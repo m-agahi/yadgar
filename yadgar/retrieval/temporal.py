@@ -2,6 +2,8 @@
 
 import re
 
+from yadgar.observability.observe import observe
+
 # Compiled patterns for temporal extraction (module-level for performance)
 _MONTH_NAMES = [
     "january",
@@ -41,6 +43,7 @@ _ORDINAL_TEMPORAL_RE = re.compile(
 )
 
 
+@observe(tier="hot", name="retrieval.temporal.parse_expression")
 def parse_temporal_expression(query: str) -> dict:
     """Extract date/time information from natural language queries.
 

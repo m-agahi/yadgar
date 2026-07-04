@@ -25,6 +25,7 @@ import difflib
 import logging
 import re as _re
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ _log = logging.getLogger(__name__)
 _HEADING_RE = _re.compile(r"^##+ (.+)")
 
 
+@observe(tier="hot")
 def _diff_context_line(diff_line: str) -> str:
     """Strip unified-diff prefix (+/-/@/ ) to get the raw text for heading detection."""
     if diff_line.startswith("@"):
@@ -43,6 +45,7 @@ def _diff_context_line(diff_line: str) -> str:
     return diff_line[1:] if diff_line else ""
 
 
+@observe(tier="hot")
 def _find_nearby_heading(diff: list[str], i: int, touched: list[str]) -> None:
     """Look back up to 5 diff lines for a ## heading; append to touched if found."""
     for j in range(max(0, i - 5), i):
@@ -54,6 +57,7 @@ def _find_nearby_heading(diff: list[str], i: int, touched: list[str]) -> None:
             return
 
 
+@observe(tier="hot")
 def _compute_change_summary(old_content: str, new_content: str) -> str:
     """Generate a concise diff summary for a wiki page version.
 
@@ -378,6 +382,7 @@ class _WikiMixin:
                 ids.append(int(d["id"]))
         return ids
 
+    @observe(tier="stage")
     def get_wiki_page_by_slug_and_branch(
         self,
         slug: str,
@@ -416,6 +421,7 @@ class _WikiMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    @observe(tier="stage")
     def get_wiki_page_by_slug_directory_branch(
         self,
         slug: str,
@@ -568,6 +574,7 @@ class _WikiMixin:
 
     # ------------------------------------------------------------------ Wiki Version CRUD
 
+    @observe(tier="stage")
     def insert_wiki_page_version(
         self,
         page_id: int,
@@ -606,6 +613,7 @@ class _WikiMixin:
         )
         return new_ver
 
+    @observe(tier="stage")
     def get_max_version_for_page(self, page_id: int) -> int:
         """Return the highest version number for a page, or 0 if none."""
         rows = self._q(
@@ -712,6 +720,7 @@ class _WikiMixin:
 
     # ------------------------------------------------------------------ Embedding backfill helpers
 
+    @observe(tier="stage")
     def get_wiki_pages_without_embedding(self) -> list[dict]:
         """Return wiki_page rows where embedding is absent or null.
 
@@ -753,6 +762,7 @@ class _WikiMixin:
 
     # ------------------------------------------------------------------ Wiki Cross-References
 
+    @observe(tier="stage")
     def replace_wiki_crossrefs(self, from_slug: str, to_slugs: list[str]) -> None:
         """Atomic replace: delete all existing crossrefs FROM this slug, insert new ones.
 
@@ -869,6 +879,7 @@ class _WikiMixin:
 
     # ------------------------------------------------------------------ _project_init / _active_work atomic helpers
 
+    @observe(tier="stage")
     def upsert_project_init(self, directory: str, content: str) -> dict:
         """Atomic delete-then-insert for _project_init memory.
 
@@ -917,6 +928,7 @@ class _WikiMixin:
             "created_at": now,
         }
 
+    @observe(tier="stage")
     def upsert_active_work(self, directory: str, content: str) -> dict:
         """Atomic delete-then-insert for _active_work memory.
 
@@ -973,6 +985,7 @@ class _WikiMixin:
         }
         return {"previous_content": previous_content, "new_memory": new_memory}
 
+    @observe(tier="stage")
     def upsert_dispatch_prelude_marker(self, directory: str) -> dict:
         """Atomic delete-then-insert for _dispatch_prelude marker memory.
 

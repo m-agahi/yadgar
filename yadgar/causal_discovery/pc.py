@@ -10,11 +10,13 @@ import numpy as np
 from yadgar.causal_discovery.independence import conditional_independence_test
 from yadgar.causal_discovery.meek import meek_r1, meek_r2, meek_r3
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def _fetch_filtered_episodes(
     storage: StorageEngine,
     cutoff_iso: str,
@@ -29,6 +31,7 @@ def _fetch_filtered_episodes(
     return episodes
 
 
+@observe(tier="stage")
 def _build_time_buckets(cutoff: datetime, now: datetime) -> list[str]:
     """Return ISO-formatted 1-hour bucket starts from cutoff to now."""
     timestamps: list[str] = []
@@ -39,6 +42,7 @@ def _build_time_buckets(cutoff: datetime, now: datetime) -> list[str]:
     return timestamps
 
 
+@observe(tier="stage")
 def _scan_entity_mentions(
     episodes: list[dict],
     all_entities: list[dict],
@@ -67,6 +71,7 @@ def _scan_entity_mentions(
     return entity_names, episode_entities
 
 
+@observe(tier="stage")
 def _fill_event_matrix(
     episode_entities: list[tuple[str, list[str]]],
     entity_names: list[str],
@@ -95,6 +100,7 @@ def _fill_event_matrix(
     return data
 
 
+@observe(tier="stage")
 def build_event_matrix(
     storage: StorageEngine,
     settings: Settings,
@@ -134,6 +140,7 @@ def build_event_matrix(
     return data, entity_names, timestamps
 
 
+@observe(tier="stage")
 def pc_algorithm(
     data: np.ndarray,
     variable_names: list[str],

@@ -10,6 +10,8 @@ _NarrativeMixin provides:
 import logging
 from dataclasses import dataclass
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 
@@ -37,6 +39,7 @@ class _NarrativeMixin:
 
     # ------------------------------------------------------------------ Prospective Memories
 
+    @observe(tier="stage")
     def insert_prospective_memory(self, pm: dict) -> int:
         now = self._now_iso()
         pid = self._next_id("prospective_memory")
@@ -80,6 +83,7 @@ class _NarrativeMixin:
 
     # ------------------------------------------------------------------ Narrative Entries
 
+    @observe(tier="stage")
     def insert_narrative_entry(self, entry: dict) -> int:
         now = self._now_iso()
         nid = self._next_id("narrative_entry")
@@ -113,6 +117,7 @@ class _NarrativeMixin:
 
     # ------------------------------------------------------------------ Astrocyte Processes
 
+    @observe(tier="stage")
     def insert_astrocyte_process(self, proc: dict) -> int:
         now = self._now_iso()
         aid = self._next_id("astrocyte_process")
@@ -139,6 +144,7 @@ class _NarrativeMixin:
         rows = self._q("SELECT * FROM astrocyte_process ORDER BY heat DESC")
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def update_astrocyte_process(self, proc_id: int, updates: dict):
         allowed = {
             "name",
@@ -170,6 +176,7 @@ class _NarrativeMixin:
 
     # ------------------------------------------------------------------ Derived Beliefs
 
+    @observe(tier="stage")
     def insert_belief(
         self,
         record: BeliefRecord,
@@ -253,6 +260,7 @@ class _NarrativeMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def get_beliefs_for_subject(
         self,
         subject: str,

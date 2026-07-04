@@ -8,6 +8,7 @@ import time as _time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def _wiki_observe_stage(stage: str, elapsed_ms: float) -> None:
 WIKI_STALE_DAYS = 90
 
 
+@observe(tier="stage")
 def _inc_embed_failure(reason: str) -> None:
     """Increment yadgar_wiki_embedding_compute_failed_total counter. Never raises."""
     try:
@@ -41,6 +43,7 @@ def _inc_embed_failure(reason: str) -> None:
 _ANCHOR_HINT_MIN_LEN = 20
 
 
+@observe(tier="stage")
 def _line_col_to_offset(content: str, line: int, col: int) -> int | None:
     """Convert 1-indexed (line, col) to a char offset into content.
 
@@ -59,6 +62,7 @@ def _line_col_to_offset(content: str, line: int, col: int) -> int | None:
     return offset
 
 
+@observe(tier="stage")
 def _check_anchor_hint_len(anchor_hint: str) -> dict | None:
     """Return an error dict if anchor_hint is shorter than the minimum, else None."""
     if len(anchor_hint) < _ANCHOR_HINT_MIN_LEN:
@@ -89,6 +93,7 @@ def _is_block_start(line: str) -> bool:
     return bool(_BLOCK_START_RE.match(line))
 
 
+@observe(tier="stage")
 def _consume_code_fence(lines: list[str], i: int) -> tuple[int, dict]:
     """Consume a fenced code block starting at i. Returns (new_i, block)."""
     fence_marker = lines[i][:3]
@@ -101,6 +106,7 @@ def _consume_code_fence(lines: list[str], i: int) -> tuple[int, dict]:
     return end, {"type": "code_fence", "start_line": start, "end_line": end}
 
 
+@observe(tier="stage")
 def _consume_blockquote(lines: list[str], i: int) -> tuple[int, dict]:
     """Consume contiguous blockquote lines starting at i. Returns (new_i, block)."""
     start = i
@@ -111,6 +117,7 @@ def _consume_blockquote(lines: list[str], i: int) -> tuple[int, dict]:
     return i, {"type": "blockquote", "start_line": start, "end_line": i}
 
 
+@observe(tier="stage")
 def _consume_table(lines: list[str], i: int) -> tuple[int, dict]:
     """Consume contiguous table lines starting at i. Returns (new_i, block)."""
     start = i
@@ -121,6 +128,7 @@ def _consume_table(lines: list[str], i: int) -> tuple[int, dict]:
     return i, {"type": "table", "start_line": start, "end_line": i}
 
 
+@observe(tier="stage")
 def _consume_list(lines: list[str], i: int) -> tuple[int, dict]:
     """Consume contiguous list lines starting at i. Returns (new_i, block)."""
     start = i
@@ -131,6 +139,7 @@ def _consume_list(lines: list[str], i: int) -> tuple[int, dict]:
     return i, {"type": "list", "start_line": start, "end_line": i}
 
 
+@observe(tier="stage")
 def _consume_paragraph(lines: list[str], i: int) -> tuple[int, dict]:
     """Consume a paragraph (runs until blank line or block start). Returns (new_i, block)."""
     start = i
@@ -141,6 +150,7 @@ def _consume_paragraph(lines: list[str], i: int) -> tuple[int, dict]:
     return i, {"type": "paragraph", "start_line": start, "end_line": i}
 
 
+@observe(tier="stage")
 def _consume_next_block(lines: list[str], i: int) -> tuple[int, dict]:
     """Consume the next non-blank block starting at lines[i]. Returns (new_i, block).
 
@@ -161,6 +171,7 @@ def _consume_next_block(lines: list[str], i: int) -> tuple[int, dict]:
     return _consume_paragraph(lines, i)
 
 
+@observe(tier="stage")
 def _parse_markdown_blocks(content: str) -> list[dict]:
     """Parse markdown content into a list of block spans.
 
@@ -188,6 +199,7 @@ def _parse_markdown_blocks(content: str) -> list[dict]:
     return blocks
 
 
+@observe(tier="stage")
 def _replace_block_span(content: str, start_line: int, end_line: int, new_content: str) -> str:
     """Replace lines[start_line:end_line] with new_content, preserving surrounding blank lines."""
     lines = content.split("\n")
@@ -199,6 +211,7 @@ def _replace_block_span(content: str, start_line: int, end_line: int, new_conten
 # ── Bold/blockquote section-heading helpers (Layer 3 extension) ───────────────
 
 
+@observe(tier="stage")
 def _find_bold_sections(content: str) -> list[dict]:
     """Find **Bold** first-line section headers (not inside fenced code blocks).
 
@@ -228,6 +241,7 @@ def _find_bold_sections(content: str) -> list[dict]:
     return sections
 
 
+@observe(tier="stage")
 def _find_blockquote_sections(content: str) -> list[dict]:
     """Find > first-line blockquote section headers.
 
@@ -248,6 +262,7 @@ def _find_blockquote_sections(content: str) -> list[dict]:
     return sections
 
 
+@observe(tier="stage")
 def _find_section_end_generic(lines: list[str], heading_line_idx: int) -> int:
     """Find end of a generic (bold/blockquote) section.
 
@@ -261,6 +276,7 @@ def _find_section_end_generic(lines: list[str], heading_line_idx: int) -> int:
     return len(lines)
 
 
+@observe(tier="stage")
 def _patch_generic_section(
     content: str,
     target: dict,
@@ -299,6 +315,7 @@ def _patch_generic_section(
 # ── Section-parsing helpers (wiki_append_section) ─────────────────────────────
 
 
+@observe(tier="stage")
 def _parse_section_heading_spec(spec: str) -> tuple[str, int | None]:
     """Parse 'Pipeline#2' → ('Pipeline', 2). Bare name → (name, None)."""
     if "#" in spec:
@@ -310,6 +327,7 @@ def _parse_section_heading_spec(spec: str) -> tuple[str, int | None]:
     return spec.strip(), None
 
 
+@observe(tier="stage")
 def _find_section_headings(content: str) -> list[dict]:
     """Find all ## / ### headings at column 0, skipping fenced code blocks.
 
@@ -350,6 +368,7 @@ def _find_section_headings(content: str) -> list[dict]:
     return headings
 
 
+@observe(tier="stage")
 def _find_section_end(lines: list[str], heading_line_idx: int, target_level: int) -> int:
     """Return index of the line that ends the section (exclusive).
 
@@ -378,6 +397,7 @@ def _find_section_end(lines: list[str], heading_line_idx: int, target_level: int
     return len(lines)
 
 
+@observe(tier="stage")
 def _patch_section(
     content: str,
     target: dict,
@@ -413,6 +433,7 @@ def _patch_section(
     return "".join(lines)
 
 
+@observe(tier="stage")
 def _diff_json(page_id: int, v1: int, v2: int, lines1: list[str], lines2: list[str]) -> dict:
     """Compute JSON-format diff between two version content lists."""
     _heading_re = re.compile(r"^##+ (.+)")
@@ -452,6 +473,7 @@ def _diff_json(page_id: int, v1: int, v2: int, lines1: list[str], lines2: list[s
     }
 
 
+@observe(tier="stage")
 def _collect_headings(lines: list[str], pattern: re.Pattern[str], result: list[str]) -> None:
     """Append section heading texts from lines to result if not already present."""
     for line in lines:
@@ -465,6 +487,7 @@ def _collect_headings(lines: list[str], pattern: re.Pattern[str], result: list[s
 # ── Auto-linking helpers (v5.85 car #5) ──────────────────────────────────────
 
 
+@observe(tier="stage")
 def _autolink_masked_regions(content: str) -> list[tuple[int, int]]:
     """Return (start, end) char-offset spans that must NOT receive auto-links.
 
@@ -515,6 +538,7 @@ def _autolink_in_masked(start: int, end: int, regions: list[tuple[int, int]]) ->
     return any(start < r_end and end > r_start for r_start, r_end in regions)
 
 
+@observe(tier="stage")
 def _autolink_find_insertions(
     content: str,
     title_to_slug: list[tuple[str, str]],
@@ -564,6 +588,7 @@ def _autolink_find_insertions(
     return proposals
 
 
+@observe(tier="stage")
 def _autolink_apply_insertions(content: str, proposals: list[dict]) -> str:
     """Wrap each proposed span in [[slug]], inserting right-to-left.
 
@@ -768,6 +793,7 @@ class WikiStore:
             slug, caller_directory, current_branch
         )
 
+    @observe(tier="stage")
     def _collect_wiki_fts_scores(
         self, query: str, scores: dict[int, float], max_results: int
     ) -> None:
@@ -788,6 +814,7 @@ class WikiStore:
         finally:
             _wiki_observe_stage("fts", (_time.perf_counter() - _fts_t0) * 1000)
 
+    @observe(tier="stage")
     def _collect_wiki_vector_scores(
         self, query: str, scores: dict[int, float], max_results: int
     ) -> None:
@@ -809,6 +836,7 @@ class WikiStore:
         except Exception:
             logger.debug("Wiki vector search failed for query '%s'", query)
 
+    @observe(tier="stage")
     def _collect_wiki_vector_scores_tagged(
         self, query: str, scores: dict[int, float], max_results: int, include_tag: str
     ) -> None:
@@ -834,6 +862,7 @@ class WikiStore:
                 "Wiki tagged vector search failed for query '%s' tag '%s'", query, include_tag
             )
 
+    @observe(tier="stage")
     def _collect_scores_dispatch(
         self, query: str, scores: dict[int, float], max_results: int, include_tag: str | None
     ) -> None:
@@ -850,6 +879,7 @@ class WikiStore:
             self._collect_wiki_vector_scores(query, scores, max_results)
 
     @staticmethod
+    @observe(tier="stage")
     def _tag_filter_pass(
         page: dict,
         include_tag: str | None,
@@ -951,6 +981,7 @@ class WikiStore:
 
         return results
 
+    @observe(tier="stage")
     def delete(self, slug: str) -> bool:
         """Delete a wiki page by slug."""
         page = self._storage.get_wiki_page_by_slug(slug)
@@ -974,6 +1005,7 @@ class WikiStore:
             category=category, slug_prefix=slug_prefix, limit=limit, directory=directory
         )
 
+    @observe(tier="stage")
     def find_similar_wiki_pages(
         self,
         title: str,
@@ -1068,6 +1100,7 @@ class WikiStore:
 
         return sorted(candidates, key=lambda c: c["similarity"], reverse=True)
 
+    @observe(tier="boundary")
     def ingest(
         self,
         content: str,
@@ -1110,6 +1143,7 @@ class WikiStore:
             opts=WikiAddOptions(source_memory_ids=source_memory_ids),
         )
 
+    @observe(tier="boundary")
     def lint(self) -> dict:
         """Wiki health check.
 
@@ -1224,6 +1258,7 @@ class WikiStore:
 
     # ── Auto-linking pass (v5.85 car #5) ──────────────────────────────────
 
+    @observe(tier="stage")
     def _autolink_title_map(
         self, directory: str | None, min_title_len: int
     ) -> list[tuple[str, str]]:
@@ -1249,6 +1284,7 @@ class WikiStore:
         ]
         return sorted(pairs, key=lambda p: len(p[0]), reverse=True)
 
+    @observe(tier="boundary")
     def autolink(
         self,
         directory: str | None = None,
@@ -1322,6 +1358,7 @@ class WikiStore:
             "links_added": len(proposals_out),
         }
 
+    @observe(tier="stage")
     def _autolink_filter_by_similarity(
         self, page: dict, proposals: list[dict], threshold: float
     ) -> list[dict]:
@@ -1344,6 +1381,7 @@ class WikiStore:
         allowed = {s["slug"] for s in similar}
         return [p for p in proposals if p["target"] in allowed]
 
+    @observe(tier="stage")
     def _autolink_write_page(self, page: dict, content: str, proposals: list[dict]) -> None:
         """Apply insertions and upsert WITHOUT clobbering page metadata.
 
@@ -1373,6 +1411,7 @@ class WikiStore:
         """Return version history for a page, newest first, without content field."""
         return self._storage.list_wiki_page_versions(page_id, limit=limit)
 
+    @observe(tier="stage")
     def read_version(self, page_id: int, version: int) -> dict:
         """Return a specific version with full content, or error dict if missing."""
         row = self._storage.get_wiki_page_version(page_id, version)
@@ -1385,6 +1424,7 @@ class WikiStore:
         row.pop("id", None)  # internal field
         return row
 
+    @observe(tier="stage")
     def diff(self, page_id: int, v1: int, v2: int, fmt: str = "unified") -> dict:
         """Diff two versions of a page. fmt='unified' or 'json'."""
         snap1 = self._storage.get_wiki_page_version(page_id, v1)
@@ -1421,6 +1461,7 @@ class WikiStore:
             "diff": diff_text,
         }
 
+    @observe(tier="stage")
     def restore_version(self, page_id: int, version: int) -> dict:
         """Restore a wiki page to a previous version by creating a new version.
 
@@ -1475,6 +1516,7 @@ class WikiStore:
 
     _VALID_HEADING_TYPES = frozenset({"h2", "h3", "bold", "blockquote"})
 
+    @observe(tier="stage")
     def _find_headings_by_type(self, page_content: str, heading_type: str) -> list[dict]:
         """Dispatch heading search by heading_type."""
         if heading_type in ("h2", "h3"):
@@ -1483,6 +1525,7 @@ class WikiStore:
             return _find_bold_sections(page_content)
         return _find_blockquote_sections(page_content)
 
+    @observe(tier="stage")
     def _patch_existing_section(
         self,
         page_content: str,
@@ -1521,6 +1564,7 @@ class WikiStore:
             return _patch_section(page_content, target, content, position)
         return _patch_generic_section(page_content, target, content, position)
 
+    @observe(tier="stage")
     def append_section(
         self,
         page_id: int,
@@ -1604,6 +1648,7 @@ class WikiStore:
 
     _METADATA_FIELDS: frozenset[str] = frozenset({"directory_context", "branch"})
 
+    @observe(tier="stage")
     def set_metadata(
         self,
         page_id: int,
@@ -1677,6 +1722,7 @@ class WikiStore:
             "version_id": new_version,
         }
 
+    @observe(tier="stage")
     def set_metadata_by_slug(
         self,
         slug: str,
@@ -1750,6 +1796,7 @@ class WikiStore:
             "changed": rows_updated > 0,
         }
 
+    @observe(tier="stage")
     def _apply_text_edit(
         self,
         page_id: int,
@@ -1768,6 +1815,7 @@ class WikiStore:
             "length_delta": len(new_content.encode()) - len(old_content.encode()),
         }
 
+    @observe(tier="stage")
     def replace_text(
         self,
         page_id: int,
@@ -1818,6 +1866,7 @@ class WikiStore:
             new_content = content.replace(old_text, new_text, n)
             return self._apply_text_edit(page_id, new_content, content, n)
 
+    @observe(tier="stage")
     def delete_text(
         self,
         page_id: int,
@@ -1864,6 +1913,7 @@ class WikiStore:
             new_content = content.replace(text, "", n)
             return self._apply_text_edit(page_id, new_content, content, n)
 
+    @observe(tier="stage")
     def insert_after(
         self,
         page_id: int,
@@ -1896,6 +1946,7 @@ class WikiStore:
         new_content = content.replace(anchor_text, anchor_text + new_text, 1)
         return self._apply_text_edit(page_id, new_content, content, 1)
 
+    @observe(tier="stage")
     def insert_before(
         self,
         page_id: int,
@@ -1930,6 +1981,7 @@ class WikiStore:
 
     # ── Layer 2: positional primitives (v5.61.0) ──────────────────────────
 
+    @observe(tier="stage")
     def replace_at(
         self,
         page_id: int,
@@ -1977,6 +2029,7 @@ class WikiStore:
         result.pop("replaced_count", None)
         return result
 
+    @observe(tier="stage")
     def delete_at(
         self,
         page_id: int,
@@ -2022,6 +2075,7 @@ class WikiStore:
         result.pop("replaced_count", None)
         return result
 
+    @observe(tier="stage")
     def insert_at(
         self,
         page_id: int,
@@ -2072,6 +2126,7 @@ class WikiStore:
 
     # ── Layer 3: structural primitives (v5.61.0) ──────────────────────────
 
+    @observe(tier="stage")
     def replace_markdown_block(
         self,
         page_id: int,
@@ -2135,6 +2190,7 @@ class WikiStore:
         raw = re.findall(r"\[\[([^\]]+)\]\]", content)
         return list(dict.fromkeys(self._slugify(r) for r in raw))  # dedupe, preserve order
 
+    @observe(tier="stage")
     def _compute_embedding(self, title: str, content: str) -> bytes | None:
         """Semantic anchoring: prepend title to content before embedding.
 
@@ -2180,6 +2236,7 @@ class WikiStore:
 
         return result
 
+    @observe(tier="stage")
     def backfill_null_embeddings(self, batch_size: int = 50) -> int:
         """Backfill embeddings for all wiki_page rows where embedding IS NULL.
 
@@ -2239,6 +2296,7 @@ class WikiStore:
         """Update wiki_crossref table to match extracted links."""
         self._storage.replace_wiki_crossrefs(slug, links)
 
+    @observe(tier="stage")
     def _link_memories(self, slug: str, memory_ids: list[int]) -> None:
         """Add this wiki page's slug to wiki_refs on each source memory."""
         for mid in memory_ids:

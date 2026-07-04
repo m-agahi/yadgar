@@ -14,9 +14,12 @@ import logging
 import os
 import socket
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def notify(state: str) -> bool:
     """Send a single sd_notify payload.
 

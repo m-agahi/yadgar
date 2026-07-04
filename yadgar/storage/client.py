@@ -24,6 +24,7 @@ import re
 import struct
 import time
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ _CAMEL_CASE_RE = re.compile(r"([a-z])([A-Z])")
 _TYPE_RECORD_RE = re.compile(r"type::record\(\s*'(\w+)'\s*,\s*\$(\w+)\s*\)")
 
 
+@observe(tier="hot")
 def _inline_int_record_ids(surql: str, params: dict | None) -> tuple[str, dict | None]:
     """Rewrite type::record('t', $p) -> t:{int} for integer params (embedded only).
 
@@ -218,6 +220,7 @@ _RELATIONSHIP_UPDATABLE_FIELDS = frozenset(
 )
 
 
+@observe(tier="hot")
 def _normalize_rows(raw) -> list:
     """Normalise a raw SurrealDB response to a flat list of dicts.
 
@@ -238,6 +241,7 @@ def _normalize_rows(raw) -> list:
     return []
 
 
+@observe(tier="hot")
 def _prefix_param_tokens(sql: str, params: dict, i: int) -> str:
     """Rewrite ``$k`` parameter tokens in *sql* to ``$p{i}_{k}``.
 
@@ -290,6 +294,7 @@ def _sql_op(surql: str) -> str:
     return first
 
 
+@observe(tier="hot")
 def _observe_query_metrics(surql: str, elapsed_s: float) -> None:
     """Observe DB-layer query histogram for a single query execution.
 
@@ -317,6 +322,7 @@ class _ClientMixin:
             raise RuntimeError("_db accessed in server mode — use _q() instead")
         return self._embedded_db
 
+    @observe(tier="stage")
     def _verify_health(self):
         """Post-startup health check — detect corrupted DB state."""
         try:
@@ -345,6 +351,7 @@ class _ClientMixin:
         except Exception as e:
             _log.warning("DB health check failed: %s", e)
 
+    @observe(tier="stage")
     def _restore_from_backup(self):
         """Restore DB from the rolling backup after detecting corruption."""
         try:
@@ -370,6 +377,7 @@ class _ClientMixin:
 
     # ------------------------------------------------------------------ helpers
 
+    @observe(tier="hot")
     def _bytes_to_floats(self, data: bytes, expected_dim: int | None = None) -> list[float]:
         # Q20: validate alignment and optional dimension match
         if len(data) % 4 != 0:
@@ -382,6 +390,7 @@ class _ClientMixin:
     def _floats_to_bytes(self, floats: list[float]) -> bytes:
         return struct.pack(f"<{len(floats)}f", *floats)
 
+    @observe(tier="hot")
     def _extract_id(self, record_id) -> int | None:
         if record_id is None:
             return None
@@ -391,12 +400,14 @@ class _ClientMixin:
             return int(record_id.split(":")[1])
         return int(record_id)
 
+    @observe(tier="hot")
     def _next_id(self, table: str) -> int:
         rows = self._q(f"UPSERT counter:{table} SET val = (val ?? 0) + 1")
         if rows:
             return int(rows[0].get("val", 1))
         return 1
 
+    @observe(tier="stage")
     def _reserve_ids(self, table: str, n: int) -> list[int]:
         """Reserve n consecutive IDs in one HTTP request.
 
@@ -406,6 +417,7 @@ class _ClientMixin:
         top = int(rows[0].get("val", n)) if rows else n
         return list(range(top - n + 1, top + 1))
 
+    @observe(tier="hot")
     def _row_to_dict(self, record: dict | None) -> dict | None:
         if record is None:
             return None
@@ -455,6 +467,7 @@ class _ClientMixin:
 
         return datetime.now(UTC).isoformat()
 
+    @observe(tier="stage")
     def _q_timeout(self, surql: str, params: dict | None = None, timeout: float = 30.0) -> list:
         """Like _q but with a per-request timeout (seconds).
 
@@ -495,6 +508,7 @@ class _ClientMixin:
         # Normalise to flat list of dicts (same as _q).
         return _normalize_rows(raw)
 
+    @observe(tier="stage")
     def _q_server(self, surql: str, params: dict | None) -> object:
         """Execute *surql* via HTTP POST and return the raw result object.
 
@@ -528,6 +542,7 @@ class _ClientMixin:
         # Last entry is the actual query result (LET entries precede it).
         return results[-1].get("result") if results else None
 
+    @observe(tier="stage")
     def _q_embedded(self, surql: str, params: dict | None) -> object:
         """Execute *surql* via the embedded SurrealKV SDK and return the raw result.
 
@@ -550,6 +565,7 @@ class _ClientMixin:
             _log.debug("Embedded DB error (%s), retrying…", exc)
             return self._embedded_db.query(surql, params or {})
 
+    @observe(tier="stage")
     def _q(self, surql: str, params: dict | None = None) -> list:
         """Run a parameterised query via HTTP (server mode) or embedded SDK.
 
@@ -563,6 +579,7 @@ class _ClientMixin:
         _observe_query_metrics(surql, time.perf_counter() - _t0)
         return _normalize_rows(raw)
 
+    @observe(tier="stage")
     def _q_multi(self, statements: list[tuple[str, dict | None]]) -> list[list]:
         """Run N read statements in ONE round-trip; return one row-list per statement.
 
@@ -597,6 +614,7 @@ class _ClientMixin:
         _observe_query_metrics("_q_multi", time.perf_counter() - _t0)
         return result
 
+    @observe(tier="stage")
     def _q_multi_server(self, statements: list[tuple[str, dict | None]]) -> list[list]:
         """Server-mode multi-statement read — one HTTP POST, per-statement results."""
         import json as _json
@@ -638,6 +656,7 @@ class _ClientMixin:
             idx += 1
         return out
 
+    @observe(tier="stage")
     def _q_multi_embedded(self, statements: list[tuple[str, dict | None]]) -> list[list]:
         """Embedded-mode multi-statement read — one SDK query, per-statement results."""
         import json as _json
@@ -657,6 +676,7 @@ class _ClientMixin:
         return self._split_embedded_multi(statements, raw)
 
     @staticmethod
+    @observe(tier="hot")
     def _split_embedded_multi(statements: list[tuple[str, dict | None]], raw: object) -> list[list]:
         """Map an embedded multi-statement raw response to per-SELECT row-lists.
 
@@ -675,6 +695,7 @@ class _ClientMixin:
         return out
 
     @staticmethod
+    @observe(tier="hot")
     def _build_chunk_body(chunk: list[tuple[str, dict | None]], json_mod: object) -> bytes:
         """Build the actual HTTP body for a single BEGIN…COMMIT transaction chunk.
 
@@ -697,6 +718,7 @@ class _ClientMixin:
         parts.append("COMMIT TRANSACTION")
         return (";\n".join(parts) + ";").encode()
 
+    @observe(tier="stage")
     def _send_chunk(
         self,
         chunk: list[tuple[str, dict | None]],
@@ -790,6 +812,7 @@ class _ClientMixin:
             for chunk in _chunk_by_bytes(count_chunk, max_bytes):
                 self._send_chunk(chunk, max_bytes, _json)
 
+    @observe(tier="hot")
     def _enrich_content_for_fts(self, content: str) -> str:
         """Enrich content with split identifier tokens for better FTS matching."""
         tokens = content.split()
@@ -804,6 +827,7 @@ class _ClientMixin:
             return content + " " + " ".join(extra_tokens)
         return content
 
+    @observe(tier="hot")
     def _preprocess_fts_query(self, query: str) -> str:
         """Preprocess query for SurrealDB full-text search.
 

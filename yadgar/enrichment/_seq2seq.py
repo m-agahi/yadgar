@@ -2,9 +2,12 @@
 
 import logging
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def _load_seq2seq_model(
     model_name: str,
 ) -> tuple[object, object, str] | None:

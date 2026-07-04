@@ -10,6 +10,7 @@ from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 import yadgar.paths as _paths
+from yadgar.observability.observe import observe
 
 
 class YamlConfigSource(PydanticBaseSettingsSource):
@@ -18,6 +19,7 @@ class YamlConfigSource(PydanticBaseSettingsSource):
         self._data: dict[str, Any] = {}
         self._load()
 
+    @observe(tier="stage")
     def _load(self) -> None:
         from yadgar.config_yaml import get_config_path  # noqa: PLC0415
 
@@ -37,6 +39,7 @@ class YamlConfigSource(PydanticBaseSettingsSource):
 
             logging.getLogger(__name__).warning("YAML config load failed", exc_info=True)
 
+    @observe(tier="hot")
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         val = self._data.get(field_name)
         return val, field_name, self.field_is_complex(field)
@@ -909,6 +912,9 @@ class Settings(BaseSettings):
 
     model_config = {"env_prefix": "YADGAR_"}
 
+    @observe(
+        exempt="pydantic field_validator — must raise ValidationError inline; an @observe wrapper alters the raise path pydantic hooks"
+    )
     @field_validator("VACUUM_AUTO_WINDOW_START", "VACUUM_AUTO_WINDOW_END")
     @classmethod
     def _validate_hhmm(cls, v: str) -> str:
@@ -916,6 +922,9 @@ class Settings(BaseSettings):
             raise ValueError(f"must be HH:MM (00:00-23:59), got {v!r}")
         return v
 
+    @observe(
+        exempt="pydantic field_validator — must raise ValidationError inline; an @observe wrapper alters the raise path pydantic hooks"
+    )
     @field_validator("LOG_FORMAT")
     @classmethod
     def _validate_log_format(cls, v: str) -> str:
@@ -955,6 +964,7 @@ def get_settings() -> Settings:
 _KNOB_PARSE_ERRORS: tuple[type[Exception], ...] = (ValueError, TypeError)
 
 
+@observe(tier="hot")
 def resolve_knob[T](
     env_name: str,
     field_name: str,

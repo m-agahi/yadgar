@@ -3,12 +3,14 @@
 import logging
 
 from yadgar.embeddings import EmbeddingEngine
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 from yadgar.storage.directory import dominant_directory
 
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def _memify_strengthen(
     storage: StorageEngine,
     stats: dict,
@@ -38,6 +40,7 @@ def _memify_strengthen(
         storage.batch_writes(batch)
 
 
+@observe(tier="stage")
 def _memify_reweight(
     storage: StorageEngine,
     stats: dict,
@@ -93,6 +96,7 @@ def _memify_reweight(
 _DERIVED_TAGS = frozenset({"derived", "auto-generated"})
 
 
+@observe(tier="stage")
 def _derive_pair_directory(src_name: str, tgt_name: str, source_mems: list[dict]) -> str:
     """Originating directory for a co-occurrence pair.
 
@@ -108,6 +112,7 @@ def _derive_pair_directory(src_name: str, tgt_name: str, source_mems: list[dict]
     return dominant_directory(dir_votes)
 
 
+@observe(tier="stage")
 def _collect_derive_inserts(
     storage: StorageEngine,
     embeddings: EmbeddingEngine,
@@ -161,6 +166,7 @@ def _collect_derive_inserts(
     return to_insert
 
 
+@observe(tier="stage")
 def _memify_derive(
     storage: StorageEngine,
     embeddings: EmbeddingEngine,

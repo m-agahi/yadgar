@@ -32,6 +32,9 @@ import sys
 import urllib.parse
 import urllib.request
 
+from yadgar.observability.observe import observe
+from yadgar.tracing import shutdown_tracing
+
 _PORT = os.environ.get("YADGAR_PORT", "8765")
 _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
@@ -42,17 +45,20 @@ _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 _FIRE_ON_REASONS = frozenset({"session_start", "compact"})
 
 
+@observe(tier="hot")
 def _auth_headers() -> dict:
     if _AUTH_TOKEN:
         return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
     return {}
 
 
+@observe(tier="hot")
 def _should_fire(data: dict) -> bool:
     """Return True iff this InstructionsLoaded event should trigger a recall."""
     return data.get("load_reason", "") in _FIRE_ON_REASONS
 
 
+@observe(tier="hot")
 def _parse_payload(data: dict) -> dict:
     """Extract and normalise fields from the InstructionsLoaded payload."""
     return {
@@ -63,6 +69,7 @@ def _parse_payload(data: dict) -> dict:
     }
 
 
+@observe(tier="stage")
 def _call_daemon(file_path: str, load_reason: str) -> str:
     """GET /hooks/instructions-loaded on the daemon.
 
@@ -80,17 +87,21 @@ def _call_daemon(file_path: str, load_reason: str) -> str:
         return ""
 
 
+@observe(tier="boundary")
 def main() -> None:
     """Entry point called by the hook script."""
     try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except Exception:
-        return
+        try:
+            data = json.loads(sys.stdin.read() or "{}")
+        except Exception:
+            return
 
-    if not _should_fire(data):
-        return
+        if not _should_fire(data):
+            return
 
-    parsed = _parse_payload(data)
-    text = _call_daemon(parsed["file_path"], parsed["load_reason"])
-    if text:
-        print(text)
+        parsed = _parse_payload(data)
+        text = _call_daemon(parsed["file_path"], parsed["load_reason"])
+        if text:
+            print(text)
+    finally:
+        shutdown_tracing()

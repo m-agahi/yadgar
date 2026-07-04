@@ -11,6 +11,8 @@ Authorization: Bearer <token> to the /admin/dbsize endpoint.
 import logging
 import os
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 _ZERO_SIZE: dict = {
@@ -29,6 +31,7 @@ def _zero_size_dict() -> dict:
     return dict(_ZERO_SIZE)
 
 
+@observe(tier="hot")
 def _resolve_embed_url(db_url: str) -> str | None:
     """Derive the embed-service URL from *db_url*, or return None.
 
@@ -44,6 +47,7 @@ def _resolve_embed_url(db_url: str) -> str | None:
     return None
 
 
+@observe(tier="stage")
 def _fetch_remote_db_size(embed_url: str, threshold: int, timeout_sec: float) -> dict | None:
     """GET /admin/dbsize from *embed_url*.
 
@@ -80,6 +84,7 @@ def _fetch_remote_db_size(embed_url: str, threshold: int, timeout_sec: float) ->
         return _zero_size_dict()
 
 
+@observe(tier="hot")
 def _stat_size(path: str) -> int:
     """Return file size via stat(), or 0 on OSError."""
     import os as _os
@@ -90,6 +95,7 @@ def _stat_size(path: str) -> int:
         return 0
 
 
+@observe(tier="stage")
 def _walk_local_db_size(db_path: os.PathLike | None, threshold: int) -> dict:
     """Walk *db_path* on the local filesystem and return a size breakdown dict."""
     import os as _os
@@ -132,6 +138,7 @@ def _walk_local_db_size(db_path: os.PathLike | None, threshold: int) -> dict:
 class _DbSizeMixin:
     """DB size reporting — mixed into StorageEngine."""
 
+    @observe(tier="stage")
     def get_db_size(self) -> dict:
         """Return a breakdown of the SurrealDB directory size in bytes.
 

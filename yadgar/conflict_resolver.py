@@ -31,6 +31,8 @@ import os
 import time
 from typing import Any
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 # ── I3 gate: captured at import time, immutable thereafter ────────────────────
@@ -73,6 +75,7 @@ Rules:
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
+@observe(tier="stage")
 def _get_client() -> Any:
     """Return the module-level httpx.Client, constructing it lazily on first call."""
     import httpx  # deferred — only imported when _ENABLED is True
@@ -83,6 +86,7 @@ def _get_client() -> Any:
     return _client
 
 
+@observe(tier="stage")
 def _fetch_similar(candidate: dict, k: int) -> list[dict]:
     """Retrieve top-K similar memories using yadgar recall.
 
@@ -119,6 +123,7 @@ def _fetch_similar(candidate: dict, k: int) -> list[dict]:
         return []
 
 
+@observe(tier="hot")
 def _build_prompt(candidate: dict, similar: list[dict]) -> str:
     similar_lines = (
         "\n".join(f"  id={m['id']}: {m.get('content', '')[:150]}" for m in similar) or "  (none)"
@@ -130,6 +135,7 @@ def _build_prompt(candidate: dict, similar: list[dict]) -> str:
     )
 
 
+@observe(tier="hot")
 def _parse_ollama_response(response_text: str) -> dict[str, Any]:
     """Parse the 'response' field from Ollama generate output.
 
@@ -149,6 +155,7 @@ def _parse_ollama_response(response_text: str) -> dict[str, Any]:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+@observe(tier="boundary")
 def resolve_conflict(candidate: dict) -> dict[str, Any]:
     """Determine the conflict-resolution op for a candidate memory.
 

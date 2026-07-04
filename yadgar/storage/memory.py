@@ -37,6 +37,7 @@ import logging
 import os
 import re as _re
 
+from yadgar.observability.observe import observe
 from yadgar.secrets import SecretLeakBlocked, check_secrets
 from yadgar.tracing import trace_span
 
@@ -47,6 +48,7 @@ _log = logging.getLogger(__name__)
 _PROVENANCE_AGENT_RE = _re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
+@observe(tier="hot")
 def _validate_provenance_agent(value: str) -> str:
     """Validate and return provenance_agent value.
 
@@ -88,6 +90,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Memories
 
+    @observe(tier="hot")
     def _build_memory_insert_clause(
         self, memory: dict, mid: int, now: str, branch: str | None, emb_floats
     ) -> tuple[str, dict]:
@@ -155,6 +158,7 @@ class _MemoryMixin:
             params["migration_grace"] = bool(memory["migration_grace"])
         return sql, params
 
+    @observe(tier="hot")
     def _validate_memory_secrets(self, memory: dict) -> None:
         """Layer 1 storage-level secret gate — last line of defence (P13/v5.10.2).
 
@@ -199,6 +203,7 @@ class _MemoryMixin:
                 "This is a kill switch for emergencies only. Remove it when resolved."
             )
 
+    @observe(tier="stage")
     def _enrich_memory_if_enabled(  # noqa: C901 — pipeline flag+length+embedding guards + 6-field mapping; extract further degrades locality without reducing count
         self, mid: int, memory: dict, settings, embeddings_engine, embedding
     ) -> None:
@@ -262,7 +267,7 @@ class _MemoryMixin:
 
             logging.getLogger(__name__).warning("Enrichment failed: %s", e)
 
-    @trace_span("storage.memory.insert_memory")
+    @observe(tier="boundary", name="storage.memory.insert_memory")
     def insert_memory(
         self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
     ) -> int:
@@ -351,19 +356,21 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage", name="storage.memory.update_memory_heat")
     def update_memory_heat(self, memory_id: int, new_heat: float):
         self._q(
             "UPDATE type::record('memory', $id) SET heat = $heat",
             {"id": memory_id, "heat": new_heat},
         )
 
+    @observe(tier="stage", name="storage.memory.update_memory_staleness")
     def update_memory_staleness(self, memory_id: int, is_stale: bool):
         self._q(
             "UPDATE type::record('memory', $id) SET is_stale = $stale",
             {"id": memory_id, "stale": is_stale},
         )
 
-    @trace_span("storage.memory.delete_memory")
+    @observe(tier="stage", name="storage.memory.delete_memory")
     def delete_memory(self, memory_id: int):
         # Delete FK dependents first
         self._q(
@@ -489,6 +496,7 @@ class _MemoryMixin:
     #     gap_detection.py:20  — needs heat, tags, confidence, content, id
     # ------------------------------------------------------------------
 
+    @observe(tier="stage")
     def get_candidate_memory_ids(self) -> list[int]:
         """Return all memory IDs that have an embedding and heat > 0.
 
@@ -510,6 +518,7 @@ class _MemoryMixin:
                 result.append(mem_id)
         return result
 
+    @observe(tier="stage")
     def get_memories_by_ids_projected(self, ids: list[int]) -> list[dict]:
         """Return id, embedding, and content for a given list of memory ids.
 
@@ -534,6 +543,7 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def iter_embeddings_minimal(self) -> list[tuple[int, bytes]]:
         """Return (id, embedding) for every memory that has an embedding and heat > 0.
 
@@ -559,6 +569,7 @@ class _MemoryMixin:
             result.append((mem_id, emb))
         return result
 
+    @observe(tier="stage")
     def get_embeddings_by_ids(self, ids: list[int]) -> list[tuple[int, bytes]]:
         """Return (id, embedding) for a given list of memory ids.
 
@@ -586,6 +597,7 @@ class _MemoryMixin:
             result.append((mem_id, emb))
         return result
 
+    @observe(tier="stage")
     def get_ids_with_heat(self) -> list[tuple[int, float]]:
         """Return (id, heat) for every memory with heat > 0.
 
@@ -603,6 +615,7 @@ class _MemoryMixin:
             result.append((mem_id, float(row.get("heat", 0.0))))
         return result
 
+    @observe(tier="stage")
     def get_memories_with_embeddings(
         self,
         limit: int | None = None,
@@ -797,6 +810,7 @@ class _MemoryMixin:
     # update_memory_compression stays here: primary table is memory; it updates
     # content + compression_level fields (not a vector-index operation).
 
+    @observe(tier="stage", name="storage.memory.update_memory_compression")
     def update_memory_compression(
         self,
         memory_id: int,
@@ -824,6 +838,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Store-type queries
 
+    @observe(tier="stage")
     def get_memories_by_store_type(
         self,
         store_type: str,
@@ -862,6 +877,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Generic helpers
 
+    @observe(tier="stage", name="storage.memory.update_memory_fields")
     def update_memory_fields(self, memory_id: int, **fields):
         from yadgar.storage.client import _EMBEDDING_FIELDS, _MEMORY_UPDATABLE_FIELDS
 
@@ -887,6 +903,7 @@ class _MemoryMixin:
         mid = int(memory_id)  # §5: cast to int to prevent record-ID injection
         self._q(f"UPDATE memory:{mid} SET {', '.join(set_parts)}", params)
 
+    @observe(tier="stage", name="storage.memory.update_memory_last_accessed")
     def update_memory_last_accessed(self, memory_id: int, timestamp: str):
         mid = int(memory_id)  # §5: cast to int
         self._q(
@@ -894,7 +911,7 @@ class _MemoryMixin:
             {"ts": timestamp},
         )
 
-    @trace_span("storage.memory.boost_memories_access")
+    @observe(tier="stage", name="storage.memory.boost_memories_access")
     def boost_memories_access(self, memory_ids: list[int], timestamp: str) -> None:
         """Bump heat (+0.1, clamped at 1.0) and last_accessed for a set of memories.
 
@@ -920,6 +937,7 @@ class _MemoryMixin:
             {"ts": timestamp},
         )
 
+    @observe(tier="stage")
     def get_total_reconsolidation_count(self) -> int:
         rows = self._q("SELECT math::sum(reconsolidation_count) AS total FROM memory GROUP ALL")
         return int(rows[0]["total"]) if rows and rows[0].get("total") is not None else 0
@@ -938,6 +956,7 @@ class _MemoryMixin:
         )
         return int(rows[0]["c"]) if rows else 0
 
+    @observe(tier="stage")
     def find_memory_ids_by_entity_name(self, entity_name: str) -> list[int]:
         """Find memory IDs whose content contains the entity name.
 
@@ -957,6 +976,7 @@ class _MemoryMixin:
             )
             return [self._extract_id(r.get("id")) for r in rows]
 
+    @observe(tier="stage")
     def find_memory_ids_by_entities(self, entity_names: list[str]) -> dict[str, list[int]]:
         """Batched ``find_memory_ids_by_entity_name`` — one round-trip for N names (v5.102.0).
 
@@ -996,6 +1016,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Memory protection and anchoring
 
+    @observe(tier="stage")
     def protect_memory(
         self,
         memory_id: int,
@@ -1037,6 +1058,7 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def get_anchored_memories_scoped(
         self,
         directory: str,
@@ -1084,6 +1106,7 @@ class _MemoryMixin:
 
         return self._rows_to_dicts(merged)
 
+    @observe(tier="stage")
     def get_recent_memories(self, limit: int = 20, exclude_anchored: bool = True) -> list[dict]:
         """Return recent non-protected memories, ordered by creation date desc."""
         if exclude_anchored:
@@ -1101,6 +1124,7 @@ class _MemoryMixin:
             )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def get_recent_memories_since(
         self,
         since: str,
@@ -1173,6 +1197,7 @@ class _MemoryMixin:
             result[int(mid)] = float(gp)
         return result
 
+    @observe(tier="stage", name="storage.memory.update_memory_graph_prior")
     def update_memory_graph_prior(self, memory_id: int, prior: float) -> None:
         """Store precomputed graph_prior scalar on a memory row (v5.54.1).
 
@@ -1217,6 +1242,7 @@ class _MemoryMixin:
             result[int(mid)] = float(cp)
         return result
 
+    @observe(tier="stage", name="storage.memory.update_memory_cofire_prior")
     def update_memory_cofire_prior(self, memory_id: int, prior: float) -> None:
         """Store precomputed cofire_prior scalar on a memory row (v5.54.2).
 
@@ -1231,6 +1257,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Memory excitability
 
+    @observe(tier="stage", name="storage.memory.update_memory_excitability")
     def update_memory_excitability(self, memory_id: int, excitability: float):
         """Update excitability and last_excitability_update for a memory."""
         now = self._now_iso()

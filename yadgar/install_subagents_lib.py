@@ -15,6 +15,8 @@ import logging
 import shutil
 from pathlib import Path
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,6 +25,7 @@ def _get_bundled_agents_dir() -> Path:
     return Path(__file__).parent / "install_assets" / "agents"
 
 
+@observe(tier="boundary")
 def install_subagents_impl(
     home_dir: Path,
     dry_run: bool = False,

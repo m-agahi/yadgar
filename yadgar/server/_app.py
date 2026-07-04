@@ -10,6 +10,7 @@ import os
 from mcp.server.fastmcp import FastMCP
 
 from yadgar.config import get_settings, resolve_knob
+from yadgar.observability.observe import observe
 from yadgar.tracing import setup_tracing
 
 settings = get_settings()
@@ -66,6 +67,7 @@ mcp_server = FastMCP(
 
 
 # ── CORS: default-deny; configurable via YADGAR_ALLOWED_ORIGINS ───────────────
+@observe(tier="stage")
 def _get_allowed_origins() -> list[str]:
     """Read allowed origins from config. Default: loopback only."""
     raw = resolve_knob("YADGAR_ALLOWED_ORIGINS", "ALLOWED_ORIGINS", str, "")
@@ -79,6 +81,7 @@ def _get_allowed_origins() -> list[str]:
     ]
 
 
+@observe(tier="stage")
 def _instrument_starlette_app(app) -> None:
     """Apply FastAPIInstrumentor to a Starlette/FastAPI app (v5.6.4 — Bug 2 fix).
 
@@ -179,6 +182,7 @@ class MCPTraceSpanMiddleware:
             await self.app(scope, receive, send)
 
 
+@observe(tier="stage")
 def _cors_wrapped_http_app(self):
     from starlette.middleware.cors import CORSMiddleware
 
@@ -205,6 +209,7 @@ def _cors_wrapped_http_app(self):
     return InFlightRequestMiddleware(auth_app)
 
 
+@observe(tier="stage")
 def _auth_wrapped_sse_app(self, mount_path=None):
     """Wrap SSE transport with BearerAuthMiddleware + RequestLogging (C-1).
 
@@ -233,6 +238,7 @@ _orig_sse_app = mcp_server.sse_app.__func__
 mcp_server.sse_app = _auth_wrapped_sse_app.__get__(mcp_server, type(mcp_server))
 
 
+@observe(tier="stage")
 def _start_loop_lag_monitor_on_live_loop():
     """Start the #80 event-loop lag monitor on the running uvicorn loop.
 
@@ -252,6 +258,7 @@ def _start_loop_lag_monitor_on_live_loop():
         return None
 
 
+@observe(tier="stage")
 async def _stop_loop_lag_monitor_safe(task) -> None:
     """Cancel the lag monitor task on shutdown. Never raises."""
     try:
@@ -262,6 +269,7 @@ async def _stop_loop_lag_monitor_safe(task) -> None:
         pass
 
 
+@observe(tier="stage")
 def _patch_uvicorn_shutdown_timeout() -> None:
     """Inject timeout_graceful_shutdown into both uvicorn-backed transports.
 
@@ -335,6 +343,7 @@ def _patch_uvicorn_shutdown_timeout() -> None:
 _patch_uvicorn_shutdown_timeout()
 
 
+@observe(tier="stage")
 def _tool(power: bool = False):
     """Register a function as an MCP tool.
 
@@ -387,6 +396,7 @@ def _tool(power: bool = False):
     return decorator
 
 
+@observe(tier="stage")
 def _build_tool_wrappers(func, traced_func, estimate_tokens):
     """Build the (sync, async) instrumented wrappers for a tool (Fix A).
 

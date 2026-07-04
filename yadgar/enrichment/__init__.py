@@ -19,6 +19,7 @@ from yadgar.enrichment.conceptnet import (
 from yadgar.enrichment.doc2query import Doc2QueryExpander as Doc2QueryExpander
 from yadgar.enrichment.fpa import FPAFilter as FPAFilter
 from yadgar.enrichment.logic import LogicExpander as LogicExpander
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -45,37 +46,44 @@ class EnrichmentPipeline:
         self._doc2query: Doc2QueryExpander | None = None
         self._logic: LogicExpander | None = None
 
+    @observe(tier="stage")
     def _get_fpa(self) -> FPAFilter | None:
         if self._fpa is None and self._embedding_engine is not None:
             self._fpa = FPAFilter(self._embedding_engine)
         return self._fpa
 
+    @observe(tier="stage")
     def _get_conceptnet(self) -> ConceptNetExpander:
         if self._conceptnet is None:
             self._conceptnet = ConceptNetExpander()
         return self._conceptnet
 
+    @observe(tier="stage")
     def _get_comet(self) -> CometInferencer:
         if self._comet is None:
             self._comet = CometInferencer()
         return self._comet
 
+    @observe(tier="stage")
     def _get_doc2query(self) -> Doc2QueryExpander:
         if self._doc2query is None:
             self._doc2query = Doc2QueryExpander()
         return self._doc2query
 
+    @observe(tier="stage")
     def _get_logic(self) -> LogicExpander:
         if self._logic is None:
             self._logic = LogicExpander()
         return self._logic
 
+    @observe(tier="stage")
     def _apply_fpa(self, embedding: bytes, texts: list[str], threshold: float) -> list[str]:
         fpa = self._get_fpa()
         if fpa is None or embedding is None:
             return texts
         return fpa.filter(embedding, texts, threshold)
 
+    @observe(tier="boundary")
     def enrich(self, content: str, embedding: bytes, settings: Settings) -> EnrichmentResult:
         result = EnrichmentResult()
 

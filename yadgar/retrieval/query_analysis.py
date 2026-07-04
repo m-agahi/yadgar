@@ -2,6 +2,7 @@
 
 import re
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.entities import (
     _LINE_SUBJECT_RE,
     _OPEN_DOMAIN_CUE_PHRASES,
@@ -12,7 +13,6 @@ from yadgar.retrieval.entities import (
     _QUESTION_WORDS,
     _SAID_LINE_RE,
 )
-from yadgar.tracing import trace_span
 
 # -- Pseudo-HyDE query expansion --
 # Strip question syntax to convert queries into declarative pseudo-documents
@@ -75,6 +75,7 @@ _HYDE_QTO_S = [
 ]
 
 
+@observe(tier="hot", name="retrieval.qa.pseudo_hyde_expand")
 def _pseudo_hyde_expand(query: str) -> str:
     """Convert a question-form query into a declarative pseudo-document.
 
@@ -127,6 +128,7 @@ def _pseudo_hyde_expand(query: str) -> str:
     return stripped.rstrip("?").strip()
 
 
+@observe(tier="hot", name="retrieval.qa.question_to_statement")
 def _question_to_statement(query: str) -> str:
     """Convert a question into a declarative statement for NLI entailment scoring."""
     q = query.strip().rstrip("?").strip()
@@ -148,6 +150,7 @@ def _question_to_statement(query: str) -> str:
     return q
 
 
+@observe(tier="hot", name="retrieval.qa.extract_content_terms")
 def _extract_content_terms(query: str, limit: int | None = None) -> list[str]:
     """Extract content-bearing query terms, preserving order."""
     terms: list[str] = []
@@ -164,6 +167,7 @@ def _extract_content_terms(query: str, limit: int | None = None) -> list[str]:
     return terms
 
 
+@observe(tier="hot", name="retrieval.qa.extract_comparison_options")
 def _extract_comparison_options(query: str) -> list[str]:
     """Extract short comparison options around an 'or' question."""
     tokens = re.findall(r"[A-Za-z][\w'-]*", query.lower())
@@ -225,6 +229,7 @@ def _extract_comparison_options(query: str) -> list[str]:
     return options[:2]
 
 
+@observe(tier="hot", name="retrieval.qa.build_boosted_fts_query")
 def _build_boosted_fts_query(query: str) -> str:
     """Add duplicate content terms so BM25 sees a sharper lexical intent."""
     boosted = [query]
@@ -242,6 +247,7 @@ def _build_boosted_fts_query(query: str) -> str:
     return " ".join(boosted)
 
 
+@observe(tier="hot", name="retrieval.qa.build_open_domain_subqueries")
 def _build_open_domain_subqueries(query: str, query_analysis: dict) -> list[str]:
     """Generate compact auxiliary queries for inference-style questions."""
     subqueries: list[str] = []
@@ -341,6 +347,7 @@ _BOOKS_KEYWORDS = ("dr. seuss", "children's books", "kids' books", "kids books")
 _BOOKS_FACT = "{subject} collects children's books and classic books"
 
 
+@observe(tier="hot", name="retrieval.qa.infer_said_line_hints")
 def _infer_said_line_hints(other: str, quote: str) -> list[str]:
     """Return fact hints inferred from a dialogue quote attributed to *other*."""
     results: list[str] = []
@@ -355,6 +362,7 @@ def _infer_said_line_hints(other: str, quote: str) -> list[str]:
     return results
 
 
+@observe(tier="hot", name="retrieval.qa.infer_subject_keyword_hints")
 def _infer_subject_keyword_hints(subject: str, lower: str) -> list[str]:
     """Return fact hints inferred from keyword groups in a subject-line."""
     results: list[str] = []
@@ -373,6 +381,7 @@ def _infer_subject_keyword_hints(subject: str, lower: str) -> list[str]:
     return results
 
 
+@observe(tier="hot", name="retrieval.qa.resolve_other_speaker")
 def _resolve_other_speaker(current: str | None, paired: list[str]) -> str | None:
     """Return the counterpart speaker in a two-speaker exchange, or None."""
     if not current or len(paired) != 2:
@@ -384,6 +393,7 @@ def _resolve_other_speaker(current: str | None, paired: list[str]) -> str | None
     return None
 
 
+@observe(tier="hot", name="retrieval.qa.add_unique_hint")
 def _add_unique_hint(text: str, hints: list[str], seen: set[str]) -> None:
     """Append *text* to hints if not already present (dedup via *seen*)."""
     normalized = text.strip().rstrip(".")
@@ -392,6 +402,7 @@ def _add_unique_hint(text: str, hints: list[str], seen: set[str]) -> None:
         hints.append(normalized + ".")
 
 
+@observe(tier="hot", name="retrieval.qa.derive_implied_fact_passages")
 def _derive_implied_fact_passages(content: str) -> list[str]:
     """Generate short inferred fact passages for open-domain reranking."""
     hints: list[str] = []
@@ -434,6 +445,7 @@ def _parse_setting_keywords(setting_str: str) -> list[str]:
     return [k.strip() for k in setting_str.split(",") if k.strip()]
 
 
+@observe(tier="hot", name="retrieval.qa.extract_named_entities")
 def _extract_named_entities(query: str) -> list[str]:
     """Return words after the first that start with an uppercase letter."""
     entities: list[str] = []
@@ -444,6 +456,7 @@ def _extract_named_entities(query: str) -> list[str]:
     return entities
 
 
+@observe(tier="hot", name="retrieval.qa.collect_semantic_expansions")
 def _collect_semantic_expansions(query_lower: str) -> list[str]:
     """Return topic expansions whose trigger phrase appears in the query."""
     expansions: list[str] = []
@@ -453,6 +466,7 @@ def _collect_semantic_expansions(query_lower: str) -> list[str]:
     return expansions
 
 
+@observe(tier="hot", name="retrieval.qa.classify_query_type")
 def _classify_query_type(
     words: list[str],
     temporal_markers: list[str],
@@ -481,7 +495,7 @@ def _classify_query_type(
     return "complex", list(all_signals)
 
 
-@trace_span("retrieval.analyze_query")
+@observe(tier="stage", name="retrieval.analyze_query")
 def analyze_query(query: str, settings) -> dict:
     """Analyze a query and classify it for signal routing.
 

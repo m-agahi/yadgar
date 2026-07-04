@@ -24,6 +24,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger("yadgar.consolidation")
@@ -54,6 +55,7 @@ def _is_candidate(mem: dict, age_cutoff: str, cold_threshold: float) -> bool:
     return True
 
 
+@observe(tier="stage", name="consolidation.cold_memory_retention_report")
 def _cold_memory_retention_report(
     storage: StorageEngine,
     settings: Settings,

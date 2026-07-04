@@ -7,7 +7,7 @@ cls_promoted + memify_derived AFTER the memory-producing phases complete.
 import logging
 import time
 
-from yadgar.tracing import trace_span
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger("yadgar.consolidation")
 
@@ -15,7 +15,7 @@ logger = logging.getLogger("yadgar.consolidation")
 class _CausalMixin:
     """Periodic PC-algorithm causal discovery dispatch."""
 
-    @trace_span("consolidation.causal")
+    @observe(tier="stage", name="consolidation.causal")
     def _run_causal_discovery_phase(self, stats: dict) -> None:
         """Run formal causal discovery (PC algorithm) periodically.
 

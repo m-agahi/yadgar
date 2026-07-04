@@ -3,6 +3,7 @@
 import logging
 import re
 
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ _ACTION_RE = re.compile(
 )
 
 
+@observe(tier="stage")
 def detect_contradictions(
     storage: StorageEngine,
     similar: list[tuple[int, float]],

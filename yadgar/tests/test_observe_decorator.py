@@ -255,6 +255,74 @@ def test_exempt_is_passthrough(in_memory_tracer, obs_registry):
     assert not exporter.get_finished_spans()
 
 
+# ── span=False: metric+log, no span (for fns with their own inner span) ───────
+
+
+def test_span_false_opens_no_span_but_keeps_stage_metric(in_memory_tracer, obs_registry):
+    """@observe(span=False) emits metric+log but opens NO span.
+
+    For fns that already carry an EXPLICIT inner `with span(NAME)` grouping span
+    (e.g. recall._apply_recall_side_effects, recall._fanout_recall): the @observe
+    span would nest between the enclosing op and the inner grouping span, pushing
+    the intended grouping span down a level. span=False suppresses the @observe
+    span so the inner span reparents directly to the enclosing op — while the
+    stage duration metric + lint sentinel are preserved.
+    """
+    from prometheus_client import generate_latest
+
+    from yadgar.observability.observe import observe
+
+    @observe(tier="stage", name="side_effects_stage", span=False)
+    def stage_fn():
+        return 1
+
+    # sentinel still set (lint / stacked-decorator detection)
+    assert getattr(stage_fn, "_yadgar_observe_has_span", False) is True
+
+    stage_fn()
+    # NO span opened by @observe
+    assert not exporter_spans(in_memory_tracer), "span=False must open no span"
+    # stage duration metric still emitted
+    out = generate_latest(obs_registry).decode()
+    assert "yadgar_observe_stage_duration_seconds" in out
+    assert 'stage="side_effects_stage"' in out
+
+
+def exporter_spans(in_memory_tracer):
+    _, exporter = in_memory_tracer
+    return [s.name for s in exporter.get_finished_spans()]
+
+
+def test_span_false_inner_span_reparents_to_enclosing(in_memory_tracer, obs_registry):
+    """A span=False fn with an inner `with span()` → inner span nests directly
+    under the enclosing op, not under a redundant @observe span layer."""
+    from opentelemetry import trace
+
+    from yadgar.observability.observe import observe
+    from yadgar.tracing import span
+
+    _, exporter = in_memory_tracer
+
+    @observe(tier="stage", name="outer_stage", span=False)
+    def outer():
+        with span("inner.group"):
+            return 1
+
+    tracer = trace.get_tracer("test")
+    with tracer.start_as_current_span("enclosing"):
+        outer()
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    assert "inner.group" in spans, list(spans)
+    assert "outer_stage" not in spans, "span=False must not open the @observe span"
+    inner = spans["inner.group"]
+    enclosing = spans["enclosing"]
+    assert inner.parent is not None
+    assert inner.parent.span_id == enclosing.context.span_id, (
+        "inner.group must reparent directly under enclosing, not a redundant layer"
+    )
+
+
 # ── double-instrumentation guard ─────────────────────────────────────────────
 
 
@@ -291,3 +359,150 @@ def test_async_boundary(in_memory_tracer, obs_registry):
     assert asyncio.run(handler()) == "ok"
     spans = exporter.get_finished_spans()
     assert any(s.name == "async.boundary" for s in spans)
+
+
+# ── staticmethod / classmethod descriptor preservation (BUG-2 regression) ─────
+# @observe stacked ABOVE @staticmethod/@classmethod must preserve the descriptor
+# so `self.method()` / `instance.method()` does NOT inject `self` as a positional
+# arg. Reproduces the P5-rollout misfire where `@observe` turned a staticmethod
+# into a plain function → "takes 0 positional arguments but 1 was given".
+
+
+def test_observe_preserves_staticmethod(in_memory_tracer, obs_registry):
+    from yadgar.observability.observe import observe
+
+    class C:
+        @observe(tier="hot", name="static.hot")
+        @staticmethod
+        def add(a, b):
+            return a + b
+
+    # call via class
+    assert C.add(2, 3) == 5
+    # call via instance — must NOT inject self
+    assert C().add(4, 5) == 9
+
+
+def test_observe_preserves_classmethod(in_memory_tracer, obs_registry):
+    from yadgar.observability.observe import observe
+
+    class C:
+        marker = "cls"
+
+        @observe(tier="hot", name="class.hot")
+        @classmethod
+        def who(cls):
+            return cls.marker
+
+    assert C.who() == "cls"
+    assert C().who() == "cls"
+
+
+def test_observe_staticmethod_boundary_emits_metric(in_memory_tracer, obs_registry):
+    from prometheus_client import generate_latest
+
+    from yadgar.observability.observe import observe
+
+    class C:
+        @observe(tier="boundary", name="static.boundary")
+        @staticmethod
+        def compute():
+            return 7
+
+    assert C().compute() == 7
+    out = generate_latest(obs_registry).decode()
+    # descriptor preserved AND signal still emitted (not silently exempted)
+    assert 'name="static.boundary"' in out
+
+
+def test_observe_exempt_staticmethod(in_memory_tracer, obs_registry):
+    from yadgar.observability.observe import observe
+
+    class C:
+        @observe(exempt="trivial static")
+        @staticmethod
+        def add(a, b):
+            return a + b
+
+    assert C.add(1, 2) == 3
+    assert C().add(3, 4) == 7
+
+
+# ── lru_cache attribute preservation (BUG-3 regression) ───────────────────────
+# @observe stacked ABOVE @functools.lru_cache must preserve the cache's public
+# attributes (cache_info / cache_clear / cache_parameters). The P5 rollout stacked
+# @observe above @lru_cache on tools.project._get_default_branch_cached /
+# _detect_branch_cached / config_registry._yaml_layer; the wrapper hid cache_info,
+# so callers doing `fn.cache_info().hits` raised AttributeError — which recall.py
+# swallowed, collapsing the allowed-branch set and dropping seeded wikis from recall.
+
+
+def test_observe_preserves_lru_cache_info(in_memory_tracer, obs_registry):
+    import functools
+
+    from yadgar.observability.observe import observe
+
+    calls = {"n": 0}
+
+    @observe(tier="stage", name="cached.stage")
+    @functools.lru_cache(maxsize=8)
+    def square(x):
+        calls["n"] += 1
+        return x * x
+
+    # cache_info must be reachable through the observe wrapper
+    assert callable(square.cache_info)
+    assert square(4) == 16
+    assert square(4) == 16  # second call hits the cache
+    info = square.cache_info()
+    assert info.hits >= 1, f"cache must still function through @observe; got {info}"
+    assert calls["n"] == 1, "underlying fn must run only once (cache active)"
+    # cache_clear must also be reachable
+    assert callable(square.cache_clear)
+    square.cache_clear()
+    assert square.cache_info().hits == 0
+
+
+# ── shutdown resilience: log emit during closed log stream (BUG-1) ────────────
+# An @observe'd fn that runs at interpreter/test shutdown (atexit teardown) may
+# hit a CLOSED log stream. A span/metric/log firing during shutdown must NEVER
+# raise (ValueError: I/O operation on closed file). Guards _emit_success AND
+# _emit_error.
+
+
+def test_emit_success_survives_closed_log_stream(monkeypatch, in_memory_tracer, obs_registry):
+    """At interpreter shutdown the log stream may be closed → logging raises
+    `ValueError: I/O operation on closed file`. _emit_success must swallow it."""
+    import yadgar.observability.observe as obs
+
+    def _boom_info(*a, **k):
+        raise ValueError("I/O operation on closed file")
+
+    monkeypatch.setattr(obs.logger, "info", _boom_info)
+
+    @obs.observe(tier="boundary", name="shutdown.ok")
+    def teardown():
+        return "done"
+
+    # Without the try/except guard in _emit_success, this ValueError propagates.
+    assert teardown() == "done"
+
+
+def test_emit_error_survives_closed_log_stream(monkeypatch, in_memory_tracer, obs_registry):
+    """_emit_error's log emit must not raise at shutdown — and must NOT mask the
+    original exception the wrapped fn raised."""
+    import yadgar.observability.observe as obs
+
+    def _boom_error(*a, **k):
+        raise ValueError("I/O operation on closed file")
+
+    monkeypatch.setattr(obs.logger, "error", _boom_error)
+
+    @obs.observe(tier="boundary", name="shutdown.err")
+    def boom():
+        raise RuntimeError("teardown boom")
+
+    # The RuntimeError must propagate; the closed-stream ValueError must NOT
+    # replace it or raise on its own.
+    with pytest.raises(RuntimeError, match="teardown boom"):
+        boom()

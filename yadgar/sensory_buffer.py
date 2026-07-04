@@ -3,6 +3,7 @@ from collections import deque
 from datetime import UTC, datetime
 
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 
@@ -29,6 +30,7 @@ class ActionLogger:
         }
         return self.session_id
 
+    @observe(tier="stage")
     def capture(self, content: str, directory: str) -> None:
         if self.current_episode is None:
             self.start_session()
@@ -37,6 +39,7 @@ class ActionLogger:
         if len(self.current_episode["raw_content"]) > self._max_chars:
             self._rotate_episode()
 
+    @observe(tier="stage")
     def flush(self) -> int | None:
         if self.current_episode is None or not self.current_episode["raw_content"]:
             return None
@@ -57,6 +60,7 @@ class ActionLogger:
     def get_session_episodes(self, session_id: str) -> list[dict]:
         return self._storage.get_session_episodes(session_id)
 
+    @observe(tier="stage")
     def capture_action(self, tool: str, directory: str, summary: str, result_type: str) -> None:
         """Record a tool invocation in the action stream.
 
@@ -85,6 +89,7 @@ class ActionLogger:
         """Return the last N action stream entries."""
         return list(self._action_stream)[-n:]
 
+    @observe(tier="hot")
     def get_action_summary(self) -> str:
         """Generate a summary of recent actions for checkpoint context."""
         if not self._action_stream:
@@ -96,6 +101,7 @@ class ActionLogger:
             lines.append(f"- {a['tool']}: {a['summary'][:80]}")
         return "Recent actions:\n" + "\n".join(lines)
 
+    @observe(tier="stage")
     def _rotate_episode(self) -> None:
         # §13: current_episode must be set before _rotate_episode is called
         if self.current_episode is None:

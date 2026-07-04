@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from yadgar import paths
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ def _dirname_to_ts(name: str) -> datetime:
     return dt.replace(tzinfo=UTC)
 
 
+@observe(tier="stage")
 def _atomic_write(path: Path, content: str) -> None:
     """Write *content* to *path* atomically via a temp file + os.replace.
 
@@ -79,6 +81,7 @@ def _atomic_write(path: Path, content: str) -> None:
         raise
 
 
+@observe(tier="stage")
 def _read_log(path: Path) -> list[dict]:
     """Read a JSON log file, returning an empty list if missing."""
     if not path.exists():
@@ -121,6 +124,7 @@ class Snapshot:
         """Append an entry to rollback_log.json atomically."""
         self._append_log("rollback_log.json", state, detail)
 
+    @observe(tier="stage")
     def _append_log(self, filename: str, state: str, detail: dict | None) -> None:
         """Read-append-write a JSON log file atomically."""
         log_path = self.path / filename
@@ -146,6 +150,7 @@ class Snapshot:
         """Return the stored CLI version, or None if not present."""
         return self._read_plain("prev_cli_version")
 
+    @observe(tier="stage")
     def _read_plain(self, filename: str) -> str | None:
         p = self.path / filename
         if not p.exists():
@@ -153,6 +158,7 @@ class Snapshot:
         return p.read_text(encoding="utf-8")
 
 
+@observe(tier="boundary")
 def create_snapshot(base_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> Snapshot:
     """Create a fresh snapshot directory named with the current UTC timestamp.
 
@@ -167,6 +173,7 @@ def create_snapshot(base_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> Snapshot:
     return Snapshot(path=snap_path, created_at=now)
 
 
+@observe(tier="stage")
 def list_snapshots(base_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> list[Snapshot]:
     """Return all existing snapshots, sorted newest-first.
 
@@ -196,6 +203,7 @@ def latest_snapshot(base_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> Snapshot | None:
     return snaps[0] if snaps else None
 
 
+@observe(tier="stage")
 def prune_old_snapshots(retention: int, base_dir: Path = DEFAULT_SNAPSHOTS_DIR) -> int:
     """Delete snapshots beyond the most recent *retention* count.
 

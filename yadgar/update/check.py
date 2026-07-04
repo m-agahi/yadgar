@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 import httpx
 
 from yadgar import __version__
+from yadgar.observability.observe import observe
 
 _PYPI_URL = "https://pypi.org/pypi/yadgar/json"
 _DEFAULT_TIMEOUT = 5
@@ -32,6 +33,7 @@ class LatestVersionInfo:
     checked_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
+@observe(tier="boundary")
 def probe_latest_version(
     *,
     url: str = _PYPI_URL,

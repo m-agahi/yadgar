@@ -27,9 +27,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def _stable_python() -> str:
     """Return a STABLE interpreter path safe to bake into persistent settings.
 
@@ -77,6 +80,7 @@ def _resolve_python_shebang() -> str:
 # ── Container detection ────────────────────────────────────────────────────
 
 
+@observe(tier="hot")
 def is_running_in_container() -> bool:
     """True iff YADGAR_IN_CONTAINER=1 is set.
 
@@ -90,6 +94,7 @@ def is_running_in_container() -> bool:
 # ── Internal helpers ───────────────────────────────────────────────────────
 
 
+@observe(tier="stage")
 def _copy_hook(src: Path, dst: Path, dry_run: bool) -> None:
     """Copy a hook script, rewrite its shebang to the installer's python,
     and mark it executable. No-op on dry_run.
@@ -114,6 +119,7 @@ def _copy_hook(src: Path, dst: Path, dry_run: bool) -> None:
     dst.chmod(0o755)
 
 
+@observe(tier="hot")
 def _make_hook_entry(cmd: str, matcher: str, env_block: dict) -> dict:
     """Build a single hook entry dict."""
     entry: dict = {
@@ -125,6 +131,7 @@ def _make_hook_entry(cmd: str, matcher: str, env_block: dict) -> dict:
     return entry
 
 
+@observe(tier="stage")
 def _append_if_absent(
     hooks_config: dict,
     event: str,
@@ -144,6 +151,7 @@ def _append_if_absent(
     hooks_config[event] = existing
 
 
+@observe(tier="stage")
 def _install_global_scripts(
     package_hooks: Path,
     global_hooks_dir: Path,
@@ -163,6 +171,7 @@ def _install_global_scripts(
     return stop_dst, session_end_dst, db_lockdown_dst
 
 
+@observe(tier="stage")
 def _build_core_hooks(
     hooks_config: dict,
     runner: str,
@@ -201,6 +210,7 @@ def _build_core_hooks(
     hooks_config["PreToolUse"] = [_make_hook_entry(db_cmd, "Bash", env_block)]
 
 
+@observe(tier="stage")
 def _install_append_hooks(
     package_hooks: Path,
     hooks_dir: Path,
@@ -224,6 +234,7 @@ def _install_append_hooks(
         )
 
 
+@observe(tier="stage")
 def _write_global_stop_hooks(
     global_claude_dir: Path,
     stop_entry: list,
@@ -244,6 +255,7 @@ def _write_global_stop_hooks(
     _atomic_write(global_claude_dir, global_settings_path, global_settings)
 
 
+@observe(tier="stage")
 def _resolve_scope_paths(
     home_dir: Path,
     scope: str,
@@ -258,6 +270,7 @@ def _resolve_scope_paths(
     return global_claude_dir, global_hooks_dir, claude_dir / "hooks", claude_dir
 
 
+@observe(tier="stage")
 def _copy_scope_scripts(
     package_hooks: Path,
     hooks_dir: Path,
@@ -285,6 +298,7 @@ def _copy_scope_scripts(
             dst.chmod(mode)
 
 
+@observe(tier="stage")
 def _load_settings(settings_path: Path) -> dict:
     """Read existing settings.json; return empty dict on missing or parse error."""
     if not settings_path.exists():
@@ -298,6 +312,7 @@ def _load_settings(settings_path: Path) -> dict:
 # ── Shared install logic ───────────────────────────────────────────────────
 
 
+@observe(tier="boundary")
 def install_hooks_impl(
     home_dir: Path,
     scope: str,
@@ -431,6 +446,7 @@ def install_hooks_impl(
     }
 
 
+@observe(tier="stage")
 def _atomic_write(directory: Path, target: Path, data: dict) -> None:
     """Write *data* as JSON to *target* atomically via a temp file."""
     directory.mkdir(parents=True, exist_ok=True)

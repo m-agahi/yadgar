@@ -8,11 +8,14 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 _FALSY = frozenset({"false", "0", "no", "off"})
 
 
+@observe(tier="hot", name="drainer.dlq.enforcement_on")
 def _enforcement_on(env_var: str) -> bool:
     """Return True (enforcement ON) unless env var is explicitly falsy.
 
@@ -42,6 +45,7 @@ def _json_default(obj):
 class _DLQMixin:
     """Dead-letter queue operations for QueueDrainer."""
 
+    @observe(tier="stage", name="drainer.dlq.move_to_dlq")
     def _move_to_dlq(
         self,
         path: Path,
@@ -117,6 +121,7 @@ class _DLQMixin:
     # ── v5.42.3: op types that require branch context ─────────────────────────
     _MEMORY_OP_TYPES: frozenset[str] = frozenset({"memorize", "anchor", "checkpoint"})
 
+    @observe(tier="stage", name="drainer.dlq.validate_wiki_add")
     def _validate_wiki_add(self, record: dict) -> str | None:
         """Validate a wiki_add queue record (§26 Option Z).
 
@@ -182,6 +187,7 @@ class _DLQMixin:
 
         return None
 
+    @observe(tier="stage", name="drainer.dlq.validate_branch_context")
     def _validate_branch_context(self, record: dict) -> str | None:
         """Validate that a memory-op queue record carries branch context (v5.42.3).
 
@@ -222,6 +228,7 @@ class _DLQMixin:
             ),
         }
 
+    @observe(tier="stage", name="drainer.dlq.validate_directory_context")
     def _validate_directory_context(self, record: dict) -> str | None:
         """Return failure_reason string if directory_context is missing/empty, else None.
 
@@ -248,6 +255,7 @@ class _DLQMixin:
             ),
         }
 
+    @observe(tier="hot", name="drainer.dlq.fill_wiki_add_defaults")
     def _fill_wiki_add_defaults(self, payload: dict) -> dict:
         """Fill fields that the export-yadgar skill cannot know (§26 Option Z).
 
@@ -272,6 +280,7 @@ class _DLQMixin:
 
     # ── v5.41.5: similarity gate in drainer (I9 fix) ─────────────────────────
 
+    @observe(tier="stage", name="drainer.dlq.sim_gate_for_drainer")
     def _sim_gate_for_drainer(self, payload: dict) -> dict | None:
         """Run the v5.39 similarity gate in the drainer pre-apply stage (I9 fix).
 

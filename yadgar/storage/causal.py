@@ -12,6 +12,8 @@ StorageEngine MRO must include _CausalMixin for that call to resolve.
 
 import logging
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 
@@ -20,6 +22,7 @@ class _CausalMixin:
 
     # ------------------------------------------------------------------ Causal DAG Edges
 
+    @observe(tier="stage")
     def insert_causal_edge(self, edge: dict) -> int:
         now = self._now_iso()
         eid = self._next_id("causal_dag_edge")
@@ -60,6 +63,7 @@ class _CausalMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def get_all_causal_edges(
         self, include_invalidated: bool = False, as_of: str | None = None
     ) -> list[dict]:
@@ -86,6 +90,7 @@ class _CausalMixin:
             )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def clear_causal_dag_edges(self, algorithm: str | None = None) -> int:
         """Delete causal DAG edges, optionally filtered by algorithm.
 

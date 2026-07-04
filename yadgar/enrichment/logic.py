@@ -2,6 +2,8 @@
 
 import re
 
+from yadgar.observability.observe import observe
+
 _HYPERNYM_MAP = {
     # Places
     "yellowstone": "national_park",
@@ -82,6 +84,7 @@ _VERB_PATTERN = re.compile(
 class LogicExpander:
     """Rule-based natural logic expansion. No external models."""
 
+    @observe(tier="boundary")
     def expand(self, content: str) -> list[str]:
         expansions: list[str] = []
         content_lower = content.lower()

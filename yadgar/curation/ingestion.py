@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass, field
 
 from yadgar.embeddings import EmbeddingEngine
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 from yadgar.tracing import trace_span
 
@@ -58,6 +59,7 @@ def find_similar_memories(
     return results
 
 
+@observe(tier="stage")
 def has_textual_overlap(new_content: str, existing_content: str) -> bool:
     """Check if new content has meaningful textual overlap with existing.
 
@@ -74,6 +76,7 @@ def has_textual_overlap(new_content: str, existing_content: str) -> bool:
     return jaccard > 0.5
 
 
+@observe(tier="stage")
 def merge_memory(
     storage: StorageEngine,
     embeddings: EmbeddingEngine,
@@ -125,6 +128,7 @@ def merge_memory(
     return {"action": "merged", "memory_id": existing_id}
 
 
+@observe(tier="stage")
 def insert_new_memory(
     storage: StorageEngine,
     content: str,
@@ -170,6 +174,7 @@ def insert_new_memory(
     return memory_id
 
 
+@observe(tier="stage")
 def create_link(storage: StorageEngine, new_id: int, existing_id: int) -> None:
     """Create a derived_from relationship between two memories via entities."""
     storage._now_iso()

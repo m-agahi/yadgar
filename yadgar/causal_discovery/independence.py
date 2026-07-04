@@ -6,9 +6,12 @@ import math
 import numpy as np
 from scipy import stats
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def conditional_independence_test(
     x: np.ndarray,
     y: np.ndarray,

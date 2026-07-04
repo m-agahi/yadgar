@@ -40,14 +40,27 @@ except ImportError:
     import urllib.parse
     import urllib.request
 
+    try:
+        from yadgar.observability.observe import observe
+    except ImportError:
+
+        def observe(*_a, **_k):
+            return lambda fn: fn
+
     _PORT = os.environ.get("YADGAR_PORT", "8765")
     _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
+    @observe(
+        exempt="portability inline fallback duplicate — runs only when yadgar package unimportable; primary path is the underscore module"
+    )
     def _auth_headers():
         if _AUTH_TOKEN:
             return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
         return {}
 
+    @observe(
+        exempt="portability inline fallback duplicate — runs only when yadgar package unimportable; primary path is the underscore module"
+    )
     def main():
         try:
             data = json.loads(sys.stdin.read() or "{}")

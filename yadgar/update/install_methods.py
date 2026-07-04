@@ -20,7 +20,10 @@ from __future__ import annotations
 import os
 import subprocess
 
+from yadgar.observability.observe import observe
 
+
+@observe(tier="stage")
 def detect_install_method() -> str:
     """Detect how yadgar is installed on this system.
 
@@ -65,6 +68,7 @@ def detect_install_method() -> str:
     return "unknown"
 
 
+@observe(tier="stage")
 def _is_docker_shim(path: str) -> bool:
     """Return True if 'path' is a shell script whose first content line calls docker run."""
     try:
@@ -75,6 +79,7 @@ def _is_docker_shim(path: str) -> bool:
         return False
 
 
+@observe(tier="stage")
 def _has_git_ancestor(path: str) -> bool:
     """Return True if any ancestor directory of 'path' contains a .git entry."""
     current = os.path.dirname(os.path.abspath(path))
@@ -85,6 +90,7 @@ def _has_git_ancestor(path: str) -> bool:
     return False
 
 
+@observe(tier="stage")
 def upgrade_command(method: str) -> str:
     """Return the upgrade command string for the given install method.
 
@@ -116,6 +122,7 @@ def upgrade_command(method: str) -> str:
     )
 
 
+@observe(tier="stage")
 def can_self_install(method: str) -> bool:
     """Return True if the daemon process can perform the upgrade itself.
 

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from yadgar.observability.observe import observe
+
 # ANSI escape sequence pattern — covers CSI, OSC, and single-char sequences
 _ANSI_RE = re.compile(
     r"\x1b(?:"
@@ -38,6 +40,7 @@ _BIDI_RE = re.compile("[​-‏‪-‮⁦-⁩﻿]")
 _DEFAULT_MAX_LEN = 1_000
 
 
+@observe(tier="hot")
 def sanitize_log_field(value: str, max_len: int = _DEFAULT_MAX_LEN) -> str:
     """Strip ANSI escapes, bidi overrides, control characters, truncate.
 

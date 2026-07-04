@@ -15,10 +15,12 @@ from pathlib import Path
 
 import httpx
 
+from yadgar.observability.observe import observe
 from yadgar.ops import ServiceController
 from yadgar.vacuum.strip import strip_export_for_vacuum as strip_action_log
 
 
+@observe(tier="stage")
 def _dir_bytes(path: Path) -> int:
     """Return total size of all files in path (recursive). Returns 0 if missing."""
     if not path.exists():
@@ -26,6 +28,7 @@ def _dir_bytes(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+@observe(tier="stage")
 def _run_cleanup_script(yadgar_home: Path, pattern: str, keep_n: int) -> None:
     """Prune old pre-vacuum snapshots, keeping only the `keep_n` most recent.
 
@@ -51,6 +54,7 @@ def _run_cleanup_script(yadgar_home: Path, pattern: str, keep_n: int) -> None:
             print(f"[vacuum] failed to prune {path}: {exc}", file=sys.stderr)
 
 
+@observe(tier="stage")
 def _surreal_headers() -> dict[str, str]:
     """SurrealDB v2+ /export rejects with HTTP 400 'Specify a namespace' without
     these headers. Vacuum is an admin operation — use root credentials.
@@ -84,6 +88,7 @@ def _surreal_headers() -> dict[str, str]:
     }
 
 
+@observe(tier="stage")
 def _vacuum_export(backend_url: str, yadgar_home: Path) -> tuple[Path, Path]:
     """Phase 1: GET /export, strip action_log, write .surql files.
 
@@ -119,6 +124,7 @@ def _vacuum_export(backend_url: str, yadgar_home: Path) -> tuple[Path, Path]:
     return raw_path, filtered_path
 
 
+@observe(tier="stage")
 def _vacuum_snapshot_and_drop(
     db_path: Path,
     yadgar_home: Path,
@@ -166,6 +172,7 @@ def _vacuum_snapshot_and_drop(
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _atomic_swap(db_path: Path, side_path: Path) -> Path:
     """Atomically swap the verified side DB in for the canonical DB.
 
@@ -203,6 +210,7 @@ def _atomic_swap(db_path: Path, side_path: Path) -> Path:
     return old_path
 
 
+@observe(tier="stage")
 def _rmtree_globs(yadgar_home: Path, *patterns: str) -> None:
     """Best-effort remove every dir matching any of *patterns* under yadgar_home."""
     for pat in patterns:
@@ -210,6 +218,7 @@ def _rmtree_globs(yadgar_home: Path, *patterns: str) -> None:
             shutil.rmtree(str(stale), ignore_errors=True)
 
 
+@observe(tier="stage")
 def _sweep_stale_building(yadgar_home: Path) -> None:
     """Discard any UNVERIFIED `surreal_db.building-*` staging (never promotable).
 
@@ -227,6 +236,7 @@ def _sweep_stale_building(yadgar_home: Path) -> None:
         _rmtree_globs(yadgar_home, "surreal_db.building-*")
 
 
+@observe(tier="stage")
 def _recover_interrupted_swap(yadgar_home: Path, db_path: Path) -> None:
     """Complete or roll back a swap interrupted by a crash between the two renames.
 

@@ -24,6 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from yadgar.config_registry import _set_config_gauges, build_config_table
+from yadgar.observability.observe import observe
 from yadgar.server._app import mcp_server
 
 
@@ -40,6 +41,7 @@ async def admin_config_handler(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/admin/config", methods=["GET"])
+@observe(tier="boundary")
 async def admin_config(request: Request) -> JSONResponse:
     """Expose runtime configuration knobs.
 

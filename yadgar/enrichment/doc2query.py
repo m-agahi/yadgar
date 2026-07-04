@@ -4,6 +4,7 @@ import logging
 
 from yadgar.config import Settings
 from yadgar.enrichment._seq2seq import _load_seq2seq_model
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class Doc2QueryExpander:
         self._device = None
         self._unavailable = False
 
+    @observe(tier="stage")
     def _ensure_model(self, model_name: str) -> bool:
         if self._model is not None:
             return True
@@ -29,6 +31,7 @@ class Doc2QueryExpander:
         self._model, self._tokenizer, self._device = result
         return True
 
+    @observe(tier="stage")
     def _token_overlap(self, a: str, b: str) -> float:
         """Compute token overlap ratio between two strings."""
         tokens_a = set(a.lower().split())
@@ -37,6 +40,7 @@ class Doc2QueryExpander:
             return 0.0
         return len(tokens_a & tokens_b) / max(len(tokens_a), len(tokens_b))
 
+    @observe(tier="boundary")
     def expand(self, content: str, settings: Settings) -> list[str]:
         if not self._ensure_model(settings.DOC2QUERY_MODEL):
             return []

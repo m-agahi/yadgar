@@ -17,6 +17,9 @@ import sys
 import urllib.parse
 import urllib.request
 
+from yadgar.observability.observe import observe
+from yadgar.tracing import shutdown_tracing
+
 _PORT = os.environ.get("YADGAR_PORT", "8765")
 _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
@@ -46,6 +49,7 @@ _KV_RE = re.compile(
 )
 
 
+@observe(tier="hot")
 def _parse_kv_value(kv_m) -> object:
     """Extract the value from a key=value regex match (helper for _parse_directive)."""
     if kv_m.group(2) is not None:
@@ -60,6 +64,7 @@ def _parse_kv_value(kv_m) -> object:
     return kv_m.group(4)
 
 
+@observe(tier="hot")
 def _parse_directive(bullet: str) -> dict | None:
     """Parse a structured directive bullet into a typed dict.
 
@@ -100,12 +105,14 @@ _FINDINGS_SECTION_RE = re.compile(
 _BULLET_RE = re.compile(r"^\s*-\s+(.+)$", re.MULTILINE)
 
 
+@observe(tier="hot")
 def _auth_headers() -> dict:
     if _AUTH_TOKEN:
         return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
     return {}
 
 
+@observe(tier="stage")
 def _extract_findings(text: str) -> list[str]:
     """Return list of bullet texts from the Yadgar findings section.
 
@@ -142,6 +149,7 @@ def _extract_findings(text: str) -> list[str]:
     return bullets
 
 
+@observe(tier="hot")
 def _extract_content_from_msg(msg: dict) -> str:
     """Extract text content from an assistant message dict (helper for _get_report_text)."""
     content = msg.get("content", "")
@@ -155,6 +163,7 @@ def _extract_content_from_msg(msg: dict) -> str:
     return ""
 
 
+@observe(tier="hot")
 def _parse_transcript_line(raw: str) -> str:
     """Parse one JSONL line from a transcript; return assistant text or empty string."""
     if not raw:
@@ -169,6 +178,7 @@ def _parse_transcript_line(raw: str) -> str:
     return _extract_content_from_msg(msg)
 
 
+@observe(tier="stage")
 def _get_report_text(data: dict) -> str:
     """Extract the agent's final report text from the SubagentStop payload.
 
@@ -198,6 +208,7 @@ def _get_report_text(data: dict) -> str:
         return ""
 
 
+@observe(tier="stage")
 def _post_findings(
     agent_type: str,
     cwd: str,
@@ -237,6 +248,7 @@ def _post_findings(
         pass  # Daemon down or error — fail silently, never block subagent
 
 
+@observe(tier="stage")
 def _detect_branch_from_cwd(cwd: str) -> str | None:
     """Detect the git branch from the caller's cwd.
 
@@ -260,52 +272,56 @@ def _detect_branch_from_cwd(cwd: str) -> str | None:
     return None
 
 
+@observe(tier="boundary")
 def main() -> None:
     """Entry point called by the hook script."""
     try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except Exception:
-        return  # Malformed payload — skip silently
+        try:
+            data = json.loads(sys.stdin.read() or "{}")
+        except Exception:
+            return  # Malformed payload — skip silently
 
-    # Extract payload fields
-    agent_type = str(data.get("agent_type", "general-purpose")).strip()
-    cwd = str(data.get("cwd", os.getcwd())).strip() or os.getcwd()
+        # Extract payload fields
+        agent_type = str(data.get("agent_type", "general-purpose")).strip()
+        cwd = str(data.get("cwd", os.getcwd())).strip() or os.getcwd()
 
-    if not agent_type:
-        agent_type = "general-purpose"
+        if not agent_type:
+            agent_type = "general-purpose"
 
-    transcript_path = data.get("transcript_path", "")
+        transcript_path = data.get("transcript_path", "")
 
-    # v5.44.0 X2: detect branch from caller cwd so writes land on correct branch.
-    # This avoids the v5.42.2 bug where drainer used daemon CWD instead of caller CWD.
-    branch_hint = _detect_branch_from_cwd(cwd)
+        # v5.44.0 X2: detect branch from caller cwd so writes land on correct branch.
+        # This avoids the v5.42.2 bug where drainer used daemon CWD instead of caller CWD.
+        branch_hint = _detect_branch_from_cwd(cwd)
 
-    # I12: log structured outcome so capture rate is observable across sessions.
-    # Get the agent's final report text
-    report_text = _get_report_text(data)
-    if not report_text:
+        # I12: log structured outcome so capture rate is observable across sessions.
+        # Get the agent's final report text
+        report_text = _get_report_text(data)
+        if not report_text:
+            logger.debug(
+                "subagent_stop outcome=transcript_missing agent_type=%s transcript_path=%r",
+                agent_type,
+                transcript_path,
+            )
+            return
+
+        # Parse findings from Yadgar findings section (lenient heading matcher)
+        findings = _extract_findings(report_text)
+        heading_matched = bool(findings)
+
         logger.debug(
-            "subagent_stop outcome=transcript_missing agent_type=%s transcript_path=%r",
+            "subagent_stop outcome=%s agent_type=%s report_len=%d heading_matched=%s bullets=%d",
+            "captured" if heading_matched else "not_matched",
             agent_type,
-            transcript_path,
+            len(report_text),
+            heading_matched,
+            len(findings),
         )
-        return
 
-    # Parse findings from Yadgar findings section (lenient heading matcher)
-    findings = _extract_findings(report_text)
-    heading_matched = bool(findings)
+        if not findings:
+            return
 
-    logger.debug(
-        "subagent_stop outcome=%s agent_type=%s report_len=%d heading_matched=%s bullets=%d",
-        "captured" if heading_matched else "not_matched",
-        agent_type,
-        len(report_text),
-        heading_matched,
-        len(findings),
-    )
-
-    if not findings:
-        return
-
-    # POST findings to daemon (branch_hint forwarded — v5.44.0 X2)
-    _post_findings(agent_type, cwd, findings, branch_hint=branch_hint)
+        # POST findings to daemon (branch_hint forwarded — v5.44.0 X2)
+        _post_findings(agent_type, cwd, findings, branch_hint=branch_hint)
+    finally:
+        shutdown_tracing()

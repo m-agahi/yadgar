@@ -4,6 +4,8 @@ import logging
 
 import numpy as np
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
@@ -13,6 +15,7 @@ class FPAFilter:
     def __init__(self, embedding_engine) -> None:
         self._engine = embedding_engine
 
+    @observe(tier="boundary")
     def filter(
         self,
         original_embedding: bytes,

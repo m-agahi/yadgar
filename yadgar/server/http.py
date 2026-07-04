@@ -29,6 +29,7 @@ import yadgar.viz_daemon_health as _vdh  # noqa: F401 — V1c: SSE daemon_health
 from yadgar import __version__
 from yadgar.config import resolve_knob
 from yadgar.graph_api import GraphAPI
+from yadgar.observability.observe import observe
 from yadgar.sanitize import sanitize_log_field
 from yadgar.server._app import mcp_server
 from yadgar.server._helpers import _bounded_set, _build_dlq_alert_text  # noqa: F401
@@ -73,6 +74,7 @@ _HOOK_RECALL_POOL = ThreadPoolExecutor(
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 async def _recall_with_timeout(
     retriever,
     handler_name: str,
@@ -134,6 +136,7 @@ _stats_cache: dict = {}  # keys: "data", "cached_at", "project"
 _SENTINEL_MAX_RETRIES = 3
 
 
+@observe(tier="stage")
 def _sentinel_memorize(content: str, directory_context: str) -> None:
     """Import one sentinel record into memory. Extracted for patching in tests.
 
@@ -160,6 +163,7 @@ def _sentinel_memorize(content: str, directory_context: str) -> None:
         raise RuntimeError(f"memorize rejected sentinel: {result}")
 
 
+@observe(tier="stage")
 def _sentinel_handle_failure(marker: Path, record: dict, retries: int, failed_dir: Path) -> None:
     """Handle a failed sentinel import: increment retries or move to failed/."""
     record["retries"] = retries
@@ -178,6 +182,7 @@ def _sentinel_handle_failure(marker: Path, record: dict, retries: int, failed_di
             logger.warning("sentinel retry write-back error: %s", wb_e)
 
 
+@observe(tier="stage")
 def _import_pending_sentinels(sentinel_dir_path: str) -> None:
     """Scan sentinel dir, import each unprocessed *.json file into memory.
 
@@ -210,6 +215,7 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
             _sentinel_handle_failure(marker, record, retries, failed_dir)
 
 
+@observe(tier="stage")
 def _vacuum_stale_sentinels(retention_days: int | None = None) -> int:
     """Delete _session_end_sentinel memory rows older than retention_days.
 
@@ -241,6 +247,7 @@ def _vacuum_stale_sentinels(retention_days: int | None = None) -> int:
     return deleted
 
 
+@observe(tier="stage")
 def _vacuum_delete_rows(storage, rows: list) -> int:
     """Delete memory rows by id. Returns count deleted."""
     deleted = 0
@@ -256,6 +263,7 @@ def _vacuum_delete_rows(storage, rows: list) -> int:
     return deleted
 
 
+@observe(tier="stage")
 def _hook_observe(hook: str, t0: float, exc: BaseException | None = None) -> None:
     """Record hook execution duration + failure metrics. Never raises."""
     try:
@@ -272,6 +280,7 @@ def _hook_observe(hook: str, t0: float, exc: BaseException | None = None) -> Non
         pass
 
 
+@observe(tier="stage")
 def _hook_observe_response(hook: str, status_code: int) -> None:
     """Increment failure counter if status_code >= 500. Never raises."""
     if status_code >= 500:
@@ -322,6 +331,7 @@ def _reset_readiness_state() -> None:
     _readiness_consecutive_failures = 0
 
 
+@observe(tier="stage")
 async def _probe_dependency(client, url: str) -> bool:
     """Probe a dependency's /health. True iff it returns HTTP 200; never raises."""
     try:
@@ -335,6 +345,7 @@ def _uptime_seconds() -> float:
     return round(time.time() - _st._start_time, 1) if _st._start_time else 0
 
 
+@observe(tier="stage")
 async def _build_health_payload() -> dict:
     """Build the /health payload, probing db + embed CONCURRENTLY (C2 P1).
 
@@ -404,6 +415,7 @@ async def _build_health_payload() -> dict:
     return payload
 
 
+@observe(tier="stage")
 def _apply_tool_pool_health(payload: dict) -> None:
     """Fold tool-offload pool occupancy into the /health payload (Fix A O2).
 
@@ -807,6 +819,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
         return JSONResponse({"text": ""})
 
 
+@observe(tier="stage")
 def _filter_prompt_recall_results(results: list[dict], directory: str | None) -> list[dict]:
     """Post-filter retriever results by caller directory for prompt-recall.
 
@@ -1939,6 +1952,9 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
     return JSONResponse(data, headers=_CORS)
 
 
+@observe(
+    exempt="async generator (SSE event stream); @observe sync-wraps and would fire the signal at generator creation not exhaustion"
+)
 async def _make_event_stream(request: Request):
     """Async generator for one SSE client connection.
 
@@ -2071,6 +2087,7 @@ async def api_wiki_read(request: Request) -> JSONResponse:
     )
 
 
+@observe(tier="stage")
 async def _viz_exact_title_node_ids(q: str) -> list[str]:
     """Resolve memories whose content exactly/prefix-matches `q` → ['mem:<id>', ...].
 

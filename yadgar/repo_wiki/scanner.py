@@ -17,6 +17,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from yadgar.observability.observe import observe
+
 # Re-use the directory-skip logic from seed._scan to avoid duplication.
 from yadgar.seed._scan import _should_skip_dir
 
@@ -65,6 +67,7 @@ class ModuleRecord:
     parse_error: str | None = None
 
 
+@observe(tier="stage")
 def _arg_str(arg: ast.arg, default: ast.expr | None = None) -> str:
     """Render one argument node as a string, with optional annotation + default."""
     part = arg.arg
@@ -75,6 +78,7 @@ def _arg_str(arg: ast.arg, default: ast.expr | None = None) -> str:
     return part
 
 
+@observe(tier="stage")
 def _build_positional_parts(args: ast.arguments) -> list[str]:
     """Build arg-part list for positional-only and regular args (before *args)."""
     parts: list[str] = []
@@ -91,6 +95,7 @@ def _build_positional_parts(args: ast.arguments) -> list[str]:
     return parts
 
 
+@observe(tier="stage")
 def _build_kwonly_parts(args: ast.arguments) -> list[str]:
     """Build arg-part list for *args / keyword-only args / **kwargs."""
     parts: list[str] = []
@@ -112,6 +117,7 @@ def _build_kwonly_parts(args: ast.arguments) -> list[str]:
     return parts
 
 
+@observe(tier="stage")
 def _build_signature(node: ast.FunctionDef | ast.AsyncFunctionDef, qualname: str) -> str:
     """Reconstruct a readable function signature from AST (no source read needed)."""
     prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
@@ -120,6 +126,7 @@ def _build_signature(node: ast.FunctionDef | ast.AsyncFunctionDef, qualname: str
     return f"{prefix} {qualname}({', '.join(arg_parts)}){ret}"
 
 
+@observe(tier="stage")
 def _extract_docstring(node: ast.AST) -> str | None:
     """Return the first string literal in a function/class/module body, or None."""
     body = getattr(node, "body", [])
@@ -134,6 +141,7 @@ def _extract_docstring(node: ast.AST) -> str | None:
     return None
 
 
+@observe(tier="stage")
 def _decorator_name_from(dec: ast.expr) -> str | None:
     """Extract the simple name from a single decorator node, or None."""
     if isinstance(dec, ast.Name):
@@ -151,6 +159,7 @@ def _decorator_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     return result - {None}  # type: ignore[return-value]
 
 
+@observe(tier="stage")
 def _extract_imports(tree: ast.Module) -> list[str]:
     """Extract top-level imported module/name strings."""
     names: list[str] = []
@@ -165,6 +174,7 @@ def _extract_imports(tree: ast.Module) -> list[str]:
     return names
 
 
+@observe(tier="stage")
 def _visit_class(cls_node: ast.ClassDef) -> ClassRecord:
     """Extract a ClassRecord from a ClassDef AST node."""
     bases = []
@@ -201,6 +211,7 @@ def _visit_class(cls_node: ast.ClassDef) -> ClassRecord:
     return cls_rec
 
 
+@observe(tier="stage")
 def scan_python_module(path: Path, repo_root: Path) -> ModuleRecord:
     """Parse one Python file and return a ModuleRecord.
 
@@ -279,6 +290,7 @@ def scan_python_module(path: Path, repo_root: Path) -> ModuleRecord:
     )
 
 
+@observe(tier="boundary")
 def scan_repo(repo_root: str | Path, include_tests: bool = False) -> list[ModuleRecord]:
     """Walk a repository and return ModuleRecords for every Python file.
 

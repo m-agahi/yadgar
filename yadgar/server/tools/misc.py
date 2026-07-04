@@ -21,6 +21,7 @@ import yadgar.server._state as _st
 from yadgar import __version__
 from yadgar.config import get_settings
 from yadgar.file_queue import is_draining
+from yadgar.observability.observe import observe
 from yadgar.restoration import CheckpointContext
 from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool, mcp_server
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+@observe(tier="stage", name="tools.misc._validate_checkpoint_surrogates")
 def _validate_checkpoint_surrogates(  # noqa: PLR0913
     current_task: str,
     custom_context: str,
@@ -85,6 +87,7 @@ def _gate_checkpoint_text(
     return gate_or_reject(current_task, custom_context, _list_text)
 
 
+@observe(tier="stage", name="tools.misc._resolve_checkpoint_branch")
 def _resolve_checkpoint_branch(
     directory: str, branch_hint: str | None
 ) -> tuple[str | None, dict | None]:
@@ -129,6 +132,7 @@ def _resolve_checkpoint_branch(
     return _branch, None
 
 
+@observe(tier="stage", name="tools.misc._enrich_checkpoint_context")
 def _enrich_checkpoint_context(custom_context: str) -> str:
     """Enrich custom_context with the action buffer summary if available."""
     buffer = _st._buffer
@@ -268,6 +272,7 @@ def restore(directory: str = "") -> dict:
 _VALID_ANCHOR_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
 
+@observe(tier="stage", name="tools.misc._validate_anchor_inputs")
 def _validate_anchor_inputs(
     content: str,
     context: str,
@@ -339,6 +344,7 @@ def _validate_anchor_inputs(
     return _tier, _computed_valid_until, None
 
 
+@observe(tier="stage", name="tools.misc._resolve_anchor_branch")
 def _resolve_anchor_branch(context: str, branch_hint: str | None) -> tuple[str | None, dict | None]:
     """Resolve branch for anchor at the MCP boundary.
 
@@ -636,6 +642,7 @@ def resource_stats() -> str:
 
 
 @mcp_server.resource("memory://hot")
+@observe(tier="boundary", name="resource.hot")
 def resource_hot() -> str:
     """All memories with heat >= HOT_THRESHOLD."""
     storage = _get_storage()
@@ -647,6 +654,7 @@ def resource_hot() -> str:
 
 
 @mcp_server.resource("memory://stale")
+@observe(tier="boundary", name="resource.stale")
 def resource_stale() -> str:
     """All stale memories."""
     storage = _get_storage()
@@ -658,6 +666,7 @@ def resource_stale() -> str:
 
 
 @mcp_server.resource("memory://processes")
+@observe(tier="boundary", name="resource.processes")
 def resource_processes() -> str:
     """List of astrocyte process stats."""
     consolidation = _get_consolidation()

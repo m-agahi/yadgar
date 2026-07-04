@@ -3,6 +3,8 @@
 import logging
 from datetime import UTC, datetime, timedelta
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 
@@ -11,6 +13,7 @@ class _EpisodeMixin:
 
     # ------------------------------------------------------------------ Episodes
 
+    @observe(tier="stage")
     def insert_episode(self, episode: dict) -> int:
         eid = self._next_id("episode")
         self._q(
@@ -44,6 +47,7 @@ class _EpisodeMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def get_max_episode_id(self) -> int:
         row = self._q("SELECT val FROM counter:episode")
         if row:
@@ -68,6 +72,7 @@ class _EpisodeMixin:
         # Re-order ascending so callers see chronological order
         return list(reversed(self._rows_to_dicts(rows)))
 
+    @observe(tier="stage")
     def prune_old_episodes(self, older_than_days: int = 14) -> int:
         """Delete episode rows older than ``older_than_days``.
 
@@ -87,6 +92,7 @@ class _EpisodeMixin:
         )
         return n
 
+    @observe(tier="stage")
     def get_episode_session_id(self, episode_id: int) -> str | None:
         rows = self._q(f"SELECT session_id FROM episode:{episode_id}")
         return rows[0].get("session_id") if rows else None

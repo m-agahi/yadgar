@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _CACHE_MAX = 512
@@ -63,6 +64,7 @@ class EmbeddingEngine:
         self._unavailable = False
         self._query_cache: OrderedDict[str, bytes] = OrderedDict()
 
+    @observe(tier="stage")
     def _is_model_cached(self) -> bool:
         """Check if the model is already downloaded in the HuggingFace cache."""
         # Check all supported HF cache locations
@@ -103,6 +105,7 @@ class EmbeddingEngine:
                         return True
         return False
 
+    @observe(tier="stage")
     def _load_sentence_transformer(self, local_only: bool, old_offline: str | None) -> object:
         """Load SentenceTransformer with retry/fallback logic.
 
@@ -134,6 +137,7 @@ class EmbeddingEngine:
                 raise  # User wants offline — respect that
             return SentenceTransformer(self.model_name, trust_remote_code=True)
 
+    @observe(tier="hot")
     @staticmethod
     def _cap_torch_threads() -> None:
         """Cap PyTorch intra/inter-op threads to half of available CPUs.
@@ -153,6 +157,7 @@ class EmbeddingEngine:
         except Exception:
             pass
 
+    @observe(tier="stage")
     def _ensure_model(self) -> None:
         """Load the SentenceTransformer model if not already loaded."""
         if self._model is not None or self._unavailable:
@@ -195,6 +200,7 @@ class EmbeddingEngine:
         """Return the current model name."""
         return self.model_name
 
+    @observe(tier="hot")
     def get_dimensions(self) -> int:
         """Return the embedding dimensionality for the current model."""
         if self.model_name in MODEL_DIMENSIONS:
@@ -206,6 +212,7 @@ class EmbeddingEngine:
             return dim
         return 384  # safe default
 
+    @observe(tier="hot")
     def needs_reembedding(self, stored_model: str) -> bool:
         """Check if a memory's stored model differs from the current model."""
         if stored_model is None:
@@ -237,6 +244,7 @@ class EmbeddingEngine:
         """Efficiently re-embed a batch of texts with the current model."""
         return self.encode_batch(texts)
 
+    @observe(tier="hot")
     @staticmethod
     def quantize(embedding: bytes, bits: int = 8) -> bytes:
         """Quantize float32 embedding to int8 for storage efficiency."""
@@ -249,6 +257,7 @@ class EmbeddingEngine:
             return scaled.astype(np.int8).tobytes()
         raise ValueError(f"Unsupported quantization bits: {bits}")
 
+    @observe(tier="hot")
     @staticmethod
     def dequantize(quantized: bytes, bits: int = 8) -> bytes:
         """Dequantize int8 back to float32 (approximate)."""
@@ -258,11 +267,13 @@ class EmbeddingEngine:
             return arr.astype(np.float32).tobytes()
         raise ValueError(f"Unsupported dequantization bits: {bits}")
 
+    @observe(tier="stage")
     def encode_query(self, text: str) -> bytes | None:
         """Encode a query with model-specific query prefix for asymmetric retrieval."""
         prefix = MODEL_QUERY_PREFIX.get(self.model_name, "")
         return self.encode(prefix + text if prefix else text)
 
+    @observe(tier="stage")
     def encode_document(self, text: str) -> bytes | None:
         """Encode a document with model-specific document prefix for asymmetric retrieval."""
         prefix = MODEL_DOC_PREFIX.get(self.model_name, "")
@@ -273,6 +284,7 @@ class EmbeddingEngine:
         text = enriched_content if enriched_content else content
         return self.encode_document(text)
 
+    @observe(tier="hot")
     def _normalize(self, arr: np.ndarray) -> np.ndarray:
         """L2-normalize an embedding vector. Required for L2-distance based search."""
         norm = np.linalg.norm(arr)
@@ -347,6 +359,7 @@ class EmbeddingEngine:
             results.append(arr.tobytes())
         return results
 
+    @observe(tier="hot")
     def similarity(self, embedding_a: bytes, embedding_b: bytes) -> float:
         """Compute cosine similarity between two embedding blobs."""
         a = np.frombuffer(embedding_a, dtype=np.float32)

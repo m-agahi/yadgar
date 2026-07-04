@@ -31,6 +31,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 # Snapshot file magic header + version
@@ -104,6 +106,7 @@ class LRUCache:
 
     # ── Snapshot I/O ─────────────────────────────────────────────────────────
 
+    @observe(tier="stage", name="backend.cache.save_snapshot")
     def save_snapshot(self, snap_dir: str, name: str) -> None:
         """Serialize cache to <snap_dir>/<name>.snap using msgpack.
 
@@ -135,6 +138,7 @@ class LRUCache:
         except OSError as exc:
             logger.warning("cache.save_snapshot: write failed for %s: %s", path, exc)
 
+    @observe(tier="stage", name="backend.cache.load_snapshot")
     def load_snapshot(self, snap_dir: str, name: str) -> None:
         """Restore entries from <snap_dir>/<name>.snap.
 

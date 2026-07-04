@@ -253,3 +253,81 @@ def test_drainer_apply_span_emits_and_does_not_raise(span_exporter):
     span = _find(span_exporter, "drainer.apply")
     assert span is not None, f"missing drainer.apply span in {_span_names(span_exporter)}"
     assert span.attributes.get("op") == "memorize"
+
+
+# ---------------------------------------------------------------------------
+# P2 (write + consolidation) — @observe boundary/stage spans emit (ADR-0034)
+# ---------------------------------------------------------------------------
+
+
+def test_drainer_apply_no_double_span_after_observe(span_exporter):
+    """After P2, _apply_inner carries @observe(stage, drainer.apply_inner) but _apply
+    keeps its MANUAL drainer.apply span — exactly ONE drainer.apply span, plus the
+    nested drainer.apply_inner. Guards against the double-span trap (a decorated
+    body-span opener would emit two drainer.apply spans).
+    """
+    from yadgar.file_queue.apply import _ApplyMixin
+
+    # op="unknown" reaches the real (now @observe-decorated) _apply_inner's else
+    # branch — a debug log, no tool import — so drainer.apply_inner span opens
+    # while _apply keeps its manual drainer.apply span. Exactly one drainer.apply.
+    drainer = _ApplyMixin()
+    drainer._apply({"op": "unknown", "payload": {}})
+
+    names = [s.name for s in span_exporter.get_finished_spans()]
+    assert names.count("drainer.apply") == 1, f"expected exactly one drainer.apply, got {names}"
+    _assert_child_of(span_exporter, "drainer.apply_inner", "drainer.apply")
+
+
+def test_engram_allocate_boundary_span_emits(span_exporter):
+    """EngramAllocator.allocate emits the engram.allocate boundary span."""
+    from yadgar.engram import EngramAllocator
+
+    alloc = EngramAllocator.__new__(EngramAllocator)
+    alloc._storage = MagicMock()
+    alloc._settings = MagicMock()
+    alloc._num_slots = 4
+    alloc._half_life = 6.0
+    alloc._boost = 0.5
+    alloc._storage.get_all_engram_slots.return_value = []
+    alloc._storage.get_slot_occupancy.return_value = {}
+    alloc._storage.get_memories_in_slot.return_value = []
+    alloc._storage.get_engram_slot.return_value = None
+    alloc._storage._now_iso.return_value = "2026-07-03T00:00:00+00:00"
+
+    alloc.allocate(1)
+    assert "engram.allocate" in _span_names(span_exporter)
+
+
+def test_cognitive_map_record_transition_boundary_span_emits(span_exporter):
+    """CognitiveMap.record_transition emits the cognitive_map.record_transition boundary span."""
+    from yadgar.cognitive_map import CognitiveMap
+
+    cm = CognitiveMap.__new__(CognitiveMap)
+    cm._storage = MagicMock()
+    cm._storage.get_transition.return_value = None
+    cm._dirty = False
+
+    cm.record_transition(1, 2)
+    assert "cognitive_map.record_transition" in _span_names(span_exporter)
+
+
+def test_kg_extract_entities_typed_boundary_span_emits(span_exporter):
+    """KnowledgeGraph.extract_entities_typed emits the boundary span (write-path entity extract)."""
+    from yadgar.knowledge_graph import KnowledgeGraph
+
+    kg = KnowledgeGraph.__new__(KnowledgeGraph)
+    kg._storage = MagicMock()
+    kg._settings = MagicMock()
+
+    kg.extract_entities_typed("def foo(): pass", "/tmp")
+    assert "knowledge_graph.extract_entities_typed" in _span_names(span_exporter)
+
+
+def test_queue_enqueue_boundary_span_emits(span_exporter, tmp_path):
+    """FileQueue.enqueue emits the queue.enqueue boundary span (durability write boundary)."""
+    from yadgar.file_queue.queue import FileQueue
+
+    q = FileQueue(base_dir=str(tmp_path))
+    q.enqueue("memorize", {"content": "x"})
+    assert "queue.enqueue" in _span_names(span_exporter)

@@ -85,6 +85,7 @@ from yadgar.backend.embed_service_metrics import (
     rerank_semaphore_held as _rerank_semaphore_held,
 )
 from yadgar.config import resolve_knob
+from yadgar.observability.observe import observe
 
 if TYPE_CHECKING:
     from yadgar.backend.ml_client import LocalMLClient
@@ -134,6 +135,7 @@ def _dbsize_cache_ttl() -> int:
     return int(get_settings().DBSIZE_CACHE_TTL_SEC)
 
 
+@observe(tier="hot")
 def _shutdown_marker_path() -> str:
     """Return path for clean-shutdown marker file."""
     return os.environ.get("YADGAR_SHUTDOWN_MARKER_PATH", "/data/.shutdown_clean")
@@ -183,6 +185,7 @@ def _cache_snapshot_interval_sec() -> int:
     )
 
 
+@observe(tier="hot")
 def _get_ce_checkpoint_hash() -> str:
     """Return a short hash identifying the current CE model checkpoint."""
     import hashlib  # noqa: PLC0415
@@ -194,6 +197,7 @@ def _get_ce_checkpoint_hash() -> str:
     return hashlib.sha256(model.encode()).hexdigest()[:16]
 
 
+@observe(tier="hot")
 def _get_embed_checkpoint_hash() -> str:
     """Return a short hash identifying the current embedding model."""
     import hashlib  # noqa: PLC0415
@@ -221,6 +225,7 @@ _ce_cache = _make_ce_cache()
 _embed_cache = _make_embed_cache()
 
 
+@observe(tier="hot")
 def _update_cache_metrics() -> None:
     """Sync cache counters to Prometheus gauges (called periodically + after ops)."""
     try:
@@ -262,6 +267,7 @@ async def _run_cache_snapshot_task() -> None:
             logger.warning("cache_snapshot_task error: %s", exc)
 
 
+@observe(tier="stage")
 async def _run_model_warmup() -> None:
     """Background task: preload rerank models (ce, nli, pair) after startup delay.
 
@@ -340,6 +346,7 @@ _reranker: LocalMLClient | None = None
 _reranker_lock = threading.Lock()
 
 
+@observe(tier="stage")
 def _get_engine():
     global _engine
     if _engine is None:
@@ -355,6 +362,7 @@ def _get_engine():
     return _engine
 
 
+@observe(tier="stage")
 def _get_reranker() -> LocalMLClient:
     global _reranker
     if _reranker is None:
@@ -531,6 +539,7 @@ except Exception:
 
 
 @app.get("/metrics")
+@observe(tier="boundary", name="backend.metrics")
 async def metrics(request: Request):
     """Prometheus metrics endpoint (V1a, v5.5.0).
 
@@ -542,6 +551,7 @@ async def metrics(request: Request):
 
 
 @app.post("/embed", response_model=EmbedResponse)
+@observe(tier="boundary", name="backend.embed")
 async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
     import time as _time
 
@@ -550,6 +560,7 @@ async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
     if engine is None:
         raise HTTPException(status_code=503, detail="Embedding engine not ready")
 
+    @observe(tier="hot")
     def _encode_all() -> list[list[float] | None]:
         import hashlib as _hl  # noqa: PLC0415
 
@@ -604,6 +615,7 @@ async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
     )
 
 
+@observe(tier="stage")
 def _score_ce_with_cache(ml, query: str, texts: list[str]) -> list[float]:
     """CE scoring with per-text LRU cache hit-path (backend v5.4.0).
 
@@ -755,6 +767,7 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
 
 
 @app.get("/health")
+@observe(tier="boundary", name="backend.health")
 async def health(response: Response):
     """Returns 200 only when DB is up AND embedding model is loaded."""
     db_url = os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000")
@@ -778,6 +791,7 @@ async def health(response: Response):
     return payload
 
 
+@observe(tier="hot")
 def _walk_db_sizes(
     db_path: Path,
     known_subdirs: set[str],
@@ -804,6 +818,7 @@ def _walk_db_sizes(
 
 
 @app.get("/admin/dbsize")
+@observe(tier="boundary", name="backend.admin_dbsize")
 async def admin_dbsize(_: None = Depends(_require_admin_token)):
     """Return a filesystem size breakdown of the SurrealDB data directory.
 

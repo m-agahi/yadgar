@@ -19,8 +19,11 @@ import time
 from pathlib import Path
 
 import yadgar.paths as _paths
+from yadgar.observability.observe import observe
+from yadgar.tracing import shutdown_tracing
 
 
+@observe(tier="hot")
 def _db_locked(db_path: Path) -> bool:
     """Check if the MCP server holds the surrealkv DB lock."""
     lock_path = db_path.parent / "yadgar.lock"
@@ -46,6 +49,7 @@ MAX_CONTEXT_CHARS = 3000
 TIME_BUDGET = 0.5
 
 
+@observe(tier="hot")
 def _extract_query(data: dict) -> str:
     """Extract the user's prompt text from hook input."""
     prompt = data.get("prompt", "")
@@ -54,6 +58,7 @@ def _extract_query(data: dict) -> str:
     return str(prompt).strip()
 
 
+@observe(tier="hot")
 def _preprocess_fts(query: str) -> str:
     """Convert user prompt into an FTS query (space-joined terms)."""
     words = []
@@ -66,6 +71,7 @@ def _preprocess_fts(query: str) -> str:
     return " ".join(words[:15])  # Cap at 15 terms
 
 
+@observe(tier="stage")
 def _fts_search(db, query: str, directory: str) -> list:
     """SurrealDB FTS search, scoped to current project first."""
     fts_query = _preprocess_fts(query)
@@ -127,6 +133,7 @@ def _fts_search(db, query: str, directory: str) -> list:
         return []
 
 
+@observe(tier="hot")
 def _merge_and_rank(fts_results: list, directory: str) -> list:
     """Deduplicate and rank results, boosting project matches."""
     seen = {}
@@ -156,6 +163,7 @@ def _merge_and_rank(fts_results: list, directory: str) -> list:
     return results[:MAX_RESULTS]
 
 
+@observe(tier="hot")
 def _format_context(memories: list, directory: str) -> str:
     """Format memories as concise context for injection."""
     if not memories:
@@ -182,42 +190,46 @@ def _format_context(memories: list, directory: str) -> str:
     return "\n".join(lines)
 
 
+@observe(tier="boundary")
 def main():
-    time.monotonic()
-
     try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError) as _e:
-        return
+        time.monotonic()
 
-    query = _extract_query(data)
-    if not query or len(query) < 2:
-        return
+        try:
+            data = json.load(sys.stdin)
+        except (json.JSONDecodeError, ValueError) as _e:
+            return
 
-    directory = data.get("cwd", "") or os.getcwd()
+        query = _extract_query(data)
+        if not query or len(query) < 2:
+            return
 
-    Path(os.environ.get("YADGAR_DB_PATH", str(_paths.DB_PATH))).expanduser()
+        directory = data.get("cwd", "") or os.getcwd()
 
-    # Try HTTP endpoint first — works in daemon mode where DB lock is always held
-    _port = os.environ.get("YADGAR_PORT", "8765")
-    try:
-        import urllib.parse as _parse
-        import urllib.request as _req
+        Path(os.environ.get("YADGAR_DB_PATH", str(_paths.DB_PATH))).expanduser()
 
-        _params = _parse.urlencode({"query": query, "directory": directory})
-        _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
-        _req_obj = _req.Request(
-            f"http://127.0.0.1:{_port}/hooks/prompt-recall?{_params}",
-        )
-        if _token:
-            _req_obj.add_header("Authorization", f"Bearer {_token}")
-        _resp = _req.urlopen(_req_obj, timeout=TIME_BUDGET)
-        _text = json.loads(_resp.read().decode()).get("text", "")
-        if _text:
-            print(_text)
-        return
-    except Exception:
-        pass  # Daemon down — skip; never use surrealkv directly from host
+        # Try HTTP endpoint first — works in daemon mode where DB lock is always held
+        _port = os.environ.get("YADGAR_PORT", "8765")
+        try:
+            import urllib.parse as _parse
+            import urllib.request as _req
+
+            _params = _parse.urlencode({"query": query, "directory": directory})
+            _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+            _req_obj = _req.Request(
+                f"http://127.0.0.1:{_port}/hooks/prompt-recall?{_params}",
+            )
+            if _token:
+                _req_obj.add_header("Authorization", f"Bearer {_token}")
+            _resp = _req.urlopen(_req_obj, timeout=TIME_BUDGET)
+            _text = json.loads(_resp.read().decode()).get("text", "")
+            if _text:
+                print(_text)
+            return
+        except Exception:
+            pass  # Daemon down — skip; never use surrealkv directly from host
+    finally:
+        shutdown_tracing()
 
 
 if __name__ == "__main__":

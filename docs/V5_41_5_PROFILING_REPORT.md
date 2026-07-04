@@ -18,25 +18,25 @@
 
 | Substep | p50 (ms) | p90 (ms) | p99 (ms) | min (ms) | max (ms) |
 |---------|----------|----------|----------|----------|----------|
-| Secret-gate regex scan (I26) | 0.010 | 0.011 | 0.205 | 0.009 | 3.117 |
-| Rules engine write-policy check | 0.001 | 0.001 | 0.006 | 0.001 | 0.021 |
-| Branch resolution + slug generation | 0.004 | 0.004 | 0.008 | 0.003 | 0.041 |
-| Similarity gate (embed + KNN) | 1026.944 | 2956.112 | 4410.718 | 43.885 | 4466.727 |
-| File queue enqueue (Path.write\_text) | 0.094 | 0.113 | 0.417 | 0.083 | 0.663 |
-| **E2E handler (server.wiki\_add)** | 0.300 | 0.334 | 0.781 | 0.276 | 0.990 |
+| Secret-gate regex scan (I26) | 0.161 | 0.187 | 0.198 | 0.120 | 0.220 |
+| Rules engine write-policy check | 0.105 | 0.131 | 0.322 | 0.076 | 1.105 |
+| Branch resolution + slug generation | 0.003 | 0.003 | 0.007 | 0.003 | 0.027 |
+| Similarity gate (embed + KNN) | 43.094 | 51.320 | 70.163 | 32.633 | 81.865 |
+| File queue enqueue (Path.write\_text) | 0.113 | 0.153 | 0.454 | 0.105 | 0.524 |
+| **E2E handler (server.wiki\_add)** | 0.601 | 0.773 | 1.354 | 0.482 | 1.375 |
 
 ## Key Findings
 
-- **E2E p50 = 0.30ms** → PASS
-- Similarity gate p50 = 1026.94ms (342435% of e2e)
-- Secret-gate p50 = 0.010ms
-- Rules engine p50 = 0.001ms
-- Branch/slug gen p50 = 0.004ms
-- Enqueue (file write) p50 = 0.094ms
+- **E2E p50 = 0.60ms** → PASS
+- Similarity gate p50 = 43.09ms (7167% of e2e)
+- Secret-gate p50 = 0.161ms
+- Rules engine p50 = 0.105ms
+- Branch/slug gen p50 = 0.003ms
+- Enqueue (file write) p50 = 0.113ms
 
 ## Decision Point Resolution
 
-**DP-A CONFIRMED:** Similarity gate = 1026.94ms = 342435% of e2e. Option A (move to drainer) is correct fix.
+**DP-A CONFIRMED:** Similarity gate = 43.09ms = 7167% of e2e. Option A (move to drainer) is correct fix.
 
 ## v5.41.5 Fix Plan
 
@@ -48,8 +48,8 @@
 
 ## References
 
-- Plan: `docs/PLAN_V5_41_5_HANDLER_I9_FIX.md`
+- Plan: `docs/plans/archive/PLAN_V5_41_5_HANDLER_I9_FIX.md`
 - Perf test (xfail): `yadgar/tests/test_wiki_mcp_handler_perf.py`
 - I9 invariant: `docs/ARCHITECTURE_INVARIANTS.md`
 - Baseline (task header): ~28.89ms p50 / xfail comment: ~48ms p50
-- This measurement: 0.30ms p50
+- This measurement: 0.60ms p50

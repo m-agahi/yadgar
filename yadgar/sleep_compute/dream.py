@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 
@@ -78,6 +79,7 @@ class _DreamMixin:
 
         return stats
 
+    @observe(tier="stage")
     def _build_connected_pair_index_by_ids(
         self,
         sampled_mem_ids: set[int],
@@ -126,6 +128,7 @@ class _DreamMixin:
             }
         )
 
+    @observe(tier="stage")
     def _ensure_memory_entity(self, memory_id: int) -> int:
         """Get or create an entity node for a memory."""
         name = f"memory:{memory_id}"
@@ -160,6 +163,7 @@ class _DreamMixin:
         )
 
 
+@observe(tier="stage")
 def _generate_random_pairs_from_count(
     n: int,
     num_pairs: int,

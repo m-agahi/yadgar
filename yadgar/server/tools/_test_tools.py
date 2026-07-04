@@ -17,9 +17,11 @@ import os
 import threading
 import time
 
+from yadgar.observability.observe import observe
 from yadgar.server._app import _tool
 
 
+@observe(tier="stage", name="tools.test_tools.register_test_tools")
 def register_test_tools() -> None:
     """Register the gated test tools. No-op unless YADGAR_TEST_TOOLS=1."""
     if os.environ.get("YADGAR_TEST_TOOLS", "0").strip().lower() not in (

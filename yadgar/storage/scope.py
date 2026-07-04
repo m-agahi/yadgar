@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from yadgar.observability.observe import observe
 from yadgar.storage.branch import BranchFilter, _build_branch_clause
 from yadgar.storage.directory import DirectoryFilter, _build_directory_clause
 
@@ -45,6 +46,7 @@ class ScopeFilter:
     branch: BranchFilter | None = None
     directory: DirectoryFilter | None = None
 
+    @observe(tier="hot")
     def build_clause(self) -> tuple[str, dict]:
         """Return (sql_fragment, params) combining both predicates with AND.
 
@@ -73,6 +75,7 @@ class ScopeFilter:
         return combined, merged_params
 
     @classmethod
+    @observe(tier="hot")
     def from_scope(cls, scope: Scope) -> ScopeFilter:
         """Build a ScopeFilter from a provider Scope.
 

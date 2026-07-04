@@ -8,7 +8,12 @@ The helper MUST NEVER raise — telemetry failures must never compound a caller 
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
 
+
+@observe(
+    exempt="enriches the CALLER's active span — a child span would enrich the wrong span and double the span count"
+)
 def record_exception(location: str, exc: BaseException) -> None:
     """Increment exception counter + best-effort span enrichment.
 

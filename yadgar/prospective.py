@@ -4,6 +4,7 @@ import re
 from datetime import UTC, datetime
 
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 VALID_TRIGGER_TYPES = frozenset(
@@ -43,6 +44,7 @@ class ProspectiveMemoryEngine:
         self._storage = storage
         self._settings = settings
 
+    @observe(tier="boundary")
     def create_trigger(
         self,
         content: str,
@@ -70,6 +72,7 @@ class ProspectiveMemoryEngine:
             }
         )
 
+    @observe(tier="stage")
     def check_triggers(self, context: dict) -> list[dict]:
         """Check all active triggers against the given context.
 
@@ -105,6 +108,7 @@ class ProspectiveMemoryEngine:
 
         return triggered
 
+    @observe(tier="stage")
     def auto_create_from_content(self, content: str, directory: str) -> list[int]:
         """Scan content for future-oriented phrases and auto-create triggers.
 
@@ -137,6 +141,7 @@ class ProspectiveMemoryEngine:
 
         return created_ids
 
+    @observe(tier="hot")
     def _matches(
         self,
         pm: dict,
@@ -167,6 +172,7 @@ class ProspectiveMemoryEngine:
 
         return False
 
+    @observe(tier="hot")
     @staticmethod
     def _matches_time(condition: str, current_time: datetime) -> bool:
         """Check if current_time matches a cron-like time condition."""

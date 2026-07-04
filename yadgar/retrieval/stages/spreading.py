@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.stages.base import RetrievalStage
 from yadgar.retrieval.state import RetrievalState
 
@@ -19,6 +20,7 @@ class SpreadingStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
+    @observe(tier="stage", name="retrieval.pipeline.spreading")
     def apply(self, state: RetrievalState) -> RetrievalState:
         settings = self._retriever._settings
         profile_dict = state.query_analysis.get("_profile_dict", {})

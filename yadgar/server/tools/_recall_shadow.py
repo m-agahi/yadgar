@@ -43,6 +43,8 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from yadgar.observability.observe import observe
+
 
 @dataclass(frozen=True, slots=True)
 class RecallShadowParams:
@@ -87,6 +89,7 @@ _MAX_SHADOW_KEYS = 4096
 _SHADOW_KEYS: OrderedDict[tuple, int] = OrderedDict()
 
 
+@observe(tier="hot", name="tools.recall_shadow.bump_epoch")
 def bump_epoch(directory: str | None) -> None:
     """Advance the structural epoch for *directory* (called from write paths).
 
@@ -105,6 +108,7 @@ def bump_epoch(directory: str | None) -> None:
         pass
 
 
+@observe(tier="hot", name="tools.recall_shadow._current_epoch")
 def _current_epoch(directory: str | None) -> int:
     # Effective epoch = per-directory epoch + the global generation.  Bumping either
     # advances the effective epoch, so a prior key recorded at the old value misses.
@@ -164,6 +168,7 @@ def observe_recall(params: RecallShadowParams) -> None:
         pass
 
 
+@observe(tier="hot", name="tools.recall_shadow._reset_for_test")
 def _reset_for_test() -> None:
     """Test hook: clear all shadow state."""
     with _LOCK:

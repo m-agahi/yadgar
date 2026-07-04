@@ -3,8 +3,8 @@
 import logging
 
 from yadgar.cls_store.patterns import _is_degenerate_auto_abstracted
+from yadgar.observability.observe import observe
 from yadgar.storage.directory import dominant_directory
-from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class _PromotionMixin:
     """Mixin: _promote_pattern — promotes one qualifying cluster to a semantic memory."""
 
-    @trace_span("consolidation.cls.promote")
+    @observe(tier="stage", name="consolidation.cls.promote")
     def _promote_pattern(self, pattern: dict) -> bool:
         """Promote a qualifying cluster to a semantic memory.
 

@@ -2,6 +2,8 @@
 
 import re
 
+from yadgar.observability.observe import observe
+
 # Lightweight entity extraction for queries (subset of consolidation patterns)
 _WORD_RE = re.compile(r"\b[A-Z][\w]*(?:[A-Z][\w]*)*\b")  # CamelCase
 _PATH_RE = re.compile(r"(?:\.{0,2}/)?(?:[\w@.-]+/)+[\w@.-]+\.\w+")
@@ -149,6 +151,7 @@ _SAID_LINE_RE = re.compile(r"^(?P<speaker>[A-Z][a-z]+) said:\s*(?P<quote>.+)$")
 _LINE_SUBJECT_RE = re.compile(r"^(?P<subject>[A-Z][a-z]+)\b")
 
 
+@observe(tier="hot", name="retrieval.entities.extract_query_entities")
 def _extract_query_entities(query: str) -> list[str]:
     """Extract key concepts/entities from a query string."""
     entities: list[str] = []

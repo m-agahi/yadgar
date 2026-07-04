@@ -50,6 +50,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import yadgar.paths as _paths
+from yadgar.observability.observe import observe
 
 _log = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ _allowlist: list[AllowlistEntry] = []
 _allowlist_loaded: bool = False
 
 
+@observe(tier="stage")
 def _get_allowlist_path() -> Path:
     env = os.environ.get("YADGAR_SECRET_GATE_ALLOWLIST_PATH", "")
     if env:
@@ -79,6 +81,7 @@ def _get_allowlist_path() -> Path:
     return _paths.SECRET_GATE_ALLOWLIST_PATH
 
 
+@observe(tier="stage")
 def _get_audit_dir() -> Path:
     env = os.environ.get("YADGAR_SECRET_GATE_AUDIT_DIR", "")
     if env:
@@ -86,6 +89,7 @@ def _get_audit_dir() -> Path:
     return _paths.SECRET_GATE_AUDIT_DIR
 
 
+@observe(tier="stage")
 def _reload_allowlist() -> None:
     """Load (or reload) the allowlist from disk.  Thread-safe.
 
@@ -142,12 +146,14 @@ def _reload_allowlist() -> None:
     )
 
 
+@observe(tier="stage")
 def _ensure_loaded() -> None:
     """Lazy-load allowlist on first use."""
     if not _allowlist_loaded:
         _reload_allowlist()
 
 
+@observe(tier="stage")
 def _detect_source() -> str:
     """Walk the call stack and return a short name for the call site.
 
@@ -176,6 +182,7 @@ def _detect_source() -> str:
     return "unknown"
 
 
+@observe(tier="stage")
 def _content_matches_pattern(content: str, pattern: str) -> bool:
     """Return True if content contains a token matching the glob pattern.
 
@@ -191,6 +198,7 @@ def _content_matches_pattern(content: str, pattern: str) -> bool:
     return fnmatch.fnmatch(content, f"*{pattern}*")
 
 
+@observe(tier="stage")
 def _write_audit(
     *,
     matched_pattern: str,
@@ -225,6 +233,7 @@ def _write_audit(
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 def is_allowlisted(
     content: str,
     tags: list[str] | None,

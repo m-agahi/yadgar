@@ -4,11 +4,13 @@ import logging
 from collections import deque
 from datetime import UTC, datetime
 
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def traverse_oriented_edges(
     start_id: int,
     start_name: str,
@@ -65,6 +67,7 @@ def traverse_oriented_edges(
     return results
 
 
+@observe(tier="stage")
 def store_dag_edges(
     storage: StorageEngine,
     dag: dict,

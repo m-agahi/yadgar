@@ -14,6 +14,8 @@ See docs/plans/recall-scoping-restamp.md §B note on DB-level filter.
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
+
 
 class DirectoryFilter:
     """Carry directory context for eligibility checks.
@@ -50,6 +52,7 @@ class DirectoryFilter:
 _ALWAYS_ELIGIBLE: frozenset[str | None] = frozenset({"global", "", None})
 
 
+@observe(tier="hot")
 def is_directory_eligible(directory_context: str | None, caller_dir: str | None) -> bool:
     """Return True when a row is eligible for the given caller directory.
 
@@ -76,6 +79,7 @@ def is_directory_eligible(directory_context: str | None, caller_dir: str | None)
     return directory_context == caller_dir
 
 
+@observe(tier="hot")
 def dominant_directory(candidates: list[str | None]) -> str:
     """Return the dominant project directory from a list of directory_context values.
 
@@ -100,6 +104,7 @@ def dominant_directory(candidates: list[str | None]) -> str:
     return "global"
 
 
+@observe(tier="hot")
 def _build_directory_clause(
     directory_filter: DirectoryFilter | None,
 ) -> tuple[str, dict]:

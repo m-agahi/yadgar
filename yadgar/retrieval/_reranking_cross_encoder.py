@@ -5,16 +5,17 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.query_analysis import (
     _derive_implied_fact_passages,
     analyze_query,
 )
 from yadgar.storage import _FTS_STOP_WORDS
-from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="hot", name="retrieval.ce.build_expanded_pairs")
 def _build_expanded_pairs(
     memories_to_score: list[dict],
     open_domain_mode: bool,
@@ -40,6 +41,7 @@ def _build_expanded_pairs(
     return expanded_texts, variant_to_memory
 
 
+@observe(tier="hot", name="retrieval.ce.aggregate_max_scores")
 def _aggregate_max_scores(
     all_scores: list[float],
     variant_to_memory: dict[int, int],
@@ -58,6 +60,7 @@ def _aggregate_max_scores(
     return [memory_raw_scores.get(i, 0.0) for i in range(n_memories)]
 
 
+@observe(tier="hot", name="retrieval.ce.apply_weights")
 def _apply_ce_weights(
     memories_to_score: list[dict],
     raw_scores: list[float],
@@ -88,7 +91,7 @@ def _apply_ce_weights(
 class _CrossEncoderMixin:
     """Provides cross_encoder_rerank, score_single_pair, and cluster_memories."""
 
-    @trace_span("retrieval.cross_encoder_rerank")
+    @observe(tier="stage", name="retrieval.cross_encoder_rerank")
     def cross_encoder_rerank(
         self,
         memories: list[dict],
@@ -146,7 +149,7 @@ class _CrossEncoderMixin:
         memories_to_score.sort(key=lambda m: m["_retrieval_score"], reverse=True)
         return memories_to_score[:top_k]
 
-    @trace_span("retrieval.score_pair")
+    @observe(tier="stage", name="retrieval.score_pair")
     def score_single_pair(self, query: str, document: str) -> float:
         """Score a single query-document pair using the ML client."""
         try:
@@ -156,7 +159,7 @@ class _CrossEncoderMixin:
         except Exception:
             return 0.0
 
-    @trace_span("retrieval.score_documents")
+    @observe(tier="stage", name="retrieval.score_documents")
     def score_documents(self, query: str, documents: list[str]) -> list[float]:
         """Score many query-document pairs in ONE batched, LRU-cached CE call (v5.98 Lever 1).
 
@@ -183,6 +186,7 @@ class _CrossEncoderMixin:
             for i in range(len(documents))
         ]
 
+    @observe(tier="stage", name="retrieval.ce.cluster_memories")
     def cluster_memories(self, memories: list[dict]) -> list[list[dict]]:
         """Cluster memories by entity/topic overlap using Jaccard similarity."""
         threshold = getattr(self._settings, "MULTI_PASSAGE_CLUSTER_OVERLAP_THRESHOLD", 0.3)

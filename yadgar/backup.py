@@ -37,6 +37,8 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 
@@ -58,6 +60,7 @@ def default_retention() -> int:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 def create_snapshot(
     db_path: Path,
     snapshot_dir: Path | None = None,
@@ -134,6 +137,7 @@ def create_snapshot(
     return target
 
 
+@observe(tier="stage")
 def _create_export_snapshot(dest_dir: Path, base_name: str, backend_url: str) -> Path:
     """Write a consistent ``GET /export`` artifact to ``<base_name>.surql``.
 
@@ -173,6 +177,7 @@ def _create_export_snapshot(dest_dir: Path, base_name: str, backend_url: str) ->
     return target
 
 
+@observe(tier="boundary")
 def restore_snapshot(snapshot_path: Path, backend_url: str) -> None:
     """Restore a snapshot into the live SurrealDB at ``backend_url``.
 
@@ -240,6 +245,7 @@ def restore_snapshot(snapshot_path: Path, backend_url: str) -> None:
     _log.info("backup snapshot restored into %s from %s", backend_url, snapshot_path)
 
 
+@observe(tier="boundary")
 def prune_snapshots(
     snapshot_dir: Path,
     pattern: str,

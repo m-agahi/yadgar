@@ -10,6 +10,8 @@ import threading
 import time
 from collections import OrderedDict
 
+from yadgar.observability.observe import observe
+
 # Maximum number of distinct keys tracked simultaneously.
 # Oldest keys are evicted when this limit is exceeded.
 _MAX_KEYS = 1_000
@@ -30,6 +32,7 @@ class TokenBucketRateLimiter:
         self._buckets: OrderedDict[str, tuple[float, float]] = OrderedDict()
         self._lock = threading.Lock()
 
+    @observe(tier="hot")
     def allow(self, key: str) -> bool:
         """Return True and consume one token if the key is under the limit.
 
@@ -52,6 +55,7 @@ class TokenBucketRateLimiter:
             self._buckets[key] = (tokens - 1.0, now)
             return True
 
+    @observe(tier="hot")
     def reset(self, key: str) -> None:
         """Reset bucket for key (for testing)."""
         with self._lock:

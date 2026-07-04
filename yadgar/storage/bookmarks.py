@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class _BookmarksMixin:
     # ------------------------------------------------------------------ helpers
 
     @staticmethod
+    @observe(tier="hot")
     def _normalise_slug(slug: str) -> str:
         """Strip whitespace; raise ValueError if empty after stripping."""
         cleaned = slug.strip()

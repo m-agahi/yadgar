@@ -5,6 +5,8 @@ default branch.  Kept separate so retrieval.core can import BranchFilter
 without pulling in the full StorageEngine.
 """
 
+from yadgar.observability.observe import observe
+
 
 class BranchFilter:
     """Carry branch context for SurrealQL predicate injection.
@@ -28,6 +30,7 @@ class BranchFilter:
         return f"BranchFilter(current={self.current_branch!r}, default={self.default_branch!r})"
 
 
+@observe(tier="hot")
 def _build_branch_clause(
     branch_filter: BranchFilter | None,
 ) -> tuple[str, dict]:

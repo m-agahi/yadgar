@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from yadgar.observability.observe import observe
+
 
 class Episode(BaseModel):
     id: int | None = None
@@ -223,6 +225,7 @@ _ADR_VALID_STATUSES: frozenset[str] = frozenset(
 )
 
 
+@observe(tier="hot")
 def _indent_continuation(value: str) -> str:
     """Indent every line after the first by two spaces (markdown list continuation).
 

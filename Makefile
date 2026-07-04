@@ -37,7 +37,7 @@ YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar
         install-hooks install-agents config-sync install-rules \
         seed-anchors detect-runtime detect-os install-runtime clean check \
         pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
-        _enable-units-auto restore upgrade-test eval longmemeval
+        _enable-units-auto restore upgrade-test eval longmemeval perf
 
 all: setup
 
@@ -313,6 +313,17 @@ longmemeval:
 	@echo "==> LongMemEval (unified MCP recall · retrieval-only) — $(Q) questions (0=all) ..."
 	@OTEL_SDK_DISABLED=true uv run --extra test --extra ml python benchmarks/run_longmemeval.py \
 	    --unified --retrieval-only --variant s --stratify-per-type --max-questions $(Q) $(ARGS)
+
+## perf: Run the #79 recall-latency load-test harness (RECORD-ONLY, non-gating).
+## Fires N recalls at a RUNNING daemon, captures recall p50/p95 + the CE-span
+## budget (backend yadgar_embed_rerank_duration_seconds{mode=ce}), writes a JSON
+## report under benchmarks/reports/ and diffs against benchmarks/reports/perf_baseline.json.
+## Requires a live daemon: set YADGAR_DAEMON_URL (+ YADGAR_BACKEND_METRICS_URL for CE).
+## SKIPS with a reason (exit 0) if YADGAR_DAEMON_URL is unset. See
+## docs/plans/perf-loadtest-contract-2026-06-30.md. NEVER gates a PR (Phase 1).
+perf:
+	@echo "==> #79 recall-latency load-test (record-only, non-gating) ..."
+	@OTEL_SDK_DISABLED=true python benchmarks/run_perf_loadtest.py
 
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
 upgrade-test:

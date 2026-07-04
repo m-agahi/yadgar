@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import yadgar.server._state as _st
 from yadgar.config import get_settings
+from yadgar.observability.observe import observe
 from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server._helpers import _q_with_timeout
@@ -184,6 +185,7 @@ _DURATION_RE = re.compile(r"^(\d+)(m|h|d)$", re.IGNORECASE)
 _UNIT_SECONDS: dict[str, int] = {"m": 60, "h": 3600, "d": 86400}
 
 
+@observe(tier="hot", name="tools.admin_other._parse_since_duration")
 def _parse_since_duration(since: str) -> str:
     """Convert a duration string ('24h', '7d', '30m') or ISO datetime to cutoff ISO string.
 
@@ -274,6 +276,7 @@ def recent_memories(
     }
 
 
+@observe(tier="stage", name="tools.admin_other._ms_per_table_stats")
 def _ms_per_table_stats(storage) -> dict:
     """Return per-table row/byte counts for DB-size telemetry (memory_stats helper)."""
     _ms_timeout = settings.CHECK_INVARIANTS_QUERY_TIMEOUT_SECONDS
@@ -307,6 +310,7 @@ def _ms_per_table_stats(storage) -> dict:
     return per_table
 
 
+@observe(tier="stage", name="tools.admin_other._ms_histogram_p95")
 def _ms_histogram_p95(hist) -> float:
     """Extract approximate p95 from a Prometheus Histogram sample."""
     try:
@@ -332,6 +336,7 @@ def _ms_histogram_p95(hist) -> float:
         return 0.0
 
 
+@observe(tier="stage", name="tools.admin_other._ms_queue_depth")
 def _ms_queue_depth() -> int:
     """Return current queue depth from Prometheus gauge (memory_stats helper)."""
     try:
@@ -346,6 +351,7 @@ def _ms_queue_depth() -> int:
     return 0
 
 
+@observe(tier="stage", name="tools.admin_other._ms_circuit_breaker_states")
 def _ms_circuit_breaker_states() -> dict[str, int]:
     """Return ML client circuit-breaker states (memory_stats helper)."""
     cb_states: dict[str, int] = {}

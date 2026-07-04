@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import yadgar.server._state as _st
+from yadgar.observability.observe import observe
 from yadgar.secrets import gate_or_reject
 from yadgar.server._helpers import _has_unpaired_surrogate
 from yadgar.tracing import trace_span
@@ -44,6 +45,7 @@ def phase_validate(ctx: MemorizeContext, settings) -> dict | None:
     return _validate_gate_and_policy(ctx)
 
 
+@observe(tier="stage")
 def _validate_tier_and_parity(ctx: MemorizeContext, settings) -> dict | None:
     """Validate tier value and apply is_protected/tier parity."""
     # v5.8.0: tier validation
@@ -70,6 +72,7 @@ def _validate_tier_and_parity(ctx: MemorizeContext, settings) -> dict | None:
     return None
 
 
+@observe(tier="stage")
 def _validate_valid_until(ctx: MemorizeContext, settings) -> dict | None:
     """Validate and compute valid_until / ttl_days conflict + computation."""
     # v5.8.0: conflicting valid_until + ttl_days
@@ -95,6 +98,7 @@ def _validate_valid_until(ctx: MemorizeContext, settings) -> dict | None:
     return None
 
 
+@observe(tier="stage")
 def _apply_tag_injection(ctx: MemorizeContext) -> None:
     """Inject _anchor and anchor:<reason> tags when is_protected."""
     if not ctx.is_protected:
@@ -107,6 +111,7 @@ def _apply_tag_injection(ctx: MemorizeContext) -> None:
     ctx.tags = tags_list
 
 
+@observe(tier="stage")
 def _validate_content_and_provenance(ctx: MemorizeContext) -> dict | None:
     """Validate content size and provenance_agent."""
     if len(ctx.content) > 32_768:
@@ -124,6 +129,7 @@ def _validate_content_and_provenance(ctx: MemorizeContext) -> dict | None:
     return None
 
 
+@observe(tier="stage")
 def _validate_gate_and_policy(ctx: MemorizeContext) -> dict | None:
     """Run secret gate, write policy, and unicode check."""
     # v5.15.0: secret gate

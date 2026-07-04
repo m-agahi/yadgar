@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.stages.base import RetrievalStage
 from yadgar.retrieval.state import RetrievalState
 
@@ -19,6 +20,7 @@ class TemporalStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
+    @observe(tier="stage", name="retrieval.pipeline.temporal")
     def apply(self, state: RetrievalState) -> RetrievalState:
         from yadgar.storage import BranchFilter  # noqa: PLC0415
 

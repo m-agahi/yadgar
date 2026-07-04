@@ -11,6 +11,7 @@ import re
 
 from yadgar.config import Settings
 from yadgar.enrichment._seq2seq import _load_seq2seq_model
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class CometInferencer:
         self._device = None
         self._unavailable = False
 
+    @observe(tier="stage")
     def _ensure_model(self, model_name: str) -> bool:
         if self._model is not None:
             return True
@@ -36,6 +38,7 @@ class CometInferencer:
         self._model, self._tokenizer, self._device = result
         return True
 
+    @observe(tier="stage")
     def _extract_predicates(self, content: str) -> list[str]:
         """Extract sentences with named subjects and verbs."""
         sentences = re.split(r"[.!?]+", content)
@@ -51,6 +54,7 @@ class CometInferencer:
                 predicates.append(sent)
         return predicates if predicates else [content.strip()]
 
+    @observe(tier="boundary")
     def infer(self, content: str, settings: Settings) -> list[str]:
         if not self._ensure_model(settings.COMET_MODEL):
             return []

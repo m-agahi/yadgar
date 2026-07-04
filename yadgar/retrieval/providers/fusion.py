@@ -43,6 +43,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.providers.base import Candidate
 
 if TYPE_CHECKING:
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="hot", name="retrieval.crossfuse.score_candidates_ce")
 def _score_candidates_ce(
     candidates: list[Candidate],
     query: str,
@@ -79,6 +81,7 @@ def _score_candidates_ce(
     return {i: float(score) for i, score in enumerate(ce_scores[: len(candidates)])}
 
 
+@observe(tier="hot", name="retrieval.crossfuse.cross_type_dedup")
 def _cross_type_dedup(
     result: list[tuple[Candidate, float]],
     memory_prior_weight: float,
@@ -122,6 +125,7 @@ def _cross_type_dedup(
     return [(c, s) for i, (c, s) in enumerate(result) if i not in dropped]
 
 
+@observe(tier="hot", name="retrieval.crossfuse.interleave_wiki")
 def _interleave_wiki_into_memories(
     mem_pool: list[Candidate],
     wiki_candidates_with_score: list[tuple[Candidate, float]],
@@ -168,6 +172,7 @@ def _interleave_wiki_into_memories(
     return result
 
 
+@observe(tier="stage", name="retrieval.crossfuse.fuse_candidates")
 def fuse_candidates(
     memory_candidates: list[Candidate],
     wiki_candidates: list[Candidate],

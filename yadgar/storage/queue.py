@@ -8,6 +8,8 @@ _QueueMixin provides:
 
 import logging
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 
@@ -16,6 +18,7 @@ class _QueueMixin:
 
     # ------------------------------------------------------------------ File Hashes
 
+    @observe(tier="stage")
     def upsert_file_hash(self, filepath: str, hash_value: str):
         """§6 Q15: read-modify-write wrapped per-call to avoid duplicate rows under concurrency."""
         now = self._now_iso()
@@ -88,12 +91,14 @@ class _QueueMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def mark_actions_processed(self, ids: list[int]):
         if not ids:
             return
         for aid in ids:
             self._q(f"UPDATE action_log:{aid} SET processed = true")
 
+    @observe(tier="stage")
     def prune_processed_action_log(self, older_than_days: int = 7) -> int:
         """Delete processed action_log rows older than ``older_than_days``.
 

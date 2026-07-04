@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover — only hits if package missing from en
 from typing import Any
 
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ NUMERIC_FIELDS = {
 }
 
 
+@observe(tier="hot")
 def _parse_condition(condition: str) -> tuple[str, str, str]:
     """Parse a condition string into (field, operator, value).
 
@@ -93,6 +95,7 @@ def _parse_condition(condition: str) -> tuple[str, str, str]:
     raise ValueError(f"Cannot parse condition: {condition!r}")
 
 
+@observe(tier="hot")
 def _parse_write_action(action: str) -> tuple[str, str, str]:
     """Parse a write-path action string.
 
@@ -116,6 +119,7 @@ def _parse_write_action(action: str) -> tuple[str, str, str]:
     )
 
 
+@observe(tier="hot")
 def _parse_action(action: str) -> tuple[str, float]:
     """Parse an action string into (action_type, value).
 
@@ -140,6 +144,7 @@ def _parse_action(action: str) -> tuple[str, float]:
     raise ValueError(f"Invalid action: {action!r}")
 
 
+@observe(tier="hot")
 def _get_field_value(memory: dict, field: str) -> Any:
     """Get a field value from a memory dict.
 
@@ -163,6 +168,7 @@ def _get_field_value(memory: dict, field: str) -> Any:
     return None
 
 
+@observe(tier="hot")
 def _coerce_none_field(field_value: Any, operator: str) -> Any:
     """Coerce None field values to sensible defaults for comparison operators."""
     if field_value is not None:
@@ -174,6 +180,7 @@ def _coerce_none_field(field_value: Any, operator: str) -> Any:
     return field_value
 
 
+@observe(tier="hot")
 def _compare_numeric(field_value: Any, value: str, operator: str) -> bool:
     """Compare field_value to value using a numeric comparison operator.
 
@@ -194,6 +201,7 @@ def _compare_numeric(field_value: Any, value: str, operator: str) -> bool:
     return num_field <= num_value
 
 
+@observe(tier="hot")
 def _compare_equality(field_value: Any, value: str, field: str, operator: str) -> bool:
     """Compare field_value to value using == or != (numeric-aware, case-insensitive)."""
     if field in NUMERIC_FIELDS:
@@ -206,6 +214,7 @@ def _compare_equality(field_value: Any, value: str, field: str, operator: str) -
     return str_match if operator == "==" else not str_match
 
 
+@observe(tier="hot")
 def _compare_contains(field_value: Any, value: str, operator: str) -> bool:
     """Evaluate contains / not_contains operator (case-insensitive, list-aware)."""
     if isinstance(field_value, list):
@@ -215,6 +224,7 @@ def _compare_contains(field_value: Any, value: str, operator: str) -> bool:
     return found if operator == "contains" else not found
 
 
+@observe(tier="hot")
 def _apply_score_delta(memory: dict, action_type: str, action_value: float) -> None:
     """Apply a boost or penalty delta to memory's _retrieval_score in-place."""
     score = memory.get("_retrieval_score", 0.0)
@@ -233,6 +243,7 @@ class RulesEngine:
         self._settings = settings
         self._applicable_rules_cache: dict[str, list[dict]] = {}
 
+    @observe(tier="boundary")
     def add_rule(
         self,
         rule_type: str,
@@ -297,6 +308,7 @@ class RulesEngine:
         self._applicable_rules_cache.clear()
         return rule_id
 
+    @observe(tier="stage")
     def get_applicable_rules(self, directory: str) -> list[dict]:
         """Get all active rules that apply to the given directory.
 
@@ -339,6 +351,7 @@ class RulesEngine:
         self._applicable_rules_cache[directory] = all_rules
         return all_rules
 
+    @observe(tier="stage")
     def apply_rules(self, memories: list[dict], directory: str) -> list[dict]:
         """Apply rules to filter and re-rank memories.
 
@@ -365,6 +378,7 @@ class RulesEngine:
         result.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
         return result
 
+    @observe(tier="hot")
     def _apply_single_rule(self, memories: list[dict], rule: dict) -> list[dict]:
         """Apply one rule to the memory list; return updated list."""
         rule_type = rule["rule_type"]
@@ -382,6 +396,7 @@ class RulesEngine:
 
         return memories
 
+    @observe(tier="hot")
     def evaluate_condition(self, condition: str, memory: dict) -> bool:
         """Evaluate a condition against a memory.
 
@@ -415,6 +430,7 @@ class RulesEngine:
 
         return True  # Unknown operator passes by default
 
+    @observe(tier="boundary")
     def delete_rule(self, rule_id: int) -> bool:
         """Deactivate a rule (soft delete).
 
@@ -430,6 +446,7 @@ class RulesEngine:
         """Return all active rules, sorted by scope then priority."""
         return self._storage.get_all_active_rules()
 
+    @observe(tier="stage")
     def check_write_policy(
         self, content: str, context: str, tags: list[str]
     ) -> tuple[bool, str, str | None]:
@@ -497,6 +514,7 @@ class RulesEngine:
 
         return False, "", modified if was_redacted else None
 
+    @observe(tier="boundary")
     def export_rules(self) -> list[dict]:
         """Serialize all active rules to a list of plain dicts (YAML/JSON-safe)."""
         return [
@@ -511,6 +529,7 @@ class RulesEngine:
             for r in self.get_all_rules()
         ]
 
+    @observe(tier="boundary")
     def import_rules(self, rules: list[dict]) -> int:
         """Import rules from a list of dicts. Returns count of successfully imported rules."""
         count = 0

@@ -12,6 +12,7 @@ import logging
 import os
 
 import yadgar.file_queue as _file_queue
+from yadgar.observability.observe import observe
 from yadgar.server.lifecycle import _get_file_queue
 from yadgar.tracing import trace_span
 
@@ -72,6 +73,7 @@ def phase_resolve_branch(ctx: MemorizeContext) -> dict | None:
     return None
 
 
+@observe(tier="stage")
 def _enqueue(ctx: MemorizeContext) -> dict:
     """Enqueue memorize job. Returns queued result or falls through on error (returns None-like)."""
     try:

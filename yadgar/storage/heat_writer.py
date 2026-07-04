@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger("yadgar.storage.heat_writer")
 
 
@@ -29,6 +31,7 @@ class HeatWriter:
     def __init__(self, storage) -> None:
         self._storage = storage
 
+    @observe(tier="stage")
     def apply_heat_intents(self, intents: list[tuple[str, dict | None]]) -> None:
         """Flush all collected heat intents in a single batch_writes call.
 

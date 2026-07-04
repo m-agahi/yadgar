@@ -191,6 +191,193 @@ def test_allowlist_valid_entry_ok():
     assert not errs, errs
 
 
+# ── path-glob exemption (STEP 1 — dir-level exemption by file path) ───────────
+
+
+def test_glob_exempts_single_file(tmp_path):
+    """A single-file glob (yadgar/viz_server.py form) makes its fns EXEMPT_GLOB."""
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    _write(
+        root,
+        "viz_server.py",
+        """
+        def render(items):
+            out = []
+            for x in items:
+                if x:
+                    out.append(x)
+            return out
+        """,
+    )
+    globs = {
+        "yadgar/viz_server.py": {
+            "category": "generated",
+            "rationale": "presentation-layer render helpers; no ops value, exempted per obs-standard",
+        }
+    }
+    findings = check_observe_coverage.scan_file(
+        root / "viz_server.py", allowlist={}, exempt_globs=globs, repo_root=tmp_path
+    )
+    statuses = {x.qualname: x.status for x in findings}
+    assert statuses.get("render") == "EXEMPT_GLOB", statuses
+
+
+def test_glob_exempts_recursive_dir(tmp_path):
+    """A recursive glob (yadgar/seed/**) exempts every fn under the dir tree."""
+    root = tmp_path / "yadgar"
+    (root / "seed").mkdir(parents=True)
+    _write(
+        root / "seed",
+        "_generate.py",
+        """
+        def build(items):
+            total = 0
+            for x in items:
+                total += x
+            return total
+        """,
+    )
+    globs = {
+        "yadgar/seed/**": {
+            "category": "generated",
+            "rationale": "one-shot project bootstrap material generation; not a runtime ops path",
+        }
+    }
+    findings = check_observe_coverage.scan_file(
+        root / "seed" / "_generate.py", allowlist={}, exempt_globs=globs, repo_root=tmp_path
+    )
+    statuses = {x.qualname: x.status for x in findings}
+    assert statuses.get("build") == "EXEMPT_GLOB", statuses
+
+
+def test_glob_matching_zero_files_is_stale(tmp_path):
+    """A glob matching no in-scope function → STALE hard-fail even in warn-mode."""
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    _write(
+        root,
+        "mod.py",
+        """
+        def real_fn():
+            x = 1
+            for i in range(3):
+                x += i
+            return x
+        """,
+    )
+    (tmp_path / ".observe-allowlist.json").write_text(
+        json.dumps(
+            {
+                "_exempt_globs": {
+                    "yadgar/nonexistent/**": {
+                        "category": "generated",
+                        "rationale": "this glob matches no functions and must fail the stale integrity check",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    rc = check_observe_coverage.main(
+        [
+            "--warn",
+            "--root",
+            str(root),
+            "--allowlist-file",
+            str(tmp_path / ".observe-allowlist.json"),
+        ]
+    )
+    assert rc == 1  # zero-match glob is a stale error, always hard
+
+
+def test_glob_bad_category_rejected():
+    errs = check_observe_coverage.validate_glob_entry(
+        "yadgar/x/**", {"category": "nonsense", "rationale": "x" * 45}
+    )
+    assert errs, "invalid glob category must be an error"
+
+
+def test_glob_short_rationale_rejected():
+    errs = check_observe_coverage.validate_glob_entry(
+        "yadgar/x/**", {"category": "generated", "rationale": "too short"}
+    )
+    assert errs, "short glob rationale must be an error"
+
+
+# ── @observe(exempt=...) reason governance (STEP 1 — close P5 hole) ────────────
+
+
+def test_observe_exempt_empty_reason_not_satisfied(tmp_path):
+    """@observe(exempt="") must NOT count as SATISFIED (the P5 governance hole)."""
+    f = _write(
+        tmp_path,
+        "mod.py",
+        """
+        from yadgar.observability.observe import observe
+
+        @observe(exempt="")
+        def thing(items):
+            total = 0
+            for x in items:
+                total += x
+            return total
+        """,
+    )
+    findings = check_observe_coverage.scan_file(f, allowlist={})
+    statuses = {x.qualname: x.status for x in findings}
+    assert statuses.get("thing") != "SATISFIED", statuses
+
+
+def test_observe_exempt_short_reason_hard_fails(tmp_path):
+    """@observe(exempt="<40 chars) → hard-fail integrity error even in warn-mode."""
+    _write(
+        tmp_path,
+        "mod.py",
+        """
+        from yadgar.observability.observe import observe
+
+        @observe(exempt="too short")
+        def thing(items):
+            total = 0
+            for x in items:
+                total += x
+            return total
+        """,
+    )
+    rc = check_observe_coverage.main(
+        [
+            "--warn",
+            "--root",
+            str(tmp_path),
+            "--allowlist-file",
+            str(tmp_path / "nonexistent.json"),
+        ]
+    )
+    assert rc == 1  # short exempt reason is an integrity error, always hard
+
+
+def test_observe_exempt_valid_reason_is_exempt(tmp_path):
+    """@observe(exempt=">=40 char reason") → EXEMPT_OBSERVE, no integrity error."""
+    f = _write(
+        tmp_path,
+        "mod.py",
+        """
+        from yadgar.observability.observe import observe
+
+        @observe(exempt="pure in-memory formatter with no I/O or branching worth a span")
+        def thing(items):
+            total = 0
+            for x in items:
+                total += x
+            return total
+        """,
+    )
+    findings = check_observe_coverage.scan_file(f, allowlist={})
+    statuses = {x.qualname: x.status for x in findings}
+    assert statuses.get("thing") == "EXEMPT_OBSERVE", statuses
+
+
 # ── warn-mode exit code ──────────────────────────────────────────────────────
 
 
