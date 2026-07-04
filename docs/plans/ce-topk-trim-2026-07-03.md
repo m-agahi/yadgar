@@ -6,6 +6,49 @@
 
 ---
 
+## CORRECTION (2026-07-04): CE runs THREE passes, not one
+
+**Source:** real cold recall trace 242cc546 (`docs/diagrams/out/recall-cold-trace-2026-07-04.svg`, task #41).
+
+The plan above was written assuming CE is a single span ("87% of recall"). That is **incomplete**. The trace reveals **three separate serial CE passes** totalling ~20s = 77% of the 26.1s cold recall:
+
+| Pass | Span name | Timestamp in trace | Duration | Arm |
+|---|---|---|---|---|
+| 1 | `cross_encoder` | @3146ms | **~11.3s** | memory arm |
+| 2 | `multi_passage` | @14398ms | **~2.4s** | memory arm (2nd CE pass) |
+| 3 | `crossfuse.score_candidates_ce` | @19505ms | **~6.4s** | WIKI arm |
+
+### What this means for the plan
+
+**1. `CROSS_ENCODER_TOP_K` almost certainly gates ONLY pass 1 (~11.3s).**
+Passes 2 (`multi_passage`) and 3 (`crossfuse.score_candidates_ce`) likely have distinct knobs or none at all. The K-sweep's latency win is **bounded to pass 1**, not "~40% of all CE." The original framing ("CE span = one span = 87%") must be re-read as: pass 1 alone = ~43% of 26.1s cold recall, not 87%. Actual savings from a K 10→6 trim: ~40% of 11.3s ≈ **4.5s**, not ~40% of 20s.
+
+**2. The K-sweep protocol (§3/§5) must measure ALL THREE CE spans.**
+Measuring only `retrieval.rerank.cross_encoder` (pass 1) misses passes 2 and 3. The sweep must also capture `multi_passage` and `crossfuse.score_candidates_ce` spans to understand total CE budget motion and identify what (if any) knobs gate passes 2 and 3.
+
+**3. Open questions now blocking the K-sweep (add to §3 pre-requisites):**
+- What gates pass 2 (`multi_passage`)? Its own top-k? Implicit from pass 1 output size? Fixed pool?
+- What feeds pass 3 (`crossfuse.score_candidates_ce`)? Is it wiki-arm-only? Does it share any config with pass 1?
+- Are passes 2 and 3 parallelisable, or do they have data dependencies on each other / on pass 1?
+
+**4. Bigger lever is task #41 (parallelism), not K-trim.**
+The three passes are serial. Parallelizing them could cut **~9s independent of any K-trim** (passes 2+3 concurrently with or after pass 1, if data dependencies allow). Task #85 (backend move) is the natural place to batch/parallelize CE passes.
+
+**5. Status of shipped work (PR #161, v5.107).**
+The DECOUPLE + configurable knobs (`CROSS_ENCODER_TOP_K` env var, `RERANKER_TOP_K` knob, `CE_TAIL_FILL_ENABLED`, `max_results`) are **already shipped** in PR #161. Only the K-sweep (choosing the default-K knee) remains — and it is now **gated on understanding the 3-pass structure** before results can be correctly interpreted against the right budget.
+
+### Corrected expected win
+
+| Scope | Original claim | Corrected |
+|---|---|---|
+| CE total budget | ~20s (3 passes) | ~20s — unchanged |
+| Pass 1 budget (`CROSS_ENCODER_TOP_K` gates) | assumed all CE | ~11.3s |
+| K 10→6 trim saves | ~40% of all CE ≈ 8s | ~40% of 11.3s ≈ **4.5s** |
+| Passes 2+3 savings from K-trim | assumed included | **unknown / likely 0** |
+| Parallelism opportunity (task #41) | not identified | **~9s** (passes 2+3 serial today) |
+
+---
+
 ## 1. Context
 
 - CE is the wall. Real trace: `retrieval.rerank.cross_encoder` span = 8.8s = **87% of recall** latency.
@@ -38,6 +81,8 @@
 ---
 
 ## 3. Design — sweep to find the knee
+
+> **See CORRECTION above.** Before running the sweep, identify what gates passes 2 (`multi_passage`) and 3 (`crossfuse.score_candidates_ce`). `CROSS_ENCODER_TOP_K` gates only pass 1 (~11.3s). The sweep results must report ALL THREE CE spans (see §5).
 
 Sweep K, measure BOTH axes at each point, find the **knee** = minimum K with no quality regression.
 
@@ -86,8 +131,14 @@ Evidence:
 
 ## 5. LATENCY measurement
 
+> **See CORRECTION above.** Cold recall trace 242cc546 identified THREE serial CE spans. Measure ALL of them per K, not just pass 1.
+
 - **Harness:** MCP-tool `recall` (routes through prod unified recall — the same path LongMemEval `--unified` uses). Not the legacy `retriever.recall()` (recurring benchmark-harness bug — must call `init_engines()` first per the LongMemEval memory).
-- **Span:** Tempo `retrieval.rerank.cross_encoder` (instrumented at `reranking.py:135` `@trace_span`, emitted via `_observe_recall_stage("cross_encoder", …)` :142 → Prometheus `yadgar_recall_stage_ms{stage="cross_encoder"}`). p50 + p95.
+- **Spans to capture (all three):**
+  - Pass 1: `retrieval.rerank.cross_encoder` → `yadgar_recall_stage_ms{stage="cross_encoder"}`. p50 + p95.
+  - Pass 2: `multi_passage` span (memory arm, 2nd CE pass). p50 + p95.
+  - Pass 3: `crossfuse.score_candidates_ce` (wiki arm). p50 + p95.
+  - **Total CE budget** = pass 1 + pass 2 + pass 3. Report this alongside the per-pass split.
 - **Conditions:** backend `--cpus 2` (unchanged), quiet host (no concurrent recalls, no consolidation cycle running — pause the nightly cycle). Warm the model first (discard the cold-load first call).
 - **Query-type control:** run a fixed query set spanning open-domain (2 variants → 2K pairs) and non-open-domain (K pairs). Report CE-span per query-type bucket — a K-trim helps the open-domain bucket ~2× more in absolute ms. Do NOT average across a shifting query mix.
 - **N per K:** ≥30 recalls per K per bucket for a stable p50/p95.
@@ -98,7 +149,9 @@ Evidence:
 
 **Does trimming actually help, or is this a no-op / quality-loss?**
 
-- **Latency mechanism is sound.** CE cost is genuinely ∝ pairs ∝ K (§2, batched single forward pass, CPU, no fixed-batch flattening). A K 10→6 trim really does cut ~40% of CE compute. This part is not a mirage.
+> **See CORRECTION above.** The "~40% CE cut" claim applies only to pass 1 (~11.3s of ~20s total CE). Passes 2+3 (~8.8s combined) are currently unaffected by `CROSS_ENCODER_TOP_K`. The corrected K 10→6 savings estimate is **~4.5s** (not ~8s).
+
+- **Latency mechanism is sound — for pass 1.** CE cost is genuinely ∝ pairs ∝ K (§2, batched single forward pass, CPU, no fixed-batch flattening). A K 10→6 trim really does cut ~40% of pass 1 CE compute. This part is not a mirage. But it's ~4.5s, not 8s — passes 2+3 are not gated by this knob.
 - **BUT the win is gated by the dual-knob trap (§4), and the gate-metric choice decides everything:**
   - **If the gate is recall@5, no backfill (confirmed):** slack plausibly exists down to K≈5–6, because fusion's top-6 usually contains the gold passage for @5 purposes. Predicted knee **K≈6–7**, ~30–40% CE-span cut. **Lever viable.**
   - **If the gate is recall@10, no backfill (confirmed):** the knee is **already at 10** — any trim under-fills positions 7–10 → mechanical quality loss. **Lever is a no-op** for a @10 gate without a code change out of this PR's scope. This is the brutal-honesty branch: if the team cares about recall@10, do not ship a config trim; ship the decouple (below) instead.
@@ -113,8 +166,10 @@ Evidence:
 **Rollback:** revert the one config default. `CROSS_ENCODER_TOP_K` is YAML-driven (`config_yaml.py` FIELD_META, section `reranking`) and the slice is **core-side** (`_reranking_cross_encoder.py:119`), before any RPC — so the backend never sees the value. Cheap, instant, no image rebuild. (Note: it is NOT in `config_registry.py` — no `YADGAR_CROSS_ENCODER_TOP_K` env var; change it via config.yaml / the Settings default. See §7.)
 
 **Go/no-go:**
-- **GO** if gate = recall@5 and the Q=500 sweep shows a K<10 within the −0.01 band → ship that K.
+- **Note:** Decouple + env-var knobs already shipped (PR #161, v5.107). Only the K-sweep (choosing the actual knee) remains.
+- **GO** if gate = recall@5 and the Q=500 sweep shows a K<10 within the −0.01 band → ship that K. Expected max savings now ~4.5s from pass 1; task #41 (serial→parallel passes) is the path to recovering the remaining ~9s.
 - **NO-GO** if gate = recall@10 (config trim is mechanically lossy → ship the decouple follow-up instead), OR if every K<10 regresses recall@5 (no slack).
+- **BLOCKED** pending: understanding what gates passes 2 (`multi_passage`) + 3 (`crossfuse.score_candidates_ce`) before the sweep is run — otherwise savings figures cannot be correctly attributed.
 
 ---
 
