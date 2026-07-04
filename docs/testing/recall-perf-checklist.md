@@ -225,3 +225,29 @@ still **CE** (~56–90% of cold): next levers unchanged — #13 onnx-int8 CE, #2
 
 > Diagram re-render step: the `docs/diagrams` YAML generator (see repo diagram workflow) would
 > re-render the recall waterfall/arc specs with these numbers — noted, not run this pass.
+
+## CE onnx-int8 A/B — 2026-07-04 (NO-GO)
+
+**Backend:** GTE-ModernBERT CE, `--cpus 2` backend, 20 calls per variant, fresh unique
+queries per call (CE result cache busted), method: direct `POST /rerank mode=ce` with
+`Authorization: Bearer <token>`, histogram `yadgar_embed_rerank_duration_seconds mode=ce`
+delta per call. Data in `/tmp/ce_speed_ab.json`.
+
+| variant | p50 | quality | verdict |
+|---|---|---|---|
+| torch | **3,917ms** | recall@10 0.9667, nDCG 0.9544, MRR 0.95 | baseline |
+| onnx-int8 | **7,899ms** | **exact parity** (controlled 30q A/B, byte-identical) | **NO-GO** |
+| ratio | **0.50× (2.0× slower)** | — | int8 hypothesis FAILED |
+
+**Quality note:** earlier uncontrolled run showed "onnx 1.0 recall" — this was noise
+(per-question recall swings 0.0↔1.0 in a single uncontrolled run). Controlled A/B shows
+exact parity.
+
+**Thread-thrash caveat:** `--cpus 2` is CFS quota, not affinity — inside container
+`os.cpu_count()=24`, ORT spawns 24 `intra_op` threads thrashing the 2-core budget. OMP
+env vars (`OMP_NUM_THREADS=2`, `OMP_WAIT_POLICY=PASSIVE`) do NOT cap ORT's intra-op
+pool (follow-up test: 7791ms uncapped → 7791ms with OMP vars, wall time unchanged;
+container CPU 157%→103%). Fix requires code-level `SessionOptions.intra_op_num_threads`.
+Unconstrained datapoint (0.83×) still slower → no latency win expected even with fix.
+
+**Decision:** `GTE_RERANKER_BACKEND` stays `torch`. See ADR-0043.
