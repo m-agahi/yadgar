@@ -51,6 +51,7 @@ from pathlib import Path
 import httpx
 
 from yadgar._surreal_runner import _resolve_db_creds
+from yadgar.observability.observe import observe
 from yadgar.ops import ServiceController, detect_service_mode
 from yadgar.vacuum.phases import (
     _atomic_swap,
@@ -97,6 +98,7 @@ _STRIPPED_TABLES = frozenset({"action_log"})
 # source of truth; re-exported via __all__ as yadgar.vacuum._resolve_db_creds.
 
 
+@observe(tier="stage")
 def _build_http_client(backend_url: str) -> httpx.Client:
     """Build an httpx.Client with SurrealDB root credentials.
 
@@ -122,6 +124,7 @@ def _build_http_client(backend_url: str) -> httpx.Client:
     )
 
 
+@observe(tier="stage")
 def _wait_for_health(
     url: str,
     timeout_s: float = 120.0,
@@ -140,6 +143,7 @@ def _wait_for_health(
     return False
 
 
+@observe(tier="stage")
 def _wait_for_yadgar_health(
     url: str,
     timeout_s: float = 180.0,
@@ -158,6 +162,7 @@ def _wait_for_yadgar_health(
     return False
 
 
+@observe(tier="stage")
 def _log_consolidation_row(row: dict) -> None:
     """Insert a consolidation_log row via the SurrealDB SQL API.
 
@@ -197,6 +202,7 @@ def _log_consolidation_row(row: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _free_port() -> int:
     """Return a free TCP port on localhost.
 
@@ -210,6 +216,7 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+@observe(tier="stage")
 def _sql_result(resp, label: str):  # type: ignore[no-untyped-def]
     """Validate a SurrealDB /sql HTTP response and return the last block's result.
 
@@ -227,6 +234,7 @@ def _sql_result(resp, label: str):  # type: ignore[no-untyped-def]
     return block.get("result", {})
 
 
+@observe(tier="stage")
 def _capture_table_counts(backend_url: str) -> dict[str, int]:
     """Return EXACT per-table row counts for the SURVIVING tables.
 
@@ -269,6 +277,7 @@ def _capture_table_counts(backend_url: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _redefine_users_post_import(backend_url: str) -> None:
     """Re-create yadgar-rw and yadgar-ro on the freshly-imported DB.
 
@@ -344,6 +353,7 @@ def _redefine_users_post_import(backend_url: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _bootstrap_namespace(backend_url: str) -> None:
     """Create the yadgar/main namespace+database on a fresh side DB.
 
@@ -365,6 +375,7 @@ def _bootstrap_namespace(backend_url: str) -> None:
             )
 
 
+@observe(tier="stage")
 def _stop_side_backend_clean(proc, side_url: str) -> None:
     """Stop the throwaway side backend GRACEFULLY and assert it fully exited.
 
@@ -404,6 +415,7 @@ def _stop_side_backend_clean(proc, side_url: str) -> None:
         time.sleep(0.2)
 
 
+@observe(tier="stage")
 def _build_and_verify_side_db(
     backend_url: str,
     filtered_path: Path,
@@ -526,6 +538,7 @@ def _build_and_verify_side_db(
             teardown_surreal_proc(proc, wait_timeout=5)
 
 
+@observe(tier="stage")
 def _restore_db(
     old_path: Path,
     db_path: Path,
@@ -560,6 +573,7 @@ def _restore_db(
         )
 
 
+@observe(tier="stage")
 def _side_build_swap_and_start(
     backend_url: str,
     filtered_path: Path,
@@ -651,6 +665,7 @@ def _side_build_swap_and_start(
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _vacuum_finalize(
     backend_url: str,
     yadgar_home: Path,
@@ -750,6 +765,7 @@ def _vacuum_finalize(
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _check_backend_reachable(backend_url: str, http_timeout: float) -> bool:
     """Return True iff GET <backend_url>/health is 200; log + return False otherwise."""
     try:
@@ -769,6 +785,7 @@ def _check_backend_reachable(backend_url: str, http_timeout: float) -> bool:
     return True
 
 
+@observe(tier="stage")
 def _has_free_space(yadgar_home: Path, before_bytes: int) -> bool:
     """Return True iff there is headroom for an atomic side-path vacuum.
 
@@ -834,6 +851,7 @@ def _vacuum_report_and_log(
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
     """Implement the new vacuum flow. Returns exit code (0 = success).
 
@@ -890,6 +908,7 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
         sensitive_lock.release()
 
 
+@observe(tier="stage")
 def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     args, settings, backend_url, db_path, yadgar_home, started_at, started_ts
 ) -> int:

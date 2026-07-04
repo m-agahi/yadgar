@@ -12,6 +12,8 @@ Profile dicts carry two representations for backward compatibility:
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
+
 # ---------------------------------------------------------------------------
 # Canonical profile definitions
 # ---------------------------------------------------------------------------
@@ -101,6 +103,7 @@ PROFILES: dict[str, dict] = {
 _VALID_PROFILES = frozenset(PROFILES.keys())
 
 
+@observe(tier="hot", name="retrieval.get_profile")
 def get_profile(name: str) -> dict:
     """Return profile dict for *name*, raising ValueError on unknown profile."""
     try:

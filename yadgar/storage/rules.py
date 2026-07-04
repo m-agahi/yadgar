@@ -9,6 +9,7 @@ _RulesMixin provides:
 
 import logging
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ class _RulesMixin:
             )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def update_rule(self, rule_id: int, updates: dict):
         allowed = {
             "rule_type",
@@ -113,6 +115,7 @@ class _RulesMixin:
 
     # ------------------------------------------------------------------ Memory Archives
 
+    @observe(tier="stage")
     def insert_archive(self, archive: dict) -> int:
         now = self._now_iso()
         aid = self._next_id("memory_archive")
@@ -145,6 +148,7 @@ class _RulesMixin:
 
     # ------------------------------------------------------------------ Memory Transitions
 
+    @observe(tier="stage")
     def insert_transition(self, transition: dict) -> int:
         existing = self.get_transition(transition["from_memory_id"], transition["to_memory_id"])
         if existing is not None:
@@ -202,6 +206,7 @@ class _RulesMixin:
             {"id": memory_id, "x": sr_x, "y": sr_y},
         )
 
+    @observe(tier="stage")
     def get_memories_with_sr_coords(self) -> list[dict]:
         rows = self._q("SELECT id, sr_x, sr_y FROM memory WHERE sr_x != 0.0 OR sr_y != 0.0")
         return [

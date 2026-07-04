@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import yadgar.paths as _paths
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ _REDACTED = "<redacted>"
 # clear_config_caches() for both at once (O1 / advisor item 3).
 
 
+@observe(tier="hot")
 def _stringify_yaml_value(val: object) -> str:
     """Render a ruamel-typed yaml value to the canonical lowercase-bool string.
 
@@ -69,6 +71,7 @@ def _stringify_yaml_value(val: object) -> str:
     return str(val)
 
 
+@observe(tier="stage")
 @lru_cache(maxsize=1)
 def _yaml_layer() -> dict[str, str]:
     """Return {YADGAR_<UPPER>: stringified-yaml-value} for keys present in config.yaml.
@@ -114,6 +117,7 @@ class ConfigEntry:
     kind: str  # "int" | "float" | "bool" | "string"
     redact: bool = False
 
+    @observe(tier="hot")
     def source(self) -> str:
         """Return source layer: 'env' > 'yaml' > 'default' (pydantic precedence)."""
         if self.name in os.environ:
@@ -122,6 +126,7 @@ class ConfigEntry:
             return "yaml"
         return "default"
 
+    @observe(tier="hot")
     def _raw_value(self) -> str:
         """Return resolved raw string value (env > yaml > default), without redaction."""
         if self.name in os.environ:
@@ -134,6 +139,7 @@ class ConfigEntry:
     def _should_redact(self) -> bool:
         return self.redact or bool(_REDACT_RE.search(self.name))
 
+    @observe(tier="hot")
     def value(self) -> str:
         """Return value string, redacted if required.
 
@@ -529,6 +535,7 @@ def build_config_table() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _set_config_gauges() -> None:
     """Set yadgar_config_value{name} for every int/float/bool entry.
 
@@ -562,6 +569,7 @@ def _set_config_gauges() -> None:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 def emit_startup_config_log() -> None:
     """Emit a single INFO-level structured log line with the full config table.
 
@@ -578,6 +586,7 @@ def emit_startup_config_log() -> None:
     )
 
 
+@observe(tier="hot")
 def warn_comet_dormant(settings) -> None:
     """BC-EN2b: emit exactly ONE startup warning when COMET enrichment is disabled.
 

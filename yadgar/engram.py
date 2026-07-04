@@ -11,6 +11,7 @@ import time
 from datetime import UTC, datetime
 
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class EngramAllocator:
     # last activation, then goes cold and the next memory starts a new cluster.
     _WARM_THRESHOLD = 0.05
 
+    @observe(tier="boundary", name="engram.allocate")
     def allocate(self, memory_id: int) -> dict:
         """Allocate a memory to a slot.
 
@@ -56,6 +58,7 @@ class EngramAllocator:
             except Exception:
                 pass
 
+    @observe(tier="stage", name="engram.allocate_inner")
     def _allocate_inner(self, memory_id: int) -> dict:
         """Inner implementation of allocate()."""
         all_slots = self._storage.get_all_engram_slots()
@@ -112,6 +115,7 @@ class EngramAllocator:
             return 0.0
         return self._compute_decayed_excitability(slot["excitability"], slot.get("last_activated"))
 
+    @observe(tier="stage", name="engram.boost_excitability")
     def boost_excitability(self, slot_index: int) -> float:
         """Boost a slot's excitability by EXCITABILITY_BOOST, capped at 1.0."""
         current = self.get_excitability(slot_index)
@@ -120,6 +124,7 @@ class EngramAllocator:
         self._storage.update_engram_slot(slot_index, new_exc, now)
         return new_exc
 
+    @observe(tier="stage", name="engram.get_temporally_linked")
     def get_temporally_linked(self, memory_id: int) -> list[int]:
         """Return all other memory IDs in the same slot as this memory."""
         mem = self._storage.get_memory(memory_id)
@@ -128,6 +133,7 @@ class EngramAllocator:
         memories = self._storage.get_memories_in_slot(mem["slot_index"])
         return [m["id"] for m in memories if m["id"] != memory_id]
 
+    @observe(tier="stage", name="engram.apply_lateral_inhibition")
     def apply_lateral_inhibition(self, activated_slot: int) -> None:
         """Reduce excitability of slots within ±2 of the activated slot."""
         inhibition = self._boost * 0.5
@@ -142,6 +148,7 @@ class EngramAllocator:
             now = self._storage._now_iso()
             self._storage.update_engram_slot(neighbor, new_exc, now)
 
+    @observe(tier="stage", name="engram.rebalance_if_needed")
     def rebalance_if_needed(self, threshold_pct: float = 0.05) -> int:
         """Redistribute memories from over-occupied slots to least-occupied ones.
 
@@ -173,6 +180,7 @@ class EngramAllocator:
                 moved += 1
         return moved
 
+    @observe(tier="stage", name="engram.get_slot_statistics")
     def get_slot_statistics(self) -> dict:
         """Return slot occupancy and excitability statistics."""
         occupancy = self._storage.get_slot_occupancy()

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 
+from yadgar.observability.observe import observe
 from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.server.lifecycle import _get_storage
@@ -35,6 +36,7 @@ _MISSING_DIRECTORY_RESPONSE: dict = {
 }
 
 
+@observe(tier="hot", name="tools.blocks._require_directory_for_project_scope")
 def _require_directory_for_project_scope(scope: str, directory: str | None) -> dict | None:
     """Return an error dict if scope='project' and directory is absent/empty, else None."""
     if scope == "project" and not (directory and directory.strip()):

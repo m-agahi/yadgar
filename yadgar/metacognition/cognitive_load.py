@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime
 
+from yadgar.observability.observe import observe
+
 
 def _extract_entities(query: str) -> list[str]:
     """Re-use retrieval entity extraction without circular import."""
@@ -10,6 +12,7 @@ def _extract_entities(query: str) -> list[str]:
     return _extract_query_entities(query)
 
 
+@observe(tier="stage")
 def _precompute_memory_features(
     memories: list[dict],
 ) -> tuple[list[set[str]], list[datetime | None]]:
@@ -39,6 +42,7 @@ def _precompute_memory_features(
     return entity_sets, timestamps
 
 
+@observe(tier="stage")
 def _memories_should_cluster(
     i: int,
     j: int,
@@ -71,6 +75,7 @@ def _memories_should_cluster(
 class _CognitiveLoadMixin:
     """Cognitive load management via Cowan's 4±1 chunk limit (Cognitive Workspace)."""
 
+    @observe(tier="boundary")
     def manage_context(self, memories: list[dict], max_chunks: int | None = None) -> list[dict]:
         """Apply Cowan's 4±1 cognitive load optimization.
 
@@ -140,6 +145,7 @@ class _CognitiveLoadMixin:
 
         return result
 
+    @observe(tier="stage")
     def chunk_memories(self, memories: list[dict]) -> list[list[dict]]:
         """Group related memories into coherent chunks.
 
@@ -171,6 +177,7 @@ class _CognitiveLoadMixin:
 
         return chunks
 
+    @observe(tier="stage")
     def summarize_overflow(self, excess_memories: list[dict], target_count: int = 1) -> list[dict]:
         """Compress multiple low-priority memories into summary chunks.
 
@@ -236,6 +243,7 @@ class _CognitiveLoadMixin:
 
         return result
 
+    @observe(tier="stage")
     def _apply_primacy_recency(
         self, scored_chunks: list[tuple[int, list[dict], float]]
     ) -> list[tuple[int, list[dict], float]]:
@@ -260,6 +268,7 @@ class _CognitiveLoadMixin:
         return [first] + middle + [last]
 
     @staticmethod
+    @observe(tier="stage")
     def _position_reason(position: int, total: int) -> str:
         """Return a human-readable reason for a chunk's position."""
         if position == 0:

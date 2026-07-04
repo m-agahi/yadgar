@@ -2,6 +2,7 @@
 
 import logging
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -117,6 +118,7 @@ class _VectorMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def update_memory_embedding(self, memory_id: int, embedding: bytes, embedding_model: str):
         floats = self._bytes_to_floats(embedding)
         self._q(
@@ -132,6 +134,7 @@ class _VectorMixin:
             except Exception:
                 pass
 
+    @observe(tier="stage")
     def recreate_vector_table(self, new_dim: int):
         """Drop and recreate the vector index with new dimensions; clear all embeddings.
 
@@ -173,6 +176,7 @@ class _VectorMixin:
             raise
         self._embedding_dim = new_dim
 
+    @observe(tier="stage")
     def probe_vector_indexes(self) -> bool:
         """Quick KNN probe — returns False if either MTREE index is corrupted."""
         count = self._q("SELECT count() AS c FROM memory GROUP ALL")
@@ -192,6 +196,7 @@ class _VectorMixin:
         except Exception:
             return False
 
+    @observe(tier="stage")
     def rebuild_vector_indexes(self) -> bool:
         """Rebuild both MTREE indexes from stored embeddings. Returns True on success."""
         try:

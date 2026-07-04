@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 from yadgar.config import resolve_knob
+from yadgar.observability.observe import observe
 
 
 def _rpc_span(name: str, attributes: dict | None = None):
@@ -218,6 +219,7 @@ class _CircuitBreaker:
     # Public state queries                                                  #
     # ------------------------------------------------------------------ #
 
+    @observe(tier="hot")
     def is_open(self, _now: float | None = None) -> bool:
         """Return True if in OPEN state (not yet past cooldown)."""
         with self._lock:
@@ -245,6 +247,7 @@ class _CircuitBreaker:
     def is_closed(self) -> bool:
         return self._state == _STATE_CLOSED
 
+    @observe(tier="hot")
     def cooldown_remaining(self, _now: float | None = None) -> float:
         if self._state != _STATE_OPEN:
             return 0.0
@@ -255,6 +258,7 @@ class _CircuitBreaker:
     # State mutators                                                        #
     # ------------------------------------------------------------------ #
 
+    @observe(tier="hot")
     def record_success(self) -> None:
         with self._lock:
             if self._state in (_STATE_HALF_OPEN, _STATE_OPEN):
@@ -270,6 +274,7 @@ class _CircuitBreaker:
             self.consecutive_probe_failures = 0
             self._open_duration_sec = self._base_open_duration_sec
 
+    @observe(tier="hot")
     def record_failure(self, _now: float | None = None) -> None:
         with self._lock:
             self.consecutive_failures += 1
@@ -288,6 +293,7 @@ class _CircuitBreaker:
             ):
                 self._open(reason=f"{self.consecutive_failures} consecutive failures", _now=_now)
 
+    @observe(tier="hot")
     def _open(self, reason: str, _now: float | None = None) -> None:
         now = _now if _now is not None else self._time_fn()
         self._state = _STATE_OPEN
@@ -353,6 +359,7 @@ class LocalMLClient:
         self._cross_encoder = None  # Lazy-loaded sentence-transformers CrossEncoder (fallback)
         self._last_used: float = 0.0  # monotonic timestamp of last call
 
+    @observe(tier="stage")
     def _load_gte_reranker(self, settings):
         """Construct the GTE-Reranker CrossEncoder for the configured backend.
 
@@ -406,6 +413,7 @@ class LocalMLClient:
         )
         return model
 
+    @observe(tier="hot")
     def _try_gte_reranker(self, query: str, texts: list[str]) -> list[float] | None:
         """Attempt GTE-Reranker scoring.  Returns scores on success, None to fall through.
 
@@ -445,6 +453,7 @@ class LocalMLClient:
 
         return None
 
+    @observe(tier="hot")
     def _try_flashrank(self, query: str, texts: list[str]) -> list[float] | None:
         """Attempt FlashRank (ONNX) scoring.  Returns scores on success, None to fall through."""
         try:
@@ -470,6 +479,7 @@ class LocalMLClient:
             )
         return None
 
+    @observe(tier="hot")
     def _try_st_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
         """sentence-transformers CrossEncoder fallback.  Always returns a list (zeros on error)."""
         settings = self._settings
@@ -521,6 +531,7 @@ class LocalMLClient:
             record_exception("ml_client.score_pair", e)
             return [0.0] * len(texts)
 
+    @observe(tier="stage")
     def score_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
         """Return raw cross-encoder scores for (query, text) pairs.
 
@@ -543,6 +554,7 @@ class LocalMLClient:
 
         return self._try_st_cross_encoder(query, texts)
 
+    @observe(tier="stage")
     def score_nli(self, query: str, texts: list[str]) -> list[float]:
         """Return NLI entailment probability for each (text, hypothesis) pair.
 
@@ -594,11 +606,13 @@ class LocalMLClient:
             self._nli_model = False
             return [0.0] * len(texts)
 
+    @observe(tier="hot")
     def score_pair(self, query: str, text: str) -> float:
         """Score a single query-document pair using the active CE model."""
         scores = self.score_cross_encoder(query, [text])
         return scores[0] if scores else 0.0
 
+    @observe(tier="stage")
     def unload_if_idle(self, idle_seconds: float | None = None) -> None:
         """Unload all model handles if unused for the configured threshold. Frees ~500 MB RSS.
 
@@ -721,6 +735,7 @@ class RemoteMLClient:
         """Clock accessor — overridden by tests via self._fake_now."""
         return getattr(self, "_fake_now", time.monotonic())
 
+    @observe(tier="stage")
     def _rerank_rpc(self, mode: str, query: str, texts: list[str]) -> list | None:
         """Shared HTTP + circuit-breaker logic for all /rerank modes.
 

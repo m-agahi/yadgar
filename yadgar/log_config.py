@@ -62,6 +62,7 @@ from typing import Literal
 
 import yadgar.paths as _paths
 from yadgar.config import resolve_knob
+from yadgar.observability.observe import observe
 
 # I14 — max chars for traceback in structured JSON (constant for test import)
 TRACEBACK_MAX_CHARS: int = 2000
@@ -118,6 +119,7 @@ _I14_SKIP_FIELDS = frozenset(
 _I14_EXPLICIT_FIELDS = frozenset({"ts", "level", "event", "traceback", "error"})
 
 
+@observe(tier="hot")
 def _is_sensitive(name: str) -> bool:
     """Return True if field name matches either denylist tier (case-insensitive).
 
@@ -146,6 +148,7 @@ class ContentRedactor(logging.Filter):
     Does NOT remove attributes that were set by stdlib (levelname, msg, etc.).
     """
 
+    @observe(tier="hot")
     def filter(self, record: logging.LogRecord) -> bool:
         sensitive_keys = [
             k
@@ -185,6 +188,9 @@ class JSONLogFormatter(logging.Formatter):
             "event": record.getMessage(),
         }
 
+    @observe(
+        exempt="log-emission path — a span here re-enters format() via LogSpanProcessor (re-entry hazard)"
+    )
     def _append_extras(self, payload: dict, record: logging.LogRecord) -> None:
         for key, value in record.__dict__.items():
             if key.startswith("_"):
@@ -202,6 +208,9 @@ class JSONLogFormatter(logging.Formatter):
                 value = _redact_dict(value)
             payload[key] = value
 
+    @observe(
+        exempt="log-emission path — a span here re-enters format() via LogSpanProcessor (re-entry hazard)"
+    )
     def _append_traceback(self, payload: dict, record: logging.LogRecord) -> None:
         if not record.exc_info:
             return
@@ -213,6 +222,9 @@ class JSONLogFormatter(logging.Formatter):
         if exc_type is not None:
             payload["error"] = exc_type.__name__
 
+    @observe(
+        exempt="reads the ambient span — @observe would open a span it then injects (feedback loop)"
+    )
     def _append_trace_context(self, payload: dict) -> None:
         """Inject trace_id + span_id from active OTel span context (if any).
 
@@ -231,6 +243,9 @@ class JSONLogFormatter(logging.Formatter):
         except Exception:
             pass  # tracing not available / not yet initialized — skip silently
 
+    @observe(
+        exempt="log-emission path — @observe span re-enters format() via LogSpanProcessor and pollutes injected trace_id"
+    )
     def format(self, record: logging.LogRecord) -> str:
         payload = self._build_base(record)
         self._append_extras(payload, record)
@@ -278,6 +293,9 @@ class JsonFormatter(logging.Formatter):
         }
     )
 
+    @observe(
+        exempt="log-emission path — a span here re-enters format() via LogSpanProcessor (re-entry hazard)"
+    )
     def format(self, record: logging.LogRecord) -> str:
         # Base fields
         payload: dict = {
@@ -320,6 +338,7 @@ class JsonFormatter(logging.Formatter):
 _request_logger = logging.getLogger("yadgar.requests")
 
 
+@observe(tier="hot")
 def _outcome_from_status(status: str) -> str:
     """Map HTTP status string to I14 outcome value.
 
@@ -341,6 +360,7 @@ def _outcome_from_status(status: str) -> str:
     return "error"
 
 
+@observe(tier="hot")
 def _resolve_route_label(scope: dict) -> str:
     """Route-template label for Prometheus; FastAPI: scope["route"].path, Starlette: router scan."""
     route_obj = scope.get("route")
@@ -357,6 +377,7 @@ def _resolve_route_label(scope: dict) -> str:
     return "<unmatched>"
 
 
+@observe(tier="hot")
 def _increment_request_metric(scope: dict) -> None:
     """Increment yadgar_requests_total{route}. No-ops if metrics unavailable."""
     try:
@@ -439,6 +460,7 @@ class RequestLoggingMiddleware:
             _increment_request_metric(scope)
 
 
+@observe(tier="stage")
 def _configure_yadgar_logger(numeric_level: int, *, propagate: bool) -> None:
     """Set level and propagate flag on the yadgar logger; clear its own handlers.
 
@@ -450,6 +472,7 @@ def _configure_yadgar_logger(numeric_level: int, *, propagate: bool) -> None:
     logger.propagate = propagate
 
 
+@observe(tier="stage")
 def _configure_request_logger(formatter: logging.Formatter) -> None:
     """Install a dedicated always-INFO handler on yadgar.requests (v5.4.8).
 
@@ -494,6 +517,7 @@ _LOG_SIZE_GAUGE_INTERVAL: float = 1.0
 _FALLBACK_LOG_DIR: str = "/tmp/yadgar-logs"
 
 
+@observe(tier="stage")
 def _resolve_log_dir() -> str:
     """Resolve the log directory, creating it if needed.
 
@@ -522,6 +546,7 @@ def _resolve_log_dir() -> str:
         return _FALLBACK_LOG_DIR
 
 
+@observe(tier="stage")
 def _resolve_log_file_path(process: Literal["core", "backend"] = "core") -> str:
     """Resolve the log file path for the given process.
 
@@ -547,6 +572,7 @@ def _resolve_log_file_path(process: Literal["core", "backend"] = "core") -> str:
         return os.path.join(_resolve_log_dir(), _DEFAULT_CORE_LOG_FILENAME)
 
 
+@observe(tier="hot")
 def _resolve_log_env_int(key: str, backend_key: str, default: int, process: str) -> int:
     """Option A env resolution for int settings."""
     if process == "backend":
@@ -604,6 +630,7 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
         self._size_gauge = None
         self._metrics_module = metrics_module  # None → resolved lazily on first use
 
+    @observe(tier="hot")
     def _ensure_metrics(self) -> None:
         if self._rotation_counter is not None:
             return
@@ -618,6 +645,7 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
         except Exception:
             pass
 
+    @observe(tier="stage")
     def doRollover(self) -> None:  # noqa: N802 (stdlib name)
         super().doRollover()
         self._ensure_metrics()
@@ -627,6 +655,7 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
             except Exception:
                 pass
 
+    @observe(tier="hot")
     def emit(self, record: logging.LogRecord) -> None:
         super().emit(record)
         now = time.monotonic()
@@ -676,6 +705,7 @@ class RateLimitFilter(logging.Filter):
         self._dropped_counter = None  # lazy
         self._metrics_module = metrics_module  # None → resolved lazily on first use
 
+    @observe(tier="hot")
     def _ensure_metrics(self) -> None:
         if self._dropped_counter is not None:
             return
@@ -688,6 +718,7 @@ class RateLimitFilter(logging.Filter):
         except Exception:
             pass
 
+    @observe(tier="hot")
     def filter(self, record: logging.LogRecord) -> bool:
         # Short-circuit for summary records to prevent recursion
         if getattr(record, "_rate_limit_summary", False):
@@ -730,6 +761,7 @@ class RateLimitFilter(logging.Filter):
 
             return False
 
+    @observe(tier="hot")
     def _emit_summary(self, logger_name: str, count: int) -> None:
         logging.getLogger(logger_name)
         summary = logging.LogRecord(
@@ -759,6 +791,7 @@ class RateLimitFilter(logging.Filter):
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _resolve_metrics_module(process: str):
     """Return the metrics module for the given process kind.
 
@@ -778,6 +811,7 @@ def _resolve_metrics_module(process: str):
         return None
 
 
+@observe(tier="stage")
 def _install_file_handler(
     formatter: logging.Formatter,
     process: Literal["core", "backend"],
@@ -842,6 +876,7 @@ def _install_file_handler(
     return handler
 
 
+@observe(tier="stage")
 def _install_rate_limiter(process: Literal["core", "backend"]) -> None:
     """Attach a shared RateLimitFilter to high-volume loggers when env-gated ON.
 
@@ -878,6 +913,7 @@ def _install_rate_limiter(process: Literal["core", "backend"]) -> None:
             lg.addFilter(filt)
 
 
+@observe(tier="stage")
 def _suppress_noisy_framework_loggers() -> None:
     """Raise threshold on chatty framework namespaces to WARNING.
 
@@ -898,6 +934,7 @@ def _suppress_noisy_framework_loggers() -> None:
             ns_logger.setLevel(logging.WARNING)
 
 
+@observe(tier="boundary")
 def configure_logging(
     log_format: str | None = None,
     level: str = "WARNING",

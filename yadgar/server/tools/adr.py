@@ -28,6 +28,7 @@ import os
 import re
 
 from yadgar.models import ADR
+from yadgar.observability.observe import observe
 from yadgar.server._app import _tool
 from yadgar.server.tools.project import _get_default_branch, _resolve_project_root
 
@@ -89,6 +90,7 @@ def parse_adr_ids(content: str) -> list[str]:
     return [f"ADR-{int(n):04d}" for n in sorted(matches, key=int, reverse=True)]
 
 
+@observe(tier="stage", name="tools.adr._next_adr_id")
 def _next_adr_id(content: str) -> str:
     """Return the next sequential ADR id (e.g. 'ADR-0004') from log content.
 

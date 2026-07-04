@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 import re
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 # (compiled_pattern, human_readable_name)
@@ -119,6 +121,7 @@ class SecretLeakBlocked(Exception):
         self.pattern_preview = pattern_preview
 
 
+@observe(tier="stage")
 def check_secrets(content: str) -> tuple[bool, str, str]:
     """Scan content for known secret patterns.
 
@@ -142,6 +145,7 @@ def check_secrets(content: str) -> tuple[bool, str, str]:
     return False, "", ""
 
 
+@observe(tier="stage")
 def gate_or_reject(
     *content_fields: str | None,
     tags: list[str] | None = None,

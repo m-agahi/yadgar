@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.stages.base import RetrievalStage
 from yadgar.retrieval.state import RetrievalState
 
@@ -21,6 +22,7 @@ class NLIStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
+    @observe(tier="stage", name="retrieval.pipeline.nli")
     def apply(self, state: RetrievalState) -> RetrievalState:
         # No-op: NLI is executed inside CEReRankStage via _apply_rerank_pipeline.
         return state

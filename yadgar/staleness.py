@@ -7,6 +7,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class _FileChangeHandler(FileSystemEventHandler):
         super().__init__()
         self._detector = detector
 
+    @observe(tier="hot")
     def _should_ignore(self, path: str) -> bool:
         parts = Path(path).parts
         for part in parts:
@@ -29,6 +31,7 @@ class _FileChangeHandler(FileSystemEventHandler):
             return True
         return False
 
+    @observe(tier="hot")
     def _handle_event(self, event) -> None:
         """Single handler for both on_modified and on_created (T-0017-staleness)."""
         if event.is_directory or self._should_ignore(event.src_path):
@@ -41,6 +44,7 @@ class _FileChangeHandler(FileSystemEventHandler):
     def on_created(self, event):
         self._handle_event(event)
 
+    @observe(tier="hot")
     def on_deleted(self, event):
         if event.is_directory or self._should_ignore(event.src_path):
             return
@@ -55,6 +59,7 @@ class StalenessDetector:
         self._watched_dirs: set[str] = set()
         self.is_running: bool = False
 
+    @observe(tier="boundary")
     def start(self, directory: str):
         if self._observer is None:
             self._observer = Observer()
@@ -69,6 +74,7 @@ class StalenessDetector:
             self._observer.start()
             self.is_running = True
 
+    @observe(tier="boundary")
     def stop(self):
         if self._observer is not None and self.is_running:
             self._observer.stop()
@@ -77,6 +83,7 @@ class StalenessDetector:
             self.is_running = False
             self._watched_dirs.clear()
 
+    @observe(tier="stage")
     def _handle_file_change(self, filepath: str):
         new_hash = self._compute_file_hash(filepath)
         old_hash = self._storage.get_file_hash(filepath)
@@ -86,6 +93,7 @@ class StalenessDetector:
 
         self._storage.upsert_file_hash(filepath, new_hash)
 
+    @observe(tier="stage")
     def _flag_memories_for_file(self, filepath: str, old_hash: str):
         memories = self._storage.get_memories_by_file_hash(old_hash)
 
@@ -104,6 +112,7 @@ class StalenessDetector:
             self._storage.update_memory_heat(memory["id"], new_heat)
             self._storage.update_memory_staleness(memory["id"], True)
 
+    @observe(tier="stage")
     def validate_memory(self, memory_id: int) -> dict:
         memory = self._storage.get_memory(memory_id)
         if memory is None:
@@ -126,6 +135,7 @@ class StalenessDetector:
 
         return {"valid": True, "reason": "file unchanged"}
 
+    @observe(tier="stage")
     def _flag_scan_memories(
         self, filepath: str, old_hash: str, flagged_memory_ids: set[int]
     ) -> None:
@@ -145,6 +155,7 @@ class StalenessDetector:
                 self._storage.update_memory_heat(m["id"], m["heat"] / 2.0)
                 self._storage.update_memory_staleness(m["id"], True)
 
+    @observe(tier="boundary")
     def scan_directory(self, directory: str) -> dict:
         files_scanned = 0
         files_changed = 0
@@ -178,6 +189,7 @@ class StalenessDetector:
             "memories_flagged": len(flagged_memory_ids),
         }
 
+    @observe(tier="stage")
     @staticmethod
     def _compute_file_hash(filepath: str) -> str:
         try:
@@ -186,6 +198,7 @@ class StalenessDetector:
         except FileNotFoundError:
             return ""
 
+    @observe(tier="hot")
     @staticmethod
     def _is_binary(filepath: str) -> bool:
         try:

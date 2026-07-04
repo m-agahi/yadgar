@@ -22,6 +22,7 @@ import re
 from datetime import UTC, datetime
 
 from yadgar.config import get_settings
+from yadgar.observability.observe import observe
 from yadgar.server._app import _tool
 from yadgar.server.lifecycle import _get_storage
 from yadgar.server.tools.project import (
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 _NONALPHA_RE = re.compile(r"[^a-z0-9]+")
 
 
+@observe(tier="hot", name="tools.audit._derive_slug")
 def _derive_slug(content: str) -> str:
     """Derive a wiki slug from anchor content.
 
@@ -57,6 +59,7 @@ def _derive_slug(content: str) -> str:
     return slug or "anchor"
 
 
+@observe(tier="hot", name="tools.audit._derive_title")
 def _derive_title(content: str) -> str:
     """Derive a human-readable title from anchor content."""
     for line in content.splitlines():
@@ -68,6 +71,7 @@ def _derive_title(content: str) -> str:
     return first_line[:80]
 
 
+@observe(tier="hot", name="tools.audit._derive_category")
 def _derive_category(tags: list[str]) -> str:
     """Infer wiki category from tag intersection with known category indicators."""
     tag_set = set(tags)
@@ -80,6 +84,7 @@ def _derive_category(tags: list[str]) -> str:
     return "reference"
 
 
+@observe(tier="hot", name="tools.audit._build_promote_draft")
 def _build_promote_draft(anchor_id: int, content: str, tags: list[str], rationale: str) -> dict:
     """Build promote-to-wiki draft dict for an anchor.
 
@@ -134,6 +139,7 @@ def _anchor_rank(row: dict) -> float:
 # ── Core audit logic ─────────────────────────────────────────────────────
 
 
+@observe(tier="stage", name="tools.audit._fetch_expired_rows")
 def _fetch_expired_rows(storage, directory: str, _now: str) -> list[dict]:
     """Fetch expired anchors: valid_until < now, migration_grace falsy."""
     try:
@@ -152,6 +158,7 @@ def _fetch_expired_rows(storage, directory: str, _now: str) -> list[dict]:
         return []
 
 
+@observe(tier="stage", name="tools.audit._fetch_redundant_pairs")
 def _fetch_redundant_pairs(
     storage, directory: str, _now: str, threshold: float
 ) -> list[tuple[dict, dict, float]]:
@@ -197,6 +204,7 @@ def _fetch_redundant_pairs(
         return []
 
 
+@observe(tier="stage", name="tools.audit._fetch_grace_expired_rows")
 def _fetch_grace_expired_rows(storage, directory: str, _now: str) -> list[dict]:
     """Fetch migration_grace=True anchors past their valid_until (PD-23).
 
@@ -220,6 +228,7 @@ def _fetch_grace_expired_rows(storage, directory: str, _now: str) -> list[dict]:
         return []
 
 
+@observe(tier="stage", name="tools.audit._fetch_cross_project_anchor_pool")
 def _fetch_cross_project_anchor_pool(storage, _now: str) -> list[tuple[dict, list[float]]]:
     """Fetch all non-expired, non-global anchors with embeddings across all directories.
 
@@ -279,6 +288,7 @@ def _cross_project_primary_rank(row: dict) -> float:
     return float(access_count) * float(heat)
 
 
+@observe(tier="stage", name="tools.audit._fetch_cross_project_candidates")
 def _fetch_cross_project_candidates(
     storage, _now: str, cosine_threshold: float, content_length_ratio_min: float = 0.85
 ) -> list[dict]:
@@ -333,6 +343,7 @@ def _fetch_cross_project_candidates(
     return candidates
 
 
+@observe(tier="stage", name="tools.audit._group_cross_project_pairs")
 def _group_cross_project_pairs(storage, raw_pairs: list[tuple[dict, dict, float]]) -> list[dict]:
     """Group raw pairs into candidate dicts using greedy primary selection.
 
@@ -413,6 +424,7 @@ def _group_cross_project_pairs(storage, raw_pairs: list[tuple[dict, dict, float]
     return candidates
 
 
+@observe(tier="stage", name="tools.audit._fetch_anchored_by_prose_only_archives")
 def _fetch_anchored_by_prose_only_archives(storage) -> list[int]:
     """Fetch memory_archive IDs that are at risk from retention purge.
 
@@ -439,6 +451,7 @@ def _fetch_anchored_by_prose_only_archives(storage) -> list[int]:
         return []
 
 
+@observe(tier="stage", name="tools.audit._build_anchored_by_prose_only_result")
 def _build_anchored_by_prose_only_result(ids: list[int]) -> dict:
     """Build the anchored_by_prose_only audit sub-dict.
 
@@ -455,6 +468,7 @@ def _build_anchored_by_prose_only_result(ids: list[int]) -> dict:
     return result
 
 
+@observe(tier="stage", name="tools.audit._fetch_promote_rows")
 def _fetch_promote_rows(storage, directory: str, _now: str, cfg) -> list[dict]:
     """Fetch promote candidates: oversized anchors with wiki-worthy tags."""
     try:
@@ -484,6 +498,7 @@ def _fetch_promote_rows(storage, directory: str, _now: str, cfg) -> list[dict]:
         return []
 
 
+@observe(tier="hot", name="tools.audit._is_safe_to_mutate")
 def _is_safe_to_mutate(row: dict) -> bool:
     """Return True if this anchor row may be auto-mutated.
 
@@ -506,6 +521,7 @@ def _is_safe_to_mutate(row: dict) -> bool:
     return True
 
 
+@observe(tier="stage", name="tools.audit._log_audit_action")
 def _log_audit_action(storage, directory: str, action: str, payload: dict) -> None:
     """Log an audit mutation to action_log using the existing insert_action_log API."""
     try:
@@ -524,6 +540,7 @@ def _log_audit_action(storage, directory: str, action: str, payload: dict) -> No
 # ── Per-directory action builders ────────────────────────────────────────
 
 
+@observe(tier="stage", name="tools.audit._build_verify_grace_actions")
 def _build_verify_grace_actions(storage, audit_dir: str, _now: str) -> list[dict]:
     """Build verify_grace_expired_anchor entries for PD-23 handler.
 
@@ -552,6 +569,7 @@ def _build_verify_grace_actions(storage, audit_dir: str, _now: str) -> list[dict
     return actions
 
 
+@observe(tier="stage", name="tools.audit._build_expire_actions")
 def _build_expire_actions(storage, audit_dir: str, _now: str) -> list[dict]:
     """Build forget_expired action entries for a single directory."""
     actions: list[dict] = []
@@ -573,6 +591,7 @@ def _build_expire_actions(storage, audit_dir: str, _now: str) -> list[dict]:
     return actions
 
 
+@observe(tier="stage", name="tools.audit._build_promote_actions")
 def _build_promote_actions(storage, audit_dir: str, _now: str, cfg) -> list[dict]:
     """Build promote draft entries for a single directory."""
     actions: list[dict] = []
@@ -587,6 +606,7 @@ def _build_promote_actions(storage, audit_dir: str, _now: str, cfg) -> list[dict
     return actions
 
 
+@observe(tier="stage", name="tools.audit._build_merge_actions")
 def _build_merge_actions(storage, audit_dir: str, _now: str, threshold: float) -> list[dict]:
     """Build merge action entries for a single directory."""
     actions: list[dict] = []
@@ -620,6 +640,7 @@ def _build_merge_actions(storage, audit_dir: str, _now: str, threshold: float) -
 # ── Mutation application ──────────────────────────────────────────────────
 
 
+@observe(tier="stage", name="tools.audit._apply_forget_expired")
 def _apply_forget_expired(storage, resolved: str, action_entry: dict) -> dict | None:
     """Apply a single forget_expired action. Returns applied entry or None on skip/error."""
     mid = action_entry["id"]
@@ -643,6 +664,7 @@ def _apply_forget_expired(storage, resolved: str, action_entry: dict) -> dict | 
         return None
 
 
+@observe(tier="stage", name="tools.audit._apply_merge")
 def _apply_merge(storage, resolved: str, action_entry: dict) -> dict | None:
     """Apply a single merge action. Returns applied entry or None on skip/error."""
     forget_id = action_entry.get("forget_id")
@@ -678,6 +700,7 @@ def _apply_merge(storage, resolved: str, action_entry: dict) -> dict | None:
         return None
 
 
+@observe(tier="stage", name="tools.audit._apply_mutations")
 def _apply_mutations(storage, resolved: str, actions: list[dict]) -> list[dict]:
     """Apply all non-skipped, non-promote mutations. Returns list of applied entries."""
     applied: list[dict] = []
@@ -790,6 +813,7 @@ def audit_anchors(
 # ── Consolidation anchor audit pass ──────────────────────────────────────
 
 
+@observe(tier="stage", name="tools.audit._run_anchor_audit_pass")
 def _run_anchor_audit_pass(storage) -> dict:
     """Run dry-run anchor audit per directory; write _audit_anchors sentinel.
 
@@ -833,6 +857,7 @@ def _run_anchor_audit_pass(storage) -> dict:
     return {"directories_audited": dirs_audited, "sentinels_written": sentinels_written}
 
 
+@observe(tier="stage", name="tools.audit._count_anchors_for_dir")
 def _count_anchors_for_dir(storage, directory: str) -> int:
     """Return anchor count for a directory (valid, non-expired)."""
     try:
@@ -850,6 +875,7 @@ def _count_anchors_for_dir(storage, directory: str) -> int:
         return 0
 
 
+@observe(tier="stage", name="tools.audit._audit_dir_safe")
 def _audit_dir_safe(directory: str) -> dict | None:
     """Run audit_anchors(dry_run=True) on a directory; return None on error."""
     try:
@@ -859,6 +885,7 @@ def _audit_dir_safe(directory: str) -> dict | None:
         return None
 
 
+@observe(tier="stage", name="tools.audit._write_audit_sentinel")
 def _write_audit_sentinel(storage, directory: str, audit_result: dict) -> bool:
     """Write _audit_anchors sentinel memory for a directory (latest-wins). Returns True on success."""
     import json as _json  # noqa: PLC0415

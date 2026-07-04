@@ -14,6 +14,9 @@ import sys
 import urllib.parse
 import urllib.request
 
+from yadgar.observability.observe import observe
+from yadgar.tracing import shutdown_tracing
+
 _PORT = os.environ.get("YADGAR_PORT", "8765")
 _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
@@ -35,6 +38,7 @@ def is_plan_file_path(path: str) -> bool:
     return bool(_PLAN_FILE_RE.search(path))
 
 
+@observe(tier="stage")
 def _post_file_changed(file_path: str, file_action: str) -> None:
     """POST to the daemon's /hooks/file-changed endpoint."""
     payload = json.dumps({"file_path": file_path, "file_action": file_action}).encode()
@@ -50,24 +54,28 @@ def _post_file_changed(file_path: str, file_action: str) -> None:
         pass
 
 
+@observe(tier="boundary")
 def main() -> None:
     try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except Exception:
-        return
+        try:
+            data = json.loads(sys.stdin.read() or "{}")
+        except Exception:
+            return
 
-    file_path = str(data.get("file_path", "")).strip()
-    file_action = str(data.get("file_action", "modified")).strip()
+        file_path = str(data.get("file_path", "")).strip()
+        file_action = str(data.get("file_action", "modified")).strip()
 
-    if not file_path:
-        return
+        if not file_path:
+            return
 
-    # Only act on team_inbox or PLAN files
-    if not (is_team_inbox_path(file_path) or is_plan_file_path(file_path)):
-        return
+        # Only act on team_inbox or PLAN files
+        if not (is_team_inbox_path(file_path) or is_plan_file_path(file_path)):
+            return
 
-    # Skip deletions — nothing to read
-    if file_action == "deleted":
-        return
+        # Skip deletions — nothing to read
+        if file_action == "deleted":
+            return
 
-    _post_file_changed(file_path, file_action)
+        _post_file_changed(file_path, file_action)
+    finally:
+        shutdown_tracing()

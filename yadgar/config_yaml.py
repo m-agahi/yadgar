@@ -15,6 +15,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
 import yadgar.paths as _paths
+from yadgar.observability.observe import observe
 
 FIELD_META: dict[str, dict[str, object]] = {
     # core
@@ -1717,6 +1718,7 @@ def get_config_path() -> Path:
     return _paths.CONFIG_YAML_PATH
 
 
+@observe(tier="stage")
 def load_yaml(path: Path) -> dict:
     """Load YAML file with ruamel.yaml, return dict (empty if file missing)."""
     if not path.exists():
@@ -1727,6 +1729,7 @@ def load_yaml(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+@observe(tier="stage")
 def save_yaml(path: Path, data) -> None:
     """Save ruamel.yaml CommentedMap back to file (preserves comments)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1737,12 +1740,14 @@ def save_yaml(path: Path, data) -> None:
         y.dump(data, f)
 
 
+@observe(tier="hot")
 def get_field_section(field_name: str) -> str:
     """Return section name for a field, or 'misc' if not found."""
     meta = FIELD_META.get(field_name.lower())
     return meta["section"] if meta else "misc"
 
 
+@observe(tier="hot")
 def coerce_value(field_name: str, raw: str) -> Any:
     """Coerce a string CLI value to the right Python type based on Settings field annotation.
 
@@ -1786,6 +1791,7 @@ def coerce_value(field_name: str, raw: str) -> Any:
     return raw
 
 
+@observe(tier="boundary")
 def cmd_config_init(args) -> None:
     """Write a fully-commented default config.yaml.
 
@@ -1877,6 +1883,7 @@ def cmd_config_init(args) -> None:
     print(f"Config written to: {path}")
 
 
+@observe(tier="boundary")
 def cmd_config_list(args) -> None:
     """Print all settings in table format: KEY  VALUE  SOURCE
 
@@ -1926,6 +1933,7 @@ def cmd_config_list(args) -> None:
         print(f"{key:<{max_key}}  {display_val:<{max_val}}  {source}")
 
 
+@observe(tier="boundary")
 def cmd_config_get(args) -> None:
     """Print the current value and source of a single key."""
     from yadgar.config import Settings
@@ -1964,6 +1972,7 @@ def cmd_config_get(args) -> None:
         print(f"Desc:    {desc}")
 
 
+@observe(tier="stage")
 def set_config_value(key: str, raw: object) -> object:
     """Sanctioned single writer for one config knob — shared by CLI + Control API.
 
@@ -2016,6 +2025,7 @@ def set_config_value(key: str, raw: object) -> object:
     return value
 
 
+@observe(tier="boundary")
 def cmd_config_set(args) -> None:
     """Update a key in ~/.config/yadgar/config.yaml (CLI front-end).
 
@@ -2039,6 +2049,7 @@ def cmd_config_set(args) -> None:
     print(f"Config: {get_config_path()}")
 
 
+@observe(tier="boundary")
 def cmd_config_edit(args) -> None:
     """Open config.yaml in $EDITOR (fallback: nano, then vi)."""
     path = get_config_path()

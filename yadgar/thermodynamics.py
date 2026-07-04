@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class MemoryThermodynamics:
 
     # -- a. Surprise Scoring --
 
+    @observe(tier="stage")
     def compute_surprise(self, content: str, directory: str) -> float:
         """Compute how novel this content is relative to existing memories.
 
@@ -88,6 +90,7 @@ class MemoryThermodynamics:
 
     # -- b. Importance Scoring --
 
+    @observe(tier="stage")
     def compute_importance(self, content: str, tags: list[str]) -> float:
         """Heuristic importance scoring based on content signals. No LLM needed.
 
@@ -120,6 +123,7 @@ class MemoryThermodynamics:
 
     # -- c. Emotional Valence --
 
+    @observe(tier="hot")
     def compute_valence(self, content: str) -> float:
         """Compute emotional valence from content keywords.
 
@@ -139,6 +143,7 @@ class MemoryThermodynamics:
 
     # -- d. Synaptic Tagging and Capture --
 
+    @observe(tier="stage")
     def synaptic_boost(self, memory_id: int, event_heat: float) -> int:
         """Boost nearby memories when a high-importance event occurs.
 
@@ -169,6 +174,7 @@ class MemoryThermodynamics:
 
     # -- e. Enhanced Decay Formula --
 
+    @observe(tier="hot")
     def compute_decay(self, memory: dict, hours_elapsed: float) -> float:
         """Compute decayed heat using importance, valence, and confidence modifiers.
 
@@ -204,6 +210,7 @@ class MemoryThermodynamics:
 
     # -- f. Metamemory --
 
+    @observe(tier="stage")
     def record_access(self, memory_id: int, was_useful: bool) -> None:
         """Track memory access and usefulness for metamemory.
 
@@ -235,6 +242,7 @@ class MemoryThermodynamics:
             access_count_since_decay=access_count_since_decay,
         )
 
+    @observe(tier="stage")
     def get_reliability(self, memory_id: int) -> float:
         """Return the confidence score for a memory.
 
@@ -251,6 +259,7 @@ class MemoryThermodynamics:
 
     # -- g. Session Coherence --
 
+    @observe(tier="hot")
     def apply_session_coherence(self, heat: float, created_at: str) -> float:
         """Boost heat for memories created within the current session window.
 

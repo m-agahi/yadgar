@@ -68,9 +68,9 @@ repos:
         files: ^yadgar/server/http\.py$
 
       - id: check-observe-coverage
-        name: Check I33 tri-signal observe-coverage (warn-mode; allowlist integrity hard)
+        name: Check I33 tri-signal observe-coverage (HARD; MISSING=0 enforced)
         language: system
-        entry: python scripts/check_observe_coverage.py --warn
+        entry: python scripts/check_observe_coverage.py
         types: [python]
         pass_filenames: false
         files: ^(yadgar/.*\.py|\.observe-allowlist\.json)$

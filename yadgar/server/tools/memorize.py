@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from yadgar.config import get_settings
 from yadgar.file_queue import is_draining  # noqa: F401 — re-exported for backward compat (tests)
+from yadgar.observability.observe import observe
 from yadgar.secrets import gate_or_reject  # noqa: F401 — required by I26 secret-gate check
 from yadgar.server._app import _tool
 
@@ -27,6 +28,7 @@ settings = get_settings()
 _VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
 
+@observe(tier="hot", name="tools.memorize._compute_valid_until")
 def _compute_valid_until(
     tier: str | None,
     valid_until: str | None,

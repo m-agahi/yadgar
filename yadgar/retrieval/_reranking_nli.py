@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.query_analysis import _question_to_statement
-from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class _NLIMixin:
     """Provides nli_rerank using NLI entailment probability."""
 
-    @trace_span("retrieval.nli_rerank")
+    @observe(tier="stage", name="retrieval.nli_rerank")
     def nli_rerank(self, query: str, memories: list[dict]) -> list[dict]:
         """Score memories by NLI entailment probability."""
         if not getattr(self._settings, "NLI_RERANKING_ENABLED", False):

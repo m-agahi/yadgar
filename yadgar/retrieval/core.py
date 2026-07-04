@@ -10,6 +10,7 @@ import networkx as nx
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.observability.observe import observe
 from yadgar.retrieval.entities import _extract_query_entities
 from yadgar.retrieval.fusion import PROFILES, _FusionMixin
 from yadgar.retrieval.graph_helpers import _GraphHelpersMixin
@@ -21,7 +22,6 @@ from yadgar.retrieval.query_analysis import (
 from yadgar.retrieval.reranking import RerankContext, Reranker, _RerankingMixin
 from yadgar.retrieval.scoring import FTSParams, _ScoringMixin
 from yadgar.storage import BranchFilter, StorageEngine
-from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- COMET query expansion --
 
+    @observe(tier="stage", name="retrieval.comet_expand_query")
     def _comet_expand_query(self, query: str) -> list[str]:
         """Use COMET-BART to generate commonsense expansions for a query.
 
@@ -97,6 +98,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- a. Personalized PageRank Retrieval --
 
+    @observe(tier="stage", name="retrieval.ppr_retrieve")
     def ppr_retrieve(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
         """Run Personalized PageRank seeded by query entities.
 
@@ -165,6 +167,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- b. Contextual Prefix Generation --
 
+    @observe(tier="hot", name="retrieval.generate_contextual_prefix")
     def generate_contextual_prefix(
         self,
         content: str,
@@ -189,6 +192,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- c. Spreading Activation --
 
+    @observe(tier="stage", name="retrieval.spreading_activation")
     def spreading_activation(
         self,
         seed_memories: list[int],
@@ -355,6 +359,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- d1. Plugin pipeline --
 
+    @observe(tier="hot", name="retrieval.get_pipeline")
     def _get_pipeline(self):
         """Return the plugin pipeline, initialising it lazily on first call."""
         if self._pipeline is None:
@@ -363,6 +368,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             self._pipeline = RetrievalPipeline.from_retriever(self)
         return self._pipeline
 
+    @observe(tier="boundary", name="retrieval.recall_via_pipeline")
     def recall_via_pipeline(
         self,
         query: str,
@@ -419,6 +425,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- d2. Unified Recall (legacy monolithic implementation — kept for compat) --
 
+    @observe(tier="stage", name="retrieval.resolve_query_and_candidate_k")
     def _resolve_query_and_candidate_k(
         self,
         query: str,
@@ -473,7 +480,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             candidate_k,
         )
 
-    @trace_span("retrieval.recall")
+    @observe(tier="boundary", name="retrieval.recall")
     def recall(
         self,
         query: str,

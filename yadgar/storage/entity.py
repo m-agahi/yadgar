@@ -3,6 +3,7 @@
 import logging
 from dataclasses import dataclass
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ class _EntityMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    @observe(tier="stage")
     def get_all_entities(self, min_heat: float = 0.0, include_archived: bool = False) -> list[dict]:
         if include_archived:
             rows = self._q(
@@ -99,6 +101,7 @@ class _EntityMixin:
         rows = self._q(f"SELECT * FROM entity:{eid}")
         return self._row_to_dict(rows[0]) if rows else None
 
+    @observe(tier="stage")
     def get_entities_by_ids(self, entity_ids: list[int]) -> dict[int, dict]:
         """Bulk-fetch entity rows for a list of ids in ONE query (v5.102.0).
 
@@ -204,6 +207,7 @@ class _EntityMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
+    @observe(tier="stage")
     def get_relationships_for_entity(
         self, entity_id: int, rel_types: list[str] | None = None, with_names: bool = True
     ) -> list[dict]:
@@ -233,6 +237,7 @@ class _EntityMixin:
             self._enrich_relationship_names(results)
         return results
 
+    @observe(tier="hot")
     def _enrich_relationship_names(self, rows: list[dict]) -> None:
         """Add source_name / target_name to each relationship row (in place)."""
         for d in rows:
@@ -243,6 +248,7 @@ class _EntityMixin:
             d["source_name"] = src_rows[0]["name"] if src_rows else None
             d["target_name"] = tgt_rows[0]["name"] if tgt_rows else None
 
+    @observe(tier="stage")
     def get_relationships_for_frontier(
         self, entity_ids: list[int], rel_types: list[str] | None = None
     ) -> list[dict]:
@@ -284,6 +290,7 @@ class _EntityMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def update_relationship_fields(self, rel_id: int, **fields) -> None:
         """Update arbitrary columns on a relationship row."""
         from yadgar.storage.client import _RELATIONSHIP_UPDATABLE_FIELDS
@@ -317,6 +324,7 @@ class _EntityMixin:
             source_entity_id, target_entity_id, relationship_type, m
         )
 
+    @observe(tier="stage")
     def _insert_typed_relationship_impl(
         self,
         source_entity_id: int,

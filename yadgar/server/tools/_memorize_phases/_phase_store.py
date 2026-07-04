@@ -7,6 +7,7 @@ import logging
 import yadgar.server._state as _st
 import yadgar.server.lifecycle as _lifecycle
 from yadgar.curation import CurateParams
+from yadgar.observability.observe import observe
 from yadgar.server._helpers import _file_hash
 from yadgar.tracing import trace_span
 
@@ -68,6 +69,7 @@ def phase_store(ctx: MemorizeContext) -> None:
             _st._pool.assign_memory(mem_data)
 
 
+@observe(tier="stage")
 def _store_via_curator(ctx: MemorizeContext, storage, embeddings, fhash: str | None) -> None:
     """Use curator for intelligent ingestion (merge/link/create)."""
     curator = _st._curator
@@ -108,6 +110,7 @@ def _store_via_curator(ctx: MemorizeContext, storage, embeddings, fhash: str | N
     ctx.memory_id = memory_id
 
 
+@observe(tier="stage")
 def _store_direct(ctx: MemorizeContext, storage, embeddings, fhash: str | None) -> None:
     """Fallback: direct insert (no curator or no embedding)."""
     memory_id = _direct_insert(ctx, storage, embeddings, fhash)

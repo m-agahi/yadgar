@@ -36,6 +36,13 @@ except ImportError:
     import re
     import urllib.request
 
+    try:
+        from yadgar.observability.observe import observe
+    except ImportError:
+
+        def observe(*_a, **_k):
+            return lambda fn: fn
+
     _PORT = os.environ.get("YADGAR_PORT", "8765")
     _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
@@ -43,6 +50,9 @@ except ImportError:
     _NEXT_HEADING_RE = re.compile(r"\n#{1,6}\s+")
     _BULLET_RE = re.compile(r"^\s*-\s+(.+)$", re.MULTILINE)
 
+    @observe(
+        exempt="portability inline fallback duplicate — runs only when yadgar package unimportable; primary path is the underscore module"
+    )
     def _extract_findings(text):
         # Lenient: any heading containing both 'yadgar' and 'find' (case-insensitive)
         section_body = None
@@ -65,6 +75,9 @@ except ImportError:
                 bullets.append(v)
         return bullets
 
+    @observe(
+        exempt="portability inline fallback duplicate — runs only when yadgar package unimportable; primary path is the underscore module"
+    )
     def _content_to_text(content):
         """Return text from a message content value, or '' if empty/non-text."""
         if isinstance(content, str):
@@ -79,6 +92,9 @@ except ImportError:
             return joined if joined.strip() else ""
         return ""
 
+    @observe(
+        exempt="portability inline fallback duplicate — runs only when yadgar package unimportable; primary path is the underscore module"
+    )
     def _parse_assistant_line(raw):
         """Parse one JSONL line; return assistant text or '' on any miss."""
         raw = raw.strip()
@@ -93,6 +109,9 @@ except ImportError:
             return ""
         return _content_to_text(msg.get("content", ""))
 
+    @observe(
+        exempt="portability inline fallback duplicate — runs only when yadgar package unimportable; primary path is the underscore module"
+    )
     def _get_report_text(data):
         transcript_path = data.get("transcript_path", "")
         if not transcript_path:
@@ -112,6 +131,9 @@ except ImportError:
         except Exception:
             return ""
 
+    @observe(
+        exempt="portability inline fallback duplicate — runs only when yadgar package unimportable; primary path is the underscore module"
+    )
     def _post_findings(agent_type, cwd, findings):
         if not findings:
             return
@@ -127,6 +149,9 @@ except ImportError:
         except Exception:
             pass
 
+    @observe(
+        exempt="portability inline fallback duplicate — runs only when yadgar package unimportable; primary path is the underscore module"
+    )
     def main():
         try:
             data = json.loads(sys.stdin.read() or "{}")

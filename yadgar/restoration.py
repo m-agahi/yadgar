@@ -10,6 +10,7 @@ from yadgar.cognitive_map import CognitiveMap
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.metacognition import MetaCognition
+from yadgar.observability.observe import observe
 from yadgar.retrieval import Retriever
 from yadgar.storage import StorageEngine
 from yadgar.tracing import trace_span
@@ -74,6 +75,7 @@ class CheckpointRestore:
         """Track tool calls for auto-checkpoint threshold."""
         self._tool_call_count += 1
 
+    @observe(tier="hot")
     def should_auto_checkpoint(self) -> bool:
         """Check if we've hit the auto-checkpoint interval."""
         interval = self._settings.REPLAY_CHECKPOINT_AUTO_INTERVAL
@@ -122,6 +124,7 @@ class CheckpointRestore:
             "status": "created",
         }
 
+    @observe(tier="boundary")
     def anchor_memory(
         self,
         content: str,
@@ -166,6 +169,7 @@ class CheckpointRestore:
         )
         return memory_id
 
+    @observe(tier="hot")
     def should_micro_checkpoint(
         self, content: str, tags: list[str], surprisal: float = 0.0
     ) -> tuple[bool, str]:
@@ -247,6 +251,7 @@ class CheckpointRestore:
             "auto_checkpoint_created": auto_created,
         }
 
+    @observe(tier="stage")
     def _fetch_recent_memories_safe(self, max_memories: int) -> list[dict]:
         """Fetch recently stored memories, suppressing errors (step 3 of restore).
 
@@ -261,6 +266,7 @@ class CheckpointRestore:
             logger.debug("Failed to fetch recently stored memories for restore")
             return []
 
+    @observe(tier="stage")
     def _fetch_hot_memories(
         self,
         directory: str,
@@ -278,6 +284,7 @@ class CheckpointRestore:
             m.pop("embedding", None)
         return [m for m in hot if m["id"] not in exclude_ids][:max_memories]
 
+    @observe(tier="hot")
     def _build_sr_query(self, checkpoint: dict | None, directory: str) -> str:
         """Derive SR navigation query from checkpoint task or directory (step 5 of restore)."""
         if checkpoint:
@@ -286,6 +293,7 @@ class CheckpointRestore:
                 return task
         return f"project work in {directory}" if directory else ""
 
+    @observe(tier="stage")
     def _predict_memories(
         self,
         checkpoint: dict | None,
@@ -321,6 +329,7 @@ class CheckpointRestore:
                 local_seen.add(mid)
         return predicted
 
+    @observe(tier="stage")
     def _detect_gaps_safe(self, directory: str) -> list[dict]:
         """Detect knowledge gaps, suppressing errors (step 6 of restore).
 
@@ -406,6 +415,7 @@ class CheckpointRestore:
         """Truncate text to max_len characters, appending '...' if cut."""
         return text if len(text) <= max_len else text[:max_len] + "..."
 
+    @observe(tier="hot")
     @staticmethod
     def _parse_list_field(value) -> list:
         """Parse a checkpoint list field — already a list or a JSON string."""
@@ -413,6 +423,7 @@ class CheckpointRestore:
             return json.loads(value)
         return value or []
 
+    @observe(tier="hot")
     def _format_checkpoint_section(self, checkpoint: dict) -> list[str]:
         """Return markdown lines for the checkpoint block."""
         lines: list[str] = ["## What You Were Doing"]
@@ -442,6 +453,7 @@ class CheckpointRestore:
         section = self._render_blocks_section(blocks, directory)
         return (section + "\n" + markdown) if section else markdown
 
+    @observe(tier="stage")
     def _fetch_blocks_safe(self, directory: str) -> list[dict]:
         """Fetch memory blocks, swallowing errors (v5.33.0). Returns [] on failure."""
         try:
@@ -458,6 +470,7 @@ class CheckpointRestore:
         """
         return render_blocks_section(blocks, directory)
 
+    @observe(tier="stage")
     def _format_restoration(
         self,
         checkpoint: dict | None,

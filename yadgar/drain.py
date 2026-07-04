@@ -26,6 +26,8 @@ import asyncio
 import logging
 import threading
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 0.05  # seconds between count checks
@@ -38,10 +40,12 @@ class _RequestCounter:
         self._lock = threading.Lock()
         self._count: int = 0
 
+    @observe(tier="hot")
     def increment(self) -> None:
         with self._lock:
             self._count += 1
 
+    @observe(tier="hot")
     def decrement(self) -> None:
         with self._lock:
             if self._count > 0:
@@ -57,6 +61,7 @@ class _RequestCounter:
 _request_counter = _RequestCounter()
 
 
+@observe(tier="boundary")
 async def drain_in_flight_requests(timeout: float) -> bool:
     """Wait for active HTTP requests to complete, up to timeout seconds.
 
@@ -79,6 +84,7 @@ async def drain_in_flight_requests(timeout: float) -> bool:
         await asyncio.sleep(_POLL_INTERVAL)
 
 
+@observe(tier="stage")
 def snapshot_embed_caches() -> None:
     """Trigger a final cache snapshot on the embed service (v5.49.0 Phase 6).
 

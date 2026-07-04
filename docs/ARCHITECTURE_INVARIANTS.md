@@ -261,7 +261,7 @@ invariant — they are covered by I19-extended proposals in the roadmap (v5.8+).
 History: introduced in v5.7.5. 13 existing un-spanned handlers were back-filled
 in the same PR. Live codebase passes at this commit: 22 handlers, all spanned.
 
-**v5.101 extension (I33):** span coverage now extends beyond `server/http.py` — the I33 lint treats `@_tool` (the 245 MCP tools in `yadgar/server/tools/*`), `_rpc_span`, and `@observe` as span sources alongside `@trace_span`, and classifies every in-scope function. I24 stays the narrow, always-hard guard for `server/http.py` public handlers; I33 is the codebase-wide ratchet (warm-mode → per-area hard).
+**v5.101 extension (I33):** span coverage now extends beyond `server/http.py` — the I33 lint treats `@_tool` (the 245 MCP tools in `yadgar/server/tools/*`), `_rpc_span`, and `@observe` as span sources alongside `@trace_span`, and classifies every in-scope function. I24 stays the narrow, always-hard guard for `server/http.py` public handlers; I33 is the codebase-wide ratchet (global hard-fail as of v5.105 — MISSING=0).
 
 ### I25 — Config knob defaults to yaml-backed
 
@@ -498,18 +498,28 @@ definitions are disallowed; stage functions reuse the shared family.
 **Enforcement (HARD CI gate — per user):** `scripts/check_observe_coverage.py`
 AST-classifies in-scope functions, cross-refs `.observe-allowlist.json`, and FAILS
 a non-exempt function that lacks a span source. Governance mirrors I30: allowlist
-integrity (stale entry / rationale ≥ 40 chars / valid category) is **always hard,
-even in warn-mode**. Rollout ratchet: ships **warn-mode** in P0 (`--warn`, exit 0 +
-baseline report; day-one baseline **1555 MISSING**), then flips per area to
-`--area <name>` hard-fail as each rollout wave reaches 100%, ending in a global
-hard-fail (plan P5). Wired into `.pre-commit-config.yaml` (`check-observe-coverage`)
-and `.forgejo/workflows/ci-pr.yaml` (`invariant-checks`). Cataloged as
-CAP-INFRA-033 in `docs/CAPABILITY_REGISTRY.md` (I32).
+integrity (stale entry / rationale ≥ 40 chars / valid category) is **always hard**.
+Rollout ratchet (COMPLETE): shipped warn-mode in P0 (v5.101, day-one baseline
+**1564 MISSING**), instrumented across waves **P1–P6** (recall → write/consolidation
+→ backend → tools → hooks/storage/root-service → server/cognitive residual), and
+**FLIPPED TO GLOBAL HARD-FAIL in v5.105** — `check_observe_coverage.py` runs with NO
+`--warn`; **MISSING = 0** (every in-scope function is span+metric+log classified or
+exempt). Ratchet is monotonic (no un-flip). **Closes #8.** Wired into
+`.pre-commit-config.yaml` (`check-observe-coverage`) and
+`.forgejo/workflows/ci-pr.yaml` (`invariant-checks`). Cataloged as CAP-INFRA-033 in
+`docs/CAPABILITY_REGISTRY.md` (I32).
 
 **Exemption categories:** `trivial`, `property`, `dunder` (auto-detected);
 `hot-loop`, `generated`, `test`, `framework-instrumented`, `pre-existing`
-(allowlist / path-excluded). Every non-obvious exemption carries a ≥40-char
-`rationale` in `.observe-allowlist.json`.
+(per-fn allowlist). **Path-glob dir-exemption (v5.105):** `.observe-allowlist.json`
+`_exempt_globs` maps a repo-relative POSIX glob (e.g. `yadgar/cli/**`,
+`yadgar/seed/**`, `yadgar/migrations.py`, viz/graph presentation files) → a
+`{category, rationale}` — functions under a matching glob classify `EXEMPT_GLOB`; a
+glob matching zero in-scope files is a **STALE hard error**. **Governed
+`@observe(exempt="…")` (v5.105):** co-located exemption for generator / manual-span
+functions (`@observe` misfires on generators — span fires at creation, not
+exhaustion); the reason string is hard-validated (≥40 chars) — an empty reason
+fails. Every non-obvious exemption carries a ≥40-char `rationale`.
 
 **Banned regressions:**
 - Adding a new per-function `Histogram(...)` for stage/boundary observability
@@ -525,11 +535,13 @@ CAP-INFRA-033 in `docs/CAPABILITY_REGISTRY.md` (I32).
 off-thread (C2 queue). The hot path is `stage`+`hot` tiers (zero per-item
 signals); warm-recall floor (~1.6s, ADR-0026/0030/0031) is preserved by design.
 
-**History:** introduced v5.101 (P0 foundation). Plan:
-`docs/plans/full-observability-standard-2026-07-03.md`. Per-area rollout = later
-phases P1–P5.
+**History:** introduced v5.101 (P0 foundation); rollout waves **P1–P6** + the global
+hard-flip landed **v5.105** (closes #8, MISSING **1564→0**). Plans:
+`docs/plans/full-observability-standard-2026-07-03.md` +
+`docs/plans/obs-velocity-completion-2026-07-04.md`.
 
-**Last updated:** 2026-07-03 (v5.101, P0 — mechanism + lint(warn) + p95 fix + propagation-verify).
+**Last updated:** 2026-07-04 (v5.105 — full rollout P1–P6, path-glob exemption +
+governed `@observe(exempt)`, global hard-fail flip, closes #8).
 
 ### Deferred (codify only when violations surface)
 

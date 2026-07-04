@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import yadgar.server._state as _st
+from yadgar.observability.observe import observe
 from yadgar.server._app import _tool
 from yadgar.server.lifecycle import _get_file_queue
 
@@ -30,6 +31,7 @@ _REJECTION_TAXONOMY: frozenset[str] = frozenset(
 _VALID_FILTERS = frozenset({"all", "rejections", "failures"})
 
 
+@observe(tier="hot", name="tools.admin_dlq._matches_filter")
 def _matches_filter(failure_reason: str | None, filter_: str | None) -> bool:
     """Return True if an entry with given failure_reason matches the filter."""
     if not filter_ or filter_ == "all":

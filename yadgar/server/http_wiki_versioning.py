@@ -27,6 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import yadgar.server._state as _st
+from yadgar.observability.observe import observe
 from yadgar.server._app import mcp_server
 from yadgar.tracing import trace_span
 
@@ -40,6 +41,7 @@ _CORS = {"Cache-Control": "no-store, no-cache, must-revalidate"}
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _parse_limit(raw: str | None, default: int = 20) -> int:
     """Parse limit query param, clamped to [1, 100]."""
     try:
@@ -48,6 +50,7 @@ def _parse_limit(raw: str | None, default: int = 20) -> int:
         return default
 
 
+@observe(tier="stage")
 def _page_row_to_dict(r: dict) -> dict:
     """Convert a storage list_wiki_pages row to a lean response dict."""
     return {
@@ -58,18 +61,21 @@ def _page_row_to_dict(r: dict) -> dict:
     }
 
 
+@observe(tier="stage")
 async def _wiki_search_semantic(wiki: object, q: str, limit: int) -> list[dict]:
     """Embedding-based search — no SurrealDB syntax."""
     results = await asyncio.to_thread(wiki.query, q, None, None, limit)
     return [{k: v for k, v in r.items() if k != "embedding"} for r in (results or [])]
 
 
+@observe(tier="stage")
 async def _wiki_search_slug(storage: object, q: str, limit: int) -> list[dict]:
     """Prefix match on slug via list_wiki_pages(slug_prefix=q)."""
     rows = await asyncio.to_thread(storage.list_wiki_pages, None, q, limit)
     return [_page_row_to_dict(r) for r in (rows or [])]
 
 
+@observe(tier="stage")
 async def _wiki_search_keyword(storage: object, q: str, limit: int) -> list[dict]:
     """Python substring filter — no FULLTEXT index, no SurrealDB FTS."""
     rows = await asyncio.to_thread(storage.list_wiki_pages, None, None, 500)

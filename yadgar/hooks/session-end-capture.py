@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 import yadgar.paths as _paths
+from yadgar.observability.observe import observe
 
 # ---------------------------------------------------------------------------
 # Kill switch
@@ -89,6 +90,7 @@ if end_reason in SKIP_REASONS:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="hot")
 def _count_human_messages(tp: str) -> int:
     """Count genuine user turns in JSONL transcript (skip system injections)."""
     p = Path(tp)
@@ -135,6 +137,7 @@ if message_count < MIN_MESSAGES:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="hot")
 def _parse_user_content(content) -> str | None:
     """Extract text from a user message content field. Returns None to skip."""
     if isinstance(content, str):
@@ -152,6 +155,7 @@ def _parse_user_content(content) -> str | None:
     return None
 
 
+@observe(tier="hot")
 def _cap_turns(turns: list[str], n: int, max_per: int = 500, max_total: int = 4096) -> list[str]:
     """Take last n turns, truncating each to max_per bytes, total to max_total bytes."""
     last_n = turns[-n:] if len(turns) > n else turns
@@ -167,6 +171,7 @@ def _cap_turns(turns: list[str], n: int, max_per: int = 500, max_total: int = 40
     return out
 
 
+@observe(tier="hot")
 def _extract_last_human_turns(tp: str, n: int) -> list[str]:
     """Return the last N human turn content strings from transcript.
 
@@ -201,6 +206,7 @@ def _extract_last_human_turns(tp: str, n: int) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="hot")
 def _extract_last_touched_files(tp: str, n: int) -> list[str]:
     """Return last N unique file paths from Read/Edit/Write ToolUse entries."""
     FILE_TOOLS = frozenset({"Read", "Edit", "Write"})
@@ -269,7 +275,7 @@ record: dict = {
     "version": 1,
     "cwd": cwd,
     "end_reason": end_reason,
-    "ended_at": datetime.datetime.utcnow().isoformat() + "Z",
+    "ended_at": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
     "transcript_path": transcript_path,
     "session_id": session_id,
     "message_count": message_count,

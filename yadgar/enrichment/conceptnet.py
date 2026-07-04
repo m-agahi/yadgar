@@ -3,6 +3,7 @@
 import re
 
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 
 _STOP_WORDS = frozenset(
     {
@@ -163,6 +164,7 @@ class ConceptNetExpander:
         # itself; we honour http_enabled by setting the initial sentinel.
         self._http_available: bool | None = True if http_enabled else None
 
+    @observe(tier="stage")
     def _try_lite(self, term: str, relations: list[str], min_weight: float) -> list[str]:
         """Try conceptnet_lite local SQLite database."""
         if self._lite_available is False:
@@ -188,6 +190,7 @@ class ConceptNetExpander:
             return []
 
     @staticmethod
+    @observe(tier="stage")
     def _parse_edges(data: dict, min_weight: float) -> list[str]:
         """Extract concept labels from a ConceptNet API response, filtered by weight."""
         results = []
@@ -198,6 +201,9 @@ class ConceptNetExpander:
                     results.append(end.replace(" ", "_"))
         return results
 
+    @observe(
+        exempt="body catches ImportError from `import httpx` to disable HTTP; the @observe span setup itself imports (re/warnings), so an @observe wrapper raises that ImportError before the body's guard runs"
+    )
     def _try_http(self, term: str, relations: list[str], min_weight: float) -> list[str]:
         """Try ConceptNet HTTP API.
 
@@ -232,10 +238,12 @@ class ConceptNetExpander:
             self._http_available = False
             return []
 
+    @observe(tier="stage")
     def _try_hardcoded(self, term: str) -> list[str]:
         """Fall back to hardcoded expansions."""
         return list(HARDCODED_EXPANSIONS.get(term, []))
 
+    @observe(tier="boundary")
     def expand(self, content: str, settings: Settings) -> list[str]:
         relations = [r.strip() for r in settings.CONCEPTNET_RELATIONS.split(",")]
         min_weight = settings.CONCEPTNET_MIN_EDGE_WEIGHT

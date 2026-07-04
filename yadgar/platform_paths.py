@@ -13,7 +13,10 @@ import platform
 import shutil
 from pathlib import Path
 
+from yadgar.observability.observe import observe
 
+
+@observe(tier="stage")
 def get_claude_config_dir() -> Path:
     """Return the Claude Code user config directory for the current OS.
 
@@ -43,6 +46,7 @@ def get_claude_settings_path() -> Path:
     return get_claude_config_dir() / "settings.json"
 
 
+@observe(tier="hot")
 def is_nix_managed() -> bool:
     """True if the system is NixOS or nix-managed — install scripts should be skipped.
 

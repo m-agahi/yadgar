@@ -34,6 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from yadgar.config import resolve_knob
+from yadgar.observability.observe import observe
 
 # ---------------------------------------------------------------------------
 # Knob resolution (I25/I32 three-way: env > config.yaml > default).
@@ -144,6 +145,7 @@ _last_completion_ts: float = 0.0
 _pool_full_since: float = 0.0
 
 
+@observe(tier="stage")
 def _inc_inflight() -> None:
     """Reserve a slot (called before submit). Stamps _pool_full_since on fill."""
     global _inflight, _pool_full_since
@@ -153,6 +155,7 @@ def _inc_inflight() -> None:
             _pool_full_since = time.monotonic()
 
 
+@observe(tier="stage")
 def _dec_inflight(*, completed: bool) -> None:
     """Release a slot. `completed` True → stamp last_completion (worker finished).
 
@@ -168,6 +171,7 @@ def _dec_inflight(*, completed: bool) -> None:
             _pool_full_since = 0.0
 
 
+@observe(tier="stage")
 def _ensure_pool() -> ThreadPoolExecutor:
     """Lazily create the bounded pool (bound to whatever loop is running)."""
     global _POOL, _POOL_MAX
@@ -178,6 +182,7 @@ def _ensure_pool() -> ThreadPoolExecutor:
         return _POOL
 
 
+@observe(tier="stage")
 def shutdown_pool(join_timeout: float = 5.0) -> None:
     """Tear down the pool on graceful stop (O10).
 
@@ -214,6 +219,7 @@ _RERANK_GATE_SIZE: int = 0
 _RERANK_GATE_LOCK = threading.Lock()
 
 
+@observe(tier="stage")
 def _rerank_gate() -> threading.Semaphore:
     """Lazily create the process-singleton heavy-rerank semaphore."""
     global _RERANK_GATE, _RERANK_GATE_SIZE
@@ -224,6 +230,7 @@ def _rerank_gate() -> threading.Semaphore:
         return _RERANK_GATE
 
 
+@observe(tier="stage")
 def acquire_rerank_slot(timeout: float | None = None) -> bool:
     """Acquire one heavy-rerank slot. Returns True on success, False on timeout.
 
@@ -237,6 +244,7 @@ def acquire_rerank_slot(timeout: float | None = None) -> bool:
     return _rerank_gate().acquire(timeout=timeout)
 
 
+@observe(tier="stage")
 def release_rerank_slot() -> None:
     """Release a previously-acquired heavy-rerank slot. Never raises."""
     gate = _RERANK_GATE
@@ -247,6 +255,7 @@ def release_rerank_slot() -> None:
             pass
 
 
+@observe(tier="stage")
 def reset_rerank_gate() -> None:
     """Drop the gate so the next acquire rebuilds it at the current env size.
 
@@ -258,6 +267,7 @@ def reset_rerank_gate() -> None:
         _RERANK_GATE_SIZE = 0
 
 
+@observe(tier="stage")
 def _ctx_wrap(call: Callable[[], Any]) -> Callable[[], Any]:
     """Run `call` inside a copy of the current contextvars Context AND account
     occupancy on the worker thread.
@@ -280,6 +290,7 @@ def _ctx_wrap(call: Callable[[], Any]) -> Callable[[], Any]:
     return _runner
 
 
+@observe(tier="boundary")
 async def run_offloaded(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run a sync callable off the event loop on the bounded pool.
 
@@ -311,6 +322,7 @@ async def run_offloaded(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> An
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def pool_stats() -> dict[str, Any]:
     """Snapshot of pool occupancy for /health + observability."""
     with _STAT_LOCK:
@@ -328,6 +340,7 @@ def pool_stats() -> dict[str, Any]:
     }
 
 
+@observe(tier="stage")
 def pool_saturated() -> bool:
     """True when the pool is exhausted AND nothing has completed for > grace.
 

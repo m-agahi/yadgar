@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 
+from yadgar.observability.observe import observe
+
 _log = logging.getLogger(__name__)
 
 # Edge tables that carry bi-temporal validity columns.
@@ -27,6 +29,7 @@ _VALID_EDGE_TABLES = frozenset(
 )
 
 
+@observe(tier="stage")
 def invalidate_edge(
     storage,
     edge_table: str,
@@ -66,6 +69,7 @@ def invalidate_edge(
         _log.info("invalidate_edge: table=%s id=%s ts=%s", edge_table, edge_id, now)
 
 
+@observe(tier="hot")
 def as_of_filter(table: str, as_of: str | None = None) -> str:  # noqa: ARG001
     """Return a SQL WHERE-fragment selecting rows valid at ``as_of``.
 

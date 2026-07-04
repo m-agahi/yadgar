@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -80,7 +81,12 @@ _IO_SINK_HINTS = {
 class Finding:
     qualname: str
     lineno: int
-    status: str  # SATISFIED | EXEMPT_DUNDER | EXEMPT_PROPERTY | EXEMPT_TRIVIAL | EXEMPT_ALLOWLIST | MISSING
+    # SATISFIED | EXEMPT_DUNDER | EXEMPT_PROPERTY | EXEMPT_TRIVIAL | EXEMPT_ALLOWLIST
+    # | EXEMPT_GLOB | EXEMPT_OBSERVE | MISSING
+    status: str
+    # Integrity errors raised at classification time (e.g. short @observe(exempt=...)
+    # reason). Threaded up to the always-hard integrity channel by run().
+    errors: list[str] = field(default_factory=list)
 
 
 # ── classification helpers ───────────────────────────────────────────────────
@@ -95,8 +101,39 @@ def _decorator_name(dec: ast.expr) -> str | None:
     return None
 
 
+def _observe_exempt_reason(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
+    """Return the string literal passed to `@observe(exempt=...)`, else None.
+
+    Distinguishes a categorized no-op (`@observe(exempt="reason")`) from a real
+    span source (`@observe(tier=...)`). A non-literal exempt value returns "" so
+    governance flags it (a reason must be a checkable literal, not a runtime expr).
+    """
+    for d in node.decorator_list:
+        if not isinstance(d, ast.Call) or _decorator_name(d) != "observe":
+            continue
+        for kw in d.keywords:
+            if kw.arg == "exempt":
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    return kw.value.value
+                return ""  # exempt present but not a string literal → flag it
+    return None
+
+
 def _has_span_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    return any(_decorator_name(d) in _SPAN_DECORATORS for d in node.decorator_list)
+    """True iff the fn carries a real span source.
+
+    `@observe(exempt=...)` is a categorized no-op, NOT a span source — it is handled
+    separately so its reason can be governed (closes the P5 hole where an empty
+    exempt reason silently counted as SATISFIED).
+    """
+    for d in node.decorator_list:
+        name = _decorator_name(d)
+        if name not in _SPAN_DECORATORS:
+            continue
+        if name == "observe" and _observe_exempt_reason(node) is not None:
+            continue  # exempt no-op, not a span
+        return True
+    return False
 
 
 def _is_property(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -146,8 +183,49 @@ def _qualname(stack: list[str], name: str) -> str:
 # ── file scan ────────────────────────────────────────────────────────────────
 
 
-def scan_file(path: Path, allowlist: dict) -> list[Finding]:
-    """Classify every function in a file. `allowlist` maps 'module:qualname' -> entry."""
+def _rel_posix(path: Path, repo_root: Path) -> str:
+    """Repo-relative POSIX path (e.g. 'yadgar/seed/_generate.py') — the glob key form."""
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:  # path outside repo_root — fall back to the raw posix form
+        return path.as_posix()
+
+
+def _matches_glob(rel: str, glob: str) -> bool:
+    """True if repo-relative POSIX path `rel` matches `glob`.
+
+    `**` is honoured recursively: a trailing `dir/**` matches everything beneath
+    `dir/`; `fnmatch`'s `*` does not cross `/`, so we normalise `**` to a
+    cross-segment wildcard first.
+    """
+    if fnmatch.fnmatchcase(rel, glob):
+        return True
+    # fnmatch treats ** like * (no /-crossing). Emulate recursive ** ourselves.
+    if "**" in glob:
+        pattern = glob.replace("**", "*")
+        # collapse any '*/*' that a 'dir/**' -> 'dir/*' could leave, then match on
+        # the whole path with `/` allowed inside the wildcard via a manual check.
+        prefix = glob.split("**", 1)[0]
+        if rel.startswith(prefix):
+            return True
+        if fnmatch.fnmatchcase(rel, pattern):
+            return True
+    return False
+
+
+def scan_file(
+    path: Path,
+    allowlist: dict,
+    exempt_globs: dict | None = None,
+    repo_root: Path | None = None,
+) -> list[Finding]:
+    """Classify every function in a file. `allowlist` maps 'module:qualname' -> entry.
+
+    `exempt_globs` maps a repo-relative POSIX glob (e.g. 'yadgar/seed/**') -> entry;
+    a function whose file path matches an exempt glob is EXEMPT_GLOB.
+    """
+    exempt_globs = exempt_globs or {}
+    repo_root = repo_root or _REPO_ROOT
     try:
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
@@ -156,6 +234,8 @@ def scan_file(path: Path, allowlist: dict) -> list[Finding]:
         return []
 
     module = path.stem
+    rel = _rel_posix(path, repo_root)
+    file_glob = next((g for g in exempt_globs if _matches_glob(rel, g)), None)
     findings: list[Finding] = []
 
     def visit(node: ast.AST, stack: list[str]) -> None:
@@ -163,8 +243,10 @@ def scan_file(path: Path, allowlist: dict) -> list[Finding]:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 qn = _qualname(stack, child.name)
                 fq = f"{module}:{qn}"
-                status = _classify(child, fq, allowlist)
-                findings.append(Finding(qualname=qn, lineno=child.lineno, status=status))
+                status, errs = _classify(child, fq, allowlist, file_glob)
+                findings.append(
+                    Finding(qualname=qn, lineno=child.lineno, status=status, errors=errs)
+                )
                 visit(child, [*stack, child.name])
             elif isinstance(child, ast.ClassDef):
                 visit(child, [*stack, child.name])
@@ -175,18 +257,30 @@ def scan_file(path: Path, allowlist: dict) -> list[Finding]:
     return findings
 
 
-def _classify(node, fq: str, allowlist: dict) -> str:
+def _classify(node, fq: str, allowlist: dict, file_glob: str | None) -> tuple[str, list[str]]:
+    """Return (status, integrity_errors). Errors are threaded to the always-hard channel."""
     if _is_dunder(node.name):
-        return "EXEMPT_DUNDER"
+        return "EXEMPT_DUNDER", []
     if _is_property(node):
-        return "EXEMPT_PROPERTY"
+        return "EXEMPT_PROPERTY", []
+    # @observe(exempt="reason") — categorized no-op; reason is GOVERNED (P5 hole).
+    exempt_reason = _observe_exempt_reason(node)
+    if exempt_reason is not None:
+        if len(exempt_reason.strip()) < _MIN_RATIONALE_CHARS:
+            return "EXEMPT_OBSERVE", [
+                f"{fq}: @observe(exempt=...) reason must be a string literal >= "
+                f"{_MIN_RATIONALE_CHARS} chars"
+            ]
+        return "EXEMPT_OBSERVE", []
     if _has_span_decorator(node):
-        return "SATISFIED"
+        return "SATISFIED", []
     if fq in allowlist:
-        return "EXEMPT_ALLOWLIST"
+        return "EXEMPT_ALLOWLIST", []
+    if file_glob is not None:
+        return "EXEMPT_GLOB", []
     if _is_trivial(node):
-        return "EXEMPT_TRIVIAL"
-    return "MISSING"
+        return "EXEMPT_TRIVIAL", []
+    return "MISSING", []
 
 
 # ── allowlist governance (always hard) ───────────────────────────────────────
@@ -205,6 +299,22 @@ def validate_allowlist_entry(fq: str, entry: dict) -> list[str]:
     return errs
 
 
+def validate_glob_entry(glob: str, entry: dict) -> list[str]:
+    """Same governance as a per-fn allowlist entry, keyed on a path glob."""
+    errs: list[str] = []
+    if not isinstance(entry, dict):
+        return [f"glob {glob}: entry must be an object"]
+    cat = entry.get("category")
+    if cat not in _ALLOWED_CATEGORIES:
+        errs.append(
+            f"glob {glob}: invalid category {cat!r} (allowed: {sorted(_ALLOWED_CATEGORIES)})"
+        )
+    rationale = entry.get("rationale", "")
+    if not isinstance(rationale, str) or len(rationale.strip()) < _MIN_RATIONALE_CHARS:
+        errs.append(f"glob {glob}: rationale must be >= {_MIN_RATIONALE_CHARS} chars")
+    return errs
+
+
 def _iter_py_files(root: Path, area: str | None) -> list[Path]:
     files = []
     for p in sorted(root.rglob("*.py")):
@@ -217,23 +327,43 @@ def _iter_py_files(root: Path, area: str | None) -> list[Path]:
     return files
 
 
-def run(root: Path, allowlist: dict, area: str | None) -> tuple[list[Finding], set[str], list[str]]:
+def run(
+    root: Path,
+    allowlist: dict,
+    area: str | None,
+    exempt_globs: dict | None = None,
+    repo_root: Path | None = None,
+) -> tuple[list[Finding], set[str], list[str]]:
     """Return (all_findings, seen_fqs, integrity_errors)."""
+    exempt_globs = exempt_globs or {}
+    repo_root = repo_root or _REPO_ROOT
     all_findings: list[Finding] = []
     seen_fqs: set[str] = set()
+    glob_hits: set[str] = set()  # globs that matched >=1 in-scope function file
     for path in _iter_py_files(root, area):
         module = path.stem
-        for f in scan_file(path, allowlist):
+        rel = _rel_posix(path, repo_root)
+        for g in exempt_globs:
+            if _matches_glob(rel, g):
+                glob_hits.add(g)
+        for f in scan_file(path, allowlist, exempt_globs, repo_root):
             all_findings.append(f)
             seen_fqs.add(f"{module}:{f.qualname}")
 
     integrity: list[str] = []
+    # classification-time errors (e.g. short @observe(exempt=...) reason) are hard.
+    for f in all_findings:
+        integrity.extend(f.errors)
     for fq, entry in allowlist.items():
         if fq.startswith("_"):
-            continue  # metadata keys (e.g. "_comment") are not allowlist entries
+            continue  # metadata keys (e.g. "_comment", "_exempt_globs") handled elsewhere
         integrity.extend(validate_allowlist_entry(fq, entry))
         if fq not in seen_fqs:
             integrity.append(f"{fq}: STALE allowlist entry — no such function in scope")
+    for glob, entry in exempt_globs.items():
+        integrity.extend(validate_glob_entry(glob, entry))
+        if glob not in glob_hits:
+            integrity.append(f"glob {glob}: STALE — matches no in-scope function file")
     return all_findings, seen_fqs, integrity
 
 
@@ -267,7 +397,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {alf} is not valid JSON: {exc}", file=sys.stderr)
             return 1
 
-    findings, _seen, integrity = run(root, allowlist, args.area)
+    exempt_globs = allowlist.get("_exempt_globs", {})
+    if not isinstance(exempt_globs, dict):
+        print("ERROR: _exempt_globs must be an object mapping glob -> entry", file=sys.stderr)
+        return 1
+
+    # Globs are keyed repo-relative (e.g. 'yadgar/seed/**'); derive the repo root
+    # from the scan root so both live-repo runs and tmp-dir test runs resolve the
+    # same POSIX form. Scan root is '.../yadgar' → repo root is its parent.
+    repo_root = root.resolve().parent if root.name == "yadgar" else _REPO_ROOT
+
+    findings, _seen, integrity = run(root, allowlist, args.area, exempt_globs, repo_root)
 
     if args.list_all:
         for f in findings:

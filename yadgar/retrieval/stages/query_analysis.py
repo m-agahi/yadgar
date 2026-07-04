@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.stages.base import RetrievalStage
 from yadgar.retrieval.state import RetrievalState
 
@@ -24,6 +25,7 @@ class QueryAnalysisStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
+    @observe(tier="stage", name="retrieval.pipeline.query_analysis")
     def apply(self, state: RetrievalState) -> RetrievalState:
         from yadgar.retrieval.profiles import get_profile  # noqa: PLC0415
         from yadgar.retrieval.query_analysis import (  # noqa: PLC0415

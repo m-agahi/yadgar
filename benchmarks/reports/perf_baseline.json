@@ -1,0 +1,18 @@
+{
+  "_comment": "#79 perf-loadtest BASELINE (RECORD-ONLY / Phase 1). These values are a STUB placeholder, NOT a measured baseline — promoting a real baseline is a deliberate manual commit after >=3 record-only runs on a stable snapshot pin establish a noise band (perf-loadtest-contract-2026-06-30.md 2.3). Until then the checker reports deltas but the harness NEVER gates (exits 0 regardless). snapshot_id / embedding_model MUST match the run for the comparison to be valid (2.5 incomparability guard); a stub snapshot_id ensures a live run is auto-flagged not-comparable until a real pin is recorded.",
+  "benchmark": "perf-loadtest",
+  "status": "stub-record-only",
+  "snapshot_id": "STUB-uncalibrated",
+  "embedding_model": "gte-modernbert",
+  "tolerance_pct": 15.0,
+  "aggregated": {
+    "recall_p50_ms": 0.0,
+    "recall_p95_ms": 0.0,
+    "ce_mean_ms": 0.0
+  },
+  "reproducibility": {
+    "note": "replace with a real run's reproducibility block when promoting a measured baseline",
+    "yadgar_commit": null,
+    "run_date_utc": null
+  }
+}

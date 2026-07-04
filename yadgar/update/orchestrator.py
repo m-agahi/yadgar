@@ -29,6 +29,7 @@ from enum import Enum
 from pathlib import Path
 
 from yadgar import paths
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,7 @@ class _RunCtx:
     forward_log: list[dict] = field(default_factory=list)
     snapshot: object = None  # yadgar.update.snapshot.Snapshot | None
 
+    @observe(tier="stage")
     def log(self, state: OrchestratorState, detail: dict | None = None) -> None:
         self.current_state = state
         entry = {"ts": _now_isoformat(), "state": state.value, "detail": detail}
@@ -139,6 +141,7 @@ class _RunCtx:
             pulled_new=pulled_new,
         )
 
+    @observe(tier="stage")
     def _prev_tag(self) -> str:
         if self.snapshot is not None:
             return self.snapshot.read_prev_image_tag() or ""
@@ -150,6 +153,7 @@ class _RunCtx:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _acquire_lock(
     lock_path: Path,
     version_from: str,
@@ -207,6 +211,7 @@ def _acquire_lock(
     return None
 
 
+@observe(tier="stage")
 def _release_lock(lock_path: Path) -> None:
     try:
         lock_path.unlink(missing_ok=True)
@@ -219,6 +224,7 @@ def _release_lock(lock_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _phase_probe_pypi(ctx: _RunCtx, target_version: str | None) -> str:
     """Return resolved target version (from override or PyPI)."""
     if target_version is not None:
@@ -229,6 +235,7 @@ def _phase_probe_pypi(ctx: _RunCtx, target_version: str | None) -> str:
     return info.available_version
 
 
+@observe(tier="stage")
 def _phase_snapshot(ctx: _RunCtx) -> None:
     """Create snapshot directory and write prev-state files."""
     from yadgar.update.snapshot import create_snapshot  # noqa: PLC0415
@@ -248,6 +255,7 @@ def _phase_snapshot(ctx: _RunCtx) -> None:
     ctx.snapshot.write_prev_cli_version(prev_cli or "")
 
 
+@observe(tier="stage")
 def _phase_cli_upgrade(ctx: _RunCtx) -> str | None:
     """Attempt CLI upgrade; return error string on failure, None on success."""
     try:
@@ -321,6 +329,7 @@ def _build_hooks(
     )
 
 
+@observe(tier="boundary")
 def run_install(
     config: InstallConfig | None = None,
     hooks: _Hooks | None = None,
@@ -402,6 +411,7 @@ def run_install(
         _release_lock(ctx.lock_path)
 
 
+@observe(tier="stage")
 def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult:
     """Execute the forward upgrade path (steps 2–10)."""
     from yadgar.update.snapshot import prune_old_snapshots  # noqa: PLC0415
@@ -493,6 +503,7 @@ def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult
     return ctx.result(OrchestratorState.RE_EXECING, error=None)
 
 
+@observe(tier="stage")
 def _handle_cli_rollback(ctx: _RunCtx, prev_cli: str, cli_error: str) -> OrchestratorResult:
     """Attempt CLI-only rollback after a failed CLI upgrade."""
     ctx.log(OrchestratorState.ROLLING_BACK_CLI_ONLY, {"prev_version": prev_cli})
@@ -516,6 +527,7 @@ def _handle_cli_rollback(ctx: _RunCtx, prev_cli: str, cli_error: str) -> Orchest
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _rollback_daemon(
     *,
     prev_tag: str,
@@ -572,6 +584,7 @@ def _rollback_daemon(
     return rollback_log
 
 
+@observe(tier="stage")
 def _rollback_final_state(rollback_log: list[dict]) -> OrchestratorState:
     if not rollback_log:
         return OrchestratorState.ROLLED_BACK_FAILED
@@ -586,6 +599,7 @@ def _rollback_final_state(rollback_log: list[dict]) -> OrchestratorState:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _default_image_pull(version: str) -> None:
     subprocess.run(
         ["podman", "pull", f"docker.io/openfantasy/yadgar:{version}"],
@@ -593,6 +607,7 @@ def _default_image_pull(version: str) -> None:
     )
 
 
+@observe(tier="stage")
 def _default_graceful_stop(timeout: int) -> None:
     subprocess.run(
         ["yadgar", "daemon", "graceful-stop", f"--timeout={timeout}"],
@@ -600,10 +615,12 @@ def _default_graceful_stop(timeout: int) -> None:
     )
 
 
+@observe(tier="stage")
 def _default_service_restart() -> None:
     subprocess.run(["systemctl", "--user", "restart", "yadgar.service"], check=True)
 
 
+@observe(tier="stage")
 def _default_health_check() -> bool:
     import urllib.request  # noqa: PLC0415
 
@@ -623,10 +640,12 @@ def _default_health_check() -> bool:
     return False
 
 
+@observe(tier="stage")
 def _default_cli_upgrade(version: str) -> None:  # noqa: ARG001
     subprocess.run(["pipx", "upgrade", "yadgar"], check=True)
 
 
+@observe(tier="stage")
 def _default_cli_rollback(prev_version: str) -> None:
     subprocess.run(
         ["pipx", "install", "--force", f"yadgar=={prev_version}"],
@@ -652,6 +671,7 @@ def _now_isoformat() -> str:
     return datetime.now(tz=UTC).isoformat()
 
 
+@observe(tier="stage")
 def _get_current_cli_version() -> str:
     try:
         from importlib.metadata import version  # noqa: PLC0415
@@ -661,6 +681,7 @@ def _get_current_cli_version() -> str:
         return "unknown"
 
 
+@observe(tier="stage")
 def _read_current_image_tag(env_path: Path) -> str | None:
     if not env_path.exists():
         return None
@@ -671,6 +692,7 @@ def _read_current_image_tag(env_path: Path) -> str | None:
     return None
 
 
+@observe(tier="stage")
 def _read_unit_file() -> str | None:
     try:
         return _DEFAULT_UNIT_FILE_PATH.read_text()
@@ -678,6 +700,7 @@ def _read_unit_file() -> str | None:
         return None
 
 
+@observe(tier="stage")
 def _write_env_file(env_path: Path, version: str, *, full_tag: str | None = None) -> None:
     """Atomically rewrite upgrade.env with the new image tag."""
     import tempfile  # noqa: PLC0415
@@ -699,6 +722,7 @@ def _write_env_file(env_path: Path, version: str, *, full_tag: str | None = None
         raise
 
 
+@observe(tier="stage")
 def _extract_version_from_tag(tag: str) -> str:
     if ":" in tag:
         return tag.rsplit(":", 1)[-1]

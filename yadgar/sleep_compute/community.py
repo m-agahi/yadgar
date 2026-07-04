@@ -7,6 +7,7 @@ from collections import Counter
 
 import numpy as np
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 # Entity-like patterns for identifying key sentences during compression
@@ -58,6 +59,7 @@ def _top_keywords(text: str, n: int = 5) -> list[str]:
     return [w for w, _ in Counter(meaningful).most_common(n)]
 
 
+@observe(tier="stage")
 def _compute_centroid(rows: list[dict]) -> bytes | None:
     """Compute a normalized centroid embedding from *rows*, or None if no embeddings."""
     embeddings_list = [m["embedding"] for m in rows if m.get("embedding") is not None]
@@ -153,6 +155,7 @@ class _CommunityMixin:
 
         return results
 
+    @observe(tier="stage")
     def _find_memories_for_entities(self, entity_names: list[str]) -> list[int]:
         """Find memory IDs whose content mentions any of the given entity names."""
         if not entity_names:
@@ -206,6 +209,7 @@ class _CommunityMixin:
         # Create level 2 (root) clusters by grouping level 1 by directory_context
         self._create_root_clusters()
 
+    @observe(tier="stage")
     def _build_cluster_summary(self, rows: list[dict], fallback: str) -> str:
         """Extract entities and keywords from member memories, return summary string."""
         all_content = " ".join(m["content"] for m in rows)
@@ -222,6 +226,7 @@ class _CommunityMixin:
             summary_parts.append("Keywords: " + ", ".join(top_keywords))
         return "; ".join(summary_parts) if summary_parts else fallback
 
+    @observe(tier="stage")
     def _create_root_clusters(self) -> None:
         """Group level 1 clusters by dominant directory_context into level 2 clusters."""
         clusters = self._storage.get_clusters_by_level(1)

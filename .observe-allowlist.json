@@ -1,11 +1,673 @@
 {
-  "_comment": "I33 observe-coverage allowlist (v5.101 P0). Governance mirrors .complexity-allowlist.json (I30): every entry needs a valid category and a rationale >= 40 chars; a stale entry (fn no longer in scope) hard-fails even in warn-mode. Categories: hot-loop, generated, trivial, property, dunder, framework-instrumented, test, pre-existing. This seed is intentionally SMALL: warn-mode reports the full MISSING baseline; the per-area rollout waves (P1..P5) will populate real exemptions. Do NOT bulk-add all ~1,600 in-scope functions here.",
+  "_comment": "I33 observe-coverage allowlist. Governance mirrors .complexity-allowlist.json (I30): every entry needs a valid category and a rationale >= 40 chars; a stale entry (fn no longer in scope) hard-fails even in warn-mode. Categories: hot-loop, generated, trivial, property, dunder, framework-instrumented, test, pre-existing. P1 (retrieval read path, ADR-0034) populated the retrieval-area exemptions below. The low-value presentation/CLI/generated/bootstrap tail is exempted en-masse via _exempt_globs (path-glob, one entry per directory or file). Do NOT bulk-add all ~1,600 in-scope functions here.",
+  "_exempt_globs": {
+    "yadgar/cli/**": {
+      "category": "generated",
+      "rationale": "operator-invoked CLI command glue: argparse wiring, table/summary printing, and thin dispatch to already-instrumented service tools. No unattended runtime ops path; a span/metric/log per CLI call adds noise, not insight (obs-standard section-5 'CLI glue' exempt-heavy)."
+    },
+    "yadgar/seed/**": {
+      "category": "generated",
+      "rationale": "one-shot project-bootstrap material generation/scan/analysis run interactively via seed_project; not a recurring runtime ops path, so per-function tri-signal instrumentation yields no dashboard value and only diff churn."
+    },
+    "yadgar/scripts/**": {
+      "category": "generated",
+      "rationale": "standalone maintenance/entry scripts (nightly_cycle, hook_runner, wiki_snapshot, yadgar_setup): short-lived batch procs whose spans would not flush and whose outer flow is already logged; instrumenting them is cosmetic per obs-standard hooks/short-proc caveat."
+    },
+    "yadgar/export/**": {
+      "category": "generated",
+      "rationale": "on-demand DuckDB export tooling (row coercion, schema build, table fetch/write): pure data-marshalling invoked from an operator export command, not a hot or unattended path; exempt per obs-standard 'seed/migration/codegen' exempt-heavy tail."
+    },
+    "yadgar/storage/migrations.py": {
+      "category": "generated",
+      "rationale": "schema migration boilerplate run once per version bump at startup; generated-style DDL steps with no recurring ops signal to surface on a dashboard, matching the 'generated/migration boilerplate' exemption category."
+    },
+    "yadgar/viz_server.py": {
+      "category": "generated",
+      "rationale": "presentation-layer viz HTTP render/layout server: builds HTML/JSON views for the local dashboard; pure rendering glue with no ops decision to trace, exempt per obs-standard presentation/viz exempt-heavy tail."
+    },
+    "yadgar/viz_daemon_health.py": {
+      "category": "generated",
+      "rationale": "viz daemon health-panel rendering helpers: format health data into presentation structures for the local dashboard; no service logic worth a span, presentation-layer exemption per obs-standard."
+    },
+    "yadgar/viz_meta.py": {
+      "category": "generated",
+      "rationale": "viz metadata presentation helper: shapes metadata for the local viz dashboard render path; pure presentation glue with no ops signal, exempt per obs-standard presentation tail."
+    },
+    "yadgar/graph_api.py": {
+      "category": "generated",
+      "rationale": "knowledge-graph viz API render/layout endpoints for the local dashboard: assemble graph node/edge view payloads; presentation rendering, not a diagnosed ops path, exempt per obs-standard presentation tail."
+    },
+    "yadgar/graph_layout.py": {
+      "category": "generated",
+      "rationale": "graph layout geometry computation for the viz dashboard: pure coordinate math for presentation; no external I/O or ops decision to surface, presentation-layer exemption per obs-standard."
+    },
+    "yadgar/blocks_render.py": {
+      "category": "generated",
+      "rationale": "memory-block presentation renderer: formats block content into display sections for the viz/CLI surface; pure presentation formatting with no ops signal, exempt per obs-standard presentation tail."
+    },
+    "yadgar/__main__.py": {
+      "category": "generated",
+      "rationale": "package entrypoint argparse/dispatch shim: parses argv and hands off to the CLI, which itself dispatches to instrumented tools; a span here duplicates the CLI boundary with no added signal, entrypoint-glue exemption."
+    },
+    "yadgar/observability/observe.py": {
+      "category": "framework-instrumented",
+      "rationale": "the @observe decorator implementation itself: decorating the instrumentation framework with @observe is circular (a span emitter cannot span-source its own emit path); this IS the tri-signal machinery, exempt by construction."
+    },
+    "yadgar/observability/timing.py": {
+      "category": "framework-instrumented",
+      "rationale": "the timing decorator factories (stage_timer/request_timer/labeled_timer) that the observe framework composes: framework plumbing that emits signals for other functions; instrumenting it is circular, exempt by construction."
+    }
+  },
   "fusion:_FusionMixin._normalize_signal": {
     "category": "hot-loop",
-    "rationale": "pre-existing; scheduled for obs-coverage wave P1 (retrieval). Per-signal score normalizer invoked inside the fusion inner loop; a span/metric/log per call is per-candidate cardinality + latency bloat on the hot recall path."
+    "rationale": "Per-signal score normalizer invoked inside the fusion inner loop (once per signal per recall); a span/metric/log per call is per-candidate cardinality + latency bloat on the hot recall path. Parent _wrrf_fuse carries the stage span."
   },
   "scoring:_normalize_fts_hits": {
     "category": "hot-loop",
-    "rationale": "pre-existing; scheduled for obs-coverage wave P1 (retrieval). Normalizes each FTS hit row in the scoring inner loop; instrumenting per-call would multiply signals per candidate with no dashboard value."
+    "rationale": "Normalizes each FTS hit row in the scoring inner loop (per BM25 search per recall); instrumenting per-call would multiply signals per candidate with no dashboard value. Parent _collect_fts_scores carries retrieval.fts span."
+  },
+  "cognitive_load:_CognitiveLoadMixin.manage_context._chunk_score": {
+    "category": "hot-loop",
+    "rationale": "Nested closure scoring one chunk per iteration inside manage_context's context-assembly loop; the instrumented parent manage_context carries the span, a per-chunk signal is per-item cardinality bloat with no dashboard value."
+  },
+  "_app:_patch_uvicorn_shutdown_timeout._sse_async_patched": {
+    "category": "framework-instrumented",
+    "rationale": "Monkeypatch shim replacing uvicorn's SSE shutdown coroutine to enforce the grace timeout; a framework lifecycle patch that must preserve the exact uvicorn call signature, wrapping it with @observe would alter shutdown timing semantics."
+  },
+  "_app:_patch_uvicorn_shutdown_timeout._streamable_http_async_patched": {
+    "category": "framework-instrumented",
+    "rationale": "Monkeypatch shim replacing uvicorn's streamable-HTTP shutdown coroutine to enforce the grace timeout; a framework lifecycle patch that must preserve the exact uvicorn call signature, instrumenting it would perturb shutdown timing."
+  },
+  "_app:_tool._estimate_tokens": {
+    "category": "hot-loop",
+    "rationale": "Nested per-call token estimator inside the _tool decorator wrapper; runs once per tool invocation as pure arithmetic on the arg string, a per-call span/metric duplicates the tool-boundary RED signal the wrapper already emits."
+  },
+  "_app:_tool.decorator": {
+    "category": "framework-instrumented",
+    "rationale": "The inner decorator returned by the _tool decorator factory; it attaches wrapping at import/registration time (not a runtime work unit), so a per-call span is meaningless and the instrumented factory _tool already carries the span."
+  },
+  "_app:_build_tool_wrappers._emit_metrics": {
+    "category": "framework-instrumented",
+    "rationale": "Nested helper that writes the shared per-tool RED metric families for the wrapper; it IS the metric-emission path, so decorating it with @observe (which emits metrics) would be circular and double-count the tool boundary signal."
+  },
+  "_app:_build_tool_wrappers._maintenance": {
+    "category": "framework-instrumented",
+    "rationale": "Nested per-invocation maintenance hook (pool bookkeeping) inside the tool wrapper; runs under the wrapper's own RED span+metric, a separate per-call signal is redundant with the tool-boundary instrumentation already present."
+  },
+  "_app:_build_tool_wrappers._instrumented": {
+    "category": "framework-instrumented",
+    "rationale": "The sync tool-call wrapper body that itself emits the shared per-tool RED span+metric+log for every tool invocation; this closure IS the instrumentation, decorating it with @observe would open a second redundant span per tool call."
+  },
+  "_app:_build_tool_wrappers._instrumented_async": {
+    "category": "framework-instrumented",
+    "rationale": "The async tool-call wrapper body that itself emits the shared per-tool RED span+metric+log for every tool invocation; this closure IS the instrumentation, decorating it with @observe would double-span each async tool call."
+  },
+  "_offload:_ctx_wrap._runner": {
+    "category": "hot-loop",
+    "rationale": "Nested closure that runs the offloaded callable on the worker thread inside a copied contextvars context; the tool body it runs carries its own trace_span and the instrumented run_offloaded boundary wraps the offload, so a per-run signal here is redundant."
+  },
+  "http:api_heat_histogram._compute": {
+    "category": "hot-loop",
+    "rationale": "Nested compute closure run under the api_heat_histogram handler; the handler is the request boundary that carries the span, a separate per-call signal on the inner bucket-computation adds cardinality with no additional ops insight."
+  },
+  "http:api_consolidation_log._fetch": {
+    "category": "hot-loop",
+    "rationale": "Nested fetch closure run under the api_consolidation_log handler; the enclosing handler carries the request boundary span, an inner per-call signal duplicates it with no dashboard value."
+  },
+  "logs:logs_stream_handler.event_generator": {
+    "category": "hot-loop",
+    "rationale": "Async generator SSE event loop nested inside logs_stream_handler; @observe sync-wraps and would fire the signal at generator creation not exhaustion, and it streams per-event forever so any per-yield signal is unbounded cardinality — the boundary handler carries the span."
+  },
+  "orchestrator:_rollback_daemon._rlog": {
+    "category": "hot-loop",
+    "rationale": "Nested logging closure inside _rollback_daemon that appends one rollback-state entry per step; the enclosing _rollback_daemon flow carries the signal, a per-log-line span/metric is per-item noise with no ops value."
+  },
+  "__init__:_capture_table_counts._post": {
+    "category": "hot-loop",
+    "rationale": "Nested HTTP POST closure invoked per table inside _capture_table_counts; the instrumented parent _capture_table_counts carries the stage span, a per-table per-call signal is per-item cardinality bloat during the one-shot vacuum flow."
+  },
+  "__init__:_side_build_swap_and_start._abort_restart": {
+    "category": "hot-loop",
+    "rationale": "Nested abort/restart closure inside _side_build_swap_and_start invoked only on the vacuum-swap error path; the enclosing instrumented _side_build_swap_and_start carries the span, a separate signal on this rarely-taken inner handler adds no dashboard value."
+  },
+  "wiki:_wiki_observe_stage": {
+    "category": "hot-loop",
+    "rationale": "Per-stage metric-emission helper called once per wiki-query stage (fts/embed_query/hnsw) inside the query hot path; it IS a metric writer (yadgar_wiki_query_stage_ms), so wrapping it with @observe would be circular and double-emit per stage."
+  },
+  "_reranking_heuristic:_score_memory": {
+    "category": "hot-loop",
+    "rationale": "Scores one memory per iteration of the heuristic_rerank per-candidate loop (N calls per rerank); a span/metric per call = per-candidate bloat. Parent heuristic_rerank carries retrieval.heuristic.rerank stage span."
+  },
+  "_reranking_mmr:_cosine_sim": {
+    "category": "hot-loop",
+    "rationale": "Cosine similarity called per candidate-vs-selected pair inside the MMR selection loop (O(k*N) calls per rerank); per-call instrumentation is pure per-item cardinality bloat with zero dashboard value."
+  },
+  "_reranking_mmr:_max_sim_to_selected": {
+    "category": "hot-loop",
+    "rationale": "Computes max similarity to the selected set per candidate inside the MMR inner loop (per-candidate per-iteration); a span/metric per call multiplies signals per candidate on the hot path with no ops value."
+  },
+  "_reranking_mmr:_best_mmr_candidate": {
+    "category": "hot-loop",
+    "rationale": "Selects the best MMR candidate once per output slot inside the top_k selection loop (per-iteration inner helper); instrumenting per-call bloats cardinality. Parent mmr_rerank carries retrieval.mmr.rerank stage span."
+  },
+  "core:Retriever._spreading_bfs_step": {
+    "category": "hot-loop",
+    "rationale": "One BFS expansion step invoked once per graph depth inside the spreading_activation while-loop (per-frontier-level); a span/metric per call bloats per-depth cardinality. Parent spreading_activation carries the stage span."
+  },
+  "core:Retriever._spreading_apply_activation": {
+    "category": "hot-loop",
+    "rationale": "Applies activation for one entity per call inside the legacy per-node BFS loop (per-entity inner helper); per-call instrumentation is per-item cardinality bloat with no dashboard value on the hot recall path."
+  },
+  "core:Retriever._spreading_bfs_step_pernode": {
+    "category": "pre-existing",
+    "rationale": "Legacy per-entity BFS step retained ONLY as the parity baseline for test_spreading_batch_parity.py; not used in production recall. Instrumenting a non-production parity baseline adds noise, not observability signal."
+  },
+  "graph_helpers:_GraphHelpersMixin._build_networkx_graph_pernode": {
+    "category": "pre-existing",
+    "rationale": "Legacy per-node networkx graph builder retained only as the parity baseline for the batched _build_networkx_graph; not on the production recall read path. A span here would trace dead code, not real ops."
+  },
+  "compare:recall_compare": {
+    "category": "pre-existing",
+    "rationale": "A/B comparison bench harness that runs recall under multiple profiles side-by-side; invoked only by benchmark scripts, never on the production recall read path. Out of P1 read-path scope; instrumentation adds no ops value."
+  },
+  "pipeline:_observe_stage_metric": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive that writes the yadgar_recall_stage_duration_seconds histogram feeding existing v5.31 dashboards; wrapping a metric-emitter in @observe would emit a span for a metric write (recursive noise, no value)."
+  },
+  "pipeline:_observe_candidates": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive that sets the per-stage candidate-count gauges feeding existing v5.31 pipeline dashboards; instrumenting a metric-writer with @observe is recursive span noise with no diagnostic value."
+  },
+  "pipeline:_observe_profile_invocation": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive that increments the recall profile-invocation counter feeding existing dashboards; a span around a single counter .inc() is pure noise, not observability signal."
+  },
+  "reranking:_observe_recall_stage": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive that observes per-rerank-stage durations into the recall stage histogram (v5.100) feeding live dashboards; wrapping this metric-writer in @observe would double-emit for one metric write."
+  },
+  "scoring:_observe_stage": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive that observes a recall-stage duration into yadgar_recall_stage_ms (v5.100) feeding existing dashboards; a span around a single metric .observe() is recursive noise with no ops value."
+  },
+  "scoring:_set_stage_attrs": {
+    "category": "framework-instrumented",
+    "rationale": "OTEL span-attribute setter that annotates the CURRENT recall stage span with count ints (v5.100); it mutates the active span rather than opening one, so wrapping it in @observe would emit a redundant child span."
+  },
+  "entities:_extract_query_entities._add": {
+    "category": "trivial",
+    "rationale": "Tiny nested closure that appends a unique name to a local list inside _extract_query_entities; not independently reachable and covered by the parent's hot span. Instrumenting a per-token closure is per-item cardinality bloat."
+  },
+  "query_analysis:_extract_comparison_options._collect_left": {
+    "category": "trivial",
+    "rationale": "Nested closure that walks tokens leftward to build a comparison operand string inside _extract_comparison_options; not independently reachable and umbrella-covered by the parent's hot span. Per-call instrumentation is noise."
+  },
+  "query_analysis:_extract_comparison_options._collect_right": {
+    "category": "trivial",
+    "rationale": "Nested closure that walks tokens rightward to build a comparison operand string inside _extract_comparison_options; not independently reachable and umbrella-covered by the parent's hot span. Per-call instrumentation is noise."
+  },
+  "query_analysis:_build_open_domain_subqueries._add": {
+    "category": "trivial",
+    "rationale": "Tiny nested closure that appends a deduplicated candidate subquery inside _build_open_domain_subqueries; not independently reachable and covered by the parent's hot span. Instrumenting a per-candidate closure adds no value."
+  },
+  "temporal:parse_temporal_expression._add_expr": {
+    "category": "trivial",
+    "rationale": "Tiny nested closure that appends a parsed temporal-expression hint inside parse_temporal_expression; not independently reachable and umbrella-covered by the parent's hot span. Per-call instrumentation is pure noise."
+  },
+  "engram:EngramAllocator.get_excitability": {
+    "category": "hot-loop",
+    "rationale": "Reads one slot's decayed excitability; called per-slot inside apply_lateral_inhibition's neighbor loop and per boost_excitability (per-allocation, per-neighbor). A span/metric per call is per-slot cardinality bloat. Parent engram.allocate carries the boundary span."
+  },
+  "engram:EngramAllocator._compute_decayed_excitability": {
+    "category": "hot-loop",
+    "rationale": "Pure exponential-decay math applied per-slot inside the exc_by_slot dict-comprehension in _allocate_inner and get_slot_statistics (once per slot in the table); per-call instrumentation is per-item cardinality bloat with no dashboard value."
+  },
+  "knowledge_graph:_error_fix_entities": {
+    "category": "hot-loop",
+    "rationale": "Builds entity triples for one error-fix regex match; called per-match inside the _ERROR_FIX_RE.finditer loop in _extract_entities_typed_inner (per-match, per-content). A span per match is per-item cardinality bloat. Parent extract_entities_typed carries the boundary span."
+  },
+  "knowledge_graph:KnowledgeGraph._ensure_entity": {
+    "category": "hot-loop",
+    "rationale": "Fetch-or-insert one entity by name; called per source and per target inside add_relationship (twice per relationship-triple, N triples per write/consolidation). Per-call instrumentation is per-entity cardinality bloat. Parent add_relationship carries the stage span."
+  },
+  "knowledge_graph:KnowledgeGraph._get_typed_relationship_by_name": {
+    "category": "hot-loop",
+    "rationale": "Resolves a source/target/rel_type triple to a relationship row; called per candidate pair inside the detect_causality co-occurrence scan loop (per-pair). A span/metric per call is per-item cardinality bloat. Parent detect_causality carries the boundary span."
+  },
+  "knowledge_graph:KnowledgeGraph._rows_to_adjacency": {
+    "category": "hot-loop",
+    "rationale": "Projects relationship rows into neighbor dicts for one entity; called per BFS node inside get_neighbors and per-frontier in traversal (per-node). A span per call is per-item cardinality bloat. Parent get_neighbors/get_subgraph carries the stage span."
+  },
+  "knowledge_graph:KnowledgeGraph._get_adjacent_batch": {
+    "category": "hot-loop",
+    "rationale": "Batched adjacency lookup for one BFS frontier; called once per depth level inside the get_subgraph traversal while-loop (per-frontier-level). Per-call instrumentation is per-level cardinality bloat. Parent get_subgraph carries the stage span."
+  },
+  "knowledge_graph:KnowledgeGraph._check_temporal_order": {
+    "category": "hot-loop",
+    "rationale": "Scans recent episodes to order two entities; called per candidate entity pair inside the detect_causality nested loop (per-pair). A span/metric per call is per-item cardinality bloat. Parent detect_causality carries the boundary span."
+  },
+  "predictive_coding:WriteGate._parse_created_at": {
+    "category": "hot-loop",
+    "rationale": "Parses one memory's created_at into a datetime; called per directory-memory inside the _most_recent_mention_dt scan loop (per-item, up to 50 memories per surprisal). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "__init__:_drainer_span": {
+    "category": "framework-instrumented",
+    "rationale": "OTEL span factory: returns an un-entered start_as_current_span('drainer.cycle') context manager entered by run(). It OPENS the span rather than being wrapped by one; decorating would emit a redundant second span around the factory call."
+  },
+  "__init__:_drainer_heartbeat": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sole body (past the import guard) is loop_heartbeat('queue_drainer'); wrapping a heartbeat emitter in @observe is recursive span noise for a single metric touch, no diagnostic value."
+  },
+  "__init__:_drainer_record_exc": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sole body is loop_record_exception('queue_drainer', exc); wrapping a loop-error counter emitter in @observe emits a span for one counter .inc(), recursive noise with no ops value."
+  },
+  "__init__:QueueDrainer.run": {
+    "category": "framework-instrumented",
+    "rationale": "Infinite drainer thread loop that opens the manual 'drainer.cycle' span per iteration via _drainer_span(); a boundary/stage decorator would span the entire thread lifetime AND double the per-cycle span. The manual cycle span is the correct instrumentation."
+  },
+  "__init__:QueueDrainer._observe_drainer_lag": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sole body is yadgar_drainer_lag_ms.observe(...); wrapping a lag-metric writer in @observe emits a span for one histogram .observe(), recursive noise with no diagnostic value."
+  },
+  "__init__:QueueDrainer._observe_secret_blocked_metric": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: increments yadgar_writegate_outcome for SecretLeakBlocked DLQ entries; wrapping a single counter .inc() in @observe is recursive span noise with no observability signal."
+  },
+  "__init__:QueueDrainer._update_dlq_gauges": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sets the P11 queue_depth/dlq_size/rejection_count gauges (I23) once per drain cycle; wrapping a gauge-setter in @observe emits a span for gauge .set() calls, recursive noise with no ops value."
+  },
+  "__init__:QueueDrainer._record_failure": {
+    "category": "hot-loop",
+    "rationale": "Increments one queue file's retry counter and computes its next backoff; called per failing queue file inside the per-file drain loop (per-item on error). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "__init__:QueueDrainer._build_rejection_reason_and_meta": {
+    "category": "hot-loop",
+    "rationale": "Maps one rejection reason to a (failure_reason, metadata) tuple; called per rejected queue file inside _reject_permanent_to_dlq (per-item on policy rejection). A span per call is per-item cardinality bloat; parent process span already covers it."
+  },
+  "__init__:_classify_error": {
+    "category": "hot-loop",
+    "rationale": "Classifies one error string as permanent/transient via regex; called per failing queue file inside _apply_pending (per-item on error). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "apply:_apply_span": {
+    "category": "framework-instrumented",
+    "rationale": "OTEL span factory: returns an un-entered start_as_current_span('drainer.apply') context manager entered by _apply(). It OPENS the span rather than being wrapped; decorating would emit a redundant second span around the factory call."
+  },
+  "apply:_set_apply_op": {
+    "category": "framework-instrumented",
+    "rationale": "OTEL span-attribute setter: sets the 'op' attribute on the active drainer.apply span via get_current_span().set_attribute; it mutates the active span rather than opening one, so wrapping it in @observe would emit a redundant child span."
+  },
+  "apply:_ApplyMixin._apply": {
+    "category": "framework-instrumented",
+    "rationale": "Opens the manual 'drainer.apply' span per replayed record via _apply_span() and sets the op attribute; @observe's guard only detects decorator spans, so decorating this body-span opener would produce TWO spans and break test_drainer_apply_span_emits (op-attr assertion)."
+  },
+  "dlq:_inc_relaxed": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sole body is yadgar_writes_with_enforcement_relaxed.labels(...).inc(); wrapping a single counter .inc() in @observe is recursive span noise for one metric touch, no diagnostic value."
+  },
+  "dlq:_json_default": {
+    "category": "hot-loop",
+    "rationale": "JSON serializer default called per non-serializable object by json.dumps while writing DLQ sidecars (per-object, inner to the serialize loop). A span/metric per call is per-item cardinality bloat with zero dashboard value."
+  },
+  "queue:_json_default": {
+    "category": "hot-loop",
+    "rationale": "JSON serializer default called per non-serializable object by json.dumps while writing queue records in enqueue (per-object, inner to the serialize loop). A span/metric per call is per-item cardinality bloat with zero dashboard value."
+  },
+  "queue:FileQueue._cleanup_date_dir": {
+    "category": "hot-loop",
+    "rationale": "Deletes stale files in one dated archive sub-directory; called per date-dir inside the cleanup_archive iterdir loop (per-directory). A span/metric per call is per-item cardinality bloat. Parent cleanup_archive carries the stage span."
+  },
+  "cleanup:_observe_action_batch": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sole body is yadgar_action_batch_size.observe(n); wrapping a single histogram .observe() in @observe is recursive span noise for one metric touch, no diagnostic value."
+  },
+  "cleanup:_observe_archive_purge": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: increments yadgar_archive_purged_total + retention_skipped counters for a completed purge; wrapping counter .inc() calls in @observe is recursive span noise with no ops value."
+  },
+  "cleanup:_quarantine_action_group": {
+    "category": "hot-loop",
+    "rationale": "Appends one poison-pill quarantine entry to a jsonl file; called per poison-pill action group inside the _process_action_log group loop (per-group on SecretLeakBlocked). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "cleanup:_bucket_for_timestamp": {
+    "category": "hot-loop",
+    "rationale": "Computes a 30-minute bucket string for one timestamp; called per action-log row inside _group_rows_by_window (per-row, up to 200 rows per cycle). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "cleanup:_build_group_content": {
+    "category": "hot-loop",
+    "rationale": "Builds a summary string for one action group; called per (directory,window) group inside the _process_action_log group loop (per-group). A span/metric per call is per-item cardinality bloat. Parent consolidation.action_log carries the stage span."
+  },
+  "cold_retention:_parse_tags": {
+    "category": "hot-loop",
+    "rationale": "Parses one memory's tags field (JSON-string aware); called per candidate memory inside _is_candidate during the cold-retention scan (per-item, up to 10000 memories). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "cold_retention:_is_candidate": {
+    "category": "hot-loop",
+    "rationale": "Evaluates the cold-retention candidate predicate for one memory; called per memory in the _cold_memory_retention_report scan comprehension (per-item, up to 10000). A span/metric per call is per-item cardinality bloat. Parent report carries the stage span."
+  },
+  "cold_retention:_emit_cold_purge_candidates_metric": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sole body is yadgar_cold_purge_candidates.set(count); wrapping a single gauge .set() in @observe is recursive span noise for one metric touch, no diagnostic value."
+  },
+  "cls:_bump_shadow_epoch_global": {
+    "category": "framework-instrumented",
+    "rationale": "Instrumentation-only shadow-cache epoch bumper: fully-guarded call to _recall_shadow.bump_epoch(None) that invalidates stale prior keys after a prior recompute; it exists to touch a cache generation counter, so wrapping it in @observe is recursive noise with no ops value."
+  },
+  "cls:_CLSMixin._build_entity_map": {
+    "category": "hot-loop",
+    "rationale": "Merges typed+legacy entity extractions for one episode; called per episode inside the _process_new_episodes loop (per-episode). A span/metric per call is per-item cardinality bloat. Parent consolidation.process_episodes carries the stage span."
+  },
+  "cls:_CLSMixin._upsert_entities": {
+    "category": "hot-loop",
+    "rationale": "Get-or-creates entities for one episode's entity map; called per episode inside the _process_new_episodes loop (per-episode). A span/metric per call is per-item cardinality bloat. Parent consolidation.process_episodes carries the stage span."
+  },
+  "cls:_CLSMixin._build_cooccurrence_batch": {
+    "category": "hot-loop",
+    "rationale": "Builds the co-occurrence SQL write batch for one episode's entity set; called per episode inside the _process_new_episodes loop (per-episode). A span/metric per call is per-item cardinality bloat. Parent process_episodes carries the stage span."
+  },
+  "cls:_CLSMixin._find_entity_by_type": {
+    "category": "hot-loop",
+    "rationale": "Finds the first entity of a target type in one episode's entity map; called per typed-relationship inside _apply_one_typed_relationship (per-relationship, nested per-episode). A span/metric per call is per-item cardinality bloat."
+  },
+  "cls:_CLSMixin._apply_one_typed_relationship": {
+    "category": "hot-loop",
+    "rationale": "Emits one typed graph edge for a single (name, ctx) pair; called per relationship context inside _apply_typed_relationships (per-relationship, nested per-episode). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "cls:_CLSMixin._apply_typed_relationships": {
+    "category": "hot-loop",
+    "rationale": "Emits typed graph edges for one episode's relationship contexts; called per episode inside the _process_new_episodes loop (per-episode). A span/metric per call is per-item cardinality bloat. Parent process_episodes carries the stage span."
+  },
+  "cls:_CLSMixin._extract_entities": {
+    "category": "hot-loop",
+    "rationale": "Regex-extracts (name, type) pairs from one episode's raw content; called per episode inside the _process_new_episodes loop (per-episode). A span/metric per call is per-item cardinality bloat. Parent process_episodes carries the stage span."
+  },
+  "cls:_CLSMixin._parse_unit_embedding": {
+    "category": "hot-loop",
+    "rationale": "Parses one memory's embedding bytes to a unit-normalized ndarray; called per memory inside the _embedding_dedup valid-collection loop (per-item). A span/metric per call is per-item cardinality bloat. Parent embedding_dedup carries the stage span."
+  },
+  "orchestrator:_warn_slow_phase": {
+    "category": "hot-loop",
+    "rationale": "Threshold-log helper: emits a CRITICAL log only when one consolidation phase exceeds the warn threshold; called per phase inside _consolidation_cycle (many times per cycle). A span/metric per call is per-phase cardinality bloat; the enclosing phase-group stage span already covers timing."
+  },
+  "clustering:_ClusteringMixin._mem_tags": {
+    "category": "hot-loop",
+    "rationale": "Returns one memory's tags as a list (JSON-string aware); called per candidate memory inside the _build_unit_matrix filter loop (per-item, capped at CLS_PATTERN_MAX_CANDIDATES). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "clustering:_ClusteringMixin._try_unit_vec": {
+    "category": "hot-loop",
+    "rationale": "Converts one memory's embedding bytes to a unit vector; called per candidate memory inside the _build_unit_matrix loop (per-item, capped at CLS_PATTERN_MAX_CANDIDATES). A span/metric per call is per-item cardinality bloat. Parent build_unit_matrix carries the stage span."
+  },
+  "clustering:_ClusteringMixin._session_proxy": {
+    "category": "hot-loop",
+    "rationale": "Resolves a session identifier for one memory; called per cluster member inside the _qualify_cluster session-diversity loop (per-item). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "clustering:_ClusteringMixin._qualify_cluster": {
+    "category": "hot-loop",
+    "rationale": "Evaluates size + session-diversity thresholds for one cluster; called per detected cluster inside find_recurring_patterns' comprehension (per-cluster). A span/metric per call is per-item cardinality bloat. Parent find_patterns carries the stage span."
+  },
+  "clustering:_ClusteringMixin._summarize_cluster": {
+    "category": "hot-loop",
+    "rationale": "Builds a brief content summary for one cluster; called per qualifying cluster inside _qualify_cluster (per-cluster). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "patterns:_has_meaningful_token": {
+    "category": "hot-loop",
+    "rationale": "Tests one text body for a meaningful (non-stopword) token; called per candidate content inside _is_degenerate_auto_abstracted and abstract_to_schema on the per-pattern promotion path (per-item). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "patterns:_is_degenerate_auto_abstracted": {
+    "category": "hot-loop",
+    "rationale": "Detects a degenerate auto-abstracted schema for one content string; called per candidate pattern inside _promote_pattern (per-pattern in the CLS promotion loop). A span/metric per call is per-item cardinality bloat. Parent consolidation.cls.promote carries the stage span."
+  },
+  "patterns:_collect_word_freq": {
+    "category": "hot-loop",
+    "rationale": "Computes per-token document frequencies for one cluster's memories; called per promoted cluster inside abstract_to_schema (per-cluster). A span/metric per call is per-item cardinality bloat. Parent abstract_to_schema carries the hot span."
+  },
+  "patterns:_build_ordered_common": {
+    "category": "hot-loop",
+    "rationale": "Orders common words by first appearance for one cluster's schema; called per promoted cluster inside abstract_to_schema (per-cluster). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "patterns:_collect_common_tags": {
+    "category": "hot-loop",
+    "rationale": "Collects tags above a frequency threshold for one cluster; called per promoted cluster inside abstract_to_schema (per-cluster). A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "cache:LRUCache.get": {
+    "category": "hot-loop",
+    "rationale": "O(1) LRU lookup called once per passage inside the _score_ce_with_cache / _encode_all per-text loops on the backend rerank+embed hot path (N calls per request). A span/metric per call is per-candidate cardinality bloat; the enclosing endpoint span covers it."
+  },
+  "cache:LRUCache.put": {
+    "category": "hot-loop",
+    "rationale": "O(1) LRU insert/evict called once per cache-miss passage inside the _score_ce_with_cache / _encode_all per-text loops on the backend hot path (per-miss per-request). A span/metric per call is per-candidate cardinality bloat with no dashboard value."
+  },
+  "cache:LRUCache.snapshot_age_seconds": {
+    "category": "hot-loop",
+    "rationale": "A single os.stat mtime read returning seconds since last snapshot; called per cache (ce/embed) inside the periodic snapshot task and feeds the cache_snapshot_age_seconds gauge directly. Wrapping this stat helper in a span is noise; the parent snapshot stage span already covers timing."
+  },
+  "embed_service:lifespan": {
+    "category": "framework-instrumented",
+    "rationale": "FastAPI ASGI lifespan async-generator (yields once between startup and shutdown); the framework enters/exits it and setup_tracing() inside it establishes the backend TracerProvider itself. @observe cannot wrap an async generator (it awaits the callable, not the generator), and a span spanning the entire process lifetime is meaningless."
+  },
+  "embed_service:_run_cache_snapshot_task": {
+    "category": "framework-instrumented",
+    "rationale": "Infinite `while True` background task that sleeps then snapshots CE+embed caches every interval; a stage decorator would open ONE span for the entire never-returning task lifetime rather than per-cycle. The per-op cache.save_snapshot stage spans are the correct per-cycle instrumentation."
+  },
+  "embed_service:_require_admin_token": {
+    "category": "framework-instrumented",
+    "rationale": "FastAPI dependency (Depends target) that verifies the admin bearer token; decorating it perturbs the Depends() signature resolution FastAPI relies on, and test_admin_auth_still_enforced_after_wrap proves auth must survive wrapping. The enclosing route boundary span already covers the request."
+  },
+  "embed_service:EmbedRequest.validate_texts": {
+    "category": "framework-instrumented",
+    "rationale": "Pydantic v2 field_validator classmethod invoked by the model's validation machinery during request parsing; decorating a validator can perturb pydantic's classmethod/validator resolution and adds a span per field-validate with no dashboard value. Pure input validation, not an observable op."
+  },
+  "embed_service:RerankRequest.validate_mode": {
+    "category": "framework-instrumented",
+    "rationale": "Pydantic v2 field_validator classmethod invoked by the model's validation machinery during request parsing; decorating a validator can perturb pydantic's classmethod/validator resolution and adds a span per field-validate with no dashboard value. Pure input validation, not an observable op."
+  },
+  "embed_service:rerank": {
+    "category": "framework-instrumented",
+    "rationale": "The /rerank route already emits its own RED family (yadgar_embed_rerank_requests_total / _duration_seconds / _503_total) AND opens a manual backend.rerank.{mode} inference span via start_as_current_span; @observe's guard only detects decorator spans, so decorating this body-span opener would double-span AND double the RED family. Verified by test_rerank_not_double_instrumented."
+  },
+  "embed_service:rerank._score": {
+    "category": "hot-loop",
+    "rationale": "Nested closure inside rerank() that dispatches to the ml client by mode (ce/nli/pair) and runs under the manual backend.rerank.{mode} span via asyncio.to_thread; not independently reachable and umbrella-covered by that inference span. Instrumenting it would emit a redundant child span for the wrapped dispatch."
+  },
+  "embed_service:rerank._make_inference_span": {
+    "category": "framework-instrumented",
+    "rationale": "OTEL span factory nested in rerank(): returns an un-entered start_as_current_span('backend.rerank.{mode}') context manager (or nullcontext) entered by the rerank body. It OPENS the manual span rather than being wrapped by one; decorating would emit a redundant second span around the factory call."
+  },
+  "embed_service:rerank._annotate_span": {
+    "category": "framework-instrumented",
+    "rationale": "OTEL span-attribute setter nested in rerank(): sets rerank.mode/n_passages/model.name on the active backend.rerank.{mode} span. It mutates the current manual span rather than opening one, so wrapping it in @observe would emit a redundant child span for attribute writes."
+  },
+  "ml_client:_rpc_span": {
+    "category": "framework-instrumented",
+    "rationale": "OTEL span factory: returns an un-entered start_as_current_span(name) context manager (or nullcontext) entered by RemoteMLClient.score_* callers to wrap their RPC. It OPENS the span rather than being wrapped by one; decorating would emit a redundant second span around the factory call."
+  },
+  "ml_client:_record_model_load": {
+    "category": "framework-instrumented",
+    "rationale": "Telemetry emitter: observes the model_load_duration_seconds histogram AND opens a manual 'model.load' start_as_current_span with cold-load attributes. It emits a metric + opens its own body-span; @observe's guard only detects decorator spans, so decorating would double-span the cold-load event and wrap a metric write."
+  },
+  "ml_client:_emit_unload_telemetry": {
+    "category": "framework-instrumented",
+    "rationale": "Telemetry emitter: sets model_loaded gauges + increments model_unload_total AND opens a manual 'model.unload' start_as_current_span with idle attributes. It emits metrics + opens its own body-span; decorating it would double-span the unload event and wrap counter/gauge writes."
+  },
+  "ml_client:_CircuitBreaker._set_gauge": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sole body sets yadgar_circuit_breaker_state.labels(endpoint).set(value); wrapping a single gauge .set() in @observe is recursive span noise for one metric touch with no diagnostic value. Called on every breaker state transition."
+  },
+  "ml_client:_CircuitBreaker._set_reachable": {
+    "category": "framework-instrumented",
+    "rationale": "Metric-emitting primitive: sole body sets yadgar_backend_reachable.labels(endpoint).set(value); wrapping a single gauge .set() in @observe is recursive span noise for one metric touch with no diagnostic value. Called on every breaker state transition."
+  },
+  "ml_client:RemoteMLClient.score_cross_encoder": {
+    "category": "framework-instrumented",
+    "rationale": "Opens a manual rpc.rerank.ce span via _rpc_span() around the _rerank_rpc HTTP call; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one RPC. Verified by test_remote_ml_client_score_methods_stay_exempt (must carry no sentinel)."
+  },
+  "ml_client:RemoteMLClient.score_nli": {
+    "category": "framework-instrumented",
+    "rationale": "Opens a manual rpc.rerank.nli span via _rpc_span() around the _rerank_rpc HTTP call; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one RPC. Verified by test_remote_ml_client_score_methods_stay_exempt (must carry no sentinel)."
+  },
+  "ml_client:RemoteMLClient.score_pair": {
+    "category": "framework-instrumented",
+    "rationale": "Opens a manual rpc.rerank.pair span via _rpc_span() around the _rerank_rpc HTTP call; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one RPC. Verified by test_remote_ml_client_score_methods_stay_exempt (must carry no sentinel)."
+  },
+  "recall:_fuse_with_span": {
+    "category": "pre-existing",
+    "rationale": "Opens a manual 'recall.fanout.fuse' span via `with span(...)` and sets dynamic memory/wiki candidate-count attributes around the cross-type CE fusion pass; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one fusion and @observe's static attributes cannot replicate the per-call counts."
+  },
+  "_recall_shadow:observe_recall": {
+    "category": "framework-instrumented",
+    "rationale": "Instrumentation-only shadow-cache primitive: records a would-HIT/would-MISS and increments yadgar_recall_shadow_cache_hits_total/_misses_total counters, fully guarded to never affect recall latency; wrapping a metric-emitting instrumentation helper in @observe is recursive span noise for a counter .inc() with no diagnostic value."
+  },
+  "audit:_anchor_rank": {
+    "category": "hot-loop",
+    "rationale": "Computes a keep-priority rank for one anchor row (word/header/tag scoring); called per redundant pair (twice per iteration: row_a and row_b) inside the _build_merge_actions _fetch_redundant_pairs loop. A span/metric per call is per-pair cardinality bloat with no dashboard value."
+  },
+  "audit:_cross_project_content_length_ratio": {
+    "category": "hot-loop",
+    "rationale": "Pure length-ratio of two content strings; called per candidate cross-project pair inside the _group_cross_project_pairs adjacency-building loop (per-pair, O(N^2) worst case). A span/metric per call is per-pair cardinality bloat with no dashboard value."
+  },
+  "audit:_cross_project_primary_rank": {
+    "category": "hot-loop",
+    "rationale": "Computes the primary-selection rank for one cross-project row; invoked inside the _sort_key sorted() comparator (per element per comparison) when ordering cluster ids. A span/metric per call is per-comparison cardinality bloat with no dashboard value."
+  },
+  "audit:_group_cross_project_pairs._sort_key": {
+    "category": "hot-loop",
+    "rationale": "Nested sorted() key comparator that ranks one cluster member id; called per element per sort inside _group_cross_project_pairs (true inner-loop comparator). A span/metric per call is per-element cardinality bloat and it is umbrella-covered by the parent's stage span."
+  },
+  "client:_inline_int_record_ids._sub": {
+    "category": "hot-loop",
+    "rationale": "re.sub callback invoked once per type::record(…) token match inside _inline_int_record_ids; not independently reachable and covered by the parent function's hot span. Decorating a per-match regex callback adds per-token cardinality with zero dashboard value."
+  },
+  "tracing:_install_span_log_queue": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: sets up the background span-log queue thread. observe.py imports yadgar.tracing; adding @observe to tracing.py would create a circular import. These functions are the span infrastructure itself — wrapping them in @observe is recursive self-instrumentation noise."
+  },
+  "tracing:_stop_span_log_queue": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: stops the span-log queue thread. Circular import with observe.py (observe imports tracing). Self-instrumentation of the span shutdown path has no ops value."
+  },
+  "tracing:_parse_otlp_headers": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: parses OTLP exporter headers. Circular import with observe.py. Instrumenting the OTLP header parser via a span is recursive noise."
+  },
+  "tracing:_build_otlp_exporter": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: builds the OTLP span exporter. Circular import with observe.py. Wrapping span-exporter construction in @observe creates recursive self-instrumentation."
+  },
+  "tracing:_CircuitBreakerSpanExporter.export": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: circuit-breaker wrapper around OTLP span export. Circular import with observe.py. Instrumenting the span exporter itself is recursive noise — it emits spans."
+  },
+  "tracing:LogSpanProcessor._emit_span_log": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: emits a span as a JSON log line. Circular import with observe.py. Wrapping a span-emitter in @observe is recursive self-instrumentation."
+  },
+  "tracing:LogSpanProcessor._emit_span_log_inner": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: the guarded body of _emit_span_log that emits the span_end JSON log line. Circular import with observe.py. Wrapping a span-emitter in @observe is recursive self-instrumentation (and would reopen the log-path recursion the re-entry guard closes)."
+  },
+  "tracing:_instrument_httpx": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: instruments httpx with OpenTelemetry. Circular import with observe.py. Auto-instrumentation setup is not independently observable."
+  },
+  "tracing:setup_tracing": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: initialises the full OpenTelemetry tracing pipeline. Circular import with observe.py. Tracing bootstrap cannot be instrumented by the tracing system it initialises."
+  },
+  "tracing:shutdown_tracing": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: shuts down the tracing pipeline. Circular import with observe.py. Span-emitting instrumentation on the shutdown path risks lost spans and is recursive noise."
+  },
+  "tracing:shutdown_tracing._run": {
+    "category": "framework-instrumented",
+    "rationale": "Nested closure inside shutdown_tracing that runs the async shutdown in a background thread. Circular import with observe.py and is an inner-thread-runner, not independently reachable."
+  },
+  "tracing:get_current_trace_id": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: reads the current OTel trace ID from context. Circular import with observe.py. Instrumenting a trace-context reader with a span is recursive noise."
+  },
+  "tracing:get_current_span_id": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: reads the current OTel span ID from context. Circular import with observe.py. Instrumenting a span-context reader with a span is recursive noise."
+  },
+  "tracing:trace_span": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: the core @trace_span decorator factory. Circular import with observe.py. Wrapping a span-decorator in @observe is direct recursive self-instrumentation."
+  },
+  "tracing:trace_span.decorator": {
+    "category": "framework-instrumented",
+    "rationale": "Inner closure of trace_span: the returned decorator. Circular import with observe.py. Framework-internal closure of the span-decorator — recursive noise."
+  },
+  "tracing:trace_span.decorator.async_wrapper": {
+    "category": "framework-instrumented",
+    "rationale": "Async wrapper closure inside trace_span.decorator. Circular import with observe.py. Framework-internal span-emission wrapper — instrumenting it is recursive self-instrumentation."
+  },
+  "tracing:trace_span.decorator.sync_wrapper": {
+    "category": "framework-instrumented",
+    "rationale": "Sync wrapper closure inside trace_span.decorator. Circular import with observe.py. Framework-internal span-emission wrapper — instrumenting it is recursive self-instrumentation."
+  },
+  "tracing:span": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: context manager for opening a manual span. Circular import with observe.py. Instrumenting a span-opener with @observe is direct recursive self-instrumentation."
+  },
+  "metrics:_collect_process_metrics": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: collects and sets process-level Prometheus gauges (CPU, RSS, FDs). observe.py imports yadgar.metrics; adding @observe here creates a circular import. These functions write metrics — wrapping them in @observe is recursive self-instrumentation noise."
+  },
+  "metrics:loop_heartbeat": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: increments the event-loop heartbeat counter on each loop iteration. Circular import with observe.py. Instrumenting a per-loop-tick metric write is recursive noise with extreme per-call cardinality."
+  },
+  "metrics:hook_record_failure": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: records a hook execution failure counter. Circular import with observe.py. Wrapping a failure-counter writer in @observe adds recursive metric noise."
+  },
+  "metrics:loop_record_exception": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: records an event-loop exception counter + histogram. Circular import with observe.py. Instrumenting the exception-metric writer with @observe is recursive noise."
+  },
+  "metrics:_record_loop_lag": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: records the event-loop lag histogram. Circular import with observe.py. Instrumenting a lag-histogram writer with @observe is recursive self-instrumentation."
+  },
+  "metrics:_loop_lag_probe": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: async probe that measures actual loop lag and records it. Circular import with observe.py. Instrumenting the lag probe itself would corrupt lag measurements."
+  },
+  "metrics:stop_loop_lag_monitor": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: stops the loop-lag background monitor task. Circular import with observe.py. Infrastructure teardown of a metrics monitor has no independent ops value."
+  },
+  "metrics:_collect_pool_stats": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: collects tool-pool gauges (idle/active/waiting workers). Circular import with observe.py. Wrapping a gauge-writer in @observe is recursive self-instrumentation."
+  },
+  "metrics:_collect_queue_depths": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: collects queue-depth gauges for all action queues. Circular import with observe.py. Instrumenting a queue-depth reporter is recursive noise."
+  },
+  "metrics:_dq_count": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: queries a data-quality metric count from the DB. Circular import with observe.py. Low-level DB read helper for a metrics collector — recursive noise if wrapped."
+  },
+  "metrics:_parse_surprise_scores": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: parses surprise-score rows from a DB result. Circular import with observe.py. Data-quality metrics helper — wrapping it in @observe adds noise with no dashboard value."
+  },
+  "metrics:_dq_set_surprise_gauges": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: sets surprise-score Prometheus gauges. Circular import with observe.py. Gauge-writer — wrapping in @observe is recursive self-instrumentation."
+  },
+  "metrics:_collect_data_quality": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: drives the full data-quality metrics collection cycle. Circular import with observe.py. Metrics-collection orchestrator — wrapping it in @observe is recursive noise."
+  },
+  "metrics:metrics_handler": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: HTTP handler that renders the /metrics Prometheus scrape endpoint. Circular import with observe.py. Instrumenting the metrics endpoint with a span/counter creates recursive self-instrumentation: every scrape would emit a span."
+  },
+  "log_config:RequestLoggingMiddleware.__call__.send_with_capture": {
+    "category": "framework-instrumented",
+    "rationale": "Nested ASGI send-capture closure inside RequestLoggingMiddleware.__call__. Not independently reachable; framework-internal response-capture that patches the ASGI send callable. Covered by the parent __call__ span."
   }
 }

@@ -16,6 +16,8 @@ WIKI_SCHEMA_VERSION is stamped on new pages at write time. Existing pages
 that predate this field are treated as schema_version=0 / untyped.
 """
 
+from yadgar.observability.observe import observe
+
 WIKI_SCHEMA_VERSION: int = 1
 
 #: Registry of page types → required markdown section headings.
@@ -57,6 +59,7 @@ PAGE_TYPES: dict[str, list[str]] = {
 }
 
 
+@observe(tier="stage")
 def check_page_type_format(slug: str, page_type: str, content: str) -> list[dict]:
     """Return missing-section issues for a typed wiki page (v5.53.2).
 

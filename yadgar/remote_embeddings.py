@@ -15,6 +15,7 @@ import httpx
 import numpy as np
 
 from yadgar.embeddings import MODEL_DIMENSIONS, MODEL_DOC_PREFIX, MODEL_QUERY_PREFIX
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _CACHE_MAX = 512
@@ -44,9 +45,11 @@ class RemoteEmbeddingEngine:
     def get_model_name(self) -> str:
         return self.model_name
 
+    @observe(tier="hot")
     def get_dimensions(self) -> int:
         return MODEL_DIMENSIONS.get(self.model_name, 384)
 
+    @observe(tier="hot")
     def needs_reembedding(self, stored_model: str) -> bool:
         if stored_model is None:
             return True
@@ -72,6 +75,7 @@ class RemoteEmbeddingEngine:
             logger.warning("RemoteEmbeddingEngine: /embed call failed: %s", exc)
             return [None] * len(texts)
 
+    @observe(tier="stage")
     def encode(self, text: str) -> bytes | None:
         with self._cache_lock:
             if text in self._query_cache:
@@ -87,10 +91,12 @@ class RemoteEmbeddingEngine:
                     self._query_cache.popitem(last=False)
         return val
 
+    @observe(tier="stage")
     def encode_query(self, text: str) -> bytes | None:
         prefix = MODEL_QUERY_PREFIX.get(self.model_name, "")
         return self.encode(prefix + text if prefix else text)
 
+    @observe(tier="stage")
     def encode_document(self, text: str) -> bytes | None:
         prefix = MODEL_DOC_PREFIX.get(self.model_name, "")
         return self.encode(prefix + text if prefix else text)
@@ -99,6 +105,7 @@ class RemoteEmbeddingEngine:
         text = enriched_content if enriched_content else content
         return self.encode_document(text)
 
+    @observe(tier="stage")
     def encode_adaptive(self, text: str, dimensions: int = None) -> bytes | None:
         raw = self.encode(text)
         if raw is None or dimensions is None:
@@ -117,6 +124,7 @@ class RemoteEmbeddingEngine:
     def batch_reembed(self, texts: list[str]) -> list[bytes | None]:
         return self.encode_batch(texts)
 
+    @observe(tier="hot")
     def similarity(self, embedding_a: bytes, embedding_b: bytes) -> float:
         a = np.frombuffer(embedding_a, dtype=np.float32)
         b = np.frombuffer(embedding_b, dtype=np.float32)

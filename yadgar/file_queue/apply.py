@@ -5,6 +5,8 @@ from __future__ import annotations
 import contextlib
 import logging
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +61,7 @@ class _ApplyMixin:
         finally:
             _drain_local.active = False
 
+    @observe(tier="stage", name="drainer.apply_inner")
     def _apply_inner(self, record: dict) -> None:
         op = record["op"]
         p = record["payload"]

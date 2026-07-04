@@ -26,9 +26,12 @@ import subprocess
 import time
 from typing import Any
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def _resolve_db_creds() -> tuple[str, str]:
     """Return (user, password) using the canonical four-tier env precedence.
 
@@ -75,6 +78,7 @@ _RETRY_BACKOFF_MS = 100  # ms per retry step (linear)
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 def spawn_surreal(
     port: int,
     data_dir: str,
@@ -126,6 +130,7 @@ def spawn_surreal(
     return proc
 
 
+@observe(tier="boundary")
 def teardown_surreal_proc(proc: subprocess.Popen, wait_timeout: float = 5.0) -> None:
     """Terminate *proc* cleanly, escalating to SIGKILL if it doesn't exit.
 
@@ -151,6 +156,7 @@ def teardown_surreal_proc(proc: subprocess.Popen, wait_timeout: float = 5.0) -> 
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 def kill_all_spawned_surreal() -> None:
     """SIGTERM all registered SurrealDB PIDs, then SIGKILL stragglers.
 
@@ -185,6 +191,7 @@ def kill_all_spawned_surreal() -> None:
 atexit.register(kill_all_spawned_surreal)
 
 
+@observe(tier="stage")
 def _session_tmp_base() -> str:
     """Root tmp dir for THIS test session's SurrealDB data.
 
@@ -204,6 +211,7 @@ def _session_tmp_base() -> str:
     return f"/tmp/pytest-of-{getpass.getuser()}"
 
 
+@observe(tier="boundary")
 def reap_stale_surreal() -> int:
     """SIGKILL orphaned test SurrealDB procs left by prior crashed runs.
 
@@ -256,6 +264,7 @@ def reap_stale_surreal() -> int:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="hot")
 def _worker_index() -> int:
     """Parse the numeric part of PYTEST_XDIST_WORKER (e.g. 'gw3' → 3)."""
     worker = os.environ.get("PYTEST_XDIST_WORKER", "")
@@ -272,6 +281,7 @@ def _worker_index() -> int:
     return int(digits) if digits else 0
 
 
+@observe(tier="stage")
 def allocate_port(n: int = 0) -> int:
     """Return the deterministic port for this xdist worker and sequence number *n*.
 
@@ -292,6 +302,7 @@ def allocate_port(n: int = 0) -> int:
     return base + worker_idx * 100 + n
 
 
+@observe(tier="hot")
 def _port_in_use(port: int) -> bool:
     """Return True if *port* is currently accepting connections on 127.0.0.1.
 
@@ -304,6 +315,7 @@ def _port_in_use(port: int) -> bool:
         return result == 0
 
 
+@observe(tier="stage")
 def allocate_port_with_retry(n: int = 0, max_retries: int = 10) -> int:
     """Return a free port, retrying with linear backoff on EADDRINUSE.
 

@@ -30,24 +30,30 @@ import os
 from pathlib import Path
 from typing import Final
 
+from yadgar.observability.observe import observe
+
 # ── XDG base-dir helpers ─────────────────────────────────────────────────────
 
 
+@observe(tier="hot")
 def _xdg_config_home() -> Path:
     """Return ``$XDG_CONFIG_HOME`` or ``~/.config``."""
     return Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser()
 
 
+@observe(tier="hot")
 def _xdg_data_home() -> Path:
     """Return ``$XDG_DATA_HOME`` or ``~/.local/share``."""
     return Path(os.environ.get("XDG_DATA_HOME") or "~/.local/share").expanduser()
 
 
+@observe(tier="hot")
 def _xdg_state_home() -> Path:
     """Return ``$XDG_STATE_HOME`` or ``~/.local/state``."""
     return Path(os.environ.get("XDG_STATE_HOME") or "~/.local/state").expanduser()
 
 
+@observe(tier="hot")
 def _xdg_cache_home() -> Path:
     """Return ``$XDG_CACHE_HOME`` or ``~/.cache``."""
     return Path(os.environ.get("XDG_CACHE_HOME") or "~/.cache").expanduser()
@@ -61,6 +67,7 @@ def _config_dir() -> Path:
     return _xdg_config_home() / "yadgar"
 
 
+@observe(tier="stage")
 def _data_dir() -> Path:
     """``~/.local/share/yadgar/`` or ``$YADGAR_DATA_DIR``."""
     override = os.environ.get("YADGAR_DATA_DIR", "").strip()
@@ -79,6 +86,7 @@ def _cache_dir() -> Path:
     return _xdg_cache_home() / "yadgar"
 
 
+@observe(tier="stage")
 def _secrets_env_path() -> Path:
     """``~/.config/yadgar/secrets.env`` or ``$YADGAR_SECRETS_ENV_FILE``."""
     override = os.environ.get("YADGAR_SECRETS_ENV_FILE", "").strip()
@@ -87,6 +95,7 @@ def _secrets_env_path() -> Path:
     return _config_dir() / "secrets.env"
 
 
+@observe(tier="stage")
 def _config_yaml_path() -> Path:
     """``~/.config/yadgar/config.yaml`` or ``$YADGAR_CONFIG_FILE``."""
     override = os.environ.get("YADGAR_CONFIG_FILE", "").strip()
@@ -95,6 +104,7 @@ def _config_yaml_path() -> Path:
     return _config_dir() / "config.yaml"
 
 
+@observe(tier="stage")
 def _db_path() -> Path:
     """``~/.local/share/yadgar/surreal_db/`` or ``$YADGAR_DB_PATH``."""
     override = os.environ.get("YADGAR_DB_PATH", "").strip()
@@ -103,6 +113,7 @@ def _db_path() -> Path:
     return _data_dir() / "surreal_db"
 
 
+@observe(tier="stage")
 def _log_dir() -> Path:
     """``~/.local/share/yadgar/logs/`` or ``$YADGAR_LOG_DIR``."""
     override = os.environ.get("YADGAR_LOG_DIR", "").strip()
@@ -116,6 +127,7 @@ def _triggers_dir() -> Path:
     return _state_dir() / "triggers"
 
 
+@observe(tier="stage")
 def _session_ends_dir() -> Path:
     """``~/.local/state/yadgar/session-ends/`` or ``$YADGAR_SESSION_END_DIR``."""
     override = os.environ.get("YADGAR_SESSION_END_DIR", "").strip()

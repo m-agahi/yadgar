@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from yadgar.observability.observe import observe
 from yadgar.server._app import _tool
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ _EXCLUDE_DIRS = frozenset(
 )
 
 
+@observe(tier="stage", name="tools.wiki_coverage._scan_py_files")
 def _scan_py_files(directory: str) -> list[str]:
     """Return sorted list of .py file paths under directory, excluding noise dirs."""
     root = Path(directory).expanduser().resolve()
@@ -55,6 +57,7 @@ def _extract_source_file_tags(tags: list[str]) -> list[str]:
     return [t[len("source_file:") :] for t in tags if t.startswith("source_file:")]
 
 
+@observe(tier="hot", name="tools.wiki_coverage._is_covered")
 def _is_covered(module_path: str, wiki_pages: list[dict]) -> bool:
     """Return True if any wiki page covers the given module path.
 

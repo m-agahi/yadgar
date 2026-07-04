@@ -33,6 +33,7 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 
+from yadgar.observability.observe import observe
 from yadgar.storage.blocks import _BlocksMixin
 from yadgar.storage.bookmarks import _BookmarksMixin
 from yadgar.storage.branch import BranchFilter as BranchFilter
@@ -89,6 +90,7 @@ _enrichment_pipeline = None
 _enrichment_pipeline_lock = threading.Lock()
 
 
+@observe(tier="hot")
 def _get_enrichment_pipeline(settings, embeddings_engine=None):
     global _enrichment_pipeline
     if _enrichment_pipeline is None:
@@ -105,6 +107,9 @@ def _get_enrichment_pipeline(settings, embeddings_engine=None):
 # ---------------------------------------------------------------------------
 
 
+@observe(
+    exempt="sync generator; @observe sync-wraps and would open/close the span at generator creation not exhaustion, so the span never covers the actual chunking work"
+)
 def _chunk_by_bytes(
     statements: list[tuple[str, dict | None]], max_bytes: int
 ) -> Iterator[list[tuple[str, dict | None]]]:
@@ -155,6 +160,7 @@ def _chunk_by_bytes(
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="hot")
 def _resolve_db_credentials() -> tuple[str, str]:
     """Return (user, password) for SurrealDB authentication.
 
@@ -336,6 +342,7 @@ class StorageEngine(
 
     # ------------------------------------------------------------------ Context manager
 
+    @observe(tier="stage")
     def close(self):
         # Unregister atexit to avoid double-close
         try:

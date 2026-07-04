@@ -28,6 +28,7 @@ from starlette.responses import JSONResponse
 
 from yadgar import __version__
 from yadgar.config import resolve_knob
+from yadgar.observability.observe import observe
 from yadgar.server._app import mcp_server
 from yadgar.tracing import trace_span
 
@@ -44,6 +45,7 @@ def _is_debug_apis_enabled() -> bool:
     )
 
 
+@observe(tier="boundary")
 async def control_update_handler(request: Request) -> JSONResponse:
     """Handle POST /api/control/update.
 

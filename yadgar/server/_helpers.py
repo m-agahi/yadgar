@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yadgar.server._state as _st
 from yadgar.config import get_settings
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ _DECISION_STRONG_RE = re.compile(
 )
 
 
+@observe(tier="stage")
 def _q_with_timeout(
     storage, surql: str, params: dict | None = None, timeout_seconds: int = 60
 ) -> list:  # noqa: E501
@@ -53,6 +55,7 @@ def _q_with_timeout(
     return storage._q(surql, params)
 
 
+@observe(tier="stage")
 def _has_unpaired_surrogate(s: str) -> bool:
     """Return True if the string contains unpaired UTF-16 surrogate code points,
     which cannot be encoded as UTF-8 and would crash the storage pipeline."""
@@ -65,6 +68,7 @@ def _has_unpaired_surrogate(s: str) -> bool:
     return False
 
 
+@observe(tier="stage")
 def _push_event(event: dict) -> None:
     """Append an event to the ring buffer with a monotonic sequence number."""
     with _st._event_lock:
@@ -72,6 +76,7 @@ def _push_event(event: dict) -> None:
         _st._event_queue.append({"seq": _st._event_seq, **event})
 
 
+@observe(tier="stage")
 def _bounded_set(d: OrderedDict, key, value, max_size: int = _st._DICT_MAX_SIZE) -> None:
     """Insert key→value, evicting oldest entry if dict exceeds max_size."""
     d[key] = value
@@ -79,6 +84,7 @@ def _bounded_set(d: OrderedDict, key, value, max_size: int = _st._DICT_MAX_SIZE)
         d.popitem(last=False)  # remove LRU (first inserted)
 
 
+@observe(tier="stage")
 def _is_episodic_query(query: str) -> bool:
     """Return True if the query is temporal/episodic — wiki blending is skipped."""
     q = query.lower()
@@ -89,6 +95,7 @@ def _is_episodic_query(query: str) -> bool:
     return False
 
 
+@observe(tier="stage")
 def _file_hash(filepath: str) -> str | None:
     """Compute SHA-256 hash of a file if it is under a registered project root.
 
@@ -141,6 +148,7 @@ def _file_hash(filepath: str) -> str | None:
     return h.hexdigest()
 
 
+@observe(tier="stage")
 def _build_dlq_alert_text() -> str:
     """Return a markdown warning string if any items are in the DLQ, else ''."""
     try:

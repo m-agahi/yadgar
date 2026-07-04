@@ -22,7 +22,10 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from yadgar.observability.observe import observe
 
+
+@observe(tier="stage")
 def _safe_urlopen(url: str, **kwargs):
     """§8: urlopen wrapper that rejects non-http/https schemes."""
     scheme = urllib.parse.urlparse(url).scheme
@@ -43,6 +46,7 @@ _HEALTH_TIMEOUT = 60.0  # Docker startup takes longer than a local process
 _RUNTIME: str | None = None
 
 
+@observe(tier="hot")
 def _get_runtime() -> str:
     """Return the active container runtime name (podman or docker).
 
@@ -66,6 +70,7 @@ def _get_runtime() -> str:
     return "docker"  # final fallback keeps backward compat
 
 
+@observe(tier="hot")
 def _default_image(repo: str) -> str:
     """Return repo:version using the installed package version, fallback to :latest."""
     try:
@@ -76,6 +81,7 @@ def _default_image(repo: str) -> str:
         return f"{repo}:latest"
 
 
+@observe(tier="stage")
 def _backend_version() -> str:
     """Return the backend image version from the bundled server.json.
 
@@ -111,6 +117,7 @@ _NETWORK_NAME = "yadgar-net"
 # ── Host memory detection ──────────────────────────────────────────────────────
 
 
+@observe(tier="stage")
 def _host_memory_bytes() -> int:
     """Detect total host RAM. Linux /proc/meminfo, macOS sysctl, POSIX fallback."""
     if platform.system() == "Linux":
@@ -148,6 +155,7 @@ def _container_memory_mb() -> int:
 # ── Source root detection ──────────────────────────────────────────────────────
 
 
+@observe(tier="hot")
 def _source_root() -> Path:
     """Walk up from this file to find the repo root (contains pyproject.toml)."""
     here = Path(__file__).resolve().parent
@@ -171,6 +179,7 @@ class ContainerProfile:
     is_dev: bool
 
 
+@observe(tier="hot")
 def _prod_profile(port: int = DEFAULT_PORT) -> ContainerProfile:
     return ContainerProfile(
         container_name=os.environ.get("YADGAR_CONTAINER", "yadgar"),
@@ -183,6 +192,7 @@ def _prod_profile(port: int = DEFAULT_PORT) -> ContainerProfile:
     )
 
 
+@observe(tier="hot")
 def _dev_profile(port: int = DEFAULT_DEV_PORT) -> ContainerProfile:
     return ContainerProfile(
         container_name=os.environ.get("YADGAR_DEV_CONTAINER", "yadgar-dev"),
@@ -198,6 +208,7 @@ def _dev_profile(port: int = DEFAULT_DEV_PORT) -> ContainerProfile:
 # ── Network helper ────────────────────────────────────────────────────────────
 
 
+@observe(tier="stage")
 def _ensure_network() -> None:
     """Create the yadgar Docker network if it doesn't exist."""
     result = subprocess.run(
@@ -222,6 +233,7 @@ class YadgarDaemon:
 
     # ── public API ──────────────────────────────────────────────────────────
 
+    @observe(tier="boundary")
     def start(self, dev: bool = False) -> dict:
         """Start the daemon container. No-op if already running."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
@@ -370,6 +382,7 @@ class YadgarDaemon:
             "warning": "health check timed out — server may still be loading",
         }
 
+    @observe(tier="boundary")
     def start_backend(self) -> dict:
         """Start the backend container (SurrealDB + embed service)."""
         name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
@@ -472,6 +485,7 @@ class YadgarDaemon:
             "warning": "health check timed out — model may still be loading",
         }
 
+    @observe(tier="boundary")
     def stop(self, dev: bool = False) -> dict:
         """Stop the core container (and optionally the backend)."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
@@ -502,6 +516,7 @@ class YadgarDaemon:
 
         return {"status": "stopped", **results}
 
+    @observe(tier="boundary")
     def status(self, dev: bool = False) -> dict:
         """Return daemon status dict."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
@@ -552,6 +567,7 @@ class YadgarDaemon:
         start_result = self.start(dev=dev)
         return {"stopped": stop_result, "started": start_result}
 
+    @observe(tier="boundary")
     def configure_mcp(self, dev: bool = False) -> dict:
         """Switch ~/.claude.json MCP config to streamable-http transport."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
@@ -582,6 +598,7 @@ class YadgarDaemon:
             "new": mcp_servers["yadgar"],
         }
 
+    @observe(tier="boundary")
     def install_systemd_service(self, dev: bool = False) -> dict:
         """Write two systemd user service units: yadgar-backend.service and yadgar.service."""
 
@@ -720,6 +737,7 @@ WantedBy=default.target
             "status": f"systemctl --user status {backend_service_name} {core_service_name}",
         }
 
+    @observe(tier="boundary")
     def pull(self) -> dict:
         """Pull the latest prod image from Docker Hub."""
         profile = _prod_profile(self.port)
@@ -728,6 +746,7 @@ WantedBy=default.target
             return {"ok": False, "reason": f"docker pull {profile.image_name} failed"}
         return {"ok": True, "image": profile.image_name}
 
+    @observe(tier="boundary")
     def push(self, tag: str | None = None) -> dict:
         """Tag the prod image and push it to Docker Hub."""
         from importlib.metadata import PackageNotFoundError
@@ -766,6 +785,7 @@ WantedBy=default.target
 
         return {"ok": True, "pushed": pushed}
 
+    @observe(tier="boundary")
     def build(self, dev: bool = False, no_cache: bool = False, backend: bool = False) -> dict:
         """Build the Docker image for the given profile."""
         source = _source_root()
@@ -799,6 +819,7 @@ WantedBy=default.target
             return {"ok": False, "reason": f"docker build failed (exit {result.returncode})"}
         return {"ok": True, "image": profile.image_name, "target": target}
 
+    @observe(tier="boundary")
     def exec_in_container(
         self, args: list[str], interactive: bool = False, dev: bool = True
     ) -> int:
@@ -823,6 +844,7 @@ WantedBy=default.target
 
     # ── Docker availability ─────────────────────────────────────────────────
 
+    @observe(tier="boundary")
     @staticmethod
     def check_runtime() -> dict:
         """Detect and verify container runtime (podman or docker).
@@ -884,6 +906,7 @@ WantedBy=default.target
 
     # ── internals ───────────────────────────────────────────────────────────
 
+    @observe(tier="stage")
     def _image_exists(self, image_name: str) -> bool:
         """Return True if the image is present in the local Docker store."""
         return (
@@ -894,6 +917,7 @@ WantedBy=default.target
             == 0
         )
 
+    @observe(tier="stage")
     def _container_running(self, name: str) -> bool:
         result = subprocess.run(
             [_get_runtime(), "inspect", "--format", "{{.State.Running}}", name],
@@ -902,6 +926,7 @@ WantedBy=default.target
         )
         return result.returncode == 0 and result.stdout.strip() == "true"
 
+    @observe(tier="stage")
     def _container_exists(self, name: str) -> bool:
         return (
             subprocess.run([_get_runtime(), "inspect", name], capture_output=True).returncode == 0
@@ -910,6 +935,7 @@ WantedBy=default.target
         #   stop(), status(), pull(), push(), build(), exec_in_container(),
         #   _image_exists(), _ensure_network(), start() rm/log lines, start_backend() rm/log lines
 
+    @observe(tier="stage")
     def _health_ok(self, port: int) -> bool:
         try:
             _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)

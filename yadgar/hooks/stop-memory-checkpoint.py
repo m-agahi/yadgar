@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 import yadgar.paths as _paths
+from yadgar.observability.observe import observe
+from yadgar.tracing import shutdown_tracing
 
 INTERVAL = 25  # human messages between checkpoints
 
@@ -106,6 +108,7 @@ mid-thought, repeat your last question so the conversation continues. Resume aft
 """
 
 
+@observe(tier="hot")
 def _count_human_messages(transcript_path: str) -> int:
     """Count human (user) turns in the JSONL transcript.
 
@@ -152,6 +155,7 @@ def _count_human_messages(transcript_path: str) -> int:
     return count
 
 
+@observe(tier="hot")
 def _default_branch(directory: str) -> str:
     """Return the repo's default branch name (e.g. "master").
 
@@ -185,6 +189,7 @@ def _state_file_path() -> Path:
     return _paths.STOP_HOOK_STATE_PATH
 
 
+@observe(tier="stage")
 def _load_state() -> dict:
     """Load the global stop-hook state dict. Returns {} on any error."""
     sf = _state_file_path()
@@ -196,6 +201,7 @@ def _load_state() -> dict:
         return {}
 
 
+@observe(tier="stage")
 def _save_state(state: dict) -> None:
     """Atomically write state dict to stop-hook-state.json (tmp + os.replace)."""
     sf = _state_file_path()
@@ -208,48 +214,56 @@ def _save_state(state: dict) -> None:
         pass
 
 
+@observe(tier="boundary")
 def main() -> None:
     try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except Exception:
-        data = {}
+        try:
+            data = json.loads(sys.stdin.read() or "{}")
+        except Exception:
+            data = {}
 
-    session_id = data.get("session_id", "unknown")
-    transcript_path = data.get("transcript_path", "")
-    stop_hook_active = str(data.get("stop_hook_active", "false")).lower() in ("true", "1", "yes")
-    directory = data.get("cwd", os.getcwd())
+        session_id = data.get("session_id", "unknown")
+        transcript_path = data.get("transcript_path", "")
+        stop_hook_active = str(data.get("stop_hook_active", "false")).lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        directory = data.get("cwd", os.getcwd())
 
-    # Infinite-loop guard: Claude already ran a checkpoint this turn — allow stop
-    if stop_hook_active:
-        print("{}")
-        return
+        # Infinite-loop guard: Claude already ran a checkpoint this turn — allow stop
+        if stop_hook_active:
+            print("{}")
+            return
 
-    # No transcript available (some agent contexts) — skip
-    if not transcript_path:
-        print("{}")
-        return
+        # No transcript available (some agent contexts) — skip
+        if not transcript_path:
+            print("{}")
+            return
 
-    state = _load_state()
-    session_state: dict = state.get(session_id, {})
-    last_save: int = session_state.get("last_save", 0)
+        state = _load_state()
+        session_state: dict = state.get(session_id, {})
+        last_save: int = session_state.get("last_save", 0)
 
-    current_count = _count_human_messages(transcript_path)
+        current_count = _count_human_messages(transcript_path)
 
-    if current_count - last_save < INTERVAL:
-        print("{}")
-        return
+        if current_count - last_save < INTERVAL:
+            print("{}")
+            return
 
-    # Checkpoint time — update state atomically and block
-    session_state["last_save"] = current_count
-    state[session_id] = session_state
-    _save_state(state)
+        # Checkpoint time — update state atomically and block
+        session_state["last_save"] = current_count
+        state[session_id] = session_state
+        _save_state(state)
 
-    project = os.path.basename(directory.rstrip("/")) or "project"
-    default_branch = _default_branch(directory)
-    prompt = _PROMPT_TEMPLATE.format(
-        directory=directory, project=project, default_branch=default_branch
-    )
-    print(json.dumps({"decision": "block", "reason": prompt}))
+        project = os.path.basename(directory.rstrip("/")) or "project"
+        default_branch = _default_branch(directory)
+        prompt = _PROMPT_TEMPLATE.format(
+            directory=directory, project=project, default_branch=default_branch
+        )
+        print(json.dumps({"decision": "block", "reason": prompt}))
+    finally:
+        shutdown_tracing()
 
 
 if __name__ == "__main__":

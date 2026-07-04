@@ -19,6 +19,7 @@ from yadgar.consolidation.orchestrator import _OrchestratorMixin
 from yadgar.curation import MemoryCurator
 from yadgar.embeddings import EmbeddingEngine
 from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.observability.observe import observe
 from yadgar.ops import _fire_vacuum_service
 from yadgar.sleep_compute import SleepComputeEngine
 from yadgar.storage import StorageEngine
@@ -34,6 +35,7 @@ def _now_local() -> datetime:
     return datetime.now()
 
 
+@observe(tier="hot", name="consolidation.in_window")
 def _in_window(now: datetime, window_start: str, window_end: str) -> bool:
     """Return True if *now* (naive local datetime) falls within [start, end).
 
@@ -58,6 +60,7 @@ def _in_window(now: datetime, window_start: str, window_end: str) -> bool:
     return now_m >= start_m or now_m < end_m
 
 
+@observe(tier="hot", name="consolidation.get_pool_class")
 def _get_pool_class():
     global _AstrocytePool
     if _AstrocytePool is None:
@@ -67,6 +70,7 @@ def _get_pool_class():
     return _AstrocytePool
 
 
+@observe(tier="hot", name="consolidation.get_causal_discovery_class")
 def _get_causal_discovery_class():
     global _CausalDiscovery
     if _CausalDiscovery is None:
@@ -158,6 +162,7 @@ class ConsolidationScheduler(
         """Run a consolidation cycle immediately. Returns the cycle stats."""
         return self._consolidation_cycle()
 
+    @observe(tier="boundary", name="consolidation.run_nightly")
     def run_nightly_consolidation(self) -> dict:
         """Nightly entrypoint: a full consolidation cycle followed by a gated sleep cycle.
 
@@ -200,6 +205,7 @@ class ConsolidationScheduler(
         """Access the DualStoreCLS for episodic/semantic classification."""
         return self._cls
 
+    @observe(tier="stage", name="consolidation.run_domain_consolidation")
     def _run_domain_consolidation(self) -> list[dict]:
         """Run consolidation for each active astrocyte process domain."""
         results = []
@@ -214,6 +220,7 @@ class ConsolidationScheduler(
 
     # -- Auto-vacuum (kept here so tests can patch module-level _now_local / _subprocess) --
 
+    @observe(tier="stage", name="consolidation.maybe_auto_vacuum")
     def _maybe_auto_vacuum(self) -> None:
         """v4.9: Fire yadgar-vacuum.service if DB is over threshold and in window.
 

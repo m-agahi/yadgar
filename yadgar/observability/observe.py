@@ -144,15 +144,21 @@ def _emit_success(spec: _Spec, elapsed_s: float) -> None:
             _REQUESTS_TOTAL.labels(name=spec.metric_key, outcome="ok").inc()
         if _REQUEST_DURATION is not None:
             _REQUEST_DURATION.labels(name=spec.metric_key).observe(elapsed_s)
-        logger.info(
-            spec.event,
-            extra={
-                "component": spec.component,
-                "action": spec.event,
-                "outcome": "ok",
-                "latency_ms": round(elapsed_s * 1000, 3),
-            },
-        )
+        # An @observe'd fn can run at interpreter/atexit shutdown when the log
+        # stream is already CLOSED → logging raises "I/O operation on closed
+        # file". A signal firing during teardown must NEVER raise, so swallow it.
+        try:
+            logger.info(
+                spec.event,
+                extra={
+                    "component": spec.component,
+                    "action": spec.event,
+                    "outcome": "ok",
+                    "latency_ms": round(elapsed_s * 1000, 3),
+                },
+            )
+        except (ValueError, OSError):  # fmt: skip
+            pass
     elif spec.tier == "stage" and _STAGE_DURATION is not None:
         _STAGE_DURATION.labels(stage=spec.metric_key).observe(elapsed_s)
     # hot: nothing
@@ -167,16 +173,22 @@ def _emit_error(spec: _Spec, exc: BaseException, elapsed_s: float) -> None:
     elif spec.tier == "stage" and _STAGE_ERRORS is not None:
         _STAGE_ERRORS.labels(stage=spec.metric_key).inc()
     if spec.tier in ("boundary", "stage"):
-        logger.error(
-            spec.event,
-            extra={
-                "component": spec.component,
-                "action": spec.event,
-                "outcome": "error",
-                "latency_ms": round(elapsed_s * 1000, 3),
-                "error": type(exc).__name__,
-            },
-        )
+        # Same shutdown resilience as _emit_success: a closed log stream at
+        # teardown must not raise (and must never mask the caller's exception,
+        # which sync_wrapper/async_wrapper re-raise after this returns).
+        try:
+            logger.error(
+                spec.event,
+                extra={
+                    "component": spec.component,
+                    "action": spec.event,
+                    "outcome": "error",
+                    "latency_ms": round(elapsed_s * 1000, 3),
+                    "error": type(exc).__name__,
+                },
+            )
+        except (ValueError, OSError):  # fmt: skip
+            pass
 
 
 def _build_wrapper(fn: Callable, core: Callable, spec: _Spec) -> Callable:
@@ -221,14 +233,36 @@ def observe(
     log_event: str | None = None,
     attributes: dict[str, Any] | None = None,
     exempt: str | None = None,
+    span: bool = True,
 ) -> Callable:
-    """Tri-signal observability decorator. See module docstring for tier semantics."""
+    """Tri-signal observability decorator. See module docstring for tier semantics.
+
+    span=False: emit metric + log (and set the lint sentinel) but do NOT open an
+    @observe span. Use ONLY for a fn that already carries an EXPLICIT inner
+    ``with span(NAME)`` grouping span (e.g. recall._apply_recall_side_effects,
+    recall._fanout_recall) — the @observe span would otherwise nest BETWEEN the
+    enclosing op and that inner grouping span, pushing the intended grouping span
+    down a level and breaking its "direct child of the enclosing op" contract.
+    The lint counts a non-exempt @observe as satisfied regardless of span=.
+    """
 
     def decorator(fn: Callable) -> Callable:
+        # Descriptor guard: `@observe` stacked ABOVE `@staticmethod`/`@classmethod`
+        # receives the *descriptor object*, not the plain function. If we wrap that
+        # descriptor and return a plain function, the method loses its descriptor
+        # binding — `self`/`cls` gets injected as a positional arg on `self.m()`
+        # ("takes 0 positional arguments but 1 was given"). Unwrap FIRST (so span
+        # name / signature detection see the real function) and RE-WRAP the result
+        # in the same descriptor LAST.
+        descriptor_type: type | None = None
+        if isinstance(fn, (staticmethod, classmethod)):
+            descriptor_type = type(fn)
+            fn = fn.__func__
+
         if exempt is not None:
             # Categorized no-op passthrough. Record the exemption for the lint.
             fn._yadgar_observe_exempt = exempt  # type: ignore[attr-defined]
-            return fn
+            return descriptor_type(fn) if descriptor_type is not None else fn
 
         span_name = name if name is not None else f"{fn.__module__}.{fn.__qualname__}"
         spec = _Spec(
@@ -238,17 +272,37 @@ def observe(
             component=fn.__module__,
         )
 
-        # Open a span only if fn is not already span-sourced (@trace_span below us).
+        # Open a span only if fn is not already span-sourced (@trace_span below us)
+        # AND span= was not explicitly disabled. span=False keeps metric+log+sentinel
+        # but leaves span-opening to the fn's own inner `with span(...)` grouping span.
         already_sourced = _already_span_sourced(fn)
-        add_span = not already_sourced
+        add_span = span and not already_sourced
         core = trace_span(span_name, attributes=attributes)(fn) if add_span else fn
 
         wrapper = _build_wrapper(fn, core, spec)
 
+        # lru_cache guard: `@observe` stacked ABOVE `@functools.lru_cache` receives
+        # the cache wrapper, whose public surface (cache_info / cache_clear /
+        # cache_parameters) callers rely on. functools.wraps copies __wrapped__ but
+        # NOT these bound methods, so `fn.cache_info()` on the observe wrapper raised
+        # AttributeError — silently swallowed by callers (e.g. recall's branch
+        # detection), collapsing the allowed-branch set. Re-expose them on the
+        # wrapper; the bound methods point at the real lru object so caching (and its
+        # hit/miss metrics) stay intact.
+        for _cache_attr in ("cache_info", "cache_clear", "cache_parameters"):
+            _cache_fn = getattr(fn, _cache_attr, None)
+            if _cache_fn is not None:
+                setattr(wrapper, _cache_attr, _cache_fn)
+
         # Mark that this fn now has a span source so a stacked @observe / the
-        # coverage lint treats it as satisfied and never double-spans.
-        if add_span or already_sourced:
-            wrapper._yadgar_observe_has_span = True  # type: ignore[attr-defined]
+        # coverage lint treats it as satisfied and never double-spans. span=False
+        # still sets it: the fn carries its own inner grouping span, so it IS
+        # span-sourced for the lint's purposes.
+        wrapper._yadgar_observe_has_span = True  # type: ignore[attr-defined]
+
+        # Re-apply the descriptor so staticmethod/classmethod binding is preserved.
+        if descriptor_type is not None:
+            return descriptor_type(wrapper)
         return wrapper
 
     return decorator

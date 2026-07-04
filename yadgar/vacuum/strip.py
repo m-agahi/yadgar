@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+from yadgar.observability.observe import observe
+
 # ---------------------------------------------------------------------------
 # action_log stripping (original — preserves backward compat)
 # ---------------------------------------------------------------------------
@@ -84,6 +86,7 @@ _REMOVE_USER_RE = re.compile(
 )
 
 
+@observe(tier="stage")
 def strip_export_for_vacuum(surql: str) -> str:
     """Strip infrastructure state (action_log + user/access definitions) from a
     SurrealDB export.

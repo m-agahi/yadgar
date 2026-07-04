@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 import yadgar.server._state as _st
 import yadgar.server.lifecycle as _lifecycle
+from yadgar.observability.observe import observe
 from yadgar.server._helpers import _DECISION_STRONG_RE, _push_event
 from yadgar.tracing import trace_span
 
@@ -44,6 +45,7 @@ def phase_post_write(ctx: MemorizeContext, settings) -> dict:
     return _build_response(ctx, storage, settings)
 
 
+@observe(tier="stage")
 def _bump_shadow_epoch(ctx: MemorizeContext) -> None:
     """v5.96.0: a memorize is a structural write → bump the directory's shadow epoch
     so the recall shadow-cache counter treats prior would-be keys as stale (miss).
@@ -58,6 +60,7 @@ def _bump_shadow_epoch(ctx: MemorizeContext) -> None:
         pass
 
 
+@observe(tier="stage")
 def _run_synaptic_boost(ctx: MemorizeContext) -> None:
     """Synaptic boost for high-importance memories."""
     thermo = _st._thermo
@@ -65,6 +68,7 @@ def _run_synaptic_boost(ctx: MemorizeContext) -> None:
         thermo.synaptic_boost(ctx.memory_id, ctx.initial_heat)
 
 
+@observe(tier="stage")
 def _run_prospective(ctx: MemorizeContext, storage) -> None:
     """Auto-create triggers and check existing triggers."""
     if _st._prospective is None:
@@ -79,6 +83,7 @@ def _run_prospective(ctx: MemorizeContext, storage) -> None:
     ctx.triggered_memories = _st._prospective.check_triggers(trigger_context)
 
 
+@observe(tier="stage")
 def _run_engram(ctx: MemorizeContext) -> None:
     """Engram allocation — competitive slot assignment with temporal linking."""
     if _st._engram is None:
@@ -89,6 +94,7 @@ def _run_engram(ctx: MemorizeContext) -> None:
         logger.debug("Engram allocation failed for memory %s", ctx.memory_id)
 
 
+@observe(tier="stage")
 def _run_zero_gap(ctx: MemorizeContext, storage, buffer, settings) -> None:
     """Zero-gap enhancements 1–5."""
     _zero_gap_1_write_gate(ctx)
@@ -99,12 +105,14 @@ def _run_zero_gap(ctx: MemorizeContext, storage, buffer, settings) -> None:
     _zero_gap_6_reinjection(ctx, settings)
 
 
+@observe(tier="stage")
 def _zero_gap_1_write_gate(ctx: MemorizeContext) -> None:
     """Record store in write gate for task continuity tracking."""
     if _st._write_gate is not None:
         _st._write_gate.record_stored(ctx.content, ctx.context, ctx.embedding)
 
 
+@observe(tier="stage")
 def _zero_gap_2_protection(ctx: MemorizeContext, storage, settings) -> None:
     """Explicit protection + decision auto-protection."""
     explicit_anchor = ctx.is_protected or "_anchor" in ctx.tags
@@ -121,6 +129,7 @@ def _zero_gap_2_protection(ctx: MemorizeContext, storage, settings) -> None:
         logger.debug("Decision auto-protected: memory %s", ctx.memory_id)
 
 
+@observe(tier="stage")
 def _zero_gap_3_session_coherence(ctx: MemorizeContext, storage) -> None:
     """Session coherence: boost heat for current-session memories."""
     thermo = _st._thermo
@@ -133,6 +142,7 @@ def _zero_gap_3_session_coherence(ctx: MemorizeContext, storage) -> None:
             storage.update_memory_heat(ctx.memory_id, coherent_heat)
 
 
+@observe(tier="stage")
 def _zero_gap_4_micro_checkpoint(ctx: MemorizeContext, settings) -> None:
     """Micro-checkpoint: auto-checkpoint on significant events."""
     if _st._replay is None or not settings.MICRO_CHECKPOINT_ENABLED:
@@ -149,6 +159,7 @@ def _zero_gap_4_micro_checkpoint(ctx: MemorizeContext, settings) -> None:
             logger.debug("Micro-checkpoint failed")
 
 
+@observe(tier="stage")
 def _zero_gap_5_action_stream(ctx: MemorizeContext, buffer) -> None:
     """Action stream: log this memorize operation."""
     if buffer is not None:
@@ -156,6 +167,7 @@ def _zero_gap_5_action_stream(ctx: MemorizeContext, buffer) -> None:
         buffer.capture_action("memorize", ctx.context, summary, ctx.curation_action)
 
 
+@observe(tier="stage")
 def _zero_gap_6_reinjection(ctx: MemorizeContext, settings) -> None:
     """Related context reinjection: surface what you already know."""
     global _reinject_skip_logged  # noqa: PLW0603
@@ -189,12 +201,14 @@ def _zero_gap_6_reinjection(ctx: MemorizeContext, settings) -> None:
         logger.debug("Reinjection recall failed")
 
 
+@observe(tier="stage")
 def _run_tool_call_record() -> None:
     """Track tool call for auto-checkpoint interval."""
     if _st._replay is not None:
         _st._replay.record_tool_call()
 
 
+@observe(tier="stage")
 def _build_response(ctx: MemorizeContext, storage, settings) -> dict:
     """Build and return the final memory response dict."""
     memory = storage.get_memory(ctx.memory_id)

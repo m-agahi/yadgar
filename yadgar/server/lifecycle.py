@@ -28,6 +28,7 @@ from yadgar.engram import EngramAllocator
 from yadgar.knowledge_graph import KnowledgeGraph
 from yadgar.metacognition import MetaCognition
 from yadgar.narrative import NarrativeEngine
+from yadgar.observability.observe import observe
 from yadgar.predictive_coding import WriteGate
 from yadgar.prospective import ProspectiveMemoryEngine
 from yadgar.restoration import CheckpointRestore
@@ -47,6 +48,9 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+@observe(
+    exempt="span factory: returns an OTel start_as_current_span context manager, not a work unit; wrapping the factory call adds a spurious span with no body timing"
+)
 def _lifecycle_span(name: str):
     """Context manager: OTel root span for lifecycle background threads.
 
@@ -63,6 +67,7 @@ def _lifecycle_span(name: str):
 # ── PR-I: loop telemetry helpers ────────────────────────────────────────
 
 
+@observe(tier="stage")
 def _lc_heartbeat(loop: str) -> None:
     """PR-I: set loop heartbeat gauge. Never raises."""
     try:
@@ -73,6 +78,7 @@ def _lc_heartbeat(loop: str) -> None:
         pass
 
 
+@observe(tier="stage")
 def _lc_record_exc(loop: str, exc: BaseException) -> None:
     """PR-I: increment loop error counter. Never raises."""
     try:
@@ -91,6 +97,7 @@ def _get_storage() -> StorageEngine:
     return _st._storage
 
 
+@observe(tier="stage")
 def _get_embeddings() -> EmbeddingEngine:
     # §13: raise RuntimeError (not AssertionError — assert can be stripped with -O)
     if _st._embeddings is None:
@@ -138,6 +145,7 @@ def _get_replay() -> CheckpointRestore:
     return _st._replay
 
 
+@observe(tier="stage")
 def _get_file_queue():
     if _st._file_queue is None:
         with _st._queue_lock:
@@ -181,6 +189,7 @@ def _get_file_queue():
 # ── Default rules ──────────────────────────────────────────────────────
 
 
+@observe(tier="stage")
 def _load_default_rules(engine: RulesEngine) -> None:
     """Seed the rules engine with defaults on a fresh install.
 
@@ -204,6 +213,7 @@ def _load_default_rules(engine: RulesEngine) -> None:
 # ── Startup helpers ────────────────────────────────────────────────────
 
 
+@observe(tier="stage")
 def _run_wiki_embedding_backfill(wiki) -> None:
     """Backfill NULL-embedding wiki_page rows (migration_014, v5.42.1).
 
@@ -241,6 +251,7 @@ def _run_wiki_embedding_backfill(wiki) -> None:
 # ── Startup ────────────────────────────────────────────────────────────
 
 
+@observe(tier="stage")
 def _emit_sd_ready() -> None:
     """v5.49.4: emit READY=1 via sd_notify after init_engines() completes.
 
@@ -255,6 +266,7 @@ def _emit_sd_ready() -> None:
         pass
 
 
+@observe(tier="stage")
 def _init_embedding_client(embedding_model: str | None, _settings):
     """Init embedding engine + ML client based on YADGAR_EMBED_URL env var.
 
@@ -291,6 +303,7 @@ def _init_embedding_client(embedding_model: str | None, _settings):
     return embeddings, ml_client
 
 
+@observe(tier="stage")
 def _init_secondary_engines(_settings) -> None:
     """Assign all secondary engine singletons in their required init order.
 
@@ -305,6 +318,7 @@ def _init_secondary_engines(_settings) -> None:
     _st._cognitive_map = CognitiveMap(_st._storage, _settings)
 
 
+@observe(tier="stage")
 def _init_retriever_and_post_engines(_settings, ml_client) -> None:
     """Init retriever, write-gate, engram, rules, causal, metacognition, replay, wiki.
 
@@ -345,6 +359,9 @@ def _init_retriever_and_post_engines(_settings, ml_client) -> None:
     _st._cls = _st._consolidation.cls
 
 
+@observe(
+    exempt="opens a manual start_as_current_span/OTel root span in-body for a background thread; @observe would double-span the work unit (I21)"
+)
 def _metrics_loop(pid: int, db_path: str, storage: object) -> None:
     """Background thread: sample system metrics every 5 s (PR-I).
 
@@ -367,6 +384,9 @@ def _metrics_loop(pid: int, db_path: str, storage: object) -> None:
             pass
 
 
+@observe(
+    exempt="opens a manual start_as_current_span/OTel root span in-body for a background thread; @observe would double-span the work unit (I21)"
+)
 def _reranker_idle_loop() -> None:
     """Background thread: unload idle rerankers (PR-I).
 
@@ -391,6 +411,7 @@ def _reranker_idle_loop() -> None:
             _lc_record_exc("model_unload", _exc)  # PR-I: loop error counter
 
 
+@observe(tier="stage")
 def _viz_loop(host: str, port: int) -> None:
     """Background thread: run the viz server (auto-started with daemon).
 
@@ -410,6 +431,7 @@ def _viz_loop(host: str, port: int) -> None:
         logger.warning("Viz server error: %s", exc)
 
 
+@observe(tier="stage")
 def _start_daemon_threads(watch_directory: str | None, _settings) -> None:
     """Start background daemon threads (metrics, reranker-idle, viz).
 
@@ -436,6 +458,7 @@ def _start_daemon_threads(watch_directory: str | None, _settings) -> None:
     threading.Thread(target=_viz_loop, args=(_viz_host, _viz_port), daemon=True).start()
 
 
+@observe(tier="stage")
 def _init_file_queue() -> None:
     """Start the file queue drainer; non-fatal on failure.
 
@@ -447,6 +470,7 @@ def _init_file_queue() -> None:
         logger.warning("File queue init failed (non-fatal): %s", exc)
 
 
+@observe(tier="boundary")
 def init_engines(
     db_path: str | None = None,
     embedding_model: str | None = None,
@@ -482,6 +506,7 @@ def init_engines(
     return _st._storage, _st._embeddings, _st._buffer, _st._consolidation, _st._staleness
 
 
+@observe(tier="boundary")
 def shutdown():
     """Gracefully shut down all engines. Idempotent — safe to call twice (Q16)."""
     if _st._shutdown_done:
@@ -570,6 +595,7 @@ def shutdown():
 _SENSITIVE_DRAIN_POLL_SEC = 0.05  # poll interval while draining (models drain.py)
 
 
+@observe(tier="stage")
 def _drain_sensitive_lock(timeout: float) -> bool:
     """Bounded synchronous wait for an in-process sensitive job to release its lock.
 
@@ -595,6 +621,7 @@ def _drain_sensitive_lock(timeout: float) -> bool:
     return True
 
 
+@observe(tier="stage")
 def _signal_handler(signum, frame):
     """Handle SIGINT/SIGTERM for graceful shutdown.
 
@@ -668,6 +695,7 @@ def _signal_handler(signum, frame):
     sys.exit(0)
 
 
+@observe(tier="stage")
 def _run_update_check() -> None:
     """Background thread target: probe PyPI for a newer yadgar version.
 
@@ -699,6 +727,7 @@ def _run_update_check() -> None:
         logger.warning("update check failed (non-fatal): %s", exc)
 
 
+@observe(tier="stage")
 def _maybe_auto_check_for_update() -> None:
     """Spawn a background update-check thread if UPDATE_CHECK_ON_START=True.
 
@@ -726,6 +755,7 @@ def _maybe_auto_check_for_update() -> None:
     logger.debug("update check thread started (daemon=True)")
 
 
+@observe(tier="stage")
 def _emit_startup_diagnostics(settings) -> None:
     """Emit startup config diagnostics and the BC-EN2b COMET-dormant warning.
 
@@ -767,6 +797,7 @@ def _emit_startup_diagnostics(settings) -> None:
         logger.debug("warn_comet_dormant failed (non-fatal)", exc_info=True)
 
 
+@observe(tier="boundary")
 def main(
     port: int | None = None,
     db_path: str | None = None,

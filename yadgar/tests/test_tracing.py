@@ -170,6 +170,42 @@ class TestTraceSpanSync:
         names = [s.name for s in spans]
         assert "test.sync_span" in names
 
+    def test_sync_runs_when_get_tracer_raises(self, monkeypatch):
+        """A degraded provider (get_tracer raises) must NOT break the wrapped fn.
+
+        I3 (graceful degradation): when tracing is unavailable/degraded, the span
+        path is a no-op but the function still runs + returns. Regression guard for
+        the shutdown_tracing crash: a log record firing mid-shutdown (provider
+        swapped to a hanging stub with no get_tracer) routed through an @observe'd
+        log-path filter → trace_span → get_tracer(stub) → AttributeError, which
+        aborted shutdown_tracing. get_tracer failures must degrade to no-span.
+        """
+        from yadgar import tracing
+        from yadgar.tracing import trace_span
+
+        def _boom(_module):
+            raise AttributeError("'_HangingProvider' object has no attribute 'get_tracer'")
+
+        monkeypatch.setattr(tracing._otel_trace, "get_tracer", _boom)
+
+        @trace_span("test.degraded")
+        def my_fn():
+            return 99
+
+        # No span opened, but the fn still runs and returns.
+        assert my_fn() == 99
+
+    def test_sync_body_exception_still_propagates_when_traced(self, in_memory_tracer):
+        """The get_tracer guard must NOT swallow the wrapped fn's own exceptions."""
+        from yadgar.tracing import trace_span
+
+        @trace_span("test.raises")
+        def my_fn():
+            raise ValueError("body error")
+
+        with pytest.raises(ValueError, match="body error"):
+            my_fn()
+
     def test_sync_default_name(self, in_memory_tracer):
         """Name defaults to module.qualname when not provided."""
         _tracer, exporter = in_memory_tracer
@@ -441,6 +477,74 @@ class TestLogSpanProcessor:
             assert any(r.levelno == _logging.INFO for r in records)
         finally:
             proc_logger.removeHandler(cap)
+
+    def test_emit_span_log_reentrant_does_not_recurse(self):
+        """A log handler that itself logs on the tracing logger (mirrors an
+        @observe'd LogRingHandler.emit / ContentRedactor.filter) must NOT cause
+        LogSpanProcessor._emit_span_log to recurse unboundedly.
+
+        Regression: the obs rollout put @observe on log handlers/filters. Handling
+        the span_end log record re-entered _emit_span_log → logger.info("span_end")
+        → handler → _emit_span_log → ... unbounded GIL-bound recursion that hung
+        the full unit suite under -n auto (signal-immune, pytest-timeout couldn't
+        kill it). A thread-local re-entry guard bounds it to one emission.
+        """
+        import logging as _logging
+        from unittest.mock import MagicMock
+
+        from yadgar import tracing as tr
+
+        proc_logger = _logging.getLogger("yadgar.tracing")
+        depth = {"cur": 0, "max": 0}
+
+        processor = tr.LogSpanProcessor(service_name="test-svc")
+
+        # A minimal fake span sufficient for _emit_span_log.
+        span = MagicMock()
+        span.context.trace_id = 1
+        span.context.span_id = 2
+        span.parent = None
+        span.name = "test.reentrant"
+        span.end_time = 2_000_000
+        span.start_time = 1_000_000
+        span.status.status_code.name = "OK"
+        span.attributes = {}
+
+        class ReentrantHandler(_logging.Handler):
+            def emit(self, record: _logging.LogRecord) -> None:
+                # Mirrors an @observe'd log handler/filter: handling the span_end
+                # record re-triggers _emit_span_log on the SAME thread (the prod
+                # cycle is emit → @observe span end → _emit_span_log → logger.info
+                # → emit → ...). Bounded so an un-guarded impl can't hang the test.
+                depth["cur"] += 1
+                depth["max"] = max(depth["max"], depth["cur"])
+                try:
+                    if depth["cur"] < 5:
+                        processor._emit_span_log(span)
+                finally:
+                    depth["cur"] -= 1
+
+        handler = ReentrantHandler()
+        handler.setLevel(_logging.DEBUG)
+        proc_logger.addHandler(handler)
+        proc_logger.setLevel(_logging.DEBUG)
+        old_propagate = proc_logger.propagate
+        proc_logger.propagate = False
+
+        try:
+            processor._emit_span_log(span)
+
+            # With the guard, the re-entrant _emit_span_log call is a no-op, so the
+            # inner logger.info never fires and handler.emit runs exactly once.
+            # Without it, each emit re-enters _emit_span_log which logs again → depth
+            # climbs (unbounded in prod; capped here only so the test can't hang).
+            assert depth["max"] == 1, (
+                f"_emit_span_log re-entered (max depth {depth['max']}) — "
+                "re-entry guard missing; this is the unbounded-recursion hang."
+            )
+        finally:
+            proc_logger.removeHandler(handler)
+            proc_logger.propagate = old_propagate
 
 
 # ---------------------------------------------------------------------------

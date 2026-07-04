@@ -21,6 +21,7 @@ from yadgar.curation.ingestion import (
 from yadgar.curation.prune_passes import _memify_prune
 from yadgar.curation.strengthen import _memify_derive, _memify_reweight, _memify_strengthen
 from yadgar.embeddings import EmbeddingEngine
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 from yadgar.thermodynamics import MemoryThermodynamics
 from yadgar.tracing import trace_span
@@ -164,6 +165,7 @@ class MemoryCurator:
             except Exception:
                 pass
 
+    @observe(tier="stage")
     def _run_write_time_contradiction(
         self,
         similar: list[tuple[int, float]],
@@ -248,6 +250,7 @@ class MemoryCurator:
 
     # ── b. Contradiction Detection ───────────────────────────────────────
 
+    @observe(tier="boundary")
     def detect_contradictions(self, new_content: str, new_embedding: bytes) -> list[dict]:
         """Find existing memories that may contradict new_content.
 

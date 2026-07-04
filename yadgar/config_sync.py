@@ -14,6 +14,8 @@ from pathlib import Path
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
+from yadgar.observability.observe import observe
+
 
 def _compute_missing(data: CommentedMap, settings) -> list[str]:
     """Return list of Settings field names absent from yaml data."""
@@ -22,6 +24,7 @@ def _compute_missing(data: CommentedMap, settings) -> list[str]:
     return [k.lower() for k in Settings.model_fields if k.lower() not in data]
 
 
+@observe(tier="hot")
 def _compute_unknown(data: CommentedMap, remove_unknown: bool) -> list[str]:
     """Return yaml keys not in Settings (only when remove_unknown=True)."""
     if not remove_unknown:
@@ -32,6 +35,7 @@ def _compute_unknown(data: CommentedMap, remove_unknown: bool) -> list[str]:
     return [k for k in data if k.lower() not in known]
 
 
+@observe(tier="hot")
 def _handle_check(missing: list[str], settings) -> None:
     """Print check result and exit (helper for cmd_config_sync --check)."""
     if missing:
@@ -44,6 +48,7 @@ def _handle_check(missing: list[str], settings) -> None:
     sys.exit(0)
 
 
+@observe(tier="hot")
 def _handle_dry_run(missing: list[str], unknown: list[str], settings, remove_unknown: bool) -> None:
     """Print dry-run diff (helper for cmd_config_sync --dry-run)."""
     from yadgar.config_yaml import FIELD_META  # noqa: PLC0415
@@ -60,6 +65,7 @@ def _handle_dry_run(missing: list[str], unknown: list[str], settings, remove_unk
         print(f"Would remove {len(unknown)} unknown keys: {unknown}")
 
 
+@observe(tier="stage")
 def _apply_missing(data: CommentedMap, missing: list[str], settings) -> None:
     """Add missing keys with defaults + FIELD_META comments."""
     from yadgar.config_yaml import FIELD_META  # noqa: PLC0415
@@ -72,6 +78,7 @@ def _apply_missing(data: CommentedMap, missing: list[str], settings) -> None:
             data.yaml_set_comment_before_after_key(field_lower, before=f" {desc}")
 
 
+@observe(tier="stage")
 def _atomic_yaml_write(path: Path, y: YAML, data: CommentedMap) -> None:
     """Write yaml data atomically (temp file → rename) with chmod 600."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,6 +98,7 @@ def _atomic_yaml_write(path: Path, y: YAML, data: CommentedMap) -> None:
         raise
 
 
+@observe(tier="boundary")
 def cmd_config_sync(args) -> None:
     """Incrementally sync ~/.config/yadgar/config.yaml with current Settings model fields.
 

@@ -19,7 +19,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from yadgar.observability.observe import observe
 
+
+@observe(tier="stage")
 def detect_service_mode() -> str:
     """Auto-detect the init system and return 'systemd', 'docker', or 'manual'."""
     if os.environ.get("INVOCATION_ID"):
@@ -47,6 +50,7 @@ class ServiceController:
     # Public API
     # ------------------------------------------------------------------
 
+    @observe(tier="boundary")
     def stop(self) -> None:
         """Stop both yadgar and yadgar-backend services."""
         if self.mode == "systemd":
@@ -56,6 +60,7 @@ class ServiceController:
         else:
             self._manual_instructions("stop")
 
+    @observe(tier="boundary")
     def stop_backend(self) -> None:
         """Stop yadgar-backend only (used by restore path in vacuum phase 3)."""
         if self.mode == "systemd":
@@ -65,6 +70,7 @@ class ServiceController:
         else:
             self._manual_instructions("stop-backend")
 
+    @observe(tier="boundary")
     def start_backend(self) -> None:
         """Start yadgar-backend only."""
         if self.mode == "systemd":
@@ -74,6 +80,7 @@ class ServiceController:
         else:
             self._manual_instructions("start-backend")
 
+    @observe(tier="boundary")
     def start_yadgar(self) -> None:
         """Start yadgar (MCP layer) only."""
         if self.mode == "systemd":
@@ -87,6 +94,7 @@ class ServiceController:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    @observe(tier="stage")
     def _systemctl(self, action: str, *services: str) -> None:
         cmd = ["systemctl", "--user", action, *services]
         result = subprocess.run(cmd, capture_output=True)
@@ -94,6 +102,7 @@ class ServiceController:
             stderr = result.stderr.decode(errors="replace").strip()
             raise RuntimeError(f"systemctl --user {action} {' '.join(services)} failed: {stderr}")
 
+    @observe(tier="stage")
     def _docker_compose(self, action: str, *services: str) -> None:
         cmd = ["docker", "compose", action, *services]
         result = subprocess.run(cmd, capture_output=True)
@@ -101,6 +110,7 @@ class ServiceController:
             stderr = result.stderr.decode(errors="replace").strip()
             raise RuntimeError(f"docker compose {action} {' '.join(services)} failed: {stderr}")
 
+    @observe(tier="hot")
     def _manual_instructions(self, step: str) -> None:
         """Print manual instructions and exit non-zero.
 
@@ -157,6 +167,7 @@ class ManualModeError(RuntimeError):
 _DEFAULT_VACUUM_TRIGGER_PATH = "/data/triggers/vacuum_requested"
 
 
+@observe(tier="stage")
 def _fire_vacuum_service() -> Path:
     """Write a trigger file requesting yadgar-vacuum.service to run.
 

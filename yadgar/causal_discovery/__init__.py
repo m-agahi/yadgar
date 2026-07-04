@@ -16,6 +16,7 @@ from yadgar.causal_discovery.meek import meek_r1, meek_r2, meek_r3
 from yadgar.causal_discovery.pc import build_event_matrix, pc_algorithm
 from yadgar.config import Settings
 from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,7 @@ class CausalDiscovery:
         """
         return pc_algorithm(data, variable_names, alpha, max_cond_set)
 
+    @observe(tier="boundary")
     def discover_dag(
         self,
         directory: str | None = None,
@@ -192,6 +194,7 @@ class CausalDiscovery:
 
         return dag
 
+    @observe(tier="boundary")
     def query_causes(self, effect_entity: str, max_depth: int = 3) -> list[dict]:
         """Find causes of an effect by traversing the DAG upstream.
 
@@ -205,6 +208,7 @@ class CausalDiscovery:
             target["id"], effect_entity, self._storage, "upstream", max_depth
         )
 
+    @observe(tier="boundary")
     def query_effects(self, cause_entity: str, max_depth: int = 3) -> list[dict]:
         """Find effects by traversing the DAG downstream.
 
@@ -218,6 +222,7 @@ class CausalDiscovery:
             source["id"], cause_entity, self._storage, "downstream", max_depth
         )
 
+    @observe(tier="boundary")
     def get_causal_chain(self, entity: str) -> dict:
         """Return both causes and effects for an entity."""
         causes = self.query_causes(entity)

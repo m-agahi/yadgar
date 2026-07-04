@@ -39,6 +39,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from yadgar.config_registry import clear_config_caches, list_config
+from yadgar.observability.observe import observe
 from yadgar.server._app import mcp_server
 from yadgar.server.tools.admin_other import consolidate_now, reembed_all
 from yadgar.server.tools.admin_vacuum import vacuum_now
@@ -115,11 +116,13 @@ SECTION_TO_CATEGORY: dict[str, str] = {
 }
 
 
+@observe(tier="stage")
 def _get_category(section: str) -> str:
     """Return capability category for a FIELD_META section; fallback 'config'."""
     return SECTION_TO_CATEGORY.get(section, "config")
 
 
+@observe(tier="stage")
 def _serialize_knob_value(value: object) -> str:
     """Serialise a coerced knob value to its canonical string form.
 
@@ -133,6 +136,7 @@ def _serialize_knob_value(value: object) -> str:
     return str(value)
 
 
+@observe(tier="stage")
 def _enrich_knob(knob: dict, field_meta_key: str) -> dict:
     """Add description/section/category/locked fields to a knob dict in-place.
 
@@ -197,6 +201,7 @@ _HOT_RELOAD_OVERRIDES: frozenset[str] = frozenset(
 )
 
 
+@observe(tier="stage")
 def _classify_knob(name: str) -> str:
     """Return 'hot_reload' or 'restart_required' for a knob env-var name."""
     if name in _HOT_RELOAD_OVERRIDES:
@@ -216,6 +221,7 @@ def _classify_knob(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
 def _validate_range(name: str, value: object) -> str | None:
     """Return an error message string if value is out of range, else None."""
     positive_floats = {
@@ -287,6 +293,7 @@ def _sentinel_dir() -> Path:
     return Path(str(_paths.STATE_DIR))
 
 
+@observe(tier="stage")
 def _write_restart_sentinel(service: str) -> Path:
     """Write a restart sentinel file for the given service.
 
@@ -312,6 +319,7 @@ def _write_restart_sentinel(service: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 async def control_config_get_handler(request: Request) -> JSONResponse:
     """GET /api/control/config — full knob table with classification + enriched metadata."""
     entries = list_config()
@@ -334,6 +342,7 @@ async def control_config_get_handler(request: Request) -> JSONResponse:
     return JSONResponse({"knobs": knobs})
 
 
+@observe(tier="boundary")
 async def control_config_post_handler(request: Request) -> JSONResponse:
     """POST /api/control/config — set ONE knob; validates type + range.
 
@@ -436,6 +445,7 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     )
 
 
+@observe(tier="stage")
 async def _vacuum_confirmed(request: Request) -> bool:
     """Return True iff the POST body carries ``confirm == "vacuum"``.
 
@@ -450,6 +460,7 @@ async def _vacuum_confirmed(request: Request) -> bool:
     return isinstance(body, dict) and body.get("confirm") == "vacuum"
 
 
+@observe(tier="boundary")
 async def control_action_handler(request: Request) -> JSONResponse:
     """POST /api/control/action/{consolidate|vacuum|reembed} — trigger admin actions.
 
@@ -491,6 +502,7 @@ async def control_action_handler(request: Request) -> JSONResponse:
     return JSONResponse({"action": action, "result": result})
 
 
+@observe(tier="boundary")
 async def control_restart_handler(request: Request) -> JSONResponse:
     """POST /api/control/restart/{yadgar|backend} — write sentinel file ONLY.
 
@@ -568,6 +580,7 @@ async def control_restart_handler(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 async def maintenance_enter_handler(request: Request) -> JSONResponse:
     """POST /api/control/maintenance/enter — enter nightly maintenance mode.
 
@@ -584,6 +597,7 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
     return JSONResponse({"status": "maintenance", "maintenance_mode": True})
 
 
+@observe(tier="boundary")
 async def maintenance_exit_handler(request: Request) -> JSONResponse:
     """POST /api/control/maintenance/exit — exit nightly maintenance mode.
 

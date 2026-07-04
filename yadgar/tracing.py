@@ -37,6 +37,17 @@ from typing import Any
 
 logger = logging.getLogger("yadgar.tracing")
 
+# Re-entry guard for LogSpanProcessor._emit_span_log. Emitting the I14 "span_end"
+# log record can re-enter _emit_span_log on the SAME thread when a log handler or
+# filter on the dispatch path is itself observed/traced (an @observe'd
+# LogRingHandler.emit / ContentRedactor.filter opens a span whose end fires
+# _emit_span_log again → logger.info("span_end") → handler → ...). That recursion
+# is unbounded, GIL-bound, and signal-immune (pytest-timeout's SIGALRM never
+# fires), which hung the full unit suite under -n auto. The guard suppresses a
+# span_end emission that occurs synchronously inside another one — an artifact of
+# the log-path being observed, never a legitimate nested span.
+_span_log_reentry = threading.local()
+
 # ---------------------------------------------------------------------------
 # C2 P2 (obs-train, docs/plans/observability-health-otlp-fix.md):
 # span-logging off the event-loop via QueueHandler + QueueListener
@@ -388,6 +399,20 @@ if _OTEL_AVAILABLE:
 
         def _emit_span_log(self, span: Any) -> None:
             """Emit one I14-compliant JSON log line for the finished span."""
+            # Re-entry guard: if this thread is already inside a span_end emission,
+            # skip — the nested call is the log↔span recursion (see module comment
+            # on _span_log_reentry), not a legitimate span. Prevents the unbounded
+            # GIL-bound recursion that hung the -n auto unit suite.
+            if getattr(_span_log_reentry, "active", False):
+                return
+            _span_log_reentry.active = True
+            try:
+                self._emit_span_log_inner(span)
+            finally:
+                _span_log_reentry.active = False
+
+        def _emit_span_log_inner(self, span: Any) -> None:
+            """Actual span_end log emission (guarded by _emit_span_log)."""
             ctx = span.context
             if ctx is None:
                 return  # pragma: no cover
@@ -657,7 +682,16 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
 
             @functools.wraps(fn)
             async def async_wrapper(*args, **kwargs):
-                tracer = _otel_trace.get_tracer(fn.__module__)
+                # I3 graceful degradation: a degraded/swapped provider whose
+                # get_tracer raises (e.g. the hanging stub installed during
+                # shutdown_tracing, reached when a log record fires mid-teardown
+                # through an observed log-path filter) must NOT break the wrapped
+                # fn — run it without a span. Guard get_tracer ONLY; the fn's own
+                # exceptions still propagate + record via the span path below.
+                try:
+                    tracer = _otel_trace.get_tracer(fn.__module__)
+                except Exception:
+                    return await fn(*args, **kwargs)
                 with tracer.start_as_current_span(span_name) as span:
                     if attributes:
                         for k, v in attributes.items():
@@ -678,7 +712,12 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
 
             @functools.wraps(fn)
             def sync_wrapper(*args, **kwargs):
-                tracer = _otel_trace.get_tracer(fn.__module__)
+                # I3 graceful degradation — see async_wrapper. Guard get_tracer
+                # ONLY; the wrapped fn's own exceptions still propagate + record.
+                try:
+                    tracer = _otel_trace.get_tracer(fn.__module__)
+                except Exception:
+                    return fn(*args, **kwargs)
                 with tracer.start_as_current_span(span_name) as span:
                     if attributes:
                         for k, v in attributes.items():

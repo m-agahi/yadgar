@@ -33,16 +33,21 @@ import sys
 import urllib.parse
 import urllib.request
 
+from yadgar.observability.observe import observe
+from yadgar.tracing import shutdown_tracing
+
 _PORT = os.environ.get("YADGAR_PORT", "8765")
 _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
 
+@observe(tier="hot")
 def _auth_headers() -> dict:
     if _AUTH_TOKEN:
         return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
     return {}
 
 
+@observe(tier="hot")
 def _parse_payload(data: dict) -> dict:
     """Extract and normalise fields from the SubagentStart payload.
 
@@ -60,6 +65,7 @@ def _parse_payload(data: dict) -> dict:
     }
 
 
+@observe(tier="stage")
 def _call_daemon(agent_type: str, cwd: str, description: str) -> str:
     """POST to /hooks/subagent-start on the daemon.
 
@@ -78,14 +84,18 @@ def _call_daemon(agent_type: str, cwd: str, description: str) -> str:
         return ""
 
 
+@observe(tier="boundary")
 def main() -> None:
     """Entry point called by the hook script."""
     try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except Exception:
-        return
+        try:
+            data = json.loads(sys.stdin.read() or "{}")
+        except Exception:
+            return
 
-    parsed = _parse_payload(data)
-    text = _call_daemon(parsed["agent_type"], parsed["cwd"], parsed["description"])
-    if text:
-        print(text)
+        parsed = _parse_payload(data)
+        text = _call_daemon(parsed["agent_type"], parsed["cwd"], parsed["description"])
+        if text:
+            print(text)
+    finally:
+        shutdown_tracing()

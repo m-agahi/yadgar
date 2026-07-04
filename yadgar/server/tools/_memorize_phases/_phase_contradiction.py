@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from yadgar.observability.observe import observe
 from yadgar.server.lifecycle import _get_storage
 from yadgar.tracing import trace_span
 
@@ -55,6 +56,7 @@ def phase_contradiction(ctx: MemorizeContext) -> dict | None:
     return None  # ADD or fallback — continue to store
 
 
+@observe(tier="stage")
 def _handle_update(ctx: MemorizeContext, target_id: int, cr_reason: str) -> dict | None:
     """Handle conflict resolver UPDATE op. Returns result dict or None (fallback to ADD)."""
     storage = _get_storage()
@@ -71,6 +73,7 @@ def _handle_update(ctx: MemorizeContext, target_id: int, cr_reason: str) -> dict
         return None  # fall through to ADD
 
 
+@observe(tier="stage")
 def _handle_delete(target_id: int, cr_reason: str) -> dict:
     """Handle conflict resolver DELETE op. Returns result dict."""
     storage = _get_storage()

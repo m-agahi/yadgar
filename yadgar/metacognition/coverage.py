@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime
 
+from yadgar.observability.observe import observe
+
 
 def _extract_entities(query: str) -> list[str]:
     """Re-use retrieval entity extraction without circular import."""
@@ -10,6 +12,7 @@ def _extract_entities(query: str) -> list[str]:
     return _extract_query_entities(query)
 
 
+@observe(tier="stage")
 def _density_score(memory_count: int) -> float:
     """Map memory count to a density score bucket."""
     if memory_count == 0:
@@ -21,6 +24,7 @@ def _density_score(memory_count: int) -> float:
     return 0.9
 
 
+@observe(tier="stage")
 def _parse_created_at(value) -> datetime | None:
     """Parse a created_at value to a timezone-aware datetime, or None."""
     if value is None:
@@ -35,6 +39,7 @@ def _parse_created_at(value) -> datetime | None:
     return value
 
 
+@observe(tier="stage")
 def _recency_score(memories: list[dict]) -> float:
     """Return recency score based on most recent memory timestamp."""
     if not memories:
@@ -59,6 +64,7 @@ def _recency_score(memories: list[dict]) -> float:
     return 0.2
 
 
+@observe(tier="stage")
 def _confidence_score(memories: list[dict]) -> float:
     """Return average confidence score of matching memories."""
     if not memories:
@@ -67,6 +73,7 @@ def _confidence_score(memories: list[dict]) -> float:
     return sum(confidences) / len(confidences)
 
 
+@observe(tier="stage")
 def _suggestion(overall: float) -> tuple[str, str]:
     """Map overall score to suggestion label and detail string."""
     if overall >= 0.7:
@@ -79,6 +86,7 @@ def _suggestion(overall: float) -> tuple[str, str]:
 class _CoverageMixin:
     """Metacognitive coverage assessment (MetaRAG signal 1)."""
 
+    @observe(tier="stage")
     def _gather_memories(self, query: str) -> list[dict]:
         """Collect matching memories via FTS + vector search with deduplication."""
         matching_memories: list[dict] = []
@@ -101,6 +109,7 @@ class _CoverageMixin:
                         seen_ids.add(mid)
         return matching_memories
 
+    @observe(tier="stage")
     def _entity_coverage(self, query: str) -> tuple[float, list[str]]:
         """Return (entity_coverage_ratio, unknown_entity_names)."""
         query_entities = _extract_entities(query)
@@ -116,6 +125,7 @@ class _CoverageMixin:
                 unknown.append(name)
         return known / total, unknown
 
+    @observe(tier="boundary")
     def assess_coverage(self, query: str, directory: str = "") -> dict:
         """Assess how well Yadgar can answer a query.
 

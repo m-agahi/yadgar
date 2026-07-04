@@ -36,6 +36,7 @@ from pathlib import Path
 
 import yadgar.paths as _paths
 from yadgar.config import resolve_knob
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ def _ttl_seconds() -> float:
     return float(resolve_knob("YADGAR_SENSITIVE_LOCK_TTL_SEC", "SENSITIVE_LOCK_TTL_SEC", int, 7200))
 
 
+@observe(tier="hot")
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -66,6 +68,7 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+@observe(tier="stage")
 def read() -> dict | None:
     """Return the lock payload dict, or None if absent/unreadable.
 
@@ -81,6 +84,7 @@ def read() -> dict | None:
         return None
 
 
+@observe(tier="hot")
 def _is_stale(payload: dict | None) -> bool:
     """True when the lock is reapable: absent, corrupt, dead pid, or TTL-expired."""
     if not payload:
@@ -96,6 +100,7 @@ def _is_stale(payload: dict | None) -> bool:
     return age > _ttl_seconds()
 
 
+@observe(tier="stage")
 def is_held_by_live_job() -> bool:
     """True iff a NON-stale lock is currently present.
 
@@ -105,6 +110,7 @@ def is_held_by_live_job() -> bool:
     return not _is_stale(read())
 
 
+@observe(tier="stage")
 def _write_lock(job: str) -> None:
     p = lock_path()
     tmp = Path(str(p) + ".tmp")
@@ -114,6 +120,7 @@ def _write_lock(job: str) -> None:
     os.replace(tmp, p)  # atomic
 
 
+@observe(tier="boundary")
 def acquire(job: str) -> bool:
     """Acquire the sensitive-job lock for *job*.
 
@@ -141,6 +148,7 @@ def acquire(job: str) -> bool:
     return True
 
 
+@observe(tier="boundary")
 def release() -> None:
     """Release the lock (best-effort — never raises)."""
     try:

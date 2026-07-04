@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from yadgar.config import resolve_knob
+from yadgar.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class BearerAuthMiddleware:
         self.app = app
         self._log_startup()
 
+    @observe(tier="hot")
     def _log_startup(self) -> None:
         global _startup_warned
         if _startup_warned:
@@ -137,11 +139,13 @@ class BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
+@observe(tier="hot")
 def _is_auth_required() -> bool:
     """Return True when YADGAR_REQUIRE_AUTH is truthy (default: True)."""
     return os.environ.get("YADGAR_REQUIRE_AUTH", "1").lower() in ("1", "true", "yes")
 
 
+@observe(tier="hot")
 def _is_protected(path: str) -> bool:
     """Return True when the path falls under a protected prefix."""
     for prefix in _PROTECTED_PREFIXES:
@@ -150,6 +154,7 @@ def _is_protected(path: str) -> bool:
     return False
 
 
+@observe(tier="hot")
 def _extract_bearer(scope: Scope) -> str:
     """Extract bearer token from Authorization header, or empty string."""
     headers = dict(scope.get("headers", []))
@@ -159,6 +164,7 @@ def _extract_bearer(scope: Scope) -> str:
     return ""
 
 
+@observe(tier="hot")
 def _observe_auth_duration(t0: float) -> None:
     """Observe elapsed ms since t0 into yadgar_mcp_auth_check_duration_ms. Non-fatal."""
     try:
@@ -185,6 +191,7 @@ _UNGATED_OPS_PATHS: frozenset[str] = frozenset(
 _UNGATED_OPS_PREFIXES: tuple[str, ...] = ("/api/control/restart/",)
 
 
+@observe(tier="hot")
 def _is_debug_api_path(path: str, method: str = "GET") -> bool:
     """Return True when path+method is gated by YADGAR_DEBUG_APIS_ENABLED.
 

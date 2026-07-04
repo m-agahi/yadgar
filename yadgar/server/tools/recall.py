@@ -6,6 +6,7 @@ import logging
 
 import yadgar.server._state as _st
 from yadgar.config import get_settings
+from yadgar.observability.observe import observe
 from yadgar.retrieval.providers.base import Scope
 from yadgar.retrieval.providers.fusion import fuse_candidates
 from yadgar.retrieval.providers.memory import MemoryProvider
@@ -32,6 +33,7 @@ _VALID_RECALL_MODES: frozenset[str] = frozenset({"landscape"})
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="hot", name="tools.recall._apply_quality_floor")
 def _apply_quality_floor(memories: list[dict], threshold: float) -> list[dict]:
     """Drop results whose cross-encoder score is below *threshold*.
 
@@ -62,6 +64,7 @@ def _apply_quality_floor(memories: list[dict], threshold: float) -> list[dict]:
     return kept
 
 
+@observe(tier="hot", name="tools.recall._dedup_by_content")
 def _dedup_by_content(memories: list[dict]) -> list[dict]:
     """Collapse repeated memories with identical content.
 
@@ -94,6 +97,7 @@ def _dedup_by_content(memories: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="hot", name="tools.recall._candidates_to_dicts")
 def _candidates_to_dicts(candidates: list) -> list[dict]:
     """Convert Candidate objects to raw dicts, stamping _source and stripping embeddings.
 
@@ -154,6 +158,7 @@ def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results):
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage", name="tools.recall._landscape_recall")
 def _landscape_recall(
     query: str,
     max_results: int,
@@ -207,6 +212,7 @@ def _landscape_recall(
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage", name="tools.recall._fanout_recall", span=False)
 def _fanout_recall(
     query: str,
     max_results: int,
@@ -342,6 +348,7 @@ def _fanout_recall(
     return pooled[:max_results]
 
 
+@observe(tier="stage", name="tools.recall._record_recall_sr_transition")
 def _record_recall_sr_transition(merged: list[dict]) -> None:
     """Record an SR (successor-representation) transition: previous recall → this one.
 
@@ -368,6 +375,7 @@ def _record_recall_sr_transition(merged: list[dict]) -> None:
     _bounded_set(_st._last_recalled_ids, session_key, top_id)
 
 
+@observe(tier="stage", name="tools.recall._apply_recall_side_effects", span=False)
 def _apply_recall_side_effects(merged: list[dict], query: str, storage) -> None:
     """Post-retrieval bookkeeping shared by the legacy and fan-out recall paths.
 

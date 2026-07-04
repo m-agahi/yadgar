@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from yadgar.observability.observe import observe
 from yadgar.retrieval.providers.base import Candidate, Scope, SourceProvider
 from yadgar.storage.directory import is_directory_eligible
 
@@ -54,6 +55,7 @@ class WikiProvider(SourceProvider):
     def type(self) -> str:
         return "wiki"
 
+    @observe(tier="stage", name="retrieval.provider.wiki_candidates")
     def candidates(self, query: str, scope: Scope, limit: int) -> list[Candidate]:
         """Call WikiStore.query() and return normalized, directory-scoped Candidates.
 

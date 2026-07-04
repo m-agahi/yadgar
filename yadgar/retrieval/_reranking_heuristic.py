@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
+
 _PUNCT = ".,;:!?()[]{}\"'`~@#$%^&*-_+=<>/\\|"
 
 _QUESTION_WORDS: frozenset[str] = frozenset(
@@ -60,6 +62,7 @@ _QUESTION_WORDS: frozenset[str] = frozenset(
 )
 
 
+@observe(tier="hot", name="retrieval.heuristic.extract_entities")
 def _extract_query_entities(query: str) -> set[str]:
     """Return lowercased capitalized tokens (len>1) from *query* as entity set."""
     entities: set[str] = set()
@@ -70,6 +73,7 @@ def _extract_query_entities(query: str) -> set[str]:
     return entities
 
 
+@observe(tier="hot", name="retrieval.heuristic.extract_terms")
 def _extract_query_terms(query_lower: str) -> tuple[set[str], set[str]]:
     """Tokenize *query_lower*, return (all_terms, content_terms).
 
@@ -86,6 +90,7 @@ def _extract_query_terms(query_lower: str) -> tuple[set[str], set[str]]:
     return query_terms, query_content_terms
 
 
+@observe(tier="hot", name="retrieval.heuristic.build_bigrams")
 def _build_bigrams(text_lower: str) -> set[str]:
     """Tokenize *text_lower* and return the set of adjacent word bigrams."""
     words = [t.strip(_PUNCT) for t in text_lower.split()]
@@ -148,6 +153,7 @@ def _score_memory(
 class _HeuristicMixin:
     """Provides heuristic_rerank using entity matching, noun overlap, and IDF weighting."""
 
+    @observe(tier="stage", name="retrieval.heuristic.rerank")
     def heuristic_rerank(
         self,
         memories: list[dict],

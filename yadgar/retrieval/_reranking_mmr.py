@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yadgar.observability.observe import observe
+
 
 def _cosine_sim(a, b) -> float:
     """Return cosine similarity between two numpy arrays, or 0.0 if either is None."""
@@ -14,6 +16,7 @@ def _cosine_sim(a, b) -> float:
     return float(dot / norm) if norm > 0 else 0.0
 
 
+@observe(tier="hot", name="retrieval.mmr.collect_embeddings")
 def _collect_candidate_embeddings(
     storage,
     memories: list[dict],
@@ -96,6 +99,7 @@ def _best_mmr_candidate(
 class _MMRMixin:
     """Provides mmr_rerank for diversity-aware candidate selection."""
 
+    @observe(tier="stage", name="retrieval.mmr.rerank")
     def mmr_rerank(
         self,
         memories: list[dict],

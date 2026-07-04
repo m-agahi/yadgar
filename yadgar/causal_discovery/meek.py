@@ -2,9 +2,12 @@
 
 import logging
 
+from yadgar.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def meek_r1(
     i: int,
     j: int,
@@ -23,6 +26,7 @@ def meek_r1(
     return False
 
 
+@observe(tier="stage")
 def meek_r2(
     i: int,
     j: int,
@@ -41,6 +45,7 @@ def meek_r2(
     return False
 
 
+@observe(tier="stage")
 def meek_r3(
     i: int,
     j: int,

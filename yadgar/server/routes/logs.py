@@ -28,6 +28,7 @@ from threading import Lock
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 
+from yadgar.observability.observe import observe
 from yadgar.server._app import mcp_server
 from yadgar.tracing import trace_span
 
@@ -54,6 +55,7 @@ def _entry_bytes(entry: dict) -> int:
     return len(json.dumps(entry, default=str))
 
 
+@observe(tier="stage")
 def _ring_append(entry: dict) -> None:
     """Append an entry to the ring, evicting oldest when byte cap is exceeded."""
     global _ring_bytes, _ring_seq
@@ -69,6 +71,7 @@ def _ring_append(entry: dict) -> None:
             _ring_bytes -= _entry_bytes(evicted)
 
 
+@observe(tier="stage")
 def get_ring_snapshot(since_seq: int = 0) -> tuple[list[dict], int]:
     """Return (entries_since_seq, next_seq).
 
@@ -90,6 +93,7 @@ def get_ring_snapshot(since_seq: int = 0) -> tuple[list[dict], int]:
 class LogRingHandler(logging.Handler):
     """Push LogRecord dicts into the in-memory ring buffer."""
 
+    @observe(tier="stage")
     def emit(self, record: logging.LogRecord) -> None:
         try:
             entry = {
@@ -107,6 +111,7 @@ _handler_installed: bool = False
 _handler_lock: Lock = Lock()
 
 
+@observe(tier="stage")
 def install_ring_handler() -> None:
     """Attach LogRingHandler to root logger (idempotent)."""
     global _handler_installed
@@ -140,6 +145,7 @@ def _is_debug_apis_enabled() -> bool:
     )
 
 
+@observe(tier="stage")
 def _gate_check() -> JSONResponse | None:
     """Return 403 JSONResponse when debug APIs disabled, else None."""
     if not _is_debug_apis_enabled():
@@ -152,6 +158,7 @@ def _gate_check() -> JSONResponse | None:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="boundary")
 async def logs_capabilities_handler(request: Request) -> JSONResponse:
     """GET /api/logs/_capabilities — probe SSE + poll support."""
     denied = _gate_check()
@@ -160,6 +167,7 @@ async def logs_capabilities_handler(request: Request) -> JSONResponse:
     return JSONResponse({"sse": True, "poll": True})
 
 
+@observe(tier="boundary")
 async def logs_poll_handler(request: Request) -> JSONResponse:
     """GET /api/logs/poll?since=<seq> — return buffered lines since seq.
 
@@ -179,6 +187,7 @@ async def logs_poll_handler(request: Request) -> JSONResponse:
     return JSONResponse({"lines": entries, "next_seq": next_seq})
 
 
+@observe(tier="boundary")
 async def logs_stream_handler(request: Request) -> StreamingResponse:
     """GET /api/logs/stream — SSE stream of new log lines.
 

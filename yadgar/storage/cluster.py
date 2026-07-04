@@ -2,11 +2,13 @@
 
 import logging
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
 
 
+@observe(tier="hot")
 def _coerce_record_id(raw_id) -> int | None:
     """Coerce a SurrealDB record id (int, RecordID, or 'table:NN' string) to int, or None."""
     if raw_id is None:
@@ -71,6 +73,7 @@ class _ClusterMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def update_cluster(self, cluster_id: int, updates: dict):
         allowed = {
             "name",
@@ -167,6 +170,7 @@ class _ClusterMixin:
         rows = self._q("SELECT * FROM memory_cluster ORDER BY heat DESC")
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def get_cluster_members(self, cluster_id: int) -> list[int]:
         """Return integer memory IDs assigned to *cluster_id*.
 

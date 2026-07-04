@@ -11,6 +11,7 @@ import logging
 import os
 from datetime import datetime
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ class _UserMixin:
 
     # ------------------------------------------------------------------ Thermodynamics
 
+    @observe(tier="stage")
     def update_memory_scores(
         self,
         memory_id: int,
@@ -47,6 +49,7 @@ class _UserMixin:
             params,
         )
 
+    @observe(tier="stage")
     def update_memory_metamemory(
         self,
         memory_id: int,
@@ -70,6 +73,7 @@ class _UserMixin:
             params,
         )
 
+    @observe(tier="stage")
     def get_memories_in_time_window(self, center_time: str, window_minutes: int) -> list[dict]:
         """Return memories created within window_minutes of center_time."""
         # Parse center_time and compute window bounds in Python (no julianday in SurrealDB)
@@ -90,6 +94,7 @@ class _UserMixin:
 
     # ------------------------------------------------------------------ User Profiles
 
+    @observe(tier="stage")
     def insert_profile(
         self,
         entity_name: str,
@@ -226,6 +231,7 @@ class _UserMixin:
         )
         return self._rows_to_dicts(rows)
 
+    @observe(tier="stage")
     def get_profiles_for_entity(
         self,
         entity_name: str,

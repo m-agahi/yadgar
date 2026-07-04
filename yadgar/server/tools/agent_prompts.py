@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import re
 
+from yadgar.observability.observe import observe
 from yadgar.secrets import gate_or_reject
 from yadgar.server._app import _tool
 from yadgar.wiki import WikiAddOptions
@@ -51,6 +52,7 @@ _DOUBLE_WRAP_RE = re.compile(
 )
 
 
+@observe(tier="hot", name="tools.agent_prompts._unwrap_purpose_prompt")
 def _unwrap_purpose_prompt(content: str) -> str:
     """Strip a leading ## Purpose / ## Prompt wrapper from content if present.
 
@@ -73,6 +75,7 @@ def _toc_row(pattern: str, purpose: str) -> str:
     return f"- `{pattern}` → {purpose}"
 
 
+@observe(tier="hot", name="tools.agent_prompts._toc_with_row")
 def _toc_with_row(body: str, pattern: str, new_row: str) -> str:
     """Return TOC body with `pattern`'s row upserted (replace if present, else append)."""
     found = any(m.group("pattern") == pattern for m in _TOC_ROW_RE.finditer(body))
@@ -83,6 +86,7 @@ def _toc_with_row(body: str, pattern: str, new_row: str) -> str:
     return body.rstrip() + "\n" + new_row + "\n"
 
 
+@observe(tier="stage", name="tools.agent_prompts._upsert_toc_row")
 def _upsert_toc_row(pattern: str, purpose: str, branch_hint: str | None) -> None:
     """Scan-replace-or-add the `pattern → purpose` row in the global TOC page.
 
@@ -123,6 +127,7 @@ def _upsert_toc_row(pattern: str, purpose: str, branch_hint: str | None) -> None
         logger.debug("agent_prompt_save: TOC upsert failed: %s", e)
 
 
+@observe(tier="stage", name="tools.agent_prompts._ensure_library_anchor")
 def _ensure_library_anchor(branch_hint: str | None) -> None:
     """Create the global discovery anchor pointing at the TOC, if absent.
 
@@ -297,6 +302,7 @@ def agent_prompt_save(
 # its public shape: list[tuple[pattern, purpose, content]].
 
 
+@observe(tier="stage", name="tools.agent_prompts._load_starter_prompts")
 def _load_starter_prompts() -> list[tuple[str, str, str]]:
     """Load the built-in starter prompts from materials/agent_prompts.yaml.
 
@@ -375,6 +381,7 @@ def seed_agent_prompts(
     }
 
 
+@observe(tier="stage", name="tools.agent_prompts._read_agent_prompt")
 def _read_agent_prompt(slug: str, storage=None) -> dict | None:
     """Internal exact-key slug read for an agent-prompt page.
 

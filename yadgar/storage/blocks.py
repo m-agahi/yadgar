@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import re
 
+from yadgar.observability.observe import observe
 from yadgar.tracing import trace_span
 
 _log = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ def _hard_char_limit() -> int:
 _BLOCK_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
+@observe(tier="hot")
 def _validate_block_name(name: str) -> str:
     """Validate block name: [a-z][a-z0-9_]*, ≤64 chars. Returns name if valid."""
     if not name or not isinstance(name, str):
@@ -74,6 +76,7 @@ def _validate_block_name(name: str) -> str:
     return name
 
 
+@observe(tier="hot")
 def _canonical_dir(scope: str, directory: str | None) -> str | None:
     """Return canonical directory value for storage: None for global, abs path for project."""
     if scope == "global":
@@ -88,6 +91,7 @@ def _canonical_dir(scope: str, directory: str | None) -> str | None:
 class _BlocksMixin:
     """Memory block CRUD — mixed into StorageEngine."""
 
+    @observe(tier="hot")
     def _block_dir_clause(self, scope: str, directory: str | None) -> tuple[str, dict]:
         """Return WHERE clause fragment + params for (scope, directory) lookup."""
         if scope == "global":
@@ -97,6 +101,7 @@ class _BlocksMixin:
             "directory": directory,
         }
 
+    @observe(tier="stage")
     def _count_blocks_in_scope(self, scope: str, directory: str | None) -> int:
         """Count existing blocks for a (scope, directory) tuple."""
         if scope == "global":

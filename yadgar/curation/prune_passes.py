@@ -6,11 +6,13 @@ from datetime import UTC, datetime, timedelta
 
 from yadgar.cls_store import _is_degenerate_auto_abstracted
 from yadgar.config import Settings
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def _parse_tags(mem: dict) -> list:
     tags = mem.get("tags", [])
     if isinstance(tags, str):
@@ -18,6 +20,7 @@ def _parse_tags(mem: dict) -> list:
     return tags
 
 
+@observe(tier="stage")
 def _prune_action_stream_cold(
     candidates: list,
     stats: dict,
@@ -40,6 +43,7 @@ def _prune_action_stream_cold(
             stats["pruned"] += 1
 
 
+@observe(tier="stage")
 def _prune_auto_generated_old(
     candidates: list,
     stats: dict,
@@ -81,6 +85,7 @@ def _prune_auto_generated_old(
         stats["pruned"] += 1
 
 
+@observe(tier="stage")
 def _prune_auto_abstracted_old(
     candidates: list,
     stats: dict,
@@ -123,6 +128,7 @@ def _prune_auto_abstracted_old(
         stats["pruned"] += 1
 
 
+@observe(tier="stage")
 def _prune_dream_insights(
     candidates: list,
     stats: dict,
@@ -154,6 +160,7 @@ def _prune_dream_insights(
         stats["pruned"] += 1
 
 
+@observe(tier="stage")
 def _prune_action_stream_aged(
     candidates: list,
     stats: dict,
@@ -193,6 +200,7 @@ def _prune_action_stream_aged(
         stats["pruned"] += 1
 
 
+@observe(tier="stage")
 def _prune_degenerate_auto_abstracted(
     candidates: list,
     stats: dict,
@@ -228,6 +236,7 @@ def _prune_degenerate_auto_abstracted(
             stats["pruned"] += 1
 
 
+@observe(tier="stage")
 def _memify_prune(
     storage: StorageEngine,
     settings: Settings,

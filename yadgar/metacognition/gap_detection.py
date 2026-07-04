@@ -2,10 +2,13 @@
 
 from collections import defaultdict
 
+from yadgar.observability.observe import observe
+
 
 class _GapDetectionMixin:
     """Metacognitive gap detection (MetaRAG signal 2)."""
 
+    @observe(tier="boundary")
     def detect_gaps(self, directory: str = "") -> list[dict]:
         """Analyze knowledge completeness for a directory/project.
 
@@ -29,6 +32,7 @@ class _GapDetectionMixin:
 
     # ── private helpers ────────────────────────────────────────────────────────
 
+    @observe(tier="stage")
     def _detect_isolated_entities(self, all_entities: list[dict]) -> list[dict]:
         """(a) Entities with 0 or 1 relationships — poorly integrated."""
         gaps: list[dict] = []
@@ -53,6 +57,7 @@ class _GapDetectionMixin:
                 )
         return gaps
 
+    @observe(tier="stage")
     def _detect_stale_regions(self, dir_memories: list[dict]) -> list[dict]:
         """(b) Clusters of memories with heat < 0.3 — knowledge may be outdated."""
         stale_memories = [m for m in dir_memories if m.get("heat", 1.0) < 0.3]
@@ -78,6 +83,7 @@ class _GapDetectionMixin:
             }
         ]
 
+    @observe(tier="stage")
     def _detect_low_confidence(self, dir_memories: list[dict]) -> list[dict]:
         """(c) Memories with confidence < 0.5 — unreliable knowledge."""
         low_conf = [m for m in dir_memories if m.get("confidence", 1.0) < 0.5]
@@ -99,6 +105,7 @@ class _GapDetectionMixin:
             }
         ]
 
+    @observe(tier="stage")
     def _build_cooccurrence_index(
         self,
         all_entities: list[dict],
@@ -130,6 +137,7 @@ class _GapDetectionMixin:
 
         return entity_cooccurrence, existing_rel_index
 
+    @observe(tier="stage")
     def _detect_missing_connections(
         self,
         all_entities: list[dict],
@@ -166,6 +174,7 @@ class _GapDetectionMixin:
                 )
         return gaps
 
+    @observe(tier="stage")
     def _detect_one_sided_knowledge(self, all_entities: list[dict]) -> list[dict]:
         """(e) Error entities with no recorded resolution."""
         error_entities = [e for e in all_entities if e.get("type") == "error"]

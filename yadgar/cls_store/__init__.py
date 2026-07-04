@@ -29,9 +29,9 @@ from yadgar.cls_store.patterns import (
 from yadgar.cls_store.promotion import _PromotionMixin
 from yadgar.config import Settings
 from yadgar.embeddings import EmbeddingEngine
+from yadgar.observability.observe import observe
 from yadgar.secrets import SecretLeakBlocked
 from yadgar.storage import StorageEngine
-from yadgar.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
 
     # ── Go-CLS Consolidation Cycle ────────────────────────────────────────
 
-    @trace_span("consolidation.cls.cycle")
+    @observe(tier="boundary", name="consolidation.cls.cycle")
     def consolidation_cycle(self) -> dict:
         """Run Go-CLS consolidation: promote recurring episodic patterns to semantic.
 
@@ -121,6 +121,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
 
     # ── Dual-Store Query ──────────────────────────────────────────────────
 
+    @observe(tier="stage", name="consolidation.cls.query_dual")
     def query_dual(self, query: str, directory: str, prefer: str = "auto") -> list[dict]:
         """Query both episodic and semantic stores, merge results.
 
@@ -176,6 +177,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
 
     # ── Internal Helpers ──────────────────────────────────────────────────
 
+    @observe(tier="hot", name="consolidation.cls.auto_weight")
     def _auto_weight(self, query: str) -> tuple[float, float]:
         """Analyze query to determine episodic vs semantic weighting.
 

@@ -4,6 +4,8 @@ from collections import defaultdict
 
 import networkx as nx
 
+from yadgar.observability.observe import observe
+
 
 class _GraphHelpersMixin:
     """Graph-traversal helpers for Retriever.
@@ -12,6 +14,7 @@ class _GraphHelpersMixin:
     — all available on the Retriever instance via the normal MRO.
     """
 
+    @observe(tier="hot", name="retrieval.graph.build_networkx")
     def _build_networkx_graph(
         self, seed_entity_ids: list[int], max_hops: int | None = None
     ) -> nx.DiGraph:
@@ -106,6 +109,7 @@ class _GraphHelpersMixin:
         """
         return self._storage.find_memory_ids_by_entities(entity_names)
 
+    @observe(tier="hot", name="retrieval.graph.find_entities_in_content")
     def _find_entities_in_content(self, content: str) -> set[int]:
         """Find entity IDs that appear in the given content."""
         entity_ids: set[int] = set()
@@ -116,6 +120,7 @@ class _GraphHelpersMixin:
                 entity_ids.add(entity["id"])
         return entity_ids
 
+    @observe(tier="hot", name="retrieval.graph.top_cooccurring")
     def _get_top_cooccurring_entities(self, content: str, limit: int = 5) -> list[str]:
         """Find entities that co-occur with entities mentioned in this content."""
         # Find entities mentioned in the content

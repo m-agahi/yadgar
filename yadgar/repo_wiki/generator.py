@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib as _hashlib
 from pathlib import Path as _Path
 
+from yadgar.observability.observe import observe
 from yadgar.repo_wiki.scanner import ClassRecord, FunctionRecord, ModuleRecord
 
 # Slug prefix for module pages.  Choose "mod-" to match existing wiki conventions.
@@ -35,6 +36,7 @@ _MAX_DOCSTRING = 800
 _MAX_SIG = 160
 
 
+@observe(tier="stage")
 def _slugify(module_name: str) -> str:
     """Convert dotted module name to a slug: yadgar.retrieval.core → mod-yadgar-retrieval-core."""
     slug = module_name.replace(".", "-").replace("_", "-")
@@ -44,6 +46,7 @@ def _slugify(module_name: str) -> str:
     return f"{_MOD_SLUG_PREFIX}{slug}".lower()
 
 
+@observe(tier="stage")
 def _truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
@@ -54,6 +57,7 @@ def _render_signature(sig: str) -> str:
     return f"```python\n{_truncate(sig, _MAX_SIG)}\n```"
 
 
+@observe(tier="stage")
 def _render_function(fn: FunctionRecord, level: int = 3) -> str:
     """Render a function/method as a markdown section."""
     hashes = "#" * level
@@ -67,6 +71,7 @@ def _render_function(fn: FunctionRecord, level: int = 3) -> str:
     return "\n".join(parts)
 
 
+@observe(tier="stage")
 def _render_class(cls: ClassRecord) -> str:
     """Render a class as a markdown section with nested methods."""
     bases_str = f"({', '.join(cls.bases)})" if cls.bases else ""
@@ -87,6 +92,7 @@ def _render_class(cls: ClassRecord) -> str:
     return "\n".join(parts)
 
 
+@observe(tier="stage")
 def generate_module_page(rec: ModuleRecord, directory_context: str) -> dict:
     """Generate a wiki page dict for one ModuleRecord.
 
@@ -185,6 +191,7 @@ def generate_module_page(rec: ModuleRecord, directory_context: str) -> dict:
     }
 
 
+@observe(tier="boundary")
 def generate_wiki_pages(
     records: list[ModuleRecord],
     directory_context: str,

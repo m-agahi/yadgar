@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from yadgar.config import Settings
 from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar.observability.observe import observe
 from yadgar.storage import StorageEngine
 from yadgar.tracing import trace_span
 
@@ -61,6 +62,7 @@ class NarrativeEngine:
         self._graph = knowledge_graph
         self._settings = settings
 
+    @observe(tier="boundary")
     def generate_narrative(
         self,
         directory: str,
@@ -116,6 +118,7 @@ class NarrativeEngine:
         entry["id"] = entry_id
         return entry
 
+    @observe(tier="boundary")
     def get_project_story(self, directory: str, max_entries: int = 10) -> str:
         """Retrieve all narrative entries for a directory and combine into a story."""
         entries = self._storage.get_narratives_for_directory(directory, limit=max_entries)
@@ -163,6 +166,7 @@ class NarrativeEngine:
 
         return stats
 
+    @observe(tier="stage")
     def _extract_decisions(self, memories: list[dict]) -> list[str]:
         """Extract decision descriptions from memories."""
         decisions = []
@@ -185,6 +189,7 @@ class NarrativeEngine:
 
         return decisions
 
+    @observe(tier="stage")
     def _extract_events(self, memories: list[dict]) -> list[str]:
         """Extract notable events from memories."""
         events = []
@@ -207,6 +212,7 @@ class NarrativeEngine:
 
         return events
 
+    @observe(tier="hot")
     def _get_top_entities(self, memories: list[dict]) -> list[str]:
         """Get most frequently mentioned entities from memory content."""
         entity_counts: Counter = Counter()
@@ -218,6 +224,7 @@ class NarrativeEngine:
 
         return [name for name, _ in entity_counts.most_common(10)]
 
+    @observe(tier="stage")
     def _get_high_heat_topics(self, directory: str) -> list[str]:
         """Get topics from high-heat memories in this directory."""
         hot_memories = self._storage.get_memories_for_directory(directory, min_heat=0.7)

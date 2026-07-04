@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 
+from yadgar.observability.observe import observe
 from yadgar.server._app import _tool
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ _TOTAL_BUDGET = 2_000
 _CONTEXT_BUDGET = 2_000
 
 
+@observe(tier="stage", name="tools.dispatch_helper._record_prelude_marker")
 def _record_prelude_marker(storage, directory: str | None) -> None:
     """Best-effort record of agent_dispatch_prelude call (read-side nudge, #69).
 
@@ -175,6 +177,7 @@ def agent_dispatch_prelude(
     return prelude
 
 
+@observe(tier="stage", name="tools.dispatch_helper._build_context_block")
 def _build_context_block(
     task_topic: str,
     branch_hint: str | None,
