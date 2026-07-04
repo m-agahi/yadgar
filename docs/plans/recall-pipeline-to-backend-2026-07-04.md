@@ -293,31 +293,157 @@ The advisor (stronger reviewer, saw the full transcript) was consulted twice, as
 
 ## Statefulness + Fanout Audit (2026-07-04)
 
-**Status:** IN PROGRESS — skeleton committed early; findings being filled in.
+**Status:** COMPLETE.
 
 Read-only audit gating the go/no-go on relocating the recall pipeline into a stateless
 per-request backend `/recall` endpoint. The go/no-go here is **not speed** — it is
 **"does moving recall to a stateless backend break anything?"** Independent (adversarial)
 verification of the plan's §2 "Stateful bits" / risk #10 claims, with fresh file:line
-evidence rather than restating the plan.
+evidence rather than restating the plan. Three arm's-length investigators traced the path;
+every load-bearing claim below was re-verified by hand against source.
 
 Categories used per finding:
 - **(a) rebuild-per-request** — reconstructed from request args + DB/models each call → moves cleanly, non-issue.
-- **(b) moves-to-backend** — real state, but lives (or trivially relocates) inside the backend container → extra work, quantified.
-- **(c) hard-blocker** — genuinely core-process-bound; not reconstructable backend-side from request args + DB.
+- **(b) moves-to-backend / split-at-boundary** — real state, but lives (or trivially relocates) inside the backend container, OR is a post-compute side-effect that stays core-side → extra work, quantified.
+- **(c) hard-blocker** — genuinely core-process-bound AND read *inside* the compute pipeline that must move → not reconstructable backend-side from request args + DB.
+
+**The load-bearing structural fact (decides the whole audit):** the recall *compute* pipeline
+that would move to the backend is `_fanout_recall` → `Retriever.recall` + fusion/PPR/spreading/
+rerank/MMR — i.e. everything under `yadgar/retrieval/*`. All the process-local session state
+the investigators flagged (`_last_recalled_ids`, `_cognitive_map`, action buffer, checkpoint
+counter, shadow-cache counters) is touched **only in the MCP-handler layer of `recall.py`,
+above that boundary — never inside `yadgar/retrieval/*`.** Verified: `grep -rn` for
+`_last_recalled_ids|_cognitive_map|record_transition|consensus_retrieve|side_effect|
+record_recall_sr` across `yadgar/retrieval/` returns **zero hits**. Every consumer lives in
+`server/tools/recall.py` / `server/_state.py`. So none of it feeds the ranking that relocates;
+it is post-compute bookkeeping wrapped around the pipeline's output.
 
 ### Audit 1 — Statefulness
 
-_TBD_
+Full path traced: `recall()` MCP handler → `_fanout_recall` (`recall.py:651`, dispatched at
+`:650-665`) → `MemoryProvider.candidates` → `Retriever.recall` (`retrieval/core.py:484`) →
+PPR/spreading (`scoring.py`, `graph_helpers.py`) → fusion (`providers/fusion.py`) → rerank
+(`reranking.py`, `_reranking_*`) → `_apply_recall_side_effects` (`recall.py:379`).
+
+| Thing | File:line | Category | Why |
+|---|---|---|---|
+| `networkx.DiGraph` (PPR/spreading) | `retrieval/graph_helpers.py:18` (`nx.DiGraph()` fresh) | **(a)** | Rebuilt per call from DB rows, discarded. No warm graph held in core. Plan's claim **confirmed** from source. |
+| Branch/scope resolution `_detect_branch(directory)` | `recall.py:592-593` → `server/tools/project.py:139` (`git rev-parse -C <dir>`) | **(a)** | Resolved **in the MCP handler** from the `directory` request arg, then passed *into* the pipeline. Already has a `branch_hint` fallback (`recall.py:601-602`) written explicitly for "container scenario / no `.git` in `_cwd`". Backend gets `current_branch`/`default_branch` in `RecallRequest`. **Non-issue — already container-ready.** |
+| `EmbeddingEngine._query_cache` (query-embed LRU, 512) | `embeddings.py:65`; singleton at `server/_state.py:46` | **(a/b)** | Module-level singleton → cross-request cache in core today. Warm-only, bounded, **no correctness dependency** — a cold backend re-embeds identical queries. Moves with the code (backend gets its own engine + cache). |
+| Warm CE / NLI / FlashRank model handles | `backend/ml_client.py:355-360` (`LocalMLClient`) | **(b)** | Warm model state. **Already backend-side today** (core's `RemoteMLClient` is a thin RPC shim to `:8001`). Migration keeps them where they are. |
+| `#88` shadow-cache counters `_SHADOW_KEYS`/`_DIR_EPOCH`/`_GLOBAL_GEN` | `server/tools/_recall_shadow.py:75-90`; call at `recall.py:619` | **(a/b)** | Module-level cross-request dicts, but **instrumentation only** — `observe_recall` bumps Prometheus "would-hit/would-miss" counters and **never reads or mutates recall output** (docstring + `observe_recall` body confirm). Call sits at **handler level, pre-dispatch** (`recall.py:604-634`) → stays core-side naturally. Not wired as a result cache. Losing it in a cold backend only resets a decision-gate metric. |
+| `_last_recalled_ids` (per-session last top-id) | `server/_state.py:120`; read `recall.py:368`, write `:375` | **(b) split-at-boundary** | Cross-request `OrderedDict`, `session_key="default"` (process-global). Read/written **only inside `_apply_recall_side_effects`** (post-compute). **Not read anywhere in `yadgar/retrieval/*`.** → stays core-side; not a pipeline input. |
+| `_cognitive_map` (SR successor-representation graph) | `server/_state.py:62`; write `recall.py:371-372` | **(b) split-at-boundary** | Module-level singleton, mutated by `_record_recall_sr_transition` (`recall.py:352,427`). Also **post-compute only**; **zero references in `yadgar/retrieval/*`.** SR transitions are recorded *from* the recall result, they do not *rank* it. → stays core-side. |
+
+**Suspect verdicts (the four the audit was told to force):**
+1. **Branch/scope resolution → NOT A BLOCKER.** Resolved handler-side from the `directory` arg with an existing container `branch_hint` fallback. Closes plan Open-Q3.
+2. **`#88` shadow cache → NOT A BLOCKER.** Wired but instrumentation-only; changes no output; handler-level. Stays core-side.
+3. **`Retriever`/`EmbeddingEngine` lifecycle → (a/b), not a blocker.** Warm caches move with the code; no correctness dependency.
+4. **networkx graph → (a), confirmed rebuilt per call.** De-risks the "rebuild caches in backend" concern entirely.
+
+**No category-(c) hard-blocker exists.** The two "hard-blocker" calls the investigators raised
+(`_last_recalled_ids`, `_cognitive_map`) were **downgraded on evidence**: they are write-only
+post-compute side-effects with zero reads inside the pipeline, so they do not gate relocating
+the compute. They become a boundary-split caveat (Audit 3), not a wall.
 
 ### Audit 2 — Fanout completeness
 
-_TBD_
+`_fanout_recall` (`recall.py:216-348`) fans out to **exactly two arms**, type-filter dispatched.
+Enumerated from the code (not the plan); the provider dir `yadgar/retrieval/providers/` holds
+only `memory.py`, `wiki.py`, `fusion.py`, `base.py` — no hidden profile/belief/engram/block arm
+in the fanout (those live in the *legacy sub-pipeline's* rerank stages, inside `Retriever.recall`,
+and move with it).
+
+| Arm | File:line | Data source | Backend-accessible |
+|---|---|---|---|
+| **Memory** | `recall.py:305-307` → `MemoryProvider.candidates` (`providers/memory.py`) → `Retriever.recall` (`retrieval/core.py:484`) | SurrealDB `memory` table (FTS `search_memories_fts_scored` + HNSW `search_vectors`), all via `StorageEngine._q` | **Y** — SurrealDB on `:8000` |
+| **Wiki** | `recall.py:315-317` → `WikiProvider.candidates` (`providers/wiki.py`) → `WikiStore.query` (`wiki.py:914`) | SurrealDB `wiki_page` table (`search_wiki_fts_scored` `wiki.py:803`, `search_wiki_vectors` `:828`, `search_wiki_vectors_tagged` `:854`), all via `self._storage` (StorageEngine) | **Y** — SurrealDB on `:8000` |
+
+**Wiki data-source pinned (was the load-bearing unknown):** the wiki store is **NOT files and NOT
+in-memory** — `WikiStore` reads and writes exclusively through `self._storage` (StorageEngine); its
+content lives in the SurrealDB `wiki_page` table (versions in `wiki_page_version`). Verified by hand:
+every read in `wiki.py` is a `self._storage.*` call. **Fully backend-servable.**
+
+**All fanout arms are cleanly backend-servable.** No arm reads core-local files, host filesystem, or
+in-process state populated by a different process. The one investigator caveat — *embedded* SurrealDB
+mode (`surrealkv`, exclusive file lock, not remotely servable) — **does not apply to this migration**:
+per §1, the backend runs the SurrealDB **server** and the `/recall` pipeline reaches it over
+**localhost HTTP** (server mode), exactly as core reaches it cross-container today. Embedded mode is a
+no-backend/stdio concern, and the dual-path flag (§5) keeps that on the local in-process path anyway.
+
+> **Note — landscape mode is out of the fanout.** `mode="landscape"` (`recall.py:557-565`) is an
+> **exclusive** dispatch that bypasses `_fanout_recall` entirely and calls `_st._pool.consensus_retrieve`
+> (`AstrocytePool`, `recall.py:202`) — a core-local, experimental (#67) path. It is **not** part of the
+> default recall path this migration targets and should **not** be relocated in the first cut; core keeps
+> serving `mode="landscape"` locally. Flag it explicitly in the `/recall` contract as core-only.
 
 ### Audit 3 — Side-effect writes
 
-_TBD_
+`_apply_recall_side_effects` (`recall.py:379`) is a **mixed unit** and the single real caveat of this
+audit. It runs **after** `merged` is produced, called only from the three MCP-handler dispatch points
+(`recall.py:564` landscape, `:664` fanout, `:800` legacy) — **never from inside `yadgar/retrieval/*`.**
+
+| Write op | File:line | Target | Backend-servable | Timing |
+|---|---|---|---|---|
+| `storage.boost_memories_access(ids, now)` (heat + `last_accessed`, batched v5.102) | `recall.py:424` → `storage/memory.py:915` | SurrealDB `memory` table via StorageEngine → `:8000` | **Y** (DB write) | **blocking** |
+| `thermo.record_access` → `update_memory_metamemory` (access/useful/confidence) | `recall.py:420` → thermo → `storage` | SurrealDB `memory` table via StorageEngine → `:8000` | **Y** (DB write) | **blocking** |
+| `_record_recall_sr_transition` → `_cognitive_map.record_transition/incremental_update` | `recall.py:427` → `:352,371-372` | Core-local `_cognitive_map` singleton + `_last_recalled_ids` (`_state.py:62,120`) | **N** (core-local) | **blocking** |
+| `buffer.capture_action("recall", …)` | `recall.py:433` | Core-local `_st._buffer` action deque | **N** (core-local) | **blocking** |
+| `_replay.record_tool_call()` (auto-checkpoint counter) | `recall.py:442` | Core-local `_st._replay` counter | **N** (core-local) | **blocking** |
+
+All writes are **synchronous/blocking** on the response — no fire-and-forget queue (the ~95s figure
+elsewhere is an offload/consolidation timeout, not a recall-write mechanism). No cross-request batch
+buffer is held in core for these writes (the v5.102 batch is a single in-request call).
+
+**Core-side coordination dependencies:** the three core-local writes need the running-process singletons
+`_st._cognitive_map`, `_st._buffer`, `_st._replay`, `_st._last_recalled_ids` — none exist in a stateless
+backend handler. The two DB writes need only a StorageEngine, which the backend owns.
+
+**⚠️ Plan internal inconsistency to correct.** §3.1 says the heat/offload writes *"run **inside** the
+backend `/recall` handler"*, but §3.2 says core keeps side-effects. Moving `_apply_recall_side_effects`
+**wholesale** into the backend (as §3.1 reads) **would break** the three core-local writes (the backend
+has no `_st`). The correct resolution is a **split at the boundary** (below).
 
 ### Verdict
 
-_TBD_
+## GO — WITH CAVEATS. No hard-blocker; no core-bound state feeds the compute that relocates.
+
+**Direct answer to the user's question — "does moving recall to a stateless backend break anything?"**
+
+- **The compute pipeline (`_fanout_recall` + `Retriever.recall` + fusion/PPR/spreading/rerank/MMR, all of
+  `yadgar/retrieval/*`): NO, nothing breaks.** All state it touches is either rebuilt per request from
+  DB/models (graph, branch, embeddings) or already backend-side (models). Both fanout arms read SurrealDB
+  via StorageEngine and are fully backend-servable. There is **no category-(c) state** in the relocating path.
+- **`_apply_recall_side_effects`: YES, it breaks IF moved wholesale to the backend as §3.1 currently reads**
+  — the SR/cognitive-map, action-buffer, and checkpoint-counter writes have no `_st` in a stateless handler.
+  **NO breakage if the function is split at the boundary** (the one required change).
+
+**Implementation checklist (the caveats — all category (a/b), quantified):**
+
+1. **[SPLIT — required] `_apply_recall_side_effects` becomes two halves at the boundary** (`recall.py:379`).
+   - **Backend half (in `/recall` handler):** the two **DB writes** — `boost_memories_access` (heat +
+     `last_accessed`) and `thermo.record_access`/`update_memory_metamemory`. These become **localhost**
+     writes, preserving §3.1's win and removing the batched heat write from the cross-container path.
+   - **Core half (in core's thin handler, on the returned `merged`):** `_record_recall_sr_transition`
+     (`_last_recalled_ids` + `_cognitive_map`), `buffer.capture_action`, `_replay.record_tool_call`.
+   - **Effort:** refactor one ~64-line function into two; the core half runs on the results the backend
+     returns. Small, mechanical, testable (heat-boost parity is already covered by
+     `test_server::test_recall_boosts_heat`). Add a test asserting the split keeps both halves firing.
+2. **[DOC — required] Correct §3.1 ↔ §3.2.** State explicitly: **DB side-effect writes move to the backend
+   handler; SR/action/checkpoint side-effects stay core-side** on the returned results. As written, §3.1 and
+   §3.2 contradict each other on this exact point.
+3. **[CONTRACT] `mode="landscape"` stays core-only** (`recall.py:557`, `AstrocytePool.consensus_retrieve`).
+   Do not relocate it in the first cut; core keeps serving it locally. Mark it core-only in the `/recall` contract.
+4. **[CONFIG] Carry `current_branch`/`default_branch` in `RecallRequest`** (already the plan's design, §3.1).
+   Branch is resolved handler-side from the `directory` arg; the backend must not attempt `_detect_branch`
+   itself (no host `.git`). This is already how `branch_hint` works — just ensure the request carries it.
+5. **[NON-ISSUE, note only]** `#88` shadow-observe (`recall.py:619`) and `_consolidation.record_activity`
+   (`recall.py:552`) sit at handler level, **above** the compute boundary, and stay core-side naturally — no
+   action, listed so they are not re-litigated. Warm embed/model caches (`embeddings.py:65`,
+   `ml_client.py:355`) move with the code; a cold backend re-embeds/re-loads with no correctness change.
+
+**Bottom line:** the plan's §2/risk-#10 claim ("no persistent state → low risk") is **substantially correct
+for the compute pipeline** but **incomplete** — it under-states `_apply_recall_side_effects`, which is a mixed
+DB/core-local unit that must be **split**, not moved wholesale. That split is the entire delta between "breaks"
+and "clean." It is bounded implementation work (one function, one doc fix), not a blocker. **GO-WITH-CAVEATS;
+the caveats above are the implementation checklist.**
