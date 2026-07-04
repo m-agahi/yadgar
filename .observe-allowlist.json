@@ -542,7 +542,7 @@
     "category": "framework-instrumented",
     "rationale": "Opens a manual rpc.rerank.pair span via _rpc_span() around the _rerank_rpc HTTP call; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one RPC. Verified by test_remote_ml_client_score_methods_stay_exempt (must carry no sentinel)."
   },
-  "recall:_fuse_with_span": {
+  "_recall_pipeline:_fuse_with_span": {
     "category": "pre-existing",
     "rationale": "Opens a manual 'recall.fanout.fuse' span via `with span(...)` and sets dynamic memory/wiki candidate-count attributes around the cross-type CE fusion pass; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one fusion and @observe's static attributes cannot replicate the per-call counts."
   },
@@ -709,5 +709,13 @@
   "log_config:RequestLoggingMiddleware.__call__.send_with_capture": {
     "category": "framework-instrumented",
     "rationale": "Nested ASGI send-capture closure inside RequestLoggingMiddleware.__call__. Not independently reachable; framework-internal response-capture that patches the ASGI send callable. Covered by the parent __call__ span."
+  },
+  "embed_service:RecallRequest.validate_type": {
+    "category": "framework-instrumented",
+    "rationale": "Pydantic @field_validator: pure input validation called by Pydantic model instantiation before any I/O. Decorating a validator with @observe adds a span to every model construction, which is per-request cardinality bloat on a trivial string-in-set check with no dashboard value."
+  },
+  "embed_service:recall_route._run_pipeline": {
+    "category": "framework-instrumented",
+    "rationale": "Inner thread-pool closure dispatched via asyncio.to_thread() inside the @observe-decorated recall_route() handler. The outer handler already carries the tri-signal span; adding a second span for the closure body produces a double-span with no boundary value — the trace already attributes the thread duration under the parent recall_route span."
   }
 }

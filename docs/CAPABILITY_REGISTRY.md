@@ -613,6 +613,20 @@ config knobs.
 - **wiring:** Called during consolidation cycles. `assign_memory()` routes memories to domain-specialist astrocyte processes. `consolidate_domain()` runs domain-level summarization. Both are exercised in e2e tests (BC-AC1, BC-AC2 marked ✅).
 - **explanation:** Domain-aware consolidation: memories are assigned to semantic domains (e.g. "code", "decisions") by the astrocyte pool. Each domain runs its own consolidation pass, producing domain summaries. This supplements the global consolidation by maintaining domain-coherent clusters. The pool can be disabled via `ASTROCYTE_POOL_ENABLED=False`; when disabled a startup warning is emitted (BC-C5b pending #40).
 
+### CAP-RETR-040 — Recall Backend Forwarding (Train 1)
+
+- **status:** LIVE
+- **category:** retrieval
+- **settings:** `RECALL_BACKEND_ENABLED`
+- **tools:** `recall`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/server/tools/_recall_pipeline.py::_fanout_recall`, `yadgar/server/tools/_recall_pipeline.py::_apply_recall_db_side_effects`, `yadgar/server/tools/_recall_pipeline.py::_apply_recall_session_side_effects`, `yadgar/backend/embed_service.py::recall_route`, `yadgar/server/tools/recall.py::_forward_to_backend`
+- **wiring:** When `RECALL_BACKEND_ENABLED=True` and `UNIFIED_RECALL_ENABLED=True` and `profile=None` and `mode!=landscape`: core recall() builds a RecallRequest and POSTs to the backend /recall endpoint; backend runs _fanout_recall + _apply_recall_db_side_effects; core runs _apply_recall_session_side_effects on the returned results. When False (default): behavior unchanged from CAP-RETR-039.
+- **explanation:** Train 1 of the recall pipeline backend migration. Extracts the _fanout_recall orchestrator and related helpers into _recall_pipeline.py (app-free module) so both core and backend share the pipeline code without import-side-effects. Splits _apply_recall_side_effects into DB half (backend) and session half (core). Backend /recall route wired with same Bearer auth as /rerank. Default False — safe no-op merge.
+
+---
+
 ### CAP-RETR-039 — Unified Scoped Recall Fan-Out (v6 T6)
 
 - **status:** LIVE

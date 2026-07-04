@@ -1125,6 +1125,17 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "unified_recall",
     },
+    # Train 1: recall-backend dual-path flag
+    "recall_backend_enabled": {
+        "desc": (
+            "Enable backend-forwarded recall (Train 1, default false). "
+            "When true, the unified fan-out path forwards to the backend /recall endpoint; "
+            "core becomes a thin forwarder and DB-side-effects run backend-side. "
+            "Landscape mode and profile-based recall always run in-core regardless. "
+            "Requires UNIFIED_RECALL_ENABLED=true. Safe to flip off at any time."
+        ),
+        "section": "unified_recall",
+    },
     "recall_memory_quota": {
         "desc": (
             "v6 T6 Step 4: Max memory candidates in the fusion pool before CE rerank (default 5). "

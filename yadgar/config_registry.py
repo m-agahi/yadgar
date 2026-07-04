@@ -398,6 +398,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_WRRF_COFIRE_PRIOR_WEIGHT", "0.15", "float"),
     # ── v6 T6 unified-scoped-recall fan-out flag + fusion settings ────────────
     ConfigEntry("YADGAR_UNIFIED_RECALL_ENABLED", "true", "bool"),
+    # Train 1: recall-backend dual-path flag (default false — no-op until explicitly enabled).
+    ConfigEntry("YADGAR_RECALL_BACKEND_ENABLED", "false", "bool"),
     # v6 T6 Step 4: cross-type fusion per-type quotas and prior weights.
     ConfigEntry("YADGAR_RECALL_MEMORY_QUOTA", "5", "int"),
     ConfigEntry("YADGAR_RECALL_WIKI_QUOTA", "5", "int"),

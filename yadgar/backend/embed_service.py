@@ -873,3 +873,130 @@ async def admin_dbsize(_: None = Depends(_require_admin_token)):
     _dbsize_cache = payload
     _dbsize_cache_ts = now
     return {**payload, "cache_age_seconds": 0.0}
+
+
+# ---------------------------------------------------------------------------
+# Train 1: backend /recall route — runs the fan-out pipeline backend-side
+# ---------------------------------------------------------------------------
+
+# Module-level guard: init_engines called at most once in the backend process.
+_recall_engines_ready: bool = False
+_recall_engines_lock = threading.Lock()
+
+
+@observe(tier="stage")
+def _ensure_recall_engines() -> None:
+    """Lazily initialise the engines needed for the backend /recall pipeline.
+
+    Calls init_engines() from lifecycle.py (verified _app-clean in the init path)
+    exactly once, guarded by a lock so concurrent requests don't race.  The
+    backend uses LocalMLClient (no YADGAR_EMBED_URL in backend container) and
+    the local SurrealDB (YADGAR_DB_URL defaults to localhost:8000).
+
+    Idempotent: subsequent calls return immediately when engines are ready.
+    """
+    global _recall_engines_ready
+    if _recall_engines_ready:
+        return
+    with _recall_engines_lock:
+        if _recall_engines_ready:
+            return
+        from yadgar.server.lifecycle import init_engines as _init_engines  # noqa: PLC0415
+
+        _init_engines()
+        _recall_engines_ready = True
+
+
+class RecallRequest(BaseModel):
+    """Request body for POST /recall."""
+
+    query: str
+    directory: str
+    current_branch: str | None = None
+    default_branch: str | None = None
+    max_results: int = 5
+    min_heat: float = 0.0
+    type: str = "all"  # noqa: A003 — matches MCP schema convention
+    profile: str | None = None
+    mode: str | None = None
+    stage_overrides: dict | None = None
+    tags: list[str] | None = None
+    knobs: dict = {}  # noqa: B006 — Pydantic default_factory not needed here
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        valid = {"all", "memory", "wiki"}
+        if v not in valid:
+            raise ValueError(f"type must be one of {sorted(valid)}; got {v!r}")
+        return v
+
+
+class RecallResponse(BaseModel):
+    """Response body for POST /recall."""
+
+    results: list[dict]
+
+
+@app.post("/recall", response_model=RecallResponse)
+@observe(tier="boundary", name="backend.recall")
+async def recall_route(
+    req: RecallRequest, _: None = Depends(_require_admin_token)
+) -> RecallResponse:
+    """Run the fan-out recall pipeline backend-side and return ranked results.
+
+    Called by the core thin forwarder when RECALL_BACKEND_ENABLED=True.
+    Runs _fanout_recall() (the extracted, app-free pipeline) against the
+    backend-local SurrealDB (localhost), then applies the DB-side bookkeeping
+    half (_apply_recall_db_side_effects: heat boost + thermo access record).
+
+    Session-side bookkeeping (SR transitions, action buffer, replay counter)
+    runs in the core process on the returned results — NOT here.
+
+    Landscape mode and profile-based recall are core-only; this route serves
+    the unified fan-out path only (type in {all, memory, wiki}, mode=None).
+
+    Returns:
+        RecallResponse with the ranked result list.
+    """
+    # landscape/profile routes are core-only — refuse gracefully.
+    if req.mode == "landscape":
+        raise HTTPException(
+            status_code=400,
+            detail="mode=landscape is core-only; backend /recall does not serve it.",
+        )
+    if req.profile is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="profile= is core-only; backend /recall does not serve it.",
+        )
+
+    # Bootstrap engines (idempotent, guarded by lock).
+    await asyncio.to_thread(_ensure_recall_engines)
+
+    from yadgar.server.lifecycle import _get_storage as _backend_get_storage  # noqa: PLC0415
+    from yadgar.server.tools._recall_pipeline import (  # noqa: PLC0415
+        _apply_recall_db_side_effects,
+        _fanout_recall,
+    )
+
+    # Run the pipeline in a thread (CPU-bound + IO-bound mix; don't block the event loop).
+    def _run_pipeline() -> list[dict]:
+        merged = _fanout_recall(
+            query=req.query,
+            max_results=req.max_results,
+            min_heat=req.min_heat,
+            directory=req.directory,
+            current_branch=req.current_branch,
+            default_branch=req.default_branch,
+            type_filter=req.type,
+            tags=req.tags,
+        )
+        storage = _backend_get_storage()
+        _apply_recall_db_side_effects(merged, req.query, storage)
+        return merged
+
+    results = await asyncio.to_thread(_run_pipeline)
+    return RecallResponse(results=results)
