@@ -1,0 +1,72 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Recall — PROPOSED optimized (all-backend · parallel-gather · single merged CE · async side-effects)
+DESIGN TARGET (not measured) · today 26.1 s → PROPOSED ~14 s critical path · CE still dominates (~10 s) → #32 faster-model next · side-effects async off-path
+total ≈ 14 s";
+  subgraph "cluster_core" {
+    label="Core process — thin shim only (forward in / return out)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "forward" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="recall() → forward to backend /recall\nthin core shim (branch/dir detect)\nPROPOSED\n1 ms"];
+    "n21" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="21 · ranked results → return to core\nCRITICAL PATH END\nest\n0.5 ms"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend — ENTIRE pipeline relocated here (#85): SurrealDB + rerank + embed, parallel gather";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "n1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="1 · query analysis\nentities / routing\nest\n0.4 ms"];
+    "n2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="2 · FTS BM25\nbranch clause injected\nest\n23 ms"];
+    "n3" [shape="box", style="filled", fillcolor="#f5e1f5", label="3 · query embed\nbackend.embed\nest\n21 ms"];
+    "n4" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="4 · vector KNN\nHNSW search\nest\n55 ms"];
+    "n5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="5 · personalized PageRank\nentity seeds + graph walk\nest\n241 ms"];
+    "n6" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="6 · spreading activation BFS\nper-depth graph IO (gather long-pole)\nest\n1.538 s"];
+    "n8" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="8 · graph priors\nstorage.graph_priors\nest\n157 ms"];
+    "n9" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="9 · cofire priors\nstorage.cofire_priors\nest\n151 ms"];
+    "n17" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="17 · wiki candidates gather\nwiki.query + get_wiki_page (∥ memory arm)\nest\n1.499 s"];
+    "n7" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="7 · convex fusion\nmerge memory signals (now over merged pool)\nest\n2 ms"];
+    "n10" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="10 · build_results hydrate\nget_memories_by_ids — MERGED memory+wiki pool\nest\n943 ms"];
+    "ce" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE — SINGLE merged pass (memory+wiki union)\n#28-trimmed · replaces 11+12+18 · multi_passage DROPPED\nPROPOSED — still the wall → #32 faster-model next\n10 s"];
+    "post" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="13–16 · post-rerank\nprofile_belief + rules + MMR + engram_links\nest\n1.2 s"];
+    "n19" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="19 · finalize + cross-type dedup\ntrivial once pool merged\nest\n0.1 ms"];
+    "n20" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="20 · side-effects: heat-boost + SR transition\nASYNC, non-blocking, ∥ return\nest\n233 ms"];
+  }
+  "forward" -> "n1" [color="#333333", style="solid", label="forward to backend"];
+  "n1" -> "n2" [color="#333333", style="solid", label="gather ∥"];
+  "n1" -> "n3" [color="#333333", style="solid", label="gather ∥"];
+  "n1" -> "n17" [color="#333333", style="solid", label="wiki arm ∥"];
+  "n3" -> "n4" [color="#333333", style="solid", label="query vector"];
+  "n2" -> "n5" [color="#333333", style="solid"];
+  "n2" -> "n6" [color="#333333", style="solid"];
+  "n2" -> "n8" [color="#333333", style="solid"];
+  "n2" -> "n9" [color="#333333", style="solid"];
+  "n4" -> "n5" [color="#333333", style="solid"];
+  "n4" -> "n6" [color="#333333", style="solid"];
+  "n4" -> "n8" [color="#333333", style="solid"];
+  "n4" -> "n9" [color="#333333", style="solid"];
+  "n2" -> "n7" [color="#333333", style="solid"];
+  "n4" -> "n7" [color="#333333", style="solid"];
+  "n5" -> "n7" [color="#333333", style="solid"];
+  "n6" -> "n7" [color="#333333", style="solid"];
+  "n8" -> "n7" [color="#333333", style="solid"];
+  "n9" -> "n7" [color="#333333", style="solid"];
+  "n7" -> "n10" [color="#333333", style="solid", label="memory pool"];
+  "n17" -> "n10" [color="#333333", style="solid", label="wiki pool → merge"];
+  "n10" -> "ce" [color="#333333", style="solid", label="merged candidates"];
+  "ce" -> "post" [color="#333333", style="solid"];
+  "post" -> "n19" [color="#333333", style="solid"];
+  "n19" -> "n21" [color="#333333", style="solid", label="critical path"];
+  "n19" -> "n20" [color="#6a8f3a", style="dashed", label="async · non-blocking"];
+}
