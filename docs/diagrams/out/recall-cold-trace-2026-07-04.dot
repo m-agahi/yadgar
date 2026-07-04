@@ -1,0 +1,72 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Recall — COLD trace (v5.106, real 2026-07-04)
+trace 242cc546 · total 26.1 s · cross-encoder runs 3x (@3146 11.3s + @14398 2.4s + @19505 6.4s ≈ 20 s = the wall)
+total ≈ 26.135 s";
+  subgraph "cluster_core" {
+    label="Core process — pipeline orchestration (recall runs here today)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="recall() entry\ntool.recall + branch/dir detect\n@6ms\n1 ms"];
+    "qanalysis" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="query analysis\nretrieval.analyze_query (entities/routing)\n@7.7ms\n0.4 ms"];
+    "ppr" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="personalized PageRank\nretrieval.ppr (entity seeds + graph walk)\n@107ms\n241 ms"];
+    "fusion" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="convex fusion\nretrieval.fusion.convex_fuse (merge signals)\n@1886ms\n2 ms"];
+    "pbelief" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="profile_belief_merge\nretrieval.rerank.profile_belief_merge\n@16791ms\n116 ms"];
+    "rules" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="rules rerank\nretrieval.rerank.rules\n@16907ms\n155 ms"];
+    "mmr" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="MMR diversity\nretrieval.rerank.mmr\n@16907ms\n0.5 ms"];
+    "interleave" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="interleave + cross-type dedup\ncrossfuse.interleave_wiki\n@25899ms\n0.05 ms"];
+    "results" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="ranked results returned\n@26135ms\n0.5 ms"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend — SurrealDB (_q_server) + rerank server (POST /rerank) + embed (rpc.embed)";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "fts" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25\nretrieval.fts (branch clause injected)\n@8.2ms\n22.6 ms"];
+    "embed" [shape="box", style="filled", fillcolor="#f5e1f5", label="query embed\nrpc.embed -> backend.embed (cold model)\n@30.9ms\n21 ms"];
+    "knn" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="vector KNN search\nretrieval.vector (HNSW, minus encode)\n@31.9ms\n55 ms"];
+    "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation BFS\nretrieval.spreading (per-depth graph IO)\n@348ms\n1.538 s"];
+    "gpriors" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="graph priors\nstorage.graph_priors _q_server\n@1888ms\n157 ms"];
+    "cpriors" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="cofire priors\nstorage.cofire_priors _q_server\n@2046ms\n151 ms"];
+    "build" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="build_results final-fetch\nstorage.get_memories_by_ids _q_server\n@2198ms\n943 ms"];
+    "ce1" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank PASS 1 (cross_encoder)\nPOST /rerank GTE-reranker (cold load)\n@3146ms\n11.253 s"];
+    "mp" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank PASS 2 (multi_passage)\nPOST /rerank per-passage rescore\n@14398ms\n2.392 s"];
+    "engram" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="engram_links\nretrieval.rerank.engram_links (graph IO)\n@17063ms\n939 ms"];
+    "wiki" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="wiki_candidates fanout\nwiki.query + get_wiki_page (N per hit)\n@18006ms\n1.499 s"];
+    "cefuse" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank PASS 3 (wiki crossfuse)\nscore_candidates_ce POST /rerank\n@19505ms\n6.394 s"];
+    "sideeff" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="side-effects: heat-boost + SR transition\nrecord_access + boost_memories_access\n@25900ms\n233 ms"];
+  }
+  "entry" -> "qanalysis" [color="#333333", style="solid", label="1"];
+  "qanalysis" -> "fts" [color="#333333", style="solid", label="2"];
+  "fts" -> "embed" [color="#333333", style="solid", label="3"];
+  "embed" -> "knn" [color="#333333", style="solid", label="query vector"];
+  "knn" -> "ppr" [color="#333333", style="solid", label="5"];
+  "ppr" -> "spread" [color="#333333", style="solid", label="6"];
+  "spread" -> "fusion" [color="#333333", style="solid", label="signals"];
+  "fusion" -> "gpriors" [color="#333333", style="solid", label="8"];
+  "gpriors" -> "cpriors" [color="#333333", style="solid", label="9"];
+  "cpriors" -> "build" [color="#333333", style="solid", label="top ids"];
+  "build" -> "ce1" [color="#333333", style="solid", label="hydrated rows"];
+  "ce1" -> "mp" [color="#333333", style="solid", label="12"];
+  "mp" -> "pbelief" [color="#333333", style="solid", label="13"];
+  "pbelief" -> "rules" [color="#333333", style="solid", label="14"];
+  "rules" -> "mmr" [color="#333333", style="solid", label="15"];
+  "mmr" -> "engram" [color="#333333", style="solid", label="16"];
+  "engram" -> "wiki" [color="#333333", style="solid", label="memory arm done"];
+  "wiki" -> "cefuse" [color="#333333", style="solid", label="18"];
+  "cefuse" -> "interleave" [color="#333333", style="solid", label="19"];
+  "interleave" -> "sideeff" [color="#333333", style="solid", label="20"];
+  "sideeff" -> "results" [color="#333333", style="solid", label="21"];
+}
