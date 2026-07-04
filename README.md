@@ -409,6 +409,8 @@ Every change to `yadgar/**` must update `README.md` and `docs/` in the same PR. 
 
 Inspired by [Zikkaron](https://github.com/amanhij/Zikkaron) by [@amanhij](https://github.com/amanhij). Different architecture, same north star.
 
+Yadgar stands on a great deal of open-source work — models, databases, frameworks, and tools. Full credits and acknowledgments (including [Tom Aarsen](https://github.com/tomaarsen), whose sentence-transformers + Ettin reranker underpin our retrieval): **[docs/tributes.md](docs/tributes.md)**.
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).
