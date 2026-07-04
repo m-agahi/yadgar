@@ -288,3 +288,36 @@ The advisor (stronger reviewer, saw the full transcript) was consulted twice, as
 - Nail heat/offload write timing (blocking vs async — the 95s offload timeout hints async elsewhere) and `/recall` auth as an exposure change; define "stateless" as no cross-request session state but keep warm models/caches. → **§3.1, §3.2, open Q2, risk #6.**
 
 **Net advisor verdict:** rigorous plan; the honest framing leans "measure boundary-attributable latency first; likely defer behind CE/spreading compute unless the 6.2s proves to be serialization." This plan encodes exactly that as a blocking gate.
+
+---
+
+## Statefulness + Fanout Audit (2026-07-04)
+
+**Status:** IN PROGRESS — skeleton committed early; findings being filled in.
+
+Read-only audit gating the go/no-go on relocating the recall pipeline into a stateless
+per-request backend `/recall` endpoint. The go/no-go here is **not speed** — it is
+**"does moving recall to a stateless backend break anything?"** Independent (adversarial)
+verification of the plan's §2 "Stateful bits" / risk #10 claims, with fresh file:line
+evidence rather than restating the plan.
+
+Categories used per finding:
+- **(a) rebuild-per-request** — reconstructed from request args + DB/models each call → moves cleanly, non-issue.
+- **(b) moves-to-backend** — real state, but lives (or trivially relocates) inside the backend container → extra work, quantified.
+- **(c) hard-blocker** — genuinely core-process-bound; not reconstructable backend-side from request args + DB.
+
+### Audit 1 — Statefulness
+
+_TBD_
+
+### Audit 2 — Fanout completeness
+
+_TBD_
+
+### Audit 3 — Side-effect writes
+
+_TBD_
+
+### Verdict
+
+_TBD_
