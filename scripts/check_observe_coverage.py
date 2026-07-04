@@ -87,6 +87,10 @@ class Finding:
     # Integrity errors raised at classification time (e.g. short @observe(exempt=...)
     # reason). Threaded up to the always-hard integrity channel by run().
     errors: list[str] = field(default_factory=list)
+    # For EXEMPT_GLOB findings only: the owning file module stem + the glob that
+    # exempted the fn — feeds the ADR-0040 option-C glob-exempt audit report.
+    module: str | None = None
+    glob: str | None = None
 
 
 # ── classification helpers ───────────────────────────────────────────────────
@@ -334,7 +338,14 @@ def run(
     exempt_globs: dict | None = None,
     repo_root: Path | None = None,
 ) -> tuple[list[Finding], set[str], list[str]]:
-    """Return (all_findings, seen_fqs, integrity_errors)."""
+    """Return (all_findings, seen_fqs, integrity_errors).
+
+    Side-channel: each EXEMPT_GLOB finding is tagged (`Finding.module` / `.glob`)
+    with the file module stem and the repo-relative glob that exempted it, so the
+    ADR-0040 option-C audit report can enumerate every glob-hidden function (a
+    drift-visibility safeguard: a whole-dir glob otherwise makes a new/modified fn
+    beneath it silently invisible).
+    """
     exempt_globs = exempt_globs or {}
     repo_root = repo_root or _REPO_ROOT
     all_findings: list[Finding] = []
@@ -343,10 +354,14 @@ def run(
     for path in _iter_py_files(root, area):
         module = path.stem
         rel = _rel_posix(path, repo_root)
+        file_glob = next((g for g in exempt_globs if _matches_glob(rel, g)), None)
         for g in exempt_globs:
             if _matches_glob(rel, g):
                 glob_hits.add(g)
         for f in scan_file(path, allowlist, exempt_globs, repo_root):
+            if f.status == "EXEMPT_GLOB":
+                f.module = module
+                f.glob = file_glob
             all_findings.append(f)
             seen_fqs.add(f"{module}:{f.qualname}")
 
@@ -365,6 +380,31 @@ def run(
         if glob not in glob_hits:
             integrity.append(f"glob {glob}: STALE — matches no in-scope function file")
     return all_findings, seen_fqs, integrity
+
+
+# ── glob-exempt audit report (ADR-0040 option C — non-failing) ───────────────
+
+
+def print_glob_exempt_report(findings: list[Finding]) -> None:
+    """Print the count + enumerated list of glob-exempted functions to STDOUT.
+
+    A `_exempt_globs` entry exempts an ENTIRE directory/file forever, so a new or
+    modified function beneath it becomes auto-invisible to the I33 ratchet (the
+    glob blind-spot ADR-0040 addresses). This report makes that hidden set
+    auditable in CI output on every run. It is PURELY informational — it prints to
+    stdout and NEVER affects the exit code (option C, the safeguard layer that
+    complements option B's glob narrowing).
+    """
+    glob_findings = [f for f in findings if f.status == "EXEMPT_GLOB"]
+    print(f"I33 glob-exempt audit — {len(glob_findings)} function(s) hidden by _exempt_globs:")
+    by_glob: dict[str, list[Finding]] = {}
+    for f in glob_findings:
+        by_glob.setdefault(f.glob or "(unknown glob)", []).append(f)
+    for glob in sorted(by_glob):
+        fns = by_glob[glob]
+        print(f"  {glob}  ({len(fns)} fn):")
+        for f in sorted(fns, key=lambda x: (x.module or "", x.qualname)):
+            print(f"    {f.module}:{f.qualname}:{f.lineno}")
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -412,6 +452,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_all:
         for f in findings:
             print(f"{f.qualname}:{f.lineno} [{f.status}]")
+
+    # ADR-0040 option C: always surface the glob-exempted set to stdout for CI
+    # drift-auditing. Informational only — never touches the exit code below.
+    print_glob_exempt_report(findings)
 
     missing = [f for f in findings if f.status == "MISSING"]
 

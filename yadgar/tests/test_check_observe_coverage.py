@@ -378,6 +378,98 @@ def test_observe_exempt_valid_reason_is_exempt(tmp_path):
     assert statuses.get("thing") == "EXEMPT_OBSERVE", statuses
 
 
+# ── glob-exempt audit report (ADR-0040 option C — non-failing CI safeguard) ───
+
+
+def test_glob_exempt_report_lists_functions_on_stdout(tmp_path, capsys):
+    """The lint prints the count + list of glob-exempted functions to STDOUT so
+    glob drift (a whole-dir exemption hiding a modified/new fn) is auditable in
+    CI output — without ever affecting the exit code (ADR-0040 option C)."""
+    root = tmp_path / "yadgar"
+    (root / "seed").mkdir(parents=True)
+    _write(
+        root / "seed",
+        "_generate.py",
+        """
+        def build(items):
+            total = 0
+            for x in items:
+                total += x
+            return total
+
+        def analyze(items):
+            out = []
+            for x in items:
+                if x:
+                    out.append(x)
+            return out
+        """,
+    )
+    (tmp_path / ".observe-allowlist.json").write_text(
+        json.dumps(
+            {
+                "_exempt_globs": {
+                    "yadgar/seed/**": {
+                        "category": "generated",
+                        "rationale": "one-shot project bootstrap material generation; not a runtime ops path",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    rc = check_observe_coverage.main(
+        [
+            "--root",
+            str(root),
+            "--allowlist-file",
+            str(tmp_path / ".observe-allowlist.json"),
+        ]
+    )
+    assert rc == 0  # report is informational — never fails
+    out = capsys.readouterr().out
+    # Count line: both glob-exempted functions surfaced.
+    assert "2" in out and "glob-exempt" in out.lower(), out
+    # The specific glob-exempted functions are enumerated so drift is visible.
+    assert "_generate:build" in out, out
+    assert "_generate:analyze" in out, out
+    # The owning glob is named so a reader knows which entry hides them.
+    assert "yadgar/seed/**" in out, out
+
+
+def test_glob_exempt_report_zero_globs_is_quiet_but_zero_exit(tmp_path, capsys):
+    """No _exempt_globs → report emits a 0-count line and still exits 0."""
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    _write(
+        root,
+        "mod.py",
+        """
+        from yadgar.tracing import trace_span
+
+        @trace_span("t")
+        def thing(items):
+            total = 0
+            for x in items:
+                total += x
+            return total
+        """,
+    )
+    (tmp_path / ".observe-allowlist.json").write_text("{}", encoding="utf-8")
+    rc = check_observe_coverage.main(
+        [
+            "--root",
+            str(root),
+            "--allowlist-file",
+            str(tmp_path / ".observe-allowlist.json"),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "glob-exempt" in out.lower(), out
+    assert "0" in out, out
+
+
 # ── warn-mode exit code ──────────────────────────────────────────────────────
 
 
