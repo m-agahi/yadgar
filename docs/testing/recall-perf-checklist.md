@@ -176,3 +176,52 @@ Post-v5.99, the dominant cold cost is **backend GTE-ModernBERT CE** — the firs
 | v5.97 | fusion N+1 batch | **~1,432ms** (−40%) | — |
 | v5.98 | GTE CE-routing (Lever 1) | ~1,602ms (flat) | ~40–50s |
 | v5.99 | PPR + spreading-BFS N+1 batch | ~1,613ms (flat) | **~7–9s** (−5–7×) |
+| v5.106 | full observability standard (@observe on every fn) | **~1,409ms** (flat) | spreading ~1.1s |
+
+## Run log — 2026-07-04 (core v5.106.0 / backend v5.12.0 — full observability standard)
+
+Same box/config (**pool=3**, `--cpus 1` core / `2` backend, GTE-ModernBERT CE). v5.106 =
+tri-signal `@observe` (span+metric+log) on **every function**. Question this run answers:
+**did the per-function instrumentation slow recall vs the pre-`@observe` baseline?**
+
+**Method fix (important):** the raw `/mcp` endpoint is now bearer-auth-gated
+(`require_auth: true`, token in `~/.config/yadgar/config.yaml`). The `benchmarks/run_perf_loadtest.py`
+harness sends no `Authorization` header → every recall 401s → `_call_recall` swallows it
+(returns `False`) → CE `d_count=0` → the contract-compare crashes on `ce_mean=None`. Drove the
+same JSON-RPC envelope directly **with** `Authorization: Bearer <token>` instead (scratch:
+`/tmp/yadgar_perf_v5106.py` + `/tmp/yadgar_concurrent_v5106.py`). Fixing the harness auth +
+guarding the `None` compare is a follow-up.
+
+⚠️ **Uptime caveat (ADR-0033 caveat-1).** Measured at daemon uptime ~647s (~11min), below the
+~30–37min settle. Trusted anyway: warm **converged tight** (1324–1441ms after discarding the
+model-warm call-0), and both warm (~1.4s) and cold (~16.8s) sit in the **steady-state** range,
+NOT the 24–76s fresh-deploy warmup-artifact band.
+
+| # | scenario | v5.106 | metric | notes |
+|---|---|---|---|---|
+| 2 | WARM (same query ×8, CE-cache hot) | **~1,409ms** median (1324–1441) | wall ≈ pipeline (~6ms gap) | v5.102 trace-gap spans closed the old ~6s un-spanned MCP-wrapper gap → wall now == pipeline. CE cached ~1–2ms. |
+| 1 | COLD (6 fresh distinct, CE-miss) | **~16.8s** median (10.9–18.4) | wall ≈ pipeline | CE the wall: `backend.rerank.ce` ~10.4s + `retrieval.rerank.cross_encoder` 8.4s → **CE ~56–78%**. `retrieval.spreading` only **1.1s** (v5.104 batch holding). Trace fully accounted, no gap. |
+| 7 | 6-concurrent (threaded direct-HTTP, all cold) | 76.7s batch / ~59s per-call median | wall | **6/6 ok**. Real parallel (threads bypass MCP-client serialization, ADR-0033 caveat-3). High because all-cold each pays full CE, contending pool=3 + serial CE on `--cpus-2` backend. **NOT comparable** to the older "~9.3s" (that was v5.97 *pipeline-histogram*, warm-ish, MCP-serialized). |
+
+**Verdict: v5.106 `@observe` did NOT meaningfully slow recall.** Three-way evidence:
+
+1. **Pipeline↔pipeline (same metric):** warm histogram **1,409ms (v5.106)** vs 1,432ms (v5.97)
+   vs 1,613ms (v5.99) — **flat/slightly-better across the entire `@observe` rollout
+   (v5.100→v5.106)**. The instrumentation added nothing detectable to the hot path.
+2. **Log layer:** only **2 core log lines per warm recall** → decisively kills the
+   "span_end logging per fn" half of the concern. Spans go to the off-thread OTLP
+   `BatchSpanProcessor`, not synchronous stdout logs.
+3. **Trace accounting (direct overhead bound):** warm trace = **1,687 spans**, cold =
+   **24,628 spans** (every-fn `@observe`). Yet `tool.recall` ≈ Σ(substantive child spans) on
+   both — if span *creates* cost real time, `tool.recall` would exceed its children. It
+   doesn't. This bounds creation overhead to **tens-of-ms worst case (<1%)** of both the 1.4s
+   warm and 18.5s cold floors. Matches the v5.101 off-cgroup A/B (+8ms for ~40 spans; design
+   sound — span create sub-µs, `LogSpanProcessor` routes off-thread via QueueHandler, `@observe`
+   = 2×monotonic + Prom `.observe()` µs).
+
+**No obs-overhead follow-up needed** — instrumentation is not on the critical path. The wall is
+still **CE** (~56–90% of cold): next levers unchanged — #13 onnx-int8 CE, #28
+`CROSS_ENCODER_TOP_K` trim, #88 query→output cache.
+
+> Diagram re-render step: the `docs/diagrams` YAML generator (see repo diagram workflow) would
+> re-render the recall waterfall/arc specs with these numbers — noted, not run this pass.
