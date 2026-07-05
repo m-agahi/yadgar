@@ -470,3 +470,298 @@ pressure-test):**
 | graph-layout (DB-backed leak) | `storage/ops.py:97` |
 | lever-a full design | `docs/plans/cache-refactor-2026-07-01.md` |
 | caching opportunities (20-cache inventory) | `docs/plans/caching-opportunities-2026-07-05.md` |
+
+---
+
+## Re-evaluation: single namespaced cache (2026-07-05, user-challenged)
+
+**Status:** RE-EVALUATION of §2–§4's "one storage cache = NO" conclusion. The user
+challenged it: *"one cache with NAMESPACES (per-namespace policy) to prevent leaks,
+serving everything — fewer moving parts. I doubt the 'no'."* Re-examined honestly,
+code-verified (2026-07-05, verification agent + main-thread reasoning). **The honest
+delta is a WIDENING + partial vindication of the prior scoping, not a reversal** (see R1
+for why the "flip" framing would be confirmation bias). This section supersedes §2a's
+"fits-none" framing and §4a's "5 leaks" list; §3 (observability) and §5 (train order)
+stand unchanged.
+
+### R1. TL;DR — the honest re-verdict (a widening, NOT a reversal)
+
+**First, an honest read of what the prior doc actually said** — because the naive
+telling ("the NO is reversed") would be exactly the confirmation-biased answer the user
+wants to hear, and it does not survive opening the prior doc:
+
+- The prior **§4 is titled "the general-purpose *class*"** and **§5 Car 1 builds it**. The
+  prior doc **already endorsed one class** with a policy *union* (`TTL | Epoch |
+  CheckpointKey | Manual`) bound at construction. Its "NO" was **scoping** — *which* caches
+  the class covers — never "one class is wrong."
+- Prior §4a **already excluded C** (config, "not a data cache") **and H** (rate-limiter,
+  "category error… excluded entirely") — the same two this re-eval calls non-caches.
+- J (graph-layout) stays out in **both** docs.
+
+**So the real delta is narrow and precise:** **B (branch) and D (rules) move from
+bespoke-leak into the class** — the prior doc **over-classified** them (R4), and the user
+was **right to doubt** those two leaks. Plus the class-vs-manager sharpening (R2). That is
+a **widening of the class's scope + a partial vindication of the user**, not a "flip."
+
+**The re-verdict, stated honestly:** **YES — one cache *class* with N named instances
+serves every in-memory cache.** The prior doc's qualified-YES-to-one-class was right; its
+"5 leaks" over-counted by 2. Corrected:
+
+- The "10 (eviction × invalidation) combos" that drove the "fits-none" framing **collapse
+  to ~3 invalidation mechanisms** on honest inspection (R3) — the code-grounded reason
+  B/D were mis-scored as leaks.
+- The 5 "bespoke leaks" (§4a) re-bucket to **2 non-caches (C, H — already excluded) + 2
+  expressible (B, D — the actual correction) + 1 different-tier (J)** (R4). Only J stays
+  out, because it lives in a **different storage tier** (SurrealDB, out-of-process), not
+  because a policy can't express it.
+- The strongest potential pushback — **hot-path overhead** on CE/embed — is **immaterial**
+  under the correct design (R5). It would only bite the *wrong* design (a per-call
+  `manager.get(namespace, key)` dispatch), which we do NOT recommend.
+
+**This delivers the user's explicit goal — fewer moving parts — for real:** one
+implementation to test/maintain/harden, N thin policy configs, isolated instances.
+
+### R2. The distinction the prior doc blurred: one CLASS vs one MANAGER
+
+"One namespaced cache serving everything" is **two different designs**, and the prior
+doc's pushback silently answered the worse one:
+
+1. **One CLASS, N instances** — `Cache(name="ce", policy=…)`, `Cache(name="project_brief",
+   policy=…)`. Policy bound at **construction**. `get(key)` on an instance is
+   `self._store[key]` behind one method — *identical hot path to today's `LRUCache.get`*.
+   This is the prior doc's own §4 recommendation for the common shape.
+2. **One MANAGER, single `get(namespace, key)` entry** — namespaces live inside one object,
+   policy **dispatched per call**. A per-`get` namespace lookup + policy branch.
+
+**The hot-path-overhead and shared-blast-radius objections belong to design (2), not (1).**
+The user's stated goal (fewer moving parts, one well-tested impl, isolated policies) is
+delivered by **(1)**. Design (2) adds a dispatch layer that buys nothing functional and
+concentrates exactly those two costs. **Recommendation: one CLASS, N instances.** If a
+registry is wanted (for `/cache-stats` enumeration + one config surface), it is a *thin
+registration map* — `registry[name] = instance` at construction — so a lookup is still
+`registry[name].get(key)` (one dict get, policy already bound), never a per-`get` policy
+branch. That registry is the prior doc's §4 "named-instance registry" and is compatible.
+
+### R3. The "10 combos" collapse on the invalidation axis (code-verified)
+
+The prior §2a listed 10 unique (eviction × invalidation) pairs and read that as
+fits-none. But the pairs are not 10 *policies* — on the invalidation axis they collapse
+to **~3 mechanisms**, verified against the cited mechanics:
+
+| Real invalidation mechanism | Caches | How it works | The "policy" is really… |
+|---|---|---|---|
+| **1. None — freshness in `key_fn`** | CE, embed (ckpt-in-key); branch, default-branch (time-bucket-in-key); shadow, recall-output, project_brief (epoch-in-key) | New key ⇒ miss ⇒ recompute; stale keys age out via LRU. Nothing is ever *invalidated* — the key simply changes. | **one policy + a pluggable `key_fn`** that embeds ckpt-hash / time-bucket / epoch-counter. A/B/E are the SAME mechanism. **Caveat:** E's `key_fn` reads `_current_epoch(dir)`, which requires the epoch bus to be bumped externally (`_phase_post_write.py:58`, `cls.py:25`) — external plumbing A/B don't need. The *cache-side* mechanism is identical; the epoch bus stays a shared moving part. |
+| **2. TTL-since-write** | stale-count, DBSIZE, predictive-coding | value stored with a write-timestamp; expired on read | one policy: `TTL(secs)` |
+| **3. Manual / whole-flush** | config\*, rules | explicit `clear()` on a mutation event | one policy: `Manual`/`WholeFlush` |
+
+\* config is memoization, not a cache — see R4.
+
+This is the **code-grounded refutation** of "10 combos → fits-none": there are ~3
+invalidation mechanisms and one eviction primitive (bounded LRU, `max_entries=0` ⇒
+unbounded). Verified:
+
+- **A/B/E are one mechanism.** CE key = `qsha:tsha:ckpt` (`embed_service.py:637`); branch
+  key = `(dir, int((time+hash(dir)%30)//30))` (`project.py:150`); epoch key embeds
+  `_current_epoch(dir)` (`_recall_shadow.py:111`). All three: *freshness lives in the key,
+  invalidation is "the key moved."* The prior doc scored B a "LEAK" because it imagined a
+  **get/put-TTL** class (which *would* change semantics) — but the correct expression is a
+  **`key_fn` that appends the time bucket**, which is *exactly what the code already does*.
+  B is not a leak; it is combo-A with a different `key_fn`. (Verified `project.py:115-150`.)
+- **D (rules) is whole-flush.** `self._applicable_rules_cache: dict[str,list] = {}`
+  (`rules_engine.py:244`), `.clear()` on add/delete (`:308,:442`). A `WholeFlush`/`Manual`
+  namespace with `max_entries=0` (unbounded) + `.clear()`-on-bust expresses this **exactly**.
+  The prior doc's "sized-LRU would serve stale for un-mutated dirs" objection is a
+  strawman — the namespace is unbounded + manual-clear, identical semantics.
+
+### R4. The 5 "leaks" re-classified honestly (3 buckets)
+
+| Prior "leak" | Bucket | Verdict |
+|---|---|---|
+| **C config singletons** (`config.py:964`, `config_registry.py:75`) | **NOT-A-CACHE** | `@lru_cache(maxsize=1)` memoized loader + `clear_config_caches()` hook. No key→value, no eviction, no hit/miss. It is a **singleton reload**, not a cache. Correctly excluded — **not a strike against unifying the real caches.** |
+| **H rate-limiter** (`rate_limit.py:32`) | **NOT-A-CACHE** | Stored tuple `(tokens, last_time)` is **mutated in place** every access (`rate_limit.py:51,55` — refill + decrement written back). Mutable rate state, not a key→value cache. Category error to evict mid-window. Correctly excluded. |
+| **B branch / default-branch** (`project.py:115/166`) | **EXPRESSIBLE** | Combo-1 (freshness-in-`key_fn`). A `key_fn` embedding the `int(time//bucket)` term expresses it exactly (R3). Prior doc **over-classified** it as a leak by assuming a get/put-TTL class. |
+| **D rules dict** (`rules_engine.py:244`) | **EXPRESSIBLE** | Whole-flush namespace (unbounded + `.clear()`-on-bust). Prior doc **over-classified**. |
+| **J graph-layout** (`storage/ops.py:102-130`) | **GENUINELY RESISTS (different tier)** | `UPSERT graph_layout_cache:current …` — a **SurrealDB record**, out-of-process, restart-surviving. Not a policy the in-memory class can't express; a **different storage tier**. |
+
+**Net: prior doc's "5 bespoke leaks" → really 2 non-caches (C, H) + 2 expressible
+(B, D) + 1 different-tier (J).** The 2 non-caches don't count against unification (they
+aren't caches). B and D fold into the class. Only J stays out.
+
+**On J — exclude it, do NOT add a pluggable DB backend.** A DB-backed storage tier on the
+cache class is **scope creep that ADDS moving parts** — the exact opposite of the user's
+goal. graph-layout is a persisted, signature-validated singleton record with its own
+recompute semantics; wrapping it in an in-memory cache class buys nothing and adds a
+second invalidation point. Clean boundary: **the class serves in-memory caches; graph-layout
+is a DB record and stays a DB record.** That is a scoping decision, not a unification failure.
+
+### R5. Hot-path overhead — the key pushback, bounded and dismissed
+
+**Ground truth (verified `embed_service.py:618-671`):** CE `get` is called **per-passage
+in a loop** — `_score_ce_with_cache`: `for i, key in enumerate(keys): hit = _ce_cache.get(key)`
+(`:644-645`) — thousands of gets per recall. This IS the latency-critical hot path, and it
+was the strongest candidate for a SURE "no."
+
+**It is not a blocker, because the overhead lives in the design we don't recommend:**
+
+- Today: `_ce_cache.get(key)` on a **bare instance** → `self._store[key]` under a lock
+  (`cache.py:65-77`). Under **one-class-N-instances**, CE is a `Cache` instance; its `get`
+  is the *same* `self._store[key]` behind one method. **Zero added indirection vs today** —
+  policy (checkpoint-in-key, deep_copy=off, obs_tier=hot) is bound at construction, not
+  branched per call.
+- The overhead the pushback imagines (namespace dict lookup + per-`get` policy branch +
+  `.labels(cache=).inc()` per call) is the **manager** design (R2, design 2). We reject it.
+- Even the per-`get` metric label-inc is avoidable: `LRUCache` already keeps internal
+  `hits/misses/evictions` ints (`cache.py:59-61`); the class exposes the same and a
+  **periodic scrape** flushes them to Prometheus (§3c escape hatch) — no hot `.labels().inc()`.
+  **Reconciles with R8's "metric fires on every get":** the internal int counter *is*
+  incremented per-get (cheap, always current) — visibility is total; only the Prometheus
+  **label-inc** is deferred to the periodic scrape on hot-tier instances. Cold-tier
+  instances label-inc inline (they're rare). Total visibility, hot-path label-inc avoided.
+- deep_copy is **per-instance opt-in, OFF for CE/embed** (floats/vectors) — the verification
+  agent's "get returns a reference, deep-copy breaks it" is a **config**, not a barrier: CE
+  sets `deep_copy=False` and gets today's reference semantics; row-dict caches set
+  `deep_copy=True`.
+
+**Bound:** a CE hit avoids a cross-encoder forward pass (**milliseconds**). The class's
+marginal cost over today's bare `LRUCache` is **~zero** (same method shape). The overhead
+is immaterial. **Hot-path overhead is OFF the blocker list.** (This was the one reason that
+could have been SURE; verified it isn't, under the recommended design.)
+
+### R6. Shared blast-radius & god-object — honest weighing
+
+- **Shared blast-radius** (one impl serving CE+embed+recall+project_brief → a core bug
+  breaks all): real, but **weighed against the benefit it's smaller.** One well-tested impl
+  = fewer *total* bugs than N bespoke impls each with its own edge cases (the current state:
+  3 embedding metric families, CE off the generic family, ~14 silent caches — that
+  fragmentation is itself the bug surface). **Mitigation is already the build order:** CE/embed
+  stay on their lean isolated `LRUCache` path until the class is proven on the cold-path new
+  consumers (extract-then-generalize, §5) — so a class bug **cannot** touch the recall hot
+  path during rollout. Migrating CE/embed onto the class stays the **optional tail** (obs
+  consistency only), never a blocker. Net: blast-radius is real but bounded by build order,
+  and the "N isolated impls" alternative has a *larger* aggregate bug surface today.
+- **God-object config complexity** ("one thing supporting the UNION of all policies"): the
+  honest test is whether the complexity is *reduced* or merely *relocated*. Here it is
+  **reduced**, because the union is small (R3: ~3 invalidation mechanisms + 1 eviction
+  primitive + 2 booleans deep_copy/obs_tier + a `key_fn`), and each namespace picks a point
+  in it declaratively at construction. That is genuinely **"N simple configs on 1 tested
+  impl" < "N bespoke impls."** The misconfiguration risk (a namespace picking the wrong
+  policy) is real but *localized and testable* (one config line per cache, unit-testable),
+  versus today's risk which is *distributed* across N hand-rolled impls. **Verdict: fewer
+  moving parts, delivered — not faked** — *provided* the design is one-class-N-instances
+  (R2). The god-object risk materializes only if it were one manager with per-call dispatch.
+
+### R7. Verdict + namespace-policy interface sketch
+
+**Does ONE namespaced cache serve everything? YES** — one `Cache` class, N instances,
+policy bound at construction — for all **8 real in-memory caches**. **2 non-caches**
+(config, rate-limit) are correctly excluded (they aren't caches). **1 cache**
+(graph-layout) stays out as a **different storage tier** (SurrealDB), by scoping choice,
+not policy failure. No SURE reason blocks in-memory unification.
+
+```
+class Cache:                              # ONE class; N instances; policy at construction
+    name: str                             # bounded metric label; REQUIRED
+    max_entries: int                      # bounded LRU (0 = unbounded)
+    invalidation: KeyFn | TTL(secs) | Manual   # the ~3 mechanisms (R3); default KeyFn
+    key_fn: Callable = identity           # embeds ckpt-hash | time-bucket | epoch (combo-1)
+    deep_copy: bool = False               # off for floats/vectors; on for row dicts
+    obs_tier: "hot" | "cold" = "cold"     # metric-only vs tri-signal (§3)
+    snapshot: SnapshotSpec | None = None  # optional msgpack (reuse cache.py I/O)
+
+  get(key)  -> value | None   # self._store[key] behind one method; metric always; span/log per tier
+  put(key, value)            # size gauge + evict counter
+  clear() / invalidate(scope)  # Manual/WholeFlush bust
+
+# thin registry (enumeration + config surface only) — NOT a per-get dispatcher:
+_REGISTRY: dict[str, Cache] = {}          # registry[name].get(key) — one dict lookup, policy pre-bound
+```
+
+**How each real cache maps to an instance:**
+
+| Cache | max_entries | invalidation / key_fn | deep_copy | obs_tier | snapshot |
+|---|---|---|---|---|---|
+| CE (A) | 100k | `key_fn = qsha:tsha:ckpt` | no | hot | msgpack |
+| embed (A) | 100k | `key_fn = tsha:mode:ckpt` | no | hot | msgpack |
+| branch / default-branch (B) | 128 | `key_fn = (dir, time//bucket)` | no | cold | no |
+| shadow / recall-output / project_brief (E) | bounded | `key_fn` embeds `_current_epoch(dir)` + TTL backstop | yes (row dicts) | hot / cold | no |
+| stale-count / DBSIZE / predictive (F/G/I) | small / 1 | `TTL(secs)` | no | cold | no |
+| rules (D) | 0 (unbounded) | `Manual` + `.clear()`-on-mutation | no | cold | no |
+
+**Handled outside the class:** config singleton + rate-limiter (**not caches** — stay as-is,
+get an obs metric in Car 0 only if a hit-rate question ever arises); graph-layout
+(**SurrealDB tier** — stays a DB record, obs metric in Car 0).
+
+### R8. Observability + train order — re-confirmed under one-class-N-instances
+
+**Observability (§3) is unchanged and, if anything, cleaner.** Obs-by-construction still
+holds: `@observe(tier=obs_tier)` on the class methods satisfies I33 (span source present);
+the in-body `record_cache_hit/miss(self.name)` metric fires on every get (total visibility);
+hot-tier = metric-only to avoid the v5.105 span-flood. One class ⇒ **one** place the tri-signal
+is wired ⇒ every instance is observable from its `name` alone. (No change to §3.)
+
+**Train order (§5) holds exactly:**
+
+- **Car 0 — observability unification** (all caches; pipeline-independent). Unchanged — it is
+  obs-only and leads regardless.
+- **Car 1 — the `Cache` class + project_brief as first instance** (extract-then-generalize:
+  build the class *from* the cold-path new consumer, validate, don't speculate). This is
+  where "one class" is born; project_brief is instance #1.
+- **Car 2 — wiki_read / dispatch_prelude as `Cache` instances.** Adding instances, not
+  rebuilding.
+- **Car 3 — recall-output (lever a) as a `Cache` instance. GATED, LAST** (recall overhaul +
+  shadow tool-lane data). Unchanged.
+- **Optional tail — migrate CE/embed onto the class** for obs-consistency only. Doubles as the
+  blast-radius mitigation: CE/embed stay isolated on `LRUCache` until the class is proven.
+
+"One class, N instances" builds the class once (Car 1) then adds instances (Cars 2–3) — the
+order is **identical** to the prior doc. The re-verdict changes the *framing* (it's a genuine
+YES, not a rescoped one) and removes the "5 leaks" caveat down to one scoped exclusion; it
+does **not** change the build sequence.
+
+### R9. Advisor input (re-evaluation)
+
+**Pass 1 (after steelmanning + drafting the reframe, before finalizing):**
+
+- **Lead with the invalidation-axis COLLAPSE, not config enumeration.** The sharp argument is
+  that A/B/E are the *same* mechanism (invalidation=none, freshness in `key_fn`) — ~3
+  mechanisms, not 10 combos. More convincing and code-verifiable. Folded into R3.
+- **Draw the one-CLASS-N-instances vs one-MANAGER distinction explicitly** — the hot-path and
+  blast-radius objections belong to the manager design; the user's fewer-moving-parts goal is
+  delivered by one-class-N-instances. The prior doc's pushback silently answered the worse
+  design. Folded into R2 + R5.
+- **Hot-path overhead is not a SURE reason** under one-class-N-instances (CE `get` stays
+  `self._store[key]`, same as today); verify item 8 doesn't force a per-call branch (it
+  doesn't). Move it off the blocker list. Folded into R5.
+- **J = different storage tier, EXCLUDE (don't add a pluggable DB backend — scope creep that
+  adds moving parts).** 5 leaks → 2 non-caches + 1 different-tier. Folded into R4.
+- **Confirmation-bias check (don't over-rotate the other way):** keep extract-then-generalize;
+  CE/embed migration stays the optional tail, which doubles as blast-radius mitigation. Folded
+  into R6/R8.
+
+**Pass 2 (before finalizing — bias check both directions):**
+
+- **Under-rotation direction: clean, don't flip back.** Verdict (YES, one class / N
+  instances) is right and code-verified. B-via-`key_fn` and D-via-whole-flush hold; the
+  hot-path dismissal is sound (`LRUCache.get` already bumps internal hit/miss ints
+  `cache.py:59-61`, so a hot-tier `Cache.get` doing the same + periodic scrape equals
+  today); J-as-different-tier is the right exclusion. Kept all of it.
+- **Over-rotation direction — the real bias catch: R1's "the NO does not survive, verdict
+  flips to YES" OVERSTATED the delta in exactly the direction the user wanted to hear.**
+  The prior doc's §4/§5 **already endorsed one class**; its "NO" was scoping (which caches
+  the class covers), and it **already excluded C and H**. The true delta is only that **B
+  and D fold in** (prior over-classified them) + the class-vs-manager sharpening — a
+  **widening + partial vindication**, not a reversal. A skeptical reader who opens the
+  prior doc sees it already recommended one class and the "flip" evaporates. **Fixed: R1
+  rewritten to lead with the honest read of the prior doc and frame the delta as a
+  widening**; the user still gets their win (they were right to doubt the B/D leaks) and it
+  is defensible under scrutiny.
+- **R3 clause added:** E's `key_fn` reads `_current_epoch(dir)`, needing the epoch bus
+  bumped externally — external plumbing A/B don't need. Cache-side mechanism identical; the
+  epoch bus stays a shared moving part. Don't let "invalidation=none" read as "zero extra
+  plumbing for E."
+- **R5/R8 tension resolved:** internal int counter incremented per-get (cheap, always
+  current) + periodic Prometheus scrape on hot-tier → total visibility, hot-path label-inc
+  avoided. One reconciling clause added to R5.
+- **Completion order:** fill this pass-2 section → commit to master (bot identity, docs
+  workflow sanctioned) → user report leading with the honest delta ("B and D fold in; prior
+  over-classified them; only 2 non-caches + 1 DB-tier stay out"), not "the NO is reversed."
