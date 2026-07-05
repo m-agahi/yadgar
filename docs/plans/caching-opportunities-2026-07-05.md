@@ -27,10 +27,14 @@ the right order.
 ## TL;DR — the ranked opportunities
 
 1. **project_brief per-(directory, branch, mode) cache** — the strongest new
-   candidate. Query-AGNOSTIC (every agent in a dir uses the SAME key), high
-   staleness tolerance (a brief is a context nudge, not a correctness read),
-   ~6–8 DB round-trips + a 479-page wiki-catalog scan saved per hit. **Same car
-   as the track-a hook hot-context** — one build can serve both.
+   candidate. Query-AGNOSTIC (every agent in a dir uses the SAME key), so it
+   sidesteps lever (a)'s per-prompt hit-rate trap. Per hit saves ~6–8 DB
+   round-trips + a 479-page wiki-catalog scan + (signals mode) an O(n²) anchor
+   cosine + ~100–200ms of git-subprocess spawn overhead. **Catalog/restore have
+   high staleness tolerance (nudge data → cache whole payload); signals mode does
+   NOT (it drives stop-hook write actions → cache only the query-agnostic
+   sub-pieces).** **Same car as the track-a hook hot-context** — one build serves
+   both.
 2. **Recall output cache (lever a)** — already fully designed
    (`cache-refactor-2026-07-01.md`) and instrumented. Shadow data now exists:
    the **hook/session-start lane hits ~74%**, the **real-work tool lane hits ~0%**
@@ -142,7 +146,10 @@ staleness/correctness blast radius.
 ### Candidates explicitly REJECTED as "new" (already cached or = lever a)
 
 - **Query embeddings** — already cached (#2/#4/#5, EMBED_CACHE + local
-  OrderedDict). Not a new candidate. Confirm, mark existing.
+  OrderedDict). Not a new candidate. (One agent flagged a distinct *query-
+  expansion* cache — the expand-to-subqueries step at `scoring.py:204`, separate
+  from the cached embedding. Dropped as low-value: the expansion is cheap
+  string/dedup work and the resulting per-subquery embeds already hit the cache.)
 - **CE scores** — already cached (#1, CE_CACHE). Not new.
 - **Branch detection** — already cached (#8, lru_cache + 30s bucket). Not new.
 - **Default-branch** — already cached (#9). Not new.
@@ -176,21 +183,43 @@ result. So it sidesteps the per-prompt hit-rate trap entirely: the hit-rate is
 "agents-per-directory-per-invalidation-window," which for a multi-agent workflow
 is high (every subagent spawn, every session start).
 
-**⚠️ The bigger win is `signals` mode, not catalog.** `signals` is the **stop-hook
-path** — fired 2–5× per session — and per the pipeline sweep it does the MOST
-work of any mode: on top of the shared 3 presence queries (`_fetch_presence_rows`
-`project.py:414-426`) it runs **3 git subprocesses every call**
-(`_get_master_head_info` `project.py:880-965` — `git log` ×2 + `git show
-pyproject`, each with a 2–3s timeout, no caching) via `_apply_roadmap_signal`
-(`project.py:1806`), PLUS an **O(n²) anchor-redundancy cosine** over all project
-anchors' deserialized embeddings (`_fetch_anchor_redundancy_pairs`
-`project.py:746-794`) and ~5 more anchor scans. Estimated **~8–12 DB round-trips
-+ 3 git subprocesses + O(n²) embed cosine per signals call.** Only
-`_compute_stale_wiki_count` (`project.py:2384`) is TTL-cached today. **The git
-subprocesses alone — 3 spawns × 2–5 stop-hooks/session — are the single most
-concrete, pipeline-independent latency waste this whole doc found**, and they
-have essentially zero staleness cost (master HEAD / version changes rarely
-mid-session; a 10–30s TTL catches all repeats).
+**`signals` mode (stop-hook path, 2–5×/session) does the most redundant work —
+but read the cost honestly (main-thread-verified, `project.py:880-1099`).** On
+top of the shared 3 presence queries (`_fetch_presence_rows` `project.py:414-426`)
+it computes the roadmap signal (`_compute_roadmap_signal` `project.py:1062`):
+
+- **1 wiki query** (`_get_roadmap_wiki_updated_at`) + **3 git subprocesses
+  UNCONDITIONALLY** when the roadmap page exists — `_get_master_head_info`
+  (`project.py:880-965`): `git log %ct`, `git log %B`, `git show
+  default:pyproject.toml`. **Not gated by staleness** (they run to *compute*
+  staleness). **NOT cached.**
+- **+2 more git subprocesses** (`_get_pyproject_version_at_ts` `project.py:968`)
+  only when `lag_hours > 0` (roadmap behind master) — this half IS gated.
+- PLUS `_compute_anchor_signals` (`project.py:1102`): an anchor-count query, the
+  **O(n²) anchor-redundancy cosine** over deserialized embeddings
+  (`_fetch_anchor_redundancy_pairs` `project.py:746`), promote-scan, expired-count,
+  cross-project scan — ~5 queries + local cosine.
+
+**⚠️ Cost honesty (the ceiling≠cost trap).** The subagent that surfaced this read
+the `timeout=3` as the per-call duration ("6–9s wasted") — **wrong**, same shape
+as the "42s spreading cumtime" caveat in the cache-refactor doc. A warm-repo `git
+log`/`git show` is **tens of ms**, so the 3 unconditional subprocesses are ~100–
+200ms of **spawn overhead**, not seconds. That makes signals-mode caching a
+**worthwhile nicety on the hook path**, NOT a "seconds-saved" headline. The real
+recurring cost across all modes is the **cross-agent DB round-trips + O(n²) anchor
+cosine + 479-page catalog scan**, which is what carries project_brief to #1 —
+not the git spawns. Only `_compute_stale_wiki_count` (`project.py:2384`) is
+TTL-cached today.
+
+**⚠️ signals-mode has LOWER staleness tolerance than catalog/restore — do NOT
+cache the whole payload.** signals drives the stop-hook's `recommended_actions`
+(which memorize/anchor/session-end/roadmap actions fire). Caching the whole
+signals output risks re-firing or suppressing write actions on stale state.
+**Correct design: cache the expensive *query-agnostic sub-pieces* with a TTL** —
+the git head-info and the O(n²) anchor cosine — exactly as
+`_compute_stale_wiki_count` already does (#18), NOT the whole signals dict. This
+matches existing precedent and de-risks the action-signal staleness. The
+whole-output cache is safe for catalog/restore (nudge data), not for signals.
 
 **What catalog mode recomputes (`project.py:1983-2037`, all cited):**
 
@@ -352,8 +381,29 @@ the recall overhaul + shadow data.**
   pipeline-independent cars (project_brief/hot-context, wiki, prelude) first;
   lever (a) gated on both shadow data AND pipeline stability. Folded into §5/§6.
 
-**Pass 2 (before finalizing):** _pending — see the commit-time advisor pass; any
-material correction will be appended here before the doc is considered final._
+**Pass 2 (before finalizing):**
+
+- **BLOCKER — unverified headline caught + corrected.** The draft's centerpiece
+  ("signals-mode fires 3 uncached git subprocesses, the single most concrete
+  latency waste") came entirely from a subagent; I had not read the code.
+  Main-thread re-verified `_get_master_head_info` (`project.py:880`) +
+  `_compute_roadmap_signal` (`project.py:1062`): the 3 git subprocesses DO fire
+  unconditionally (when the roadmap page exists), +2 more only when roadmap lags.
+  **But** the subagent read `timeout=3` as per-call cost ("6–9s") — the
+  ceiling≠cost trap (same shape as the "42s spreading cumtime" caveat). Warm-repo
+  git is ~tens of ms → ~100–200ms spawn overhead, a nicety, not a seconds-saved
+  headline. **§4 headline downgraded; project_brief stays #1 on the DB
+  round-trips + O(n²) cosine + catalog scan, not the git spawns.**
+- **signals-mode staleness is LOWER than catalog/restore** — it drives stop-hook
+  write actions (`recommended_actions`). Caching the whole signals payload risks
+  re-firing/suppressing writes on stale state. **Corrected §4 to cache only the
+  query-agnostic sub-pieces (git head-info, O(n²) cosine) with a TTL — matching
+  the `_compute_stale_wiki_count` precedent — not the whole signals output.**
+- **Query-expansion divergence** between the two agents (one said embeddings
+  cached, one flagged the expansion step) — resolved: dropped as low-value with a
+  one-line note in the rejected list, rather than left unaddressed.
+- **Ranking + train order confirmed sound** by the advisor — no change to the
+  sequencing (pipeline-independent cars first, lever (a) gated last).
 
 ---
 
