@@ -1,0 +1,87 @@
+# Recall — FORWARD-ONLY, WARM cache-MISS, REAL profile (not estimates).
+#
+# Source: real OTel span table (Tempo, http://localhost:3200) of one WARM recall —
+# trace eeb62550bad99165f81af3d21f702ce7, wall 21977 ms, 27126 spans.
+# Captured 2026-07-06. core yadgar:5.108.0 + backend yadgar-backend:5.15.0.
+# Distinct fresh query => EMBED_CACHE + CE_CACHE MISS => cross-encoder actually runs.
+# A second warm run (69c9b424..., 18736 ms) is noted per-node as {alt} for variance.
+#
+# FORWARD-ONLY (Train 1.5, PR #163, #85 DONE): core recall() is now a PURE
+# FORWARDER. It POSTs to backend /recall and returns; the WHOLE pipeline
+# (fanout / vector / embed / FTS / PPR / spreading / fusion / CE-rerank / crossfuse /
+# side-effects) runs INSIDE the backend. Every retrieval.* stage span reports
+# service=yadgar-backend — INCLUDING ppr and fusion, which the older cold-trace
+# spec drew in `core`. That relocation is the whole point of this diagram: the
+# `core` cluster is now just the tool.recall forwarder (~8-12 ms overhead) plus the
+# returned result; the `backend` cluster owns everything else.
+#
+# ROUTING/PROPAGATION VERIFIED: root span tool.recall (yadgar-core) and child
+# backend.recall (yadgar-backend) share ONE trace_id => traceparent propagates
+# core->backend, no trace-gap. All 3 recall variants route to backend: standard
+# (this trace), plain no-profile (69c9b424, same shape), and landscape
+# (03765c7b: backend spans present via astrocyte.consensus_retrieve — a separate
+# lightweight ~2 s path, NOT drawn here).
+#
+# THE WALL: cross-encoder dominates. Two CE passes here — rerank.cross_encoder
+# @8985 ms + crossfuse.score_candidates_ce (wiki-fusion arm) @8081 ms ≈ 17 s of the
+# 22 s (77%). multi_passage adds 596 ms. Optimization direction = faster CE
+# (Ettin swap, Train 2) + keep-warm, NOT cutting CE call-count (double-CE is
+# quality-load-bearing, ADR-0035).
+#
+# Node types are all rectangle-drawing (compute/io/model) on purpose — start/end/
+# store draw circle/doublecircle/cylinder, avoided here.
+
+title: "Recall — FORWARD-ONLY, WARM cache-MISS (v5.108 / backend v5.15, real 2026-07-06)"
+subtitle: "trace eeb62550 · wall 21977 ms · core=thin forwarder, backend=whole pipeline · CE 2x ≈ 17 s = the wall"
+rankdir: TB
+show_total: true
+total_ms: 21977        # real trace wall; do NOT let node-sum drift the annotation
+
+clusters:
+  - {id: core,    label: "Core process (--cpus 1) — tool.recall FORWARDER only (POST /recall + return)", kind: core}
+  - {id: backend, label: "Backend (--cpus 2) — backend.recall runs the ENTIRE pipeline (SurrealDB + rerank server + embed)", kind: backend}
+
+nodes:
+  # --- core: forwarder shim ---
+  - {id: entry,   label: "recall() entry (FORWARDER)\\ntool.recall: validate + detect branch/dir\\nPOST backend /recall (traceparent propagated)\\n~8-12 ms core overhead", cluster: core, type: compute, time_ms: 10}
+  # --- backend: query prep ---
+  - {id: qanalysis, label: "query analysis + routing\\nretrieval.analyze_query (entities/routing)", cluster: backend, type: compute, time_ms: 3}
+  - {id: fts,     label: "FTS BM25\\nretrieval.fts (branch clause injected)",              cluster: backend, type: io,    time_ms: 27}
+  - {id: embed,   label: "query embed\\nretrieval.vector.encode_query (warm model)",       cluster: backend, type: model, time_ms: 9}
+  - {id: vector,  label: "vector KNN search\\nretrieval.vector (HNSW ANN)",                cluster: backend, type: io,    time_ms: 59}
+  # --- backend: graph signals ---
+  - {id: ppr,     label: "personalized PageRank\\nretrieval.ppr (entity seeds + graph walk)\\n{alt 234 ms}", cluster: backend, type: compute, time_ms: 208}
+  - {id: spread,  label: "spreading activation BFS\\nretrieval.spreading (v5.104 batched per-depth)\\n{alt 1565 ms}", cluster: backend, type: io, time_ms: 1444}
+  - {id: entities,label: "entity extraction\\nretrieval.graph.find_entities_in_content\\n{alt 393 ms}", cluster: backend, type: io, time_ms: 385}
+  # --- backend: fusion + hydrate ---
+  - {id: fusion,  label: "convex / WRRF fusion\\nretrieval.fusion (merge signals)\\n{alt 311 ms}",   cluster: backend, type: compute, time_ms: 287}
+  - {id: build,   label: "build_results final-fetch\\nretrieval.build_results (WHERE id IN, v5.97 batched)\\n{alt 1063 ms}", cluster: backend, type: io, time_ms: 866}
+  # --- backend: CE rerank pipeline (the wall) ---
+  - {id: ce1,     label: "CE rerank PASS 1 (cross_encoder)\\nretrieval.rerank.cross_encoder (GTE-ModernBERT, warm)\\n{alt 7806 ms}", cluster: backend, type: model, time_ms: 8985}
+  - {id: mp,      label: "CE rerank PASS 2 (multi_passage)\\nretrieval.rerank.multi_passage (per-passage rescore)\\n{alt 1507 ms — high variance}", cluster: backend, type: model, time_ms: 596}
+  - {id: engram,  label: "engram_links rerank\\nretrieval.rerank.engram_links (graph IO)\\n{alt 250 ms}", cluster: backend, type: io, time_ms: 753}
+  # --- backend: wiki fanout arm + cross-type CE fusion ---
+  - {id: wiki,    label: "wiki_candidates fanout\\nretrieval.provider.wiki_candidates\\n{alt 262 ms}", cluster: backend, type: io, time_ms: 331}
+  - {id: cefuse,  label: "CE rerank PASS 3 (wiki crossfuse)\\nretrieval.crossfuse.score_candidates_ce POST /rerank\\n{alt 5277 ms}", cluster: backend, type: model, time_ms: 8081}
+  # --- backend: tail side-effects (DB writes relocated to backend by forward-only) ---
+  - {id: sideeff, label: "DB side-effects\\ntools.recall._apply_recall_db_side_effects\\n(heat-boost + record_access — moved to backend)\\n{alt (in-band)}", cluster: backend, type: io, time_ms: 195}
+  # --- core: return ---
+  - {id: results, label: "ranked results returned to caller\\n(core forwarder returns backend payload)", cluster: core, type: compute, time_ms: 1}
+
+edges:
+  - {src: entry,     dst: qanalysis, order: 1, label: "POST /recall"}
+  - {src: qanalysis, dst: fts,       order: 2}
+  - {src: fts,       dst: embed,     order: 3}
+  - {src: embed,     dst: vector,    order: 4, label: "query vector"}
+  - {src: vector,    dst: ppr,       order: 5}
+  - {src: ppr,       dst: spread,    order: 6}
+  - {src: spread,    dst: entities,  order: 7}
+  - {src: entities,  dst: fusion,    order: 8, label: "signals"}
+  - {src: fusion,    dst: build,     order: 9, label: "top ids"}
+  - {src: build,     dst: ce1,       order: 10, label: "hydrated rows"}
+  - {src: ce1,       dst: mp,        order: 11}
+  - {src: mp,        dst: engram,    order: 12}
+  - {src: engram,    dst: wiki,      order: 13, label: "memory arm done"}
+  - {src: wiki,      dst: cefuse,    order: 14}
+  - {src: cefuse,    dst: sideeff,   order: 15}
+  - {src: sideeff,   dst: results,   order: 16, label: "return payload"}
