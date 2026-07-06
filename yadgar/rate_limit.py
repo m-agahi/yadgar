@@ -38,13 +38,19 @@ class TokenBucketRateLimiter:
 
         Returns False (rate-limited) when the bucket is empty.
         """
+        from yadgar.metrics import record_cache_evict, record_cache_hit, record_cache_miss
+
         now = time.monotonic()
         with self._lock:
             if key not in self._buckets:
+                record_cache_miss("rate_limit")
                 # Evict oldest entry if at capacity
                 if len(self._buckets) >= _MAX_KEYS:
                     self._buckets.popitem(last=False)
+                    record_cache_evict("rate_limit")
                 self._buckets[key] = (self._capacity, now)
+            else:
+                record_cache_hit("rate_limit")
 
             tokens, last_time = self._buckets[key]
             elapsed = now - last_time

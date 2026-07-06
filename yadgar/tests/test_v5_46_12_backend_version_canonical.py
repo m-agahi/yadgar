@@ -63,12 +63,13 @@ class TestBackendVersionConstant:
         )
 
     def test_backend_version_value(self) -> None:
-        """yadgar.BACKEND_VERSION must be '5.15.0' (bumped in recall backend forward-only)."""
+        """yadgar.BACKEND_VERSION must be '5.16.0' (bumped in v5.109 Car 0 — the
+        backend CacheStatsCollector dual-emit lives in embed_service_metrics.py)."""
         import yadgar
 
-        assert yadgar.BACKEND_VERSION == "5.15.0", (
-            f"yadgar.BACKEND_VERSION = {yadgar.BACKEND_VERSION!r}, expected '5.15.0'.\n"
-            "Fix: set BACKEND_VERSION = '5.15.0' in yadgar/__init__.py."
+        assert yadgar.BACKEND_VERSION == "5.16.0", (
+            f"yadgar.BACKEND_VERSION = {yadgar.BACKEND_VERSION!r}, expected '5.16.0'.\n"
+            "Fix: set BACKEND_VERSION = '5.16.0' in yadgar/__init__.py."
         )
 
 

@@ -80,11 +80,16 @@ class WriteGate:
         """
         import time
 
+        from yadgar.metrics import record_cache_hit, record_cache_miss
+
         ttl = self._settings.PREDICTIVE_CODING_ENTITY_TTL_SECONDS
         now = time.monotonic()
         if self._entity_cache is None or ttl == 0 or (now - self._entity_cache_ts) >= ttl:
+            record_cache_miss("predictive_entities")
             self._entity_cache = self._storage.get_all_entities(min_heat=0.0, include_archived=True)
             self._entity_cache_ts = now
+        else:
+            record_cache_hit("predictive_entities")
         return self._entity_cache
 
     def invalidate_entity_cache(self) -> None:

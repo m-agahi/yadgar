@@ -1,5 +1,53 @@
 {
   "_comment": "I33 observe-coverage allowlist. Governance mirrors .complexity-allowlist.json (I30): every entry needs a valid category and a rationale >= 40 chars; a stale entry (fn no longer in scope) hard-fails even in warn-mode. Categories: hot-loop, generated, trivial, property, dunder, framework-instrumented, test, pre-existing. P1 (retrieval read path, ADR-0034) populated the retrieval-area exemptions below. The low-value presentation/CLI/generated/bootstrap tail is exempted en-masse via _exempt_globs (path-glob, one entry per directory or file). ADR-0040 option B (I33 glob blind-spot): _exempt_globs now hold ONLY CATEGORICALLY-non-observable dirs/files (a future fn there is also boilerplate: CLI glue, seed/export/migration codegen, package/logging/observe/timing framework, pure-render presentation files with no I/O). MIXED-logic files (viz_server.py, graph_api.py that COMPUTE the graph — real observable work) were removed from the glob and their real fns tier-instrumented @observe or given a governed per-fn exemption, so a NEW/modified fn there is no longer auto-invisible. Do NOT bulk-add all ~1,600 in-scope functions here.",
+  "cache:Cache._is_expired": {
+    "category": "trivial",
+    "rationale": "Pure two-line TTL predicate (clock() - write_ts > ttl); no I/O, no ops decision. Called under the lock from the already-@observe'd Cache.get; a span/metric per get would double-instrument the hot path with zero dashboard value."
+  },
+  "cache:Cache._record_hit": {
+    "category": "trivial",
+    "rationale": "One-line internal counter bump (self.hits += 1) plus an optional record_cache_hit call (itself framework-instrumented). Called from the @observe'd Cache.get; wrapping it adds recursive metric noise on every get."
+  },
+  "cache:Cache._record_miss": {
+    "category": "trivial",
+    "rationale": "One-line internal counter bump (self.misses += 1) plus an optional record_cache_miss call (itself framework-instrumented). Called from the @observe'd Cache.get; wrapping it adds recursive metric noise on every miss."
+  },
+  "cache:Cache._record_evict": {
+    "category": "trivial",
+    "rationale": "One-line delegation to record_cache_evict (itself framework-instrumented) on the cold-tier eviction path. Called from the @observe'd Cache.put; a span/metric here double-instruments the same eviction event."
+  },
+  "wiki:_current_wiki_epoch": {
+    "category": "trivial",
+    "rationale": "Two-line guarded read of the global structural wiki epoch (_current_epoch(None) from the shadow bus) folded into the wiki_read/wiki_query cache keys. No I/O of its own, no ops decision; the enclosing @_tool wiki_read/wiki_query already carry a span source."
+  },
+  "dispatch_helper:_current_wiki_epoch": {
+    "category": "trivial",
+    "rationale": "Two-line guarded read of the global structural wiki epoch (_current_epoch(None) from the shadow bus) folded into the agent-prompt prelude cache key. No I/O of its own; the enclosing @_tool agent_dispatch_prelude already carries a span source."
+  },
+  "metrics:record_cache_hit": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: increments the generic yadgar_cache_hit_total{cache} counter. Circular import with observe.py; wrapping a per-hit metric writer in @observe adds recursive span/metric noise at high per-call cardinality."
+  },
+  "metrics:record_cache_miss": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: increments the generic yadgar_cache_miss_total{cache} counter. Circular import with observe.py; wrapping a per-miss metric writer in @observe adds recursive span/metric noise at high per-call cardinality."
+  },
+  "metrics:record_cache_evict": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: increments the generic yadgar_cache_evictions_total{cache} counter. Circular import with observe.py; wrapping an eviction-counter writer in @observe adds recursive metric noise."
+  },
+  "metrics:set_cache_size": {
+    "category": "framework-instrumented",
+    "rationale": "Observability framework primitive: sets the generic yadgar_cache_size_entries{cache} gauge at scrape/op time. Circular import with observe.py; wrapping a gauge setter in @observe adds recursive metric noise."
+  },
+  "embed_service_metrics:CacheStatsCollector.collect": {
+    "category": "framework-instrumented",
+    "rationale": "Prometheus Collector protocol method (a generator that yields MetricFamily objects at scrape time). It IS the observability surface for the backend CE/embed cache dual-emit; @observe cannot wrap a generator without breaking yield semantics, and instrumenting the scrape emitter is recursive."
+  },
+  "embed_service_metrics:_default_backend_cache_instances": {
+    "category": "framework-instrumented",
+    "rationale": "Scrape-time data source for CacheStatsCollector: lazy-imports embed_service and returns the CE/embed LRUCache instances. Framework primitive read at /metrics scrape only; instrumenting the metrics-collector's own accessor is recursive noise."
+  },
   "_exempt_globs": {
     "yadgar/cli/**": {
       "category": "generated",

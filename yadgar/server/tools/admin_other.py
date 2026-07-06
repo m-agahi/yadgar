@@ -40,7 +40,17 @@ def forget(memory_id: int) -> dict:
     memory = storage.get_memory(memory_id)
     if memory is None:
         return {"memory_id": memory_id, "status": "not_found"}
+    directory = memory.get("directory_context")
     storage.delete_memory(memory_id)
+    # v5.111.0 (Car 1): a delete is a STRUCTURAL write — bump the directory's
+    # epoch (normalized to git-root, same key project_brief reads) so any cached
+    # project_brief for that dir busts. Guarded: must never break the delete.
+    try:
+        from yadgar.server.tools.project import _bump_epoch_for_context  # noqa: PLC0415
+
+        _bump_epoch_for_context(directory)
+    except Exception:  # noqa: BLE001 - instrumentation must never break the delete
+        pass
     return {"memory_id": memory_id, "status": "deleted"}
 
 

@@ -102,6 +102,37 @@ class _WikiMixin:
 
     # ------------------------------------------------------------------ Wiki Pages
 
+    @observe(tier="hot", name="storage.wiki._bump_wiki_epoch")
+    def _bump_wiki_epoch(self) -> None:
+        """Car 2 (v5.113): advance the structural epoch on ANY wiki mutation.
+
+        This is the single provably-complete invalidation chokepoint for the
+        wiki_read / wiki_query / agent_dispatch_prelude caches: every wiki write
+        funnels through insert/update/delete_wiki_page or set_wiki_page_metadata,
+        and each calls this on success. A GLOBAL bump (``bump_epoch(None)`` →
+        ``_GLOBAL_GEN``) is used deliberately: at the storage layer we hold only
+        a ``page_id``, not the normalized ``(directory, branch)`` the reads key
+        on (wiki_read keys on ``caller_dir.rstrip("/")`` + an ``os.getcwd()``
+        branch — nothing like project_brief's git-root). A global bump folds into
+        ``_current_epoch(dir)`` for EVERY dir, so it busts the cached read
+        regardless of how read and write each normalized the directory — the
+        normalization-proof bust (no decorative-epoch bug, cf. Car 1).
+
+        agent_prompt_save is itself a wiki write (wiki.add → update/insert), so
+        the prelude cache busts through this same hook — no separate trigger.
+
+        Coarser than strictly needed (busts all dirs + the project_brief/recall
+        shadow keys), but correct-by-superset and wiki writes are rare, so the
+        hit-rate cost is negligible. Fully guarded: instrumentation must never
+        break or roll back the write it follows.
+        """
+        try:
+            from yadgar.server.tools._recall_shadow import bump_epoch  # noqa: PLC0415
+
+            bump_epoch(None)
+        except Exception:  # pragma: no cover - must never break the write
+            pass
+
     @trace_span("storage.wiki.insert_wiki_page")
     def insert_wiki_page(self, page: dict, branch: str | None = None) -> int:
         """Insert a new wiki page, return its integer ID.
@@ -187,6 +218,7 @@ class _WikiMixin:
             "COMMIT TRANSACTION",
             params,
         )
+        self._bump_wiki_epoch()  # Car 2: bust wiki_read/query/prelude caches
         return pid
 
     @trace_span("storage.wiki.update_wiki_page")
@@ -269,6 +301,7 @@ class _WikiMixin:
             "COMMIT TRANSACTION",
             params,
         )
+        self._bump_wiki_epoch()  # Car 2: bust wiki_read/query/prelude caches
         return True
 
     @trace_span("storage.wiki.set_wiki_page_metadata")
@@ -343,6 +376,7 @@ class _WikiMixin:
             "COMMIT TRANSACTION",
             params,
         )
+        self._bump_wiki_epoch()  # Car 2: bust wiki_read/query/prelude caches
         return True
 
     @trace_span("storage.wiki.get_wiki_page")
@@ -496,6 +530,7 @@ class _WikiMixin:
             "DELETE type::record('wiki_page', $id)",
             {"id": pid},
         )
+        self._bump_wiki_epoch()  # Car 2: bust wiki_read/query/prelude caches
         return True
 
     @trace_span("storage.wiki.list_wiki_pages")

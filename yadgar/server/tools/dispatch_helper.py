@@ -58,6 +58,59 @@ _TOTAL_BUDGET = 2_000
 _CONTEXT_BUDGET = 2_000
 
 
+# ── Car 2 (v5.113): agent-prompt lookup cache ─────────────────────────────────
+#
+# The prelude is per-pattern-mostly-static: the only expensive, pattern-dependent
+# work is the agent-prompt slug read (_read_agent_prompt("agent-prompt-<pattern>")
+# → a storage lookup). task_topic affects only the trivial recall-hint line, and
+# include_context=True pulls in non-deterministic recall/wiki_query — so we cache
+# ONLY the pattern-static prompt-lookup result, keyed by (pattern, wiki epoch).
+# agent_prompt_save is itself a wiki write → it bumps the global wiki epoch (via
+# storage._bump_wiki_epoch) → this key moves → a stale prompt can never be served.
+_PROMPT_CACHE_TTL = 120.0
+
+
+def _current_wiki_epoch() -> int:
+    """Global structural wiki epoch (bumped on every wiki write, incl. agent_prompt_save)."""
+    try:
+        from yadgar.server.tools._recall_shadow import _current_epoch  # noqa: PLC0415
+
+        return _current_epoch(None)
+    except Exception:
+        return 0
+
+
+def _make_prompt_cache():
+    from yadgar.cache import TTL, Cache  # noqa: PLC0415
+
+    return Cache(
+        name="agent_prompt_prelude",
+        max_entries=128,  # per pattern
+        invalidation=TTL(_PROMPT_CACHE_TTL),  # epoch in key + TTL backstop
+        deep_copy=True,  # prompt-result dict handed to caller / mutated downstream
+        obs_tier="cold",  # low call rate
+    )
+
+
+_prompt_cache = _make_prompt_cache()
+
+
+@observe(tier="stage", name="tools.dispatch_helper._cached_agent_prompt")
+def _cached_agent_prompt(pattern: str, storage) -> dict | None:
+    """Epoch-cached wrapper around _read_agent_prompt for the prelude's pattern-static
+    lookup. Cache-miss result is IDENTICAL to a direct _read_agent_prompt call."""
+    from yadgar.server.tools.agent_prompts import _read_agent_prompt  # noqa: PLC0415
+
+    key = (pattern, _current_wiki_epoch())
+    hit = _prompt_cache.get(key)
+    if hit is not None:
+        return hit
+    result = _read_agent_prompt(f"agent-prompt-{pattern}", storage=storage)
+    if result is not None:  # do not cache None misses (cheap; create bumps epoch)
+        _prompt_cache.put(key, result)
+    return result
+
+
 @observe(tier="stage", name="tools.dispatch_helper._record_prelude_marker")
 def _record_prelude_marker(storage, directory: str | None) -> None:
     """Best-effort record of agent_dispatch_prelude call (read-side nudge, #69).
@@ -136,9 +189,7 @@ def agent_dispatch_prelude(
 
     if pattern and get_settings().AGENT_PROMPT_LIBRARY_ENABLED:
         try:
-            from yadgar.server.tools.agent_prompts import _read_agent_prompt  # noqa: PLC0415
-
-            prompt_result = _read_agent_prompt(f"agent-prompt-{pattern}", storage=storage)
+            prompt_result = _cached_agent_prompt(pattern, storage)
             if prompt_result and prompt_result.get("content"):
                 raw_content = prompt_result["content"]
                 version = prompt_result.get("version", "?")

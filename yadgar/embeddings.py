@@ -301,12 +301,14 @@ class EmbeddingEngine:
                 self._query_cache.move_to_end(text)
                 try:
                     from yadgar.metrics import (
-                        yadgar_cache_hit_total,
+                        record_cache_hit,
                         yadgar_embedding_cache_hits_total,
                     )
 
+                    # Legacy unlabelled counter kept for the dual-emit window
+                    # (removed on the scheduled-rename tick with a dashboard PR).
                     yadgar_embedding_cache_hits_total.inc()
-                    yadgar_cache_hit_total.labels(cache="embedding").inc()
+                    record_cache_hit("embedding")
                 except Exception:
                     pass
                 return self._query_cache[text]
@@ -322,16 +324,23 @@ class EmbeddingEngine:
             result = arr.tobytes()
             self._query_cache[text] = result
             self._query_cache.move_to_end(text)
+            _evicted = False
             if len(self._query_cache) > _CACHE_MAX:
                 self._query_cache.popitem(last=False)
+                _evicted = True
             try:
                 from yadgar.metrics import (
-                    yadgar_cache_miss_total,
+                    record_cache_evict,
+                    record_cache_miss,
                     yadgar_embedding_cache_misses_total,
                 )
 
+                # Legacy unlabelled counter kept for the dual-emit window
+                # (removed on the scheduled-rename tick with a dashboard PR).
                 yadgar_embedding_cache_misses_total.inc()
-                yadgar_cache_miss_total.labels(cache="embedding").inc()
+                record_cache_miss("embedding")
+                if _evicted:
+                    record_cache_evict("embedding")
             except Exception:
                 pass
             return result

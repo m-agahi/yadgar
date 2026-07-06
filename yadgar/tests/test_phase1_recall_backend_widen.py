@@ -604,11 +604,11 @@ class TestBackend400sRemoved:
 
 
 class TestBackendVersionBump:
-    """§5.5: BACKEND_VERSION must be 5.15.0."""
+    """§5.5: BACKEND_VERSION must be 5.16.0."""
 
-    def test_backend_version_is_5_15_0(self):
+    def test_backend_version_is_5_16_0(self):
         import yadgar
 
-        assert yadgar.BACKEND_VERSION == "5.15.0", (
-            f"BACKEND_VERSION={yadgar.BACKEND_VERSION!r}; expected '5.15.0'"
+        assert yadgar.BACKEND_VERSION == "5.16.0", (
+            f"BACKEND_VERSION={yadgar.BACKEND_VERSION!r}; expected '5.16.0'"
         )

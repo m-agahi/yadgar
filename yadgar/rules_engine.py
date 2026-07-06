@@ -305,6 +305,9 @@ class RulesEngine:
                 "is_active": True,
             }
         )
+        from yadgar.metrics import record_cache_evict
+
+        record_cache_evict("rules", len(self._applicable_rules_cache))
         self._applicable_rules_cache.clear()
         return rule_id
 
@@ -324,8 +327,12 @@ class RulesEngine:
         delete_rule).  Use this method in hot paths; skip it only when
         freshness is required immediately after a rule mutation.
         """
+        from yadgar.metrics import record_cache_hit, record_cache_miss
+
         if directory in self._applicable_rules_cache:
+            record_cache_hit("rules")
             return self._applicable_rules_cache[directory]
+        record_cache_miss("rules")
 
         # Get global rules
         global_rules = self._storage.get_rules_for_scope("global")
@@ -439,6 +446,9 @@ class RulesEngine:
         if self._storage.get_rule(rule_id) is None:
             return False
         self._storage.update_rule(rule_id, {"is_active": False})
+        from yadgar.metrics import record_cache_evict
+
+        record_cache_evict("rules", len(self._applicable_rules_cache))
         self._applicable_rules_cache.clear()
         return True
 
