@@ -120,6 +120,12 @@ class Node:
     cluster: str | None = None
     time_ms: float | None = None
     type: str = "compute"
+    # For `type: cache_class` — the namespace rows drawn INSIDE the single
+    # record-shaped box. Each entry is one of:
+    #   * a str (the row text), or
+    #   * a mapping {id: <port-id>, text: <row text>} so edges can target the
+    #     row directly via `port: <port-id>` (record ports).
+    namespaces: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -129,6 +135,11 @@ class Edge:
     order: int | None = None
     label: str = ""
     type: str = "flow"
+    # Optional record-port on the DESTINATION cache_class node, so the arrow
+    # lands on a specific namespace row (`"dst":"port"`) instead of the box edge.
+    port: str | None = None
+    # Optional record-port on the SOURCE cache_class node (`"src":"port" -> ...`).
+    src_port: str | None = None
 
 
 @dataclass
@@ -175,6 +186,7 @@ def load_spec(path: Path) -> DiagramSpec:
             cluster=(str(n["cluster"]) if n.get("cluster") is not None else None),
             time_ms=_as_float(n.get("time_ms")),
             type=str(n.get("type", "compute")),
+            namespaces=list(n.get("namespaces", []) or []),
         )
         for n in raw.get("nodes", [])
         if isinstance(n, dict) and "id" in n
@@ -187,6 +199,8 @@ def load_spec(path: Path) -> DiagramSpec:
             order=(int(e["order"]) if e.get("order") is not None else None),
             label=str(e.get("label", "")),
             type=str(e.get("type", "flow")),
+            port=(str(e["port"]) if e.get("port") is not None else None),
+            src_port=(str(e["src_port"]) if e.get("src_port") is not None else None),
         )
         for e in raw.get("edges", [])
         if isinstance(e, dict) and "src" in e and "dst" in e
@@ -235,6 +249,50 @@ def _esc(text: str) -> str:
     return "".join(out)
 
 
+def _esc_record_field(text: str) -> str:
+    r"""Escape row text for use inside a Graphviz record label field.
+
+    On top of the normal double-quote/backslash escaping done by :func:`_esc`,
+    record labels give structural meaning to ``| { } < >`` and to spaces at the
+    field boundary. Those must be backslash-escaped so they render literally.
+    ``\n``/``\l``/``\r`` line-breaks are still honoured (passed through _esc).
+    """
+    out: list[str] = []
+    for ch in _esc(text):
+        if ch in "|{}<> ":
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+NODE_STYLES_CACHE_CLASS = {
+    "shape": "Mrecord",
+    "style": "filled,dashed",
+    "fillcolor": "#e7f6e7",
+    "color": "#3a8f3a",
+}
+
+
+def _cache_class_label(node: Node) -> str:
+    """Build a record label: one title field + one field per namespace row.
+
+    Emitted UNBRACED so that under ``rankdir=LR`` the fields stack vertically
+    (title on top, namespace rows beneath) — a single box with internal rows.
+    A namespace entry may be a mapping ``{id, text}`` to attach a record port
+    ``<id>`` so edges can target that row via ``dst:port``.
+    """
+    fields: list[str] = [_esc_record_field(node.label or node.id)]
+    for ns in node.namespaces:
+        if isinstance(ns, dict):
+            port = str(ns.get("id", "")).strip()
+            text = _esc_record_field(str(ns.get("text", "")))
+            fields.append(f"<{port}> {text}" if port else text)
+        else:
+            fields.append(_esc_record_field(str(ns)))
+    return "|".join(fields)
+
+
 def _node_label(node: Node) -> str:
     """Build the visible node label, appending a timing line when present."""
     label = node.label or node.id
@@ -262,6 +320,14 @@ def _computed_total(spec: DiagramSpec) -> float | None:
 
 
 def _emit_node(node: Node, indent: str) -> str:
+    if node.type == "cache_class":
+        # Record-shaped ONE box with namespace rows. The label is already fully
+        # record-escaped by _cache_class_label, so emit it verbatim rather than
+        # sending it back through _esc (which would double-escape the record
+        # structural chars). Non-label attrs still go through _attr_str.
+        style = {**NODE_STYLES_CACHE_CLASS}
+        attrs = f'label="{_cache_class_label(node)}", {_attr_str(style)}'
+        return f'{indent}"{_esc(node.id)}" [{attrs}];'
     style = {**(NODE_STYLES.get(node.type, NODE_DEFAULT))}
     style["label"] = _node_label(node)
     return f'{indent}"{_esc(node.id)}" [{_attr_str(style)}];'
@@ -298,13 +364,21 @@ def _cluster_lines(cluster: Cluster, members: list[Node]) -> list[str]:
     return out
 
 
+def _endpoint(node_id: str, port: str | None) -> str:
+    """Render an edge endpoint, optionally with a record port (`"node":"port"`)."""
+    base = f'"{_esc(node_id)}"'
+    return f'{base}:"{_esc(port)}"' if port else base
+
+
 def _edge_line(edge: Edge) -> str:
     estyle = {**(EDGE_STYLES.get(edge.type, EDGE_DEFAULT))}
     parts = [f'{k}="{_esc(v)}"' for k, v in estyle.items()]
     elabel = edge.label or (str(edge.order) if edge.order is not None else "")
     if elabel:
         parts.append(f'label="{_esc(elabel)}"')
-    return f'  "{_esc(edge.src)}" -> "{_esc(edge.dst)}" [{", ".join(parts)}];'
+    src = _endpoint(edge.src, edge.src_port)
+    dst = _endpoint(edge.dst, edge.port)
+    return f"  {src} -> {dst} [{', '.join(parts)}];"
 
 
 def render_dot(spec: DiagramSpec) -> str:

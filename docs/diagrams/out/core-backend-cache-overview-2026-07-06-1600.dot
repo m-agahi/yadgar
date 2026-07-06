@@ -21,7 +21,7 @@ LEFT=CORE (yadgar/, SHIPPED core Cache #164) · RIGHT=BACKEND (yadgar/backend/, 
     "write_tools" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="CORE write tools\nmemorize · forget · anchor\nmemory_update(content) · wiki_add"];
     "bg_cycles" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="CORE background cycles\nconsolidation / nightly (merge·dedup·create·delete)\nvacuum (delete) · reembed (embedding change)"];
     "session" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="CORE session / state\ncheckpoint · session SR transition\n(stay in core — no cache, no epoch bump)"];
-    "core_cache" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="CORE unified Cache  [SHIPPED #164]\nyadgar/cache.py — _REGISTRY of namespaces:\nproject_brief · wiki_read · wiki_query · agent_prompt_prelude\nconfig · branch/default_branch · rate_limit\n(epoch / TTL invalidation, stays in core)"];
+    "core_cache" [label="Core\ Cache\ —\ yadgar/cache.py\ (ONE\ class,\ SHIPPED\ #164)|<project_brief> project_brief|<wiki_read> wiki_read|<wiki_query> wiki_query|<agent_prompt_prelude> agent_prompt_prelude|<config> config|<branch> branch\ /\ default_branch|<rate_limit> rate_limit|(epoch\ /\ TTL\ invalidation\ —\ stays\ in\ core)", shape="Mrecord", style="filled,dashed", fillcolor="#e7f6e7", color="#3a8f3a"];
     "epoch_bus" [shape="diamond", style="filled", fillcolor="#fdf3c8", label="data_epoch bus\n_recall_shadow.bump_epoch → structural data_epoch++\nbumped by writes AND background cycles\n(pure heat-decay does NOT bump — heat never cached)"];
   }
   subgraph "cluster_backend" {
@@ -32,11 +32,7 @@ LEFT=CORE (yadgar/, SHIPPED core Cache #164) · RIGHT=BACKEND (yadgar/backend/, 
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
     "backend_recall" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="backend.recall  (POST /recall)\nruns the WHOLE pipeline:\nencode_query · vector · fts · fanout/fusion · spreading · ppr\nentities · wiki-candidates · CE passes · build_results · engram_links · db"];
-    "ns_ce" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="backend cache: ce   [SHIPPED cache, folds into NEW class]\nkey query_sha:text_sha:ckpt_sha · CE score · ModelCkpt\ncrossfuse POPULATES → cross_encoder LOOKUP = HIT (#41 within-req dedup)"];
-    "ns_embed" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="backend cache: embed  [SHIPPED cache, folds into NEW class]\nkey text_sha:ckpt_sha · vector · ModelCkpt\nencode_query served warm"];
-    "ns_mdoc" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="backend cache: memory_doc  [NEW]\nkey memory_id:data_epoch · IMMUTABLE projection · DataEpoch\nbuild_results id→doc (heat/access fetched fresh, never cached)"];
-    "ns_slot" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="backend cache: engram_slot  [NEW]\nkey slot_index:data_epoch · [memory_id,…] · DataEpoch\nengram_links slot→ids"];
-    "ns_graph" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="backend cache: graph  [NEW]\nkey entity_id:data_epoch · [neighbour,…] · DataEpoch\nspreading + ppr entity→neighbours"];
+    "backend_cache" [label="Backend\ Cache\ —\ yadgar/backend/cache.py\ (ONE\ class)|<ce> ce\ \ ·\ \ query_sha:text_sha:ckpt\ \ ·\ \ ModelCkpt\ [SHIPPED,\ folds\ in]|<embed> embed\ \ ·\ \ text_sha:ckpt\ \ ·\ \ ModelCkpt\ [SHIPPED,\ folds\ in]|<memory_doc> memory_doc\ \ ·\ \ memory_id:data_epoch\ \ ·\ \ DataEpoch\ [NEW]|<engram_slot> engram_slot\ \ ·\ \ slot_index:data_epoch\ \ ·\ \ DataEpoch\ [NEW]|<graph> graph\ \ ·\ \ entity_id:data_epoch\ \ ·\ \ DataEpoch\ [NEW]", shape="Mrecord", style="filled,dashed", fillcolor="#e7f6e7", color="#3a8f3a"];
     "ml" [shape="box", style="filled", fillcolor="#f5e1f5", label="ML client (LocalMLClient)\nCE model + embed model"];
     "db" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="Storage / DB\nSurrealDB"];
   }
@@ -55,19 +51,19 @@ LEFT=CORE (yadgar/, SHIPPED core Cache #164) · RIGHT=BACKEND (yadgar/backend/, 
   "write_tools" -> "epoch_bus" [color="#333333", style="solid", label="bump_epoch"];
   "bg_cycles" -> "epoch_bus" [color="#333333", style="solid", label="bump_epoch (structural)"];
   "recall_fwd" -> "backend_recall" [color="#333333", style="solid", label="HTTP POST /recall (traceparent)"];
-  "epoch_bus" -> "ns_mdoc" [color="#6a8f3a", style="dashed", label="data_epoch on each recall req → in key"];
-  "epoch_bus" -> "ns_slot" [color="#6a8f3a", style="dashed", label="data_epoch → in key"];
-  "epoch_bus" -> "ns_graph" [color="#6a8f3a", style="dashed", label="data_epoch → in key"];
-  "backend_recall" -> "ns_ce" [color="#333333", style="solid", label="CE passes (crossfuse/cross_encoder/multi_passage)"];
-  "backend_recall" -> "ns_embed" [color="#333333", style="solid", label="encode_query"];
-  "backend_recall" -> "ns_mdoc" [color="#333333", style="solid", label="build_results"];
-  "backend_recall" -> "ns_slot" [color="#333333", style="solid", label="engram_links"];
-  "backend_recall" -> "ns_graph" [color="#333333", style="solid", label="spreading + ppr"];
-  "ns_ce" -> "ml" [color="#333333", style="solid", label="miss → CE model (ckpt_sha busts)"];
-  "ns_embed" -> "ml" [color="#333333", style="solid", label="miss → embed model (ckpt_sha busts)"];
-  "ns_mdoc" -> "db" [color="#333333", style="solid", label="miss → fetch doc"];
-  "ns_slot" -> "db" [color="#333333", style="solid", label="miss → fetch slot"];
-  "ns_graph" -> "db" [color="#333333", style="solid", label="miss → fetch neighbours"];
+  "epoch_bus" -> "backend_cache":"memory_doc" [color="#6a8f3a", style="dashed", label="data_epoch on each recall req → in key"];
+  "epoch_bus" -> "backend_cache":"engram_slot" [color="#6a8f3a", style="dashed", label="data_epoch → in key"];
+  "epoch_bus" -> "backend_cache":"graph" [color="#6a8f3a", style="dashed", label="data_epoch → in key"];
+  "backend_recall" -> "backend_cache":"ce" [color="#333333", style="solid", label="CE passes (crossfuse/cross_encoder/multi_passage)"];
+  "backend_recall" -> "backend_cache":"embed" [color="#333333", style="solid", label="encode_query"];
+  "backend_recall" -> "backend_cache":"memory_doc" [color="#333333", style="solid", label="build_results"];
+  "backend_recall" -> "backend_cache":"engram_slot" [color="#333333", style="solid", label="engram_links"];
+  "backend_recall" -> "backend_cache":"graph" [color="#333333", style="solid", label="spreading + ppr"];
+  "backend_cache":"ce" -> "ml" [color="#333333", style="solid", label="miss → CE model (ckpt_sha busts)"];
+  "backend_cache":"embed" -> "ml" [color="#333333", style="solid", label="miss → embed model (ckpt_sha busts)"];
+  "backend_cache":"memory_doc" -> "db" [color="#333333", style="solid", label="miss → fetch doc"];
+  "backend_cache":"engram_slot" -> "db" [color="#333333", style="solid", label="miss → fetch slot"];
+  "backend_cache":"graph" -> "db" [color="#333333", style="solid", label="miss → fetch neighbours"];
   "leg_shipped" -> "leg_new" [color="#999999", style="dashed"];
   "leg_new" -> "leg_bound" [color="#999999", style="dashed"];
 }
