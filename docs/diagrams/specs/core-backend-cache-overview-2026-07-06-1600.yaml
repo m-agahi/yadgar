@@ -73,18 +73,38 @@ nodes:
   - {id: bg_cycles,  label: "CORE background cycles\\nconsolidation / nightly (merge·dedup·create·delete)\\nvacuum (delete) · reembed (embedding change)", cluster: core, type: compute}
   - {id: session,    label: "CORE session / state\\ncheckpoint · session SR transition\\n(stay in core — no cache, no epoch bump)", cluster: core, type: compute}
 
-  - {id: core_cache, label: "CORE unified Cache  [SHIPPED #164]\\nyadgar/cache.py — _REGISTRY of namespaces:\\nproject_brief · wiki_read · wiki_query · agent_prompt_prelude\\nconfig · branch/default_branch · rate_limit\\n(epoch / TTL invalidation, stays in core)", cluster: core, type: cache}
+  # CORE unified Cache — ONE class, N namespaces as record rows INSIDE one box.
+  - id: core_cache
+    label: "Core Cache — yadgar/cache.py (ONE class, SHIPPED #164)"
+    cluster: core
+    type: cache_class
+    namespaces:
+      - {id: project_brief,        text: "project_brief"}
+      - {id: wiki_read,            text: "wiki_read"}
+      - {id: wiki_query,           text: "wiki_query"}
+      - {id: agent_prompt_prelude, text: "agent_prompt_prelude"}
+      - {id: config,               text: "config"}
+      - {id: branch,               text: "branch / default_branch"}
+      - {id: rate_limit,           text: "rate_limit"}
+      - "(epoch / TTL invalidation — stays in core)"
   - {id: epoch_bus,  label: "data_epoch bus\\n_recall_shadow.bump_epoch → structural data_epoch++\\nbumped by writes AND background cycles\\n(pure heat-decay does NOT bump — heat never cached)", cluster: core, type: gate}
 
   # ================= RIGHT COLUMN — BACKEND =================
   - {id: backend_recall, label: "backend.recall  (POST /recall)\\nruns the WHOLE pipeline:\\nencode_query · vector · fts · fanout/fusion · spreading · ppr\\nentities · wiki-candidates · CE passes · build_results · engram_links · db", cluster: backend, type: compute}
 
-  # backend unified Cache — 5 namespaces (ModelCkpt: ce/embed ; DataEpoch: the 3 data)
-  - {id: ns_ce,    label: "backend cache: ce   [SHIPPED cache, folds into NEW class]\\nkey query_sha:text_sha:ckpt_sha · CE score · ModelCkpt\\ncrossfuse POPULATES → cross_encoder LOOKUP = HIT (#41 within-req dedup)", cluster: backend, type: cache}
-  - {id: ns_embed, label: "backend cache: embed  [SHIPPED cache, folds into NEW class]\\nkey text_sha:ckpt_sha · vector · ModelCkpt\\nencode_query served warm", cluster: backend, type: cache}
-  - {id: ns_mdoc,  label: "backend cache: memory_doc  [NEW]\\nkey memory_id:data_epoch · IMMUTABLE projection · DataEpoch\\nbuild_results id→doc (heat/access fetched fresh, never cached)", cluster: backend, type: cache}
-  - {id: ns_slot,  label: "backend cache: engram_slot  [NEW]\\nkey slot_index:data_epoch · [memory_id,…] · DataEpoch\\nengram_links slot→ids", cluster: backend, type: cache}
-  - {id: ns_graph, label: "backend cache: graph  [NEW]\\nkey entity_id:data_epoch · [neighbour,…] · DataEpoch\\nspreading + ppr entity→neighbours", cluster: backend, type: cache}
+  # BACKEND unified Cache — ONE class, 5 namespaces as record rows INSIDE one box.
+  # ModelCkpt invalidation: ce/embed (ckpt_sha self-busts).
+  # DataEpoch invalidation: memory_doc/engram_slot/graph (data_epoch in key).
+  - id: backend_cache
+    label: "Backend Cache — yadgar/backend/cache.py (ONE class)"
+    cluster: backend
+    type: cache_class
+    namespaces:
+      - {id: ce,          text: "ce  ·  query_sha:text_sha:ckpt  ·  ModelCkpt [SHIPPED, folds in]"}
+      - {id: embed,       text: "embed  ·  text_sha:ckpt  ·  ModelCkpt [SHIPPED, folds in]"}
+      - {id: memory_doc,  text: "memory_doc  ·  memory_id:data_epoch  ·  DataEpoch [NEW]"}
+      - {id: engram_slot, text: "engram_slot  ·  slot_index:data_epoch  ·  DataEpoch [NEW]"}
+      - {id: graph,       text: "graph  ·  entity_id:data_epoch  ·  DataEpoch [NEW]"}
 
   - {id: ml,    label: "ML client (LocalMLClient)\\nCE model + embed model", cluster: backend, type: model}
   - {id: db,    label: "Storage / DB\\nSurrealDB", cluster: backend, type: store}
@@ -95,7 +115,7 @@ nodes:
   - {id: leg_bound,   label: "TWO caches, one per service — they NEVER merge.\\nONLY 2 signals cross core↔backend:\\nrecall() HTTP POST (solid) · data_epoch (async dashed)", cluster: legend, type: compute}
 
 edges:
-  # ---- WITHIN CORE: read tools → core cache; writes+cycles → epoch bus ----
+  # ---- WITHIN CORE: read tools → the ONE core cache box; writes+cycles → epoch bus ----
   - {src: read_tools,  dst: core_cache, type: flow,  label: "consult (project_brief/wiki/prelude)"}
   - {src: write_tools, dst: epoch_bus,  type: flow,  label: "bump_epoch"}
   - {src: bg_cycles,   dst: epoch_bus,  type: flow,  label: "bump_epoch (structural)"}
@@ -103,24 +123,25 @@ edges:
   # ---- THE BOUNDARY: exactly 2 signals cross core↔backend ----
   # (1) recall() forwards the call over HTTP  (solid flow)
   - {src: recall_fwd,  dst: backend_recall, type: flow, label: "HTTP POST /recall (traceparent)"}
-  # (2) data_epoch rides each recall request → the 3 DATA namespaces (async dashed)
-  - {src: epoch_bus,   dst: ns_mdoc,  type: async, label: "data_epoch on each recall req → in key"}
-  - {src: epoch_bus,   dst: ns_slot,  type: async, label: "data_epoch → in key"}
-  - {src: epoch_bus,   dst: ns_graph, type: async, label: "data_epoch → in key"}
+  # (2) data_epoch rides each recall request → the 3 DataEpoch rows of the ONE
+  #     backend cache box (async dashed). Ports land on the exact namespace row.
+  - {src: epoch_bus, dst: backend_cache, port: memory_doc,  type: async, label: "data_epoch on each recall req → in key"}
+  - {src: epoch_bus, dst: backend_cache, port: engram_slot, type: async, label: "data_epoch → in key"}
+  - {src: epoch_bus, dst: backend_cache, port: graph,       type: async, label: "data_epoch → in key"}
 
-  # ---- WITHIN BACKEND: recall pipeline stages → the namespace they consult ----
-  - {src: backend_recall, dst: ns_ce,    type: flow, label: "CE passes (crossfuse/cross_encoder/multi_passage)"}
-  - {src: backend_recall, dst: ns_embed, type: flow, label: "encode_query"}
-  - {src: backend_recall, dst: ns_mdoc,  type: flow, label: "build_results"}
-  - {src: backend_recall, dst: ns_slot,  type: flow, label: "engram_links"}
-  - {src: backend_recall, dst: ns_graph, type: flow, label: "spreading + ppr"}
-  # ce/embed invalidation is self-contained (ckpt_sha) — no cross-service signal
-  - {src: ns_ce,    dst: ml, type: flow, label: "miss → CE model (ckpt_sha busts)"}
-  - {src: ns_embed, dst: ml, type: flow, label: "miss → embed model (ckpt_sha busts)"}
+  # ---- WITHIN BACKEND: recall pipeline stages → the row of the ONE cache box they consult ----
+  - {src: backend_recall, dst: backend_cache, port: ce,          type: flow, label: "CE passes (crossfuse/cross_encoder/multi_passage)"}
+  - {src: backend_recall, dst: backend_cache, port: embed,       type: flow, label: "encode_query"}
+  - {src: backend_recall, dst: backend_cache, port: memory_doc,  type: flow, label: "build_results"}
+  - {src: backend_recall, dst: backend_cache, port: engram_slot, type: flow, label: "engram_links"}
+  - {src: backend_recall, dst: backend_cache, port: graph,       type: flow, label: "spreading + ppr"}
+  # ce/embed miss → ML model (ckpt_sha self-busts, no cross-service signal)
+  - {src: backend_cache, src_port: ce,    dst: ml, type: flow, label: "miss → CE model (ckpt_sha busts)"}
+  - {src: backend_cache, src_port: embed, dst: ml, type: flow, label: "miss → embed model (ckpt_sha busts)"}
   # data namespaces miss → DB fetch
-  - {src: ns_mdoc,  dst: db, type: flow, label: "miss → fetch doc"}
-  - {src: ns_slot,  dst: db, type: flow, label: "miss → fetch slot"}
-  - {src: ns_graph, dst: db, type: flow, label: "miss → fetch neighbours"}
+  - {src: backend_cache, src_port: memory_doc,  dst: db, type: flow, label: "miss → fetch doc"}
+  - {src: backend_cache, src_port: engram_slot, dst: db, type: flow, label: "miss → fetch slot"}
+  - {src: backend_cache, src_port: graph,       dst: db, type: flow, label: "miss → fetch neighbours"}
 
   # ---- legend wiring (visual grouping only) ----
   - {src: leg_shipped, dst: leg_new,   type: skip}
