@@ -1,0 +1,62 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Recall — FORWARD-ONLY, WARM cache-MISS (v5.108 / backend v5.15, real 2026-07-06)
+trace eeb62550 · wall 21977 ms · core=thin forwarder, backend=whole pipeline · CE 2x ≈ 17 s = the wall
+total ≈ 21.977 s";
+  subgraph "cluster_core" {
+    label="Core process (--cpus 1) — tool.recall FORWARDER only (POST /recall + return)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="recall() entry (FORWARDER)\ntool.recall: validate + detect branch/dir\nPOST backend /recall (traceparent propagated)\n~8-12 ms core overhead\n10 ms"];
+    "results" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="ranked results returned to caller\n(core forwarder returns backend payload)\n1 ms"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (--cpus 2) — backend.recall runs the ENTIRE pipeline (SurrealDB + rerank server + embed)";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "qanalysis" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="query analysis + routing\nretrieval.analyze_query (entities/routing)\n3 ms"];
+    "fts" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25\nretrieval.fts (branch clause injected)\n27 ms"];
+    "embed" [shape="box", style="filled", fillcolor="#f5e1f5", label="query embed\nretrieval.vector.encode_query (warm model)\n9 ms"];
+    "vector" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="vector KNN search\nretrieval.vector (HNSW ANN)\n59 ms"];
+    "ppr" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="personalized PageRank\nretrieval.ppr (entity seeds + graph walk)\n{alt 234 ms}\n208 ms"];
+    "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation BFS\nretrieval.spreading (v5.104 batched per-depth)\n{alt 1565 ms}\n1.444 s"];
+    "entities" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="entity extraction\nretrieval.graph.find_entities_in_content\n{alt 393 ms}\n385 ms"];
+    "fusion" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="convex / WRRF fusion\nretrieval.fusion (merge signals)\n{alt 311 ms}\n287 ms"];
+    "build" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="build_results final-fetch\nretrieval.build_results (WHERE id IN, v5.97 batched)\n{alt 1063 ms}\n866 ms"];
+    "ce1" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank PASS 1 (cross_encoder)\nretrieval.rerank.cross_encoder (GTE-ModernBERT, warm)\n{alt 7806 ms}\n8.985 s"];
+    "mp" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank PASS 2 (multi_passage)\nretrieval.rerank.multi_passage (per-passage rescore)\n{alt 1507 ms — high variance}\n596 ms"];
+    "engram" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="engram_links rerank\nretrieval.rerank.engram_links (graph IO)\n{alt 250 ms}\n753 ms"];
+    "wiki" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="wiki_candidates fanout\nretrieval.provider.wiki_candidates\n{alt 262 ms}\n331 ms"];
+    "cefuse" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank PASS 3 (wiki crossfuse)\nretrieval.crossfuse.score_candidates_ce POST /rerank\n{alt 5277 ms}\n8.081 s"];
+    "sideeff" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="DB side-effects\ntools.recall._apply_recall_db_side_effects\n(heat-boost + record_access — moved to backend)\n{alt (in-band)}\n195 ms"];
+  }
+  "entry" -> "qanalysis" [color="#333333", style="solid", label="POST /recall"];
+  "qanalysis" -> "fts" [color="#333333", style="solid", label="2"];
+  "fts" -> "embed" [color="#333333", style="solid", label="3"];
+  "embed" -> "vector" [color="#333333", style="solid", label="query vector"];
+  "vector" -> "ppr" [color="#333333", style="solid", label="5"];
+  "ppr" -> "spread" [color="#333333", style="solid", label="6"];
+  "spread" -> "entities" [color="#333333", style="solid", label="7"];
+  "entities" -> "fusion" [color="#333333", style="solid", label="signals"];
+  "fusion" -> "build" [color="#333333", style="solid", label="top ids"];
+  "build" -> "ce1" [color="#333333", style="solid", label="hydrated rows"];
+  "ce1" -> "mp" [color="#333333", style="solid", label="11"];
+  "mp" -> "engram" [color="#333333", style="solid", label="12"];
+  "engram" -> "wiki" [color="#333333", style="solid", label="memory arm done"];
+  "wiki" -> "cefuse" [color="#333333", style="solid", label="14"];
+  "cefuse" -> "sideeff" [color="#333333", style="solid", label="15"];
+  "sideeff" -> "results" [color="#333333", style="solid", label="return payload"];
+}
