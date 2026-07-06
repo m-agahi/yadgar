@@ -1,6 +1,12 @@
 # PLAN — CE Lever 2: `CROSS_ENCODER_TOP_K` trim (improvement-train task #28)
 
-**Status:** DRAFT — plan only, no code/PR. Audited 2026-07-03.
+> **DEFERRED PERMANENTLY (2026-07-06) — superseded by Ettin (#32). ARCHIVED.**
+> Swapping the CE model to Ettin (~8× faster) removes CE as the bottleneck, so
+> trimming `CROSS_ENCODER_TOP_K` becomes marginal — and the trim is quality-risky
+> (fewer candidates reranked). Never implemented. Revisit ONLY if Ettin stalls and
+> CE is still the binding constraint. The plan below is retained for reference.
+
+**Status:** DEFERRED PERMANENTLY (was DRAFT) — plan only, never implemented. Audited 2026-07-03.
 **Scope:** ONE config-default change + sweep-results doc. Config-only, no backend image bump.
 **Go/no-go lean:** CONDITIONAL — viable ONLY if the quality gate measures **recall@5 / MRR@5** (not @10). Predicted knee **K≈6–7**. See §6 audit — a recall@10 gate makes this lever a mechanical no-op.
 
