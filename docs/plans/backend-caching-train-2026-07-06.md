@@ -64,20 +64,48 @@ Recall's CE calls (`_rerank_cross_encoder`, `_score_candidates_ce`,
 That is the within-request dedup — **all queries, not repeat-gated.** Cross-request
 repeat hits come free on top (rare, but non-negative).
 
-## Invalidation — cross-service data-epoch
+## Invalidation — structural data-epoch (ALL mutators, not just writes)
 
 - **Model-stable** (`ce`, `embed`): `ckpt_sha` already in key → model swap busts.
   No change.
-- **Data-stable** (`memory_doc`, `engram_slot`, `graph`): need a **write-bust**.
-  Backend doesn't see memory/entity writes today (they enter via core
-  `memorize`). Solution mirrors core: a **global `data_epoch`** bumped by core on
-  writes (memorize/forget/entity/relationship — the core already runs
-  `_recall_shadow.bump_epoch`), **passed to the backend on each recall request**
-  (header/param) and **embedded in the data-namespace keys**. Stale keys then
-  naturally miss — epoch-in-key, no explicit cross-service bust call.
-  - `memory_doc` special case: memory **content is immutable** after write →
-    content can be cached ~bust-free; only heat/metadata is stale-tolerant →
-    short TTL layer or accept staleness for ranking-neutral fields.
+- **Data-stable** (`memory_doc`, `engram_slot`, `graph`): keyed by a
+  cross-service **structural `data_epoch`**, bumped by core, passed to the backend
+  on each recall request, embedded in the data-namespace keys → stale keys miss
+  (epoch-in-key, no explicit bust call).
+
+### Two kinds of state — cache only the structural kind
+
+- **Immutable / structural**: memory content + embedding bytes, slot occupancy,
+  entity graph. Changes ONLY on create / delete / merge / re-embed.
+- **Volatile**: heat, access_count, last_accessed. Change on **every recall**
+  (access-bump) AND every decay cycle.
+
+**Rule: cache structural state only; NEVER cache heat.** `memory_doc` caches the
+immutable projection (content, embedding, created_at, links); heat/access are
+fetched fresh (small ints, cheap) — sidesteps heat-staleness entirely and means
+pure heat-decay needs no bump.
+
+### `data_epoch` MUST be bumped by every structural mutator — interactive AND background
+
+- **Interactive**: memorize, forget, anchor, memory_update(content), wiki writes,
+  entity/relationship writes. (core already runs `_recall_shadow.bump_epoch`.)
+- **Background (the missed set)**: the **nightly / consolidation cycle**
+  (merge / dedup / create / delete → structure changes + new memories),
+  **vacuum** (deletes), **reembed** (embedding changes). These do NOT pass
+  through `memorize` → they MUST bump `data_epoch` directly at their commit point.
+- **NOT required to bump**: pure **heat-decay** (touches only heat, which is never
+  cached). If a decay pass also creates/prunes (structural), that structural part
+  bumps.
+
+Consolidation/vacuum touch many memories at once → a single global `data_epoch`
+bump per cycle busts all structural caches wholesale (fine — cycles are periodic;
+caches serve hits *between* cycles). **Cache lifetime ≈ inter-cycle interval.**
+
+**OPEN (verify before wiring):** enumerate the exact mutation set + cadence of the
+consolidation / decay / vacuum / reembed cycles — which bump *structure* vs
+*heat-only*, and how often — because a background structural change that misses
+the `data_epoch` bump = stale recall (deleted memory served, missing new memory).
+This is the highest-risk correctness item in the train.
 
 ## Cars (one branch, one PR at train end)
 
