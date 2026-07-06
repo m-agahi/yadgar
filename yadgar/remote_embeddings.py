@@ -77,10 +77,14 @@ class RemoteEmbeddingEngine:
 
     @observe(tier="stage")
     def encode(self, text: str) -> bytes | None:
+        from yadgar.metrics import record_cache_evict, record_cache_hit, record_cache_miss
+
         with self._cache_lock:
             if text in self._query_cache:
                 self._query_cache.move_to_end(text)
+                record_cache_hit("remote_embedding")
                 return self._query_cache[text]
+        record_cache_miss("remote_embedding")
         result = self._call([text], "raw")
         val = result[0] if result else None
         if val is not None:
@@ -89,6 +93,7 @@ class RemoteEmbeddingEngine:
                 self._query_cache.move_to_end(text)
                 if len(self._query_cache) > _CACHE_MAX:
                     self._query_cache.popitem(last=False)
+                    record_cache_evict("remote_embedding")
         return val
 
     @observe(tier="stage")

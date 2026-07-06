@@ -119,6 +119,59 @@ yadgar_cache_miss_total = Counter(
     registry=_registry,
 )
 
+# ── Car 0 (v5.109) — generic cache-obs family completion + shared helper ──────
+# The hit/miss counters above already exist; Car 0 adds the eviction counter and
+# size gauge so ALL caches emit the same {cache="<name>"} family through one
+# helper, replacing scattered inline `.labels(cache=...).inc()` at each site.
+
+yadgar_cache_evictions_total = Counter(
+    "yadgar_cache_evictions_total",
+    "Total cache evictions by cache name (LRU overflow / TTL expiry)",
+    ["cache"],
+    registry=_registry,
+)
+
+yadgar_cache_size_entries = Gauge(
+    "yadgar_cache_size_entries",
+    "Current number of entries in each cache, by cache name",
+    ["cache"],
+    registry=_registry,
+)
+
+
+def record_cache_hit(cache: str) -> None:
+    """Increment the generic cache-hit counter for `cache`. Never raises."""
+    try:
+        yadgar_cache_hit_total.labels(cache=cache).inc()
+    except Exception:  # noqa: BLE001 — telemetry must not compound caller failures
+        pass
+
+
+def record_cache_miss(cache: str) -> None:
+    """Increment the generic cache-miss counter for `cache`. Never raises."""
+    try:
+        yadgar_cache_miss_total.labels(cache=cache).inc()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def record_cache_evict(cache: str, n: int = 1) -> None:
+    """Increment the generic cache-eviction counter for `cache` by `n`. Never raises."""
+    try:
+        if n:
+            yadgar_cache_evictions_total.labels(cache=cache).inc(n)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def set_cache_size(cache: str, entries: int) -> None:
+    """Set the current entry-count gauge for `cache`. Never raises."""
+    try:
+        yadgar_cache_size_entries.labels(cache=cache).set(entries)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # ── P11 Observability v1 — write path ───────────────────────────────────────
 
 yadgar_dlq_size = Gauge(

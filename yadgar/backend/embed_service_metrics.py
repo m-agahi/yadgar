@@ -267,6 +267,94 @@ for _cache_name in ("ce", "embed"):
     cache_snapshot_age_seconds.labels(cache=_cache_name).set(-1)
 
 # ---------------------------------------------------------------------------
+# Car 0 (backend v5.14) — dual-emit CE/embed onto the generic {cache=} family
+# ---------------------------------------------------------------------------
+# The old bespoke `yadgar_embed_ce_cache_*` / `yadgar_embed_embed_cache_*`
+# counters above stay STATICALLY declared and inline-incremented in
+# embed_service.py, UNTOUCHED (behavior-neutral). Car 0 ADDS the generic
+# `yadgar_cache_{hit,miss,evictions}_total{cache=<name>}` + `_size_entries`
+# series via a scrape-time collector that reads the LRUCache internal ints
+# (hits/misses/evictions/size_entries). No per-get label-inc → zero added
+# latency on the per-passage CE loop.
+#
+# ⚠ Collision guard (dual-emit resolution A): this collector emits ONLY the NEW
+# generic series. It must NOT re-yield the old bespoke names — re-yielding an
+# already-statically-declared counter in the same process = duplicate `# TYPE`
+# at scrape → Prometheus rejects the whole scrape. The generic
+# `yadgar_cache_hit_total` is declared statically only CORE-side
+# (yadgar/metrics.py), never here, so this collector is its sole backend emitter.
+
+
+def _default_backend_cache_instances() -> dict:
+    """Return {name: LRUCache} for the process CE + embed caches.
+
+    Lazy-imported from embed_service (which imports counters FROM this module at
+    import time) to avoid a circular import; the cache instances are read at
+    scrape time only.
+    """
+    try:
+        from yadgar.backend import embed_service as _es  # noqa: PLC0415
+
+        return {"ce": _es._ce_cache, "embed": _es._embed_cache}
+    except Exception:  # noqa: BLE001 — a degraded backend must not break /metrics
+        return {}
+
+
+class CacheStatsCollector:
+    """Scrape-time collector: emits the generic {cache=} cache series off the
+    backend LRUCache internal ints. Registered on the backend `_registry`.
+
+    Emits ONLY the new generic names (never the old bespoke ones) — see the
+    collision guard above.
+    """
+
+    def __init__(self, instances_fn=_default_backend_cache_instances) -> None:
+        self._instances_fn = instances_fn
+
+    def collect(self):  # noqa: D401 — prometheus_client Collector protocol
+        from prometheus_client.core import (  # noqa: PLC0415
+            CounterMetricFamily,
+            GaugeMetricFamily,
+        )
+
+        hit = CounterMetricFamily(
+            "yadgar_cache_hit_total", "Total cache hits by cache name", labels=["cache"]
+        )
+        miss = CounterMetricFamily(
+            "yadgar_cache_miss_total", "Total cache misses by cache name", labels=["cache"]
+        )
+        evict = CounterMetricFamily(
+            "yadgar_cache_evictions_total",
+            "Total cache evictions by cache name",
+            labels=["cache"],
+        )
+        size = GaugeMetricFamily(
+            "yadgar_cache_size_entries",
+            "Current number of entries in each cache, by cache name",
+            labels=["cache"],
+        )
+        try:
+            instances = self._instances_fn() or {}
+        except Exception:  # noqa: BLE001
+            instances = {}
+        for name, cache in instances.items():
+            if cache is None:
+                continue
+            hit.add_metric([name], getattr(cache, "hits", 0))
+            miss.add_metric([name], getattr(cache, "misses", 0))
+            evict.add_metric([name], getattr(cache, "evictions", 0))
+            size.add_metric([name], getattr(cache, "size_entries", 0))
+        yield hit
+        yield miss
+        yield evict
+        yield size
+
+
+# Register the dual-emit collector on the backend registry (idempotent per-import).
+_registry.register(CacheStatsCollector())
+
+
+# ---------------------------------------------------------------------------
 # ASGI handler
 # ---------------------------------------------------------------------------
 

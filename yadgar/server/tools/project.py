@@ -67,10 +67,16 @@ _GIT_SAFE_ARGS = [
 
 
 @observe(tier="stage", name="tools.project._resolve_project_root")
+@functools.lru_cache(maxsize=1024)
 def _resolve_project_root(directory: str) -> str:
     """Resolve the git project root for a directory (walk-up via git rev-parse).
 
     Falls back to the given directory if not inside a git repo or git is unavailable.
+
+    Cached with no TTL: a directory's git-root is process-stable (unlike branch,
+    which uses a 30s bucket because it changes). Caching keeps the memorize/forget
+    write-path epoch normalization (which resolves via this helper) off a git
+    subprocess after the first touch per directory — within the I9 ≤5ms budget.
     """
     try:
         out = (
@@ -149,12 +155,12 @@ def _detect_branch(directory: str) -> str | None:
         _before = _detect_branch_cached.cache_info().hits
         result = _detect_branch_cached(directory, int((time.time() + (hash(directory) % 30)) // 30))
         try:
-            from yadgar.metrics import yadgar_cache_hit_total, yadgar_cache_miss_total
+            from yadgar.metrics import record_cache_hit, record_cache_miss
 
             if _detect_branch_cached.cache_info().hits > _before:
-                yadgar_cache_hit_total.labels(cache="branch_detect").inc()
+                record_cache_hit("branch_detect")
             else:
-                yadgar_cache_miss_total.labels(cache="branch_detect").inc()
+                record_cache_miss("branch_detect")
         except Exception:
             pass
         return result
@@ -204,12 +210,12 @@ def _get_default_branch(directory: str) -> str:
     _before = _get_default_branch_cached.cache_info().hits
     result = _get_default_branch_cached(directory, int(time.time() // 300))
     try:
-        from yadgar.metrics import yadgar_cache_hit_total, yadgar_cache_miss_total
+        from yadgar.metrics import record_cache_hit, record_cache_miss
 
         if _get_default_branch_cached.cache_info().hits > _before:
-            yadgar_cache_hit_total.labels(cache="default_branch").inc()
+            record_cache_hit("default_branch")
         else:
-            yadgar_cache_miss_total.labels(cache="default_branch").inc()
+            record_cache_miss("default_branch")
     except Exception:
         pass
     return result
@@ -2037,6 +2043,65 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     return result
 
 
+# ── Car 1 (v5.111): project_brief whole-payload cache ─────────────────────────
+#
+# Query-AGNOSTIC — every agent hitting the same (dir, branch, mode) computes an
+# identical brief, so the key has no query term and cross-agent calls collapse to
+# one compute. Invalidation = Epoch(dir) folded into the key + a TTL(300) backstop
+# for heat/anchor drift (which does NOT bump the epoch). deep_copy=True because the
+# brief dict (and its row-dicts) is mutated by callers / _render.
+#
+# The epoch bus already busts on the two STRUCTURAL writes (memorize via
+# _bump_epoch_for_context; consolidation's global bump). ⚠️ Epoch-key
+# normalization: the read below and every bump caller MUST feed the SAME
+# git-root-resolved key — see _bump_epoch_for_context.
+_PROJECT_BRIEF_CACHE_TTL = 300.0
+
+
+def _project_brief_key(resolved: str, branch: str | None, mode: str) -> tuple:
+    """Effective cache key: (git-root, branch, mode, structural epoch).
+
+    Reads the epoch under the SAME resolved git-root the bump callers normalize
+    to, so a structural write busts the entry (not a decorative no-op)."""
+    from yadgar.server.tools._recall_shadow import _current_epoch  # noqa: PLC0415
+
+    return (resolved, branch or "", mode, _current_epoch(resolved))
+
+
+def _make_project_brief_cache():
+    from yadgar.cache import TTL, Cache  # noqa: PLC0415
+
+    return Cache(
+        name="project_brief",
+        max_entries=256,  # small keyspace (dirs × modes)
+        invalidation=TTL(_PROJECT_BRIEF_CACHE_TTL),  # heat/anchor-drift backstop
+        key_fn=lambda k: k,  # caller passes the already-built effective (epoch) key tuple
+        deep_copy=True,  # brief dict mutated by callers / _render
+        obs_tier="cold",  # few calls/session → full tri-signal fine
+    )
+
+
+_project_brief_cache = _make_project_brief_cache()
+
+
+@observe(tier="hot", name="tools.project._bump_epoch_for_context")
+def _bump_epoch_for_context(context: str | None) -> None:
+    """Advance the structural epoch for `context`, normalized to its git-root.
+
+    The single shared bump helper for every structural write (memorize, forget).
+    Normalizing to git-root here — the SAME resolution project_brief's key uses —
+    is what makes the epoch actually bust the cached brief instead of landing on a
+    different, never-read _DIR_EPOCH key (the decorative-epoch bug). Fully guarded:
+    instrumentation must never break or block the write path."""
+    try:
+        from yadgar.server.tools._recall_shadow import bump_epoch  # noqa: PLC0415
+
+        resolved = _resolve_project_root(context) if context else None
+        bump_epoch(resolved)
+    except Exception:  # pragma: no cover - must never break writes
+        pass
+
+
 @_tool(always_load=True)
 def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None = None) -> dict:
     """Return a layered project context snapshot for the given directory.
@@ -2067,13 +2132,26 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
             When absent, falls back to _get_current_branch(resolved).
     """
     resolved = _resolve_project_root(directory)
-    storage = _get_storage()
 
     # v5.1.9 F3: prefer host-supplied branch_hint.
     if branch_hint:
         branch: str | None = branch_hint
     else:
         branch = _get_current_branch(resolved)
+
+    # Car 1: whole-payload cache for the query-agnostic modes (catalog/restore/full).
+    # Checked BEFORE any storage round-trip so a hit skips _fetch_presence_rows +
+    # the catalog scan (the expensive work). signals mode is INTENTIONALLY not
+    # cached (option A) — it drives the stop-hook's recommended_actions writes and
+    # tolerates no staleness; its age numerics are recomputed every call.
+    _cacheable = mode != "signals"
+    if _cacheable:
+        _key = _project_brief_key(resolved, branch, mode)
+        _hit = _project_brief_cache.get(_key)
+        if _hit is not None:
+            return _hit
+
+    storage = _get_storage()
 
     # Project name: last path component of resolved root
     project = Path(resolved).name
@@ -2099,28 +2177,35 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
         )
 
     if mode == "restore":
-        return _project_brief_restore(
+        result = _project_brief_restore(
             resolved=resolved,
             mode=mode,
             storage=storage,
             checkpoint_rows=checkpoint_rows,
         )
+    else:
+        # catalog / full modes (back-compat)
+        result = _project_brief_catalog_full(
+            {
+                "resolved": resolved,
+                "mode": mode,
+                "project": project,
+                "branch": branch,
+                "storage": storage,
+                "init_rows": init_rows,
+                "active_rows": active_rows,
+                "init_memory_present": init_memory_present,
+                "active_work_present": active_work_present,
+                "checkpoint_rows": checkpoint_rows,
+            }
+        )
 
-    # catalog / full modes (back-compat)
-    return _project_brief_catalog_full(
-        {
-            "resolved": resolved,
-            "mode": mode,
-            "project": project,
-            "branch": branch,
-            "storage": storage,
-            "init_rows": init_rows,
-            "active_rows": active_rows,
-            "init_memory_present": init_memory_present,
-            "active_work_present": active_work_present,
-            "checkpoint_rows": checkpoint_rows,
-        }
-    )
+    # Car 1: store the freshly-computed brief. deep_copy=True means the cache holds
+    # an isolated copy — a caller mutating `result` cannot corrupt the cached value,
+    # and a later hit returns its own deep copy (so callers can't corrupt each other).
+    if _cacheable:
+        _project_brief_cache.put(_key, result)
+    return result
 
 
 @_tool(power=True)
@@ -2388,13 +2473,17 @@ def _compute_stale_wiki_count(resolved: str) -> int:
     once per STALE_COUNT_CACHE_TTL_S seconds per project directory.
     Returns 0 on any error (graceful degradation).
     """
+    from yadgar.metrics import record_cache_hit, record_cache_miss
+
     try:
         cfg = get_settings()
         ttl = getattr(cfg, "STALE_COUNT_CACHE_TTL_S", 300)
         now = time.monotonic()
         cached = _read_stale_count_cache(resolved, now, ttl)
         if cached is not None:
+            record_cache_hit("stale_wiki_count")
             return cached
+        record_cache_miss("stale_wiki_count")
         count = len(_scan_stale_wiki_slugs(resolved))
         with _stale_count_cache_lock:
             _stale_count_cache[resolved] = (count, now)

@@ -95,6 +95,7 @@ def _yaml_layer() -> dict[str, str]:
     return layer
 
 
+@observe(tier="stage")
 def clear_config_caches() -> None:
     """Clear BOTH the yaml-present cache and the get_settings lru_cache.
 
@@ -106,6 +107,15 @@ def clear_config_caches() -> None:
     from yadgar.config import get_settings  # noqa: PLC0415 — avoid import cycle
 
     get_settings.cache_clear()
+
+    # Car 0 obs: config caches are @lru_cache singletons (near-100% hit after first
+    # call; .cache_clear()/.cache_info() are used externally so a per-call hit/miss
+    # wrapper would not be behavior-neutral). Emit the rare structural bust instead
+    # — flood-safe and the informative signal for a singleton reload.
+    from yadgar.metrics import record_cache_evict  # noqa: PLC0415
+
+    record_cache_evict("config_yaml")
+    record_cache_evict("config_settings")
 
 
 @dataclass

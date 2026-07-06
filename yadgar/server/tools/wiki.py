@@ -562,6 +562,58 @@ def wiki_add(
     )
 
 
+# ── Car 2 (v5.113): wiki_read / wiki_query result caches ──────────────────────
+#
+# Both are query/slug-scoped read caches. Invalidation folds the structural wiki
+# epoch (_current_epoch) into the key: ANY wiki write bumps the global epoch (via
+# storage._bump_wiki_epoch → bump_epoch(None)), so a stale key becomes unreachable
+# on the next read — the wiki-write-busts-read correctness guarantee. A short TTL
+# backstops any non-write drift. deep_copy=True: callers mutate returned row-dicts
+# (wiki_query bumps r["_retrieval_score"]; read dicts are handed out mutable).
+_WIKI_READ_CACHE_TTL = 120.0
+_WIKI_QUERY_CACHE_TTL = 60.0  # fuzzy search → shorter TTL acceptable
+
+
+def _current_wiki_epoch() -> int:
+    """Global structural epoch — bumped on every wiki write. Folded into cache keys
+    so a wiki mutation busts every cached wiki read/query regardless of dir/branch
+    normalization (the bump is global; see storage.wiki._bump_wiki_epoch)."""
+    try:
+        from yadgar.server.tools._recall_shadow import _current_epoch  # noqa: PLC0415
+
+        return _current_epoch(None)
+    except Exception:
+        return 0
+
+
+def _make_wiki_read_cache():
+    from yadgar.cache import TTL, Cache  # noqa: PLC0415
+
+    return Cache(
+        name="wiki_read",
+        max_entries=512,  # per (slug, dir, branch)
+        invalidation=TTL(_WIKI_READ_CACHE_TTL),  # epoch in key + TTL backstop
+        deep_copy=True,  # returned page dict is mutable / caller-owned
+        obs_tier="cold",  # low call rate → full tri-signal fine
+    )
+
+
+def _make_wiki_query_cache():
+    from yadgar.cache import TTL, Cache  # noqa: PLC0415
+
+    return Cache(
+        name="wiki_query",
+        max_entries=512,  # per (query, dir, branch, cat, tags)
+        invalidation=TTL(_WIKI_QUERY_CACHE_TTL),  # fuzzy search → short TTL
+        deep_copy=True,  # results carry mutated _retrieval_score row-dicts
+        obs_tier="cold",
+    )
+
+
+_wiki_read_cache = _make_wiki_read_cache()
+_wiki_query_cache = _make_wiki_query_cache()
+
+
 @_tool()
 def wiki_query(
     query: str,
@@ -582,7 +634,7 @@ def wiki_query(
         Uses branch_hint when daemon-side _detect_branch returns None (container scenario).
         Resolution order: _detect_branch(directory) → branch_hint → None (canonical slot).
 
-    DEPRECATION (v6 T6 Step 5): When UNIFIED_RECALL_ENABLED=True, prefer
+    DEPRECATION (Phase 2a): unified recall is now the only path — prefer
     ``recall(query, directory=..., type="wiki")`` which routes through the
     unified fan-out path with CE fusion and per-type quotas. This function
     remains fully functional for one release cycle as a thin alias.
@@ -606,10 +658,30 @@ def wiki_query(
     except Exception:
         pass
 
+    # Car 2: cache the (embedding-computing) query by its inputs + wiki epoch.
+    # A hit skips _st._wiki.query (which embeds the query text). A wiki write
+    # bumps the epoch → the key moves → a stale result can never be served.
+    # P11 / Car 2: start the duration clock BEFORE the cache lookup so the
+    # yadgar_wiki_query_duration_ms histogram observes on EVERY wiki_query call
+    # (cache hit AND miss) — obs total-visibility. The cache-hit early return
+    # lives inside the try below so the finally still fires for hits.
     _wiki_query_t0 = _time.monotonic()
+    _q_key = (
+        query,
+        _dir_stripped,
+        branch_hint or "",
+        category,
+        tuple(tags) if tags else None,
+        max_results,
+        _current_wiki_epoch(),
+    )
     results: list[dict] = []
 
     try:
+        _q_hit = _wiki_query_cache.get(_q_key)
+        if _q_hit is not None:
+            return _q_hit
+
         assert _st._wiki is not None, "WikiStore not initialized"
         # Fetch extra results before branch filter so we still return max_results after pruning.
         results = _st._wiki.query(query, tags, category, max_results * 3)
@@ -670,6 +742,10 @@ def wiki_query(
         for r in results:
             r.pop("embedding", None)
 
+        # Car 2: store the freshly-computed result under the epoch-folded key.
+        # deep_copy=True → the cache holds an isolated copy; a caller mutating a
+        # returned row (e.g. re-scoring) cannot corrupt the cached value.
+        _wiki_query_cache.put(_q_key, results)
         return results
 
     finally:
@@ -731,9 +807,20 @@ def wiki_read(
     # The effective branch for §25 step 1 uses branch_hint if _detect_branch failed.
     _effective_branch = branch_hint or _current_branch
 
+    # Car 2: cache the resolved page by (slug, dir, effective-branch) + wiki epoch.
+    # A hit skips the WikiStore read. A wiki write to ANY page bumps the global
+    # epoch → this key moves → a stale page can never be served (the
+    # wiki-write-busts-read guarantee). Only found pages are cached; a not-found
+    # result is cheap to recompute and a later create bumps the epoch anyway.
+    _caller_dir = directory.strip().rstrip("/") if directory is not None else None
+    _r_key = (slug, _caller_dir, _effective_branch, _current_wiki_epoch())
+    _r_hit = _wiki_read_cache.get(_r_key)
+    if _r_hit is not None:
+        return _r_hit
+
     if directory is not None:
         # v5.42.5: 4-step directory-aware resolution
-        caller_dir = directory.strip().rstrip("/") or None
+        caller_dir = _caller_dir or None
         page = _st._wiki.read_by_directory_branch(slug, caller_dir, _effective_branch)
     else:
         # Legacy fallback — no directory supplied; backward-compat mode.
@@ -747,6 +834,9 @@ def wiki_read(
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}
     page.pop("embedding", None)
+    # Car 2: store the resolved page. deep_copy=True → callers cannot corrupt the
+    # cached value, and each hit returns its own isolated copy.
+    _wiki_read_cache.put(_r_key, page)
     return page
 
 

@@ -106,9 +106,13 @@ class _OpsMixin:
         ``positions`` is a ``{node_id: [x, y, z]}`` map. Returns None when no
         layout has been computed yet.
         """
+        from yadgar.metrics import record_cache_hit, record_cache_miss
+
         rows = self._q("SELECT signature, positions, computed_at FROM graph_layout_cache:current")
         if not rows or not rows[0].get("signature"):
+            record_cache_miss("graph_layout")
             return None
+        record_cache_hit("graph_layout")
         row = rows[0]
         return {
             "signature": str(row["signature"]),

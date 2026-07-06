@@ -53,9 +53,14 @@ def _bump_shadow_epoch(ctx: MemorizeContext) -> None:
     Instrumentation only, fully guarded — must never break or block the write path.
     """
     try:
-        from yadgar.server.tools._recall_shadow import bump_epoch  # noqa: PLC0415
+        # v5.111.0 (Car 1): normalize ctx.context to its git-root before bumping so
+        # the epoch lands on the SAME key project_brief reads. bump_epoch(ctx.context)
+        # (raw dir) would land on a different _DIR_EPOCH key than the resolved git-root
+        # project_brief keys on → the epoch would be decorative and never bust a cached
+        # brief on a memorize into a subdir.
+        from yadgar.server.tools.project import _bump_epoch_for_context  # noqa: PLC0415
 
-        bump_epoch(ctx.context)
+        _bump_epoch_for_context(ctx.context)
     except Exception:  # pragma: no cover - instrumentation must never break writes
         pass
 
