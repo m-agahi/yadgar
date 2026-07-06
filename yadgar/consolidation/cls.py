@@ -201,6 +201,13 @@ class _CLSMixin:
             batch = self._build_cooccurrence_batch(entity_ids)
             if batch:
                 self._storage.batch_writes(batch)
+                # Car 4: the co-occurrence batch writes edges (raw CREATE/UPDATE
+                # relationship) that bypass the storage insert/reinforce bump sites.
+                # Bump every entity in this episode's set so the graph adjacency
+                # cache reflects the new/reinforced edges (pure-structural read, no
+                # fresh recheck). All edges here connect entities within entity_ids.
+                for _eid in entity_ids:
+                    self._storage._bump_entity_version(_eid)
 
             self._apply_typed_relationships(rel_contexts, entity_map)
 

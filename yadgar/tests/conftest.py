@@ -648,6 +648,45 @@ def _reset_server_state():
         _proj._resolve_project_root.cache_clear()
     except Exception:
         pass
+    _reset_backend_caches()
+
+
+def _reset_backend_caches() -> None:
+    """Flush every process-global backend cache + the scope-version map.
+
+    The backend caches (memory_doc / graph / engram_slot / ce, and any other
+    namespace registered in ``yadgar.backend.cache._REGISTRY``) are PROCESS-GLOBAL
+    and keyed by ids the test DB reuses: each test wipes the DB, so memory /
+    entity / slot ids RESTART at 1, and a prior test's cached ``memory_doc[1]``
+    (or slot/graph adjacency) would be served for a NEW test's id-1 row — a stale
+    HIT returning the wrong row's content/rank. Prod is safe (ids are monotonic,
+    never reused); this is a TEST-ISOLATION bug only. Clearing between tests (not
+    disabling) keeps the cache-path coverage the pre-existing recall tests rely on.
+
+    Iterate the live ``_REGISTRY`` rather than the ``get_*_cache`` factories: those
+    lazily materialise + register a cache if absent, so calling them in teardown
+    would create caches that never existed for this test. The scope-version map is
+    not in the registry — cleared separately under its own lock. Never raise in
+    teardown; skip silently if the backend module isn't importable.
+    """
+    try:
+        from yadgar.backend import cache as _bc  # noqa: PLC0415
+    except Exception:
+        return
+    try:
+        for _c in list(_bc._REGISTRY.values()):
+            try:
+                _c.clear()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        _sv = _bc._SCOPE_VERSIONS
+        with _sv._lock:
+            _sv._versions.clear()
+    except Exception:
+        pass
 
 
 _WIPE_TABLES = (

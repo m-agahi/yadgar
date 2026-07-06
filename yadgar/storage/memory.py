@@ -335,9 +335,67 @@ class _MemoryMixin:
             return []
         # de-dup while preserving determinism; the caller re-orders anyway.
         unique_ids = list(dict.fromkeys(int(mid) for mid in memory_ids))
+
+        # Car 2 (backend 5.19.0): the `memory_doc` cache holds ONLY the two
+        # immutable KB-scale columns (content + embedding), keyed by memory_id.
+        # Everything else — heat, access_count and every consolidation/decay-mutated
+        # field — is fetched FRESH here via `SELECT * OMIT content, embedding`, so the
+        # returned rows are byte-identical to the old single-`SELECT *` path INCLUDING
+        # live heat. Only the KB-scale content/embedding transfer is elided on a
+        # cache hit (the ~866 ms warm cost). A `NullCache` (default until wired /
+        # kill-switched) makes the cache a no-op: every id misses, one heavy fetch,
+        # behaviour identical to pre-Car-2. See yadgar/backend/cache.py
+        # get_memory_doc_cache for the invalidation contract (TTL + per-id evict;
+        # DELETE inert; monotonic ids).
+        cache = self._resolve_memory_doc_cache()
+
+        # 1. FRESH scalars for every requested id (never cached — includes heat).
         id_list = ", ".join(f"memory:{mid}" for mid in unique_ids)
-        rows = self._q(f"SELECT * FROM memory WHERE id IN [{id_list}]")
-        results = self._rows_to_dicts(rows)
+        fresh_rows = self._q(
+            f"SELECT * OMIT content, embedding FROM memory WHERE id IN [{id_list}]"
+        )
+        fresh_by_id = {self._extract_id(r.get("id")): r for r in fresh_rows if r is not None}
+
+        # 2. content+embedding — from cache where present, heavy-fetch the misses.
+        heavy_by_id: dict[int, dict] = {}
+        miss_ids: list[int] = []
+        for mid in unique_ids:
+            cached = cache.get(mid)
+            if cached is not None:
+                heavy_by_id[mid] = cached
+            else:
+                miss_ids.append(mid)
+        if miss_ids:
+            miss_list = ", ".join(f"memory:{mid}" for mid in miss_ids)
+            heavy_rows = self._q(
+                f"SELECT id, content, embedding FROM memory WHERE id IN [{miss_list}]"
+            )
+            for r in heavy_rows:
+                if r is None:
+                    continue
+                hid = self._extract_id(r.get("id"))
+                heavy = {"content": r.get("content"), "embedding": r.get("embedding")}
+                heavy_by_id[hid] = heavy
+                cache.put(hid, heavy)
+
+        # 3. merge raw fresh + raw heavy per id, then normalise ONCE — so the cached
+        #    and uncached paths run the identical `_rows_to_dicts` transform (same
+        #    id→int, embedding list→bytes, JSON/bool coercion). Missing ids are simply
+        #    absent (a fused candidate deleted between fusion + hydration → skipped by
+        #    the caller, exactly as the old per-id get_memory loop did).
+        merged_raw: list[dict] = []
+        for mid in unique_ids:
+            fresh = fresh_by_id.get(mid)
+            if fresh is None:
+                continue  # deleted / missing — not a candidate
+            row = dict(fresh)
+            heavy = heavy_by_id.get(mid)
+            if heavy is not None:
+                row["content"] = heavy.get("content")
+                row["embedding"] = heavy.get("embedding")
+            merged_raw.append(row)
+
+        results = self._rows_to_dicts(merged_raw)
         for result in results:
             # SurrealDB omits fields set to NONE; add expected nullable defaults
             # (identical to get_memory).
@@ -347,6 +405,24 @@ class _MemoryMixin:
             result.setdefault("original_content", None)
             result.setdefault("last_reconsolidated", None)
         return results
+
+    @observe(tier="hot", name="storage.memory.resolve_memory_doc_cache")
+    def _resolve_memory_doc_cache(self):
+        """Return the injected ``memory_doc`` cache, or the process-global default.
+
+        Constructor-DI seam (mirrors Reranker's ``_ce_cache``): a ``StorageEngine``
+        may set ``self._memory_doc_cache`` to a ``NullCache`` (disable) or a test
+        double; otherwise the shared registered instance is used. Import is deferred
+        to keep the storage import graph free of the FastAPI embed_service module.
+        """
+        cache = getattr(self, "_memory_doc_cache", None)
+        if cache is not None:
+            return cache
+        from yadgar.backend.cache import get_memory_doc_cache  # noqa: PLC0415
+
+        cache = get_memory_doc_cache()
+        self._memory_doc_cache = cache
+        return cache
 
     @trace_span("storage.memory.get_memories_by_heat")
     def get_memories_by_heat(self, min_heat: float, limit: int = 100) -> list[dict]:
@@ -396,6 +472,23 @@ class _MemoryMixin:
         ent = self.get_entity_by_name(ent_name)  # resolved via _EntityMixin in MRO
         if ent is not None:
             eid = ent["id"]  # already an int after _row_to_dict normalisation
+            # Car 4: bump both endpoints of every edge about to be removed so the
+            # graph adjacency cache doesn't serve the pruned edges (pure-structural
+            # read, no fresh recheck). Resolve endpoints BEFORE the bulk delete.
+            try:
+                doomed = self._q(
+                    "SELECT source_entity_id, target_entity_id FROM relationship "
+                    "WHERE source_entity_id = $eid OR target_entity_id = $eid",
+                    {"eid": eid},
+                )
+                bump_ids: set[int] = {eid}
+                for r in doomed:
+                    bump_ids.add(r["source_entity_id"])
+                    bump_ids.add(r["target_entity_id"])
+                for bid in bump_ids:
+                    self._bump_entity_version(bid)
+            except Exception:  # noqa: BLE001 — bump must never fail the delete
+                _log.debug("graph-cache bump on memory %s delete failed", memory_id, exc_info=True)
             self._q(
                 "DELETE FROM relationship WHERE source_entity_id = $eid OR target_entity_id = $eid",
                 {"eid": eid},
@@ -902,6 +995,16 @@ class _MemoryMixin:
             params[pname] = v
         mid = int(memory_id)  # §5: cast to int to prevent record-ID injection
         self._q(f"UPDATE memory:{mid} SET {', '.join(set_parts)}", params)
+        # Car 2 (backend 5.19.0): the memory_doc cache holds content+embedding by id.
+        # A content or embedding edit makes any cached entry stale → evict this id so
+        # the next recall re-fetches it (the interactive per-id backstop that
+        # complements the TTL). Other field updates (heat, is_stale, tags, …) are not
+        # cached, so they need no bust.
+        if "content" in converted or any(k in _EMBEDDING_FIELDS for k in converted):
+            try:
+                self._resolve_memory_doc_cache().invalidate(mid)
+            except Exception:  # noqa: BLE001 — cache bust must never fail a write
+                _log.debug("memory_doc cache invalidate failed for %s", mid, exc_info=True)
 
     @observe(tier="stage", name="storage.memory.update_memory_last_accessed")
     def update_memory_last_accessed(self, memory_id: int, timestamp: str):

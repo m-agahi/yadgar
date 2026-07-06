@@ -808,6 +808,16 @@ class Settings(BaseSettings):
     CACHE_SNAPSHOT_INTERVAL_SEC: int = 600
     # Directory for cache snapshot files (ce.snap, embed.snap).
     CACHE_SNAPSHOT_DIR: str = "/data/cache"
+    # backend 5.17.0 (Car 0) — % of backend container RAM budgeted for the unified
+    # backend Cache (byte-bounded LRU eviction across the ce/embed namespaces).
+    # Split weighted across namespaces; supersedes the count-cap *_MAX_ENTRIES.
+    BACKEND_CACHE_RAM_PCT: float = 10.0
+    # core 5.112.0 (#49) — % of the CORE container RAM (--memory 1g) budgeted for
+    # the unified core Cache (yadgar/cache.py): byte-bounded LRU eviction across the
+    # core read-tool namespaces (project_brief / wiki_read / wiki_query /
+    # agent_prompt_prelude), sharing ONE process budget (weighted split). Mirrors
+    # BACKEND_CACHE_RAM_PCT but for the core process's own container + namespaces.
+    CORE_CACHE_RAM_PCT: float = 10.0
 
     # v5.35.1 — Memory block caps (I25: env + yaml + registry, formerly module constants)
     # Max blocks per (scope, directory) tuple.

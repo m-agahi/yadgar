@@ -586,24 +586,42 @@ def _current_wiki_epoch() -> int:
         return 0
 
 
+@observe(tier="stage", name="tools.wiki._make_wiki_read_cache")
 def _make_wiki_read_cache():
-    from yadgar.cache import TTL, Cache  # noqa: PLC0415
+    from yadgar.cache import (  # noqa: PLC0415
+        TTL,
+        Cache,
+        _core_cache_ram_pct,
+        _core_cache_total_budget_bytes,
+        _namespace_budget_bytes,
+    )
 
+    total = _core_cache_total_budget_bytes(_core_cache_ram_pct())
+    budget = _namespace_budget_bytes("wiki_read", total)
     return Cache(
         name="wiki_read",
-        max_entries=512,  # per (slug, dir, branch)
+        max_bytes=budget,  # byte-bounded LRU (core RAM-% budget, #49)
         invalidation=TTL(_WIKI_READ_CACHE_TTL),  # epoch in key + TTL backstop
         deep_copy=True,  # returned page dict is mutable / caller-owned
         obs_tier="cold",  # low call rate → full tri-signal fine
     )
 
 
+@observe(tier="stage", name="tools.wiki._make_wiki_query_cache")
 def _make_wiki_query_cache():
-    from yadgar.cache import TTL, Cache  # noqa: PLC0415
+    from yadgar.cache import (  # noqa: PLC0415
+        TTL,
+        Cache,
+        _core_cache_ram_pct,
+        _core_cache_total_budget_bytes,
+        _namespace_budget_bytes,
+    )
 
+    total = _core_cache_total_budget_bytes(_core_cache_ram_pct())
+    budget = _namespace_budget_bytes("wiki_query", total)
     return Cache(
         name="wiki_query",
-        max_entries=512,  # per (query, dir, branch, cat, tags)
+        max_bytes=budget,  # byte-bounded LRU (core RAM-% budget, #49)
         invalidation=TTL(_WIKI_QUERY_CACHE_TTL),  # fuzzy search → short TTL
         deep_copy=True,  # results carry mutated _retrieval_score row-dicts
         obs_tier="cold",

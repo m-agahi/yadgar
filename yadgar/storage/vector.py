@@ -133,6 +133,15 @@ class _VectorMixin:
                 self.insert_vector(memory_id, embedding)
             except Exception:
                 pass
+        # Car 2 (backend 5.22.0): the memory_doc cache holds content+embedding by id.
+        # This is the reembed path (reembed_stale / reembed_all) — a raw embedding
+        # UPDATE that bypasses update_memory_fields' per-id evict. Without this bust
+        # the cache serves a STALE embedding for up to TTL(2700s). Evict this id so
+        # the next recall re-fetches the new embedding (mirrors memory.py's evict).
+        try:
+            self._resolve_memory_doc_cache().invalidate(int(memory_id))
+        except Exception:  # noqa: BLE001 — cache bust must never fail a write
+            _log.debug("memory_doc cache invalidate failed for %s", memory_id, exc_info=True)
 
     @observe(tier="stage")
     def recreate_vector_table(self, new_dim: int):

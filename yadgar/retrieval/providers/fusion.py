@@ -70,7 +70,10 @@ def _score_candidates_ce(
     ce_scores: list[float] | None = None
 
     try:
-        ce_scores = retriever._reranker._ml.score_cross_encoder(query, texts)
+        # Car 1 (#41): route crossfuse CE scoring through the ce cache so the
+        # scores computed here are REUSED by cross_encoder / multi_passage later
+        # in the same request (within-request dedup; get-or-compute).
+        ce_scores = retriever._reranker.score_ce_cached(query, texts)
     except Exception as exc:
         logger.debug("Cross-type CE scoring failed: %s — using native_score fallback", exc)
 

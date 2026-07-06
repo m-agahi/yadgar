@@ -604,11 +604,20 @@ class TestBackend400sRemoved:
 
 
 class TestBackendVersionBump:
-    """§5.5: BACKEND_VERSION must be 5.16.0."""
+    """§5.5: BACKEND_VERSION must be at or above the widen floor (5.22.0).
 
-    def test_backend_version_is_5_16_0(self):
+    Tracks the shipped constant with a ``>=`` floor so a routine backend bump
+    doesn't break the test — the invariant is "never regress below the widen
+    baseline", not "pinned to one string".
+    """
+
+    _FLOOR = (5, 22, 0)
+
+    def test_backend_version_at_or_above_floor(self):
         import yadgar
 
-        assert yadgar.BACKEND_VERSION == "5.16.0", (
-            f"BACKEND_VERSION={yadgar.BACKEND_VERSION!r}; expected '5.16.0'"
+        actual = tuple(int(p) for p in yadgar.BACKEND_VERSION.split("."))
+        assert actual >= self._FLOOR, (
+            f"BACKEND_VERSION={yadgar.BACKEND_VERSION!r}; "
+            f"expected >= {'.'.join(map(str, self._FLOOR))}"
         )

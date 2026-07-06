@@ -304,7 +304,10 @@ def _prune_caused_by_rows(storage, query_timeout: int, excess: int, ceiling: int
         if rid is None:
             continue
         try:
-            storage._q("DELETE type::record('relationship', $rid)", {"rid": rid})
+            # Car 4: route through delete_relationship so both endpoint entities'
+            # graph-cache versions are bumped (a raw DELETE would leave the pruned
+            # edge in cached adjacency — the read is pure-structural, no recheck).
+            storage.delete_relationship(int(rid))
             pruned += 1
         except Exception as del_exc:
             logger.warning("check_invariants: failed to prune caused_by row %s: %s", rid, del_exc)

@@ -64,7 +64,7 @@ class Reranker(
     so no sentence_transformers import occurs in this module.
     """
 
-    def __init__(self, settings, storage, ml_client=None) -> None:
+    def __init__(self, settings, storage, ml_client=None, ce_cache=None) -> None:
         self._settings = settings
         self._storage = storage
         if ml_client is None:
@@ -72,6 +72,15 @@ class Reranker(
 
             ml_client = LocalMLClient(settings)
         self._ml = ml_client
+        # Car 1 (#41): the `ce` cache DI seam. Default = the process-global `ce`
+        # namespace (feature-on) so overlapping recall CE passes dedup; tests inject
+        # a NullCache to reproduce the pre-Car-1 no-dedup behaviour. Typed via the
+        # CacheProtocol seam (mirrors the MLClient Protocol DI above).
+        if ce_cache is None:
+            from yadgar.backend.cache import get_ce_cache
+
+            ce_cache = get_ce_cache()
+        self._ce_cache = ce_cache
 
     def unload_if_idle(self, idle_seconds: float = 600.0) -> None:
         """Unload all reranker models if unused for `idle_seconds`. Frees ~500MB RSS."""

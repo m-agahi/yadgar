@@ -409,20 +409,169 @@ class _OpsMixin:
             {"si": slot_index, "exc": excitability, "la": last_activated},
         )
 
+    @observe(tier="stage", name="storage.ops.assign_memory_slot")
     def assign_memory_slot(self, memory_id: int, slot_index: int):
         now = self._now_iso()
+        # Car 3 (backend 5.20.0): capture the memory's OLD slot BEFORE the write so
+        # a reslot (rebalance, engram.py:177) can bump BOTH the source and target
+        # slot versions — assign_memory_slot is the single slot_index-write choke
+        # point (allocate + rebalance both route here). A fresh new-memory alloc
+        # has no old slot (NONE) → only the target is bumped.
+        old_slot = None
+        try:
+            rows = self._q(
+                "SELECT VALUE slot_index FROM type::record('memory', $id)",
+                {"id": memory_id},
+            )
+            if rows and rows[0] is not None:
+                old_slot = int(rows[0])
+        except Exception:  # noqa: BLE001 — a lookup failure must never fail the write
+            _log.debug(
+                "assign_memory_slot: old-slot lookup failed for %s", memory_id, exc_info=True
+            )
         self._q(
             "UPDATE type::record('memory', $id) SET "
             "slot_index = $si, excitability = 1.0, last_excitability_update = $now",
             {"id": memory_id, "si": slot_index, "now": now},
         )
+        # version-in-key bump: the target slot gains a member (invisible to a
+        # cached, older-version candidate set until the version moves). Bump the
+        # source too when this is a reslot (it also gains an *implicit* change, and
+        # the reslot-into needs the target bumped for the moved id to appear).
+        self._bump_slot_version(slot_index)
+        if old_slot is not None and old_slot != slot_index:
+            self._bump_slot_version(old_slot)
 
+    @observe(tier="stage", name="storage.ops.get_memories_in_slot")
     def get_memories_in_slot(self, slot_index: int) -> list[dict]:
+        """Return the live members of an engram slot (``heat>0``, created_at order).
+
+        Car 3 (backend 5.20.0): the ``engram_slot`` cache holds ONLY the STRUCTURAL
+        membership — the ordered candidate memory ids for the slot, keyed by
+        ``(slot_index, slot_version)``. The volatile ``heat>0`` predicate and the
+        live ``slot_index`` match are re-verified FRESH here against the cached
+        candidate ids (a light id-restricted query), so heat→0 decay, delete and
+        reslot-away are inert (the fresh recheck drops them) with NO version bump.
+        Only a NEW member appearing (create-alloc / reslot-into) needs a bump —
+        done at ``assign_memory_slot`` — because a joined id is absent from the
+        cached candidate set until the slot's version moves. A ``NullCache``
+        (default until wired / kill-switched) makes every read a full slot scan,
+        identical to pre-Car-3. See yadgar/backend/cache.py get_engram_slot_cache
+        for the full staleness contract.
+        """
+        cache = self._resolve_engram_slot_cache()
+        version = self._resolve_scope_versions().version("slot", slot_index)
+        cached_ids = cache.get((slot_index, version))
+        if cached_ids is not None:
+            if not cached_ids:
+                return []
+            # Fresh recheck: re-apply heat>0 + live slot match on the cached ids,
+            # preserving the cached created_at order. Structural drops (delete /
+            # reslot-away / heat→0) fall out here without any version bump.
+            id_list = ", ".join(f"memory:{mid}" for mid in cached_ids)
+            rows = self._q(
+                f"SELECT * FROM memory WHERE id IN [{id_list}] AND slot_index = $si AND heat > 0",
+                {"si": slot_index},
+            )
+            live = self._rows_to_dicts(rows)
+            live_by_id = {m["id"]: m for m in live}
+            # rebuild in the cached (created_at) order; skip ids no longer live.
+            return [live_by_id[mid] for mid in cached_ids if mid in live_by_id]
+
+        # Miss: full slot scan. Cache the HEAT-FREE structural membership (every
+        # id in the slot, created_at order) — NOT the heat-filtered result — so a
+        # later heat-revival (heat 0→>0, no slot write, no version bump) is caught
+        # by the fresh recheck (the id is in the candidate set). Apply heat>0 only
+        # to the RETURNED rows, so the miss path is byte-identical to the pre-Car-3
+        # `WHERE ... AND heat>0` query.
         rows = self._q(
-            "SELECT * FROM memory WHERE slot_index = $si AND heat > 0 ORDER BY created_at",
+            "SELECT * FROM memory WHERE slot_index = $si ORDER BY created_at",
             {"si": slot_index},
         )
-        return self._rows_to_dicts(rows)
+        all_members = self._rows_to_dicts(rows)
+        cache.put((slot_index, version), [m["id"] for m in all_members])
+        return [m for m in all_members if m.get("heat", 0) > 0]
+
+    @observe(tier="hot", name="storage.ops.resolve_engram_slot_cache")
+    def _resolve_engram_slot_cache(self):
+        """Return the injected ``engram_slot`` cache, or the process-global default.
+
+        Constructor-DI seam (mirrors ``_resolve_memory_doc_cache``): a
+        ``StorageEngine`` may set ``self._engram_slot_cache`` to a ``NullCache``
+        (disable) or a test double; otherwise the shared registered instance is
+        used. Import is deferred to keep the storage import graph clean.
+        """
+        cache = getattr(self, "_engram_slot_cache", None)
+        if cache is not None:
+            return cache
+        from yadgar.backend.cache import get_engram_slot_cache  # noqa: PLC0415
+
+        cache = get_engram_slot_cache()
+        self._engram_slot_cache = cache
+        return cache
+
+    @observe(tier="hot", name="storage.ops.resolve_scope_versions")
+    def _resolve_scope_versions(self):
+        """Return the injected :class:`ScopeVersions`, or the process-global one.
+
+        The version-in-key store the slot read consults and the slot write bumps.
+        A test may inject ``self._scope_versions``; otherwise the shared backend
+        instance is used (slot writes + the slot read share one process).
+        """
+        sv = getattr(self, "_scope_versions", None)
+        if sv is not None:
+            return sv
+        from yadgar.backend.cache import get_scope_versions  # noqa: PLC0415
+
+        sv = get_scope_versions()
+        self._scope_versions = sv
+        return sv
+
+    @observe(tier="hot", name="storage.ops.bump_slot_version")
+    def _bump_slot_version(self, slot_index: int) -> None:
+        """Bump the ``slot`` scope version for ``slot_index`` (version-in-key).
+
+        Called at the slot-write choke point (``assign_memory_slot``). Never fails
+        a write — a bump miss only risks a briefly-stale NEW-member appearance,
+        bounded by the next structural write to the slot."""
+        try:
+            self._resolve_scope_versions().bump("slot", slot_index)
+        except Exception:  # noqa: BLE001 — version bump must never fail a write
+            _log.debug("slot version bump failed for slot %s", slot_index, exc_info=True)
+
+    # ── Car 4 (graph adjacency cache) — entity-scope version-in-key ───────────
+
+    @observe(tier="hot", name="storage.ops.resolve_graph_cache")
+    def _resolve_graph_cache(self):
+        """Return the injected ``graph`` cache, or the process-global default.
+
+        Constructor-DI seam (mirrors ``_resolve_engram_slot_cache``): a
+        ``StorageEngine`` may set ``self._graph_cache`` to a ``NullCache``
+        (disable) or a test double; otherwise the shared registered instance is
+        used. Import is deferred to keep the storage import graph clean."""
+        cache = getattr(self, "_graph_cache", None)
+        if cache is not None:
+            return cache
+        from yadgar.backend.cache import get_graph_cache  # noqa: PLC0415
+
+        cache = get_graph_cache()
+        self._graph_cache = cache
+        return cache
+
+    @observe(tier="hot", name="storage.ops.bump_entity_version")
+    def _bump_entity_version(self, entity_id: int) -> None:
+        """Bump the ``entity`` scope version for ``entity_id`` (Car 4 version-in-key).
+
+        Called at EVERY relationship-write choke point (insert / reinforce / field
+        update / delete). An edge lives in BOTH endpoints' adjacency, so both
+        endpoints are bumped by the callers. Never fails a write — a bump miss
+        risks a briefly-stale adjacency, bounded by the next edge write; over-bump
+        is perf-only. The graph read is pure-structural (no fresh recheck), so
+        delete/weight-change are NOT inert here — hence the bump on every mutation."""
+        try:
+            self._resolve_scope_versions().bump("entity", int(entity_id))
+        except Exception:  # noqa: BLE001 — version bump must never fail a write
+            _log.debug("entity version bump failed for entity %s", entity_id, exc_info=True)
 
     @observe(tier="stage", name="storage.ops.get_slot_occupancy")
     def get_slot_occupancy(self) -> dict:

@@ -63,13 +63,19 @@ class TestBackendVersionConstant:
         )
 
     def test_backend_version_value(self) -> None:
-        """yadgar.BACKEND_VERSION must be '5.16.0' (bumped in v5.109 Car 0 — the
-        backend CacheStatsCollector dual-emit lives in embed_service_metrics.py)."""
+        """yadgar.BACKEND_VERSION must be >= '5.21.0' (backend caching train:
+        Car 2 memory_doc cache @ 5.19.0; Car 3 engram_slot cache + ScopeVersions
+        version-in-key @ 5.20.0; Car 4 graph adjacency cache @ 5.21.0). FLOOR, not
+        exact-pin, so a later stacked car's bump doesn't have to touch this canonical
+        assert (exact equality with the server.json backend_version is still enforced
+        by the sync test below)."""
         import yadgar
 
-        assert yadgar.BACKEND_VERSION == "5.16.0", (
-            f"yadgar.BACKEND_VERSION = {yadgar.BACKEND_VERSION!r}, expected '5.16.0'.\n"
-            "Fix: set BACKEND_VERSION = '5.16.0' in yadgar/__init__.py."
+        floor = (5, 21, 0)
+        parts = tuple(int(p) for p in yadgar.BACKEND_VERSION.split("."))
+        assert parts >= floor, (
+            f"yadgar.BACKEND_VERSION = {yadgar.BACKEND_VERSION!r}, expected >= '5.21.0'.\n"
+            "Fix: set BACKEND_VERSION >= '5.21.0' in yadgar/__init__.py."
         )
 
 
