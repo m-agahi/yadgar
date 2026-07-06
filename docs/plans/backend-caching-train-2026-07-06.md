@@ -101,11 +101,46 @@ Consolidation/vacuum touch many memories at once → a single global `data_epoch
 bump per cycle busts all structural caches wholesale (fine — cycles are periodic;
 caches serve hits *between* cycles). **Cache lifetime ≈ inter-cycle interval.**
 
-**OPEN (verify before wiring):** enumerate the exact mutation set + cadence of the
-consolidation / decay / vacuum / reembed cycles — which bump *structure* vs
-*heat-only*, and how often — because a background structural change that misses
-the `data_epoch` bump = stale recall (deleted memory served, missing new memory).
-This is the highest-risk correctness item in the train.
+### RESOLVED — mutation-set investigation (2026-07-06)
+
+17+ structural mutators exist; **currently only 2 bump** (graph/cofire priors,
+`cls.py:598/716`, global, shadow-only). Heat-decay correctly does NOT bump
+(heat-only, `heat_decay.py:55`). The other **15+ are unbumped**:
+- DELETE: merge-duplicates `cls.py:826`, cold-retention `cold_retention.py:116`,
+  vacuum (bulk).
+- INSERT: action-log summaries `cleanup.py:150`, dream insights `dream.py:148`,
+  entities/rels `cls.py:108/203`, community clusters `community.py:134`.
+- UPDATE embedding: reembed-stale `embed_compress.py:46`, reembed_all
+  `admin_other.py:180`; content: compress `embed_compress.py:87`.
+- memify / CLS-promotion / causal / auto-narrate.
+
+**Wiring — Option A (cycle-END choke-points, ~4-5 sites, low miss-risk vs 17
+per-mutator sites):** consolidation cycle end (`orchestrator.py:~385`), sleep
+cycle end (`run_nightly_consolidation`; sleep every 6h), manual tools
+(`reembed_all`, standalone `consolidate_now`). Reuse the existing global
+`bump_epoch(None)`. **Vacuum is special** — a separate end-to-end process (stop
+core → export → swap → import → restart), no yadgar code runs after the delete →
+bump on next core **STARTUP** (or write a pending-bump marker in the vacuum flow).
+
+### GRANULARITY REFINEMENT (critical — else caches die like the output cache)
+
+A SINGLE global `data_epoch` bumped on every write/cycle is **too coarse for
+`memory_doc`**: a new `memorize` would bust ALL cached ids though existing content
+is unchanged — the exact 0%-hit fate that killed the output cache. So invalidation
+is **per-namespace**:
+- **`memory_doc`**: content is IMMUTABLE per-id → cache indefinitely, **evict
+  PER-ID** only on that id's structural change (delete/merge/reembed/compress) —
+  Manual/per-key invalidation, NOT the global epoch. Survives writes + decay +
+  access → high hit-rate. The cycle-end choke-point passes the affected id-set to
+  the per-id evict (the DELETE/reembed sites already know their ids).
+- **`graph` / `engram_slot`**: structural epoch bumped on graph/slot mutations
+  (rarer than memory writes) — coarser global-ish bump is fine.
+- **`ce`**: ModelCkpt (unchanged). **`embed`**: ModelCkpt + evict-per-id on reembed
+  of that specific text/memory.
+
+This is why Car 0's `Cache` must support BOTH `Manual` (per-key evict) and
+`DataEpoch` (epoch-in-key) invalidation policies — `memory_doc` uses per-key,
+`graph`/`engram_slot` use epoch.
 
 ## Design standards (MANDATORY, all cars)
 
