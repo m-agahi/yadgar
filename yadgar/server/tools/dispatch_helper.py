@@ -73,7 +73,7 @@ def _record_prelude_marker(storage, directory: str | None) -> None:
         logger.debug("agent_dispatch_prelude: upsert_dispatch_prelude_marker failed: %s", _e)
 
 
-@_tool()
+@_tool(always_load=True)
 def agent_dispatch_prelude(
     pattern: str,
     task_topic: str,

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
 
 @pytest.fixture(autouse=True)
 def _reset_shadow():

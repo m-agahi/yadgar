@@ -356,7 +356,7 @@ class TestRecallCoreForwarderE2E:
     """
 
     def test_forwarder_e2e_flag_on(self, e2e_engines, monkeypatch):
-        """recall() with RECALL_BACKEND_ENABLED=True returns real results via backend.
+        """recall() returns real results via backend (always-on since Phase 2a).
 
         Monkeypatches httpx.post to route through ASGITransport(app=embed_service.app)
         so no actual TCP connections are made.  Confirms:
@@ -419,32 +419,22 @@ class TestRecallCoreForwarderE2E:
         # Set YADGAR_EMBED_URL so _forward_to_backend passes the guard check.
         monkeypatch.setenv("YADGAR_EMBED_URL", "http://backend-stub:8001")
 
-        # Get the recall module and toggle both flags.
         _rm = sys.modules.get("yadgar.server.tools.recall")
         if _rm is None:
             import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
-
-        original_unified = _rm.settings.UNIFIED_RECALL_ENABLED
-        original_backend = _rm.settings.RECALL_BACKEND_ENABLED
 
         # Snapshot _last_recalled_ids to detect session side-effect mutation.
         from yadgar.server import _state as _st_module
 
         ids_before = dict(_st_module._last_recalled_ids)
 
-        _rm.settings.UNIFIED_RECALL_ENABLED = True
-        _rm.settings.RECALL_BACKEND_ENABLED = True
-        try:
-            with monkeypatch.context() as m:
-                m.setattr("httpx.post", _asgi_post)
-                results = _rm.recall(
-                    query=_FWD_QUERY,
-                    directory=YADGAR_DIR,
-                    max_results=20,
-                )
-        finally:
-            _rm.settings.UNIFIED_RECALL_ENABLED = original_unified
-            _rm.settings.RECALL_BACKEND_ENABLED = original_backend
+        with monkeypatch.context() as m:
+            m.setattr("httpx.post", _asgi_post)
+            results = _rm.recall(
+                query=_FWD_QUERY,
+                directory=YADGAR_DIR,
+                max_results=20,
+            )
 
         # Assert 1: non-empty results with correct shape.
         assert len(results) > 0, "recall() with RECALL_BACKEND_ENABLED=True returned no results"
@@ -519,26 +509,17 @@ class TestRecallCoreForwarderE2E:
         if _rm is None:
             import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
 
-        original_unified = _rm.settings.UNIFIED_RECALL_ENABLED
-        original_backend = _rm.settings.RECALL_BACKEND_ENABLED
-
         # OFF path: run in-core directly.
         off_results = _run_off_path(_PAR2_QUERY)
 
-        # ON path: drive forwarder.
-        _rm.settings.UNIFIED_RECALL_ENABLED = True
-        _rm.settings.RECALL_BACKEND_ENABLED = True
-        try:
-            with monkeypatch.context() as m:
-                m.setattr("httpx.post", _asgi_post)
-                on_raw = _rm.recall(
-                    query=_PAR2_QUERY,
-                    directory=YADGAR_DIR,
-                    max_results=20,
-                )
-        finally:
-            _rm.settings.UNIFIED_RECALL_ENABLED = original_unified
-            _rm.settings.RECALL_BACKEND_ENABLED = original_backend
+        # ON path: drive forwarder (always-on since Phase 2a).
+        with monkeypatch.context() as m:
+            m.setattr("httpx.post", _asgi_post)
+            on_raw = _rm.recall(
+                query=_PAR2_QUERY,
+                directory=YADGAR_DIR,
+                max_results=20,
+            )
 
         on_results = [
             (r.get("id"), float(r.get("_retrieval_score", r.get("heat", 0.0)))) for r in on_raw
@@ -550,4 +531,145 @@ class TestRecallCoreForwarderE2E:
             "Forwarder e2e: OFF and ON paths produced different results:\n"
             f"  OFF={off_results}\n"
             f"  ON ={on_results}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# #44: REAL-init bootstrap under the prod BACKEND env (the test that would have
+# caught the 500).  The bootstrap test above spies init_engines to a no-op, so
+# it never exercised the real _init_embedding_client offload-guard path — which
+# is exactly why #44 escaped.  This test runs the REAL init_engines under the
+# prod backend condition (YADGAR_OFFLOAD_TOOLS=1 + no YADGAR_EMBED_URL) and
+# asserts /recall serves a 200 with real results, NOT a 500.
+# ---------------------------------------------------------------------------
+
+
+class TestRecallBackendProdEnvBootstrap:
+    """Real init under prod backend env: offload ON + no EMBED_URL → local, 200."""
+
+    def test_recall_bootstrap_local_engines_under_offload_env(self, e2e_engines, monkeypatch):
+        """Backend /recall runs REAL init_engines under prod backend env → 200, not 500.
+
+        Reproduces #44: the prod backend container carries the shared
+        YADGAR_OFFLOAD_TOOLS flag but has no YADGAR_EMBED_URL.  Before the fix,
+        _ensure_recall_engines → init_engines() → _init_embedding_client()
+        tripped the CORE offload guard and raised → the route 500'd.
+
+        This test does NOT spy init_engines — it lets the REAL bootstrap run
+        (init_engines(local_engines=True)), so it exercises the actual
+        guard-bypass path.  RED on pre-fix code (500 from RuntimeError); GREEN
+        after (local engines, 200, real results).
+
+        Re-entrancy: init_engines rebuilds _st._storage/_embeddings/_retriever
+        etc.  The rebuild inherits the fixture's live YADGAR_DB_URL (server mode)
+        so the fresh engines reach the SAME running SurrealDB and see the seeded
+        corpus.  We snapshot + restore the fixture engine handles so downstream
+        tests in this module are unaffected.
+        """
+        import asyncio
+        import os as _os
+
+        import httpx
+
+        storage = e2e_engines["storage"]
+        embeddings = e2e_engines["embeddings"]
+        db_path = e2e_engines["db_path"]
+
+        # Seed a corpus (unique prefix) so the served recall returns real rows.
+        _PROD_QUERY = "prod env bootstrap recall probe 5w8t"
+        _insert_mem(storage, embeddings, f"{_PROD_QUERY} primary hit", heat=0.9)
+        _insert_mem(storage, embeddings, f"{_PROD_QUERY} secondary hit", heat=0.5)
+
+        import yadgar.backend.embed_service as _svc
+        import yadgar.server.lifecycle as _lifecycle
+        from yadgar.backend.embed_service import app
+        from yadgar.server import _state as _st
+
+        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+
+        # Prod BACKEND container condition: shared offload flag ON, no EMBED_URL.
+        # This is the exact env that made #44 raise inside _init_embedding_client.
+        monkeypatch.setenv("YADGAR_OFFLOAD_TOOLS", "1")
+        monkeypatch.delenv("YADGAR_EMBED_URL", raising=False)
+
+        # The bootstrap runs the REAL init_engines(local_engines=True) — this is
+        # the code path #44 broke (NOT a no-op spy like the other bootstrap test).
+        # We only inject the fixture db_path so the rebuilt engines land in the
+        # fixture's server-mode namespace and see the seeded corpus; the offload
+        # guard-bypass (_init_embedding_client(local_engines=True)) is exercised
+        # for real.  A spy that swallowed init_engines would NOT catch #44 — that
+        # is exactly why the original bootstrap test missed it.
+        _real_init_engines = _lifecycle.init_engines
+        init_calls: list[dict] = []
+
+        def _init_with_fixture_db(*args, **kwargs):
+            init_calls.append(dict(kwargs))
+            kwargs.setdefault("db_path", db_path)
+            kwargs.setdefault("embedding_model", "all-MiniLM-L6-v2")
+            return _real_init_engines(*args, **kwargs)
+
+        # Patch the name _ensure_recall_engines imports (from yadgar.server.lifecycle).
+        monkeypatch.setattr(_lifecycle, "init_engines", _init_with_fixture_db)
+
+        # Snapshot ALL _st engine singletons so we restore them after the real
+        # re-init.  init_engines rebuilds ~24 _st._* handles; a partial restore
+        # would leak this test's rebuilt engines into sibling e2e modules that
+        # share the process.  Snapshot every private _st attribute, restore all.
+        saved_state = {
+            name: getattr(_st, name)
+            for name in vars(_st)
+            if name.startswith("_") and not name.startswith("__")
+        }
+        original_ready = _svc._recall_engines_ready
+        # Force the REAL bootstrap to run (no spy on init_engines this time).
+        _svc._recall_engines_ready = False
+
+        payload = {
+            "query": _PROD_QUERY,
+            "directory": YADGAR_DIR,
+            "current_branch": "master",
+            "default_branch": "master",
+            "max_results": 10,
+            "min_heat": 0.0,
+            "type": "all",
+            "tags": None,
+        }
+
+        _orig_allow_root = _os.environ.get("YADGAR_ALLOW_ROOT", "0")
+        _os.environ["YADGAR_ALLOW_ROOT"] = "1"
+        try:
+
+            async def _post() -> httpx.Response:
+                transport = httpx.ASGITransport(app=app)
+                async with httpx.AsyncClient(
+                    transport=transport, base_url="http://backend"
+                ) as client:
+                    return await client.post("/recall", json=payload, headers={})
+
+            resp = asyncio.run(_post())
+        finally:
+            _os.environ["YADGAR_ALLOW_ROOT"] = _orig_allow_root
+            # Restore ALL fixture engine handles + ready flag for downstream tests.
+            for _name, _val in saved_state.items():
+                setattr(_st, _name, _val)
+            _svc._recall_engines_ready = original_ready
+
+        # The REAL bootstrap must have run init_engines with local_engines=True
+        # (the guard-bypass path).  If this is empty, the test proved nothing.
+        assert init_calls, "init_engines was never called — bootstrap did not run"
+        assert init_calls[0].get("local_engines") is True, (
+            "bootstrap called init_engines WITHOUT local_engines=True — the #44 "
+            "guard-bypass path was not exercised"
+        )
+
+        # The core assertion: NOT a 500 (which is what #44 produced).
+        assert resp.status_code == 200, (
+            f"backend /recall returned {resp.status_code} under prod backend env "
+            f"(offload ON + no EMBED_URL) — #44 regression: {resp.text[:400]}"
+        )
+        results = resp.json()["results"]
+        assert len(results) > 0, (
+            "backend /recall served 200 but returned no results — bootstrap ran "
+            "but the local-engine pipeline did not retrieve the seeded corpus"
         )

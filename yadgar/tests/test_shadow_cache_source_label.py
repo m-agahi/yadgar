@@ -305,7 +305,7 @@ def _call_real_tool_recall(query: str, directory: str):
 
 
 class TestToolWiring:
-    def test_tool_recall_records_tool_source_miss(self):
+    def test_tool_recall_records_tool_source_miss(self, recall_backend_bypass):
         from yadgar.metrics import yadgar_recall_shadow_cache_misses_total
 
         m0 = _label_count(yadgar_recall_shadow_cache_misses_total, "tool")
@@ -315,7 +315,7 @@ class TestToolWiring:
             "recall() must invoke observe_recall(source='tool') — MISS on first sight"
         )
 
-    def test_tool_recall_records_tool_source_hit(self):
+    def test_tool_recall_records_tool_source_hit(self, recall_backend_bypass):
         from yadgar.metrics import yadgar_recall_shadow_cache_hits_total
 
         _call_real_tool_recall("unique tool wiring probe", "/tmp/wiring_tool_proj")  # miss
@@ -324,7 +324,7 @@ class TestToolWiring:
         h1 = _label_count(yadgar_recall_shadow_cache_hits_total, "tool")
         assert h1 == h0 + 1, "identical recall() at same epoch must be source='tool' HIT"
 
-    def test_tool_miss_does_not_increment_hook_counter(self):
+    def test_tool_miss_does_not_increment_hook_counter(self, recall_backend_bypass):
         from yadgar.metrics import (
             yadgar_recall_shadow_cache_hits_total,
             yadgar_recall_shadow_cache_misses_total,

@@ -383,46 +383,39 @@ class TestRecallNoGitContext:
     """recall: when _get_default_branch raises, scope must not hardcode "master"."""
 
     def test_recall_no_git_context_does_not_filter_to_master(self, monkeypatch):
-        """Pre-fix: except sets _default_branch = "master".
+        """Phase 2a: recall() is a pure forwarder. Spy on _forward_to_backend.
 
-        Retriever is called with default_branch="master". On a main-default repo,
-        memories stored under branch="main" are excluded.
+        Pre-fix: except sets _default_branch = "master".
+        Post-fix: default_branch = None is passed to _forward_to_backend.
 
-        We test via spy: capture the default_branch passed to retriever.recall().
-        RED: pre-fix, default_branch = "master". GREEN: post-fix, default_branch = None.
+        Phase 2a migration: retriever.recall is no longer called directly by
+        recall(); the core tool now calls _forward_to_backend with the resolved
+        branch args. Spy on _forward_to_backend to verify default_branch=None
+        (not "master") is forwarded when _get_default_branch raises.
         """
-        storage = server._get_storage()
-        retriever = server._retriever
+        import sys
 
-        if retriever is None:
-            pytest.skip("No retriever initialized — skip recall spy test")
-
-        _insert_memory_direct(
-            storage,
-            "unique content for v5424 recall fallback test corpus",
-            branch=None,
-        )
+        _recall_module = sys.modules["yadgar.server.tools.recall"]
 
         monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
         monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
 
-        captured_default_branch = []
-        original_recall = retriever.recall
+        captured: dict = {}
 
-        def _spy_recall(*args, **kwargs):
-            captured_default_branch.append(kwargs.get("default_branch", "NOT_PASSED"))
-            return original_recall(*args, **kwargs)
+        def _spy_forward(**kw):
+            captured.update(kw)
+            return []  # empty results — we only care about args
 
-        monkeypatch.setattr(retriever, "recall", _spy_recall)
+        monkeypatch.setattr(_recall_module, "_forward_to_backend", _spy_forward)
 
         server.recall("unique content for v5424 recall fallback test", directory="/tmp/test")
 
-        assert captured_default_branch, "retriever.recall was never called"
-        db_used = captured_default_branch[0]
+        assert captured, "_forward_to_backend was never called"
+        db_used = captured.get("default_branch", "NOT_PASSED")
 
         # RED: pre-fix, db_used = "master". GREEN: post-fix, db_used = None.
         assert db_used is None, (
-            f"FAIL (RED): recall passed default_branch={db_used!r} to retriever.recall "
+            f"FAIL: recall passed default_branch={db_used!r} to _forward_to_backend "
             f"when _get_default_branch raised. "
             f"Expected None but got 'master'. "
             f"Fix: change except block in recall.py: _default_branch = None"

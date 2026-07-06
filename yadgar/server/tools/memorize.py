@@ -66,7 +66,7 @@ def _compute_valid_until(
     return None
 
 
-@_tool()
+@_tool(always_load=True)
 def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     content: str,
     context: str,

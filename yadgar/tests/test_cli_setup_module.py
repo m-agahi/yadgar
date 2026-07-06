@@ -146,7 +146,8 @@ class TestCmdSetupDockerAvailable:
 
 
 class TestCmdSetupDockerUnavailable:
-    def test_fallback_to_stdio_mode(self, tmp_path, capsys):
+    def test_docker_unavailable_prints_warning(self, tmp_path, capsys):
+        """Phase 2b: Docker unavailable now shows HTTP config (not stdio fallback)."""
         mock_check = {"ok": False, "reason": "Docker not found"}
         mock_config_path = tmp_path / "config.yaml"
         mock_secrets_path = tmp_path / "secrets.env"
@@ -164,9 +165,11 @@ class TestCmdSetupDockerUnavailable:
             cmd_setup(args)
 
         out = capsys.readouterr().out
-        assert "✗" in out or "Docker unavailable" in out or "stdio" in out
+        # Phase 2b: still shows ✗ for Docker unavailable; no longer offers stdio mode
+        assert "✗" in out or "Docker unavailable" in out or "Docker not found" in out
 
-    def test_prints_stdio_mcp_config(self, tmp_path, capsys):
+    def test_docker_unavailable_prints_http_config(self, tmp_path, capsys):
+        """Phase 2b: Docker unavailable still emits streamable-HTTP config (not stdio command)."""
         mock_check = {"ok": False, "reason": "Docker not found"}
         mock_config_path = tmp_path / "config.yaml"
         mock_secrets_path = tmp_path / "secrets.env"
@@ -184,5 +187,6 @@ class TestCmdSetupDockerUnavailable:
             cmd_setup(args)
 
         out = capsys.readouterr().out
-        # Stdio mode config — "command": "yadgar"
-        assert '"command"' in out or "command" in out
+        # Phase 2b: no longer "command": "yadgar" (stdio); must emit streamable-http config
+        assert "streamable-http" in out
+        assert '"command"' not in out

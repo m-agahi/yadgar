@@ -344,10 +344,13 @@ _patch_uvicorn_shutdown_timeout()
 
 
 @observe(tier="stage")
-def _tool(power: bool = False):
+def _tool(power: bool = False, always_load: bool = False):
     """Register a function as an MCP tool.
 
     power=True tools are omitted when YADGAR_PROFILE=minimal.
+    always_load=True emits ``meta={"anthropic/alwaysLoad": True}`` on the
+    registered FastMCP Tool so Claude Code never auto-defers these tools to
+    the deferred-tool list (ADR-0047, #45).
     Wraps each registered tool to record estimated token output in
     yadgar_tool_token_estimate_total{tool=<name>}.
     """
@@ -388,7 +391,10 @@ def _tool(power: bool = False):
 
         sync_wrapper, async_wrapper = _build_tool_wrappers(func, _traced_func, _estimate_tokens)
         # ASYNC wrapper → FastMCP (offload-friendly `await fn` branch).
-        mcp_server.tool()(async_wrapper)
+        # ADR-0047: always_load=True tools carry anthropic/alwaysLoad in their meta
+        # so Claude Code never defers them to the lazy-tool list.
+        _meta_kwargs = {"meta": {"anthropic/alwaysLoad": True}} if always_load else {}
+        mcp_server.tool(**_meta_kwargs)(async_wrapper)
         # SYNC wrapper → the module-level name (direct-call contract: internal/test
         # callers run inline exactly as pre-Fix-A).
         return sync_wrapper

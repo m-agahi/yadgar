@@ -1,14 +1,12 @@
-"""Unit tests for v6 T6 Step 2 — fan-out orchestrator + UNIFIED_RECALL_ENABLED flag.
+"""Phase 2a — fan-out orchestrator tests (forward-only cutover).
 
-Coverage:
-  1. UNIFIED_RECALL_ENABLED=True → fan-out returns memory + wiki candidates
-  2. UNIFIED_RECALL_ENABLED=False → legacy path taken; _fanout_recall NOT called
-  3. Flag-False: existing recall tests are unaffected (regression guard)
-  4. _fanout_recall pools memory + wiki raw dicts
-  5. _fanout_recall deduplicates by content (reuses _dedup_by_content)
-  6. _fanout_recall respects max_results cap
-  7. Flag-True with no wiki (_wiki=None) → only memory candidates returned
-  8. Flag-True with no retriever (_retriever=None) → only wiki candidates returned
+Phase 2a rewrites:
+  - TestUnifiedRecallFlag: flag is removed. Tests rewritten to verify that
+    recall() unconditionally calls _forward_to_backend (no flag gate).
+  - TestFlagFalseRegression: legacy path is gone — tests deleted.
+  - TestFanoutRecall: direct _fanout_recall unit tests — unchanged (backend still uses it).
+  - TestFlagTrueEndToEnd: rewritten to verify _forward_to_backend is called with
+    correct args; result contains items from backend mock.
 """
 
 from __future__ import annotations
@@ -19,14 +17,10 @@ from unittest.mock import MagicMock, patch
 import yadgar.server._state as _st
 import yadgar.server.tools.recall as _recall_symbol  # noqa: F401 — imported for side-effects
 
-# @_tool() registers the function and replaces it in the module's local name,
-# so `import yadgar.server.tools.recall` yields the function, not the module.
-# Use sys.modules to get the actual module object for monkeypatching settings.
 _recall_module = sys.modules["yadgar.server.tools.recall"]
 
 from yadgar.server.tools.recall import _fanout_recall  # noqa: E402
 
-# The MCP tool function — callable directly for end-to-end tests
 recall_fn = _recall_module.recall
 
 
@@ -39,199 +33,120 @@ def _make_memory_dict(mid: int = 1, score: float = 0.8, content: str | None = No
     return {
         "id": mid,
         "content": content or f"memory content {mid}",
-        "heat": 0.6,
+        "heat": score * 0.5,
         "_retrieval_score": score,
-        "directory_context": "/tmp/test",
-        "branch": "master",
         "tags": [],
+        "branch": None,
+        "_source": "memory",
     }
 
 
-def _make_wiki_dict(slug: str = "overview", score: float = 0.7) -> dict:
+def _make_wiki_dict(slug: str = "test-wiki", score: float = 0.7) -> dict:
     return {
-        "id": 100,
+        "id": hash(slug) % 10000,  # WikiProvider.candidates requires non-None id
         "slug": slug,
-        "title": f"Wiki: {slug}",
+        "title": slug.replace("-", " ").title(),
         "content": f"wiki content for {slug}",
         "_retrieval_score": score,
-        "directory_context": "/tmp/test",
-        "branch": "master",
         "_source": "wiki",
+        "branch": None,
+        "directory_context": None,  # None = always eligible (global sentinel)
     }
 
 
-def _make_mock_retriever(memories=None):
-    r = MagicMock()
-    r.recall.return_value = memories if memories is not None else [_make_memory_dict(1, 0.9)]
-    return r
+def _make_mock_retriever(results=None):
+    retriever = MagicMock()
+    retriever.recall.return_value = results if results is not None else [_make_memory_dict(1)]
+    retriever.recall_via_pipeline.return_value = (
+        results if results is not None else [_make_memory_dict(2)]
+    )
+    return retriever
 
 
-def _make_mock_wiki(pages=None):
-    w = MagicMock()
-    w.query.return_value = pages if pages is not None else [_make_wiki_dict("overview", 0.75)]
-    return w
+def _make_mock_wiki(results=None):
+    wiki = MagicMock()
+    wiki.query.return_value = results if results is not None else [_make_wiki_dict()]
+    return wiki
 
 
 # ---------------------------------------------------------------------------
-# 1 + 2. UNIFIED_RECALL_ENABLED flag controls routing
+# 1 + 2. Phase 2a: forward-only dispatch — no flag, always _forward_to_backend
 # ---------------------------------------------------------------------------
 
 
-class TestUnifiedRecallFlag:
-    """Tests that the flag gates which path is taken, not which path produces what."""
+class TestForwardOnlyDispatch:
+    """Phase 2a: recall() always calls _forward_to_backend — no flag gate."""
 
     def _call_recall(self, directory="/tmp/test", **kwargs):
-        """Helper to call recall MCP tool with standard mocked dependencies."""
-        mock_retriever = _make_mock_retriever()
-        mock_storage = MagicMock()
-        mock_storage._now_iso.return_value = "2026-01-01T00:00:00"
-        mock_wiki = _make_mock_wiki()
+        """Helper: call recall with _forward_to_backend mocked."""
+        fake_results = [_make_memory_dict(1)]
+        captured = {}
+
+        def _spy_fwd(**kw):
+            captured.update(kw)
+            return fake_results
 
         with (
-            patch.object(_st, "_retriever", mock_retriever),
-            patch.object(_st, "_storage", mock_storage),
-            patch.object(_st, "_consolidation", None),
-            patch.object(_st, "_thermo", None),
-            patch.object(_st, "_cognitive_map", None),
-            patch.object(_st, "_buffer", None),
-            patch.object(_st, "_replay", None),
-            patch.object(_st, "_wiki", mock_wiki),
-            patch.object(_st, "_last_recalled_ids", {}),
+            patch.object(_recall_module, "_forward_to_backend", side_effect=_spy_fwd),
+            patch.object(_recall_module, "_apply_recall_session_side_effects"),
+            patch.object(_recall_module, "_st") as mock_st,
             patch("yadgar.server.tools.project._detect_branch", return_value=None),
             patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
         ):
-            return recall_fn(query="test query", max_results=5, directory=directory, **kwargs)
+            mock_st._consolidation = None
+            mock_st._pool = None
+            result = recall_fn(query="test query", max_results=5, directory=directory, **kwargs)
 
-    def test_flag_true_calls_fanout(self, monkeypatch):
-        """When UNIFIED_RECALL_ENABLED=True, _fanout_recall is entered."""
-        monkeypatch.setattr(_recall_module.settings, "UNIFIED_RECALL_ENABLED", True)
+        return result, captured
 
-        fanout_called = []
+    def test_always_calls_forward_to_backend(self):
+        """recall() always calls _forward_to_backend — no flag, unconditional."""
+        result, captured = self._call_recall()
+        # captured is non-empty iff _forward_to_backend was called
+        assert captured, "_forward_to_backend was not called"
 
-        orig_fanout = _recall_module._fanout_recall
+    def test_type_filter_forwarded(self):
+        """type= param is forwarded to backend."""
+        _, captured = self._call_recall(type="memory")
+        assert captured.get("type_filter") == "memory"
 
-        def spy_fanout(*args, **kwargs):
-            fanout_called.append(True)
-            return orig_fanout(*args, **kwargs)
+    def test_tags_forwarded(self):
+        """tags= param is forwarded to backend."""
+        _, captured = self._call_recall(tags=["adr"])
+        assert captured.get("tags") == ["adr"]
 
-        monkeypatch.setattr(_recall_module, "_fanout_recall", spy_fanout)
-        self._call_recall()
-        assert fanout_called, "_fanout_recall was not called despite UNIFIED_RECALL_ENABLED=True"
+    def test_mode_forwarded(self):
+        """mode= param is forwarded to backend."""
+        _, captured = self._call_recall(mode="landscape")
+        assert captured.get("mode") == "landscape"
 
-    def test_flag_false_does_not_call_fanout(self, monkeypatch):
-        """When UNIFIED_RECALL_ENABLED=False (default), _fanout_recall is NOT entered."""
-        monkeypatch.setattr(_recall_module.settings, "UNIFIED_RECALL_ENABLED", False)
+    def test_profile_forwarded(self):
+        """profile= param is forwarded to backend."""
+        _, captured = self._call_recall(profile="fast")
+        assert captured.get("profile") == "fast"
 
-        fanout_called = []
-
-        def spy_fanout(*args, **kwargs):
-            fanout_called.append(True)
-            return []
-
-        monkeypatch.setattr(_recall_module, "_fanout_recall", spy_fanout)
-        self._call_recall()
-        assert not fanout_called, "_fanout_recall was called despite UNIFIED_RECALL_ENABLED=False"
-
-    def test_flag_false_retriever_is_called(self, monkeypatch):
-        """Flag=False → retriever.recall() is called (legacy path active)."""
-        monkeypatch.setattr(_recall_module.settings, "UNIFIED_RECALL_ENABLED", False)
-
-        mock_retriever = _make_mock_retriever()
-        mock_storage = MagicMock()
-        mock_storage._now_iso.return_value = "2026-01-01T00:00:00"
-        mock_wiki = _make_mock_wiki()
-
-        with (
-            patch.object(_st, "_retriever", mock_retriever),
-            patch.object(_st, "_storage", mock_storage),
-            patch.object(_st, "_consolidation", None),
-            patch.object(_st, "_thermo", None),
-            patch.object(_st, "_cognitive_map", None),
-            patch.object(_st, "_buffer", None),
-            patch.object(_st, "_replay", None),
-            patch.object(_st, "_wiki", mock_wiki),
-            patch.object(_st, "_last_recalled_ids", {}),
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
-        ):
-            recall_fn(query="test query", max_results=5, directory="/tmp/test")
-
-        mock_retriever.recall.assert_called()
+    def test_returns_backend_results(self):
+        """recall() returns exactly what _forward_to_backend returns."""
+        result, _ = self._call_recall()
+        assert len(result) >= 1
+        assert result[0]["id"] == 1
 
 
 # ---------------------------------------------------------------------------
-# 3. Flag-False regression — result type and count unchanged
-# ---------------------------------------------------------------------------
-
-
-class TestFlagFalseRegression:
-    """Validates that flag-False produces results from the legacy path."""
-
-    def test_flag_false_returns_list(self, monkeypatch):
-        """Flag=False → result is a list (legacy path return type preserved)."""
-        monkeypatch.setattr(_recall_module.settings, "UNIFIED_RECALL_ENABLED", False)
-
-        mock_retriever = _make_mock_retriever([_make_memory_dict(1)])
-        mock_storage = MagicMock()
-        mock_storage._now_iso.return_value = "2026-01-01T00:00:00"
-        mock_wiki = _make_mock_wiki([])  # empty wiki
-
-        with (
-            patch.object(_st, "_retriever", mock_retriever),
-            patch.object(_st, "_storage", mock_storage),
-            patch.object(_st, "_consolidation", None),
-            patch.object(_st, "_thermo", None),
-            patch.object(_st, "_cognitive_map", None),
-            patch.object(_st, "_buffer", None),
-            patch.object(_st, "_replay", None),
-            patch.object(_st, "_wiki", mock_wiki),
-            patch.object(_st, "_last_recalled_ids", {}),
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
-        ):
-            result = recall_fn(query="retrieval pipeline", max_results=5, directory="/tmp/test")
-
-        assert isinstance(result, list)
-
-    def test_flag_false_no_source_tag(self, monkeypatch):
-        """Flag=False → memory results do not have _source='wiki' (legacy schema)."""
-        monkeypatch.setattr(_recall_module.settings, "UNIFIED_RECALL_ENABLED", False)
-
-        mem = _make_memory_dict(1)
-        mock_retriever = _make_mock_retriever([mem])
-        mock_storage = MagicMock()
-        mock_storage._now_iso.return_value = "2026-01-01T00:00:00"
-        mock_wiki = _make_mock_wiki([])
-
-        with (
-            patch.object(_st, "_retriever", mock_retriever),
-            patch.object(_st, "_storage", mock_storage),
-            patch.object(_st, "_consolidation", None),
-            patch.object(_st, "_thermo", None),
-            patch.object(_st, "_cognitive_map", None),
-            patch.object(_st, "_buffer", None),
-            patch.object(_st, "_replay", None),
-            patch.object(_st, "_wiki", mock_wiki),
-            patch.object(_st, "_last_recalled_ids", {}),
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
-        ):
-            result = recall_fn(query="retrieval pipeline", max_results=5, directory="/tmp/test")
-
-        # Memory results in legacy path should not have _source set
-        for r in result:
-            assert r.get("_source") != "wiki" or r.get("id") == 1
-
-
-# ---------------------------------------------------------------------------
-# 4. _fanout_recall unit tests
+# 3. _fanout_recall unit tests (unchanged — backend still uses it directly)
 # ---------------------------------------------------------------------------
 
 
 class TestFanoutRecall:
-    """Direct unit tests for the _fanout_recall() helper."""
+    """Direct unit tests for the _fanout_recall() helper.
 
-    def _call_fanout(self, query="test", max_results=5, retriever=None, wiki=None):
+    _fanout_recall is called by the backend route handler, not by recall() directly
+    (Phase 2a). These tests exercise it in-core via test-wired _st.*."""
+
+    def _call_fanout(self, query="test", max_results=5, retriever=None, wiki=None, profile=None):
+        kw = {}
+        if profile is not None:
+            kw["profile"] = profile
         with (
             patch.object(_st, "_retriever", retriever),
             patch.object(_st, "_wiki", wiki),
@@ -243,23 +158,20 @@ class TestFanoutRecall:
                 directory="/tmp/test",
                 current_branch="main",
                 default_branch="master",
+                **kw,
             )
 
     def test_pools_memory_and_wiki(self):
         """Fan-out with both retriever + wiki returns items from both sources."""
         mem = _make_memory_dict(1, 0.9)
         wiki = _make_wiki_dict("overview", 0.8)
-
         mock_retriever = _make_mock_retriever([mem])
         mock_wiki = _make_mock_wiki([wiki])
 
         results = self._call_fanout(retriever=mock_retriever, wiki=mock_wiki)
 
-        sources = {r.get("_source", "memory") for r in results}
-        assert "memory" in sources or any(r.get("id") == 1 for r in results), (
-            "Expected at least one memory result"
-        )
-        assert any(r.get("_source") == "wiki" for r in results), "Expected at least one wiki result"
+        assert any(r.get("id") == 1 for r in results), "Expected memory result"
+        assert any(r.get("_source") == "wiki" for r in results), "Expected wiki result"
 
     def test_memory_only_when_wiki_none(self):
         """With _wiki=None, only memory candidates are returned."""
@@ -283,7 +195,6 @@ class TestFanoutRecall:
 
     def test_respects_max_results(self):
         """Fan-out result count does not exceed max_results."""
-        # Seed many memories and wikis
         mems = [_make_memory_dict(i, 0.9 - i * 0.01) for i in range(1, 20)]
         wikis = [_make_wiki_dict(f"page-{i}", 0.8) for i in range(10)]
         mock_retriever = _make_mock_retriever(mems)
@@ -310,7 +221,6 @@ class TestFanoutRecall:
 
         results = self._call_fanout(retriever=mock_retriever, wiki=mock_wiki, max_results=10)
 
-        # Only one item with the shared content should survive dedup
         contents = [r.get("content") for r in results]
         assert contents.count(shared_content) == 1
 
@@ -320,7 +230,7 @@ class TestFanoutRecall:
         assert results == []
 
     def test_returns_list_of_dicts(self):
-        """Fan-out always returns list[dict] (same type as legacy recall)."""
+        """Fan-out always returns list[dict]."""
         mem = _make_memory_dict(1, 0.9)
         mock_retriever = _make_mock_retriever([mem])
         results = self._call_fanout(retriever=mock_retriever, wiki=None)
@@ -329,23 +239,9 @@ class TestFanoutRecall:
             assert isinstance(r, dict)
 
     def test_preserves_retriever_native_order(self):
-        """Single-provider bypass preserves the retriever's native order verbatim.
-
-        Retriever.recall() owns ranking: WRRF + heuristic/CE/NLI/MP (each ending
-        in a _retrieval_score sort), THEN optional rule/metacognition reordering
-        that can move items away from strict _retrieval_score order. The fan-out
-        must NOT re-sort — re-sorting by _retrieval_score would override the
-        retriever's final ranking, which is exactly the double-rerank regression
-        (type=memory MRR 0.84 → 0.74). This supersedes the Step-2 "sort pool by
-        _retrieval_score then trim" model, which wrongly assumed fan-out owns
-        ordering.
-
-        Mock retriever returns ids [1, 2] in an order that is NOT
-        _retrieval_score-descending, to prove the bypass preserves the provider
-        order rather than imposing a score sort.
-        """
+        """Single-provider bypass preserves the retriever's native order verbatim."""
         mems = [
-            _make_memory_dict(1, 0.5),  # retriever emits this first despite lower score
+            _make_memory_dict(1, 0.5),
             _make_memory_dict(2, 0.9),
         ]
         mock_retriever = _make_mock_retriever(mems)
@@ -357,42 +253,32 @@ class TestFanoutRecall:
 
 
 # ---------------------------------------------------------------------------
-# 5. Flag-True end-to-end: recall MCP tool returns both types
+# 4. Phase 2a end-to-end: recall MCP tool returns results via forward path
 # ---------------------------------------------------------------------------
 
 
-class TestFlagTrueEndToEnd:
-    """Integration: recall MCP tool with flag=True returns memory + wiki candidates."""
+class TestForwardOnlyEndToEnd:
+    """Integration: recall MCP tool returns results forwarded from mock backend."""
 
-    def test_flag_true_returns_memory_and_wiki(self, monkeypatch):
-        """With UNIFIED_RECALL_ENABLED=True, recall returns items from both providers."""
-        monkeypatch.setattr(_recall_module.settings, "UNIFIED_RECALL_ENABLED", True)
-
+    def test_returns_memory_and_wiki_from_backend(self):
+        """recall() returns whatever _forward_to_backend returns (mock both types)."""
         mem = _make_memory_dict(1, 0.9)
         wiki_page = _make_wiki_dict("test-wiki", 0.75)
-
-        mock_retriever = _make_mock_retriever([mem])
-        mock_storage = MagicMock()
-        mock_storage._now_iso.return_value = "2026-01-01T00:00:00"
-        mock_wiki = _make_mock_wiki([wiki_page])
+        fake_results = [mem, wiki_page]
 
         with (
-            patch.object(_st, "_retriever", mock_retriever),
-            patch.object(_st, "_storage", mock_storage),
-            patch.object(_st, "_consolidation", None),
-            patch.object(_st, "_thermo", None),
-            patch.object(_st, "_cognitive_map", None),
-            patch.object(_st, "_buffer", None),
-            patch.object(_st, "_replay", None),
-            patch.object(_st, "_wiki", mock_wiki),
-            patch.object(_st, "_last_recalled_ids", {}),
+            patch.object(_recall_module, "_forward_to_backend", return_value=fake_results),
+            patch.object(_recall_module, "_apply_recall_session_side_effects"),
+            patch.object(_recall_module, "_st") as mock_st,
             patch("yadgar.server.tools.project._detect_branch", return_value=None),
             patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
         ):
+            mock_st._consolidation = None
+            mock_st._pool = None
             result = recall_fn(query="test query", max_results=10, directory="/tmp/test")
 
         has_wiki = any(r.get("_source") == "wiki" for r in result)
         has_memory = any(r.get("id") == 1 for r in result)
 
-        assert has_wiki, f"Expected wiki result in fan-out output; got: {result}"
-        assert has_memory, f"Expected memory result in fan-out output; got: {result}"
+        assert has_wiki, f"Expected wiki result; got: {result}"
+        assert has_memory, f"Expected memory result; got: {result}"

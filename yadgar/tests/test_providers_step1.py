@@ -178,12 +178,15 @@ class TestMemoryProvider:
     def test_candidates_calls_retriever_recall(self, mock_retriever, default_scope):
         provider = MemoryProvider(mock_retriever)
         provider.candidates("test query", default_scope, limit=10)
+        # Phase 2a forward-only: MemoryProvider now threads a `profile` kwarg
+        # (None when constructed without one) into Retriever.recall().
         mock_retriever.recall.assert_called_once_with(
             "test query",
             max_results=10,
             min_heat=0.0,
             current_branch="feat/test",
             default_branch="master",
+            profile=None,
         )
 
     def test_candidates_returns_candidate_objects(self, mock_retriever, default_scope):

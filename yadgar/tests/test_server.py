@@ -63,7 +63,7 @@ def test_remember_no_file_hash_for_directory():
 # ── recall ─────────────────────────────────────────────────────────────
 
 
-def test_recall_finds_by_fts(flush_queue):
+def test_recall_finds_by_fts(flush_queue, recall_backend_bypass):
     server.memorize("SQLite full text search is useful", "/tmp", ["db"])
     server.memorize("Python asyncio event loop", "/tmp", ["async"])
     flush_queue()
@@ -74,21 +74,30 @@ def test_recall_finds_by_fts(flush_queue):
 
 
 def test_recall_boosts_heat():
+    # Phase 2a forward-only: recall() forwards to the backend and the heat-boost
+    # side effect now runs backend-side in _apply_recall_db_side_effects (called
+    # inside _fanout_recall on the backend). recall_backend_bypass deliberately
+    # SKIPS db side effects, so it cannot exercise the boost. Test the live
+    # heat-boost function directly instead — same code path the backend runs.
+    from yadgar.server.tools._recall_pipeline import _apply_recall_db_side_effects
+
     result = memorize_sync("heat boost test", "/tmp", ["test"])
     mid = result["id"]
 
+    storage = server._get_storage()
     # Set heat to 0.5 so we can observe the boost
-    server._get_storage().update_memory_heat(mid, 0.5)
+    storage.update_memory_heat(mid, 0.5)
 
-    results = server.recall("heat boost test", directory="/tmp")
-    assert len(results) >= 1
-    # Heat should be 0.5 + 0.1 = 0.6
-    boosted = [r for r in results if r["id"] == mid]
-    assert len(boosted) == 1
-    assert abs(boosted[0]["heat"] - 0.6) < 0.01
+    merged = [{"id": mid, "content": "heat boost test", "heat": 0.5}]
+    _apply_recall_db_side_effects(merged, "heat boost test", storage)
+
+    # Heat should be 0.5 + 0.1 = 0.6 on the mutated dict...
+    assert abs(merged[0]["heat"] - 0.6) < 0.01
+    # ...and the batched DB write should have persisted the access boost.
+    assert storage.get_memory(mid)["last_accessed"] is not None
 
 
-def test_recall_respects_min_heat():
+def test_recall_respects_min_heat(recall_backend_bypass):
     r = memorize_sync("low heat memory", "/tmp", ["test"])
     server._get_storage().update_memory_heat(r["id"], 0.05)
 
@@ -97,7 +106,7 @@ def test_recall_respects_min_heat():
     assert len(matching) == 0
 
 
-def test_recall_max_results(flush_queue):
+def test_recall_max_results(flush_queue, recall_backend_bypass):
     for i in range(10):
         server.memorize(f"memory number {i} test recall", "/tmp", ["bulk"])
     flush_queue()
@@ -106,7 +115,7 @@ def test_recall_max_results(flush_queue):
     assert len(results) <= 3
 
 
-def test_recall_no_embedding_in_results(flush_queue):
+def test_recall_no_embedding_in_results(flush_queue, recall_backend_bypass):
     server.memorize("no embedding leak", "/tmp", ["test"])
     flush_queue()
     results = server.recall("no embedding leak", directory="/tmp")

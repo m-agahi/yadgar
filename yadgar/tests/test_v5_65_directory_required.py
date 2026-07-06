@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
 # ---------------------------------------------------------------------------
 # Helpers shared across parts
 # ---------------------------------------------------------------------------

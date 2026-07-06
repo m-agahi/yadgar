@@ -1042,3 +1042,83 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
         pass
     # Fallback: return the queued response if we can't find it
     return result
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a migration fixture: forward_to_backend bypass
+#
+# After Phase 2a, recall() is a pure forwarder to the backend HTTP endpoint.
+# Tests that call recall() directly and don't mock _forward_to_backend will
+# fail with "YADGAR_EMBED_URL is not set" because there is no backend server
+# in the unit test environment.
+#
+# This fixture patches _forward_to_backend to call _fanout_recall directly
+# (bypassing HTTP) using the same _st module object that the test's engine
+# fixture has already wired. This preserves the test's semantic intent while
+# removing the HTTP dependency.
+#
+# Opt-in: tests that call recall() without mocking _forward_to_backend
+# automatically get this bypass because it's module-scoped autouse=False.
+# Autouse: disabled globally to avoid interfering with tests that deliberately
+# mock _forward_to_backend (those inner-scope mocks win regardless, but we
+# avoid adding noise to the patch stack).
+#
+# Usage: add `recall_backend_bypass` as a fixture argument, or mark the test
+# module with `pytestmark = pytest.mark.usefixtures("recall_backend_bypass")`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def recall_backend_bypass(monkeypatch):
+    """Patch _forward_to_backend to call _fanout_recall directly (no HTTP).
+
+    Phase 2a migration fixture: provides a backend-equivalent call path for
+    tests that call recall() directly without mocking _forward_to_backend.
+
+    The patch routes _forward_to_backend → _fanout_recall synchronously, using
+    the same yadgar.server._state (_st) module that the test's engine fixture
+    has already populated. This gives tests full fanout behavior (MemoryProvider +
+    WikiProvider + fusion) without requiring a running backend HTTP server.
+
+    DB side effects (_apply_recall_db_side_effects: heat updates, activity log)
+    are intentionally skipped — unit tests don't test persistence behavior.
+    """
+    import sys
+
+    from yadgar.server.tools._recall_pipeline import _fanout_recall
+
+    _recall_module = sys.modules["yadgar.server.tools.recall"]
+
+    def _bypass_forward(  # noqa: PLR0913 — mirrors full recall() forwarding signature
+        query,
+        max_results,
+        min_heat,
+        directory,
+        current_branch,
+        default_branch,
+        type_filter,
+        tags,
+        mode=None,
+        profile=None,
+    ):
+        """Direct _fanout_recall call — bypasses HTTP, same _st engines."""
+        if mode is not None and mode != "landscape":
+            # Unknown mode — return empty (forward-only would have 400'd)
+            return []
+        if mode == "landscape":
+            # Landscape not fully wired in unit tests — return empty (no AstrocytePool)
+            return []
+        return _fanout_recall(
+            query=query,
+            max_results=max_results,
+            min_heat=min_heat,
+            directory=directory,
+            current_branch=current_branch,
+            default_branch=default_branch,
+            type_filter=type_filter,
+            tags=tags,
+            profile=profile,
+        )
+
+    monkeypatch.setattr(_recall_module, "_forward_to_backend", _bypass_forward)
+    yield

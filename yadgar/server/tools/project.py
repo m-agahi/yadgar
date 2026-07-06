@@ -2037,7 +2037,7 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     return result
 
 
-@_tool()
+@_tool(always_load=True)
 def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None = None) -> dict:
     """Return a layered project context snapshot for the given directory.
 

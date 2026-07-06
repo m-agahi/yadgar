@@ -80,23 +80,21 @@ def _run_recall(
     if _rm is None:
         import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
 
-    _rm.settings.UNIFIED_RECALL_ENABLED = True
-    try:
-        recall_fn = _rm.recall
-        return recall_fn(
-            query=query,
-            directory=directory,
-            max_results=max_results,
-            type=type_filter,  # noqa: A002
-        )
-    finally:
-        _rm.settings.UNIFIED_RECALL_ENABLED = False
+    recall_fn = _rm.recall
+    return recall_fn(
+        query=query,
+        directory=directory,
+        max_results=max_results,
+        type=type_filter,  # noqa: A002
+    )
 
 
 class TestTypeParamE2E:
     """Live-DB e2e tests for Step 5: recall(type=) filtering and wiki_query deprecation."""
 
-    def test_type_memory_returns_only_memories(self, e2e_engines, monkeypatch):
+    def test_type_memory_returns_only_memories(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """recall(type="memory") must not return any wiki results.
 
         Ref: BC-U2.
@@ -125,7 +123,7 @@ class TestTypeParamE2E:
             f"recall(type='memory') must include memory id={mem_id}; got ids={mem_ids}"
         )
 
-    def test_type_wiki_returns_only_wiki(self, e2e_engines, monkeypatch):
+    def test_type_wiki_returns_only_wiki(self, e2e_engines, monkeypatch, recall_backend_bypass):
         """recall(type="wiki") must not return any memory results.
 
         Ref: BC-U3.
@@ -157,7 +155,9 @@ class TestTypeParamE2E:
             f"got wiki_slugs={wiki_slugs_in_results}"
         )
 
-    def test_type_memory_order_matches_legacy(self, e2e_engines, monkeypatch):
+    def test_type_memory_order_matches_legacy(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """recall(type="memory") fan-out returns results in the SAME ORDER as legacy recall.
 
         Ref: BC-U2 (strengthened) — the previous e2e only checked membership.
@@ -233,16 +233,12 @@ class TestTypeParamE2E:
             )
 
         # Fan-out: recall(type="memory") — should bypass fuse_candidates, return native order
-        _rm.settings.UNIFIED_RECALL_ENABLED = True
-        try:
-            fanout_results = _rm.recall(
-                query=f"order parity {unique}",
-                directory=YADGAR_DIR,
-                max_results=20,
-                type="memory",  # noqa: A002
-            )
-        finally:
-            _rm.settings.UNIFIED_RECALL_ENABLED = False
+        fanout_results = _rm.recall(
+            query=f"order parity {unique}",
+            directory=YADGAR_DIR,
+            max_results=20,
+            type="memory",  # noqa: A002
+        )
 
         fanout_mem_ids = [
             r.get("id") for r in fanout_results if r.get("id") in {mem_high, mem_mid, mem_low}
@@ -254,7 +250,7 @@ class TestTypeParamE2E:
             f"If they differ, the single-provider bypass is not in effect (double CE-rerank regression)."
         )
 
-    def test_type_wiki_order_returns_results(self, e2e_engines, monkeypatch):
+    def test_type_wiki_order_returns_results(self, e2e_engines, monkeypatch, recall_backend_bypass):
         """recall(type="wiki") fan-out returns non-empty wiki results (coverage preserved).
 
         Ref: BC-U3 (order parity addendum) — wiki coverage must be non-zero after
@@ -284,7 +280,7 @@ class TestTypeParamE2E:
             f"Sources in results: {[r.get('_source') for r in results]}"
         )
 
-    def test_type_all_returns_both(self, e2e_engines, monkeypatch):
+    def test_type_all_returns_both(self, e2e_engines, monkeypatch, recall_backend_bypass):
         """recall(type="all") returns both memory and wiki results.
 
         Ref: BC-U1.
@@ -322,7 +318,9 @@ class TestTypeParamE2E:
             f"Wiki slug='{wiki_slug}' must appear"
         )
 
-    def test_type_invalid_raises_before_retrieval(self, e2e_engines, monkeypatch):
+    def test_type_invalid_raises_before_retrieval(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """recall(type="invalid") raises ValueError before any DB query.
 
         Ref: BC-U5 — validation must be early (pre-DB) to avoid pointless work.
@@ -336,19 +334,17 @@ class TestTypeParamE2E:
         if _rm is None:
             import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
 
-        _rm.settings.UNIFIED_RECALL_ENABLED = True
-        try:
-            recall_fn = _rm.recall
-            with pytest.raises(ValueError, match="invalid"):
-                recall_fn(
-                    query="any query",
-                    directory=YADGAR_DIR,
-                    type="invalid",  # noqa: A002
-                )
-        finally:
-            _rm.settings.UNIFIED_RECALL_ENABLED = False
+        recall_fn = _rm.recall
+        with pytest.raises(ValueError, match="invalid"):
+            recall_fn(
+                query="any query",
+                directory=YADGAR_DIR,
+                type="invalid",  # noqa: A002
+            )
 
-    def test_type_all_memory_order_parity_with_relevant_wiki(self, e2e_engines, monkeypatch):
+    def test_type_all_memory_order_parity_with_relevant_wiki(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """recall(type="all") preserves relative memory order while inserting relevant wiki.
 
         Ref: v5.80 fanout-fusion-fix — the double-rerank bug.
@@ -426,16 +422,12 @@ class TestTypeParamE2E:
             )
 
         # Fan-out: recall(type="all") — fuse_candidates must NOT reorder memories.
-        _rm.settings.UNIFIED_RECALL_ENABLED = True
-        try:
-            fanout_results = _rm.recall(
-                query=f"type all order parity {unique}",
-                directory=YADGAR_DIR,
-                max_results=20,
-                type="all",  # noqa: A002
-            )
-        finally:
-            _rm.settings.UNIFIED_RECALL_ENABLED = False
+        fanout_results = _rm.recall(
+            query=f"type all order parity {unique}",
+            directory=YADGAR_DIR,
+            max_results=20,
+            type="all",  # noqa: A002
+        )
 
         fanout_mem_ids = [
             r.get("id")
@@ -460,7 +452,9 @@ class TestTypeParamE2E:
             f"Wiki coverage must be preserved after fusion fix."
         )
 
-    def test_type_all_wiki_pool_empty_preserves_memory_order(self, e2e_engines, monkeypatch):
+    def test_type_all_wiki_pool_empty_preserves_memory_order(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """recall(type="all") preserves native memory order when the wiki pool is empty.
 
         Ref: v5.80 fanout-fusion-fix — gap (d), BC-U6.
@@ -535,16 +529,12 @@ class TestTypeParamE2E:
         # exercises the `not wiki_candidates` bypass branch under type="all".
         monkeypatch.setattr(_st, "_wiki", None)
 
-        _rm.settings.UNIFIED_RECALL_ENABLED = True
-        try:
-            fanout_results = _rm.recall(
-                query=f"type all empty wiki {unique}",
-                directory=YADGAR_DIR,
-                max_results=20,
-                type="all",  # noqa: A002
-            )
-        finally:
-            _rm.settings.UNIFIED_RECALL_ENABLED = False
+        fanout_results = _rm.recall(
+            query=f"type all empty wiki {unique}",
+            directory=YADGAR_DIR,
+            max_results=20,
+            type="all",  # noqa: A002
+        )
 
         # No wiki should appear — the pool was forced empty.
         assert not any(r.get("_source") == "wiki" for r in fanout_results), (
@@ -564,10 +554,12 @@ class TestTypeParamE2E:
             f"CE-reranking the memory-only pool (double-rerank regression, gap d)."
         )
 
-    def test_wiki_query_alias_equivalent_to_type_wiki(self, e2e_engines, monkeypatch, caplog):
+    def test_wiki_query_alias_equivalent_to_type_wiki(
+        self, e2e_engines, monkeypatch, caplog, recall_backend_bypass
+    ):
         """wiki_query() and recall(type="wiki") return the same wiki slugs.
 
-        Also verifies wiki_query() emits deprecation INFO log when UNIFIED_RECALL_ENABLED=True.
+        Also verifies wiki_query() emits deprecation INFO log (always-on since Phase 2a).
         """
         import sys
 
@@ -587,15 +579,6 @@ class TestTypeParamE2E:
         _wm = sys.modules.get("yadgar.server.tools.wiki")
         if _wm is None:
             import yadgar.server.tools.wiki as _wm  # type: ignore[no-redef]
-
-        # Enable unified recall: both module-level settings AND get_settings cache.
-        # wiki_query() calls _get_settings() (function-local import) so we need the
-        # cache to return an object with UNIFIED_RECALL_ENABLED=True.
-        import yadgar.config as _cfg
-
-        _rm.settings.UNIFIED_RECALL_ENABLED = True
-        monkeypatch.setenv("YADGAR_UNIFIED_RECALL_ENABLED", "true")
-        _cfg.get_settings.cache_clear()
 
         try:
             recall_fn = _rm.recall
@@ -643,6 +626,4 @@ class TestTypeParamE2E:
             )
 
         finally:
-            _rm.settings.UNIFIED_RECALL_ENABLED = False
-            monkeypatch.delenv("YADGAR_UNIFIED_RECALL_ENABLED", raising=False)
-            _cfg.get_settings.cache_clear()
+            pass

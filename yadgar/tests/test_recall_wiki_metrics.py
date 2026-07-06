@@ -267,7 +267,7 @@ def _make_retriever_with_mocks(settings_override=None):
 
 
 class TestRecallDurationMetricBugA:
-    def test_recall_duration_increments_by_m(self):
+    def test_recall_duration_increments_by_m(self, recall_backend_bypass):
         """After M recall MCP tool calls, yadgar_recall_duration_ms._count must increment by M.
 
         Bug A: the metric was observed only inside a bare try/except at end of the
@@ -296,23 +296,26 @@ class TestRecallDurationMetricBugA:
         import yadgar.server._state as _st
         from yadgar.metrics import yadgar_recall_duration_ms
 
-        mock_retriever = _make_mock_retriever()
-        mock_retriever.recall.side_effect = RuntimeError("injected error for Bug A test")
         mock_storage = _make_mock_storage()
-        mock_wiki = _make_mock_wiki()
 
         before = _count_nolabel(yadgar_recall_duration_ms)
 
+        # Phase 2a forward-only: recall() no longer calls _st._retriever.recall()
+        # directly — it calls _forward_to_backend() first. Inject the failure at the
+        # new call site so the recall() body still raises and we can prove the
+        # yadgar_recall_duration_ms observation fires in the finally block regardless.
+        def _boom(*_a, **_k):
+            raise RuntimeError("injected error for Bug A test")
+
         with (
-            patch.object(_st, "_retriever", mock_retriever),
             patch.object(_st, "_storage", mock_storage),
             patch.object(_st, "_consolidation", None),
             patch.object(_st, "_thermo", None),
             patch.object(_st, "_cognitive_map", None),
             patch.object(_st, "_buffer", None),
             patch.object(_st, "_replay", None),
-            patch.object(_st, "_wiki", mock_wiki),
             patch.object(_st, "_last_recalled_ids", {}),
+            patch("yadgar.server.tools.recall._forward_to_backend", _boom),
             patch("yadgar.server.tools.project._detect_branch", return_value=None),
             patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
             pytest.raises(RuntimeError, match="injected error for Bug A test"),

@@ -26,6 +26,9 @@ import pytest
 from yadgar import server
 from yadgar.file_queue import FileQueue, QueueDrainer
 
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
+
 # ── shared fixture ────────────────────────────────────────────────────────────
 
 

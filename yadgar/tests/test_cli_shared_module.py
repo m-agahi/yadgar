@@ -2,8 +2,11 @@
 
 Wave 5 coverage: yadgar/cli/_shared.py (20 stmts, 0% pre-wave).
 Strategy: all heavy imports (CognitiveMap, EmbeddingEngine, KnowledgeGraph,
-MetaCognition, CheckpointRestore, Retriever, StorageEngine, Settings) are
-lazy inside init_replay_lightweight — patch at the yadgar.* module level.
+MetaCognition, CheckpointRestore, StorageEngine, Settings) are lazy inside
+init_replay_lightweight — patch at the yadgar.* module level.
+Phase 2b: Retriever removed from _shared.py (CLI recall island killed).
+CheckpointRestore receives retriever=None; retriever patches kept as no-ops
+to avoid import errors, but Retriever is no longer constructed by the function.
 _shared.py also calls logging.disable so patch logging too.
 """
 
@@ -23,6 +26,8 @@ _PATCH_TARGETS = {
     "yadgar.embeddings.EmbeddingEngine": None,
     "yadgar.knowledge_graph.KnowledgeGraph": None,
     "yadgar.cognitive_map.CognitiveMap": None,
+    # Phase 2b: Retriever no longer imported/constructed in init_replay_lightweight.
+    # Patch kept as a no-op guard so tests don't fail if a future import re-adds it.
     "yadgar.retrieval.Retriever": None,
     "yadgar.metacognition.MetaCognition": None,
     "yadgar.restoration.CheckpointRestore": None,
@@ -235,6 +240,22 @@ class TestInitReplayLightweightConstructionChain:
         embeddings = clses[10]
         call_kwargs = mock_replay_cls.call_args.kwargs
         assert call_kwargs.get("embeddings") is embeddings
+
+    def test_checkpoint_restore_receives_retriever_none(self):
+        """Phase 2b: CLI recall island killed — retriever=None passed to CheckpointRestore."""
+        clses = self._run()
+        mock_replay_cls = clses[7]
+        call_kwargs = mock_replay_cls.call_args.kwargs
+        assert call_kwargs.get("retriever") is None, (
+            "Phase 2b: init_replay_lightweight must pass retriever=None to CheckpointRestore "
+            "(Retriever construction removed from CLI per §5.4 decision 4)"
+        )
+
+    def test_retriever_not_constructed(self):
+        """Phase 2b: Retriever class must NOT be instantiated by init_replay_lightweight."""
+        clses = self._run()
+        mock_retriever_cls = clses[5]
+        mock_retriever_cls.assert_not_called()
 
     def test_logging_disabled(self):
         """logging.disable(CRITICAL) must be called."""

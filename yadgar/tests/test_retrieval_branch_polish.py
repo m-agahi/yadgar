@@ -329,19 +329,25 @@ class TestC4BoostBoundedUnitInterval:
         assert 0.0 < w < 1.0, f"BRANCH_BOOST_WEIGHT should be in (0, 1), got {w}"
 
     def test_c4_boost_formula_matches_convex_combination(self):
-        """Verify the actual boost in server.py uses convex combination formula."""
+        """Verify the branch boost uses the convex combination formula.
+
+        Phase 2a forward-only: server.recall() is now a pure forwarder and the
+        C4 branch-boost logic relocated to _apply_fanout_boosts in
+        _recall_pipeline.py (runs inside _fanout_recall on the backend). Inspect
+        the boost function at its new home.
+        """
         import inspect
 
-        from yadgar import server as s
+        from yadgar.server.tools._recall_pipeline import _apply_fanout_boosts
 
-        src = inspect.getsource(s.recall)
+        src = inspect.getsource(_apply_fanout_boosts)
         # Should NOT contain the old 1.5x multiplier
         assert "* 1.5" not in src, (
-            "server.py recall() still uses the old '* 1.5' multiplier; should use convex boost"
+            "_apply_fanout_boosts still uses the old '* 1.5' multiplier; should use convex boost"
         )
         # Should contain the convex combination pattern
         assert "BRANCH_BOOST_WEIGHT" in src or "branch_boost_weight" in src.lower(), (
-            "server.py recall() should reference BRANCH_BOOST_WEIGHT for the convex boost"
+            "_apply_fanout_boosts should reference BRANCH_BOOST_WEIGHT for the convex boost"
         )
 
     def test_c4_boost_clamps_base_above_1(self):
@@ -364,20 +370,24 @@ class TestC4BoostBoundedUnitInterval:
         )
 
     def test_c4_server_boost_clamps_base(self):
-        """server.py recall() boost must clamp base score to 1.0 before convex step."""
+        """Branch boost must clamp base score to 1.0 before the convex step.
+
+        Phase 2a forward-only: the boost relocated from server.recall() to
+        _apply_fanout_boosts in _recall_pipeline.py. Inspect it there.
+        """
         import inspect
         import re as _re
 
-        from yadgar import server as s
+        from yadgar.server.tools._recall_pipeline import _apply_fanout_boosts
 
-        src = inspect.getsource(s.recall)
-        # The boost block assigns `base = m.get(...)`.  After the fix it must be:
+        src = inspect.getsource(_apply_fanout_boosts)
+        # The boost block assigns `base = m.get(...)`.  It must be:
         #   base = min(m.get(...), 1.0)
         # This specific pattern confirms the clamp is in the boost assignment, not
-        # somewhere else in recall() (e.g. the heat-bump line `min(m["heat"] + 0.1, 1.0)`).
+        # somewhere else (e.g. the heat-bump line `min(m["heat"] + 0.1, 1.0)`).
         has_clamp_in_base = bool(_re.search(r"base\s*=\s*min\(", src))
         assert has_clamp_in_base, (
-            "server.py recall() boost block must assign `base = min(...)` to clamp "
+            "_apply_fanout_boosts boost block must assign `base = min(...)` to clamp "
             "WRRF scores > 1.0 before the convex combination step. "
             "Without this, base=1.5 → boosted=1.4 (suppressed instead of boosted)."
         )

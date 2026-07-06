@@ -32,9 +32,55 @@ Ref: BC-AC3a, CAP-RETR-025.
 
 from __future__ import annotations
 
+import asyncio
+import os as _os
+
+import httpx
 import pytest
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture
+def landscape_asgi_wiring(e2e_engines, monkeypatch):
+    """Wire httpx.post through ASGITransport so recall(mode='landscape') round-trips
+    via the in-process backend embed_service.app without real TCP.
+
+    Phase 2 test-fix (Pattern 2): mirrors TestRecallCoreForwarderE2E.test_forwarder_e2e_flag_on.
+    Required for landscape tests because recall_backend_bypass returns [] for landscape.
+    """
+    import yadgar.backend.embed_service as _svc
+    from yadgar.backend.embed_service import app as _backend_app
+
+    _svc._recall_engines_ready = True
+
+    def _asgi_post(url: str, *, json=None, headers=None, timeout=None):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        path = parsed.path
+
+        _orig_root = _os.environ.get("YADGAR_ALLOW_ROOT", "0")
+        _os.environ["YADGAR_ALLOW_ROOT"] = "1"
+        try:
+
+            async def _do():
+                transport = httpx.ASGITransport(app=_backend_app)
+                async with httpx.AsyncClient(
+                    transport=transport, base_url="http://backend"
+                ) as client:
+                    resp = await client.post(path, json=json, headers=headers or {})
+                    resp.raise_for_status()
+                    return resp
+
+            return asyncio.run(_do())
+        finally:
+            _os.environ["YADGAR_ALLOW_ROOT"] = _orig_root
+
+    monkeypatch.setenv("YADGAR_EMBED_URL", "http://backend-stub:8001")
+    monkeypatch.setattr("httpx.post", _asgi_post)
+    yield
+
 
 _UNIQUE_TAG = "xzlandscape801"
 _YADGAR_DIR = "/home/test/yadgar-project"
@@ -118,7 +164,7 @@ def _run_landscape_recall(
 class TestLandscapeRecallE2E:
     """E2E tests for recall(mode="landscape") — BC-AC3a."""
 
-    def test_landscape_returns_nonempty_list(self, e2e_engines, monkeypatch):
+    def test_landscape_returns_nonempty_list(self, e2e_engines, monkeypatch, landscape_asgi_wiring):
         """recall(mode="landscape") returns ≥1 result for a relevant query.
 
         Ref: BC-AC3a (a).
@@ -131,7 +177,9 @@ class TestLandscapeRecallE2E:
             f"got {results}"
         )
 
-    def test_landscape_results_carry_consensus_score(self, e2e_engines, monkeypatch):
+    def test_landscape_results_carry_consensus_score(
+        self, e2e_engines, monkeypatch, landscape_asgi_wiring
+    ):
         """recall(mode="landscape") stamps each result with consensus_score > 0.
 
         Ref: BC-AC3a (b).
@@ -152,7 +200,9 @@ class TestLandscapeRecallE2E:
                 f"consensus_score must be > 0; got {r['consensus_score']}"
             )
 
-    def test_cross_domain_memory_has_multiple_voting_domains(self, e2e_engines, monkeypatch):
+    def test_cross_domain_memory_has_multiple_voting_domains(
+        self, e2e_engines, monkeypatch, landscape_asgi_wiring
+    ):
         """A memory with keywords in ≥2 domains carries ≥2 voting_domains.
 
         Ref: BC-AC3a (c).
@@ -171,7 +221,9 @@ class TestLandscapeRecallE2E:
             f"content={_CROSS_DOMAIN_CONTENT[:60]}"
         )
 
-    def test_directory_scoping_excludes_foreign_dir(self, e2e_engines, monkeypatch):
+    def test_directory_scoping_excludes_foreign_dir(
+        self, e2e_engines, monkeypatch, landscape_asgi_wiring
+    ):
         """recall(mode="landscape", directory=X) must exclude memories from directory Y.
 
         Ref: BC-AC3a (d) — directory contract.
@@ -221,7 +273,7 @@ class TestLandscapeRecallE2E:
                 mode="bogus",
             )
 
-    def test_none_mode_uses_normal_recall(self, e2e_engines, monkeypatch):
+    def test_none_mode_uses_normal_recall(self, e2e_engines, monkeypatch, recall_backend_bypass):
         """mode=None (default) must NOT trigger landscape path — normal recall behavior.
 
         Ensures the default path is 100% unchanged when mode is absent.

@@ -180,6 +180,7 @@ def fuse_candidates(
     retriever: Retriever | None,
     max_results: int,
     settings,
+    profile: str | None = None,
 ) -> list[Candidate]:
     """Fuse memory and wiki candidates into a single ranked list.
 
@@ -188,7 +189,8 @@ def fuse_candidates(
     1. Apply per-type quotas (RECALL_MEMORY_QUOTA, RECALL_WIKI_QUOTA).
     2. CE-score ALL candidates (memory + wiki) against the query.
        This gives a common relevance scale for cross-type comparison.
-       Falls back to native_score when retriever is None or CE unavailable.
+       Falls back to native_score when retriever is None, CE unavailable,
+       OR profile="fast" (fast skips the cross-type CE pass entirely).
     3. Emit memory candidates in NATIVE order (the order MemoryProvider returned
        them — WRRF+GTE already applied). Never reorder memories by CE.
     4. Sort wiki candidates by (CE + RECALL_WIKI_PRIOR_WEIGHT * native_score)
@@ -212,6 +214,9 @@ def fuse_candidates(
         retriever: Retriever instance (owns the GTE reranker). May be None.
         max_results: Maximum candidates in the final output.
         settings: Settings instance carrying quota/prior weights.
+        profile: Optional rerank level ("fast", "balanced", "full", None).
+            When "fast", the cross-type CE pass is skipped (native_score proxy used
+            for wiki placement). Matches Phase 1 §3.1 fusion-CE gate.
 
     Returns:
         List of Candidates with memories in native order + wiki interleaved by
@@ -232,11 +237,15 @@ def fuse_candidates(
     # Step 2: CE-score all candidates for a common relevance yardstick.
     # Memory scores are used ONLY for wiki placement comparison, never for
     # resorting memories against each other.
+    # Phase 1 §3.1 fusion-CE gate: when profile="fast", skip CE (native_score proxy).
+    # This matches the memory-arm CE gate in Retriever.recall(profile="fast") so the
+    # full fanout fast path avoids ALL CE inference — latency budget for the hook.
     all_candidates = mem_pool + wiki_pool
-    if retriever is not None:
+    _skip_ce = profile == "fast"
+    if retriever is not None and not _skip_ce:
         all_scores = _score_candidates_ce(all_candidates, query, retriever)
     else:
-        # No retriever — fall back to native_score as the CE proxy.
+        # No retriever OR profile="fast" — fall back to native_score as the CE proxy.
         all_scores = {i: c.native_score for i, c in enumerate(all_candidates)}
 
     # Split scores back per type.

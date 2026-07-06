@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
 # ---------------------------------------------------------------------------
 # Part A — DirectoryFilter / is_directory_eligible / _build_directory_clause
 # ---------------------------------------------------------------------------

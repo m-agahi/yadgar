@@ -905,6 +905,13 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
             pass
 
         try:
+            # v5.108.0 §5.4 (recall-forward-only-2026-07-05.md): hook callers are the ONE
+            # accepted core-resident exception to the forward-only rule. Forwarding would add
+            # a real TCP hop to YADGAR_EMBED_URL which fights the 2.0s latency budget
+            # (HOOK_RECALL_TIMEOUT_S). Retriever.recall(profile="fast") is proven under
+            # budget on the warm box; forward-over-TCP is not. Documented disposition:
+            # keep these three hook sites calling _st._retriever.recall(profile="fast")
+            # directly. Revisit if backend TCP p99 is measured < 500ms on production box.
             # v5.6.6 A: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
             # Hooks fire 50+ times/hour; full rerank pipeline causes 8-46s CPU bursts.
             # v5.51.0: wrapped in _recall_with_timeout (asyncio.wait_for) to bound latency.

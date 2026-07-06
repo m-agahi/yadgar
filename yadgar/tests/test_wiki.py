@@ -18,6 +18,9 @@ import pytest
 from yadgar import server
 from yadgar.wiki import WikiAddOptions
 
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 

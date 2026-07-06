@@ -25,6 +25,10 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
 # ---------------------------------------------------------------------------
 # Helpers (mirrored from test_recall_wiki_metrics.py)
 # ---------------------------------------------------------------------------

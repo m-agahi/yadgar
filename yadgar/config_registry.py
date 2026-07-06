@@ -396,10 +396,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_WRRF_GRAPH_PRIOR_WEIGHT", "0.2", "float"),
     # v5.54.2: precomputed co-recall (transition-edge) prior weight (additive boost in all profiles)
     ConfigEntry("YADGAR_WRRF_COFIRE_PRIOR_WEIGHT", "0.15", "float"),
-    # ── v6 T6 unified-scoped-recall fan-out flag + fusion settings ────────────
-    ConfigEntry("YADGAR_UNIFIED_RECALL_ENABLED", "true", "bool"),
-    # Train 1: recall-backend dual-path flag (default false — no-op until explicitly enabled).
-    ConfigEntry("YADGAR_RECALL_BACKEND_ENABLED", "false", "bool"),
+    # ── v6 T6 unified-scoped-recall fusion settings ─────────────────────────
     # v6 T6 Step 4: cross-type fusion per-type quotas and prior weights.
     ConfigEntry("YADGAR_RECALL_MEMORY_QUOTA", "5", "int"),
     ConfigEntry("YADGAR_RECALL_WIKI_QUOTA", "5", "int"),
@@ -452,6 +449,7 @@ _REGISTRY: list[ConfigEntry] = [
         "string",
     ),
     ConfigEntry("YADGAR_RETRIEVAL_PROFILE", "balanced", "string"),
+    ConfigEntry("YADGAR_FANOUT_BOOST_SCOPE", "scoped", "string"),
     ConfigEntry("YADGAR_HEAVY_RERANK_ENABLED", "true", "bool"),
     # neuromorphic
     ConfigEntry("YADGAR_HOPFIELD_BETA", "8.0", "float"),

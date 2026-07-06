@@ -921,7 +921,7 @@ class TestFullSleepCycle:
 
 
 class TestBackwardCompatibility:
-    def test_basic_remember_recall_works(self, server_engines):
+    def test_basic_remember_recall_works(self, server_engines, recall_backend_bypass):
         """Verify basic remember/recall still works with the original simple interface."""
         result = memorize_sync(
             "backward compat test memory",

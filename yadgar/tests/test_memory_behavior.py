@@ -70,7 +70,7 @@ class TestContentIntegrity:
     content field of a stored memory.
     """
 
-    def test_exact_content_preserved(self):
+    def test_exact_content_preserved(self, recall_backend_bypass):
         """recall() returns the exact content that was stored."""
         content = "The deployment uses Helm chart version 3.14.2 with replicas=5"
         result = memorize_sync(content, "/home/user/project", ["infra"])
@@ -84,7 +84,7 @@ class TestContentIntegrity:
             f"Content was modified:\nExpected: {content!r}\nGot:      {match['content']!r}"
         )
 
-    def test_specific_detail_preserved(self):
+    def test_specific_detail_preserved(self, recall_backend_bypass):
         """Specific identifiers (IDs, paths, item names) survive retrieval unchanged."""
         content = "Codeberg PAT is stored in 1Password item zqq55bz2qi53gw375jlm2sh4jq"
         result = memorize_sync(content, "/home/user", ["codeberg", "secrets"])
@@ -97,7 +97,7 @@ class TestContentIntegrity:
             "Specific 1Password item ID was lost from memory content"
         )
 
-    def test_recall_does_not_rewrite_content(self):
+    def test_recall_does_not_rewrite_content(self, recall_backend_bypass):
         """Calling recall() multiple times with different queries never rewrites content."""
         content = "Redis cluster uses Sentinel mode with quorum=2 and auth password stored in Vault"
         result = memorize_sync(content, "/home/user/ops", ["redis", "vault"])
@@ -537,7 +537,7 @@ class TestRegressionScenarios:
     Each test reproduces a specific bug. The bug reference is in the docstring.
     """
 
-    def test_1password_item_name_survives_recall(self):
+    def test_1password_item_name_survives_recall(self, recall_backend_bypass):
         """Regression: specific 1Password item ID was lost during reconsolidation.
 
         Bug: reconsolidate() would replace memory content with the query string
@@ -565,7 +565,7 @@ class TestRegressionScenarios:
             f"Current content: {mem['content']!r}"
         )
 
-    def test_credentials_not_corrupted_by_cross_project_recall(self):
+    def test_credentials_not_corrupted_by_cross_project_recall(self, recall_backend_bypass):
         """Cross-directory recall must not corrupt credential memories.
 
         Previously: directory mismatch contributed to mismatch score, potentially

@@ -152,13 +152,21 @@ def _candidates_to_dicts(candidates: list) -> list[dict]:
     pooled: list[dict] = []
     for cand in candidates:
         raw = cand.raw
-        raw["_source"] = cand.type  # "memory" or "wiki" — idempotent for wiki
+        # Preserve existing _source annotations (e.g. "profile", "belief") that
+        # carry semantic meaning beyond "memory"/"wiki" type bucket.  Only stamp
+        # cand.type when _source is absent or already equals the bucket type so we
+        # don't overwrite structured-knowledge provenance injected by reranking.
+        existing_src = raw.get("_source")
+        if existing_src not in (None, "memory", "wiki"):
+            pass  # keep the structured-knowledge annotation (profile, belief, …)
+        else:
+            raw["_source"] = cand.type  # "memory" or "wiki" — idempotent for wiki
         raw.pop("embedding", None)
         pooled.append(raw)
     return pooled
 
 
-def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results):
+def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results, profile=None):
     """Cross-type CE fusion, grouped under a named ``recall.fanout.fuse`` span.
 
     v5.102: the multi-provider fusion runs the cross-type cross-encoder pass —
@@ -171,6 +179,9 @@ def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results):
     load-bearing for cross-type ranking quality (the single-provider bypass in
     ``_fanout_recall`` records double-CE dropping MRR 0.84→0.74). Extracted to a
     helper so ``_fanout_recall`` stays under the I13/I30 complexity caps.
+
+    Phase 1 §3.1: profile="fast" threads through to fuse_candidates to gate the
+    cross-type CE pass (fast = use native_score proxy, no CE inference).
     """
     from yadgar.tracing import span  # noqa: PLC0415
 
@@ -186,6 +197,7 @@ def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results):
             retriever=_st._retriever,
             max_results=max_results,
             settings=settings,
+            profile=profile,
         )
 
 
@@ -194,8 +206,80 @@ def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results):
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="hot", name="tools.recall._apply_fanout_boosts")
+def _apply_fanout_boosts(
+    pooled: list[dict],
+    query: str,
+    current_branch: str | None,
+    profile: str | None = None,
+) -> list[dict]:
+    """Apply C4 branch boost and postmortem/incident boost to fanout results.
+
+    Phase 1 §5.2: mirrors recall.py:526-552 (legacy B5/B2 path) to close the
+    parity gap where the default fanout path (B3/B4) lacked these boosts.
+
+    Branch boost (C4): convex combination base + (1-base) * BRANCH_BOOST_WEIGHT
+    for memories whose branch matches current_branch. Sort is applied only when
+    at least one boost fires — preserves the retriever's native order otherwise
+    (important: avoids the double-sort regression from PR #143).
+
+    Postmortem/incident boost: convex combination with POSTMORTEM_BOOST_FACTOR
+    for memories tagged _postmortem or _incident when the query contains a
+    postmortem action keyword (POSTMORTEM_BOOST_KEYWORDS).
+
+    FANOUT_BOOST_SCOPE gate (§45):
+      - "off"    → skip all boosts, return pooled unchanged.
+      - "scoped" → apply boosts only when profile is not None (profile-origin
+                   callers: hook=fast). Default — reproduces pre-forward-only
+                   prod parity where hook path boosted, default path did not.
+      - "global" → apply boosts always regardless of profile.
+
+    Args:
+        pooled: Deduplicated fanout result list (mutated in-place for boosts).
+        query: Recall query string (for postmortem keyword check).
+        current_branch: Active git branch or None (for branch boost).
+        profile: Retrieval profile that triggered this fanout (None = default path).
+
+    Returns:
+        The pooled list with boosts applied (same list, possibly re-sorted).
+    """
+    scope = getattr(settings, "FANOUT_BOOST_SCOPE", "scoped")
+    if scope == "off" or (scope == "scoped" and profile is None):
+        return pooled
+
+    if current_branch is not None:
+        _boost_weight = getattr(settings, "BRANCH_BOOST_WEIGHT", 0.2)
+        _branch_boosted = False
+        for m in pooled:
+            if m.get("branch") == current_branch:
+                base = min(float(m.get("_retrieval_score", m.get("heat", 0.0))), 1.0)
+                m["_retrieval_score"] = base + (1.0 - base) * _boost_weight
+                _branch_boosted = True
+        if _branch_boosted:
+            pooled.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
+
+    _pm_boost_factor = getattr(settings, "POSTMORTEM_BOOST_FACTOR", 0.3)
+    _pm_keywords = getattr(settings, "POSTMORTEM_BOOST_KEYWORDS", ())
+    if _pm_boost_factor > 0.0 and _pm_keywords:
+        _query_lower = query.lower()
+        _has_action_verb = any(kw in _query_lower for kw in _pm_keywords)
+        if _has_action_verb:
+            _pm_tags = {"_postmortem", "_incident"}
+            _pm_boosted = False
+            for m in pooled:
+                _mem_tags = set(m.get("tags", []))
+                if _mem_tags & _pm_tags:
+                    base = min(float(m.get("_retrieval_score", m.get("heat", 0.0))), 1.0)
+                    m["_retrieval_score"] = base + (1.0 - base) * _pm_boost_factor
+                    _pm_boosted = True
+            if _pm_boosted:
+                pooled.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
+
+    return pooled
+
+
 @observe(tier="stage", name="tools.recall._fanout_recall", span=False)
-def _fanout_recall(
+def _fanout_recall(  # noqa: PLR0913 — 9 params allowlisted (I30); Phase 2 wraps params
     query: str,
     max_results: int,
     min_heat: float,
@@ -204,6 +288,7 @@ def _fanout_recall(
     default_branch: str | None,
     type_filter: str = "all",
     tags: list[str] | None = None,
+    profile: str | None = None,
 ) -> list[dict]:
     """Fan out recall to MemoryProvider + WikiProvider, fuse + dedup results.
 
@@ -285,7 +370,7 @@ def _fanout_recall(
 
     # Memory provider — active when type_filter is "all" or "memory"
     if type_filter in ("all", "memory") and _st._retriever is not None:
-        memory_provider = MemoryProvider(_st._retriever)
+        memory_provider = MemoryProvider(_st._retriever, profile=profile)
         memory_candidates = memory_provider.candidates(query, scope, limit=pool_limit)
 
     # Wiki provider — active when type_filter is "all" or "wiki".
@@ -322,11 +407,21 @@ def _fanout_recall(
         pooled = _candidates_to_dicts(candidates)
     else:
         # Multi-provider path (type="all"): cross-type CE fusion needed.
-        fused = _fuse_with_span(memory_candidates, wiki_candidates, query, max_results)
+        fused = _fuse_with_span(
+            memory_candidates, wiki_candidates, query, max_results, profile=profile
+        )
         pooled = _candidates_to_dicts(fused)
 
     # Final dedup by content (handles any duplicates fusion didn't catch)
     pooled = _dedup_by_content(pooled)
+
+    # Phase 1 §5.2: apply C4 branch boost + postmortem/incident boost.
+    # §45: profile threaded through so FANOUT_BOOST_SCOPE gate can discriminate
+    # profile-origin (hook=fast) callers from default (profile=None) callers.
+    pooled = _apply_fanout_boosts(
+        pooled, query=query, current_branch=current_branch, profile=profile
+    )
+
     return pooled[:max_results]
 
 

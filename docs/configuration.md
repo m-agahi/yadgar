@@ -284,7 +284,6 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
-| `unified_recall_enabled` | `YADGAR_UNIFIED_RECALL_ENABLED` | bool | `true` | Enable the unified fan-out recall path (default as of v5.80). `recall()` fans out to MemoryProvider + WikiProvider, applies DB-level directory scoping, cross-type CE fusion with per-type quotas, and returns a combined relevance-ranked list. When false, `recall()` uses the exact legacy path. |
 | `recall_memory_quota` | `YADGAR_RECALL_MEMORY_QUOTA` | int | `5` | Max memory candidates in the fusion pool before CE rerank. Prevents memory candidates from starving wiki candidates. |
 | `recall_wiki_quota` | `YADGAR_RECALL_WIKI_QUOTA` | int | `5` | Max wiki candidates in the fusion pool before CE rerank. |
 | `recall_memory_prior_weight` | `YADGAR_RECALL_MEMORY_PRIOR_WEIGHT` | float | `0.1` | Additive prior weight for memory `native_score` in CE fusion (CE is primary; prior is a tie-shaper). |

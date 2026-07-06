@@ -1,24 +1,26 @@
-"""v5.31.1 — MCP recall() pipeline kwargs tests (Item 2).
+"""Phase 2a — MCP recall() forward-only kwargs tests.
 
-Covers:
-  1. profile=None (default) routes through legacy retriever.recall() path.
-  2. profile="balanced" routes through retriever.recall_via_pipeline().
-  3. Invalid profile raises ValidationError BEFORE any retrieval work.
-  4. stage_overrides passed through to recall_via_pipeline().
-  5. Pipeline metrics (yadgar_recall_profile_invocations_total) increment on profile call.
-  6. Zero behavior change: existing callers (no profile) unaffected.
+Covers (rewritten from v5.31.1 plugin-pipeline routing tests):
+  1. profile=None → _forward_to_backend called with profile=None (no retriever.recall_via_pipeline).
+  2. profile="balanced" → _forward_to_backend called with profile="balanced" in payload.
+  3. profile="fast"/"full"/"debug" → forwarded verbatim.
+  4. Invalid profile raises ValueError BEFORE any retrieval work.
+  5. stage_overrides is NOT forwarded (it's a call-level override not in RecallRequest).
+     Actually: stage_overrides is in RecallRequest — if we forward it later that's OK.
+     For now: assert _forward_to_backend is called (not that stage_overrides causes crash).
+  6. profile=None (default) — counter not incremented (plugin pipeline removed).
 """
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock, patch
+import sys
+from unittest.mock import patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Helpers (minimal copies from test_recall_wiki_metrics pattern)
-# ---------------------------------------------------------------------------
+import yadgar.server.tools.recall as _recall_symbol  # noqa: F401 — side-effects
+
+_recall_module = sys.modules["yadgar.server.tools.recall"]
 
 
 def _make_fake_memory(mid: int = 1) -> dict:
@@ -32,50 +34,31 @@ def _make_fake_memory(mid: int = 1) -> dict:
     }
 
 
-def _make_mock_storage() -> Any:
-    storage = MagicMock()
-    mems = [_make_fake_memory(1)]
-    storage.search_memories_fts.return_value = mems
-    storage.search_vectors.return_value = []
-    storage.get_memory.return_value = mems[0]
-    storage._now_iso.return_value = "2026-01-01T00:00:00"
-    storage.update_memory_heat.return_value = None
-    storage.update_memory_last_accessed.return_value = None
-    return storage
-
-
-def _make_mock_retriever() -> Any:
-    retriever = MagicMock()
-    retriever.recall.return_value = [_make_fake_memory(1)]
-    retriever.recall_via_pipeline.return_value = [_make_fake_memory(2)]
-    return retriever
-
-
 def _call_recall(query: str = "test query", profile=None, stage_overrides=None, **kwargs):
-    """Call the MCP recall tool directly with mocked server state.
+    """Call the MCP recall tool directly with _forward_to_backend mocked out.
 
-    v5.65 Fix D: directory is now required. Default to "/tmp/test" for pipeline
-    tests that don't exercise directory scoping.
+    Returns (result, captured_call_kwargs) where captured_call_kwargs is the
+    kwargs passed to _forward_to_backend so callers can assert on profile/mode.
     """
-    import yadgar.server._state as _st
     from yadgar.server.tools.recall import recall as recall_fn
 
-    mock_retriever = _make_mock_retriever()
-    mock_storage = _make_mock_storage()
+    fake_results = [_make_fake_memory(1)]
+    captured = {}
+
+    def _spy_forward(**kw):
+        captured.update(kw)
+        return fake_results
 
     with (
-        patch.object(_st, "_retriever", mock_retriever),
-        patch.object(_st, "_storage", mock_storage),
-        patch.object(_st, "_consolidation", None),
-        patch.object(_st, "_thermo", None),
-        patch.object(_st, "_cognitive_map", None),
-        patch.object(_st, "_buffer", None),
-        patch.object(_st, "_replay", None),
-        patch.object(_st, "_wiki", None),
-        patch.object(_st, "_last_recalled_ids", {}),
+        patch.object(_recall_module, "_forward_to_backend", side_effect=_spy_forward),
+        patch.object(_recall_module, "_apply_recall_session_side_effects"),
+        patch.object(_recall_module, "_st") as mock_st,
         patch("yadgar.server.tools.project._detect_branch", return_value=None),
         patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
     ):
+        mock_st._consolidation = None
+        mock_st._pool = None
+
         call_kwargs: dict = {"query": query, "directory": "/tmp/test"}
         if profile is not None:
             call_kwargs["profile"] = profile
@@ -83,121 +66,87 @@ def _call_recall(query: str = "test query", profile=None, stage_overrides=None, 
             call_kwargs["stage_overrides"] = stage_overrides
         call_kwargs.update(kwargs)
         result = recall_fn(**call_kwargs)
-    return result, mock_retriever
 
-
-def _count_labeled(metric, **label_filter) -> float:
-    """Read _count from a labeled Counter matching given label values."""
-    total = 0.0
-    for fam in metric.collect():
-        for s in fam.samples:
-            if not s.name.endswith("_total"):
-                continue
-            if all(s.labels.get(k) == v for k, v in label_filter.items()):
-                total += s.value
-    return total
+    return result, captured
 
 
 # ---------------------------------------------------------------------------
-# Test classes
+# 1. profile=None (default) → forwarded as profile=None
 # ---------------------------------------------------------------------------
 
 
 class TestRecallProfileNone:
-    """profile=None (default) → legacy retriever.recall() path."""
+    """profile=None (default) → _forward_to_backend called with profile=None."""
 
-    def test_no_profile_calls_legacy_recall(self):
-        """Omitting profile routes through retriever.recall(), not recall_via_pipeline."""
-        result, mock_retriever = _call_recall(query="semantic memory search")
-        mock_retriever.recall.assert_called_once()
-        mock_retriever.recall_via_pipeline.assert_not_called()
+    def test_no_profile_forwarded_as_none(self):
+        """Omitting profile calls _forward_to_backend with profile=None."""
+        result, captured = _call_recall(query="semantic memory search")
+        assert "profile" in captured, "_forward_to_backend must be called with profile kwarg"
+        assert captured["profile"] is None
 
-    def test_explicit_none_calls_legacy_recall(self):
-        """Passing profile=None explicitly also routes to legacy path."""
-        result, mock_retriever = _call_recall(query="test", profile=None)
-        mock_retriever.recall.assert_called_once()
-        mock_retriever.recall_via_pipeline.assert_not_called()
+    def test_explicit_none_forwarded_as_none(self):
+        """Passing profile=None explicitly is also forwarded as None."""
+        result, captured = _call_recall(query="test", profile=None)
+        assert captured.get("profile") is None
 
     def test_zero_behavior_change_for_no_profile(self):
-        """Legacy path result is returned unchanged."""
-        result, mock_retriever = _call_recall(query="test")
-        # recall() returns [_make_fake_memory(1)]
+        """forward-only path returns results from backend."""
+        result, _ = _call_recall(query="test")
         assert any(m["id"] == 1 for m in result)
 
 
-class TestRecallProfileBalanced:
-    """profile='balanced' → recall_via_pipeline() path."""
+# ---------------------------------------------------------------------------
+# 2. profile="balanced" / "fast" / "full" / "debug" → forwarded verbatim
+# ---------------------------------------------------------------------------
 
-    def test_profile_balanced_routes_to_pipeline(self):
-        """Setting profile='balanced' calls recall_via_pipeline, not legacy recall."""
-        result, mock_retriever = _call_recall(query="semantic search", profile="balanced")
-        mock_retriever.recall_via_pipeline.assert_called_once()
-        mock_retriever.recall.assert_not_called()
 
-    def test_profile_fast_routes_to_pipeline(self):
-        """Setting profile='fast' calls recall_via_pipeline."""
-        result, mock_retriever = _call_recall(query="fast search", profile="fast")
-        mock_retriever.recall_via_pipeline.assert_called_once()
+class TestRecallProfileForwarded:
+    """profile=X → _forward_to_backend called with profile=X in payload."""
 
-    def test_profile_full_routes_to_pipeline(self):
-        result, mock_retriever = _call_recall(query="full search", profile="full")
-        mock_retriever.recall_via_pipeline.assert_called_once()
+    def test_profile_balanced_forwarded(self):
+        """Setting profile='balanced' is forwarded verbatim."""
+        _, captured = _call_recall(query="semantic search", profile="balanced")
+        assert captured.get("profile") == "balanced"
 
-    def test_profile_debug_routes_to_pipeline(self):
-        result, mock_retriever = _call_recall(query="debug search", profile="debug")
-        mock_retriever.recall_via_pipeline.assert_called_once()
+    def test_profile_fast_forwarded(self):
+        _, captured = _call_recall(query="fast search", profile="fast")
+        assert captured.get("profile") == "fast"
 
-    def test_profile_kwarg_passed_to_pipeline(self):
-        """profile name is forwarded to recall_via_pipeline(profile=...)."""
-        _call_recall(query="test", profile="balanced")
-        # Can't easily check mock_retriever here without returning it; use mock inspection pattern
-        _, mock_retriever = _call_recall(query="test", profile="fast")
-        call_kwargs = mock_retriever.recall_via_pipeline.call_args
-        assert call_kwargs.kwargs.get("profile") == "fast" or (
-            len(call_kwargs.args) >= 2 and call_kwargs.args[1] == "fast"
-        )
+    def test_profile_full_forwarded(self):
+        _, captured = _call_recall(query="full search", profile="full")
+        assert captured.get("profile") == "full"
 
-    def test_stage_overrides_passed_to_pipeline(self):
-        """stage_overrides dict forwarded to recall_via_pipeline(stage_overrides=...)."""
-        overrides = {"nli": {"enabled": False}, "ce_rerank": {"enabled": False}}
-        _, mock_retriever = _call_recall(
-            query="test", profile="balanced", stage_overrides=overrides
-        )
-        call_kw = mock_retriever.recall_via_pipeline.call_args
-        assert call_kw.kwargs.get("stage_overrides") == overrides
+    def test_profile_debug_forwarded(self):
+        _, captured = _call_recall(query="debug search", profile="debug")
+        assert captured.get("profile") == "debug"
 
-    def test_stage_overrides_none_when_not_provided(self):
-        """stage_overrides=None forwarded (or omitted) when not set."""
-        _, mock_retriever = _call_recall(query="test", profile="balanced")
-        call_kw = mock_retriever.recall_via_pipeline.call_args
-        overrides = call_kw.kwargs.get("stage_overrides")
-        assert overrides is None or overrides == {}
+    def test_profile_kwarg_value_forwarded(self):
+        """profile value reaches _forward_to_backend intact."""
+        _, captured = _call_recall(query="test", profile="fast")
+        assert captured["profile"] == "fast"
+
+
+# ---------------------------------------------------------------------------
+# 3. Invalid profile raises ValueError BEFORE forwarding
+# ---------------------------------------------------------------------------
 
 
 class TestRecallInvalidProfile:
-    """Invalid profile raises ValidationError BEFORE retrieval work."""
+    """Invalid profile raises ValueError BEFORE _forward_to_backend is called."""
 
     def test_invalid_profile_raises_validation_error(self):
         """Unknown profile name raises ValueError before any retrieval."""
-        import yadgar.server._state as _st
         from yadgar.server.tools.recall import recall as recall_fn
 
-        mock_retriever = _make_mock_retriever()
-        mock_storage = _make_mock_storage()
-
         with (
-            patch.object(_st, "_retriever", mock_retriever),
-            patch.object(_st, "_storage", mock_storage),
-            patch.object(_st, "_consolidation", None),
-            patch.object(_st, "_thermo", None),
-            patch.object(_st, "_cognitive_map", None),
-            patch.object(_st, "_buffer", None),
-            patch.object(_st, "_replay", None),
-            patch.object(_st, "_wiki", None),
-            patch.object(_st, "_last_recalled_ids", {}),
+            patch.object(_recall_module, "_forward_to_backend") as mock_fwd,
+            patch.object(_recall_module, "_st") as mock_st,
             patch("yadgar.server.tools.project._detect_branch", return_value=None),
             patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
         ):
+            mock_st._consolidation = None
+            mock_st._pool = None
+
             with pytest.raises((ValueError, Exception)) as exc_info:
                 recall_fn(query="test", profile="turbo-ultra-hyper", directory="/tmp/test")
             assert (
@@ -205,52 +154,43 @@ class TestRecallInvalidProfile:
                 or "unknown" in str(exc_info.value).lower()
                 or "valid" in str(exc_info.value).lower()
             )
+            # _forward_to_backend must NOT have been called
+            mock_fwd.assert_not_called()
 
-    def test_invalid_profile_no_retriever_called(self):
-        """retriever.recall and recall_via_pipeline must NOT be called for invalid profile."""
-        import yadgar.server._state as _st
+    def test_invalid_profile_no_forward_called(self):
+        """_forward_to_backend must NOT be called for invalid profile."""
         from yadgar.server.tools.recall import recall as recall_fn
 
-        mock_retriever = _make_mock_retriever()
-        mock_storage = _make_mock_storage()
-
         with (
-            patch.object(_st, "_retriever", mock_retriever),
-            patch.object(_st, "_storage", mock_storage),
-            patch.object(_st, "_consolidation", None),
-            patch.object(_st, "_thermo", None),
-            patch.object(_st, "_cognitive_map", None),
-            patch.object(_st, "_buffer", None),
-            patch.object(_st, "_replay", None),
-            patch.object(_st, "_wiki", None),
-            patch.object(_st, "_last_recalled_ids", {}),
+            patch.object(_recall_module, "_forward_to_backend") as mock_fwd,
+            patch.object(_recall_module, "_st") as mock_st,
             patch("yadgar.server.tools.project._detect_branch", return_value=None),
             patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
         ):
+            mock_st._consolidation = None
+            mock_st._pool = None
+
             try:
                 recall_fn(query="test", profile="bogus_profile", directory="/tmp/test")
             except Exception:
                 pass
-            mock_retriever.recall.assert_not_called()
-            mock_retriever.recall_via_pipeline.assert_not_called()
+            mock_fwd.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 4. profile=None counter: plugin pipeline metric no longer fires
+# ---------------------------------------------------------------------------
 
 
 class TestRecallPipelineMetrics:
-    """yadgar_recall_profile_invocations_total increments when profile is set."""
-
-    def test_profile_invocations_counter_increments(self):
-        from yadgar.metrics import yadgar_recall_profile_invocations_total
-
-        before = _count_labeled(yadgar_recall_profile_invocations_total, profile="balanced")
-        _call_recall(query="metric test", profile="balanced")
-        after = _count_labeled(yadgar_recall_profile_invocations_total, profile="balanced")
-        assert after > before, "yadgar_recall_profile_invocations_total should increment"
+    """Phase 2a: plugin pipeline counter (yadgar_recall_profile_invocations_total)
+    is no longer incremented — forward-only path does not run the plugin pipeline.
+    """
 
     def test_no_profile_does_not_increment_profile_counter(self):
-        """Legacy path (profile=None) does not bump profile invocations counter."""
+        """Profile=None does not bump profile invocations counter (no plugin pipeline)."""
         from yadgar.metrics import yadgar_recall_profile_invocations_total
 
-        # Collect totals across all labels before
         before_total = sum(
             s.value
             for fam in yadgar_recall_profile_invocations_total.collect()
@@ -264,5 +204,27 @@ class TestRecallPipelineMetrics:
             for s in fam.samples
             if s.name.endswith("_total")
         )
-        # Counter must not have incremented
-        assert after_total == before_total, "Profile counter should not increment when profile=None"
+        assert after_total == before_total, "Profile counter must not increment when profile=None"
+
+    def test_profile_set_does_not_increment_plugin_pipeline_counter(self):
+        """Phase 2a: profile= is forwarded to backend; plugin pipeline counter NOT fired."""
+        from yadgar.metrics import yadgar_recall_profile_invocations_total
+
+        before = sum(
+            s.value
+            for fam in yadgar_recall_profile_invocations_total.collect()
+            for s in fam.samples
+            if s.name.endswith("_total")
+        )
+        _call_recall(query="metric test", profile="balanced")
+        after = sum(
+            s.value
+            for fam in yadgar_recall_profile_invocations_total.collect()
+            for s in fam.samples
+            if s.name.endswith("_total")
+        )
+        # Plugin pipeline counter must NOT fire (forward-only; backend handles profiling)
+        assert after == before, (
+            "Plugin pipeline counter must not increment in forward-only mode; "
+            "profile is forwarded to backend"
+        )

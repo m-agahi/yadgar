@@ -437,13 +437,13 @@ config knobs.
 
 - **status:** LIVE
 - **category:** retrieval
-- **settings:** `BRANCH_BOOST_WEIGHT`, `POSTMORTEM_BOOST_FACTOR`, `POSTMORTEM_BOOST_KEYWORDS`
+- **settings:** `BRANCH_BOOST_WEIGHT`, `POSTMORTEM_BOOST_FACTOR`, `POSTMORTEM_BOOST_KEYWORDS`, `FANOUT_BOOST_SCOPE`
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/server/tools/recall.py`
-- **wiring:** Applied in the `recall` tool after retriever output, before final trimming. Branch boost fires when `_current_branch` is not None and iterates all merged results; postmortem boost fires when the query contains a keyword from `POSTMORTEM_BOOST_KEYWORDS` (default: action verbs like "fix", "incident") and a result has `_postmortem` or `_incident` tags. Both use the convex combination formula `base + (1 - base) × weight` to keep scores in [0, 1].
-- **explanation:** Two score-adjustment passes applied in the MCP tool layer, not in the core retriever. Branch boost (`BRANCH_BOOST_WEIGHT=0.2`) elevates results from the caller's current git branch, surfacing branch-relevant context. Postmortem boost (`POSTMORTEM_BOOST_FACTOR=0.3`) elevates memories tagged `_postmortem` or `_incident` when the query sounds like incident investigation. After both passes the list is re-sorted and trimmed to `max_results`.
+- **refs:** `yadgar/server/tools/_recall_pipeline.py`
+- **wiring:** Applied in the fanout recall pipeline via `_apply_fanout_boosts`. Branch boost fires when `_current_branch` is not None and a result's branch matches; postmortem boost fires when the query contains a keyword from `POSTMORTEM_BOOST_KEYWORDS` and a result has `_postmortem` or `_incident` tags. Both use the convex combination formula `base + (1 - base) × weight` to keep scores in [0, 1]. `FANOUT_BOOST_SCOPE` gates which callers receive boosts: `scoped` (default) applies only when `profile` is not None (hook=fast path), `global` always applies, `off` disables both boosts.
+- **explanation:** Two score-adjustment passes applied in the fanout pipeline after retriever output. Branch boost (`BRANCH_BOOST_WEIGHT=0.2`) elevates results from the caller's current git branch. Postmortem boost (`POSTMORTEM_BOOST_FACTOR=0.3`) elevates memories tagged `_postmortem` or `_incident` when the query sounds like incident investigation. `FANOUT_BOOST_SCOPE=scoped` (default) preserves pre-forward-only prod parity where the hook (profile=fast) path boosted and the default (profile=None) path did not, avoiding the −0.02 recall@5 regression observed on the default path in A/B testing.
 
 ---
 
@@ -617,12 +617,12 @@ config knobs.
 
 - **status:** LIVE
 - **category:** retrieval
-- **settings:** `RECALL_BACKEND_ENABLED`
+- **settings:** — (Phase 2a: recall is always forwarded to backend; flag removed)
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/server/tools/_recall_pipeline.py::_fanout_recall`, `yadgar/server/tools/_recall_pipeline.py::_apply_recall_db_side_effects`, `yadgar/server/tools/_recall_pipeline.py::_apply_recall_session_side_effects`, `yadgar/backend/embed_service.py::recall_route`, `yadgar/server/tools/recall.py::_forward_to_backend`
-- **wiring:** When `RECALL_BACKEND_ENABLED=True` and `UNIFIED_RECALL_ENABLED=True` and `profile=None` and `mode!=landscape`: core recall() builds a RecallRequest and POSTs to the backend /recall endpoint; backend runs _fanout_recall + _apply_recall_db_side_effects; core runs _apply_recall_session_side_effects on the returned results. When False (default): behavior unchanged from CAP-RETR-039.
+- **wiring:** Phase 2a (always-on): core recall() unconditionally POSTs to the backend /recall endpoint via _forward_to_backend(); backend runs _fanout_recall (all modes/profiles) + _apply_recall_db_side_effects; core runs _apply_recall_session_side_effects on results. RECALL_BACKEND_ENABLED and UNIFIED_RECALL_ENABLED flags removed — no fallback path.
 - **explanation:** Train 1 of the recall pipeline backend migration. Extracts the _fanout_recall orchestrator and related helpers into _recall_pipeline.py (app-free module) so both core and backend share the pipeline code without import-side-effects. Splits _apply_recall_side_effects into DB half (backend) and session half (core). Backend /recall route wired with same Bearer auth as /rerank. Default False — safe no-op merge.
 
 ---
@@ -631,13 +631,13 @@ config knobs.
 
 - **status:** LIVE
 - **category:** retrieval
-- **settings:** `UNIFIED_RECALL_ENABLED`, `RECALL_MEMORY_QUOTA`, `RECALL_WIKI_QUOTA`, `RECALL_MEMORY_PRIOR_WEIGHT`, `RECALL_WIKI_PRIOR_WEIGHT`
+- **settings:** `RECALL_MEMORY_QUOTA`, `RECALL_WIKI_QUOTA`, `RECALL_MEMORY_PRIOR_WEIGHT`, `RECALL_WIKI_PRIOR_WEIGHT` (UNIFIED_RECALL_ENABLED removed Phase 2a — fanout always-on)
 - **tools:** `recall`, `wiki_query`
 - **migrations:** `023`
 - **bc:** `BC-G11`, `BC-U1`, `BC-U2`, `BC-U3`, `BC-U4`, `BC-U5`, `BC-U6`, `BC-U7`, `BC-U8`
 - **refs:** `yadgar/retrieval/providers/base.py::SourceProvider`, `yadgar/retrieval/providers/base.py::Candidate`, `yadgar/retrieval/providers/memory.py::MemoryProvider`, `yadgar/retrieval/providers/wiki.py::WikiProvider`, `yadgar/retrieval/providers/fusion.py::fuse_candidates`, `yadgar/storage/scope.py::ScopeFilter`, `yadgar/server/tools/recall.py::_fanout_recall`
-- **wiring:** `recall()` routes through `_fanout_recall()` by default (v5.80: `UNIFIED_RECALL_ENABLED=True`). Steps 0–5 (v6 T6): (0) eval harness; (3a) ScopeFilter dataclass; (3b) directory scoping in MemoryProvider + WikiProvider; (4) cross-type CE fusion via `fuse_candidates` (per-type quotas → CE rerank → additive prior boost → provenance dedup → trim); (5) `recall(type=)` param for source-type filtering + `wiki_query` deprecation log. `RECALL_MEMORY_QUOTA`/`RECALL_WIKI_QUOTA` bound each source's candidate pool before CE rerank. `RECALL_MEMORY_PRIOR_WEIGHT`/`RECALL_WIKI_PRIOR_WEIGHT` are additive priors folded into CE scores. Set `UNIFIED_RECALL_ENABLED=False` to revert to the legacy path.
-- **explanation:** Unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. Both providers apply Python-side `is_directory_eligible()` post-filter matching the legacy path. `fuse_candidates` in `yadgar/retrieval/providers/fusion.py` runs CE rerank, additive prior boost, and cross-type provenance dedup (memory id ∈ wiki.source_memory_ids → keep higher-CE). `recall(type="memory"|"wiki"|"all")` routes to the appropriate provider subset. `wiki_query` emits INFO deprecation log when flag is ON. LIVE as of v5.80: `UNIFIED_RECALL_ENABLED=True` is now the default. Fusion fixes shipped in v5.80 (single-provider bypass + memory-order-stable fuse_candidates) ensure no memory-ranking regression. The single-provider bypass triggers whenever EITHER pool is empty — covering explicit `type="memory"`/`"wiki"` AND `type="all"` where one pool returned no candidates (e.g. no relevant wiki); `fuse_candidates` runs only when both pools are non-empty, so a memory-only pool is never CE-reranked a second time (BC-U6/U7/U8).
+- **wiring:** `recall()` routes through `_fanout_recall()` by default (v5.80: `UNIFIED_RECALL_ENABLED=True`). Steps 0–5 (v6 T6): (0) eval harness; (3a) ScopeFilter dataclass; (3b) directory scoping in MemoryProvider + WikiProvider; (4) cross-type CE fusion via `fuse_candidates` (per-type quotas → CE rerank → additive prior boost → provenance dedup → trim); (5) `recall(type=)` param for source-type filtering + `wiki_query` deprecation log. `RECALL_MEMORY_QUOTA`/`RECALL_WIKI_QUOTA` bound each source's candidate pool before CE rerank. `RECALL_MEMORY_PRIOR_WEIGHT`/`RECALL_WIKI_PRIOR_WEIGHT` are additive priors folded into CE scores. Phase 2a: fanout path is always-on; UNIFIED_RECALL_ENABLED flag removed.
+- **explanation:** Unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. Both providers apply Python-side `is_directory_eligible()` post-filter matching the legacy path. `fuse_candidates` in `yadgar/retrieval/providers/fusion.py` runs CE rerank, additive prior boost, and cross-type provenance dedup (memory id ∈ wiki.source_memory_ids → keep higher-CE). `recall(type="memory"|"wiki"|"all")` routes to the appropriate provider subset. `wiki_query` emits INFO deprecation log when flag is ON. LIVE as of v5.80 (always-on). Phase 2a: flag removed; fanout path unconditional. Fusion fixes shipped in v5.80 (single-provider bypass + memory-order-stable fuse_candidates) ensure no memory-ranking regression. The single-provider bypass triggers whenever EITHER pool is empty — covering explicit `type="memory"`/`"wiki"` AND `type="all"` where one pool returned no candidates (e.g. no relevant wiki); `fuse_candidates` runs only when both pools are non-empty, so a memory-only pool is never CE-reranked a second time (BC-U6/U7/U8).
 
 ---
 

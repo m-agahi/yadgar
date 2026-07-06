@@ -164,6 +164,12 @@ class Settings(BaseSettings):
     RERANKER_ENABLED: bool = True
     RERANKER_TOP_K: int = 50
     RETRIEVAL_PROFILE: str = "balanced"  # fast | balanced | full
+    # §45 fanout boost scope — controls when C4/postmortem boosts apply in fanout recall.
+    # "scoped": apply only when profile is not None (profile-origin callers: hook=fast).
+    # "global": apply to all fanout recall (any profile, including None).
+    # "off": never apply boosts (useful for A/B or CPU-constrained deploys).
+    # Default "scoped" preserves pre-forward-only prod parity: hook boosted, default did not.
+    FANOUT_BOOST_SCOPE: str = "scoped"  # scoped | global | off
 
     # v7: Query routing settings
     QUERY_ROUTING_ENABLED: bool = True
@@ -344,20 +350,6 @@ class Settings(BaseSettings):
     # removes mis-stamped system/global rows that currently bulk up the corpus.
     # Set to 0.0 to disable entirely; missing CE scores are always preserved.
     RECALL_QUALITY_FLOOR: float = 0.0
-
-    # v6 T6 (unified-scoped-recall) — fan-out recall flag (I25 three-way registered).
-    # When True (default as of v5.80), recall() routes through the SourceProvider
-    # fan-out orchestrator (MemoryProvider + WikiProvider pooled + simple dedup).
-    # When False, recall() uses the EXACT legacy path — ZERO behavior change.
-    # Steps 3–5 (DirectoryFilter, fusion, type= param) now LIVE as the default path.
-    UNIFIED_RECALL_ENABLED: bool = True
-
-    # Train 1: recall-backend — dual-path flag (three-way registered).
-    # When False (default): recall() executes the fan-out pipeline in-core (current behavior).
-    # When True: recall() forwards the fan-out path to the backend /recall endpoint;
-    # core becomes a thin forwarder. Only applies when UNIFIED_RECALL_ENABLED=True and
-    # profile=None; landscape mode and profile-based recall always run in-core.
-    RECALL_BACKEND_ENABLED: bool = False
 
     # v6 T6 Step 4: cross-type fusion settings (I25 three-way registered).
     # Per-type quotas: max candidates from each source before CE rerank.

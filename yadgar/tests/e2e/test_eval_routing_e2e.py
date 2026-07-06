@@ -25,7 +25,9 @@ class TestEvalRoutesViaMCPTool:
     queries WikiStore; the legacy retriever.recall() path never queries wikis.
     """
 
-    def test_eval_routes_through_fanout_when_unified(self, e2e_engines, monkeypatch):
+    def test_eval_routes_through_fanout_when_unified(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """With --unified on, wiki-only pair is retrievable (recall@10 > 0).
 
         Approach:
@@ -72,14 +74,8 @@ class TestEvalRoutesViaMCPTool:
         monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
         monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
 
-        # With unified=True, wiki is retrievable
-        monkeypatch.setenv("YADGAR_UNIFIED_RECALL_ENABLED", "true")
-        # Reload settings so the env var takes effect
-
-        import yadgar.config as _cfg
-
-        # Force settings reload
-        _cfg.get_settings.cache_clear()
+        # Fan-out is now unconditional (Phase 2a: recall() is a pure forwarder).
+        # recall_backend_bypass fixture routes _forward_to_backend → _fanout_recall.
 
         try:
             metrics = evaluate_pair_unified(
@@ -94,7 +90,7 @@ class TestEvalRoutesViaMCPTool:
                 f"Got retrieved_count={metrics.get('retrieved_count', 0)}"
             )
         finally:
-            _cfg.get_settings.cache_clear()
+            pass  # no settings cache to clear (UNIFIED flag removed)
 
     def test_legacy_path_cannot_retrieve_wiki(self, e2e_engines, monkeypatch):
         """Legacy retriever.recall() path does NOT return wiki results.

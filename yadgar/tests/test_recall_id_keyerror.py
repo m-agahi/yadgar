@@ -33,35 +33,21 @@ def _make_full_memory(mid: int = 1) -> dict:
 
 
 def _call_recall_with_results(result_dicts: list[dict]) -> list[dict]:
-    """Run the recall MCP tool with a mock retriever returning *result_dicts*."""
+    """Exercise the DB-side heat-boost loop directly (Phase 2a: it relocated from
+    the in-core recall() into _apply_recall_db_side_effects, which runs inside
+    _fanout_recall on the backend). The guard under test is m.get("id") /
+    m.get("heat", 0.0) against KeyError on incomplete result dicts."""
     import yadgar.server._state as _st
-    from yadgar.server.tools.recall import recall as recall_fn
-
-    mock_retriever = MagicMock()
-    mock_retriever.recall.return_value = result_dicts
+    from yadgar.server.tools._recall_pipeline import _apply_recall_db_side_effects
 
     mock_storage = MagicMock()
     mock_storage._now_iso.return_value = "2026-01-01T00:00:00"
-    mock_storage.update_memory_heat.return_value = None
-    mock_storage.update_memory_last_accessed.return_value = None
+    mock_storage.boost_memories_access.return_value = None
 
-    mock_wiki = MagicMock()
-    mock_wiki.query.return_value = []
-
-    with (
-        patch.object(_st, "_retriever", mock_retriever),
-        patch.object(_st, "_storage", mock_storage),
-        patch.object(_st, "_consolidation", None),
-        patch.object(_st, "_thermo", None),
-        patch.object(_st, "_cognitive_map", None),
-        patch.object(_st, "_buffer", None),
-        patch.object(_st, "_replay", None),
-        patch.object(_st, "_wiki", mock_wiki),
-        patch.object(_st, "_last_recalled_ids", {}),
-        patch("yadgar.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
-    ):
-        return recall_fn(query="test query", max_results=5, min_heat=0.0, directory="/tmp/test")
+    # thermo=None path is exercised (no thermo.record_access); mutates dicts in place.
+    with patch.object(_st, "_thermo", None):
+        _apply_recall_db_side_effects(result_dicts, "test query", mock_storage)
+    return result_dicts
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +100,8 @@ class TestRecallIdKeyError:
         result = _call_recall_with_results([normal])
         assert len(result) == 1
         assert result[0]["id"] == 42
+        # Heat-boost guard: 0.5 + 0.1 = 0.6 (mutated in-place by _apply_recall_db_side_effects)
+        assert abs(result[0]["heat"] - 0.6) < 0.01
 
     def test_recall_mixed_results_no_crash(self):
         """recall() must handle a mixed list of complete and incomplete result dicts."""

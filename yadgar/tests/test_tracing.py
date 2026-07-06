@@ -930,11 +930,26 @@ class TestFallbackMode:
 
                     assert my_fn() == "identity"
         finally:
-            # Restore
+            # Restore. `from yadgar.tracing import _OTEL_AVAILABLE` under the
+            # blocked import re-executes the submodule fresh (_OTEL_AVAILABLE=False)
+            # AND rebinds it onto the parent package: `yadgar.tracing = <broken>`.
+            # Restoring `sys.modules` alone is NOT enough — a later
+            # `import yadgar.tracing as t` resolves via the parent-package
+            # attribute (IMPORT_FROM getattr), not `sys.modules`, so it would keep
+            # returning the broken OTel-unavailable module and leak _OTEL_AVAILABLE
+            # =False into the next test (e.g. test_tracing_httpx_hoist saw
+            # setup_tracing() early-return → httpx never instrumented). Restore
+            # BOTH bindings so they stay in sync.
             if saved is not None:
                 sys.modules[tracing_key] = saved
+                yadgar_pkg = sys.modules.get("yadgar")
+                if yadgar_pkg is not None:
+                    yadgar_pkg.tracing = saved
             else:
                 sys.modules.pop(tracing_key, None)
+                yadgar_pkg = sys.modules.get("yadgar")
+                if yadgar_pkg is not None and hasattr(yadgar_pkg, "tracing"):
+                    delattr(yadgar_pkg, "tracing")
 
     def test_setup_tracing_noop_when_otel_missing(self):
         """setup_tracing does not raise even when called in fallback mode."""

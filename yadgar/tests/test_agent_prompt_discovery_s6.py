@@ -140,15 +140,13 @@ class TestBC_S6_Brief:
         assert "agent_prompt_toc" in result
         assert result["agent_prompt_toc"]["patterns"] == []
 
-    def test_toc_page_does_not_leak_into_general_recall(self, monkeypatch):
+    def test_toc_page_does_not_leak_into_general_recall(self, monkeypatch, recall_backend_bypass):
         """The global agent-prompt-toc page must NOT pollute general recall.
 
         Regression guard: the TOC carries tag 'agent-prompt-toc' (≠ 'agent-prompt'),
         so the default exclude must list it too — otherwise it reintroduces the
         every-project leak S3 exists to kill.
         """
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
-        monkeypatch.setattr(_recall_module.settings, "UNIFIED_RECALL_ENABLED", True)
         _save("review-diff", "x", purpose="Reusable subagent dispatch prompts.")
         results = _recall_fn()(
             query="reusable subagent dispatch prompts",
@@ -171,8 +169,6 @@ def _recall_fn():
 
 class TestBC_S6_KillGate:
     def _setup(self, monkeypatch):
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
-        monkeypatch.setattr(_recall_module.settings, "UNIFIED_RECALL_ENABLED", True)
         _save(
             "review-pr-security",
             "Review a pull request for security vulnerabilities. Check for injection, "
@@ -186,7 +182,7 @@ class TestBC_S6_KillGate:
 
         monkeypatch.setattr(get_settings(), "AGENT_PROMPT_LIBRARY_ENABLED", value)
 
-    def test_flag_off_recall_include_inert(self, monkeypatch):
+    def test_flag_off_recall_include_inert(self, monkeypatch, recall_backend_bypass):
         self._setup(monkeypatch)
         self._set_flag(monkeypatch, False)
         results = _recall_fn()(
@@ -199,7 +195,7 @@ class TestBC_S6_KillGate:
             f"flag-off tagged recall must be inert, got: {results}"
         )
 
-    def test_flag_on_recall_include_surfaces(self, monkeypatch):
+    def test_flag_on_recall_include_surfaces(self, monkeypatch, recall_backend_bypass):
         self._setup(monkeypatch)
         self._set_flag(monkeypatch, True)
         results = _recall_fn()(

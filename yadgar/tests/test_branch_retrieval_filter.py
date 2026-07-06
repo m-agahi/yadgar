@@ -12,6 +12,8 @@ import pytest
 
 from yadgar import server
 
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
 
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):

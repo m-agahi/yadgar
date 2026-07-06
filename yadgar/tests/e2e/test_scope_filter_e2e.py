@@ -58,19 +58,14 @@ def _run_fanout_recall(server, monkeypatch, query: str, directory: str, max_resu
     if _rm is None:
         import yadgar.server.tools.recall as _rm
 
-    # Enable unified recall for this call
-    _rm.settings.UNIFIED_RECALL_ENABLED = True
-    try:
-        recall_fn = _rm.recall
-        return recall_fn(query=query, directory=directory, max_results=max_results)
-    finally:
-        _rm.settings.UNIFIED_RECALL_ENABLED = False
+    recall_fn = _rm.recall
+    return recall_fn(query=query, directory=directory, max_results=max_results)
 
 
 class TestScopeFilterE2E:
     """Live-DB e2e tests for ScopeFilter scoping in fan-out recall."""
 
-    def test_db_clause_excludes_other_dir(self, e2e_engines, monkeypatch):
+    def test_db_clause_excludes_other_dir(self, e2e_engines, monkeypatch, recall_backend_bypass):
         """Seed YADGAR and AWS rows; recall(directory=YADGAR) → AWS row absent.
 
         Asserts the $df_caller param binds against real rows — the thing the
@@ -108,7 +103,9 @@ class TestScopeFilterE2E:
         )
         assert global_id in result_ids, f"Global sentinel id={global_id} must always be present"
 
-    def test_db_clause_includes_field_absent_or_proves_none_exist(self, e2e_engines, monkeypatch):
+    def test_db_clause_includes_field_absent_or_proves_none_exist(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """Prove field-absent row behavior.
 
         Attempt to insert a row without directory_context. Two outcomes:
@@ -176,7 +173,7 @@ class TestScopeFilterE2E:
                 f"got {len(matching)} matching results"
             )
 
-    def test_branch_and_directory_compose(self, e2e_engines, monkeypatch):
+    def test_branch_and_directory_compose(self, e2e_engines, monkeypatch, recall_backend_bypass):
         """ScopeFilter(branch, directory) ANDs correctly.
 
         Seed rows differing on branch AND directory:
@@ -250,7 +247,9 @@ class TestScopeFilterE2E:
             f"result_ids={result_ids}"
         )
 
-    def test_scope_filter_none_is_legacy_noop(self, e2e_engines, monkeypatch):
+    def test_scope_filter_none_is_legacy_noop(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """ScopeFilter(branch=None, directory=None) → ('', {}) — legacy no-op.
 
         Asserts the dataclass empty-case invariant and that fan-out recall
