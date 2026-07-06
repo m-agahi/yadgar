@@ -321,4 +321,20 @@ Backend's **module-level** core imports today are only `paths`, `config`, `obser
 - **Q2 → INCLUDE `StorageProtocol`** (user override — do NOT defer). Formalize it in Car 2 alongside `MLClientProtocol` + `CacheProtocol`. EVERY cross-boundary seam gets a Protocol this train.
 - **Q4 → `_surreal_runner.py` = core** (launched by core entrypoint, not imported by backend).
 
-**NO DEFERRALS within the reorg (user, 2026-07-06):** the WHOLE folder split + ALL Protocols (MLClient/Cache/Storage + any other seam found) + slim-`_state` + enforcement land in THIS train. Nothing punted to a reorg follow-up. Out-of-scope is ONLY: (1) recall **Train-3** perf restructure (separate, Ettin-gated — perf not reorg); (2) the NEW **write-path relocation train** (move write execution — memorize / consolidation / write side-effects — to backend, analogous to forward-only recall; logged as a task, NOT this train); (3) #21 db-audit.
+**NO DEFERRALS within the reorg (user, 2026-07-06):** the WHOLE folder split + ALL Protocols (MLClient/Cache/Storage + any other seam found) + slim-`_state` + enforcement land in THIS train. Nothing punted to a reorg follow-up. Out-of-scope is ONLY: (1) recall **Train-3** perf restructure (separate, Ettin-gated — perf not reorg); (2) the NEW **write-path relocation train** (#52 — move write execution memorize/consolidation to backend, analogous to forward-only recall; logged, NOT this train); (3) #21 db-audit.
+
+---
+
+## 10. FINALIZED PLAN (post engine-map investigation, 2026-07-06)
+
+### Slim-`_state` engine sets (investigation ac905f6, no ambiguous engines)
+- **SLIM (14, backend `/recall` builds):** `_storage, _embeddings, _retriever, _kg, _wiki, _engram, _rules_engine, _metacognition, _thermo, _cognitive_map, _buffer, _replay, _consolidation`(for `_pool`), `_pool`.
+- **CORE-ONLY (10, backend SKIPS):** `_staleness, _curator, _prospective, _narrative, _sleep, _write_gate, _causal, _cls, _file_queue, _queue_drainer`. Zero reachability from `recall_pipeline.py` / `embed_service.py` `/recall`.
+- **Strategy:** add `engine_set: Literal["slim","full"]="full"` kwarg to `init_engines()` (lifecycle.py) + `_init_*_slim` helpers building only the 14; `embed_service.py:962` passes `engine_set="slim"`. ConsolidationScheduler safe to construct in slim (its `__init__` starts no daemon threads without `start_daemons=True`); backend uses only `_pool`. Low risk (all 14 have defensive None-checks; a missing one = immediate backend-recall crash → caught by a backend-recall smoke test).
+
+### Revised car list (5 cars, all this train, each behavior-neutral, one stacked PR)
+- **Car 0** — `_shared/` + leaf libs (config/observe/metrics/tracing/paths/embeddings/models/…), shims, lint report-only. ~140 sites.
+- **Car 1** — `_shared/runtime/` + move the recall runtime (`_state`→`state.py`, `lifecycle`, `_recall_pipeline`, `_offload`) + the engine constellation. Closes the `backend→server` seam. ~52 sites.
+- **Car 2** — formalize **ALL** Protocols: `MLClientProtocol` + `CacheProtocol` + **`StorageProtocol`** (user override, no defer) in `_shared/protocols.py` + DI wiring → `core→backend` allowlist EMPTY.
+- **Car 3** — **slim `_state`**: `engine_set="slim"` kwarg; backend builds the 14; core/memorize/consolidation build full. Behavior-neutral (recall parity + backend-recall smoke).
+- **Car 4** — move remaining CORE-only → `yadgar/core/`, delete Car 0/1 shims, flip import-lint → **hard-fail** (enforcement ON). Version bump + packaging/`shared-data` path updates.
