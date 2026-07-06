@@ -1,0 +1,338 @@
+"""TDD — prompt-recall hook forwards to the backend /recall path.
+
+Plan: docs/plans/hook-recall-forward-2026-07-06.md (reverses forward-only §5.4
+for prompt-recall ONLY; instructions-loaded + subagent-start stay in-core).
+
+Properties under test:
+- prompt-recall forwards to backend with profile="fast" + right args + caller dir.
+- _forward_hook_recall passes the SHORT timeout (HOOK_RECALL_TIMEOUT_S) to
+  _forward_to_backend, NOT the 120s MCP default (#81 pool-starvation guard).
+- The directory post-filter is still applied to forwarded results.
+- Graceful degradation: backend raise / timeout -> {"text": ""}, never raises.
+- Quality-neutral: handler emits backend rows unchanged (modulo dir filter).
+- MCP recall keeps _forward_to_backend default timeout_s == 120.0.
+- instructions-loaded + subagent-start stay in-core (still drive retriever.recall).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _make_mock_request(params: dict) -> MagicMock:
+    req = MagicMock()
+    req.query_params = MagicMock()
+    req.query_params.get = MagicMock(side_effect=lambda k, d="": params.get(k, d))
+    return req
+
+
+# ---------------------------------------------------------------------------
+# 1 + 6. prompt-recall forwards with the right args; emits backend rows unchanged
+# ---------------------------------------------------------------------------
+
+
+class TestPromptRecallForwards:
+    def test_forwards_with_profile_fast_and_dir(self):
+        """hook_prompt_recall calls _forward_hook_recall with profile='fast',
+        max_results=5, min_heat=0.0, and the caller directory."""
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        rows = [
+            {"content": "m1", "directory_context": "/home/user/project"},
+            {"content": "m2", "directory_context": "/home/user/project"},
+        ]
+        captured: dict = {}
+
+        async def _fake_forward(forwarder, handler_name, *args, **kwargs):
+            captured["forwarder"] = forwarder
+            captured["handler"] = handler_name
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return rows
+
+        req = _make_mock_request(
+            {"query": "what is the architecture", "directory": "/home/user/project"}
+        )
+
+        async def _run():
+            with patch.object(_st, "_retriever", MagicMock()):
+                with patch("yadgar.server.http._recall_with_timeout", side_effect=_fake_forward):
+                    with patch.object(_st, "_last_session_context", {}):
+                        with patch.object(_st, "_last_prompt_recall", {}):
+                            return await _http.hook_prompt_recall(req)
+
+        resp = asyncio.run(_run())
+        kw = captured["kwargs"]
+        assert kw.get("profile") == "fast", captured
+        assert kw.get("max_results") == 5, captured
+        assert kw.get("min_heat") == 0.0, captured
+        # directory is threaded via the forwarder object (bound at construction),
+        # so the backend can scope server-side.
+        fwd = captured["forwarder"]
+        assert isinstance(fwd, _http._HookRecallForwarder), captured
+        assert fwd._directory == "/home/user/project", captured
+        # quality-neutral: the emitted markdown contains the backend row contents
+        body = json.loads(resp.body)
+        assert "m1" in body["text"] and "m2" in body["text"], body
+
+    def test_recall_with_timeout_runs_forward_callable_not_retriever_recall(self):
+        """The prompt-recall handler must route recall through the forward path,
+        NOT retriever.recall. Proven by: retriever.recall is never called."""
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        retriever = MagicMock()
+        retriever.recall = MagicMock(return_value=[{"content": "SHOULD_NOT_APPEAR"}])
+
+        forwarded = [{"content": "from-backend", "directory_context": "/d"}]
+
+        async def _run():
+            with patch.object(_st, "_retriever", retriever):
+                with patch(
+                    "yadgar.server.http._forward_hook_recall",
+                    return_value=forwarded,
+                ):
+                    with patch.object(_st, "_last_session_context", {}):
+                        with patch.object(_st, "_last_prompt_recall", {}):
+                            req = _make_mock_request({"query": "real query", "directory": "/d"})
+                            return await _http.hook_prompt_recall(req)
+
+        resp = asyncio.run(_run())
+        body = json.loads(resp.body)
+        assert "from-backend" in body["text"], body
+        retriever.recall.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 2. _forward_hook_recall passes the SHORT timeout to _forward_to_backend
+# ---------------------------------------------------------------------------
+
+
+class TestForwardHookRecallTimeout:
+    def test_passes_short_hook_timeout(self):
+        """_forward_hook_recall must pass timeout_s == HOOK_RECALL_TIMEOUT_S to
+        _forward_to_backend (NOT the 120s MCP default) — #81 starvation guard."""
+        import yadgar.server.http as _http
+        from yadgar.config import get_settings
+
+        captured: dict = {}
+
+        def _fake_backend(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        with patch("yadgar.server.tools.recall._forward_to_backend", side_effect=_fake_backend):
+            _http._forward_hook_recall(
+                "q",
+                max_results=5,
+                min_heat=0.0,
+                directory="/home/user/project",
+                profile="fast",
+            )
+
+        assert captured.get("timeout_s") == get_settings().HOOK_RECALL_TIMEOUT_S, captured
+        assert captured.get("timeout_s") != 120.0, captured
+        assert captured.get("profile") == "fast", captured
+        assert captured.get("directory") == "/home/user/project", captured
+        assert captured.get("type_filter") == "all", captured
+
+    def test_directory_normalized_trailing_slash(self):
+        """A trailing-slash directory is stripped before forwarding, so backend
+        exact-string is_directory_eligible scoping does not silently return empty."""
+        import yadgar.server.http as _http
+
+        captured: dict = {}
+
+        def _fake_backend(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        with patch("yadgar.server.tools.recall._forward_to_backend", side_effect=_fake_backend):
+            _http._forward_hook_recall(
+                "q",
+                max_results=5,
+                min_heat=0.0,
+                directory="/home/user/project/",  # trailing slash
+                profile="fast",
+            )
+
+        assert captured.get("directory") == "/home/user/project", captured
+
+
+# ---------------------------------------------------------------------------
+# 3. Directory filter still applied to forwarded results
+# ---------------------------------------------------------------------------
+
+
+class TestDirectoryFilterStillApplied:
+    def test_ineligible_rows_dropped(self):
+        """_filter_prompt_recall_results drops rows whose directory_context does
+        not match the caller dir (idempotent atop backend scoping)."""
+        import yadgar.server.http as _http
+
+        rows = [
+            {"content": "keep", "directory_context": "/home/user/project"},
+            {"content": "drop", "directory_context": "/some/other/project"},
+            {"content": "global", "directory_context": "global"},
+        ]
+        out = _http._filter_prompt_recall_results(rows, "/home/user/project")
+        contents = {r["content"] for r in out}
+        assert "keep" in contents
+        assert "global" in contents  # sentinel always eligible
+        assert "drop" not in contents
+
+
+# ---------------------------------------------------------------------------
+# 4 + 5. Graceful degradation
+# ---------------------------------------------------------------------------
+
+
+class TestGracefulDegradation:
+    def test_backend_raise_returns_empty(self):
+        """Backend raises -> handler returns {"text": ""} and does NOT raise."""
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        async def _boom(*_a, **_k):
+            raise RuntimeError("YADGAR_EMBED_URL unreachable")
+
+        async def _run():
+            with patch.object(_st, "_retriever", MagicMock()):
+                with patch("yadgar.server.http._recall_with_timeout", side_effect=_boom):
+                    with patch.object(_st, "_last_session_context", {}):
+                        with patch.object(_st, "_last_prompt_recall", {}):
+                            req = _make_mock_request({"query": "q", "directory": "/d"})
+                            return await _http.hook_prompt_recall(req)
+
+        resp = asyncio.run(_run())
+        body = json.loads(resp.body)
+        assert body.get("text") == "", body
+
+    def test_backend_timeout_returns_empty(self):
+        """_recall_with_timeout returns None (timeout) -> {"text": ""}."""
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        async def _run():
+            with patch.object(_st, "_retriever", MagicMock()):
+                with patch(
+                    "yadgar.server.http._recall_with_timeout",
+                    new_callable=AsyncMock,
+                    return_value=None,
+                ):
+                    with patch.object(_st, "_last_session_context", {}):
+                        with patch.object(_st, "_last_prompt_recall", {}):
+                            req = _make_mock_request({"query": "q", "directory": "/d"})
+                            return await _http.hook_prompt_recall(req)
+
+        resp = asyncio.run(_run())
+        body = json.loads(resp.body)
+        assert body.get("text") == "", body
+
+
+# ---------------------------------------------------------------------------
+# 7. MCP recall keeps the 120s default timeout
+# ---------------------------------------------------------------------------
+
+
+class TestMcpRecallTimeoutDefaultUnchanged:
+    def test_forward_to_backend_default_timeout_is_120(self):
+        """_forward_to_backend default timeout_s must remain 120.0 (MCP path)."""
+        import inspect
+
+        from yadgar.server.tools.recall import _forward_to_backend
+
+        sig = inspect.signature(_forward_to_backend)
+        assert sig.parameters["timeout_s"].default == 120.0, sig
+
+
+# ---------------------------------------------------------------------------
+# 8. instructions-loaded + subagent-start stay in-core (scope guard)
+# ---------------------------------------------------------------------------
+
+
+class TestOtherHooksStayInCore:
+    def test_instructions_loaded_still_uses_retriever_recall(self):
+        """instructions-loaded must still drive retriever.recall via
+        _recall_with_timeout (NOT forwarded) — scope decision guard."""
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        captured: dict = {}
+
+        async def _capture(retriever, handler_name, *args, **kwargs):
+            captured["retriever"] = retriever
+            captured["profile"] = kwargs.get("profile")
+            return []
+
+        req = _make_mock_request(
+            {"file_path": "/home/user/.claude/CLAUDE.md", "load_reason": "session_start"}
+        )
+        retriever = MagicMock()
+
+        async def _run():
+            with patch.object(_st, "_retriever", retriever):
+                with patch("yadgar.server.http._recall_with_timeout", side_effect=_capture):
+                    return await _http.hook_instructions_loaded(req)
+
+        asyncio.run(_run())
+        # in-core: the retriever singleton is passed into _recall_with_timeout
+        assert captured.get("retriever") is retriever, captured
+        assert captured.get("profile") == "fast", captured
+
+    def test_prompt_recall_no_directory_falls_back_in_core(self):
+        """When the request has NO directory, prompt-recall must NOT forward (the
+        backend requires a directory to scope) — it falls back to the in-core
+        retriever (whole-DB, old behavior), never regressing to always-empty."""
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        captured: dict = {}
+
+        async def _capture(retriever, handler_name, *args, **kwargs):
+            captured["retriever"] = retriever
+            return []
+
+        retriever = MagicMock()
+        req = _make_mock_request({"query": "real query"})  # no directory
+
+        async def _run():
+            with patch.object(_st, "_retriever", retriever):
+                with patch("yadgar.server.http._recall_with_timeout", side_effect=_capture):
+                    with patch.object(_st, "_last_session_context", {}):
+                        with patch.object(_st, "_last_prompt_recall", {}):
+                            return await _http.hook_prompt_recall(req)
+
+        asyncio.run(_run())
+        # directory absent -> in-core fallback: the raw retriever is used, NOT a forwarder
+        assert captured.get("retriever") is retriever, captured
+        assert not isinstance(captured.get("retriever"), _http._HookRecallForwarder), captured
+
+    def test_subagent_start_still_uses_retriever_recall(self):
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        captured: dict = {}
+
+        async def _capture(retriever, handler_name, *args, **kwargs):
+            captured["retriever"] = retriever
+            captured["profile"] = kwargs.get("profile")
+            return []
+
+        req = _make_mock_request({"agent_type": "general-purpose", "cwd": "/home/user/project"})
+        req.json = AsyncMock(
+            return_value={"description": "analyze code", "cwd": "/home/user/project"}
+        )
+        retriever = MagicMock()
+
+        async def _run():
+            with patch.object(_st, "_retriever", retriever):
+                with patch("yadgar.server.http._recall_with_timeout", side_effect=_capture):
+                    return await _http.hook_subagent_start(req)
+
+        asyncio.run(_run())
+        assert captured.get("retriever") is retriever, captured
+        assert captured.get("profile") == "fast", captured

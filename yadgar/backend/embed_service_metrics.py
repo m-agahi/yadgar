@@ -286,18 +286,48 @@ for _cache_name in ("ce", "embed"):
 
 
 def _default_backend_cache_instances() -> dict:
-    """Return {name: LRUCache} for the process CE + embed caches.
+    """Return {name: Cache} for EVERY registered backend cache namespace.
 
-    Lazy-imported from embed_service (which imports counters FROM this module at
-    import time) to avoid a circular import; the cache instances are read at
-    scrape time only.
+    Enumerates the shared ``yadgar.backend.cache._REGISTRY`` — the single source of
+    truth every ``Cache`` self-registers into at construction (``ce``, ``embed``
+    from ``embed_service`` import; ``memory_doc``, ``engram_slot``, ``graph``
+    lazily on the first recall that hits their seam). Reading the registry (rather
+    than the two hard-coded module globals) is what surfaces the recall-path DATA
+    caches at backend ``/metrics``: they are ``obs_tier="cold"`` so their
+    ``record_cache_*`` calls land in the CORE-scraped ``yadgar.metrics`` registry,
+    invisible here — this scrape-time collector is their only backend emitter.
+
+    The three data caches are eagerly ensured (idempotent factories) so their
+    series appear with 0 values even before the first recall registers them —
+    deterministic, always-present metrics instead of appear-on-first-hit.
+
+    Read at SCRAPE time only. A degraded import must never break ``/metrics``.
     """
-    try:
-        from yadgar.backend import embed_service as _es  # noqa: PLC0415
+    from yadgar.backend.cache import _REGISTRY  # noqa: PLC0415
 
-        return {"ce": _es._ce_cache, "embed": _es._embed_cache}
+    # Importing embed_service registers the ce/embed namespaces at its module
+    # import (``_ce_cache = _make_ce_cache()``) — force it so both are present in
+    # ``_REGISTRY`` regardless of import order (preserves the pre-fix guarantee).
+    try:
+        import yadgar.backend.embed_service  # noqa: F401,PLC0415
     except Exception:  # noqa: BLE001 — a degraded backend must not break /metrics
-        return {}
+        pass
+
+    # Eagerly ensure the recall-path data caches are registered so their series
+    # are always present (0-valued until first hit), not appear-on-first-recall.
+    for _factory_name in (
+        "get_memory_doc_cache",
+        "get_engram_slot_cache",
+        "get_graph_cache",
+    ):
+        try:
+            import yadgar.backend.cache as _cache_mod  # noqa: PLC0415
+
+            getattr(_cache_mod, _factory_name)()
+        except Exception:  # noqa: BLE001 — a degraded cache must not break /metrics
+            pass
+
+    return dict(_REGISTRY)
 
 
 class CacheStatsCollector:

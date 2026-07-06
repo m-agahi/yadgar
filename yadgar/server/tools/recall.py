@@ -52,6 +52,7 @@ def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signatur
     tags: list[str] | None,
     mode: str | None = None,
     profile: str | None = None,
+    timeout_s: float = 120.0,
 ) -> list[dict]:
     """Forward recall to the backend /recall endpoint.
 
@@ -64,6 +65,11 @@ def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signatur
 
     Branch args come from the caller's _detect_branch resolution — the backend
     must NOT call _detect_branch (no host .git in container).
+
+    timeout_s: httpx request timeout. Defaults to 120.0 for the MCP recall path.
+        The prompt-recall HOOK path passes a SHORT timeout (HOOK_RECALL_TIMEOUT_S)
+        so a hung backend cannot keep the hook's bounded-pool thread alive past
+        its budget (#81 pool-starvation guard — see hook-recall-forward plan).
 
     Raises:
         RuntimeError: if YADGAR_EMBED_URL is not configured.
@@ -100,7 +106,7 @@ def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signatur
         f"{backend_base}/recall",
         json=payload,
         headers=headers,
-        timeout=120.0,
+        timeout=timeout_s,
     )
     resp.raise_for_status()
     data = resp.json()

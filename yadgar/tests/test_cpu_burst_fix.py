@@ -18,23 +18,29 @@ import pytest
 
 
 class TestHookLightweightProfile:
-    """GET /hooks/prompt-recall must call retriever.recall with profile='fast'."""
+    """GET /hooks/prompt-recall must run recall with profile='fast'.
+
+    v5.113.0: prompt-recall FORWARDS to the backend (hook-recall-forward plan),
+    so 'fast' is now asserted on the forward path (_forward_to_backend), not the
+    in-core retriever. The intent is unchanged: the hook must run the cheap
+    BM25+HNSW-only profile, never the full CE/NLI/MP pipeline.
+    """
 
     def test_prompt_recall_uses_fast_profile(self, monkeypatch):
-        """hook_prompt_recall calls retriever.recall(profile='fast'), skipping CE/NLI."""
+        """hook_prompt_recall forwards recall with profile='fast', skipping CE/NLI."""
         import asyncio
+        from unittest.mock import patch
 
         import yadgar.server._state as _st
 
-        # Build a minimal fake retriever with a spy on recall
-        recall_kwargs: dict = {}
+        # Spy on the forward-to-backend call the hook now drives.
+        forward_kwargs: dict = {}
 
-        class _FakeRetriever:
-            def recall(self, query, max_results=5, min_heat=0.0, profile=None, **kw):
-                recall_kwargs["profile"] = profile
-                return []
+        def _spy_forward(**kwargs):
+            forward_kwargs.update(kwargs)
+            return []
 
-        monkeypatch.setattr(_st, "_retriever", _FakeRetriever())
+        monkeypatch.setattr(_st, "_retriever", object())  # non-None so handler proceeds
         # Suppress throttle check
         monkeypatch.setattr(_st, "_last_session_context", {})
         monkeypatch.setattr(_st, "_last_prompt_recall", {})
@@ -47,12 +53,13 @@ class TestHookLightweightProfile:
             query_params = {"query": "test query", "directory": "/tmp"}
 
         async def _run():
-            return await hook_prompt_recall(_FakeRequest())
+            with patch("yadgar.server.tools.recall._forward_to_backend", side_effect=_spy_forward):
+                return await hook_prompt_recall(_FakeRequest())
 
         asyncio.run(_run())
 
-        assert recall_kwargs.get("profile") == "fast", (
-            f"Expected recall called with profile='fast', got {recall_kwargs.get('profile')!r}"
+        assert forward_kwargs.get("profile") == "fast", (
+            f"Expected forward called with profile='fast', got {forward_kwargs.get('profile')!r}"
         )
 
 
