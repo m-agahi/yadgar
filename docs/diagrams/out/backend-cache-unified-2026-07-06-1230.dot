@@ -1,0 +1,55 @@
+digraph flow {
+  rankdir="LR";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Backend caching train — UNIFIED backend Cache class + 5 namespaces (PROPOSED, 2026-07-06)
+one Cache class (yadgar/backend/cache.py) · _REGISTRY of 5 · ce/embed=ModelCkpt (MOVED-IN) · memory_doc/engram_slot/graph=DataEpoch (NEW) fed by cross-service data_epoch from CORE";
+  subgraph "cluster_core" {
+    label="Core (--cpus 1) — owns the data_epoch bus (_recall_shadow.bump_epoch)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "writes" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="CORE writes\nmemorize / forget / entity / relationship\n_recall_shadow.bump_epoch → global data_epoch++"];
+    "recallreq" [shape="diamond", style="filled", fillcolor="#fdf3c8", label="recall request → backend\ncarries data_epoch (cheap header/int)\nembedded into DataEpoch-keyed namespace keys"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (--cpus 2) — UNIFIED Cache class (yadgar/backend/cache.py): ONE class, _REGISTRY of N named instances, policy bound at construction";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "ns_ce" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[MOVED-IN] namespace: ce\nkey = query_sha:text_sha:ckpt_sha\nval = CE score · invalidation = ModelCkpt\nMOVE _ce_cache (embed_service.py:224) + WIRE recall CE path (#41)"];
+    "ns_embed" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[MOVED-IN] namespace: embed\nkey = text_sha:ckpt_sha\nval = vector · invalidation = ModelCkpt\nMOVE _embed_cache (embed_service.py:223)"];
+    "ns_mdoc" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] namespace: memory_doc\nkey = memory_id:data_epoch\nval = full doc dict · invalidation = DataEpoch\nbuild_results (fusion.py:316) · content-immutable → ~bust-free\nest. shave 150-200 ms"];
+    "ns_slot" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] namespace: engram_slot\nkey = slot_index:data_epoch\nval = [memory_id,…] · invalidation = DataEpoch\nengram_links (engram.py:128)\nest. shave 100-150 ms"];
+    "ns_graph" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] namespace: graph\nkey = entity_id:data_epoch\nval = [neighbour,…] · invalidation = DataEpoch\nspreading+ppr (knowledge_graph.py:455, core.py:125)\nest. shave 300-400 ms"];
+  }
+  subgraph "cluster_legend" {
+    label="Legend";
+    style=filled;
+    bgcolor="#f0f0f0";
+    color="#888888";
+    fontcolor="#555555";
+    fontname="Helvetica-Bold";
+    "leg_moved" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[MOVED-IN] ce, embed\nexisting backend LRU folded into the Cache class\nbehaviour-neutral (same keys, same values)"];
+    "leg_new" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] memory_doc, engram_slot, graph\nquery-independent stable-data caches (cross-query)"];
+    "leg_ckpt" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="ModelCkpt invalidation\nckpt_sha in key → model swap busts\n(no cross-service signal)"];
+    "leg_epoch" [shape="diamond", style="filled", fillcolor="#fdf3c8", label="DataEpoch invalidation\ndata_epoch in key → CORE write bumps → stale keys miss\n(cross-service signal, async dashed)"];
+  }
+  "writes" -> "recallreq" [color="#6a8f3a", style="dashed", label="data_epoch++ (on every write)"];
+  "recallreq" -> "ns_mdoc" [color="#6a8f3a", style="dashed", label="data_epoch in key"];
+  "recallreq" -> "ns_slot" [color="#6a8f3a", style="dashed", label="data_epoch in key"];
+  "recallreq" -> "ns_graph" [color="#6a8f3a", style="dashed", label="data_epoch in key"];
+  "recallreq" -> "ns_ce" [color="#999999", style="dashed", label="no data_epoch — ckpt_sha self-busts"];
+  "recallreq" -> "ns_embed" [color="#999999", style="dashed", label="no data_epoch — ckpt_sha self-busts"];
+  "leg_moved" -> "leg_ckpt" [color="#999999", style="dashed", label="ce/embed →"];
+  "leg_new" -> "leg_epoch" [color="#999999", style="dashed", label="memory_doc/engram_slot/graph →"];
+}

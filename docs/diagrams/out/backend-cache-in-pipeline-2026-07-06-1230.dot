@@ -1,0 +1,65 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Backend caching train — 5 namespaces IN the recall pipeline (PROPOSED, 2026-07-06)
+warm PLAIN trace 17f93bcc (19.3 s, CE 3-pass = 79%) · encode_query→embed · spreading+ppr→graph · build_results→memory_doc · engram_links→engram_slot · crossfuse POPULATES→ce, cross_encoder LOOKUP→HIT (#41 within-req dedup)
+total ≈ 19.321 s";
+  subgraph "cluster_core" {
+    label="Core (--cpus 1) — forwarder; bumps data_epoch on writes, passes it on the recall request";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="recall() entry (FORWARDER)\nPOST /recall + data_epoch (cross-service signal)\n105 ms"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (--cpus 2) — backend.recall pipeline + the UNIFIED Cache class (5 namespaces)";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "embed" [shape="box", style="filled", fillcolor="#f5e1f5", label="query embed\nretrieval.vector.encode_query (warm model)\n15 ms"];
+    "vector" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="vector KNN search\nretrieval.vector (HNSW ANN)\n55 ms"];
+    "ppr" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="personalized PageRank\nretrieval.ppr (entity seeds + graph walk)\n234 ms"];
+    "spread" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation BFS\nretrieval.spreading (per-neighbour DB, uncached today)\n1.475 s"];
+    "fusion" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="convex / WRRF fusion\nretrieval.fusion (merge signals)\n273 ms"];
+    "build" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="build_results final-fetch\nretrieval.build_results (WHERE id IN, batched)\n866 ms"];
+    "ce1" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE PASS 1 — cross_encoder\nretrieval.rerank.cross_encoder (GTE-ModernBERT)\n7.937 s"];
+    "mp" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE PASS 2 — multi_passage\nretrieval.rerank.multi_passage (synthetic cluster texts)\n1.479 s"];
+    "engram" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="engram_links rerank\nretrieval.rerank.engram_links (graph IO)\n375 ms"];
+    "cefuse" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE PASS 3 — wiki crossfuse\nretrieval.crossfuse.score_candidates_ce (memory∪wiki CE)\n5.803 s"];
+    "results" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="ranked results returned\n1 ms"];
+    "ns_embed" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[MOVED-IN] ce.embed namespace\nkey text_sha:ckpt_sha · ModelCkpt\nrepeat encode_query served warm"];
+    "ns_graph" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] graph namespace\nkey entity_id:data_epoch · DataEpoch\nentity→neighbours · est. shave 300-400 ms"];
+    "ns_mdoc" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] memory_doc namespace\nkey memory_id:data_epoch · DataEpoch\nid→doc (content-immutable) · est. shave 150-200 ms"];
+    "ns_slot" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] engram_slot namespace\nkey slot_index:data_epoch · DataEpoch\nslot→ids · est. shave 100-150 ms"];
+    "ns_ce" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[MOVED-IN+WIRE] ce namespace\nkey query_sha:text_sha:ckpt_sha · ModelCkpt\n#41 within-request CE dedup"];
+  }
+  "entry" -> "embed" [color="#333333", style="solid", label="POST /recall + data_epoch"];
+  "embed" -> "vector" [color="#333333", style="solid", label="query vector"];
+  "vector" -> "ppr" [color="#333333", style="solid", label="3"];
+  "ppr" -> "spread" [color="#333333", style="solid", label="4"];
+  "spread" -> "fusion" [color="#333333", style="solid", label="5"];
+  "fusion" -> "build" [color="#333333", style="solid", label="top ids"];
+  "build" -> "ce1" [color="#333333", style="solid", label="hydrated rows"];
+  "ce1" -> "mp" [color="#333333", style="solid", label="8"];
+  "mp" -> "engram" [color="#333333", style="solid", label="9"];
+  "engram" -> "cefuse" [color="#333333", style="solid", label="10"];
+  "cefuse" -> "results" [color="#333333", style="solid", label="11"];
+  "embed" -> "ns_embed" [color="#6a8f3a", style="dashed", label="encode_query (warm)"];
+  "ppr" -> "ns_graph" [color="#6a8f3a", style="dashed", label="ppr → graph"];
+  "spread" -> "ns_graph" [color="#6a8f3a", style="dashed", label="spreading → graph"];
+  "build" -> "ns_mdoc" [color="#6a8f3a", style="dashed", label="build_results id→doc"];
+  "engram" -> "ns_slot" [color="#6a8f3a", style="dashed", label="engram_links slot→ids"];
+  "cefuse" -> "ns_ce" [color="#6a8f3a", style="dashed", label="crossfuse POPULATES (query,text)"];
+  "ns_ce" -> "ce1" [color="#6a8f3a", style="dashed", label="cross_encoder LOOKUP → HIT (skip re-score)"];
+  "mp" -> "ns_ce" [color="#999999", style="dashed", label="multi_passage mostly disjoint (partial)"];
+}

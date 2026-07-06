@@ -1,0 +1,87 @@
+# Backend Caching Train — the 5 namespaces IN the recall pipeline (flow view) — 2026-07-06.
+#
+# PROPOSED design (not built). Source of truth: docs/plans/backend-caching-train-2026-07-06.md.
+# Companion structural view: backend-cache-unified-2026-07-06-1230.yaml (same 5 namespaces,
+# there shown as one Cache class + the invalidation split). This view answers WHERE each
+# namespace hooks the backend recall pipeline.
+#
+# Pipeline stage ms are the REAL warm cache-MISS PLAIN trace (17f93bcc, wall 19321 ms,
+# core 5.111 / backend 5.16) from recall-paths-all-2026-07-06-1024.yaml. CE 3 passes
+# ≈ 15.2 s = 79% (the wall). The cache targets the sub-CE floor + within-request CE dedup.
+#
+# HOOKPOINTS (cached stage → namespace it consults):
+#   * encode_query           → embed        (already-served warm; MOVED-IN)
+#   * spreading + ppr        → graph        (entity→neighbours; est. 300-400 ms; NEW)
+#   * build_results          → memory_doc   (id→doc; est. 150-200 ms; NEW)
+#   * engram_links           → engram_slot  (slot→ids; est. 100-150 ms; NEW)
+#   * crossfuse (CE PASS 3)  → ce  [POPULATE]  — scores (query,text) → stored
+#   * cross_encoder (PASS 1) → ce  [LOOKUP]     — overlapping (query,text) → HIT
+#   * multi_passage (PASS 2) → ce  [mostly disjoint synthetic cluster texts]
+#
+# #41 within-request CE dedup: recall's CE passes call score_cross_encoder DIRECTLY
+# today, bypassing the ce cache (only /rerank uses it). Route them through the `ce`
+# namespace: crossfuse POPULATES (query,text) → cross_encoder LOOKUP of the overlapping
+# pair HITS (same request, same query, same ckpt) → skips re-scoring. All queries, not
+# repeat-gated. That is the biggest shave (Car 1).
+#
+# Cache nodes are type:cache (dashed green). Namespace tags [MOVED-IN]/[NEW] mirror the
+# structural view.
+
+title: "Backend caching train — 5 namespaces IN the recall pipeline (PROPOSED, 2026-07-06)"
+subtitle: "warm PLAIN trace 17f93bcc (19.3 s, CE 3-pass = 79%) · encode_query→embed · spreading+ppr→graph · build_results→memory_doc · engram_links→engram_slot · crossfuse POPULATES→ce, cross_encoder LOOKUP→HIT (#41 within-req dedup)"
+rankdir: TB
+show_total: true
+total_ms: 19321        # real PLAIN wall; node-sum meaningless (memory ∥ wiki fork)
+
+clusters:
+  - {id: core,     label: "Core (--cpus 1) — forwarder; bumps data_epoch on writes, passes it on the recall request", kind: core}
+  - {id: backend,  label: "Backend (--cpus 2) — backend.recall pipeline + the UNIFIED Cache class (5 namespaces)", kind: backend}
+
+nodes:
+  # ---- core forwarder + data_epoch signal ----
+  - {id: entry,    label: "recall() entry (FORWARDER)\\nPOST /recall + data_epoch (cross-service signal)", cluster: core, type: compute, time_ms: 105}
+
+  # ---- backend pipeline stages (real warm-miss ms) ----
+  - {id: embed,    label: "query embed\\nretrieval.vector.encode_query (warm model)", cluster: backend, type: model, time_ms: 15}
+  - {id: vector,   label: "vector KNN search\\nretrieval.vector (HNSW ANN)", cluster: backend, type: io, time_ms: 55}
+  - {id: ppr,      label: "personalized PageRank\\nretrieval.ppr (entity seeds + graph walk)", cluster: backend, type: compute, time_ms: 234}
+  - {id: spread,   label: "spreading activation BFS\\nretrieval.spreading (per-neighbour DB, uncached today)", cluster: backend, type: io, time_ms: 1475}
+  - {id: fusion,   label: "convex / WRRF fusion\\nretrieval.fusion (merge signals)", cluster: backend, type: compute, time_ms: 273}
+  - {id: build,    label: "build_results final-fetch\\nretrieval.build_results (WHERE id IN, batched)", cluster: backend, type: io, time_ms: 866}
+  - {id: ce1,      label: "CE PASS 1 — cross_encoder\\nretrieval.rerank.cross_encoder (GTE-ModernBERT)", cluster: backend, type: model, time_ms: 7937}
+  - {id: mp,       label: "CE PASS 2 — multi_passage\\nretrieval.rerank.multi_passage (synthetic cluster texts)", cluster: backend, type: model, time_ms: 1479}
+  - {id: engram,   label: "engram_links rerank\\nretrieval.rerank.engram_links (graph IO)", cluster: backend, type: io, time_ms: 375}
+  - {id: cefuse,   label: "CE PASS 3 — wiki crossfuse\\nretrieval.crossfuse.score_candidates_ce (memory∪wiki CE)", cluster: backend, type: model, time_ms: 5803}
+  - {id: results,  label: "ranked results returned", cluster: backend, type: compute, time_ms: 1}
+
+  # ---- the 5 Cache namespaces (dashed green); same nodes as the structural view ----
+  - {id: ns_embed, label: "[MOVED-IN] ce.embed namespace\\nkey text_sha:ckpt_sha · ModelCkpt\\nrepeat encode_query served warm", cluster: backend, type: cache}
+  - {id: ns_graph, label: "[NEW] graph namespace\\nkey entity_id:data_epoch · DataEpoch\\nentity→neighbours · est. shave 300-400 ms", cluster: backend, type: cache}
+  - {id: ns_mdoc,  label: "[NEW] memory_doc namespace\\nkey memory_id:data_epoch · DataEpoch\\nid→doc (content-immutable) · est. shave 150-200 ms", cluster: backend, type: cache}
+  - {id: ns_slot,  label: "[NEW] engram_slot namespace\\nkey slot_index:data_epoch · DataEpoch\\nslot→ids · est. shave 100-150 ms", cluster: backend, type: cache}
+  - {id: ns_ce,    label: "[MOVED-IN+WIRE] ce namespace\\nkey query_sha:text_sha:ckpt_sha · ModelCkpt\\n#41 within-request CE dedup", cluster: backend, type: cache}
+
+edges:
+  # main pipeline flow (ordered)
+  - {src: entry,    dst: embed,   order: 1, label: "POST /recall + data_epoch"}
+  - {src: embed,    dst: vector,  order: 2, label: "query vector"}
+  - {src: vector,   dst: ppr,     order: 3}
+  - {src: ppr,      dst: spread,  order: 4}
+  - {src: spread,   dst: fusion,  order: 5}
+  - {src: fusion,   dst: build,   order: 6, label: "top ids"}
+  - {src: build,    dst: ce1,     order: 7, label: "hydrated rows"}
+  - {src: ce1,      dst: mp,      order: 8}
+  - {src: mp,       dst: engram,  order: 9}
+  - {src: engram,   dst: cefuse,  order: 10}
+  - {src: cefuse,   dst: results, order: 11}
+
+  # ---- HOOKPOINTS: cached stage → namespace it consults ----
+  - {src: embed,    dst: ns_embed, type: async, label: "encode_query (warm)"}
+  - {src: ppr,      dst: ns_graph, type: async, label: "ppr → graph"}
+  - {src: spread,   dst: ns_graph, type: async, label: "spreading → graph"}
+  - {src: build,    dst: ns_mdoc,  type: async, label: "build_results id→doc"}
+  - {src: engram,   dst: ns_slot,  type: async, label: "engram_links slot→ids"}
+  # #41: crossfuse POPULATES ce, cross_encoder LOOKUP → HIT on the overlapping pair
+  - {src: cefuse,   dst: ns_ce,    type: async, label: "crossfuse POPULATES (query,text)"}
+  - {src: ns_ce,    dst: ce1,      type: async, label: "cross_encoder LOOKUP → HIT (skip re-score)"}
+  - {src: mp,       dst: ns_ce,    type: skip,  label: "multi_passage mostly disjoint (partial)"}
