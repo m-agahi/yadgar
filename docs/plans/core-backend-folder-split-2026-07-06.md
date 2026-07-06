@@ -310,3 +310,13 @@ Backend's **module-level** core imports today are only `paths`, `config`, `obser
 - **Q3:** core-behaviour-only engines pulled into `_shared` by `_state` construction (`staleness`, `prospective`, `sensory_buffer`, `narrative` writer path). Keep in `_shared` (simplest, avoids backend→core), or split `_state` so backend recall constructs a *slim* engine set (no staleness/prospective)? Slim `_state` is cleaner long-term but is a real refactor — recommend defer to a follow-up, keep whole constellation in `_shared` for this train.
 - **Q4:** `_surreal_runner.py` — core or backend? Launched by core entrypoint, not imported by `backend/*`. Classified core; confirm.
 - **Q5:** naming — `_shared/runtime/` for the extracted engine/recall runtime; acceptable, or prefer `_shared/engines/` + `_shared/recall/`?
+
+---
+
+## 9. DECISIONS (user, 2026-07-06)
+
+- **Q1 → ALL 4 cars this train.** End state = zero cross-boundary violations, enforcement fully ON. Runtime extraction (Car 1) included.
+- **Q3 → SLIM `_state` NOW** (the harder path, chosen deliberately). Backend recall must construct only the engines the recall path needs; core-only engines (staleness / prospective / sensory_buffer / narrative-writer + any others) are NOT built by the backend. This is a REAL refactor, not pure relocation → it needs the actual backend-`/recall` engine-dependency map (which of the ~23 `_state` engines the recall pipeline touches vs core-only). Design sub-task dispatched; folds into Car 1/2 as a `_state` split (full engine set for core/memorize/consolidation; slim recall set for backend `/recall`). RISK: a missing engine in the slim set → backend recall runtime error → characterization/parity + a backend-recall smoke test per the slim change.
+- **Q5 → `_shared/runtime/`** (engine-agnostic name; recall is one member, not the only engine — do NOT name a dir `recall`). `recall_pipeline.py` is one file inside `_shared/runtime/`.
+- **Q2 → defer `StorageProtocol`** (StorageEngine is `_shared`, nothing forces it).
+- **Q4 → `_surreal_runner.py` = core** (launched by core entrypoint, not imported by backend).
