@@ -20,11 +20,21 @@
 #   * ModelCkpt-keyed (ce, embed): ckpt_sha already in key → model swap busts. No
 #     cross-service signal needed. These are the MOVED-IN, model-stable caches.
 #   * DataEpoch-keyed (memory_doc, engram_slot, graph): key embeds a global
-#     `data_epoch`. CORE bumps it on memorize/forget/entity/relationship writes
-#     (already runs _recall_shadow.bump_epoch) and PASSES it to the backend on each
-#     recall request (cheap header/int, not a round-trip). Stale keys naturally miss
-#     — epoch-in-key, no explicit cross-service bust call. This core→backend
-#     data_epoch arrow is drawn async (green dashed).
+#     structural `data_epoch`. CORE bumps it on EVERY structural mutator — both
+#     INTERACTIVE writes (memorize/forget/anchor/memory_update(content)/wiki/
+#     entity/relationship — already runs _recall_shadow.bump_epoch) AND BACKGROUND
+#     cycles (consolidation/nightly merge·dedup·create·delete, vacuum deletes,
+#     reembed embedding-change) which bypass memorize and MUST bump at their commit
+#     point. CORE PASSES the epoch to the backend on each recall request (cheap
+#     header/int, not a round-trip). Stale keys naturally miss — epoch-in-key, no
+#     explicit cross-service bust call. This core→backend arrow is async (dashed).
+#
+# HEAT IS NEVER CACHED: two kinds of state — STRUCTURAL (content, embedding, slot
+# occupancy, entity graph — changes only on create/delete/merge/reembed) vs
+# VOLATILE (heat/access_count/last_accessed — changes on every recall + every decay
+# cycle). memory_doc caches ONLY the immutable structural projection; heat/access
+# are fetched fresh (small cheap ints) → sidesteps heat-staleness, so pure
+# HEAT-DECAY does NOT bump data_epoch (only structural mutation does).
 #
 # LEGEND cluster spells out MOVED-IN vs NEW and the two invalidation classes.
 
@@ -40,15 +50,16 @@ clusters:
 
 nodes:
   # ---- core: the write events + the data_epoch signal ----
-  - {id: writes,   label: "CORE writes\\nmemorize / forget / entity / relationship\\n_recall_shadow.bump_epoch → global data_epoch++", cluster: core, type: compute}
+  - {id: writes,   label: "CORE structural mutators → data_epoch++\\nINTERACTIVE writes: memorize / forget / anchor\\nmemory_update(content) / wiki / entity / relationship\\nBACKGROUND cycles: consolidate/nightly (merge·dedup·create·delete)\\nvacuum (delete) · reembed (embedding change)\\nall call _recall_shadow.bump_epoch → global data_epoch++", cluster: core, type: compute}
   - {id: recallreq,label: "recall request → backend\\ncarries data_epoch (cheap header/int)\\nembedded into DataEpoch-keyed namespace keys", cluster: core, type: gate}
+  - {id: heatnote, label: "NOTE — heat is NEVER cached\\nheat / access_count / last_accessed = VOLATILE\\n(change on every recall + every decay cycle)\\n→ fetched fresh (small cheap ints), never in memory_doc\\n→ pure HEAT-DECAY does NOT bump data_epoch\\n(only STRUCTURAL create/delete/merge/reembed bumps)", cluster: core, type: skip}
 
   # ---- backend: the ONE Cache class = 5 namespaces in the registry ----
   # Model-stable (MOVED-IN) namespaces:
   - {id: ns_ce,    label: "[MOVED-IN] namespace: ce\\nkey = query_sha:text_sha:ckpt_sha\\nval = CE score · invalidation = ModelCkpt\\nMOVE _ce_cache (embed_service.py:224) + WIRE recall CE path (#41)", cluster: backend, type: cache}
   - {id: ns_embed, label: "[MOVED-IN] namespace: embed\\nkey = text_sha:ckpt_sha\\nval = vector · invalidation = ModelCkpt\\nMOVE _embed_cache (embed_service.py:223)", cluster: backend, type: cache}
   # Data-stable (NEW) namespaces:
-  - {id: ns_mdoc,  label: "[NEW] namespace: memory_doc\\nkey = memory_id:data_epoch\\nval = full doc dict · invalidation = DataEpoch\\nbuild_results (fusion.py:316) · content-immutable → ~bust-free\\nest. shave 150-200 ms", cluster: backend, type: cache}
+  - {id: ns_mdoc,  label: "[NEW] namespace: memory_doc\\nkey = memory_id:data_epoch\\nval = IMMUTABLE projection (content, embedding, created_at, links)\\nheat/access NOT cached — fetched fresh · invalidation = DataEpoch\\nbuild_results (fusion.py:316) · content-immutable → ~bust-free\\nest. shave 150-200 ms", cluster: backend, type: cache}
   - {id: ns_slot,  label: "[NEW] namespace: engram_slot\\nkey = slot_index:data_epoch\\nval = [memory_id,…] · invalidation = DataEpoch\\nengram_links (engram.py:128)\\nest. shave 100-150 ms", cluster: backend, type: cache}
   - {id: ns_graph, label: "[NEW] namespace: graph\\nkey = entity_id:data_epoch\\nval = [neighbour,…] · invalidation = DataEpoch\\nspreading+ppr (knowledge_graph.py:455, core.py:125)\\nest. shave 300-400 ms", cluster: backend, type: cache}
 
@@ -56,11 +67,13 @@ nodes:
   - {id: leg_moved, label: "[MOVED-IN] ce, embed\\nexisting backend LRU folded into the Cache class\\nbehaviour-neutral (same keys, same values)", cluster: legend, type: cache}
   - {id: leg_new,   label: "[NEW] memory_doc, engram_slot, graph\\nquery-independent stable-data caches (cross-query)", cluster: legend, type: cache}
   - {id: leg_ckpt,  label: "ModelCkpt invalidation\\nckpt_sha in key → model swap busts\\n(no cross-service signal)", cluster: legend, type: compute}
-  - {id: leg_epoch, label: "DataEpoch invalidation\\ndata_epoch in key → CORE write bumps → stale keys miss\\n(cross-service signal, async dashed)", cluster: legend, type: gate}
+  - {id: leg_epoch, label: "DataEpoch invalidation\\ndata_epoch in key → CORE bumps → stale keys miss\\nbumped by ALL structural mutators: interactive writes\\n+ background cycles (consolidate/vacuum/reembed)\\nheat-decay does NOT bump (heat never cached)\\n(cross-service signal, async dashed)", cluster: legend, type: gate}
 
 edges:
-  # core write bus feeds the data_epoch into the recall request
-  - {src: writes,    dst: recallreq, type: async, label: "data_epoch++ (on every write)"}
+  # core mutator bus feeds the data_epoch into the recall request
+  - {src: writes,    dst: recallreq, type: async, label: "data_epoch++ (interactive + background)"}
+  # heat-decay note: heat never cached, memory_doc holds only the immutable projection
+  - {src: heatnote,  dst: ns_mdoc,   type: skip, label: "heat fetched fresh (not cached)"}
   # cross-service data_epoch → the 3 DataEpoch namespaces (embedded in key)
   - {src: recallreq, dst: ns_mdoc,   type: async, label: "data_epoch in key"}
   - {src: recallreq, dst: ns_slot,   type: async, label: "data_epoch in key"}

@@ -25,7 +25,10 @@
 # repeat-gated. That is the biggest shave (Car 1).
 #
 # Cache nodes are type:cache (dashed green). Namespace tags [MOVED-IN]/[NEW] mirror the
-# structural view.
+# structural view. data_epoch (in the DataEpoch keys) is bumped by ALL structural
+# mutators — interactive writes AND background cycles (consolidate/vacuum/reembed);
+# heat/access are volatile and NEVER cached (memory_doc holds only the immutable
+# projection, so pure heat-decay needs no bump).
 
 title: "Backend caching train — 5 namespaces IN the recall pipeline (PROPOSED, 2026-07-06)"
 subtitle: "warm PLAIN trace 17f93bcc (19.3 s, CE 3-pass = 79%) · encode_query→embed · spreading+ppr→graph · build_results→memory_doc · engram_links→engram_slot · crossfuse POPULATES→ce, cross_encoder LOOKUP→HIT (#41 within-req dedup)"
@@ -34,7 +37,7 @@ show_total: true
 total_ms: 19321        # real PLAIN wall; node-sum meaningless (memory ∥ wiki fork)
 
 clusters:
-  - {id: core,     label: "Core (--cpus 1) — forwarder; bumps data_epoch on writes, passes it on the recall request", kind: core}
+  - {id: core,     label: "Core (--cpus 1) — forwarder; bumps data_epoch on ALL structural mutators (interactive writes + background consolidate/vacuum/reembed), passes it on the recall request", kind: core}
   - {id: backend,  label: "Backend (--cpus 2) — backend.recall pipeline + the UNIFIED Cache class (5 namespaces)", kind: backend}
 
 nodes:
@@ -57,7 +60,7 @@ nodes:
   # ---- the 5 Cache namespaces (dashed green); same nodes as the structural view ----
   - {id: ns_embed, label: "[MOVED-IN] ce.embed namespace\\nkey text_sha:ckpt_sha · ModelCkpt\\nrepeat encode_query served warm", cluster: backend, type: cache}
   - {id: ns_graph, label: "[NEW] graph namespace\\nkey entity_id:data_epoch · DataEpoch\\nentity→neighbours · est. shave 300-400 ms", cluster: backend, type: cache}
-  - {id: ns_mdoc,  label: "[NEW] memory_doc namespace\\nkey memory_id:data_epoch · DataEpoch\\nid→doc (content-immutable) · est. shave 150-200 ms", cluster: backend, type: cache}
+  - {id: ns_mdoc,  label: "[NEW] memory_doc namespace\\nkey memory_id:data_epoch · DataEpoch\\nid→doc IMMUTABLE projection (content/embedding) · est. shave 150-200 ms\\nheat/access NEVER cached — fetched fresh (heat-decay = no bump)", cluster: backend, type: cache}
   - {id: ns_slot,  label: "[NEW] engram_slot namespace\\nkey slot_index:data_epoch · DataEpoch\\nslot→ids · est. shave 100-150 ms", cluster: backend, type: cache}
   - {id: ns_ce,    label: "[MOVED-IN+WIRE] ce namespace\\nkey query_sha:text_sha:ckpt_sha · ModelCkpt\\n#41 within-request CE dedup", cluster: backend, type: cache}
 
