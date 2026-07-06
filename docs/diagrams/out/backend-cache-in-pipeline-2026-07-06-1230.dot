@@ -11,7 +11,7 @@ digraph flow {
 warm PLAIN trace 17f93bcc (19.3 s, CE 3-pass = 79%) · encode_query→embed · spreading+ppr→graph · build_results→memory_doc · engram_links→engram_slot · crossfuse POPULATES→ce, cross_encoder LOOKUP→HIT (#41 within-req dedup)
 total ≈ 19.321 s";
   subgraph "cluster_core" {
-    label="Core (--cpus 1) — forwarder; bumps data_epoch on writes, passes it on the recall request";
+    label="Core (--cpus 1) — forwarder; bumps data_epoch on ALL structural mutators (interactive writes + background consolidate/vacuum/reembed), passes it on the recall request";
     style=filled;
     bgcolor="#eef4fb";
     color="#4a72a8";
@@ -39,7 +39,7 @@ total ≈ 19.321 s";
     "results" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="ranked results returned\n1 ms"];
     "ns_embed" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[MOVED-IN] ce.embed namespace\nkey text_sha:ckpt_sha · ModelCkpt\nrepeat encode_query served warm"];
     "ns_graph" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] graph namespace\nkey entity_id:data_epoch · DataEpoch\nentity→neighbours · est. shave 300-400 ms"];
-    "ns_mdoc" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] memory_doc namespace\nkey memory_id:data_epoch · DataEpoch\nid→doc (content-immutable) · est. shave 150-200 ms"];
+    "ns_mdoc" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] memory_doc namespace\nkey memory_id:data_epoch · DataEpoch\nid→doc IMMUTABLE projection (content/embedding) · est. shave 150-200 ms\nheat/access NEVER cached — fetched fresh (heat-decay = no bump)"];
     "ns_slot" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[NEW] engram_slot namespace\nkey slot_index:data_epoch · DataEpoch\nslot→ids · est. shave 100-150 ms"];
     "ns_ce" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="[MOVED-IN+WIRE] ce namespace\nkey query_sha:text_sha:ckpt_sha · ModelCkpt\n#41 within-request CE dedup"];
   }
