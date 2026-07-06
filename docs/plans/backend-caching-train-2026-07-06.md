@@ -107,6 +107,33 @@ consolidation / decay / vacuum / reembed cycles — which bump *structure* vs
 the `data_epoch` bump = stale recall (deleted memory served, missing new memory).
 This is the highest-risk correctness item in the train.
 
+## Design standards (MANDATORY, all cars)
+
+- **Protocol + constructor DI (modular-monolith standard).** Define a
+  `CacheProtocol` (`typing.Protocol`: `get / set / invalidate / stats`). The
+  concrete unified `Cache` implements it. Every consumer (recall pipeline stages,
+  read tools) receives its cache via **constructor DI, typed as the Protocol** —
+  never the concrete class, never a module global. Swappable (a `NullCache` for
+  tests/disable, an alternate impl) + unit-testable in isolation. Mirrors the
+  established `MLClient` Protocol → `LocalMLClient`/`RemoteMLClient` + reranker
+  constructor-DI pattern. Same standard applies going forward to all designs.
+
+- **Cache size = knob, % of container RAM. TWO SEPARATE knobs (per service).**
+  - `YADGAR_BACKEND_CACHE_RAM_PCT` — backend cache byte budget = pct × backend
+    container memory (`--memory 4g`).
+  - `YADGAR_CORE_CACHE_RAM_PCT` — core cache byte budget = pct × core container
+    memory (`--memory 1g`).
+  Separate because the two services have different RAM envelopes and cache
+  profiles (backend holds big `memory_doc`/`embed`/graph entries; core holds small
+  read-tool results). Each service reads its OWN knob + its OWN container memory
+  limit (cgroup `memory.max` / `memory.limit_in_bytes`; sane default outside a
+  container). **Byte-bounded LRU eviction** (track approximate entry bytes; evict
+  LRU when the budget is exceeded) — NOT fixed `max_entries`, because entry sizes
+  vary wildly (a `ce` score is tiny; a `memory_doc` holds full content +
+  embedding). Budget split across the service's namespaces (weighted or equal).
+  New backend `Cache` gets `YADGAR_BACKEND_CACHE_RAM_PCT`; the shipped core
+  `Cache` (#164) is **retrofitted** to `YADGAR_CORE_CACHE_RAM_PCT`.
+
 ## Cars (one branch, one PR at train end)
 
 - **Car 0 — unified `Cache` class + fold-in.** `LRUCache`→`Cache` (namespaces,
