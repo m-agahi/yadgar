@@ -1,0 +1,96 @@
+# Cache layer — where every cache sits + hit/miss + invalidation — 2026-07-06.
+#
+# Captured live: core yadgar:5.111.0 + backend yadgar-backend:5.16.0, from the
+# unified Cache class (yadgar/cache.py, Car 1 v5.111) + backend LRUCache
+# (embed_service). All hit/miss/evict figures are REAL, read from
+# :8765/metrics (core) and :8001/metrics (backend) this session.
+#
+# THE UNIFIED Cache CLASS (yadgar/cache.py): one class, N named instances, policy
+# bound at CONSTRUCTION. Three invalidation strategies:
+#   * KeyFn  — freshness lives in the key (epoch / ckpt-hash); stale keys age out via
+#              LRU, nothing explicitly invalidated.
+#   * TTL(s) — value stored with write-ts, expired on read.
+#   * Manual — explicit clear()/invalidate() on a mutation event.
+# Every get/put carries @observe; hit/miss/evict counters always captured;
+# "cold" tier also emits yadgar_cache_{hit,miss,evictions}_total{cache=<name>}.
+#
+# LIVE-OBSERVED cache behaviour this session:
+#   * project_brief (TTL 300s + epoch-in-key): 1st call MISS, 2nd identical HIT
+#     (hit 0→1). Then memorize+forget+wiki writes bumped the epoch → a 3rd call
+#     with the SAME key MISSED (miss 1→2, hit held 1). Epoch bump busted it; TTL
+#     backstop did NOT fire (<5 min). EPOCH INVALIDATION EMPIRICALLY PROVEN.
+#   * wiki_query (TTL + global wiki-epoch): ZCACHEPROBE 1st MISS, 2nd identical HIT
+#     (hit 0→1, miss 1→2).
+#   * Also firing (core): default_branch (5 hits), rate_limit (33), remote_embedding,
+#     rules, branch_detect, stale_wiki_count, agent_prompt_prelude.
+#   * Backend CE cache (LRU, key=(query,passage)): hits=0, misses=0, size=3125
+#     PRE-WARMED. The recall CE path (LocalMLClient._try_gte_reranker /
+#     crossfuse.score_candidates_ce) does NOT consult it → CE ran FULL on an
+#     identical repeat recall (7.9s→8.7s, 5.8s→6.2s; repeat WALL 20504 ms > first
+#     19321 ms). CE cache = INEFFECTIVE across separate recalls.
+#   * Backend embed cache (LRU, key=query-hash): size grew 1786→1791 (one entry per
+#     distinct recall query) but hits stayed 1 (every recall used a distinct query);
+#     on the ZQUERYALPHA repeat encode_query DID drop to 0.1ms (query-embed served
+#     warm).
+#
+# HONEST HEADLINE (ADR-0030, still true post-#164): the content caches (CE/embed
+# LRU) do NOT speed up a repeated recall — CE is the wall on hit and miss alike.
+# The caches that actually cut time are the CORE-side epoch/TTL caches, and they
+# sit on the OTHER read tools (project_brief / wiki_read / wiki_query / prelude),
+# NOT on recall's hot path.
+
+title: "Cache layer — placement, hit/miss, invalidation (core 5.111 / backend 5.16, REAL 2026-07-06)"
+subtitle: "core epoch/TTL caches (project_brief/wiki/prelude) HIT + bust on epoch-bump (observed) · backend CE/embed LRU do NOT accelerate repeat recall (CE ran full: 20.5s repeat > 19.3s first)"
+rankdir: LR
+show_total: false
+
+clusters:
+  - {id: core,    label: "Core (--cpus 1) — unified Cache class (yadgar/cache.py); epoch bus in _recall_shadow.py", kind: core}
+  - {id: backend, label: "Backend (--cpus 2) — LRUCache in embed_service (CE + embed)", kind: backend}
+  - {id: writes,  label: "Write events that BUST caches (epoch bumps)", kind: external}
+
+nodes:
+  # ---- core read tools + their caches ----
+  - {id: pbtool,  label: "project_brief()", cluster: core, type: compute}
+  - {id: pbcache, label: "project_brief cache\\nTTL(300s) + epoch-in-key (git-root dir epoch)\\nMISS→HIT→(epoch-bump)MISS observed\\nhit 1 / miss 2", cluster: core, type: cache}
+
+  - {id: wqtool,  label: "wiki_query()", cluster: core, type: compute}
+  - {id: wqcache, label: "wiki_query cache\\nTTL + global wiki-epoch in key\\nMISS→HIT observed (hit 1 / miss 2)", cluster: core, type: cache}
+
+  - {id: wrtool,  label: "wiki_read()", cluster: core, type: compute}
+  - {id: wrcache, label: "wiki_read cache\\nTTL + global wiki-epoch in key", cluster: core, type: cache}
+
+  - {id: pretool, label: "agent_dispatch_prelude()", cluster: core, type: compute}
+  - {id: precache,label: "agent_prompt_prelude cache\\nTTL + global wiki-epoch in key", cluster: core, type: cache}
+
+  - {id: misc,    label: "config / branch / rules / rate_limit / remote_embedding caches\\nKeyFn or Manual; all firing (default_branch 5 hits, rate_limit 33 …)", cluster: core, type: cache}
+
+  # ---- recall + backend content caches ----
+  - {id: recall,  label: "recall() → backend.recall\\n(forward-only)", cluster: core, type: compute}
+  - {id: cecache, label: "CE score cache (LRU)\\nkey=(query,passage) content-hash · NO epoch\\nsize 3125 · hits 0 / miss 0\\nRECALL CE PATH DOES NOT CONSULT IT → CE ran full on repeat", cluster: backend, type: cache}
+  - {id: emcache, label: "embed vector cache (LRU)\\nkey=query-hash content · NO epoch\\nsize 1786→1791 · hit 1 / miss 7\\nrepeat encode_query 0.1ms (served warm)", cluster: backend, type: cache}
+  - {id: cework,  label: "CE rerank (GTE-ModernBERT)\\nTHE WALL — ~15.2s, unchanged hit vs miss\\n(cache does not cut it)", cluster: backend, type: model}
+
+  # ---- write events (epoch bumps) ----
+  - {id: dirbump, label: "memorize / forget\\n_bump_epoch_for_context → per-dir epoch++", cluster: writes, type: compute}
+  - {id: wikibump,label: "wiki_add / delete / metadata\\n_bump_wiki_epoch → bump_epoch(None) GLOBAL gen++", cluster: writes, type: compute}
+
+edges:
+  # read tools consult their caches (hit path solid, miss path to work implied)
+  - {src: pbtool,  dst: pbcache,  label: "get (hit→return)"}
+  - {src: wqtool,  dst: wqcache,  label: "get"}
+  - {src: wrtool,  dst: wrcache,  label: "get"}
+  - {src: pretool, dst: precache, label: "get"}
+  - {src: recall,  dst: emcache,  label: "query embed (may hit)"}
+  - {src: recall,  dst: cecache,  type: skip, label: "NOT consulted on recall CE"}
+  - {src: recall,  dst: cework,   label: "CE runs FULL (wall)"}
+
+  # invalidation: dir-epoch bump busts project_brief
+  - {src: dirbump, dst: pbcache,  type: async, label: "per-dir epoch++ BUSTS (observed miss)"}
+  # invalidation: global wiki-epoch bump busts wiki/prelude + project_brief (superset)
+  - {src: wikibump, dst: wrcache,  type: async, label: "GLOBAL epoch++ BUSTS"}
+  - {src: wikibump, dst: wqcache,  type: async, label: "BUSTS"}
+  - {src: wikibump, dst: precache, type: async, label: "BUSTS"}
+  - {src: wikibump, dst: pbcache,  type: async, label: "global fold-in BUSTS too"}
+  # backend LRU caches: no epoch, age out via LRU only
+  - {src: cecache, dst: emcache,  type: skip, label: "LRU age-out only (no epoch bump reaches these)"}

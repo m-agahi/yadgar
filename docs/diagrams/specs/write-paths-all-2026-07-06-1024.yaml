@@ -1,0 +1,92 @@
+# Write paths — memorize / anchor / wiki_add / checkpoint — 2026-07-06.
+#
+# Captured live: core yadgar:5.111.0 + backend yadgar-backend:5.16.0.
+# All four write tools verified live this session (each queued + persisted /
+# committed; memorize id 531934, anchor id 531935 both confirmed via
+# recent_memories after drain; forget deleted both; wiki_add committed +
+# wiki_delete removed the throwaway page; checkpoint surfaced back in project_brief).
+#
+# TWO write shapes:
+#   * memorize / anchor / checkpoint  → surprise-gate + ENQUEUE fast-path (queued=True
+#     immediately, MCP handler ≤5ms p50 = the I9 invariant), then the DRAINER replays
+#     the payload async (embed, store, post-write). anchor = memorize with
+#     is_protected + tier; checkpoint = a dedicated snapshot write.
+#   * wiki_add  → committed through storage.wiki (insert/update_wiki_page) which
+#     funnels through _bump_wiki_epoch on success.
+#
+# THE KEY NEW CONTENT = the epoch → cache-bust arrows (green dashed, type:async):
+#   * memorize / forget  → tools.project._bump_epoch_for_context(context) →
+#     bump_epoch(git-root)  → per-directory epoch++  → busts project_brief cache
+#     (whose key embeds _current_epoch(resolved git-root)).  EMPIRICALLY OBSERVED:
+#     after this session's memorize+forget+wiki writes, a project_brief re-call with
+#     the SAME (dir,branch,mode) key MISSED (miss 1→2, hit held at 1) — the epoch
+#     bump busted it; TTL(300s) backstop did NOT fire (<5 min elapsed).
+#   * wiki_add / wiki_delete / metadata  → storage.wiki._bump_wiki_epoch →
+#     bump_epoch(None) → GLOBAL generation++  → busts wiki_read + wiki_query +
+#     agent_prompt_prelude caches (all key on the global wiki epoch) AND
+#     project_brief (global fold-in = correct-by-superset).
+#
+# TIMINGS: the sync leg is the I9 ≤5ms handler budget (sourced). Per-phase drainer
+# numbers past the queue are ESTIMATES (no write trace was pulled) — the diagram's
+# real job is the FLOW + the epoch→cache-bust arrows, both verified this session.
+# show_total:false — caller only experiences the ~5ms sync ack; drainer is off-path.
+
+title: "Write paths — memorize / anchor / wiki_add / checkpoint + epoch cache-bust (core 5.111 / backend 5.16, 2026-07-06)"
+subtitle: "sync enqueue ≤5ms (I9) + async drain replay · wiki-epoch & dir-epoch bumps BUST the read-path caches (green dashed). Drainer ms = estimates; flow + bust arrows verified live"
+rankdir: TB
+show_total: false
+
+clusters:
+  - {id: core,    label: "Core (--cpus 1) — MCP handlers + surprise gate + file queue + drainer + core-side caches", kind: core}
+  - {id: backend, label: "Backend (--cpus 2) — SurrealDB store + embed", kind: backend}
+  - {id: caches,  label: "Read-path caches (busted by the epoch bumps) — see cache-layer spec", kind: external}
+
+nodes:
+  # ---- synchronous MCP-handler leg (must stay under the ~5ms I9 budget) ----
+  - {id: entry,    label: "memorize / anchor / checkpoint entry", cluster: core, type: start, time_ms: 0}
+  - {id: gate,     label: "secret gate + write policy + WriteGate surprisal\\n(bypass kw: error/decided/architecture always pass)", cluster: core, type: gate, time_ms: 1}
+  - {id: resolve,  label: "resolve branch/dir", cluster: core, type: compute, time_ms: 1}
+  - {id: enqueue,  label: "ENQUEUE to file queue\\nserialize payload (atomic tmp+rename)", cluster: core, type: store, time_ms: 2}
+  - {id: acked,    label: "return queued=True\\n(handler done, ≤5ms p50 — I9)", cluster: core, type: end}
+  # ---- epoch bump (fires from the write path) ----
+  - {id: bumpdir,  label: "_bump_epoch_for_context(context)\\nbump_epoch(git-root) → per-dir epoch++\\n(memorize / forget)", cluster: core, type: compute, time_ms: 0}
+  # ---- asynchronous drainer replay (off the response path; ms = estimates) ----
+  - {id: drainer,  label: "drainer replay (async, off response path)", cluster: core, type: start, time_ms: 0}
+  - {id: embedw,   label: "phase_embed\\nwrite-gate + embed (est)", cluster: core, type: model, time_ms: 40}
+  - {id: store,    label: "phase_store\\ncurator/insert_memory + vector + graph (est)", cluster: backend, type: store, time_ms: 15}
+  - {id: post,     label: "phase_post_write\\nprotection, engram, SR (est)", cluster: core, type: compute, time_ms: 10}
+  - {id: done,     label: "persisted + recallable", cluster: core, type: end}
+
+  # ---- wiki_add path (committed through storage.wiki) ----
+  - {id: wentry,   label: "wiki_add / wiki_delete / set_metadata entry", cluster: core, type: start, time_ms: 0}
+  - {id: wgate,    label: "similarity gate (drainer, deferred)\\ncommit via storage.wiki", cluster: core, type: gate, time_ms: 1}
+  - {id: wstore,   label: "insert/update/delete_wiki_page\\n(SurrealDB)", cluster: backend, type: store, time_ms: 15}
+  - {id: wbump,    label: "storage.wiki._bump_wiki_epoch\\nbump_epoch(None) → GLOBAL generation++\\n(single wiki-write chokepoint)", cluster: core, type: compute, time_ms: 0}
+  - {id: wdone,    label: "wiki committed", cluster: core, type: end}
+
+  # ---- the caches that get busted (green-dashed async edges land here) ----
+  - {id: cpb,      label: "project_brief cache\\n(epoch-in-key + TTL 300s)", cluster: caches, type: cache}
+  - {id: cwiki,    label: "wiki_read + wiki_query + agent_prompt_prelude caches\\n(global wiki-epoch in key + TTL)", cluster: caches, type: cache}
+
+edges:
+  # memorize/anchor/checkpoint sync leg
+  - {src: entry,    dst: gate,    order: 1}
+  - {src: gate,     dst: resolve, order: 2}
+  - {src: resolve,  dst: enqueue, order: 3}
+  - {src: enqueue,  dst: acked,   order: 4, label: "sync ack"}
+  # epoch bump + its cache-bust (async/structural)
+  - {src: resolve,  dst: bumpdir, order: 5, type: async, label: "structural write"}
+  - {src: bumpdir,  dst: cpb,     type: async, label: "per-dir epoch++ BUSTS (observed miss)"}
+  # async drain continuation
+  - {src: enqueue,  dst: drainer, order: 6, type: async, label: "async replay"}
+  - {src: drainer,  dst: embedw,  order: 7}
+  - {src: embedw,   dst: store,   order: 8}
+  - {src: store,    dst: post,    order: 9}
+  - {src: post,     dst: done,    order: 10}
+  # wiki_add path
+  - {src: wentry,   dst: wgate,   order: 11}
+  - {src: wgate,    dst: wstore,  order: 12}
+  - {src: wstore,   dst: wbump,   order: 13, label: "on success"}
+  - {src: wbump,    dst: wdone,   order: 14}
+  - {src: wbump,    dst: cwiki,   type: async, label: "GLOBAL epoch++ BUSTS wiki/prelude"}
+  - {src: wbump,    dst: cpb,     type: async, label: "global fold-in also BUSTS project_brief"}

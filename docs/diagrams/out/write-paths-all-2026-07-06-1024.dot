@@ -1,0 +1,71 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Write paths — memorize / anchor / wiki_add / checkpoint + epoch cache-bust (core 5.111 / backend 5.16, 2026-07-06)
+sync enqueue ≤5ms (I9) + async drain replay · wiki-epoch & dir-epoch bumps BUST the read-path caches (green dashed). Drainer ms = estimates; flow + bust arrows verified live";
+  subgraph "cluster_core" {
+    label="Core (--cpus 1) — MCP handlers + surprise gate + file queue + drainer + core-side caches";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="circle", style="filled", fillcolor="#d6d6d6", label="memorize / anchor / checkpoint entry\n0 ms"];
+    "gate" [shape="diamond", style="filled", fillcolor="#fdf3c8", label="secret gate + write policy + WriteGate surprisal\n(bypass kw: error/decided/architecture always pass)\n1 ms"];
+    "resolve" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="resolve branch/dir\n1 ms"];
+    "enqueue" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="ENQUEUE to file queue\nserialize payload (atomic tmp+rename)\n2 ms"];
+    "acked" [shape="doublecircle", style="filled", fillcolor="#d6d6d6", label="return queued=True\n(handler done, ≤5ms p50 — I9)"];
+    "bumpdir" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_bump_epoch_for_context(context)\nbump_epoch(git-root) → per-dir epoch++\n(memorize / forget)\n0 ms"];
+    "drainer" [shape="circle", style="filled", fillcolor="#d6d6d6", label="drainer replay (async, off response path)\n0 ms"];
+    "embedw" [shape="box", style="filled", fillcolor="#f5e1f5", label="phase_embed\nwrite-gate + embed (est)\n40 ms"];
+    "post" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="phase_post_write\nprotection, engram, SR (est)\n10 ms"];
+    "done" [shape="doublecircle", style="filled", fillcolor="#d6d6d6", label="persisted + recallable"];
+    "wentry" [shape="circle", style="filled", fillcolor="#d6d6d6", label="wiki_add / wiki_delete / set_metadata entry\n0 ms"];
+    "wgate" [shape="diamond", style="filled", fillcolor="#fdf3c8", label="similarity gate (drainer, deferred)\ncommit via storage.wiki\n1 ms"];
+    "wbump" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="storage.wiki._bump_wiki_epoch\nbump_epoch(None) → GLOBAL generation++\n(single wiki-write chokepoint)\n0 ms"];
+    "wdone" [shape="doublecircle", style="filled", fillcolor="#d6d6d6", label="wiki committed"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (--cpus 2) — SurrealDB store + embed";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "store" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="phase_store\ncurator/insert_memory + vector + graph (est)\n15 ms"];
+    "wstore" [shape="cylinder", style="filled", fillcolor="#fce3d6", label="insert/update/delete_wiki_page\n(SurrealDB)\n15 ms"];
+  }
+  subgraph "cluster_caches" {
+    label="Read-path caches (busted by the epoch bumps) — see cache-layer spec";
+    style=filled;
+    bgcolor="#f0f0f0";
+    color="#888888";
+    fontcolor="#555555";
+    fontname="Helvetica-Bold";
+    "cpb" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="project_brief cache\n(epoch-in-key + TTL 300s)"];
+    "cwiki" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="wiki_read + wiki_query + agent_prompt_prelude caches\n(global wiki-epoch in key + TTL)"];
+  }
+  "entry" -> "gate" [color="#333333", style="solid", label="1"];
+  "gate" -> "resolve" [color="#333333", style="solid", label="2"];
+  "resolve" -> "enqueue" [color="#333333", style="solid", label="3"];
+  "enqueue" -> "acked" [color="#333333", style="solid", label="sync ack"];
+  "resolve" -> "bumpdir" [color="#6a8f3a", style="dashed", label="structural write"];
+  "enqueue" -> "drainer" [color="#6a8f3a", style="dashed", label="async replay"];
+  "drainer" -> "embedw" [color="#333333", style="solid", label="7"];
+  "embedw" -> "store" [color="#333333", style="solid", label="8"];
+  "store" -> "post" [color="#333333", style="solid", label="9"];
+  "post" -> "done" [color="#333333", style="solid", label="10"];
+  "wentry" -> "wgate" [color="#333333", style="solid", label="11"];
+  "wgate" -> "wstore" [color="#333333", style="solid", label="12"];
+  "wstore" -> "wbump" [color="#333333", style="solid", label="on success"];
+  "wbump" -> "wdone" [color="#333333", style="solid", label="14"];
+  "bumpdir" -> "cpb" [color="#6a8f3a", style="dashed", label="per-dir epoch++ BUSTS (observed miss)"];
+  "wbump" -> "cwiki" [color="#6a8f3a", style="dashed", label="GLOBAL epoch++ BUSTS wiki/prelude"];
+  "wbump" -> "cpb" [color="#6a8f3a", style="dashed", label="global fold-in also BUSTS project_brief"];
+}
