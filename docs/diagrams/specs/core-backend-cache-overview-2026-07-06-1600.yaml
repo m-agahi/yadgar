@@ -1,0 +1,127 @@
+# Core ↔ Backend cache + component OVERVIEW (two columns) — 2026-07-06.
+#
+# PRIMARY OVERVIEW. Answers the question the two detail diagrams left confusing:
+# "where do the caches live, and do they move core→backend?" — they DO NOT.
+# There are TWO SEPARATE unified Cache classes, ONE PER SERVICE:
+#   * CORE cache  (yadgar/cache.py, SHIPPED #164) — lives inside the CORE box.
+#   * BACKEND cache (yadgar/backend/cache.py, NEW this train) — lives inside BACKEND.
+# They never touch. Nothing "moves" between them.
+#
+# TWO COLUMNS (rankdir=LR): LEFT = CORE (yadgar/, stays as-is), RIGHT = BACKEND
+# (yadgar/backend/, the recall pipeline). Arrows = who-calls-who.
+#
+# ONLY TWO signals cross the core↔backend boundary (the acceptance invariant —
+# if a third boundary-crossing edge appears, the "caches move" confusion is back):
+#   1. core recall() --HTTP POST /recall (traceparent)--> backend.recall  (solid flow)
+#   2. core write/epoch bus --data_epoch on each recall request--> backend DATA
+#      namespaces (memory_doc, engram_slot, graph)                         (async dashed)
+# Everything else stays WITHIN its own column.
+#
+# LEFT — CORE (yadgar/):
+#   * MCP tool entrypoints (recall, memorize, anchor, wiki_add, wiki_query,
+#     project_brief, checkpoint) — collapsed to functional nodes.
+#   * recall() = THIN FORWARDER (tool.recall → _forward_to_backend) — calls backend.
+#   * CORE unified Cache (yadgar/cache.py, SHIPPED #164) namespaces: project_brief,
+#     wiki_read, wiki_query, agent_prompt_prelude, config, branch/default_branch,
+#     rate_limit. Read tools consult it (stays in core).
+#   * Write/epoch bus: _recall_shadow.bump_epoch → the structural data_epoch,
+#     bumped by memorize/forget/wiki writes AND background cycles
+#     (consolidation/nightly, vacuum, reembed). session SR-transition stays core.
+#
+# RIGHT — BACKEND (yadgar/backend/):
+#   * POST /recall → backend.recall runs the WHOLE pipeline (encode_query, vector,
+#     fts, fanout/fusion, spreading, ppr, entities, wiki-candidates, CE passes
+#     crossfuse/cross_encoder/multi_passage, build_results, engram_links, db).
+#     Collapsed to ONE backend.recall node with the cached stages branching off it.
+#   * BACKEND unified Cache (yadgar/backend/cache.py, NEW class this train):
+#       ce          — CE score. ModelCkpt. ckpt_sha self-busts. ce+embed already
+#       embed       — vector.  ModelCkpt. exist today as loose LRUCache; this train
+#                     FOLDS them into the unified class (NOT moved from core).
+#       memory_doc  — id→doc.        DataEpoch. NEW.
+#       engram_slot — slot→ids.      DataEpoch. NEW.
+#       graph       — entity→neigh.  DataEpoch. NEW.
+#   * ML client (LocalMLClient: CE + embed models), Storage/DB (SurrealDB).
+#
+# INVALIDATION: ce/embed = model-ckpt hash (ckpt_sha in key). memory_doc/
+# engram_slot/graph = the cross-service data_epoch (in key). Legend spells it out.
+#
+# LEGEND: SHIPPED = core cache (#164) + backend ce/embed (exist today as loose LRU).
+# NEW = the unified backend Cache CLASS itself + the 3 data namespaces
+# (memory_doc/engram_slot/graph) + the cross-service data_epoch signal. (The class
+# is new; the two caches it folds in are not.)
+#
+# Companion DETAIL views (kept, NOT superseded — they carry the pipeline/structural
+# depth this overview deliberately omits):
+#   backend-cache-unified-2026-07-06-1230.yaml     (structural: one class, 5 ns)
+#   backend-cache-in-pipeline-2026-07-06-1230.yaml (flow: 5 ns in the pipeline)
+
+title: "Core ↔ Backend cache + component OVERVIEW — two columns, who-calls-who (2026-07-06)"
+subtitle: "LEFT=CORE (yadgar/, SHIPPED core Cache #164) · RIGHT=BACKEND (yadgar/backend/, recall pipeline + NEW backend Cache) · TWO separate caches (one per service, they never merge) · ONLY 2 signals cross the boundary: recall() HTTP POST (solid) + data_epoch (async dashed)"
+rankdir: LR
+show_total: false
+
+clusters:
+  - {id: core,    label: "CORE  (yadgar/, --cpus 1) — MCP tools + forwarder + SHIPPED unified Cache (yadgar/cache.py #164) + data_epoch bus", kind: core}
+  - {id: backend, label: "BACKEND  (yadgar/backend/, --cpus 2) — backend.recall pipeline + NEW unified Cache (yadgar/backend/cache.py) + ML + DB", kind: backend}
+  - {id: legend,  label: "Legend", kind: external}
+
+nodes:
+  # ================= LEFT COLUMN — CORE =================
+  - {id: read_tools, label: "CORE read tools\\nproject_brief · wiki_query · wiki_read\\nagent_prompt_prelude", cluster: core, type: compute}
+  - {id: recall_fwd, label: "recall()  — THIN FORWARDER\\ntool.recall → _forward_to_backend\\n(no pipeline in core)", cluster: core, type: gate}
+  - {id: write_tools,label: "CORE write tools\\nmemorize · forget · anchor\\nmemory_update(content) · wiki_add", cluster: core, type: compute}
+  - {id: bg_cycles,  label: "CORE background cycles\\nconsolidation / nightly (merge·dedup·create·delete)\\nvacuum (delete) · reembed (embedding change)", cluster: core, type: compute}
+  - {id: session,    label: "CORE session / state\\ncheckpoint · session SR transition\\n(stay in core — no cache, no epoch bump)", cluster: core, type: compute}
+
+  - {id: core_cache, label: "CORE unified Cache  [SHIPPED #164]\\nyadgar/cache.py — _REGISTRY of namespaces:\\nproject_brief · wiki_read · wiki_query · agent_prompt_prelude\\nconfig · branch/default_branch · rate_limit\\n(epoch / TTL invalidation, stays in core)", cluster: core, type: cache}
+  - {id: epoch_bus,  label: "data_epoch bus\\n_recall_shadow.bump_epoch → structural data_epoch++\\nbumped by writes AND background cycles\\n(pure heat-decay does NOT bump — heat never cached)", cluster: core, type: gate}
+
+  # ================= RIGHT COLUMN — BACKEND =================
+  - {id: backend_recall, label: "backend.recall  (POST /recall)\\nruns the WHOLE pipeline:\\nencode_query · vector · fts · fanout/fusion · spreading · ppr\\nentities · wiki-candidates · CE passes · build_results · engram_links · db", cluster: backend, type: compute}
+
+  # backend unified Cache — 5 namespaces (ModelCkpt: ce/embed ; DataEpoch: the 3 data)
+  - {id: ns_ce,    label: "backend cache: ce   [SHIPPED cache, folds into NEW class]\\nkey query_sha:text_sha:ckpt_sha · CE score · ModelCkpt\\ncrossfuse POPULATES → cross_encoder LOOKUP = HIT (#41 within-req dedup)", cluster: backend, type: cache}
+  - {id: ns_embed, label: "backend cache: embed  [SHIPPED cache, folds into NEW class]\\nkey text_sha:ckpt_sha · vector · ModelCkpt\\nencode_query served warm", cluster: backend, type: cache}
+  - {id: ns_mdoc,  label: "backend cache: memory_doc  [NEW]\\nkey memory_id:data_epoch · IMMUTABLE projection · DataEpoch\\nbuild_results id→doc (heat/access fetched fresh, never cached)", cluster: backend, type: cache}
+  - {id: ns_slot,  label: "backend cache: engram_slot  [NEW]\\nkey slot_index:data_epoch · [memory_id,…] · DataEpoch\\nengram_links slot→ids", cluster: backend, type: cache}
+  - {id: ns_graph, label: "backend cache: graph  [NEW]\\nkey entity_id:data_epoch · [neighbour,…] · DataEpoch\\nspreading + ppr entity→neighbours", cluster: backend, type: cache}
+
+  - {id: ml,    label: "ML client (LocalMLClient)\\nCE model + embed model", cluster: backend, type: model}
+  - {id: db,    label: "Storage / DB\\nSurrealDB", cluster: backend, type: store}
+
+  # ================= LEGEND =================
+  - {id: leg_shipped, label: "SHIPPED\\ncore unified Cache (#164) + backend ce/embed\\n(exist today as loose LRUCache)", cluster: legend, type: cache}
+  - {id: leg_new,     label: "NEW (this train)\\nunified backend Cache CLASS itself\\n+ memory_doc / engram_slot / graph namespaces\\n+ cross-service data_epoch signal", cluster: legend, type: gate}
+  - {id: leg_bound,   label: "TWO caches, one per service — they NEVER merge.\\nONLY 2 signals cross core↔backend:\\nrecall() HTTP POST (solid) · data_epoch (async dashed)", cluster: legend, type: compute}
+
+edges:
+  # ---- WITHIN CORE: read tools → core cache; writes+cycles → epoch bus ----
+  - {src: read_tools,  dst: core_cache, type: flow,  label: "consult (project_brief/wiki/prelude)"}
+  - {src: write_tools, dst: epoch_bus,  type: flow,  label: "bump_epoch"}
+  - {src: bg_cycles,   dst: epoch_bus,  type: flow,  label: "bump_epoch (structural)"}
+
+  # ---- THE BOUNDARY: exactly 2 signals cross core↔backend ----
+  # (1) recall() forwards the call over HTTP  (solid flow)
+  - {src: recall_fwd,  dst: backend_recall, type: flow, label: "HTTP POST /recall (traceparent)"}
+  # (2) data_epoch rides each recall request → the 3 DATA namespaces (async dashed)
+  - {src: epoch_bus,   dst: ns_mdoc,  type: async, label: "data_epoch on each recall req → in key"}
+  - {src: epoch_bus,   dst: ns_slot,  type: async, label: "data_epoch → in key"}
+  - {src: epoch_bus,   dst: ns_graph, type: async, label: "data_epoch → in key"}
+
+  # ---- WITHIN BACKEND: recall pipeline stages → the namespace they consult ----
+  - {src: backend_recall, dst: ns_ce,    type: flow, label: "CE passes (crossfuse/cross_encoder/multi_passage)"}
+  - {src: backend_recall, dst: ns_embed, type: flow, label: "encode_query"}
+  - {src: backend_recall, dst: ns_mdoc,  type: flow, label: "build_results"}
+  - {src: backend_recall, dst: ns_slot,  type: flow, label: "engram_links"}
+  - {src: backend_recall, dst: ns_graph, type: flow, label: "spreading + ppr"}
+  # ce/embed invalidation is self-contained (ckpt_sha) — no cross-service signal
+  - {src: ns_ce,    dst: ml, type: flow, label: "miss → CE model (ckpt_sha busts)"}
+  - {src: ns_embed, dst: ml, type: flow, label: "miss → embed model (ckpt_sha busts)"}
+  # data namespaces miss → DB fetch
+  - {src: ns_mdoc,  dst: db, type: flow, label: "miss → fetch doc"}
+  - {src: ns_slot,  dst: db, type: flow, label: "miss → fetch slot"}
+  - {src: ns_graph, dst: db, type: flow, label: "miss → fetch neighbours"}
+
+  # ---- legend wiring (visual grouping only) ----
+  - {src: leg_shipped, dst: leg_new,   type: skip}
+  - {src: leg_new,     dst: leg_bound, type: skip}
