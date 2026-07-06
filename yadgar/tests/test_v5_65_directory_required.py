@@ -248,17 +248,22 @@ class TestHookPromptRecallDirectoryFiltering:
         directory: str | None,
         retriever_results: list[dict],
     ) -> dict:
-        """Call hook_prompt_recall with given directory + mock retriever results.
+        """Call hook_prompt_recall with given directory + given recall results.
+
+        v5.113.0: prompt-recall now FORWARDS to the backend (via
+        _HookRecallForwarder) when a directory is present, so injecting via
+        mock_retriever.recall no longer reaches the result set. Patch
+        _recall_with_timeout instead — the ONE seam both the forward path and the
+        directory=None in-core fallback funnel through. This tests exactly what
+        TestHookPromptRecallDirectoryFiltering asserts: that
+        _filter_prompt_recall_results drops directory-ineligible rows, regardless
+        of which recall path produced them.
 
         Returns the JSON response body dict.
         """
         import yadgar.server._state as _st
         import yadgar.server.http as _http  # noqa: F401 — ensure routes registered
         from yadgar.server.http import hook_prompt_recall
-
-        # Build fake retriever that returns given results
-        mock_retriever = MagicMock()
-        mock_retriever.recall.return_value = retriever_results
 
         # Build fake request
         query_params: dict[str, str] = {"query": query}
@@ -269,26 +274,24 @@ class TestHookPromptRecallDirectoryFiltering:
             def __init__(self):
                 self.query_params = query_params
 
+        async def _recall_returns_injected(retriever, handler_name, *args, **kwargs):
+            # Path-agnostic: whatever recall path the handler chose, return the
+            # injected results so the directory post-filter is exercised.
+            return list(retriever_results)
+
         async def _run():
             with (
-                patch.object(_st, "_retriever", mock_retriever),
+                patch.object(_st, "_retriever", MagicMock()),
                 patch.object(_st, "_last_session_context", {}),
                 patch.object(_st, "_last_prompt_recall", {}),
                 patch("yadgar.server.http._build_dlq_alert_text", return_value=""),
-                # _recall_with_timeout calls asyncio.to_thread(retriever.recall, ...).
-                # Patch to_thread so it calls the retriever synchronously.
                 patch(
-                    "asyncio.to_thread",
-                    side_effect=lambda fn, *a, **kw: asyncio.coroutine(lambda: fn(*a, **kw))(),
+                    "yadgar.server.http._recall_with_timeout",
+                    side_effect=_recall_returns_injected,
                 ),
             ):
-                # Also override wait_for so the timeout wrapper works synchronously
-                async def _fake_to_thread(fn, *args, **kwargs):
-                    return fn(*args, **kwargs)
-
-                with patch("asyncio.to_thread", side_effect=_fake_to_thread):
-                    resp = await hook_prompt_recall(_FakeRequest())
-                    return resp.body if hasattr(resp, "body") else {}
+                resp = await hook_prompt_recall(_FakeRequest())
+                return resp.body if hasattr(resp, "body") else {}
 
         raw = asyncio.run(_run())
         import json

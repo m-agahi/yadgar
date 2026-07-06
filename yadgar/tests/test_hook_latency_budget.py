@@ -328,21 +328,29 @@ class TestTimeoutCounterAllHandlers:
 
 
 class TestHookCoreResidentDecision:
-    """Assert hook callers remain core-resident (call Retriever.recall(profile='fast') locally).
+    """Assert the SPLIT hook disposition (v5.113.0, hook-recall-forward-2026-07-06.md).
 
-    Spec §5.4 (recall-forward-only-2026-07-05.md): the three hook sites
-    (prompt-recall, instructions-loaded, subagent-start) are the ONE accepted
-    core-resident exception to the forward-only rule. This test asserts the
-    decision is implemented: hooks call _recall_with_timeout which runs
-    retriever.recall(profile='fast') in the bounded thread pool — NOT
-    _forward_to_backend (which would add a TCP hop fighting the 2.0s budget).
+    §5.4 (recall-forward-only-2026-07-05.md) originally kept ALL THREE hook sites
+    core-resident. v5.113.0 REVERSES that for prompt-recall ONLY (the cache-train
+    trigger; the deployed prompt-recall hook always passes ?directory= so the
+    backend can scope, making the forward quality-neutral). instructions-loaded +
+    subagent-start STAY core-resident (no directory / whole-DB — forwarding would
+    regress; see the plan's Trap 4).
 
-    If this test breaks because a hook no longer calls retriever.recall,
-    update the §5.4 documentation comment in http.py to reflect the change.
+    So:
+      - prompt-recall → FORWARDS: _recall_with_timeout drives a _HookRecallForwarder
+        (profile='fast'), NOT the raw Retriever.
+      - instructions-loaded + subagent-start → still drive retriever.recall(profile='fast')
+        in the bounded pool.
+
+    This class encodes that split. The prompt-recall case is the authorized
+    forward-path assertion the OLD docstring pointed to ("replace this test with a
+    forward-path assertion") — an intentional #52 substitution, not weakening.
     """
 
-    def test_prompt_recall_hook_passes_profile_fast(self):
-        """prompt-recall handler calls _recall_with_timeout with profile='fast'."""
+    def test_prompt_recall_hook_forwards_via_forwarder(self):
+        """prompt-recall handler drives _recall_with_timeout with a
+        _HookRecallForwarder (forward-to-backend path), profile='fast'."""
         import asyncio
         from unittest.mock import MagicMock, patch
 
@@ -354,16 +362,16 @@ class TestHookCoreResidentDecision:
         mock_request.query_params = MagicMock()
         mock_request.query_params.get = MagicMock(
             side_effect=lambda k, d="": {
-                "query": "test core-resident query",
+                "query": "test forward query",
                 "directory": "/home/user/project",
             }.get(k, d)
         )
 
-        captured_kwargs = {}
+        captured: dict = {}
 
         async def _capture_recall(retriever, handler_name, *args, **kwargs):
-            captured_kwargs.update(kwargs)
-            captured_kwargs["args"] = args
+            captured["retriever"] = retriever
+            captured["kwargs"] = kwargs
             return []
 
         async def _run():
@@ -377,12 +385,12 @@ class TestHookCoreResidentDecision:
                             await _http.hook_prompt_recall(mock_request)
 
         asyncio.run(_run())
-        assert captured_kwargs.get("profile") == "fast", (
-            f"prompt-recall hook must call _recall_with_timeout with profile='fast' "
-            f"(core-resident §5.4 decision). Got profile={captured_kwargs.get('profile')!r}. "
-            "If the hook was wired to forward, update the §5.4 comment in http.py "
-            "and replace this test with a forward-path assertion."
+        assert captured["kwargs"].get("profile") == "fast", captured
+        assert isinstance(captured["retriever"], _http._HookRecallForwarder), (
+            "prompt-recall must forward via _HookRecallForwarder (v5.113.0), "
+            f"not the raw retriever. Got {type(captured['retriever']).__name__}."
         )
+        assert captured["retriever"]._directory == "/home/user/project", captured
 
     def test_instructions_loaded_hook_passes_profile_fast(self):
         """instructions-loaded handler calls _recall_with_timeout with profile='fast'."""
