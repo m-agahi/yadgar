@@ -2068,12 +2068,21 @@ def _project_brief_key(resolved: str, branch: str | None, mode: str) -> tuple:
     return (resolved, branch or "", mode, _current_epoch(resolved))
 
 
+@observe(tier="stage", name="tools.project._make_project_brief_cache")
 def _make_project_brief_cache():
-    from yadgar.cache import TTL, Cache  # noqa: PLC0415
+    from yadgar.cache import (  # noqa: PLC0415
+        TTL,
+        Cache,
+        _core_cache_ram_pct,
+        _core_cache_total_budget_bytes,
+        _namespace_budget_bytes,
+    )
 
+    total = _core_cache_total_budget_bytes(_core_cache_ram_pct())
+    budget = _namespace_budget_bytes("project_brief", total)
     return Cache(
         name="project_brief",
-        max_entries=256,  # small keyspace (dirs × modes)
+        max_bytes=budget,  # byte-bounded LRU (core RAM-% budget, #49)
         invalidation=TTL(_PROJECT_BRIEF_CACHE_TTL),  # heat/anchor-drift backstop
         key_fn=lambda k: k,  # caller passes the already-built effective (epoch) key tuple
         deep_copy=True,  # brief dict mutated by callers / _render

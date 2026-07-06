@@ -175,6 +175,16 @@ def _embed_cache_max_entries() -> int:
     return resolve_knob("YADGAR_EMBED_CACHE_MAX_ENTRIES", "EMBED_CACHE_MAX_ENTRIES", int, 100000)
 
 
+def _backend_cache_ram_pct() -> float:
+    """% of the backend container RAM budgeted for the unified backend cache.
+
+    Byte-bounded eviction sizes each namespace from this (Car 0, backend 5.17.0).
+    The legacy YADGAR_*_CACHE_MAX_ENTRIES knobs no longer cap entry count; the
+    byte budget is authoritative. The *_CACHE_ENABLED kill switches still disable.
+    """
+    return resolve_knob("YADGAR_BACKEND_CACHE_RAM_PCT", "BACKEND_CACHE_RAM_PCT", float, 10.0)
+
+
 def _cache_snapshot_dir() -> str:
     return resolve_knob("YADGAR_CACHE_SNAPSHOT_DIR", "CACHE_SNAPSHOT_DIR", str, "/data/cache")
 
@@ -206,18 +216,58 @@ def _get_embed_checkpoint_hash() -> str:
     return hashlib.sha256(model.encode()).hexdigest()[:16]
 
 
+@observe(tier="stage")
 def _make_ce_cache():
-    from yadgar.backend.cache import LRUCache  # noqa: PLC0415
+    """Build the unified `ce` namespace (Car 0). Byte-budget from RAM-%.
 
-    max_e = _ce_cache_max_entries() if _ce_cache_enabled() else 0
-    return LRUCache(max_entries=max_e, checkpoint_hash=_get_ce_checkpoint_hash())
+    Behaviour-neutral fold-in: same keys (query_sha:text_sha:ckpt), same float
+    values, same ModelCkpt-in-key invalidation, same snapshot format. Only the
+    eviction discipline changed (count-cap → byte-cap). DI note: still a module
+    global for now; consumer constructor-DI deferred to a later car.
+    """
+    from yadgar.backend.cache import (  # noqa: PLC0415
+        Cache,
+        ModelCkpt,
+        _backend_cache_total_budget_bytes,
+        _namespace_budget_bytes,
+    )
+
+    if not _ce_cache_enabled():
+        budget = 0
+    else:
+        total = _backend_cache_total_budget_bytes(_backend_cache_ram_pct())
+        budget = _namespace_budget_bytes("ce", total)
+    return Cache(
+        name="ce",
+        max_bytes=budget,
+        invalidation=ModelCkpt(),
+        checkpoint_hash=_get_ce_checkpoint_hash(),
+        obs_tier="hot",
+    )
 
 
+@observe(tier="stage")
 def _make_embed_cache():
-    from yadgar.backend.cache import LRUCache  # noqa: PLC0415
+    """Build the unified `embed` namespace (Car 0). See `_make_ce_cache`."""
+    from yadgar.backend.cache import (  # noqa: PLC0415
+        Cache,
+        ModelCkpt,
+        _backend_cache_total_budget_bytes,
+        _namespace_budget_bytes,
+    )
 
-    max_e = _embed_cache_max_entries() if _embed_cache_enabled() else 0
-    return LRUCache(max_entries=max_e, checkpoint_hash=_get_embed_checkpoint_hash())
+    if not _embed_cache_enabled():
+        budget = 0
+    else:
+        total = _backend_cache_total_budget_bytes(_backend_cache_ram_pct())
+        budget = _namespace_budget_bytes("embed", total)
+    return Cache(
+        name="embed",
+        max_bytes=budget,
+        invalidation=ModelCkpt(),
+        checkpoint_hash=_get_embed_checkpoint_hash(),
+        obs_tier="hot",
+    )
 
 
 # Module-level cache instances (reset on importlib.reload)

@@ -80,12 +80,21 @@ def _current_wiki_epoch() -> int:
         return 0
 
 
+@observe(tier="stage", name="tools.dispatch_helper._make_prompt_cache")
 def _make_prompt_cache():
-    from yadgar.cache import TTL, Cache  # noqa: PLC0415
+    from yadgar.cache import (  # noqa: PLC0415
+        TTL,
+        Cache,
+        _core_cache_ram_pct,
+        _core_cache_total_budget_bytes,
+        _namespace_budget_bytes,
+    )
 
+    total = _core_cache_total_budget_bytes(_core_cache_ram_pct())
+    budget = _namespace_budget_bytes("agent_prompt_prelude", total)
     return Cache(
         name="agent_prompt_prelude",
-        max_entries=128,  # per pattern
+        max_bytes=budget,  # byte-bounded LRU (core RAM-% budget, #49)
         invalidation=TTL(_PROMPT_CACHE_TTL),  # epoch in key + TTL backstop
         deep_copy=True,  # prompt-result dict handed to caller / mutated downstream
         obs_tier="cold",  # low call rate

@@ -522,6 +522,14 @@
     "category": "hot-loop",
     "rationale": "A single os.stat mtime read returning seconds since last snapshot; called per cache (ce/embed) inside the periodic snapshot task and feeds the cache_snapshot_age_seconds gauge directly. Wrapping this stat helper in a span is noise; the parent snapshot stage span already covers timing."
   },
+  "cache:Cache.snapshot_age_seconds": {
+    "category": "hot-loop",
+    "rationale": "Unified backend Cache twin of LRUCache.snapshot_age_seconds — a single os.stat mtime read returning seconds since last snapshot per namespace, feeding the snapshot-age gauge. Wrapping this one-stat helper in a span is noise; the parent snapshot stage span already covers timing."
+  },
+  "cache:Cache._drop_locked": {
+    "category": "hot-loop",
+    "rationale": "O(1) OrderedDict pop + byte-accounting decrement under the already-held instance lock; invoked per manual invalidate and per expired-TTL get on the backend hot path. A span/metric per call is per-key cardinality bloat with no dashboard value; the get/put/invalidate parent spans already cover it."
+  },
   "embed_service:lifespan": {
     "category": "framework-instrumented",
     "rationale": "FastAPI ASGI lifespan async-generator (yields once between startup and shutdown); the framework enters/exits it and setup_tracing() inside it establishes the backend TracerProvider itself. @observe cannot wrap an async generator (it awaits the callable, not the generator), and a span spanning the entire process lifetime is meaningless."

@@ -664,6 +664,21 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Directory for cache snapshot files ce.snap + embed.snap (default /data/cache)",
         "section": "backend_hot_path_cache",
     },
+    "backend_cache_ram_pct": {
+        "desc": (
+            "Percent of backend container RAM budgeted for the unified backend "
+            "Cache; byte-bounded LRU eviction across ce/embed namespaces (default 10)"
+        ),
+        "section": "backend_hot_path_cache",
+    },
+    "core_cache_ram_pct": {
+        "desc": (
+            "Percent of the core container RAM budgeted for the unified core Cache; "
+            "byte-bounded LRU eviction across the core read-tool namespaces "
+            "project_brief/wiki_read/wiki_query/agent_prompt_prelude (default 10)"
+        ),
+        "section": "backend_hot_path_cache",
+    },
     # v5.5.0 — model preload warm-up
     "model_preload": {
         "desc": (

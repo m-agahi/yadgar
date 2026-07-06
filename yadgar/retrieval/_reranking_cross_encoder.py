@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections import defaultdict
 
@@ -126,7 +127,9 @@ class _CrossEncoderMixin:
         )
 
         try:
-            all_scores = self._ml.score_cross_encoder(query, expanded_texts)
+            # Car 1 (#41): route through the ce cache so overlapping (query, text)
+            # pairs already scored by crossfuse are reused (get-or-compute).
+            all_scores = self.score_ce_cached(query, expanded_texts)
         except Exception as e:
             logger.warning("cross_encoder_rerank: ML client failed: %s", e)
             return memories[:top_k]
@@ -174,7 +177,8 @@ class _CrossEncoderMixin:
         if not documents:
             return []
         try:
-            scores = self._ml.score_cross_encoder(query, documents)
+            # Car 1 (#41): get-or-compute via the ce cache (reuses crossfuse hits).
+            scores = self.score_ce_cached(query, documents)
         except Exception:
             return [0.0] * len(documents)
         # N4: circuit breaker open → whole-list None; back-fill 0.0 per document.
@@ -185,6 +189,73 @@ class _CrossEncoderMixin:
             float(scores[i]) if i < len(scores) and scores[i] is not None else 0.0
             for i in range(len(documents))
         ]
+
+    @observe(tier="hot", name="retrieval.ce.score_ce_cached")
+    def score_ce_cached(self, query: str, texts: list[str]) -> list[float] | None:
+        """Get-or-compute CE scores through the injected ``ce`` cache (Car 1, #41).
+
+        Drop-in for ``self._ml.score_cross_encoder(query, texts)`` — SAME contract:
+        returns ``None`` when the model/circuit yields None (whole-list degrade →
+        callers keep their byte-identical fallback), else ``list[float]`` in input
+        order. The ONLY behavioural change is that overlapping ``(query, text)``
+        pairs already scored this process are reused instead of re-run:
+
+          * split ``texts`` into cache-HITS (reuse stored score) + MISSES;
+          * call ``score_cross_encoder`` on the misses ONLY, then populate;
+          * reassemble in the original order.
+
+        Quality-neutral by construction: a CE score for a fixed ``(query, text,
+        ckpt)`` is deterministic, so a reused score is IDENTICAL to a recomputed
+        one (same key ⇒ same value). ``None`` / empty model results are passed
+        through and NOT cached, so the ``native_score`` fallbacks fire unchanged.
+
+        The cache is ``self._ce_cache`` (constructor-DI on ``Reranker``); a
+        ``NullCache`` injected ⇒ always-miss ⇒ today's no-dedup behaviour.
+        """
+        if not texts:
+            return []
+
+        cache = getattr(self, "_ce_cache", None)
+        if cache is None:  # defensive — no cache wired ⇒ direct passthrough
+            return self._ml.score_cross_encoder(query, texts)
+
+        ckpt = getattr(cache, "_ckpt", "")
+        query_sha = hashlib.sha256(query.encode("utf-8", errors="replace")).hexdigest()[:16]
+        keys: list[str] = []
+        for text in texts:
+            text_sha = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
+            keys.append(f"{query_sha}:{text_sha}:{ckpt}")
+
+        scores: dict[int, float] = {}
+        miss_indices: list[int] = []
+        miss_texts: list[str] = []
+        for i, key in enumerate(keys):
+            hit = cache.get(key)
+            if hit is not None:
+                scores[i] = hit
+            else:
+                miss_indices.append(i)
+                miss_texts.append(texts[i])
+
+        if miss_texts:
+            new_scores = self._ml.score_cross_encoder(query, miss_texts)
+            # Preserve score_cross_encoder's whole-list None contract: circuit-open
+            # ⇒ do NOT cache, do NOT partially fill — return None so every caller's
+            # existing degrade path fires exactly as before (quality-neutral).
+            if new_scores is None:
+                return None
+            for j, idx in enumerate(miss_indices):
+                # Per-element guard mirrors the pre-Car-1 score_documents contract:
+                # a None element (not just whole-list None) degrades to 0.0, never
+                # float(None) → TypeError.
+                if j < len(new_scores) and new_scores[j] is not None:
+                    score = float(new_scores[j])
+                else:
+                    score = 0.0
+                cache.put(keys[idx], score)
+                scores[idx] = score
+
+        return [scores.get(i, 0.0) for i in range(len(texts))]
 
     @observe(tier="stage", name="retrieval.ce.cluster_memories")
     def cluster_memories(self, memories: list[dict]) -> list[list[dict]]:

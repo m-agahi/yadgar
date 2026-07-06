@@ -339,10 +339,15 @@ def test_run_check_invariants_caused_by_ceiling_prunes():
                 return [{"c": 15}]
             if "ORDER BY created_at ASC" in surql and "caused_by" in surql:
                 return [{"rid": i, "created_at": f"2026-01-0{i + 1}T00:00:00"} for i in range(5)]
-            if "DELETE type::record('relationship', $rid)" in surql:
+            if "DELETE type::record('relationship'" in surql:
                 pruned_calls.append(params)
                 return []
             return super()._q(surql, params)
+
+        def delete_relationship(self, rel_id: int) -> None:
+            # Car 4 routes the caused_by prune through delete_relationship; mirror
+            # the real delete (skip the endpoint version-bump — not asserted here).
+            self._q("DELETE type::record('relationship', $id)", {"id": rel_id})
 
     storage = CausedByStorage()
     settings = _make_settings(MAX_CAUSED_BY_ROWS=10)  # ceiling=10, count=15 → 5 to prune

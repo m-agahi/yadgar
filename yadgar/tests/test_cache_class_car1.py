@@ -3,7 +3,8 @@
 The `Cache` class (yadgar/cache.py) generalizes the backend `LRUCache` into a
 core-side, named, N-instance cache with policy bound at CONSTRUCTION:
 
-  - bounded LRU eviction (max_entries; 0 = unbounded whole-flush case)
+  - byte-bounded LRU eviction (max_bytes; 0 = disabled kill-switch case) — core
+    5.112.0 #49 retrofit from the earlier max_entries count-cap
   - pluggable invalidation: KeyFn (freshness in key) | TTL(secs) | Manual
   - deep-copy-on-return (deep_copy=True) so callers mutating a returned row-dict
     cannot corrupt the cached value
@@ -35,32 +36,32 @@ def _clear_registry():
 
 
 def test_construct_self_registers_by_name():
-    c = Cache(name="t_reg", max_entries=8)
+    c = Cache(name="t_reg", max_bytes=1_000_000)
     assert _REGISTRY["t_reg"] is c
 
 
 def test_duplicate_name_raises():
-    Cache(name="t_dup", max_entries=8)
+    Cache(name="t_dup", max_bytes=1_000_000)
     with pytest.raises(ValueError):
-        Cache(name="t_dup", max_entries=8)
+        Cache(name="t_dup", max_bytes=1_000_000)
 
 
 # ── basic hit / miss / put ───────────────────────────────────────────────────
 
 
 def test_get_miss_returns_none():
-    c = Cache(name="t_miss", max_entries=8)
+    c = Cache(name="t_miss", max_bytes=1_000_000)
     assert c.get("absent") is None
 
 
 def test_put_then_get_hit():
-    c = Cache(name="t_hit", max_entries=8)
+    c = Cache(name="t_hit", max_bytes=1_000_000)
     c.put("k", 42)
     assert c.get("k") == 42
 
 
 def test_stats_counts_hits_and_misses():
-    c = Cache(name="t_stats", max_entries=8)
+    c = Cache(name="t_stats", max_bytes=1_000_000)
     c.get("x")  # miss
     c.put("x", 1)
     c.get("x")  # hit
@@ -70,32 +71,44 @@ def test_stats_counts_hits_and_misses():
     assert s["size"] == 1
 
 
-# ── LRU eviction ─────────────────────────────────────────────────────────────
+# ── byte-bounded LRU eviction (core 5.112.0 #49: bound is bytes, not count) ────
 
 
-def test_lru_evicts_oldest_over_cap():
-    c = Cache(name="t_evict", max_entries=2)
-    c.put("a", 1)
-    c.put("b", 2)
-    c.put("c", 3)  # evicts "a" (LRU)
+def _two_entry_budget(payload) -> int:
+    """A byte budget that holds ~2 copies of `payload` but not a 3rd."""
+    from yadgar.cache import _estimate_bytes
+
+    per = _estimate_bytes(payload)
+    return per * 2 + per // 2
+
+
+def test_lru_evicts_oldest_over_budget():
+    payload = "x" * 1000
+    c = Cache(name="t_evict", max_bytes=_two_entry_budget(payload))
+    c.put("a", payload)
+    c.put("b", payload)
+    c.put("c", payload)  # over byte budget → evicts "a" (LRU)
     assert c.get("a") is None
-    assert c.get("b") == 2
-    assert c.get("c") == 3
+    assert c.get("b") == payload
+    assert c.get("c") == payload
     assert c.stats()["evictions"] == 1
 
 
 def test_get_promotes_to_mru():
-    c = Cache(name="t_mru", max_entries=2)
-    c.put("a", 1)
-    c.put("b", 2)
+    payload = "x" * 1000
+    c = Cache(name="t_mru", max_bytes=_two_entry_budget(payload))
+    c.put("a", payload)
+    c.put("b", payload)
     c.get("a")  # a now MRU
-    c.put("c", 3)  # evicts b (LRU), not a
-    assert c.get("a") == 1
+    c.put("c", payload)  # evicts b (LRU), not a
+    assert c.get("a") == payload
     assert c.get("b") is None
 
 
-def test_max_entries_zero_is_unbounded():
-    c = Cache(name="t_unbounded", max_entries=0)
+def test_generous_budget_holds_many_small_entries():
+    # A budget far exceeding the entries' footprint never evicts (the practical
+    # behaviour-neutral case: the core budget dwarfs the small read-tool dicts).
+    c = Cache(name="t_unbounded", max_bytes=100_000_000)
     for i in range(1000):
         c.put(str(i), i)
     assert c.get("0") == 0
@@ -103,12 +116,19 @@ def test_max_entries_zero_is_unbounded():
     assert c.stats()["evictions"] == 0
 
 
+def test_max_bytes_zero_disables():
+    c = Cache(name="t_disabled", max_bytes=0)
+    c.put("k", "v")
+    assert c.get("k") is None
+    assert c.stats()["size"] == 0
+
+
 # ── TTL invalidation ─────────────────────────────────────────────────────────
 
 
 def test_ttl_expires_on_read():
     now = [1000.0]
-    c = Cache(name="t_ttl", max_entries=8, invalidation=TTL(10), clock=lambda: now[0])
+    c = Cache(name="t_ttl", max_bytes=1_000_000, invalidation=TTL(10), clock=lambda: now[0])
     c.put("k", "v")
     assert c.get("k") == "v"  # fresh
     now[0] += 11  # advance past TTL
@@ -118,7 +138,7 @@ def test_ttl_expires_on_read():
 
 def test_ttl_within_window_hits():
     now = [1000.0]
-    c = Cache(name="t_ttl2", max_entries=8, invalidation=TTL(300), clock=lambda: now[0])
+    c = Cache(name="t_ttl2", max_bytes=1_000_000, invalidation=TTL(300), clock=lambda: now[0])
     c.put("k", "v")
     now[0] += 299
     assert c.get("k") == "v"
@@ -128,7 +148,7 @@ def test_ttl_within_window_hits():
 
 
 def test_manual_clear_flushes_all():
-    c = Cache(name="t_clear", max_entries=0, invalidation=Manual())
+    c = Cache(name="t_clear", max_bytes=1_000_000, invalidation=Manual())
     c.put("a", 1)
     c.put("b", 2)
     c.clear()
@@ -138,7 +158,7 @@ def test_manual_clear_flushes_all():
 
 
 def test_invalidate_single_key():
-    c = Cache(name="t_inv", max_entries=8, invalidation=Manual())
+    c = Cache(name="t_inv", max_bytes=1_000_000, invalidation=Manual())
     c.put("a", 1)
     c.put("b", 2)
     c.invalidate("a")
@@ -155,7 +175,7 @@ def test_key_fn_derives_effective_key():
     epoch = [0]
     c = Cache(
         name="t_keyfn",
-        max_entries=8,
+        max_bytes=1_000_000,
         invalidation=KeyFn(),
         key_fn=lambda user_key: (user_key, epoch[0]),
     )
@@ -169,7 +189,7 @@ def test_key_fn_derives_effective_key():
 
 
 def test_deep_copy_isolates_returned_value():
-    c = Cache(name="t_dc", max_entries=8, deep_copy=True)
+    c = Cache(name="t_dc", max_bytes=1_000_000, deep_copy=True)
     c.put("k", {"heat": 1, "nested": {"x": [1, 2]}})
     got = c.get("k")
     got["heat"] = 999
@@ -180,7 +200,7 @@ def test_deep_copy_isolates_returned_value():
 
 
 def test_no_deep_copy_returns_reference():
-    c = Cache(name="t_ref", max_entries=8, deep_copy=False)
+    c = Cache(name="t_ref", max_bytes=1_000_000, deep_copy=False)
     c.put("k", {"heat": 1})
     got = c.get("k")
     got["heat"] = 999
@@ -196,7 +216,7 @@ def test_no_deep_copy_returns_reference():
 def test_cold_tier_emits_hit_miss_metric():
     from yadgar import metrics
 
-    c = Cache(name="t_obs_cold", max_entries=8, obs_tier="cold")
+    c = Cache(name="t_obs_cold", max_bytes=1_000_000, obs_tier="cold")
     h0 = metrics.yadgar_cache_hit_total.labels(cache="t_obs_cold")._value.get()
     m0 = metrics.yadgar_cache_miss_total.labels(cache="t_obs_cold")._value.get()
     c.get("k")  # miss
@@ -211,10 +231,13 @@ def test_cold_tier_emits_hit_miss_metric():
 def test_eviction_emits_metric():
     from yadgar import metrics
 
-    c = Cache(name="t_obs_evict", max_entries=1, obs_tier="cold")
+    payload = "x" * 1000
+    from yadgar.cache import _estimate_bytes
+
+    c = Cache(name="t_obs_evict", max_bytes=_estimate_bytes(payload) + 1, obs_tier="cold")
     e0 = metrics.yadgar_cache_evictions_total.labels(cache="t_obs_evict")._value.get()
-    c.put("a", 1)
-    c.put("b", 2)  # evict a
+    c.put("a", payload)
+    c.put("b", payload)  # over budget → evict a
     e1 = metrics.yadgar_cache_evictions_total.labels(cache="t_obs_evict")._value.get()
     assert e1 == e0 + 1
 

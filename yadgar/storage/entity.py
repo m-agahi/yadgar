@@ -152,6 +152,9 @@ class _EntityMixin:
                 "vf": relationship.get("valid_from", now),
             },
         )
+        # Car 4: a new edge bumps BOTH endpoint entities' graph-cache versions.
+        self._bump_entity_version(relationship["source_entity_id"])
+        self._bump_entity_version(relationship["target_entity_id"])
         return rid
 
     @trace_span("storage.entity.get_relationship_between")
@@ -304,6 +307,9 @@ class _EntityMixin:
         params = dict(fields)
         params["id"] = rel_id
         self._q(f"UPDATE type::record('relationship', $id) SET {sets}", params)
+        # Car 4: any field update may change weight (in the cached adjacency) or an
+        # endpoint — always-bump both endpoints (over-bump is perf-only).
+        self._bump_relationship_endpoints(rel_id)
 
     @trace_span("storage.entity.insert_typed_relationship")
     def insert_typed_relationship(
@@ -363,7 +369,29 @@ class _EntityMixin:
             sql += ", source_memory_id = $smid"
             params["smid"] = meta.source_memory_id
         self._q(sql, params)
+        # Car 4: a new edge bumps BOTH endpoint entities' graph-cache versions.
+        self._bump_entity_version(source_entity_id)
+        self._bump_entity_version(target_entity_id)
         return rid
+
+    @observe(tier="hot", name="storage.entity.bump_relationship_endpoints")
+    def _bump_relationship_endpoints(self, rel_id: int) -> None:
+        """Bump both endpoint entities' graph-cache versions for a rel by id (Car 4).
+
+        rel_id-only writers (reinforce / field-update / delete) don't carry the
+        endpoints, so resolve them first. Best-effort: a resolve miss just skips the
+        bump (worst case a briefly-stale adjacency, bounded by the next edge write)."""
+        try:
+            rows = self._q(
+                "SELECT source_entity_id, target_entity_id FROM type::record('relationship', $id)",
+                {"id": rel_id},
+            )
+            if rows:
+                d = rows[0]
+                self._bump_entity_version(d["source_entity_id"])
+                self._bump_entity_version(d["target_entity_id"])
+        except Exception:  # noqa: BLE001 — bump must never fail the write
+            _log.debug("relationship endpoint bump failed for rel %s", rel_id, exc_info=True)
 
     def reinforce_relationship(self, rel_id: int, weight_increase: float = 1.0):
         self._q(
@@ -371,6 +399,20 @@ class _EntityMixin:
             "weight = weight + $inc, last_reinforced = $now",
             {"id": rel_id, "inc": weight_increase, "now": self._now_iso()},
         )
+        # Car 4: weight is IN the cached adjacency (PPR/spreading read it), so a
+        # weight change must bump both endpoints — no fresh recheck to catch it.
+        self._bump_relationship_endpoints(rel_id)
+
+    def delete_relationship(self, rel_id: int) -> None:
+        """Delete a relationship edge by id, bumping both endpoints (Car 4).
+
+        The graph read is pure-structural (no fresh recheck), so a delete is NOT
+        inert — it must bump both endpoint versions or the removed edge survives in
+        cached adjacency. Endpoints are resolved BEFORE the delete (they're gone
+        after). Admin/invariant cleanup routes through here rather than a raw
+        ``DELETE`` so the bump is never bypassed."""
+        self._bump_relationship_endpoints(rel_id)
+        self._q("DELETE type::record('relationship', $id)", {"id": rel_id})
 
     def get_relationship_by_source_and_type(
         self, source_entity_id: int, relationship_type: str

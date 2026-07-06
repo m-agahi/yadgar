@@ -358,6 +358,10 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_EMBED_CACHE_MAX_ENTRIES", "100000", "int"),
     ConfigEntry("YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC", "600", "int"),
     ConfigEntry("YADGAR_CACHE_SNAPSHOT_DIR", "/data/cache", "string"),
+    # backend 5.17.0 (Car 0) — unified backend Cache byte budget as % of RAM.
+    ConfigEntry("YADGAR_BACKEND_CACHE_RAM_PCT", "10.0", "float"),
+    # core 5.112.0 (#49) — unified core Cache byte budget as % of core container RAM.
+    ConfigEntry("YADGAR_CORE_CACHE_RAM_PCT", "10.0", "float"),
     # ── v5.41.2 wiki write wait timeout ─────────────────────────────────────
     ConfigEntry("YADGAR_WIKI_WRITE_WAIT_TIMEOUT_SECONDS", "5.0", "float"),
     # ── v5.39.0 wiki similarity gate knobs ───────────────────────────────────

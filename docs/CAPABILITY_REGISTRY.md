@@ -2071,13 +2071,24 @@ config knobs.
 ### CAP-OPS-022 — CE and embedding LRU cache with snapshot persistence
 - **status:** LIVE
 - **category:** ops
-- **settings:** `CE_CACHE_ENABLED`, `CE_CACHE_MAX_ENTRIES`, `EMBED_CACHE_ENABLED`, `EMBED_CACHE_MAX_ENTRIES`, `CACHE_SNAPSHOT_INTERVAL_SEC`, `CACHE_SNAPSHOT_DIR`
+- **settings:** `CE_CACHE_ENABLED`, `CE_CACHE_MAX_ENTRIES`, `EMBED_CACHE_ENABLED`, `EMBED_CACHE_MAX_ENTRIES`, `CACHE_SNAPSHOT_INTERVAL_SEC`, `CACHE_SNAPSHOT_DIR`, `BACKEND_CACHE_RAM_PCT`
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/ml_client.py`
-- **wiring:** `RemoteMLClient` maintains two LRU caches: CE score cache (keyed on query+passage pairs, `CE_CACHE_ENABLED`, max `CE_CACHE_MAX_ENTRIES`) and embedding vector cache (`EMBED_CACHE_ENABLED`, max `EMBED_CACHE_MAX_ENTRIES`). A background snapshotting thread persists both caches to `CACHE_SNAPSHOT_DIR/ce.snap` and `CACHE_SNAPSHOT_DIR/embed.snap` every `CACHE_SNAPSHOT_INTERVAL_SEC` seconds. Caches are loaded from snapshot on startup.
-- **explanation:** LRU caches absorb repeated CE reranking and embedding requests for the same content, avoiding redundant GPU/CPU inference. The snapshot mechanism persists warm cache state across restarts, so the cache hit rate remains high even after a daemon restart. `CE_CACHE_MAX_ENTRIES` and `EMBED_CACHE_MAX_ENTRIES` bound memory consumption. Cache hit/miss counts are surfaced as Prometheus counters (`yadgar_embedding_cache_hits_total`, `yadgar_embedding_cache_misses_total`).
+- **refs:** `yadgar/backend/ml_client.py`, `yadgar/backend/cache.py`
+- **wiring:** `RemoteMLClient` maintains two LRU caches: CE score cache (keyed on query+passage pairs, `CE_CACHE_ENABLED`) and embedding vector cache (`EMBED_CACHE_ENABLED`). Backend caching train Car 0 (#49) folds both into the unified backend `Cache` class (`yadgar/backend/cache.py`, one class / N named namespaces / policy bound at construction) with **byte-bounded LRU eviction**: the byte budget is `BACKEND_CACHE_RAM_PCT` % of the backend container memory limit (cgroup `memory.max` / `memory.limit_in_bytes`), split weighted across the `ce`/`embed` namespaces. A background snapshotting thread persists both caches to `CACHE_SNAPSHOT_DIR/ce.snap` and `CACHE_SNAPSHOT_DIR/embed.snap` every `CACHE_SNAPSHOT_INTERVAL_SEC` seconds. Caches are loaded from snapshot on startup.
+- **explanation:** LRU caches absorb repeated CE reranking and embedding requests for the same content, avoiding redundant GPU/CPU inference. The snapshot mechanism persists warm cache state across restarts, so the cache hit rate remains high even after a daemon restart. `BACKEND_CACHE_RAM_PCT` (Car 0) bounds total backend cache memory as a fraction of container RAM — byte-bounded eviction, superseding the legacy count-cap `CE_CACHE_MAX_ENTRIES` / `EMBED_CACHE_MAX_ENTRIES` (kept as inert config for back-compat). Cache hit/miss/evict counts are surfaced as Prometheus counters (`yadgar_embedding_cache_hits_total`, `yadgar_embedding_cache_misses_total`, and the generic `yadgar_cache_*{cache=<namespace>}` family).
+
+### CAP-OPS-041 — Core read-tool cache with RAM-% byte budget
+- **status:** LIVE
+- **category:** ops
+- **settings:** `CORE_CACHE_RAM_PCT`
+- **tools:** —
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/cache.py`, `yadgar/server/tools/project.py`, `yadgar/server/tools/wiki.py`, `yadgar/server/tools/dispatch_helper.py`
+- **wiring:** The unified core `Cache` class (`yadgar/cache.py`, #164 — one class / N named instances / policy bound at construction) backs the core read-tool caches: `project_brief` (`project.py`), `wiki_read` + `wiki_query` (`wiki.py`), and `agent_prompt_prelude` (`dispatch_helper.py`). Core caching (#49, v5.112.0) retrofits its LRU bound from a fixed `max_entries` count-cap to **byte-bounded eviction**: the byte budget is `CORE_CACHE_RAM_PCT` % of the CORE container memory limit (cgroup `memory.max` / `memory.limit_in_bytes`, 1 GiB fallback matching the `--memory 1g` core container — NOT the backend's 4 GiB), split weighted across the four core namespaces which share ONE process budget. Byte size is estimated via `msgpack.packb` length; the LRU evicts until `current_bytes ≤ max_bytes`. Mirrors backend Car 0 (`CAP-OPS-022`) but for the core process's own container + namespaces, with its own knob and cgroup reader kept separate from the backend's.
+- **explanation:** The core read-tool caches absorb repeated `project_brief` / `wiki_read` / `wiki_query` / agent-prompt-prelude calls within a session (freshness via TTL + structural-epoch-in-key invalidation). `CORE_CACHE_RAM_PCT` bounds their total memory as a fraction of the core container RAM — byte-bounded eviction superseding the earlier per-cache count-caps. The change is behaviour-neutral: at 10 % × 1 GiB ≈ 107 MB / 4 ≈ 25.6 MiB per namespace the byte ceiling dwarfs the small read-tool dicts and never triggers in practice, so TTL + epoch-in-key still do all real eviction with identical keys/values/hit-miss. Hit/miss/evict counts are surfaced as the generic `yadgar_cache_*{cache=<namespace>}` Prometheus family.
 
 ### CAP-OPS-023 — ASGI graceful shutdown and daemon lifecycle
 - **status:** LIVE

@@ -465,24 +465,56 @@ class KnowledgeGraph:
 
         The storage query orders by ``id``; grouping preserves that order, so the
         resulting per-eid lists match the per-node query order exactly.
+
+        Car 4 (backend 5.21.0): per-entity adjacency is cached in the ``graph``
+        namespace, keyed ``(entity_id, rel_types_key, entity_version)``
+        (``scope_kind="entity"`` on the shared ``ScopeVersions``). The read is
+        PURE-STRUCTURAL — ``get_relationships_for_frontier`` filters only on
+        endpoint id, no heat/archived/weight predicate — so the cached neighbour
+        list is served WHOLE (no Car-3 recheck). Only the MISS subset hits the DB;
+        each freshly-computed list is cached. Every edge mutation bumps BOTH
+        endpoints' entity versions (see ``_bump_entity_version``), so a new /
+        deleted / reweighted edge is reflected on the next recall. A ``NullCache``
+        (default until wired / kill-switched) makes every entity a miss → the exact
+        pre-Car-4 single-frontier-query behaviour.
         """
-        rows = self._storage.get_relationships_for_frontier(entity_ids, rel_types)
-        frontier_set = set(entity_ids)
-        adjacency: dict[int, list[dict]] = {eid: [] for eid in entity_ids}
-        for row_d in rows:
-            src = row_d["source_entity_id"]
-            tgt = row_d["target_entity_id"]
-            # A row contributes to each of its endpoints that is in the frontier;
-            # use a set so a self-loop (src == tgt) contributes exactly once.
-            for endpoint in {src, tgt} & frontier_set:
-                other_id = tgt if src == endpoint else src
-                adjacency[endpoint].append(
-                    {
-                        "entity_id": other_id,
-                        "relationship_type": row_d["relationship_type"],
-                        "weight": row_d["weight"],
-                    }
-                )
+        cache = self._storage._resolve_graph_cache()
+        versions = self._storage._resolve_scope_versions()
+        rel_key = tuple(sorted(rel_types)) if rel_types else None
+
+        adjacency: dict[int, list[dict]] = {}
+        keys: dict[int, tuple] = {}
+        miss_ids: list[int] = []
+        for eid in entity_ids:
+            key = (eid, rel_key, versions.version("entity", eid))
+            keys[eid] = key
+            cached = cache.get(key)
+            if cached is not None:
+                adjacency[eid] = cached
+            else:
+                adjacency[eid] = []
+                miss_ids.append(eid)
+
+        if miss_ids:
+            rows = self._storage.get_relationships_for_frontier(miss_ids, rel_types)
+            miss_set = set(miss_ids)
+            for row_d in rows:
+                src = row_d["source_entity_id"]
+                tgt = row_d["target_entity_id"]
+                # A row contributes to each of its endpoints in the miss subset;
+                # a set collapses a self-loop (src == tgt) to one contribution.
+                for endpoint in {src, tgt} & miss_set:
+                    other_id = tgt if src == endpoint else src
+                    adjacency[endpoint].append(
+                        {
+                            "entity_id": other_id,
+                            "relationship_type": row_d["relationship_type"],
+                            "weight": row_d["weight"],
+                        }
+                    )
+            for eid in miss_ids:
+                cache.put(keys[eid], adjacency[eid])
+
         return adjacency
 
     def _check_temporal_order(self, entity_a: str, entity_b: str) -> str | None:

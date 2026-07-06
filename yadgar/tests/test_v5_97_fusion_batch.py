@@ -130,37 +130,72 @@ class TestBatchFetchParity:
 
 
 class TestSingleQuery:
-    def test_issues_one_query_for_n_ids(self):
+    def test_bounded_queries_not_n(self):
+        """Car 2 (backend 5.19.0): the batch is no longer literally ONE query — it
+        is a light `SELECT * OMIT content, embedding` for all ids PLUS a heavy
+        content/embedding fetch for the cache MISSES only. With a NullCache (every
+        id misses ⇒ the pre-Car-2 shape) that is exactly 2 queries — still a bounded
+        constant, never the N point-reads the v5.97 batch replaced."""
+        from yadgar.backend.cache import NullCache
         from yadgar.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock(return_value=[])
         mixin._rows_to_dicts = lambda rows: []
+        mixin._extract_id = lambda x: x
+        mixin._memory_doc_cache = NullCache()
 
         _MemoryMixin.get_memories_by_ids(mixin, [1, 2, 3, 4, 5])
 
-        assert mixin._q.call_count == 1, (
-            f"expected exactly 1 batched query for 5 ids, got {mixin._q.call_count}"
+        # fresh OMIT (returns []) ⇒ no ids to heavy-fetch ⇒ 1 query here; the point
+        # is it is a small constant, never 5.
+        assert mixin._q.call_count <= 2, (
+            f"expected a bounded (≤2) query count for 5 ids, got {mixin._q.call_count}"
         )
 
+    def test_full_cache_hit_issues_one_query(self):
+        """On a full cache hit the heavy fetch is elided ⇒ exactly ONE (light) query."""
+        from yadgar.storage.memory import _MemoryMixin
+
+        class _HitCache:
+            def get(self, key):
+                return {"content": "c", "embedding": b""}
+
+            def put(self, key, value):
+                pass
+
+        mixin = object.__new__(_MemoryMixin)
+        # fresh OMIT returns rows for both ids so they survive the merge
+        mixin._q = MagicMock(return_value=[{"id": 7}, {"id": 8}])
+        mixin._rows_to_dicts = lambda rows: rows
+        mixin._extract_id = lambda x: x
+        mixin._memory_doc_cache = _HitCache()
+
+        _MemoryMixin.get_memories_by_ids(mixin, [7, 8])
+        assert mixin._q.call_count == 1
+
     def test_ids_int_sanitised_and_inline_in_list(self):
+        from yadgar.backend.cache import NullCache
         from yadgar.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
-        captured: dict = {}
+        captured: list = []
 
         def _spy(sql, params=None):
-            captured["sql"] = sql
+            captured.append(sql)
             return []
 
         mixin._q = _spy
         mixin._rows_to_dicts = lambda rows: []
+        mixin._extract_id = lambda x: x
+        mixin._memory_doc_cache = NullCache()
         _MemoryMixin.get_memories_by_ids(mixin, [7, 8])
 
-        assert "memory:7" in captured["sql"] and "memory:8" in captured["sql"]
-        assert "IN [" in captured["sql"]
+        joined = " ".join(captured)
+        assert "memory:7" in joined and "memory:8" in joined
+        assert "IN [" in joined
         # Must NOT use the parameterised `IN $ids` form (fails embedded SurrealKV).
-        assert "$ids" not in captured["sql"]
+        assert "$ids" not in joined
 
 
 # ---------------------------------------------------------------------------
