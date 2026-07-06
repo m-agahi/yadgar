@@ -36,8 +36,9 @@ class MemoryProvider(SourceProvider):
     fan-out orchestrator can return it directly to callers without schema changes.
     """
 
-    def __init__(self, retriever: Retriever) -> None:
+    def __init__(self, retriever: Retriever, profile: str | None = None) -> None:
         self._retriever = retriever
+        self._profile = profile
 
     @property
     def type(self) -> str:
@@ -65,6 +66,7 @@ class MemoryProvider(SourceProvider):
             min_heat=scope.min_heat,
             current_branch=scope.branch,
             default_branch=scope.default_branch,
+            profile=self._profile,
         )
 
         # Step 3: Python-side directory post-filter (same semantics as legacy path).

@@ -93,18 +93,19 @@ def cmd_setup(args):
     print("=== Yadgar v" + __version__ + " — setup complete ===")
     print()
 
-    if check["ok"]:
-        # Docker-mode MCP config (streamable-http). Token resolved at
-        # daemon-configure-mcp time so this snippet is illustrative.
-        mcp_config = {
-            "mcpServers": {
-                "yadgar": {
-                    "type": "streamable-http",
-                    "url": "http://localhost:8765/mcp",
-                    "headers": {"Authorization": "Bearer ${YADGAR_MCP_AUTH_TOKEN}"},
-                }
+    # Streamable-HTTP MCP config (the only supported transport — stdio dropped in Phase 2b).
+    # Token resolved at daemon-configure-mcp time; this snippet is illustrative.
+    mcp_config = {
+        "mcpServers": {
+            "yadgar": {
+                "type": "streamable-http",
+                "url": "http://localhost:8765/mcp",
+                "headers": {"Authorization": "Bearer ${YADGAR_MCP_AUTH_TOKEN}"},
             }
         }
+    }
+
+    if check["ok"]:
         print("Next steps:")
         print(f"  1. set -a && . {secrets_path} && set +a")
         print("  2. yadgar daemon start")
@@ -115,24 +116,16 @@ def cmd_setup(args):
         print()
         print(json.dumps(mcp_config, indent=2))
     else:
-        # Fallback: stdio mode (no Docker). Auth middleware bypassed.
-        mcp_config = {
-            "mcpServers": {
-                "yadgar": {
-                    "command": "yadgar",
-                    "args": [],
-                    "env": {},
-                }
-            }
-        }
-        print("Docker unavailable — using stdio mode (one process per Claude session).")
-        print("Stdio bypasses the HTTP auth middleware so no token is needed.")
+        # Docker unavailable — streamable-HTTP is still required (stdio is no longer supported).
+        # See MIGRATION_NOTES.md for the client config change.
+        print("Docker unavailable — Yadgar requires Docker for the streamable-HTTP deployment.")
+        print("Install Docker Desktop or Docker Engine, then re-run `yadgar setup`.")
         print()
-        print("Add to ~/.claude.json (merge with existing mcpServers):")
+        print("Once Docker is available, configure your MCP client with:")
         print()
         print(json.dumps(mcp_config, indent=2))
         print()
-        print("Restart Claude Code — Yadgar tools appear automatically.")
+        print("See MIGRATION_NOTES.md for migration from stdio-based configs.")
 
 
 def register(subparsers):

@@ -84,7 +84,7 @@ def test_memorize_secret_detected_returns_synchronously():
 # ── Drain replay persists memories ───────────────────────────────────────────
 
 
-def test_memorize_drain_actually_persists(flush_queue):
+def test_memorize_drain_actually_persists(flush_queue, recall_backend_bypass):
     """memorize() + flush_queue() makes the memory searchable via recall()."""
     content = "drain replay persistence test unique content xyz"
     result = server.memorize(content, "/tmp/persist", ["test"])
@@ -96,7 +96,7 @@ def test_memorize_drain_actually_persists(flush_queue):
     assert any(h["content"] == content for h in hits), "Memory was not found after drain replay"
 
 
-def test_memorize_drain_preserves_context_and_tags(flush_queue):
+def test_memorize_drain_preserves_context_and_tags(flush_queue, recall_backend_bypass):
     """After drain, the memory has the correct directory_context and tags."""
     content = "context and tags preservation test content abc"
     server.memorize(content, "/projects/myapp", ["infra", "v4test"])

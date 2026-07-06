@@ -78,7 +78,7 @@ class TestIsEpisodicQuery:
 
 
 class TestWikiBlendingThreshold:
-    def test_episodic_query_skips_wiki(self):
+    def test_episodic_query_skips_wiki(self, recall_backend_bypass):
         """Temporal/episodic queries must NOT blend wiki results."""
         _wiki().add("Architecture Overview", "Core design of the system.", "architecture")
         server.memorize(content="Fixed a bug yesterday.", context="/tmp", tags=[])
@@ -86,7 +86,7 @@ class TestWikiBlendingThreshold:
         wiki_hits = [r for r in results if r.get("_source") == "wiki"]
         assert len(wiki_hits) == 0
 
-    def test_relevant_wiki_appears_in_results(self, flush_queue):
+    def test_relevant_wiki_appears_in_results(self, flush_queue, recall_backend_bypass):
         """A wiki page with sufficient relevance should surface in recall."""
         _wiki().add(
             "Storage Engine Design",
@@ -105,7 +105,7 @@ class TestWikiBlendingThreshold:
         # At least one wiki result should be present (relevance gate passed)
         assert len(wiki_hits) >= 1
 
-    def test_results_sorted_by_score(self):
+    def test_results_sorted_by_score(self, recall_backend_bypass):
         """Blended results must be sorted by _retrieval_score descending."""
         _wiki().add(
             "Test Architecture", "Key design decisions for the test system.", "architecture"
@@ -116,7 +116,7 @@ class TestWikiBlendingThreshold:
             scores = [r.get("_retrieval_score", 0.0) for r in results]
             assert scores == sorted(scores, reverse=True)
 
-    def test_blended_total_respects_max_results(self):
+    def test_blended_total_respects_max_results(self, recall_backend_bypass):
         """Output length must never exceed max_results."""
         for i in range(3):
             _wiki().add(

@@ -893,6 +893,12 @@ def _ensure_recall_engines() -> None:
     backend uses LocalMLClient (no YADGAR_EMBED_URL in backend container) and
     the local SurrealDB (YADGAR_DB_URL defaults to localhost:8000).
 
+    #44 fix: passes local_engines=True so init selects LOCAL in-process engines
+    and does NOT trip the CORE offload guard.  The prod backend container carries
+    the shared YADGAR_OFFLOAD_TOOLS flag but has no YADGAR_EMBED_URL (it IS the
+    embed service); the guard is a core tool-body-pool concern that does not
+    apply to this single-purpose ML service, where local engines are GIL-safe.
+
     Idempotent: subsequent calls return immediately when engines are ready.
     """
     global _recall_engines_ready
@@ -903,7 +909,7 @@ def _ensure_recall_engines() -> None:
             return
         from yadgar.server.lifecycle import init_engines as _init_engines  # noqa: PLC0415
 
-        _init_engines()
+        _init_engines(local_engines=True)
         _recall_engines_ready = True
 
 
@@ -940,6 +946,30 @@ class RecallResponse(BaseModel):
     results: list[dict]
 
 
+@observe(tier="stage", name="backend.recall.landscape")
+def _run_landscape_backend(query: str, max_results: int, directory: str, storage) -> list[dict]:
+    """Backend-side landscape recall via AstrocytePool.consensus_retrieve.
+
+    Phase 1 §5.1/§3.2: mirrors core _landscape_recall (recall.py:45-91) but runs
+    inside the backend process where the AstrocytePool is available after
+    init_engines(local_engines=True). The 400 guard at the route level is removed;
+    this function is called when req.mode=="landscape".
+
+    Returns [] gracefully when _pool is None (pool unavailable / disabled).
+    Directory post-filter via is_directory_eligible (same predicate as fanout path).
+    """
+    import yadgar.server._state as _st  # noqa: PLC0415
+    from yadgar.storage.directory import is_directory_eligible  # noqa: PLC0415
+
+    if _st._pool is None:
+        logger.debug("landscape_backend: pool unavailable — returning []")
+        return []
+
+    raw = _st._pool.consensus_retrieve(query, top_k=max_results)
+    scoped = [r for r in raw if is_directory_eligible(r.get("directory_context"), directory)]
+    return scoped[:max_results]
+
+
 @app.post("/recall", response_model=RecallResponse)
 @observe(tier="boundary", name="backend.recall")
 async def recall_route(
@@ -947,32 +977,25 @@ async def recall_route(
 ) -> RecallResponse:
     """Run the fan-out recall pipeline backend-side and return ranked results.
 
+    Phase 1 (backend contract widening, §5.1):
+      - mode=None: _fanout_recall with optional profile/rerank_level threading.
+      - mode="landscape": _landscape_recall via backend-local AstrocytePool.
+
+    The two 400 guards for mode=landscape and profile= are removed — the backend
+    now serves every recall variant. Existing callers (mode=None, profile=None)
+    are unaffected (additive change, not a breaking change).
+
     Called by the core thin forwarder when RECALL_BACKEND_ENABLED=True.
-    Runs _fanout_recall() (the extracted, app-free pipeline) against the
-    backend-local SurrealDB (localhost), then applies the DB-side bookkeeping
-    half (_apply_recall_db_side_effects: heat boost + thermo access record).
+    Applies the DB-side bookkeeping half (_apply_recall_db_side_effects) for
+    the fanout path. Landscape side-effects use _apply_recall_db_side_effects too
+    (heat boost + thermo), mirroring the core landscape path.
 
     Session-side bookkeeping (SR transitions, action buffer, replay counter)
     runs in the core process on the returned results — NOT here.
 
-    Landscape mode and profile-based recall are core-only; this route serves
-    the unified fan-out path only (type in {all, memory, wiki}, mode=None).
-
     Returns:
         RecallResponse with the ranked result list.
     """
-    # landscape/profile routes are core-only — refuse gracefully.
-    if req.mode == "landscape":
-        raise HTTPException(
-            status_code=400,
-            detail="mode=landscape is core-only; backend /recall does not serve it.",
-        )
-    if req.profile is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="profile= is core-only; backend /recall does not serve it.",
-        )
-
     # Bootstrap engines (idempotent, guarded by lock).
     await asyncio.to_thread(_ensure_recall_engines)
 
@@ -984,17 +1007,32 @@ async def recall_route(
 
     # Run the pipeline in a thread (CPU-bound + IO-bound mix; don't block the event loop).
     def _run_pipeline() -> list[dict]:
-        merged = _fanout_recall(
-            query=req.query,
-            max_results=req.max_results,
-            min_heat=req.min_heat,
-            directory=req.directory,
-            current_branch=req.current_branch,
-            default_branch=req.default_branch,
-            type_filter=req.type,
-            tags=req.tags,
-        )
         storage = _backend_get_storage()
+
+        if req.mode == "landscape":
+            # §5.1 landscape dispatch: backend-hosted consensus_retrieve via AstrocytePool.
+            # Mirrors core _landscape_recall (recall.py:45-91): consensus_retrieve →
+            # directory post-filter → apply DB side-effects.
+            merged = _run_landscape_backend(
+                query=req.query,
+                max_results=req.max_results,
+                directory=req.directory,
+                storage=storage,
+            )
+        else:
+            # Default fanout path — thread profile/rerank_level.
+            merged = _fanout_recall(
+                query=req.query,
+                max_results=req.max_results,
+                min_heat=req.min_heat,
+                directory=req.directory,
+                current_branch=req.current_branch,
+                default_branch=req.default_branch,
+                type_filter=req.type,
+                tags=req.tags,
+                profile=req.profile,
+            )
+
         _apply_recall_db_side_effects(merged, req.query, storage)
         return merged
 

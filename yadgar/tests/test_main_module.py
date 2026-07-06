@@ -74,10 +74,11 @@ class TestStartupBanner:
 
 
 class TestValidTransports:
-    def test_valid_transports_contains_stdio(self):
+    def test_valid_transports_does_not_contain_stdio(self):
+        """Phase 2b: stdio removed from VALID_TRANSPORTS; streamable-http is the default."""
         from yadgar.__main__ import VALID_TRANSPORTS
 
-        assert "stdio" in VALID_TRANSPORTS
+        assert "stdio" not in VALID_TRANSPORTS
 
     def test_valid_transports_contains_sse(self):
         from yadgar.__main__ import VALID_TRANSPORTS
@@ -248,8 +249,8 @@ class TestCliDefaultServer:
         err = capsys.readouterr().err
         assert "Yadgar" in err or "Transport" in err
 
-    def test_no_banner_for_stdio_transport(self, monkeypatch, capsys):
-        """No banner for default stdio transport."""
+    def test_default_transport_prints_banner(self, monkeypatch, capsys):
+        """Phase 2b: default is streamable-http; bare 'yadgar' now prints the banner."""
         monkeypatch.setattr(sys, "argv", ["yadgar"])
 
         mock_server_main = MagicMock()
@@ -267,7 +268,7 @@ class TestCliDefaultServer:
                 main_mod.cli()
 
         err = capsys.readouterr().err
-        assert "=== Yadgar" not in err
+        assert "=== Yadgar" in err or "Transport" in err
 
     def test_no_banner_when_quiet(self, monkeypatch, capsys):
         """--quiet suppresses banner even for non-stdio transport."""

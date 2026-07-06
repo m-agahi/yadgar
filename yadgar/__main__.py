@@ -5,7 +5,7 @@ import sys
 
 from yadgar import __version__
 
-VALID_TRANSPORTS = ("stdio", "sse", "streamable-http")
+VALID_TRANSPORTS = ("sse", "streamable-http")
 
 STARTUP_BANNER = f"""\
 === Yadgar v{__version__} ===
@@ -49,9 +49,9 @@ def cli():
     parser.add_argument(
         "--transport",
         type=str,
-        default="stdio",
+        default="streamable-http",
         choices=VALID_TRANSPORTS,
-        help="MCP transport protocol (default: stdio)",
+        help="MCP transport protocol (default: streamable-http)",
     )
     parser.add_argument(
         "--quiet",
@@ -141,7 +141,7 @@ def cli():
 
             _configure_logging(log_format="json", level="WARNING", process="core")
 
-        if not args.quiet and args.transport != "stdio":
+        if not args.quiet:
             print(STARTUP_BANNER, file=sys.stderr)
             print(f"Transport: {args.transport}", file=sys.stderr)
             if args.host:

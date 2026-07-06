@@ -2,7 +2,12 @@
 
 
 def init_replay_lightweight(db_path=None):
-    """Initialize only the engines needed for drain/restore (no daemons, no server)."""
+    """Initialize only the engines needed for drain/restore (no daemons, no server).
+
+    Phase 2b: Retriever construction removed (CLI recall island killed per §5.4 decision 4).
+    CheckpointRestore.retriever is set to None — it never calls .recall() so this is safe.
+    CLI replay that genuinely needs recall must route through the backend HTTP endpoint.
+    """
     import logging
 
     # Suppress all library logging — hooks must only output data to stdout
@@ -14,7 +19,6 @@ def init_replay_lightweight(db_path=None):
     from yadgar.knowledge_graph import KnowledgeGraph
     from yadgar.metacognition import MetaCognition
     from yadgar.restoration import CheckpointRestore
-    from yadgar.retrieval import Retriever
     from yadgar.storage import StorageEngine
 
     settings = Settings()
@@ -22,13 +26,12 @@ def init_replay_lightweight(db_path=None):
     embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
     kg = KnowledgeGraph(storage, settings)
     cognitive_map = CognitiveMap(storage, settings)
-    retriever = Retriever(storage, embeddings, kg, settings)
     metacognition = MetaCognition(storage, embeddings, kg, settings)
 
     replay = CheckpointRestore(
         storage=storage,
         embeddings=embeddings,
-        retriever=retriever,
+        retriever=None,  # CLI recall island killed — no local Retriever constructed
         cognitive_map=cognitive_map,
         metacognition=metacognition,
         settings=settings,

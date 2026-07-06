@@ -14,6 +14,9 @@ from yadgar.cognitive_map import CognitiveMap
 from yadgar.metacognition import MetaCognition
 from yadgar.tests.conftest import memorize_sync
 
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
+
 # ── Fixtures ───────────────────────────────────────────────────────────
 
 

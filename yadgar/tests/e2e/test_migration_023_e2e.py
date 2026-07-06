@@ -44,12 +44,7 @@ def _run_fanout_recall(monkeypatch, query: str, directory: str, max_results: int
     if _rm is None:
         import yadgar.server.tools.recall as _rm
 
-    # Force fan-out path regardless of current default
-    _rm.settings.UNIFIED_RECALL_ENABLED = True
-    try:
-        return _rm.recall(query=query, directory=directory, max_results=max_results)
-    finally:
-        _rm.settings.UNIFIED_RECALL_ENABLED = False
+    return _rm.recall(query=query, directory=directory, max_results=max_results)
 
 
 def _seed_field_absent_memory(storage, embeddings, content: str) -> int:
@@ -131,7 +126,9 @@ class TestMigration023E2E:
             f"Expected 'global', got {row_after[0].get('directory_context')!r} for id={mem_id}"
         )
 
-    def test_backfilled_row_surfaces_in_directory_recall(self, e2e_engines, monkeypatch):
+    def test_backfilled_row_surfaces_in_directory_recall(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """After backfill to 'global', the row is returned by directory-scoped recall.
 
         'global' is an always-eligible sentinel — it must surface for any directory query.

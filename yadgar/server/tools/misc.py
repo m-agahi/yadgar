@@ -164,7 +164,7 @@ def _build_checkpoint_ctx(  # noqa: PLR0913
     )
 
 
-@_tool()
+@_tool(always_load=True)
 def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existing 8-param fn
     directory: str,
     current_task: str = "",
@@ -251,7 +251,7 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     return replay.create_checkpoint(directory, ctx)
 
 
-@_tool()
+@_tool(always_load=True)
 def restore(directory: str = "") -> dict:
     """Restore context after compaction using Hippocampal Replay.
 
@@ -384,7 +384,7 @@ def _resolve_anchor_branch(context: str, branch_hint: str | None) -> tuple[str |
     return _branch, None
 
 
-@_tool()
+@_tool(always_load=True)
 def anchor(
     content: str,
     context: str,

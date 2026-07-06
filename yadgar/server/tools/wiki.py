@@ -598,16 +598,11 @@ def wiki_query(
             "container cannot detect it via os.getcwd())"
         )
 
-    # v6 T6 Step 5: deprecation notice when unified recall is active.
-    # Emit once per call (INFO level) to signal callers should migrate to recall(type="wiki").
+    # Phase 2a: unified recall is now the ONLY path; emit deprecation unconditionally.
     try:
-        from yadgar.config import get_settings as _get_settings  # noqa: PLC0415
-
-        if _get_settings().UNIFIED_RECALL_ENABLED:
-            logger.info(
-                "wiki_query is deprecated in the unified recall path. "
-                "Use recall(query, directory=..., type='wiki') instead."
-            )
+        logger.info(
+            "wiki_query is deprecated. Use recall(query, directory=..., type='wiki') instead."
+        )
     except Exception:
         pass
 

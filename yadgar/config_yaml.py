@@ -1114,28 +1114,6 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "recall_quality",
     },
-    # v6 T6 — unified-scoped-recall fan-out flag
-    "unified_recall_enabled": {
-        "desc": (
-            "Enable the unified fan-out recall path (v6 T6, default false). "
-            "When true, recall() fans out to MemoryProvider + WikiProvider, applies "
-            "DB-level directory scoping, cross-type CE fusion with per-type quotas, "
-            "and returns a combined relevance-ranked list. "
-            "When false (default), recall() uses the exact legacy path with zero behavior change."
-        ),
-        "section": "unified_recall",
-    },
-    # Train 1: recall-backend dual-path flag
-    "recall_backend_enabled": {
-        "desc": (
-            "Enable backend-forwarded recall (Train 1, default false). "
-            "When true, the unified fan-out path forwards to the backend /recall endpoint; "
-            "core becomes a thin forwarder and DB-side-effects run backend-side. "
-            "Landscape mode and profile-based recall always run in-core regardless. "
-            "Requires UNIFIED_RECALL_ENABLED=true. Safe to flip off at any time."
-        ),
-        "section": "unified_recall",
-    },
     "recall_memory_quota": {
         "desc": (
             "v6 T6 Step 4: Max memory candidates in the fusion pool before CE rerank (default 5). "
@@ -1333,6 +1311,17 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Default retrieval preset: fast, balanced, or full (default balanced).",
         "section": "retrieval_fusion",
         "choices": ["fast", "balanced", "full"],
+    },
+    "fanout_boost_scope": {
+        "desc": (
+            "Controls when C4 branch and postmortem/incident boosts apply in fanout recall "
+            "(default scoped). "
+            "'scoped': apply only when profile is not None (profile-origin callers, e.g. hook=fast). "
+            "'global': apply to all fanout recalls regardless of profile. "
+            "'off': never apply boosts (A/B or CPU-constrained deploys)."
+        ),
+        "section": "retrieval_fusion",
+        "choices": ["scoped", "global", "off"],
     },
     "heavy_rerank_enabled": {
         "desc": (

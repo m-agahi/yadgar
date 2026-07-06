@@ -41,6 +41,9 @@ import pytest
 
 from yadgar import server
 
+pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
+
+
 # ── shared fixture ─────────────────────────────────────────────────────────────
 
 

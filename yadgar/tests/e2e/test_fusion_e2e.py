@@ -78,18 +78,14 @@ def _run_fanout_recall(
     if _rm is None:
         import yadgar.server.tools.recall as _rm
 
-    _rm.settings.UNIFIED_RECALL_ENABLED = True
-    try:
-        recall_fn = _rm.recall
-        return recall_fn(query=query, directory=directory, max_results=max_results)
-    finally:
-        _rm.settings.UNIFIED_RECALL_ENABLED = False
+    recall_fn = _rm.recall
+    return recall_fn(query=query, directory=directory, max_results=max_results)
 
 
 class TestFusionE2E:
     """Live-DB e2e tests for Step 4 cross-type fusion in fan-out recall."""
 
-    def test_fanout_returns_memory_and_wiki(self, e2e_engines, monkeypatch):
+    def test_fanout_returns_memory_and_wiki(self, e2e_engines, monkeypatch, recall_backend_bypass):
         """Flag-ON: recall returns both mem:<id> and wiki:<slug> for a mixed corpus.
 
         This is the CORE test that the first attempt's broken mocks could never
@@ -126,7 +122,9 @@ class TestFusionE2E:
             f"Wiki slug '{wiki_slug}' must appear in wiki results; wiki_ids={wiki_ids}"
         )
 
-    def test_relevant_wiki_outranks_irrelevant_hot_memory(self, e2e_engines, monkeypatch):
+    def test_relevant_wiki_outranks_irrelevant_hot_memory(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """High-heat irrelevant memory should NOT outrank on-topic wiki after CE fusion.
 
         Ref: BC-U4 — CE relevance is the primary sort key; heat is a prior only.
@@ -168,7 +166,9 @@ class TestFusionE2E:
         # CE models differ across environments.
         # We assert presence, not strict ordering (ordering is CE-dependent).
 
-    def test_provenance_dedup_collapses_memory_into_wiki(self, e2e_engines, monkeypatch):
+    def test_provenance_dedup_collapses_memory_into_wiki(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """Memory whose id is in wiki.source_memory_ids → only one survives.
 
         Cross-type dedup: when a memory's content was used to generate a wiki page,
@@ -206,7 +206,9 @@ class TestFusionE2E:
             f"results=[{[(r.get('id'), r.get('_source')) for r in results]}]"
         )
 
-    def test_quota_prevents_source_starvation(self, e2e_engines, monkeypatch):
+    def test_quota_prevents_source_starvation(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """20 memories + 2 wikis: both wikis reach the fusion pool.
 
         RECALL_WIKI_QUOTA default=5 means up to 5 wiki candidates enter the pool.
@@ -250,7 +252,9 @@ class TestFusionE2E:
             f"got {len(wiki_results)} wiki results out of {len(results)} total"
         )
 
-    def test_ce_unavailable_falls_back_to_native_score(self, e2e_engines, monkeypatch):
+    def test_ce_unavailable_falls_back_to_native_score(
+        self, e2e_engines, monkeypatch, recall_backend_bypass
+    ):
         """CE unavailable → fusion falls back to native_score order and does NOT crash.
 
         Verifies the CE fallback path in fuse_candidates / _score_candidates_ce.

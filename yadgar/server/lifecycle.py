@@ -267,11 +267,21 @@ def _emit_sd_ready() -> None:
 
 
 @observe(tier="stage")
-def _init_embedding_client(embedding_model: str | None, _settings):
+def _init_embedding_client(embedding_model: str | None, _settings, local_engines: bool = False):
     """Init embedding engine + ML client based on YADGAR_EMBED_URL env var.
 
     Returns (embeddings, ml_client). Extracted from init_engines to reduce
     cyclomatic complexity (each branch imports different client classes).
+
+    local_engines: when True, force in-process LOCAL engines (EmbeddingEngine +
+        LocalMLClient) and SKIP the offload guard.  This is the BACKEND
+        recall-bootstrap context (#44): the backend IS the embed service, so it
+        has no YADGAR_EMBED_URL and correctly wants local torch engines.  The
+        offload guard is a CORE concern — core offloads tool bodies onto a thread
+        pool and needs REMOTE engines for GIL-safety.  The backend is a
+        single-purpose ML service that does NOT run the core tool pool, so local
+        engines are GIL-safe there.  Default False keeps the guard firing on
+        every core path (guard unchanged for core).
     """
     if os.environ.get("YADGAR_EMBED_URL"):
         from yadgar.backend.ml_client import RemoteMLClient  # noqa: PLC0415
@@ -286,15 +296,20 @@ def _init_embedding_client(embedding_model: str | None, _settings):
         # tool body lands on — on a worker that still holds the GIL during
         # pure-python glue, defeating the offload premise. Fail loud rather than
         # silently ship a broken foundation.
-        from yadgar.server._offload import offload_enabled  # noqa: PLC0415
+        #
+        # local_engines=True bypasses the guard: the BACKEND recall bootstrap (#44)
+        # runs local engines by design (it IS the embed service) and is NOT the
+        # core tool-body pool, so the GIL premise does not apply there.
+        if not local_engines:
+            from yadgar.server._offload import offload_enabled  # noqa: PLC0415
 
-        if offload_enabled():
-            raise RuntimeError(
-                "YADGAR_OFFLOAD_TOOLS is enabled but no YADGAR_EMBED_URL is set, so "
-                "local in-process torch engines would be selected. Tool-body offload "
-                "is only GIL-safe with REMOTE engines (YADGAR_EMBED_URL + "
-                "YADGAR_DB_URL). Set YADGAR_EMBED_URL or disable offload."
-            )
+            if offload_enabled():
+                raise RuntimeError(
+                    "YADGAR_OFFLOAD_TOOLS is enabled but no YADGAR_EMBED_URL is set, so "
+                    "local in-process torch engines would be selected. Tool-body offload "
+                    "is only GIL-safe with REMOTE engines (YADGAR_EMBED_URL + "
+                    "YADGAR_DB_URL). Set YADGAR_EMBED_URL or disable offload."
+                )
 
         from yadgar.backend.ml_client import LocalMLClient  # noqa: PLC0415
 
@@ -476,14 +491,24 @@ def init_engines(
     embedding_model: str | None = None,
     start_daemons: bool = False,
     watch_directory: str | None = None,
+    local_engines: bool = False,
 ):
-    """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness)."""
+    """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness).
+
+    local_engines: when True, force local in-process ML engines and skip the
+        core offload guard.  Used by the BACKEND recall bootstrap (#44) — the
+        backend is the embed service (no YADGAR_EMBED_URL) and is not the core
+        tool-body pool, so local engines are correct + GIL-safe there.  Default
+        False keeps every core init path on the guarded selection logic.
+    """
     # Q16: reset shutdown flag so a re-initialized server can shut down cleanly
     _st._shutdown_done = False
 
     _settings = get_settings()
     _st._storage = StorageEngine(db_path or _settings.DB_PATH)
-    _st._embeddings, _ml_client = _init_embedding_client(embedding_model, _settings)
+    _st._embeddings, _ml_client = _init_embedding_client(
+        embedding_model, _settings, local_engines=local_engines
+    )
 
     _init_secondary_engines(_settings)
     _init_retriever_and_post_engines(_settings, _ml_client)
@@ -801,7 +826,7 @@ def _emit_startup_diagnostics(settings) -> None:
 def main(
     port: int | None = None,
     db_path: str | None = None,
-    transport: str = "stdio",
+    transport: str = "streamable-http",
 ):
     from yadgar.server._app import mcp_server
 

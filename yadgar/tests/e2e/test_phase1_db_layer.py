@@ -199,7 +199,7 @@ class TestBCA1_MemorizeRecallRoundTrip:
     and that recall() can surface it by content query.
     """
 
-    def test_memorize_recall_roundtrip(self, e2e_engines):
+    def test_memorize_recall_roundtrip(self, e2e_engines, recall_backend_bypass):
         from yadgar.server.tools.recall import recall
 
         yadgar_dir = e2e_engines["yadgar_dir"]
@@ -352,7 +352,7 @@ class TestBCA3_EmbeddingOnWrite:
 class TestBCB1_DirectoryFilter:
     """BC-B1: recall(directory=A) returns A + global, excludes project B."""
 
-    def test_excludes_other_project(self, e2e_engines):
+    def test_excludes_other_project(self, e2e_engines, recall_backend_bypass):
         """Memory stamped project-B MUST NOT appear in recall(directory=yadgar_dir)."""
         from yadgar.server.tools.recall import recall
 
@@ -388,7 +388,7 @@ class TestBCB1_DirectoryFilter:
             f"Got ids: {result_ids}"
         )
 
-    def test_global_memory_included(self, e2e_engines):
+    def test_global_memory_included(self, e2e_engines, recall_backend_bypass):
         """Memory stamped directory_context='' (global) SHALL appear in any recall."""
         from yadgar.server.tools.recall import recall
 
@@ -417,7 +417,7 @@ class TestBCB1_DirectoryFilter:
 class TestBCB2_WikiDirectoryFilter:
     """BC-B2: wiki results in recall apply the SAME directory filter as memories."""
 
-    def test_aws_wiki_excluded_from_yadgar_recall(self, e2e_engines):
+    def test_aws_wiki_excluded_from_yadgar_recall(self, e2e_engines, recall_backend_bypass):
         """A wiki page seeded with aws-dir MUST be excluded from recall(directory=yadgar_dir)."""
         from yadgar.server.tools.recall import recall
         from yadgar.server.tools.wiki import wiki_add
@@ -467,7 +467,7 @@ class TestBCB2_WikiDirectoryFilter:
             "BC-B2: aws-dir wiki page content must NOT appear in recall(directory=yadgar_dir)."
         )
 
-    def test_yadgar_wiki_present_in_yadgar_recall(self, e2e_engines):
+    def test_yadgar_wiki_present_in_yadgar_recall(self, e2e_engines, recall_backend_bypass):
         """POSITIVE CONTROL: a wiki page seeded with yadgar_dir MUST appear in recall(directory=yadgar_dir).
 
         Without this, the absence assertion above passes trivially if recall returns zero
@@ -550,7 +550,7 @@ class TestBCB3_DirectoryRequired:
 class TestBCB4_SystemTagExcluded:
     """BC-B4: directory_context='system' SHALL NOT be eligible in recall."""
 
-    def test_system_memory_not_returned(self, e2e_engines):
+    def test_system_memory_not_returned(self, e2e_engines, recall_backend_bypass):
         """A memory stamped directory_context='system' must not appear in user recall."""
         from yadgar.server.tools.recall import recall
 
@@ -588,7 +588,7 @@ class TestBCB5_ProfileRecallSurfaces:
     recall results as a result with _source='profile' when PROFILE_EXTRACTION_ENABLED=True.
     """
 
-    def test_profile_appears_in_recall(self, e2e_engines):
+    def test_profile_appears_in_recall(self, e2e_engines, recall_backend_bypass):
         from yadgar.server.tools.recall import recall
 
         yadgar_dir = e2e_engines["yadgar_dir"]
@@ -618,7 +618,6 @@ class TestBCB5_ProfileRecallSurfaces:
             directory=yadgar_dir,
             max_results=20,
         )
-
         profile_sources = [r for r in results if r.get("_source") == "profile"]
         assert len(profile_sources) > 0, (
             "BC-B5: profile result MUST appear in recall when a matching profile exists. "

@@ -297,7 +297,7 @@ class TestSessionManagement:
 
 class TestTransportSelection:
     def test_valid_transports_in_cli_help(self):
-        """CLI advertises both sse and streamable-http transports."""
+        """Phase 2b: CLI advertises sse and streamable-http (stdio removed)."""
         result = subprocess.run(
             [sys.executable, "-m", "yadgar", "--help"],
             capture_output=True,
@@ -305,6 +305,7 @@ class TestTransportSelection:
         )
         assert "sse" in result.stdout
         assert "streamable-http" in result.stdout
+        assert "stdio" not in result.stdout
 
     def test_main_accepts_transport_param(self):
         """server.main() accepts a transport keyword argument."""
@@ -312,17 +313,17 @@ class TestTransportSelection:
 
         sig = inspect.signature(server.main)
         assert "transport" in sig.parameters
-        assert sig.parameters["transport"].default == "stdio"
+        assert sig.parameters["transport"].default == "streamable-http"
 
     def test_cli_transport_flag_default(self):
-        """CLI defaults to stdio transport."""
+        """Phase 2b: CLI defaults to streamable-http; stdio is no longer a valid choice."""
         result = subprocess.run(
             [sys.executable, "-m", "yadgar", "--help"],
             capture_output=True,
             text=True,
         )
         assert "--transport" in result.stdout
-        assert "stdio" in result.stdout
+        assert "stdio" not in result.stdout
         assert "streamable-http" in result.stdout
 
     def test_cli_rejects_invalid_transport(self):

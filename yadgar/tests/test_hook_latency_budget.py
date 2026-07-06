@@ -320,3 +320,145 @@ class TestTimeoutCounterAllHandlers:
         assert after == before + 1, (
             f"Counter for subagent-start: expected {before + 1}, got {after}"
         )
+
+
+# ---------------------------------------------------------------------------
+# §7 #8 — core-resident hook decision (v5.108.0, Phase 2c)
+# ---------------------------------------------------------------------------
+
+
+class TestHookCoreResidentDecision:
+    """Assert hook callers remain core-resident (call Retriever.recall(profile='fast') locally).
+
+    Spec §5.4 (recall-forward-only-2026-07-05.md): the three hook sites
+    (prompt-recall, instructions-loaded, subagent-start) are the ONE accepted
+    core-resident exception to the forward-only rule. This test asserts the
+    decision is implemented: hooks call _recall_with_timeout which runs
+    retriever.recall(profile='fast') in the bounded thread pool — NOT
+    _forward_to_backend (which would add a TCP hop fighting the 2.0s budget).
+
+    If this test breaks because a hook no longer calls retriever.recall,
+    update the §5.4 documentation comment in http.py to reflect the change.
+    """
+
+    def test_prompt_recall_hook_passes_profile_fast(self):
+        """prompt-recall handler calls _recall_with_timeout with profile='fast'."""
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        mock_retriever = MagicMock()
+        mock_request = MagicMock()
+        mock_request.query_params = MagicMock()
+        mock_request.query_params.get = MagicMock(
+            side_effect=lambda k, d="": {
+                "query": "test core-resident query",
+                "directory": "/home/user/project",
+            }.get(k, d)
+        )
+
+        captured_kwargs = {}
+
+        async def _capture_recall(retriever, handler_name, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            captured_kwargs["args"] = args
+            return []
+
+        async def _run():
+            with patch.object(_st, "_retriever", mock_retriever):
+                with patch(
+                    "yadgar.server.http._recall_with_timeout",
+                    side_effect=_capture_recall,
+                ):
+                    with patch.object(_st, "_last_session_context", {}):
+                        with patch.object(_st, "_last_prompt_recall", {}):
+                            await _http.hook_prompt_recall(mock_request)
+
+        asyncio.run(_run())
+        assert captured_kwargs.get("profile") == "fast", (
+            f"prompt-recall hook must call _recall_with_timeout with profile='fast' "
+            f"(core-resident §5.4 decision). Got profile={captured_kwargs.get('profile')!r}. "
+            "If the hook was wired to forward, update the §5.4 comment in http.py "
+            "and replace this test with a forward-path assertion."
+        )
+
+    def test_instructions_loaded_hook_passes_profile_fast(self):
+        """instructions-loaded handler calls _recall_with_timeout with profile='fast'."""
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        mock_retriever = MagicMock()
+        mock_request = MagicMock()
+        mock_request.query_params = MagicMock()
+        mock_request.query_params.get = MagicMock(
+            side_effect=lambda k, d="": {
+                "file_path": "/home/user/.claude/CLAUDE.md",
+                "load_reason": "session_start",
+            }.get(k, d)
+        )
+
+        captured_kwargs = {}
+
+        async def _capture_recall(retriever, handler_name, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return []
+
+        async def _run():
+            with patch.object(_st, "_retriever", mock_retriever):
+                with patch(
+                    "yadgar.server.http._recall_with_timeout",
+                    side_effect=_capture_recall,
+                ):
+                    await _http.hook_instructions_loaded(mock_request)
+
+        asyncio.run(_run())
+        assert captured_kwargs.get("profile") == "fast", (
+            f"instructions-loaded hook must call _recall_with_timeout with profile='fast'. "
+            f"Got profile={captured_kwargs.get('profile')!r}."
+        )
+
+    def test_subagent_start_hook_passes_profile_fast(self):
+        """hook_subagent_start handler calls _recall_with_timeout with profile='fast'."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        import yadgar.server._state as _st
+        import yadgar.server.http as _http
+
+        mock_retriever = MagicMock()
+        mock_request = MagicMock()
+        mock_request.query_params = MagicMock()
+        mock_request.query_params.get = MagicMock(
+            side_effect=lambda k, d="": {
+                "agent_type": "general-purpose",
+                "cwd": "/home/user/project",
+            }.get(k, d)
+        )
+        mock_request.json = AsyncMock(
+            return_value={"description": "analyze code", "cwd": "/home/user/project"}
+        )
+
+        captured_kwargs = {}
+
+        async def _capture_recall(retriever, handler_name, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return []
+
+        async def _run():
+            with patch.object(_st, "_retriever", mock_retriever):
+                with patch(
+                    "yadgar.server.http._recall_with_timeout",
+                    side_effect=_capture_recall,
+                ):
+                    await _http.hook_subagent_start(mock_request)
+
+        asyncio.run(_run())
+        assert captured_kwargs.get("profile") == "fast", (
+            f"subagent-start hook must call _recall_with_timeout with profile='fast'. "
+            f"Got profile={captured_kwargs.get('profile')!r}."
+        )
