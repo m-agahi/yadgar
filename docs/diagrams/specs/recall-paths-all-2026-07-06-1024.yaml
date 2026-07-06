@@ -1,0 +1,94 @@
+# Recall — ALL PATHS (forward-only), REAL warm-miss trace, 2026-07-06.
+#
+# Captured live: core yadgar:5.111.0 + backend yadgar-backend:5.16.0 (both healthy).
+# One diagram, four recall shapes, all forward-only (core = thin forwarder,
+# backend runs the whole pipeline). Numbers are REAL OTel span durations pulled
+# from Tempo (http://localhost:3200), warm cache-MISS runs:
+#
+#   * PLAIN no-profile  → trace 17f93bcc… wall 19321 ms (the main pipeline shown here)
+#   * profile="fast"    → trace 00cfc87e… wall  1471 ms (CE + spreading + ppr OFF)
+#   * profile="full"    → same shape as PLAIN (all signals on)
+#   * mode="landscape"  → trace eef6e95b… wall  2176 ms (astrocyte.consensus_retrieve)
+#
+# FORWARD-ONLY (PR #163, #85): tool.recall → tools.recall._forward_to_backend →
+# POST /recall → backend.recall. Every retrieval.* stage span is
+# service=yadgar-backend (verified: both services share ONE trace_id per run →
+# traceparent propagates core→backend, no trace-gap). DB side-effects run in the
+# BACKEND (recall.side_effects.db); only SESSION side-effects (SR transition,
+# _record_recall_sr_transition) stay in CORE.
+#
+# THE WALL = cross-encoder. rerank.cross_encoder 7937 ms + crossfuse.score_candidates_ce
+# 5803 ms + multi_passage 1479 ms ≈ 15.2 s of 19.3 s (79%). spreading 1475 ms,
+# build_results 866 ms, ppr 234 ms, everything else <100 ms.
+#
+# CACHE NOTE (see cache-layer spec): an IDENTICAL repeat of PLAIN (trace 8216c4fa…)
+# ran 20504 ms — NOT faster. Backend CE cache hits stayed 0; CE stages ran full
+# again. Content caches (CE/embed LRU) do NOT accelerate a repeated recall; only
+# the core-side epoch/TTL caches (project_brief/wiki_*) cut time, and those sit on
+# OTHER tools, not on recall. This is the ADR-0030 lesson, still true post-#164.
+
+title: "Recall — ALL PATHS (forward-only), REAL warm-miss (core 5.111 / backend 5.16, 2026-07-06)"
+subtitle: "trace 17f93bcc · PLAIN wall 19321 ms · core=forwarder, backend=pipeline · CE 3 passes ≈ 15.2 s = 79% · fast=1.5s landscape=2.2s"
+rankdir: TB
+show_total: true
+total_ms: 19321        # real PLAIN wall; node-sum meaningless (memory ∥ wiki fork)
+
+clusters:
+  - {id: core,    label: "Core (--cpus 1) — tool.recall FORWARDER: validate + POST /recall + return; SESSION side-effects stay here", kind: core}
+  - {id: backend, label: "Backend (--cpus 2) — backend.recall runs the ENTIRE pipeline (SurrealDB + GTE reranker + embed); DB side-effects moved here", kind: backend}
+
+nodes:
+  # --- core: forwarder shim ---
+  - {id: entry,   label: "recall() entry (FORWARDER)\\ntool.recall: validate + detect dir/branch\\ntools.recall._forward_to_backend (traceparent)", cluster: core, type: compute, time_ms: 105}
+  # --- backend: query prep ---
+  - {id: recvfwd, label: "POST /recall received\\nbackend.recall entry", cluster: backend, type: compute, time_ms: 2}
+  - {id: qanalysis, label: "query analysis + routing\\nretrieval.analyze_query / resolve_query_and_candidate_k", cluster: backend, type: compute, time_ms: 1}
+  - {id: fts,     label: "FTS BM25 (memory + wiki + profiles)\\nretrieval.fts (branch clause injected)", cluster: backend, type: io, time_ms: 47}
+  - {id: embed,   label: "query embed\\nretrieval.vector.encode_query (warm model)", cluster: backend, type: model, time_ms: 15}
+  - {id: vector,  label: "vector KNN search\\nretrieval.vector (HNSW ANN)", cluster: backend, type: io, time_ms: 55}
+  # --- backend: graph signals ---
+  - {id: ppr,     label: "personalized PageRank\\nretrieval.ppr (entity seeds + graph walk)", cluster: backend, type: compute, time_ms: 234}
+  - {id: spread,  label: "spreading activation BFS\\nretrieval.spreading (per-neighbour DB, uncached)", cluster: backend, type: io, time_ms: 1475}
+  - {id: entities,label: "entity extraction\\nretrieval.graph.find_entities_in_content", cluster: backend, type: io, time_ms: 372}
+  # --- backend: fusion + hydrate (memory arm) ---
+  - {id: fusion,  label: "convex / WRRF fusion\\nretrieval.fusion (merge signals)", cluster: backend, type: compute, time_ms: 273}
+  - {id: build,   label: "build_results final-fetch\\nretrieval.build_results (WHERE id IN, batched)", cluster: backend, type: io, time_ms: 866}
+  # --- backend: CE rerank pipeline (the wall) ---
+  - {id: ce1,     label: "CE PASS 1 — cross_encoder\\nretrieval.rerank.cross_encoder\\nLocalMLClient._try_gte_reranker (GTE-ModernBERT)", cluster: backend, type: model, time_ms: 7937}
+  - {id: mp,      label: "CE PASS 2 — multi_passage\\nretrieval.rerank.multi_passage (per-passage rescore)", cluster: backend, type: model, time_ms: 1479}
+  - {id: engram,  label: "engram_links rerank\\nretrieval.rerank.engram_links (graph IO)", cluster: backend, type: io, time_ms: 375}
+  # --- backend: wiki arm + cross-type CE fusion ---
+  - {id: wiki,    label: "wiki_candidates fan-out\\nretrieval.provider.wiki_candidates (wiki.query: FTS+vector+tags)", cluster: backend, type: io, time_ms: 319}
+  - {id: cefuse,  label: "CE PASS 3 — wiki crossfuse\\nretrieval.crossfuse.score_candidates_ce (memory∪wiki CE)", cluster: backend, type: model, time_ms: 5803}
+  # --- backend: DB side-effects (relocated to backend by forward-only) ---
+  - {id: sideeff, label: "DB side-effects\\ntools.recall._apply_recall_db_side_effects\\nheat-boost + record_access (BACKEND)", cluster: backend, type: io, time_ms: 225}
+  # --- core: session side-effects + return ---
+  - {id: sess,    label: "SESSION side-effects (CORE)\\ntools.recall._record_recall_sr_transition\\nSR/cognitive-map transition", cluster: core, type: compute, time_ms: 97}
+  - {id: results, label: "ranked results returned to caller", cluster: core, type: compute, time_ms: 1}
+
+  # --- alternate recall shapes (rendered as side branches off the forwarder) ---
+  - {id: fastp,   label: "profile=\"fast\" (trace 00cfc87e)\\nNO CE, NO spreading, NO ppr\\nengram_links 580 ms = the tail\\nwall 1471 ms", cluster: backend, type: compute, time_ms: 1471}
+  - {id: landscape, label: "mode=\"landscape\" (trace eef6e95b)\\nbackend.recall.landscape → astrocyte.consensus_retrieve\\n93 domain-vote similarity calls; NO CE\\nwall 2176 ms", cluster: backend, type: compute, time_ms: 2176}
+
+edges:
+  - {src: entry,     dst: recvfwd,   order: 1, label: "POST /recall"}
+  - {src: recvfwd,   dst: qanalysis, order: 2}
+  - {src: qanalysis, dst: fts,       order: 3}
+  - {src: fts,       dst: embed,     order: 4}
+  - {src: embed,     dst: vector,    order: 5, label: "query vector"}
+  - {src: vector,    dst: ppr,       order: 6}
+  - {src: ppr,       dst: spread,    order: 7}
+  - {src: spread,    dst: entities,  order: 8}
+  - {src: entities,  dst: fusion,    order: 9, label: "signals"}
+  - {src: fusion,    dst: build,     order: 10, label: "top ids"}
+  - {src: build,     dst: ce1,       order: 11, label: "hydrated rows"}
+  - {src: ce1,       dst: mp,        order: 12}
+  - {src: mp,        dst: engram,    order: 13}
+  - {src: engram,    dst: wiki,      order: 14, label: "memory arm done"}
+  - {src: wiki,      dst: cefuse,    order: 15}
+  - {src: cefuse,    dst: sideeff,   order: 16}
+  - {src: sideeff,   dst: sess,      order: 17, label: "return to core"}
+  - {src: sess,      dst: results,   order: 18}
+  # alternate shapes branch off the same forwarder
+  - {src: recvfwd,   dst: fastp,     type: skip, label: "profile=fast"}
+  - {src: recvfwd,   dst: landscape, type: skip, label: "mode=landscape"}

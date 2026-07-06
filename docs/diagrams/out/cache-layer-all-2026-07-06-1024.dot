@@ -1,0 +1,64 @@
+digraph flow {
+  rankdir="LR";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="Cache layer — placement, hit/miss, invalidation (core 5.111 / backend 5.16, REAL 2026-07-06)
+core epoch/TTL caches (project_brief/wiki/prelude) HIT + bust on epoch-bump (observed) · backend CE/embed LRU do NOT accelerate repeat recall (CE ran full: 20.5s repeat > 19.3s first)";
+  subgraph "cluster_core" {
+    label="Core (--cpus 1) — unified Cache class (yadgar/cache.py); epoch bus in _recall_shadow.py";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "pbtool" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="project_brief()"];
+    "pbcache" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="project_brief cache\nTTL(300s) + epoch-in-key (git-root dir epoch)\nMISS→HIT→(epoch-bump)MISS observed\nhit 1 / miss 2"];
+    "wqtool" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="wiki_query()"];
+    "wqcache" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="wiki_query cache\nTTL + global wiki-epoch in key\nMISS→HIT observed (hit 1 / miss 2)"];
+    "wrtool" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="wiki_read()"];
+    "wrcache" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="wiki_read cache\nTTL + global wiki-epoch in key"];
+    "pretool" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="agent_dispatch_prelude()"];
+    "precache" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="agent_prompt_prelude cache\nTTL + global wiki-epoch in key"];
+    "misc" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="config / branch / rules / rate_limit / remote_embedding caches\nKeyFn or Manual; all firing (default_branch 5 hits, rate_limit 33 …)"];
+    "recall" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="recall() → backend.recall\n(forward-only)"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (--cpus 2) — LRUCache in embed_service (CE + embed)";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "cecache" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="CE score cache (LRU)\nkey=(query,passage) content-hash · NO epoch\nsize 3125 · hits 0 / miss 0\nRECALL CE PATH DOES NOT CONSULT IT → CE ran full on repeat"];
+    "emcache" [shape="box", style="rounded,filled,dashed", fillcolor="#e7f6e7", label="embed vector cache (LRU)\nkey=query-hash content · NO epoch\nsize 1786→1791 · hit 1 / miss 7\nrepeat encode_query 0.1ms (served warm)"];
+    "cework" [shape="box", style="filled", fillcolor="#f5e1f5", label="CE rerank (GTE-ModernBERT)\nTHE WALL — ~15.2s, unchanged hit vs miss\n(cache does not cut it)"];
+  }
+  subgraph "cluster_writes" {
+    label="Write events that BUST caches (epoch bumps)";
+    style=filled;
+    bgcolor="#f0f0f0";
+    color="#888888";
+    fontcolor="#555555";
+    fontname="Helvetica-Bold";
+    "dirbump" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="memorize / forget\n_bump_epoch_for_context → per-dir epoch++"];
+    "wikibump" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="wiki_add / delete / metadata\n_bump_wiki_epoch → bump_epoch(None) GLOBAL gen++"];
+  }
+  "pbtool" -> "pbcache" [color="#333333", style="solid", label="get (hit→return)"];
+  "wqtool" -> "wqcache" [color="#333333", style="solid", label="get"];
+  "wrtool" -> "wrcache" [color="#333333", style="solid", label="get"];
+  "pretool" -> "precache" [color="#333333", style="solid", label="get"];
+  "recall" -> "emcache" [color="#333333", style="solid", label="query embed (may hit)"];
+  "recall" -> "cecache" [color="#999999", style="dashed", label="NOT consulted on recall CE"];
+  "recall" -> "cework" [color="#333333", style="solid", label="CE runs FULL (wall)"];
+  "dirbump" -> "pbcache" [color="#6a8f3a", style="dashed", label="per-dir epoch++ BUSTS (observed miss)"];
+  "wikibump" -> "wrcache" [color="#6a8f3a", style="dashed", label="GLOBAL epoch++ BUSTS"];
+  "wikibump" -> "wqcache" [color="#6a8f3a", style="dashed", label="BUSTS"];
+  "wikibump" -> "precache" [color="#6a8f3a", style="dashed", label="BUSTS"];
+  "wikibump" -> "pbcache" [color="#6a8f3a", style="dashed", label="global fold-in BUSTS too"];
+  "cecache" -> "emcache" [color="#999999", style="dashed", label="LRU age-out only (no epoch bump reaches these)"];
+}
