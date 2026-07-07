@@ -7,8 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from yadgar._shared.config import Settings
-from yadgar._shared.curation.contradiction import _ACTION_RE, _NEGATION_RE, detect_contradictions
-from yadgar._shared.curation.ingestion import (
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.thermodynamics import MemoryThermodynamics
+from yadgar._shared.tracing import trace_span
+from yadgar.core.curation.contradiction import _ACTION_RE, _NEGATION_RE, detect_contradictions
+from yadgar.core.curation.ingestion import (
     _LINK_HIGH,
     _LINK_LOW,
     NewMemorySpec,
@@ -18,13 +23,8 @@ from yadgar._shared.curation.ingestion import (
     insert_new_memory,
     merge_memory,
 )
-from yadgar._shared.curation.prune_passes import _memify_prune
-from yadgar._shared.curation.strengthen import _memify_derive, _memify_reweight, _memify_strengthen
-from yadgar._shared.embeddings import EmbeddingEngine
-from yadgar._shared.observability.observe import observe
-from yadgar._shared.storage import StorageEngine
-from yadgar._shared.thermodynamics import MemoryThermodynamics
-from yadgar._shared.tracing import trace_span
+from yadgar.core.curation.prune_passes import _memify_prune
+from yadgar.core.curation.strengthen import _memify_derive, _memify_reweight, _memify_strengthen
 
 logger = logging.getLogger(__name__)
 

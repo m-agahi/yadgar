@@ -7,7 +7,7 @@ import pytest
 
 from yadgar._shared.config import Settings
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.narrative import NarrativeEngine
+from yadgar.core.narrative import NarrativeEngine
 
 
 @pytest.fixture(scope="module")

@@ -10,14 +10,14 @@ import logging
 
 import numpy as np
 
-from yadgar._shared.causal_discovery.dag_io import store_dag_edges, traverse_oriented_edges
-from yadgar._shared.causal_discovery.independence import conditional_independence_test
-from yadgar._shared.causal_discovery.meek import meek_r1, meek_r2, meek_r3
-from yadgar._shared.causal_discovery.pc import build_event_matrix, pc_algorithm
 from yadgar._shared.config import Settings
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage import StorageEngine
+from yadgar.core.causal_discovery.dag_io import store_dag_edges, traverse_oriented_edges
+from yadgar.core.causal_discovery.independence import conditional_independence_test
+from yadgar.core.causal_discovery.meek import meek_r1, meek_r2, meek_r3
+from yadgar.core.causal_discovery.pc import build_event_matrix, pc_algorithm
 
 logger = logging.getLogger(__name__)
 

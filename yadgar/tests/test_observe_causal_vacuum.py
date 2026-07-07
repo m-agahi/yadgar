@@ -8,7 +8,7 @@ def _has_span(fn) -> bool:
 
 
 def test_causal_discover_instrumented():
-    from yadgar._shared.causal_discovery import CausalDiscovery
+    from yadgar.core.causal_discovery import CausalDiscovery
 
     assert _has_span(CausalDiscovery.discover_dag)
 
@@ -26,7 +26,7 @@ def test_vacuum_phases_instrumented():
 
 
 def test_causal_pc_stages_instrumented():
-    from yadgar._shared.causal_discovery import pc
+    from yadgar.core.causal_discovery import pc
 
     assert _has_span(pc.pc_algorithm)
     assert _has_span(pc.build_event_matrix)

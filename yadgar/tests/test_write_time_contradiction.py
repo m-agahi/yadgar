@@ -24,10 +24,10 @@ import numpy as np
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar._shared.curation import MemoryCurator
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
+from yadgar.core.curation import MemoryCurator
 
 
 @pytest.fixture
@@ -122,7 +122,7 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
     sim = embeddings.similarity(base_emb, new_emb)
     assert sim >= 0.7, f"crafted embeddings have insufficient similarity {sim}"
 
-    from yadgar._shared.curation.ingestion import find_similar_memories
+    from yadgar.core.curation.ingestion import find_similar_memories
 
     found = find_similar_memories(storage, embeddings, new_emb, min_sim=0.6)
     assert any(mid == old_id for mid, _ in found), (
@@ -130,7 +130,7 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
     )
 
     # Direct sanity-check: call the detector directly and verify it would mutate
-    from yadgar._shared.curation.contradiction import detect_contradictions
+    from yadgar.core.curation.contradiction import detect_contradictions
 
     direct = detect_contradictions(storage, found, new_content)
     assert direct, f"detector returned empty list; would never decay (found={found})"
@@ -144,8 +144,8 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
     # Must patch the name in yadgar.curation (where __init__ imported it),
     # NOT in yadgar.curation.contradiction — that bound name is not used
     # by _run_write_time_contradiction.
-    import yadgar._shared.curation as _curation_mod
-    import yadgar._shared.curation.contradiction as _cmod
+    import yadgar.core.curation as _curation_mod
+    import yadgar.core.curation.contradiction as _cmod
 
     _calls: list = []
     _orig = _cmod.detect_contradictions
@@ -231,7 +231,7 @@ def test_detector_exception_does_not_block_write(curator, storage, monkeypatch):
     new_content = "We no longer use PostgreSQL"
 
     with patch(
-        "yadgar._shared.curation.contradiction.detect_contradictions",
+        "yadgar.core.curation.contradiction.detect_contradictions",
         side_effect=RuntimeError("boom"),
     ):
         result = curator.curate_on_remember(
@@ -341,7 +341,7 @@ def test_llm_resolver_short_circuit_bypasses_lightweight(monkeypatch):
         patch("yadgar._shared.runtime.lifecycle._get_storage", return_value=mock_storage),
         patch("yadgar._shared.runtime.lifecycle._get_embeddings", return_value=mock_emb),
         patch("yadgar._shared.runtime.lifecycle._get_buffer", return_value=MagicMock()),
-        patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=MagicMock()),
+        patch("yadgar.core.lifecycle._get_file_queue", return_value=MagicMock()),
         patch(
             "yadgar.core.conflict_resolver.resolve_conflict",
             return_value={"op": "NOOP", "target_id": None, "reason": "duplicate"},

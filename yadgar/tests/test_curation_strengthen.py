@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar._shared.curation.strengthen import _memify_derive, _memify_reweight, _memify_strengthen
+from yadgar.core.curation.strengthen import _memify_derive, _memify_reweight, _memify_strengthen
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

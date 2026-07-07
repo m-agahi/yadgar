@@ -1351,7 +1351,7 @@ def _compute_pending_rejections(resolved: str) -> int:
     import json as _json  # noqa: PLC0415
 
     try:
-        from yadgar._shared.runtime.lifecycle import _get_file_queue  # noqa: PLC0415
+        from yadgar.core.lifecycle import _get_file_queue  # noqa: PLC0415
 
         fq = _get_file_queue()
         dlq_dir = fq.dlq_dir

@@ -9,21 +9,21 @@ callers that still call it.
 import logging
 from datetime import UTC, datetime
 
-from yadgar._shared.cls_store import DualStoreCLS
 from yadgar._shared.config import Settings
-from yadgar._shared.curation import MemoryCurator
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.sleep_compute import SleepComputeEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
+from yadgar.core.cls_store import DualStoreCLS
 from yadgar.core.consolidation.causal import _CausalMixin
 from yadgar.core.consolidation.cleanup import _CleanupMixin
 from yadgar.core.consolidation.cls import _CLSMixin
 from yadgar.core.consolidation.heat_decay import _HeatDecayMixin
 from yadgar.core.consolidation.orchestrator import _OrchestratorMixin
+from yadgar.core.curation import MemoryCurator
 from yadgar.core.ops import _fire_vacuum_service
+from yadgar.core.sleep_compute import SleepComputeEngine
 
 # Lazy imports to avoid circular dependencies
 _AstrocytePool = None
@@ -74,13 +74,20 @@ def _get_pool_class():
 def _get_causal_discovery_class():
     global _CausalDiscovery
     if _CausalDiscovery is None:
-        from yadgar._shared.causal_discovery import CausalDiscovery
+        from yadgar.core.causal_discovery import CausalDiscovery
 
         _CausalDiscovery = CausalDiscovery
     return _CausalDiscovery
 
 
 logger = logging.getLogger("yadgar.consolidation")
+
+# Sentinel for the `pool` kwarg: distinguishes "not supplied" (build own — bare
+# callers, backward-compat) from "supplied, possibly None" (composition root
+# injects the standalone pool, or None when disabled/failed upstream). A plain
+# None default would rebuild in the disabled case → double warning + identity
+# divergence between _st._pool and _st._consolidation.pool (R2a Car A).
+_POOL_UNSET = object()
 
 
 class ConsolidationScheduler(
@@ -103,6 +110,7 @@ class ConsolidationScheduler(
         storage: StorageEngine,
         embeddings: EmbeddingEngine,
         settings: Settings,
+        pool=_POOL_UNSET,
     ) -> None:
         self._storage = storage
         self._embeddings = embeddings
@@ -134,20 +142,31 @@ class ConsolidationScheduler(
         except Exception:
             logger.exception("Failed to initialize CausalDiscovery")
 
-        # Initialize astrocyte pool for domain-aware consolidation
-        self._pool = None
-        if not getattr(settings, "ASTROCYTE_POOL_ENABLED", True):
-            logger.warning(
-                "AstrocytePool is DISABLED (ASTROCYTE_POOL_ENABLED=False). "
-                "Domain-aware consolidation will not run."
-            )
+        # Initialize astrocyte pool for domain-aware consolidation.
+        # R2a Car A: when a `pool` is injected (composition root builds it
+        # standalone so the backend SLIM path can populate _st._pool without
+        # importing this module), USE it verbatim — do NOT rebuild or re-run
+        # init_processes(). The injected value may be a real AstrocytePool OR
+        # None (disabled/failed upstream); either way we adopt it exactly so
+        # _st._pool and _st._consolidation.pool stay the same object.
+        # When `pool` is the sentinel (bare callers — tests, backward-compat),
+        # build our own exactly as before.
+        if pool is not _POOL_UNSET:
+            self._pool = pool
         else:
-            try:
-                PoolCls = _get_pool_class()
-                self._pool = PoolCls(storage, embeddings, self._graph, self._thermo, settings)
-                self._pool.init_processes()
-            except Exception:
-                logger.exception("Failed to initialize AstrocytePool")
+            self._pool = None
+            if not getattr(settings, "ASTROCYTE_POOL_ENABLED", True):
+                logger.warning(
+                    "AstrocytePool is DISABLED (ASTROCYTE_POOL_ENABLED=False). "
+                    "Domain-aware consolidation will not run."
+                )
+            else:
+                try:
+                    PoolCls = _get_pool_class()
+                    self._pool = PoolCls(storage, embeddings, self._graph, self._thermo, settings)
+                    self._pool.init_processes()
+                except Exception:
+                    logger.exception("Failed to initialize AstrocytePool")
 
         # v4.9: vacuum auto-trigger cooldown timestamp (in-memory; resets on restart)
         self._last_vacuum_at: datetime | None = None

@@ -148,10 +148,10 @@ class TestCausalDiscoveryAdjacencyGuard:
 
     @pytest.fixture
     def discovery(self, tmp_path):
-        from yadgar._shared.causal_discovery import CausalDiscovery
         from yadgar._shared.config import Settings
         from yadgar._shared.knowledge_graph import KnowledgeGraph
         from yadgar._shared.storage import StorageEngine
+        from yadgar.core.causal_discovery import CausalDiscovery
 
         storage = StorageEngine(str(tmp_path / "test.db"))
         settings = Settings()

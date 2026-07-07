@@ -239,7 +239,7 @@ class TestWouldReject:
 
     def test_would_reject_true_when_below_shadow_threshold(self):
         """Low surprisal → would_reject=True at shadow threshold."""
-        from yadgar._shared.predictive_coding import WriteGate
+        from yadgar.core.predictive_coding import WriteGate
 
         # Verify WriteGate has would_reject_at method
         assert hasattr(WriteGate, "would_reject_at"), (
@@ -265,7 +265,7 @@ class TestWouldReject:
 
     def test_would_reject_false_when_above_shadow_threshold(self):
         """High surprisal → would_reject=False at shadow threshold."""
-        from yadgar._shared.predictive_coding import WriteGate
+        from yadgar.core.predictive_coding import WriteGate
 
         mock_storage = MagicMock()
         mock_embeddings = MagicMock()
@@ -290,7 +290,7 @@ class TestWouldReject:
         At very high continuity, effective_threshold = max(0.1, 0.15 - 0.15) = 0.10.
         surprisal=0.12 >= effective_threshold=0.10 → would_reject=False even though 0.12 < 0.15.
         """
-        from yadgar._shared.predictive_coding import WriteGate
+        from yadgar.core.predictive_coding import WriteGate
 
         mock_storage = MagicMock()
         mock_embeddings = MagicMock()

@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar._shared.curation import MemoryCurator
-from yadgar._shared.curation.ingestion import NewMemorySpec, insert_new_memory
+from yadgar.core.curation import MemoryCurator
+from yadgar.core.curation.ingestion import NewMemorySpec, insert_new_memory
 
 # ---------------------------------------------------------------------------
 # Helpers

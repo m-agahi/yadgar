@@ -8,10 +8,10 @@ import numpy as np
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar._shared.curation import MemoryCurator
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
+from yadgar.core.curation import MemoryCurator
 
 # Detect whether the embedding model can be loaded
 _engine = EmbeddingEngine()
@@ -645,10 +645,10 @@ def test_memify_prune_auto_generated(tmp_path):
     from datetime import UTC, datetime, timedelta
 
     from yadgar._shared.config import Settings
-    from yadgar._shared.curation import MemoryCurator
     from yadgar._shared.embeddings import EmbeddingEngine
     from yadgar._shared.storage import StorageEngine
     from yadgar._shared.thermodynamics import MemoryThermodynamics
+    from yadgar.core.curation import MemoryCurator
 
     storage = StorageEngine(str(tmp_path / "autogen_prune.db"))
     emb = EmbeddingEngine()
@@ -821,10 +821,10 @@ def test_memify_prune_auto_abstracted(tmp_path):
     from datetime import UTC, datetime, timedelta
 
     from yadgar._shared.config import Settings
-    from yadgar._shared.curation import MemoryCurator
     from yadgar._shared.embeddings import EmbeddingEngine
     from yadgar._shared.storage import StorageEngine
     from yadgar._shared.thermodynamics import MemoryThermodynamics
+    from yadgar.core.curation import MemoryCurator
 
     storage = StorageEngine(str(tmp_path / "aa_prune.db"))
     emb = EmbeddingEngine()
@@ -1012,10 +1012,10 @@ def test_memify_prune_dream_insights(tmp_path):
     from datetime import UTC, datetime, timedelta
 
     from yadgar._shared.config import Settings
-    from yadgar._shared.curation import MemoryCurator
     from yadgar._shared.embeddings import EmbeddingEngine
     from yadgar._shared.storage import StorageEngine
     from yadgar._shared.thermodynamics import MemoryThermodynamics
+    from yadgar.core.curation import MemoryCurator
 
     storage = StorageEngine(str(tmp_path / "dream_prune.db"))
     emb = EmbeddingEngine()

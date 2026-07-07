@@ -211,7 +211,7 @@ def test_rerank_stage_spans_nested(span_exporter):
 
 def test_write_surprisal_span_emits(span_exporter):
     """WriteGate.compute_surprisal emits write.surprisal span."""
-    from yadgar._shared.predictive_coding import WriteGate
+    from yadgar.core.predictive_coding import WriteGate
 
     gate = WriteGate.__new__(WriteGate)
     gate._storage = MagicMock()

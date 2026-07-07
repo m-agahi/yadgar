@@ -25,7 +25,7 @@ class TestDaemonAutoCheck:
         monkeypatch.setenv("YADGAR_UPDATE_CHECK_ON_START", "false")
 
         # Import and call the auto-check wiring function directly
-        from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
+        from yadgar.core.daemons import _maybe_auto_check_for_update
 
         with patch("yadgar.core.update.check.probe_latest_version") as mock_probe:
             _maybe_auto_check_for_update()
@@ -50,7 +50,7 @@ class TestDaemonAutoCheck:
             return LatestVersionInfo(available_version="9.99.0")
 
         with patch("yadgar.core.update.check.probe_latest_version", side_effect=_probe):
-            from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
+            from yadgar.core.daemons import _maybe_auto_check_for_update
 
             _maybe_auto_check_for_update()
             time.sleep(0.05)  # let thread register
@@ -73,7 +73,7 @@ class TestDaemonAutoCheck:
             return LatestVersionInfo(available_version="9.99.0")
 
         with patch("yadgar.core.update.check.probe_latest_version", side_effect=_slow_probe):
-            from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
+            from yadgar.core.daemons import _maybe_auto_check_for_update
 
             _maybe_auto_check_for_update()
             # Thread should be alive (blocked on barrier)
@@ -101,7 +101,7 @@ class TestDaemonAutoCheck:
             return LatestVersionInfo(available_version="9.99.0")
 
         with patch("yadgar.core.update.check.probe_latest_version", side_effect=_slow_probe):
-            from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
+            from yadgar.core.daemons import _maybe_auto_check_for_update
 
             t0 = _time.monotonic()
             _maybe_auto_check_for_update()
@@ -125,9 +125,9 @@ class TestDaemonAutoCheck:
             raise httpx.ConnectError("unreachable")
 
         with patch("yadgar.core.update.check.probe_latest_version", side_effect=_failing_probe):
-            from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
+            from yadgar.core.daemons import _maybe_auto_check_for_update
 
-            with caplog.at_level(logging.WARNING, logger="yadgar._shared.runtime.lifecycle"):
+            with caplog.at_level(logging.WARNING, logger="yadgar.core.daemons"):
                 _maybe_auto_check_for_update()
                 # Wait for the background thread to complete
                 completed.wait(timeout=3.0)

@@ -1203,7 +1203,7 @@ config knobs.
 - **tools:** `memorize`
 - **migrations:** —
 - **bc:** `BC-PCd2`
-- **refs:** `yadgar/_shared/predictive_coding.py::WriteGate.should_store`, `yadgar/_shared/predictive_coding.py::WriteGate.would_reject_at`, `yadgar/core/server/tools/_memorize_phases/_phase_embed.py::phase_embed`, `yadgar/core/server/tools/_memorize_phases/_phase_store.py::phase_store`, `yadgar/core/server/tools/_memorize_phases/context.py`
+- **refs:** `yadgar/core/predictive_coding.py::WriteGate.should_store`, `yadgar/core/predictive_coding.py::WriteGate.would_reject_at`, `yadgar/core/server/tools/_memorize_phases/_phase_embed.py::phase_embed`, `yadgar/core/server/tools/_memorize_phases/_phase_store.py::phase_store`, `yadgar/core/server/tools/_memorize_phases/context.py`
 - **wiring:** `phase_embed` calls `_st._write_gate.should_store(content, context, tags)` → when `WRITE_GATE_THRESHOLD <= 0.0` (default `0.0`), `should_store` immediately returns `(True, 0.0, "gate_disabled")` — nothing is ever dropped. The gate then calls `would_reject_at(content, context, tags, settings.WRITE_GATE_SHADOW_THRESHOLD, surprisal=surprisal)` (default shadow threshold `0.15`) → sets `ctx.gate_surprisal` and `ctx.would_reject`. In `phase_store`, these shadow fields are written to the memory row via `storage.update_memory_fields(ctx.memory_id, surprise_score=ctx.gate_surprisal, would_reject=ctx.would_reject)`. The gate NEVER drops a memory at the current default config.
 - **explanation:** The predictive coding write gate models Friston-style free-energy minimization: it computes surprisal for each candidate memory as a weighted sum of four novelty signals (embedding novelty 0.4, entity novelty 0.25, temporal novelty 0.2, structural novelty 0.15). With `WRITE_GATE_THRESHOLD=0.0` (default), the gate is in **shadow mode**: it computes surprisal and the adaptive `would_reject` shadow decision at `WRITE_GATE_SHADOW_THRESHOLD=0.15`, stamps both on the memory row, but never actually drops a write. To activate the gate as a real filter, set `WRITE_GATE_THRESHOLD` to a positive value (e.g. 0.15). Bypass conditions (error/exception/decision keywords, `important`/`critical` tags) always pass regardless of threshold. Task continuity (directory match + temporal proximity + semantic similarity to recent stores) reduces the effective threshold by up to `WRITE_GATE_CONTINUITY_DISCOUNT` (default 0.15).
 
@@ -1216,7 +1216,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/predictive_coding.py::WriteGate._get_cached_entities`, `yadgar/_shared/predictive_coding.py::WriteGate.invalidate_entity_cache`
+- **refs:** `yadgar/core/predictive_coding.py::WriteGate._get_cached_entities`, `yadgar/core/predictive_coding.py::WriteGate.invalidate_entity_cache`
 - **wiring:** `WriteGate._compute_entity_novelty` and `_compute_structural_novelty` call `_get_cached_entities()`, which uses a monotonic-clock TTL check against `PREDICTIVE_CODING_ENTITY_TTL_SECONDS` (default 300 s = 5 min). On expiry or cache miss, it fetches all entities from storage; `invalidate_entity_cache()` is called after entity inserts/deletes to force refresh.
 - **explanation:** The write gate's surprisal computation queries the knowledge-graph entity set on every call. To avoid O(N·M) DB fetches during batch write sessions, the entity list is cached in memory with a configurable TTL. When TTL is 0, caching is disabled (always fetches). The cache is also proactively invalidated after any entity mutation via `invalidate_entity_cache()`. This setting only matters when the write gate is active (i.e. `WRITE_GATE_THRESHOLD > 0`), but the cache operates regardless since the entity set is fetched even in shadow mode.
 
@@ -1307,7 +1307,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-PC1`, `BC-PC2`, `BC-PC3`, `BC-PC4`, `BC-PCd1`, `BC-PCd2`
-- **refs:** `yadgar/_shared/predictive_coding.py::WriteGate`, `yadgar/core/server/tools/_memorize_phases/_phase_embed.py`
+- **refs:** `yadgar/core/predictive_coding.py::WriteGate`, `yadgar/core/server/tools/_memorize_phases/_phase_embed.py`
 - **wiring:** The write-gate `should_store` computes surprisal then applies a thermo heat boost via `thermo.apply_surprise_boost(1.0, ctx.surprise)` — surprising memories start hotter (`BC-PCd1`). The gate's `should_store` in shadow mode never drops (`BC-PCd2` — full enforcement requires `WRITE_GATE_THRESHOLD > 0`). `BC-PC1`–`BC-PC4` govern project_brief scoping and seed_project, covered by the project-context subsystem not the write gate.
 - **explanation:** This entry groups the behaviour-contract rows assigned to the predictive-coding and project-context subsystems that are exercised via the write path or write-gate logic. `BC-PCd1` (novel memory triggers surprise heat boost) is wired: `initial_heat = thermo.apply_surprise_boost(1.0, ctx.surprise)` in `phase_embed`, so high-surprisal writes receive a heat multiplier. `BC-PCd2` (should_store gates redundant writes) is shadow-only at default config — the gate computes but does not enforce. `BC-PC1`–`BC-PC4` cover project_brief and seed_project and are tracked against those tools' entries.
 
@@ -1379,7 +1379,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-CLS1`, `BC-CLS2`, `BC-CLS3`
-- **refs:** `yadgar/_shared/cls_store/__init__.py::DualStoreCLS.consolidation_cycle`, `yadgar/_shared/cls_store/clustering.py::_ClusteringMixin.find_recurring_patterns`, `yadgar/_shared/cls_store/promotion.py::_PromotionMixin._promote_pattern`, `yadgar/_shared/cls_store/patterns.py::_PatternsMixin`
+- **refs:** `yadgar/core/cls_store/__init__.py::DualStoreCLS.consolidation_cycle`, `yadgar/core/cls_store/clustering.py::_ClusteringMixin.find_recurring_patterns`, `yadgar/core/cls_store/promotion.py::_PromotionMixin._promote_pattern`, `yadgar/core/cls_store/patterns.py::_PatternsMixin`
 - **wiring:** `ConsolidationScheduler._consolidation_cycle()` → `_run_curation_phases()` → `self._cls.consolidation_cycle()`. Runs every cycle. `DualStoreCLS` is initialized in `ConsolidationScheduler.__init__()`. Pattern detection is capped at `CLS_PATTERN_MAX_CANDIDATES` most-recent episodic memories. Clusters with cosine similarity ≥ `CLUSTER_SIMILARITY_THRESHOLD` and meeting session/directory diversity requirements are promoted to semantic memories.
 - **explanation:** Implements the Go-CLS model (McClelland et al. 1995; Sun et al. 2023): episodic (hippocampal-fast) memories that recur across multiple sessions are abstracted into semantic (neocortical-slow) memories. `find_recurring_patterns()` builds a numpy pairwise cosine similarity matrix over recent episodic memories, performs greedy clustering at `CLUSTER_SIMILARITY_THRESHOLD`, and filters for clusters with ≥ 3 occurrences across ≥ 2 sessions. Qualifying clusters pass consistency checking (negation-pattern contradiction detection), then `abstract_to_schema()` generates a "Recurring pattern…" summary. The schema is promoted to a new semantic memory, episodic sources are linked via `derived_from` edges, and no episodic memories are deleted.
 
@@ -1423,8 +1423,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C4`
-- **refs:** `yadgar/_shared/sleep_compute/dream.py::_DreamMixin.dream_replay`, `yadgar/_shared/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`, `yadgar/core/consolidation/__init__.py::ConsolidationScheduler.run_nightly_consolidation`
-- **wiring:** `run_nightly_consolidation()` → `_maybe_sleep_cycle()` → `SleepComputeEngine.run_sleep_cycle()` → `dream_replay()`. This runs at most once every 6 hours (6-hour guard in `_maybe_sleep_cycle`). Also reachable via `consolidate_now(mode='full')` MCP tool. The nightly cron path was dead from v5.7.0 until v5.72 (#61, PR-1) re-wired `_maybe_sleep_cycle()` into `run_nightly_consolidation()`. DREAM_INSIGHT_MAX_AGE_DAYS is used in curation prune passes (`yadgar/_shared/curation/prune_passes.py:139`) to purge stale dream insight memories.
+- **refs:** `yadgar/core/sleep_compute/dream.py::_DreamMixin.dream_replay`, `yadgar/core/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`, `yadgar/core/consolidation/__init__.py::ConsolidationScheduler.run_nightly_consolidation`
+- **wiring:** `run_nightly_consolidation()` → `_maybe_sleep_cycle()` → `SleepComputeEngine.run_sleep_cycle()` → `dream_replay()`. This runs at most once every 6 hours (6-hour guard in `_maybe_sleep_cycle`). Also reachable via `consolidate_now(mode='full')` MCP tool. The nightly cron path was dead from v5.7.0 until v5.72 (#61, PR-1) re-wired `_maybe_sleep_cycle()` into `run_nightly_consolidation()`. DREAM_INSIGHT_MAX_AGE_DAYS is used in curation prune passes (`yadgar/core/curation/prune_passes.py:139`) to purge stale dream insight memories.
 - **explanation:** Implements offline memory replay inspired by hippocampal sharp-wave ripples during sleep. Selects up to `DREAM_REPLAY_PAIRS` random pairs of memories with embeddings that are not yet connected in the entity graph. For each pair with cosine similarity > 0.4, a weak co-occurrence link (weight=0.5) is created. Pairs with similarity > 0.7 additionally generate a synthetic "Dream connection" memory with surprise_score=0.8 and heat=0.5. These insights are pruned by the curation pass when older than `DREAM_INSIGHT_MAX_AGE_DAYS` days.
 
 ### CAP-CONS-008 — Community Detection & Cluster Summarization (sleep cycle phases 2-3)
@@ -1434,7 +1434,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C4`, `BC-VZ-R3`
-- **refs:** `yadgar/_shared/sleep_compute/community.py::_CommunityMixin.detect_communities`, `yadgar/_shared/sleep_compute/community.py::_CommunityMixin.generate_cluster_summaries`, `yadgar/_shared/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`, `yadgar/_shared/storage/cluster.py::_ClusterMixin.get_memory_clusters`, `yadgar/_shared/storage/cluster.py::_ClusterMixin.get_cluster_members`
+- **refs:** `yadgar/core/sleep_compute/community.py::_CommunityMixin.detect_communities`, `yadgar/core/sleep_compute/community.py::_CommunityMixin.generate_cluster_summaries`, `yadgar/core/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`, `yadgar/_shared/storage/cluster.py::_ClusterMixin.get_memory_clusters`, `yadgar/_shared/storage/cluster.py::_ClusterMixin.get_cluster_members`
 - **wiring:** `run_sleep_cycle()` → `detect_communities()` then `generate_cluster_summaries()`. Both run in the nightly sleep cycle gated by the 6-hour guard. `detect_communities()` builds a networkx Graph from all active entity relationships and runs Louvain community detection (fallback: label propagation). `generate_cluster_summaries()` generates text summaries and centroid embeddings for clusters with > 3 members, then groups level-1 clusters into level-2 root clusters by directory context. `FRACTAL_LEVELS` was deleted in v6 T3 — only 2 levels (community + root) are built; deeper clustering remains future work. v5.80 (#80 viz-fidelity-v2): memory_cluster viz-consumption is now LIVE — `get_memory_clusters()` + `get_cluster_members(cid)` added to `_ClusterMixin` and consumed by `GraphAPI.get_full_graph()` to emit clusters[] in the graph payload (BC-VZ-R3).
 - **explanation:** Identifies coherent memory clusters using graph-community detection on the entity co-occurrence graph. Communities (groups of entities that co-occur frequently) are stored as `memory_cluster` records, and memories mentioning those entities are assigned to clusters (via cluster_id field on memory rows). Level-2 (root) clusters group level-1 communities by dominant directory context, implementing a two-level hierarchical structure. `FRACTAL_LEVELS` was CONFIG-ONLY (deleted v6 T3) — only 2 levels are built regardless. Cluster viz-consumption was previously DORMANT (write path only); v5.80 wires the read path through CAP-VIZ-011.
 
@@ -1445,7 +1445,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C4`
-- **refs:** `yadgar/_shared/sleep_compute/embed_compress.py::_EmbedCompressMixin.reembed_stale`, `yadgar/_shared/sleep_compute/embed_compress.py::_EmbedCompressMixin.compress_old_memories`, `yadgar/_shared/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`
+- **refs:** `yadgar/core/sleep_compute/embed_compress.py::_EmbedCompressMixin.reembed_stale`, `yadgar/core/sleep_compute/embed_compress.py::_EmbedCompressMixin.compress_old_memories`, `yadgar/core/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`
 - **wiring:** `run_sleep_cycle()` → `reembed_stale()` → `compress_old_memories()`. Both run nightly in the sleep cycle. `reembed_stale()` fetches memories whose `embedding_model` differs from the current model and re-encodes them in batches of 50. `compress_old_memories()` uses a `days_threshold=30` hard-coded value. `COMPRESSION_GIST_AGE_HOURS` and `COMPRESSION_TAG_AGE_HOURS` were CONFIG-ONLY and deleted in v6 T3.
 - **explanation:** Two maintenance passes run during the nightly sleep cycle. Re-embedding updates embeddings when the active model changes. Memory compression extracts key sentences from verbose old memories (> 1000 chars, older than 30 days) using entity-pattern regex. `COMPRESSION_GIST_AGE_HOURS` and `COMPRESSION_TAG_AGE_HOURS` were never read by `compress_old_memories()` — deleted in v6 T3 (#41).
 
@@ -1456,7 +1456,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C4`
-- **refs:** `yadgar/_shared/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`, `yadgar/_shared/narrative.py::NarrativeEngine.auto_narrate`
+- **refs:** `yadgar/core/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`, `yadgar/core/narrative.py::NarrativeEngine.auto_narrate`
 - **wiring:** `run_sleep_cycle()` → `self._narrative.auto_narrate()`. `NarrativeEngine` is instantiated in `SleepComputeEngine.__init__()`. `auto_narrate()` checks if a narrative entry exists in the last `NARRATIVE_INTERVAL_HOURS` hours; if not, it generates one. Narrative entries older than `NARRATIVE_ENTRY_RETENTION_DAYS` are pruned by `_run_retention_tasks()` in the main consolidation cycle.
 - **explanation:** Generates periodic narrative summaries of recent memory activity to provide a human-readable chronicle of what the system has learned. Runs at most once per `NARRATIVE_INTERVAL_HOURS` (default 24h) as phase 6 of the nightly sleep cycle. The narrative is stored as a `narrative_entry` record and pruned after `NARRATIVE_ENTRY_RETENTION_DAYS` days (default 90). This is distinct from wiki content — it's an autobiographical memory of system activity rather than curated knowledge.
 
@@ -1467,7 +1467,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-CA2`, `BC-CA3`
-- **refs:** `yadgar/core/consolidation/causal.py::_CausalMixin._run_causal_discovery_phase`, `yadgar/_shared/causal_discovery/pc.py::pc_algorithm`, `yadgar/_shared/causal_discovery/__init__.py`
+- **refs:** `yadgar/core/consolidation/causal.py::_CausalMixin._run_causal_discovery_phase`, `yadgar/core/causal_discovery/pc.py::pc_algorithm`, `yadgar/core/causal_discovery/__init__.py`
 - **wiring:** `_consolidation_cycle()` → `_run_causal_discovery_phase()`. Runs periodically: fires when `_events_since_last_discovery >= 50` (hardcoded threshold, not CAUSAL_THRESHOLD). `CAUSAL_THRESHOLD` (default 3) controls how many times an entity must co-occur to be considered causally relevant in `CausalDiscovery.detect_causality()` — a separate simpler method. `MAX_CAUSED_BY_ROWS` bounds the `caused_by` table query. The PC algorithm is initialized in `ConsolidationScheduler.__init__()` via lazy import of `CausalDiscovery`.
 - **explanation:** Implements the PC (Peter-Clark) constraint-based causal discovery algorithm to discover directed causal relationships between entities in the knowledge graph. Builds a time-aligned binary event matrix (1-hour buckets over 168 hours) where rows = time windows and columns = entity variables. Phase 1 removes undirected edges where conditional independence is detected (Fisher's z-test). Phase 2 orients v-structures and applies Meek's rules (R1/R2/R3) to produce a Partially Directed Acyclic Graph (PDAG). Results are stored as directed and undirected edge records in the knowledge graph. Fires only when ≥ 50 new memories have been added since the last discovery run.
 
@@ -1522,7 +1522,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-MC3`
-- **refs:** `yadgar/_shared/retrieval/fusion.py`, `yadgar/_shared/curation/__init__.py::MemoryCurator._memify_derive`, `yadgar/_shared/curation/strengthen.py::_memify_derive`
+- **refs:** `yadgar/_shared/retrieval/fusion.py`, `yadgar/core/curation/__init__.py::MemoryCurator._memify_derive`, `yadgar/core/curation/strengthen.py::_memify_derive`
 - **wiring:** `DERIVED_BELIEFS_ENABLED` is checked in `yadgar/_shared/retrieval/fusion.py:422` (getattr default False — note mismatch with config default True). `_memify_derive()` is called from `MemoryCurator.memify_cycle()` → called from `_run_curation_phases()` during each consolidation cycle. `DERIVED_BELIEF_RETENTION_DAYS` controls pruning of `derived_belief` table rows in `_run_retention_tasks()`.
 - **explanation:** Derives new beliefs by finding co-occurring entity clusters in the memory store and creating summary "derived" memories tagged `["derived", "auto-generated"]`. The derive pass scans entities that frequently appear together, generates a co-occurrence summary, and inserts it as a new episodic memory with importance=0.6. Derived beliefs are pruned from the `derived_belief` table after `DERIVED_BELIEF_RETENTION_DAYS` days. The retrieval path checks `DERIVED_BELIEFS_ENABLED` to decide whether to include derived belief results in fusion — note a potential config default mismatch between config.py (True) and fusion.py (getattr default False).
 
@@ -1577,7 +1577,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C3`
-- **refs:** `yadgar/_shared/curation/prune_passes.py::_memify_prune`, `yadgar/_shared/curation/__init__.py::MemoryCurator.memify_cycle`
+- **refs:** `yadgar/core/curation/prune_passes.py::_memify_prune`, `yadgar/core/curation/__init__.py::MemoryCurator.memify_cycle`
 - **wiring:** `_run_curation_phases()` → `self._curator.memify_cycle()` → `_memify_prune()`. Runs every consolidation cycle. Operates in multiple passes: (1) cold unaccessed auto-generated memories, (2) cold unaccessed auto-abstracted, (3) cold unaccessed dream insights, (4) hard-cap dream insights by `DREAM_INSIGHT_MAX_AGE_DAYS`, (5) stale action-stream memories by recency (v5.66), (6) degenerate auto-abstracted schemas. Protected memories and recently-accessed memories are always spared.
 - **explanation:** Implements the retention policy for system-generated (non-user) memories. Pruning is structured in ordered passes to catch different memory classes: action-stream summaries use a combined created_at + last_accessed recency check (v5.66 fix — a single accidental recall no longer grants immortality), dream insights have a hard age cap regardless of heat, and degenerate CLS schemas (no meaningful subject) are deleted unconditionally. User-created memories are never touched by this pass; the `cold_retention` pass (CAP-CONS-005) handles those via separate gated logic.
 
@@ -1698,7 +1698,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-CU3`
-- **refs:** `yadgar/_shared/curation/__init__.py::MemoryCurator.curate_on_remember`, `yadgar/_shared/curation/ingestion.py::find_similar_memories`
+- **refs:** `yadgar/core/curation/__init__.py::MemoryCurator.curate_on_remember`, `yadgar/core/curation/ingestion.py::find_similar_memories`
 - **wiring:** `memorize()` → `MemoryCurator.curate_on_remember()` → `find_similar_memories()` (cosine search) → for any pair with similarity ≥ `CURATION_SIMILARITY_THRESHOLD` AND textual Jaccard > 0.5, existing memory is merged via `merge_memory()`. Also used by `cls_store/promotion.py` for cluster promotion decisions.
 - **explanation:** Controls the cosine similarity threshold above which two memories with sufficient textual overlap are merged (deduplicated) rather than stored as separate records. Default 0.95 (near-exact duplicates only). The merge operation keeps the highest-heat memory, combining tags and updating the embedding. This prevents accumulating semantically-identical records across sessions. Lower values cause more aggressive merging; the textual-overlap guard prevents merging memories that score high on embeddings but carry genuinely different information (e.g. two functions with similar names).
 
@@ -1709,7 +1709,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-CU1`, `BC-CU2`
-- **refs:** `yadgar/_shared/curation/prune_passes.py`, `yadgar/_shared/curation/__init__.py`
+- **refs:** `yadgar/core/curation/prune_passes.py`, `yadgar/core/curation/__init__.py`
 - **wiring:** Called from `MemoryCurator` during the consolidation cycle (`consolidate_now` → memify self-improvement → `_memify_prune()`). The co-occurrence strengthen pass (`_memify_strengthen`) and recency prune gate (`_memify_prune`) run as part of the nightly or on-demand consolidation cycle.
 - **explanation:** BC-CU1 covers the co-occurrence memify pass: memories that co-occur frequently are strengthened (heat boost) and stamped with the originating directory context (v5.64). BC-CU2 covers the recency prune gate (v5.66): very old, cold memories below a recency threshold are pruned during the consolidation cycle. Both passes are components of the `MemoryCurator` self-improvement cycle alongside the derive and reweight passes.
 

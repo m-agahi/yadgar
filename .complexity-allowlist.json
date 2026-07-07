@@ -33,7 +33,7 @@
     "added_by": "recall-backend-train1"
   },
   {
-    "path": "yadgar/_shared/causal_discovery/pc.py",
+    "path": "yadgar/core/causal_discovery/pc.py",
     "function": "pc_algorithm",
     "lineno": 105,
     "metrics": {

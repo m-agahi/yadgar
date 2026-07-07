@@ -6,9 +6,9 @@ import logging
 
 import yadgar._shared.runtime.lifecycle as _lifecycle
 import yadgar._shared.runtime.state as _st
-from yadgar._shared.curation import CurateParams
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.tracing import trace_span
+from yadgar.core.curation import CurateParams
 from yadgar.core.server._helpers import _file_hash
 
 from .context import MemorizeContext

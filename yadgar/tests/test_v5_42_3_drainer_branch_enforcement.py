@@ -109,8 +109,8 @@ def bare_drainer(tmp_path):
 @pytest.fixture
 def patched_drainer(tmp_path):
     """FileQueue + QueueDrainer with server lifecycle patches (for integration tests)."""
-    import yadgar._shared.runtime.lifecycle as _lc
     import yadgar._shared.runtime.state as _state_mod
+    import yadgar.core.lifecycle as _cl
 
     real_fq = FileQueue(tmp_path)
     drainer = QueueDrainer(
@@ -123,7 +123,7 @@ def patched_drainer(tmp_path):
         return real_fq
 
     with (
-        patch.object(_lc, "_get_file_queue", _get_fq),
+        patch.object(_cl, "_get_file_queue", _get_fq),
         patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
@@ -328,7 +328,7 @@ class TestDlqRequeueMissingBranch:
 
         with (
             patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
-            patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
+            patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
         ):
             result = server.dlq_requeue(filename=fname)
 
@@ -355,7 +355,7 @@ class TestDlqRequeueMissingBranch:
 
         with (
             patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
-            patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
+            patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
         ):
             result = server.dlq_requeue(filename=fname, force=True)
 

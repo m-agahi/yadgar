@@ -88,8 +88,8 @@ def _drainer_env(tmp_path):
     )
     real_fq = FileQueue(tmp_path)
 
-    import yadgar._shared.runtime.lifecycle as _lc
     import yadgar._shared.runtime.state as _state_mod
+    import yadgar.core.lifecycle as _cl
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -103,7 +103,7 @@ def _drainer_env(tmp_path):
     # Patch _get_file_queue in all the places that hold a direct reference.
     # v5.42.3: also patch _detect_branch so wiki_add calls without branch_hint work.
     with (
-        patch.object(_lc, "_get_file_queue", _get_fq),
+        patch.object(_cl, "_get_file_queue", _get_fq),
         patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),

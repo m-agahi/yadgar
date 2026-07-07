@@ -4,10 +4,10 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from yadgar._shared.cls_store import _is_degenerate_auto_abstracted
 from yadgar._shared.config import Settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage import StorageEngine
+from yadgar.core.cls_store import _is_degenerate_auto_abstracted
 
 logger = logging.getLogger(__name__)
 

@@ -149,7 +149,7 @@ class _DLQMixin:
 
         # 3. Degenerate content filter (v4.9 guard)
         try:
-            from yadgar._shared.cls_store import _is_degenerate_auto_abstracted
+            from yadgar.core.cls_store import _is_degenerate_auto_abstracted
 
             if _is_degenerate_auto_abstracted(p.get("content", "")):
                 return "degenerate_content"

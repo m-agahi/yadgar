@@ -13,8 +13,10 @@ import os
 
 import yadgar.core.file_queue as _file_queue
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.runtime.lifecycle import _get_file_queue
 from yadgar._shared.tracing import trace_span
+
+# R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
+from yadgar.core.lifecycle import _get_file_queue
 
 from .context import MemorizeContext
 

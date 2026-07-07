@@ -10,28 +10,28 @@ Based on:
 import logging
 import time
 
-from yadgar._shared.cls_store.clustering import _ClusteringMixin
-from yadgar._shared.cls_store.patterns import (
-    _ARCHITECTURE_KEYWORDS,
-    _DECISION_KEYWORDS,
-    _SPECIFIC_INDICATORS,
-    _PatternsMixin,
-)
-from yadgar._shared.cls_store.patterns import (
-    _has_ascii_identifier_token as _has_ascii_identifier_token,
-)
-from yadgar._shared.cls_store.patterns import (
-    _has_meaningful_token as _has_meaningful_token,
-)
-from yadgar._shared.cls_store.patterns import (
-    _is_degenerate_auto_abstracted as _is_degenerate_auto_abstracted,
-)
-from yadgar._shared.cls_store.promotion import _PromotionMixin
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.secrets import SecretLeakBlocked
 from yadgar._shared.storage import StorageEngine
+from yadgar.core.cls_store.clustering import _ClusteringMixin
+from yadgar.core.cls_store.patterns import (
+    _ARCHITECTURE_KEYWORDS,
+    _DECISION_KEYWORDS,
+    _SPECIFIC_INDICATORS,
+    _PatternsMixin,
+)
+from yadgar.core.cls_store.patterns import (
+    _has_ascii_identifier_token as _has_ascii_identifier_token,
+)
+from yadgar.core.cls_store.patterns import (
+    _has_meaningful_token as _has_meaningful_token,
+)
+from yadgar.core.cls_store.patterns import (
+    _is_degenerate_auto_abstracted as _is_degenerate_auto_abstracted,
+)
+from yadgar.core.cls_store.promotion import _PromotionMixin
 
 logger = logging.getLogger(__name__)
 

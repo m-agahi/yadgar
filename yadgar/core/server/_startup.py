@@ -24,13 +24,20 @@ import yadgar._shared.paths as _paths
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.runtime.lifecycle import (
-    _emit_startup_diagnostics,
-    _maybe_auto_check_for_update,
-    _signal_handler,
-    init_engines,
-    shutdown,
-)
+from yadgar._shared.runtime.lifecycle import _emit_startup_diagnostics
+
+# R2a Car B: main() must build the FULL 24-engine set — route through the CORE
+# composition root (shared engines + 9 core-only), not the shared-only lifecycle
+# entry.
+from yadgar.core.bootstrap import core_init_engines as init_engines
+from yadgar.core.daemons import _maybe_auto_check_for_update  # R2a Car D1
+
+# R2a Car D2: the signal handler + graceful-shutdown wrapper moved to
+# yadgar.core.lifecycle (they import yadgar.core.sensitive_lock / sd_notify / drain
+# — formerly the last _shared → core edges). main() binds the CORE handler and the
+# finally-block calls the CORE shutdown wrapper (which injects the sd_notify/drain
+# callbacks into the shared teardown at their exact original positions).
+from yadgar.core.lifecycle import _signal_handler, shutdown
 
 logger = logging.getLogger(__name__)
 

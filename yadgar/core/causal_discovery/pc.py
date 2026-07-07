@@ -7,11 +7,11 @@ from itertools import combinations
 
 import numpy as np
 
-from yadgar._shared.causal_discovery.independence import conditional_independence_test
-from yadgar._shared.causal_discovery.meek import meek_r1, meek_r2, meek_r3
 from yadgar._shared.config import Settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage import StorageEngine
+from yadgar.core.causal_discovery.independence import conditional_independence_test
+from yadgar.core.causal_discovery.meek import meek_r1, meek_r2, meek_r3
 
 logger = logging.getLogger(__name__)
 

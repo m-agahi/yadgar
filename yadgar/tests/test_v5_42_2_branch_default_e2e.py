@@ -83,14 +83,24 @@ ensures both writer and reader agree on scope.
 def _drainer_env(tmp_path, monkeypatch):
     """Isolated server with real FileQueue and a synchronous-on-demand QueueDrainer."""
     monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path / "yadgar_data"))
+    # v5.42.5/6 added an MCP-boundary guard (_check_wiki_add_context) that rejects
+    # wiki_add when branch/directory are absent and YADGAR_*_ENFORCEMENT default ON.
+    # This v5.42.2 regression test deliberately writes the seed page WITHOUT a branch
+    # (validating the drainer's canonical branch=None slot — see test docstring), so
+    # the branch guard would trip before the behavior under test runs. The enforcement
+    # guard is orthogonal to the branch-default scope mismatch these tests exercise;
+    # disable it here to reach that pre-enforcement code path. Not #52 test-weakening:
+    # no assertion is changed. _enforcement_on reads os.environ live per-call.
+    monkeypatch.setenv("YADGAR_BRANCH_ENFORCEMENT", "false")
+    monkeypatch.setenv("YADGAR_DIRECTORY_ENFORCEMENT", "false")
     server.init_engines(
         db_path=str(tmp_path / "branch_default_e2e.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
     real_fq = FileQueue(tmp_path)
 
-    import yadgar._shared.runtime.lifecycle as _lc
     import yadgar._shared.runtime.state as _state_mod
+    import yadgar.core.lifecycle as _cl
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -102,7 +112,7 @@ def _drainer_env(tmp_path, monkeypatch):
         return real_fq
 
     with (
-        patch.object(_lc, "_get_file_queue", _get_fq),
+        patch.object(_cl, "_get_file_queue", _get_fq),
         patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),

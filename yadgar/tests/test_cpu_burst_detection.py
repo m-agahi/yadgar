@@ -140,7 +140,7 @@ _YADGAR_SRC = _REPO_ROOT / "yadgar"
 # Add to this set only with explicit design review.
 _EXPECTED_SLEEP_CYCLE_CALLERS = frozenset(
     {
-        "_shared/sleep_compute/__init__.py",  # SleepEngine.run_sleep_cycle() definition
+        "core/sleep_compute/__init__.py",  # SleepEngine.run_sleep_cycle() definition
         "core/consolidation/orchestrator.py",  # _maybe_sleep_cycle — calls self._sleep_engine.run_sleep_cycle()
         "core/server/tools/admin_other.py",  # consolidate_now(mode='full') explicit MCP tool
     }
