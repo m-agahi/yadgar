@@ -1,7 +1,7 @@
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar._shared.staleness import StalenessDetector
+from yadgar.core.staleness import StalenessDetector
 
 
 @pytest.fixture(scope="module")

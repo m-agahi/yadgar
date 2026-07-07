@@ -157,8 +157,8 @@ class TestDrainStageMsMetric:
 class TestCuratorMetrics:
     @pytest.fixture
     def curator(self, tmp_storage, stub_embeddings, tmp_settings):
-        from yadgar._shared.curation import MemoryCurator
         from yadgar._shared.thermodynamics import MemoryThermodynamics
+        from yadgar.core.curation import MemoryCurator
 
         thermo = MemoryThermodynamics(tmp_storage, stub_embeddings, tmp_settings)
         return MemoryCurator(tmp_storage, stub_embeddings, thermo, tmp_settings)

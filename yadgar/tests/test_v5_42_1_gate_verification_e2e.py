@@ -88,14 +88,23 @@ All wiki ops target <100ms latency.
 def _drainer_env(tmp_path, monkeypatch):
     """Isolated server with real FileQueue and a synchronous-on-demand QueueDrainer."""
     monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path / "yadgar_data"))
+    # v5.42.5/6 added an MCP-boundary guard (_check_wiki_add_context) that rejects
+    # wiki_add when branch/directory are absent and YADGAR_*_ENFORCEMENT default ON.
+    # This v5.42.1 gate-verification test drives wiki_add without a directory arg;
+    # the guard would trip before the similarity-gate behavior under test runs.
+    # Enforcement is orthogonal to the backfill/gate scenario exercised here; disable
+    # it to reach that pre-enforcement code path. Not #52 test-weakening: no assertion
+    # is changed. _enforcement_on reads os.environ live per-call.
+    monkeypatch.setenv("YADGAR_BRANCH_ENFORCEMENT", "false")
+    monkeypatch.setenv("YADGAR_DIRECTORY_ENFORCEMENT", "false")
     server.init_engines(
         db_path=str(tmp_path / "gate_verification_e2e.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
     real_fq = FileQueue(tmp_path)
 
-    import yadgar._shared.runtime.lifecycle as _lc
     import yadgar._shared.runtime.state as _state_mod
+    import yadgar.core.lifecycle as _cl
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -107,7 +116,7 @@ def _drainer_env(tmp_path, monkeypatch):
         return real_fq
 
     with (
-        patch.object(_lc, "_get_file_queue", _get_fq),
+        patch.object(_cl, "_get_file_queue", _get_fq),
         patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
@@ -190,7 +199,7 @@ def test_v5_42_1_gate_fires_post_backfill_e2e(_drainer_env):
 
     # ── Step 5: dlq_inspect(filter="rejections") — expect 1 entry ────────────
     with (
-        patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
+        patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
         patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
     ):
         rejections = server.dlq_inspect(filter="rejections")
@@ -211,7 +220,7 @@ def test_v5_42_1_gate_fires_post_backfill_e2e(_drainer_env):
 
     # ── Step 6: dlq_dismiss the entry ────────────────────────────────────────
     with (
-        patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
+        patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
         patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
     ):
         dismiss_result = server.dlq_dismiss(filename=rejection["file"])

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.114.0"
+version = "5.115.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -117,20 +117,20 @@ ignore = [
 # b27d218 enabled ruff --select=C901,PLR0913 without grandfathering existing code.
 # Each entry is technical debt; refactor target: v5.4.4.
 # DO NOT add new entries here — fix violations in new code.
-"yadgar/_shared/causal_discovery/pc.py" = ["C901"]
+"yadgar/core/causal_discovery/pc.py" = ["C901"]
 "yadgar/core/cli/daemon.py" = ["C901"]
 "yadgar/core/cli/stats.py" = ["C901"]
-"yadgar/_shared/cls_store/clustering.py" = ["C901"]
+"yadgar/core/cls_store/clustering.py" = ["C901"]
 "yadgar/core/consolidation/cls.py" = ["C901"]
-"yadgar/_shared/curation/__init__.py" = ["PLR0913"]
-"yadgar/_shared/curation/ingestion.py" = ["PLR0913"]
-"yadgar/_shared/curation/prune_passes.py" = ["C901"]
+"yadgar/core/curation/__init__.py" = ["PLR0913"]
+"yadgar/core/curation/ingestion.py" = ["PLR0913"]
+"yadgar/core/curation/prune_passes.py" = ["C901"]
 "yadgar/core/graph_api.py" = ["C901"]
 "yadgar/core/install_hooks_lib.py" = ["C901"]
 "yadgar/_shared/metacognition/cognitive_load.py" = ["C901"]
 "yadgar/_shared/metacognition/coverage.py" = ["C901"]
 "yadgar/_shared/metacognition/gap_detection.py" = ["C901"]
-"yadgar/_shared/predictive_coding.py" = ["C901"]
+"yadgar/core/predictive_coding.py" = ["C901"]
 "yadgar/_shared/restoration.py" = ["C901", "PLR0913"]
 "yadgar/_shared/retrieval/_reranking_heuristic.py" = ["C901"]
 "yadgar/_shared/retrieval/fusion.py" = ["C901"]
@@ -258,19 +258,6 @@ forbidden_modules = ["yadgar.core", "yadgar.backend"]
 ignore_imports = [
   "yadgar._shared.runtime.lifecycle -> yadgar.backend.ml_client",
   "yadgar._shared.runtime.lifecycle -> yadgar.backend.cache",
-  # folder-split #17 composition-root: init_engines/_state wire the FULL
-  # engine set incl. CORE-only daemons (consolidation/file_queue/viz/etc). A
-  # composition root spans layers by nature (same as the backend DI waiver above).
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.consolidation",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.drain",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.file_queue",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.graph_api",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.sd_notify",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.sensitive_lock",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.update.check",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.viz_server",
-  "yadgar._shared.runtime.state -> yadgar.core.consolidation",
-  "yadgar._shared.runtime.state -> yadgar.core.file_queue",
 ]
 
 [[tool.importlinter.contracts]]
@@ -278,19 +265,8 @@ name = "backend must not import core"
 type = "forbidden"
 source_modules = ["yadgar.backend"]
 forbidden_modules = ["yadgar.core"]
-ignore_imports = [
-  # composition-root transitive chain (backend -> _shared.runtime -> core):
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.consolidation",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.drain",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.file_queue",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.graph_api",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.sd_notify",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.sensitive_lock",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.update.check",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.viz_server",
-  "yadgar._shared.runtime.state -> yadgar.core.consolidation",
-  "yadgar._shared.runtime.state -> yadgar.core.file_queue",
-]
+# R2a Car D2: the composition-root transitive chain (backend -> _shared.runtime ->
+# core) is GONE — _shared.runtime.lifecycle now imports ZERO core. No waiver needed.
 
 [[tool.importlinter.contracts]]
 name = "core and backend must not import each other's internals"
@@ -309,19 +285,6 @@ forbidden_modules = ["yadgar.backend"]
 ignore_imports = [
   "yadgar._shared.runtime.lifecycle -> yadgar.backend.ml_client",
   "yadgar._shared.runtime.lifecycle -> yadgar.backend.cache",
-  # folder-split #17 composition-root: init_engines/_state wire the FULL
-  # engine set incl. CORE-only daemons (consolidation/file_queue/viz/etc). A
-  # composition root spans layers by nature (same as the backend DI waiver above).
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.consolidation",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.drain",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.file_queue",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.graph_api",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.sd_notify",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.sensitive_lock",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.update.check",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.viz_server",
-  "yadgar._shared.runtime.state -> yadgar.core.consolidation",
-  "yadgar._shared.runtime.state -> yadgar.core.file_queue",
 ]
 
 [[tool.importlinter.contracts]]
@@ -337,17 +300,4 @@ containers = ["yadgar"]
 ignore_imports = [
   "yadgar._shared.runtime.lifecycle -> yadgar.backend.ml_client",
   "yadgar._shared.runtime.lifecycle -> yadgar.backend.cache",
-  # folder-split #17 composition-root: init_engines/_state wire the FULL
-  # engine set incl. CORE-only daemons (consolidation/file_queue/viz/etc). A
-  # composition root spans layers by nature (same as the backend DI waiver above).
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.consolidation",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.drain",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.file_queue",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.graph_api",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.sd_notify",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.sensitive_lock",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.update.check",
-  "yadgar._shared.runtime.lifecycle -> yadgar.core.viz_server",
-  "yadgar._shared.runtime.state -> yadgar.core.consolidation",
-  "yadgar._shared.runtime.state -> yadgar.core.file_queue",
 ]

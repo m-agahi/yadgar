@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar._shared.prospective import ProspectiveMemoryEngine
+from yadgar.core.prospective import ProspectiveMemoryEngine
 
 
 @pytest.fixture(scope="module")

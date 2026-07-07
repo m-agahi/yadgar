@@ -7,12 +7,15 @@ import os
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.runtime.lifecycle import _get_file_queue, _get_storage
+from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.secrets import gate_or_reject
 from yadgar._shared.storage.directory import is_directory_eligible
 from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core.file_queue import is_draining
 from yadgar.core.file_queue.dlq import _enforcement_on, _inc_relaxed
+
+# R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
+from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
 from yadgar.core.server._helpers import _has_unpaired_surrogate, _push_event
 

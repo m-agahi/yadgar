@@ -6,7 +6,9 @@ import logging
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.runtime.lifecycle import _get_file_queue
+
+# R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
+from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
 
 logger = logging.getLogger(__name__)

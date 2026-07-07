@@ -684,7 +684,8 @@ class TestBCE3_SensitiveJobLock:
     def test_external_shutdown_refused_while_locked(self, tmp_path, monkeypatch):
         import json
 
-        from yadgar._shared.runtime import lifecycle
+        # R2a Car D2: _signal_handler + shutdown moved to yadgar.core.lifecycle.
+        from yadgar.core import lifecycle
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(parents=True, exist_ok=True)

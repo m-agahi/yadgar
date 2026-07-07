@@ -2,7 +2,7 @@
 
 import pytest
 
-from yadgar._shared.cls_store.patterns import _PatternsMixin
+from yadgar.core.cls_store.patterns import _PatternsMixin
 
 
 class _ConcretePatterns(_PatternsMixin):

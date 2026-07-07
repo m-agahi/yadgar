@@ -2,10 +2,10 @@
 
 import pytest
 
-from yadgar._shared.cls_store import DualStoreCLS
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
+from yadgar.core.cls_store import DualStoreCLS
 
 
 @pytest.fixture
@@ -969,19 +969,19 @@ class TestHasAsciiIdentifierToken:
 
     def test_rejects_bare_frequently_modified_together(self):
         """'frequently modified together' has no identifier → rejected."""
-        from yadgar._shared.cls_store import _has_ascii_identifier_token
+        from yadgar.core.cls_store import _has_ascii_identifier_token
 
         assert _has_ascii_identifier_token("frequently modified together") is False
 
     def test_rejects_short_body(self):
         """Body shorter than 20 chars is rejected regardless of content."""
-        from yadgar._shared.cls_store import _has_ascii_identifier_token
+        from yadgar.core.cls_store import _has_ascii_identifier_token
 
         assert _has_ascii_identifier_token("short body") is False
 
     def test_accepts_python_path(self):
         """Body containing a .py file path is accepted."""
-        from yadgar._shared.cls_store import _has_ascii_identifier_token
+        from yadgar.core.cls_store import _has_ascii_identifier_token
 
         assert (
             _has_ascii_identifier_token(
@@ -992,7 +992,7 @@ class TestHasAsciiIdentifierToken:
 
     def test_accepts_json_extension(self):
         """Body containing a .json file is accepted."""
-        from yadgar._shared.cls_store import _has_ascii_identifier_token
+        from yadgar.core.cls_store import _has_ascii_identifier_token
 
         assert (
             _has_ascii_identifier_token(
@@ -1003,7 +1003,7 @@ class TestHasAsciiIdentifierToken:
 
     def test_accepts_long_python_identifier(self):
         """Body with a Python identifier longer than 3 chars is accepted."""
-        from yadgar._shared.cls_store import _has_ascii_identifier_token
+        from yadgar.core.cls_store import _has_ascii_identifier_token
 
         assert (
             _has_ascii_identifier_token("consolidation_cycle and embedding_engine used frequently")
@@ -1012,7 +1012,7 @@ class TestHasAsciiIdentifierToken:
 
     def test_rejects_stop_words_only(self):
         """Pure stop-word body rejected."""
-        from yadgar._shared.cls_store import _has_ascii_identifier_token
+        from yadgar.core.cls_store import _has_ascii_identifier_token
 
         assert (
             _has_ascii_identifier_token("and the for with that this from was were frequently")
@@ -1025,7 +1025,7 @@ class TestIsDegenerateAutoAbstracted:
 
     def test_tags_suffix_variant_detected(self):
         """Realistic emission shape with [tags: ...] suffix IS degenerate."""
-        from yadgar._shared.cls_store import _is_degenerate_auto_abstracted
+        from yadgar.core.cls_store import _is_degenerate_auto_abstracted
 
         content = (
             "Recurring pattern across 27 observations: frequently modified together"
@@ -1042,7 +1042,7 @@ class TestIsDegenerateAutoAbstracted:
         ASCII identifier tokens, so _has_ascii_identifier_token returns False.
         Condition 2 must only fire when the Recurring prefix was present.
         """
-        from yadgar._shared.cls_store import _is_degenerate_auto_abstracted
+        from yadgar.core.cls_store import _is_degenerate_auto_abstracted
 
         content = "Часто изменяется вместе с другим файлом в проекте"
         assert _is_degenerate_auto_abstracted(content) is False, (
@@ -1051,7 +1051,7 @@ class TestIsDegenerateAutoAbstracted:
 
     def test_non_recurring_prefix_arabic_not_degenerate(self):
         """Arabic script content without Recurring prefix must not be degenerate."""
-        from yadgar._shared.cls_store import _is_degenerate_auto_abstracted
+        from yadgar.core.cls_store import _is_degenerate_auto_abstracted
 
         content = "يتم تعديله بشكل متكرر مع ملفات أخرى في المشروع"
         assert _is_degenerate_auto_abstracted(content) is False, (
@@ -1066,7 +1066,7 @@ class TestIsDegenerateAutoAbstracted:
         must not delete Russian/Arabic/Japanese/Greek/etc content just because it
         lacks ASCII identifier tokens — Unicode letter runs are meaningful tokens too.
         """
-        from yadgar._shared.cls_store import _is_degenerate_auto_abstracted
+        from yadgar.core.cls_store import _is_degenerate_auto_abstracted
 
         content = (
             "Recurring pattern across 5 observations: часто изменяется вместе с другими файлами"
@@ -1078,7 +1078,7 @@ class TestIsDegenerateAutoAbstracted:
 
     def test_recurring_prefix_arabic_body_NOT_degenerate(self):
         """Recurring prefix + Arabic body must NOT be flagged as degenerate."""
-        from yadgar._shared.cls_store import _is_degenerate_auto_abstracted
+        from yadgar.core.cls_store import _is_degenerate_auto_abstracted
 
         content = "Recurring pattern across 3 observations: يتم تعديله بشكل متكرر مع ملفات أخرى"
         assert _is_degenerate_auto_abstracted(content) is False, (
@@ -1087,7 +1087,7 @@ class TestIsDegenerateAutoAbstracted:
 
     def test_recurring_prefix_japanese_body_NOT_degenerate(self):
         """Recurring prefix + Japanese body must NOT be flagged as degenerate."""
-        from yadgar._shared.cls_store import _is_degenerate_auto_abstracted
+        from yadgar.core.cls_store import _is_degenerate_auto_abstracted
 
         content = "Recurring pattern across 4 observations: 頻繁に変更されるモジュール"
         assert _is_degenerate_auto_abstracted(content) is False, (

@@ -139,9 +139,10 @@ class TestWikiAddForwardsTagsToGate:
         storage_mock.get_wiki_page_by_slug.return_value = None
 
         import yadgar._shared.runtime.lifecycle as _lc
+        import yadgar.core.lifecycle as _cl
 
         monkeypatch.setattr(_lc, "_get_storage", lambda: storage_mock)
-        monkeypatch.setattr(_lc, "_get_file_queue", lambda: MagicMock())
+        monkeypatch.setattr(_cl, "_get_file_queue", lambda: MagicMock())
 
         from yadgar.core.server.tools.wiki import wiki_add
 

@@ -6,9 +6,9 @@ import pytest
 
 from yadgar._shared.config import Settings
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.predictive_coding import WriteGate
 from yadgar._shared.retrieval import Retriever
 from yadgar._shared.storage import StorageEngine
+from yadgar.core.predictive_coding import WriteGate
 
 # ---------------------------------------------------------------------------
 # v5.54.5 B2: integration tests in this module call memorize() with /tmp/...

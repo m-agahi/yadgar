@@ -40,16 +40,16 @@ class TestVizBindHost:
     """lifecycle.py auto-start of viz_server must pass settings.HOST."""
 
     def test_lifecycle_viz_thread_reads_settings_host(self) -> None:
-        """Source-level assertion: lifecycle uses settings.HOST for viz bind."""
-        from yadgar._shared.runtime import lifecycle
+        """Source-level assertion: viz thread uses settings.HOST for viz bind."""
+        from yadgar.core import daemons
 
-        src = open(lifecycle.__file__).read()
+        src = open(daemons.__file__).read()
         # Pin that the viz thread now picks host from settings, not hardcoded.
         assert 'getattr(_settings, "HOST"' in src or "_settings.HOST" in src, (
-            "lifecycle.py viz thread must read host from settings"
+            "core/daemons.py viz thread must read host from settings"
         )
         # Pin that run_viz_server is called with host= kwarg.
-        assert "run_viz_server(host=" in src, "lifecycle.py must pass host= to run_viz_server"
+        assert "run_viz_server(host=" in src, "core/daemons.py must pass host= to run_viz_server"
 
     def test_viz_server_signature_accepts_host(self) -> None:
         """run_viz_server must accept a host kwarg (regression check)."""

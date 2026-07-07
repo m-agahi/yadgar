@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar._shared.staleness import StalenessDetector, _FileChangeHandler
+from yadgar.core.staleness import StalenessDetector, _FileChangeHandler
 
 
 @pytest.fixture()

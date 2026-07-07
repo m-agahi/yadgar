@@ -2,9 +2,9 @@
 
 import logging
 
-from yadgar._shared.cls_store.patterns import _is_degenerate_auto_abstracted
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage.directory import dominant_directory
+from yadgar.core.cls_store.patterns import _is_degenerate_auto_abstracted
 
 logger = logging.getLogger(__name__)
 

@@ -7,19 +7,19 @@ import pytest
 
 from yadgar._shared.astrocyte_pool import AstrocytePool
 from yadgar._shared.config import Settings
-from yadgar._shared.curation import CurateParams, MemoryCurator
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.narrative import NarrativeEngine
-from yadgar._shared.prospective import ProspectiveMemoryEngine
 from yadgar._shared.retrieval import Retriever
 from yadgar._shared.sensory_buffer import ActionLogger
-from yadgar._shared.sleep_compute import SleepComputeEngine
-from yadgar._shared.staleness import StalenessDetector
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
 from yadgar.core import server
 from yadgar.core.consolidation import ConsolidationScheduler
+from yadgar.core.curation import CurateParams, MemoryCurator
+from yadgar.core.narrative import NarrativeEngine
+from yadgar.core.prospective import ProspectiveMemoryEngine
+from yadgar.core.sleep_compute import SleepComputeEngine
+from yadgar.core.staleness import StalenessDetector
 from yadgar.tests.conftest import memorize_sync
 
 # ── Fixtures ──────────────────────────────────────────────────────────

@@ -65,7 +65,7 @@ from benchmarks.run_longmemeval import (
 )
 from yadgar.core._surreal_runner import teardown_surreal_proc
 from yadgar._shared.config import Settings
-from yadgar._shared.curation import MemoryCurator
+from yadgar.core.curation import MemoryCurator
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.retrieval import Retriever

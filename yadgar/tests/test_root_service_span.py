@@ -181,7 +181,7 @@ def test_restoration_anchor_memory_sentinel():
 
 
 def test_staleness_scan_directory_sentinel():
-    from yadgar._shared.staleness import StalenessDetector
+    from yadgar.core.staleness import StalenessDetector
 
     assert _has_span(StalenessDetector.scan_directory)
 
@@ -192,7 +192,7 @@ def test_staleness_scan_directory_sentinel():
 
 
 def test_narrative_generate_narrative_sentinel():
-    from yadgar._shared.narrative import NarrativeEngine
+    from yadgar.core.narrative import NarrativeEngine
 
     assert _has_span(NarrativeEngine.generate_narrative)
 
@@ -214,7 +214,7 @@ def test_conflict_resolver_resolve_sentinel():
 
 
 def test_prospective_create_trigger_sentinel():
-    from yadgar._shared.prospective import ProspectiveMemoryEngine
+    from yadgar.core.prospective import ProspectiveMemoryEngine
 
     assert _has_span(ProspectiveMemoryEngine.create_trigger)
 

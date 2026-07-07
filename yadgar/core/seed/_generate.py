@@ -379,11 +379,11 @@ def seed_project(
     own_storage = storage is None
     if own_storage:
         from yadgar._shared.config import Settings
-        from yadgar._shared.curation import MemoryCurator
         from yadgar._shared.embeddings import EmbeddingEngine
         from yadgar._shared.knowledge_graph import KnowledgeGraph
         from yadgar._shared.storage import StorageEngine
         from yadgar._shared.thermodynamics import MemoryThermodynamics
+        from yadgar.core.curation import MemoryCurator
 
         settings = Settings()
         storage = StorageEngine(db_path or settings.DB_PATH)

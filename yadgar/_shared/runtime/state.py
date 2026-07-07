@@ -11,61 +11,58 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import OrderedDict, deque
-from typing import TYPE_CHECKING
+from typing import Any
 
 from yadgar._shared.astrocyte_pool import AstrocytePool
-from yadgar._shared.causal_discovery import CausalDiscovery
-from yadgar._shared.cls_store import DualStoreCLS
 from yadgar._shared.cognitive_map import CognitiveMap
 from yadgar._shared.config import resolve_knob
-from yadgar._shared.curation import MemoryCurator
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.engram import EngramAllocator
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.metacognition import MetaCognition
-from yadgar._shared.narrative import NarrativeEngine
-from yadgar._shared.predictive_coding import WriteGate
-from yadgar._shared.prospective import ProspectiveMemoryEngine
 from yadgar._shared.rate_limit import TokenBucketRateLimiter
 from yadgar._shared.restoration import CheckpointRestore
 from yadgar._shared.retrieval import Retriever
 from yadgar._shared.rules_engine import RulesEngine
 from yadgar._shared.sensory_buffer import ActionLogger
-from yadgar._shared.sleep_compute import SleepComputeEngine
-from yadgar._shared.staleness import StalenessDetector
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
 from yadgar._shared.wiki import WikiStore
-from yadgar.core.consolidation import ConsolidationScheduler
 
-if TYPE_CHECKING:
-    from yadgar.core.file_queue import FileQueue, QueueDrainer
+# R2a Car B/C: the core-only engine slots are annotated `Any` so this shared leaf
+# module carries NO `yadgar.core` import. ConsolidationScheduler
+# (yadgar.core.consolidation), FileQueue/QueueDrainer (yadgar.core.file_queue),
+# and the 8 core-only engines — StalenessDetector, MemoryCurator,
+# ProspectiveMemoryEngine, NarrativeEngine, SleepComputeEngine, WriteGate,
+# DualStoreCLS, CausalDiscovery (all yadgar.core.*) — are constructed by
+# core/bootstrap + lifecycle; the concrete types are not needed at the
+# slot-declaration site. This keeps state.py free of any `state -> core.*` edge.
 
 # Global instances — initialized in main()
 _storage: StorageEngine | None = None
 _embeddings: EmbeddingEngine | None = None
 _buffer: ActionLogger | None = None
-_consolidation: ConsolidationScheduler | None = None
-_staleness: StalenessDetector | None = None
+_consolidation: Any = None  # core: ConsolidationScheduler
+_staleness: Any = None  # core: StalenessDetector
 _thermo: MemoryThermodynamics | None = None
 _retriever: Retriever | None = None
-_curator: MemoryCurator | None = None
-_prospective: ProspectiveMemoryEngine | None = None
-_narrative: NarrativeEngine | None = None
-_sleep: SleepComputeEngine | None = None
+_curator: Any = None  # core: MemoryCurator
+_prospective: Any = None  # core: ProspectiveMemoryEngine
+_narrative: Any = None  # core: NarrativeEngine
+_sleep: Any = None  # core: SleepComputeEngine
 _pool: AstrocytePool | None = None
 _kg: KnowledgeGraph | None = None
-_write_gate: WriteGate | None = None
+_write_gate: Any = None  # core: WriteGate
 _engram: EngramAllocator | None = None
 _rules_engine: RulesEngine | None = None
-_cls: DualStoreCLS | None = None
+_cls: Any = None  # core: DualStoreCLS
 _cognitive_map: CognitiveMap | None = None
-_causal: CausalDiscovery | None = None
+_causal: Any = None  # core: CausalDiscovery
 _metacognition: MetaCognition | None = None
 _replay: CheckpointRestore | None = None
 _wiki: WikiStore | None = None
-_file_queue: FileQueue | None = None
-_queue_drainer: QueueDrainer | None = None
+_file_queue: Any = None  # core: FileQueue
+_queue_drainer: Any = None  # core: QueueDrainer
 _queue_lock = threading.Lock()
 _event_lock = threading.Lock()
 _metrics_lock = threading.Lock()  # §9 Q6: guard _system_metrics_cache

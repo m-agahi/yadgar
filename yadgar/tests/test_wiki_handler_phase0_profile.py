@@ -31,14 +31,14 @@ def _profile_env(tmp_path):
     )
     real_fq = FileQueue(tmp_path)
 
-    import yadgar._shared.runtime.lifecycle as _lifecycle_mod
     import yadgar._shared.runtime.state as _state_mod
+    import yadgar.core.lifecycle as _cl
 
     def _patched_get_fq():
         return real_fq
 
     with (
-        patch.object(_lifecycle_mod, "_get_file_queue", _patched_get_fq),
+        patch.object(_cl, "_get_file_queue", _patched_get_fq),
         patch.object(_state_mod, "_queue_drainer", None),
     ):
         yield real_fq

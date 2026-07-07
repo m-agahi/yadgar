@@ -18,10 +18,10 @@ import numpy as np
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar._shared.curation import MemoryCurator
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
+from yadgar.core.curation import MemoryCurator
 
 
 def _make_embedding(seed: int = 0) -> bytes:
@@ -62,7 +62,7 @@ class TestNLISpyModuleBinding:
 
     def test_yadgar_curation_exports_detect_contradictions(self):
         """yadgar.curation must expose detect_contradictions as a direct attribute."""
-        import yadgar._shared.curation as _cmod
+        import yadgar.core.curation as _cmod
 
         assert hasattr(_cmod, "detect_contradictions"), (
             "yadgar.curation must export detect_contradictions (imported in __init__)"
@@ -71,8 +71,8 @@ class TestNLISpyModuleBinding:
     def test_bound_name_is_same_function_as_source(self):
         """yadgar.curation.detect_contradictions and yadgar.curation.contradiction.detect_contradictions
         must be the same underlying function object (pre-patch identity check)."""
-        import yadgar._shared.curation as _pkg
-        import yadgar._shared.curation.contradiction as _src
+        import yadgar.core.curation as _pkg
+        import yadgar.core.curation.contradiction as _src
 
         assert _pkg.detect_contradictions is _src.detect_contradictions, (
             "yadgar.curation.detect_contradictions must be the same object as "
@@ -81,8 +81,8 @@ class TestNLISpyModuleBinding:
 
     def test_patching_curation_init_intercepts_calls(self, storage, curator, monkeypatch):
         """Spy on yadgar.curation.detect_contradictions captures calls from curator."""
-        import yadgar._shared.curation as _curation_mod
-        import yadgar._shared.curation.contradiction as _cont_mod
+        import yadgar.core.curation as _curation_mod
+        import yadgar.core.curation.contradiction as _cont_mod
 
         monkeypatch.setenv("YADGAR_WRITE_TIME_CONTRADICTION", "on")
 

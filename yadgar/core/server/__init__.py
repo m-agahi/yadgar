@@ -83,12 +83,23 @@ from yadgar._shared.runtime.lifecycle import (  # noqa: F401
     _get_write_gate,
     _get_engram,
     _get_replay,
-    _get_file_queue,
     _load_default_rules,
-    init_engines,
-    shutdown,
-    _signal_handler,
 )
+
+# R2a Car D2: _get_file_queue / shutdown / _signal_handler moved to
+# yadgar.core.lifecycle (they held the last _shared → core edges). Re-export from
+# the core home so the ~90 `server.X` callers/tests remain unchanged.
+from yadgar.core.lifecycle import (  # noqa: F401
+    _get_file_queue,
+    _signal_handler,
+    shutdown,
+)
+
+# R2a Car B: `init_engines` now resolves to the CORE composition root
+# (core.bootstrap.core_init_engines), which builds the shared engines via
+# lifecycle.init_engines THEN the 9 core-only engines. The ~90 callers that do
+# `server.init_engines(...)` keep building the full 24-engine set unchanged.
+from yadgar.core.bootstrap import core_init_engines as init_engines  # noqa: F401
 
 # Car 3 (folder-split #17): main() moved out of _shared.runtime.lifecycle to the
 # core-side yadgar.server._startup (it imports server._app + server.tools.misc,

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from yadgar._shared.sleep_compute.community import _CommunityMixin
-from yadgar._shared.sleep_compute.dream import _DreamMixin
-from yadgar._shared.sleep_compute.embed_compress import _EmbedCompressMixin
 from yadgar._shared.tracing import trace_span
+from yadgar.core.sleep_compute.community import _CommunityMixin
+from yadgar.core.sleep_compute.dream import _DreamMixin
+from yadgar.core.sleep_compute.embed_compress import _EmbedCompressMixin
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class SleepComputeEngine(_DreamMixin, _CommunityMixin, _EmbedCompressMixin):
         thermodynamics,
         settings,
     ) -> None:
-        from yadgar._shared.narrative import NarrativeEngine
+        from yadgar.core.narrative import NarrativeEngine
 
         self._storage = storage
         self._embeddings = embeddings

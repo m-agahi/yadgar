@@ -1,11 +1,11 @@
 """Car 3 (folder-split #17) GATE: backend slim-engine set parity + presence.
 
-The backend ``/recall`` bootstrap builds a SLIM engine set — only the 14 engines
-the recall path needs — and SKIPS the 10 CORE-ONLY engines. This is the gate that
+The backend ``/recall`` bootstrap builds a SLIM engine set — only the 13 engines
+the recall path needs — and SKIPS the 11 CORE-ONLY engines. This is the gate that
 proves the split is behavior-neutral for recall:
 
-  * ``test_slim_builds_14_skips_10`` — after ``init_engines(engine_set="slim")``
-    the 14 slim engines are non-None and the 10 CORE-ONLY engines are None. A
+  * ``test_slim_builds_13_skips_11`` — after ``init_engines(engine_set="slim")``
+    the 13 slim engines are non-None and the 11 CORE-ONLY engines are None. A
     slim-set engine that turns out to be needed surfaces as a None-crash on the
     first ``/recall`` (caught by the parity test below).
   * ``test_slim_recall_works`` — the real backend recall path (``_fanout_recall``
@@ -16,12 +16,19 @@ proves the split is behavior-neutral for recall:
     between, because the engine singletons are process-global). If slim output
     differs from full, a needed engine was skipped → STOP.
 
-The 14 SLIM engines (backend builds): _storage, _embeddings, _retriever, _kg,
+The 13 SLIM engines (backend builds): _storage, _embeddings, _retriever, _kg,
 _wiki, _engram, _rules_engine, _metacognition, _thermo, _cognitive_map, _buffer,
-_replay, _consolidation (for _pool), _pool.
+_replay, _pool.
 
-The 10 CORE-ONLY engines (backend skips): _staleness, _curator, _prospective,
-_narrative, _sleep, _write_gate, _causal, _cls, _file_queue, _queue_drainer.
+The 11 CORE-ONLY engines (backend skips): _consolidation, _staleness, _curator,
+_prospective, _narrative, _sleep, _write_gate, _causal, _cls, _file_queue,
+_queue_drainer.
+
+R2a Car B: _consolidation moved SLIM->CORE-ONLY. Post-Car-A `_pool` is standalone
+(shared root builds it directly), so slim no longer needs consolidation for its
+`_pool` attribute. Consolidation is now built full-only by core/bootstrap, which
+removes the `_shared -> core.consolidation` edge. The parity tests below confirm
+this is behavior-neutral for recall.
 """
 
 from __future__ import annotations
@@ -35,8 +42,13 @@ pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 _MODEL = "all-MiniLM-L6-v2"
 _DIR = "/tmp/slim-parity-dir"
 
-# The 14 engines the SLIM backend build must populate.
-SLIM_14 = [
+# The 13 engines the SLIM backend build must populate.
+# R2a Car B: _consolidation moved to CORE-ONLY. Post-Car-A `_pool` is built
+# STANDALONE by the shared root, so consolidation is no longer needed in slim.
+# Building it in slim would reintroduce the `_shared -> core.consolidation` edge
+# this Car removes; the parity tests below prove recall is behavior-neutral
+# without it.
+SLIM_13 = [
     "_storage",
     "_embeddings",
     "_retriever",
@@ -49,12 +61,12 @@ SLIM_14 = [
     "_cognitive_map",
     "_buffer",
     "_replay",
-    "_consolidation",  # built for its _pool attribute
     "_pool",
 ]
 
-# The 10 CORE-ONLY engines the SLIM build must leave None.
-CORE_ONLY_10 = [
+# The 11 CORE-ONLY engines the SLIM build must leave None.
+CORE_ONLY_11 = [
+    "_consolidation",  # R2a Car B: full-only (yadgar.core.consolidation)
     "_staleness",
     "_curator",
     "_prospective",
@@ -120,17 +132,17 @@ def _result_signature(results: list[dict]) -> list[tuple]:
     return sig
 
 
-def test_slim_builds_14_skips_10(tmp_path):
-    """engine_set='slim' populates the 14 slim engines and skips the 10 core-only."""
+def test_slim_builds_13_skips_11(tmp_path):
+    """engine_set='slim' populates the 13 slim engines and skips the 11 core-only."""
     db_path = str(tmp_path / "slim.db")
     server.init_engines(db_path=db_path, embedding_model=_MODEL, engine_set="slim")
     try:
         import yadgar._shared.runtime.state as _st
 
-        missing = [name for name in SLIM_14 if getattr(_st, name) is None]
+        missing = [name for name in SLIM_13 if getattr(_st, name) is None]
         assert not missing, f"slim build MISSING required engines (backend would crash): {missing}"
 
-        present = [name for name in CORE_ONLY_10 if getattr(_st, name) is not None]
+        present = [name for name in CORE_ONLY_11 if getattr(_st, name) is not None]
         assert not present, f"slim build built CORE-ONLY engines it should skip: {present}"
     finally:
         server.shutdown()

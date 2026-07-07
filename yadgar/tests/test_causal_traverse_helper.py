@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar._shared.causal_discovery import CausalDiscovery as CausalDiscoveryEngine
+from yadgar.core.causal_discovery import CausalDiscovery as CausalDiscoveryEngine
 
 
 @pytest.fixture()
@@ -24,7 +24,7 @@ def mock_storage():
 
 
 def test_helper_is_importable():
-    from yadgar._shared.causal_discovery import _traverse_oriented_edges  # noqa: F401
+    from yadgar.core.causal_discovery import _traverse_oriented_edges  # noqa: F401
 
 
 def test_query_causes_empty_when_no_entity(mock_storage):
