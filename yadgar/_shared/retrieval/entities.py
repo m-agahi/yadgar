@@ -151,7 +151,7 @@ _SAID_LINE_RE = re.compile(r"^(?P<speaker>[A-Z][a-z]+) said:\s*(?P<quote>.+)$")
 _LINE_SUBJECT_RE = re.compile(r"^(?P<subject>[A-Z][a-z]+)\b")
 
 
-@observe(tier="hot", name="retrieval.entities.extract_query_entities")
+@observe(tier="hot", metric="retrieval.entities.extract_query_entities")
 def _extract_query_entities(query: str) -> list[str]:
     """Extract key concepts/entities from a query string."""
     entities: list[str] = []

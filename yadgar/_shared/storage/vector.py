@@ -40,7 +40,7 @@ class _VectorMixin:
             {"id": memory_id, "emb": floats},
         )
 
-    @trace_span("storage.vector.search_vectors")
+    @trace_span()
     def search_vectors(
         self,
         query_embedding: bytes,
@@ -83,7 +83,7 @@ class _VectorMixin:
                 break
         return results
 
-    @trace_span("storage.vector.search_implicit_vectors")
+    @trace_span()
     def search_implicit_vectors(
         self,
         query_embedding: bytes,

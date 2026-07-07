@@ -76,7 +76,7 @@ def _compute_centroid(rows: list[dict]) -> bytes | None:
 class _CommunityMixin:
     """Community detection and cluster summarization operations."""
 
-    @trace_span("sleep.detect_communities")
+    @trace_span()
     def detect_communities(self) -> list[dict]:
         """Build a networkx graph from entity relationships and detect communities."""
         import networkx as nx
@@ -175,7 +175,7 @@ class _CommunityMixin:
 
         return list(memory_ids)
 
-    @trace_span("sleep.generate_cluster_summaries")
+    @trace_span()
     def generate_cluster_summaries(self) -> None:
         """Generate summaries and centroid embeddings for clusters with > 3 members."""
         clusters = self._storage.get_clusters_by_level(1)

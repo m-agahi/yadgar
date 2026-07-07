@@ -55,7 +55,7 @@ class RemoteEmbeddingEngine:
             return True
         return stored_model != self.model_name
 
-    @trace_span("rpc.embed")
+    @trace_span()
     def _call(self, texts: list[str], mode: str = "document") -> list[bytes | None]:
         if not texts:
             return []

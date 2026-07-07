@@ -129,7 +129,7 @@ async def _recall_with_timeout(
 # ---------------------------------------------------------------------------
 
 
-@observe(tier="boundary", name="http._forward_hook_recall")
+@observe(tier="boundary", metric="http._forward_hook_recall")
 def _forward_hook_recall(
     query: str,
     *,
@@ -559,7 +559,7 @@ def _apply_tool_pool_health(payload: dict) -> None:
 
 
 @mcp_server.custom_route("/health", methods=["GET"])
-@trace_span("hook.health")
+@trace_span()
 async def health_check(request: Request) -> JSONResponse:
     """Health check endpoint."""
     _t0 = time.perf_counter()
@@ -600,7 +600,7 @@ async def health_check(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/health/live", methods=["GET"])
-@trace_span("hook.health_live")
+@trace_span()
 async def liveness_check(request: Request) -> JSONResponse:
     """LIVENESS probe (#74 fix #1) — answerable from the core's own loop ALONE.
 
@@ -637,7 +637,7 @@ async def liveness_check(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/metrics", methods=["GET"])
-@trace_span("hook.metrics")
+@trace_span()
 async def metrics_endpoint(request: Request):
     """Prometheus metrics endpoint (§15).
 
@@ -650,7 +650,7 @@ async def metrics_endpoint(request: Request):
 
 
 @mcp_server.custom_route("/hooks/pre-compact", methods=["POST"])
-@trace_span("hook.pre_compact")
+@trace_span()
 async def hook_pre_compact(request: Request) -> JSONResponse:
     """Called by PreCompact hook before context compaction."""
     try:
@@ -678,7 +678,7 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/post-compact", methods=["GET"])
-@trace_span("hook.post_compact")
+@trace_span()
 async def hook_post_compact(request: Request) -> JSONResponse:
     """Called by SessionStart hook after compaction. Returns restoration context."""
     directory = request.query_params.get("directory", os.getcwd())
@@ -697,7 +697,7 @@ async def hook_post_compact(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/block-reflect", methods=["GET"])
-@trace_span("hook.block_reflect")
+@trace_span()
 async def hook_block_reflect(request: Request) -> JSONResponse:
     """Re-inject updated block contents after a block_* MCP write tool call (v5.35.1).
 
@@ -727,7 +727,7 @@ async def hook_block_reflect(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/auto-capture", methods=["POST"])
-@trace_span("hook.auto_capture")
+@trace_span()
 async def hook_auto_capture(request: Request) -> JSONResponse:
     """Capture a tool action from PostToolUse hook (HTTP transport).
 
@@ -822,7 +822,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/session-context", methods=["GET"])
-@trace_span("hook.session_context")
+@trace_span()
 async def hook_session_context(request: Request) -> JSONResponse:
     """Return project_brief markdown for session-start hook (§28 pipe).
 
@@ -966,7 +966,7 @@ def _filter_prompt_recall_results(results: list[dict], directory: str | None) ->
 
 
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
-@trace_span("hook.prompt_recall")
+@trace_span()
 async def hook_prompt_recall(request: Request) -> JSONResponse:
     """Return auto-recall markdown for UserPromptSubmit hook (daemon mode).
 
@@ -1102,7 +1102,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/subagent-stop", methods=["POST"])
-@trace_span("hook.subagent_stop")
+@trace_span()
 async def hook_subagent_stop(request: Request) -> JSONResponse:
     """SubagentStop hook endpoint — memorize Yadgar findings from subagent reports.
 
@@ -1206,7 +1206,7 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/seed-anchor", methods=["POST"])
-@trace_span("hook.seed_anchor")
+@trace_span()
 async def hook_seed_anchor(request: Request) -> JSONResponse:
     """Seed a single protected anchor into memory (v5.46.15).
 
@@ -1290,7 +1290,7 @@ async def hook_seed_anchor(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/seed-agent-prompts", methods=["POST"])
-@trace_span("hook.seed_agent_prompts")
+@trace_span()
 async def hook_seed_agent_prompts(request: Request) -> JSONResponse:
     """Seed the 4 built-in starter agent-prompts via daemon (v5.85 S8).
 
@@ -1324,7 +1324,7 @@ async def hook_seed_agent_prompts(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/file-changed", methods=["POST"])
-@trace_span("hook.file_changed")
+@trace_span()
 async def hook_file_changed(request: Request) -> JSONResponse:
     """FileChanged hook endpoint — mirrors team_inbox JSONL and PLAN_*.md changes.
 
@@ -1401,7 +1401,7 @@ async def hook_file_changed(request: Request) -> JSONResponse:
         _hook_observe("file_changed", _t0, _caught_exc)
 
 
-@trace_span("hook.team_inbox")
+@trace_span()
 async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
     """Read new JSONL lines from a team_inbox file and write action_log entries."""
     import asyncio as _asyncio
@@ -1496,7 +1496,7 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
         _hook_observe("team_inbox", _t0, _caught_exc)
 
 
-@trace_span("hook.plan_file")
+@trace_span()
 async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
     """Read plan-file content (docs/plans/<slug>.md) and memorize with _plan tag (hash-dedup)."""
     import asyncio as _asyncio
@@ -1591,7 +1591,7 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/instructions-loaded", methods=["GET"])
-@trace_span("hook.instructions_loaded")
+@trace_span()
 async def hook_instructions_loaded(request: Request) -> JSONResponse:
     """InstructionsLoaded hook endpoint — inject recalled context on CLAUDE.md load.
 
@@ -1695,7 +1695,7 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/hooks/subagent-start", methods=["POST"])
-@trace_span("hook.subagent_start")
+@trace_span()
 async def hook_subagent_start(request: Request) -> JSONResponse:
     """SubagentStart hook endpoint — inject recalled context into subagent.
 
@@ -1826,7 +1826,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/graph", methods=["GET"])
-@trace_span("hook.api_graph")
+@trace_span()
 async def api_graph(request: Request) -> JSONResponse:
     """Return full knowledge graph (nodes + edges) for visualization."""
     _t0_hook = time.perf_counter()
@@ -1893,7 +1893,7 @@ async def api_graph(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/stats", methods=["GET"])
-@trace_span("api.stats")
+@trace_span()
 async def api_stats(request: Request) -> JSONResponse:
     """Return memory statistics as JSON (used by `yadgar stats` CLI when daemon is running).
 
@@ -1938,7 +1938,7 @@ async def api_stats(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/graph/stats", methods=["GET"])
-@trace_span("api.graph_stats")
+@trace_span()
 async def api_graph_stats(request: Request) -> JSONResponse:
     """Return graph statistics: counts + top entities by heat."""
     if _st._storage is None:
@@ -1948,7 +1948,7 @@ async def api_graph_stats(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/graph/edges", methods=["GET"])
-@trace_span("api.graph_edges_lazy")
+@trace_span()
 async def api_graph_edges_lazy(request: Request) -> JSONResponse:
     """On-demand edge computation for lazy edge types (v5.54.3).
 
@@ -1984,7 +1984,7 @@ async def api_graph_edges_lazy(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/graph/neighborhood/{node_id}", methods=["GET"])
-@trace_span("api.graph_neighborhood")
+@trace_span()
 async def api_graph_neighborhood(request: Request) -> JSONResponse:
     """Return 1–2 hop subgraph around a node."""
     if _st._storage is None:
@@ -1999,7 +1999,7 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/system", methods=["GET"])
-@trace_span("api.system")
+@trace_span()
 async def api_system(request: Request) -> JSONResponse:
     """Return current system and process metrics."""
     # §9 Q6: snapshot under lock before serialising to avoid torn reads.
@@ -2011,7 +2011,7 @@ async def api_system(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/info", methods=["GET"])
-@trace_span("api.info")
+@trace_span()
 async def api_info(request: Request) -> JSONResponse:
     """Return version and Python runtime info for the viz Info tab."""
     import sys as _sys  # noqa: PLC0415
@@ -2023,7 +2023,7 @@ async def api_info(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/metrics/heat-histogram", methods=["GET"])
-@trace_span("api.heat_histogram")
+@trace_span()
 async def api_heat_histogram(request: Request) -> JSONResponse:
     """Return heat distribution bucketed into N bins."""
     if _st._storage is None:
@@ -2053,7 +2053,7 @@ async def api_heat_histogram(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/metrics/consolidation-log", methods=["GET"])
-@trace_span("api.consolidation_log")
+@trace_span()
 async def api_consolidation_log(request: Request) -> JSONResponse:
     """Return last N consolidation cycle records (oldest first)."""
     if _st._storage is None:
@@ -2180,7 +2180,7 @@ async def _make_event_stream(request: Request):
 
 
 @mcp_server.custom_route("/api/graph/events", methods=["GET"])
-@trace_span("api.graph_events")
+@trace_span()
 async def api_graph_events(request: Request) -> StreamingResponse:
     """SSE stream of incremental graph update events + system metrics every 5s."""
     headers = {**_CORS, "Content-Type": "text/event-stream", "X-Accel-Buffering": "no"}
@@ -2190,7 +2190,7 @@ async def api_graph_events(request: Request) -> StreamingResponse:
 
 
 @mcp_server.custom_route("/api/wiki/read", methods=["GET"])
-@trace_span("api.wiki_read")
+@trace_span()
 async def api_wiki_read(request: Request) -> JSONResponse:
     """Read a single wiki page by slug for the viz detail panel.
 
@@ -2268,7 +2268,7 @@ async def _viz_exact_title_node_ids(q: str) -> list[str]:
 
 
 @mcp_server.custom_route("/api/viz/search", methods=["GET"])
-@trace_span("hook.viz_search")
+@trace_span()
 async def api_viz_search(request: Request) -> JSONResponse:
     """Semantic search for viz graph: return node IDs matching query.
 
@@ -2363,7 +2363,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/viz/config", methods=["GET"])
-@trace_span("api.viz_config")
+@trace_span()
 async def api_viz_config(request: Request) -> JSONResponse:
     """Return active viz configuration as nested JSON.
 
@@ -2431,7 +2431,7 @@ async def api_viz_config(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/graph", methods=["GET"])
-@trace_span("api.graph_view")
+@trace_span()
 async def graph_view(request: Request) -> FileResponse:
     """3D memory force graph visualization."""
     static_dir = Path(__file__).parent.parent / "static"

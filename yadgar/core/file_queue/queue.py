@@ -60,7 +60,7 @@ class FileQueue:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    @observe(tier="boundary", name="queue.enqueue")
+    @observe(tier="boundary", metric="queue.enqueue")
     def enqueue(self, op_type: str, payload: dict) -> str:
         """Write a queued operation atomically.
 
@@ -82,7 +82,7 @@ class FileQueue:
         tmp.rename(target)  # atomic on POSIX
         return record_id
 
-    @observe(tier="hot", name="queue.register_wait")
+    @observe(tier="hot", metric="queue.register_wait")
     def register_wait(self, job_id: str) -> threading.Event:
         """Register interest in completion of job_id. Returns a threading.Event.
 
@@ -108,7 +108,7 @@ class FileQueue:
         """
         self._signal_complete_with_result(job_id, None)
 
-    @observe(tier="hot", name="queue.signal_complete_with_result")
+    @observe(tier="hot", metric="queue.signal_complete_with_result")
     def _signal_complete_with_result(self, job_id: str, result: dict | None) -> None:
         """Mark job_id as complete with an optional result payload.
 
@@ -129,7 +129,7 @@ class FileQueue:
             self._job_futures[job_id] = (event, result)
         event.set()
 
-    @observe(tier="hot", name="queue.get_job_result")
+    @observe(tier="hot", metric="queue.get_job_result")
     def get_job_result(self, job_id: str) -> dict | None:
         """Return the result payload stored by the drainer for job_id.
 
@@ -147,7 +147,7 @@ class FileQueue:
         _, result = entry
         return result
 
-    @observe(tier="hot", name="queue.cleanup_job")
+    @observe(tier="hot", metric="queue.cleanup_job")
     def _cleanup_job(self, job_id: str) -> None:
         """Remove a job from tracking after wait_for_job() has consumed it."""
         with self._job_lock:
@@ -157,7 +157,7 @@ class FileQueue:
         """Return queue files sorted oldest-first."""
         return sorted(self.queue_dir.glob("*.json"))
 
-    @observe(tier="stage", name="queue.archive")
+    @observe(tier="stage", metric="queue.archive")
     def archive(self, path: Path) -> None:
         """Move a confirmed queue file to archive/memories/YYYY-MM-DD/."""
         dest = self._memories_archive_dir() / path.name
@@ -182,7 +182,7 @@ class FileQueue:
             pass
         return deleted
 
-    @observe(tier="stage", name="queue.cleanup_archive")
+    @observe(tier="stage", metric="queue.cleanup_archive")
     def cleanup_archive(self) -> int:
         """Delete archive files older than _ARCHIVE_MAX_AGE. Returns count deleted."""
         cutoff = time.time() - _ARCHIVE_MAX_AGE
@@ -205,7 +205,7 @@ class FileQueue:
                 pass
         return deleted
 
-    @observe(tier="stage", name="queue.cleanup_dlq")
+    @observe(tier="stage", metric="queue.cleanup_dlq")
     def cleanup_dlq(self, max_age_days: int = 90) -> int:
         """Delete DLQ entries older than max_age_days. Returns count of main files deleted.
 
@@ -240,7 +240,7 @@ class FileQueue:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    @observe(tier="stage", name="queue.write_wiki")
+    @observe(tier="stage", metric="queue.write_wiki")
     def write_wiki(self, slug: str, content: str) -> None:
         """Persist a wiki page as a date-stamped .md in archive/wiki/YYYY-MM-DD/."""
         import re
@@ -257,7 +257,7 @@ class FileQueue:
         tmp.write_text(content, encoding="utf-8")
         tmp.rename(wiki_path)
 
-    @observe(tier="stage", name="queue.delete_wiki")
+    @observe(tier="stage", metric="queue.delete_wiki")
     def delete_wiki(self, slug: str) -> None:
         """Remove .md mirror(s) for a deleted wiki page across all dated dirs."""
         import re

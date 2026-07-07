@@ -82,7 +82,7 @@ def test_decorator_noop_without_prometheus_client():
     # Remove prometheus_client from sys.modules so timing.py sees ImportError
     saved = {}
     for key in list(sys.modules.keys()):
-        if "prometheus_client" in key or key == "yadgar.observability.timing":
+        if "prometheus_client" in key or "observability.timing" in key:
             saved[key] = sys.modules.pop(key)
 
     try:
@@ -114,16 +114,16 @@ def test_decorator_noop_without_prometheus_client():
             builtins.__import__ = real_import
     finally:
         # Remove any modules planted under the fake import hook that were NOT
-        # present before this test ran. Without this, if
-        # 'yadgar.observability.timing' was absent from sys.modules at test
-        # start (common in xdist workers before any timing test runs), the
-        # broken copy (_PROMETHEUS_AVAILABLE=False) stays in sys.modules after
-        # sys.modules.update(saved) and poisons every subsequent test on the
-        # same worker that imports _make_stage_timer (flaky empty-scrape).
+        # present before this test ran. Without this, if the timing module was
+        # absent from sys.modules at test start (common in xdist workers before
+        # any timing test runs), the broken copy (_PROMETHEUS_AVAILABLE=False)
+        # stays in sys.modules after sys.modules.update(saved) and poisons every
+        # subsequent test on the same worker that imports _make_stage_timer
+        # (flaky empty-scrape). Match by substring ("observability.timing") so
+        # this survives module moves — the timing module now lives at
+        # yadgar._shared.observability.timing (was yadgar.observability.timing).
         for key in list(sys.modules):
-            if (
-                "prometheus_client" in key or key == "yadgar.observability.timing"
-            ) and key not in saved:
+            if ("prometheus_client" in key or "observability.timing" in key) and key not in saved:
                 del sys.modules[key]
         sys.modules.update(saved)
 

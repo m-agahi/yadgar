@@ -150,7 +150,7 @@ class TestTraceSpanSync:
         """Decorated sync function returns its normal return value."""
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.sync_fn")
+        @trace_span()
         def my_fn():
             return 42
 
@@ -161,14 +161,15 @@ class TestTraceSpanSync:
         _tracer, exporter = in_memory_tracer
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.sync_span")
+        @trace_span()
         def my_fn():
             return "ok"
 
         my_fn()
         spans = exporter.get_finished_spans()
         names = [s.name for s in spans]
-        assert "test.sync_span" in names
+        expected = f"{my_fn.__module__}.{my_fn.__qualname__}"
+        assert expected in names
 
     def test_sync_runs_when_get_tracer_raises(self, monkeypatch):
         """A degraded provider (get_tracer raises) must NOT break the wrapped fn.
@@ -188,7 +189,7 @@ class TestTraceSpanSync:
 
         monkeypatch.setattr(tracing._otel_trace, "get_tracer", _boom)
 
-        @trace_span("test.degraded")
+        @trace_span()
         def my_fn():
             return 99
 
@@ -199,7 +200,7 @@ class TestTraceSpanSync:
         """The get_tracer guard must NOT swallow the wrapped fn's own exceptions."""
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.raises")
+        @trace_span()
         def my_fn():
             raise ValueError("body error")
 
@@ -224,13 +225,14 @@ class TestTraceSpanSync:
         _tracer, exporter = in_memory_tracer
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.with_attrs", attributes={"custom.key": "val"})
+        @trace_span(attributes={"custom.key": "val"})
         def my_fn():
             return 1
 
         my_fn()
         spans = exporter.get_finished_spans()
-        span = next(s for s in spans if s.name == "test.with_attrs")
+        expected = f"{my_fn.__module__}.{my_fn.__qualname__}"
+        span = next(s for s in spans if s.name == expected)
         assert span.attributes.get("custom.key") == "val"
 
 
@@ -244,7 +246,7 @@ class TestTraceSpanAsync:
         """Decorated async function returns its normal return value."""
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.async_fn")
+        @trace_span()
         async def my_fn():
             return 99
 
@@ -256,14 +258,15 @@ class TestTraceSpanAsync:
         _tracer, exporter = in_memory_tracer
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.async_span")
+        @trace_span()
         async def my_fn():
             return "ok"
 
         asyncio.run(my_fn())
         spans = exporter.get_finished_spans()
         names = [s.name for s in spans]
-        assert "test.async_span" in names
+        expected = f"{my_fn.__module__}.{my_fn.__qualname__}"
+        assert expected in names
 
 
 # ---------------------------------------------------------------------------
@@ -277,18 +280,20 @@ class TestSpanTree:
         _tracer, exporter = in_memory_tracer
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.inner")
+        @trace_span()
         def inner():
             return "inner"
 
-        @trace_span("test.outer")
+        @trace_span()
         def outer():
             return inner()
 
         outer()
         spans = exporter.get_finished_spans()
-        outer_span = next(s for s in spans if s.name == "test.outer")
-        inner_span = next(s for s in spans if s.name == "test.inner")
+        outer_name = f"{outer.__module__}.{outer.__qualname__}"
+        inner_name = f"{inner.__module__}.{inner.__qualname__}"
+        outer_span = next(s for s in spans if s.name == outer_name)
+        inner_span = next(s for s in spans if s.name == inner_name)
         # Inner's parent should be outer
         assert inner_span.parent is not None
         assert inner_span.parent.span_id == outer_span.context.span_id
@@ -298,18 +303,20 @@ class TestSpanTree:
         _tracer, exporter = in_memory_tracer
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.async_inner")
+        @trace_span()
         async def inner():
             return "inner"
 
-        @trace_span("test.async_outer")
+        @trace_span()
         async def outer():
             return await inner()
 
         asyncio.run(outer())
         spans = exporter.get_finished_spans()
-        outer_span = next(s for s in spans if s.name == "test.async_outer")
-        inner_span = next(s for s in spans if s.name == "test.async_inner")
+        outer_name = f"{outer.__module__}.{outer.__qualname__}"
+        inner_name = f"{inner.__module__}.{inner.__qualname__}"
+        outer_span = next(s for s in spans if s.name == outer_name)
+        inner_span = next(s for s in spans if s.name == inner_name)
         assert inner_span.parent is not None
         assert inner_span.parent.span_id == outer_span.context.span_id
 
@@ -324,7 +331,7 @@ class TestTraceSpanException:
         """Exception propagates out of decorated function."""
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.exception_fn")
+        @trace_span()
         def my_fn():
             raise ValueError("boom")
 
@@ -338,7 +345,7 @@ class TestTraceSpanException:
         _tracer, exporter = in_memory_tracer
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.exception_span")
+        @trace_span()
         def my_fn():
             raise RuntimeError("test error")
 
@@ -346,7 +353,8 @@ class TestTraceSpanException:
             my_fn()
 
         spans = exporter.get_finished_spans()
-        span = next(s for s in spans if s.name == "test.exception_span")
+        expected = f"{my_fn.__module__}.{my_fn.__qualname__}"
+        span = next(s for s in spans if s.name == expected)
         assert span.status.status_code == StatusCode.ERROR
         # Events should contain the exception
         assert any(e.name == "exception" for e in span.events)
@@ -358,7 +366,7 @@ class TestTraceSpanException:
         _tracer, exporter = in_memory_tracer
         from yadgar._shared.tracing import trace_span
 
-        @trace_span("test.async_exception")
+        @trace_span()
         async def my_fn():
             raise ValueError("async boom")
 
@@ -366,7 +374,8 @@ class TestTraceSpanException:
             asyncio.run(my_fn())
 
         spans = exporter.get_finished_spans()
-        span = next(s for s in spans if s.name == "test.async_exception")
+        expected = f"{my_fn.__module__}.{my_fn.__qualname__}"
+        span = next(s for s in spans if s.name == expected)
         assert span.status.status_code == StatusCode.ERROR
 
 
@@ -924,7 +933,7 @@ class TestFallbackMode:
                 if not _OTEL_AVAILABLE:
                     from yadgar._shared.tracing import trace_span
 
-                    @trace_span("test.fallback")
+                    @trace_span()
                     def my_fn():
                         return "identity"
 
@@ -1357,7 +1366,7 @@ class TestStorageMethodSpan:
         from yadgar._shared.tracing import trace_span
 
         # Create a minimal mock storage method decorated with @trace_span
-        @trace_span("storage.vector.search_vectors")
+        @trace_span()
         def fake_search_vectors(query_embedding, limit=10):
             return []
 
@@ -1366,7 +1375,8 @@ class TestStorageMethodSpan:
 
         spans = exporter.get_finished_spans()
         names = [s.name for s in spans]
-        assert "storage.vector.search_vectors" in names, f"Expected span not found in: {names}"
+        expected = f"{fake_search_vectors.__module__}.{fake_search_vectors.__qualname__}"
+        assert expected in names, f"Expected span not found in: {names}"
 
 
 # ---------------------------------------------------------------------------

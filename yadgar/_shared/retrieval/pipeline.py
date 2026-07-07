@@ -88,7 +88,7 @@ class RetrievalPipeline:
         self.stages: dict[str, RetrievalStage] = {s.name: s for s in stages}
 
     @classmethod
-    @observe(tier="hot", name="retrieval.pipeline.from_retriever")
+    @observe(tier="hot", metric="retrieval.pipeline.from_retriever")
     def from_retriever(cls, retriever) -> RetrievalPipeline:
         """Build a fully wired pipeline from an existing ``Retriever`` instance.
 
@@ -125,7 +125,7 @@ class RetrievalPipeline:
         ]
         return cls(stage_list)
 
-    @observe(tier="boundary", name="retrieval.pipeline.run")
+    @observe(tier="boundary", metric="retrieval.pipeline.run")
     def run(self, state: RetrievalState) -> RetrievalState:
         """Execute the pipeline for *state.profile*, collecting per-stage stats.
 

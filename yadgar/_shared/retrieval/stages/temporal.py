@@ -20,7 +20,7 @@ class TemporalStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.temporal")
+    @observe(tier="stage", metric="retrieval.pipeline.temporal")
     def apply(self, state: RetrievalState) -> RetrievalState:
         from yadgar._shared.storage import BranchFilter  # noqa: PLC0415
 

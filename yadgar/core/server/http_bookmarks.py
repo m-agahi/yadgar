@@ -38,7 +38,7 @@ _NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate"}
 
 
 @mcp_server.custom_route("/api/bookmarks", methods=["GET"])
-@trace_span("api.bookmarks.list")
+@trace_span()
 async def api_bookmarks_list(request: Request) -> JSONResponse:
     """List all wiki bookmarks ordered by position.
 
@@ -53,7 +53,7 @@ async def api_bookmarks_list(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/bookmarks", methods=["POST"])
-@trace_span("api.bookmarks.add")
+@trace_span()
 async def api_bookmarks_add(request: Request) -> JSONResponse:
     """Add or update a wiki bookmark.
 
@@ -85,7 +85,7 @@ async def api_bookmarks_add(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/bookmarks/{slug}", methods=["DELETE"])
-@trace_span("api.bookmarks.remove")
+@trace_span()
 async def api_bookmarks_remove(request: Request) -> JSONResponse:
     """Remove a wiki bookmark.
 
@@ -101,7 +101,7 @@ async def api_bookmarks_remove(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/bookmarks/{slug}/position", methods=["PUT"])
-@trace_span("api.bookmarks.reorder")
+@trace_span()
 async def api_bookmarks_reorder(request: Request) -> JSONResponse:
     """Move a bookmark to a new position.
 
@@ -140,7 +140,7 @@ async def api_bookmarks_reorder(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/wiki/search", methods=["GET"])
-@trace_span("api.wiki.search")
+@trace_span()
 async def api_wiki_search(request: Request) -> JSONResponse:
     """Semantic wiki search for bookmarks UI.
 
@@ -176,7 +176,7 @@ async def api_wiki_search(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/wiki/list", methods=["GET"])
-@trace_span("api.wiki.list")
+@trace_span()
 async def api_wiki_list(request: Request) -> JSONResponse:
     """List wiki pages for slug autocomplete in bookmarks UI.
 
@@ -211,7 +211,7 @@ async def api_wiki_list(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/static/bookmarks.html", methods=["GET"])
-@trace_span("api.bookmarks_view")
+@trace_span()
 async def bookmarks_view(request: Request) -> RedirectResponse:
     """Redirect to the #bookmarks tab in the main SPA (v5.50.0 migration).
 

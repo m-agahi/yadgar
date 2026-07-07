@@ -72,7 +72,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- COMET query expansion --
 
-    @observe(tier="stage", name="retrieval.comet_expand_query")
+    @observe(tier="stage", metric="retrieval.comet_expand_query")
     def _comet_expand_query(self, query: str) -> list[str]:
         """Use COMET-BART to generate commonsense expansions for a query.
 
@@ -102,7 +102,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- a. Personalized PageRank Retrieval --
 
-    @observe(tier="stage", name="retrieval.ppr_retrieve")
+    @observe(tier="stage", metric="retrieval.ppr_retrieve")
     def ppr_retrieve(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
         """Run Personalized PageRank seeded by query entities.
 
@@ -171,7 +171,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- b. Contextual Prefix Generation --
 
-    @observe(tier="hot", name="retrieval.generate_contextual_prefix")
+    @observe(tier="hot", metric="retrieval.generate_contextual_prefix")
     def generate_contextual_prefix(
         self,
         content: str,
@@ -196,7 +196,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- c. Spreading Activation --
 
-    @observe(tier="stage", name="retrieval.spreading_activation")
+    @observe(tier="stage", metric="retrieval.spreading_activation")
     def spreading_activation(
         self,
         seed_memories: list[int],
@@ -363,7 +363,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- d1. Plugin pipeline --
 
-    @observe(tier="hot", name="retrieval.get_pipeline")
+    @observe(tier="hot", metric="retrieval.get_pipeline")
     def _get_pipeline(self):
         """Return the plugin pipeline, initialising it lazily on first call."""
         if self._pipeline is None:
@@ -372,7 +372,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             self._pipeline = RetrievalPipeline.from_retriever(self)
         return self._pipeline
 
-    @observe(tier="boundary", name="retrieval.recall_via_pipeline")
+    @observe(tier="boundary", metric="retrieval.recall_via_pipeline")
     def recall_via_pipeline(
         self,
         query: str,
@@ -429,7 +429,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
     # -- d2. Unified Recall (legacy monolithic implementation — kept for compat) --
 
-    @observe(tier="stage", name="retrieval.resolve_query_and_candidate_k")
+    @observe(tier="stage", metric="retrieval.resolve_query_and_candidate_k")
     def _resolve_query_and_candidate_k(
         self,
         query: str,
@@ -484,7 +484,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             candidate_k,
         )
 
-    @observe(tier="boundary", name="retrieval.recall")
+    @observe(tier="boundary", metric="retrieval.recall")
     def recall(
         self,
         query: str,

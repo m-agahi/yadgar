@@ -120,7 +120,7 @@ class LRUCache:
 
     # ── Snapshot I/O ─────────────────────────────────────────────────────────
 
-    @observe(tier="stage", name="backend.cache.save_snapshot")
+    @observe(tier="stage", metric="backend.cache.save_snapshot")
     def save_snapshot(self, snap_dir: str, name: str) -> None:
         """Serialize cache to <snap_dir>/<name>.snap using msgpack.
 
@@ -152,7 +152,7 @@ class LRUCache:
         except OSError as exc:
             logger.warning("cache.save_snapshot: write failed for %s: %s", path, exc)
 
-    @observe(tier="stage", name="backend.cache.load_snapshot")
+    @observe(tier="stage", metric="backend.cache.load_snapshot")
     def load_snapshot(self, snap_dir: str, name: str) -> None:
         """Restore entries from <snap_dir>/<name>.snap.
 
@@ -271,7 +271,7 @@ def _identity(key: Hashable) -> Hashable:
     return key
 
 
-@observe(tier="hot", name="backend.cache.estimate_bytes")
+@observe(tier="hot", metric="backend.cache.estimate_bytes")
 def _estimate_bytes(value: Any) -> int:
     """Approximate stored byte size of ``value`` (LRU byte-budget signal).
 
@@ -306,7 +306,7 @@ from yadgar._shared.protocols import CacheProtocol as CacheProtocol  # noqa: E40
 _REGISTRY: dict[str, Cache] = {}
 
 
-@observe(tier="stage", name="backend.cache.get_ce_cache")
+@observe(tier="stage", metric="backend.cache.get_ce_cache")
 def get_ce_cache() -> CacheProtocol:
     """Return the process-global ``ce`` namespace (Car 1 recall-CE-dedup seam).
 
@@ -345,7 +345,7 @@ def get_ce_cache() -> CacheProtocol:
     return _make_ce_cache()
 
 
-@observe(tier="stage", name="backend.cache.get_memory_doc_cache")
+@observe(tier="stage", metric="backend.cache.get_memory_doc_cache")
 def get_memory_doc_cache() -> CacheProtocol:
     """Return the process-global ``memory_doc`` namespace (Car 2 build_results seam).
 
@@ -398,7 +398,7 @@ def _memory_doc_cache_ttl_sec() -> float:
     )
 
 
-@observe(tier="stage", name="backend.cache.make_memory_doc_cache")
+@observe(tier="stage", metric="backend.cache.make_memory_doc_cache")
 def _make_memory_doc_cache() -> Cache:
     """Build (and register) the unified ``memory_doc`` namespace (Car 2).
 
@@ -487,7 +487,7 @@ class Cache:
 
     # ── Core ops ─────────────────────────────────────────────────────────────
 
-    @observe(tier="hot", name="backend.cache.get")
+    @observe(tier="hot", metric="backend.cache.get")
     def get(self, key: Hashable) -> Any | None:
         """Return value for key (deep-copied if configured), or None on miss."""
         if self.max_bytes == 0:
@@ -506,7 +506,7 @@ class Cache:
             self._record_hit()
         return copy.deepcopy(value) if self._deep_copy else value
 
-    @observe(tier="hot", name="backend.cache.put")
+    @observe(tier="hot", metric="backend.cache.put")
     def put(self, key: Hashable, value: Any) -> None:
         """Insert/update key → value; byte-bounded LRU eviction when over budget."""
         if self.max_bytes == 0:
@@ -529,14 +529,14 @@ class Cache:
 
     # ── Invalidation ─────────────────────────────────────────────────────────
 
-    @observe(tier="stage", name="backend.cache.invalidate")
+    @observe(tier="stage", metric="backend.cache.invalidate")
     def invalidate(self, scope: Hashable = None) -> None:
         """Drop a single effective key (Manual bust). Rare/structural → tier=stage."""
         eff = self._key_fn(scope)
         with self._lock:
             self._drop_locked(eff)
 
-    @observe(tier="stage", name="backend.cache.clear")
+    @observe(tier="stage", metric="backend.cache.clear")
     def clear(self) -> None:
         """Whole-flush (Manual). Rare/structural → tier=stage."""
         with self._lock:
@@ -568,7 +568,7 @@ class Cache:
 
     # ── Snapshot I/O (delegates to LRUCache format for ce/embed parity) ───────
 
-    @observe(tier="stage", name="backend.cache.save_snapshot")
+    @observe(tier="stage", metric="backend.cache.save_snapshot")
     def save_snapshot(self, snap_dir: str, name: str) -> None:
         """Serialize to <snap_dir>/<name>.snap (shared LRUCache msgpack format).
 
@@ -579,7 +579,7 @@ class Cache:
             items = [(k, v) for k, v in self._store.items()]
         _write_snapshot(items, self._ckpt, snap_dir, name)
 
-    @observe(tier="stage", name="backend.cache.load_snapshot")
+    @observe(tier="stage", metric="backend.cache.load_snapshot")
     def load_snapshot(self, snap_dir: str, name: str) -> None:
         """Restore entries from <snap_dir>/<name>.snap (ckpt-gated, byte-bounded)."""
         items = _read_snapshot(self._ckpt, snap_dir, name)
@@ -617,7 +617,7 @@ class Cache:
         if self._store.pop(eff, None) is not None:
             self.current_bytes -= self._sizes.pop(eff, 0)
 
-    @observe(tier="hot", name="backend.cache.evict")
+    @observe(tier="hot", metric="backend.cache.evict")
     def _evict_to_budget_locked(self, keep: Hashable) -> None:
         """Evict LRU entries until current_bytes ≤ max_bytes (never evict `keep`)."""
         while self.current_bytes > self.max_bytes and len(self._store) > 1:
@@ -670,13 +670,13 @@ class ScopeVersions:
         self._versions: dict[tuple[str, Hashable], int] = {}
         self._lock = threading.Lock()
 
-    @observe(tier="hot", name="backend.cache.scope_version_read")
+    @observe(tier="hot", metric="backend.cache.scope_version_read")
     def version(self, scope_kind: str, scope_id: Hashable) -> int:
         """Current version for a scope (0 if never bumped)."""
         with self._lock:
             return self._versions.get((scope_kind, scope_id), 0)
 
-    @observe(tier="hot", name="backend.cache.scope_version_bump")
+    @observe(tier="hot", metric="backend.cache.scope_version_bump")
     def bump(self, scope_kind: str, scope_id: Hashable) -> int:
         """Increment and return the scope's version. O(1), cheap enough for the
         write hot-path (a single dict update under a short lock)."""
@@ -699,7 +699,7 @@ def get_scope_versions() -> ScopeVersions:
     return _SCOPE_VERSIONS
 
 
-@observe(tier="stage", name="backend.cache.get_engram_slot_cache")
+@observe(tier="stage", metric="backend.cache.get_engram_slot_cache")
 def get_engram_slot_cache() -> CacheProtocol:
     """Return the process-global ``engram_slot`` namespace (Car 3 slot-links seam).
 
@@ -734,7 +734,7 @@ def _engram_slot_cache_enabled() -> bool:
     )
 
 
-@observe(tier="stage", name="backend.cache.make_engram_slot_cache")
+@observe(tier="stage", metric="backend.cache.make_engram_slot_cache")
 def _make_engram_slot_cache() -> Cache:
     """Build (and register) the unified ``engram_slot`` namespace (Car 3).
 
@@ -757,7 +757,7 @@ def _make_engram_slot_cache() -> Cache:
     )
 
 
-@observe(tier="stage", name="backend.cache.get_graph_cache")
+@observe(tier="stage", metric="backend.cache.get_graph_cache")
 def get_graph_cache() -> CacheProtocol:
     """Return the process-global ``graph`` namespace (Car 4 adjacency seam).
 
@@ -800,7 +800,7 @@ def _graph_cache_enabled() -> bool:
     )
 
 
-@observe(tier="stage", name="backend.cache.make_graph_cache")
+@observe(tier="stage", metric="backend.cache.make_graph_cache")
 def _make_graph_cache() -> Cache:
     """Build (and register) the unified ``graph`` namespace (Car 4).
 
@@ -842,7 +842,7 @@ class NullCache:
 # ── Snapshot helpers (shared free functions; LRUCache-compatible format) ──────
 
 
-@observe(tier="stage", name="backend.cache.write_snapshot")
+@observe(tier="stage", metric="backend.cache.write_snapshot")
 def _write_snapshot(items: list, ckpt: str, snap_dir: str, name: str) -> None:
     try:
         import msgpack  # noqa: PLC0415
@@ -863,7 +863,7 @@ def _write_snapshot(items: list, ckpt: str, snap_dir: str, name: str) -> None:
         logger.warning("cache.save_snapshot: write failed for %s: %s", path, exc)
 
 
-@observe(tier="stage", name="backend.cache.read_snapshot")
+@observe(tier="stage", metric="backend.cache.read_snapshot")
 def _read_snapshot(ckpt: str, snap_dir: str, name: str) -> list | None:
     """Return the [key, value] list, or None on any discard condition."""
     try:
@@ -930,7 +930,7 @@ _NAMESPACE_WEIGHTS = {
 }
 
 
-@observe(tier="stage", name="backend.cache.read_container_memory")
+@observe(tier="stage", metric="backend.cache.read_container_memory")
 def _read_container_memory_bytes() -> int | None:
     """Return the container memory limit in bytes, or None if unbounded/unknown."""
     for path_str in (_CGROUP_V2, _CGROUP_V1):
@@ -951,7 +951,7 @@ def _read_container_memory_bytes() -> int | None:
     return None
 
 
-@observe(tier="stage", name="backend.cache.total_budget")
+@observe(tier="stage", metric="backend.cache.total_budget")
 def _backend_cache_total_budget_bytes(pct: float) -> int:
     """Total backend cache byte budget = pct%% × container memory (or fallback)."""
     limit = _read_container_memory_bytes()
@@ -960,7 +960,7 @@ def _backend_cache_total_budget_bytes(pct: float) -> int:
     return int((pct / 100.0) * limit)
 
 
-@observe(tier="stage", name="backend.cache.namespace_budget")
+@observe(tier="stage", metric="backend.cache.namespace_budget")
 def _namespace_budget_bytes(
     namespace: str, total_budget: int, *, active: tuple[str, ...] = ("ce", "embed")
 ) -> int:

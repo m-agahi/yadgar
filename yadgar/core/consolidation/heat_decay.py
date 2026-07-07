@@ -42,7 +42,7 @@ def _reconcile_heat_intents(
 class _HeatDecayMixin:
     """Applies thermodynamic decay to memory and entity heat values."""
 
-    @observe(tier="stage", name="consolidation.decay")
+    @observe(tier="stage", metric="consolidation.decay")
     def _apply_decay(self, stats: dict) -> None:
         """Collect memory + entity heat intents, reconcile, apply once (BC-CSW1)."""
         now = datetime.now(UTC)
@@ -54,7 +54,7 @@ class _HeatDecayMixin:
         # Phase 3 — single apply via HeatWriter facade (BC-CSW1)
         HeatWriter(self._storage).apply_heat_intents(all_intents)
 
-    @observe(tier="stage", name="consolidation.build_domain_multiplier_map")
+    @observe(tier="stage", metric="consolidation.build_domain_multiplier_map")
     def _build_domain_multiplier_map(self) -> dict[int, float]:
         """Return {memory_id -> max decay multiplier across all domains}.
 
@@ -82,7 +82,7 @@ class _HeatDecayMixin:
         except Exception:
             return {}  # pool unavailable -> all mults default 1.0
 
-    @observe(tier="stage", name="consolidation.decay_memories")
+    @observe(tier="stage", metric="consolidation.decay_memories")
     def _decay_memories(self, stats: dict, now: datetime) -> list[tuple[str, dict | None]]:
         """Compute per-memory heat decay; return batch of DB writes."""
         cold = self._settings.COLD_THRESHOLD
@@ -141,7 +141,7 @@ class _HeatDecayMixin:
                     stats["memories_updated"] += 1
         return mem_batch
 
-    @observe(tier="stage", name="consolidation.decay_entities")
+    @observe(tier="stage", metric="consolidation.decay_entities")
     def _decay_entities(self, now: datetime) -> list[tuple[str, dict | None]]:
         """Compute per-entity heat decay; return batch of DB writes."""
         decay = self._settings.DECAY_FACTOR

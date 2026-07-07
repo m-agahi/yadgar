@@ -43,7 +43,7 @@ _ORDINAL_TEMPORAL_RE = re.compile(
 )
 
 
-@observe(tier="hot", name="retrieval.temporal.parse_expression")
+@observe(tier="hot", metric="retrieval.temporal.parse_expression")
 def parse_temporal_expression(query: str) -> dict:
     """Extract date/time information from natural language queries.
 

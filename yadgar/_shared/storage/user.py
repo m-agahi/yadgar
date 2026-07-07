@@ -213,7 +213,7 @@ class _UserMixin:
         )
         return pid
 
-    @trace_span("storage.user.search_profiles_fts")
+    @trace_span()
     def search_profiles_fts(
         self, query: str, limit: int = 10, include_invalidated: bool = False
     ) -> list[dict]:

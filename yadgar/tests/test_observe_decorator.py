@@ -98,13 +98,14 @@ def test_boundary_emits_span(in_memory_tracer, obs_registry):
     _, exporter = in_memory_tracer
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="boundary", name="my.boundary")
+    @observe(tier="boundary", metric="my.boundary")
     def handler():
         return "ok"
 
     assert handler() == "ok"
     spans = exporter.get_finished_spans()
-    assert any(s.name == "my.boundary" for s in spans), [s.name for s in spans]
+    expected = f"{handler.__module__}.{handler.__qualname__}"
+    assert any(s.name == expected for s in spans), [s.name for s in spans]
 
 
 def test_boundary_emits_red_metric(in_memory_tracer, obs_registry):
@@ -112,7 +113,7 @@ def test_boundary_emits_red_metric(in_memory_tracer, obs_registry):
 
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="boundary", name="my.boundary")
+    @observe(tier="boundary", metric="my.boundary")
     def handler():
         return 1
 
@@ -127,7 +128,7 @@ def test_boundary_emits_red_metric(in_memory_tracer, obs_registry):
 def test_boundary_emits_info_log(in_memory_tracer, obs_registry, caplog):
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="boundary", name="my.boundary", log_event="handled")
+    @observe(tier="boundary", metric="my.boundary", log_event="handled")
     def handler():
         return 1
 
@@ -144,7 +145,7 @@ def test_boundary_error_metric_and_log(in_memory_tracer, obs_registry, caplog):
 
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="boundary", name="my.boundary", log_event="handled")
+    @observe(tier="boundary", metric="my.boundary", log_event="handled")
     def boom():
         raise ValueError("nope")
 
@@ -163,13 +164,14 @@ def test_stage_emits_span(in_memory_tracer, obs_registry):
     _, exporter = in_memory_tracer
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="stage", name="scoring")
+    @observe(tier="stage", metric="scoring")
     def stage_fn():
         return 1
 
     stage_fn()
     spans = exporter.get_finished_spans()
-    assert any(s.name == "scoring" for s in spans), [s.name for s in spans]
+    expected = f"{stage_fn.__module__}.{stage_fn.__qualname__}"
+    assert any(s.name == expected for s in spans), [s.name for s in spans]
 
 
 def test_stage_uses_shared_histogram_family(in_memory_tracer, obs_registry):
@@ -177,7 +179,7 @@ def test_stage_uses_shared_histogram_family(in_memory_tracer, obs_registry):
 
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="stage", name="scoring")
+    @observe(tier="stage", metric="scoring")
     def stage_fn():
         return 1
 
@@ -196,7 +198,7 @@ def test_stage_no_info_log_but_error_on_raise(in_memory_tracer, obs_registry, ca
 
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="stage", name="scoring")
+    @observe(tier="stage", metric="scoring")
     def ok_fn():
         return 1
 
@@ -206,7 +208,7 @@ def test_stage_no_info_log_but_error_on_raise(in_memory_tracer, obs_registry, ca
     info_recs = [r for r in caplog.records if r.levelno == logging.INFO]
     assert not info_recs, [r.getMessage() for r in info_recs]
 
-    @observe(tier="stage", name="scoring")
+    @observe(tier="stage", metric="scoring")
     def boom():
         raise RuntimeError("x")
 
@@ -227,7 +229,7 @@ def test_hot_no_metric_no_log(in_memory_tracer, obs_registry, caplog):
 
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="hot", name="inner")
+    @observe(tier="hot", metric="inner")
     def inner():
         return 42
 
@@ -272,7 +274,7 @@ def test_span_false_opens_no_span_but_keeps_stage_metric(in_memory_tracer, obs_r
 
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="stage", name="side_effects_stage", span=False)
+    @observe(tier="stage", metric="side_effects_stage", span=False)
     def stage_fn():
         return 1
 
@@ -303,7 +305,7 @@ def test_span_false_inner_span_reparents_to_enclosing(in_memory_tracer, obs_regi
 
     _, exporter = in_memory_tracer
 
-    @observe(tier="stage", name="outer_stage", span=False)
+    @observe(tier="stage", metric="outer_stage", span=False)
     def outer():
         with span("inner.group"):
             return 1
@@ -332,8 +334,8 @@ def test_double_span_guard_emits_one_span(in_memory_tracer, obs_registry):
     from yadgar._shared.observability.observe import observe
     from yadgar._shared.tracing import trace_span
 
-    @observe(tier="boundary", name="dup")
-    @trace_span("dup.span")
+    @observe(tier="boundary", metric="dup")
+    @trace_span()
     def handler():
         return "ok"
 
@@ -352,13 +354,14 @@ def test_async_boundary(in_memory_tracer, obs_registry):
     _, exporter = in_memory_tracer
     from yadgar._shared.observability.observe import observe
 
-    @observe(tier="boundary", name="async.boundary")
+    @observe(tier="boundary", metric="async.boundary")
     async def handler():
         return "ok"
 
     assert asyncio.run(handler()) == "ok"
     spans = exporter.get_finished_spans()
-    assert any(s.name == "async.boundary" for s in spans)
+    expected = f"{handler.__module__}.{handler.__qualname__}"
+    assert any(s.name == expected for s in spans)
 
 
 # ── staticmethod / classmethod descriptor preservation (BUG-2 regression) ─────
@@ -372,7 +375,7 @@ def test_observe_preserves_staticmethod(in_memory_tracer, obs_registry):
     from yadgar._shared.observability.observe import observe
 
     class C:
-        @observe(tier="hot", name="static.hot")
+        @observe(tier="hot", metric="static.hot")
         @staticmethod
         def add(a, b):
             return a + b
@@ -389,7 +392,7 @@ def test_observe_preserves_classmethod(in_memory_tracer, obs_registry):
     class C:
         marker = "cls"
 
-        @observe(tier="hot", name="class.hot")
+        @observe(tier="hot", metric="class.hot")
         @classmethod
         def who(cls):
             return cls.marker
@@ -404,7 +407,7 @@ def test_observe_staticmethod_boundary_emits_metric(in_memory_tracer, obs_regist
     from yadgar._shared.observability.observe import observe
 
     class C:
-        @observe(tier="boundary", name="static.boundary")
+        @observe(tier="boundary", metric="static.boundary")
         @staticmethod
         def compute():
             return 7
@@ -444,7 +447,7 @@ def test_observe_preserves_lru_cache_info(in_memory_tracer, obs_registry):
 
     calls = {"n": 0}
 
-    @observe(tier="stage", name="cached.stage")
+    @observe(tier="stage", metric="cached.stage")
     @functools.lru_cache(maxsize=8)
     def square(x):
         calls["n"] += 1
@@ -480,7 +483,7 @@ def test_emit_success_survives_closed_log_stream(monkeypatch, in_memory_tracer, 
 
     monkeypatch.setattr(obs.logger, "info", _boom_info)
 
-    @obs.observe(tier="boundary", name="shutdown.ok")
+    @obs.observe(tier="boundary", metric="shutdown.ok")
     def teardown():
         return "done"
 
@@ -498,7 +501,7 @@ def test_emit_error_survives_closed_log_stream(monkeypatch, in_memory_tracer, ob
 
     monkeypatch.setattr(obs.logger, "error", _boom_error)
 
-    @obs.observe(tier="boundary", name="shutdown.err")
+    @obs.observe(tier="boundary", metric="shutdown.err")
     def boom():
         raise RuntimeError("teardown boom")
 

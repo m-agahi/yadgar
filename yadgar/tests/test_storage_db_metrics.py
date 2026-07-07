@@ -185,7 +185,7 @@ class TestStorageSearchSpans:
             session_hints=[],
         )
         span_names = [s.name for s in exporter.get_finished_spans()]
-        assert "storage.memory.search_memories_by_content_date" in span_names, (
+        assert any(n.endswith(".search_memories_by_content_date") for n in span_names), (
             f"Expected span; got {span_names}"
         )
 
@@ -199,7 +199,7 @@ class TestStorageSearchSpans:
             end_date="2026-12-31T23:59:59",
         )
         span_names = [s.name for s in exporter.get_finished_spans()]
-        assert "storage.memory.search_memories_by_timestamp_range" in span_names, (
+        assert any(n.endswith(".search_memories_by_timestamp_range") for n in span_names), (
             f"Expected span; got {span_names}"
         )
 
@@ -210,7 +210,7 @@ class TestStorageSearchSpans:
 
         storage.search_memories_by_month(month_hints=["january"])
         span_names = [s.name for s in exporter.get_finished_spans()]
-        assert "storage.memory.search_memories_by_month" in span_names, (
+        assert any(n.endswith(".search_memories_by_month") for n in span_names), (
             f"Expected span; got {span_names}"
         )
 
@@ -221,4 +221,6 @@ class TestStorageSearchSpans:
 
         storage.search_profiles_fts(query="alice")
         span_names = [s.name for s in exporter.get_finished_spans()]
-        assert "storage.user.search_profiles_fts" in span_names, f"Expected span; got {span_names}"
+        assert any(n.endswith(".search_profiles_fts") for n in span_names), (
+            f"Expected span; got {span_names}"
+        )

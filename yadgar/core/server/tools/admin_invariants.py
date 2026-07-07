@@ -19,7 +19,7 @@ settings = get_settings()
 # ── shared low-level helpers (module-level so check helpers can call them) ───
 
 
-@observe(tier="hot", name="tools.admin_invariants._is_timeout")
+@observe(tier="hot", metric="tools.admin_invariants._is_timeout")
 def _is_timeout(exc: BaseException) -> bool:
     """Return True if *exc* is any recognised timeout variant."""
     try:
@@ -37,7 +37,7 @@ def _q_t(storage, query_timeout: int, surql: str, params: dict | None = None) ->
     return _q_with_timeout(storage, surql, params, timeout_seconds=query_timeout)
 
 
-@observe(tier="stage", name="tools.admin_invariants._count_q")
+@observe(tier="stage", metric="tools.admin_invariants._count_q")
 def _count_q(storage, query_timeout: int, surql: str, params: dict | None = None) -> int:
     rows = _q_t(storage, query_timeout, surql, params)
     if not rows:
@@ -46,7 +46,7 @@ def _count_q(storage, query_timeout: int, surql: str, params: dict | None = None
     return int(row.get("c", row.get("count", 0)))
 
 
-@observe(tier="stage", name="tools.admin_invariants._delete_record")
+@observe(tier="stage", metric="tools.admin_invariants._delete_record")
 def _delete_record(storage, table: str, rid: int, label: str) -> None:
     """Delete a single record by integer id, logging on failure."""
     try:
@@ -55,7 +55,7 @@ def _delete_record(storage, table: str, rid: int, label: str) -> None:
         logger.warning("check_invariants: failed to delete %s row %s: %s", label, rid, del_exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._delete_records")
+@observe(tier="stage", metric="tools.admin_invariants._delete_records")
 def _delete_records(storage, table: str, rids: list[int], label: str) -> None:
     """Batch-delete records by integer id list, logging each failure."""
     for rid in rids:
@@ -65,7 +65,7 @@ def _delete_records(storage, table: str, rids: list[int], label: str) -> None:
 # ── per-invariant check helpers ──────────────────────────────────────────────
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_memory_similarity_link")
+@observe(tier="stage", metric="tools.admin_invariants._check_memory_similarity_link")
 def _check_memory_similarity_link(
     storage,
     query_timeout: int,
@@ -118,7 +118,7 @@ def _check_memory_similarity_link(
             logger.warning("check_invariants: memory_similarity_link check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_memory_transition")
+@observe(tier="stage", metric="tools.admin_invariants._check_memory_transition")
 def _check_memory_transition(
     storage,
     query_timeout: int,
@@ -162,7 +162,7 @@ def _check_memory_transition(
             logger.warning("check_invariants: memory_transition check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_memory_archive")
+@observe(tier="stage", metric="tools.admin_invariants._check_memory_archive")
 def _check_memory_archive(
     storage,
     query_timeout: int,
@@ -195,7 +195,7 @@ def _check_memory_archive(
             logger.warning("check_invariants: memory_archive check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._repair_dangling_caused_by")
+@observe(tier="stage", metric="tools.admin_invariants._repair_dangling_caused_by")
 def _repair_dangling_caused_by(
     storage,
     dangling_rel_rows: list,
@@ -240,7 +240,7 @@ def _repair_dangling_caused_by(
         )
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_relationships")
+@observe(tier="stage", metric="tools.admin_invariants._check_relationships")
 def _check_relationships(
     storage,
     query_timeout: int,
@@ -287,7 +287,7 @@ def _check_relationships(
             logger.warning("check_invariants: relationship/caused_by check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._prune_caused_by_rows")
+@observe(tier="stage", metric="tools.admin_invariants._prune_caused_by_rows")
 def _prune_caused_by_rows(storage, query_timeout: int, excess: int, ceiling: int) -> int:
     """Prune *excess* oldest caused_by rows. Returns count actually pruned."""
     oldest_rows_all = _q_t(
@@ -314,7 +314,7 @@ def _prune_caused_by_rows(storage, query_timeout: int, excess: int, ceiling: int
     return pruned
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_caused_by_ceiling")
+@observe(tier="stage", metric="tools.admin_invariants._check_caused_by_ceiling")
 def _check_caused_by_ceiling(
     storage,
     query_timeout: int,
@@ -357,7 +357,7 @@ def _check_caused_by_ceiling(
             logger.warning("check_invariants: caused_by ceiling check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_wiki_crossref")
+@observe(tier="stage", metric="tools.admin_invariants._check_wiki_crossref")
 def _check_wiki_crossref(
     storage,
     query_timeout: int,
@@ -403,7 +403,7 @@ def _check_wiki_crossref(
             logger.warning("check_invariants: wiki_crossref check failed: %s", exc)
 
 
-@observe(tier="hot", name="tools.admin_invariants._parse_memory_id")
+@observe(tier="hot", metric="tools.admin_invariants._parse_memory_id")
 def _parse_memory_id(suffix: str) -> int | None:
     """Return int(suffix) or None if suffix is not a valid integer."""
     if not suffix:
@@ -414,7 +414,7 @@ def _parse_memory_id(suffix: str) -> int | None:
         return None
 
 
-@observe(tier="hot", name="tools.admin_invariants._collect_orphan_entity_ids")
+@observe(tier="hot", metric="tools.admin_invariants._collect_orphan_entity_ids")
 def _collect_orphan_entity_ids(mem_entity_rows: list, mem_ids_set: set[int]) -> list[int]:
     """Return entity IDs from memory:<N> rows where N is not a live memory ID."""
     orphan_eids: list[int] = []
@@ -431,7 +431,7 @@ def _collect_orphan_entity_ids(mem_entity_rows: list, mem_ids_set: set[int]) -> 
     return orphan_eids
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_memory_entity_orphans")
+@observe(tier="stage", metric="tools.admin_invariants._check_memory_entity_orphans")
 def _check_memory_entity_orphans(
     storage,
     query_timeout: int,
@@ -473,7 +473,7 @@ def _check_memory_entity_orphans(
             logger.warning("check_invariants: memory entity orphan check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_row_count_ceilings")
+@observe(tier="stage", metric="tools.admin_invariants._check_row_count_ceilings")
 def _check_row_count_ceilings(
     storage,
     query_timeout: int,
@@ -505,7 +505,7 @@ def _check_row_count_ceilings(
                 logger.warning("check_invariants: %s ceiling check failed: %s", table, exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_msl_ceiling")
+@observe(tier="stage", metric="tools.admin_invariants._check_msl_ceiling")
 def _check_msl_ceiling(
     storage,
     query_timeout: int,
@@ -537,7 +537,7 @@ def _check_msl_ceiling(
             logger.warning("check_invariants: msl ceiling check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_engram_slot_distribution")
+@observe(tier="stage", metric="tools.admin_invariants._check_engram_slot_distribution")
 def _check_engram_slot_distribution(
     storage,
     query_timeout: int,
@@ -584,7 +584,7 @@ def _check_engram_slot_distribution(
             logger.warning("check_invariants: slot distribution check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_engram_slot_integrity")
+@observe(tier="stage", metric="tools.admin_invariants._check_engram_slot_integrity")
 def _check_engram_slot_integrity(
     storage,
     query_timeout: int,
@@ -615,7 +615,7 @@ def _check_engram_slot_integrity(
             logger.warning("check_invariants: engram_slot check failed: %s", exc)
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_db_size")
+@observe(tier="stage", metric="tools.admin_invariants._check_db_size")
 def _check_db_size(storage, _settings) -> dict:
     """Collect DB-size telemetry; log warning throttled to once per hour. Returns db_size dict."""
     import datetime as _dt
@@ -641,7 +641,7 @@ def _check_db_size(storage, _settings) -> dict:
     return db_size
 
 
-@observe(tier="stage", name="tools.admin_invariants._check_per_table_size")
+@observe(tier="stage", metric="tools.admin_invariants._check_per_table_size")
 def _check_per_table_size(storage, query_timeout: int) -> dict:
     """Collect per-table size breakdown. Returns per_table dict."""
     per_table: dict[str, dict] = {}
@@ -677,7 +677,7 @@ def _check_per_table_size(storage, query_timeout: int) -> dict:
 # ── orchestrator ─────────────────────────────────────────────────────────────
 
 
-@observe(tier="stage", name="tools.admin_invariants._run_check_invariants")
+@observe(tier="stage", metric="tools.admin_invariants._run_check_invariants")
 def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
     """Core logic for check_invariants — separated so tests can call it directly.
 

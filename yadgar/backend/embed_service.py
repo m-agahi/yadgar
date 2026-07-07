@@ -589,7 +589,7 @@ except Exception:
 
 
 @app.get("/metrics")
-@observe(tier="boundary", name="backend.metrics")
+@observe(tier="boundary", metric="backend.metrics")
 async def metrics(request: Request):
     """Prometheus metrics endpoint (V1a, v5.5.0).
 
@@ -601,7 +601,7 @@ async def metrics(request: Request):
 
 
 @app.post("/embed", response_model=EmbedResponse)
-@observe(tier="boundary", name="backend.embed")
+@observe(tier="boundary", metric="backend.embed")
 async def embed(req: EmbedRequest, _: None = Depends(_require_admin_token)):
     import time as _time
 
@@ -817,7 +817,7 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
 
 
 @app.get("/health")
-@observe(tier="boundary", name="backend.health")
+@observe(tier="boundary", metric="backend.health")
 async def health(response: Response):
     """Returns 200 only when DB is up AND embedding model is loaded."""
     db_url = os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000")
@@ -868,7 +868,7 @@ def _walk_db_sizes(
 
 
 @app.get("/admin/dbsize")
-@observe(tier="boundary", name="backend.admin_dbsize")
+@observe(tier="boundary", metric="backend.admin_dbsize")
 async def admin_dbsize(_: None = Depends(_require_admin_token)):
     """Return a filesystem size breakdown of the SurrealDB data directory.
 
@@ -999,7 +999,7 @@ class RecallResponse(BaseModel):
     results: list[dict]
 
 
-@observe(tier="stage", name="backend.recall.landscape")
+@observe(tier="stage", metric="backend.recall.landscape")
 def _run_landscape_backend(query: str, max_results: int, directory: str, storage) -> list[dict]:
     """Backend-side landscape recall via AstrocytePool.consensus_retrieve.
 
@@ -1024,7 +1024,7 @@ def _run_landscape_backend(query: str, max_results: int, directory: str, storage
 
 
 @app.post("/recall", response_model=RecallResponse)
-@observe(tier="boundary", name="backend.recall")
+@observe(tier="boundary", metric="backend.recall")
 async def recall_route(
     req: RecallRequest, _: None = Depends(_require_admin_token)
 ) -> RecallResponse:

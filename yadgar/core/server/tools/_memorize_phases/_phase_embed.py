@@ -14,7 +14,7 @@ from .context import MemorizeContext
 logger = logging.getLogger(__name__)
 
 
-@trace_span("memorize.embed")
+@trace_span()
 def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
     """Run write gate, generate embedding, compute thermo scores.
 

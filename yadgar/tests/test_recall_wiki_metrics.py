@@ -425,9 +425,11 @@ class TestRecallSpanEmission:
 
         spans = exporter.get_finished_spans()
         span_names = [s.name for s in spans]
-        assert "retrieval.recall" in span_names, (
-            f"Expected 'retrieval.recall' span; found: {span_names}. "
-            "Add @trace_span('retrieval.recall') to Retriever.recall() in retrieval/core.py."
+        # R2b: span names are dynamic (module.qualname). Assert the qualname tail
+        # so this survives future moves — still proves Retriever.recall emitted a span.
+        assert any(n.endswith(".Retriever.recall") for n in span_names), (
+            f"Expected a Retriever.recall span (name ending '.Retriever.recall'); "
+            f"found: {span_names}."
         )
 
 
@@ -455,7 +457,11 @@ class TestWikiQuerySpanEmission:
 
         spans = exporter.get_finished_spans()
         span_names = [s.name for s in spans]
-        assert "wiki.query" in span_names, f"Expected 'wiki.query' span; found: {span_names}"
+        # R2b: span names are dynamic (module.qualname). Assert the qualname tail.
+        assert any(n.endswith(".WikiStore.query") for n in span_names), (
+            f"Expected a WikiStore.query span (name ending '.WikiStore.query'); "
+            f"found: {span_names}."
+        )
 
 
 # ---------------------------------------------------------------------------

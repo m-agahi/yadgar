@@ -24,7 +24,7 @@ _ENTITY_PATTERN_RE = re.compile(
 class _EmbedCompressMixin:
     """Re-embedding and memory compression operations."""
 
-    @trace_span("sleep.reembed_stale")
+    @trace_span()
     def reembed_stale(self) -> int:
         """Re-embed memories whose embedding_model differs from the current model."""
         current_model = self._embeddings.get_model_name()
@@ -48,7 +48,7 @@ class _EmbedCompressMixin:
 
         return count
 
-    @trace_span("sleep.compress_old_memories")
+    @trace_span()
     def compress_old_memories(self, days_threshold: int = 30) -> int:
         """Compress old verbose memories by extracting key entity-bearing sentences."""
         cutoff = (datetime.now(UTC) - timedelta(days=days_threshold)).isoformat()

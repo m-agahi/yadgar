@@ -30,7 +30,7 @@ _EXTRA_WHERE_PATTERN = _re.compile(
 _META_KEY_PATTERN = _re.compile(r"^[a-z0-9_]+$")
 
 
-@observe(tier="hot", name="storage.ops.sanitize_meta_key")
+@observe(tier="hot", metric="storage.ops.sanitize_meta_key")
 def _sanitize_meta_key(key: str) -> str:
     """Validate a consolidation_meta record key (lowercase alnum + underscore only).
 
@@ -48,7 +48,7 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ Consolidation Log
 
-    @observe(tier="stage", name="storage.ops.insert_consolidation_log")
+    @observe(tier="stage", metric="storage.ops.insert_consolidation_log")
     def insert_consolidation_log(self, log: dict) -> int:
         cid = self._next_id("consolidation_log")
         self._q(
@@ -73,7 +73,7 @@ class _OpsMixin:
     # Stored as singleton rows in `consolidation_meta` keyed by a stable record id
     # so reads are O(1) and writes are upsert-in-place (no per-write row growth).
 
-    @observe(tier="stage", name="storage.ops.get_consolidation_watermark")
+    @observe(tier="stage", metric="storage.ops.get_consolidation_watermark")
     def get_consolidation_watermark(self, key: str) -> str | None:
         """Return the persisted ISO-8601 watermark for `key`, or None if unset.
 
@@ -85,7 +85,7 @@ class _OpsMixin:
             return str(rows[0]["ts"])
         return None
 
-    @observe(tier="stage", name="storage.ops.set_consolidation_watermark")
+    @observe(tier="stage", metric="storage.ops.set_consolidation_watermark")
     def set_consolidation_watermark(self, key: str, value: str) -> None:
         """Upsert the watermark for `key` to the ISO-8601 timestamp `value`."""
         safe = _sanitize_meta_key(key)
@@ -99,7 +99,7 @@ class _OpsMixin:
     # holds {signature, positions, computed_at} so /api/graph can attach x/y/z
     # when the flag is on and the cached signature still matches the live graph.
 
-    @observe(tier="stage", name="storage.ops.get_graph_layout_cache")
+    @observe(tier="stage", metric="storage.ops.get_graph_layout_cache")
     def get_graph_layout_cache(self) -> dict | None:
         """Return the cached layout {signature, positions, computed_at}, or None.
 
@@ -120,7 +120,7 @@ class _OpsMixin:
             "computed_at": str(row.get("computed_at") or ""),
         }
 
-    @observe(tier="stage", name="storage.ops.set_graph_layout_cache")
+    @observe(tier="stage", metric="storage.ops.set_graph_layout_cache")
     def set_graph_layout_cache(self, signature: str, positions: dict, computed_at: str) -> None:
         """Upsert the singleton precomputed-layout row in place.
 
@@ -135,7 +135,7 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ Stats
 
-    @observe(tier="stage", name="storage.ops.get_memory_stats")
+    @observe(tier="stage", metric="storage.ops.get_memory_stats")
     def get_memory_stats(self) -> dict:
         total_rows = self._q("SELECT count() AS c FROM memory GROUP ALL")
         total = int(total_rows[0]["c"]) if total_rows else 0
@@ -170,7 +170,7 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ prune_old_rows
 
-    @observe(tier="stage", name="storage.ops.prune_old_rows")
+    @observe(tier="stage", metric="storage.ops.prune_old_rows")
     def prune_old_rows(
         self,
         table: str,
@@ -223,7 +223,7 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ Archive Retention
 
-    @observe(tier="stage", name="storage.ops.purge_expired_archives")
+    @observe(tier="stage", metric="storage.ops.purge_expired_archives")
     def purge_expired_archives(
         self,
         dry_run: bool = False,
@@ -334,7 +334,7 @@ class _OpsMixin:
             "candidate_ids": candidate_ids,
         }
 
-    @observe(tier="hot", name="storage.ops.count_archive_skip_protected")
+    @observe(tier="hot", metric="storage.ops.count_archive_skip_protected")
     def _count_archive_skip_protected(self, archived_cutoff: str) -> int:
         """Count protected archives older than cutoff."""
         rows = self._q(
@@ -344,7 +344,7 @@ class _OpsMixin:
         )
         return int(rows[0]["c"]) if rows and rows[0].get("c") else 0
 
-    @observe(tier="hot", name="storage.ops.count_archive_skip_anchor")
+    @observe(tier="hot", metric="storage.ops.count_archive_skip_anchor")
     def _count_archive_skip_anchor(self, archived_cutoff: str) -> int:
         """Count anchor-tagged archives older than cutoff."""
         rows = self._q(
@@ -355,7 +355,7 @@ class _OpsMixin:
         )
         return int(rows[0]["c"]) if rows and rows[0].get("c") else 0
 
-    @observe(tier="hot", name="storage.ops.count_archive_skip_recent")
+    @observe(tier="hot", metric="storage.ops.count_archive_skip_recent")
     def _count_archive_skip_recent(self, archived_cutoff: str, thrash_cutoff: str) -> int:
         """Count archives older than archived_cutoff but recently created (thrash-guard)."""
         rows = self._q(
@@ -367,7 +367,7 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ Engram Slots
 
-    @observe(tier="stage", name="storage.ops.init_engram_slots")
+    @observe(tier="stage", metric="storage.ops.init_engram_slots")
     def init_engram_slots(self, num_slots: int):
         """Ensure all slot indices exist in the engram_slot table."""
         now = self._now_iso()
@@ -409,7 +409,7 @@ class _OpsMixin:
             {"si": slot_index, "exc": excitability, "la": last_activated},
         )
 
-    @observe(tier="stage", name="storage.ops.assign_memory_slot")
+    @observe(tier="stage", metric="storage.ops.assign_memory_slot")
     def assign_memory_slot(self, memory_id: int, slot_index: int):
         now = self._now_iso()
         # Car 3 (backend 5.20.0): capture the memory's OLD slot BEFORE the write so
@@ -442,7 +442,7 @@ class _OpsMixin:
         if old_slot is not None and old_slot != slot_index:
             self._bump_slot_version(old_slot)
 
-    @observe(tier="stage", name="storage.ops.get_memories_in_slot")
+    @observe(tier="stage", metric="storage.ops.get_memories_in_slot")
     def get_memories_in_slot(self, slot_index: int) -> list[dict]:
         """Return the live members of an engram slot (``heat>0``, created_at order).
 
@@ -492,7 +492,7 @@ class _OpsMixin:
         cache.put((slot_index, version), [m["id"] for m in all_members])
         return [m for m in all_members if m.get("heat", 0) > 0]
 
-    @observe(tier="hot", name="storage.ops.resolve_engram_slot_cache")
+    @observe(tier="hot", metric="storage.ops.resolve_engram_slot_cache")
     def _resolve_engram_slot_cache(self):
         """Return the injected ``engram_slot`` cache, or the process-global default.
 
@@ -514,7 +514,7 @@ class _OpsMixin:
         self._engram_slot_cache = cache
         return cache
 
-    @observe(tier="hot", name="storage.ops.resolve_scope_versions")
+    @observe(tier="hot", metric="storage.ops.resolve_scope_versions")
     def _resolve_scope_versions(self):
         """Return the injected :class:`ScopeVersions`, or the process-global one.
 
@@ -536,7 +536,7 @@ class _OpsMixin:
         self._scope_versions = sv
         return sv
 
-    @observe(tier="hot", name="storage.ops.bump_slot_version")
+    @observe(tier="hot", metric="storage.ops.bump_slot_version")
     def _bump_slot_version(self, slot_index: int) -> None:
         """Bump the ``slot`` scope version for ``slot_index`` (version-in-key).
 
@@ -550,7 +550,7 @@ class _OpsMixin:
 
     # ── Car 4 (graph adjacency cache) — entity-scope version-in-key ───────────
 
-    @observe(tier="hot", name="storage.ops.resolve_graph_cache")
+    @observe(tier="hot", metric="storage.ops.resolve_graph_cache")
     def _resolve_graph_cache(self):
         """Return the injected ``graph`` cache, or the process-global default.
 
@@ -571,7 +571,7 @@ class _OpsMixin:
         self._graph_cache = cache
         return cache
 
-    @observe(tier="hot", name="storage.ops.bump_entity_version")
+    @observe(tier="hot", metric="storage.ops.bump_entity_version")
     def _bump_entity_version(self, entity_id: int) -> None:
         """Bump the ``entity`` scope version for ``entity_id`` (Car 4 version-in-key).
 
@@ -586,7 +586,7 @@ class _OpsMixin:
         except Exception:  # noqa: BLE001 — version bump must never fail a write
             _log.debug("entity version bump failed for entity %s", entity_id, exc_info=True)
 
-    @observe(tier="stage", name="storage.ops.get_slot_occupancy")
+    @observe(tier="stage", metric="storage.ops.get_slot_occupancy")
     def get_slot_occupancy(self) -> dict:
         """Return {slot_index: count} for all occupied slots."""
         rows = self._q(
@@ -611,7 +611,7 @@ class _OpsMixin:
 
     # ------------------------------------------------------------------ Checkpoints
 
-    @observe(tier="stage", name="storage.ops.insert_checkpoint")
+    @observe(tier="stage", metric="storage.ops.insert_checkpoint")
     def insert_checkpoint(self, data: dict) -> int:
         """Replace any existing checkpoint for this directory.
 
@@ -654,7 +654,7 @@ class _OpsMixin:
         )
         return cid
 
-    @observe(tier="stage", name="storage.ops.get_active_checkpoint")
+    @observe(tier="stage", metric="storage.ops.get_active_checkpoint")
     def get_active_checkpoint(self, directory: str = "") -> dict | None:
         """Latest checkpoint for this directory. Empty directory = global most-recent."""
         if directory:
@@ -669,7 +669,7 @@ class _OpsMixin:
             return None
         return self._row_to_dict(rows[0])
 
-    @observe(tier="stage", name="storage.ops.get_current_epoch")
+    @observe(tier="stage", metric="storage.ops.get_current_epoch")
     def get_current_epoch(self) -> int:
         """Get the current compaction epoch number."""
         rows = self._q("SELECT math::max(epoch) AS max_epoch FROM checkpoint GROUP ALL")
@@ -720,7 +720,7 @@ def purge_expired_archives(
     )
 
 
-@observe(tier="stage", name="storage.ops.vacuum_checkpoints")
+@observe(tier="stage", metric="storage.ops.vacuum_checkpoints")
 def vacuum_checkpoints(storage, *, dry_run: bool = True) -> dict:
     """Collapse stale checkpoints: keep latest per directory_context, delete rest.
 

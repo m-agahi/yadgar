@@ -169,7 +169,10 @@ def main() -> int:
         try:
             base_idx = args.index("--base")
             base_ref = args[base_idx + 1]
-        except ValueError, IndexError:
+        # Parenthesised tuple required — CI compiles on <py3.14 where the
+        # bare `except X, Y:` form is a SyntaxError. fmt:skip keeps ruff (py314
+        # target, PEP 758) from stripping the parens back to the bare form.
+        except (ValueError, IndexError):  # fmt: skip
             print(
                 "check-backend-bump: ERROR: --ci requires --base <ref>",
                 file=sys.stderr,

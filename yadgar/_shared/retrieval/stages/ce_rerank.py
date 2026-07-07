@@ -35,7 +35,7 @@ class _ReRankPipelineStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.ce_rerank")
+    @observe(tier="stage", metric="retrieval.pipeline.ce_rerank")
     def apply(self, state: RetrievalState) -> RetrievalState:
         profile_name = state.profile
         profile_dict = state.query_analysis.get("_profile_dict", {})
@@ -67,6 +67,6 @@ class CEReRankStage(RetrievalStage):
         self._retriever = retriever
         self._delegate = _ReRankPipelineStage(retriever)
 
-    @observe(tier="stage", name="retrieval.pipeline.ce_rerank")
+    @observe(tier="stage", metric="retrieval.pipeline.ce_rerank")
     def apply(self, state: RetrievalState) -> RetrievalState:
         return self._delegate.apply(state)

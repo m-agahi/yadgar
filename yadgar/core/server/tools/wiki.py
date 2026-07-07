@@ -22,7 +22,7 @@ from yadgar.core.server._helpers import _has_unpaired_surrogate, _push_event
 logger = logging.getLogger(__name__)
 
 
-@observe(tier="hot", name="tools.wiki._check_wiki_add_context")
+@observe(tier="hot", metric="tools.wiki._check_wiki_add_context")
 def _check_wiki_add_context(branch: str | None, directory: str | None) -> dict | None:
     """Check branch + directory enforcement at MCP boundary.
 
@@ -72,7 +72,7 @@ def _check_wiki_add_context(branch: str | None, directory: str | None) -> dict |
     return None
 
 
-@observe(tier="stage", name="tools.wiki._wiki_add_sync_write")
+@observe(tier="stage", metric="tools.wiki._wiki_add_sync_write")
 def _wiki_add_sync_write(
     title: str,
     content: str,
@@ -163,7 +163,7 @@ def _wiki_add_sync_write(
     return result
 
 
-@observe(tier="stage", name="tools.wiki._wiki_add_wait_path")
+@observe(tier="stage", metric="tools.wiki._wiki_add_wait_path")
 def _wiki_add_wait_path(
     title: str,
     content: str,
@@ -295,7 +295,7 @@ def _wiki_add_wait_path(
     }
 
 
-@observe(tier="stage", name="tools.wiki._check_similarity_gate")
+@observe(tier="stage", metric="tools.wiki._check_similarity_gate")
 def _check_similarity_gate(
     title: str,
     content: str,
@@ -589,7 +589,7 @@ def _current_wiki_epoch() -> int:
         return 0
 
 
-@observe(tier="stage", name="tools.wiki._make_wiki_read_cache")
+@observe(tier="stage", metric="tools.wiki._make_wiki_read_cache")
 def _make_wiki_read_cache():
     from yadgar.core.cache import (  # noqa: PLC0415
         TTL,
@@ -610,7 +610,7 @@ def _make_wiki_read_cache():
     )
 
 
-@observe(tier="stage", name="tools.wiki._make_wiki_query_cache")
+@observe(tier="stage", metric="tools.wiki._make_wiki_query_cache")
 def _make_wiki_query_cache():
     from yadgar.core.cache import (  # noqa: PLC0415
         TTL,
@@ -1121,7 +1121,7 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
 # ── v5.41.0: Versioning + section-patching tools ──────────────────────────────
 
 
-@observe(tier="stage", name="tools.wiki._resolve_page_id_by_slug")
+@observe(tier="stage", metric="tools.wiki._resolve_page_id_by_slug")
 def _resolve_page_id_by_slug(
     slug: str,
     directory: str | None = None,

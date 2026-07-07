@@ -78,7 +78,7 @@ class MemoryCurator:
 
     # ── a. Active Curation on Ingestion ──────────────────────────────────
 
-    @trace_span("curation.curate_on_remember")
+    @trace_span()
     def curate_on_remember(
         self,
         content: str,
@@ -264,7 +264,7 @@ class MemoryCurator:
 
     # ── c. Memify Self-Improvement Layer ─────────────────────────────────
 
-    @trace_span("curation.memify")
+    @trace_span()
     def memify_cycle(self) -> dict:
         """Run the full memify self-improvement cycle.
 
@@ -302,22 +302,22 @@ class MemoryCurator:
         )
         return stats
 
-    @trace_span("consolidation.memify.prune")
+    @trace_span()
     def _memify_prune(self, stats: dict) -> None:
         """Delete cold, unaccessed, stale auto-generated memories."""
         _memify_prune(self._storage, self._settings, stats)
 
-    @trace_span("consolidation.memify.strengthen")
+    @trace_span()
     def _memify_strengthen(self, stats: dict) -> None:
         """Boost importance for memories accessed > 5 times with confidence > 0.8."""
         _memify_strengthen(self._storage, stats)
 
-    @trace_span("consolidation.memify.reweight")
+    @trace_span()
     def _memify_reweight(self, stats: dict) -> None:
         """Adjust relationship weights based on usage patterns."""
         _memify_reweight(self._storage, stats)
 
-    @trace_span("consolidation.memify.derive")
+    @trace_span()
     def _memify_derive(self, stats: dict) -> None:
         """Generate synthetic derived-fact memories for high-weight entity pairs."""
         _memify_derive(self._storage, self._embeddings, stats)

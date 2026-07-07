@@ -756,7 +756,7 @@ class _ClientMixin:
                     f"SurrealDB batch error: {entry.get('detail') or entry.get('result') or entry}"
                 )
 
-    @trace_span("storage.batch_writes")
+    @trace_span()
     def batch_writes(self, statements: list[tuple[str, dict | None]]) -> None:
         """Execute multiple write statements against SurrealDB.
 

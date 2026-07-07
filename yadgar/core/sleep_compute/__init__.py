@@ -44,7 +44,7 @@ class SleepComputeEngine(_DreamMixin, _CommunityMixin, _EmbedCompressMixin):
         self._settings = settings
         self._narrative = NarrativeEngine(storage, knowledge_graph, settings)
 
-    @trace_span("sleep.cycle")
+    @trace_span()
     def run_sleep_cycle(self) -> dict:
         """Orchestrate all sleep-time operations in order."""
         stats: dict = {}

@@ -12,7 +12,7 @@ class _MultiPassageMixin:
     self.cluster_memories).
     """
 
-    @observe(tier="stage", name="retrieval.multi_passage_rerank")
+    @observe(tier="stage", metric="retrieval.multi_passage_rerank")
     def multi_passage_rerank(self, query: str, memories: list[dict], top_k: int) -> list[dict]:
         """Multi-passage evidence aggregation reranking.
 

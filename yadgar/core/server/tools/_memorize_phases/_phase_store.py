@@ -16,7 +16,7 @@ from .context import MemorizeContext
 logger = logging.getLogger(__name__)
 
 
-@trace_span("memorize.store")
+@trace_span()
 def phase_store(ctx: MemorizeContext) -> None:
     """Write memory to storage via curator or direct insert.
 

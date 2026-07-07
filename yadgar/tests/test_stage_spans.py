@@ -66,18 +66,36 @@ def _find(exporter, name):
     return None
 
 
-def _assert_child_of(exporter, child_name: str, parent_name: str) -> None:
-    """Assert child_name span is a real child of parent_name (same trace, parent ref)."""
-    child = _find(exporter, child_name)
-    parent = _find(exporter, parent_name)
-    assert child is not None, f"missing span {child_name!r} in {_span_names(exporter)}"
+def _find_suffix(exporter, suffix: str):
+    """Find a span whose dynamic module.qualname name ends with ``suffix``.
+
+    Span names are now dynamic (``module.qualname``) after R2b Cars 1+2; assert the
+    method-name tail (move-resilient) instead of a hardcoded landmark string.
+    """
+    for s in exporter.get_finished_spans():
+        if s.name.endswith(suffix):
+            return s
+    return None
+
+
+def _assert_child_of(exporter, child_suffix: str, parent_name: str) -> None:
+    """Assert a span whose name ends with child_suffix is a real child of parent_name.
+
+    child_suffix matches the dynamic ``module.qualname`` span-name tail (e.g.
+    ``._collect_ppr_scores``). parent_name is a curated landmark span kept verbatim
+    (e.g. ``retrieval.recall``) OR itself a ``.qualname`` suffix — resolved by exact
+    match first, then suffix.
+    """
+    child = _find_suffix(exporter, child_suffix)
+    parent = _find(exporter, parent_name) or _find_suffix(exporter, parent_name)
+    assert child is not None, f"missing span *{child_suffix!r} in {_span_names(exporter)}"
     assert parent is not None, f"missing parent span {parent_name!r}"
     assert child.context.trace_id == parent.context.trace_id, (
-        f"{child_name} trace_id != {parent_name} trace_id — orphaned span, "
+        f"{child_suffix} trace_id != {parent_name} trace_id — orphaned span, "
         "will not nest under recall in Tempo."
     )
     assert child.parent is not None and child.parent.span_id == parent.context.span_id, (
-        f"{child_name}.parent is not {parent_name} — not a direct child."
+        f"{child_suffix}.parent is not {parent_name} — not a direct child."
     )
 
 
@@ -122,7 +140,7 @@ def test_ppr_stage_span_nested_under_parent(span_exporter):
     with tracer.start_as_current_span("retrieval.recall"):
         stub._collect_ppr_scores("q", _make_scores(), None, 10)
 
-    _assert_child_of(span_exporter, "retrieval.ppr", "retrieval.recall")
+    _assert_child_of(span_exporter, "._collect_ppr_scores", "retrieval.recall")
 
 
 def test_spreading_stage_span_nested(span_exporter):
@@ -133,7 +151,7 @@ def test_spreading_stage_span_nested(span_exporter):
     with tracer.start_as_current_span("retrieval.recall"):
         stub._collect_spreading_scores(_make_scores(), None, [1, 2, 3])
 
-    _assert_child_of(span_exporter, "retrieval.spreading", "retrieval.recall")
+    _assert_child_of(span_exporter, "._collect_spreading_scores", "retrieval.recall")
 
 
 def test_fts_stage_span_emits(span_exporter):
@@ -151,7 +169,9 @@ def test_fts_stage_span_emits(span_exporter):
         branch_filter=None,
     )
     stub._collect_fts_scores(_make_scores(), params)
-    assert "retrieval.fts" in _span_names(span_exporter)
+    assert _find_suffix(span_exporter, "._collect_fts_scores") is not None, _span_names(
+        span_exporter
+    )
 
 
 def test_vector_stage_span_emits(span_exporter):
@@ -159,7 +179,9 @@ def test_vector_stage_span_emits(span_exporter):
     stub._embeddings = MagicMock()
     stub._embeddings.encode_query.return_value = None  # short-circuits KNN loop
     stub._collect_vector_scores("q", _make_scores(), None, [], 10, 0.0)
-    assert "retrieval.vector" in _span_names(span_exporter)
+    assert _find_suffix(span_exporter, "._collect_vector_scores") is not None, _span_names(
+        span_exporter
+    )
 
 
 def test_temporal_stage_span_emits(span_exporter):
@@ -167,7 +189,9 @@ def test_temporal_stage_span_emits(span_exporter):
     stub._settings.TEMPORAL_RETRIEVAL_ENABLED = False
     # temporal collector may early-return on no temporal markers; span still opens
     stub._collect_temporal_scores("q", _make_scores(), 0.0, 10)
-    assert "retrieval.temporal" in _span_names(span_exporter)
+    assert _find_suffix(span_exporter, "._collect_temporal_scores") is not None, _span_names(
+        span_exporter
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +225,7 @@ def test_rerank_stage_spans_nested(span_exporter):
     with tracer.start_as_current_span("retrieval.rerank"):
         stub._rerank_heuristic([], ctx)
 
-    _assert_child_of(span_exporter, "retrieval.rerank.heuristic", "retrieval.rerank")
+    _assert_child_of(span_exporter, "._rerank_heuristic", "retrieval.rerank")
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +246,7 @@ def test_write_surprisal_span_emits(span_exporter):
 
     result = gate.compute_surprisal("some content", "/tmp", [])
     assert isinstance(result, float)
-    assert "write.surprisal" in _span_names(span_exporter)
+    assert _find_suffix(span_exporter, ".compute_surprisal") is not None, _span_names(span_exporter)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +300,9 @@ def test_drainer_apply_no_double_span_after_observe(span_exporter):
 
     names = [s.name for s in span_exporter.get_finished_spans()]
     assert names.count("drainer.apply") == 1, f"expected exactly one drainer.apply, got {names}"
-    _assert_child_of(span_exporter, "drainer.apply_inner", "drainer.apply")
+    # _apply_inner's @observe span is now the dynamic module.qualname (…._apply_inner);
+    # drainer.apply stays a curated manual span.
+    _assert_child_of(span_exporter, "._apply_inner", "drainer.apply")
 
 
 def test_engram_allocate_boundary_span_emits(span_exporter):
@@ -296,7 +322,7 @@ def test_engram_allocate_boundary_span_emits(span_exporter):
     alloc._storage._now_iso.return_value = "2026-07-03T00:00:00+00:00"
 
     alloc.allocate(1)
-    assert "engram.allocate" in _span_names(span_exporter)
+    assert _find_suffix(span_exporter, ".allocate") is not None, _span_names(span_exporter)
 
 
 def test_cognitive_map_record_transition_boundary_span_emits(span_exporter):
@@ -309,7 +335,7 @@ def test_cognitive_map_record_transition_boundary_span_emits(span_exporter):
     cm._dirty = False
 
     cm.record_transition(1, 2)
-    assert "cognitive_map.record_transition" in _span_names(span_exporter)
+    assert _find_suffix(span_exporter, ".record_transition") is not None, _span_names(span_exporter)
 
 
 def test_kg_extract_entities_typed_boundary_span_emits(span_exporter):
@@ -321,7 +347,9 @@ def test_kg_extract_entities_typed_boundary_span_emits(span_exporter):
     kg._settings = MagicMock()
 
     kg.extract_entities_typed("def foo(): pass", "/tmp")
-    assert "knowledge_graph.extract_entities_typed" in _span_names(span_exporter)
+    assert _find_suffix(span_exporter, ".extract_entities_typed") is not None, _span_names(
+        span_exporter
+    )
 
 
 def test_queue_enqueue_boundary_span_emits(span_exporter, tmp_path):
@@ -330,4 +358,4 @@ def test_queue_enqueue_boundary_span_emits(span_exporter, tmp_path):
 
     q = FileQueue(base_dir=str(tmp_path))
     q.enqueue("memorize", {"content": "x"})
-    assert "queue.enqueue" in _span_names(span_exporter)
+    assert _find_suffix(span_exporter, ".enqueue") is not None, _span_names(span_exporter)

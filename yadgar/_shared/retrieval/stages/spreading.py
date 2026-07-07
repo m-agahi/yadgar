@@ -20,7 +20,7 @@ class SpreadingStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.spreading")
+    @observe(tier="stage", metric="retrieval.pipeline.spreading")
     def apply(self, state: RetrievalState) -> RetrievalState:
         settings = self._retriever._settings
         profile_dict = state.query_analysis.get("_profile_dict", {})

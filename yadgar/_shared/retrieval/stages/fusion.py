@@ -25,7 +25,7 @@ class FusionStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.fusion")
+    @observe(tier="stage", metric="retrieval.pipeline.fusion")
     def apply(self, state: RetrievalState) -> RetrievalState:
         profile_dict = state.query_analysis.get("_profile_dict", {})
 

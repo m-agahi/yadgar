@@ -56,9 +56,9 @@ def test_compute_valid_until_emits_span(span_exporter):
     from yadgar.core.server.tools.memorize import _compute_valid_until
 
     _compute_valid_until("semantic_immortal", None, None, get_settings())
-    assert "tools.memorize._compute_valid_until" in _span_names(span_exporter), _span_names(
-        span_exporter
-    )
+    # R2b: span names are dynamic (module.qualname). Assert the qualname tail.
+    names = _span_names(span_exporter)
+    assert any(n.endswith(".memorize._compute_valid_until") for n in names), names
 
 
 def test_slug_prefix_emits_span(span_exporter):
@@ -66,7 +66,9 @@ def test_slug_prefix_emits_span(span_exporter):
     from yadgar.core.server.tools.project import _slug_prefix
 
     _slug_prefix("some-wiki-slug-here")
-    assert "tools.project._slug_prefix" in _span_names(span_exporter), _span_names(span_exporter)
+    # R2b: span names are dynamic (module.qualname). Assert the qualname tail.
+    names = _span_names(span_exporter)
+    assert any(n.endswith(".project._slug_prefix") for n in names), names
 
 
 def test_omit_sentinel_emits_span(span_exporter):
@@ -74,7 +76,9 @@ def test_omit_sentinel_emits_span(span_exporter):
     from yadgar.core.server.tools.project import _omit_sentinel
 
     _omit_sentinel({}, "k", "v", None)
-    assert "tools.project._omit_sentinel" in _span_names(span_exporter), _span_names(span_exporter)
+    # R2b: span names are dynamic (module.qualname). Assert the qualname tail.
+    names = _span_names(span_exporter)
+    assert any(n.endswith(".project._omit_sentinel") for n in names), names
 
 
 def test_cosine_similarity_emits_span(span_exporter):
@@ -82,6 +86,6 @@ def test_cosine_similarity_emits_span(span_exporter):
     from yadgar.core.server.tools.project import _cosine_similarity
 
     _cosine_similarity([1.0, 0.0, 1.0], [1.0, 1.0, 0.0])
-    assert "tools.project._cosine_similarity" in _span_names(span_exporter), _span_names(
-        span_exporter
-    )
+    # R2b: span names are dynamic (module.qualname). Assert the qualname tail.
+    names = _span_names(span_exporter)
+    assert any(n.endswith(".project._cosine_similarity") for n in names), names

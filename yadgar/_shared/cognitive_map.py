@@ -40,7 +40,7 @@ class CognitiveMap:
 
     # -- Recording --
 
-    @observe(tier="boundary", name="cognitive_map.record_transition")
+    @observe(tier="boundary", metric="cognitive_map.record_transition")
     def record_transition(
         self, from_memory_id: int, to_memory_id: int, session_id: str = ""
     ) -> None:
@@ -61,7 +61,7 @@ class CognitiveMap:
 
     # -- Transition matrix --
 
-    @observe(tier="stage", name="cognitive_map.build_transition_matrix")
+    @observe(tier="stage", metric="cognitive_map.build_transition_matrix")
     def build_transition_matrix(self) -> np.ndarray:
         """Build row-normalized transition matrix T from stored transitions.
 
@@ -100,7 +100,7 @@ class CognitiveMap:
 
     # -- SR matrix --
 
-    @observe(tier="stage", name="cognitive_map.compute_sr_matrix")
+    @observe(tier="stage", metric="cognitive_map.compute_sr_matrix")
     def compute_sr_matrix(self) -> np.ndarray:
         """Compute M = (I - γ·T)^{-1}, the Successor Representation matrix."""
         T = self.build_transition_matrix()
@@ -133,7 +133,7 @@ class CognitiveMap:
 
     # -- Coordinate extraction --
 
-    @observe(tier="stage", name="cognitive_map.extract_coordinates")
+    @observe(tier="stage", metric="cognitive_map.extract_coordinates")
     def extract_coordinates(self, n_dims: int = 2) -> dict[int, tuple]:
         """Extract low-dimensional coordinates from SR matrix eigenvectors.
 
@@ -171,7 +171,7 @@ class CognitiveMap:
 
     # -- Navigation --
 
-    @observe(tier="stage", name="cognitive_map.navigate_to")
+    @observe(tier="stage", metric="cognitive_map.navigate_to")
     def navigate_to(
         self,
         query_embedding: bytes,
@@ -218,7 +218,7 @@ class CognitiveMap:
 
     # -- Incremental TD update --
 
-    @observe(tier="stage", name="cognitive_map.incremental_update")
+    @observe(tier="stage", metric="cognitive_map.incremental_update")
     def incremental_update(self, from_id: int, to_id: int) -> None:
         """TD-learning update: M[from] += lr * (e_to + γ·M[to] - M[from]).
 
@@ -239,7 +239,7 @@ class CognitiveMap:
         delta = e_to + self._discount * self._sr_matrix[j] - self._sr_matrix[i]
         self._sr_matrix[i] += self._lr * delta
 
-    @observe(tier="stage", name="cognitive_map.has_sufficient_data")
+    @observe(tier="stage", metric="cognitive_map.has_sufficient_data")
     def has_sufficient_data(self) -> bool:
         """Check if enough transitions exist for meaningful SR computation."""
         transitions = self._storage.get_all_transitions()

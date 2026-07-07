@@ -20,7 +20,7 @@ class FTSStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.fts")
+    @observe(tier="stage", metric="retrieval.pipeline.fts")
     def apply(self, state: RetrievalState) -> RetrievalState:
         from collections import defaultdict  # noqa: PLC0415
 

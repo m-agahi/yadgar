@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class _PromotionMixin:
     """Mixin: _promote_pattern — promotes one qualifying cluster to a semantic memory."""
 
-    @observe(tier="stage", name="consolidation.cls.promote")
+    @observe(tier="stage", metric="consolidation.cls.promote")
     def _promote_pattern(self, pattern: dict) -> bool:
         """Promote a qualifying cluster to a semantic memory.
 

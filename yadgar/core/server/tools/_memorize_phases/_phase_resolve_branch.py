@@ -23,7 +23,7 @@ from .context import MemorizeContext
 logger = logging.getLogger(__name__)
 
 
-@trace_span("memorize.resolve_branch")
+@trace_span()
 def phase_resolve_branch(ctx: MemorizeContext) -> dict | None:
     """Resolve branch context and enqueue on fast path.
 

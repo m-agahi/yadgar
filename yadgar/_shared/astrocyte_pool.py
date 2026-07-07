@@ -81,7 +81,7 @@ class AstrocytePool:
 
     # -- a. Process Initialization --
 
-    @observe(tier="stage", name="astrocyte.init_processes")
+    @observe(tier="stage", metric="astrocyte.init_processes")
     def init_processes(self) -> None:
         """Create specialized processes, reusing existing DB records if present."""
         existing = self._storage.get_astrocyte_processes()
@@ -112,7 +112,7 @@ class AstrocytePool:
 
     # -- b. Domain Assignment --
 
-    @observe(tier="boundary", name="astrocyte.assign_memory")
+    @observe(tier="boundary", metric="astrocyte.assign_memory")
     def assign_memory(self, memory: dict) -> list[str]:
         """Assign a memory to relevant domain processes based on content analysis.
 
@@ -132,7 +132,7 @@ class AstrocytePool:
             except Exception:
                 pass
 
-    @observe(tier="stage", name="astrocyte.assign_memory_inner")
+    @observe(tier="stage", metric="astrocyte.assign_memory_inner")
     def _assign_memory_inner(self, memory: dict) -> list[str]:
         """Inner implementation of assign_memory()."""
         content = memory.get("content", "")
@@ -183,7 +183,7 @@ class AstrocytePool:
 
     # -- c. Specialized Consolidation --
 
-    @observe(tier="boundary", name="astrocyte.consolidate_domain")
+    @observe(tier="boundary", metric="astrocyte.consolidate_domain")
     def consolidate_domain(self, process_name: str) -> dict:
         """Run consolidation only on memories assigned to a specific domain process.
 
@@ -265,7 +265,7 @@ class AstrocytePool:
 
     # -- d. Consensus Retrieval --
 
-    @observe(tier="stage", name="astrocyte.consensus_retrieve")
+    @observe(tier="stage", metric="astrocyte.consensus_retrieve")
     def consensus_retrieve(self, query: str, top_k: int = 5) -> list[dict]:
         """Each process scores the query against its domain memories, then merge with voting.
 
@@ -335,7 +335,7 @@ class AstrocytePool:
 
     # -- e. Process Health --
 
-    @observe(tier="stage", name="astrocyte.get_process_stats")
+    @observe(tier="stage", metric="astrocyte.get_process_stats")
     def get_process_stats(self) -> list[dict]:
         """Return stats for each astrocyte process."""
         stats = []

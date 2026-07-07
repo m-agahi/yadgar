@@ -21,7 +21,7 @@ class MMRStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.mmr")
+    @observe(tier="stage", metric="retrieval.pipeline.mmr")
     def apply(self, state: RetrievalState) -> RetrievalState:
         # No-op: MMR is executed inside CEReRankStage via _apply_rerank_pipeline.
         return state

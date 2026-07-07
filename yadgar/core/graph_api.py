@@ -94,7 +94,7 @@ class GraphAPI:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    @trace_span("graph_api.get_full_graph")
+    @trace_span()
     def get_full_graph(
         self,
         max_memories: int = 500,
@@ -515,7 +515,7 @@ class GraphAPI:
             )
         return result
 
-    @trace_span("graph_api.get_edges_by_type")
+    @trace_span()
     def get_edges_by_type(
         self,
         edge_type: str,
@@ -537,7 +537,7 @@ class GraphAPI:
         # is unreachable. Kept as a generic gate for any future lazy edge type.
         return {"edges": []}
 
-    @trace_span("graph_api.get_graph_stats")
+    @trace_span()
     def get_graph_stats(self) -> dict:
         """Return graph statistics: memory count, edge type counts."""
         try:
@@ -579,7 +579,7 @@ class GraphAPI:
             "wiki_page_count": wiki_count,
         }
 
-    @trace_span("graph_api.get_neighborhood")
+    @trace_span()
     def get_neighborhood(self, node_id: str, hops: int = 2) -> dict:
         """Return subgraph around a memory node."""
         nodes: list[dict] = []

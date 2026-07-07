@@ -18,7 +18,7 @@ from .context import MemorizeContext
 logger = logging.getLogger(__name__)
 
 
-@trace_span("memorize.contradiction")
+@trace_span()
 def phase_contradiction(ctx: MemorizeContext) -> dict | None:
     """Run C4 LLM conflict resolver if enabled.
 

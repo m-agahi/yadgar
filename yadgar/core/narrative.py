@@ -134,7 +134,7 @@ class NarrativeEngine:
 
         return "\n\n".join(parts)
 
-    @trace_span("sleep.narrate")
+    @trace_span()
     def auto_narrate(self) -> dict:
         """Auto-generate narratives for active directories during sleep-time compute.
 

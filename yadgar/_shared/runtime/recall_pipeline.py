@@ -75,7 +75,7 @@ settings = get_settings()
 # ---------------------------------------------------------------------------
 
 
-@observe(tier="hot", name="tools.recall._apply_quality_floor")
+@observe(tier="hot", metric="tools.recall._apply_quality_floor")
 def _apply_quality_floor(memories: list[dict], threshold: float) -> list[dict]:
     """Drop results whose cross-encoder score is below *threshold*.
 
@@ -106,7 +106,7 @@ def _apply_quality_floor(memories: list[dict], threshold: float) -> list[dict]:
     return kept
 
 
-@observe(tier="hot", name="tools.recall._dedup_by_content")
+@observe(tier="hot", metric="tools.recall._dedup_by_content")
 def _dedup_by_content(memories: list[dict]) -> list[dict]:
     """Collapse repeated memories with identical content.
 
@@ -139,7 +139,7 @@ def _dedup_by_content(memories: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-@observe(tier="hot", name="tools.recall._candidates_to_dicts")
+@observe(tier="hot", metric="tools.recall._candidates_to_dicts")
 def _candidates_to_dicts(candidates: list) -> list[dict]:
     """Convert Candidate objects to raw dicts, stamping _source and stripping embeddings.
 
@@ -212,7 +212,7 @@ def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results, prof
 # ---------------------------------------------------------------------------
 
 
-@observe(tier="hot", name="tools.recall._apply_fanout_boosts")
+@observe(tier="hot", metric="tools.recall._apply_fanout_boosts")
 def _apply_fanout_boosts(
     pooled: list[dict],
     query: str,
@@ -284,7 +284,7 @@ def _apply_fanout_boosts(
     return pooled
 
 
-@observe(tier="stage", name="tools.recall._fanout_recall", span=False)
+@observe(tier="stage", metric="tools.recall._fanout_recall", span=False)
 def _fanout_recall(  # noqa: PLR0913 — 9 params allowlisted (I30); Phase 2 wraps params
     query: str,
     max_results: int,
@@ -431,7 +431,7 @@ def _fanout_recall(  # noqa: PLR0913 — 9 params allowlisted (I30); Phase 2 wra
     return pooled[:max_results]
 
 
-@observe(tier="stage", name="tools.recall._record_recall_sr_transition")
+@observe(tier="stage", metric="tools.recall._record_recall_sr_transition")
 def _record_recall_sr_transition(merged: list[dict]) -> None:
     """Record an SR (successor-representation) transition: previous recall → this one.
 
@@ -458,7 +458,7 @@ def _record_recall_sr_transition(merged: list[dict]) -> None:
     _bounded_set(_st._last_recalled_ids, session_key, top_id)
 
 
-@observe(tier="stage", name="tools.recall._apply_recall_db_side_effects")
+@observe(tier="stage", metric="tools.recall._apply_recall_db_side_effects")
 def _apply_recall_db_side_effects(merged: list[dict], query: str, storage) -> None:  # noqa: ARG001
     """DB-side bookkeeping half: heat boost + thermo access record.
 
@@ -479,6 +479,7 @@ def _apply_recall_db_side_effects(merged: list[dict], query: str, storage) -> No
     """
     from yadgar._shared.tracing import span  # noqa: PLC0415
 
+    # span(): curated landmark name — inline CM can't auto-derive (ADR-0061 exception)
     with span("recall.side_effects.db", results=len(merged)):
         now = storage._now_iso()
         thermo = _st._thermo
@@ -499,7 +500,7 @@ def _apply_recall_db_side_effects(merged: list[dict], query: str, storage) -> No
             storage.boost_memories_access(boosted_ids, now)
 
 
-@observe(tier="stage", name="tools.recall._apply_recall_session_side_effects")
+@observe(tier="stage", metric="tools.recall._apply_recall_session_side_effects")
 def _apply_recall_session_side_effects(merged: list[dict], query: str) -> None:
     """Core-local session bookkeeping half: SR transitions, action buffer, replay counter.
 
@@ -518,6 +519,7 @@ def _apply_recall_session_side_effects(merged: list[dict], query: str) -> None:
     """
     from yadgar._shared.tracing import span  # noqa: PLC0415
 
+    # span(): curated landmark name — inline CM can't auto-derive (ADR-0061 exception)
     with span("recall.side_effects.session", results=len(merged)):
         # SR transitions: link previous recall → current recall.
         _record_recall_sr_transition(merged)
@@ -538,7 +540,7 @@ def _apply_recall_session_side_effects(merged: list[dict], query: str) -> None:
             _st._replay.record_tool_call()
 
 
-@observe(tier="stage", name="tools.recall._apply_recall_side_effects", span=False)
+@observe(tier="stage", metric="tools.recall._apply_recall_side_effects", span=False)
 def _apply_recall_side_effects(merged: list[dict], query: str, storage) -> None:
     """Post-retrieval bookkeeping shared by the legacy and fan-out recall paths.
 
@@ -570,6 +572,7 @@ def _apply_recall_side_effects(merged: list[dict], query: str, storage) -> None:
     """
     from yadgar._shared.tracing import span  # noqa: PLC0415
 
+    # span(): curated landmark name — inline CM can't auto-derive (ADR-0061 exception)
     with span("recall.side_effects", results=len(merged)):
         _apply_recall_db_side_effects(merged, query, storage)
         _apply_recall_session_side_effects(merged, query)

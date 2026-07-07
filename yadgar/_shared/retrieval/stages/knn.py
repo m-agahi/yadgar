@@ -20,7 +20,7 @@ class KNNStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.knn")
+    @observe(tier="stage", metric="retrieval.pipeline.knn")
     def apply(self, state: RetrievalState) -> RetrievalState:
         from yadgar._shared.storage import BranchFilter  # noqa: PLC0415
 

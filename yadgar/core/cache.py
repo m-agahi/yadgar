@@ -116,7 +116,7 @@ _NAMESPACE_WEIGHTS = {
 }
 
 
-@observe(tier="hot", name="cache.estimate_bytes")
+@observe(tier="hot", metric="cache.estimate_bytes")
 def _estimate_bytes(value: Any) -> int:
     """Approximate stored byte size of ``value`` (LRU byte-budget signal).
 
@@ -134,7 +134,7 @@ def _estimate_bytes(value: Any) -> int:
         return sys.getsizeof(value)
 
 
-@observe(tier="stage", name="cache.read_container_memory")
+@observe(tier="stage", metric="cache.read_container_memory")
 def _read_container_memory_bytes() -> int | None:
     """Return the core container memory limit in bytes, or None if unbounded."""
     for path_str in (_CORE_CGROUP_V2, _CORE_CGROUP_V1):
@@ -164,7 +164,7 @@ def _core_cache_ram_pct() -> float:
     return resolve_knob("YADGAR_CORE_CACHE_RAM_PCT", "CORE_CACHE_RAM_PCT", float, 10.0)
 
 
-@observe(tier="stage", name="cache.total_budget")
+@observe(tier="stage", metric="cache.total_budget")
 def _core_cache_total_budget_bytes(pct: float) -> int:
     """Total core cache byte budget = pct%% × core container memory (or fallback)."""
     limit = _read_container_memory_bytes()
@@ -173,7 +173,7 @@ def _core_cache_total_budget_bytes(pct: float) -> int:
     return int((pct / 100.0) * limit)
 
 
-@observe(tier="stage", name="cache.namespace_budget")
+@observe(tier="stage", metric="cache.namespace_budget")
 def _namespace_budget_bytes(
     namespace: str,
     total_budget: int,
@@ -259,7 +259,7 @@ class Cache:
 
     # ── Core ops ─────────────────────────────────────────────────────────────
 
-    @observe(tier="hot", name="cache.get")
+    @observe(tier="hot", metric="cache.get")
     def get(self, key: Hashable) -> Any | None:
         """Return value for key (deep-copied if configured), or None on miss."""
         if self.max_bytes == 0:
@@ -278,7 +278,7 @@ class Cache:
             self._record_hit()
         return copy.deepcopy(value) if self._deep_copy else value
 
-    @observe(tier="hot", name="cache.put")
+    @observe(tier="hot", metric="cache.put")
     def put(self, key: Hashable, value: Any) -> None:
         """Insert or update key → value; byte-bounded LRU eviction when over budget.
 
@@ -307,7 +307,7 @@ class Cache:
 
     # ── Invalidation ─────────────────────────────────────────────────────────
 
-    @observe(tier="stage", name="cache.invalidate")
+    @observe(tier="stage", metric="cache.invalidate")
     def invalidate(self, scope: Hashable = None) -> None:
         """Drop a single effective key (Manual bust). Rare/structural → tier=stage
         (span + ERROR-on-raise log; spec §7 'log on bust ALWAYS')."""
@@ -315,7 +315,7 @@ class Cache:
         with self._lock:
             self._drop_locked(eff)
 
-    @observe(tier="stage", name="cache.clear")
+    @observe(tier="stage", metric="cache.clear")
     def clear(self) -> None:
         """Whole-flush (rules case / Manual). Rare/structural → tier=stage."""
         with self._lock:
@@ -347,7 +347,7 @@ class Cache:
         if self._store.pop(eff, None) is not None:
             self.current_bytes -= self._sizes.pop(eff, 0)
 
-    @observe(tier="hot", name="cache.evict")
+    @observe(tier="hot", metric="cache.evict")
     def _evict_to_budget_locked(self, keep: Hashable) -> None:
         """Evict LRU entries until current_bytes ≤ max_bytes (never evict `keep`)."""
         while self.current_bytes > self.max_bytes and len(self._store) > 1:

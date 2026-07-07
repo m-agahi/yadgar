@@ -49,7 +49,7 @@ def _warn_slow_phase(phase: str, duration_ms: int) -> None:
 class _OrchestratorMixin:
     """Main consolidation cycle orchestrator."""
 
-    @observe(tier="stage", name="consolidation.maybe_sleep_cycle")
+    @observe(tier="stage", metric="consolidation.maybe_sleep_cycle")
     def _maybe_sleep_cycle(self) -> dict | None:
         """Run a full sleep cycle if at least 6 hours since the last one.
 
@@ -80,7 +80,7 @@ class _OrchestratorMixin:
     _SIMILARITY_WATERMARK_KEY = "similarity_linking"
     _FULL_RECONCILE_WATERMARK_KEY = "full_reconcile"
 
-    @observe(tier="stage", name="consolidation.run_similarity_linking")
+    @observe(tier="stage", metric="consolidation.run_similarity_linking")
     def _run_similarity_linking(self, stats: dict) -> None:
         """In-cycle similarity linking — incremental fast-path when enabled, else full.
 
@@ -105,7 +105,7 @@ class _OrchestratorMixin:
             self._link_similar_memories_incremental(stats, since=since)
         self._storage.set_consolidation_watermark(self._SIMILARITY_WATERMARK_KEY, run_start)
 
-    @observe(tier="hot", name="consolidation.full_reconcile_due")
+    @observe(tier="hot", metric="consolidation.full_reconcile_due")
     def _full_reconcile_due(self, embeddings_changed: bool) -> bool:
         """True when a full reconcile must run: embeddings changed OR weekly cadence."""
         if embeddings_changed:
@@ -120,7 +120,7 @@ class _OrchestratorMixin:
             return True
         return datetime.now(UTC) - last_dt >= timedelta(days=interval_days)
 
-    @observe(tier="stage", name="consolidation.maybe_full_reconcile")
+    @observe(tier="stage", metric="consolidation.maybe_full_reconcile")
     def _maybe_full_reconcile(self, sleep_stats: dict | None) -> None:
         """Post-sleep safety net: re-run the FULL pass when embeddings mutated or weekly.
 
@@ -155,7 +155,7 @@ class _OrchestratorMixin:
             record_exception("consolidation.phase_full_reconcile_links", _exc)
             logger.exception("Full similarity-link reconcile failed")
 
-    @observe(tier="stage", name="consolidation.maybe_precompute_graph_layout")
+    @observe(tier="stage", metric="consolidation.maybe_precompute_graph_layout")
     def _maybe_precompute_graph_layout(self) -> None:
         """v5.88: precompute + cache the 3D graph layout (nightly path only).
 
@@ -198,7 +198,7 @@ class _OrchestratorMixin:
             record_exception("consolidation.phase_precompute_graph_layout", _exc)
             logger.exception("Precompute graph layout failed")
 
-    @observe(tier="stage", name="consolidation.episodic")
+    @observe(tier="stage", metric="consolidation.episodic")
     def _run_episodic_phases(self, stats: dict) -> None:
         """Phase group 1: decay, episode processing, pruning, duplicate merge."""
         _t = time.monotonic()
@@ -225,7 +225,7 @@ class _OrchestratorMixin:
         logger.info("phase_end: merge_duplicates duration_ms=%d", _dur_ms)
         _warn_slow_phase("merge_duplicates", _dur_ms)
 
-    @observe(tier="stage", name="consolidation.graph")
+    @observe(tier="stage", metric="consolidation.graph")
     def _run_graph_phases(self, stats: dict) -> None:
         """Phase group 2: similarity linking, causality, graph priors, cofire priors."""
         # Semantic similarity linking — create relationships between similar memories
@@ -287,7 +287,7 @@ class _OrchestratorMixin:
             record_exception("consolidation.phase_compute_cofire_priors", _exc)
             logger.exception("Co-fire prior computation failed (non-fatal)")
 
-    @observe(tier="stage", name="consolidation.curation")
+    @observe(tier="stage", metric="consolidation.curation")
     def _run_curation_phases(self, stats: dict) -> None:
         """Phase group 3: memify, CLS consolidation, action log processing."""
         # Run memify self-improvement cycle
@@ -343,7 +343,7 @@ class _OrchestratorMixin:
             record_exception("consolidation.phase_action_log", _exc)
             logger.exception("Action log processing failed")
 
-    @observe(tier="boundary", name="consolidation.cycle")
+    @observe(tier="boundary", metric="consolidation.cycle")
     def _consolidation_cycle(self) -> dict:
         _cycle_wall_t0 = time.monotonic()
         start = time.monotonic()
@@ -400,7 +400,7 @@ class _OrchestratorMixin:
             except Exception:
                 pass
 
-    @observe(tier="stage", name="consolidation.run_post_cycle_tasks")
+    @observe(tier="stage", metric="consolidation.run_post_cycle_tasks")
     def _run_post_cycle_tasks(self, stats: dict, start: float) -> None:
         """Non-fatal post-consolidation tasks: invariant checks, vacuum, log, MTREE probe."""
         # Run invariant checks — violations are logged CRITICAL

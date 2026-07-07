@@ -43,7 +43,7 @@ PROFILES: dict[str, dict] = {
 }
 
 
-@observe(tier="hot", name="retrieval.fusion.wrrf_fuse_fn")
+@observe(tier="hot", metric="retrieval.fusion.wrrf_fuse_fn")
 def _wrrf_fuse(
     ranked_lists: dict[str, list[int]],
     wrrf_weights: dict[str, float],
@@ -70,7 +70,7 @@ def _wrrf_fuse(
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 
-@observe(tier="hot", name="retrieval.fusion.convex_fuse_fn")
+@observe(tier="hot", metric="retrieval.fusion.convex_fuse_fn")
 def _convex_fuse(
     signal_scores: dict[str, dict[int, float]],
     weights: dict[str, float],
@@ -147,7 +147,7 @@ class _FusionMixin:
                 for mid, _v in sig_vals:
                     normalized[mid][sig] = 0.5
 
-    @observe(tier="hot", name="retrieval.fusion.wrrf")
+    @observe(tier="hot", metric="retrieval.fusion.wrrf")
     def _wrrf_fuse(self, scores: dict, signal_weights: dict) -> tuple[dict, list]:
         """WRRF-style normalized weighted sum fusion.
 
@@ -184,7 +184,7 @@ class _FusionMixin:
         return fused_scores, sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
 
     @staticmethod
-    @observe(tier="hot", name="retrieval.fusion.apply_prior_boost")
+    @observe(tier="hot", metric="retrieval.fusion.apply_prior_boost")
     def _apply_prior_boost(fused_scores: dict, weight: float, priors: dict) -> list:
         """Apply a precomputed prior boost (additive, O(1)) and return re-sorted list."""
         for mid, prior_val in priors.items():
@@ -192,7 +192,7 @@ class _FusionMixin:
                 fused_scores[mid] = fused_scores[mid] + weight * prior_val
         return sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
 
-    @observe(tier="stage", name="retrieval.fusion")
+    @observe(tier="stage", metric="retrieval.fusion")
     def _fuse_scores(
         self,
         scores: dict,
@@ -251,7 +251,7 @@ class _FusionMixin:
 
         return fused, fused_scores
 
-    @observe(tier="stage", name="retrieval.inject_ce_diversity")
+    @observe(tier="stage", metric="retrieval.inject_ce_diversity")
     def _inject_ce_diversity(
         self,
         result_memories: list[dict],
@@ -281,7 +281,7 @@ class _FusionMixin:
                     result_memories.append(mem)
                     seen_ids.add(mid)
 
-    @observe(tier="stage", name="retrieval.build_results")
+    @observe(tier="stage", metric="retrieval.build_results")
     def _build_initial_results(
         self,
         fused: list,
@@ -333,7 +333,7 @@ class _FusionMixin:
 
         return result_memories, seen_ids, use_cross_encoder
 
-    @observe(tier="stage", name="retrieval.comparison_dual_search")
+    @observe(tier="stage", metric="retrieval.comparison_dual_search")
     def _comparison_dual_search(
         self,
         query: str,
@@ -387,7 +387,7 @@ class _FusionMixin:
 
         return unique[: max_results * 2]
 
-    @observe(tier="stage", name="retrieval.search_profiles_and_beliefs")
+    @observe(tier="stage", metric="retrieval.search_profiles_and_beliefs")
     def _search_profiles_and_beliefs(
         self,
         query: str,

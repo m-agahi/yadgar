@@ -98,7 +98,11 @@ def test_health_boundary_span_emits(span_provider, monkeypatch):
     # /health returns 503 when DB/model down — status is irrelevant; span must emit.
     assert resp.status_code in (200, 503)
     names = _span_names(exporter)
-    assert "backend.health" in names, f"no backend.health boundary span in {names}"
+    # Span name is now the dynamic module.qualname (…embed_service.health); the
+    # "backend.health" metric label is preserved separately via @observe(metric=).
+    assert any(n.endswith(".embed_service.health") for n in names), (
+        f"no backend health boundary span in {names}"
+    )
 
 
 def test_admin_dbsize_boundary_span_and_nesting(span_provider, monkeypatch):
@@ -111,11 +115,12 @@ def test_admin_dbsize_boundary_span_and_nesting(span_provider, monkeypatch):
     assert resp.status_code == 200
     spans = exporter.get_finished_spans()
     names = {s.name for s in spans}
-    assert "backend.admin_dbsize" in names, f"no boundary span in {names}"
+    # Span name is now the dynamic module.qualname (…embed_service.admin_dbsize).
+    assert any(n.endswith(".admin_dbsize") for n in names), f"no boundary span in {names}"
 
     # Nesting: the observe boundary span shares a trace_id with the server span.
-    obs = next(s for s in spans if s.name == "backend.admin_dbsize")
-    server = [s for s in spans if s.name != "backend.admin_dbsize"]
+    obs = next(s for s in spans if s.name.endswith(".admin_dbsize"))
+    server = [s for s in spans if not s.name.endswith(".admin_dbsize")]
     assert server, "no FastAPI server span captured"
     assert any(s.context.trace_id == obs.context.trace_id for s in server), (
         "boundary span is an orphan root — not nested under the request span"

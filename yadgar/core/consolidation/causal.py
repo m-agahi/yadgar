@@ -15,7 +15,7 @@ logger = logging.getLogger("yadgar.consolidation")
 class _CausalMixin:
     """Periodic PC-algorithm causal discovery dispatch."""
 
-    @observe(tier="stage", name="consolidation.causal")
+    @observe(tier="stage", metric="consolidation.causal")
     def _run_causal_discovery_phase(self, stats: dict) -> None:
         """Run formal causal discovery (PC algorithm) periodically.
 

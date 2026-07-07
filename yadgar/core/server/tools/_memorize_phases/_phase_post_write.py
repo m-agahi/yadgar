@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 _reinject_skip_logged: bool = False
 
 
-@trace_span("memorize.post_write")
+@trace_span()
 def phase_post_write(ctx: MemorizeContext, settings) -> dict:
     """Run post-write hooks and build the final response dict.
 
