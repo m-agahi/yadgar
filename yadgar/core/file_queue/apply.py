@@ -61,7 +61,7 @@ class _ApplyMixin:
         finally:
             _drain_local.active = False
 
-    @observe(tier="stage", name="drainer.apply_inner")
+    @observe(tier="stage", metric="drainer.apply_inner")
     def _apply_inner(self, record: dict) -> None:
         op = record["op"]
         p = record["payload"]

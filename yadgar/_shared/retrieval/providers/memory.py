@@ -44,7 +44,7 @@ class MemoryProvider(SourceProvider):
     def type(self) -> str:
         return "memory"
 
-    @observe(tier="stage", name="retrieval.provider.memory_candidates")
+    @observe(tier="stage", metric="retrieval.provider.memory_candidates")
     def candidates(self, query: str, scope: Scope, limit: int) -> list[Candidate]:
         """Call Retriever.recall() and return normalized, directory-scoped Candidates.
 

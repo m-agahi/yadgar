@@ -80,7 +80,7 @@ def _current_wiki_epoch() -> int:
         return 0
 
 
-@observe(tier="stage", name="tools.dispatch_helper._make_prompt_cache")
+@observe(tier="stage", metric="tools.dispatch_helper._make_prompt_cache")
 def _make_prompt_cache():
     from yadgar.core.cache import (  # noqa: PLC0415
         TTL,
@@ -104,7 +104,7 @@ def _make_prompt_cache():
 _prompt_cache = _make_prompt_cache()
 
 
-@observe(tier="stage", name="tools.dispatch_helper._cached_agent_prompt")
+@observe(tier="stage", metric="tools.dispatch_helper._cached_agent_prompt")
 def _cached_agent_prompt(pattern: str, storage) -> dict | None:
     """Epoch-cached wrapper around _read_agent_prompt for the prelude's pattern-static
     lookup. Cache-miss result is IDENTICAL to a direct _read_agent_prompt call."""
@@ -120,7 +120,7 @@ def _cached_agent_prompt(pattern: str, storage) -> dict | None:
     return result
 
 
-@observe(tier="stage", name="tools.dispatch_helper._record_prelude_marker")
+@observe(tier="stage", metric="tools.dispatch_helper._record_prelude_marker")
 def _record_prelude_marker(storage, directory: str | None) -> None:
     """Best-effort record of agent_dispatch_prelude call (read-side nudge, #69).
 
@@ -237,7 +237,7 @@ def agent_dispatch_prelude(
     return prelude
 
 
-@observe(tier="stage", name="tools.dispatch_helper._build_context_block")
+@observe(tier="stage", metric="tools.dispatch_helper._build_context_block")
 def _build_context_block(
     task_topic: str,
     branch_hint: str | None,

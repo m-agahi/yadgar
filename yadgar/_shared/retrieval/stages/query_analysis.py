@@ -25,7 +25,7 @@ class QueryAnalysisStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.query_analysis")
+    @observe(tier="stage", metric="retrieval.pipeline.query_analysis")
     def apply(self, state: RetrievalState) -> RetrievalState:
         from yadgar._shared.retrieval.profiles import get_profile  # noqa: PLC0415
         from yadgar._shared.retrieval.query_analysis import (  # noqa: PLC0415

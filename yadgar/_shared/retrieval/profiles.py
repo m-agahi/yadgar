@@ -103,7 +103,7 @@ PROFILES: dict[str, dict] = {
 _VALID_PROFILES = frozenset(PROFILES.keys())
 
 
-@observe(tier="hot", name="retrieval.get_profile")
+@observe(tier="hot", metric="retrieval.get_profile")
 def get_profile(name: str) -> dict:
     """Return profile dict for *name*, raising ValueError on unknown profile."""
     try:

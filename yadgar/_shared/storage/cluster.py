@@ -34,7 +34,7 @@ class _ClusterMixin:
 
     # ------------------------------------------------------------------ Memory Clusters
 
-    @trace_span("storage.cluster.insert_cluster")
+    @trace_span()
     def insert_cluster(self, cluster: dict) -> int:
         now = self._now_iso()
         cid = self._next_id("memory_cluster")
@@ -114,7 +114,7 @@ class _ClusterMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
-    @trace_span("storage.cluster.insert_memory_similarity_link")
+    @trace_span()
     def insert_memory_similarity_link(
         self,
         mid_a: int,

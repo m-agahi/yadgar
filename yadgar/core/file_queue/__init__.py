@@ -180,7 +180,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         self._stop_event.set()
         self.join(timeout=5.0)
 
-    @observe(tier="stage", name="drainer.flush_barrier")
+    @observe(tier="stage", metric="drainer.flush_barrier")
     def flush_barrier(self, timeout: float) -> bool:
         """Block until in-memory queue is drained to storage or timeout expires.
 
@@ -209,7 +209,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         """Clear retry state for a file (called by dlq_requeue after moving back to queue)."""
         self._attempts.pop(filename, None)
 
-    @observe(tier="boundary", name="drainer.drain_cycle")
+    @observe(tier="boundary", metric="drainer.drain_cycle")
     def _drain_once(self) -> int:
         # Serialize the whole pass: the background loop and drain_now() share one
         # drainer instance; concurrent passes steal each other's pending files
@@ -219,7 +219,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         with self._drain_lock:
             return self._drain_once_locked()
 
-    @observe(tier="stage", name="drainer.drain_once_locked")
+    @observe(tier="stage", metric="drainer.drain_once_locked")
     def _drain_once_locked(self) -> int:
         _cycle_t0 = time.monotonic()
         files = self._queue.pending()
@@ -268,7 +268,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
         return processed
 
-    @observe(tier="hot", name="drainer.process_pending_file")
+    @observe(tier="hot", metric="drainer.process_pending_file")
     def _process_pending_file(self, path, now: float) -> int:
         """Process one pending queue file. Returns 1 on success, 0 otherwise.
 
@@ -315,7 +315,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
         return self._apply_pending(fname, path, data, op_type, now)
 
-    @observe(tier="hot", name="drainer.reject_permanent_to_dlq")
+    @observe(tier="hot", metric="drainer.reject_permanent_to_dlq")
     def _reject_permanent_to_dlq(
         self,
         path,
@@ -386,7 +386,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         except Exception:
             pass
 
-    @observe(tier="hot", name="drainer.apply_pending")
+    @observe(tier="hot", metric="drainer.apply_pending")
     def _apply_pending(self, fname: str, path, data: dict, op_type: str, now: float) -> int:
         """Attempt to apply one queue item. Returns 1 on success, 0 on error.
 
@@ -434,7 +434,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             self._backoff_max, self._backoff_base * (2.0 ** (attempt.count - 1))
         )
 
-    @observe(tier="hot", name="drainer.archive_with_metrics")
+    @observe(tier="hot", metric="drainer.archive_with_metrics")
     def _archive_with_metrics(self, path) -> None:
         """Archive a queue file and record stage timing."""
         _t0 = time.perf_counter()
@@ -452,7 +452,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
     # ── v5.42.0 helpers ───────────────────────────────────────────────────────
 
-    @observe(tier="stage", name="drainer.scan_dlq_counts")
+    @observe(tier="stage", metric="drainer.scan_dlq_counts")
     def _scan_dlq_counts(self) -> tuple[int, int]:
         """Scan DLQ directory and return (dlq_count, rejection_count).
 
@@ -501,7 +501,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         except Exception:
             pass
 
-    @observe(tier="hot", name="drainer.handle_sim_rejection")
+    @observe(tier="hot", metric="drainer.handle_sim_rejection")
     def _handle_sim_rejection(self, path, rejection: dict, job_id: str | None) -> None:
         """Route a drainer similarity-gate rejection to DLQ (v5.42.0).
 
@@ -543,7 +543,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
     # ── end v5.42.0 helpers ───────────────────────────────────────────────────
 
-    @observe(tier="hot", name="drainer.apply_with_stage_metrics")
+    @observe(tier="hot", metric="drainer.apply_with_stage_metrics")
     def _apply_with_stage_metrics(self, data: dict, path) -> None:
         """Apply one queue item and archive it, timing each stage for PR-E metrics.
 
@@ -588,7 +588,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         if job_id:
             self._queue.signal_complete(job_id)
 
-    @observe(tier="stage", name="drainer.wait_for_job")
+    @observe(tier="stage", metric="drainer.wait_for_job")
     def wait_for_job(self, job_id: str, timeout: float = 5.0) -> bool:
         """Block until job_id has been committed to the DB, or until timeout.
 

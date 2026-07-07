@@ -186,7 +186,7 @@ class _CLSMixin:
         for name, ctx in rel_contexts.items():
             self._apply_one_typed_relationship(name, ctx, entity_map)
 
-    @observe(tier="stage", name="consolidation.process_episodes")
+    @observe(tier="stage", metric="consolidation.process_episodes")
     def _process_new_episodes(self, stats: dict) -> None:
         episodes = self._storage.get_episodes_since(self._last_consolidated_episode_id)
         for ep in episodes:
@@ -270,7 +270,7 @@ class _CLSMixin:
                 unique.append(pair)
         return unique
 
-    @observe(tier="stage", name="consolidation.graph_priors")
+    @observe(tier="stage", metric="consolidation.graph_priors")
     def _compute_graph_priors(self, stats: dict) -> None:
         """Precompute per-memory graph_prior scalar and store on memory rows (v5.54.1).
 
@@ -353,7 +353,7 @@ class _CLSMixin:
         logger.info("graph_prior: computed and stored for %d memories", updated)
         _bump_shadow_epoch_global(updated)
 
-    @observe(tier="stage", name="consolidation.cofire_priors")
+    @observe(tier="stage", metric="consolidation.cofire_priors")
     def _compute_cofire_priors(self, stats: dict) -> None:
         """Precompute per-memory cofire_prior scalar and store on memory rows (v5.54.2).
 
@@ -427,7 +427,7 @@ class _CLSMixin:
     # ── _link_similar_memories helpers ────────────────────────────────────────
 
     @staticmethod
-    @observe(tier="stage", name="consolidation.build_valid_embedding_matrix")
+    @observe(tier="stage", metric="consolidation.build_valid_embedding_matrix")
     def _build_valid_embedding_matrix(
         memories: list[dict],
         min_count: int = 2,
@@ -462,7 +462,7 @@ class _CLSMixin:
         return ids, matrix
 
     @staticmethod
-    @observe(tier="stage", name="consolidation.collect_link_candidates")
+    @observe(tier="stage", metric="consolidation.collect_link_candidates")
     def _collect_link_candidates(
         ids: list[int],
         sim_matrix: object,
@@ -509,7 +509,7 @@ class _CLSMixin:
 
         return pending_inserts, pending_reinforces
 
-    @observe(tier="stage", name="consolidation.build_similarity_batch")
+    @observe(tier="stage", metric="consolidation.build_similarity_batch")
     def _build_similarity_batch(
         self,
         pending_inserts: list[tuple[int, int, float]],
@@ -553,7 +553,7 @@ class _CLSMixin:
 
         return batch
 
-    @observe(tier="stage", name="consolidation.load_existing_links_and_degree")
+    @observe(tier="stage", metric="consolidation.load_existing_links_and_degree")
     def _load_existing_links_and_degree(self) -> tuple[dict[tuple[int, int], dict], dict[int, int]]:
         """Pre-load all existing links + per-memory degree to avoid per-pair reads."""
         existing_links: dict[tuple[int, int], dict] = {}
@@ -565,7 +565,7 @@ class _CLSMixin:
             degree[tgt_id] = degree.get(tgt_id, 0) + 1
         return existing_links, degree
 
-    @observe(tier="stage", name="consolidation.link_similar")
+    @observe(tier="stage", metric="consolidation.link_similar")
     def _link_similar_memories(self, stats: dict) -> None:
         """Create memory_similarity_link records between semantically similar memories.
 
@@ -607,7 +607,7 @@ class _CLSMixin:
         stats["similarity_links_created"] = len(pending_inserts)
 
     @staticmethod
-    @observe(tier="stage", name="consolidation.collect_link_candidates_rect")
+    @observe(tier="stage", metric="consolidation.collect_link_candidates_rect")
     def _collect_link_candidates_rect(
         probe_ids: list[int],
         corpus_ids: list[int],
@@ -668,7 +668,7 @@ class _CLSMixin:
 
         return pending_inserts, pending_reinforces
 
-    @observe(tier="stage", name="consolidation.link_similar_incremental")
+    @observe(tier="stage", metric="consolidation.link_similar_incremental")
     def _link_similar_memories_incremental(self, stats: dict, since: str) -> None:
         """Link only memories created since `since` against the full candidate corpus.
 
@@ -727,7 +727,7 @@ class _CLSMixin:
     # ── _merge_duplicates helpers ──────────────────────────────────────────────
 
     @staticmethod
-    @observe(tier="stage", name="consolidation.exact_content_dedup")
+    @observe(tier="stage", metric="consolidation.exact_content_dedup")
     def _exact_content_dedup(memories: list[dict]) -> set[int]:
         """Pass 1: collect IDs to delete via exact-content match.
 
@@ -771,7 +771,7 @@ class _CLSMixin:
             return None
 
     @staticmethod
-    @observe(tier="stage", name="consolidation.embedding_dedup")
+    @observe(tier="stage", metric="consolidation.embedding_dedup")
     def _embedding_dedup(memories: list[dict], to_delete: set[int]) -> set[int]:
         """Pass 2: collect IDs to delete via embedding cosine similarity > 0.95.
 
@@ -806,7 +806,7 @@ class _CLSMixin:
 
         return to_delete
 
-    @observe(tier="stage", name="consolidation.merge_duplicates")
+    @observe(tier="stage", metric="consolidation.merge_duplicates")
     def _merge_duplicates(self, stats: dict) -> None:
         """Delete near-duplicate memories (cosine similarity > 0.95), keeping the hotter one.
 

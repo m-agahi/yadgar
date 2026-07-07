@@ -66,7 +66,7 @@ _GIT_SAFE_ARGS = [
 ]
 
 
-@observe(tier="stage", name="tools.project._resolve_project_root")
+@observe(tier="stage", metric="tools.project._resolve_project_root")
 @functools.lru_cache(maxsize=1024)
 def _resolve_project_root(directory: str) -> str:
     """Resolve the git project root for a directory (walk-up via git rev-parse).
@@ -96,7 +96,7 @@ def _resolve_project_root(directory: str) -> str:
     return directory
 
 
-@observe(tier="stage", name="tools.project._get_current_branch")
+@observe(tier="stage", metric="tools.project._get_current_branch")
 def _get_current_branch(directory: str) -> str | None:
     """Return current git branch for the given directory, or None if not in a repo."""
     try:
@@ -117,7 +117,7 @@ def _get_current_branch(directory: str) -> str | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._detect_branch_cached")
+@observe(tier="stage", metric="tools.project._detect_branch_cached")
 @functools.lru_cache(maxsize=128)
 def _detect_branch_cached(directory: str, _ts_bucket: int) -> str | None:
     """Cached per 30s bucket. Returns None for detached HEAD or non-git.
@@ -141,7 +141,7 @@ def _detect_branch_cached(directory: str, _ts_bucket: int) -> str | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._detect_branch")
+@observe(tier="stage", metric="tools.project._detect_branch")
 def _detect_branch(directory: str) -> str | None:
     """Return the current git branch for directory, or None on non-git/error.
 
@@ -168,7 +168,7 @@ def _detect_branch(directory: str) -> str | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._get_default_branch_cached")
+@observe(tier="stage", metric="tools.project._get_default_branch_cached")
 @functools.lru_cache(maxsize=128)
 def _get_default_branch_cached(directory: str, _ts_bucket: int) -> str:
     """Cached per 5-minute bucket. Falls back to 'master'."""
@@ -199,7 +199,7 @@ def _get_default_branch_cached(directory: str, _ts_bucket: int) -> str:
     return "master"
 
 
-@observe(tier="stage", name="tools.project._get_default_branch")
+@observe(tier="stage", metric="tools.project._get_default_branch")
 def _get_default_branch(directory: str) -> str:
     """Return the repo default branch name (e.g. 'master' or 'main').
 
@@ -224,7 +224,7 @@ def _get_default_branch(directory: str) -> str:
 # ── Project tools ──────────────────────────────────────────────────────
 
 
-@observe(tier="stage", name="tools.project._render_project_brief")
+@observe(tier="stage", metric="tools.project._render_project_brief")
 def _render_project_brief(brief: dict) -> str:
     """Render a project_brief dict as markdown for hook injection (§28)."""
     project = brief.get("project", "unknown")
@@ -373,7 +373,7 @@ _WIKI_CATALOG_MAX_PER_GROUP = 5
 # ── project_brief helpers (v5.7.12) ───────────────────────────────────────
 
 
-@observe(tier="hot", name="tools.project._compute_row_age_hours")
+@observe(tier="hot", metric="tools.project._compute_row_age_hours")
 def _compute_row_age_hours(rows: list) -> float | None:
     """Return age in hours of the first row's created_at, or None if absent.
 
@@ -411,7 +411,7 @@ def _get_max_anchors() -> int:
     return get_settings().PROJECT_BRIEF_MAX_ANCHORS
 
 
-@observe(tier="stage", name="tools.project._fetch_presence_rows")
+@observe(tier="stage", metric="tools.project._fetch_presence_rows")
 def _fetch_presence_rows(storage, resolved: str) -> tuple:
     """Fetch presence + age rows for init_memory, active_work, and checkpoint.
 
@@ -434,7 +434,7 @@ def _fetch_presence_rows(storage, resolved: str) -> tuple:
     return init_rows, active_rows, checkpoint_rows
 
 
-@observe(tier="hot", name="tools.project._build_checkpoint_dict")
+@observe(tier="hot", metric="tools.project._build_checkpoint_dict")
 def _build_checkpoint_dict(checkpoint_rows: list) -> dict | None:
     """Build a compact checkpoint dict from raw checkpoint rows.  None if absent."""
     if not checkpoint_rows:
@@ -447,7 +447,7 @@ def _build_checkpoint_dict(checkpoint_rows: list) -> dict | None:
     }
 
 
-@observe(tier="stage", name="tools.project._build_wiki_pages")
+@observe(tier="stage", metric="tools.project._build_wiki_pages")
 def _build_wiki_pages(storage, limit: int, directory: str | None = None) -> list[dict]:
     """Fetch and shape wiki pages list, scoped to directory + 'global' when supplied.
 
@@ -466,7 +466,7 @@ def _build_wiki_pages(storage, limit: int, directory: str | None = None) -> list
     ]
 
 
-@observe(tier="hot", name="tools.project._slug_prefix")
+@observe(tier="hot", metric="tools.project._slug_prefix")
 def _slug_prefix(slug: str) -> str:
     """Extract the first segment of a slug (split on '-', take element [0] + '-').
 
@@ -487,7 +487,7 @@ def _slug_prefix(slug: str) -> str:
 _WIKI_CATALOG_MAX_PREFIXES = 8
 
 
-@observe(tier="stage", name="tools.project._build_wiki_catalog")
+@observe(tier="stage", metric="tools.project._build_wiki_catalog")
 def _build_wiki_catalog(storage, resolved: str) -> dict:
     """Build a grouped wiki catalog for project_brief catalog/restore renders (v5.53.0).
 
@@ -538,7 +538,7 @@ def _build_wiki_catalog(storage, resolved: str) -> dict:
     return {"total": total, "groups": groups}
 
 
-@observe(tier="hot", name="tools.project._render_wiki_catalog")
+@observe(tier="hot", metric="tools.project._render_wiki_catalog")
 def _render_wiki_catalog(catalog: dict, resolved: str) -> list[str]:
     """Render the wiki catalog dict as markdown lines for _render_project_brief.
 
@@ -591,7 +591,7 @@ def _render_wiki_catalog(catalog: dict, resolved: str) -> list[str]:
     return lines
 
 
-@observe(tier="stage", name="tools.project._build_hot_memories")
+@observe(tier="stage", metric="tools.project._build_hot_memories")
 def _build_hot_memories(storage, resolved: str, limit: int, snippet: int) -> list[dict]:
     """Fetch hot memories excluding anchored entries.
 
@@ -615,7 +615,7 @@ def _build_hot_memories(storage, resolved: str, limit: int, snippet: int) -> lis
     ]
 
 
-@observe(tier="stage", name="tools.project._build_anchor_rows_catalog")
+@observe(tier="stage", metric="tools.project._build_anchor_rows_catalog")
 def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
     """Fetch global + project anchor rows for catalog/full modes.
 
@@ -672,7 +672,7 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
     return top_anchors_global, top_anchors_project, top_anchors_union
 
 
-@observe(tier="stage", name="tools.project._build_anchor_rows_restore")
+@observe(tier="stage", metric="tools.project._build_anchor_rows_restore")
 def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
     """Fetch anchors for restore mode: merged list with scope field, truncated."""
     max_anchors = _get_max_anchors()
@@ -738,7 +738,7 @@ def _count_markdown_headers(content: str) -> int:
     return len(_MD_HEADER_RE.findall(stripped))
 
 
-@observe(tier="hot", name="tools.project._cosine_similarity")
+@observe(tier="hot", metric="tools.project._cosine_similarity")
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two float vectors."""
     dot = sum(x * y for x, y in zip(a, b, strict=False))
@@ -749,7 +749,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-@observe(tier="stage", name="tools.project._fetch_anchor_redundancy_pairs")
+@observe(tier="stage", metric="tools.project._fetch_anchor_redundancy_pairs")
 def _fetch_anchor_redundancy_pairs(
     storage, resolved: str, _now: str, threshold: float
 ) -> tuple[list[list], bool]:
@@ -800,7 +800,7 @@ def _fetch_anchor_redundancy_pairs(
         return [], False
 
 
-@observe(tier="stage", name="tools.project._fetch_anchor_promote_ids")
+@observe(tier="stage", metric="tools.project._fetch_anchor_promote_ids")
 def _fetch_anchor_promote_ids(storage, resolved: str, _now: str, cfg) -> tuple[list[int], bool]:
     """Fetch IDs of anchors qualifying for promote-to-wiki detection.
 
@@ -835,7 +835,7 @@ def _fetch_anchor_promote_ids(storage, resolved: str, _now: str, cfg) -> tuple[l
         return [], False
 
 
-@observe(tier="stage", name="tools.project._fetch_expired_anchor_count")
+@observe(tier="stage", metric="tools.project._fetch_expired_anchor_count")
 def _fetch_expired_anchor_count(storage, _now: str) -> int:
     """Count expired anchors (valid_until < now) that are not in migration grace period."""
     try:
@@ -853,7 +853,7 @@ def _fetch_expired_anchor_count(storage, _now: str) -> int:
         return 0
 
 
-@observe(tier="stage", name="tools.project._fetch_cross_project_candidates_for_signals")
+@observe(tier="stage", metric="tools.project._fetch_cross_project_candidates_for_signals")
 def _fetch_cross_project_candidates_for_signals(storage, _now: str, cfg) -> list[dict]:
     """Fetch cross-project redundancy candidates for signals mode payload.
 
@@ -883,7 +883,7 @@ _SHIP_COMMIT_RE = re.compile(
 )
 
 
-@observe(tier="stage", name="tools.project._get_master_head_info")
+@observe(tier="stage", metric="tools.project._get_master_head_info")
 def _get_master_head_info(resolved: str) -> dict | None:
     """Return HEAD info for the default (master) branch of resolved repo.
 
@@ -971,7 +971,7 @@ def _get_master_head_info(resolved: str) -> dict | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._get_pyproject_version_at_ts")
+@observe(tier="stage", metric="tools.project._get_pyproject_version_at_ts")
 def _get_pyproject_version_at_ts(resolved: str, ts: float) -> str | None:
     """Return pyproject.toml version at the most recent master commit on or before ts.
 
@@ -1020,7 +1020,7 @@ def _get_pyproject_version_at_ts(resolved: str, ts: float) -> str | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._get_roadmap_wiki_updated_at")
+@observe(tier="stage", metric="tools.project._get_roadmap_wiki_updated_at")
 def _get_roadmap_wiki_updated_at(storage) -> float | None:
     """Return roadmap wiki page updated_at as a unix timestamp float.
 
@@ -1050,7 +1050,7 @@ def _get_roadmap_wiki_updated_at(storage) -> float | None:
         return None
 
 
-@observe(tier="hot", name="tools.project._detect_ship")
+@observe(tier="hot", metric="tools.project._detect_ship")
 def _detect_ship(head_info: dict, resolved: str, roadmap_ts: float) -> bool:
     """Return True when a ship is detected since roadmap_ts.
 
@@ -1065,7 +1065,7 @@ def _detect_ship(head_info: dict, resolved: str, roadmap_ts: float) -> bool:
     return bool(_SHIP_COMMIT_RE.search(msg))
 
 
-@observe(tier="stage", name="tools.project._compute_roadmap_signal")
+@observe(tier="stage", metric="tools.project._compute_roadmap_signal")
 def _compute_roadmap_signal(resolved: str, storage) -> tuple[float, dict | None]:
     """Compute roadmap_update_lag_hours and optional update_roadmap action.
 
@@ -1105,7 +1105,7 @@ def _compute_roadmap_signal(resolved: str, storage) -> tuple[float, dict | None]
     return lag_hours, action
 
 
-@observe(tier="stage", name="tools.project._compute_anchor_signals")
+@observe(tier="stage", metric="tools.project._compute_anchor_signals")
 def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
     """Compute anchor hygiene signals for project_brief(mode='signals').
 
@@ -1144,7 +1144,7 @@ def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
     }
 
 
-@observe(tier="stage", name="tools.project._check_session_end_sentinel")
+@observe(tier="stage", metric="tools.project._check_session_end_sentinel")
 def _check_session_end_sentinel(storage, resolved: str) -> dict | None:
     """Check for an unprocessed session_end_sentinel memory row for this directory.
 
@@ -1212,7 +1212,7 @@ def _check_session_end_sentinel(storage, resolved: str) -> dict | None:
     }
 
 
-@observe(tier="stage", name="tools.project._build_recommended_actions")
+@observe(tier="stage", metric="tools.project._build_recommended_actions")
 def _build_recommended_actions(
     init_memory_present: bool,
     active_work_present: bool,
@@ -1311,7 +1311,7 @@ def _build_recommended_actions(
     return actions
 
 
-@observe(tier="stage", name="tools.project._apply_roadmap_signal")
+@observe(tier="stage", metric="tools.project._apply_roadmap_signal")
 def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
     """Compute roadmap lag and append update_roadmap action if warranted.
 
@@ -1335,7 +1335,7 @@ def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
 _REJECTION_REASONS: frozenset[str] = frozenset({"duplicate_detected", "policy_rejected"})
 
 
-@observe(tier="stage", name="tools.project._compute_pending_rejections")
+@observe(tier="stage", metric="tools.project._compute_pending_rejections")
 def _compute_pending_rejections(resolved: str) -> int:
     """Count DLQ rejection entries whose caller_context.directory matches resolved.
 
@@ -1381,7 +1381,7 @@ def _compute_pending_rejections(resolved: str) -> int:
     return count
 
 
-@observe(tier="stage", name="tools.project._apply_rejection_signal")
+@observe(tier="stage", metric="tools.project._apply_rejection_signal")
 def _apply_rejection_signal(resolved: str, actions: list) -> int:
     """Compute pending_rejections_count and append review_rejections action if warranted.
 
@@ -1406,7 +1406,7 @@ def _apply_rejection_signal(resolved: str, actions: list) -> int:
 # ── v5.84.0 car #12: ADR nudge signal ─────────────────────────────────────────
 
 
-@observe(tier="stage", name="tools.project._get_adr_log_updated_at")
+@observe(tier="stage", metric="tools.project._get_adr_log_updated_at")
 def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
     """Return ADR log wiki page updated_at as a unix timestamp float.
 
@@ -1440,7 +1440,7 @@ def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._get_active_work_updated_at")
+@observe(tier="stage", metric="tools.project._get_active_work_updated_at")
 def _get_active_work_updated_at(storage, resolved: str) -> float | None:
     """Return the most recent _active_work memory created_at as a unix timestamp float.
 
@@ -1468,7 +1468,7 @@ def _get_active_work_updated_at(storage, resolved: str) -> float | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._apply_adr_signal")
+@observe(tier="stage", metric="tools.project._apply_adr_signal")
 def _apply_adr_signal(resolved: str, storage, actions: list) -> None:
     """Append capture_adr action when decisions are likely uncaptured.
 
@@ -1538,7 +1538,7 @@ def _apply_adr_signal(resolved: str, storage, actions: list) -> None:
         return
 
 
-@observe(tier="stage", name="tools.project._get_agent_prompt_toc_updated_at")
+@observe(tier="stage", metric="tools.project._get_agent_prompt_toc_updated_at")
 def _get_agent_prompt_toc_updated_at(storage, resolved: str) -> float | None:
     """Return the global agent-prompt TOC page updated_at as a unix timestamp float.
 
@@ -1568,7 +1568,7 @@ def _get_agent_prompt_toc_updated_at(storage, resolved: str) -> float | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._get_dispatch_prelude_updated_at")
+@observe(tier="stage", metric="tools.project._get_dispatch_prelude_updated_at")
 def _get_dispatch_prelude_updated_at(storage, resolved: str) -> float | None:
     """Return the most recent _dispatch_prelude marker created_at as a unix timestamp.
 
@@ -1597,7 +1597,7 @@ def _get_dispatch_prelude_updated_at(storage, resolved: str) -> float | None:
         return None
 
 
-@observe(tier="stage", name="tools.project._apply_dispatch_prelude_signal")
+@observe(tier="stage", metric="tools.project._apply_dispatch_prelude_signal")
 def _apply_dispatch_prelude_signal(resolved: str, storage, actions: list) -> None:
     """Append use_agent_prompt_library action when the library hasn't been used recently.
 
@@ -1664,7 +1664,7 @@ def _apply_dispatch_prelude_signal(resolved: str, storage, actions: list) -> Non
         return
 
 
-@observe(tier="stage", name="tools.project._apply_agent_prompt_signal")
+@observe(tier="stage", metric="tools.project._apply_agent_prompt_signal")
 def _apply_agent_prompt_signal(resolved: str, storage, actions: list) -> None:
     """Append capture_agent_prompt action when the prompt library looks stale.
 
@@ -1740,14 +1740,14 @@ def _apply_agent_prompt_signal(resolved: str, storage, actions: list) -> None:
         return
 
 
-@observe(tier="hot", name="tools.project._omit_sentinel")
+@observe(tier="hot", metric="tools.project._omit_sentinel")
 def _omit_sentinel(d: dict, key: str, value: object, sentinel: object) -> None:
     """Set d[key]=value only when value != sentinel (for budget-trimming optional fields)."""
     if value != sentinel:
         d[key] = value
 
 
-@observe(tier="stage", name="tools.project._project_brief_signals")
+@observe(tier="stage", metric="tools.project._project_brief_signals")
 def _project_brief_signals(
     resolved: str,
     mode: str,
@@ -1871,7 +1871,7 @@ def _project_brief_signals(
     return result
 
 
-@observe(tier="stage", name="tools.project._build_recent_writes")
+@observe(tier="stage", metric="tools.project._build_recent_writes")
 def _build_recent_writes(storage, resolved: str, limit: int = 10) -> list[dict]:
     """Fetch memories written in the last 24h for this project, newest first.
 
@@ -1903,7 +1903,7 @@ def _build_recent_writes(storage, resolved: str, limit: int = 10) -> list[dict]:
     return result
 
 
-@observe(tier="stage", name="tools.project._build_adr_log")
+@observe(tier="stage", metric="tools.project._build_adr_log")
 def _build_adr_log(resolved: str) -> dict:
     """Build the adr_log field for restore mode (car #13).
 
@@ -1933,7 +1933,7 @@ def _build_adr_log(resolved: str) -> dict:
     return {"slug": slug, "latest_ids": latest_ids}
 
 
-@observe(tier="stage", name="tools.project._build_agent_prompt_toc")
+@observe(tier="stage", metric="tools.project._build_agent_prompt_toc")
 def _build_agent_prompt_toc(storage) -> dict:
     """Build the agent_prompt_toc field for restore mode (S6 discovery surface).
 
@@ -1957,7 +1957,7 @@ def _build_agent_prompt_toc(storage) -> dict:
     return {"slug": _TOC_SLUG, "patterns": patterns}
 
 
-@observe(tier="stage", name="tools.project._project_brief_restore")
+@observe(tier="stage", metric="tools.project._project_brief_restore")
 def _project_brief_restore(
     resolved: str,
     mode: str,
@@ -1986,7 +1986,7 @@ def _project_brief_restore(
     return out
 
 
-@observe(tier="stage", name="tools.project._project_brief_catalog_full")
+@observe(tier="stage", metric="tools.project._project_brief_catalog_full")
 def _project_brief_catalog_full(ctx: dict) -> dict:
     """Build catalog/full mode payload (back-compat).
 
@@ -2068,7 +2068,7 @@ def _project_brief_key(resolved: str, branch: str | None, mode: str) -> tuple:
     return (resolved, branch or "", mode, _current_epoch(resolved))
 
 
-@observe(tier="stage", name="tools.project._make_project_brief_cache")
+@observe(tier="stage", metric="tools.project._make_project_brief_cache")
 def _make_project_brief_cache():
     from yadgar.core.cache import (  # noqa: PLC0415
         TTL,
@@ -2093,7 +2093,7 @@ def _make_project_brief_cache():
 _project_brief_cache = _make_project_brief_cache()
 
 
-@observe(tier="hot", name="tools.project._bump_epoch_for_context")
+@observe(tier="hot", metric="tools.project._bump_epoch_for_context")
 def _bump_epoch_for_context(context: str | None) -> None:
     """Advance the structural epoch for `context`, normalized to its git-root.
 
@@ -2256,7 +2256,7 @@ def bootstrap_project(directory: str, content: str) -> dict:
     return result
 
 
-@observe(tier="stage", name="tools.project._seed_default_blocks")
+@observe(tier="stage", metric="tools.project._seed_default_blocks")
 def _seed_default_blocks(storage, directory: str) -> None:
     """Seed default memory blocks for a project directory (v5.33.0).
 
@@ -2282,7 +2282,7 @@ def _seed_default_blocks(storage, directory: str) -> None:
             logger.debug("_seed_default_blocks: failed to seed block %r for %r", name, directory)
 
 
-@observe(tier="stage", name="tools.project._get_active_work_tracked_dir")
+@observe(tier="stage", metric="tools.project._get_active_work_tracked_dir")
 def _get_active_work_tracked_dir() -> Path:
     """Return the base path for the active-work directory registry.
 
@@ -2295,7 +2295,7 @@ def _get_active_work_tracked_dir() -> Path:
     return _paths.ACTIVE_WORK_TRACKED_DIR
 
 
-@observe(tier="stage", name="tools.project._register_active_work_directory")
+@observe(tier="stage", metric="tools.project._register_active_work_directory")
 def _register_active_work_directory(resolved: str) -> None:
     """Write a marker file to the active-work directory registry.
 
@@ -2377,7 +2377,7 @@ _stale_count_cache: dict[str, tuple[int, float]] = {}
 _stale_count_cache_lock = threading.Lock()
 
 
-@observe(tier="stage", name="tools.project._read_stale_count_cache")
+@observe(tier="stage", metric="tools.project._read_stale_count_cache")
 def _read_stale_count_cache(resolved: str, now: float, ttl: float) -> int | None:
     """Return cached stale count if still fresh, else None. Thread-safe."""
     if ttl <= 0:
@@ -2390,7 +2390,7 @@ def _read_stale_count_cache(resolved: str, now: float, ttl: float) -> int | None
     return cached_count if (now - cached_at) < ttl else None
 
 
-@observe(tier="hot", name="tools.project._is_wiki_page_stale")
+@observe(tier="hot", metric="tools.project._is_wiki_page_stale")
 def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
     """Return True if a single .md wiki page has hash drift vs its source files.
 
@@ -2428,7 +2428,7 @@ def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
     return bool((current_hash or stored_hash) and current_hash != stored_hash)
 
 
-@observe(tier="stage", name="tools.project._scan_stale_wiki_slugs")
+@observe(tier="stage", metric="tools.project._scan_stale_wiki_slugs")
 def _scan_stale_wiki_slugs(directory: str) -> list[str]:
     """Pure side-effect-free scan of wiki pages for hash-drift.
 
@@ -2474,7 +2474,7 @@ def _scan_stale_wiki_slugs(directory: str) -> list[str]:
     return result
 
 
-@observe(tier="stage", name="tools.project._compute_stale_wiki_count")
+@observe(tier="stage", metric="tools.project._compute_stale_wiki_count")
 def _compute_stale_wiki_count(resolved: str) -> int:
     """Return stale wiki page count for resolved directory, TTL-cached.
 
@@ -2504,7 +2504,7 @@ def _compute_stale_wiki_count(resolved: str) -> int:
 # ── Wiki refresh helpers ────────────────────────────────────────────────
 
 
-@observe(tier="hot", name="tools.project._parse_frontmatter")
+@observe(tier="hot", metric="tools.project._parse_frontmatter")
 def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
     """Parse YAML frontmatter from a markdown file. Returns None if no frontmatter.
 
@@ -2549,7 +2549,7 @@ def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
     return result if result else None
 
 
-@observe(tier="hot", name="tools.project._compute_source_hash")
+@observe(tier="hot", metric="tools.project._compute_source_hash")
 def _compute_source_hash(source_files: list[str], hashlib_mod) -> str:
     """Compute SHA256 over all source contents, concatenated in order.
 
@@ -2589,7 +2589,7 @@ def _compute_source_hash(source_files: list[str], hashlib_mod) -> str:
     return h.hexdigest()
 
 
-@observe(tier="hot", name="tools.project._hash_directory_manifest")
+@observe(tier="hot", metric="tools.project._hash_directory_manifest")
 def _hash_directory_manifest(directory: Path, h, hashlib_mod) -> bool:
     """Fold a stable recursive manifest of ``directory`` into accumulator ``h``.
 
@@ -2622,7 +2622,7 @@ def _hash_directory_manifest(directory: Path, h, hashlib_mod) -> bool:
     return any_file
 
 
-@observe(tier="stage", name="tools.project._scan_stale_wiki_slugs_db")
+@observe(tier="stage", metric="tools.project._scan_stale_wiki_slugs_db")
 def _scan_stale_wiki_slugs_db(directory: str) -> list[str]:
     """Scan DB-stored wiki pages with page_type='code' for hash drift.
 
@@ -2667,7 +2667,7 @@ def _scan_stale_wiki_slugs_db(directory: str) -> list[str]:
     return stale
 
 
-@observe(tier="stage", name="tools.project._wiki_refresh_stale_impl")
+@observe(tier="stage", metric="tools.project._wiki_refresh_stale_impl")
 def _wiki_refresh_stale_impl(
     directory: str,
     slugs: list[str] | None,

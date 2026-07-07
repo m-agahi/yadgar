@@ -106,7 +106,7 @@ def _count_memories(backend_url: str) -> int:
     # SurrealDB returns a list of results; first result, first row
     try:
         return data[0]["result"][0]["count"]
-    except IndexError, KeyError, TypeError:
+    except (IndexError, KeyError, TypeError):  # fmt: skip
         return 0
 
 
@@ -513,7 +513,7 @@ def test_vacuum_e2e_import_failure_restores_original(live_backend_container):
     data = resp.json()
     try:
         sentinel_count = data[0]["result"][0]["count"]
-    except IndexError, KeyError, TypeError:
+    except (IndexError, KeyError, TypeError):  # fmt: skip
         sentinel_count = 0
 
     assert sentinel_count >= 50, (

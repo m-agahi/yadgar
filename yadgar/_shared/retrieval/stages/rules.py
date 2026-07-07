@@ -20,7 +20,7 @@ class RulesStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.rules")
+    @observe(tier="stage", metric="retrieval.pipeline.rules")
     def apply(self, state: RetrievalState) -> RetrievalState:
         # No-op: executed inside CEReRankStage via _apply_rerank_pipeline.
         return state

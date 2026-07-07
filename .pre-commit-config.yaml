@@ -75,6 +75,14 @@ repos:
         pass_filenames: false
         files: ^(yadgar/.*\.py|\.observe-allowlist\.json)$
 
+      - id: check-dynamic-span-names
+        name: Check span names stay dynamic (no hardcoded @trace_span/@observe name, R2b)
+        language: system
+        entry: python scripts/check_dynamic_span_names.py
+        types: [python]
+        pass_filenames: false
+        files: ^yadgar/.*\.py$
+
       - id: check-secret-gate
         name: Check I26 secret-gate invariant (all write tools call gate_or_reject)
         language: system

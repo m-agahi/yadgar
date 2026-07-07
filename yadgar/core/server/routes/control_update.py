@@ -146,7 +146,7 @@ async def control_update_handler(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/control/update", methods=["POST"])
-@trace_span("api.control.update")
+@trace_span()
 async def control_update(request: Request) -> JSONResponse:
     """Version check endpoint for Control-tab integration (v5.50) and CLI power users.
 

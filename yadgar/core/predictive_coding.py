@@ -71,7 +71,7 @@ class WriteGate:
 
     # ── Entity Cache ─────────────────────────────────────────────────────
 
-    @observe(tier="hot", name="write.get_cached_entities")
+    @observe(tier="hot", metric="write.get_cached_entities")
     def _get_cached_entities(self) -> list[dict[str, Any]]:
         """Return all entities, using a TTL cache to avoid redundant DB fetches.
 
@@ -118,7 +118,7 @@ class WriteGate:
             }
         )
 
-    @observe(tier="stage", name="write.compute_task_continuity")
+    @observe(tier="stage", metric="write.compute_task_continuity")
     def _compute_task_continuity(self, content: str, directory: str) -> float:
         """How task-continuous is this content with recent stores?
 
@@ -167,7 +167,7 @@ class WriteGate:
 
     # ── Core: Surprisal Computation ──────────────────────────────────────
 
-    @observe(tier="boundary", name="write.surprisal")
+    @observe(tier="boundary", metric="write.surprisal")
     def compute_surprisal(self, content: str, directory: str, tags: list[str]) -> float:
         """Compute how surprising content is relative to the directory's generative model.
 
@@ -211,7 +211,7 @@ class WriteGate:
 
         return max(0.0, min(1.0, surprisal))
 
-    @observe(tier="stage", name="write.compute_embedding_novelty")
+    @observe(tier="stage", metric="write.compute_embedding_novelty")
     def _compute_embedding_novelty(self, content: str) -> float:
         """Signal 1: How novel is this content in embedding space?
 
@@ -234,7 +234,7 @@ class WriteGate:
 
         return max(0.0, min(1.0, 1.0 - max_similarity))
 
-    @observe(tier="stage", name="write.compute_entity_novelty")
+    @observe(tier="stage", metric="write.compute_entity_novelty")
     def _compute_entity_novelty(self, content: str, directory: str) -> float:
         """Signal 2: How many entities in this content are new to the graph?
 
@@ -256,7 +256,7 @@ class WriteGate:
 
         return new_count / total_entities
 
-    @observe(tier="hot", name="write.collect_temporal_entities")
+    @observe(tier="hot", metric="write.collect_temporal_entities")
     def _collect_temporal_entities(self, content: str, directory: str) -> set[str]:
         """Collect entity names to check for temporal novelty.
 
@@ -286,7 +286,7 @@ class WriteGate:
         except (ValueError, TypeError, KeyError):  # fmt: skip
             return None
 
-    @observe(tier="hot", name="write.most_recent_mention_dt")
+    @observe(tier="hot", metric="write.most_recent_mention_dt")
     def _most_recent_mention_dt(
         self, entity_names: set[str], dir_memories: list[dict]
     ) -> datetime | None:
@@ -306,7 +306,7 @@ class WriteGate:
                 most_recent = mem_dt
         return most_recent
 
-    @observe(tier="stage", name="write.compute_temporal_novelty")
+    @observe(tier="stage", metric="write.compute_temporal_novelty")
     def _compute_temporal_novelty(self, content: str, directory: str) -> float:
         """Signal 3: How recently was a related topic discussed?
 
@@ -333,7 +333,7 @@ class WriteGate:
             return 0.3  # Moderate gap
         return 0.7  # Old topic resurfacing = surprising
 
-    @observe(tier="stage", name="write.compute_structural_novelty")
+    @observe(tier="stage", metric="write.compute_structural_novelty")
     def _compute_structural_novelty(self, content: str, directory: str) -> float:
         """Signal 4: Does this content introduce new relationship types or causal patterns?
 
@@ -380,7 +380,7 @@ class WriteGate:
 
     # ── Write Gate Decision ──────────────────────────────────────────────
 
-    @observe(tier="boundary", name="write.gate")
+    @observe(tier="boundary", metric="write.gate")
     def should_store(
         self, content: str, directory: str, tags: list[str]
     ) -> tuple[bool, float, str]:
@@ -463,7 +463,7 @@ class WriteGate:
             )
             return (False, surprisal, f"below_threshold (effective={effective_threshold:.2f})")
 
-    @observe(tier="stage", name="write.would_reject_at")
+    @observe(tier="stage", metric="write.would_reject_at")
     def would_reject_at(
         self,
         content: str,
@@ -517,7 +517,7 @@ class WriteGate:
 
     # ── Event Boundary Detection ─────────────────────────────────────────
 
-    @observe(tier="stage", name="write.compute_boundary_signal")
+    @observe(tier="stage", metric="write.compute_boundary_signal")
     def compute_boundary_signal(self, content: str, previous_content: str) -> float:
         """Detect event boundaries — transitions between different topics/tasks.
 
@@ -546,7 +546,7 @@ class WriteGate:
 
     # ── Directory Generative Model ───────────────────────────────────────
 
-    @observe(tier="hot", name="write.extract_common_tags")
+    @observe(tier="hot", metric="write.extract_common_tags")
     def _extract_common_tags(self, memories: list[dict]) -> list[str]:
         """Return the 10 most frequent tags across memories.
 
@@ -566,7 +566,7 @@ class WriteGate:
                 tag_counter[tag] += 1
         return [tag for tag, _ in tag_counter.most_common(10)]
 
-    @observe(tier="hot", name="write.entity_names_in")
+    @observe(tier="hot", metric="write.entity_names_in")
     def _entity_names_in(self, memories: list[dict], all_entities: list[dict]) -> set[str]:
         """Return names of cached entities that appear in any of the given memories."""
         found: set[str] = set()
@@ -577,7 +577,7 @@ class WriteGate:
                     found.add(e["name"])
         return found
 
-    @observe(tier="hot", name="write.compute_centroid")
+    @observe(tier="hot", metric="write.compute_centroid")
     def _compute_centroid(self, memories: list[dict]) -> bytes | None:
         """Compute the mean embedding of memories as bytes, or None if unavailable."""
         dim = self._embeddings.get_dimensions()
@@ -594,7 +594,7 @@ class WriteGate:
         centroid = np.mean(embeddings_list, axis=0).astype(np.float32)
         return centroid.tobytes()
 
-    @observe(tier="stage", name="write.get_directory_model")
+    @observe(tier="stage", metric="write.get_directory_model")
     def get_directory_model(self, directory: str) -> dict:
         """Build summary of what Yadgar 'knows' about a directory.
 

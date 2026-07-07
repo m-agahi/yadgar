@@ -36,7 +36,7 @@ _MISSING_DIRECTORY_RESPONSE: dict = {
 }
 
 
-@observe(tier="hot", name="tools.blocks._require_directory_for_project_scope")
+@observe(tier="hot", metric="tools.blocks._require_directory_for_project_scope")
 def _require_directory_for_project_scope(scope: str, directory: str | None) -> dict | None:
     """Return an error dict if scope='project' and directory is absent/empty, else None."""
     if scope == "project" and not (directory and directory.strip()):

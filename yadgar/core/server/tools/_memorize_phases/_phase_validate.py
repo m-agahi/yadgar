@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
 
-@trace_span("memorize.validate")
+@trace_span()
 def phase_validate(ctx: MemorizeContext, settings) -> dict | None:
     """Validate and normalise inputs. Returns rejection dict or None (continue).
 

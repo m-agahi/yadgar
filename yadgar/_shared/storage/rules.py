@@ -20,7 +20,7 @@ class _RulesMixin:
 
     # ------------------------------------------------------------------ Memory Rules
 
-    @trace_span("storage.rules.insert_rule")
+    @trace_span()
     def insert_rule(self, rule: dict) -> int:
         now = self._now_iso()
         rid = self._next_id("memory_rule")
@@ -43,7 +43,7 @@ class _RulesMixin:
         )
         return rid
 
-    @trace_span("storage.rules.get_rules_for_scope")
+    @trace_span()
     def get_rules_for_scope(self, scope: str, scope_value: str | None = None) -> list[dict]:
         if scope == "global":
             rows = self._q(

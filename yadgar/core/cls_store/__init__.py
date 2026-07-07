@@ -57,7 +57,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
 
     # ── Go-CLS Consolidation Cycle ────────────────────────────────────────
 
-    @observe(tier="boundary", name="consolidation.cls.cycle")
+    @observe(tier="boundary", metric="consolidation.cls.cycle")
     def consolidation_cycle(self) -> dict:
         """Run Go-CLS consolidation: promote recurring episodic patterns to semantic.
 
@@ -121,7 +121,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
 
     # ── Dual-Store Query ──────────────────────────────────────────────────
 
-    @observe(tier="stage", name="consolidation.cls.query_dual")
+    @observe(tier="stage", metric="consolidation.cls.query_dual")
     def query_dual(self, query: str, directory: str, prefer: str = "auto") -> list[dict]:
         """Query both episodic and semantic stores, merge results.
 
@@ -177,7 +177,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
 
     # ── Internal Helpers ──────────────────────────────────────────────────
 
-    @observe(tier="hot", name="consolidation.cls.auto_weight")
+    @observe(tier="hot", metric="consolidation.cls.auto_weight")
     def _auto_weight(self, query: str) -> tuple[float, float]:
         """Analyze query to determine episodic vs semantic weighting.
 

@@ -287,21 +287,21 @@ async def logs_stream_handler(request: Request) -> StreamingResponse:
 
 
 @mcp_server.custom_route("/api/logs/_capabilities", methods=["GET"])
-@trace_span("api.logs.capabilities")
+@trace_span()
 async def logs_capabilities(request: Request) -> JSONResponse:
     """Probe endpoint: advertise SSE + poll support."""
     return await logs_capabilities_handler(request)
 
 
 @mcp_server.custom_route("/api/logs/poll", methods=["GET"])
-@trace_span("api.logs.poll")
+@trace_span()
 async def logs_poll(request: Request) -> JSONResponse:
     """Long-poll fallback: return buffered log lines since ?since=<seq>."""
     return await logs_poll_handler(request)
 
 
 @mcp_server.custom_route("/api/logs/stream", methods=["GET"])
-@trace_span("api.logs.stream")
+@trace_span()
 async def logs_stream(request: Request):
     """SSE stream: push daemon log lines as they arrive."""
     return await logs_stream_handler(request)

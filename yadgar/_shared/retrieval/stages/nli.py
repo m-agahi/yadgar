@@ -22,7 +22,7 @@ class NLIStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.nli")
+    @observe(tier="stage", metric="retrieval.pipeline.nli")
     def apply(self, state: RetrievalState) -> RetrievalState:
         # No-op: NLI is executed inside CEReRankStage via _apply_rerank_pipeline.
         return state

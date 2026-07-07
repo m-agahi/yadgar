@@ -221,7 +221,7 @@ class EmbeddingEngine:
             return True
         return stored_model != self.model_name
 
-    @trace_span("embeddings.encode_adaptive")
+    @trace_span()
     def encode_adaptive(self, text: str, dimensions: int = None) -> bytes | None:
         """Encode text with Matryoshka adaptive dimensionality.
 
@@ -294,7 +294,7 @@ class EmbeddingEngine:
             arr = arr / norm
         return arr
 
-    @trace_span("embeddings.encode")
+    @trace_span()
     def encode(self, text: str) -> bytes | None:
         """Encode text to a float32 byte blob."""
         _t0 = time.monotonic()
@@ -355,7 +355,7 @@ class EmbeddingEngine:
             except Exception:
                 pass
 
-    @trace_span("embeddings.encode_batch")
+    @trace_span()
     def encode_batch(self, texts: list[str]) -> list[bytes | None]:
         """Batch encode texts for efficiency during consolidation."""
         self._ensure_model()

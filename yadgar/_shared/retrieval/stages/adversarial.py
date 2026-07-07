@@ -20,7 +20,7 @@ class AdversarialStage(RetrievalStage):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
-    @observe(tier="stage", name="retrieval.pipeline.adversarial")
+    @observe(tier="stage", metric="retrieval.pipeline.adversarial")
     def apply(self, state: RetrievalState) -> RetrievalState:
         # No-op: executed inside CEReRankStage via _apply_rerank_pipeline.
         return state

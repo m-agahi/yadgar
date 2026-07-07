@@ -55,7 +55,7 @@ class WikiProvider(SourceProvider):
     def type(self) -> str:
         return "wiki"
 
-    @observe(tier="stage", name="retrieval.provider.wiki_candidates")
+    @observe(tier="stage", metric="retrieval.provider.wiki_candidates")
     def candidates(self, query: str, scope: Scope, limit: int) -> list[Candidate]:
         """Call WikiStore.query() and return normalized, directory-scoped Candidates.
 

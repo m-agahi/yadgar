@@ -55,7 +55,7 @@ def _is_candidate(mem: dict, age_cutoff: str, cold_threshold: float) -> bool:
     return True
 
 
-@observe(tier="stage", name="consolidation.cold_memory_retention_report")
+@observe(tier="stage", metric="consolidation.cold_memory_retention_report")
 def _cold_memory_retention_report(
     storage: StorageEngine,
     settings: Settings,

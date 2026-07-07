@@ -15,7 +15,7 @@ class _ClusteringMixin:
 
     # ── Pattern Detection (Go-CLS) ───────────────────────────────────────
 
-    @observe(tier="stage", name="consolidation.cls.find_patterns")
+    @observe(tier="stage", metric="consolidation.cls.find_patterns")
     def find_recurring_patterns(
         self, directory: str = None, min_occurrences: int = 3
     ) -> list[dict]:
@@ -50,7 +50,7 @@ class _ClusteringMixin:
 
     # ── Pattern Detection Helpers ─────────────────────────────────────────
 
-    @observe(tier="stage", name="consolidation.cls.fetch_episodic_candidates")
+    @observe(tier="stage", metric="consolidation.cls.fetch_episodic_candidates")
     def _fetch_episodic_candidates(self, directory: str | None) -> list[dict]:
         """Fetch episodic memories capped at CLS_PATTERN_MAX_CANDIDATES."""
         cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
@@ -68,7 +68,7 @@ class _ClusteringMixin:
             tags = _json.loads(tags)
         return tags
 
-    @observe(tier="stage", name="consolidation.cls.build_unit_matrix")
+    @observe(tier="stage", metric="consolidation.cls.build_unit_matrix")
     def _build_unit_matrix(self, memories: list[dict]) -> tuple[list[dict], np.ndarray]:
         """Filter noise tags and normalise embeddings into a unit matrix.
 
@@ -106,7 +106,7 @@ class _ClusteringMixin:
             return None
 
     @staticmethod
-    @observe(tier="stage", name="consolidation.cls.greedy_cluster")
+    @observe(tier="stage", metric="consolidation.cls.greedy_cluster")
     def _greedy_cluster(
         valid_mems: list[dict], sim_matrix: np.ndarray, threshold: float
     ) -> list[list[dict]]:
@@ -164,7 +164,7 @@ class _ClusteringMixin:
 
     # ── Internal Helpers ──────────────────────────────────────────────────
 
-    @observe(tier="stage", name="consolidation.cls.search_store")
+    @observe(tier="stage", metric="consolidation.cls.search_store")
     def _search_store(
         self,
         query: str,

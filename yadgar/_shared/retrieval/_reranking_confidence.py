@@ -8,7 +8,7 @@ from yadgar._shared.observability.observe import observe
 class _ConfidenceMixin:
     """Provides detect_adversarial and compute_signal_confidence."""
 
-    @observe(tier="stage", name="retrieval.confidence.detect_adversarial")
+    @observe(tier="stage", metric="retrieval.confidence.detect_adversarial")
     def detect_adversarial(self, result_memories: list[dict]) -> dict:
         """Z-score gap analysis for adversarial/low-confidence detection.
 
@@ -70,7 +70,7 @@ class _ConfidenceMixin:
             "abstain": abstain,
         }
 
-    @observe(tier="hot", name="retrieval.confidence.compute_signal")
+    @observe(tier="hot", metric="retrieval.confidence.compute_signal")
     def compute_signal_confidence(
         self,
         signal_name: str,

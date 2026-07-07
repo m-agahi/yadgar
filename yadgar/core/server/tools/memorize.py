@@ -30,7 +30,7 @@ settings = get_settings()
 _VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
 
-@observe(tier="hot", name="tools.memorize._compute_valid_until")
+@observe(tier="hot", metric="tools.memorize._compute_valid_until")
 def _compute_valid_until(
     tier: str | None,
     valid_until: str | None,

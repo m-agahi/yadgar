@@ -267,7 +267,7 @@ class _MemoryMixin:
 
             logging.getLogger(__name__).warning("Enrichment failed: %s", e)
 
-    @observe(tier="boundary", name="storage.memory.insert_memory")
+    @observe(tier="boundary", metric="storage.memory.insert_memory")
     def insert_memory(
         self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
     ) -> int:
@@ -287,7 +287,7 @@ class _MemoryMixin:
 
         return mid
 
-    @trace_span("storage.memory.get_memory")
+    @trace_span()
     def get_memory(self, memory_id: int) -> dict | None:
         # Use direct record ID syntax — more reliable than type::record() in surrealkv
         mid = int(memory_id)  # sanitize
@@ -302,7 +302,7 @@ class _MemoryMixin:
             result.setdefault("last_reconsolidated", None)
         return result
 
-    @trace_span("storage.memory.get_memories_by_ids")
+    @trace_span()
     def get_memories_by_ids(self, memory_ids: list[int]) -> list[dict]:
         """Bulk-fetch full memory rows for a list of ids in ONE query (v5.97.0).
 
@@ -406,7 +406,7 @@ class _MemoryMixin:
             result.setdefault("last_reconsolidated", None)
         return results
 
-    @observe(tier="hot", name="storage.memory.resolve_memory_doc_cache")
+    @observe(tier="hot", metric="storage.memory.resolve_memory_doc_cache")
     def _resolve_memory_doc_cache(self):
         """Return the injected ``memory_doc`` cache, or the process-global default.
 
@@ -428,7 +428,7 @@ class _MemoryMixin:
         self._memory_doc_cache = cache
         return cache
 
-    @trace_span("storage.memory.get_memories_by_heat")
+    @trace_span()
     def get_memories_by_heat(self, min_heat: float, limit: int = 100) -> list[dict]:
         rows = self._q(
             "SELECT * FROM memory WHERE heat >= $min ORDER BY heat DESC LIMIT $lim",
@@ -436,21 +436,21 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
-    @observe(tier="stage", name="storage.memory.update_memory_heat")
+    @observe(tier="stage", metric="storage.memory.update_memory_heat")
     def update_memory_heat(self, memory_id: int, new_heat: float):
         self._q(
             "UPDATE type::record('memory', $id) SET heat = $heat",
             {"id": memory_id, "heat": new_heat},
         )
 
-    @observe(tier="stage", name="storage.memory.update_memory_staleness")
+    @observe(tier="stage", metric="storage.memory.update_memory_staleness")
     def update_memory_staleness(self, memory_id: int, is_stale: bool):
         self._q(
             "UPDATE type::record('memory', $id) SET is_stale = $stale",
             {"id": memory_id, "stale": is_stale},
         )
 
-    @observe(tier="stage", name="storage.memory.delete_memory")
+    @observe(tier="stage", metric="storage.memory.delete_memory")
     def delete_memory(self, memory_id: int):
         # Delete FK dependents first
         self._q(
@@ -750,7 +750,7 @@ class _MemoryMixin:
         rows = self._q("SELECT * FROM memory WHERE embedding IS NONE AND heat > 0")
         return self._rows_to_dicts(rows)
 
-    @trace_span("storage.memory.search_memories_fts")
+    @trace_span()
     def search_memories_fts(self, query: str, min_heat: float = 0.1, limit: int = 5) -> list[dict]:
         fts_query = self._preprocess_fts_query(query)
         rows = self._q(
@@ -760,7 +760,7 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
-    @trace_span("storage.memory.search_memories_fts_scored")
+    @trace_span()
     def search_memories_fts_scored(
         self,
         query: str,
@@ -794,7 +794,7 @@ class _MemoryMixin:
             results.append((mid, score))
         return results
 
-    @trace_span("storage.memory.search_memories_by_content_date")
+    @trace_span()
     def search_memories_by_content_date(
         self,
         date_hints: list[str],
@@ -834,7 +834,7 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
-    @trace_span("storage.memory.search_memories_by_timestamp_range")
+    @trace_span()
     def search_memories_by_timestamp_range(
         self,
         start_date: str,
@@ -849,7 +849,7 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
-    @trace_span("storage.memory.search_memories_by_month")
+    @trace_span()
     def search_memories_by_month(
         self,
         month_hints: list[str],
@@ -907,7 +907,7 @@ class _MemoryMixin:
     # update_memory_compression stays here: primary table is memory; it updates
     # content + compression_level fields (not a vector-index operation).
 
-    @observe(tier="stage", name="storage.memory.update_memory_compression")
+    @observe(tier="stage", metric="storage.memory.update_memory_compression")
     def update_memory_compression(
         self,
         memory_id: int,
@@ -974,7 +974,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Generic helpers
 
-    @observe(tier="stage", name="storage.memory.update_memory_fields")
+    @observe(tier="stage", metric="storage.memory.update_memory_fields")
     def update_memory_fields(self, memory_id: int, **fields):
         from yadgar._shared.storage.client import _EMBEDDING_FIELDS, _MEMORY_UPDATABLE_FIELDS
 
@@ -1010,7 +1010,7 @@ class _MemoryMixin:
             except Exception:  # noqa: BLE001 — cache bust must never fail a write
                 _log.debug("memory_doc cache invalidate failed for %s", mid, exc_info=True)
 
-    @observe(tier="stage", name="storage.memory.update_memory_last_accessed")
+    @observe(tier="stage", metric="storage.memory.update_memory_last_accessed")
     def update_memory_last_accessed(self, memory_id: int, timestamp: str):
         mid = int(memory_id)  # §5: cast to int
         self._q(
@@ -1018,7 +1018,7 @@ class _MemoryMixin:
             {"ts": timestamp},
         )
 
-    @observe(tier="stage", name="storage.memory.boost_memories_access")
+    @observe(tier="stage", metric="storage.memory.boost_memories_access")
     def boost_memories_access(self, memory_ids: list[int], timestamp: str) -> None:
         """Bump heat (+0.1, clamped at 1.0) and last_accessed for a set of memories.
 
@@ -1266,7 +1266,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Graph prior (v5.54.1)
 
-    @trace_span("storage.graph_priors")
+    @trace_span()
     def get_memory_graph_priors(self, memory_ids: list[int]) -> dict[int, float]:
         """Bulk-fetch graph_prior scalars for a list of memory IDs (v5.54.1).
 
@@ -1304,7 +1304,7 @@ class _MemoryMixin:
             result[int(mid)] = float(gp)
         return result
 
-    @observe(tier="stage", name="storage.memory.update_memory_graph_prior")
+    @observe(tier="stage", metric="storage.memory.update_memory_graph_prior")
     def update_memory_graph_prior(self, memory_id: int, prior: float) -> None:
         """Store precomputed graph_prior scalar on a memory row (v5.54.1).
 
@@ -1319,7 +1319,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Co-recall prior (v5.54.2)
 
-    @trace_span("storage.cofire_priors")
+    @trace_span()
     def get_memory_cofire_priors(self, memory_ids: list[int]) -> dict[int, float]:
         """Bulk-fetch cofire_prior scalars for a list of memory IDs (v5.54.2).
 
@@ -1349,7 +1349,7 @@ class _MemoryMixin:
             result[int(mid)] = float(cp)
         return result
 
-    @observe(tier="stage", name="storage.memory.update_memory_cofire_prior")
+    @observe(tier="stage", metric="storage.memory.update_memory_cofire_prior")
     def update_memory_cofire_prior(self, memory_id: int, prior: float) -> None:
         """Store precomputed cofire_prior scalar on a memory row (v5.54.2).
 
@@ -1364,7 +1364,7 @@ class _MemoryMixin:
 
     # ------------------------------------------------------------------ Memory excitability
 
-    @observe(tier="stage", name="storage.memory.update_memory_excitability")
+    @observe(tier="stage", metric="storage.memory.update_memory_excitability")
     def update_memory_excitability(self, memory_id: int, excitability: float):
         """Update excitability and last_excitability_update for a memory."""
         now = self._now_iso()

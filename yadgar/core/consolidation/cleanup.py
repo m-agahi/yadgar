@@ -73,7 +73,7 @@ def _bucket_for_timestamp(timestamp: str) -> str:
         return "unknown"
 
 
-@observe(tier="stage", name="consolidation.group_rows_by_window")
+@observe(tier="stage", metric="consolidation.group_rows_by_window")
 def _group_rows_by_window(rows: list) -> dict[str, list]:
     """Group action-log rows by (directory, 30-min window) key.
 
@@ -118,7 +118,7 @@ def _build_group_content(actions: list) -> str | None:
 class _CleanupMixin:
     """Action log processing and retention-based table pruning."""
 
-    @observe(tier="stage", name="consolidation.action_log")
+    @observe(tier="stage", metric="consolidation.action_log")
     def _process_action_log(self) -> dict:
         """Process unprocessed action_log entries into summarized memories.
 
@@ -160,7 +160,7 @@ class _CleanupMixin:
 
         return stats
 
-    @observe(tier="stage", name="consolidation.prune_action_log_safe")
+    @observe(tier="stage", metric="consolidation.prune_action_log_safe")
     def _prune_action_log_safe(self) -> None:
         """Prune old processed rows so action_log doesn't grow without bound. Non-fatal."""
         try:
@@ -169,7 +169,7 @@ class _CleanupMixin:
         except Exception:
             logger.debug("action_log prune failed (non-fatal)", exc_info=True)
 
-    @observe(tier="hot", name="consolidation.try_store_action_summary")
+    @observe(tier="hot", metric="consolidation.try_store_action_summary")
     def _try_store_action_summary(
         self, content: str, directory: str, group_ids: list
     ) -> int | None:
@@ -215,7 +215,7 @@ class _CleanupMixin:
             _quarantine_action_group(group_ids, str(_slb), directory)
             return None
 
-    @observe(tier="stage", name="consolidation.prune_episodes")
+    @observe(tier="stage", metric="consolidation.prune_episodes")
     def _prune_old_episodes_safe(self) -> None:
         """Prune old episodes to keep the table bounded. Non-fatal."""
         try:
@@ -226,7 +226,7 @@ class _CleanupMixin:
         except Exception:
             logger.debug("Episode prune failed (non-fatal)", exc_info=True)
 
-    @observe(tier="stage", name="consolidation.run_retention_tasks")
+    @observe(tier="stage", metric="consolidation.run_retention_tasks")
     def _run_retention_tasks(self) -> None:
         """Prune old rows from auxiliary tables. Each task is non-fatal."""
         _retention_tasks = [

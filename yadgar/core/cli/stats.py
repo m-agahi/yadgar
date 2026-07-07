@@ -12,7 +12,7 @@ def _one(results, key, default=0):
     """Extract a single aggregate value from a GROUP ALL result."""
     try:
         return results[0][0][key] if results and results[0] else default
-    except IndexError, KeyError, TypeError:
+    except (IndexError, KeyError, TypeError):  # fmt: skip
         return default
 
 

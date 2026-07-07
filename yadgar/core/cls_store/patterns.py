@@ -281,7 +281,7 @@ class _PatternsMixin:
 
     # ── Classification ────────────────────────────────────────────────────
 
-    @observe(tier="boundary", name="consolidation.cls.classify_memory")
+    @observe(tier="boundary", metric="consolidation.cls.classify_memory")
     def classify_memory(self, content: str, tags: list[str], directory: str) -> str:
         """Classify incoming memory as 'episodic' or 'semantic'.
 
@@ -313,7 +313,7 @@ class _PatternsMixin:
 
     # ── Consistency Check ─────────────────────────────────────────────────
 
-    @observe(tier="hot", name="consolidation.cls.check_consistency")
+    @observe(tier="hot", metric="consolidation.cls.check_consistency")
     def check_consistency(self, cluster_memories: list[dict]) -> dict:
         """Verify cluster members don't contradict each other.
 
@@ -349,7 +349,7 @@ class _PatternsMixin:
 
     # ── Schema Abstraction ────────────────────────────────────────────────
 
-    @observe(tier="hot", name="consolidation.cls.abstract_to_schema")
+    @observe(tier="hot", metric="consolidation.cls.abstract_to_schema")
     def abstract_to_schema(self, cluster_memories: list[dict]) -> str:
         """Abstract multiple episodic memories into a semantic schema.
 

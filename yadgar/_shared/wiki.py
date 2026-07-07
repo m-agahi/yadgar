@@ -645,7 +645,7 @@ class WikiStore:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    @trace_span("wiki.add")
+    @trace_span()
     def add(
         self,
         title: str,
@@ -912,7 +912,7 @@ class WikiStore:
             return False
         return True
 
-    @trace_span("wiki.query")
+    @trace_span()
     def query(  # noqa: PLR0913
         self,
         query: str,

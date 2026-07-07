@@ -35,7 +35,7 @@ class NewMemorySpec:
     valence: float = 0.0
 
 
-@trace_span("curation.find_similar_memories")
+@trace_span()
 def find_similar_memories(
     storage: StorageEngine,
     embeddings: EmbeddingEngine,

@@ -40,7 +40,7 @@ _VALID_RECALL_MODES: frozenset[str] = frozenset({"landscape"})
 # ---------------------------------------------------------------------------
 
 
-@observe(tier="boundary", name="tools.recall._forward_to_backend")
+@observe(tier="boundary", metric="tools.recall._forward_to_backend")
 def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signature
     query: str,
     max_results: int,

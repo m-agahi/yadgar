@@ -115,7 +115,7 @@ class _BlocksMixin:
             )
         return int(rows[0]["cnt"]) if rows else 0
 
-    @trace_span("storage.blocks.create_block")
+    @trace_span()
     def create_block(
         self,
         name: str,
@@ -234,7 +234,7 @@ class _BlocksMixin:
             "updated_at": now,
         }
 
-    @trace_span("storage.blocks.get_block")
+    @trace_span()
     def get_block(
         self, name: str, scope: str = "project", directory: str | None = None
     ) -> dict | None:
@@ -259,7 +259,7 @@ class _BlocksMixin:
             return None
         return self._row_to_dict(rows[0])
 
-    @trace_span("storage.blocks.update_block")
+    @trace_span()
     def update_block(
         self,
         name: str,
@@ -320,7 +320,7 @@ class _BlocksMixin:
             "updated_at": now,
         }
 
-    @trace_span("storage.blocks.delete_block")
+    @trace_span()
     def delete_block(self, name: str, scope: str = "project", directory: str | None = None) -> None:
         """Delete block by (name, scope, directory). Idempotent — no error if missing."""
         try:
@@ -339,7 +339,7 @@ class _BlocksMixin:
                 {"name": name, "scope": scope, "directory": canonical_dir},
             )
 
-    @trace_span("storage.blocks.list_blocks")
+    @trace_span()
     def list_blocks(self, scope: str | None = None, directory: str | None = None) -> list[dict]:
         """Return blocks filtered by scope and directory.
 
@@ -378,7 +378,7 @@ class _BlocksMixin:
 
         return self._rows_to_dicts(rows)
 
-    @trace_span("storage.blocks.replace_block")
+    @trace_span()
     def replace_block(
         self,
         name: str,
@@ -434,7 +434,7 @@ class _BlocksMixin:
 
         return self.update_block(name, new_content, scope=scope, directory=canonical_dir)
 
-    @trace_span("storage.blocks.append_block")
+    @trace_span()
     def append_block(
         self,
         name: str,

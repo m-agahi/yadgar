@@ -21,7 +21,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar.core.server._app import _tool
 
 
-@observe(tier="stage", name="tools.test_tools.register_test_tools")
+@observe(tier="stage", metric="tools.test_tools.register_test_tools")
 def register_test_tools() -> None:
     """Register the gated test tools. No-op unless YADGAR_TEST_TOOLS=1."""
     if os.environ.get("YADGAR_TEST_TOOLS", "0").strip().lower() not in (

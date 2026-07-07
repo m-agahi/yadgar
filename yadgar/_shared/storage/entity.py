@@ -30,7 +30,7 @@ class _EntityMixin:
 
     # ------------------------------------------------------------------ Entities
 
-    @trace_span("storage.entity.insert_entity")
+    @trace_span()
     def insert_entity(self, entity: dict) -> int:
         now = self._now_iso()
         eid = self._next_id("entity")
@@ -50,7 +50,7 @@ class _EntityMixin:
         )
         return eid
 
-    @trace_span("storage.entity.get_entity_by_name")
+    @trace_span()
     def get_entity_by_name(self, name: str) -> dict | None:
         rows = self._q(
             "SELECT * FROM entity WHERE name = $name LIMIT 1",
@@ -130,7 +130,7 @@ class _EntityMixin:
 
     # ------------------------------------------------------------------ Relationships
 
-    @trace_span("storage.entity.insert_relationship")
+    @trace_span()
     def insert_relationship(self, relationship: dict) -> int:
         now = self._now_iso()
         rid = self._next_id("relationship")
@@ -157,7 +157,7 @@ class _EntityMixin:
         self._bump_entity_version(relationship["target_entity_id"])
         return rid
 
-    @trace_span("storage.entity.get_relationship_between")
+    @trace_span()
     def get_relationship_between(self, source_id: int, target_id: int) -> dict | None:
         rows = self._q(
             "SELECT * FROM relationship WHERE "
@@ -311,7 +311,7 @@ class _EntityMixin:
         # endpoint — always-bump both endpoints (over-bump is perf-only).
         self._bump_relationship_endpoints(rel_id)
 
-    @trace_span("storage.entity.insert_typed_relationship")
+    @trace_span()
     def insert_typed_relationship(
         self,
         source_entity_id: int,
@@ -374,7 +374,7 @@ class _EntityMixin:
         self._bump_entity_version(target_entity_id)
         return rid
 
-    @observe(tier="hot", name="storage.entity.bump_relationship_endpoints")
+    @observe(tier="hot", metric="storage.entity.bump_relationship_endpoints")
     def _bump_relationship_endpoints(self, rel_id: int) -> None:
         """Bump both endpoint entities' graph-cache versions for a rel by id (Car 4).
 

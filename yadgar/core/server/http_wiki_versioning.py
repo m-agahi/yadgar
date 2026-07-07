@@ -90,7 +90,7 @@ async def _wiki_search_keyword(storage: object, q: str, limit: int) -> list[dict
 
 
 @mcp_server.custom_route("/api/wiki_query", methods=["GET"])
-@trace_span("api.wiki_query")
+@trace_span()
 async def api_wiki_query(request: Request) -> JSONResponse:
     """Unified wiki search for the Bookmarks tab.
 
@@ -132,7 +132,7 @@ async def api_wiki_query(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/wiki_history", methods=["GET"])
-@trace_span("api.wiki_history")
+@trace_span()
 async def api_wiki_history(request: Request) -> JSONResponse:
     """List version history for a wiki page.
 
@@ -177,7 +177,7 @@ async def api_wiki_history(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/wiki_read_version", methods=["GET"])
-@trace_span("api.wiki_read_version")
+@trace_span()
 async def api_wiki_read_version(request: Request) -> JSONResponse:
     """Read a specific historical version of a wiki page.
 
@@ -221,7 +221,7 @@ async def api_wiki_read_version(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/wiki_diff", methods=["GET"])
-@trace_span("api.wiki_diff")
+@trace_span()
 async def api_wiki_diff(request: Request) -> JSONResponse:
     """Diff two versions of a wiki page.
 
@@ -270,7 +270,7 @@ async def api_wiki_diff(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/wiki_restore", methods=["POST"])
-@trace_span("api.wiki_restore")
+@trace_span()
 async def api_wiki_restore(request: Request) -> JSONResponse:
     """Restore a wiki page to a previous version (creates a new version).
 

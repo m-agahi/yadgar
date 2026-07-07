@@ -75,7 +75,7 @@ class KnowledgeGraph:
 
     # -- a. Typed Relationship Management --
 
-    @observe(tier="stage", name="knowledge_graph.add_relationship")
+    @observe(tier="stage", metric="knowledge_graph.add_relationship")
     def add_relationship(
         self,
         source: str,
@@ -108,7 +108,7 @@ class KnowledgeGraph:
 
     # -- b. Bi-Temporal Queries --
 
-    @observe(tier="stage", name="knowledge_graph.get_relationships_at_time")
+    @observe(tier="stage", metric="knowledge_graph.get_relationships_at_time")
     def get_relationships_at_time(self, entity_name: str, event_time: datetime) -> list[dict]:
         entity = self._storage.get_entity_by_name(entity_name)
         if not entity:
@@ -118,7 +118,7 @@ class KnowledgeGraph:
         all_rels = self._storage.get_relationships_for_entity(eid)
         return [r for r in all_rels if r.get("event_time") and r["event_time"] <= event_iso]
 
-    @observe(tier="stage", name="knowledge_graph.get_relationship_history")
+    @observe(tier="stage", metric="knowledge_graph.get_relationship_history")
     def get_relationship_history(self, source: str, target: str) -> list[dict]:
         source_entity = self._storage.get_entity_by_name(source)
         target_entity = self._storage.get_entity_by_name(target)
@@ -136,7 +136,7 @@ class KnowledgeGraph:
 
     # -- c. Causal Edge Detection --
 
-    @observe(tier="boundary", name="knowledge_graph.detect_causality")
+    @observe(tier="boundary", metric="knowledge_graph.detect_causality")
     def detect_causality(self) -> int:
         threshold = self._settings.CAUSAL_THRESHOLD
         created = 0
@@ -195,7 +195,7 @@ class KnowledgeGraph:
 
     # -- d. Enhanced Entity Extraction --
 
-    @observe(tier="boundary", name="knowledge_graph.extract_entities_typed")
+    @observe(tier="boundary", metric="knowledge_graph.extract_entities_typed")
     def extract_entities_typed(self, content: str, directory: str) -> list[tuple[str, str, str]]:
         _t0 = time.monotonic()
         try:
@@ -211,7 +211,7 @@ class KnowledgeGraph:
             except Exception:
                 pass
 
-    @observe(tier="stage", name="knowledge_graph.extract_entities_typed_inner")
+    @observe(tier="stage", metric="knowledge_graph.extract_entities_typed_inner")
     def _extract_entities_typed_inner(
         self, content: str, directory: str
     ) -> list[tuple[str, str, str]]:
@@ -273,7 +273,7 @@ class KnowledgeGraph:
 
     # -- e. Graph Traversal --
 
-    @observe(tier="stage", name="knowledge_graph.get_neighbors")
+    @observe(tier="stage", metric="knowledge_graph.get_neighbors")
     def get_neighbors(
         self,
         entity_name: str,
@@ -310,7 +310,7 @@ class KnowledgeGraph:
                     queue.append((nid, current_depth + 1))
         return result
 
-    @observe(tier="stage", name="knowledge_graph.get_subgraph")
+    @observe(tier="stage", metric="knowledge_graph.get_subgraph")
     def get_subgraph(self, entity_names: list[str], depth: int = 2) -> dict:
         nodes: dict[int, dict] = {}
         edges: list[dict] = []

@@ -620,42 +620,42 @@ async def maintenance_exit_handler(request: Request) -> JSONResponse:
 
 
 @mcp_server.custom_route("/api/control/config", methods=["GET"])
-@trace_span("api.control.config.get")
+@trace_span()
 async def control_config_get(request: Request) -> JSONResponse:
     """Expose knob table for Control tab config editor."""
     return await control_config_get_handler(request)
 
 
 @mcp_server.custom_route("/api/control/config", methods=["POST"])
-@trace_span("api.control.config.post")
+@trace_span()
 async def control_config_post(request: Request) -> JSONResponse:
     """Set ONE config knob (validates type + range; persists to YAML)."""
     return await control_config_post_handler(request)
 
 
 @mcp_server.custom_route("/api/control/action/{action}", methods=["POST"])
-@trace_span("api.control.action")
+@trace_span()
 async def control_action(request: Request) -> JSONResponse:
     """Trigger consolidate / vacuum / reembed action."""
     return await control_action_handler(request)
 
 
 @mcp_server.custom_route("/api/control/restart/{service}", methods=["POST"])
-@trace_span("api.control.restart")
+@trace_span()
 async def control_restart(request: Request) -> JSONResponse:
     """Write restart sentinel file for yadgar or yadgar-backend (sentinel-only; no exec)."""
     return await control_restart_handler(request)
 
 
 @mcp_server.custom_route("/api/control/maintenance/enter", methods=["POST"])
-@trace_span("api.control.maintenance.enter")
+@trace_span()
 async def control_maintenance_enter(request: Request) -> JSONResponse:
     """Enter nightly maintenance mode — MCP tools fast-fail, core stays UP."""
     return await maintenance_enter_handler(request)
 
 
 @mcp_server.custom_route("/api/control/maintenance/exit", methods=["POST"])
-@trace_span("api.control.maintenance.exit")
+@trace_span()
 async def control_maintenance_exit(request: Request) -> JSONResponse:
     """Exit nightly maintenance mode — restore normal MCP tool dispatch."""
     return await maintenance_exit_handler(request)

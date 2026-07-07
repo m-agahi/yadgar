@@ -46,7 +46,7 @@ class _BookmarksMixin:
 
     # ------------------------------------------------------------------ CRUD
 
-    @trace_span("storage.bookmarks.add_bookmark")
+    @trace_span()
     def add_bookmark(self, slug: str, label_override: str = "") -> dict:
         """Insert or update a bookmark. Idempotent on slug.
 
@@ -92,7 +92,7 @@ class _BookmarksMixin:
             "added_at": now,
         }
 
-    @trace_span("storage.bookmarks.remove_bookmark")
+    @trace_span()
     def remove_bookmark(self, slug: str) -> bool:
         """Delete bookmark by slug. Returns True if deleted, False if not found."""
         slug = slug.strip()
@@ -108,7 +108,7 @@ class _BookmarksMixin:
         )
         return True
 
-    @trace_span("storage.bookmarks.get_bookmark")
+    @trace_span()
     def get_bookmark(self, slug: str) -> dict | None:
         """Fetch a single bookmark by slug. Returns None if not found."""
         slug = slug.strip()
@@ -118,13 +118,13 @@ class _BookmarksMixin:
         )
         return self._row_to_dict(rows[0]) if rows else None
 
-    @trace_span("storage.bookmarks.list_bookmarks")
+    @trace_span()
     def list_bookmarks(self) -> list[dict]:
         """Return all bookmarks ordered by position ascending."""
         rows = self._q("SELECT * FROM wiki_bookmark ORDER BY position ASC")
         return self._rows_to_dicts(rows)
 
-    @trace_span("storage.bookmarks.reorder_bookmark")
+    @trace_span()
     def reorder_bookmark(self, slug: str, new_position: int) -> bool:
         """Move *slug* to *new_position*; shift other bookmarks to maintain density.
 

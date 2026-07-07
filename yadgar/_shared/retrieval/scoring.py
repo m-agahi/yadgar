@@ -78,7 +78,7 @@ class _ScoringMixin:
 
     # -- Signal collection helpers --
 
-    @observe(tier="hot", name="retrieval.fts.bm25")
+    @observe(tier="hot", metric="retrieval.fts.bm25")
     def _run_fts_bm25(self, params: FTSParams, scores: dict) -> None:
         """Section 1: FTS5 keyword search with BM25 scores (main query + subqueries)."""
         fts_searches = [(params.query, 1.0)]
@@ -97,7 +97,7 @@ class _ScoringMixin:
         except Exception:
             pass
 
-    @observe(tier="hot", name="retrieval.fts.entity")
+    @observe(tier="hot", metric="retrieval.fts.entity")
     def _run_entity_fts(self, params: FTSParams, scores: dict) -> None:
         """Section 1b: Entity-focused FTS for person names mentioned in the query."""
         entity_names = [
@@ -122,7 +122,7 @@ class _ScoringMixin:
         except Exception:
             pass
 
-    @observe(tier="hot", name="retrieval.fts.comet")
+    @observe(tier="hot", metric="retrieval.fts.comet")
     def _run_comet_fts(self, params: FTSParams, scores: dict) -> None:
         """Section 1c: COMET query expansion FTS (open-domain mode only)."""
         if not params.open_domain_mode:
@@ -142,7 +142,7 @@ class _ScoringMixin:
         except Exception:
             pass
 
-    @observe(tier="stage", name="retrieval.fts")
+    @observe(tier="stage", metric="retrieval.fts")
     def _collect_fts_scores(self, scores: dict, params: FTSParams) -> None:
         """Collect FTS BM25 scores (including entity-FTS and COMET expansion) into scores."""
         if params.enabled_signals is not None and "fts" not in params.enabled_signals:
@@ -153,7 +153,7 @@ class _ScoringMixin:
         self._run_comet_fts(params, scores)
         _observe_stage("bm25", (_time.perf_counter() - _bm25_t0) * 1000)
 
-    @observe(tier="hot", name="retrieval.vector.build_search_list")
+    @observe(tier="hot", metric="retrieval.vector.build_search_list")
     def _build_vector_search_list(
         self,
         query: str,
@@ -169,7 +169,7 @@ class _ScoringMixin:
             searches.append((subquery, 0.85))
         return searches
 
-    @observe(tier="hot", name="retrieval.vector.encode_query")
+    @observe(tier="hot", metric="retrieval.vector.encode_query")
     def _encode_vector_query(
         self,
         vector_query: str,
@@ -184,7 +184,7 @@ class _ScoringMixin:
             embed_query_observed = True
         return encoded, _enc_elapsed, embed_query_observed
 
-    @observe(tier="stage", name="retrieval.vector")
+    @observe(tier="stage", metric="retrieval.vector")
     def _collect_vector_scores(
         self,
         query: str,
@@ -240,7 +240,7 @@ class _ScoringMixin:
         _set_stage_attrs(candidates=len(vector_memory_ids))
         return vector_memory_ids, query_embedding
 
-    @observe(tier="stage", name="retrieval.ppr")
+    @observe(tier="stage", metric="retrieval.ppr")
     def _collect_ppr_scores(
         self,
         query: str,
@@ -261,7 +261,7 @@ class _ScoringMixin:
         _set_stage_attrs(candidates=len(ppr_results) if ppr_results else 0)
         _observe_stage("ppr", (_time.perf_counter() - _ppr_t0) * 1000)
 
-    @observe(tier="stage", name="retrieval.spreading")
+    @observe(tier="stage", metric="retrieval.spreading")
     def _collect_spreading_scores(
         self,
         scores: dict,
@@ -285,21 +285,21 @@ class _ScoringMixin:
             _set_stage_attrs(seeds=len(top_vector_seeds), activated=len(spread_results or []))
         _observe_stage("spreading_activation", (_time.perf_counter() - _spread_t0) * 1000)
 
-    @observe(tier="hot", name="retrieval.temporal.content_scores")
+    @observe(tier="hot", metric="retrieval.temporal.content_scores")
     def _apply_temporal_content_scores(self, temporal_memories: list, scores: dict) -> None:
         """Write content-date temporal scores for each returned memory."""
         for i, mem in enumerate(temporal_memories):
             if mem.get("id") is not None:
                 scores[mem["id"]]["temporal"] = 1.0 / (1 + i)
 
-    @observe(tier="hot", name="retrieval.temporal.month_scores")
+    @observe(tier="hot", metric="retrieval.temporal.month_scores")
     def _apply_temporal_month_scores(self, month_matches: list, scores: dict) -> None:
         """Write month-proximity temporal scores for memory IDs not already scored."""
         for mid in month_matches:
             if scores[mid]["temporal"] == 0.0:
                 scores[mid]["temporal"] = 0.5
 
-    @observe(tier="stage", name="retrieval.temporal")
+    @observe(tier="stage", metric="retrieval.temporal")
     def _collect_temporal_scores(
         self,
         query: str,

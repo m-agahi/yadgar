@@ -102,9 +102,9 @@ def test_health_check_emits_span():
             mock_request.query_params = {}
             asyncio.run(_http.health_check(mock_request))
 
-    assert "hook.health" in recorded_spans, (
-        f"Expected span 'hook.health' in {recorded_spans}. "
-        "health_check must be decorated with @trace_span('hook.health')."
+    assert any(n.endswith(".health_check") for n in recorded_spans), (
+        f"Expected a '…health_check' span in {recorded_spans}. "
+        "health_check must be decorated with @trace_span() (dynamic module.qualname name)."
     )
 
 
