@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from yadgar.remote_embeddings import RemoteEmbeddingEngine
+from yadgar._shared.remote_embeddings import RemoteEmbeddingEngine
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -21,7 +21,7 @@ from yadgar.remote_embeddings import RemoteEmbeddingEngine
 def _make_engine(embed_url="http://127.0.0.1:8001") -> tuple[RemoteEmbeddingEngine, MagicMock]:
     """Create an engine with a mocked httpx.Client."""
     mock_client = MagicMock()
-    with patch("yadgar.remote_embeddings.httpx.Client", return_value=mock_client):
+    with patch("yadgar._shared.remote_embeddings.httpx.Client", return_value=mock_client):
         engine = RemoteEmbeddingEngine()
     return engine, mock_client
 
@@ -55,7 +55,7 @@ class TestInit:
 
     def test_custom_model_name(self):
         mock_client = MagicMock()
-        with patch("yadgar.remote_embeddings.httpx.Client", return_value=mock_client):
+        with patch("yadgar._shared.remote_embeddings.httpx.Client", return_value=mock_client):
             engine = RemoteEmbeddingEngine(model_name="custom-model")
         assert engine.model_name == "custom-model"
 
@@ -90,7 +90,7 @@ class TestModelInfo:
 
     def test_get_dimensions_unknown_model(self):
         mock_client = MagicMock()
-        with patch("yadgar.remote_embeddings.httpx.Client", return_value=mock_client):
+        with patch("yadgar._shared.remote_embeddings.httpx.Client", return_value=mock_client):
             engine = RemoteEmbeddingEngine(model_name="unknown-model")
         assert engine.get_dimensions() == 384  # fallback
 
@@ -195,7 +195,7 @@ class TestEncode:
         engine, mock_client = _make_engine()
         mock_client.post.return_value = _mock_embed_response([[1.0, 0.0]])
         # Fill cache beyond limit
-        from yadgar.remote_embeddings import _CACHE_MAX
+        from yadgar._shared.remote_embeddings import _CACHE_MAX
 
         for i in range(_CACHE_MAX + 5):
             engine.encode(f"text-{i}")
@@ -211,7 +211,7 @@ class TestEncodeQueryDocument:
     def test_encode_query_uses_prefix(self):
         mock_client = MagicMock()
         mock_client.post.return_value = _mock_embed_response([[1.0, 0.0]])
-        with patch("yadgar.remote_embeddings.httpx.Client", return_value=mock_client):
+        with patch("yadgar._shared.remote_embeddings.httpx.Client", return_value=mock_client):
             engine = RemoteEmbeddingEngine(model_name="all-MiniLM-L6-v2")
         engine.encode_query("test query")
         # Verify that encode was called (prefix may be empty for this model)

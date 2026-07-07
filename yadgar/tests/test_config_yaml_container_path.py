@@ -14,7 +14,7 @@ class TestGetConfigPath:
         """Env unset → returns ~/.config/yadgar/config.yaml expanded."""
         monkeypatch.delenv("YADGAR_CONFIG_FILE", raising=False)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-        from yadgar.config_yaml import get_config_path
+        from yadgar._shared.config_yaml import get_config_path
 
         result = get_config_path()
         assert result == Path("~/.config/yadgar/config.yaml").expanduser()
@@ -23,7 +23,7 @@ class TestGetConfigPath:
         """YADGAR_CONFIG_FILE set → returns that exact path."""
         custom = tmp_path / "custom" / "config.yaml"
         monkeypatch.setenv("YADGAR_CONFIG_FILE", str(custom))
-        from yadgar.config_yaml import get_config_path
+        from yadgar._shared.config_yaml import get_config_path
 
         result = get_config_path()
         assert result == custom
@@ -32,7 +32,7 @@ class TestGetConfigPath:
         """YADGAR_CONFIG_FILE='' (empty) → falls through to default."""
         monkeypatch.setenv("YADGAR_CONFIG_FILE", "")
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-        from yadgar.config_yaml import get_config_path
+        from yadgar._shared.config_yaml import get_config_path
 
         result = get_config_path()
         assert result == Path("~/.config/yadgar/config.yaml").expanduser()
@@ -41,7 +41,7 @@ class TestGetConfigPath:
         """YADGAR_CONFIG_FILE='   ' (whitespace) → falls through to default."""
         monkeypatch.setenv("YADGAR_CONFIG_FILE", "   ")
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-        from yadgar.config_yaml import get_config_path
+        from yadgar._shared.config_yaml import get_config_path
 
         result = get_config_path()
         assert result == Path("~/.config/yadgar/config.yaml").expanduser()
@@ -59,7 +59,7 @@ class TestYamlConfigSourceLoad:
         # Re-import to pick up the patched env (import cache cleared via module reload)
         import importlib
 
-        import yadgar.config as cfg_mod
+        import yadgar._shared.config as cfg_mod
 
         importlib.reload(cfg_mod)
         source = cfg_mod.YamlConfigSource(cfg_mod.Settings)
@@ -72,7 +72,7 @@ class TestYamlConfigSourceLoad:
 
         import importlib
 
-        import yadgar.config as cfg_mod
+        import yadgar._shared.config as cfg_mod
 
         importlib.reload(cfg_mod)
         source = cfg_mod.YamlConfigSource(cfg_mod.Settings)
@@ -83,13 +83,13 @@ class TestYamlConfigSourceLoad:
         monkeypatch.delenv("YADGAR_CONFIG_FILE", raising=False)
         # Patch get_config_path to point at a non-existent file
         monkeypatch.setattr(
-            "yadgar.config_yaml.get_config_path",
+            "yadgar._shared.config_yaml.get_config_path",
             lambda: tmp_path / "nonexistent.yaml",
         )
 
         import importlib
 
-        import yadgar.config as cfg_mod
+        import yadgar._shared.config as cfg_mod
 
         importlib.reload(cfg_mod)
         source = cfg_mod.YamlConfigSource(cfg_mod.Settings)

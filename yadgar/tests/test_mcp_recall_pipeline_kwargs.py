@@ -18,9 +18,9 @@ from unittest.mock import patch
 
 import pytest
 
-import yadgar.server.tools.recall as _recall_symbol  # noqa: F401 — side-effects
+import yadgar.core.server.tools.recall as _recall_symbol  # noqa: F401 — side-effects
 
-_recall_module = sys.modules["yadgar.server.tools.recall"]
+_recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
 
 def _make_fake_memory(mid: int = 1) -> dict:
@@ -40,7 +40,7 @@ def _call_recall(query: str = "test query", profile=None, stage_overrides=None, 
     Returns (result, captured_call_kwargs) where captured_call_kwargs is the
     kwargs passed to _forward_to_backend so callers can assert on profile/mode.
     """
-    from yadgar.server.tools.recall import recall as recall_fn
+    from yadgar.core.server.tools.recall import recall as recall_fn
 
     fake_results = [_make_fake_memory(1)]
     captured = {}
@@ -53,8 +53,8 @@ def _call_recall(query: str = "test query", profile=None, stage_overrides=None, 
         patch.object(_recall_module, "_forward_to_backend", side_effect=_spy_forward),
         patch.object(_recall_module, "_apply_recall_session_side_effects"),
         patch.object(_recall_module, "_st") as mock_st,
-        patch("yadgar.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         mock_st._consolidation = None
         mock_st._pool = None
@@ -136,13 +136,13 @@ class TestRecallInvalidProfile:
 
     def test_invalid_profile_raises_validation_error(self):
         """Unknown profile name raises ValueError before any retrieval."""
-        from yadgar.server.tools.recall import recall as recall_fn
+        from yadgar.core.server.tools.recall import recall as recall_fn
 
         with (
             patch.object(_recall_module, "_forward_to_backend") as mock_fwd,
             patch.object(_recall_module, "_st") as mock_st,
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             mock_st._consolidation = None
             mock_st._pool = None
@@ -159,13 +159,13 @@ class TestRecallInvalidProfile:
 
     def test_invalid_profile_no_forward_called(self):
         """_forward_to_backend must NOT be called for invalid profile."""
-        from yadgar.server.tools.recall import recall as recall_fn
+        from yadgar.core.server.tools.recall import recall as recall_fn
 
         with (
             patch.object(_recall_module, "_forward_to_backend") as mock_fwd,
             patch.object(_recall_module, "_st") as mock_st,
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             mock_st._consolidation = None
             mock_st._pool = None
@@ -189,7 +189,7 @@ class TestRecallPipelineMetrics:
 
     def test_no_profile_does_not_increment_profile_counter(self):
         """Profile=None does not bump profile invocations counter (no plugin pipeline)."""
-        from yadgar.metrics import yadgar_recall_profile_invocations_total
+        from yadgar._shared.metrics import yadgar_recall_profile_invocations_total
 
         before_total = sum(
             s.value
@@ -208,7 +208,7 @@ class TestRecallPipelineMetrics:
 
     def test_profile_set_does_not_increment_plugin_pipeline_counter(self):
         """Phase 2a: profile= is forwarded to backend; plugin pipeline counter NOT fired."""
-        from yadgar.metrics import yadgar_recall_profile_invocations_total
+        from yadgar._shared.metrics import yadgar_recall_profile_invocations_total
 
         before = sum(
             s.value

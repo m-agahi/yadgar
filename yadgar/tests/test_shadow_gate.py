@@ -30,7 +30,7 @@ def _make_ctx(
     would_reject: bool | None = None,
 ):
     """Build a minimal MemorizeContext for phase_store tests."""
-    from yadgar.server.tools._memorize_phases.context import MemorizeContext
+    from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
     ctx = MemorizeContext(
         content=content,
@@ -62,7 +62,7 @@ class TestContextField:
     """MemorizeContext must have gate_surprisal and would_reject fields."""
 
     def test_gate_surprisal_field_exists(self):
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         ctx = MemorizeContext(
             content="x",
@@ -80,7 +80,7 @@ class TestContextField:
         assert hasattr(ctx, "gate_surprisal")
 
     def test_would_reject_field_exists(self):
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         ctx = MemorizeContext(
             content="x",
@@ -98,7 +98,7 @@ class TestContextField:
 
     def test_gate_surprisal_distinct_from_thermo_surprise(self):
         """gate_surprisal and surprise are separate fields — they must be independently settable."""
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         ctx = MemorizeContext(
             content="x",
@@ -127,7 +127,7 @@ class TestPhaseEmbedCapturesGateSurprisal:
 
     def test_gate_surprisal_captured_from_should_store(self):
         """ctx.gate_surprisal == surprisal returned by _write_gate.should_store()."""
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         fake_surprisal = 0.71  # gate value
 
@@ -161,15 +161,15 @@ class TestPhaseEmbedCapturesGateSurprisal:
         )
 
         with (
-            patch("yadgar.server.tools._memorize_phases._phase_embed._st") as mock_st,
-            patch("yadgar.server.tools._memorize_phases._phase_embed._lifecycle") as mock_lc,
+            patch("yadgar.core.server.tools._memorize_phases._phase_embed._st") as mock_st,
+            patch("yadgar.core.server.tools._memorize_phases._phase_embed._lifecycle") as mock_lc,
         ):
             mock_st._write_gate = mock_gate
             mock_st._retriever = None
             mock_st._thermo = mock_thermo
             mock_lc._get_embeddings.return_value = mock_embeddings
 
-            from yadgar.server.tools._memorize_phases._phase_embed import phase_embed
+            from yadgar.core.server.tools._memorize_phases._phase_embed import phase_embed
 
             result = phase_embed(ctx, mock_settings)
 
@@ -185,7 +185,7 @@ class TestPhaseEmbedCapturesGateSurprisal:
 
     def test_gate_surprisal_none_when_gate_disabled(self):
         """When _write_gate is None (disabled), gate_surprisal stays at its default."""
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         mock_embeddings = MagicMock()
         mock_embeddings.encode.return_value = [0.1] * 4
@@ -214,15 +214,15 @@ class TestPhaseEmbedCapturesGateSurprisal:
         )
 
         with (
-            patch("yadgar.server.tools._memorize_phases._phase_embed._st") as mock_st,
-            patch("yadgar.server.tools._memorize_phases._phase_embed._lifecycle") as mock_lc,
+            patch("yadgar.core.server.tools._memorize_phases._phase_embed._st") as mock_st,
+            patch("yadgar.core.server.tools._memorize_phases._phase_embed._lifecycle") as mock_lc,
         ):
             mock_st._write_gate = None  # gate disabled
             mock_st._retriever = None
             mock_st._thermo = mock_thermo
             mock_lc._get_embeddings.return_value = mock_embeddings
 
-            from yadgar.server.tools._memorize_phases._phase_embed import phase_embed
+            from yadgar.core.server.tools._memorize_phases._phase_embed import phase_embed
 
             result = phase_embed(ctx, mock_settings)
 
@@ -239,7 +239,7 @@ class TestWouldReject:
 
     def test_would_reject_true_when_below_shadow_threshold(self):
         """Low surprisal → would_reject=True at shadow threshold."""
-        from yadgar.predictive_coding import WriteGate
+        from yadgar._shared.predictive_coding import WriteGate
 
         # Verify WriteGate has would_reject_at method
         assert hasattr(WriteGate, "would_reject_at"), (
@@ -265,7 +265,7 @@ class TestWouldReject:
 
     def test_would_reject_false_when_above_shadow_threshold(self):
         """High surprisal → would_reject=False at shadow threshold."""
-        from yadgar.predictive_coding import WriteGate
+        from yadgar._shared.predictive_coding import WriteGate
 
         mock_storage = MagicMock()
         mock_embeddings = MagicMock()
@@ -290,7 +290,7 @@ class TestWouldReject:
         At very high continuity, effective_threshold = max(0.1, 0.15 - 0.15) = 0.10.
         surprisal=0.12 >= effective_threshold=0.10 → would_reject=False even though 0.12 < 0.15.
         """
-        from yadgar.predictive_coding import WriteGate
+        from yadgar._shared.predictive_coding import WriteGate
 
         mock_storage = MagicMock()
         mock_embeddings = MagicMock()
@@ -340,10 +340,10 @@ class TestShadowFieldsStoredOnMemory:
         storage = self._make_storage_mock(99)
 
         with (
-            patch("yadgar.server.tools._memorize_phases._phase_store._st") as mock_st,
-            patch("yadgar.server.tools._memorize_phases._phase_store._lifecycle") as mock_lc,
+            patch("yadgar.core.server.tools._memorize_phases._phase_store._st") as mock_st,
+            patch("yadgar.core.server.tools._memorize_phases._phase_store._lifecycle") as mock_lc,
             patch(
-                "yadgar.server.tools._memorize_phases._phase_store._file_hash",
+                "yadgar.core.server.tools._memorize_phases._phase_store._file_hash",
                 return_value=None,
             ),
         ):
@@ -356,10 +356,10 @@ class TestShadowFieldsStoredOnMemory:
 
             # Patch _direct_insert to return a known memory_id
             with patch(
-                "yadgar.server.tools._memorize_phases._phase_store._direct_insert",
+                "yadgar.core.server.tools._memorize_phases._phase_store._direct_insert",
                 return_value=99,
             ):
-                from yadgar.server.tools._memorize_phases._phase_store import phase_store
+                from yadgar.core.server.tools._memorize_phases._phase_store import phase_store
 
                 phase_store(ctx)
 
@@ -391,10 +391,10 @@ class TestShadowFieldsStoredOnMemory:
         storage = self._make_storage_mock(77)
 
         with (
-            patch("yadgar.server.tools._memorize_phases._phase_store._st") as mock_st,
-            patch("yadgar.server.tools._memorize_phases._phase_store._lifecycle") as mock_lc,
+            patch("yadgar.core.server.tools._memorize_phases._phase_store._st") as mock_st,
+            patch("yadgar.core.server.tools._memorize_phases._phase_store._lifecycle") as mock_lc,
             patch(
-                "yadgar.server.tools._memorize_phases._phase_store._file_hash",
+                "yadgar.core.server.tools._memorize_phases._phase_store._file_hash",
                 return_value=None,
             ),
         ):
@@ -406,10 +406,10 @@ class TestShadowFieldsStoredOnMemory:
             mock_lc._get_buffer.return_value = MagicMock()
 
             with patch(
-                "yadgar.server.tools._memorize_phases._phase_store._direct_insert",
+                "yadgar.core.server.tools._memorize_phases._phase_store._direct_insert",
                 return_value=77,
             ):
-                from yadgar.server.tools._memorize_phases._phase_store import phase_store
+                from yadgar.core.server.tools._memorize_phases._phase_store import phase_store
 
                 phase_store(ctx)
 
@@ -433,10 +433,10 @@ class TestShadowFieldsStoredOnMemory:
         storage = self._make_storage_mock(55)
 
         with (
-            patch("yadgar.server.tools._memorize_phases._phase_store._st") as mock_st,
-            patch("yadgar.server.tools._memorize_phases._phase_store._lifecycle") as mock_lc,
+            patch("yadgar.core.server.tools._memorize_phases._phase_store._st") as mock_st,
+            patch("yadgar.core.server.tools._memorize_phases._phase_store._lifecycle") as mock_lc,
             patch(
-                "yadgar.server.tools._memorize_phases._phase_store._file_hash",
+                "yadgar.core.server.tools._memorize_phases._phase_store._file_hash",
                 return_value=None,
             ),
         ):
@@ -448,10 +448,10 @@ class TestShadowFieldsStoredOnMemory:
             mock_lc._get_buffer.return_value = MagicMock()
 
             with patch(
-                "yadgar.server.tools._memorize_phases._phase_store._direct_insert",
+                "yadgar.core.server.tools._memorize_phases._phase_store._direct_insert",
                 return_value=55,
             ) as mock_insert:
-                from yadgar.server.tools._memorize_phases._phase_store import phase_store
+                from yadgar.core.server.tools._memorize_phases._phase_store import phase_store
 
                 phase_store(ctx)
                 # Direct insert MUST have been called — memory was stored
@@ -467,7 +467,7 @@ class TestShadowGateConfig:
     """WRITE_GATE_SHADOW_THRESHOLD must exist in Settings and be I25-registered."""
 
     def test_shadow_threshold_in_settings(self):
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         s = Settings()
         assert hasattr(s, "WRITE_GATE_SHADOW_THRESHOLD"), (
@@ -477,7 +477,7 @@ class TestShadowGateConfig:
         assert s.WRITE_GATE_SHADOW_THRESHOLD == 0.15
 
     def test_shadow_threshold_in_registry(self):
-        from yadgar.config_registry import _REGISTRY
+        from yadgar._shared.config_registry import _REGISTRY
 
         names = {e.name for e in _REGISTRY}
         assert "YADGAR_WRITE_GATE_SHADOW_THRESHOLD" in names, (
@@ -485,14 +485,14 @@ class TestShadowGateConfig:
         )
 
     def test_shadow_threshold_in_field_meta(self):
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "write_gate_shadow_threshold" in FIELD_META, (
             "write_gate_shadow_threshold must be in FIELD_META"
         )
 
     def test_would_reject_in_updatable_fields(self):
-        from yadgar.storage.client import _MEMORY_UPDATABLE_FIELDS
+        from yadgar._shared.storage.client import _MEMORY_UPDATABLE_FIELDS
 
         assert "would_reject" in _MEMORY_UPDATABLE_FIELDS, (
             "would_reject must be in _MEMORY_UPDATABLE_FIELDS"
@@ -506,14 +506,14 @@ class TestShadowGateMigration:
     """Migration 022 must exist and add would_reject to memory."""
 
     def test_migration_022_in_migrations_list(self):
-        from yadgar.storage.migrations import _MIGRATIONS
+        from yadgar._shared.storage.migrations import _MIGRATIONS
 
         versions = [m["version"] for m in _MIGRATIONS]
         matching = [v for v in versions if v.startswith("022")]
         assert matching, f"Migration 022_* must be in _MIGRATIONS. Found versions: {versions}"
 
     def test_migration_022_function_exists(self):
-        from yadgar.storage import migrations as m_mod
+        from yadgar._shared.storage import migrations as m_mod
 
         # Check the migration function is importable
         fn_names = [m["fn"].__name__ for m in m_mod._MIGRATIONS if m["version"].startswith("022")]

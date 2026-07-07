@@ -171,7 +171,7 @@ def test_zero_factor_via_config(monkeypatch):
     """Config with POSTMORTEM_BOOST_FACTOR=0 → no boost applied in recall path."""
     monkeypatch.setenv("YADGAR_POSTMORTEM_BOOST_FACTOR", "0.0")
 
-    from yadgar.config import Settings
+    from yadgar._shared.config import Settings
 
     s = Settings()
     assert s.POSTMORTEM_BOOST_FACTOR == pytest.approx(0.0)
@@ -189,7 +189,7 @@ def test_zero_factor_via_config(monkeypatch):
 
 def test_config_has_postmortem_boost_keywords():
     """Settings has POSTMORTEM_BOOST_KEYWORDS with the expected action verbs."""
-    from yadgar.config import Settings
+    from yadgar._shared.config import Settings
 
     s = Settings()
     assert hasattr(s, "POSTMORTEM_BOOST_KEYWORDS")
@@ -200,7 +200,7 @@ def test_config_has_postmortem_boost_keywords():
 
 def test_config_has_postmortem_boost_factor():
     """Settings has POSTMORTEM_BOOST_FACTOR defaulting to 0.3."""
-    from yadgar.config import Settings
+    from yadgar._shared.config import Settings
 
     s = Settings()
     assert hasattr(s, "POSTMORTEM_BOOST_FACTOR")

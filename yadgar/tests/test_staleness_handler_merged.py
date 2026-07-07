@@ -13,13 +13,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar.staleness import StalenessDetector, _FileChangeHandler
+from yadgar._shared.staleness import StalenessDetector, _FileChangeHandler
 
 
 @pytest.fixture()
 def mock_detector():
     storage = MagicMock()
-    from yadgar.config import Settings
+    from yadgar._shared.config import Settings
 
     settings = Settings()
     detector = StalenessDetector(storage=storage, settings=settings)

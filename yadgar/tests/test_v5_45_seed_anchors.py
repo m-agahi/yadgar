@@ -9,7 +9,7 @@ BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # v5.88: anchors.yaml moved to the canonical seed materials dir (one place to edit seeds).
-ANCHORS_YAML = REPO_ROOT / "yadgar" / "seed" / "materials" / "anchors.yaml"
+ANCHORS_YAML = REPO_ROOT / "yadgar" / "core" / "seed" / "materials" / "anchors.yaml"
 
 
 class TestV5_45SeedAnchorsLoader:

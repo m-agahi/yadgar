@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 from yadgar.tests.conftest import memorize_sync
 
 
@@ -22,8 +22,8 @@ def _engines(tmp_path_factory):
     # v5.42.3: /tmp/* dirs are not git repos; patch _detect_branch so tests
     # that call memorize/anchor/etc. with /tmp paths pass branch context.
     with (
-        patch("yadgar.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.server._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield
     server.shutdown()
@@ -79,7 +79,7 @@ def test_recall_boosts_heat():
     # inside _fanout_recall on the backend). recall_backend_bypass deliberately
     # SKIPS db side effects, so it cannot exercise the boost. Test the live
     # heat-boost function directly instead — same code path the backend runs.
-    from yadgar.server.tools._recall_pipeline import _apply_recall_db_side_effects
+    from yadgar._shared.runtime.recall_pipeline import _apply_recall_db_side_effects
 
     result = memorize_sync("heat boost test", "/tmp", ["test"])
     mid = result["id"]
@@ -316,7 +316,7 @@ def test_mcp_server_has_resources():
 
 def test_check_invariants_ok_on_clean_db():
     """check_invariants returns ok=True on a fresh, empty database."""
-    from yadgar.server import _run_check_invariants
+    from yadgar.core.server import _run_check_invariants
 
     result = _run_check_invariants(server._get_storage())
     assert result["ok"] is True
@@ -326,7 +326,7 @@ def test_check_invariants_ok_on_clean_db():
 
 def test_check_invariants_detects_dangling_similarity_link():
     """Dangling memory_similarity_link rows are auto-repaired and appear in 'fixed', not 'violations'."""
-    from yadgar.server import _run_check_invariants
+    from yadgar.core.server import _run_check_invariants
 
     storage = server._get_storage()
     # Insert a link referencing memory IDs that don't exist
@@ -348,7 +348,7 @@ def test_check_invariants_detects_dangling_similarity_link():
 
 def test_check_invariants_result_has_fixed_key():
     """check_invariants always returns a 'fixed' key, even when nothing was fixed."""
-    from yadgar.server import _run_check_invariants
+    from yadgar.core.server import _run_check_invariants
 
     result = _run_check_invariants(server._get_storage())
     assert "fixed" in result
@@ -357,7 +357,7 @@ def test_check_invariants_result_has_fixed_key():
 
 def test_check_invariants_autorepair_wiki_crossref():
     """Dangling wiki_crossref rows are auto-deleted and appear in 'fixed'."""
-    from yadgar.server import _run_check_invariants
+    from yadgar.core.server import _run_check_invariants
 
     storage = server._get_storage()
     # Insert a crossref pointing to non-existent slugs
@@ -378,7 +378,7 @@ def test_check_invariants_autorepair_wiki_crossref():
 
 def test_check_invariants_autorepair_memory_entity_orphans():
     """memory:N entity rows where N is not a live memory ID are deleted and appear in 'fixed'."""
-    from yadgar.server import _run_check_invariants
+    from yadgar.core.server import _run_check_invariants
 
     storage = server._get_storage()
     # Insert an orphan entity (memory ID 888888 doesn't exist)
@@ -401,12 +401,12 @@ def test_check_invariants_nonfixable_stays_in_violations():
     """Ceiling breaches and slot anomalies remain in violations (not auto-repaired)."""
     from unittest.mock import patch
 
-    from yadgar.server import _run_check_invariants
+    from yadgar.core.server import _run_check_invariants
 
     storage = server._get_storage()
     # Patch the settings to set HOPFIELD_MAX_PATTERNS to a value that won't match
     # engram_slot count, triggering a structural violation
-    with patch("yadgar.server.settings") as mock_settings:
+    with patch("yadgar.core.server.settings") as mock_settings:
         mock_settings.MAX_SIMILARITY_LINKS_PER_MEMORY = 10
         mock_settings.PROJECT_CONTEXT_MIN_HEAT = 0.01
         mock_settings.HOPFIELD_MAX_PATTERNS = 99999  # wrong count → structural violation

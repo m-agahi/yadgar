@@ -23,11 +23,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from yadgar.config import Settings
-from yadgar.curation import MemoryCurator
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.storage import StorageEngine
-from yadgar.thermodynamics import MemoryThermodynamics
+from yadgar._shared.config import Settings
+from yadgar._shared.curation import MemoryCurator
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.thermodynamics import MemoryThermodynamics
 
 
 @pytest.fixture
@@ -122,7 +122,7 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
     sim = embeddings.similarity(base_emb, new_emb)
     assert sim >= 0.7, f"crafted embeddings have insufficient similarity {sim}"
 
-    from yadgar.curation.ingestion import find_similar_memories
+    from yadgar._shared.curation.ingestion import find_similar_memories
 
     found = find_similar_memories(storage, embeddings, new_emb, min_sim=0.6)
     assert any(mid == old_id for mid, _ in found), (
@@ -130,7 +130,7 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
     )
 
     # Direct sanity-check: call the detector directly and verify it would mutate
-    from yadgar.curation.contradiction import detect_contradictions
+    from yadgar._shared.curation.contradiction import detect_contradictions
 
     direct = detect_contradictions(storage, found, new_content)
     assert direct, f"detector returned empty list; would never decay (found={found})"
@@ -144,8 +144,8 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
     # Must patch the name in yadgar.curation (where __init__ imported it),
     # NOT in yadgar.curation.contradiction — that bound name is not used
     # by _run_write_time_contradiction.
-    import yadgar.curation as _curation_mod
-    import yadgar.curation.contradiction as _cmod
+    import yadgar._shared.curation as _curation_mod
+    import yadgar._shared.curation.contradiction as _cmod
 
     _calls: list = []
     _orig = _cmod.detect_contradictions
@@ -231,7 +231,7 @@ def test_detector_exception_does_not_block_write(curator, storage, monkeypatch):
     new_content = "We no longer use PostgreSQL"
 
     with patch(
-        "yadgar.curation.contradiction.detect_contradictions",
+        "yadgar._shared.curation.contradiction.detect_contradictions",
         side_effect=RuntimeError("boom"),
     ):
         result = curator.curate_on_remember(
@@ -253,7 +253,7 @@ def test_metric_increments_on_contradiction(curator, storage, monkeypatch):
     """yadgar_write_time_contradiction_total{reason} increments per detected contradiction."""
     monkeypatch.delenv("YADGAR_WRITE_TIME_CONTRADICTION", raising=False)
 
-    from yadgar.metrics import yadgar_write_time_contradiction_total
+    from yadgar._shared.metrics import yadgar_write_time_contradiction_total
 
     def _val(reason: str) -> float:
         return yadgar_write_time_contradiction_total.labels(reason=reason)._value.get()
@@ -318,14 +318,15 @@ def test_llm_resolver_short_circuit_bypasses_lightweight(monkeypatch):
     mock_emb.encode.return_value = b"\x00" * (384 * 4)
     mock_emb.get_model_name.return_value = "test-model"
 
-    import yadgar.server._state as _state_mod
+    import yadgar._shared.runtime.state as _state_mod
 
     with (
-        patch("yadgar.file_queue.is_draining", return_value=True),
+        patch("yadgar.core.file_queue.is_draining", return_value=True),
         patch(
-            "yadgar.server.tools._memorize_phases._phase_validate.gate_or_reject", return_value=None
+            "yadgar.core.server.tools._memorize_phases._phase_validate.gate_or_reject",
+            return_value=None,
         ),
-        patch("yadgar.server.tools.memorize.settings", settings_stub),
+        patch("yadgar.core.server.tools.memorize.settings", settings_stub),
         patch.object(_state_mod, "_retriever", MagicMock()),
         patch.object(_state_mod, "_replay", None),
         patch.object(_state_mod, "_buffer", MagicMock()),
@@ -337,16 +338,16 @@ def test_llm_resolver_short_circuit_bypasses_lightweight(monkeypatch):
         patch.object(_state_mod, "_consolidation", None),
         patch.object(_state_mod, "_prospective", None),
         patch.object(_state_mod, "_engram", None),
-        patch("yadgar.server.lifecycle._get_storage", return_value=mock_storage),
-        patch("yadgar.server.lifecycle._get_embeddings", return_value=mock_emb),
-        patch("yadgar.server.lifecycle._get_buffer", return_value=MagicMock()),
-        patch("yadgar.server.lifecycle._get_file_queue", return_value=MagicMock()),
+        patch("yadgar._shared.runtime.lifecycle._get_storage", return_value=mock_storage),
+        patch("yadgar._shared.runtime.lifecycle._get_embeddings", return_value=mock_emb),
+        patch("yadgar._shared.runtime.lifecycle._get_buffer", return_value=MagicMock()),
+        patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=MagicMock()),
         patch(
-            "yadgar.conflict_resolver.resolve_conflict",
+            "yadgar.core.conflict_resolver.resolve_conflict",
             return_value={"op": "NOOP", "target_id": None, "reason": "duplicate"},
         ),
     ):
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         result = memorize("anything", context="/test/wtc", tags=[])
 

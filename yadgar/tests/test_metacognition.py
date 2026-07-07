@@ -5,10 +5,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.metacognition import MetaCognition
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.metacognition import MetaCognition
+from yadgar._shared.storage import StorageEngine
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -603,7 +603,7 @@ class TestSummarizeOverflow:
 class TestMCPTools:
     def test_mcp_assess_coverage(self, storage, embeddings, graph, settings, tmp_path):
         """Server tool assess_coverage returns coverage dict."""
-        from yadgar.metacognition import MetaCognition
+        from yadgar._shared.metacognition import MetaCognition
 
         mc = MetaCognition(storage, embeddings, graph, settings)
 
@@ -622,7 +622,7 @@ class TestMCPTools:
 
     def test_mcp_detect_gaps(self, storage, embeddings, graph, settings):
         """Server tool detect_gaps returns gap list."""
-        from yadgar.metacognition import MetaCognition
+        from yadgar._shared.metacognition import MetaCognition
 
         mc = MetaCognition(storage, embeddings, graph, settings)
 

@@ -5,7 +5,7 @@ import os
 import time
 from unittest.mock import MagicMock, patch
 
-from yadgar.file_queue import DrainerConfig, FileQueue, QueueDrainer, _Attempt, _classify_error
+from yadgar.core.file_queue import DrainerConfig, FileQueue, QueueDrainer, _Attempt, _classify_error
 
 # ── _classify_error ───────────────────────────────────────────────────────────
 
@@ -221,7 +221,7 @@ class TestBackoffBehavior:
 
         _advance_all_backoffs(drainer)
         with patch.object(drainer, "_apply", side_effect=err):
-            with patch("yadgar.file_queue.time") as mock_time:
+            with patch("yadgar.core.file_queue.time") as mock_time:
                 mock_time.time.return_value = now
                 drainer._drain_once()
 

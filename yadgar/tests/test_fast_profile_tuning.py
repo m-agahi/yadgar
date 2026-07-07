@@ -17,7 +17,7 @@ class TestFastProfileDefinition:
 
     def test_fast_profile_has_skip_query_analysis(self):
         """PROFILES['fast'] must have skip_query_analysis=True."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         assert "fast" in PROFILES, "PROFILES must contain 'fast' key"
         profile = PROFILES["fast"]
@@ -29,7 +29,7 @@ class TestFastProfileDefinition:
 
     def test_fast_profile_has_use_fast_candidate_multiplier(self):
         """PROFILES['fast'] must have use_fast_candidate_multiplier=True."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         profile = PROFILES["fast"]
         assert profile.get("use_fast_candidate_multiplier") is True, (
@@ -39,7 +39,7 @@ class TestFastProfileDefinition:
 
     def test_balanced_profile_unchanged(self):
         """balanced profile must NOT have skip_query_analysis or use_fast_candidate_multiplier."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         balanced = PROFILES["balanced"]
         assert not balanced.get("skip_query_analysis", False), (
@@ -51,7 +51,7 @@ class TestFastProfileDefinition:
 
     def test_full_profile_unchanged(self):
         """full profile must NOT have skip_query_analysis or use_fast_candidate_multiplier."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         full = PROFILES["full"]
         assert not full.get("skip_query_analysis", False), (
@@ -73,7 +73,7 @@ class TestFastProfileCandidateMultiplier:
         self, profile_name: str, max_results: int, fast_mult: int, global_mult: int
     ) -> int:
         """Mirror the core.py candidate_k computation for testing."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         profile = PROFILES.get(profile_name, PROFILES["balanced"])
         if profile.get("use_fast_candidate_multiplier", False):
@@ -137,7 +137,7 @@ class TestFastProfileSkipsQueryAnalysis:
 
     def test_fast_profile_flag_skips_analysis(self):
         """PROFILES['fast']['skip_query_analysis']=True means analyze_query is NOT called."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         profile = PROFILES["fast"]
         assert profile.get("skip_query_analysis") is True, (
@@ -147,7 +147,7 @@ class TestFastProfileSkipsQueryAnalysis:
 
     def test_balanced_profile_flag_does_not_skip_analysis(self):
         """PROFILES['balanced']['skip_query_analysis'] is absent/False → analyze_query runs."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         profile = PROFILES["balanced"]
         assert not profile.get("skip_query_analysis", False), (
@@ -159,7 +159,7 @@ class TestFastProfileSkipsQueryAnalysis:
         """core.py recall() must have a branch guarded by profile.get('skip_query_analysis')."""
         import pathlib
 
-        core_src = pathlib.Path(__file__).parent.parent / "retrieval" / "core.py"
+        core_src = pathlib.Path(__file__).parent.parent / "_shared" / "retrieval" / "core.py"
         source = core_src.read_text()
 
         assert "skip_query_analysis" in source, (
@@ -188,7 +188,7 @@ class TestFastProfileEnabledSignalsNotEmpty:
         """When skip_query_analysis=True, core.py sets enabled_signals=profile_signals directly."""
         import pathlib
 
-        core_src = pathlib.Path(__file__).parent.parent / "retrieval" / "core.py"
+        core_src = pathlib.Path(__file__).parent.parent / "_shared" / "retrieval" / "core.py"
         source = core_src.read_text()
 
         # Verify that the skip path assigns enabled_signals = profile_signals (or equivalent)
@@ -201,7 +201,7 @@ class TestFastProfileEnabledSignalsNotEmpty:
 
     def test_fast_profile_signals_non_empty_from_profile_definition(self):
         """PROFILES['fast']['signals'] must include vector and fts."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         fast_signals = set(PROFILES["fast"]["signals"])
         assert len(fast_signals) > 0, (

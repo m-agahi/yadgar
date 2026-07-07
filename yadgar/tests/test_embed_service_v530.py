@@ -42,7 +42,7 @@ def _reload_es(
     non-existent directories. Required for any test that checks os.walk call
     counts (P7 fix v5.46.7 — _walk_db_sizes only runs when db_path.exists()).
     """
-    import yadgar.config as cfg
+    import yadgar._shared.config as cfg
 
     monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1" if allow_root else "0")
     if ttl is not None:
@@ -193,7 +193,7 @@ class TestDbsizeCache:
         # admin_dbsize invokes _walk_db_sizes (not the early-return path).
         monkeypatch.setenv("YADGAR_DB_PATH", str(db_dir))
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         cfg.get_settings.cache_clear()
 
@@ -255,7 +255,7 @@ class TestRestartAttribution:
         monkeypatch.setenv("YADGAR_DB_PATH", str(db_path))
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         cfg.get_settings.cache_clear()
 
@@ -289,7 +289,7 @@ class TestRestartAttribution:
         monkeypatch.setenv("YADGAR_DB_PATH", str(db_path))
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         cfg.get_settings.cache_clear()
 
@@ -317,7 +317,7 @@ class TestRestartAttribution:
         monkeypatch.setenv("YADGAR_DB_PATH", str(tmp_path / "surreal_db"))  # does not exist
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         cfg.get_settings.cache_clear()
 
@@ -347,7 +347,7 @@ class TestRestartAttribution:
         monkeypatch.setenv("YADGAR_DB_PATH", str(db_path))
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         cfg.get_settings.cache_clear()
 

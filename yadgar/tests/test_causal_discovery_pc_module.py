@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
-from yadgar.causal_discovery.pc import (
+from yadgar._shared.causal_discovery.pc import (
     _build_time_buckets,
     _fill_event_matrix,
     _scan_entity_mentions,

@@ -5,7 +5,7 @@ cron, manual). The background _daemon_loop — which auto-triggered consolidatio
 on idle detection with a 30-min cooldown — must not exist on ConsolidationScheduler.
 """
 
-from yadgar.consolidation import ConsolidationScheduler
+from yadgar.core.consolidation import ConsolidationScheduler
 
 
 def test_daemon_loop_method_removed():
@@ -31,9 +31,9 @@ def test_stop_method_removed():
 
 def test_force_consolidate_still_callable(tmp_path):
     """force_consolidate() must still work — MCP consolidate_now depends on it."""
-    from yadgar.config import Settings
-    from yadgar.embeddings import EmbeddingEngine
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.config import Settings
+    from yadgar._shared.embeddings import EmbeddingEngine
+    from yadgar._shared.storage import StorageEngine
 
     storage = StorageEngine(str(tmp_path / "pr0_test.db"))
     emb = EmbeddingEngine()

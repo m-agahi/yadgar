@@ -8,7 +8,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from yadgar.server.tools._memorize_phases import (
+from yadgar.core.server.tools._memorize_phases import (
     MemorizeContext,
     phase_contradiction,
     phase_embed,
@@ -66,11 +66,11 @@ def test_phase_validate_rejects_empty_content(monkeypatch):
     """phase_validate returns content_too_large=False for empty, but content_too_large for huge."""
     # Empty content should pass validate (it's not too large)
     ctx = _make_ctx(content="")
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     monkeypatch.setattr(_st, "_rules_engine", None)
     with patch(
-        "yadgar.server.tools._memorize_phases._phase_validate.gate_or_reject",
+        "yadgar.core.server.tools._memorize_phases._phase_validate.gate_or_reject",
         return_value=None,
     ):
         result = phase_validate(ctx, _make_settings())
@@ -79,7 +79,7 @@ def test_phase_validate_rejects_empty_content(monkeypatch):
     # Oversized content should be rejected
     big_ctx = _make_ctx(content="x" * (32_768 + 1))
     with patch(
-        "yadgar.server.tools._memorize_phases._phase_validate.gate_or_reject",
+        "yadgar.core.server.tools._memorize_phases._phase_validate.gate_or_reject",
         return_value=None,
     ):
         result = phase_validate(big_ctx, _make_settings())
@@ -95,14 +95,14 @@ def test_phase_validate_rejects_empty_content(monkeypatch):
 
 def test_phase_validate_accepts_all_valid_tiers(monkeypatch):
     """phase_validate accepts all three valid tier values without error."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     monkeypatch.setattr(_st, "_rules_engine", None)
 
     for tier in ("semantic_immortal", "conditional", "ephemeral"):
         ctx = _make_ctx(tier=tier)
         with patch(
-            "yadgar.server.tools._memorize_phases._phase_validate.gate_or_reject",
+            "yadgar.core.server.tools._memorize_phases._phase_validate.gate_or_reject",
             return_value=None,
         ):
             result = phase_validate(ctx, _make_settings())
@@ -116,13 +116,13 @@ def test_phase_validate_accepts_all_valid_tiers(monkeypatch):
 
 def test_phase_validate_calls_secret_gate(monkeypatch):
     """phase_validate calls gate_or_reject and returns its rejection dict."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     monkeypatch.setattr(_st, "_rules_engine", None)
 
     rejection = {"stored": False, "reason": "secret_detected", "pattern": "test"}
     with patch(
-        "yadgar.server.tools._memorize_phases._phase_validate.gate_or_reject",
+        "yadgar.core.server.tools._memorize_phases._phase_validate.gate_or_reject",
         return_value=rejection,
     ) as mock_gate:
         ctx = _make_ctx()
@@ -139,14 +139,14 @@ def test_phase_validate_calls_secret_gate(monkeypatch):
 
 def test_phase_resolve_branch_uses_branch_hint_when_cwd_fails(monkeypatch):
     """phase_resolve_branch uses branch_hint when _detect_branch returns None."""
-    import yadgar.file_queue as _fq
+    import yadgar.core.file_queue as _fq
 
     # _phase_resolve_branch calls _file_queue.is_draining() via module ref — patch source
     monkeypatch.setattr(_fq, "is_draining", lambda: True)  # draining → no enqueue
 
     ctx = _make_ctx(branch_hint="feat/fallback-branch")
 
-    with patch("yadgar.server._detect_branch", return_value=None):
+    with patch("yadgar.core.server._detect_branch", return_value=None):
         result = phase_resolve_branch(ctx)
 
     assert result is None, "Draining path should return None (continue)"
@@ -160,14 +160,14 @@ def test_phase_resolve_branch_uses_branch_hint_when_cwd_fails(monkeypatch):
 
 def test_phase_resolve_branch_prefers_cwd_when_both_available(monkeypatch):
     """phase_resolve_branch uses _detect_branch result over branch_hint."""
-    import yadgar.file_queue as _fq
+    import yadgar.core.file_queue as _fq
 
     # _phase_resolve_branch calls _file_queue.is_draining() via module ref — patch source
     monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
     ctx = _make_ctx(branch_hint="feat/fallback-branch")
 
-    with patch("yadgar.server._detect_branch", return_value="feat/cwd-branch"):
+    with patch("yadgar.core.server._detect_branch", return_value="feat/cwd-branch"):
         result = phase_resolve_branch(ctx)
 
     assert result is None
@@ -181,8 +181,8 @@ def test_phase_resolve_branch_prefers_cwd_when_both_available(monkeypatch):
 
 def test_phase_embed_returns_vector(monkeypatch):
     """phase_embed sets ctx.embedding from embeddings engine."""
-    import yadgar.server._state as _st
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
+    import yadgar._shared.runtime.state as _st
 
     mock_embeddings = MagicMock()
     mock_embeddings.encode.return_value = [0.1, 0.2, 0.3]
@@ -205,8 +205,8 @@ def test_phase_embed_returns_vector(monkeypatch):
 
 def test_phase_embed_retries_on_timeout(monkeypatch):
     """phase_embed returns rejection dict when write gate rejects (surprisal too low)."""
-    import yadgar.server._state as _st
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
+    import yadgar._shared.runtime.state as _st
 
     mock_embeddings = MagicMock()
     mock_embeddings.encode.return_value = [0.1]
@@ -236,7 +236,7 @@ def test_phase_contradiction_flags_known_pairs(monkeypatch):
     monkeypatch.setenv("YADGAR_CONFLICT_RESOLVER", "on")
 
     mock_result = {"op": "NOOP", "reason": "duplicate detected"}
-    with patch("yadgar.conflict_resolver.resolve_conflict", return_value=mock_result):
+    with patch("yadgar.core.conflict_resolver.resolve_conflict", return_value=mock_result):
         ctx = _make_ctx()
         ctx.resolved_branch = "feat/test"
         result = phase_contradiction(ctx)
@@ -253,7 +253,7 @@ def test_phase_contradiction_flags_known_pairs(monkeypatch):
 
 def test_phase_store_returns_id(monkeypatch):
     """phase_store sets ctx.memory_id to the ID returned by storage."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     mock_storage = MagicMock()
     mock_storage.insert_memory.return_value = 77
@@ -264,7 +264,7 @@ def test_phase_store_returns_id(monkeypatch):
 
     mock_buffer = MagicMock()
 
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
 
     monkeypatch.setattr(_lc, "_get_storage", lambda: mock_storage)
     monkeypatch.setattr(_lc, "_get_embeddings", lambda: mock_embeddings)
@@ -291,7 +291,7 @@ def test_phase_store_returns_id(monkeypatch):
 
 def test_phase_post_write_writes_link_when_contradictions_present(monkeypatch):
     """phase_post_write applies explicit protection when is_protected=True."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     mock_storage = MagicMock()
     mock_storage.get_memory.return_value = {
@@ -305,7 +305,7 @@ def test_phase_post_write_writes_link_when_contradictions_present(monkeypatch):
 
     mock_buffer = MagicMock()
 
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
 
     monkeypatch.setattr(_lc, "_get_storage", lambda: mock_storage)
     monkeypatch.setattr(_lc, "_get_buffer", lambda: mock_buffer)
@@ -324,7 +324,7 @@ def test_phase_post_write_writes_link_when_contradictions_present(monkeypatch):
 
     settings = _make_settings()
 
-    with patch("yadgar.server.tools._memorize_phases._phase_post_write._push_event"):
+    with patch("yadgar.core.server.tools._memorize_phases._phase_post_write._push_event"):
         result = phase_post_write(ctx, settings)
 
     assert result.get("id") == 42

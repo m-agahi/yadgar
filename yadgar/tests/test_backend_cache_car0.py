@@ -322,7 +322,7 @@ class TestObsByConstruction:
         assert s["evictions"] >= 1
 
     def test_cold_tier_emits_generic_family(self) -> None:
-        from yadgar import metrics
+        from yadgar._shared import metrics
 
         c = _fresh_cache(name="obs_cold_probe", max_bytes=10_000, obs_tier="cold")
         before = metrics.yadgar_cache_hit_total.labels(cache="obs_cold_probe")._value.get()

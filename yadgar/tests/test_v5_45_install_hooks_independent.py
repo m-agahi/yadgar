@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-HOOKS_LIB = REPO_ROOT / "yadgar" / "install_hooks_lib.py"
+HOOKS_LIB = REPO_ROOT / "yadgar" / "core" / "install_hooks_lib.py"
 
 
 class TestV5_45InstallHooksIndependent:

@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -92,7 +92,7 @@ def test_returns_skipped_on_feature_branch(tmp_path):
     _make_wiki_dir(tmp_path, [])
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="feat/something"),
+        patch("yadgar.core.server._get_current_branch", return_value="feat/something"),
         patch(
             "subprocess.check_output",
             side_effect=lambda cmd, **kw: b"master" if "symbolic-ref" in cmd else b"feat/something",
@@ -109,7 +109,7 @@ def test_returns_skipped_when_branch_is_feature(tmp_path):
     _make_wiki_dir(tmp_path, [])
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="feat/v5.0"),
+        patch("yadgar.core.server._get_current_branch", return_value="feat/v5.0"),
         patch(
             "subprocess.check_output",
             side_effect=lambda cmd, **kw: b"master",
@@ -128,7 +128,7 @@ def test_force_branch_overrides_enforcement(tmp_path):
     _make_wiki_dir(tmp_path, [])
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="feat/something"),
+        patch("yadgar.core.server._get_current_branch", return_value="feat/something"),
         patch("subprocess.check_output", return_value=b"master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path), force_branch=True)
@@ -142,7 +142,7 @@ def test_force_branch_false_on_master_still_works(tmp_path):
     _make_wiki_dir(tmp_path, [])
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -166,7 +166,7 @@ def test_no_stale_when_hashes_match(tmp_path):
     )
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -187,7 +187,7 @@ def test_detects_stale_when_hash_mismatch(tmp_path):
     )
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -211,7 +211,7 @@ def test_detects_multiple_stale_pages(tmp_path):
     )
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -234,7 +234,7 @@ def test_missing_source_file_marks_stale(tmp_path):
     )
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -245,7 +245,7 @@ def test_missing_source_file_marks_stale(tmp_path):
 def test_no_wiki_dir_returns_empty_stale(tmp_path):
     """No .local-review/wiki/ directory → returns empty stale list, no error."""
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -269,7 +269,7 @@ def test_refresh_queue_file_written_on_drift(tmp_path):
     )
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         server.wiki_refresh_stale(directory=str(tmp_path))
@@ -295,7 +295,7 @@ def test_refresh_queue_not_written_when_no_drift(tmp_path):
     )
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         server.wiki_refresh_stale(directory=str(tmp_path))
@@ -323,7 +323,7 @@ def test_never_raises_on_malformed_frontmatter(tmp_path):
     (wiki_dir / "bad.md").write_text("---\nnot: valid: yaml: {\nbad\n---\n\ncontent")
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -335,7 +335,7 @@ def test_never_raises_on_malformed_frontmatter(tmp_path):
 def test_return_dict_has_required_keys(tmp_path):
     """Return value must include 'stale' and 'dispatched_agent_id'."""
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -356,7 +356,7 @@ def test_singular_source_file_field_detected(tmp_path):
     pinned at always-0. With a deliberately wrong stored hash, the singular-field
     page must now be detected as stale.
     """
-    from yadgar.server.tools.project import _compute_source_hash
+    from yadgar.core.server.tools.project import _compute_source_hash
 
     src = tmp_path / "yadgar" / "server.py"
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -369,7 +369,7 @@ def test_singular_source_file_field_detected(tmp_path):
     _make_wiki_page_singular(tmp_path, "mod-server", str(src), "0" * 64)
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -390,7 +390,7 @@ def test_directory_source_not_always_stale(tmp_path):
       - unchanged dir  → stored hash == computed hash → NOT stale
       - touch/add file → manifest changes → computed != stored → STALE
     """
-    from yadgar.server.tools.project import _compute_source_hash
+    from yadgar.core.server.tools.project import _compute_source_hash
 
     # Build a directory with a couple of files.
     src_dir = tmp_path / "yadgar"
@@ -408,7 +408,7 @@ def test_directory_source_not_always_stale(tmp_path):
 
     # 1) Unchanged directory → NOT stale.
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -422,7 +422,7 @@ def test_directory_source_not_always_stale(tmp_path):
     assert new_hash != baseline_hash, "manifest hash must change when a file is added"
 
     with (
-        patch("yadgar.server._get_current_branch", return_value="master"),
+        patch("yadgar.core.server._get_current_branch", return_value="master"),
         patch("subprocess.check_output", return_value=b"refs/remotes/origin/master"),
     ):
         result = server.wiki_refresh_stale(directory=str(tmp_path))
@@ -438,7 +438,7 @@ def test_stale_wiki_count_not_always_n_for_dir_source(tmp_path):
     from always-0 to always-N. With the manifest hash, an unchanged dir-sourced
     page contributes 0.
     """
-    from yadgar.server.tools.project import _compute_source_hash, _compute_stale_wiki_count
+    from yadgar.core.server.tools.project import _compute_source_hash, _compute_stale_wiki_count
 
     src_dir = tmp_path / "pkg"
     src_dir.mkdir(parents=True, exist_ok=True)
@@ -457,7 +457,7 @@ def test_directory_manifest_ignores_pycache_churn(tmp_path):
     Those files are rewritten on every interpreter run; if they fed the manifest
     the page would flip to always-stale on a live tree.
     """
-    from yadgar.server.tools.project import _compute_source_hash
+    from yadgar.core.server.tools.project import _compute_source_hash
 
     src_dir = tmp_path / "pkg"
     src_dir.mkdir(parents=True, exist_ok=True)
@@ -489,7 +489,7 @@ class TestCheckerDbPath:
         """DB page with hash matching live file → NOT stale (no .local-review file)."""
         import hashlib
 
-        from yadgar.server.tools.project import _scan_stale_wiki_slugs_db
+        from yadgar.core.server.tools.project import _scan_stale_wiki_slugs_db
 
         # Write a source file
         src = tmp_path / "pkg" / "mod.py"
@@ -499,7 +499,7 @@ class TestCheckerDbPath:
         correct_hash = hashlib.sha256(src.read_bytes()).hexdigest()
 
         # Insert a page into DB with page_type="code", hash, source_file
-        from yadgar.server.lifecycle import _get_storage
+        from yadgar._shared.runtime.lifecycle import _get_storage
 
         storage = _get_storage()
         storage.insert_wiki_page(
@@ -521,8 +521,8 @@ class TestCheckerDbPath:
 
     def test_checker_db_path_stale_on_drift(self, tmp_path):
         """DB page with hash not matching live file → stale."""
-        from yadgar.server.lifecycle import _get_storage
-        from yadgar.server.tools.project import _scan_stale_wiki_slugs_db
+        from yadgar._shared.runtime.lifecycle import _get_storage
+        from yadgar.core.server.tools.project import _scan_stale_wiki_slugs_db
 
         src = tmp_path / "pkg" / "mod2.py"
         src.parent.mkdir(parents=True, exist_ok=True)
@@ -550,8 +550,8 @@ class TestCheckerDbPath:
         """Mutate source file → DB page becomes stale."""
         import hashlib
 
-        from yadgar.server.lifecycle import _get_storage
-        from yadgar.server.tools.project import _scan_stale_wiki_slugs_db
+        from yadgar._shared.runtime.lifecycle import _get_storage
+        from yadgar.core.server.tools.project import _scan_stale_wiki_slugs_db
 
         src = tmp_path / "pkg" / "mod3.py"
         src.parent.mkdir(parents=True, exist_ok=True)
@@ -606,7 +606,7 @@ class TestCheckerDbPath:
         (wiki_dir / "fn-pkg-foo.md").write_text(content)
 
         # Run the full stale scan (disk path) — fn pages must NOT appear
-        from yadgar.server.tools.project import _scan_stale_wiki_slugs
+        from yadgar.core.server.tools.project import _scan_stale_wiki_slugs
 
         stale = _scan_stale_wiki_slugs(str(tmp_path))
         assert "fn-pkg-foo" not in stale, (

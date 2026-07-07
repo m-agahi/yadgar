@@ -44,7 +44,7 @@ class TestNightlyCycleDbPathDerivation:
         yadgar.paths.DB_PATH resolves to YADGAR_DATA_DIR/surreal_db (or XDG
         default ~/.local/share/yadgar/surreal_db).
         """
-        import yadgar.scripts.nightly_cycle as nc
+        import yadgar.core.scripts.nightly_cycle as nc
 
         importlib.reload(nc)
 
@@ -77,7 +77,7 @@ class TestNightlyCycleDbPathDerivation:
         mock_sched.force_consolidate.return_value = {"merged": 0}
 
         with patch.multiple(
-            "yadgar.scripts.nightly_cycle",
+            "yadgar.core.scripts.nightly_cycle",
             _run_systemctl=MagicMock(),
             create_snapshot=_snap_capture,
             prune_snapshots=MagicMock(return_value=[]),
@@ -106,7 +106,7 @@ class TestNightlyCycleDbPathDerivation:
     def test_db_path_xdg_default_when_no_data_dir_override(self, tmp_path: Path, monkeypatch):
         """When YADGAR_DATA_DIR is unset, db_path must use XDG default
         (~/.local/share/yadgar/surreal_db), NOT ~/.yadgar/surreal_db."""
-        import yadgar.scripts.nightly_cycle as nc
+        import yadgar.core.scripts.nightly_cycle as nc
 
         importlib.reload(nc)
 
@@ -139,7 +139,7 @@ class TestNightlyCycleDbPathDerivation:
         mock_sched.force_consolidate.return_value = {"merged": 0}
 
         with patch.multiple(
-            "yadgar.scripts.nightly_cycle",
+            "yadgar.core.scripts.nightly_cycle",
             _run_systemctl=MagicMock(),
             create_snapshot=_snap_capture,
             prune_snapshots=MagicMock(return_value=[]),
@@ -164,7 +164,7 @@ class TestNightlyCycleDbPathDerivation:
 
     def test_explicit_args_db_path_still_respected(self, tmp_path: Path):
         """When args.db_path is explicitly provided, it must take precedence."""
-        import yadgar.scripts.nightly_cycle as nc
+        import yadgar.core.scripts.nightly_cycle as nc
 
         explicit_db = tmp_path / "explicit_db"
         explicit_db.mkdir()
@@ -186,7 +186,7 @@ class TestNightlyCycleDbPathDerivation:
         mock_sched.force_consolidate.return_value = {"merged": 0}
 
         with patch.multiple(
-            "yadgar.scripts.nightly_cycle",
+            "yadgar.core.scripts.nightly_cycle",
             _run_systemctl=MagicMock(),
             create_snapshot=_snap_capture,
             prune_snapshots=MagicMock(return_value=[]),
@@ -219,7 +219,7 @@ class TestGcCallbackShutdownSafe:
 
         _gc_callback(phase='start', info={'generation': 0}) must not raise.
         """
-        import yadgar.graph_api as ga
+        import yadgar.core.graph_api as ga
 
         importlib.reload(ga)
 
@@ -241,7 +241,7 @@ class TestGcCallbackShutdownSafe:
 
         _gc_callback(phase='stop', info={'generation': 0}) must not raise.
         """
-        import yadgar.graph_api as ga
+        import yadgar.core.graph_api as ga
 
         importlib.reload(ga)
 
@@ -260,7 +260,7 @@ class TestGcCallbackShutdownSafe:
 
     def test_gc_callback_start_still_records_when_healthy(self):
         """In normal operation, 'start' phase still records timestamp."""
-        import yadgar.graph_api as ga
+        import yadgar.core.graph_api as ga
 
         importlib.reload(ga)
 
@@ -275,7 +275,7 @@ class TestGcCallbackShutdownSafe:
 
     def test_gc_callback_stop_does_not_raise_when_no_start(self):
         """'stop' with no matching 'start' must be a no-op (not raise KeyError)."""
-        import yadgar.graph_api as ga
+        import yadgar.core.graph_api as ga
 
         importlib.reload(ga)
 
@@ -301,7 +301,7 @@ class TestReembedAllSkipsNoneContent:
 
     def test_reembed_all_skips_none_content_rows(self):
         """Rows with None content are filtered out; only valid rows get embedded."""
-        from yadgar.server.tools.admin_other import reembed_all
+        from yadgar.core.server.tools.admin_other import reembed_all
 
         rows = [
             {"id": 1, "content": "valid memory one"},
@@ -323,9 +323,9 @@ class TestReembedAllSkipsNoneContent:
         mock_embeddings.encode_batch.side_effect = _encode_batch
         mock_embeddings.model_name = "all-MiniLM-L6-v2"
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             with patch(
-                "yadgar.server.tools.admin_other._get_embeddings", return_value=mock_embeddings
+                "yadgar.core.server.tools.admin_other._get_embeddings", return_value=mock_embeddings
             ):
                 result = reembed_all()
 
@@ -345,7 +345,7 @@ class TestReembedAllSkipsNoneContent:
 
     def test_reembed_all_all_none_content_returns_zero(self):
         """If ALL rows have None content, reembedded=0 but no crash."""
-        from yadgar.server.tools.admin_other import reembed_all
+        from yadgar.core.server.tools.admin_other import reembed_all
 
         rows = [
             {"id": 1, "content": None},
@@ -357,9 +357,9 @@ class TestReembedAllSkipsNoneContent:
         mock_embeddings = MagicMock()
         mock_embeddings.model_name = "all-MiniLM-L6-v2"
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             with patch(
-                "yadgar.server.tools.admin_other._get_embeddings", return_value=mock_embeddings
+                "yadgar.core.server.tools.admin_other._get_embeddings", return_value=mock_embeddings
             ):
                 result = reembed_all()
 
@@ -369,7 +369,7 @@ class TestReembedAllSkipsNoneContent:
 
     def test_reembed_all_valid_content_still_embedded(self):
         """Rows with valid content must still be embedded (regression guard)."""
-        from yadgar.server.tools.admin_other import reembed_all
+        from yadgar.core.server.tools.admin_other import reembed_all
 
         rows = [{"id": 1, "content": "hello world"}]
 
@@ -380,9 +380,9 @@ class TestReembedAllSkipsNoneContent:
         mock_embeddings.encode_batch.return_value = [b"\x01" * 4]
         mock_embeddings.model_name = "all-MiniLM-L6-v2"
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             with patch(
-                "yadgar.server.tools.admin_other._get_embeddings", return_value=mock_embeddings
+                "yadgar.core.server.tools.admin_other._get_embeddings", return_value=mock_embeddings
             ):
                 result = reembed_all()
 

@@ -16,7 +16,7 @@ def test_install_hooks_no_shell_injection(tmp_path, monkeypatch):
     # Point Claude dirs somewhere harmless
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    from yadgar import server as _s
+    from yadgar.core import server as _s
 
     _s.install_hooks(project_directory=evil_dir)
 
@@ -39,7 +39,7 @@ def test_install_hooks_injection_in_hook_command(tmp_path, monkeypatch):
     project_dir = str(tmp_path / "myproject")
     os.makedirs(project_dir, exist_ok=True)
 
-    from yadgar import server as _s
+    from yadgar.core import server as _s
 
     _s.install_hooks(project_directory=project_dir)
 
@@ -64,12 +64,12 @@ def test_install_hooks_injection_in_hook_command(tmp_path, monkeypatch):
 
 
 def test_hook_runner_script_exists():
-    """yadgar/scripts/hook_runner.py must exist as a real file."""
+    """yadgar/core/scripts/hook_runner.py must exist as a real file."""
     from pathlib import Path
 
-    runner = Path(__file__).parent.parent / "scripts" / "hook_runner.py"
+    runner = Path(__file__).parent.parent / "core" / "scripts" / "hook_runner.py"
     assert runner.exists(), (
-        "yadgar/scripts/hook_runner.py does not exist — hook_runner.py must be "
+        "yadgar/core/scripts/hook_runner.py does not exist — hook_runner.py must be "
         "shipped as a real script (not inline python3 -c)"
     )
 
@@ -84,7 +84,7 @@ def test_hook_command_uses_shlex_quote(tmp_path, monkeypatch):
     project_dir = tmp_path / 'proj"ect'
     project_dir.mkdir(parents=True, exist_ok=True)
 
-    from yadgar import server as _s
+    from yadgar.core import server as _s
 
     _s.install_hooks(project_directory=str(project_dir))
 

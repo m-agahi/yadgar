@@ -12,7 +12,7 @@ import time
 
 def test_prune_keeps_keep_n_newest(tmp_path):
     """10 snapshot files → only keep_n=3 remain (the 3 newest)."""
-    from yadgar.vacuum import _run_cleanup_script
+    from yadgar.core.vacuum import _run_cleanup_script
 
     # Create 10 fake snapshot files with distinct mtimes
     files = []
@@ -39,7 +39,7 @@ def test_prune_keeps_keep_n_newest(tmp_path):
 
 def test_prune_noop_when_fewer_than_keep_n(tmp_path):
     """Fewer files than keep_n → nothing deleted."""
-    from yadgar.vacuum import _run_cleanup_script
+    from yadgar.core.vacuum import _run_cleanup_script
 
     for i in range(3):
         p = tmp_path / f"snap-{i:04d}.bak"
@@ -54,7 +54,7 @@ def test_prune_noop_when_fewer_than_keep_n(tmp_path):
 
 def test_prune_deletes_files_not_dirs_only(tmp_path):
     """Works with plain files as well as directories."""
-    from yadgar.vacuum import _run_cleanup_script
+    from yadgar.core.vacuum import _run_cleanup_script
 
     for i in range(6):
         p = tmp_path / f"backup-{i:04d}.surql"

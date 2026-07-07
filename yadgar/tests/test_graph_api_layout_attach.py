@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.graph_layout import attach_cached_positions, graph_signature
+from yadgar.core.graph_layout import attach_cached_positions, graph_signature
 
 
 def _payload(ids):
@@ -79,7 +79,7 @@ _TEST_TOKEN = "layout-attach-test-token"
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("graph_api_layout_attach")
-    from yadgar import server
+    from yadgar.core import server
 
     server.init_engines(db_path=str(tmp_path / "attach.db"), embedding_model="all-MiniLM-L6-v2")
     yield
@@ -91,8 +91,8 @@ def _client(monkeypatch):
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", _TEST_TOKEN)
     from starlette.testclient import TestClient
 
-    from yadgar import server as _server
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core import server as _server
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     return TestClient(BearerAuthMiddleware(_server.mcp_server.streamable_http_app()))
 
@@ -102,7 +102,7 @@ def _headers():
 
 
 def _seed(n=4):
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     for i in range(n):
         _st._storage.insert_memory(
@@ -118,7 +118,7 @@ def _seed(n=4):
 def test_default_off_payload_has_no_positions(monkeypatch):
     """Default OFF preserves current behavior: no x/y/z in any node."""
     monkeypatch.setenv("YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED", "false")
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     get_settings.cache_clear()
     _seed()
@@ -131,13 +131,13 @@ def test_default_off_payload_has_no_positions(monkeypatch):
 def test_flag_on_fresh_cache_attaches_positions(monkeypatch):
     """Flag ON + a fresh cache → nodes carry x/y/z from the cache."""
     monkeypatch.setenv("YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED", "true")
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     get_settings.cache_clear()
     _seed()
 
-    import yadgar.server._state as _st
-    from yadgar.graph_api import GraphAPI
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.graph_api import GraphAPI
 
     g = GraphAPI(_st._storage).get_full_graph(0, 8, False, None, 0, 0)
     sig = graph_signature(g["nodes"], g["edges"])
@@ -153,13 +153,13 @@ def test_flag_on_fresh_cache_attaches_positions(monkeypatch):
 def test_flag_on_capped_subset_still_attaches_by_id(monkeypatch):
     """Caps bind (full-graph cache is a superset): the capped subset still gets x/y/z."""
     monkeypatch.setenv("YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED", "true")
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     get_settings.cache_clear()
     _seed(6)
 
-    import yadgar.server._state as _st
-    from yadgar.graph_api import GraphAPI
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.graph_api import GraphAPI
 
     # Cache positions for the FULL uncapped graph.
     g = GraphAPI(_st._storage).get_full_graph(0, 8, False, None, 0, 0)

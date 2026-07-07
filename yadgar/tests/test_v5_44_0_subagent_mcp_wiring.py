@@ -29,7 +29,7 @@ class TestBundledAgentTemplates:
     def _agents_dir(self) -> Path:
         # Resolve relative to this file
         here = Path(__file__).parent.parent  # yadgar/
-        return here / "install_assets" / "agents"
+        return here / "core" / "install_assets" / "agents"
 
     def test_general_purpose_md_exists(self):
         p = self._agents_dir() / "general-purpose.md"
@@ -97,7 +97,7 @@ class TestAgentDispatchPreludeX1:
 
     def test_backward_compat_no_new_params(self):
         """Old callers: agent_dispatch_prelude(pattern, topic, storage) still works."""
-        from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
+        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         # Mock storage — no agent_prompt_get results
         storage = MagicMock()
@@ -107,11 +107,11 @@ class TestAgentDispatchPreludeX1:
 
     def test_include_context_false_no_prefetch(self):
         """include_context=False (default) should NOT call recall or wiki_query."""
-        from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
+        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         storage = MagicMock()
 
-        with patch("yadgar.server.tools.dispatch_helper._build_context_block") as mock_ctx:
+        with patch("yadgar.core.server.tools.dispatch_helper._build_context_block") as mock_ctx:
             mock_ctx.return_value = "### Yadgar Context\n- test"
             result = agent_dispatch_prelude(
                 "",
@@ -129,11 +129,11 @@ class TestAgentDispatchPreludeX1:
 
     def test_include_context_true_calls_build_context(self):
         """include_context=True invokes _build_context_block."""
-        from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
+        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         storage = MagicMock()
 
-        with patch("yadgar.server.tools.dispatch_helper._build_context_block") as mock_ctx:
+        with patch("yadgar.core.server.tools.dispatch_helper._build_context_block") as mock_ctx:
             mock_ctx.return_value = (
                 "### Yadgar Context (auto-prefetched ...)\n\n### Recent memories\n- test memory"
             )
@@ -165,7 +165,7 @@ class TestAgentDispatchPreludeX1:
         """
         import inspect
 
-        from yadgar.server.tools.dispatch_helper import _build_context_block
+        from yadgar.core.server.tools.dispatch_helper import _build_context_block
 
         # Signature check — function accepts branch_hint and directory params
         sig = inspect.signature(_build_context_block)
@@ -180,7 +180,7 @@ class TestAgentDispatchPreludeX1:
 
     def test_contract_text_updated_for_long_running(self):
         """v5.44.0 contract allows long_running agents to call memorize directly."""
-        from yadgar.server.tools.dispatch_helper import _YADGAR_CONTRACT
+        from yadgar.core.server.tools.dispatch_helper import _YADGAR_CONTRACT
 
         # DP-1: long_running carve-out must be documented
         lower = _YADGAR_CONTRACT.lower()
@@ -196,7 +196,7 @@ class TestAgentDispatchPreludeX1:
 
     def test_prelude_returns_string_with_new_params(self):
         """No exception when all new params provided."""
-        from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
+        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         storage = MagicMock()
         result = agent_dispatch_prelude(
@@ -219,7 +219,7 @@ class TestSubagentStopDirectiveParser:
     """parse_directive() correctly identifies memorize/wiki_add/anchor directives."""
 
     def test_parse_memorize_directive(self):
-        from yadgar.hooks.subagent_stop import _parse_directive
+        from yadgar.core.hooks.subagent_stop import _parse_directive
 
         directive = 'memorize: content="found that module X uses Y", tags=["arch","v5.44.0"], context="/tmp/proj"'
         result = _parse_directive(directive)
@@ -228,7 +228,7 @@ class TestSubagentStopDirectiveParser:
         assert "module X" in result["params"].get("content", "")
 
     def test_parse_wiki_add_directive(self):
-        from yadgar.hooks.subagent_stop import _parse_directive
+        from yadgar.core.hooks.subagent_stop import _parse_directive
 
         directive = 'wiki_add: title="X2 design", content="SubagentStop extension", category="architecture", tags=["v5.44.0"], directory="/tmp", branch_hint="feat/v5.44.0"'
         result = _parse_directive(directive)
@@ -237,7 +237,7 @@ class TestSubagentStopDirectiveParser:
         assert result["params"].get("title") == "X2 design"
 
     def test_parse_anchor_directive(self):
-        from yadgar.hooks.subagent_stop import _parse_directive
+        from yadgar.core.hooks.subagent_stop import _parse_directive
 
         directive = 'anchor: content="SubagentStop X2 ships in v5.44.0", reason="key milestone", tier="conditional"'
         result = _parse_directive(directive)
@@ -247,14 +247,14 @@ class TestSubagentStopDirectiveParser:
 
     def test_parse_none_returns_none(self):
         """Plain text bullets that aren't directives return None."""
-        from yadgar.hooks.subagent_stop import _parse_directive
+        from yadgar.core.hooks.subagent_stop import _parse_directive
 
         assert _parse_directive("some plain text finding") is None
         assert _parse_directive("fact: module X calls Y") is None
 
     def test_parse_malformed_directive_returns_none(self):
         """Malformed directive key=value returns None (lenient — don't reject)."""
-        from yadgar.hooks.subagent_stop import _parse_directive
+        from yadgar.core.hooks.subagent_stop import _parse_directive
 
         _parse_directive("memorize: content=NOT_QUOTED")
         # May be None or partial — as long as it doesn't raise
@@ -262,7 +262,7 @@ class TestSubagentStopDirectiveParser:
 
     def test_extract_directives_from_findings(self):
         """Bullets with directives are identified as directives."""
-        from yadgar.hooks.subagent_stop import _extract_findings, _parse_directive
+        from yadgar.core.hooks.subagent_stop import _extract_findings, _parse_directive
 
         report = """\
 ## Yadgar Findings
@@ -284,7 +284,7 @@ class TestSubagentStopDirectiveParser:
     def test_plain_bullet_falls_back_to_memorize(self):
         """Non-directive bullets (plain text) still get stored as memories (backward compat)."""
 
-        from yadgar.hooks.subagent_stop import _post_findings
+        from yadgar.core.hooks.subagent_stop import _post_findings
 
         posted_payloads = []
 
@@ -314,7 +314,7 @@ class TestSubagentStopWriteback:
 
     def test_post_findings_includes_branch_hint(self):
         """_post_findings includes branch_hint in the POST payload."""
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         posted = []
 
@@ -339,7 +339,7 @@ class TestSubagentStopWriteback:
 
     def test_post_includes_subagent_writeback_tag_request(self):
         """Payload signals _subagent_writeback for daemon-side tagging."""
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         posted = []
 
@@ -372,7 +372,7 @@ class TestPlatformPaths:
 
     def test_linux_returns_dot_claude(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Linux")
-        from yadgar.platform_paths import get_claude_config_dir
+        from yadgar._shared.platform_paths import get_claude_config_dir
 
         result = get_claude_config_dir()
         assert result == Path.home() / ".claude"
@@ -382,10 +382,10 @@ class TestPlatformPaths:
         monkeypatch.setattr("platform.system", lambda: "Darwin")
         import importlib
 
-        from yadgar import platform_paths  # noqa: PLC0415
+        from yadgar._shared import platform_paths  # noqa: PLC0415
 
         importlib.reload(platform_paths)
-        from yadgar.platform_paths import get_claude_config_dir
+        from yadgar._shared.platform_paths import get_claude_config_dir
 
         result = get_claude_config_dir()
         assert (
@@ -399,17 +399,17 @@ class TestPlatformPaths:
         monkeypatch.setenv("APPDATA", "C:\\Users\\testuser\\AppData\\Roaming")
         import importlib
 
-        from yadgar import platform_paths  # noqa: PLC0415
+        from yadgar._shared import platform_paths  # noqa: PLC0415
 
         importlib.reload(platform_paths)
-        from yadgar.platform_paths import get_claude_config_dir
+        from yadgar._shared.platform_paths import get_claude_config_dir
 
         result = get_claude_config_dir()
         assert "Claude" in str(result)
 
     def test_agents_dir_is_subdir_of_config(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Linux")
-        from yadgar.platform_paths import get_claude_agents_dir, get_claude_config_dir
+        from yadgar._shared.platform_paths import get_claude_agents_dir, get_claude_config_dir
 
         agents = get_claude_agents_dir()
         config = get_claude_config_dir()
@@ -417,7 +417,7 @@ class TestPlatformPaths:
 
     def test_settings_path_is_settings_json(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Linux")
-        from yadgar.platform_paths import get_claude_settings_path
+        from yadgar._shared.platform_paths import get_claude_settings_path
 
         path = get_claude_settings_path()
         assert path.name == "settings.json"
@@ -427,10 +427,12 @@ class TestPlatformPaths:
         import shutil
 
         monkeypatch.setattr(shutil, "which", lambda x: None)
-        monkeypatch.setattr("yadgar.platform_paths.Path", lambda p: tmp_path / p.lstrip("/"))
+        monkeypatch.setattr(
+            "yadgar._shared.platform_paths.Path", lambda p: tmp_path / p.lstrip("/")
+        )
 
         # Can't easily mock Path("/etc/NIXOS").exists() directly but we can check the logic
-        from yadgar.platform_paths import is_nix_managed
+        from yadgar._shared.platform_paths import is_nix_managed
 
         # On non-NixOS test system: should return False (unless actually on NixOS)
         result = is_nix_managed()
@@ -440,7 +442,7 @@ class TestPlatformPaths:
     def test_no_hardcoded_home_max(self):
         """platform_paths.py must contain no hardcoded /home/max or specific username."""
         here = Path(__file__).parent.parent  # yadgar/
-        source = (here / "platform_paths.py").read_text()
+        source = (here / "_shared" / "platform_paths.py").read_text()
         assert "/home/max" not in source, "Hardcoded /home/max path found in platform_paths.py"
 
 
@@ -451,9 +453,9 @@ class TestInstallSubagents:
     """yadgar install-subagents copies agent templates to ~/.claude/agents/."""
 
     def test_install_copies_agent_files(self, tmp_path, monkeypatch):
-        from yadgar.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
         result = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         assert result["status"] == "installed"
         agents_dir = tmp_path / ".claude" / "agents"
@@ -468,9 +470,9 @@ class TestInstallSubagents:
 
     def test_idempotent_no_op_second_run(self, tmp_path, monkeypatch):
         """Running install twice produces same result, no duplication."""
-        from yadgar.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
         r1 = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         r2 = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         assert r1["status"] == "installed"
@@ -482,18 +484,18 @@ class TestInstallSubagents:
         assert file_count == 5
 
     def test_dry_run_does_not_write_files(self, tmp_path, monkeypatch):
-        from yadgar.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
         result = install_subagents_impl(home_dir=tmp_path, dry_run=True, force=False)
         assert result["status"] == "dry_run"
         agents_dir = tmp_path / ".claude" / "agents"
         assert not agents_dir.exists(), "dry_run must not create directories"
 
     def test_check_lists_changes_without_writing(self, tmp_path, monkeypatch):
-        from yadgar.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
         result = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False, check=True)
         # --check: returns list of files that would be installed
         assert "would_install" in result or "status" in result
@@ -502,9 +504,9 @@ class TestInstallSubagents:
 
     def test_nix_skip_on_nixos(self, tmp_path, monkeypatch):
         """On NixOS, install-subagents skips with status=nix_managed."""
-        from yadgar.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar.platform_paths.is_nix_managed", lambda: True)
+        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: True)
         result = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         assert result["status"] == "nix_managed"
         agents_dir = tmp_path / ".claude" / "agents"
@@ -512,9 +514,9 @@ class TestInstallSubagents:
 
     def test_force_overwrites_existing(self, tmp_path, monkeypatch):
         """--force overwrites existing agent files."""
-        from yadgar.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
         # First install
         install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         # Corrupt one file
@@ -540,7 +542,7 @@ class TestConfigSync:
 
     def test_missing_key_added_with_default(self, tmp_path):
         """config_sync adds a missing key with its default value."""
-        from yadgar.config_sync import cmd_config_sync
+        from yadgar._shared.config_sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         # Write config with one field that should be present
@@ -552,7 +554,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
 
         content = config_path.read_text()
@@ -562,7 +564,7 @@ class TestConfigSync:
 
     def test_user_value_preserved(self, tmp_path):
         """User-set values are preserved byte-for-byte after sync."""
-        from yadgar.config_sync import cmd_config_sync
+        from yadgar._shared.config_sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         self._write_minimal_config(config_path, "port: 9999\n")
@@ -573,7 +575,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
 
         content = config_path.read_text()
@@ -581,7 +583,7 @@ class TestConfigSync:
 
     def test_idempotent_second_run_no_changes(self, tmp_path):
         """Running config_sync twice returns added=[] on second run."""
-        from yadgar.config_sync import cmd_config_sync
+        from yadgar._shared.config_sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         self._write_minimal_config(config_path, "port: 8765\n")
@@ -592,7 +594,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
             content_after_first = config_path.read_text()
             cmd_config_sync(_Args())
@@ -603,7 +605,7 @@ class TestConfigSync:
 
     def test_dry_run_no_write(self, tmp_path):
         """--dry-run prints diff but does not modify the file."""
-        from yadgar.config_sync import cmd_config_sync
+        from yadgar._shared.config_sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         original = "port: 8765\n"
@@ -615,14 +617,14 @@ class TestConfigSync:
             dry_run = True
             remove_unknown = False
 
-        with patch("yadgar.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
 
         assert config_path.read_text() == original, "dry_run must not modify file"
 
     def test_check_flag_nonzero_when_missing_keys(self, tmp_path):
         """--check exits nonzero when keys would be added."""
-        from yadgar.config_sync import cmd_config_sync
+        from yadgar._shared.config_sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         self._write_minimal_config(config_path, "port: 8765\n")
@@ -633,14 +635,14 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_config_sync(_Args())
             assert exc_info.value.code != 0
 
     def test_check_flag_zero_when_no_missing_keys(self, tmp_path):
         """--check exits zero when config is fully synced."""
-        from yadgar.config_sync import cmd_config_sync
+        from yadgar._shared.config_sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         self._write_minimal_config(config_path, "port: 8765\n")
@@ -652,7 +654,7 @@ class TestConfigSync:
             remove_unknown = False
 
         # First sync fully
-        with patch("yadgar.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
 
         # Now check — should be zero (nothing missing)
@@ -662,7 +664,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
             # Should NOT raise SystemExit (exits 0 = no changes needed)
             try:
                 cmd_config_sync(_CheckArgs())
@@ -671,7 +673,7 @@ class TestConfigSync:
 
     def test_config_not_found_returns_error(self, tmp_path):
         """config_sync on missing config file returns graceful error."""
-        from yadgar.config_sync import cmd_config_sync
+        from yadgar._shared.config_sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config_nonexistent.yaml"
 
@@ -681,7 +683,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
             # Should print error and exit 1, not raise unhandled exception
             with pytest.raises(SystemExit) as exc_info:
                 cmd_config_sync(_Args())
@@ -702,7 +704,7 @@ class TestSubagentWritebackProduction:
 
     def test_memorize_directive_forwarded_in_payload(self):
         """Parsed memorize directive appears in POSTed payload."""
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         posted = []
 
@@ -751,7 +753,7 @@ Work done.
         the SAME branch. The hook must forward the caller-supplied branch_hint,
         not re-derive from daemon CWD.
         """
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         posted = []
 
@@ -781,6 +783,6 @@ Work done.
 class TestContractRegression:
     def test_contract_has_findings_heading_literal(self):
         """_YADGAR_CONTRACT must still have '## Yadgar findings' — regression guard."""
-        from yadgar.server.tools.dispatch_helper import _YADGAR_CONTRACT
+        from yadgar.core.server.tools.dispatch_helper import _YADGAR_CONTRACT
 
         assert "## Yadgar findings" in _YADGAR_CONTRACT

@@ -20,7 +20,7 @@ class TestAgentPromptSave:
     """agent_prompt_save upserts one page per pattern."""
 
     def test_first_save_creates_page(self, storage):
-        from yadgar.server.tools.agent_prompts import agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         result = agent_prompt_save(
             "dispatch-fix-bug", "Dispatch a bug-fix agent.", directory="global", storage=storage
@@ -30,7 +30,7 @@ class TestAgentPromptSave:
         assert result["slug"] == "agent-prompt-dispatch-fix-bug"
 
     def test_second_save_updates_page_not_creates_new(self, storage):
-        from yadgar.server.tools.agent_prompts import agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         agent_prompt_save("dispatch-fix-bug", "First version.", directory="global", storage=storage)
         result = agent_prompt_save(
@@ -49,7 +49,7 @@ class TestAgentPromptSave:
         )
 
     def test_save_different_patterns_are_independent(self, storage):
-        from yadgar.server.tools.agent_prompts import agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         r1 = agent_prompt_save(
             "dispatch-fix-bug", "Bug fix prompt.", directory="global", storage=storage
@@ -64,7 +64,7 @@ class TestAgentPromptSave:
         assert r1["slug"] != r2["slug"]
 
     def test_saved_page_has_correct_page_type(self, storage):
-        from yadgar.server.tools.agent_prompts import agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         agent_prompt_save("dispatch-fix-bug", "Fix bugs.", directory="global", storage=storage)
         page = storage.get_wiki_page_by_slug("agent-prompt-dispatch-fix-bug")
@@ -80,7 +80,7 @@ class TestReadAgentPrompt:
     """
 
     def test_read_returns_latest_content(self, storage):
-        from yadgar.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
 
         agent_prompt_save("dispatch-fix-bug", "First version.", directory="global", storage=storage)
         agent_prompt_save(
@@ -93,13 +93,13 @@ class TestReadAgentPrompt:
         assert result["slug"] == "agent-prompt-dispatch-fix-bug"
 
     def test_read_unknown_slug_returns_none(self, storage):
-        from yadgar.server.tools.agent_prompts import _read_agent_prompt
+        from yadgar.core.server.tools.agent_prompts import _read_agent_prompt
 
         result = _read_agent_prompt("agent-prompt-nonexistent-pattern-xyz", storage=storage)
         assert result is None or result == {}
 
     def test_read_returns_version_1_when_only_one_save(self, storage):
-        from yadgar.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
 
         agent_prompt_save(
             "dispatch-review-code", "Review code carefully.", directory="global", storage=storage
@@ -110,7 +110,7 @@ class TestReadAgentPrompt:
         assert "Review code" in result["content"]
 
     def test_read_with_many_saves_returns_latest_version(self, storage):
-        from yadgar.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
 
         for i in range(1, 6):
             agent_prompt_save(
@@ -127,7 +127,7 @@ class TestAgentPromptDoubleWrap:
 
     def test_pre_wrapped_content_produces_single_wrap(self, storage):
         """RED: saving already-wrapped content currently double-wraps (## Purpose appears twice)."""
-        from yadgar.server.tools.agent_prompts import agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         pre_wrapped = "## Purpose\n\nSome purpose\n\n## Prompt\n\nDO THE THING"
         agent_prompt_save(
@@ -152,7 +152,7 @@ class TestAgentPromptDoubleWrap:
 
     def test_bare_content_wraps_normally(self, storage):
         """Passthrough: bare content gets wrapped once (no change in behaviour)."""
-        from yadgar.server.tools.agent_prompts import agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         agent_prompt_save(
             "bare-content-test",
@@ -170,14 +170,14 @@ class TestAgentPromptDoubleWrap:
 
     def test_unwrap_helper_strips_wrapper(self):
         """Unit-test _unwrap_purpose_prompt directly."""
-        from yadgar.server.tools.agent_prompts import _unwrap_purpose_prompt
+        from yadgar.core.server.tools.agent_prompts import _unwrap_purpose_prompt
 
         wrapped = "## Purpose\n\nSome purpose\n\n## Prompt\n\nDO THE THING"
         assert _unwrap_purpose_prompt(wrapped) == "DO THE THING"
 
     def test_unwrap_helper_passthrough_bare(self):
         """_unwrap_purpose_prompt returns bare content unchanged."""
-        from yadgar.server.tools.agent_prompts import _unwrap_purpose_prompt
+        from yadgar.core.server.tools.agent_prompts import _unwrap_purpose_prompt
 
         bare = "DO THE THING"
         assert _unwrap_purpose_prompt(bare) == bare
@@ -187,18 +187,18 @@ class TestAgentPromptToolSurface:
     """v5.85 S4 (I32): bespoke get/search tools removed; save stays a tool."""
 
     def test_get_and_search_tools_removed_from_all(self):
-        from yadgar.server import tools
+        from yadgar.core.server import tools
 
         assert "agent_prompt_get" not in tools.__all__
         assert "agent_prompt_search" not in tools.__all__
 
     def test_save_tool_still_exported(self):
-        from yadgar.server import tools
+        from yadgar.core.server import tools
 
         assert "agent_prompt_save" in tools.__all__
 
     def test_removed_tools_not_importable(self):
-        import yadgar.server.tools.agent_prompts as ap_mod
+        import yadgar.core.server.tools.agent_prompts as ap_mod
 
         assert not hasattr(ap_mod, "agent_prompt_get")
         assert not hasattr(ap_mod, "agent_prompt_search")

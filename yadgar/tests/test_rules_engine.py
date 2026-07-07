@@ -2,11 +2,11 @@
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import Retriever
-from yadgar.rules_engine import (
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval import Retriever
+from yadgar._shared.rules_engine import (
     RulesEngine,
     _parse_action,
     _parse_condition,
@@ -603,9 +603,9 @@ class TestMcpAddRuleTool:
     def test_add_rule_tool(self, storage, settings):
         """Test that the server-level add_rule tool function works."""
         # Temporarily set the global _rules_engine
-        import yadgar.server as srv
-        from yadgar.server import add_rule as _add_rule_tool
-        from yadgar.server import get_rules as _get_rules_tool
+        import yadgar.core.server as srv
+        from yadgar.core.server import add_rule as _add_rule_tool
+        from yadgar.core.server import get_rules as _get_rules_tool
 
         original = srv._rules_engine
         try:
@@ -631,8 +631,8 @@ class TestMcpAddRuleTool:
 
     def test_add_rule_tool_validation_error(self, storage, settings):
         """Test that invalid rules return error."""
-        import yadgar.server as srv
-        from yadgar.server import add_rule as _add_rule_tool
+        import yadgar.core.server as srv
+        from yadgar.core.server import add_rule as _add_rule_tool
 
         original = srv._rules_engine
         try:
@@ -650,8 +650,8 @@ class TestMcpAddRuleTool:
 
     def test_add_rule_tool_not_initialized(self):
         """Test that add_rule returns error when engine not initialized."""
-        import yadgar.server as srv
-        from yadgar.server import add_rule as _add_rule_tool
+        import yadgar.core.server as srv
+        from yadgar.core.server import add_rule as _add_rule_tool
 
         original = srv._rules_engine
         try:
@@ -668,8 +668,8 @@ class TestMcpAddRuleTool:
 
     def test_get_rules_with_directory_filter(self, storage, settings):
         """Test get_rules with directory scoping."""
-        import yadgar.server as srv
-        from yadgar.server import get_rules as _get_rules_tool
+        import yadgar.core.server as srv
+        from yadgar.core.server import get_rules as _get_rules_tool
 
         original = srv._rules_engine
         try:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -34,7 +34,7 @@ def _engines(tmp_path_factory):
 
 @pytest.fixture()
 def storage(_engines):
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 
@@ -87,7 +87,7 @@ class TestAnchorPassEnabled:
         """After consolidate_now(), _audit_anchors memory exists for directory with anchors."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "0")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)
@@ -108,7 +108,7 @@ class TestAnchorPassEnabled:
         """Second consolidate_now() overwrites (not appends) sentinel — latest-wins."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "0")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)
@@ -127,7 +127,7 @@ class TestAnchorPassEnabled:
 
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "0")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)
@@ -155,7 +155,7 @@ class TestAnchorPassDisabled:
 
     def test_no_sentinel_when_disabled(self, storage, monkeypatch, request):
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "false")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)
@@ -182,7 +182,7 @@ class TestThresholdGate:
         """With 1 anchor and threshold=5, sentinel is not written."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "5")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)
@@ -198,7 +198,7 @@ class TestThresholdGate:
         """With threshold=2 and 2 anchors, sentinel is written."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_THRESHOLD", "2")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)

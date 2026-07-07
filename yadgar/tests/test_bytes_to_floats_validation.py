@@ -15,7 +15,7 @@ class TestBytesToFloatsValidation:
 
     @pytest.fixture
     def storage(self, tmp_path):
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         engine = StorageEngine(str(tmp_path / "test.db"))
         yield engine

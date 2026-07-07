@@ -30,21 +30,21 @@ import pytest
 
 
 def test_safe_urlopen_rejects_file_scheme():
-    from yadgar.daemon import _safe_urlopen
+    from yadgar.core.daemon import _safe_urlopen
 
     with pytest.raises(ValueError, match="Disallowed URL scheme"):
         _safe_urlopen("file:///etc/passwd")
 
 
 def test_safe_urlopen_rejects_ftp_scheme():
-    from yadgar.daemon import _safe_urlopen
+    from yadgar.core.daemon import _safe_urlopen
 
     with pytest.raises(ValueError, match="Disallowed URL scheme"):
         _safe_urlopen("ftp://example.com/data")
 
 
 def test_safe_urlopen_allows_http():
-    from yadgar.daemon import _safe_urlopen
+    from yadgar.core.daemon import _safe_urlopen
 
     mock_resp = MagicMock()
     with patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
@@ -54,7 +54,7 @@ def test_safe_urlopen_allows_http():
 
 
 def test_safe_urlopen_allows_https():
-    from yadgar.daemon import _safe_urlopen
+    from yadgar.core.daemon import _safe_urlopen
 
     mock_resp = MagicMock()
     with patch("urllib.request.urlopen", return_value=mock_resp):
@@ -63,7 +63,7 @@ def test_safe_urlopen_allows_https():
 
 
 def test_safe_urlopen_rejects_javascript_scheme():
-    from yadgar.daemon import _safe_urlopen
+    from yadgar.core.daemon import _safe_urlopen
 
     with pytest.raises(ValueError, match="Disallowed URL scheme"):
         _safe_urlopen("javascript:alert(1)")
@@ -73,7 +73,7 @@ def test_safe_urlopen_rejects_javascript_scheme():
 
 
 def test_get_runtime_uses_env_override(monkeypatch):
-    from yadgar import daemon
+    from yadgar.core import daemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "podman")
     result = daemon._get_runtime()
@@ -81,7 +81,7 @@ def test_get_runtime_uses_env_override(monkeypatch):
 
 
 def test_get_runtime_uses_env_override_docker(monkeypatch):
-    from yadgar import daemon
+    from yadgar.core import daemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     result = daemon._get_runtime()
@@ -89,7 +89,7 @@ def test_get_runtime_uses_env_override_docker(monkeypatch):
 
 
 def test_get_runtime_uses_cached_runtime(monkeypatch):
-    from yadgar import daemon
+    from yadgar.core import daemon
 
     monkeypatch.delenv("YADGAR_CONTAINER_RUNTIME", raising=False)
     monkeypatch.setattr(daemon, "_RUNTIME", "podman")
@@ -98,7 +98,7 @@ def test_get_runtime_uses_cached_runtime(monkeypatch):
 
 
 def test_get_runtime_falls_back_to_docker_when_none_found(monkeypatch):
-    from yadgar import daemon
+    from yadgar.core import daemon
 
     monkeypatch.delenv("YADGAR_CONTAINER_RUNTIME", raising=False)
     monkeypatch.setattr(daemon, "_RUNTIME", None)
@@ -115,7 +115,7 @@ def test_get_runtime_falls_back_to_docker_when_none_found(monkeypatch):
 
 
 def test_default_image_uses_package_version():
-    from yadgar.daemon import _default_image
+    from yadgar.core.daemon import _default_image
 
     with patch("importlib.metadata.version", return_value="5.49.5"):
         result = _default_image("myrepo/img")
@@ -123,7 +123,7 @@ def test_default_image_uses_package_version():
 
 
 def test_default_image_falls_back_to_latest():
-    from yadgar.daemon import _default_image
+    from yadgar.core.daemon import _default_image
 
     with patch("importlib.metadata.version", side_effect=Exception("not found")):
         result = _default_image("myrepo/img")
@@ -134,28 +134,28 @@ def test_default_image_falls_back_to_latest():
 
 
 def test_container_memory_mb_min_clamped():
-    from yadgar.daemon import _container_memory_mb
+    from yadgar.core.daemon import _container_memory_mb
 
     # Very small host RAM → clamped to 512
-    with patch("yadgar.daemon._host_memory_bytes", return_value=256 * 1024 * 1024):
+    with patch("yadgar.core.daemon._host_memory_bytes", return_value=256 * 1024 * 1024):
         result = _container_memory_mb()
     assert result == 512
 
 
 def test_container_memory_mb_max_clamped():
-    from yadgar.daemon import _container_memory_mb
+    from yadgar.core.daemon import _container_memory_mb
 
     # 1 TB host RAM → clamped to 8192
-    with patch("yadgar.daemon._host_memory_bytes", return_value=1024 * 1024 * 1024 * 1024):
+    with patch("yadgar.core.daemon._host_memory_bytes", return_value=1024 * 1024 * 1024 * 1024):
         result = _container_memory_mb()
     assert result == 8192
 
 
 def test_container_memory_mb_quarter_in_range():
-    from yadgar.daemon import _container_memory_mb
+    from yadgar.core.daemon import _container_memory_mb
 
     # 32 GB host RAM → 32768 / 8 = 4096 MB → in [512, 8192]
-    with patch("yadgar.daemon._host_memory_bytes", return_value=32 * 1024 * 1024 * 1024):
+    with patch("yadgar.core.daemon._host_memory_bytes", return_value=32 * 1024 * 1024 * 1024):
         result = _container_memory_mb()
     assert result == 4096
 
@@ -164,7 +164,7 @@ def test_container_memory_mb_quarter_in_range():
 
 
 def test_host_memory_bytes_returns_int():
-    from yadgar.daemon import _host_memory_bytes
+    from yadgar.core.daemon import _host_memory_bytes
 
     result = _host_memory_bytes()
     assert isinstance(result, int)
@@ -173,7 +173,7 @@ def test_host_memory_bytes_returns_int():
 
 def test_host_memory_bytes_linux_fallback_on_no_meminfo(monkeypatch, tmp_path):
     """When /proc/meminfo is missing, falls back to sysconf."""
-    from yadgar import daemon
+    from yadgar.core import daemon
 
     monkeypatch.setattr(platform, "system", lambda: "Linux")
 
@@ -187,14 +187,14 @@ def test_host_memory_bytes_linux_fallback_on_no_meminfo(monkeypatch, tmp_path):
 
 
 def test_source_root_returns_path():
-    from yadgar.daemon import _source_root
+    from yadgar.core.daemon import _source_root
 
     result = _source_root()
     assert isinstance(result, Path)
 
 
 def test_source_root_has_pyproject_toml():
-    from yadgar.daemon import _source_root
+    from yadgar.core.daemon import _source_root
 
     result = _source_root()
     # Either the result itself has pyproject.toml, or the module is installed
@@ -205,7 +205,7 @@ def test_source_root_has_pyproject_toml():
 
 
 def test_prod_profile_defaults(monkeypatch):
-    from yadgar.daemon import DEFAULT_PORT, _prod_profile
+    from yadgar.core.daemon import DEFAULT_PORT, _prod_profile
 
     monkeypatch.delenv("YADGAR_CONTAINER", raising=False)
     monkeypatch.delenv("YADGAR_IMAGE", raising=False)
@@ -219,7 +219,7 @@ def test_prod_profile_defaults(monkeypatch):
 
 
 def test_prod_profile_env_override(monkeypatch):
-    from yadgar.daemon import _prod_profile
+    from yadgar.core.daemon import _prod_profile
 
     monkeypatch.setenv("YADGAR_CONTAINER", "my-yadgar")
     monkeypatch.setenv("YADGAR_VOLUME", "my-volume")
@@ -229,7 +229,7 @@ def test_prod_profile_env_override(monkeypatch):
 
 
 def test_dev_profile_defaults(monkeypatch):
-    from yadgar.daemon import DEFAULT_DEV_PORT, _dev_profile
+    from yadgar.core.daemon import DEFAULT_DEV_PORT, _dev_profile
 
     monkeypatch.delenv("YADGAR_DEV_CONTAINER", raising=False)
     monkeypatch.delenv("YADGAR_DEV_IMAGE", raising=False)
@@ -243,7 +243,7 @@ def test_dev_profile_defaults(monkeypatch):
 
 
 def test_dev_profile_custom_port(monkeypatch):
-    from yadgar.daemon import _dev_profile
+    from yadgar.core.daemon import _dev_profile
 
     monkeypatch.delenv("YADGAR_DEV_CONTAINER", raising=False)
     profile = _dev_profile(port=9999)
@@ -254,7 +254,7 @@ def test_dev_profile_custom_port(monkeypatch):
 
 
 def test_daemon_init_defaults():
-    from yadgar.daemon import DEFAULT_PORT, YadgarDaemon
+    from yadgar.core.daemon import DEFAULT_PORT, YadgarDaemon
 
     d = YadgarDaemon()
     assert d.port == DEFAULT_PORT
@@ -262,14 +262,14 @@ def test_daemon_init_defaults():
 
 
 def test_daemon_init_custom_port():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon(port=9876)
     assert d.port == 9876
 
 
 def test_daemon_init_with_db_path():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon(db_path="/custom/path")
     assert d.db_path == "/custom/path"
@@ -279,7 +279,7 @@ def test_daemon_init_with_db_path():
 
 
 def test_container_running_true(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     d = YadgarDaemon()
@@ -289,7 +289,7 @@ def test_container_running_true(monkeypatch):
 
 
 def test_container_running_false_non_zero(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     d = YadgarDaemon()
@@ -299,7 +299,7 @@ def test_container_running_false_non_zero(monkeypatch):
 
 
 def test_container_running_false_not_true(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     d = YadgarDaemon()
@@ -312,7 +312,7 @@ def test_container_running_false_not_true(monkeypatch):
 
 
 def test_image_exists_true():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
     mock_result = MagicMock(returncode=0)
@@ -321,7 +321,7 @@ def test_image_exists_true():
 
 
 def test_image_exists_false():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
     mock_result = MagicMock(returncode=1)
@@ -333,7 +333,7 @@ def test_image_exists_false():
 
 
 def test_health_ok_true():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
     mock_resp = MagicMock()
@@ -342,7 +342,7 @@ def test_health_ok_true():
 
 
 def test_health_ok_false_on_error():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
     with patch("urllib.request.urlopen", side_effect=OSError("refused")):
@@ -353,7 +353,7 @@ def test_health_ok_false_on_error():
 
 
 def test_health_ok_true_on_503_degraded():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
     err = urllib.error.HTTPError(
@@ -368,7 +368,7 @@ def test_health_ok_true_on_503_degraded():
 
 
 def test_health_ok_false_on_urlerror():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
     with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
@@ -379,7 +379,7 @@ def test_health_ok_false_on_urlerror():
 
 
 def test_status_shows_degraded_detail_on_503():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
     body = json.dumps({"status": "degraded", "db": "ok", "embed": "down"}).encode()
@@ -402,7 +402,7 @@ def test_status_shows_degraded_detail_on_503():
 
 
 def test_status_unreachable_on_urlerror():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
     with patch.object(d, "_container_running", return_value=True):
@@ -417,7 +417,7 @@ def test_status_unreachable_on_urlerror():
 
 
 def test_start_already_running(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     monkeypatch.delenv("YADGAR_CONTAINER", raising=False)
@@ -432,7 +432,7 @@ def test_start_already_running(monkeypatch):
 
 
 def test_start_dev_already_running(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     monkeypatch.delenv("YADGAR_DEV_CONTAINER", raising=False)
@@ -445,7 +445,7 @@ def test_start_dev_already_running(monkeypatch):
 
 
 def test_start_image_not_found(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     monkeypatch.delenv("YADGAR_CONTAINER", raising=False)
@@ -467,7 +467,7 @@ def test_start_image_not_found(monkeypatch):
 
 
 def test_start_dev_image_not_found_hint(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     d = YadgarDaemon()
@@ -485,7 +485,7 @@ def test_start_dev_image_not_found_hint(monkeypatch):
 
 
 def test_check_runtime_env_override_ok(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "podman")
     mock_version = MagicMock(returncode=0, stdout="4.9.0\n")
@@ -496,7 +496,7 @@ def test_check_runtime_env_override_ok(monkeypatch):
 
 
 def test_check_runtime_env_override_not_found(monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "myfake-rt")
     with patch("subprocess.run", side_effect=FileNotFoundError("not found")):
@@ -506,7 +506,7 @@ def test_check_runtime_env_override_not_found(monkeypatch):
 
 
 def test_check_docker_alias():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     with patch.object(YadgarDaemon, "check_runtime", return_value={"ok": True}) as mock_cr:
         result = YadgarDaemon.check_docker()
@@ -518,7 +518,7 @@ def test_check_docker_alias():
 
 
 def test_configure_mcp_creates_entry(tmp_path, monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
     config_path = tmp_path / ".claude.json"
@@ -535,7 +535,7 @@ def test_configure_mcp_creates_entry(tmp_path, monkeypatch):
 
 
 def test_configure_mcp_with_auth_token(tmp_path, monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "mytoken123")
     config_path = tmp_path / ".claude.json"
@@ -553,7 +553,7 @@ def test_configure_mcp_with_auth_token(tmp_path, monkeypatch):
 
 def test_configure_mcp_missing_config_file(tmp_path, monkeypatch):
     """If .claude.json doesn't exist, creates a new one."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
     config_path = tmp_path / ".claude.json"
@@ -568,7 +568,7 @@ def test_configure_mcp_missing_config_file(tmp_path, monkeypatch):
 
 
 def test_configure_mcp_preserves_other_keys(tmp_path, monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
     config_path = tmp_path / ".claude.json"
@@ -585,7 +585,7 @@ def test_configure_mcp_preserves_other_keys(tmp_path, monkeypatch):
 
 
 def test_configure_mcp_returns_old_new(tmp_path, monkeypatch):
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
     old_entry = {"type": "stdio", "command": "yadgar"}

@@ -20,7 +20,7 @@ _BRANCH = "feat/test-branch"
 
 
 def _make_candidate(content, score=0.5, cand_type="memory", branch=None):
-    from yadgar.retrieval.providers.base import Candidate
+    from yadgar._shared.retrieval.providers.base import Candidate
 
     mid = abs(hash(content)) % 10000
     return Candidate(
@@ -44,7 +44,7 @@ def _make_candidate(content, score=0.5, cand_type="memory", branch=None):
 
 
 def _make_wiki_candidate(content, score=0.4):
-    from yadgar.retrieval.providers.base import Candidate
+    from yadgar._shared.retrieval.providers.base import Candidate
 
     return Candidate(
         type="wiki",
@@ -67,7 +67,7 @@ class TestFusionCEGate:
     """§3.1: fast profile must skip fusion CE in fuse_candidates."""
 
     def test_fast_profile_skips_fusion_ce(self, monkeypatch):
-        from yadgar.retrieval.providers.fusion import fuse_candidates
+        from yadgar._shared.retrieval.providers.fusion import fuse_candidates
 
         ce_called = []
 
@@ -75,7 +75,9 @@ class TestFusionCEGate:
             ce_called.append(len(candidates))
             return {i: c.native_score for i, c in enumerate(candidates)}
 
-        monkeypatch.setattr("yadgar.retrieval.providers.fusion._score_candidates_ce", _spy_ce)
+        monkeypatch.setattr(
+            "yadgar._shared.retrieval.providers.fusion._score_candidates_ce", _spy_ce
+        )
 
         mem_cands = [_make_candidate("memory about python testing", 0.8)]
         wiki_cands = [_make_wiki_candidate("wiki reference about python", 0.5)]
@@ -102,7 +104,7 @@ class TestFusionCEGate:
         )
 
     def test_balanced_profile_calls_fusion_ce(self, monkeypatch):
-        from yadgar.retrieval.providers.fusion import fuse_candidates
+        from yadgar._shared.retrieval.providers.fusion import fuse_candidates
 
         ce_called = []
 
@@ -110,7 +112,9 @@ class TestFusionCEGate:
             ce_called.append(len(candidates))
             return {i: c.native_score for i, c in enumerate(candidates)}
 
-        monkeypatch.setattr("yadgar.retrieval.providers.fusion._score_candidates_ce", _spy_ce)
+        monkeypatch.setattr(
+            "yadgar._shared.retrieval.providers.fusion._score_candidates_ce", _spy_ce
+        )
 
         mem_cands = [_make_candidate("memory about python testing", 0.8)]
         wiki_cands = [_make_wiki_candidate("wiki reference about python", 0.5)]
@@ -135,7 +139,7 @@ class TestFusionCEGate:
         assert len(ce_called) > 0, "fuse_candidates with profile='balanced' must call CE"
 
     def test_none_profile_calls_fusion_ce(self, monkeypatch):
-        from yadgar.retrieval.providers.fusion import fuse_candidates
+        from yadgar._shared.retrieval.providers.fusion import fuse_candidates
 
         ce_called = []
 
@@ -143,7 +147,9 @@ class TestFusionCEGate:
             ce_called.append(len(candidates))
             return {i: c.native_score for i, c in enumerate(candidates)}
 
-        monkeypatch.setattr("yadgar.retrieval.providers.fusion._score_candidates_ce", _spy_ce)
+        monkeypatch.setattr(
+            "yadgar._shared.retrieval.providers.fusion._score_candidates_ce", _spy_ce
+        )
 
         mem_cands = [_make_candidate("memory about python testing", 0.8)]
         wiki_cands = [_make_wiki_candidate("wiki reference about python", 0.5)]
@@ -169,10 +175,10 @@ class TestFusionCEGate:
         )
 
     def test_fast_profile_returns_nonempty(self, monkeypatch):
-        from yadgar.retrieval.providers.fusion import fuse_candidates
+        from yadgar._shared.retrieval.providers.fusion import fuse_candidates
 
         monkeypatch.setattr(
-            "yadgar.retrieval.providers.fusion._score_candidates_ce",
+            "yadgar._shared.retrieval.providers.fusion._score_candidates_ce",
             lambda candidates, query, retriever: {
                 i: c.native_score for i, c in enumerate(candidates)
             },
@@ -205,15 +211,15 @@ class TestMemoryProviderProfileThreading:
     """§3.1: profile must thread through MemoryProvider."""
 
     def test_memory_provider_accepts_profile_param(self):
-        from yadgar.retrieval.providers.memory import MemoryProvider
+        from yadgar._shared.retrieval.providers.memory import MemoryProvider
 
         mock_retriever = MagicMock()
         provider = MemoryProvider(mock_retriever, profile="fast")
         assert provider._profile == "fast", "MemoryProvider must store profile on _profile"
 
     def test_memory_provider_threads_profile_to_retriever(self):
-        from yadgar.retrieval.providers.base import Scope
-        from yadgar.retrieval.providers.memory import MemoryProvider
+        from yadgar._shared.retrieval.providers.base import Scope
+        from yadgar._shared.retrieval.providers.memory import MemoryProvider
 
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
@@ -228,7 +234,7 @@ class TestMemoryProviderProfileThreading:
         )
 
     def test_memory_provider_default_profile_none(self):
-        from yadgar.retrieval.providers.memory import MemoryProvider
+        from yadgar._shared.retrieval.providers.memory import MemoryProvider
 
         mock_retriever = MagicMock()
         provider = MemoryProvider(mock_retriever)
@@ -238,8 +244,8 @@ class TestMemoryProviderProfileThreading:
 
     def test_memory_provider_none_profile_not_passed_to_retriever(self):
         """profile=None must not be passed as kwarg (keeps existing callers working)."""
-        from yadgar.retrieval.providers.base import Scope
-        from yadgar.retrieval.providers.memory import MemoryProvider
+        from yadgar._shared.retrieval.providers.base import Scope
+        from yadgar._shared.retrieval.providers.memory import MemoryProvider
 
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
@@ -256,7 +262,7 @@ class TestBranchBoostInFanout:
     """§5.2: C4 branch boost must fire in _fanout_recall."""
 
     def test_current_branch_memory_gets_boosted(self, monkeypatch):
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         base_score = 0.5
         boosted_memory = {
@@ -283,7 +289,7 @@ class TestBranchBoostInFanout:
         monkeypatch.setattr(_st, "_retriever", mock_retriever)
         monkeypatch.setattr(_st, "_wiki", None)
 
-        import yadgar.server.tools._recall_pipeline as _pipe
+        import yadgar._shared.runtime.recall_pipeline as _pipe
 
         # FANOUT_BOOST_SCOPE default is "scoped": boosts fire only when profile is
         # not None. This test calls _fanout_recall on the default (no-profile) path
@@ -291,7 +297,7 @@ class TestBranchBoostInFanout:
         # does not gate it out. (monkeypatch auto-restores the shared singleton.)
         monkeypatch.setattr(_pipe.settings, "FANOUT_BOOST_SCOPE", "global")
 
-        from yadgar.server.tools._recall_pipeline import _fanout_recall
+        from yadgar._shared.runtime.recall_pipeline import _fanout_recall
 
         results = _fanout_recall(
             query="test branch boost",
@@ -319,7 +325,7 @@ class TestBranchBoostInFanout:
         )
 
     def test_no_branch_no_boost(self, monkeypatch):
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         base_score = 0.5
         mem = {
@@ -336,7 +342,7 @@ class TestBranchBoostInFanout:
         monkeypatch.setattr(_st, "_retriever", mock_retriever)
         monkeypatch.setattr(_st, "_wiki", None)
 
-        from yadgar.server.tools._recall_pipeline import _fanout_recall
+        from yadgar._shared.runtime.recall_pipeline import _fanout_recall
 
         results = _fanout_recall(
             query="test no boost",
@@ -359,7 +365,7 @@ class TestPostmortemBoostInFanout:
     """§5.2: postmortem/incident boost must fire in _fanout_recall."""
 
     def test_postmortem_tagged_memory_boosted_on_keyword_query(self, monkeypatch):
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         base_score = 0.5
         pm_memory = {
@@ -385,13 +391,13 @@ class TestPostmortemBoostInFanout:
         monkeypatch.setattr(_st, "_retriever", mock_retriever)
         monkeypatch.setattr(_st, "_wiki", None)
 
-        import yadgar.server.tools._recall_pipeline as _pipe
+        import yadgar._shared.runtime.recall_pipeline as _pipe
 
         # scope="global": prove the postmortem-boost mechanism fires on the default
         # (no-profile) _fanout_recall path (default "scoped" would gate it out).
         monkeypatch.setattr(_pipe.settings, "FANOUT_BOOST_SCOPE", "global")
 
-        from yadgar.server.tools._recall_pipeline import _fanout_recall
+        from yadgar._shared.runtime.recall_pipeline import _fanout_recall
 
         results = _fanout_recall(
             query="what happened during the deploy rollback",
@@ -419,7 +425,7 @@ class TestPostmortemBoostInFanout:
         )
 
     def test_incident_tagged_memory_boosted(self, monkeypatch):
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         base_score = 0.5
         incident_memory = {
@@ -436,13 +442,13 @@ class TestPostmortemBoostInFanout:
         monkeypatch.setattr(_st, "_retriever", mock_retriever)
         monkeypatch.setattr(_st, "_wiki", None)
 
-        import yadgar.server.tools._recall_pipeline as _pipe
+        import yadgar._shared.runtime.recall_pipeline as _pipe
 
         # scope="global": prove the incident-boost mechanism fires on the default
         # (no-profile) _fanout_recall path (default "scoped" would gate it out).
         monkeypatch.setattr(_pipe.settings, "FANOUT_BOOST_SCOPE", "global")
 
-        from yadgar.server.tools._recall_pipeline import _fanout_recall
+        from yadgar._shared.runtime.recall_pipeline import _fanout_recall
 
         results = _fanout_recall(
             query="what happened when we merge the deploy",
@@ -458,7 +464,7 @@ class TestPostmortemBoostInFanout:
         assert r.get("_retrieval_score", 0.0) > base_score, "_incident memory must be boosted"
 
     def test_no_boost_without_keyword_in_query(self, monkeypatch):
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         base_score = 0.5
         pm_memory = {
@@ -475,7 +481,7 @@ class TestPostmortemBoostInFanout:
         monkeypatch.setattr(_st, "_retriever", mock_retriever)
         monkeypatch.setattr(_st, "_wiki", None)
 
-        from yadgar.server.tools._recall_pipeline import _fanout_recall
+        from yadgar._shared.runtime.recall_pipeline import _fanout_recall
 
         results = _fanout_recall(
             query="show me architecture decisions about the database",
@@ -520,7 +526,7 @@ class TestBackend400sRemoved:
         )
         # Also mock storage get in case it's called
         monkeypatch.setattr(
-            "yadgar.server.lifecycle._get_storage",
+            "yadgar._shared.runtime.lifecycle._get_storage",
             lambda: MagicMock(),
             raising=False,
         )
@@ -575,7 +581,7 @@ class TestBackend400sRemoved:
             raising=False,
         )
         monkeypatch.setattr(
-            "yadgar.server.lifecycle._get_storage",
+            "yadgar._shared.runtime.lifecycle._get_storage",
             lambda: MagicMock(),
             raising=False,
         )

@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-_HOOK = Path(__file__).parent.parent / "hooks" / "db-lockdown-check.py"
+_HOOK = Path(__file__).parent.parent / "core" / "hooks" / "db-lockdown-check.py"
 
 
 def _load_hook():

@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 import numpy as np
 import pytest
 
-from yadgar.causal_discovery import CausalDiscovery
-from yadgar.config import Settings
-from yadgar.knowledge_graph import KnowledgeGraph
+from yadgar._shared.causal_discovery import CausalDiscovery
+from yadgar._shared.config import Settings
+from yadgar._shared.knowledge_graph import KnowledgeGraph
 
 
 @pytest.fixture(scope="module")

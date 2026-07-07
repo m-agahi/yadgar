@@ -32,10 +32,10 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
+import yadgar._shared.config as cfg
 import yadgar.backend.ml_client as ml
-import yadgar.config as cfg
-import yadgar.server.http as srv_http
-from yadgar.server import _offload
+import yadgar.core.server.http as srv_http
+from yadgar._shared.runtime import offload as _offload
 
 
 @pytest.fixture(autouse=True)

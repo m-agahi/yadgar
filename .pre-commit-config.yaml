@@ -65,7 +65,7 @@ repos:
         entry: python scripts/check_trace_spans.py
         types: [python]
         pass_filenames: false
-        files: ^yadgar/server/http\.py$
+        files: ^yadgar/core/server/http\.py$
 
       - id: check-observe-coverage
         name: Check I33 tri-signal observe-coverage (HARD; MISSING=0 enforced)
@@ -80,35 +80,35 @@ repos:
         language: system
         entry: python scripts/check_secret_gate.py
         pass_filenames: false
-        files: ^yadgar/server/tools/.*\.py$
+        files: ^yadgar/core/server/tools/.*\.py$
 
       - id: check-config-three-way-sync
         name: Check config three-way-sync invariant (I25)
         language: system
         entry: uv run python -m pytest yadgar/tests/test_config_three_way_sync.py -q --tb=short
         pass_filenames: false
-        files: ^yadgar/(config\.py|config_yaml\.py|config_registry\.py|tests/config_env_only_allowlist\.txt)$
+        files: ^yadgar/(_shared/(config\.py|config_yaml\.py|config_registry\.py)|tests/config_env_only_allowlist\.txt)$
 
       - id: check-allowlist-audit
         name: Check I28 allowlist-audit invariant (every allowlist hit has audit entry)
         language: system
         entry: python scripts/check_allowlist_audit.py
         pass_filenames: false
-        files: ^yadgar/(security/allowlist\.py|secrets\.py)$
+        files: ^yadgar/core/(security/allowlist\.py|secrets\.py)$
 
       - id: check-dead-capability
         name: Check I29 edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
         language: system
         entry: python scripts/check_dead_capability.py
         pass_filenames: false
-        files: ^(yadgar/graph_api\.py|yadgar/viz_meta\.py|docs/EDGE_CONTRACT\.md)$
+        files: ^(yadgar/core/graph_api\.py|yadgar/core/viz_meta\.py|docs/EDGE_CONTRACT\.md)$
 
       - id: check-capability-coverage
         name: Check I32 capability-registry coverage (every setting/tool/migration/BC catalogued)
         language: system
         entry: python scripts/check_capability_coverage.py
         pass_filenames: false
-        files: ^(yadgar/config\.py|yadgar/storage/migrations\.py|yadgar/server/tools/.*\.py|docs/BEHAVIOR_CONTRACT\.md|docs/CAPABILITY_REGISTRY\.md)$
+        files: ^(yadgar/_shared/config\.py|yadgar/_shared/storage/migrations\.py|yadgar/core/server/tools/.*\.py|docs/BEHAVIOR_CONTRACT\.md|docs/CAPABILITY_REGISTRY\.md)$
 
       - id: check-complexity-allowlist
         name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
@@ -148,6 +148,23 @@ repos:
         files: ^(Dockerfile|uv\.lock|pyproject\.toml)$
         pass_filenames: false
         stages: [manual]
+
+      - id: import-linter
+        name: Enforce layer boundaries (import-linter, folder-split #17)
+        # HARD-FAIL, not report-only. Analyzes the IMPORTABLE yadgar package
+        # (not staged files), so it needs yadgar installed in the environment —
+        # language: system runs it in the active venv where `pip install -e .`
+        # has been done. An isolated pre-commit venv would lack yadgar and hit
+        # "Could not read any configuration". Contract config lives in
+        # pyproject.toml [tool.importlinter]; must stay 4 kept / 0 broken.
+        language: system
+        entry: lint-imports
+        files: ^(yadgar/.*\.py|pyproject\.toml)$
+        pass_filenames: false
+        # pre-commit only (fail fast at commit). Without this the hook runs every
+        # stage incl. pre-push, where the venv may be absent on PATH → spurious
+        # "Executable `lint-imports` not found". Commit-time is the enforcement point.
+        stages: [pre-commit]
 
   - repo: local
     hooks:

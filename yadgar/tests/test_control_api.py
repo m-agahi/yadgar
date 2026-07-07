@@ -55,8 +55,8 @@ def _make_app(monkeypatch, *, debug_apis_on: bool = False, extra_env: dict | Non
         for k, v in extra_env.items():
             monkeypatch.setenv(k, v)
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
-    from yadgar.server.routes.control import (
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.server.routes.control import (
         control_action_handler,
         control_config_get_handler,
         control_config_post_handler,
@@ -223,7 +223,7 @@ def test_is_debug_api_path_only_logs_gated():
     /api/control/config stays ungated (ADR-0011); operational action/restart
     paths are now ALSO ungated (ADR-0013). Only /api/logs/* stays gated.
     """
-    from yadgar.auth_middleware import _is_debug_api_path
+    from yadgar.core.auth_middleware import _is_debug_api_path
 
     # Config: ungated for every method (ADR-0011)
     assert _is_debug_api_path("/api/control/config", "GET") is False
@@ -582,7 +582,7 @@ def test_action_consolidate_calls_consolidate_now(monkeypatch, tmp_path):
     client = _make_app(monkeypatch, debug_apis_on=False)
     mock_result = {"consolidated": 5}
     with patch(
-        "yadgar.server.routes.control.consolidate_now",
+        "yadgar.core.server.routes.control.consolidate_now",
         return_value=mock_result,
     ) as mock_fn:
         resp = client.post(
@@ -604,7 +604,7 @@ def test_action_vacuum_calls_vacuum_now(monkeypatch, tmp_path):
     client = _make_app(monkeypatch, debug_apis_on=False)
     mock_result = {"vacuumed": 3}
     with patch(
-        "yadgar.server.routes.control.vacuum_now",
+        "yadgar.core.server.routes.control.vacuum_now",
         return_value=mock_result,
     ) as mock_fn:
         resp = client.post(
@@ -624,7 +624,7 @@ def test_action_vacuum_without_confirm_returns_400(monkeypatch, tmp_path):
     or mismatched confirm is rejected before vacuum_now runs.
     """
     client = _make_app(monkeypatch, debug_apis_on=False)
-    with patch("yadgar.server.routes.control.vacuum_now") as mock_fn:
+    with patch("yadgar.core.server.routes.control.vacuum_now") as mock_fn:
         resp = client.post(
             "/api/control/action/vacuum",
             json={},
@@ -638,7 +638,7 @@ def test_action_vacuum_without_confirm_returns_400(monkeypatch, tmp_path):
 def test_action_vacuum_mismatched_confirm_returns_400(monkeypatch, tmp_path):
     """POST /api/control/action/vacuum with wrong confirm → 400; vacuum_now NOT called."""
     client = _make_app(monkeypatch, debug_apis_on=False)
-    with patch("yadgar.server.routes.control.vacuum_now") as mock_fn:
+    with patch("yadgar.core.server.routes.control.vacuum_now") as mock_fn:
         resp = client.post(
             "/api/control/action/vacuum",
             json={"confirm": "yes"},
@@ -652,8 +652,8 @@ def test_action_consolidate_reembed_need_no_confirm(monkeypatch, tmp_path):
     """ADR-0013: consolidate + reembed are safe — NO confirm field required."""
     client = _make_app(monkeypatch, debug_apis_on=False)
     with (
-        patch("yadgar.server.routes.control.consolidate_now", return_value={}),
-        patch("yadgar.server.routes.control.reembed_all", return_value={}),
+        patch("yadgar.core.server.routes.control.consolidate_now", return_value={}),
+        patch("yadgar.core.server.routes.control.reembed_all", return_value={}),
     ):
         for action in ("consolidate", "reembed"):
             resp = client.post(
@@ -673,7 +673,7 @@ def test_action_reembed_calls_reembed_all(monkeypatch, tmp_path):
     """
     client = _make_app(monkeypatch, debug_apis_on=False)
     with patch(
-        "yadgar.server.routes.control.reembed_all",
+        "yadgar.core.server.routes.control.reembed_all",
         return_value={"reembedded": 10},
     ) as mock_fn:
         resp = client.post(
@@ -692,8 +692,8 @@ def test_action_emits_audit_log(monkeypatch, tmp_path, caplog):
 
     client = _make_app(monkeypatch, debug_apis_on=False)
     with (
-        patch("yadgar.server.routes.control.consolidate_now", return_value={}),
-        caplog.at_level(logging.INFO, logger="yadgar.server.routes.control"),
+        patch("yadgar.core.server.routes.control.consolidate_now", return_value={}),
+        caplog.at_level(logging.INFO, logger="yadgar.core.server.routes.control"),
     ):
         resp = client.post(
             "/api/control/action/consolidate",
@@ -972,8 +972,8 @@ def test_section_category_map_covers_all_field_meta_sections(monkeypatch):
     causes unknown categories to silently fall back to 'config'. This test
     catches that regression.
     """
-    from yadgar.config_yaml import FIELD_META
-    from yadgar.server.routes.control import SECTION_TO_CATEGORY
+    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar.core.server.routes.control import SECTION_TO_CATEGORY
 
     sections_in_meta = {meta["section"] for meta in FIELD_META.values()}
     unmapped = sections_in_meta - set(SECTION_TO_CATEGORY.keys())
@@ -995,8 +995,8 @@ def test_no_knobs_resolve_to_catchall_config_category():
     yadgar/config_yaml.py FIELD_META to an existing, explicitly mapped section.
     Do NOT create new sections.
     """
-    from yadgar.config_yaml import FIELD_META
-    from yadgar.server.routes.control import _get_category
+    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar.core.server.routes.control import _get_category
 
     catchall = [name for name, m in FIELD_META.items() if _get_category(m["section"]) == "config"]
     assert catchall == [], (
@@ -1020,7 +1020,7 @@ def test_no_patch_write_path_under_admin_config(monkeypatch):
     """
     import inspect
 
-    from yadgar.server import admin_config as ac_module
+    from yadgar.core.server import admin_config as ac_module
 
     source = inspect.getsource(ac_module)
     # Check that no write method is registered via custom_route
@@ -1110,7 +1110,7 @@ def test_config_post_calls_clear_config_caches(monkeypatch, tmp_path):
     monkeypatch.delenv(knob, raising=False)
     client = _make_app(monkeypatch, debug_apis_on=True)
 
-    with _patch("yadgar.server.routes.control.clear_config_caches") as mock_clear:
+    with _patch("yadgar.core.server.routes.control.clear_config_caches") as mock_clear:
         resp = client.post(
             "/api/control/config", json={"name": knob, "value": 9.0}, headers=_auth_headers()
         )

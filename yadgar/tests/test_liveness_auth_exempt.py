@@ -8,7 +8,7 @@ exactly like /health and /metrics.
 
 from __future__ import annotations
 
-from yadgar.auth_middleware import _EXEMPT_PATHS, _is_protected
+from yadgar.core.auth_middleware import _EXEMPT_PATHS, _is_protected
 
 
 def test_liveness_path_is_auth_exempt():

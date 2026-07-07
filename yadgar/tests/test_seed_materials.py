@@ -93,7 +93,7 @@ _EXPECTED: list[tuple[str, str, str]] = [
 
 def test_materials_dir_has_both_seed_files():
     """yadgar/seed/materials/ holds anchors.yaml + agent_prompts.yaml."""
-    materials = files("yadgar.seed").joinpath("materials")
+    materials = files("yadgar.core.seed").joinpath("materials")
     assert materials.joinpath("anchors.yaml").is_file(), "materials/anchors.yaml missing"
     assert materials.joinpath("agent_prompts.yaml").is_file(), (
         "materials/agent_prompts.yaml missing"
@@ -105,14 +105,14 @@ def test_materials_dir_has_both_seed_files():
 
 def test_starter_prompts_loaded_from_materials():
     """STARTER_PROMPTS equals the expected 4-starter list, loaded from yaml."""
-    from yadgar.server.tools.agent_prompts import STARTER_PROMPTS
+    from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
     assert STARTER_PROMPTS == _EXPECTED, "STARTER_PROMPTS does not match expected materials content"
 
 
 def test_starter_prompts_is_list_of_3_tuples():
     """Interface preserved: list of (pattern, purpose, content) 3-tuples, length 4."""
-    from yadgar.server.tools.agent_prompts import STARTER_PROMPTS
+    from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
     assert isinstance(STARTER_PROMPTS, list)
     assert len(STARTER_PROMPTS) == 4
@@ -122,7 +122,7 @@ def test_starter_prompts_is_list_of_3_tuples():
 
 def test_implement_tdd_has_yagni_ladder():
     """implement-tdd carries the new YAGNI least-code ladder (purpose + 7 rungs)."""
-    from yadgar.server.tools.agent_prompts import STARTER_PROMPTS
+    from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
     by_pattern = {p: (purpose, content) for p, purpose, content in STARTER_PROMPTS}
     purpose, content = by_pattern["implement-tdd"]
@@ -137,7 +137,9 @@ def test_loader_reads_yaml_not_inline_tuples():
 
     Guards against a regression where someone re-inlines the prompts in Python.
     """
-    src = (Path(__file__).parent.parent / "server" / "tools" / "agent_prompts.py").read_text()
+    src = (
+        Path(__file__).parent.parent / "core" / "server" / "tools" / "agent_prompts.py"
+    ).read_text()
     assert "agent_prompts.yaml" in src, "loader no longer references agent_prompts.yaml"
 
 
@@ -146,9 +148,9 @@ def test_loader_reads_yaml_not_inline_tuples():
 
 def test_anchors_yaml_loads_from_materials():
     """_load_anchors_yaml loads the relocated materials/anchors.yaml (>= 6 entries)."""
-    from yadgar.cli.seed import _load_anchors_yaml
+    from yadgar.core.cli.seed import _load_anchors_yaml
 
-    anchors_path = str(files("yadgar.seed").joinpath("materials").joinpath("anchors.yaml"))
+    anchors_path = str(files("yadgar.core.seed").joinpath("materials").joinpath("anchors.yaml"))
     entries = _load_anchors_yaml(anchors_path)
     assert len(entries) >= 6
     for e in entries:

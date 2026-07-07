@@ -10,7 +10,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from yadgar.cli.setup import _render_secrets_env, cmd_setup, register
+from yadgar.core.cli.setup import _render_secrets_env, cmd_setup, register
 
 # ---------------------------------------------------------------------------
 # _render_secrets_env
@@ -77,13 +77,13 @@ class TestCmdSetupDockerAvailable:
         args = SimpleNamespace()
 
         with (
-            patch("yadgar.daemon.YadgarDaemon.check_docker", return_value=mock_check),
-            patch("yadgar.paths.CONFIG_DIR", tmp_path),
-            patch("yadgar.paths.DATA_DIR", tmp_path),
-            patch("yadgar.paths.STATE_DIR", tmp_path),
-            patch("yadgar.paths.SECRETS_ENV_PATH", mock_secrets_path),
-            patch("yadgar.config_yaml.get_config_path", return_value=mock_config_path),
-            patch("yadgar.config_yaml.cmd_config_init"),
+            patch("yadgar.core.daemon.YadgarDaemon.check_docker", return_value=mock_check),
+            patch("yadgar._shared.paths.CONFIG_DIR", tmp_path),
+            patch("yadgar._shared.paths.DATA_DIR", tmp_path),
+            patch("yadgar._shared.paths.STATE_DIR", tmp_path),
+            patch("yadgar._shared.paths.SECRETS_ENV_PATH", mock_secrets_path),
+            patch("yadgar._shared.config_yaml.get_config_path", return_value=mock_config_path),
+            patch("yadgar._shared.config_yaml.cmd_config_init"),
         ):
             cmd_setup(args)
 
@@ -126,13 +126,13 @@ class TestCmdSetupDockerAvailable:
         args = SimpleNamespace()
 
         with (
-            patch("yadgar.daemon.YadgarDaemon.check_docker", return_value=mock_check),
-            patch("yadgar.paths.CONFIG_DIR", tmp_path),
-            patch("yadgar.paths.DATA_DIR", tmp_path),
-            patch("yadgar.paths.STATE_DIR", tmp_path),
-            patch("yadgar.paths.SECRETS_ENV_PATH", existing),
-            patch("yadgar.config_yaml.get_config_path", return_value=mock_config_path),
-            patch("yadgar.config_yaml.cmd_config_init"),
+            patch("yadgar.core.daemon.YadgarDaemon.check_docker", return_value=mock_check),
+            patch("yadgar._shared.paths.CONFIG_DIR", tmp_path),
+            patch("yadgar._shared.paths.DATA_DIR", tmp_path),
+            patch("yadgar._shared.paths.STATE_DIR", tmp_path),
+            patch("yadgar._shared.paths.SECRETS_ENV_PATH", existing),
+            patch("yadgar._shared.config_yaml.get_config_path", return_value=mock_config_path),
+            patch("yadgar._shared.config_yaml.cmd_config_init"),
         ):
             cmd_setup(args)
 
@@ -154,13 +154,13 @@ class TestCmdSetupDockerUnavailable:
         args = SimpleNamespace()
 
         with (
-            patch("yadgar.daemon.YadgarDaemon.check_docker", return_value=mock_check),
-            patch("yadgar.paths.CONFIG_DIR", tmp_path),
-            patch("yadgar.paths.DATA_DIR", tmp_path),
-            patch("yadgar.paths.STATE_DIR", tmp_path),
-            patch("yadgar.paths.SECRETS_ENV_PATH", mock_secrets_path),
-            patch("yadgar.config_yaml.get_config_path", return_value=mock_config_path),
-            patch("yadgar.config_yaml.cmd_config_init"),
+            patch("yadgar.core.daemon.YadgarDaemon.check_docker", return_value=mock_check),
+            patch("yadgar._shared.paths.CONFIG_DIR", tmp_path),
+            patch("yadgar._shared.paths.DATA_DIR", tmp_path),
+            patch("yadgar._shared.paths.STATE_DIR", tmp_path),
+            patch("yadgar._shared.paths.SECRETS_ENV_PATH", mock_secrets_path),
+            patch("yadgar._shared.config_yaml.get_config_path", return_value=mock_config_path),
+            patch("yadgar._shared.config_yaml.cmd_config_init"),
         ):
             cmd_setup(args)
 
@@ -176,13 +176,13 @@ class TestCmdSetupDockerUnavailable:
         args = SimpleNamespace()
 
         with (
-            patch("yadgar.daemon.YadgarDaemon.check_docker", return_value=mock_check),
-            patch("yadgar.paths.CONFIG_DIR", tmp_path),
-            patch("yadgar.paths.DATA_DIR", tmp_path),
-            patch("yadgar.paths.STATE_DIR", tmp_path),
-            patch("yadgar.paths.SECRETS_ENV_PATH", mock_secrets_path),
-            patch("yadgar.config_yaml.get_config_path", return_value=mock_config_path),
-            patch("yadgar.config_yaml.cmd_config_init"),
+            patch("yadgar.core.daemon.YadgarDaemon.check_docker", return_value=mock_check),
+            patch("yadgar._shared.paths.CONFIG_DIR", tmp_path),
+            patch("yadgar._shared.paths.DATA_DIR", tmp_path),
+            patch("yadgar._shared.paths.STATE_DIR", tmp_path),
+            patch("yadgar._shared.paths.SECRETS_ENV_PATH", mock_secrets_path),
+            patch("yadgar._shared.config_yaml.get_config_path", return_value=mock_config_path),
+            patch("yadgar._shared.config_yaml.cmd_config_init"),
         ):
             cmd_setup(args)
 

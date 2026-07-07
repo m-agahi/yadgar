@@ -4,10 +4,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.engram import EngramAllocator
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.engram import EngramAllocator
+from yadgar._shared.storage import StorageEngine
 
 
 @pytest.fixture
@@ -390,7 +390,7 @@ class TestProtectedSlotBehavior:
 class TestIntegrationRemember:
     def test_integration_remember(self, tmp_path):
         """Engram allocation should persist slot_index on the memory DB record."""
-        from yadgar.server import init_engines, shutdown
+        from yadgar.core.server import init_engines, shutdown
         from yadgar.tests.conftest import memorize_sync
 
         db_path = str(tmp_path / "test_integration.db")
@@ -420,8 +420,8 @@ class TestIntegrationRemember:
 
     def test_integration_remember_temporal_link_content(self, tmp_path):
         """Verify that temporal links actually point to related memories."""
-        from yadgar.server import init_engines, shutdown
-        from yadgar.server import memorize as remember
+        from yadgar.core.server import init_engines, shutdown
+        from yadgar.core.server import memorize as remember
 
         db_path = str(tmp_path / "test_integration2.db")
         try:

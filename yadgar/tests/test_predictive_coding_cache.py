@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.predictive_coding import WriteGate
+from yadgar._shared.config import Settings
+from yadgar._shared.predictive_coding import WriteGate
 
 # ---------------------------------------------------------------------------
 # Fixtures

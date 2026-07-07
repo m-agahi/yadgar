@@ -18,7 +18,7 @@ class TestPayloadParseFull:
     """_parse_payload extracts all SubagentStart fields."""
 
     def test_all_fields_present(self):
-        from yadgar.hooks.subagent_start import _parse_payload
+        from yadgar.core.hooks.subagent_start import _parse_payload
 
         data = {
             "session_id": "sess-abc",
@@ -43,7 +43,7 @@ class TestPayloadParseMissing:
     """_parse_payload returns safe defaults when fields are absent."""
 
     def test_empty_payload_defaults(self):
-        from yadgar.hooks.subagent_start import _parse_payload
+        from yadgar.core.hooks.subagent_start import _parse_payload
 
         parsed = _parse_payload({})
         assert parsed["agent_type"] == "general-purpose"
@@ -52,7 +52,7 @@ class TestPayloadParseMissing:
         assert parsed["description"] == ""
 
     def test_partial_payload(self):
-        from yadgar.hooks.subagent_start import _parse_payload
+        from yadgar.core.hooks.subagent_start import _parse_payload
 
         data = {"agent_type": "Explore", "cwd": "/tmp"}
         parsed = _parse_payload(data)
@@ -62,7 +62,7 @@ class TestPayloadParseMissing:
 
     def test_prompt_field_used_as_fallback(self):
         """Some Claude Code versions may send 'prompt' instead of 'description'."""
-        from yadgar.hooks.subagent_start import _parse_payload
+        from yadgar.core.hooks.subagent_start import _parse_payload
 
         data = {"prompt": "Search for all usages of memorize()"}
         parsed = _parse_payload(data)
@@ -76,7 +76,7 @@ class TestDaemonCall:
     """_call_daemon POSTs to /hooks/subagent-start and returns text."""
 
     def test_successful_call_returns_text(self, monkeypatch):
-        from yadgar.hooks import subagent_start as _ss
+        from yadgar.core.hooks import subagent_start as _ss
 
         class _FakeResp:
             def read(self):
@@ -90,7 +90,7 @@ class TestDaemonCall:
         assert "Yadgar" in text
 
     def test_daemon_down_returns_empty(self, monkeypatch):
-        from yadgar.hooks import subagent_start as _ss
+        from yadgar.core.hooks import subagent_start as _ss
 
         def _raise(*a, **kw):
             raise ConnectionRefusedError("no daemon")
@@ -100,7 +100,7 @@ class TestDaemonCall:
         assert text == ""
 
     def test_posts_to_correct_url(self, monkeypatch):
-        from yadgar.hooks import subagent_start as _ss
+        from yadgar.core.hooks import subagent_start as _ss
 
         captured = {}
 
@@ -125,7 +125,7 @@ class TestDaemonCall:
 
     def test_empty_description_still_calls(self, monkeypatch):
         """Even with no description, daemon should be called (may return empty text)."""
-        from yadgar.hooks import subagent_start as _ss
+        from yadgar.core.hooks import subagent_start as _ss
 
         called = []
 
@@ -149,7 +149,7 @@ class TestInstallHooksSubagentStart:
     """install_hooks registers SubagentStart with append-if-absent semantics."""
 
     def test_fresh_install_adds_subagent_start(self, tmp_path):
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         result = install_hooks_impl(
             home_dir=tmp_path,
@@ -164,7 +164,7 @@ class TestInstallHooksSubagentStart:
         assert isinstance(entries, list) and len(entries) > 0
 
     def test_idempotent_does_not_duplicate(self, tmp_path):
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         install_hooks_impl(
             home_dir=tmp_path, scope="global", project_directory=str(tmp_path), dry_run=False

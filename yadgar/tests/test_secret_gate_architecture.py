@@ -32,7 +32,7 @@ class TestPatternStrictness:
 
     def test_ghp_33_chars_blocked(self):
         """Memory id 519107 case: 33-char token that slipped through {36,}."""
-        from yadgar.secrets import check_secrets
+        from yadgar._shared.secrets import check_secrets
 
         # "ghp_" prefix + 29 chars = 33 total after prefix (was under old {36,})
         token = "ghp_SECRETTOKEN1234567890abcdefghijk"  # gitleaks:allow
@@ -43,7 +43,7 @@ class TestPatternStrictness:
 
     def test_ghp_20_chars_blocked(self):
         """Minimum new threshold: exactly 20 chars after prefix."""
-        from yadgar.secrets import check_secrets
+        from yadgar._shared.secrets import check_secrets
 
         token = "ghp_" + "A" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
@@ -51,14 +51,14 @@ class TestPatternStrictness:
         assert "GitHub" in reason
 
     def test_gho_20_chars_blocked(self):
-        from yadgar.secrets import check_secrets
+        from yadgar._shared.secrets import check_secrets
 
         token = "gho_" + "B" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
         assert blocked is True
 
     def test_ghs_20_chars_blocked(self):
-        from yadgar.secrets import check_secrets
+        from yadgar._shared.secrets import check_secrets
 
         token = "ghs_" + "C" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
@@ -66,7 +66,7 @@ class TestPatternStrictness:
 
     def test_ghp_19_chars_not_blocked(self):
         """19 chars after prefix is too short — not a real token, should pass."""
-        from yadgar.secrets import check_secrets
+        from yadgar._shared.secrets import check_secrets
 
         token = "ghp_" + "x" * 19
         blocked, _, _ = check_secrets(f"ref={token}")
@@ -79,7 +79,7 @@ class TestPatternStrictness:
 
     def test_sk_ant_20_chars_blocked(self):
         """Anthropic key: {32,} → {20,}."""
-        from yadgar.secrets import check_secrets
+        from yadgar._shared.secrets import check_secrets
 
         token = "sk-ant-" + "x" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
@@ -88,7 +88,7 @@ class TestPatternStrictness:
 
     def test_sk_openai_20_chars_blocked(self):
         """OpenAI key: {30,} → {20,}."""
-        from yadgar.secrets import check_secrets
+        from yadgar._shared.secrets import check_secrets
 
         token = "sk-" + "y" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
@@ -104,13 +104,13 @@ class TestGateOrReject:
     """gate_or_reject(*fields) returns rejection dict or None."""
 
     def test_returns_none_for_clean_content(self):
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         result = gate_or_reject("safe content", "another safe field")
         assert result is None
 
     def test_returns_rejection_dict_for_secret(self):
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         result = gate_or_reject("nothing bad", "AKIAIOSFODNN7EXAMPLE here")
         assert result is not None
@@ -119,13 +119,13 @@ class TestGateOrReject:
         assert "AWS" in result["reason"]
 
     def test_empty_fields_skipped(self):
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         result = gate_or_reject("", None, "  ", "safe text")
         assert result is None
 
     def test_first_match_wins(self):
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         result = gate_or_reject("AKIAIOSFODNN7EXAMPLE", f"ghp_{'A' * 20}")  # gitleaks:allow
         assert result is not None
@@ -133,7 +133,7 @@ class TestGateOrReject:
         assert "AWS" in result["reason"] or "secret_detected" in result["reason"]
 
     def test_pattern_preview_present(self):
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         result = gate_or_reject("AKIAIOSFODNN7EXAMPLE here")
         assert result is not None
@@ -147,12 +147,12 @@ class TestGateOrReject:
 
 class TestSecretLeakBlockedException:
     def test_exception_importable(self):
-        from yadgar.secrets import SecretLeakBlocked
+        from yadgar._shared.secrets import SecretLeakBlocked
 
         assert issubclass(SecretLeakBlocked, Exception)
 
     def test_exception_carries_reason_and_preview(self):
-        from yadgar.secrets import SecretLeakBlocked
+        from yadgar._shared.secrets import SecretLeakBlocked
 
         exc = SecretLeakBlocked("AWS access key", "AKIAIOSFODNN7EX...")
         assert "AWS" in str(exc) or exc.args
@@ -170,8 +170,8 @@ def isolated_server(monkeypatch, tmp_path):
     Patches _get_file_queue to raise so we test the sync (non-enqueue) path,
     which exercises gate_or_reject before any state mutation.
     """
-    import yadgar.file_queue as _fq
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.file_queue as _fq
 
     monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
@@ -184,8 +184,8 @@ def isolated_server(monkeypatch, tmp_path):
     mock_replay.anchor_memory.return_value = 42
     mock_replay.create_checkpoint.return_value = {"stored": True}
 
-    monkeypatch.setattr("yadgar.server.lifecycle._get_storage", lambda: mock_storage)
-    monkeypatch.setattr("yadgar.server.lifecycle._get_replay", lambda: mock_replay)
+    monkeypatch.setattr("yadgar._shared.runtime.lifecycle._get_storage", lambda: mock_storage)
+    monkeypatch.setattr("yadgar._shared.runtime.lifecycle._get_replay", lambda: mock_replay)
     monkeypatch.setattr(_st, "_storage", mock_storage)
     monkeypatch.setattr(_st, "_wiki", None)
 
@@ -196,7 +196,7 @@ class TestAnchorAPIGate:
     """anchor() must reject content containing secrets."""
 
     def test_anchor_rejects_aws_key(self, isolated_server):
-        from yadgar.server.tools.misc import anchor
+        from yadgar.core.server.tools.misc import anchor
 
         result = anchor(
             content="AKIAIOSFODNN7EXAMPLE my key",
@@ -208,7 +208,7 @@ class TestAnchorAPIGate:
 
     def test_anchor_rejects_short_ghp_token(self, isolated_server):
         """ghp_ tokens ≥20 chars after prefix must be caught."""
-        from yadgar.server.tools.misc import anchor
+        from yadgar.core.server.tools.misc import anchor
 
         token = "ghp_" + "A" * 20  # gitleaks:allow
         result = anchor(
@@ -221,7 +221,7 @@ class TestAnchorAPIGate:
 
     def test_anchor_scans_reason_field(self, isolated_server):
         """reason field must also be scanned."""
-        from yadgar.server.tools.misc import anchor
+        from yadgar.core.server.tools.misc import anchor
 
         result = anchor(
             content="normal content",
@@ -233,7 +233,7 @@ class TestAnchorAPIGate:
 
     def test_anchor_clean_content_passes(self, isolated_server):
         """anchor with clean content must still work."""
-        from yadgar.server.tools.misc import anchor
+        from yadgar.core.server.tools.misc import anchor
 
         result = anchor(
             content="my important decision about the database schema",
@@ -248,10 +248,10 @@ class TestAnchorAPIGate:
 
 class TestUpdateActiveWorkAPIGate:
     def test_rejects_secret_content(self, isolated_server, monkeypatch):
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
-        from yadgar.server.tools.project import update_active_work
+        from yadgar.core.server.tools.project import update_active_work
 
         result = update_active_work(
             directory="/home/user/project",
@@ -261,10 +261,10 @@ class TestUpdateActiveWorkAPIGate:
         assert "secret_detected" in result.get("reason", "")
 
     def test_clean_content_passes(self, isolated_server, monkeypatch):
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
-        from yadgar.server.tools.project import update_active_work
+        from yadgar.core.server.tools.project import update_active_work
 
         result = update_active_work(
             directory="/home/user/project",
@@ -277,10 +277,10 @@ class TestUpdateActiveWorkAPIGate:
 
 class TestBootstrapProjectAPIGate:
     def test_rejects_secret_content(self, isolated_server, monkeypatch):
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
-        from yadgar.server.tools.project import bootstrap_project
+        from yadgar.core.server.tools.project import bootstrap_project
 
         result = bootstrap_project(
             directory="/home/user/project",
@@ -290,10 +290,10 @@ class TestBootstrapProjectAPIGate:
         assert "secret_detected" in result.get("reason", "")
 
     def test_clean_content_passes(self, isolated_server, monkeypatch):
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
-        from yadgar.server.tools.project import bootstrap_project
+        from yadgar.core.server.tools.project import bootstrap_project
 
         result = bootstrap_project(
             directory="/home/user/project",
@@ -309,10 +309,10 @@ class TestCheckpointAPIGate:
     """checkpoint() must scan all free-text fields."""
 
     def test_rejects_secret_in_current_task(self, isolated_server, monkeypatch):
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
-        from yadgar.server.tools.misc import checkpoint
+        from yadgar.core.server.tools.misc import checkpoint
 
         result = checkpoint(
             directory="/home/user/project",
@@ -322,10 +322,10 @@ class TestCheckpointAPIGate:
         assert "secret_detected" in result.get("reason", "")
 
     def test_rejects_secret_in_key_decisions(self, isolated_server, monkeypatch):
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
-        from yadgar.server.tools.misc import checkpoint
+        from yadgar.core.server.tools.misc import checkpoint
 
         result = checkpoint(
             directory="/home/user/project",
@@ -336,10 +336,10 @@ class TestCheckpointAPIGate:
         assert "secret_detected" in result.get("reason", "")
 
     def test_rejects_secret_in_custom_context(self, isolated_server, monkeypatch):
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
-        from yadgar.server.tools.misc import checkpoint
+        from yadgar.core.server.tools.misc import checkpoint
 
         result = checkpoint(
             directory="/home/user/project",
@@ -350,10 +350,10 @@ class TestCheckpointAPIGate:
         assert "secret_detected" in result.get("reason", "")
 
     def test_clean_checkpoint_passes(self, isolated_server, monkeypatch):
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
-        from yadgar.server.tools.misc import checkpoint
+        from yadgar.core.server.tools.misc import checkpoint
 
         result = checkpoint(
             directory="/home/user/project",
@@ -370,12 +370,12 @@ class TestCheckpointAPIGate:
 
 class TestWikiUpdateAPIGate:
     def test_rejects_secret_in_content_field(self, isolated_server, monkeypatch):
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         mock_wiki_storage = MagicMock()
         monkeypatch.setattr(_st, "_storage", mock_wiki_storage)
 
-        from yadgar.server.tools.admin_other import wiki_update
+        from yadgar.core.server.tools.admin_other import wiki_update
 
         result = wiki_update(
             page_id=1,
@@ -384,7 +384,7 @@ class TestWikiUpdateAPIGate:
         assert result.get("stored") is False or "secret_detected" in result.get("reason", "")
 
     def test_clean_fields_pass(self, isolated_server, monkeypatch):
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         mock_storage = MagicMock()
         mock_storage.get_wiki_page.return_value = {
@@ -395,7 +395,7 @@ class TestWikiUpdateAPIGate:
         mock_storage.update_wiki_page.return_value = None
         monkeypatch.setattr(_st, "_storage", mock_storage)
 
-        from yadgar.server.tools.admin_other import wiki_update
+        from yadgar.core.server.tools.admin_other import wiki_update
 
         result = wiki_update(
             page_id=1,
@@ -417,8 +417,8 @@ class TestStorageLevelGate:
 
     def test_insert_memory_raises_on_secret(self):
         """Storage layer is the final chokepoint — raises rather than stores."""
-        from yadgar.secrets import SecretLeakBlocked
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         class _MockEngine(_MemoryMixin):
             def _now_iso(self):
@@ -446,8 +446,8 @@ class TestStorageLevelGate:
 
     def test_insert_memory_clean_does_not_raise(self, monkeypatch):
         """insert_memory with clean content must not raise SecretLeakBlocked."""
-        from yadgar.secrets import SecretLeakBlocked
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         class _MockEngine(_MemoryMixin):
             def _now_iso(self):
@@ -480,8 +480,8 @@ class TestStorageLevelGate:
         """YADGAR_SECRET_GATE_DISABLED=1 bypasses gate but logs warning."""
 
         monkeypatch.setenv("YADGAR_SECRET_GATE_DISABLED", "1")
-        from yadgar.secrets import SecretLeakBlocked
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         class _MockEngine(_MemoryMixin):
             def _now_iso(self):
@@ -542,8 +542,8 @@ class TestI26Lint:
         ungated_tool = fake_tools_dir / "ungated_tool.py"
         ungated_tool.write_text(
             textwrap.dedent("""
-            from yadgar.server._app import _tool
-            from yadgar.storage.memory import _MemoryMixin
+            from yadgar.core.server._app import _tool
+            from yadgar._shared.storage.memory import _MemoryMixin
 
             @_tool()
             def bad_write_tool(content: str, context: str) -> dict:

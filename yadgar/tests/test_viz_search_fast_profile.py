@@ -22,8 +22,8 @@ class TestVizSearchUseFastProfile:
 
     def test_recall_called_with_fast_profile(self):
         """retriever.recall kwarg profile must equal 'fast' in viz_search."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
@@ -66,8 +66,8 @@ class TestVizSearchUseFastProfile:
 
     def test_fast_profile_present_alongside_other_kwargs(self):
         """profile='fast' must coexist with max_results and min_heat kwargs."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
@@ -107,7 +107,7 @@ class TestVizSearchUseFastProfile:
         """
         import pathlib
 
-        http_src = pathlib.Path(__file__).parent.parent / "server" / "http.py"
+        http_src = pathlib.Path(__file__).parent.parent / "core" / "server" / "http.py"
         source = http_src.read_text()
 
         # Count occurrences — prompt_recall + subagent_start + instructions_loaded + viz_search

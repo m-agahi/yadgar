@@ -23,8 +23,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.file_queue import FileQueue, QueueDrainer
+from yadgar.core import server
+from yadgar.core.file_queue import FileQueue, QueueDrainer
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
@@ -46,7 +46,7 @@ def _engines(tmp_path_factory):
 @pytest.fixture
 def bare_drainer(tmp_path):
     """Isolated FileQueue + QueueDrainer for unit-level drainer tests."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     fq = FileQueue(tmp_path)
     drainer = QueueDrainer(
@@ -60,8 +60,8 @@ def bare_drainer(tmp_path):
 @pytest.fixture
 def patched_drainer(tmp_path):
     """FileQueue + QueueDrainer with server lifecycle patches (integration)."""
-    import yadgar.server._state as _state_mod
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
+    import yadgar._shared.runtime.state as _state_mod
 
     real_fq = FileQueue(tmp_path)
     drainer = QueueDrainer(
@@ -75,7 +75,7 @@ def patched_drainer(tmp_path):
 
     with (
         patch.object(_lc, "_get_file_queue", _get_fq),
-        patch("yadgar.server.tools.wiki._get_file_queue", _get_fq),
+        patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
     ):
@@ -145,9 +145,9 @@ class TestWikiAddDirectoryBoundary:
 
     def test_wiki_add_rejects_empty_directory(self):
         """wiki_add(directory='') → synchronous error, no storage write."""
-        from yadgar.server.tools.wiki import wiki_add
+        from yadgar.core.server.tools.wiki import wiki_add
 
-        with patch("yadgar.server.tools.wiki.is_draining", return_value=False):
+        with patch("yadgar.core.server.tools.wiki.is_draining", return_value=False):
             result = wiki_add(
                 title="Test Page",
                 content="Some content",
@@ -161,9 +161,9 @@ class TestWikiAddDirectoryBoundary:
 
     def test_wiki_add_rejects_whitespace_only_directory(self):
         """wiki_add(directory='   ') → synchronous error."""
-        from yadgar.server.tools.wiki import wiki_add
+        from yadgar.core.server.tools.wiki import wiki_add
 
-        with patch("yadgar.server.tools.wiki.is_draining", return_value=False):
+        with patch("yadgar.core.server.tools.wiki.is_draining", return_value=False):
             result = wiki_add(
                 title="Test Page",
                 content="Some content",
@@ -176,9 +176,9 @@ class TestWikiAddDirectoryBoundary:
 
     def test_wiki_add_rejects_missing_directory_param(self):
         """wiki_add with no directory param → synchronous error."""
-        from yadgar.server.tools.wiki import wiki_add
+        from yadgar.core.server.tools.wiki import wiki_add
 
-        with patch("yadgar.server.tools.wiki.is_draining", return_value=False):
+        with patch("yadgar.core.server.tools.wiki.is_draining", return_value=False):
             result = wiki_add(
                 title="Test Page No Dir",
                 content="Some content",
@@ -191,9 +191,9 @@ class TestWikiAddDirectoryBoundary:
 
     def test_wiki_add_accepts_valid_directory(self):
         """wiki_add(directory='/proj/x') succeeds (queued or committed)."""
-        from yadgar.server.tools.wiki import wiki_add
+        from yadgar.core.server.tools.wiki import wiki_add
 
-        with patch("yadgar.server.tools.wiki.is_draining", return_value=False):
+        with patch("yadgar.core.server.tools.wiki.is_draining", return_value=False):
             result = wiki_add(
                 title="Valid Dir Page",
                 content="Some content",
@@ -262,7 +262,7 @@ class TestDrainerRejectsNoDirectory:
         """End-to-end: enqueue wiki_add without directory → DLQ with missing_directory."""
         import json
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         drainer, fq = patched_drainer
 
@@ -304,7 +304,7 @@ class TestResolutionProjectBeatsGlobal:
 
     def test_resolution_project_canonical_beats_global(self):
         """Insert same slug in /proj/A (canonical) and global. wiki_read with /proj/A returns /proj/A."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         storage = _st._storage
 
@@ -324,12 +324,12 @@ class TestResolutionProjectBeatsGlobal:
             branch=None,
         )
 
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.wiki import wiki_read
 
         with (
-            patch("yadgar.server.tools.wiki.os") as mock_os,
-            patch("yadgar.server._detect_branch", return_value="main", create=True),
-            patch("yadgar.server._get_default_branch", return_value=None, create=True),
+            patch("yadgar.core.server.tools.wiki.os") as mock_os,
+            patch("yadgar.core.server._detect_branch", return_value="main", create=True),
+            patch("yadgar.core.server._get_default_branch", return_value=None, create=True),
         ):
             mock_os.getcwd.return_value = "/daemon/cwd"
             result = wiki_read(slug, directory="/proj/A")
@@ -344,7 +344,7 @@ class TestResolutionProjectBeatsGlobal:
 
     def test_resolution_falls_back_to_global_when_no_project_match(self):
         """wiki_read with /proj/B (not present) → global page returned."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         storage = _st._storage
 
@@ -357,12 +357,12 @@ class TestResolutionProjectBeatsGlobal:
             branch=None,
         )
 
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.wiki import wiki_read
 
         with (
-            patch("yadgar.server.tools.wiki.os") as mock_os,
-            patch("yadgar.server._detect_branch", return_value=None, create=True),
-            patch("yadgar.server._get_default_branch", return_value=None, create=True),
+            patch("yadgar.core.server.tools.wiki.os") as mock_os,
+            patch("yadgar.core.server._detect_branch", return_value=None, create=True),
+            patch("yadgar.core.server._get_default_branch", return_value=None, create=True),
         ):
             mock_os.getcwd.return_value = "/daemon/cwd"
             result = wiki_read(slug, directory="/proj/B")
@@ -381,7 +381,7 @@ class TestWikiListDirectoryFilter:
 
     def test_wiki_list_scopes_to_directory(self):
         """Insert pages in /proj/A, /proj/B, global. List /proj/A → A + global only."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         storage = _st._storage
 
@@ -390,7 +390,7 @@ class TestWikiListDirectoryFilter:
         _insert_wiki_direct(storage, "Page B1", "B1 content", "/proj/B")
         _insert_wiki_direct(storage, "Page Global", "Global content", "global")
 
-        from yadgar.server.tools.wiki import wiki_list
+        from yadgar.core.server.tools.wiki import wiki_list
 
         results = wiki_list(directory="/proj/A")
         slugs = [r["slug"] for r in results]
@@ -409,7 +409,7 @@ class TestResolveSlugCallerDirectory:
 
     def test_resolve_slug_uses_caller_directory_not_daemon_cwd(self):
         """Insert page under /caller/repo. Daemon CWD=/daemon/root. wiki_history with caller dir works."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         storage = _st._storage
 
@@ -421,9 +421,9 @@ class TestResolveSlugCallerDirectory:
             branch=None,
         )
 
-        from yadgar.server.tools.wiki import wiki_history
+        from yadgar.core.server.tools.wiki import wiki_history
 
-        with patch("yadgar.server.tools.wiki.os") as mock_os:
+        with patch("yadgar.core.server.tools.wiki.os") as mock_os:
             mock_os.getcwd.return_value = "/daemon/root"
             # directory param routes to caller context, ignores os.getcwd()
             result = wiki_history(slug, directory="/caller/repo")
@@ -440,21 +440,21 @@ class TestAgentPromptSaveRequiresDirectory:
 
     def test_agent_prompt_save_requires_directory(self):
         """agent_prompt_save(no directory) → {"error": "missing_directory"}."""
-        from yadgar.server.tools.agent_prompts import agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         result = agent_prompt_save(pattern="test-pattern", content="Test prompt content")
         assert result.get("error") == "missing_directory", (
             f"Expected missing_directory error, got: {result}"
         )
         # Verify no wiki_page created
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         rows = _st._storage._q("SELECT * FROM wiki_page WHERE slug CONTAINS 'test-pattern'")
         assert len(rows) == 0, f"Expected 0 rows, found {len(rows)}"
 
     def test_agent_prompt_save_accepts_valid_directory(self):
         """agent_prompt_save with valid directory saves successfully."""
-        from yadgar.server.tools.agent_prompts import agent_prompt_save
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         result = agent_prompt_save(
             pattern="test-pattern-valid",
@@ -473,7 +473,7 @@ class TestBlocksProjectScopeRequiresDirectory:
 
     def test_block_create_project_scope_rejects_empty_directory(self):
         """block_create(scope='project', directory=None) → ok=False, error=missing_directory."""
-        from yadgar.server.tools.blocks import block_create
+        from yadgar.core.server.tools.blocks import block_create
 
         result = block_create(name="test-block", content="content", scope="project", directory=None)
         assert result.get("ok") is False, f"Expected ok=False, got: {result}"
@@ -483,7 +483,7 @@ class TestBlocksProjectScopeRequiresDirectory:
 
     def test_block_create_global_scope_allows_no_directory(self):
         """block_create(scope='global', directory=None) → ok=True."""
-        from yadgar.server.tools.blocks import block_create
+        from yadgar.core.server.tools.blocks import block_create
 
         result = block_create(
             name="testglobalblock", content="global content", scope="global", directory=None
@@ -507,14 +507,14 @@ class TestRecallDirectoryScope:
         v5.65 Fix D: directory is now required (no os.getcwd() fallback in recall).
         directory=/proj/A is passed explicitly; no os-patching needed.
         """
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         storage = _st._storage
 
         _insert_memory_direct(storage, "proj-A-secret content here", "/proj/A")
         _insert_memory_direct(storage, "proj-B-secret content here", "/proj/B")
 
-        from yadgar.server.tools.recall import recall
+        from yadgar.core.server.tools.recall import recall
 
         results = recall(query="proj secret", max_results=10, directory="/proj/A")
 

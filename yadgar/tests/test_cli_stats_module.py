@@ -30,7 +30,7 @@ def _make_args(**kwargs):
 
 
 def test_cmd_stats_http_table_format(capsys):
-    from yadgar.cli.stats import cmd_stats
+    from yadgar.core.cli.stats import cmd_stats
 
     mock_data = {
         "total_memories": 42,
@@ -53,7 +53,7 @@ def test_cmd_stats_http_table_format(capsys):
 
 
 def test_cmd_stats_http_json_format(capsys):
-    from yadgar.cli.stats import cmd_stats
+    from yadgar.core.cli.stats import cmd_stats
 
     mock_data = {"total_memories": 10}
     mock_resp = MagicMock()
@@ -68,7 +68,7 @@ def test_cmd_stats_http_json_format(capsys):
 
 
 def test_cmd_stats_http_with_project(capsys):
-    from yadgar.cli.stats import cmd_stats
+    from yadgar.core.cli.stats import cmd_stats
 
     mock_data = {"total_memories": 5, "active_count": 4, "avg_heat": 0.8}
     mock_resp = MagicMock()
@@ -88,7 +88,7 @@ def test_cmd_stats_http_with_project(capsys):
 
 def test_cmd_stats_http_daemon_not_running_falls_through(monkeypatch):
     """When HTTP fails, falls back to surrealdb import."""
-    from yadgar.cli.stats import cmd_stats
+    from yadgar.core.cli.stats import cmd_stats
 
     # Make HTTP fail
     monkeypatch.setattr("urllib.request.urlopen", MagicMock(side_effect=OSError("refused")))
@@ -101,7 +101,7 @@ def test_cmd_stats_http_daemon_not_running_falls_through(monkeypatch):
 
 
 def test_cmd_stats_http_avg_heat_displayed(capsys):
-    from yadgar.cli.stats import cmd_stats
+    from yadgar.core.cli.stats import cmd_stats
 
     mock_data = {
         "total_memories": 3,
@@ -121,7 +121,7 @@ def test_cmd_stats_http_avg_heat_displayed(capsys):
 
 
 def test_cmd_stats_project_in_header(capsys):
-    from yadgar.cli.stats import cmd_stats
+    from yadgar.core.cli.stats import cmd_stats
 
     mock_data = {"total_memories": 1}
     mock_resp = MagicMock()

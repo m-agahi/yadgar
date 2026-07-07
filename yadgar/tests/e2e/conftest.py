@@ -105,7 +105,7 @@ def service_stub():
 
     patchers = []
     try:
-        import yadgar.scripts.nightly_cycle as _nc
+        import yadgar.core.scripts.nightly_cycle as _nc
 
         patchers.append(patch.object(_nc, "_stop_service", stop_mock))
         patchers.append(patch.object(_nc, "_start_service", start_mock))
@@ -113,7 +113,7 @@ def service_stub():
         pass
 
     try:
-        from yadgar.ops import ServiceController as _SC
+        from yadgar.core.ops import ServiceController as _SC
 
         patchers.append(patch.object(_SC, "stop", svc_stop))
         patchers.append(patch.object(_SC, "stop_backend", svc_stop_backend))
@@ -198,17 +198,17 @@ def e2e_engines(tmp_path_factory):
     monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
 
     # DATA-SAFETY: assert the override took effect and is NOT under real data dir
-    from yadgar import paths as _paths
+    from yadgar._shared import paths as _paths
 
     resolved_data = _paths._data_dir()
     _assert_not_real_data_dir(resolved_data)
 
     # Wire up the full engine stack
-    from yadgar import server
+    from yadgar.core import server
 
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
 
-    from yadgar.server.lifecycle import _get_embeddings, _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_embeddings, _get_storage
 
     storage = _get_storage()
     embeddings = _get_embeddings()

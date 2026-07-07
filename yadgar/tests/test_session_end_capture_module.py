@@ -26,7 +26,7 @@ import pytest
 # Safe module load
 # ---------------------------------------------------------------------------
 
-_SCRIPT_PATH = Path(__file__).parent.parent / "hooks" / "session-end-capture.py"
+_SCRIPT_PATH = Path(__file__).parent.parent / "core" / "hooks" / "session-end-capture.py"
 
 
 def _load_module_disabled():

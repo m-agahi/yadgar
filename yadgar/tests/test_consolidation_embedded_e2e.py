@@ -40,10 +40,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar.config import get_settings
-from yadgar.consolidation import ConsolidationScheduler
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import get_settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.storage import StorageEngine
+from yadgar.core.consolidation import ConsolidationScheduler
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -271,8 +271,8 @@ class TestEmbeddedConsolidationE2E:
         This test is the closest behavioral analog to what the nightly systemd
         timer actually does on every invocation.
         """
-        from yadgar.consolidation import ConsolidationScheduler as _CS
-        from yadgar.embeddings import EmbeddingEngine as _EE
+        from yadgar._shared.embeddings import EmbeddingEngine as _EE
+        from yadgar.core.consolidation import ConsolidationScheduler as _CS
 
         monkeypatch.delenv("YADGAR_DB_URL", raising=False)
         get_settings.cache_clear()
@@ -387,9 +387,9 @@ class TestNightlyCycleEmbedded:
         # ConsolidationScheduler construction -> AstrocytePool.init_processes ->
         # insert_astrocyte_process (type::record). Pre-fix this failed embedded,
         # leaving the engram empty (the engram_slot=0 invariant violation source).
-        from yadgar.config import get_settings as _gs
-        from yadgar.consolidation import ConsolidationScheduler as _CS
-        from yadgar.embeddings import EmbeddingEngine as _EE
+        from yadgar._shared.config import get_settings as _gs
+        from yadgar._shared.embeddings import EmbeddingEngine as _EE
+        from yadgar.core.consolidation import ConsolidationScheduler as _CS
 
         _CS(embedded_storage, _EE(), _gs())
         rows = embedded_storage._q("SELECT id FROM astrocyte_process")

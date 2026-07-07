@@ -33,7 +33,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import yadgar.server.http as srv_http
+import yadgar.core.server.http as srv_http
 
 
 def _make_request() -> MagicMock:
@@ -83,7 +83,7 @@ def test_liveness_makes_no_backend_probe(monkeypatch):
 
 def test_liveness_503_only_when_pool_saturated():
     """Liveness 503 iff the tool pool is genuinely wedged (preserves O2 P0-kill)."""
-    with patch("yadgar.server._offload.pool_saturated", return_value=True):
+    with patch("yadgar._shared.runtime.offload.pool_saturated", return_value=True):
         resp = asyncio.run(srv_http.liveness_check(_make_request()))
     assert resp.status_code == 503, (
         "a wedged pool must still drive liveness 503 so P0 can kill (O2 preserved)"
@@ -92,7 +92,7 @@ def test_liveness_503_only_when_pool_saturated():
 
 def test_liveness_200_when_pool_busy_but_not_saturated():
     """A busy-but-draining pool (not saturated) keeps liveness 200 — no self-kill."""
-    with patch("yadgar.server._offload.pool_saturated", return_value=False):
+    with patch("yadgar._shared.runtime.offload.pool_saturated", return_value=False):
         resp = asyncio.run(srv_http.liveness_check(_make_request()))
     assert resp.status_code == 200
 

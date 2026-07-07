@@ -50,7 +50,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from yadgar._surreal_runner import spawn_surreal, teardown_surreal_proc
+from yadgar.core._surreal_runner import spawn_surreal, teardown_surreal_proc
 from yadgar.tests.conftest import _find_free_port, _wait_for_health
 from yadgar.tests.e2e.conftest import _assert_not_real_data_dir
 
@@ -254,8 +254,8 @@ def _drive_backend(backend: _Backend, *, fail_stop_backend: bool = False):
     _ControllingSvc.calls = []
     try:
         with (
-            patch("yadgar.ops.ServiceController", _ControllingSvc),
-            patch("yadgar.vacuum.ServiceController", _ControllingSvc),
+            patch("yadgar.core.ops.ServiceController", _ControllingSvc),
+            patch("yadgar.core.vacuum.ServiceController", _ControllingSvc),
         ):
             yield _ControllingSvc
     finally:
@@ -286,7 +286,7 @@ class TestBCE1_RowCountsPreserved:
     """
 
     def test_memory_count_unchanged(self, dedicated_backend):
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         backend = dedicated_backend
         _seed_memories(backend.url, 7)
@@ -295,7 +295,7 @@ class TestBCE1_RowCountsPreserved:
 
         with (
             _drive_backend(backend) as svc,
-            patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True),
+            patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
         ):
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -383,7 +383,7 @@ class TestBCE2_VacuumAtomicity:
 
     # -- (a) side-path import fails → canonical untouched, original rows served --
     def test_a_import_failure_leaves_canonical_untouched(self, dedicated_backend):
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         backend = dedicated_backend
         _seed_memories(backend.url, 7)
@@ -406,8 +406,8 @@ class TestBCE2_VacuumAtomicity:
         # because the canonical was genuinely never renamed.
         with (
             _drive_backend(backend, fail_stop_backend=True),
-            patch("yadgar.vacuum.httpx.post", side_effect=_import_fails),
-            patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True),
+            patch("yadgar.core.vacuum.httpx.post", side_effect=_import_fails),
+            patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
         ):
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -435,8 +435,8 @@ class TestBCE2_VacuumAtomicity:
 
     # -- (b) verification fails (short side count) → no swap, canonical intact --
     def test_b_verification_failure_blocks_swap(self, dedicated_backend):
-        from yadgar import vacuum as _vac
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core import vacuum as _vac
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         backend = dedicated_backend
         _seed_memories(backend.url, 7)
@@ -455,8 +455,8 @@ class TestBCE2_VacuumAtomicity:
 
         with (
             _drive_backend(backend),
-            patch("yadgar.vacuum._capture_table_counts", side_effect=_short_side_count),
-            patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True),
+            patch("yadgar.core.vacuum._capture_table_counts", side_effect=_short_side_count),
+            patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
         ):
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -482,8 +482,8 @@ class TestBCE2_VacuumAtomicity:
 
     # -- (c) happy path → reopen the swapped-in dir, EXACT pre-vacuum counts --
     def test_c_happy_path_swapped_dir_opens_complete(self, dedicated_backend):
-        from yadgar import vacuum as _vac
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core import vacuum as _vac
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         backend = dedicated_backend
         _seed_memories(backend.url, 7)
@@ -492,7 +492,7 @@ class TestBCE2_VacuumAtomicity:
 
         with (
             _drive_backend(backend),
-            patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True),
+            patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
         ):
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -544,7 +544,7 @@ class TestBCE2_VacuumAtomicity:
         newest-wins heuristic would (wrongly) pick the partial; recovery must
         instead promote `.new` and DISCARD the `.building`.
         """
-        from yadgar.vacuum import _recover_interrupted_swap
+        from yadgar.core.vacuum import _recover_interrupted_swap
 
         backend = dedicated_backend
         _seed_memories(backend.url, 7)
@@ -609,7 +609,7 @@ class TestBCE2_VacuumAtomicity:
         the canonical is restored (recovery fired first); it does not require the
         subsequent vacuum to fully succeed.
         """
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         backend = dedicated_backend
         _seed_memories(backend.url, 7)
@@ -631,7 +631,7 @@ class TestBCE2_VacuumAtomicity:
         # preflight, which would otherwise have returned "DB dir not found").
         with (
             _drive_backend(backend),
-            patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True),
+            patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
         ):
             cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -684,7 +684,7 @@ class TestBCE3_SensitiveJobLock:
     def test_external_shutdown_refused_while_locked(self, tmp_path, monkeypatch):
         import json
 
-        from yadgar.server import lifecycle
+        from yadgar._shared.runtime import lifecycle
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -733,7 +733,7 @@ class TestBCF1_BackupRoundTrip:
     """
 
     def test_snapshot_restore_same_count(self, dedicated_backend, tmp_path):
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         backend = dedicated_backend
         _seed_memories(backend.url, 5)
@@ -780,8 +780,8 @@ class TestBCF2_RestoreToFullState:
     """
 
     def test_export_restore_brings_full_state(self, dedicated_backend, tmp_path):
-        from yadgar import vacuum as _vac
-        from yadgar.backup import create_snapshot, restore_snapshot
+        from yadgar.core import vacuum as _vac
+        from yadgar.core.backup import create_snapshot, restore_snapshot
 
         backend = dedicated_backend
         _seed_memories(backend.url, 6)
@@ -855,8 +855,8 @@ class TestBCF3_QuiescedBackup:
     """
 
     def test_concurrent_write_backup_is_consistent(self, dedicated_backend, tmp_path):
-        from yadgar import vacuum as _vac
-        from yadgar.backup import create_snapshot, restore_snapshot
+        from yadgar.core import vacuum as _vac
+        from yadgar.core.backup import create_snapshot, restore_snapshot
 
         backend = dedicated_backend
         _seed_memories(backend.url, 10)
@@ -1063,7 +1063,7 @@ class TestBCD1_NightlyCompletesExitZero:
     def test_real_nightly_main_exits_zero_no_contention(self, dedicated_backend, tmp_path, caplog):
         import logging
 
-        from yadgar.scripts import nightly_cycle as nc
+        from yadgar.core.scripts import nightly_cycle as nc
 
         backend = dedicated_backend
         _seed_memories(backend.url, 8)
@@ -1087,9 +1087,9 @@ class TestBCD1_NightlyCompletesExitZero:
             with (
                 patch.object(nc, "_stop_service", _NightlyBackendDriver.stop_service),
                 patch.object(nc, "_start_service", _NightlyBackendDriver.start_service),
-                patch("yadgar.ops.ServiceController", _NightlySvc),
-                patch("yadgar.vacuum.ServiceController", _NightlySvc),
-                patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True),
+                patch("yadgar.core.ops.ServiceController", _NightlySvc),
+                patch("yadgar.core.vacuum.ServiceController", _NightlySvc),
+                patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
                 caplog.at_level(logging.WARNING, logger="yadgar.nightly_cycle"),
             ):
                 code = nc.main(args)

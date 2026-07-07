@@ -34,7 +34,7 @@ _TEST_TOKEN = "contract-test-token"
 def _engines(tmp_path_factory):
     """Start in-process server engines against a fresh temp DB."""
     tmp_path = tmp_path_factory.mktemp("graph_api_contract")
-    from yadgar import server
+    from yadgar.core import server
 
     db_path = str(tmp_path / "contract_test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
@@ -49,8 +49,8 @@ def _make_client(monkeypatch):
 
     from starlette.testclient import TestClient
 
-    from yadgar import server as _server
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core import server as _server
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     asgi_app = _server.mcp_server.streamable_http_app()
     return TestClient(BearerAuthMiddleware(asgi_app), raise_server_exceptions=False)
@@ -62,7 +62,7 @@ def _auth_headers() -> dict[str, str]:
 
 def _seed_memories(n: int = 5) -> None:
     """Insert n memories into the active StorageEngine."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     storage = _st._storage
     assert storage is not None, "StorageEngine not initialized"

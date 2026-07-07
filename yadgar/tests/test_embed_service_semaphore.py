@@ -25,7 +25,7 @@ def _make_app(monkeypatch, max_concurrency: int = 1, acquire_timeout: float = 2.
     """Return a fresh FastAPI TestClient with embed_service patched to avoid model load."""
     import importlib
 
-    import yadgar.config as cfg
+    import yadgar._shared.config as cfg
 
     monkeypatch.setenv("YADGAR_RERANK_MAX_CONCURRENCY", str(max_concurrency))
     monkeypatch.setenv("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", str(acquire_timeout))
@@ -52,8 +52,8 @@ class TestSemaphoreNormalCall:
         """POST /rerank returns 200 when semaphore has capacity and reranker works."""
         import importlib
 
+        import yadgar._shared.config as cfg
         import yadgar.backend.embed_service as es
-        import yadgar.config as cfg
 
         monkeypatch.setenv("YADGAR_RERANK_MAX_CONCURRENCY", "1")
         monkeypatch.setenv("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", "2.0")
@@ -89,7 +89,7 @@ class TestSemaphoreHeldReturns503:
         import importlib
         import time
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_RERANK_MAX_CONCURRENCY", "1")
         monkeypatch.setenv("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", "0.1")
@@ -140,7 +140,7 @@ class TestSemaphorePerModeIsolation:
         """Holding ce semaphore should not affect nli calls."""
         import importlib
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_RERANK_MAX_CONCURRENCY", "1")
         monkeypatch.setenv("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", "0.1")
@@ -186,7 +186,7 @@ class TestSemaphoreConcurrencyN:
         """With N=2, holding 1 slot still allows a second call through."""
         import importlib
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_RERANK_MAX_CONCURRENCY", "2")
         monkeypatch.setenv("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", "0.1")

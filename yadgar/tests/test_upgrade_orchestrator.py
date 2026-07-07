@@ -61,7 +61,7 @@ def _noop_re_exec(version: str, snapshot_path: Path) -> None:  # noqa: ARG001
 
 def _run(tmp_path: Path, **overrides):
     """Convenience wrapper: run_install with test-safe paths and all injections."""
-    from yadgar.update.orchestrator import InstallConfig, _build_hooks, run_install
+    from yadgar.core.update.orchestrator import InstallConfig, _build_hooks, run_install
 
     # Separate config fields from hook fields
     _hook_fields = {
@@ -121,7 +121,7 @@ def test_orchestrator_happy_path(tmp_path: Path) -> None:
     NOTE: run_install() records RE_EXECING as the last in-process state because
     os.execvp never returns in production.  Phase 10 --finalize subcommand sets DONE.
     """
-    from yadgar.update.orchestrator import OrchestratorState
+    from yadgar.core.update.orchestrator import OrchestratorState
 
     result = _run(tmp_path)
 
@@ -166,7 +166,7 @@ def test_orchestrator_image_pull_fail_rollback(tmp_path: Path) -> None:
     At PULLING_IMAGE, the env-file has NOT yet been written and the daemon has NOT
     been restarted, so rollback is a no-op cleanup.  Terminal = ROLLED_BACK_OK.
     """
-    from yadgar.update.orchestrator import OrchestratorState
+    from yadgar.core.update.orchestrator import OrchestratorState
 
     def failing_pull(version: str) -> None:  # noqa: ARG001
         raise RuntimeError("simulated pull failure")
@@ -201,7 +201,7 @@ def test_orchestrator_image_pull_fail_rollback(tmp_path: Path) -> None:
 
 def test_orchestrator_health_check_fail_triggers_rollback(tmp_path: Path) -> None:
     """Health-check failure triggers rollback: env-file restored, service restarted twice."""
-    from yadgar.update.orchestrator import OrchestratorState
+    from yadgar.core.update.orchestrator import OrchestratorState
 
     service_restart = MagicMock()
     health_calls: list[bool] = []
@@ -243,7 +243,7 @@ def test_orchestrator_cli_upgrade_fail_attempts_pipx_force_install_prev(
     tmp_path: Path,
 ) -> None:
     """CLI upgrade failure triggers ROLLING_BACK_CLI_ONLY with prev-version arg."""
-    from yadgar.update.orchestrator import OrchestratorState
+    from yadgar.core.update.orchestrator import OrchestratorState
 
     cli_rollback_calls: list[str] = []
 
@@ -304,7 +304,7 @@ def test_orchestrator_snapshot_written(tmp_path: Path) -> None:
 
 def test_orchestrator_snapshot_retention(tmp_path: Path) -> None:
     """With UPDATE_SNAPSHOT_RETENTION=2, only 2 snapshots remain after 5 successful runs."""
-    from yadgar.update.snapshot import list_snapshots
+    from yadgar.core.update.snapshot import list_snapshots
 
     snaps_dir = tmp_path / "snaps"
 
@@ -330,7 +330,7 @@ def test_orchestrator_snapshot_retention(tmp_path: Path) -> None:
 
 def test_orchestrator_install_disabled_refuses(tmp_path: Path) -> None:
     """run_install() with enabled_override=False refuses without any state mutations."""
-    from yadgar.update.orchestrator import (
+    from yadgar.core.update.orchestrator import (
         InstallConfig,
         OrchestratorState,
         _build_hooks,
@@ -383,7 +383,7 @@ def test_orchestrator_install_disabled_refuses(tmp_path: Path) -> None:
 
 def test_orchestrator_concurrent_run_blocked(tmp_path: Path) -> None:
     """A lock file with current process PID blocks a second run_install call."""
-    from yadgar.update.orchestrator import OrchestratorState, run_install
+    from yadgar.core.update.orchestrator import OrchestratorState, run_install
 
     lock_path = tmp_path / "upgrade.lock"
     lock_data = {
@@ -395,7 +395,7 @@ def test_orchestrator_concurrent_run_blocked(tmp_path: Path) -> None:
     lock_path.write_text(json.dumps(lock_data))
     original_content = lock_path.read_text()
 
-    from yadgar.update.orchestrator import InstallConfig, _build_hooks
+    from yadgar.core.update.orchestrator import InstallConfig, _build_hooks
 
     config = InstallConfig(
         target_version="5.49.0",
@@ -433,7 +433,7 @@ def test_orchestrator_concurrent_run_blocked(tmp_path: Path) -> None:
 
 def test_orchestrator_stale_lock_taken_over(tmp_path: Path) -> None:
     """A lock with dead PID (or old start_ts) is treated as stale; orchestrator proceeds."""
-    from yadgar.update.orchestrator import OrchestratorState
+    from yadgar.core.update.orchestrator import OrchestratorState
 
     lock_path = tmp_path / "upgrade.lock"
     # PID 99999999 is guaranteed not to exist
@@ -459,7 +459,7 @@ def test_orchestrator_stale_lock_taken_over(tmp_path: Path) -> None:
 
 def test_orchestrator_records_re_exec_state(tmp_path: Path) -> None:
     """Mock re_exec (doesn't actually exec); orchestrator records RE_EXECING as final state."""
-    from yadgar.update.orchestrator import OrchestratorState
+    from yadgar.core.update.orchestrator import OrchestratorState
 
     re_exec_calls: list[tuple[str, Path]] = []
 
@@ -498,7 +498,7 @@ def test_install_systemd_service_type_notify(tmp_path: Path) -> None:
     not the .in template.  Also asserts the db unit is allowed to remain Type=simple
     (SurrealDB container does not sd_notify).
     """
-    import yadgar.daemon as _daemon_mod
+    import yadgar.core.daemon as _daemon_mod
 
     daemon = _daemon_mod.YadgarDaemon()
 

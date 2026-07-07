@@ -39,8 +39,8 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
-from yadgar.storage import StorageEngine
+from yadgar._shared.storage import StorageEngine
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -223,7 +223,7 @@ class TestBlockList:
 class TestMcpBlockTools:
     def test_mcp_block_create_success(self) -> None:
         """block_create MCP tool returns id + name on success."""
-        from yadgar.server.tools.blocks import block_create
+        from yadgar.core.server.tools.blocks import block_create
 
         result = block_create(
             name="my_task", content="do the thing", scope="project", directory=_PROJ_DIR
@@ -234,7 +234,7 @@ class TestMcpBlockTools:
 
     def test_mcp_block_create_duplicate_errors(self) -> None:
         """block_create returns {ok: False, error: ...} on duplicate."""
-        from yadgar.server.tools.blocks import block_create
+        from yadgar.core.server.tools.blocks import block_create
 
         block_create(name="dup", content="first", scope="project", directory=_PROJ_DIR)
         result = block_create(name="dup", content="second", scope="project", directory=_PROJ_DIR)
@@ -243,7 +243,7 @@ class TestMcpBlockTools:
 
     def test_mcp_block_get_success(self) -> None:
         """block_get returns content of existing block."""
-        from yadgar.server.tools.blocks import block_create, block_get
+        from yadgar.core.server.tools.blocks import block_create, block_get
 
         block_create(name="fetched", content="hello", scope="project", directory=_PROJ_DIR)
         result = block_get(name="fetched", scope="project", directory=_PROJ_DIR)
@@ -251,14 +251,14 @@ class TestMcpBlockTools:
 
     def test_mcp_block_get_missing_returns_error(self) -> None:
         """block_get on nonexistent block returns {ok: False}."""
-        from yadgar.server.tools.blocks import block_get
+        from yadgar.core.server.tools.blocks import block_get
 
         result = block_get(name="ghost", scope="project", directory=_PROJ_DIR)
         assert result.get("ok") is False
 
     def test_mcp_block_update_success(self) -> None:
         """block_update replaces content; block_get reflects new value."""
-        from yadgar.server.tools.blocks import block_create, block_get, block_update
+        from yadgar.core.server.tools.blocks import block_create, block_get, block_update
 
         block_create(name="updatable", content="original", scope="project", directory=_PROJ_DIR)
         result = block_update(
@@ -270,7 +270,7 @@ class TestMcpBlockTools:
 
     def test_mcp_block_delete_success(self) -> None:
         """block_delete removes block; block_get returns error afterward."""
-        from yadgar.server.tools.blocks import block_create, block_delete, block_get
+        from yadgar.core.server.tools.blocks import block_create, block_delete, block_get
 
         block_create(name="killme", content="bye", scope="project", directory=_PROJ_DIR)
         result = block_delete(name="killme", scope="project", directory=_PROJ_DIR)
@@ -280,7 +280,7 @@ class TestMcpBlockTools:
 
     def test_mcp_block_list_returns_all(self) -> None:
         """block_list returns all blocks for given scope+directory."""
-        from yadgar.server.tools.blocks import block_create, block_list
+        from yadgar.core.server.tools.blocks import block_create, block_list
 
         block_create(name="block_a", content="a", scope="project", directory=_PROJ_DIR)
         block_create(name="block_b", content="b", scope="project", directory=_PROJ_DIR)
@@ -291,7 +291,7 @@ class TestMcpBlockTools:
 
     def test_mcp_block_create_secret_gate_rejects(self) -> None:
         """block_create rejects content with secret tokens via gate_or_reject."""
-        from yadgar.server.tools.blocks import block_create
+        from yadgar.core.server.tools.blocks import block_create
 
         result = block_create(
             name="secret_block",
@@ -314,8 +314,8 @@ class TestMcpBlockTools:
 class TestBootstrapSeedsBlocks:
     def test_bootstrap_seeds_default_blocks(self) -> None:
         """bootstrap_project seeds current_task + gotchas blocks on first call."""
-        from yadgar.server.tools.blocks import block_list
-        from yadgar.server.tools.project import bootstrap_project
+        from yadgar.core.server.tools.blocks import block_list
+        from yadgar.core.server.tools.project import bootstrap_project
 
         bootstrap_project(directory=_PROJ_DIR, content="# Test project")
         blocks = block_list(scope="project", directory=_PROJ_DIR)
@@ -325,8 +325,8 @@ class TestBootstrapSeedsBlocks:
 
     def test_bootstrap_idempotent_does_not_overwrite_blocks(self) -> None:
         """Re-running bootstrap_project does not clobber existing block content."""
-        from yadgar.server.tools.blocks import block_get, block_update
-        from yadgar.server.tools.project import bootstrap_project
+        from yadgar.core.server.tools.blocks import block_get, block_update
+        from yadgar.core.server.tools.project import bootstrap_project
 
         bootstrap_project(directory=_PROJ_DIR, content="# First bootstrap")
         # Manually update current_task
@@ -350,7 +350,7 @@ class TestMemoryBlockConfigKnobs:
 
     def test_knobs_present_in_settings(self) -> None:
         """Settings class exposes all four MEMORY_BLOCK_* knobs with correct defaults."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         fields = Settings.model_fields
         assert "MEMORY_BLOCK_MAX_PER_SCOPE" in fields, "Missing MEMORY_BLOCK_MAX_PER_SCOPE"
@@ -364,7 +364,7 @@ class TestMemoryBlockConfigKnobs:
 
     def test_knob_defaults(self) -> None:
         """MEMORY_BLOCK_* knobs default to the values specified in the plan."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         s = Settings()
         assert s.MEMORY_BLOCK_MAX_PER_SCOPE == 10
@@ -380,7 +380,7 @@ class TestMemoryBlockConfigKnobs:
         orig = os.environ.get("YADGAR_MEMORY_BLOCK_HARD_CHAR_LIMIT")
         os.environ["YADGAR_MEMORY_BLOCK_HARD_CHAR_LIMIT"] = "100"
         # Bust the lru_cache so the patched env is picked up.
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         try:
@@ -400,7 +400,7 @@ class TestMemoryBlockConfigKnobs:
 
     def test_i25_knobs_in_registry(self) -> None:
         """All four MEMORY_BLOCK_* env names appear in config_registry._REGISTRY."""
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_MEMORY_BLOCK_MAX_PER_SCOPE" in names
@@ -410,7 +410,7 @@ class TestMemoryBlockConfigKnobs:
 
     def test_i25_knobs_in_field_meta(self) -> None:
         """All four MEMORY_BLOCK_* lower-case keys appear in config_yaml.FIELD_META."""
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "memory_block_max_per_scope" in FIELD_META
         assert "memory_block_default_char_limit" in FIELD_META
@@ -428,7 +428,7 @@ class TestBlockReplace:
 
     def test_replace_success(self) -> None:
         """replace_block replaces exactly-one occurrence, returns updated content."""
-        from yadgar.server.tools.blocks import block_create, block_replace
+        from yadgar.core.server.tools.blocks import block_create, block_replace
 
         block_create(
             name="replace_me", content="Hello World!", scope="project", directory=_PROJ_DIR
@@ -445,7 +445,7 @@ class TestBlockReplace:
 
     def test_replace_not_found_errors(self) -> None:
         """block_replace errors if old_text not found in block content."""
-        from yadgar.server.tools.blocks import block_create, block_replace
+        from yadgar.core.server.tools.blocks import block_create, block_replace
 
         block_create(name="no_match", content="Hello World", scope="project", directory=_PROJ_DIR)
         result = block_replace(
@@ -456,7 +456,7 @@ class TestBlockReplace:
 
     def test_replace_ambiguous_errors(self) -> None:
         """block_replace errors if old_text appears more than once."""
-        from yadgar.server.tools.blocks import block_create, block_replace
+        from yadgar.core.server.tools.blocks import block_create, block_replace
 
         block_create(name="ambiguous", content="foo bar foo", scope="project", directory=_PROJ_DIR)
         result = block_replace(
@@ -472,7 +472,7 @@ class TestBlockReplace:
 
     def test_replace_block_not_found_errors(self) -> None:
         """block_replace on nonexistent block returns {ok: False}."""
-        from yadgar.server.tools.blocks import block_replace
+        from yadgar.core.server.tools.blocks import block_replace
 
         result = block_replace(
             name="ghost", old_text="x", new_text="y", scope="project", directory=_PROJ_DIR
@@ -481,7 +481,7 @@ class TestBlockReplace:
 
     def test_replace_secret_gate(self) -> None:
         """block_replace rejects new_text containing secrets (I26)."""
-        from yadgar.server.tools.blocks import block_create, block_replace
+        from yadgar.core.server.tools.blocks import block_create, block_replace
 
         block_create(name="safe_r", content="initial content", scope="project", directory=_PROJ_DIR)
         result = block_replace(
@@ -499,7 +499,7 @@ class TestBlockAppend:
 
     def test_append_success(self) -> None:
         """block_append appends text with newline separator."""
-        from yadgar.server.tools.blocks import block_append, block_create
+        from yadgar.core.server.tools.blocks import block_append, block_create
 
         block_create(name="appendable", content="line one", scope="project", directory=_PROJ_DIR)
         result = block_append(
@@ -513,14 +513,14 @@ class TestBlockAppend:
 
     def test_append_block_not_found_errors(self) -> None:
         """block_append on nonexistent block returns {ok: False}."""
-        from yadgar.server.tools.blocks import block_append
+        from yadgar.core.server.tools.blocks import block_append
 
         result = block_append(name="ghost_append", text="x", scope="project", directory=_PROJ_DIR)
         assert result.get("ok") is False
 
     def test_append_exceeds_char_limit_errors(self) -> None:
         """block_append respects char_limit — rejects append that would overflow."""
-        from yadgar.server.tools.blocks import block_append, block_create
+        from yadgar.core.server.tools.blocks import block_append, block_create
 
         # char_limit=20, content fills it up so append overflows
         block_create(
@@ -542,7 +542,7 @@ class TestBlockAppend:
 
     def test_append_secret_gate(self) -> None:
         """block_append rejects text containing secrets (I26)."""
-        from yadgar.server.tools.blocks import block_append, block_create
+        from yadgar.core.server.tools.blocks import block_append, block_create
 
         block_create(
             name="safe_append", content="safe content", scope="project", directory=_PROJ_DIR

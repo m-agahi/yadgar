@@ -1,6 +1,6 @@
 import pytest
 
-from yadgar.storage import _FTS_STOP_WORDS, StorageEngine
+from yadgar._shared.storage import _FTS_STOP_WORDS, StorageEngine
 
 
 @pytest.fixture(scope="module")
@@ -860,10 +860,10 @@ class TestBatchWritesByteChunking:
 
     def test_batch_writes_chunks_by_bytes(self, monkeypatch):
         """100 statements each ~100 KB → ≥10 separate HTTP requests at 1 MB cap."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         monkeypatch.setattr(
-            "yadgar.config.get_settings",
+            "yadgar._shared.config.get_settings",
             lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=1_000_000),
         )
 
@@ -885,10 +885,10 @@ class TestBatchWritesByteChunking:
 
     def test_batch_writes_chunks_by_count(self, monkeypatch):
         """1500 tiny statements → ≥3 HTTP requests at MAX_BATCH_STATEMENTS=500."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         monkeypatch.setattr(
-            "yadgar.config.get_settings",
+            "yadgar._shared.config.get_settings",
             lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=1_000_000),
         )
 
@@ -906,10 +906,10 @@ class TestBatchWritesByteChunking:
         (not silently dropped) and emits a WARN log."""
         import logging
 
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         monkeypatch.setattr(
-            "yadgar.config.get_settings",
+            "yadgar._shared.config.get_settings",
             lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=100_000),
         )
 
@@ -925,10 +925,10 @@ class TestBatchWritesByteChunking:
         ]
 
         # pytest caplog attaches at root, but yadgar/log_config.py sets
-        # `yadgar.propagate = False`, so records from yadgar.storage.* never
+        # `yadgar.propagate = False`, so records from yadgar._shared.storage.* never
         # reach root → caplog stays empty regardless of `logger=` filter
         # (the `logger=` arg adjusts level on a logger but doesn't move the
-        # capture handler). Attach our own list-handler at yadgar.storage so
+        # capture handler). Attach our own list-handler at yadgar._shared.storage so
         # propagation goes UP one level and lands in records[] before
         # propagate=False at yadgar stops the chain.
         records: list[logging.LogRecord] = []
@@ -938,7 +938,7 @@ class TestBatchWritesByteChunking:
                 records.append(record)
 
         list_handler = _ListHandler(level=logging.WARNING)
-        target = logging.getLogger("yadgar.storage")
+        target = logging.getLogger("yadgar._shared.storage")
         prior_level = target.level
         target.setLevel(logging.WARNING)
         target.addHandler(list_handler)
@@ -950,11 +950,12 @@ class TestBatchWritesByteChunking:
 
         # Exactly one HTTP request — not dropped
         assert mock_http.post.call_count == 1
-        # A WARN was emitted by yadgar.storage or yadgar.storage.client
+        # A WARN was emitted by yadgar._shared.storage or yadgar._shared.storage.client
         assert any(
-            r.levelno >= logging.WARNING and r.name.startswith("yadgar.storage") for r in records
+            r.levelno >= logging.WARNING and r.name.startswith("yadgar._shared.storage")
+            for r in records
         ), (
-            f"no WARN from yadgar.storage* in {[(r.name, r.levelname, r.getMessage()) for r in records]}"
+            f"no WARN from yadgar._shared.storage* in {[(r.name, r.levelname, r.getMessage()) for r in records]}"
         )
 
     def test_batch_writes_no_413_when_framing_overhead_exceeds_estimate(self, monkeypatch):
@@ -973,7 +974,7 @@ class TestBatchWritesByteChunking:
         """
         import httpx
 
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         # Tight byte cap: 1 KB.  Each statement has 8 params with ~20-byte values.
         # Per-stmt estimate: sql (~60 B) + 8 × ~22 B values ≈ 236 B.
@@ -985,7 +986,7 @@ class TestBatchWritesByteChunking:
         limit = 1024
 
         monkeypatch.setattr(
-            "yadgar.config.get_settings",
+            "yadgar._shared.config.get_settings",
             lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=limit),
         )
 

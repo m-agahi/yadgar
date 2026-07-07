@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.cache import _REGISTRY
+from yadgar.core.cache import _REGISTRY
 
 
 @pytest.fixture(autouse=True)
 def _reset_epoch_and_cache(monkeypatch):
-    from yadgar.server.tools import _recall_shadow, project
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
+    from yadgar.core.server.tools import project
 
     _recall_shadow._reset_for_test()
     # Isolate each test: clear stored entries AND reset the module singleton's
@@ -44,7 +45,8 @@ def test_subdir_memorize_busts_parent_project_brief_epoch(monkeypatch):
     Written at the epoch layer with the resolver patched so subdir + parent both
     map to one git-root (a bare tmpdir would fall back to raw input on a non-git
     path and pass for the wrong reason)."""
-    from yadgar.server.tools import _recall_shadow, project
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
+    from yadgar.core.server.tools import project
 
     ROOT = "/repo"
 
@@ -72,7 +74,8 @@ def test_subdir_memorize_busts_parent_project_brief_epoch(monkeypatch):
 def test_bump_helper_normalizes_before_bump(monkeypatch):
     """The shared bump helper resolves its dir arg to git-root before bumping,
     so a raw subdir and the git-root land on the SAME epoch key."""
-    from yadgar.server.tools import _recall_shadow, project
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
+    from yadgar.core.server.tools import project
 
     ROOT = "/x/root"
     monkeypatch.setattr(project, "_resolve_project_root", lambda d: ROOT)
@@ -88,7 +91,7 @@ def test_bump_helper_normalizes_before_bump(monkeypatch):
 
 def _patch_compute(monkeypatch, calls: list):
     """Patch the catalog/full compute to a model-free sentinel + count calls."""
-    from yadgar.server.tools import project
+    from yadgar.core.server.tools import project
 
     def fake_compute(ctx: dict) -> dict:
         calls.append(ctx["resolved"])
@@ -107,7 +110,7 @@ def _patch_compute(monkeypatch, calls: list):
 
 
 def test_catalog_cache_miss_then_hit(monkeypatch):
-    from yadgar.server.tools import project
+    from yadgar.core.server.tools import project
 
     calls: list = []
     _patch_compute(monkeypatch, calls)
@@ -119,7 +122,7 @@ def test_catalog_cache_miss_then_hit(monkeypatch):
 
 
 def test_epoch_bump_busts_catalog_cache(monkeypatch):
-    from yadgar.server.tools import project
+    from yadgar.core.server.tools import project
 
     calls: list = []
     _patch_compute(monkeypatch, calls)
@@ -132,7 +135,7 @@ def test_epoch_bump_busts_catalog_cache(monkeypatch):
 
 def test_deep_copy_isolation_returned_brief(monkeypatch):
     """Mutating the returned brief dict must not corrupt the cached value."""
-    from yadgar.server.tools import project
+    from yadgar.core.server.tools import project
 
     calls: list = []
     _patch_compute(monkeypatch, calls)
@@ -149,7 +152,7 @@ def test_deep_copy_isolation_returned_brief(monkeypatch):
 def test_signals_mode_bypasses_cache(monkeypatch):
     """signals mode has low staleness tolerance (drives stop-hook writes) → it is
     NOT served from the whole-payload cache (option A)."""
-    from yadgar.server.tools import project
+    from yadgar.core.server.tools import project
 
     calls: list = []
     _patch_compute(monkeypatch, calls)
@@ -166,7 +169,7 @@ def test_signals_mode_bypasses_cache(monkeypatch):
 
 
 def test_different_mode_different_key(monkeypatch):
-    from yadgar.server.tools import project
+    from yadgar.core.server.tools import project
 
     calls: list = []
     _patch_compute(monkeypatch, calls)

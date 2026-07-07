@@ -51,8 +51,8 @@ def _insert_mem(storage, embeddings, content: str, heat: float = 0.9) -> int:
 
 
 def _insert_wiki(title: str, content: str) -> str:
-    from yadgar.server import _state as _st
-    from yadgar.wiki import WikiAddOptions
+    from yadgar._shared.runtime import state as _st
+    from yadgar._shared.wiki import WikiAddOptions
 
     assert _st._wiki is not None
     opts = WikiAddOptions(
@@ -74,7 +74,7 @@ def _insert_and_assign_pool(storage, embeddings, content: str) -> int:
     """Insert memory + assign to astrocyte pool (for landscape mode)."""
     from datetime import UTC, datetime
 
-    from yadgar.server import _state as _st
+    from yadgar._shared.runtime import state as _st
 
     emb = embeddings.encode(content)
     now = datetime.now(UTC).isoformat()
@@ -140,8 +140,8 @@ def variant_corpus(e2e_engines, monkeypatch):
     # Seed pool-assigned memory for landscape
     _insert_and_assign_pool(storage, embeddings, f"def fix_handler() resolved TypeError {_QUERY}")
 
-    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
     # Mark engines ready (fixture engines already initialized)
     original_ready = _svc._recall_engines_ready
@@ -304,7 +304,7 @@ class TestBackendLandscapeMode:
         self, variant_corpus, monkeypatch
     ):
         """When pool is available, landscape rows carry consensus_score + voting_domains."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
         from yadgar.backend.embed_service import app
 
         if _st._pool is None:

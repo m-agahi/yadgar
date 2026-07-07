@@ -19,10 +19,10 @@ class TestC2BranchFilterInSurrealQL:
 
     def _make_retriever(self, current_branch=None, default_branch="master"):
         """Build a Retriever with a recording storage mock."""
-        from yadgar.config import Settings
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.knowledge_graph import KnowledgeGraph
-        from yadgar.retrieval.core import Retriever
+        from yadgar._shared.config import Settings
+        from yadgar._shared.embeddings import EmbeddingEngine
+        from yadgar._shared.knowledge_graph import KnowledgeGraph
+        from yadgar._shared.retrieval.core import Retriever
 
         settings = Settings(
             DB_PATH="/tmp/test.db",
@@ -203,7 +203,7 @@ class TestC3LRUBucketJitter:
         """The actual _detect_branch function injects a per-directory hash jitter."""
         import inspect
 
-        from yadgar import server as s
+        from yadgar.core import server as s
 
         # Read the source of _detect_branch to verify the jitter formula is present
         src = inspect.getsource(s._detect_branch)
@@ -227,7 +227,7 @@ class TestC4BoostBoundedUnitInterval:
 
     def test_c4_boost_bounded_in_unit_interval(self):
         """Boosted scores stay <= 1.0 regardless of weight."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         weight = Settings().BRANCH_BOOST_WEIGHT  # type: ignore[attr-defined]
 
@@ -241,7 +241,7 @@ class TestC4BoostBoundedUnitInterval:
 
     def test_c4_boost_preserves_ranking(self):
         """Convex boost on middle candidate moves it up without violating [0,1]."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         weight = Settings().BRANCH_BOOST_WEIGHT  # type: ignore[attr-defined]
 
@@ -272,7 +272,7 @@ class TestC4BoostBoundedUnitInterval:
 
     def test_c4_no_boost_when_branch_is_none(self):
         """When current_branch=None, _retrieval_scores are unchanged."""
-        from yadgar import server as s
+        from yadgar.core import server as s
 
         # Monkeypatch branch detection to return None
         with patch.object(s, "_detect_branch", return_value=None):
@@ -301,7 +301,7 @@ class TestC4BoostBoundedUnitInterval:
 
                 # C4: boost only applies when _current_branch is not None
                 if _current_branch is not None:
-                    from yadgar.config import Settings
+                    from yadgar._shared.config import Settings
 
                     weight = Settings().BRANCH_BOOST_WEIGHT  # type: ignore[attr-defined]
                     for m in merged:
@@ -318,7 +318,7 @@ class TestC4BoostBoundedUnitInterval:
 
     def test_c4_branch_boost_weight_in_config(self):
         """BRANCH_BOOST_WEIGHT is defined in Settings and is a float in (0, 1)."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         settings = Settings()
         assert hasattr(settings, "BRANCH_BOOST_WEIGHT"), (
@@ -338,7 +338,7 @@ class TestC4BoostBoundedUnitInterval:
         """
         import inspect
 
-        from yadgar.server.tools._recall_pipeline import _apply_fanout_boosts
+        from yadgar._shared.runtime.recall_pipeline import _apply_fanout_boosts
 
         src = inspect.getsource(_apply_fanout_boosts)
         # Should NOT contain the old 1.5x multiplier
@@ -378,7 +378,7 @@ class TestC4BoostBoundedUnitInterval:
         import inspect
         import re as _re
 
-        from yadgar.server.tools._recall_pipeline import _apply_fanout_boosts
+        from yadgar._shared.runtime.recall_pipeline import _apply_fanout_boosts
 
         src = inspect.getsource(_apply_fanout_boosts)
         # The boost block assigns `base = m.get(...)`.  It must be:
@@ -402,10 +402,10 @@ class TestC5TemporalBranchFilter:
     """_collect_temporal_scores passes branch_filter to storage temporal methods."""
 
     def _make_retriever_temporal(self, current_branch="feat/x", default_branch="master"):
-        from yadgar.config import Settings
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.knowledge_graph import KnowledgeGraph
-        from yadgar.retrieval.core import Retriever
+        from yadgar._shared.config import Settings
+        from yadgar._shared.embeddings import EmbeddingEngine
+        from yadgar._shared.knowledge_graph import KnowledgeGraph
+        from yadgar._shared.retrieval.core import Retriever
 
         settings = Settings(
             DB_PATH="/tmp/test.db",

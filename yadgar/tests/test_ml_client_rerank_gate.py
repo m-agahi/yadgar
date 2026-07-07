@@ -24,9 +24,9 @@ import time
 import httpx
 import pytest
 
+import yadgar._shared.config as cfg
 import yadgar.backend.ml_client as ml
-import yadgar.config as cfg
-from yadgar.server import _offload
+from yadgar._shared.runtime import offload as _offload
 
 
 @pytest.fixture(autouse=True)

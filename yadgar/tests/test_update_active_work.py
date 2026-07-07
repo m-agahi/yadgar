@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -14,7 +14,7 @@ def _engines(tmp_path_factory):
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
     # v5.42.3: /tmp/aw_test is not a git repo; patch _detect_branch so tests
     # pass branch context without needing every call to supply branch_hint.
-    with patch("yadgar.server.tools.project._detect_branch", return_value="feat/test-branch"):
+    with patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"):
         yield
     server.shutdown()
 

@@ -28,7 +28,7 @@ def _make_handler(
     environ: dict[str, str] | None = None,
 ) -> Any:
     """Build a _ProxyHandler instance wired to a fake socket/rfile/wfile."""
-    from yadgar.viz_server import _Handler
+    from yadgar.core.viz_server import _Handler
 
     handler = _Handler.__new__(_Handler)
     handler.command = method
@@ -63,7 +63,7 @@ class TestProxyInjectsBearer:
                 200, content=b'{"nodes":[]}', headers={"content-type": "application/json"}
             )
 
-        from yadgar.viz_server import _proxy_request
+        from yadgar.core.viz_server import _proxy_request
 
         result = _proxy_request(
             method="GET",
@@ -85,7 +85,7 @@ class TestProxyInjectsBearer:
             captured_headers.update(kwargs.get("headers", {}))
             return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
 
-        from yadgar.viz_server import _proxy_request
+        from yadgar.core.viz_server import _proxy_request
 
         _proxy_request(
             method="GET",
@@ -106,7 +106,7 @@ class TestProxyPreservesStatusAndContentType:
         def _fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(404, content=b"not found", headers={"content-type": "text/plain"})
 
-        from yadgar.viz_server import _proxy_request
+        from yadgar.core.viz_server import _proxy_request
 
         result = _proxy_request(
             method="GET",
@@ -129,7 +129,7 @@ class TestProxyPreservesStatusAndContentType:
                 headers={"content-type": "application/json; charset=utf-8"},
             )
 
-        from yadgar.viz_server import _proxy_request
+        from yadgar.core.viz_server import _proxy_request
 
         result = _proxy_request(
             method="GET",
@@ -152,7 +152,7 @@ class TestProxyPreservesQueryString:
             captured_url.append(url)
             return httpx.Response(200, content=b"[]", headers={"content-type": "application/json"})
 
-        from yadgar.viz_server import _proxy_request
+        from yadgar.core.viz_server import _proxy_request
 
         _proxy_request(
             method="GET",
@@ -171,7 +171,7 @@ class TestVizProxyEnvFlag:
         """Proxy should be active when YADGAR_VIZ_PROXY is unset (default on)."""
         monkeypatch.delenv("YADGAR_VIZ_PROXY", raising=False)
 
-        from yadgar.viz_server import _proxy_enabled
+        from yadgar.core.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is True
 
@@ -179,7 +179,7 @@ class TestVizProxyEnvFlag:
         """YADGAR_VIZ_PROXY=0 must disable proxy."""
         monkeypatch.setenv("YADGAR_VIZ_PROXY", "0")
 
-        from yadgar.viz_server import _proxy_enabled
+        from yadgar.core.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is False
 
@@ -187,7 +187,7 @@ class TestVizProxyEnvFlag:
         """YADGAR_VIZ_PROXY=1 must enable proxy."""
         monkeypatch.setenv("YADGAR_VIZ_PROXY", "1")
 
-        from yadgar.viz_server import _proxy_enabled
+        from yadgar.core.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is True
 
@@ -214,7 +214,7 @@ class TestHandleProxyLazyImport:
 
         fake_settings = SimpleNamespace(MCP_AUTH_TOKEN="lazy-import-test-token")
 
-        from yadgar.viz_server import _Handler
+        from yadgar.core.viz_server import _Handler
 
         handler = _Handler.__new__(_Handler)
         handler.command = "GET"
@@ -238,8 +238,8 @@ class TestHandleProxyLazyImport:
         handler.wfile = MagicMock()
 
         with (
-            patch("yadgar.config.get_settings", return_value=fake_settings),
-            patch("yadgar.viz_server._proxy_request", side_effect=_fake_proxy_request),
+            patch("yadgar._shared.config.get_settings", return_value=fake_settings),
+            patch("yadgar.core.viz_server._proxy_request", side_effect=_fake_proxy_request),
         ):
             # Must NOT raise ImportError — that's the regression we're guarding
             handler._handle_proxy()
@@ -256,7 +256,7 @@ class TestProxyTimeout:
         """When no client_factory is provided, proxy uses 60s read timeout."""
         import inspect
 
-        from yadgar import viz_server
+        from yadgar.core import viz_server
 
         # Re-read the source to verify the lambda sets Timeout(60.0, …)
         src = inspect.getsource(viz_server._proxy_request)
@@ -270,7 +270,7 @@ class TestProxyTimeout:
             called.append(True)
             return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
 
-        from yadgar.viz_server import _proxy_request
+        from yadgar.core.viz_server import _proxy_request
 
         result = _proxy_request(
             method="GET",
@@ -289,7 +289,7 @@ class TestRunVizServerSignature:
         """run_viz_server must still accept host= kwarg (regression guard)."""
         import inspect
 
-        from yadgar.viz_server import run_viz_server
+        from yadgar.core.viz_server import run_viz_server
 
         sig = inspect.signature(run_viz_server)
         assert "host" in sig.parameters
@@ -298,7 +298,7 @@ class TestRunVizServerSignature:
         """run_viz_server must accept daemon_url= kwarg."""
         import inspect
 
-        from yadgar.viz_server import run_viz_server
+        from yadgar.core.viz_server import run_viz_server
 
         sig = inspect.signature(run_viz_server)
         assert "daemon_url" in sig.parameters

@@ -53,12 +53,14 @@ def _run_memorize_with_settings(settings_stub: MagicMock, retriever_mock: MagicM
     """
     import importlib
 
-    import yadgar.file_queue as _fq
-    import yadgar.server._state as _state_mod
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
+    import yadgar._shared.runtime.state as _state_mod
+    import yadgar.core.file_queue as _fq
 
-    _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
-    _validate_mod = importlib.import_module("yadgar.server.tools._memorize_phases._phase_validate")
+    _mem_mod = importlib.import_module("yadgar.core.server.tools.memorize")
+    _validate_mod = importlib.import_module(
+        "yadgar.core.server.tools._memorize_phases._phase_validate"
+    )
 
     mock_storage = MagicMock()
     mock_storage.insert_memory.return_value = "memory:test000"
@@ -91,8 +93,8 @@ def _run_memorize_with_settings(settings_stub: MagicMock, retriever_mock: MagicM
         patch.object(_state_mod, "_retriever", retriever_mock),
     ):
         # also patch settings in post_write path
-        with patch("yadgar.server.tools._memorize_phases._phase_post_write._push_event"):
-            from yadgar.server.tools.memorize import memorize
+        with patch("yadgar.core.server.tools._memorize_phases._phase_post_write._push_event"):
+            from yadgar.core.server.tools.memorize import memorize
 
             start = time.perf_counter()
             memorize("hello world", context="test", tags=[], branch_hint="test-branch")
@@ -139,7 +141,7 @@ class TestReinjectOnCallsRecall:
 class TestReinjectDefaultIsOff:
     def test_reinject_default_is_off(self, monkeypatch):
         """Import Settings with no YADGAR_REINJECT_ON_WRITE env → field is False."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.delenv("YADGAR_REINJECT_ON_WRITE", raising=False)
         cfg.get_settings.cache_clear()

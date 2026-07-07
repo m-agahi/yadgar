@@ -47,7 +47,7 @@ def _reset_tracer_provider() -> None:
             trace._TRACER_PROVIDER = None
         trace.set_tracer_provider(TracerProvider())
         try:
-            import yadgar.tracing as _tr
+            import yadgar._shared.tracing as _tr
 
             _tr._SETUP_DONE.clear()
             _tr._stop_span_log_queue()
@@ -90,7 +90,7 @@ def recording_provider_with_log_span_processor():
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-    from yadgar import tracing as tr
+    from yadgar._shared import tracing as tr
 
     once = getattr(trace, "_TRACER_PROVIDER_SET_ONCE", None)
     prev_once_done = getattr(once, "_done", None) if once is not None else None
@@ -131,7 +131,7 @@ def _make_observed_log_path_logger() -> logging.Logger:
     filter, and the RotatingJSONLFileHandler emit path — the same objects prod
     installs. Each observed method opens a span per record when decorated.
     """
-    from yadgar.log_config import ContentRedactor, JSONLogFormatter
+    from yadgar._shared.log_config import ContentRedactor, JSONLogFormatter
 
     lg = logging.getLogger("yadgar.tests.amp_probe")
     lg.handlers.clear()
@@ -167,7 +167,7 @@ class TestLogSpanAmplification:
         finally:
             # Flush the span-log queue path so any amplified span_end records land.
             try:
-                import yadgar.tracing as _tr
+                import yadgar._shared.tracing as _tr
 
                 _tr._stop_span_log_queue()
             except Exception:

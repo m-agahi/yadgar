@@ -8,7 +8,8 @@ from unittest.mock import patch
 import pytest
 from starlette.testclient import TestClient
 
-from yadgar import __version__, server
+from yadgar import __version__
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -95,7 +96,7 @@ class TestHealthEndpoint:
         server._active_transport = "sse"
         server._start_time = 1000000.0
         client = self._get_client("sse")
-        with patch("yadgar.server._offload.pool_saturated", return_value=True):
+        with patch("yadgar._shared.runtime.offload.pool_saturated", return_value=True):
             resp = client.get("/health/live")
         assert resp.status_code == 503
         assert resp.json()["tool_pool_saturated"] is True

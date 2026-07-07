@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -60,7 +60,7 @@ def test_restore_adr_log_latest_ids_when_present(tmp_path):
         "## ADR-0003: Third decision\n\nsome content\n"
     )
     with patch(
-        "yadgar.server.tools.wiki.wiki_read",
+        "yadgar.core.server.tools.wiki.wiki_read",
         return_value={"content": log_content, "slug": "test-adr-log"},
     ):
         result = server.project_brief(str(tmp_path), mode="restore")
@@ -82,7 +82,7 @@ def test_restore_adr_log_latest_ids_capped_at_three(tmp_path):
         "## ADR-0005: Fifth\n\nsome content\n"
     )
     with patch(
-        "yadgar.server.tools.wiki.wiki_read",
+        "yadgar.core.server.tools.wiki.wiki_read",
         return_value={"content": log_content, "slug": "test-adr-log"},
     ):
         result = server.project_brief(str(tmp_path), mode="restore")
@@ -113,11 +113,11 @@ def test_restore_adr_log_uses_default_branch_hint(tmp_path):
         captured_calls.append({"slug": slug, "directory": directory, "branch_hint": branch_hint})
         return {"error": "not found"}
 
-    with patch("yadgar.server.tools.wiki.wiki_read", side_effect=fake_wiki_read):
+    with patch("yadgar.core.server.tools.wiki.wiki_read", side_effect=fake_wiki_read):
         server.project_brief(str(tmp_path), mode="restore")
 
     # At least one call should be for the ADR log slug
-    from yadgar.server.tools.project import _get_default_branch
+    from yadgar.core.server.tools.project import _get_default_branch
 
     expected_branch = _get_default_branch(str(tmp_path))
     adr_calls = [c for c in captured_calls if "adr-log" in (c.get("slug") or "")]
@@ -136,7 +136,7 @@ def test_restore_adr_log_no_crash_when_wiki_read_raises(tmp_path):
     def raising_wiki_read(slug, directory=None, branch_hint=None):
         raise RuntimeError("wiki connection error")
 
-    with patch("yadgar.server.tools.wiki.wiki_read", side_effect=raising_wiki_read):
+    with patch("yadgar.core.server.tools.wiki.wiki_read", side_effect=raising_wiki_read):
         result = server.project_brief(str(tmp_path), mode="restore")
 
     # Must not crash; adr_log field present with empty latest_ids or absent but no exception

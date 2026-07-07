@@ -20,8 +20,8 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from yadgar import server
-from yadgar.viz_server import _Handler
+from yadgar.core import server
+from yadgar.core.viz_server import _Handler
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -92,7 +92,7 @@ class TestVizProxyForwardsBookmarks:
     def test_proxy_routes_api_bookmarks_get(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """GET /api/bookmarks is treated as an /api/* path and proxied."""
         monkeypatch.setenv("YADGAR_VIZ_PROXY", "1")
-        from yadgar.viz_server import _proxy_enabled
+        from yadgar.core.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is True
 
@@ -121,12 +121,12 @@ class TestVizProxyForwardsBookmarks:
             captured_url.append(upstream_url)
             return httpx.Response(200, content=b"[]", headers={"content-type": "application/json"})
 
-        import yadgar.viz_server as _vs
+        import yadgar.core.viz_server as _vs
 
         monkeypatch.setattr(_vs, "_proxy_request", _fake_proxy_request)
         from unittest.mock import patch
 
-        with patch("yadgar.config.get_settings", return_value=fake_settings):
+        with patch("yadgar._shared.config.get_settings", return_value=fake_settings):
             handler._handle_proxy()
 
         assert any("/api/bookmarks" in u for u in captured_url), (
@@ -138,7 +138,7 @@ class TestVizProxyForwardsBookmarks:
         # viz_server may not have do_DELETE. Test that the viz_server handles it at all.
         # At minimum, proxy path matching should work for /api/bookmarks/foo
         monkeypatch.setenv("YADGAR_VIZ_PROXY", "1")
-        from yadgar.viz_server import _proxy_enabled
+        from yadgar.core.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is True
 
@@ -153,7 +153,7 @@ class TestDaemonBookmarkRoutes:
 
     def test_bookmark_list_route_registered(self) -> None:
         """GET /api/bookmarks route handler is importable."""
-        from yadgar.server import http_bookmarks as _hb
+        from yadgar.core.server import http_bookmarks as _hb
 
         # The route is registered via @mcp_server.custom_route at import time.
         # Verify the handler function exists.
@@ -163,7 +163,7 @@ class TestDaemonBookmarkRoutes:
 
     def test_bookmark_add_route_registered(self) -> None:
         """POST /api/bookmarks route handler is importable."""
-        from yadgar.server import http_bookmarks as _hb
+        from yadgar.core.server import http_bookmarks as _hb
 
         assert hasattr(_hb, "api_bookmarks_add"), (
             "api_bookmarks_add handler not registered in yadgar.server.http_bookmarks"
@@ -171,7 +171,7 @@ class TestDaemonBookmarkRoutes:
 
     def test_bookmark_remove_route_registered(self) -> None:
         """DELETE /api/bookmarks/{slug} route handler is importable."""
-        from yadgar.server import http_bookmarks as _hb
+        from yadgar.core.server import http_bookmarks as _hb
 
         assert hasattr(_hb, "api_bookmarks_remove"), (
             "api_bookmarks_remove handler not registered in yadgar.server.http_bookmarks"
@@ -179,7 +179,7 @@ class TestDaemonBookmarkRoutes:
 
     def test_bookmark_reorder_route_registered(self) -> None:
         """PUT /api/bookmarks/{slug}/position route handler is importable."""
-        from yadgar.server import http_bookmarks as _hb
+        from yadgar.core.server import http_bookmarks as _hb
 
         assert hasattr(_hb, "api_bookmarks_reorder"), (
             "api_bookmarks_reorder handler not registered in yadgar.server.http_bookmarks"
@@ -196,7 +196,7 @@ class TestBookmarkAPIEndToEnd:
 
     def test_api_bookmarks_post_creates_entry(self) -> None:
         """bookmark_add creates a bookmark retrievable by bookmark_list."""
-        from yadgar.server.tools.bookmarks import bookmark_add, bookmark_list
+        from yadgar.core.server.tools.bookmarks import bookmark_add, bookmark_list
 
         bookmark_add("e2e-slug", label_override="E2E Test")
         rows = bookmark_list()
@@ -205,7 +205,7 @@ class TestBookmarkAPIEndToEnd:
 
     def test_api_bookmarks_delete_removes_entry(self) -> None:
         """bookmark_remove removes the bookmark from list."""
-        from yadgar.server.tools.bookmarks import bookmark_add, bookmark_list, bookmark_remove
+        from yadgar.core.server.tools.bookmarks import bookmark_add, bookmark_list, bookmark_remove
 
         bookmark_add("rm-e2e")
         bookmark_remove("rm-e2e")
@@ -215,14 +215,14 @@ class TestBookmarkAPIEndToEnd:
 
     def test_api_bookmarks_post_missing_slug_rejected(self) -> None:
         """bookmark_add with empty slug returns error response."""
-        from yadgar.server.tools.bookmarks import bookmark_add
+        from yadgar.core.server.tools.bookmarks import bookmark_add
 
         result = bookmark_add("")
         assert result.get("added") is False
 
     def test_api_bookmarks_reorder_works(self) -> None:
         """bookmark_reorder shifts positions correctly."""
-        from yadgar.server.tools.bookmarks import bookmark_add, bookmark_list, bookmark_reorder
+        from yadgar.core.server.tools.bookmarks import bookmark_add, bookmark_list, bookmark_reorder
 
         bookmark_add("order-a")
         bookmark_add("order-b")
@@ -234,13 +234,13 @@ class TestBookmarkAPIEndToEnd:
 
     def test_wiki_read_route_registered(self) -> None:
         """Existing /api/wiki/read route still resolves (regression guard)."""
-        from yadgar.server import http as _http
+        from yadgar.core.server import http as _http
 
         assert hasattr(_http, "api_wiki_read"), "api_wiki_read handler must remain registered"
 
     def test_wiki_search_route_registered(self) -> None:
         """GET /api/wiki/search route handler registered."""
-        from yadgar.server import http_bookmarks as _hb
+        from yadgar.core.server import http_bookmarks as _hb
 
         assert hasattr(_hb, "api_wiki_search"), (
             "api_wiki_search handler not registered in yadgar.server.http_bookmarks"
@@ -248,7 +248,7 @@ class TestBookmarkAPIEndToEnd:
 
     def test_wiki_list_route_registered(self) -> None:
         """GET /api/wiki/list route handler registered."""
-        from yadgar.server import http_bookmarks as _hb
+        from yadgar.core.server import http_bookmarks as _hb
 
         assert hasattr(_hb, "api_wiki_list"), (
             "api_wiki_list handler not registered in yadgar.server.http_bookmarks"

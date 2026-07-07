@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 def _make_stats_data(**kwargs):
     """Build a StatsData with provided field overrides."""
-    from yadgar.cli.stats import StatsData
+    from yadgar.core.cli.stats import StatsData
 
     sd = StatsData()
     for k, v in kwargs.items():
@@ -46,7 +46,7 @@ def _mock_db(query_responses: dict[str, list]) -> MagicMock:
 
 class TestStatsDataFields:
     def test_has_data_quality_fields(self):
-        from yadgar.cli.stats import StatsData
+        from yadgar.core.cli.stats import StatsData
 
         sd = StatsData()
         assert hasattr(sd, "dq_null_embedding_count")
@@ -58,7 +58,7 @@ class TestStatsDataFields:
         assert hasattr(sd, "dq_surprise_p95")
 
     def test_data_quality_defaults(self):
-        from yadgar.cli.stats import StatsData
+        from yadgar.core.cli.stats import StatsData
 
         sd = StatsData()
         assert sd.dq_null_embedding_count == 0
@@ -75,7 +75,7 @@ class TestStatsDataFields:
 
 class TestQueryDataQuality:
     def test_no_op_when_total_zero(self):
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         sd = _make_stats_data(total=0)
         db = MagicMock()
@@ -85,7 +85,7 @@ class TestQueryDataQuality:
         assert sd.dq_embedding_valid_ratio == 0.0
 
     def test_null_embedding_ratio(self):
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         sd = _make_stats_data(total=100, stale=0)
 
@@ -104,7 +104,7 @@ class TestQueryDataQuality:
         assert abs(sd.dq_embedding_valid_ratio - 0.80) < 1e-6
 
     def test_full_embedding_validity(self):
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         sd = _make_stats_data(total=50, stale=0)
         db = _mock_db(
@@ -121,7 +121,7 @@ class TestQueryDataQuality:
         assert sd.dq_embedding_valid_ratio == 1.0
 
     def test_duplicate_rate_computed(self):
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         sd = _make_stats_data(total=100, stale=0)
         db = _mock_db(
@@ -137,7 +137,7 @@ class TestQueryDataQuality:
         assert abs(sd.dq_duplicate_rate - 0.30) < 1e-6
 
     def test_zombie_rate_uses_stale(self):
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         # 80 active, 20 stale
         sd = _make_stats_data(total=80, stale=20)
@@ -155,7 +155,7 @@ class TestQueryDataQuality:
         assert abs(sd.dq_zombie_rate - 0.20) < 1e-6
 
     def test_domain_coverage(self):
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         sd = _make_stats_data(total=200, stale=0)
         db = _mock_db(
@@ -171,7 +171,7 @@ class TestQueryDataQuality:
         assert abs(sd.dq_domain_coverage - 0.75) < 1e-6
 
     def test_surprise_p50_p95(self):
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         sd = _make_stats_data(total=50, stale=0)
         # 30 rows with surprise scores
@@ -197,7 +197,7 @@ class TestQueryDataQuality:
 
     def test_surprise_p50_with_few_scores(self):
         """With <20 scores, p95 falls back to max()."""
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         sd = _make_stats_data(total=20, stale=0)
         rows = [{"surprise_score": s} for s in [0.1, 0.2, 0.5, 0.9, 1.5]]
@@ -217,7 +217,7 @@ class TestQueryDataQuality:
 
     def test_db_error_silently_swallowed(self):
         """DB errors should not raise — graceful degradation."""
-        from yadgar.cli.stats import _query_data_quality
+        from yadgar.core.cli.stats import _query_data_quality
 
         sd = _make_stats_data(total=50, stale=0)
         db = MagicMock()
@@ -236,7 +236,7 @@ class TestQueryDataQuality:
 
 class TestBuildJsonOutput:
     def test_data_quality_section_present(self):
-        from yadgar.cli.stats import _build_json_output
+        from yadgar.core.cli.stats import _build_json_output
 
         sd = _make_stats_data(
             total=100,
@@ -262,7 +262,7 @@ class TestBuildJsonOutput:
         assert abs(dq["surprise_p95"] - 0.75) < 0.0001
 
     def test_data_quality_null_surprise_is_none(self):
-        from yadgar.cli.stats import _build_json_output
+        from yadgar.core.cli.stats import _build_json_output
 
         sd = _make_stats_data(total=0)
         out = _build_json_output(sd)
@@ -276,7 +276,7 @@ class TestBuildJsonOutput:
 
 class TestPrintTableOutput:
     def test_data_quality_section_in_output(self, capsys):
-        from yadgar.cli.stats import _print_table_output
+        from yadgar.core.cli.stats import _print_table_output
 
         sd = _make_stats_data(
             total=100,
@@ -300,7 +300,7 @@ class TestPrintTableOutput:
         assert "Surprise p50" in captured.out
 
     def test_data_quality_section_no_surprise(self, capsys):
-        from yadgar.cli.stats import _print_table_output
+        from yadgar.core.cli.stats import _print_table_output
 
         sd = _make_stats_data(total=10, stale=0)
         _print_table_output(sd, project=None)

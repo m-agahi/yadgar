@@ -87,7 +87,7 @@ def _assert_child_of(exporter, child_name: str, parent_name: str) -> None:
 
 
 def _make_scoring_stub():
-    from yadgar.retrieval.scoring import _ScoringMixin
+    from yadgar._shared.retrieval.scoring import _ScoringMixin
 
     class _Stub(_ScoringMixin):
         def __init__(self):
@@ -137,7 +137,7 @@ def test_spreading_stage_span_nested(span_exporter):
 
 
 def test_fts_stage_span_emits(span_exporter):
-    from yadgar.retrieval.scoring import FTSParams
+    from yadgar._shared.retrieval.scoring import FTSParams
 
     stub = _make_scoring_stub()
     stub._storage.search_memories_fts_scored.return_value = []
@@ -179,7 +179,7 @@ def test_rerank_stage_spans_nested(span_exporter):
     """A rerank stage (heuristic) emits retrieval.rerank.heuristic under retrieval.rerank."""
     from opentelemetry import trace
 
-    from yadgar.retrieval.reranking import RerankContext, _RerankingMixin
+    from yadgar._shared.retrieval.reranking import RerankContext, _RerankingMixin
 
     class _Stub(_RerankingMixin):
         def __init__(self):
@@ -211,7 +211,7 @@ def test_rerank_stage_spans_nested(span_exporter):
 
 def test_write_surprisal_span_emits(span_exporter):
     """WriteGate.compute_surprisal emits write.surprisal span."""
-    from yadgar.predictive_coding import WriteGate
+    from yadgar._shared.predictive_coding import WriteGate
 
     gate = WriteGate.__new__(WriteGate)
     gate._storage = MagicMock()
@@ -237,7 +237,7 @@ def test_drainer_apply_span_emits_and_does_not_raise(span_exporter):
     (start_as_current_span is a single-use generator). A double __enter__ would
     raise RuntimeError on every drained record and DLQ every write.
     """
-    from yadgar.file_queue.apply import _ApplyMixin
+    from yadgar.core.file_queue.apply import _ApplyMixin
 
     applied = []
 
@@ -266,7 +266,7 @@ def test_drainer_apply_no_double_span_after_observe(span_exporter):
     nested drainer.apply_inner. Guards against the double-span trap (a decorated
     body-span opener would emit two drainer.apply spans).
     """
-    from yadgar.file_queue.apply import _ApplyMixin
+    from yadgar.core.file_queue.apply import _ApplyMixin
 
     # op="unknown" reaches the real (now @observe-decorated) _apply_inner's else
     # branch — a debug log, no tool import — so drainer.apply_inner span opens
@@ -281,7 +281,7 @@ def test_drainer_apply_no_double_span_after_observe(span_exporter):
 
 def test_engram_allocate_boundary_span_emits(span_exporter):
     """EngramAllocator.allocate emits the engram.allocate boundary span."""
-    from yadgar.engram import EngramAllocator
+    from yadgar._shared.engram import EngramAllocator
 
     alloc = EngramAllocator.__new__(EngramAllocator)
     alloc._storage = MagicMock()
@@ -301,7 +301,7 @@ def test_engram_allocate_boundary_span_emits(span_exporter):
 
 def test_cognitive_map_record_transition_boundary_span_emits(span_exporter):
     """CognitiveMap.record_transition emits the cognitive_map.record_transition boundary span."""
-    from yadgar.cognitive_map import CognitiveMap
+    from yadgar._shared.cognitive_map import CognitiveMap
 
     cm = CognitiveMap.__new__(CognitiveMap)
     cm._storage = MagicMock()
@@ -314,7 +314,7 @@ def test_cognitive_map_record_transition_boundary_span_emits(span_exporter):
 
 def test_kg_extract_entities_typed_boundary_span_emits(span_exporter):
     """KnowledgeGraph.extract_entities_typed emits the boundary span (write-path entity extract)."""
-    from yadgar.knowledge_graph import KnowledgeGraph
+    from yadgar._shared.knowledge_graph import KnowledgeGraph
 
     kg = KnowledgeGraph.__new__(KnowledgeGraph)
     kg._storage = MagicMock()
@@ -326,7 +326,7 @@ def test_kg_extract_entities_typed_boundary_span_emits(span_exporter):
 
 def test_queue_enqueue_boundary_span_emits(span_exporter, tmp_path):
     """FileQueue.enqueue emits the queue.enqueue boundary span (durability write boundary)."""
-    from yadgar.file_queue.queue import FileQueue
+    from yadgar.core.file_queue.queue import FileQueue
 
     q = FileQueue(base_dir=str(tmp_path))
     q.enqueue("memorize", {"content": "x"})

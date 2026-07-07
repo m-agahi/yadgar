@@ -32,16 +32,16 @@ class TestShutdownTimeoutWiring:
         tests that reload yadgar.server pick up this empty instance, clearing all
         route/tool registrations (Root-A xdist pollution — v5.56 fix).
         """
-        import yadgar.server as _srv
-        import yadgar.server._app as _app
+        import yadgar.core.server as _srv
+        import yadgar.core.server._app as _app
 
         self._saved_app_mcp = _app.mcp_server
         self._saved_srv_mcp = _srv.__dict__.get("mcp_server")
 
     def teardown_method(self):
         """Restore mcp_server on both _app and server to the original instance."""
-        import yadgar.server as _srv
-        import yadgar.server._app as _app
+        import yadgar.core.server as _srv
+        import yadgar.core.server._app as _app
 
         if self._saved_app_mcp is not None:
             _app.mcp_server = self._saved_app_mcp
@@ -72,7 +72,7 @@ class TestShutdownTimeoutWiring:
         # Re-import server._app so get_settings() picks up env reset.
         import importlib
 
-        import yadgar.server._app as app_mod
+        import yadgar.core.server._app as app_mod
 
         importlib.reload(app_mod)
         mcp_srv = app_mod.mcp_server
@@ -91,7 +91,7 @@ class TestShutdownTimeoutWiring:
 
         import importlib
 
-        import yadgar.server._app as app_mod
+        import yadgar.core.server._app as app_mod
 
         importlib.reload(app_mod)
         mcp_srv = app_mod.mcp_server
@@ -110,8 +110,8 @@ class TestShutdownTimeoutWiring:
 
         import importlib
 
-        import yadgar.config as cfg_mod
-        import yadgar.server._app as app_mod
+        import yadgar._shared.config as cfg_mod
+        import yadgar.core.server._app as app_mod
 
         # Use cache_clear() instead of reload() to pick up fresh env values without
         # replacing the module object in sys.modules.  importlib.reload(yadgar.config)

@@ -16,7 +16,7 @@ import pytest
 
 @pytest.fixture
 def storage(tmp_path):
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     engine = StorageEngine(str(tmp_path / "dc_norm.db"), embedding_dim=384)
     yield engine

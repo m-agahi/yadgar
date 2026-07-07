@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-_SCRIPT_PATH = Path(__file__).parent.parent / "hooks" / "subagent-stop.py"
+_SCRIPT_PATH = Path(__file__).parent.parent / "core" / "hooks" / "subagent-stop.py"
 
 
 # ---------------------------------------------------------------------------

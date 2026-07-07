@@ -1,7 +1,7 @@
 import pytest
 
-from yadgar.config import Settings
-from yadgar.sensory_buffer import ActionLogger
+from yadgar._shared.config import Settings
+from yadgar._shared.sensory_buffer import ActionLogger
 
 
 @pytest.fixture(scope="module")

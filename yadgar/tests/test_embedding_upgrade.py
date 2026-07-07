@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from yadgar.embeddings import MODEL_DIMENSIONS, EmbeddingEngine
-from yadgar.storage import StorageEngine
+from yadgar._shared.embeddings import MODEL_DIMENSIONS, EmbeddingEngine
+from yadgar._shared.storage import StorageEngine
 
 # Detect whether the model can actually be loaded
 _engine = EmbeddingEngine()

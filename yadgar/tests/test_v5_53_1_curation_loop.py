@@ -66,14 +66,14 @@ class TestStaleWikiCount:
 
     def test_no_drift_returns_zero(self, tmp_path):
         """No hash drift → count == 0."""
-        from yadgar.server.tools.project import _compute_stale_wiki_count
+        from yadgar.core.server.tools.project import _compute_stale_wiki_count
 
         # Fresh dir with no wiki subdir → 0
         assert _compute_stale_wiki_count(str(tmp_path)) == 0
 
     def test_drifted_page_count_rises(self, tmp_path):
         """A page whose source file changed → count == 1."""
-        from yadgar.server.tools.project import (
+        from yadgar.core.server.tools.project import (
             _compute_stale_wiki_count,
             _stale_count_cache,
         )
@@ -99,7 +99,7 @@ class TestStaleWikiCount:
 
     def test_multiple_drifted_pages(self, tmp_path):
         """Two pages drift → count == 2."""
-        from yadgar.server.tools.project import (
+        from yadgar.core.server.tools.project import (
             _compute_stale_wiki_count,
             _stale_count_cache,
         )
@@ -120,7 +120,7 @@ class TestStaleWikiCount:
 
     def test_ttl_cache_prevents_rescan(self, tmp_path, monkeypatch):
         """Within TTL window, _scan_stale_wiki_slugs is NOT called a second time."""
-        from yadgar.server.tools import project as _proj
+        from yadgar.core.server.tools import project as _proj
 
         call_count = [0]
         original_scan = _proj._scan_stale_wiki_slugs
@@ -141,8 +141,8 @@ class TestStaleWikiCount:
 
     def test_ttl_zero_disables_cache(self, tmp_path, monkeypatch):
         """TTL=0 disables caching: each call triggers a scan."""
-        from yadgar.config import Settings
-        from yadgar.server.tools import project as _proj
+        from yadgar._shared.config import Settings
+        from yadgar.core.server.tools import project as _proj
 
         call_count = [0]
         original_scan = _proj._scan_stale_wiki_slugs
@@ -162,7 +162,7 @@ class TestStaleWikiCount:
 
     def test_stale_wiki_count_in_signals_not_hardcoded(self, tmp_path, monkeypatch):
         """project_brief signals mode includes stale_wiki_count from real compute."""
-        from yadgar.server.tools import project as _proj
+        from yadgar.core.server.tools import project as _proj
 
         # Patch compute to return a known value
         monkeypatch.setattr(_proj, "_compute_stale_wiki_count", lambda resolved: 3)
@@ -209,7 +209,7 @@ class TestWikiRefreshStaleReturn:
 
     def test_stale_slugs_in_return(self, tmp_path):
         """Stale page → stale list contains its slug, stale_count == 1."""
-        from yadgar.server.tools.project import _wiki_refresh_stale_impl
+        from yadgar.core.server.tools.project import _wiki_refresh_stale_impl
 
         wiki_dir = tmp_path / ".local-review" / "wiki"
         wiki_dir.mkdir(parents=True)
@@ -232,7 +232,7 @@ class TestWikiRefreshStaleReturn:
 
     def test_no_stale_returns_empty_lists(self, tmp_path):
         """No drift → stale=[], stale_count=0, suggested_calls=[]."""
-        from yadgar.server.tools.project import _wiki_refresh_stale_impl
+        from yadgar.core.server.tools.project import _wiki_refresh_stale_impl
 
         wiki_dir = tmp_path / ".local-review" / "wiki"
         wiki_dir.mkdir(parents=True)
@@ -250,7 +250,7 @@ class TestWikiRefreshStaleReturn:
 
     def test_suggested_calls_mention_repo_wiki(self, tmp_path):
         """suggested_calls contain repo-wiki reference for each stale slug."""
-        from yadgar.server.tools.project import _wiki_refresh_stale_impl
+        from yadgar.core.server.tools.project import _wiki_refresh_stale_impl
 
         wiki_dir = tmp_path / ".local-review" / "wiki"
         wiki_dir.mkdir(parents=True)
@@ -281,8 +281,8 @@ def _make_drainer_with_mock_wiki(mock_wiki):
     """Build a QueueDrainer and patch _st._wiki to mock_wiki."""
     import tempfile
 
-    import yadgar.server._state as _st
-    from yadgar.file_queue import FileQueue, QueueDrainer
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.file_queue import FileQueue, QueueDrainer
 
     tmp = tempfile.mkdtemp()
     fq = FileQueue(tmp)
@@ -302,8 +302,8 @@ class TestDedupGateSuggestedSlug:
         """Call _sim_gate_for_drainer with a mocked wiki returning given candidates."""
         import tempfile
 
-        import yadgar.server._state as _st
-        from yadgar.file_queue import FileQueue, QueueDrainer
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.file_queue import FileQueue, QueueDrainer
 
         mock_wiki = MagicMock()
         mock_wiki.find_similar_wiki_pages.return_value = candidates
@@ -365,7 +365,7 @@ class TestDedupGateSuggestedSlug:
         # (early return before find_similar_wiki_pages is even called)
         import tempfile
 
-        from yadgar.file_queue import FileQueue, QueueDrainer
+        from yadgar.core.file_queue import FileQueue, QueueDrainer
 
         with tempfile.TemporaryDirectory() as tmp:
             fq = FileQueue(tmp)
@@ -377,7 +377,7 @@ class TestDedupGateSuggestedSlug:
         """replace_slug set → gate returns None (bypass) before find_similar called."""
         import tempfile
 
-        from yadgar.file_queue import FileQueue, QueueDrainer
+        from yadgar.core.file_queue import FileQueue, QueueDrainer
 
         payload = {
             "title": "Yadgar 2026 Roadmap",
@@ -449,7 +449,7 @@ class TestDedupGateSuggestedSlug:
 class TestWriteBackNudgeInStopHook:
     """Stop hook prompt includes write-back consolidation nudge."""
 
-    _HOOK_PATH = Path(__file__).parent.parent / "hooks" / "stop-memory-checkpoint.py"
+    _HOOK_PATH = Path(__file__).parent.parent / "core" / "hooks" / "stop-memory-checkpoint.py"
 
     def _run_hook(self, hook_path: Path, stdin_data: dict, env: dict | None = None) -> dict:
         """Run the hook script in a subprocess, return parsed stdout."""

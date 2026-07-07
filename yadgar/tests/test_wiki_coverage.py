@@ -33,9 +33,9 @@ def _make_wiki_page(slug: str, tags: list[str]) -> dict:
 
 def test_empty_directory_gives_zero_coverage(tmp_path):
     """Empty directory (no .py files) → total=0, coverage=0.0."""
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", None):
+    with patch("yadgar._shared.runtime.state._wiki", None):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 0
@@ -49,9 +49,9 @@ def test_directory_with_no_py_files_zero_coverage(tmp_path):
     (tmp_path / "README.md").write_text("# readme")
     (tmp_path / "config.yaml").write_text("key: value")
 
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", None):
+    with patch("yadgar._shared.runtime.state._wiki", None):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 0
@@ -84,9 +84,9 @@ def test_five_files_three_covered(tmp_path):
         mod_pages if tags == ["mod"] else []
     )
 
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", mock_wiki):
+    with patch("yadgar._shared.runtime.state._wiki", mock_wiki):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 5
@@ -112,9 +112,9 @@ def test_coverage_with_fn_tagged_pages(tmp_path):
         fn_pages if tags == ["fn"] else []
     )
 
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", mock_wiki):
+    with patch("yadgar._shared.runtime.state._wiki", mock_wiki):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 2
@@ -136,9 +136,9 @@ def test_coverage_via_slug_basename_match(tmp_path):
         mod_pages if tags == ["mod"] else []
     )
 
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", mock_wiki):
+    with patch("yadgar._shared.runtime.state._wiki", mock_wiki):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 2
@@ -152,14 +152,14 @@ def test_coverage_via_slug_basename_match(tmp_path):
 
 def test_wiki_coverage_importable_from_tools():
     """wiki_coverage is importable from yadgar.server.tools."""
-    from yadgar.server.tools import wiki_coverage  # noqa: F401
+    from yadgar.core.server.tools import wiki_coverage  # noqa: F401
 
     assert callable(wiki_coverage)
 
 
 def test_wiki_coverage_importable_from_server():
     """wiki_coverage is importable from yadgar.server (public API)."""
-    import yadgar.server as srv
+    import yadgar.core.server as srv
 
     assert hasattr(srv, "wiki_coverage")
     assert callable(srv.wiki_coverage)
@@ -167,7 +167,7 @@ def test_wiki_coverage_importable_from_server():
 
 def test_wiki_coverage_in_tools_all():
     """wiki_coverage appears in yadgar.server.tools.__all__."""
-    from yadgar.server import tools
+    from yadgar.core.server import tools
 
     assert "wiki_coverage" in tools.__all__
 
@@ -182,9 +182,9 @@ def test_excludes_venv_directory(tmp_path):
     venv_dir.mkdir(parents=True)
     (venv_dir / "site.py").write_text("# venv site.py — should be excluded")
 
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", None):
+    with patch("yadgar._shared.runtime.state._wiki", None):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 1
@@ -198,9 +198,9 @@ def test_excludes_tests_directory(tmp_path):
     tests_dir.mkdir()
     (tests_dir / "test_app.py").write_text("# test file — excluded")
 
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", None):
+    with patch("yadgar._shared.runtime.state._wiki", None):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 1
@@ -217,9 +217,9 @@ def test_excludes_pycache_directory(tmp_path):
     # Also create a .py there just to be sure it's excluded
     (cache_dir / "cached.py").write_text("# should be excluded")
 
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", None):
+    with patch("yadgar._shared.runtime.state._wiki", None):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 1
@@ -230,9 +230,9 @@ def test_no_wiki_store_returns_all_uncovered(tmp_path):
     for name in ["a.py", "b.py", "c.py"]:
         (tmp_path / name).write_text("# module")
 
-    from yadgar.server.tools.wiki_coverage import wiki_coverage
+    from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 
-    with patch("yadgar.server._state._wiki", None):
+    with patch("yadgar._shared.runtime.state._wiki", None):
         result = wiki_coverage(directory=str(tmp_path))
 
     assert result["total_modules"] == 3

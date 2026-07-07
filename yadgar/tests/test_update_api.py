@@ -32,8 +32,8 @@ def _make_update_app(monkeypatch, require_auth: bool = True, debug_apis: str = "
 
     monkeypatch.setenv("YADGAR_UPDATE_DEBUG_APIS_ENABLED", debug_apis)
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
-    from yadgar.server.routes.control_update import control_update_handler
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.server.routes.control_update import control_update_handler
 
     app = BearerAuthMiddleware(
         Starlette(routes=[Route("/api/control/update", control_update_handler, methods=["POST"])])
@@ -79,12 +79,13 @@ class TestControlUpdateAuth:
         mock_result.checked_at = "2026-06-07T00:00:00Z"
 
         with (
-            patch("yadgar.update.check.probe_latest_version", return_value=mock_result),
-            patch("yadgar.update.install_methods.detect_install_method", return_value="pipx"),
+            patch("yadgar.core.update.check.probe_latest_version", return_value=mock_result),
+            patch("yadgar.core.update.install_methods.detect_install_method", return_value="pipx"),
             patch(
-                "yadgar.update.install_methods.upgrade_command", return_value="pipx upgrade yadgar"
+                "yadgar.core.update.install_methods.upgrade_command",
+                return_value="pipx upgrade yadgar",
             ),
-            patch("yadgar.update.install_methods.can_self_install", return_value=True),
+            patch("yadgar.core.update.install_methods.can_self_install", return_value=True),
         ):
             resp = client.post(
                 "/api/control/update",
@@ -110,12 +111,13 @@ class TestControlUpdateCheckAction:
         mock_result.checked_at = "2026-06-07T00:00:00Z"
 
         with (
-            patch("yadgar.update.check.probe_latest_version", return_value=mock_result),
-            patch("yadgar.update.install_methods.detect_install_method", return_value="pipx"),
+            patch("yadgar.core.update.check.probe_latest_version", return_value=mock_result),
+            patch("yadgar.core.update.install_methods.detect_install_method", return_value="pipx"),
             patch(
-                "yadgar.update.install_methods.upgrade_command", return_value="pipx upgrade yadgar"
+                "yadgar.core.update.install_methods.upgrade_command",
+                return_value="pipx upgrade yadgar",
             ),
-            patch("yadgar.update.install_methods.can_self_install", return_value=True),
+            patch("yadgar.core.update.install_methods.can_self_install", return_value=True),
         ):
             resp = client.post(
                 "/api/control/update",
@@ -150,12 +152,13 @@ class TestControlUpdateCheckAction:
         mock_result.checked_at = "2026-06-07T00:00:00Z"
 
         with (
-            patch("yadgar.update.check.probe_latest_version", return_value=mock_result),
-            patch("yadgar.update.install_methods.detect_install_method", return_value="pipx"),
+            patch("yadgar.core.update.check.probe_latest_version", return_value=mock_result),
+            patch("yadgar.core.update.install_methods.detect_install_method", return_value="pipx"),
             patch(
-                "yadgar.update.install_methods.upgrade_command", return_value="pipx upgrade yadgar"
+                "yadgar.core.update.install_methods.upgrade_command",
+                return_value="pipx upgrade yadgar",
             ),
-            patch("yadgar.update.install_methods.can_self_install", return_value=True),
+            patch("yadgar.core.update.install_methods.can_self_install", return_value=True),
         ):
             resp = client.post(
                 "/api/control/update",
@@ -177,12 +180,13 @@ class TestControlUpdateCheckAction:
         mock_result.checked_at = "2026-06-07T00:00:00Z"
 
         with (
-            patch("yadgar.update.check.probe_latest_version", return_value=mock_result),
-            patch("yadgar.update.install_methods.detect_install_method", return_value="pipx"),
+            patch("yadgar.core.update.check.probe_latest_version", return_value=mock_result),
+            patch("yadgar.core.update.install_methods.detect_install_method", return_value="pipx"),
             patch(
-                "yadgar.update.install_methods.upgrade_command", return_value="pipx upgrade yadgar"
+                "yadgar.core.update.install_methods.upgrade_command",
+                return_value="pipx upgrade yadgar",
             ),
-            patch("yadgar.update.install_methods.can_self_install", return_value=True),
+            patch("yadgar.core.update.install_methods.can_self_install", return_value=True),
         ):
             resp = client.post(
                 "/api/control/update",
@@ -204,12 +208,13 @@ class TestControlUpdateCheckAction:
         mock_result.checked_at = "2026-06-07T00:00:00Z"
 
         with (
-            patch("yadgar.update.check.probe_latest_version", return_value=mock_result),
-            patch("yadgar.update.install_methods.detect_install_method", return_value="pipx"),
+            patch("yadgar.core.update.check.probe_latest_version", return_value=mock_result),
+            patch("yadgar.core.update.install_methods.detect_install_method", return_value="pipx"),
             patch(
-                "yadgar.update.install_methods.upgrade_command", return_value="pipx upgrade yadgar"
+                "yadgar.core.update.install_methods.upgrade_command",
+                return_value="pipx upgrade yadgar",
             ),
-            patch("yadgar.update.install_methods.can_self_install", return_value=True),
+            patch("yadgar.core.update.install_methods.can_self_install", return_value=True),
         ):
             # Empty body — no "action" field
             resp = client.post(
@@ -237,10 +242,14 @@ class TestControlUpdateInstallAction:
         mock_result.checked_at = "2026-06-07T00:00:00Z"
 
         with (
-            patch("yadgar.update.check.probe_latest_version", return_value=mock_result),
-            patch("yadgar.update.install_methods.detect_install_method", return_value="container"),
-            patch("yadgar.update.install_methods.upgrade_command", return_value="docker pull ..."),
-            patch("yadgar.update.install_methods.can_self_install", return_value=False),
+            patch("yadgar.core.update.check.probe_latest_version", return_value=mock_result),
+            patch(
+                "yadgar.core.update.install_methods.detect_install_method", return_value="container"
+            ),
+            patch(
+                "yadgar.core.update.install_methods.upgrade_command", return_value="docker pull ..."
+            ),
+            patch("yadgar.core.update.install_methods.can_self_install", return_value=False),
         ):
             resp = client.post(
                 "/api/control/update",
@@ -258,7 +267,7 @@ class TestControlUpdateInstallAction:
         client = TestClient(app, raise_server_exceptions=False)
 
         with patch(
-            "yadgar.update.check.probe_latest_version",
+            "yadgar.core.update.check.probe_latest_version",
             side_effect=httpx.ConnectError("unreachable"),
         ):
             resp = client.post(

@@ -2,9 +2,9 @@
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.rules_engine import RulesEngine, _parse_write_action
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.rules_engine import RulesEngine, _parse_write_action
+from yadgar._shared.storage import StorageEngine
 
 
 @pytest.fixture

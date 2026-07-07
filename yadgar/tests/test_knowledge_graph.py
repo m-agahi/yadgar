@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.knowledge_graph import VALID_REL_TYPES, KnowledgeGraph
+from yadgar._shared.config import Settings
+from yadgar._shared.knowledge_graph import VALID_REL_TYPES, KnowledgeGraph
 
 
 @pytest.fixture(scope="module")

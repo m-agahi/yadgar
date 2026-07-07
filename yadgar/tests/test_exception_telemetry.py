@@ -49,7 +49,7 @@ def _reset_otel():
             trace._TRACER_PROVIDER = None
         trace.set_tracer_provider(TracerProvider())
         try:
-            import yadgar.tracing as _tr
+            import yadgar._shared.tracing as _tr
 
             _tr._SETUP_DONE.clear()
         except Exception:
@@ -100,8 +100,8 @@ def in_memory_tracer():
 
 def test_record_exception_increments_counter():
     """record_exception("test.location", ValueError("x")) increments by 1."""
-    from yadgar.exception_telemetry import record_exception
-    from yadgar.metrics import yadgar_exception_total
+    from yadgar._shared.exception_telemetry import record_exception
+    from yadgar._shared.metrics import yadgar_exception_total
 
     before = _counter_value(
         yadgar_exception_total, location="test.location", error_type="ValueError"
@@ -120,7 +120,7 @@ def test_record_exception_increments_counter():
 
 def test_record_exception_no_span_does_not_raise():
     """record_exception with no active span must not raise."""
-    from yadgar.exception_telemetry import record_exception
+    from yadgar._shared.exception_telemetry import record_exception
 
     # Should be silent — any exception here is a bug
     record_exception("test.no_span", RuntimeError("no span"))
@@ -135,7 +135,7 @@ def test_record_exception_enriches_active_span(in_memory_tracer):
     """record_exception with an active span sets ERROR status and records the exception."""
     from opentelemetry.trace import StatusCode
 
-    from yadgar.exception_telemetry import record_exception
+    from yadgar._shared.exception_telemetry import record_exception
 
     tracer, exporter = in_memory_tracer
     exc = ValueError("span_test")
@@ -159,8 +159,8 @@ def test_record_exception_enriches_active_span(in_memory_tracer):
 
 def test_ml_client_nli_failure_increments_counter():
     """NLI model failure: counter ml_client.score_nli increments, zeros returned."""
+    from yadgar._shared.metrics import yadgar_exception_total
     from yadgar.backend.ml_client import LocalMLClient
-    from yadgar.metrics import yadgar_exception_total
 
     before = _counter_value(
         yadgar_exception_total, location="ml_client.score_nli", error_type="RuntimeError"
@@ -198,7 +198,7 @@ def test_ml_client_nli_failure_increments_counter():
 
 def test_team_inbox_json_parse_failure_increments_counter():
     """Malformed JSONL in team_inbox → counter server.http.team_inbox increments, loop continues."""
-    from yadgar.metrics import yadgar_exception_total
+    from yadgar._shared.metrics import yadgar_exception_total
 
     before = _counter_value(
         yadgar_exception_total, location="server.http.team_inbox", error_type="JSONDecodeError"
@@ -208,7 +208,7 @@ def test_team_inbox_json_parse_failure_increments_counter():
     # team_inbox processes lines; malformed JSON triggers json.JSONDecodeError handler
     import json
 
-    from yadgar.exception_telemetry import record_exception
+    from yadgar._shared.exception_telemetry import record_exception
 
     # Simulate the handler directly
     raw_line = "not valid json {"
@@ -236,7 +236,7 @@ def test_team_inbox_handler_json_failure_counter():
     """Wire-in test: actual json.JSONDecodeError in team_inbox handler increments counter."""
     import json
 
-    from yadgar.metrics import yadgar_exception_total
+    from yadgar._shared.metrics import yadgar_exception_total
 
     # We test the handler-level behavior by calling the JSONL-loop portion inline.
     # This validates that server/http.py's except json.JSONDecodeError block calls
@@ -258,7 +258,7 @@ def test_team_inbox_handler_json_failure_counter():
             json.loads(raw_line)
             stored += 1
         except json.JSONDecodeError as exc:
-            from yadgar.exception_telemetry import record_exception
+            from yadgar._shared.exception_telemetry import record_exception
 
             record_exception("server.http.team_inbox", exc)
             skipped += 1
@@ -278,7 +278,7 @@ def test_team_inbox_handler_json_failure_counter():
 
 def test_consolidation_idle_cycle_phase_failure_increments_counter():
     """Phase failure in _consolidation_cycle increments consolidation.phase_link_similar."""
-    from yadgar.metrics import yadgar_exception_total
+    from yadgar._shared.metrics import yadgar_exception_total
 
     before = _counter_value(
         yadgar_exception_total,
@@ -287,7 +287,7 @@ def test_consolidation_idle_cycle_phase_failure_increments_counter():
     )
 
     # Call record_exception directly with the expected location — validates the label
-    from yadgar.exception_telemetry import record_exception
+    from yadgar._shared.exception_telemetry import record_exception
 
     record_exception("consolidation.phase_link_similar", RuntimeError("link_failed"))
 
@@ -306,7 +306,7 @@ def test_consolidation_idle_cycle_phase_failure_increments_counter():
 
 def test_consolidation_orchestrator_link_similar_failure():
     """Wire-in: _consolidation_cycle's link_similar phase increments counter on failure."""
-    from yadgar.metrics import yadgar_exception_total
+    from yadgar._shared.metrics import yadgar_exception_total
 
     before = _counter_value(
         yadgar_exception_total,
@@ -318,7 +318,7 @@ def test_consolidation_orchestrator_link_similar_failure():
     from unittest.mock import MagicMock
 
     # Import the mixin to confirm the structure
-    from yadgar.consolidation.orchestrator import _OrchestratorMixin
+    from yadgar.core.consolidation.orchestrator import _OrchestratorMixin
 
     class _TestConsolidator(_OrchestratorMixin):
         def __init__(self):
@@ -390,7 +390,7 @@ def test_drainer_warn_handler_increments_counter():
     """Drain error in file_queue drainer run() loop increments file_queue.drainer counter."""
     import threading
 
-    from yadgar.metrics import yadgar_exception_total
+    from yadgar._shared.metrics import yadgar_exception_total
 
     before = _counter_value(
         yadgar_exception_total, location="file_queue.drainer", error_type="RuntimeError"
@@ -398,7 +398,7 @@ def test_drainer_warn_handler_increments_counter():
 
     import tempfile
 
-    from yadgar.file_queue import FileQueue, QueueDrainer
+    from yadgar.core.file_queue import FileQueue, QueueDrainer
 
     with tempfile.TemporaryDirectory():
         mock_queue = MagicMock(spec=FileQueue)
@@ -445,8 +445,8 @@ def test_drainer_warn_handler_increments_counter():
 
 def test_no_double_counting_single_exception():
     """A single exception caught once increments the counter exactly once, not more."""
-    from yadgar.exception_telemetry import record_exception
-    from yadgar.metrics import yadgar_exception_total
+    from yadgar._shared.exception_telemetry import record_exception
+    from yadgar._shared.metrics import yadgar_exception_total
 
     before = _counter_value(
         yadgar_exception_total,

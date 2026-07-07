@@ -90,7 +90,7 @@ def test_health_check_emits_span():
         # Import the handler after patching so @trace_span uses patched tracer
         # We call the handler directly since custom_route binds at import time
 
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_aclient = AsyncMock()
@@ -115,11 +115,11 @@ def test_health_check_emits_span():
 
 def test_hook_subagent_stop_increments_duration_histogram():
     """Calling hook_subagent_stop → yadgar_hook_execution_duration_ms{hook=subagent_stop} count +1."""
-    from yadgar.metrics import yadgar_hook_execution_duration_ms
+    from yadgar._shared.metrics import yadgar_hook_execution_duration_ms
 
     before = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="subagent_stop")
 
-    import yadgar.server.http as _http
+    import yadgar.core.server.http as _http
 
     mock_request = MagicMock()
     mock_request.json = AsyncMock(
@@ -143,14 +143,14 @@ def test_hook_subagent_stop_increments_duration_histogram():
 
 def test_hook_instructions_loaded_failure_counter_on_exception():
     """When hook_instructions_loaded raises ValueError, yadgar_hook_failure_total{hook=instructions_loaded,reason=ValueError} +1."""
-    from yadgar.metrics import yadgar_hook_failure_total
+    from yadgar._shared.metrics import yadgar_hook_failure_total
 
     before = _labeled_counter_value(
         yadgar_hook_failure_total, hook="instructions_loaded", reason="ValueError"
     )
 
-    import yadgar.server._state as _st
-    import yadgar.server.http as _http
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.server.http as _http
 
     # Make retriever.recall raise ValueError
     mock_retriever = MagicMock()
@@ -187,12 +187,12 @@ def test_hook_instructions_loaded_failure_counter_on_exception():
 
 def test_api_viz_search_failure_counter_on_500():
     """When api_viz_search returns status_code >= 500, yadgar_hook_failure_total{hook=viz_search,reason='500'} +1."""
-    from yadgar.metrics import yadgar_hook_failure_total
+    from yadgar._shared.metrics import yadgar_hook_failure_total
 
     before = _labeled_counter_value(yadgar_hook_failure_total, hook="viz_search", reason="500")
 
-    import yadgar.server._state as _st
-    import yadgar.server.http as _http
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.server.http as _http
 
     # Patch retriever.recall to raise so handler returns a 500
     mock_retriever = MagicMock()
@@ -224,7 +224,7 @@ def test_api_viz_search_failure_counter_on_500():
     else:
         # viz_search returns 200 on error — test that a forced 500 would increment.
         # We test via the hook_record_failure helper directly.
-        from yadgar.metrics import hook_record_failure
+        from yadgar._shared.metrics import hook_record_failure
 
         hook_record_failure("viz_search", status_code=500)
         after2 = _labeled_counter_value(yadgar_hook_failure_total, hook="viz_search", reason="500")
@@ -249,9 +249,9 @@ def test_requests_total_still_increments_on_hook_request(monkeypatch):
     from starlette.routing import Route
     from starlette.testclient import TestClient
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
-    from yadgar.log_config import RequestLoggingMiddleware
-    from yadgar.metrics import yadgar_requests_total
+    from yadgar._shared.log_config import RequestLoggingMiddleware
+    from yadgar._shared.metrics import yadgar_requests_total
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     before = _get_counter_value(yadgar_requests_total, route="/hooks/test-prk")
 
@@ -277,12 +277,12 @@ def test_requests_total_still_increments_on_hook_request(monkeypatch):
 
 def test_api_graph_increments_duration_histogram():
     """Calling api_graph → yadgar_hook_execution_duration_ms{hook=api_graph} count +1."""
-    from yadgar.metrics import yadgar_hook_execution_duration_ms
+    from yadgar._shared.metrics import yadgar_hook_execution_duration_ms
 
     before = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="api_graph")
 
-    import yadgar.server._state as _st
-    import yadgar.server.http as _http
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.server.http as _http
 
     mock_storage = MagicMock()
 
@@ -310,14 +310,14 @@ def test_api_graph_increments_duration_histogram():
 
 def test_hook_subagent_start_failure_counter_on_exception():
     """When hook_subagent_start's recall raises RuntimeError, failure counter increments."""
-    from yadgar.metrics import yadgar_hook_failure_total
+    from yadgar._shared.metrics import yadgar_hook_failure_total
 
     before = _labeled_counter_value(
         yadgar_hook_failure_total, hook="subagent_start", reason="RuntimeError"
     )
 
-    import yadgar.server._state as _st
-    import yadgar.server.http as _http
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.server.http as _http
 
     mock_retriever = MagicMock()
     mock_retriever.recall.side_effect = RuntimeError("db gone")
@@ -348,7 +348,7 @@ def test_hook_subagent_start_failure_counter_on_exception():
 
 def test_hook_record_failure_helper_exists():
     """hook_record_failure(hook, reason) exists in metrics and increments yadgar_hook_failure_total."""
-    from yadgar.metrics import hook_record_failure, yadgar_hook_failure_total
+    from yadgar._shared.metrics import hook_record_failure, yadgar_hook_failure_total
 
     before = _labeled_counter_value(yadgar_hook_failure_total, hook="test_hook", reason="TestError")
 
@@ -372,12 +372,12 @@ def test_hook_auto_capture_increments_duration_histogram():
     PR-K covered 9 routes but skipped auto_capture and prompt_recall — the two
     highest-frequency hooks (93% of traffic).  v5.7.4 wires those two routes.
     """
-    from yadgar.metrics import yadgar_hook_execution_duration_ms
+    from yadgar._shared.metrics import yadgar_hook_execution_duration_ms
 
     before = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="auto_capture")
 
-    import yadgar.server._state as _st
-    import yadgar.server.http as _http
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.server.http as _http
 
     mock_limiter = MagicMock()
     mock_limiter.allow.return_value = True
@@ -407,12 +407,12 @@ def test_hook_auto_capture_increments_duration_histogram():
 
 def test_hook_auto_capture_failure_counter_on_500():
     """Storage not initialized → 503 response → yadgar_hook_failure_total{hook=auto_capture,reason='503'} +1."""
-    from yadgar.metrics import yadgar_hook_failure_total
+    from yadgar._shared.metrics import yadgar_hook_failure_total
 
     before = _labeled_counter_value(yadgar_hook_failure_total, hook="auto_capture", reason="503")
 
-    import yadgar.server._state as _st
-    import yadgar.server.http as _http
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.server.http as _http
 
     mock_limiter = MagicMock()
     mock_limiter.allow.return_value = True
@@ -441,12 +441,12 @@ def test_hook_auto_capture_failure_counter_on_500():
 
 def test_hook_prompt_recall_increments_duration_histogram():
     """Calling hook_prompt_recall → yadgar_hook_execution_duration_ms{hook=prompt_recall} count +1."""
-    from yadgar.metrics import yadgar_hook_execution_duration_ms
+    from yadgar._shared.metrics import yadgar_hook_execution_duration_ms
 
     before = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="prompt_recall")
 
-    import yadgar.server._state as _st
-    import yadgar.server.http as _http
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.server.http as _http
 
     mock_retriever = MagicMock()
     mock_retriever.recall.return_value = []
@@ -474,14 +474,14 @@ def test_hook_prompt_recall_increments_duration_histogram():
 
 def test_hook_prompt_recall_failure_counter_on_exception():
     """When hook_prompt_recall's recall raises RuntimeError, failure counter increments."""
-    from yadgar.metrics import yadgar_hook_failure_total
+    from yadgar._shared.metrics import yadgar_hook_failure_total
 
     before = _labeled_counter_value(
         yadgar_hook_failure_total, hook="prompt_recall", reason="RuntimeError"
     )
 
-    import yadgar.server._state as _st
-    import yadgar.server.http as _http
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.server.http as _http
 
     mock_retriever = MagicMock()
 

@@ -13,9 +13,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from yadgar import consolidation as consolidation_mod
-from yadgar.config import Settings
-from yadgar.consolidation import ConsolidationScheduler, _in_window
+from yadgar._shared.config import Settings
+from yadgar.core import consolidation as consolidation_mod
+from yadgar.core.consolidation import ConsolidationScheduler, _in_window
 
 # ---------------------------------------------------------------------------
 # _in_window unit tests
@@ -131,7 +131,7 @@ class TestAutoTriggerWindow:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -149,7 +149,7 @@ class TestAutoTriggerWindow:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -166,7 +166,7 @@ class TestAutoTriggerWindow:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -183,7 +183,7 @@ class TestAutoTriggerWindow:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -209,7 +209,7 @@ class TestAutoTriggerCooldown:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -227,7 +227,7 @@ class TestAutoTriggerCooldown:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -245,7 +245,7 @@ class TestAutoTriggerCooldown:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service"),
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -329,7 +329,7 @@ class TestIsActivePreCheck:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
             patch(
@@ -366,7 +366,7 @@ class TestContainerSafeAutoTrigger:
         with (
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch(
-                "yadgar.server._run_check_invariants",
+                "yadgar.core.server._run_check_invariants",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):

@@ -62,7 +62,7 @@ def _restore_injected_globals():
     """
     import sys
 
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     storage = _get_storage()
     # Snapshot every injected cache/version seam these tests mutate — memory_doc
@@ -71,7 +71,7 @@ def _restore_injected_globals():
     _seams = ("_memory_doc_cache", "_engram_slot_cache", "_graph_cache", "_scope_versions")
     saved = {name: (hasattr(storage, name), getattr(storage, name, None)) for name in _seams}
 
-    admin = sys.modules.get("yadgar.server.tools.admin_other")
+    admin = sys.modules.get("yadgar.core.server.tools.admin_other")
     saved_st_storage = getattr(admin._st, "_storage", None) if admin is not None else None
 
     try:
@@ -219,11 +219,11 @@ def _run_fanout_recall(monkeypatch, query: str, directory: str, max_results: int
     """
     import sys
 
-    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
-    _rm = sys.modules.get("yadgar.server.tools.recall")
+    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
+    _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
-        import yadgar.server.tools.recall as _rm  # noqa: PLC0415
+        import yadgar.core.server.tools.recall as _rm  # noqa: PLC0415
     return _rm.recall(query=query, directory=directory, max_results=max_results)
 
 
@@ -253,7 +253,7 @@ class TestMemoryDocContentEvict:
         assert cache.stats()["hits"] == base_hits + 1, "cached id was not served on repeat read"
 
         # [2] REAL mutation — content edit through the wired evict path.
-        from yadgar.server.tools import admin_other
+        from yadgar.core.server.tools import admin_other
 
         admin_other._st._storage = storage  # ensure the tool targets this engine
         admin_other.memory_update(mid, {"content": "EDITED content marker beta8w"})
@@ -662,9 +662,9 @@ class TestGraphInvalidation:
         return storage.insert_entity({"name": name, "type": "concept"})
 
     def _kg(self):
-        from yadgar.config import get_settings
-        from yadgar.knowledge_graph import KnowledgeGraph
-        from yadgar.server.lifecycle import _get_storage
+        from yadgar._shared.config import get_settings
+        from yadgar._shared.knowledge_graph import KnowledgeGraph
+        from yadgar._shared.runtime.lifecycle import _get_storage
 
         return KnowledgeGraph(_get_storage(), get_settings())
 

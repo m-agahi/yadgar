@@ -136,7 +136,7 @@ class TestMemoryUpdatableFieldsInvariant:
         in INTERNAL_EXCLUDE but also not in _MEMORY_UPDATABLE_FIELDS.
         Fix: add the field to _MEMORY_UPDATABLE_FIELDS in storage/client.py.
         """
-        from yadgar.storage.client import _MEMORY_UPDATABLE_FIELDS
+        from yadgar._shared.storage.client import _MEMORY_UPDATABLE_FIELDS
 
         expected_updatable = KNOWN_MEMORY_FIELDS - INTERNAL_EXCLUDE
         missing = expected_updatable - _MEMORY_UPDATABLE_FIELDS
@@ -157,7 +157,7 @@ class TestMemoryUpdatableFieldsInvariant:
         Fix: remove the phantom from _MEMORY_UPDATABLE_FIELDS OR add it to
         KNOWN_MEMORY_FIELDS above (if it's a real field we forgot to track).
         """
-        from yadgar.storage.client import _MEMORY_UPDATABLE_FIELDS
+        from yadgar._shared.storage.client import _MEMORY_UPDATABLE_FIELDS
 
         phantoms = _MEMORY_UPDATABLE_FIELDS - KNOWN_MEMORY_FIELDS
 
@@ -174,7 +174,7 @@ class TestMemoryUpdatableFieldsInvariant:
         Embeddings updated via memory_update() skip the vector index — this is a
         silent correctness bug. They must be updated via dedicated vector helpers.
         """
-        from yadgar.storage.client import _MEMORY_UPDATABLE_FIELDS
+        from yadgar._shared.storage.client import _MEMORY_UPDATABLE_FIELDS
 
         embedding_fields = {"embedding", "centroid_embedding", "implicit_embedding"}
         leaking = embedding_fields & _MEMORY_UPDATABLE_FIELDS
@@ -187,7 +187,7 @@ class TestMemoryUpdatableFieldsInvariant:
 
     def test_last_accessed_and_access_count_updatable(self) -> None:
         """last_accessed and access_count must be in _MEMORY_UPDATABLE_FIELDS (v5.35.1 fix)."""
-        from yadgar.storage.client import _MEMORY_UPDATABLE_FIELDS
+        from yadgar._shared.storage.client import _MEMORY_UPDATABLE_FIELDS
 
         assert "last_accessed" in _MEMORY_UPDATABLE_FIELDS, (
             "last_accessed missing from _MEMORY_UPDATABLE_FIELDS — "

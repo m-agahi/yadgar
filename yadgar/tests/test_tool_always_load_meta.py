@@ -39,7 +39,7 @@ EXPECTED_META = {"anthropic/alwaysLoad": True}
 @pytest.fixture(scope="module")
 def listed_tools():
     """Return the list of Tool objects from the live mcp_server."""
-    import yadgar.server._app as _app
+    import yadgar.core.server._app as _app
 
     return asyncio.run(_app.mcp_server.list_tools())
 

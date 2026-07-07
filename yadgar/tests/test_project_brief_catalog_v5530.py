@@ -20,8 +20,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.server.tools.project import (
+from yadgar.core import server
+from yadgar.core.server.tools.project import (
     _WIKI_CATALOG_MAX_PER_GROUP,
     _WIKI_CATALOG_MAX_PREFIXES,
     _build_wiki_catalog,
@@ -38,8 +38,8 @@ def _engines(tmp_path_factory):
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
     with (
-        patch("yadgar.server.tools.project._detect_branch", return_value="feat/test"),
-        patch("yadgar.server._detect_branch", return_value="feat/test"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/test"),
     ):
         yield
     server.shutdown()
@@ -48,7 +48,7 @@ def _engines(tmp_path_factory):
 @pytest.fixture
 def flush_queue():
     def _flush():
-        from yadgar import server as _s
+        from yadgar.core import server as _s
 
         if _s._queue_drainer is not None:
             _s._queue_drainer.drain_now()
@@ -404,7 +404,7 @@ def test_signals_mode_required_keys_still_present():
 
 
 def test_mcp_instructions_contains_read_first_contract():
-    from yadgar.server._app import mcp_server
+    from yadgar.core.server._app import mcp_server
 
     instructions = mcp_server._mcp_server.instructions or ""
     # Must contain the key contract phrases
@@ -415,7 +415,7 @@ def test_mcp_instructions_contains_read_first_contract():
 
 
 def test_mcp_instructions_mentions_wiki_index():
-    from yadgar.server._app import mcp_server
+    from yadgar.core.server._app import mcp_server
 
     instructions = mcp_server._mcp_server.instructions or ""
     # The read-first contract should mention wiki index / catalog concept
@@ -423,7 +423,7 @@ def test_mcp_instructions_mentions_wiki_index():
 
 
 def test_mcp_instructions_mentions_wiki_query_caveat():
-    from yadgar.server._app import mcp_server
+    from yadgar.core.server._app import mcp_server
 
     instructions = mcp_server._mcp_server.instructions or ""
     # Should warn that wiki_query is for fuzzy search only (~0.34)

@@ -53,7 +53,7 @@ class TestMemorizeForwardsTagsToGate:
         # Patch gate_or_reject in the memorize module
         # Import the module directly via sys.modules to avoid __init__ re-export collision
         # Patch gate_or_reject at the phase_validate module where it is actually called.
-        import yadgar.server.tools._memorize_phases._phase_validate as _pv
+        import yadgar.core.server.tools._memorize_phases._phase_validate as _pv
 
         monkeypatch.setattr(_pv, "gate_or_reject", fake_gate)
 
@@ -66,24 +66,24 @@ class TestMemorizeForwardsTagsToGate:
         embeddings_mock.encode.return_value = [0.1] * 384
         embeddings_mock.model_name = "test-model"
 
-        import yadgar.server.lifecycle as _lc
+        import yadgar._shared.runtime.lifecycle as _lc
 
         monkeypatch.setattr(_lc, "_get_storage", lambda: storage_mock)
         monkeypatch.setattr(_lc, "_get_embeddings", lambda: embeddings_mock)
 
         # Stub file_queue to avoid queue init
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
         # Stub buffer state — use MagicMock so _get_buffer() guard passes
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         buffer_mock = MagicMock()
         monkeypatch.setattr(_st, "_buffer", buffer_mock)
         monkeypatch.setattr(_st, "_rules_engine", None)
 
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         tags = ["test-fixture", "yadgar"]
         memorize(
@@ -119,18 +119,18 @@ class TestWikiAddForwardsTagsToGate:
             captured_calls.append({"args": args, "tags": tags})
             return None
 
-        import yadgar.server.tools.wiki as _wiki_mod
+        import yadgar.core.server.tools.wiki as _wiki_mod
 
         monkeypatch.setattr(_wiki_mod, "gate_or_reject", fake_gate, raising=False)
 
         # Stub wiki state
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         wiki_mock = MagicMock()
         monkeypatch.setattr(_st, "_wiki", wiki_mock)
         monkeypatch.setattr(_st, "_rules_engine", None)
 
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
@@ -138,12 +138,12 @@ class TestWikiAddForwardsTagsToGate:
         storage_mock.insert_wiki_page.return_value = 1
         storage_mock.get_wiki_page_by_slug.return_value = None
 
-        import yadgar.server.lifecycle as _lc
+        import yadgar._shared.runtime.lifecycle as _lc
 
         monkeypatch.setattr(_lc, "_get_storage", lambda: storage_mock)
         monkeypatch.setattr(_lc, "_get_file_queue", lambda: MagicMock())
 
-        from yadgar.server.tools.wiki import wiki_add
+        from yadgar.core.server.tools.wiki import wiki_add
 
         tags = ["test-fixture", "wiki"]
         wiki_add(
@@ -178,21 +178,21 @@ class TestAnchorForwardsTagsToGate:
             captured_calls.append({"args": args, "tags": tags})
             return None
 
-        import yadgar.server.tools.misc as _misc_mod
+        import yadgar.core.server.tools.misc as _misc_mod
 
         monkeypatch.setattr(_misc_mod, "gate_or_reject", fake_gate)
 
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
-        import yadgar.server.lifecycle as _lc
+        import yadgar._shared.runtime.lifecycle as _lc
 
         replay_mock = MagicMock()
         replay_mock.anchor_memory.return_value = 42
         monkeypatch.setattr(_lc, "_get_replay", lambda: replay_mock)
 
-        from yadgar.server.tools.misc import anchor
+        from yadgar.core.server.tools.misc import anchor
 
         anchor(
             content="critical fact",
@@ -227,25 +227,25 @@ class TestCheckpointGateCallAcceptable:
             captured_calls.append({"args": args, "tags": tags})
             return None
 
-        import yadgar.server.tools.misc as _misc_mod
+        import yadgar.core.server.tools.misc as _misc_mod
 
         monkeypatch.setattr(_misc_mod, "gate_or_reject", fake_gate)
 
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
-        import yadgar.server.lifecycle as _lc
+        import yadgar._shared.runtime.lifecycle as _lc
 
         replay_mock = MagicMock()
         replay_mock.create_checkpoint.return_value = {"stored": True}
         monkeypatch.setattr(_lc, "_get_replay", lambda: replay_mock)
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         monkeypatch.setattr(_st, "_buffer", None)
 
-        from yadgar.server.tools.misc import checkpoint
+        from yadgar.core.server.tools.misc import checkpoint
 
         checkpoint(
             directory="/home/user/project",
@@ -280,7 +280,7 @@ class TestMemorizeAllowlistedTagSucceeds:
         monkeypatch.setenv("YADGAR_SECRET_GATE_AUDIT_DIR", str(tmp_path / "audit"))
 
         # Force reload of allowlist module state (in case prior tests loaded it)
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._allowlist_loaded = False
         _al._allowlist = []
@@ -295,22 +295,22 @@ class TestMemorizeAllowlistedTagSucceeds:
         embeddings_mock.encode.return_value = [0.1] * 384
         embeddings_mock.model_name = "test-model"
 
-        import yadgar.server.lifecycle as _lc
+        import yadgar._shared.runtime.lifecycle as _lc
 
         monkeypatch.setattr(_lc, "_get_storage", lambda: storage_mock)
         monkeypatch.setattr(_lc, "_get_embeddings", lambda: embeddings_mock)
 
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         buffer_mock = MagicMock()
         monkeypatch.setattr(_st, "_buffer", buffer_mock)
         monkeypatch.setattr(_st, "_rules_engine", None)
 
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         fake_token = "ghp_" + "X" * 25  # gitleaks:allow — fake, test fixture
         result = memorize(

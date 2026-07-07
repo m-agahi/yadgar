@@ -30,7 +30,7 @@ class TestApiWikiRead:
         from starlette.applications import Starlette
         from starlette.routing import Route
 
-        from yadgar.server.http import api_wiki_read
+        from yadgar.core.server.http import api_wiki_read
 
         return Starlette(routes=[Route("/api/wiki/read", api_wiki_read, methods=["GET"])])
 
@@ -39,7 +39,7 @@ class TestApiWikiRead:
         wiki = MagicMock()
         wiki.read.return_value = page
 
-        with patch("yadgar.server.http._st") as mock_st:
+        with patch("yadgar.core.server.http._st") as mock_st:
             mock_st._wiki = wiki
 
             from starlette.testclient import TestClient
@@ -59,7 +59,7 @@ class TestApiWikiRead:
         wiki = MagicMock()
         wiki.read.return_value = None
 
-        with patch("yadgar.server.http._st") as mock_st:
+        with patch("yadgar.core.server.http._st") as mock_st:
             mock_st._wiki = wiki
 
             from starlette.testclient import TestClient
@@ -73,7 +73,7 @@ class TestApiWikiRead:
     def test_no_slug_returns_400(self) -> None:
         wiki = MagicMock()
 
-        with patch("yadgar.server.http._st") as mock_st:
+        with patch("yadgar.core.server.http._st") as mock_st:
             mock_st._wiki = wiki
 
             from starlette.testclient import TestClient
@@ -85,7 +85,7 @@ class TestApiWikiRead:
         assert resp.status_code == 400
 
     def test_wiki_not_initialized_returns_503(self) -> None:
-        with patch("yadgar.server.http._st") as mock_st:
+        with patch("yadgar.core.server.http._st") as mock_st:
             mock_st._wiki = None
 
             from starlette.testclient import TestClient
@@ -100,7 +100,7 @@ class TestApiWikiRead:
         wiki = MagicMock()
         wiki.read.side_effect = RuntimeError("db error")
 
-        with patch("yadgar.server.http._st") as mock_st:
+        with patch("yadgar.core.server.http._st") as mock_st:
             mock_st._wiki = wiki
 
             from starlette.testclient import TestClient
@@ -116,7 +116,7 @@ class TestApiWikiRead:
         wiki = MagicMock()
         wiki.read.return_value = page
 
-        with patch("yadgar.server.http._st") as mock_st:
+        with patch("yadgar.core.server.http._st") as mock_st:
             mock_st._wiki = wiki
 
             from starlette.testclient import TestClient

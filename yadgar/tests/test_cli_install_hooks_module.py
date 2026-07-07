@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar.cli.install_hooks import cmd_install_hooks, register
+from yadgar.core.cli.install_hooks import cmd_install_hooks, register
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,7 +77,7 @@ class TestRegister:
 class TestCmdInstallHooks:
     def test_success_prints_json(self, capsys):
         result = {"status": "ok", "files": ["yadgar-file-changed.py"]}
-        with patch("yadgar.install_hooks_lib.install_hooks_impl", return_value=result):
+        with patch("yadgar.core.install_hooks_lib.install_hooks_impl", return_value=result):
             cmd_install_hooks(_make_args())
         out = capsys.readouterr().out
         payload = json.loads(out)
@@ -85,7 +85,7 @@ class TestCmdInstallHooks:
 
     def test_error_exits_one(self, capsys):
         result = {"status": "error", "reason": "home dir not found"}
-        with patch("yadgar.install_hooks_lib.install_hooks_impl", return_value=result):
+        with patch("yadgar.core.install_hooks_lib.install_hooks_impl", return_value=result):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_install_hooks(_make_args())
         assert exc_info.value.code == 1
@@ -94,14 +94,16 @@ class TestCmdInstallHooks:
 
     def test_dry_run_status_no_extra_output(self, capsys):
         result = {"status": "dry_run"}
-        with patch("yadgar.install_hooks_lib.install_hooks_impl", return_value=result):
+        with patch("yadgar.core.install_hooks_lib.install_hooks_impl", return_value=result):
             cmd_install_hooks(_make_args(dry_run=True))
         out = capsys.readouterr().out
         assert out.strip() == ""
 
     def test_passes_flags_to_impl(self):
         result = {"status": "ok"}
-        with patch("yadgar.install_hooks_lib.install_hooks_impl", return_value=result) as mock_impl:
+        with patch(
+            "yadgar.core.install_hooks_lib.install_hooks_impl", return_value=result
+        ) as mock_impl:
             with patch("builtins.print"):
                 cmd_install_hooks(
                     _make_args(scope="project", project_directory="/tmp/proj", dry_run=True)

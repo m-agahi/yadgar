@@ -14,12 +14,12 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock, patch
 
-import yadgar.server._state as _st
-import yadgar.server.tools.recall as _recall_symbol  # noqa: F401 — imported for side-effects
+import yadgar._shared.runtime.state as _st
+import yadgar.core.server.tools.recall as _recall_symbol  # noqa: F401 — imported for side-effects
 
-_recall_module = sys.modules["yadgar.server.tools.recall"]
+_recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
-from yadgar.server.tools.recall import _fanout_recall  # noqa: E402
+from yadgar.core.server.tools.recall import _fanout_recall  # noqa: E402
 
 recall_fn = _recall_module.recall
 
@@ -90,8 +90,8 @@ class TestForwardOnlyDispatch:
             patch.object(_recall_module, "_forward_to_backend", side_effect=_spy_fwd),
             patch.object(_recall_module, "_apply_recall_session_side_effects"),
             patch.object(_recall_module, "_st") as mock_st,
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             mock_st._consolidation = None
             mock_st._pool = None
@@ -270,8 +270,8 @@ class TestForwardOnlyEndToEnd:
             patch.object(_recall_module, "_forward_to_backend", return_value=fake_results),
             patch.object(_recall_module, "_apply_recall_session_side_effects"),
             patch.object(_recall_module, "_st") as mock_st,
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             mock_st._consolidation = None
             mock_st._pool = None

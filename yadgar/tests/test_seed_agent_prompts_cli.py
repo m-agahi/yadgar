@@ -21,7 +21,7 @@ class TestSeedAgentPromptsHelper:
     """Tests for _seed_agent_prompts(db_path, dry_run) helper."""
 
     def test_dry_run_zero_http_calls(self):
-        from yadgar.cli.seed import _seed_agent_prompts
+        from yadgar.core.cli.seed import _seed_agent_prompts
 
         with patch("urllib.request.urlopen") as mock_urlopen:
             result = _seed_agent_prompts(db_path=None, dry_run=True)
@@ -31,21 +31,21 @@ class TestSeedAgentPromptsHelper:
         assert result.get("created", 0) == 4 or result.get("skipped", 0) >= 0
 
     def test_daemon_unreachable_graceful(self):
-        from yadgar.cli.seed import _seed_agent_prompts
+        from yadgar.core.cli.seed import _seed_agent_prompts
 
-        with patch("yadgar.cli.seed._daemon_health_ok", return_value=False):
+        with patch("yadgar.core.cli.seed._daemon_health_ok", return_value=False):
             result = _seed_agent_prompts(db_path=None, dry_run=False)
         assert result.get("reason") == "daemon_unreachable"
         # No exception raised
         assert isinstance(result, dict)
 
     def test_happy_path_posts_to_correct_endpoint(self):
-        from yadgar.cli.seed import _seed_agent_prompts
+        from yadgar.core.cli.seed import _seed_agent_prompts
 
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps({"created": 4, "skipped": 0}).encode()
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
             patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen,
         ):
             result = _seed_agent_prompts(db_path=None, dry_run=False)
@@ -57,12 +57,12 @@ class TestSeedAgentPromptsHelper:
         assert result.get("created", 0) >= 0
 
     def test_happy_path_returns_created_count(self):
-        from yadgar.cli.seed import _seed_agent_prompts
+        from yadgar.core.cli.seed import _seed_agent_prompts
 
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps({"created": 4, "skipped": 0}).encode()
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
             patch("urllib.request.urlopen", return_value=mock_resp),
         ):
             result = _seed_agent_prompts(db_path=None, dry_run=False)
@@ -84,16 +84,16 @@ class TestCmdSeedAgentPromptsFlag:
         return SimpleNamespace(**defaults)
 
     def test_agent_prompts_flag_dispatches_to_helper(self, capsys):
-        from yadgar.cli.seed import cmd_seed
+        from yadgar.core.cli.seed import cmd_seed
 
         mock_result = {"seeded": True, "created": 4, "skipped": 0, "dry_run": False}
-        with patch("yadgar.cli.seed._seed_agent_prompts", return_value=mock_result) as mock_fn:
+        with patch("yadgar.core.cli.seed._seed_agent_prompts", return_value=mock_result) as mock_fn:
             args = self._args(agent_prompts=True)
             cmd_seed(args)
         mock_fn.assert_called_once()
 
     def test_agent_prompts_dry_run_prints_output(self, capsys):
-        from yadgar.cli.seed import cmd_seed
+        from yadgar.core.cli.seed import cmd_seed
 
         with patch("urllib.request.urlopen") as mock_urlopen:
             args = self._args(agent_prompts=True, dry_run=True)
@@ -105,12 +105,12 @@ class TestCmdSeedAgentPromptsFlag:
         assert len(combined) > 0
 
     def test_agent_prompts_success_prints_json(self, capsys):
-        from yadgar.cli.seed import cmd_seed
+        from yadgar.core.cli.seed import cmd_seed
 
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps({"created": 4, "skipped": 0}).encode()
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
             patch("urllib.request.urlopen", return_value=mock_resp),
         ):
             args = self._args(agent_prompts=True)
@@ -120,9 +120,9 @@ class TestCmdSeedAgentPromptsFlag:
         assert isinstance(parsed, dict)
 
     def test_agent_prompts_daemon_unreachable_no_raise(self, capsys):
-        from yadgar.cli.seed import cmd_seed
+        from yadgar.core.cli.seed import cmd_seed
 
-        with patch("yadgar.cli.seed._daemon_health_ok", return_value=False):
+        with patch("yadgar.core.cli.seed._daemon_health_ok", return_value=False):
             args = self._args(agent_prompts=True)
             # Must not raise
             cmd_seed(args)

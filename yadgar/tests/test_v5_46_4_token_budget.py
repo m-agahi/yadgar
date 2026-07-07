@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-SERVER_DIR = Path(__file__).resolve().parents[1] / "server"
+SERVER_DIR = Path(__file__).resolve().parents[1] / "core" / "server"
 
 
 def _source(relative: str) -> str:

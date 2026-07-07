@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.config_registry import clear_config_caches
+from yadgar._shared.config_registry import clear_config_caches
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def _isolate_config(monkeypatch, tmp_path):
 
 
 def _write_yaml(tmp_path, body: str) -> None:
-    from yadgar.config_yaml import get_config_path
+    from yadgar._shared.config_yaml import get_config_path
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,7 +218,7 @@ def test_get_ce_checkpoint_hash_inner_fallback_yaml(monkeypatch, tmp_path):
 
 def test_backend_log_level_env_override(monkeypatch):
     monkeypatch.setenv("YADGAR_BACKEND_LOG_LEVEL", "debug")
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     result = resolve_knob("YADGAR_BACKEND_LOG_LEVEL", "BACKEND_LOG_LEVEL", str, "warn")
     assert result.upper() == "DEBUG"
@@ -227,7 +227,7 @@ def test_backend_log_level_env_override(monkeypatch):
 def test_backend_log_level_yaml(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_BACKEND_LOG_LEVEL", raising=False)
     _write_yaml(tmp_path, "backend_log_level: info\n")
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     result = resolve_knob("YADGAR_BACKEND_LOG_LEVEL", "BACKEND_LOG_LEVEL", str, "warn")
     assert result.upper() == "INFO"
@@ -240,7 +240,7 @@ def test_backend_log_level_yaml(monkeypatch, tmp_path):
 
 def test_log_format_env_override(monkeypatch):
     monkeypatch.setenv("YADGAR_LOG_FORMAT", "text")
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     result = resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json")
     assert result == "text"
@@ -249,7 +249,7 @@ def test_log_format_env_override(monkeypatch):
 def test_log_format_yaml(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_LOG_FORMAT", raising=False)
     _write_yaml(tmp_path, "log_format: text\n")
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     result = resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json")
     assert result == "text"

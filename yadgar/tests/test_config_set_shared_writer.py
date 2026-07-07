@@ -22,13 +22,13 @@ import os
 
 import pytest
 
-from yadgar.config_yaml import set_config_value
+from yadgar._shared.config_yaml import set_config_value
 
 
 @pytest.fixture
 def _cfg_path(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
-    monkeypatch.setattr("yadgar.config_yaml.get_config_path", lambda: path)
+    monkeypatch.setattr("yadgar._shared.config_yaml.get_config_path", lambda: path)
     return path
 
 
@@ -67,7 +67,7 @@ def test_set_config_value_chmod_0o600(_cfg_path):
 def test_cmd_config_set_delegates_to_shared_writer(tmp_path, monkeypatch):
     """The CLI path must route through set_config_value (single validation path)."""
     path = tmp_path / "config.yaml"
-    monkeypatch.setattr("yadgar.config_yaml.get_config_path", lambda: path)
+    monkeypatch.setattr("yadgar._shared.config_yaml.get_config_path", lambda: path)
 
     calls = []
     real = set_config_value
@@ -76,9 +76,9 @@ def test_cmd_config_set_delegates_to_shared_writer(tmp_path, monkeypatch):
         calls.append((key, raw))
         return real(key, raw)
 
-    monkeypatch.setattr("yadgar.config_yaml.set_config_value", _spy)
+    monkeypatch.setattr("yadgar._shared.config_yaml.set_config_value", _spy)
 
-    from yadgar.config_yaml import cmd_config_set
+    from yadgar._shared.config_yaml import cmd_config_set
 
     class _Args:
         key = "viz_node_size_3d"

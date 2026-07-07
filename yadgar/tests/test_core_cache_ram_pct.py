@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.cache import (
+from yadgar.core.cache import (
     _CORE_FALLBACK_CONTAINER_BYTES,
     _REGISTRY,
     Cache,
@@ -110,7 +110,7 @@ def test_ram_pct_default_is_ten(monkeypatch):
 def test_total_budget_is_pct_of_container_memory(monkeypatch):
     """Budget = pct% × container memory (cgroup read)."""
     # Mock the cgroup reader to a known limit.
-    import yadgar.cache as cache_mod
+    import yadgar.core.cache as cache_mod
 
     monkeypatch.setattr(cache_mod, "_read_container_memory_bytes", lambda: 1_000_000_000)
     budget = _core_cache_total_budget_bytes(10.0)
@@ -119,7 +119,7 @@ def test_total_budget_is_pct_of_container_memory(monkeypatch):
 
 def test_total_budget_uses_core_fallback_when_no_cgroup(monkeypatch):
     """No readable cgroup limit → core fallback (1 GiB, NOT backend's 4 GiB)."""
-    import yadgar.cache as cache_mod
+    import yadgar.core.cache as cache_mod
 
     monkeypatch.setattr(cache_mod, "_read_container_memory_bytes", lambda: None)
     budget = _core_cache_total_budget_bytes(10.0)
@@ -130,7 +130,7 @@ def test_total_budget_uses_core_fallback_when_no_cgroup(monkeypatch):
 
 def test_read_container_memory_parses_cgroup_v2(monkeypatch, tmp_path):
     """cgroup v2 memory.max is read + parsed."""
-    import yadgar.cache as cache_mod
+    import yadgar.core.cache as cache_mod
 
     limit_file = tmp_path / "memory.max"
     limit_file.write_text("536870912\n")  # 512 MiB
@@ -140,7 +140,7 @@ def test_read_container_memory_parses_cgroup_v2(monkeypatch, tmp_path):
 
 
 def test_read_container_memory_max_sentinel_is_unbounded(monkeypatch, tmp_path):
-    import yadgar.cache as cache_mod
+    import yadgar.core.cache as cache_mod
 
     limit_file = tmp_path / "memory.max"
     limit_file.write_text("max\n")

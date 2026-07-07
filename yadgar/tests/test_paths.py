@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import yadgar.paths as paths
+import yadgar._shared.paths as paths
 
 # ── CONFIG_DIR ────────────────────────────────────────────────────────────────
 

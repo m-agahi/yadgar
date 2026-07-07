@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-_NC_MODULE = "yadgar.scripts.nightly_cycle"
-_VAC_MODULE = "yadgar.vacuum"
+_NC_MODULE = "yadgar.core.scripts.nightly_cycle"
+_VAC_MODULE = "yadgar.core.vacuum"
 
 
 class TestVacuumImplEnvRead:
@@ -28,7 +28,7 @@ class TestVacuumImplEnvRead:
 
         captured_url: list[str] = []
 
-        import yadgar.vacuum as vac_mod
+        import yadgar.core.vacuum as vac_mod
 
         # Stub out the real HTTP call — we only care what URL is used
         def _fake_get(url, **_kw):
@@ -44,8 +44,8 @@ class TestVacuumImplEnvRead:
         db_dir.mkdir()
 
         with (
-            patch("yadgar.vacuum.httpx.get", side_effect=_fake_get),
-            patch("yadgar.config.Settings") as mock_settings_cls,
+            patch("yadgar.core.vacuum.httpx.get", side_effect=_fake_get),
+            patch("yadgar._shared.config.Settings") as mock_settings_cls,
         ):
             mock_settings = MagicMock()
             mock_settings.DB_PATH = str(db_dir)
@@ -73,7 +73,7 @@ class TestVacuumImplEnvRead:
         """nightly_cycle.main resolves backend_url from YADGAR_DB_URL, not hard-coded :8080."""
         import importlib
 
-        import yadgar.scripts.nightly_cycle as nc_mod
+        import yadgar.core.scripts.nightly_cycle as nc_mod
 
         importlib.reload(nc_mod)
 
@@ -137,7 +137,7 @@ class TestNoHardCodedPort8080InProductionSources:
         """nightly_cycle.py must not use getattr(..., ':8080') without env fallback."""
         import inspect
 
-        import yadgar.scripts.nightly_cycle as nc
+        import yadgar.core.scripts.nightly_cycle as nc
 
         src = inspect.getsource(nc)
         # The bad pattern: getattr(args, "backend_url", "http://127.0.0.1:8080")
@@ -152,7 +152,7 @@ class TestNoHardCodedPort8080InProductionSources:
         """cmd_vacuum_impl must not use getattr(..., ':8080') without env fallback."""
         import inspect
 
-        import yadgar.vacuum as vac
+        import yadgar.core.vacuum as vac
 
         src = inspect.getsource(vac)
         bad_pattern = 'getattr(args, "backend_url", "http://127.0.0.1:8080")'

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 def test_graceful_stop_waits_for_in_flight(tmp_path):
     """Inject 3 fake in-flight requests; drain returns True once all complete."""
-    from yadgar.drain import _request_counter, drain_in_flight_requests
+    from yadgar.core.drain import _request_counter, drain_in_flight_requests
 
     # Reset counter to known state
     with _request_counter._lock:
@@ -50,7 +50,7 @@ def test_graceful_stop_waits_for_in_flight(tmp_path):
 
 def test_graceful_stop_honors_timeout(tmp_path):
     """Single never-completing request; drain_in_flight_requests returns False at timeout."""
-    from yadgar.drain import _request_counter, drain_in_flight_requests
+    from yadgar.core.drain import _request_counter, drain_in_flight_requests
 
     # Reset counter to known state
     with _request_counter._lock:
@@ -78,7 +78,7 @@ def test_graceful_stop_flushes_queue(tmp_path):
     """Enqueue 10 items; flush_barrier returns True + all applied to storage."""
     import json as _json
 
-    from yadgar.file_queue import FileQueue, QueueDrainer
+    from yadgar.core.file_queue import FileQueue, QueueDrainer
 
     fq = FileQueue(base_dir=tmp_path)
 
@@ -135,7 +135,7 @@ def test_graceful_stop_snapshots_embed_cache(tmp_path, monkeypatch):
     import sys
     from types import ModuleType
 
-    from yadgar.drain import snapshot_embed_caches
+    from yadgar.core.drain import snapshot_embed_caches
 
     ce_mock = MagicMock()
     embed_mock = MagicMock()

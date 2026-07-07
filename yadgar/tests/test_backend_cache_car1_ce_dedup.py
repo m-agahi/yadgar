@@ -25,9 +25,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from yadgar._shared.retrieval._reranking_cross_encoder import _CrossEncoderMixin
+from yadgar._shared.retrieval._reranking_multi_passage import _MultiPassageMixin
 from yadgar.backend.cache import Cache, ModelCkpt, NullCache
-from yadgar.retrieval._reranking_cross_encoder import _CrossEncoderMixin
-from yadgar.retrieval._reranking_multi_passage import _MultiPassageMixin
 
 # ── stubs ────────────────────────────────────────────────────────────────────
 
@@ -183,20 +183,67 @@ class TestDependencyInjection:
         host.score_ce_cached("q", ["a", "bb"])  # identical repeat → full hit
         assert ml.texts_scored == 2  # second pass fully reused
 
-    def test_reranker_default_injects_shared_ce(self):
-        """Reranker() with no ce_cache → shared registry `ce` instance (feature-on)."""
-        from yadgar.backend.cache import get_ce_cache
-        from yadgar.retrieval.reranking import Reranker
+    def test_reranker_default_is_shared_null_cache(self):
+        """Car 2 (folder-split #17): a BARE Reranker() with no ce_cache defaults to a
+        _shared NullCache (all-miss ≡ pre-Car-1 no-dedup), NOT the backend `ce`
+        singleton — the lazy `backend.cache.get_ce_cache()` fallback was deleted to
+        remove the _shared→backend import edge.
+
+        The REAL process-global `ce` singleton is now injected at the composition
+        root (lifecycle.init_engines → Retriever → Reranker), keeping the production
+        recall path byte-identical (live CE dedup). See
+        test_lifecycle_injects_real_ce_cache below (or the recall-parity e2e).
+        """
+        from yadgar._shared.protocols import NullCache as SharedNullCache
+        from yadgar._shared.retrieval.reranking import Reranker
 
         r = Reranker(MagicMock(), MagicMock(), ml_client=_CountingML())
-        assert r._ce_cache is get_ce_cache()
+        assert isinstance(r._ce_cache, SharedNullCache)
 
     def test_reranker_accepts_injected_cache(self):
-        from yadgar.retrieval.reranking import Reranker
+        from yadgar._shared.retrieval.reranking import Reranker
 
         null = NullCache()
         r = Reranker(MagicMock(), MagicMock(), ml_client=_CountingML(), ce_cache=null)
         assert r._ce_cache is null
+
+    def test_retriever_threads_ce_cache_to_reranker(self):
+        """Car 2: Retriever forwards its injected ce_cache to the Reranker it builds,
+        so the composition root's real `ce` singleton reaches the CE path."""
+        from yadgar._shared.retrieval.core import Retriever
+
+        sentinel = NullCache()
+        ret = Retriever(
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            ml_client=_CountingML(),
+            ce_cache=sentinel,
+        )
+        assert ret._reranker._ce_cache is sentinel
+
+    def test_lifecycle_injects_real_storage_caches(self):
+        """Car 2: the composition root injects the REAL backend cache singletons into
+        StorageEngine — byte-identical to the deleted lazy storage resolvers. Verify
+        _inject_storage_caches assigns exactly the get_*_cache() registry instances."""
+        from yadgar._shared.runtime.lifecycle import _inject_storage_caches
+        from yadgar.backend.cache import (
+            get_engram_slot_cache,
+            get_graph_cache,
+            get_memory_doc_cache,
+            get_scope_versions,
+        )
+
+        class _Bag:
+            pass
+
+        st = _Bag()
+        _inject_storage_caches(st)
+        assert st._memory_doc_cache is get_memory_doc_cache()
+        assert st._engram_slot_cache is get_engram_slot_cache()
+        assert st._graph_cache is get_graph_cache()
+        assert st._scope_versions is get_scope_versions()
 
 
 # ── accessor ──────────────────────────────────────────────────────────────────

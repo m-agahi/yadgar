@@ -39,10 +39,10 @@ from collections import OrderedDict
 from collections.abc import Hashable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
-from yadgar.metrics import record_cache_evict, record_cache_hit, record_cache_miss
-from yadgar.observability.observe import observe
+from yadgar._shared.metrics import record_cache_evict, record_cache_hit, record_cache_miss
+from yadgar._shared.observability.observe import observe
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -293,22 +293,12 @@ def _estimate_bytes(value: Any) -> int:
 # ── Protocol + registry ───────────────────────────────────────────────────────
 
 
-@runtime_checkable
-class CacheProtocol(Protocol):
-    """The modular-monolith cache interface. Consumers depend on THIS, not Cache.
-
-    Method names mirror the core ``yadgar/cache.py`` Cache + every existing backend
-    consumer (``_ce_cache.get`` / ``.put``) — hence ``put`` (not ``set``).
-    """
-
-    def get(self, key: Hashable) -> Any | None: ...
-
-    def put(self, key: Hashable, value: Any) -> None: ...
-
-    def invalidate(self, scope: Hashable = ...) -> None: ...
-
-    def stats(self) -> dict: ...
-
+# Car 2 (folder-split #17): CacheProtocol moved to yadgar/_shared/protocols.py
+# (the single home for cross-boundary seams). Re-exported here for back-compat —
+# existing consumers still ``from yadgar.backend.cache import CacheProtocol``.
+# The redundant ``as CacheProtocol`` alias marks this an intentional re-export
+# (ruff F401 pass).
+from yadgar._shared.protocols import CacheProtocol as CacheProtocol  # noqa: E402,PLC0414
 
 # Backend registry — enumeration + one config surface. Tolerates re-registration
 # (importlib.reload of embed_service re-creates the ce/embed namespaces in tests).
@@ -387,7 +377,7 @@ def get_memory_doc_cache() -> CacheProtocol:
 
 
 def _memory_doc_cache_enabled() -> bool:
-    from yadgar.config import resolve_knob  # noqa: PLC0415
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415
 
     return resolve_knob(
         "YADGAR_MEMORY_DOC_CACHE_ENABLED",
@@ -398,7 +388,7 @@ def _memory_doc_cache_enabled() -> bool:
 
 
 def _memory_doc_cache_ttl_sec() -> float:
-    from yadgar.config import resolve_knob  # noqa: PLC0415
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415
 
     # 45 min default — a TTL backstop that bounds worst-case staleness from a
     # content edit / reembed that bypasses the per-id evict path. Cache lifetime
@@ -437,7 +427,7 @@ def _backend_cache_ram_pct_local() -> float:
     cache — resolved from the storage layer — never pulls the FastAPI embed_service
     module into the retrieval hot-path import graph.
     """
-    from yadgar.config import resolve_knob  # noqa: PLC0415
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415
 
     return resolve_knob("YADGAR_BACKEND_CACHE_RAM_PCT", "BACKEND_CACHE_RAM_PCT", float, 10.0)
 
@@ -734,7 +724,7 @@ def get_engram_slot_cache() -> CacheProtocol:
 
 
 def _engram_slot_cache_enabled() -> bool:
-    from yadgar.config import resolve_knob  # noqa: PLC0415
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415
 
     return resolve_knob(
         "YADGAR_ENGRAM_SLOT_CACHE_ENABLED",
@@ -800,7 +790,7 @@ def get_graph_cache() -> CacheProtocol:
 
 
 def _graph_cache_enabled() -> bool:
-    from yadgar.config import resolve_knob  # noqa: PLC0415
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415
 
     return resolve_knob(
         "YADGAR_GRAPH_CACHE_ENABLED",

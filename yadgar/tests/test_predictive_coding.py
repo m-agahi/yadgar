@@ -4,11 +4,11 @@ import os
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.predictive_coding import WriteGate
-from yadgar.retrieval import Retriever
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.predictive_coding import WriteGate
+from yadgar._shared.retrieval import Retriever
+from yadgar._shared.storage import StorageEngine
 
 # ---------------------------------------------------------------------------
 # v5.54.5 B2: integration tests in this module call memorize() with /tmp/...
@@ -435,7 +435,7 @@ class TestDirectoryModelBuilds:
 class TestWriteGateIntegration:
     def test_server_remember_respects_gate(self, tmp_path):
         """Server memorize() should respect write gate decisions during drain."""
-        from yadgar import server
+        from yadgar.core import server
         from yadgar.tests.conftest import memorize_sync
 
         db_path = str(tmp_path / "test_integration.db")
@@ -477,7 +477,7 @@ class TestWriteGateIntegration:
 class TestSurprisalReturnedInResponse:
     def test_surprisal_in_remember_response(self, tmp_path):
         """Write gate computes a valid surprisal score for novel content."""
-        from yadgar import server
+        from yadgar.core import server
         from yadgar.tests.conftest import memorize_sync
 
         db_path = str(tmp_path / "test_surprisal_response.db")
@@ -509,7 +509,7 @@ class TestSurprisalReturnedInResponse:
 
     def test_blocked_memory_returns_surprisal(self, tmp_path):
         """Write gate computes surprisal for duplicate content; low when embeddings available."""
-        from yadgar import server
+        from yadgar.core import server
         from yadgar.tests.conftest import memorize_sync
 
         db_path = str(tmp_path / "test_blocked_surprisal.db")
@@ -538,7 +538,7 @@ class TestSurprisalReturnedInResponse:
                 # When sentence-transformers is available, duplicates get low surprisal.
                 # Without embeddings, the embedding component falls back to high novelty,
                 # so we only check the magnitude when embeddings are functional.
-                from yadgar.embeddings import EmbeddingEngine
+                from yadgar._shared.embeddings import EmbeddingEngine
 
                 _emb = EmbeddingEngine()
                 if _emb.encode("test") is not None:
@@ -642,8 +642,8 @@ def structural_novelty_at_scale(tmp_path, settings, embeddings):
     and the entity-pair loop actually runs. 50 'Y' entities → up to 1225 pairs.
     At 3ms/pair that is ~3.7s with the old per-pair HTTP pattern.
     """
-    from yadgar.knowledge_graph import KnowledgeGraph
-    from yadgar.retrieval import Retriever
+    from yadgar._shared.knowledge_graph import KnowledgeGraph
+    from yadgar._shared.retrieval import Retriever
 
     engine = StorageEngine(str(tmp_path / "sn_scale.db"))
     kg = KnowledgeGraph(engine, settings)
@@ -679,8 +679,8 @@ def test_structural_novelty_under_5s_at_50_entities(structural_novelty_at_scale)
 
 def test_structural_novelty_correctness_returns_float(tmp_path, settings, embeddings):
     """Bulk-SQL path returns a valid float in [0, 1]."""
-    from yadgar.knowledge_graph import KnowledgeGraph
-    from yadgar.retrieval import Retriever
+    from yadgar._shared.knowledge_graph import KnowledgeGraph
+    from yadgar._shared.retrieval import Retriever
 
     engine = StorageEngine(str(tmp_path / "sn_correct.db"))
     kg = KnowledgeGraph(engine, settings)

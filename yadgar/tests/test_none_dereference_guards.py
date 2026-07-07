@@ -16,7 +16,7 @@ class TestEmbeddingsNoneGuard:
 
     @pytest.fixture
     def engine(self):
-        from yadgar.embeddings import EmbeddingEngine
+        from yadgar._shared.embeddings import EmbeddingEngine
 
         return EmbeddingEngine("all-MiniLM-L6-v2")
 
@@ -62,7 +62,7 @@ class TestServerEmbeddingEngineGuard:
     """server.py: _get_embeddings() must raise RuntimeError (not AssertionError)."""
 
     def test_get_embeddings_raises_when_none(self, monkeypatch):
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         original = srv._embeddings
         try:
@@ -78,9 +78,9 @@ class TestCognitiveMapSRMatrixGuard:
 
     @pytest.fixture
     def cmap(self, tmp_path):
-        from yadgar.cognitive_map import CognitiveMap
-        from yadgar.config import Settings
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.cognitive_map import CognitiveMap
+        from yadgar._shared.config import Settings
+        from yadgar._shared.storage import StorageEngine
 
         storage = StorageEngine(str(tmp_path / "test.db"))
         settings = Settings()
@@ -111,9 +111,9 @@ class TestSensoryBufferNoneGuard:
     """sensory_buffer.py: _rotate_episode must raise if current_episode is None."""
 
     def test_rotate_episode_none_guard(self, tmp_path):
-        from yadgar.config import Settings
-        from yadgar.sensory_buffer import ActionLogger
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.config import Settings
+        from yadgar._shared.sensory_buffer import ActionLogger
+        from yadgar._shared.storage import StorageEngine
 
         storage = StorageEngine(str(tmp_path / "test.db"))
         settings = Settings()
@@ -128,9 +128,9 @@ class TestSensoryBufferNoneGuard:
 
     def test_capture_with_none_episode_auto_starts(self, tmp_path):
         """capture() auto-calls start_session() when current_episode is None."""
-        from yadgar.config import Settings
-        from yadgar.sensory_buffer import ActionLogger
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.config import Settings
+        from yadgar._shared.sensory_buffer import ActionLogger
+        from yadgar._shared.storage import StorageEngine
 
         storage = StorageEngine(str(tmp_path / "test.db"))
         settings = Settings()
@@ -148,10 +148,10 @@ class TestCausalDiscoveryAdjacencyGuard:
 
     @pytest.fixture
     def discovery(self, tmp_path):
-        from yadgar.causal_discovery import CausalDiscovery
-        from yadgar.config import Settings
-        from yadgar.knowledge_graph import KnowledgeGraph
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.causal_discovery import CausalDiscovery
+        from yadgar._shared.config import Settings
+        from yadgar._shared.knowledge_graph import KnowledgeGraph
+        from yadgar._shared.storage import StorageEngine
 
         storage = StorageEngine(str(tmp_path / "test.db"))
         settings = Settings()
@@ -178,8 +178,8 @@ class TestEnrichmentSkipWhenDisabled:
 
     @pytest.fixture
     def enricher(self, tmp_path):
-        from yadgar.config import Settings
-        from yadgar.enrichment import EnrichmentPipeline
+        from yadgar._shared.config import Settings
+        from yadgar._shared.enrichment import EnrichmentPipeline
 
         settings = Settings(
             CONCEPTNET_ENRICHMENT_ENABLED=False,
@@ -193,7 +193,7 @@ class TestEnrichmentSkipWhenDisabled:
         """With all enrichment disabled, enriched_content == original content."""
         import struct
 
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         settings = Settings(
             CONCEPTNET_ENRICHMENT_ENABLED=False,
@@ -217,9 +217,9 @@ class TestRerankerSkipWhenDisabled:
 
     @pytest.fixture
     def reranker(self, tmp_path):
-        from yadgar.config import Settings
-        from yadgar.retrieval.reranking import Reranker
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.config import Settings
+        from yadgar._shared.retrieval.reranking import Reranker
+        from yadgar._shared.storage import StorageEngine
 
         settings = Settings(NLI_RERANKING_ENABLED=False)
         storage = StorageEngine(str(tmp_path / "test.db"))
@@ -242,7 +242,7 @@ class TestBytesToFloatsReturnType:
 
     @pytest.fixture
     def storage(self, tmp_path):
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         engine = StorageEngine(str(tmp_path / "test.db"))
         yield engine

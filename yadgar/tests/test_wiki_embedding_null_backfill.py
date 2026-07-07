@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Content
@@ -80,13 +80,13 @@ def _wiki():
 
 
 def _storage():
-    import yadgar.server._state as _state_mod
+    import yadgar._shared.runtime.state as _state_mod
 
     return _state_mod._storage
 
 
 def _embeddings():
-    import yadgar.server._state as _state_mod
+    import yadgar._shared.runtime.state as _state_mod
 
     return _state_mod._embeddings
 
@@ -187,7 +187,7 @@ class TestNullEmbeddingBugReproduction:
     def test_get_wiki_pages_without_embedding_skips_populated_rows(self):
         """get_wiki_pages_without_embedding() excludes rows that already have embeddings."""
         # Insert one row with a real embedding (via normal path).
-        import yadgar.file_queue._locals as _loc
+        import yadgar.core.file_queue._locals as _loc
 
         _loc._drain_local.active = True
         try:
@@ -272,7 +272,7 @@ class TestBackfillFixesBug:
 
     def test_backfill_skips_already_embedded_rows(self):
         """Backfill leaves pages with existing embeddings untouched."""
-        import yadgar.file_queue._locals as _loc
+        import yadgar.core.file_queue._locals as _loc
 
         # Insert a real page (has embedding).
         _loc._drain_local.active = True

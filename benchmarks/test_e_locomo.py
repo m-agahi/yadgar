@@ -23,11 +23,11 @@ from pathlib import Path
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import Retriever
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval import Retriever
+from yadgar._shared.storage import StorageEngine
 
 # Use nomic for higher quality embeddings (768d, 62.28 nDCG@10 vs 41.95)
 EMBEDDING_MODEL = os.environ.get("LOCOMO_EMBEDDING_MODEL", "nomic-ai/nomic-embed-text-v1.5")

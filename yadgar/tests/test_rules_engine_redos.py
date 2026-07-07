@@ -9,8 +9,8 @@ which supports a timeout= kwarg. A 1-second timeout is enforced per-call.
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.rules_engine import RulesEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.rules_engine import RulesEngine
 
 # The classic catastrophic-backtracking (ReDoS) pattern.
 # stdlib `re.sub(EVIL_PATTERN, '', EVIL_INPUT)` hangs for > 10s.

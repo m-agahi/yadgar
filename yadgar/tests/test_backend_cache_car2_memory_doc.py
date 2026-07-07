@@ -66,8 +66,8 @@ class _FakeStorage:
         self.fresh_fetches = 0  # number of OMIT-fresh queries issued
 
     # -- the real methods under test, imported from the mixins -----------------
-    from yadgar.storage.client import _ClientMixin
-    from yadgar.storage.memory import _MemoryMixin
+    from yadgar._shared.storage.client import _ClientMixin
+    from yadgar._shared.storage.memory import _MemoryMixin
 
     get_memories_by_ids = _MemoryMixin.get_memories_by_ids
     _resolve_memory_doc_cache = _MemoryMixin._resolve_memory_doc_cache
@@ -282,7 +282,7 @@ class TestPerIdEvict:
 
     def test_update_memory_fields_content_evicts(self):
         """memory_update(content) → update_memory_fields evicts the memory_doc id."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         calls: list = []
 
@@ -305,7 +305,7 @@ class TestPerIdEvict:
         assert calls == [7], "content edit must evict the memory_doc id"
 
     def test_update_memory_fields_noncontent_does_not_evict(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         calls: list = []
 
@@ -331,8 +331,8 @@ class TestPerIdEvict:
         embedding (the reembed_stale / reembed_all path) — it MUST evict the memory_doc
         id, else reembed serves a STALE embedding from the cache for up to TTL(2700s).
         Mirrors the update_memory_fields(content) evict, but on the vector seam."""
-        from yadgar.storage.memory import _MemoryMixin
-        from yadgar.storage.vector import _VectorMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.vector import _VectorMixin
 
         calls: list = []
 
@@ -394,7 +394,7 @@ class TestOmitPortableEmbedded:
         pytest.importorskip("surrealdb")
         import numpy as np
 
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         s = StorageEngine(str(tmp_path / "db"))
         mem = {

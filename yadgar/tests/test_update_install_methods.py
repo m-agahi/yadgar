@@ -33,7 +33,7 @@ class TestDetectInstallMethod:
         with patch("subprocess.check_output", return_value=str(fake_bin)):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -49,7 +49,7 @@ class TestDetectInstallMethod:
         with patch("subprocess.check_output", return_value=str(fake_bin)):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -64,7 +64,7 @@ class TestDetectInstallMethod:
         ):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -80,7 +80,7 @@ class TestDetectInstallMethod:
         with patch("subprocess.check_output", return_value=str(fake_shim)):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -98,7 +98,7 @@ class TestDetectInstallMethod:
         with patch("subprocess.check_output", return_value=str(fake_bin)):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -113,7 +113,7 @@ class TestDetectInstallMethod:
         ):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -128,7 +128,7 @@ class TestDetectInstallMethod:
         ):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -140,7 +140,7 @@ class TestDetectInstallMethod:
         with patch("subprocess.check_output", return_value=""):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -156,7 +156,7 @@ class TestDetectInstallMethod:
         with patch("subprocess.check_output", return_value=str(fake_bin)):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -172,7 +172,7 @@ class TestDetectInstallMethod:
 class TestIsDockerShim:
     def test_true_for_docker_run_shim(self, tmp_path):
         """Returns True when file contains 'docker run'."""
-        from yadgar.update.install_methods import _is_docker_shim
+        from yadgar.core.update.install_methods import _is_docker_shim
 
         shim = tmp_path / "yadgar"
         shim.write_text('#!/bin/sh\ndocker run --rm openfantasy/yadgar "$@"\n')
@@ -180,7 +180,7 @@ class TestIsDockerShim:
 
     def test_false_for_normal_script(self, tmp_path):
         """Returns False when file doesn't contain 'docker run'."""
-        from yadgar.update.install_methods import _is_docker_shim
+        from yadgar.core.update.install_methods import _is_docker_shim
 
         script = tmp_path / "yadgar"
         script.write_text("#!/usr/bin/env python3\nimport sys\n")
@@ -188,7 +188,7 @@ class TestIsDockerShim:
 
     def test_false_for_missing_file(self):
         """Returns False when file doesn't exist (OSError)."""
-        from yadgar.update.install_methods import _is_docker_shim
+        from yadgar.core.update.install_methods import _is_docker_shim
 
         assert _is_docker_shim("/nonexistent/path/yadgar") is False
 
@@ -201,7 +201,7 @@ class TestIsDockerShim:
 class TestHasGitAncestor:
     def test_true_when_git_in_ancestor(self, tmp_path):
         """Returns True when a .git dir exists in an ancestor."""
-        from yadgar.update.install_methods import _has_git_ancestor
+        from yadgar.core.update.install_methods import _has_git_ancestor
 
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
@@ -213,7 +213,7 @@ class TestHasGitAncestor:
 
     def test_false_when_no_git_ancestor(self, tmp_path):
         """Returns False when no .git dir in any ancestor."""
-        from yadgar.update.install_methods import _has_git_ancestor
+        from yadgar.core.update.install_methods import _has_git_ancestor
 
         file_path = tmp_path / "bin" / "yadgar"
         file_path.parent.mkdir()
@@ -231,45 +231,45 @@ class TestHasGitAncestor:
 
 class TestUpgradeCommand:
     def test_pipx(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         assert upgrade_command("pipx") == "pipx upgrade yadgar"
 
     def test_brew(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         assert upgrade_command("brew") == "brew upgrade yadgar"
 
     def test_nix_flake_contains_nix(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         assert "nix" in upgrade_command("nix-flake").lower()
 
     def test_container_contains_docker_pull(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         assert "docker pull" in upgrade_command("container")
 
     def test_source_contains_git_pull_or_pip(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("source")
         assert "git pull" in cmd or "pip install" in cmd
 
     def test_unknown_fallback(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("unknown")
         assert "pypi.org" in cmd or "manual" in cmd.lower() or "Cannot determine" in cmd
 
     def test_not_installed_fallback(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("not_installed")
         assert cmd  # non-empty string
 
     def test_arbitrary_method_fallback(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("foobar")
         assert isinstance(cmd, str) and len(cmd) > 0
@@ -282,36 +282,36 @@ class TestUpgradeCommand:
 
 class TestCanSelfInstall:
     def test_pipx_true(self):
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("pipx") is True
 
     def test_source_true(self):
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("source") is True
 
     def test_brew_false(self):
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("brew") is False
 
     def test_nix_flake_false(self):
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("nix-flake") is False
 
     def test_container_false(self):
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("container") is False
 
     def test_unknown_false(self):
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("unknown") is False
 
     def test_not_installed_false(self):
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("not_installed") is False

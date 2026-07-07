@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 
-from yadgar.seed._analysis import (
+from yadgar.core.seed._analysis import (
     _detect_stack,
     _find_subproject_boundaries,
     _summarize_cargo_toml,

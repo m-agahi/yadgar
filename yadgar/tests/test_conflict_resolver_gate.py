@@ -29,7 +29,7 @@ def _reload_cr(env: dict[str, str]) -> object:
         # Remove key if not in env so we get clean state
         if "YADGAR_CONFLICT_RESOLVER" not in env:
             os.environ.pop("YADGAR_CONFLICT_RESOLVER", None)
-        import yadgar.conflict_resolver as cr
+        import yadgar.core.conflict_resolver as cr
 
         importlib.reload(cr)
         return cr
@@ -43,7 +43,7 @@ def test_gate_off_no_httpx_client_constructed():
     with patch("httpx.Client") as mock_client_cls:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("YADGAR_CONFLICT_RESOLVER", None)
-            import yadgar.conflict_resolver as cr
+            import yadgar.core.conflict_resolver as cr
 
             importlib.reload(cr)
 
@@ -60,7 +60,7 @@ def test_gate_off_returns_noop_quickly():
     """With flag OFF, resolve_conflict returns NOOP in well under 1ms."""
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("YADGAR_CONFLICT_RESOLVER", None)
-        import yadgar.conflict_resolver as cr
+        import yadgar.core.conflict_resolver as cr
 
         importlib.reload(cr)
 
@@ -93,11 +93,11 @@ def test_gate_on_uses_client():
 
     with patch("httpx.Client", return_value=mock_client_instance) as mock_client_cls:
         with patch.dict(os.environ, {"YADGAR_CONFLICT_RESOLVER": "on"}):
-            import yadgar.conflict_resolver as cr
+            import yadgar.core.conflict_resolver as cr
 
             importlib.reload(cr)
 
-            with patch("yadgar.conflict_resolver._fetch_similar", return_value=[]):
+            with patch("yadgar.core.conflict_resolver._fetch_similar", return_value=[]):
                 cr.resolve_conflict(_candidate())
 
         mock_client_cls.assert_called_once()
@@ -114,7 +114,7 @@ def test_gate_state_immutable_at_import():
     # Reload with flag OFF — gate should be captured as disabled
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("YADGAR_CONFLICT_RESOLVER", None)
-        import yadgar.conflict_resolver as cr
+        import yadgar.core.conflict_resolver as cr
 
         importlib.reload(cr)
 

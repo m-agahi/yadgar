@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 # Module constant
 # ---------------------------------------------------------------------------
 
-_MODULE = "yadgar.scripts.nightly_cycle"
+_MODULE = "yadgar.core.scripts.nightly_cycle"
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ def _make_args(**kwargs):
 
 def _import_module():
     """Import (or reload) nightly_cycle and return it."""
-    import yadgar.scripts.nightly_cycle as _mod
+    import yadgar.core.scripts.nightly_cycle as _mod
 
     importlib.reload(_mod)
     return _mod
@@ -124,7 +124,7 @@ def _run_with_mocks(
 class TestImportability:
     def test_module_importable(self) -> None:
         """yadgar.scripts.nightly_cycle must be importable and expose main()."""
-        from yadgar.scripts import nightly_cycle
+        from yadgar.core.scripts import nightly_cycle
 
         assert hasattr(nightly_cycle, "main")
         assert callable(nightly_cycle.main)

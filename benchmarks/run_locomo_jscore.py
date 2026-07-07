@@ -55,10 +55,10 @@ from benchmarks.test_e_locomo import (
     _ingest_conversation,
     _make_settings,
 )
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import Retriever
-from yadgar.storage import StorageEngine
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval import Retriever
+from yadgar._shared.storage import StorageEngine
 
 
 # ─── Logging ───────────────────────────────────────────────────────────────

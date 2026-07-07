@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -24,7 +24,7 @@ def _engines(tmp_path_factory):
     )
     # v5.42.3: /tmp/* and /projects/* are not git repos; patch _detect_branch
     # so memorize() calls without branch_hint pass branch context.
-    with patch("yadgar.server._detect_branch", return_value="feat/test-branch"):
+    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
         yield
     server.shutdown()
 

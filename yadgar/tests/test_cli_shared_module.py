@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from yadgar.cli._shared import init_replay_lightweight
+from yadgar.core.cli._shared import init_replay_lightweight
 
 # ---------------------------------------------------------------------------
 # Shared mock setup
@@ -54,14 +54,14 @@ def _build_mocks():
 def _patch_all(settings, storage, embeddings, kg, cmap, retriever, metacog, replay):
     """Return a list of patch context managers."""
     return [
-        patch("yadgar.config.Settings", return_value=settings),
-        patch("yadgar.storage.StorageEngine", return_value=storage),
-        patch("yadgar.embeddings.EmbeddingEngine", return_value=embeddings),
-        patch("yadgar.knowledge_graph.KnowledgeGraph", return_value=kg),
-        patch("yadgar.cognitive_map.CognitiveMap", return_value=cmap),
-        patch("yadgar.retrieval.Retriever", return_value=retriever),
-        patch("yadgar.metacognition.MetaCognition", return_value=metacog),
-        patch("yadgar.restoration.CheckpointRestore", return_value=replay),
+        patch("yadgar._shared.config.Settings", return_value=settings),
+        patch("yadgar._shared.storage.StorageEngine", return_value=storage),
+        patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
+        patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
+        patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
+        patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
+        patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
+        patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
     ]
 
 
@@ -74,14 +74,14 @@ class TestInitReplayLightweightReturnValue:
     def test_returns_tuple_of_two(self):
         mocks = _build_mocks()
         with (
-            patch("yadgar.config.Settings", return_value=mocks[0]),
-            patch("yadgar.storage.StorageEngine", return_value=mocks[1]),
-            patch("yadgar.embeddings.EmbeddingEngine", return_value=mocks[2]),
-            patch("yadgar.knowledge_graph.KnowledgeGraph", return_value=mocks[3]),
-            patch("yadgar.cognitive_map.CognitiveMap", return_value=mocks[4]),
-            patch("yadgar.retrieval.Retriever", return_value=mocks[5]),
-            patch("yadgar.metacognition.MetaCognition", return_value=mocks[6]),
-            patch("yadgar.restoration.CheckpointRestore", return_value=mocks[7]),
+            patch("yadgar._shared.config.Settings", return_value=mocks[0]),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mocks[1]),
+            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=mocks[2]),
+            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=mocks[3]),
+            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=mocks[4]),
+            patch("yadgar._shared.retrieval.Retriever", return_value=mocks[5]),
+            patch("yadgar._shared.metacognition.MetaCognition", return_value=mocks[6]),
+            patch("yadgar._shared.restoration.CheckpointRestore", return_value=mocks[7]),
         ):
             result = init_replay_lightweight()
         assert isinstance(result, tuple)
@@ -91,14 +91,14 @@ class TestInitReplayLightweightReturnValue:
         mocks = _build_mocks()
         settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
-            patch("yadgar.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar.retrieval.Retriever", return_value=retriever),
-            patch("yadgar.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar.restoration.CheckpointRestore", return_value=replay),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
+            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
+            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
+            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
+            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
+            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
         ):
             got_storage, _ = init_replay_lightweight()
         assert got_storage is storage
@@ -107,14 +107,14 @@ class TestInitReplayLightweightReturnValue:
         mocks = _build_mocks()
         settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
-            patch("yadgar.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar.retrieval.Retriever", return_value=retriever),
-            patch("yadgar.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar.restoration.CheckpointRestore", return_value=replay),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
+            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
+            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
+            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
+            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
+            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
         ):
             _, got_replay = init_replay_lightweight()
         assert got_replay is replay
@@ -132,14 +132,14 @@ class TestInitReplayLightweightDbPath:
         settings.DB_PATH = "/default/path.db"
 
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage) as mock_storage_cls,
-            patch("yadgar.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar.retrieval.Retriever", return_value=retriever),
-            patch("yadgar.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar.restoration.CheckpointRestore", return_value=replay),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage) as mock_storage_cls,
+            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
+            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
+            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
+            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
+            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
+            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
         ):
             init_replay_lightweight()
         mock_storage_cls.assert_called_once_with("/default/path.db")
@@ -149,14 +149,14 @@ class TestInitReplayLightweightDbPath:
         settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
 
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage) as mock_storage_cls,
-            patch("yadgar.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar.retrieval.Retriever", return_value=retriever),
-            patch("yadgar.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar.restoration.CheckpointRestore", return_value=replay),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage) as mock_storage_cls,
+            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
+            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
+            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
+            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
+            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
+            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
         ):
             init_replay_lightweight(db_path="/custom/path.db")
         mock_storage_cls.assert_called_once_with("/custom/path.db")
@@ -181,14 +181,14 @@ class TestInitReplayLightweightConstructionChain:
         mock_replay_cls = MagicMock(return_value=replay)
 
         with (
-            patch("yadgar.config.Settings", mock_settings_cls),
-            patch("yadgar.storage.StorageEngine", mock_storage_cls),
-            patch("yadgar.embeddings.EmbeddingEngine", mock_embed_cls),
-            patch("yadgar.knowledge_graph.KnowledgeGraph", mock_kg_cls),
-            patch("yadgar.cognitive_map.CognitiveMap", mock_cmap_cls),
-            patch("yadgar.retrieval.Retriever", mock_retriever_cls),
-            patch("yadgar.metacognition.MetaCognition", mock_metacog_cls),
-            patch("yadgar.restoration.CheckpointRestore", mock_replay_cls),
+            patch("yadgar._shared.config.Settings", mock_settings_cls),
+            patch("yadgar._shared.storage.StorageEngine", mock_storage_cls),
+            patch("yadgar._shared.embeddings.EmbeddingEngine", mock_embed_cls),
+            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", mock_kg_cls),
+            patch("yadgar._shared.cognitive_map.CognitiveMap", mock_cmap_cls),
+            patch("yadgar._shared.retrieval.Retriever", mock_retriever_cls),
+            patch("yadgar._shared.metacognition.MetaCognition", mock_metacog_cls),
+            patch("yadgar._shared.restoration.CheckpointRestore", mock_replay_cls),
         ):
             init_replay_lightweight()
 
@@ -264,14 +264,14 @@ class TestInitReplayLightweightConstructionChain:
         mocks = _build_mocks()
         settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
-            patch("yadgar.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar.retrieval.Retriever", return_value=retriever),
-            patch("yadgar.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar.restoration.CheckpointRestore", return_value=replay),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
+            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
+            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
+            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
+            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
+            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
             patch("logging.disable") as mock_disable,
         ):
             init_replay_lightweight()

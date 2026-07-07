@@ -30,7 +30,7 @@ def test_query_cache_concurrent_rmw_no_corruption(monkeypatch):
     (8× init without its lock, 1× with). The cache lock is audit-mandated
     defensive correctness against torn iteration under heavier real loads.
     """
-    from yadgar.remote_embeddings import RemoteEmbeddingEngine
+    from yadgar._shared.remote_embeddings import RemoteEmbeddingEngine
 
     eng = RemoteEmbeddingEngine.__new__(RemoteEmbeddingEngine)
     # minimal init without httpx
@@ -64,7 +64,7 @@ def test_query_cache_concurrent_rmw_no_corruption(monkeypatch):
 
     assert not errors, f"concurrent cache RMW raised: {errors[:3]}"
     # Cache respects its bound (no runaway growth / lost popitem).
-    from yadgar.remote_embeddings import _CACHE_MAX
+    from yadgar._shared.remote_embeddings import _CACHE_MAX
 
     assert len(eng._query_cache) <= _CACHE_MAX
 
@@ -152,7 +152,7 @@ def test_circuit_breaker_concurrent_transitions_stay_consistent():
 
 
 def test_stale_count_cache_concurrent_access_no_corruption(monkeypatch):
-    import yadgar.server.tools.project as proj
+    import yadgar.core.server.tools.project as proj
 
     # Stub the disk scan so the RMW around the cache is the unit under test.
     monkeypatch.setattr(proj, "_scan_stale_wiki_slugs", lambda resolved: ["a", "b"])
@@ -183,7 +183,7 @@ def test_stale_count_cache_concurrent_access_no_corruption(monkeypatch):
 
 
 def test_enrichment_pipeline_single_init_under_concurrency(monkeypatch):
-    import yadgar.storage as storage
+    import yadgar._shared.storage as storage
 
     # Reset the module singleton + count constructions.
     monkeypatch.setattr(storage, "_enrichment_pipeline", None, raising=False)
@@ -194,7 +194,7 @@ def test_enrichment_pipeline_single_init_under_concurrency(monkeypatch):
         def __init__(self, settings, embeddings_engine=None):
             init_count["n"] += 1
 
-    import yadgar.enrichment as enrichment
+    import yadgar._shared.enrichment as enrichment
 
     monkeypatch.setattr(enrichment, "EnrichmentPipeline", _FakePipeline)
 

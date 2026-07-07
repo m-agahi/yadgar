@@ -57,7 +57,7 @@ def _reset_otel():
         trace.set_tracer_provider(new_provider)
 
         try:
-            import yadgar.tracing as _tr
+            import yadgar._shared.tracing as _tr
 
             _tr._SETUP_DONE.clear()
         except Exception:
@@ -142,8 +142,8 @@ def _make_mock_wiki() -> Any:
 
 def _call_recall_mcp_tool(query: str = "test query", max_results: int = 1, min_heat: float = 0.0):
     """Call the recall MCP tool function directly with mocked dependencies."""
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import recall as recall_fn
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import recall as recall_fn
 
     mock_retriever = _make_mock_retriever()
     mock_storage = _make_mock_storage()
@@ -159,8 +159,8 @@ def _call_recall_mcp_tool(query: str = "test query", max_results: int = 1, min_h
         patch.object(_st, "_replay", None),
         patch.object(_st, "_wiki", mock_wiki),
         patch.object(_st, "_last_recalled_ids", {}),
-        patch("yadgar.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         return recall_fn(
             query=query, max_results=max_results, min_heat=min_heat, directory="/tmp/test"
@@ -174,15 +174,15 @@ def _call_wiki_query_mcp_tool(
     max_results: int = 5,
 ):
     """Call the wiki_query MCP tool function directly with mocked dependencies."""
-    import yadgar.server._state as _st
-    from yadgar.server.tools.wiki import wiki_query as wiki_query_fn
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.wiki import wiki_query as wiki_query_fn
 
     mock_wiki = _make_mock_wiki()
 
     with (
         patch.object(_st, "_wiki", mock_wiki),
-        patch("yadgar.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         return wiki_query_fn(
             query=query,
@@ -195,7 +195,7 @@ def _call_wiki_query_mcp_tool(
 
 def _make_settings_mock():
     """Return a minimal settings mock for Retriever tests."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     s = MagicMock(wraps=settings)
@@ -234,7 +234,7 @@ def _make_settings_mock():
 
 def _make_retriever_with_mocks(settings_override=None):
     """Build a Retriever with fully mocked sub-dependencies."""
-    from yadgar.retrieval.core import Retriever
+    from yadgar._shared.retrieval.core import Retriever
 
     s = settings_override or _make_settings_mock()
 
@@ -274,7 +274,7 @@ class TestRecallDurationMetricBugA:
         function — an exception in the body left count=0. Fix: observation must be in
         a try/finally so it always fires.
         """
-        from yadgar.metrics import yadgar_recall_duration_ms
+        from yadgar._shared.metrics import yadgar_recall_duration_ms
 
         before = _count_nolabel(yadgar_recall_duration_ms)
         M = 3
@@ -293,8 +293,8 @@ class TestRecallDurationMetricBugA:
         an exception propagated through the bare try/except at end of the happy path and
         the metric was NEVER observed. After the fix, the finally block fires regardless.
         """
-        import yadgar.server._state as _st
-        from yadgar.metrics import yadgar_recall_duration_ms
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.metrics import yadgar_recall_duration_ms
 
         mock_storage = _make_mock_storage()
 
@@ -315,12 +315,12 @@ class TestRecallDurationMetricBugA:
             patch.object(_st, "_buffer", None),
             patch.object(_st, "_replay", None),
             patch.object(_st, "_last_recalled_ids", {}),
-            patch("yadgar.server.tools.recall._forward_to_backend", _boom),
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.recall._forward_to_backend", _boom),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
             pytest.raises(RuntimeError, match="injected error for Bug A test"),
         ):
-            from yadgar.server.tools.recall import recall as recall_fn
+            from yadgar.core.server.tools.recall import recall as recall_fn
 
             recall_fn(query="test", max_results=1, directory="/tmp/test")
 
@@ -339,7 +339,7 @@ class TestRecallDurationMetricBugA:
 class TestRecallStageMetrics:
     def test_embed_query_stage_observed(self):
         """yadgar_recall_stage_ms{stage='embed_query'} has at least 1 observation after recall."""
-        from yadgar.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.metrics import yadgar_recall_stage_ms
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="embed_query")
         retriever = _make_retriever_with_mocks()
@@ -351,7 +351,7 @@ class TestRecallStageMetrics:
 
     def test_bm25_stage_observed(self):
         """yadgar_recall_stage_ms{stage='bm25'} has at least 1 observation after recall."""
-        from yadgar.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.metrics import yadgar_recall_stage_ms
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="bm25")
         retriever = _make_retriever_with_mocks()
@@ -361,7 +361,7 @@ class TestRecallStageMetrics:
 
     def test_hnsw_stage_observed(self):
         """yadgar_recall_stage_ms{stage='hnsw'} has at least 1 observation after recall."""
-        from yadgar.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.metrics import yadgar_recall_stage_ms
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="hnsw")
         retriever = _make_retriever_with_mocks()
@@ -371,7 +371,7 @@ class TestRecallStageMetrics:
 
     def test_rerank_final_stage_observed(self):
         """yadgar_recall_stage_ms{stage='rerank_final'} has at least 1 observation after recall."""
-        from yadgar.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.metrics import yadgar_recall_stage_ms
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="rerank_final")
         retriever = _make_retriever_with_mocks()
@@ -383,7 +383,7 @@ class TestRecallStageMetrics:
 
     def test_at_least_3_distinct_stages_observed(self):
         """At least 3 distinct stage names have observations after a recall call."""
-        from yadgar.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.metrics import yadgar_recall_stage_ms
 
         before_by_stage: dict[str, float] = {}
         for fam in yadgar_recall_stage_ms.collect():
@@ -439,7 +439,7 @@ class TestRecallSpanEmission:
 class TestWikiQuerySpanEmission:
     def test_wiki_query_span_emitted(self, in_memory_tracer):
         """A wiki.query span must be emitted when WikiStore.query() runs."""
-        from yadgar.wiki import WikiStore
+        from yadgar._shared.wiki import WikiStore
 
         _, exporter = in_memory_tracer
 
@@ -466,7 +466,7 @@ class TestWikiQuerySpanEmission:
 class TestWikiQueryDurationMetric:
     def test_wiki_query_duration_increments_by_m(self):
         """After M wiki_query MCP tool calls, yadgar_wiki_query_duration_ms._count == M."""
-        from yadgar.metrics import yadgar_wiki_query_duration_ms
+        from yadgar._shared.metrics import yadgar_wiki_query_duration_ms
 
         before = _count_nolabel(yadgar_wiki_query_duration_ms)
         M = 3
@@ -487,7 +487,7 @@ class TestWikiQueryDurationMetric:
 class TestNliOffNoObservation:
     def test_nli_stage_not_observed_when_disabled(self):
         """With NLI_RERANKING_ENABLED=false, nli stage must not appear in observations."""
-        from yadgar.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.metrics import yadgar_recall_stage_ms
 
         s = _make_settings_mock()
         s.NLI_RERANKING_ENABLED = False  # explicitly off

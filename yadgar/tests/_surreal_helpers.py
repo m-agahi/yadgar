@@ -5,7 +5,7 @@ import it without pulling in test-only modules.  This file is now a re-export
 shim so existing test imports continue to work unchanged.
 """
 
-from yadgar._surreal_runner import (  # noqa: F401
+from yadgar.core._surreal_runner import (  # noqa: F401
     _DEFAULT_PORT_BASE,
     _RETRY_BACKOFF_MS,
     _SPAWNED_SURREAL_PIDS,

@@ -20,7 +20,7 @@ import pytest
 def _engines(tmp_path_factory):
     from unittest.mock import patch
 
-    from yadgar import server
+    from yadgar.core import server
 
     tmp_path = tmp_path_factory.mktemp("latency")
     server.init_engines(
@@ -28,14 +28,14 @@ def _engines(tmp_path_factory):
         embedding_model="all-MiniLM-L6-v2",
     )
     # v5.42.3: /latency/project is not a git repo; patch _detect_branch.
-    with patch("yadgar.server._detect_branch", return_value="feat/test-branch"):
+    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
         yield
     server.shutdown()
 
 
 def test_memorize_takes_async_path():
     """memorize() must use the async enqueue path (not sync DB write)."""
-    from yadgar import server
+    from yadgar.core import server
 
     result = server.memorize(
         "latency budget test unique payload alpha bravo charlie delta epsilon",
@@ -60,8 +60,8 @@ def test_memorize_enqueue_under_5ms():
     tracked separately.  This test establishes the budget for the
     non-DB code path so regressions there are caught.
     """
-    from yadgar import server
-    from yadgar.file_queue import FileQueue
+    from yadgar.core import server
+    from yadgar.core.file_queue import FileQueue
 
     # Ensure file queue is initialized (warm up)
     server.memorize("warmup for latency test setup", "/latency/project", ["warmup"])

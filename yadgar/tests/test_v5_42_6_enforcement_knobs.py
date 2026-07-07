@@ -51,8 +51,8 @@ import pytest
 
 def _make_drainer(tmp_path):
     """Build a minimal QueueDrainer with a real FileQueue for unit tests."""
-    import yadgar.server._state as _st
-    from yadgar.file_queue import FileQueue, QueueDrainer
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.file_queue import FileQueue, QueueDrainer
 
     q = FileQueue(tmp_path)
     return QueueDrainer(queue=q, storage_factory=lambda: _st._storage, drain_interval=9999)
@@ -277,7 +277,7 @@ def _get_counter_value(metric_name: str, labels: dict) -> float:
 
     metric_name should include the _total suffix (e.g. 'foo_total').
     """
-    from yadgar.metrics import _registry  # noqa: PLC0415
+    from yadgar._shared.metrics import _registry  # noqa: PLC0415
 
     for metric in _registry.collect():
         for sample in metric.samples:
@@ -374,8 +374,8 @@ class TestMCPBoundaryEnforcementKnobs:
         """K15: YADGAR_BRANCH_ENFORCEMENT=false → wiki_add does not return missing_branch."""
         from unittest.mock import MagicMock, patch
 
-        import yadgar.server._state as _st
-        from yadgar.server.tools.wiki import wiki_add
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.wiki import wiki_add
 
         _fake_queue = MagicMock()
         _fake_queue.enqueue.return_value = None
@@ -383,8 +383,8 @@ class TestMCPBoundaryEnforcementKnobs:
 
         with (
             patch.dict(os.environ, {"YADGAR_BRANCH_ENFORCEMENT": "false"}),
-            patch("yadgar.server.tools.wiki.is_draining", return_value=False),
-            patch("yadgar.server.tools.wiki._get_file_queue", return_value=_fake_queue),
+            patch("yadgar.core.server.tools.wiki.is_draining", return_value=False),
+            patch("yadgar.core.server.tools.wiki._get_file_queue", return_value=_fake_queue),
             patch.object(_st, "_wiki", _fake_wiki),
         ):
             result = wiki_add(
@@ -406,8 +406,8 @@ class TestMCPBoundaryEnforcementKnobs:
         """K16: YADGAR_DIRECTORY_ENFORCEMENT=false → wiki_add does not return missing_directory."""
         from unittest.mock import MagicMock, patch
 
-        import yadgar.server._state as _st
-        from yadgar.server.tools.wiki import wiki_add
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.wiki import wiki_add
 
         _fake_queue = MagicMock()
         _fake_queue.enqueue.return_value = None
@@ -415,8 +415,8 @@ class TestMCPBoundaryEnforcementKnobs:
 
         with (
             patch.dict(os.environ, {"YADGAR_DIRECTORY_ENFORCEMENT": "false"}),
-            patch("yadgar.server.tools.wiki.is_draining", return_value=False),
-            patch("yadgar.server.tools.wiki._get_file_queue", return_value=_fake_queue),
+            patch("yadgar.core.server.tools.wiki.is_draining", return_value=False),
+            patch("yadgar.core.server.tools.wiki._get_file_queue", return_value=_fake_queue),
             patch.object(_st, "_wiki", _fake_wiki),
         ):
             result = wiki_add(

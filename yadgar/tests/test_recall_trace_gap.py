@@ -99,8 +99,8 @@ def test_side_effects_span_nested_under_recall(span_exporter):
     """_apply_recall_side_effects emits recall.side_effects under an outer span."""
     from opentelemetry import trace
 
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import _apply_recall_side_effects
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import _apply_recall_side_effects
 
     # Neutralise optional side-effect subsystems so the body runs to completion
     # without a live storage / cognitive map.
@@ -132,8 +132,8 @@ def test_side_effects_batches_heat_writes(span_exporter):
     Pre-fix: N × update_memory_heat + N × update_memory_last_accessed.
     Post-fix: a single boost_memories_access(ids, ts) call.
     """
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import _apply_recall_side_effects
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import _apply_recall_side_effects
 
     _st._thermo = None
     _st._cognitive_map = None
@@ -162,8 +162,8 @@ def test_side_effects_batches_heat_writes(span_exporter):
 
 def test_side_effects_preserves_heat_values(span_exporter):
     """Batched boost must produce identical in-dict heat: min(heat+0.1, 1.0)."""
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import _apply_recall_side_effects
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import _apply_recall_side_effects
 
     _st._thermo = None
     _st._cognitive_map = None
@@ -188,7 +188,7 @@ def test_side_effects_preserves_heat_values(span_exporter):
 
 def test_boost_memories_access_empty_is_noop(span_exporter):
     """boost_memories_access([]) must not touch the DB (guard against empty IN [])."""
-    from yadgar.storage.memory import _MemoryMixin
+    from yadgar._shared.storage.memory import _MemoryMixin
 
     class _Stub(_MemoryMixin):
         def __init__(self):
@@ -225,8 +225,8 @@ def test_fanout_fuse_span_emits_on_multi_provider(span_exporter):
     """
     from opentelemetry import trace
 
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import _fanout_recall
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import _fanout_recall
 
     mem = {
         "id": 1,
@@ -276,8 +276,8 @@ def test_fanout_fuse_span_absent_on_single_provider(span_exporter):
 
     from opentelemetry import trace
 
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import _fanout_recall
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import _fanout_recall
 
     mem = {
         "id": 1,

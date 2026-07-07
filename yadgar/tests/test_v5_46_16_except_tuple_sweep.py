@@ -55,12 +55,12 @@ _BARE_FORM = re.compile(
 
 SITES = [
     (
-        "yadgar/daemon.py",
+        "yadgar/core/daemon.py",
         "FileNotFoundError, subprocess.TimeoutExpired",
         "daemon.py container-runtime detection",
     ),
     (
-        "yadgar/config_registry.py",
+        "yadgar/_shared/config_registry.py",
         "ValueError, TypeError",
         "config_registry.py prometheus metrics setter",
     ),
@@ -70,12 +70,12 @@ SITES = [
         "embed_service.py shutdown handler (critical — Exception was escaping)",
     ),
     (
-        "yadgar/conflict_resolver.py",
+        "yadgar/core/conflict_resolver.py",
         "ValueError, TypeError",
         "conflict_resolver.py similar-result id parse",
     ),
     (
-        "yadgar/log_config.py",
+        "yadgar/_shared/log_config.py",
         "PermissionError, OSError",
         "log_config.py fallback log-dir creation",
     ),
@@ -86,27 +86,27 @@ SITES = [
     # gets rewritten to the PEP-758 bare form the AST hooks reject). The literal-paren
     # regex below can't match a Name, so this site is retired, not repointed.
     (
-        "yadgar/server/http.py",
+        "yadgar/core/server/http.py",
         "TypeError, ValueError",
         "server/http.py viz_search node-id parse",
     ),
     (
-        "yadgar/server/http_bookmarks.py",
+        "yadgar/core/server/http_bookmarks.py",
         "TypeError, ValueError",
         "server/http_bookmarks.py position int parse",
     ),
     (
-        "yadgar/server/http_bookmarks.py",
+        "yadgar/core/server/http_bookmarks.py",
         "ValueError, TypeError",
         "server/http_bookmarks.py wiki-search limit int parse",
     ),
     (
-        "yadgar/scripts/hook_runner.py",
+        "yadgar/core/scripts/hook_runner.py",
         "json.JSONDecodeError, ValueError",
         "scripts/hook_runner.py hook_db_lockdown_check JSON parse",
     ),
     (
-        "yadgar/hooks/db-lockdown-check.py",
+        "yadgar/core/hooks/db-lockdown-check.py",
         "json.JSONDecodeError, ValueError",
         "hooks/db-lockdown-check.py main() JSON parse",
     ),

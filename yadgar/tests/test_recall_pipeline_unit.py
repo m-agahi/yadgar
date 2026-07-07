@@ -25,9 +25,9 @@ def test_backend_tracing_provider_not_clobbered():
         "os.environ.pop('OTEL_SDK_DISABLED', None); "
         "os.environ['YADGAR_OTLP_ENDPOINT'] = ''; "
         "os.environ.setdefault('YADGAR_DB_PATH', '/tmp/probe-test.db'); "
-        "from yadgar.tracing import setup_tracing; "
+        "from yadgar._shared.tracing import setup_tracing; "
         "setup_tracing('yadgar-backend'); "
-        "import yadgar.server.tools._recall_pipeline; "
+        "import yadgar._shared.runtime.recall_pipeline; "
         "from opentelemetry import trace; "
         "provider = trace.get_tracer_provider(); "
         "svc = getattr(getattr(provider, 'resource', None), 'attributes', {}).get('service.name', 'MISSING'); "
@@ -63,7 +63,7 @@ def test_backend_tracing_provider_not_clobbered():
 
 def test_side_effect_split_both_halves_fire():
     """_apply_recall_side_effects fires both DB half and session half."""
-    from yadgar.server.tools._recall_pipeline import _apply_recall_side_effects
+    from yadgar._shared.runtime.recall_pipeline import _apply_recall_side_effects
 
     mem = {"id": 42, "heat": 0.5, "_source": "memory", "content": "test"}
     merged = [mem]
@@ -71,8 +71,8 @@ def test_side_effect_split_both_halves_fire():
     storage._now_iso.return_value = "2026-01-01T00:00:00+00:00"
 
     with (
-        patch("yadgar.server.tools._recall_pipeline._st") as mock_st,
-        patch("yadgar.server.tools._recall_pipeline._record_recall_sr_transition") as mock_sr,
+        patch("yadgar._shared.runtime.recall_pipeline._st") as mock_st,
+        patch("yadgar._shared.runtime.recall_pipeline._record_recall_sr_transition") as mock_sr,
     ):
         mock_st._thermo = None
         mock_st._buffer = MagicMock()
@@ -89,14 +89,14 @@ def test_side_effect_split_both_halves_fire():
 
 def test_db_side_effects_only_boost():
     """_apply_recall_db_side_effects writes heat/thermo but NOT session state."""
-    from yadgar.server.tools._recall_pipeline import _apply_recall_db_side_effects
+    from yadgar._shared.runtime.recall_pipeline import _apply_recall_db_side_effects
 
     mem = {"id": 7, "heat": 0.3, "_source": "memory", "content": "db test"}
     merged = [mem]
     storage = MagicMock()
     storage._now_iso.return_value = "2026-01-01T00:00:00+00:00"
 
-    with patch("yadgar.server.tools._recall_pipeline._st") as mock_st:
+    with patch("yadgar._shared.runtime.recall_pipeline._st") as mock_st:
         mock_st._thermo = MagicMock()
         mock_st._buffer = MagicMock()
         mock_st._replay = MagicMock()
@@ -115,14 +115,14 @@ def test_db_side_effects_only_boost():
 
 def test_session_side_effects_only_session():
     """_apply_recall_session_side_effects fires SR/buffer/replay but NOT boost."""
-    from yadgar.server.tools._recall_pipeline import _apply_recall_session_side_effects
+    from yadgar._shared.runtime.recall_pipeline import _apply_recall_session_side_effects
 
     mem = {"id": 3, "heat": 0.6, "_source": "memory", "content": "session test"}
     merged = [mem]
 
     with (
-        patch("yadgar.server.tools._recall_pipeline._st") as mock_st,
-        patch("yadgar.server.tools._recall_pipeline._record_recall_sr_transition") as mock_sr,
+        patch("yadgar._shared.runtime.recall_pipeline._st") as mock_st,
+        patch("yadgar._shared.runtime.recall_pipeline._record_recall_sr_transition") as mock_sr,
     ):
         mock_st._buffer = MagicMock()
         mock_st._replay = MagicMock()
@@ -139,14 +139,14 @@ def test_session_side_effects_only_session():
 
 def test_db_side_effects_skips_wiki_rows():
     """_apply_recall_db_side_effects skips wiki rows."""
-    from yadgar.server.tools._recall_pipeline import _apply_recall_db_side_effects
+    from yadgar._shared.runtime.recall_pipeline import _apply_recall_db_side_effects
 
     wiki_row = {"_source": "wiki", "id": "wiki:slug", "content": "wiki content"}
     merged = [wiki_row]
     storage = MagicMock()
     storage._now_iso.return_value = "2026-01-01T00:00:00+00:00"
 
-    with patch("yadgar.server.tools._recall_pipeline._st") as mock_st:
+    with patch("yadgar._shared.runtime.recall_pipeline._st") as mock_st:
         mock_st._thermo = MagicMock()
         _apply_recall_db_side_effects(merged, "query", storage)
         storage.boost_memories_access.assert_not_called()
@@ -164,9 +164,9 @@ def test_forward_to_backend_payload_and_auth():
     Phase 2a: payload must include mode and profile so the backend can
     dispatch landscape and rerank_level-gated fanout variants.
     """
-    import yadgar.server.tools  # noqa: F401
+    import yadgar.core.server.tools  # noqa: F401
 
-    _recall_module = sys.modules["yadgar.server.tools.recall"]
+    _recall_module = sys.modules["yadgar.core.server.tools.recall"]
     from yadgar.backend.embed_service import RecallRequest
 
     captured = {}
@@ -220,9 +220,9 @@ def test_forward_to_backend_threads_mode_and_profile():
 
     Phase 2a: mode='landscape' and profile='fast' must reach the backend /recall.
     """
-    import yadgar.server.tools  # noqa: F401
+    import yadgar.core.server.tools  # noqa: F401
 
-    _recall_module = sys.modules["yadgar.server.tools.recall"]
+    _recall_module = sys.modules["yadgar.core.server.tools.recall"]
     captured = {}
 
     def _fake_post(url, *, json=None, headers=None, timeout=None):
@@ -256,9 +256,9 @@ def test_forward_to_backend_threads_mode_and_profile():
 
 def test_forward_to_backend_no_url_raises():
     """_forward_to_backend raises RuntimeError when YADGAR_EMBED_URL is unset."""
-    import yadgar.server.tools  # noqa: F401
+    import yadgar.core.server.tools  # noqa: F401
 
-    _recall_module = sys.modules["yadgar.server.tools.recall"]
+    _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
     with patch.dict("os.environ", {}, clear=True):
         try:
@@ -290,9 +290,9 @@ def test_recall_forward_only_calls_session_side_effects():
     Phase 2a: forward-only path — no flag needed. recall() unconditionally
     forwards to _forward_to_backend and runs session half on returned list.
     """
-    import yadgar.server.tools  # noqa: F401
+    import yadgar.core.server.tools  # noqa: F401
 
-    _recall_module = sys.modules["yadgar.server.tools.recall"]
+    _recall_module = sys.modules["yadgar.core.server.tools.recall"]
     _recall_fn = _recall_module.recall
 
     fake_results = [{"id": 99, "content": "forward result", "heat": 0.7, "_source": "memory"}]
@@ -306,8 +306,8 @@ def test_recall_forward_only_calls_session_side_effects():
         mock_st._pool = None
 
         with (
-            patch("yadgar.server.tools.project._detect_branch", return_value="master"),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             result = _recall_fn(query="forward test", directory="/tmp", max_results=5)
 
@@ -321,9 +321,9 @@ def test_recall_forward_only_loud_failure():
     Phase 2a: replaces deleted test_recall_backend_enabled_fallback_on_error.
     Backend error → loud raise; _fanout_recall must NOT be called in-core.
     """
-    import yadgar.server.tools  # noqa: F401
+    import yadgar.core.server.tools  # noqa: F401
 
-    _recall_module = sys.modules["yadgar.server.tools.recall"]
+    _recall_module = sys.modules["yadgar.core.server.tools.recall"]
     _recall_fn = _recall_module.recall
 
     with (
@@ -337,8 +337,8 @@ def test_recall_forward_only_loud_failure():
         mock_st._pool = None
 
         with (
-            patch("yadgar.server.tools.project._detect_branch", return_value="master"),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             try:
                 _recall_fn(query="loud fail test", directory="/tmp", max_results=5)

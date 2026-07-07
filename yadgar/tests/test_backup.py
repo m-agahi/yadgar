@@ -43,7 +43,7 @@ def _make_snapshot_dir(base: Path, name: str, *, older: bool = False) -> Path:
 class TestCreateSnapshot:
     def test_creates_directory_matching_pattern(self, tmp_path: Path) -> None:
         """Snapshot dir must exist and match <db_basename>.<label>-<TS> pattern."""
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         db = _make_dummy_db(tmp_path / "surreal_db")
         result = create_snapshot(db, snapshot_dir=tmp_path, label="nightly")
@@ -56,7 +56,7 @@ class TestCreateSnapshot:
         """Timestamp must be YYYY-MM-DD-HHMMSS (dashes, seconds precision)."""
         import re
 
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         db = _make_dummy_db(tmp_path / "surreal_db")
         result = create_snapshot(db, snapshot_dir=tmp_path, label="nightly")
@@ -69,7 +69,7 @@ class TestCreateSnapshot:
 
     def test_copies_contents_byte_for_byte(self, tmp_path: Path) -> None:
         """Contents must be identical to source."""
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         db = _make_dummy_db(tmp_path / "surreal_db")
         result = create_snapshot(db, snapshot_dir=tmp_path)
@@ -83,7 +83,7 @@ class TestCreateSnapshot:
 
     def test_default_snapshot_dir_is_parent_of_db(self, tmp_path: Path) -> None:
         """When snapshot_dir=None, parent of db_path is used."""
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         db_parent = tmp_path / "yadgar_home"
         db_parent.mkdir()
@@ -94,14 +94,14 @@ class TestCreateSnapshot:
 
     def test_raises_runtime_error_on_missing_source(self, tmp_path: Path) -> None:
         """Missing db_path must raise RuntimeError."""
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         with pytest.raises(RuntimeError):
             create_snapshot(tmp_path / "nonexistent_db", snapshot_dir=tmp_path)
 
     def test_label_appears_in_directory_name(self, tmp_path: Path) -> None:
         """Custom label must appear in the snapshot directory name."""
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         db = _make_dummy_db(tmp_path / "surreal_db")
         result = create_snapshot(db, snapshot_dir=tmp_path, label="pre-cycle")
@@ -112,13 +112,13 @@ class TestCreateSnapshot:
         """If target already exists, a counter suffix is appended to avoid collision."""
         from unittest.mock import patch
 
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         db = _make_dummy_db(tmp_path / "surreal_db")
         fixed_ts = "2026-05-26-143025"
         first_target = tmp_path / f"surreal_db.nightly-{fixed_ts}"
 
-        with patch("yadgar.backup.datetime") as mock_dt:
+        with patch("yadgar.core.backup.datetime") as mock_dt:
             mock_dt.now.return_value.strftime.return_value = fixed_ts
             result1 = create_snapshot(db, snapshot_dir=tmp_path, label="nightly")
 
@@ -127,7 +127,7 @@ class TestCreateSnapshot:
         # Second call with same ts — must get a different path
         _make_dummy_db(tmp_path / "surreal_db2")
 
-        with patch("yadgar.backup.datetime") as mock_dt:
+        with patch("yadgar.core.backup.datetime") as mock_dt:
             mock_dt.now.return_value.strftime.return_value = fixed_ts
             result2 = create_snapshot(db, snapshot_dir=tmp_path, label="nightly")
 
@@ -143,7 +143,7 @@ class TestCreateSnapshot:
 class TestPruneSnapshots:
     def test_keeps_newest_n_deletes_rest(self, tmp_path: Path) -> None:
         """With 5 snapshots and retention=3, the 2 oldest are deleted."""
-        from yadgar.backup import prune_snapshots
+        from yadgar.core.backup import prune_snapshots
 
         for i in range(5):
             d = tmp_path / f"surreal_db.nightly-2026-05-26-10000{i}"
@@ -169,7 +169,7 @@ class TestPruneSnapshots:
 
     def test_returns_removed_paths(self, tmp_path: Path) -> None:
         """Returned list must contain exactly the removed Path objects."""
-        from yadgar.backup import prune_snapshots
+        from yadgar.core.backup import prune_snapshots
 
         dirs = []
         for i in range(4):
@@ -186,7 +186,7 @@ class TestPruneSnapshots:
 
     def test_idempotent_second_call_returns_empty(self, tmp_path: Path) -> None:
         """Second prune with same retention on already-pruned dir returns []."""
-        from yadgar.backup import prune_snapshots
+        from yadgar.core.backup import prune_snapshots
 
         for i in range(3):
             d = tmp_path / f"surreal_db.nightly-snap-{i:04d}"
@@ -198,7 +198,7 @@ class TestPruneSnapshots:
 
     def test_does_not_touch_non_matching_dirs(self, tmp_path: Path) -> None:
         """Directories not matching the pattern are not deleted."""
-        from yadgar.backup import prune_snapshots
+        from yadgar.core.backup import prune_snapshots
 
         # 5 matching
         for i in range(5):
@@ -214,7 +214,7 @@ class TestPruneSnapshots:
 
     def test_retention_zero_deletes_all(self, tmp_path: Path) -> None:
         """retention=0 removes all matching directories."""
-        from yadgar.backup import prune_snapshots
+        from yadgar.core.backup import prune_snapshots
 
         for i in range(3):
             (tmp_path / f"surreal_db.nightly-snap-{i:04d}").mkdir()
@@ -225,7 +225,7 @@ class TestPruneSnapshots:
 
     def test_retention_ge_count_deletes_none(self, tmp_path: Path) -> None:
         """When retention >= count, nothing is deleted."""
-        from yadgar.backup import prune_snapshots
+        from yadgar.core.backup import prune_snapshots
 
         for i in range(3):
             (tmp_path / f"surreal_db.nightly-snap-{i:04d}").mkdir()
@@ -241,7 +241,7 @@ class TestPruneSnapshots:
 
     def test_missing_snapshot_dir_returns_empty(self, tmp_path: Path) -> None:
         """Missing snapshot_dir returns [] rather than raising."""
-        from yadgar.backup import prune_snapshots
+        from yadgar.core.backup import prune_snapshots
 
         removed = prune_snapshots(tmp_path / "nonexistent", "surreal_db.nightly-*", retention=3)
         assert removed == []
@@ -271,7 +271,7 @@ class TestPruneDoesNotDeleteJustCreated:
         import os
         import time
 
-        from yadgar.backup import create_snapshot, prune_snapshots
+        from yadgar.core.backup import create_snapshot, prune_snapshots
 
         # Simulate a DB directory that hasn't been written to in a while
         db = tmp_path / "surreal_db"
@@ -320,7 +320,7 @@ class TestPruneDoesNotDeleteJustCreated:
         import os
         import time
 
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         db = tmp_path / "surreal_db"
         db.mkdir()
@@ -352,7 +352,7 @@ class TestPruneDoesNotDeleteJustCreated:
         import os
         import time
 
-        from yadgar.backup import create_snapshot, prune_snapshots
+        from yadgar.core.backup import create_snapshot, prune_snapshots
 
         db = tmp_path / "surreal_db"
         db.mkdir()
@@ -394,7 +394,7 @@ class TestEnvKnob:
     def test_backup_retention_default_is_3(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """YADGAR_BACKUP_RETENTION defaults to 3 when not set."""
         monkeypatch.delenv("YADGAR_BACKUP_RETENTION", raising=False)
-        from yadgar.backup import default_retention
+        from yadgar.core.backup import default_retention
 
         assert default_retention() == 3
 
@@ -404,7 +404,7 @@ class TestEnvKnob:
         # Need fresh read — function reads os.getenv live
         import importlib
 
-        import yadgar.backup as bkp
+        import yadgar.core.backup as bkp
 
         importlib.reload(bkp)
 
@@ -412,7 +412,7 @@ class TestEnvKnob:
 
     def test_config_registry_contains_knob(self) -> None:
         """YADGAR_BACKUP_RETENTION is registered in config_registry."""
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = [e.name for e in list_config()]
         assert "YADGAR_BACKUP_RETENTION" in names
@@ -486,7 +486,7 @@ class TestRoundTripIntegrity:
     def test_snapshot_contains_identical_relative_paths(self, tmp_path: Path) -> None:
         """Every relative path in source (excluding symlinks) must exist in snapshot."""
 
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         src = self._build_complex_source(tmp_path)
         snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
@@ -503,7 +503,7 @@ class TestRoundTripIntegrity:
         import filecmp
         import hashlib
 
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         src = self._build_complex_source(tmp_path)
         snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
@@ -528,7 +528,7 @@ class TestRoundTripIntegrity:
         """Large binary blob (~200 KB) must survive copytree byte-for-byte."""
         import hashlib
 
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         src = self._build_complex_source(tmp_path)
         snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
@@ -546,7 +546,7 @@ class TestRoundTripIntegrity:
 
     def test_snapshot_empty_directory_preserved(self, tmp_path: Path) -> None:
         """Empty directories in source must be present in snapshot."""
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         src = self._build_complex_source(tmp_path)
         snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
@@ -558,7 +558,7 @@ class TestRoundTripIntegrity:
 
     def test_snapshot_symlink_content_dereferenced(self, tmp_path: Path) -> None:
         """Symlink in source is dereferenced: snapshot contains a regular file with linked content."""
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         src = self._build_complex_source(tmp_path)
         snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")
@@ -574,7 +574,7 @@ class TestRoundTripIntegrity:
 
     def test_snapshot_utf8_text_not_mangled(self, tmp_path: Path) -> None:
         """UTF-8 text file with non-ASCII content must survive copytree byte-identical."""
-        from yadgar.backup import create_snapshot
+        from yadgar.core.backup import create_snapshot
 
         src = self._build_complex_source(tmp_path)
         snap = create_snapshot(src, snapshot_dir=tmp_path, label="rt-test")

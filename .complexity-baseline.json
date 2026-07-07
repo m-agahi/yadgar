@@ -761,51 +761,51 @@
     "nesting": 4,
     "params": 2
   },
-  "yadgar/astrocyte_pool.py::AstrocytePool@59": {
+  "yadgar/_shared/astrocyte_pool.py::AstrocytePool@59": {
     "attrs": 6,
     "inh_depth": 0,
     "methods": 7
   },
-  "yadgar/astrocyte_pool.py::__file__": {
+  "yadgar/_shared/astrocyte_pool.py::__file__": {
     "loc": 370
   },
-  "yadgar/astrocyte_pool.py::__init__@67": {
+  "yadgar/_shared/astrocyte_pool.py::__init__@67": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
     "params": 6
   },
-  "yadgar/astrocyte_pool.py::_assign_memory_inner@131": {
+  "yadgar/_shared/astrocyte_pool.py::_assign_memory_inner@131": {
     "cyclo": 11,
     "loc": 47,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/astrocyte_pool.py::assign_memory@114": {
+  "yadgar/_shared/astrocyte_pool.py::assign_memory@114": {
     "cyclo": 2,
     "loc": 16,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/astrocyte_pool.py::consensus_retrieve@272": {
+  "yadgar/_shared/astrocyte_pool.py::consensus_retrieve@272": {
     "cyclo": 15,
     "loc": 66,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/astrocyte_pool.py::consolidate_domain@181": {
+  "yadgar/_shared/astrocyte_pool.py::consolidate_domain@181": {
     "cyclo": 14,
     "loc": 88,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/astrocyte_pool.py::get_process_stats@341": {
+  "yadgar/_shared/astrocyte_pool.py::get_process_stats@341": {
     "cyclo": 5,
     "loc": 30,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/astrocyte_pool.py::init_processes@84": {
+  "yadgar/_shared/astrocyte_pool.py::init_processes@84": {
     "cyclo": 5,
     "loc": 27,
     "nesting": 2,
@@ -947,135 +947,135 @@
     "nesting": 2,
     "params": 3
   },
-  "yadgar/causal_discovery/__init__.py::CausalDiscovery@32": {
+  "yadgar/_shared/causal_discovery/__init__.py::CausalDiscovery@32": {
     "attrs": 3,
     "inh_depth": 0,
     "methods": 11
   },
-  "yadgar/causal_discovery/__init__.py::__file__": {
+  "yadgar/_shared/causal_discovery/__init__.py::__file__": {
     "loc": 233
   },
-  "yadgar/causal_discovery/__init__.py::__init__@41": {
+  "yadgar/_shared/causal_discovery/__init__.py::__init__@41": {
     "cyclo": 1,
     "loc": 9,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/causal_discovery/__init__.py::_meek_r1@76": {
+  "yadgar/_shared/causal_discovery/__init__.py::_meek_r1@76": {
     "cyclo": 1,
     "loc": 13,
     "nesting": 0,
     "params": 6
   },
-  "yadgar/causal_discovery/__init__.py::_meek_r2@90": {
+  "yadgar/_shared/causal_discovery/__init__.py::_meek_r2@90": {
     "cyclo": 1,
     "loc": 13,
     "nesting": 0,
     "params": 6
   },
-  "yadgar/causal_discovery/__init__.py::_meek_r3@104": {
+  "yadgar/_shared/causal_discovery/__init__.py::_meek_r3@104": {
     "cyclo": 1,
     "loc": 13,
     "nesting": 0,
     "params": 6
   },
-  "yadgar/causal_discovery/__init__.py::build_event_matrix@51": {
+  "yadgar/_shared/causal_discovery/__init__.py::build_event_matrix@51": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/causal_discovery/__init__.py::conditional_independence_test@63": {
+  "yadgar/_shared/causal_discovery/__init__.py::conditional_independence_test@63": {
     "cyclo": 1,
     "loc": 12,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/causal_discovery/__init__.py::discover_dag@137": {
+  "yadgar/_shared/causal_discovery/__init__.py::discover_dag@137": {
     "cyclo": 3,
     "loc": 57,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/causal_discovery/__init__.py::get_causal_chain@221": {
+  "yadgar/_shared/causal_discovery/__init__.py::get_causal_chain@221": {
     "cyclo": 1,
     "loc": 13,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/causal_discovery/__init__.py::pc_algorithm@118": {
+  "yadgar/_shared/causal_discovery/__init__.py::pc_algorithm@118": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/causal_discovery/__init__.py::query_causes@195": {
+  "yadgar/_shared/causal_discovery/__init__.py::query_causes@195": {
     "cyclo": 2,
     "loc": 12,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/causal_discovery/__init__.py::query_effects@208": {
+  "yadgar/_shared/causal_discovery/__init__.py::query_effects@208": {
     "cyclo": 2,
     "loc": 12,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/causal_discovery/dag_io.py::__file__": {
+  "yadgar/_shared/causal_discovery/dag_io.py::__file__": {
     "loc": 95
   },
-  "yadgar/causal_discovery/dag_io.py::store_dag_edges@68": {
+  "yadgar/_shared/causal_discovery/dag_io.py::store_dag_edges@68": {
     "cyclo": 4,
     "loc": 28,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/causal_discovery/dag_io.py::traverse_oriented_edges@12": {
+  "yadgar/_shared/causal_discovery/dag_io.py::traverse_oriented_edges@12": {
     "cyclo": 9,
     "loc": 54,
     "nesting": 3,
     "params": 5
   },
-  "yadgar/causal_discovery/independence.py::__file__": {
+  "yadgar/_shared/causal_discovery/independence.py::__file__": {
     "loc": 73
   },
-  "yadgar/causal_discovery/independence.py::conditional_independence_test@12": {
+  "yadgar/_shared/causal_discovery/independence.py::conditional_independence_test@12": {
     "cyclo": 14,
     "loc": 62,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/causal_discovery/meek.py::__file__": {
+  "yadgar/_shared/causal_discovery/meek.py::__file__": {
     "loc": 62
   },
-  "yadgar/causal_discovery/meek.py::meek_r1@8": {
+  "yadgar/_shared/causal_discovery/meek.py::meek_r1@8": {
     "cyclo": 4,
     "loc": 16,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/causal_discovery/meek.py::meek_r2@26": {
+  "yadgar/_shared/causal_discovery/meek.py::meek_r2@26": {
     "cyclo": 4,
     "loc": 16,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/causal_discovery/meek.py::meek_r3@44": {
+  "yadgar/_shared/causal_discovery/meek.py::meek_r3@44": {
     "cyclo": 9,
     "loc": 19,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/causal_discovery/pc.py::__file__": {
+  "yadgar/_shared/causal_discovery/pc.py::__file__": {
     "loc": 279
   },
-  "yadgar/causal_discovery/pc.py::build_event_matrix@18": {
+  "yadgar/_shared/causal_discovery/pc.py::build_event_matrix@18": {
     "cyclo": 19,
     "loc": 85,
     "nesting": 4,
     "params": 4
   },
-  "yadgar/causal_discovery/pc.py::pc_algorithm@105": {
+  "yadgar/_shared/causal_discovery/pc.py::pc_algorithm@105": {
     "cyclo": 53,
     "loc": 175,
     "nesting": 6,
@@ -1315,191 +1315,191 @@
     "nesting": 0,
     "params": 1
   },
-  "yadgar/cls_store/__init__.py::DualStoreCLS@38": {
+  "yadgar/_shared/cls_store/__init__.py::DualStoreCLS@38": {
     "attrs": 3,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/cls_store/__init__.py::__file__": {
+  "yadgar/_shared/cls_store/__init__.py::__file__": {
     "loc": 188
   },
-  "yadgar/cls_store/__init__.py::__init__@47": {
+  "yadgar/_shared/cls_store/__init__.py::__init__@47": {
     "cyclo": 1,
     "loc": 9,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/cls_store/__init__.py::_auto_weight@172": {
+  "yadgar/_shared/cls_store/__init__.py::_auto_weight@172": {
     "cyclo": 6,
     "loc": 17,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/cls_store/__init__.py::consolidation_cycle@60": {
+  "yadgar/_shared/cls_store/__init__.py::consolidation_cycle@60": {
     "cyclo": 4,
     "loc": 54,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/cls_store/__init__.py::query_dual@117": {
+  "yadgar/_shared/cls_store/__init__.py::query_dual@117": {
     "cyclo": 9,
     "loc": 52,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/cls_store/clustering.py::_ClusteringMixin@12": {
+  "yadgar/_shared/cls_store/clustering.py::_ClusteringMixin@12": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
   },
-  "yadgar/cls_store/clustering.py::__file__": {
+  "yadgar/_shared/cls_store/clustering.py::__file__": {
     "loc": 173
   },
-  "yadgar/cls_store/clustering.py::_search_store@139": {
+  "yadgar/_shared/cls_store/clustering.py::_search_store@139": {
     "cyclo": 4,
     "loc": 30,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/cls_store/clustering.py::_summarize_cluster@170": {
+  "yadgar/_shared/cls_store/clustering.py::_summarize_cluster@170": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/cls_store/clustering.py::find_recurring_patterns@18": {
+  "yadgar/_shared/cls_store/clustering.py::find_recurring_patterns@18": {
     "cyclo": 26,
     "loc": 118,
     "nesting": 4,
     "params": 3
   },
-  "yadgar/cls_store/patterns.py::_PatternsMixin@181": {
+  "yadgar/_shared/cls_store/patterns.py::_PatternsMixin@181": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
   },
-  "yadgar/cls_store/patterns.py::__file__": {
+  "yadgar/_shared/cls_store/patterns.py::__file__": {
     "loc": 360
   },
-  "yadgar/cls_store/patterns.py::_has_meaningful_token@122": {
+  "yadgar/_shared/cls_store/patterns.py::_has_meaningful_token@122": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/cls_store/patterns.py::_is_degenerate_auto_abstracted@143": {
+  "yadgar/_shared/cls_store/patterns.py::_is_degenerate_auto_abstracted@143": {
     "cyclo": 5,
     "loc": 24,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/cls_store/patterns.py::abstract_to_schema@252": {
+  "yadgar/_shared/cls_store/patterns.py::abstract_to_schema@252": {
     "cyclo": 17,
     "loc": 109,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/cls_store/patterns.py::check_consistency@217": {
+  "yadgar/_shared/cls_store/patterns.py::check_consistency@217": {
     "cyclo": 4,
     "loc": 32,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/cls_store/patterns.py::classify_memory@186": {
+  "yadgar/_shared/cls_store/patterns.py::classify_memory@186": {
     "cyclo": 6,
     "loc": 28,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/cls_store/promotion.py::_PromotionMixin@11": {
+  "yadgar/_shared/cls_store/promotion.py::_PromotionMixin@11": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/cls_store/promotion.py::__file__": {
+  "yadgar/_shared/cls_store/promotion.py::__file__": {
     "loc": 115
   },
-  "yadgar/cls_store/promotion.py::_promote_pattern@15": {
+  "yadgar/_shared/cls_store/promotion.py::_promote_pattern@15": {
     "cyclo": 15,
     "loc": 101,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/cognitive_map.py::CognitiveMap@28": {
+  "yadgar/_shared/cognitive_map.py::CognitiveMap@28": {
     "attrs": 7,
     "inh_depth": 0,
     "methods": 12
   },
-  "yadgar/cognitive_map.py::__file__": {
+  "yadgar/_shared/cognitive_map.py::__file__": {
     "loc": 316
   },
-  "yadgar/cognitive_map.py::__init__@31": {
+  "yadgar/_shared/cognitive_map.py::__init__@31": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/cognitive_map.py::build_transition_matrix@62": {
+  "yadgar/_shared/cognitive_map.py::build_transition_matrix@62": {
     "cyclo": 6,
     "loc": 35,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/cognitive_map.py::compute_sr_matrix@100": {
+  "yadgar/_shared/cognitive_map.py::compute_sr_matrix@100": {
     "cyclo": 4,
     "loc": 29,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/cognitive_map.py::extract_coordinates@132": {
+  "yadgar/_shared/cognitive_map.py::extract_coordinates@132": {
     "cyclo": 7,
     "loc": 34,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/cognitive_map.py::get_neighborhood@222": {
+  "yadgar/_shared/cognitive_map.py::get_neighborhood@222": {
     "cyclo": 6,
     "loc": 22,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/cognitive_map.py::get_sr_scores@269": {
+  "yadgar/_shared/cognitive_map.py::get_sr_scores@269": {
     "cyclo": 11,
     "loc": 38,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/cognitive_map.py::has_sufficient_data@308": {
+  "yadgar/_shared/cognitive_map.py::has_sufficient_data@308": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/cognitive_map.py::incremental_update@247": {
+  "yadgar/_shared/cognitive_map.py::incremental_update@247": {
     "cyclo": 5,
     "loc": 19,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/cognitive_map.py::is_dirty@315": {
+  "yadgar/_shared/cognitive_map.py::is_dirty@315": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/cognitive_map.py::navigate_to@178": {
+  "yadgar/_shared/cognitive_map.py::navigate_to@178": {
     "cyclo": 7,
     "loc": 43,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/cognitive_map.py::record_transition@42": {
+  "yadgar/_shared/cognitive_map.py::record_transition@42": {
     "cyclo": 2,
     "loc": 17,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/cognitive_map.py::update_memory_coordinates@167": {
+  "yadgar/_shared/cognitive_map.py::update_memory_coordinates@167": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 1,
@@ -2616,170 +2616,170 @@
     "nesting": 1,
     "params": 2
   },
-  "yadgar/curation/__init__.py::MemoryCurator@39": {
+  "yadgar/_shared/curation/__init__.py::MemoryCurator@39": {
     "attrs": 4,
     "inh_depth": 0,
     "methods": 14
   },
-  "yadgar/curation/__init__.py::__file__": {
+  "yadgar/_shared/curation/__init__.py::__file__": {
     "loc": 289
   },
-  "yadgar/curation/__init__.py::__init__@48": {
+  "yadgar/_shared/curation/__init__.py::__init__@48": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/curation/__init__.py::_create_link@215": {
+  "yadgar/_shared/curation/__init__.py::_create_link@215": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/curation/__init__.py::_find_similar_memories@176": {
+  "yadgar/_shared/curation/__init__.py::_find_similar_memories@176": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/curation/__init__.py::_has_textual_overlap@183": {
+  "yadgar/_shared/curation/__init__.py::_has_textual_overlap@183": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/curation/__init__.py::_insert_new_memory@206": {
+  "yadgar/_shared/curation/__init__.py::_insert_new_memory@206": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/curation/__init__.py::_memify_derive@287": {
+  "yadgar/_shared/curation/__init__.py::_memify_derive@287": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/curation/__init__.py::_memify_prune@272": {
+  "yadgar/_shared/curation/__init__.py::_memify_prune@272": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/curation/__init__.py::_memify_reweight@282": {
+  "yadgar/_shared/curation/__init__.py::_memify_reweight@282": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/curation/__init__.py::_memify_strengthen@277": {
+  "yadgar/_shared/curation/__init__.py::_memify_strengthen@277": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/curation/__init__.py::_merge_memory@187": {
+  "yadgar/_shared/curation/__init__.py::_merge_memory@187": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 6
   },
-  "yadgar/curation/__init__.py::_run_write_time_contradiction@144": {
+  "yadgar/_shared/curation/__init__.py::_run_write_time_contradiction@144": {
     "cyclo": 6,
     "loc": 31,
     "nesting": 4,
     "params": 3
   },
-  "yadgar/curation/__init__.py::curate_on_remember@62": {
+  "yadgar/_shared/curation/__init__.py::curate_on_remember@62": {
     "cyclo": 12,
     "loc": 81,
     "nesting": 4,
     "params": 12
   },
-  "yadgar/curation/__init__.py::detect_contradictions@221": {
+  "yadgar/_shared/curation/__init__.py::detect_contradictions@221": {
     "cyclo": 2,
     "loc": 10,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/curation/__init__.py::memify_cycle@234": {
+  "yadgar/_shared/curation/__init__.py::memify_cycle@234": {
     "cyclo": 1,
     "loc": 36,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/curation/contradiction.py::__file__": {
+  "yadgar/_shared/curation/contradiction.py::__file__": {
     "loc": 82
   },
-  "yadgar/curation/contradiction.py::detect_contradictions@27": {
+  "yadgar/_shared/curation/contradiction.py::detect_contradictions@27": {
     "cyclo": 10,
     "loc": 56,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/curation/ingestion.py::NewMemorySpec@19": {
+  "yadgar/_shared/curation/ingestion.py::NewMemorySpec@19": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 0
   },
-  "yadgar/curation/ingestion.py::__file__": {
+  "yadgar/_shared/curation/ingestion.py::__file__": {
     "loc": 190
   },
-  "yadgar/curation/ingestion.py::create_link@166": {
+  "yadgar/_shared/curation/ingestion.py::create_link@166": {
     "cyclo": 3,
     "loc": 25,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/curation/ingestion.py::find_similar_memories@38": {
+  "yadgar/_shared/curation/ingestion.py::find_similar_memories@38": {
     "cyclo": 6,
     "loc": 21,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/curation/ingestion.py::has_textual_overlap@61": {
+  "yadgar/_shared/curation/ingestion.py::has_textual_overlap@61": {
     "cyclo": 4,
     "loc": 14,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/curation/ingestion.py::insert_new_memory@128": {
+  "yadgar/_shared/curation/ingestion.py::insert_new_memory@128": {
     "cyclo": 3,
     "loc": 36,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/curation/ingestion.py::merge_memory@77": {
+  "yadgar/_shared/curation/ingestion.py::merge_memory@77": {
     "cyclo": 6,
     "loc": 49,
     "nesting": 3,
     "params": 7
   },
-  "yadgar/curation/prune_passes.py::__file__": {
+  "yadgar/_shared/curation/prune_passes.py::__file__": {
     "loc": 172
   },
-  "yadgar/curation/prune_passes.py::_memify_prune@13": {
+  "yadgar/_shared/curation/prune_passes.py::_memify_prune@13": {
     "cyclo": 56,
     "loc": 160,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/curation/strengthen.py::__file__": {
+  "yadgar/_shared/curation/strengthen.py::__file__": {
     "loc": 213
   },
-  "yadgar/curation/strengthen.py::_memify_derive@90": {
+  "yadgar/_shared/curation/strengthen.py::_memify_derive@90": {
     "cyclo": 14,
     "loc": 124,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/curation/strengthen.py::_memify_reweight@40": {
+  "yadgar/_shared/curation/strengthen.py::_memify_reweight@40": {
     "cyclo": 13,
     "loc": 48,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/curation/strengthen.py::_memify_strengthen@11": {
+  "yadgar/_shared/curation/strengthen.py::_memify_strengthen@11": {
     "cyclo": 11,
     "loc": 27,
     "nesting": 2,
@@ -3158,69 +3158,69 @@
     "nesting": 1,
     "params": 3
   },
-  "yadgar/engram.py::EngramAllocator@19": {
+  "yadgar/_shared/engram.py::EngramAllocator@19": {
     "attrs": 5,
     "inh_depth": 0,
     "methods": 10
   },
-  "yadgar/engram.py::__file__": {
+  "yadgar/_shared/engram.py::__file__": {
     "loc": 218
   },
-  "yadgar/engram.py::__init__@22": {
+  "yadgar/_shared/engram.py::__init__@22": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/engram.py::_allocate_inner@59": {
+  "yadgar/_shared/engram.py::_allocate_inner@59": {
     "cyclo": 6,
     "loc": 48,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/engram.py::_compute_decayed_excitability@200": {
+  "yadgar/_shared/engram.py::_compute_decayed_excitability@200": {
     "cyclo": 6,
     "loc": 19,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/engram.py::allocate@37": {
+  "yadgar/_shared/engram.py::allocate@37": {
     "cyclo": 2,
     "loc": 21,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/engram.py::apply_lateral_inhibition@131": {
+  "yadgar/_shared/engram.py::apply_lateral_inhibition@131": {
     "cyclo": 5,
     "loc": 13,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/engram.py::boost_excitability@115": {
+  "yadgar/_shared/engram.py::boost_excitability@115": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/engram.py::get_excitability@108": {
+  "yadgar/_shared/engram.py::get_excitability@108": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/engram.py::get_slot_statistics@176": {
+  "yadgar/_shared/engram.py::get_slot_statistics@176": {
     "cyclo": 4,
     "loc": 23,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/engram.py::get_temporally_linked@123": {
+  "yadgar/_shared/engram.py::get_temporally_linked@123": {
     "cyclo": 4,
     "loc": 7,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/engram.py::rebalance_if_needed@145": {
+  "yadgar/_shared/engram.py::rebalance_if_needed@145": {
     "cyclo": 6,
     "loc": 30,
     "nesting": 2,
@@ -4430,105 +4430,105 @@
   "yadgar/install_hooks_lib.py::__file__": {
     "loc": 368
   },
-  "yadgar/knowledge_graph.py::KnowledgeGraph@43": {
+  "yadgar/_shared/knowledge_graph.py::KnowledgeGraph@43": {
     "attrs": 2,
     "inh_depth": 0,
     "methods": 16
   },
-  "yadgar/knowledge_graph.py::__file__": {
+  "yadgar/_shared/knowledge_graph.py::__file__": {
     "loc": 438
   },
-  "yadgar/knowledge_graph.py::__init__@52": {
+  "yadgar/_shared/knowledge_graph.py::__init__@52": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/knowledge_graph.py::_check_temporal_order@414": {
+  "yadgar/_shared/knowledge_graph.py::_check_temporal_order@414": {
     "cyclo": 10,
     "loc": 25,
     "nesting": 4,
     "params": 3
   },
-  "yadgar/knowledge_graph.py::_ensure_entity@346": {
+  "yadgar/_shared/knowledge_graph.py::_ensure_entity@346": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/knowledge_graph.py::_extract_entities_typed_inner@187": {
+  "yadgar/_shared/knowledge_graph.py::_extract_entities_typed_inner@187": {
     "cyclo": 14,
     "loc": 58,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/knowledge_graph.py::_get_adjacent@390": {
+  "yadgar/_shared/knowledge_graph.py::_get_adjacent@390": {
     "cyclo": 4,
     "loc": 23,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/knowledge_graph.py::_get_typed_relationship@353": {
+  "yadgar/_shared/knowledge_graph.py::_get_typed_relationship@353": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/knowledge_graph.py::_get_typed_relationship_by_name@356": {
+  "yadgar/_shared/knowledge_graph.py::_get_typed_relationship_by_name@356": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/knowledge_graph.py::_insert_typed_relationship@365": {
+  "yadgar/_shared/knowledge_graph.py::_insert_typed_relationship@365": {
     "cyclo": 1,
     "loc": 21,
     "nesting": 0,
     "params": 7
   },
-  "yadgar/knowledge_graph.py::_reinforce_typed_relationship@387": {
+  "yadgar/_shared/knowledge_graph.py::_reinforce_typed_relationship@387": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/knowledge_graph.py::add_relationship@58": {
+  "yadgar/_shared/knowledge_graph.py::add_relationship@58": {
     "cyclo": 4,
     "loc": 29,
     "nesting": 1,
     "params": 6
   },
-  "yadgar/knowledge_graph.py::detect_causality@116": {
+  "yadgar/_shared/knowledge_graph.py::detect_causality@116": {
     "cyclo": 10,
     "loc": 55,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/knowledge_graph.py::extract_entities_typed@174": {
+  "yadgar/_shared/knowledge_graph.py::extract_entities_typed@174": {
     "cyclo": 2,
     "loc": 12,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/knowledge_graph.py::get_neighbors@248": {
+  "yadgar/_shared/knowledge_graph.py::get_neighbors@248": {
     "cyclo": 6,
     "loc": 35,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/knowledge_graph.py::get_relationship_history@99": {
+  "yadgar/_shared/knowledge_graph.py::get_relationship_history@99": {
     "cyclo": 7,
     "loc": 14,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/knowledge_graph.py::get_relationships_at_time@90": {
+  "yadgar/_shared/knowledge_graph.py::get_relationships_at_time@90": {
     "cyclo": 4,
     "loc": 8,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/knowledge_graph.py::get_subgraph@284": {
+  "yadgar/_shared/knowledge_graph.py::get_subgraph@284": {
     "cyclo": 11,
     "loc": 59,
     "nesting": 4,
@@ -4753,99 +4753,99 @@
     "nesting": 1,
     "params": 1
   },
-  "yadgar/metacognition/__init__.py::MetaCognition@30": {
+  "yadgar/_shared/metacognition/__init__.py::MetaCognition@30": {
     "attrs": 5,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/metacognition/__init__.py::__file__": {
+  "yadgar/_shared/metacognition/__init__.py::__file__": {
     "loc": 48
   },
-  "yadgar/metacognition/__init__.py::__init__@34": {
+  "yadgar/_shared/metacognition/__init__.py::__init__@34": {
     "cyclo": 1,
     "loc": 12,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/metacognition/cognitive_load.py::_CognitiveLoadMixin@13": {
+  "yadgar/_shared/metacognition/cognitive_load.py::_CognitiveLoadMixin@13": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 5
   },
-  "yadgar/metacognition/cognitive_load.py::__file__": {
+  "yadgar/_shared/metacognition/cognitive_load.py::__file__": {
     "loc": 254
   },
-  "yadgar/metacognition/cognitive_load.py::_apply_primacy_recency@224": {
+  "yadgar/_shared/metacognition/cognitive_load.py::_apply_primacy_recency@224": {
     "cyclo": 3,
     "loc": 22,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/metacognition/cognitive_load.py::_chunk_score@43": {
+  "yadgar/_shared/metacognition/cognitive_load.py::_chunk_score@43": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/metacognition/cognitive_load.py::_extract_entities@6": {
+  "yadgar/_shared/metacognition/cognitive_load.py::_extract_entities@6": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/metacognition/cognitive_load.py::_position_reason@248": {
+  "yadgar/_shared/metacognition/cognitive_load.py::_position_reason@248": {
     "cyclo": 4,
     "loc": 7,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/metacognition/cognitive_load.py::chunk_memories@85": {
+  "yadgar/_shared/metacognition/cognitive_load.py::chunk_memories@85": {
     "cyclo": 19,
     "loc": 73,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/metacognition/cognitive_load.py::manage_context@16": {
+  "yadgar/_shared/metacognition/cognitive_load.py::manage_context@16": {
     "cyclo": 13,
     "loc": 68,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/metacognition/cognitive_load.py::summarize_overflow@159": {
+  "yadgar/_shared/metacognition/cognitive_load.py::summarize_overflow@159": {
     "cyclo": 14,
     "loc": 64,
     "nesting": 4,
     "params": 3
   },
-  "yadgar/metacognition/coverage.py::_CoverageMixin@13": {
+  "yadgar/_shared/metacognition/coverage.py::_CoverageMixin@13": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/metacognition/coverage.py::__file__": {
+  "yadgar/_shared/metacognition/coverage.py::__file__": {
     "loc": 138
   },
-  "yadgar/metacognition/coverage.py::_extract_entities@6": {
+  "yadgar/_shared/metacognition/coverage.py::_extract_entities@6": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/metacognition/coverage.py::assess_coverage@16": {
+  "yadgar/_shared/metacognition/coverage.py::assess_coverage@16": {
     "cyclo": 31,
     "loc": 123,
     "nesting": 6,
     "params": 3
   },
-  "yadgar/metacognition/gap_detection.py::_GapDetectionMixin@6": {
+  "yadgar/_shared/metacognition/gap_detection.py::_GapDetectionMixin@6": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/metacognition/gap_detection.py::__file__": {
+  "yadgar/_shared/metacognition/gap_detection.py::__file__": {
     "loc": 168
   },
-  "yadgar/metacognition/gap_detection.py::detect_gaps@9": {
+  "yadgar/_shared/metacognition/gap_detection.py::detect_gaps@9": {
     "cyclo": 35,
     "loc": 160,
     "nesting": 3,
@@ -5134,63 +5134,63 @@
   "yadgar/models.py::__file__": {
     "loc": 228
   },
-  "yadgar/narrative.py::NarrativeEngine@51": {
+  "yadgar/_shared/narrative.py::NarrativeEngine@51": {
     "attrs": 3,
     "inh_depth": 0,
     "methods": 9
   },
-  "yadgar/narrative.py::__file__": {
+  "yadgar/_shared/narrative.py::__file__": {
     "loc": 235
   },
-  "yadgar/narrative.py::__init__@54": {
+  "yadgar/_shared/narrative.py::__init__@54": {
     "cyclo": 1,
     "loc": 9,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/narrative.py::_extract_decisions@166": {
+  "yadgar/_shared/narrative.py::_extract_decisions@166": {
     "cyclo": 9,
     "loc": 21,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/narrative.py::_extract_events@188": {
+  "yadgar/_shared/narrative.py::_extract_events@188": {
     "cyclo": 8,
     "loc": 21,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/narrative.py::_get_active_directories@232": {
+  "yadgar/_shared/narrative.py::_get_active_directories@232": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/narrative.py::_get_high_heat_topics@221": {
+  "yadgar/_shared/narrative.py::_get_high_heat_topics@221": {
     "cyclo": 3,
     "loc": 10,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/narrative.py::_get_top_entities@210": {
+  "yadgar/_shared/narrative.py::_get_top_entities@210": {
     "cyclo": 4,
     "loc": 10,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/narrative.py::auto_narrate@135": {
+  "yadgar/_shared/narrative.py::auto_narrate@135": {
     "cyclo": 5,
     "loc": 30,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/narrative.py::generate_narrative@64": {
+  "yadgar/_shared/narrative.py::generate_narrative@64": {
     "cyclo": 7,
     "loc": 54,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/narrative.py::get_project_story@119": {
+  "yadgar/_shared/narrative.py::get_project_story@119": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 1,
@@ -5335,157 +5335,157 @@
     "nesting": 2,
     "params": 1
   },
-  "yadgar/predictive_coding.py::WriteGate@43": {
+  "yadgar/_shared/predictive_coding.py::WriteGate@43": {
     "attrs": 8,
     "inh_depth": 0,
     "methods": 13
   },
-  "yadgar/predictive_coding.py::__file__": {
+  "yadgar/_shared/predictive_coding.py::__file__": {
     "loc": 546
   },
-  "yadgar/predictive_coding.py::__init__@52": {
+  "yadgar/_shared/predictive_coding.py::__init__@52": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/predictive_coding.py::_compute_embedding_novelty@205": {
+  "yadgar/_shared/predictive_coding.py::_compute_embedding_novelty@205": {
     "cyclo": 6,
     "loc": 21,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/predictive_coding.py::_compute_entity_novelty@227": {
+  "yadgar/_shared/predictive_coding.py::_compute_entity_novelty@227": {
     "cyclo": 4,
     "loc": 20,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/predictive_coding.py::_compute_structural_novelty@304": {
+  "yadgar/_shared/predictive_coding.py::_compute_structural_novelty@304": {
     "cyclo": 14,
     "loc": 43,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/predictive_coding.py::_compute_task_continuity@114": {
+  "yadgar/_shared/predictive_coding.py::_compute_task_continuity@114": {
     "cyclo": 8,
     "loc": 45,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/predictive_coding.py::_compute_temporal_novelty@248": {
+  "yadgar/_shared/predictive_coding.py::_compute_temporal_novelty@248": {
     "cyclo": 16,
     "loc": 55,
     "nesting": 5,
     "params": 3
   },
-  "yadgar/predictive_coding.py::_get_cached_entities@73": {
+  "yadgar/_shared/predictive_coding.py::_get_cached_entities@73": {
     "cyclo": 4,
     "loc": 14,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/predictive_coding.py::compute_boundary_signal@434": {
+  "yadgar/_shared/predictive_coding.py::compute_boundary_signal@434": {
     "cyclo": 4,
     "loc": 25,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/predictive_coding.py::compute_surprisal@162": {
+  "yadgar/_shared/predictive_coding.py::compute_surprisal@162": {
     "cyclo": 2,
     "loc": 42,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/predictive_coding.py::get_directory_model@462": {
+  "yadgar/_shared/predictive_coding.py::get_directory_model@462": {
     "cyclo": 18,
     "loc": 85,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/predictive_coding.py::invalidate_entity_cache@88": {
+  "yadgar/_shared/predictive_coding.py::invalidate_entity_cache@88": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/predictive_coding.py::record_stored@99": {
+  "yadgar/_shared/predictive_coding.py::record_stored@99": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/predictive_coding.py::should_store@350": {
+  "yadgar/_shared/predictive_coding.py::should_store@350": {
     "cyclo": 8,
     "loc": 81,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/prospective.py::ProspectiveMemoryEngine@39": {
+  "yadgar/_shared/prospective.py::ProspectiveMemoryEngine@39": {
     "attrs": 2,
     "inh_depth": 0,
     "methods": 6
   },
-  "yadgar/prospective.py::__file__": {
+  "yadgar/_shared/prospective.py::__file__": {
     "loc": 183
   },
-  "yadgar/prospective.py::__init__@42": {
+  "yadgar/_shared/prospective.py::__init__@42": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/prospective.py::_matches@140": {
+  "yadgar/_shared/prospective.py::_matches@140": {
     "cyclo": 9,
     "loc": 29,
     "nesting": 4,
     "params": 6
   },
-  "yadgar/prospective.py::_matches_time@171": {
+  "yadgar/_shared/prospective.py::_matches_time@171": {
     "cyclo": 4,
     "loc": 13,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/prospective.py::auto_create_from_content@108": {
+  "yadgar/_shared/prospective.py::auto_create_from_content@108": {
     "cyclo": 8,
     "loc": 31,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/prospective.py::check_triggers@73": {
+  "yadgar/_shared/prospective.py::check_triggers@73": {
     "cyclo": 4,
     "loc": 34,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/prospective.py::create_trigger@46": {
+  "yadgar/_shared/prospective.py::create_trigger@46": {
     "cyclo": 2,
     "loc": 26,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/rate_limit.py::TokenBucketRateLimiter@18": {
+  "yadgar/_shared/rate_limit.py::TokenBucketRateLimiter@18": {
     "attrs": 4,
     "inh_depth": 0,
     "methods": 3
   },
-  "yadgar/rate_limit.py::__file__": {
+  "yadgar/_shared/rate_limit.py::__file__": {
     "loc": 58
   },
-  "yadgar/rate_limit.py::__init__@26": {
+  "yadgar/_shared/rate_limit.py::__init__@26": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/rate_limit.py::allow@33": {
+  "yadgar/_shared/rate_limit.py::allow@33": {
     "cyclo": 5,
     "loc": 21,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/rate_limit.py::reset@55": {
+  "yadgar/_shared/rate_limit.py::reset@55": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 1,
@@ -5607,1347 +5607,1347 @@
     "nesting": 0,
     "params": 3
   },
-  "yadgar/restoration.py::CheckpointContext@26": {
+  "yadgar/_shared/restoration.py::CheckpointContext@26": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 0
   },
-  "yadgar/restoration.py::CheckpointRestore@46": {
+  "yadgar/_shared/restoration.py::CheckpointRestore@46": {
     "attrs": 7,
     "inh_depth": 0,
     "methods": 22
   },
-  "yadgar/restoration.py::__file__": {
+  "yadgar/_shared/restoration.py::__file__": {
     "loc": 509
   },
-  "yadgar/restoration.py::__init__@55": {
+  "yadgar/_shared/restoration.py::__init__@55": {
     "cyclo": 2,
     "loc": 16,
     "nesting": 0,
     "params": 7
   },
-  "yadgar/restoration.py::_build_sr_query@277": {
+  "yadgar/_shared/restoration.py::_build_sr_query@277": {
     "cyclo": 4,
     "loc": 7,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/restoration.py::_detect_gaps_safe@320": {
+  "yadgar/_shared/restoration.py::_detect_gaps_safe@320": {
     "cyclo": 4,
     "loc": 12,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/restoration.py::_fetch_blocks_safe@402": {
+  "yadgar/_shared/restoration.py::_fetch_blocks_safe@402": {
     "cyclo": 3,
     "loc": 7,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/restoration.py::_fetch_blocks_safe@440": {
+  "yadgar/_shared/restoration.py::_fetch_blocks_safe@440": {
     "cyclo": 3,
     "loc": 7,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/restoration.py::_fetch_hot_memories@260": {
+  "yadgar/_shared/restoration.py::_fetch_hot_memories@260": {
     "cyclo": 4,
     "loc": 16,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/restoration.py::_fetch_recent_memories_safe@246": {
+  "yadgar/_shared/restoration.py::_fetch_recent_memories_safe@246": {
     "cyclo": 3,
     "loc": 13,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/restoration.py::_format_checkpoint_section@373": {
+  "yadgar/_shared/restoration.py::_format_checkpoint_section@373": {
     "cyclo": 7,
     "loc": 23,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/restoration.py::_format_checkpoint_section@411": {
+  "yadgar/_shared/restoration.py::_format_checkpoint_section@411": {
     "cyclo": 7,
     "loc": 23,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/restoration.py::_format_restoration@418": {
+  "yadgar/_shared/restoration.py::_format_restoration@418": {
     "cyclo": 13,
     "loc": 54,
     "nesting": 2,
     "params": 8
   },
-  "yadgar/restoration.py::_format_restoration@456": {
+  "yadgar/_shared/restoration.py::_format_restoration@456": {
     "cyclo": 13,
     "loc": 54,
     "nesting": 2,
     "params": 8
   },
-  "yadgar/restoration.py::_parse_list_field@367": {
+  "yadgar/_shared/restoration.py::_parse_list_field@367": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/restoration.py::_parse_list_field@405": {
+  "yadgar/_shared/restoration.py::_parse_list_field@405": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/restoration.py::_predict_memories@285": {
+  "yadgar/_shared/restoration.py::_predict_memories@285": {
     "cyclo": 8,
     "loc": 34,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/restoration.py::_prepend_blocks@397": {
+  "yadgar/_shared/restoration.py::_prepend_blocks@397": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/restoration.py::_prepend_blocks@435": {
+  "yadgar/_shared/restoration.py::_prepend_blocks@435": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/restoration.py::_render_blocks_section@410": {
+  "yadgar/_shared/restoration.py::_render_blocks_section@410": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/restoration.py::_render_blocks_section@448": {
+  "yadgar/_shared/restoration.py::_render_blocks_section@448": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/restoration.py::_truncate@362": {
+  "yadgar/_shared/restoration.py::_truncate@362": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/restoration.py::_truncate@400": {
+  "yadgar/_shared/restoration.py::_truncate@400": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/restoration.py::anchor_memory@123": {
+  "yadgar/_shared/restoration.py::anchor_memory@123": {
     "cyclo": 4,
     "loc": 43,
     "nesting": 1,
     "params": 8
   },
-  "yadgar/restoration.py::create_checkpoint@87": {
+  "yadgar/_shared/restoration.py::create_checkpoint@87": {
     "cyclo": 2,
     "loc": 35,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/restoration.py::create_micro_checkpoint@202": {
+  "yadgar/_shared/restoration.py::create_micro_checkpoint@202": {
     "cyclo": 1,
     "loc": 10,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/restoration.py::pre_compact_drain@213": {
+  "yadgar/_shared/restoration.py::pre_compact_drain@213": {
     "cyclo": 3,
     "loc": 32,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/restoration.py::record_tool_call@72": {
+  "yadgar/_shared/restoration.py::record_tool_call@72": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/restoration.py::reset_tool_count@83": {
+  "yadgar/_shared/restoration.py::reset_tool_count@83": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/restoration.py::restore@246": {
+  "yadgar/_shared/restoration.py::restore@246": {
     "cyclo": 24,
     "loc": 114,
     "nesting": 6,
     "params": 2
   },
-  "yadgar/restoration.py::restore@333": {
+  "yadgar/_shared/restoration.py::restore@333": {
     "cyclo": 6,
     "loc": 65,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/restoration.py::should_auto_checkpoint@76": {
+  "yadgar/_shared/restoration.py::should_auto_checkpoint@76": {
     "cyclo": 3,
     "loc": 6,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/restoration.py::should_micro_checkpoint@167": {
+  "yadgar/_shared/restoration.py::should_micro_checkpoint@167": {
     "cyclo": 8,
     "loc": 34,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/retrieval/__init__.py::__file__": {
+  "yadgar/_shared/retrieval/__init__.py::__file__": {
     "loc": 34
   },
-  "yadgar/retrieval/_reranking_confidence.py::_ConfidenceMixin@6": {
+  "yadgar/_shared/retrieval/_reranking_confidence.py::_ConfidenceMixin@6": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/_reranking_confidence.py::__file__": {
+  "yadgar/_shared/retrieval/_reranking_confidence.py::__file__": {
     "loc": 111
   },
-  "yadgar/retrieval/_reranking_confidence.py::compute_signal_confidence@70": {
+  "yadgar/_shared/retrieval/_reranking_confidence.py::compute_signal_confidence@70": {
     "cyclo": 14,
     "loc": 42,
     "nesting": 5,
     "params": 3
   },
-  "yadgar/retrieval/_reranking_confidence.py::detect_adversarial@9": {
+  "yadgar/_shared/retrieval/_reranking_confidence.py::detect_adversarial@9": {
     "cyclo": 10,
     "loc": 60,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::_CrossEncoderMixin@18": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::_CrossEncoderMixin@18": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::_CrossEncoderMixin@90": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::_CrossEncoderMixin@90": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::__file__": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::__file__": {
     "loc": 190
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::_aggregate_max_scores@43": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::_aggregate_max_scores@43": {
     "cyclo": 4,
     "loc": 18,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::_apply_ce_weights@63": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::_apply_ce_weights@63": {
     "cyclo": 5,
     "loc": 25,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::_build_expanded_pairs@18": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::_build_expanded_pairs@18": {
     "cyclo": 4,
     "loc": 23,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::cluster_memories@125": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::cluster_memories@125": {
     "cyclo": 9,
     "loc": 32,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::cluster_memories@159": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::cluster_memories@159": {
     "cyclo": 9,
     "loc": 32,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::cross_encoder_rerank@22": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::cross_encoder_rerank@22": {
     "cyclo": 22,
     "loc": 92,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::cross_encoder_rerank@94": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::cross_encoder_rerank@94": {
     "cyclo": 12,
     "loc": 54,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::score_single_pair@116": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::score_single_pair@116": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/retrieval/_reranking_cross_encoder.py::score_single_pair@150": {
+  "yadgar/_shared/retrieval/_reranking_cross_encoder.py::score_single_pair@150": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/retrieval/_reranking_heuristic.py::_HeuristicMixin@6": {
+  "yadgar/_shared/retrieval/_reranking_heuristic.py::_HeuristicMixin@6": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/retrieval/_reranking_heuristic.py::__file__": {
+  "yadgar/_shared/retrieval/_reranking_heuristic.py::__file__": {
     "loc": 158
   },
-  "yadgar/retrieval/_reranking_heuristic.py::heuristic_rerank@9": {
+  "yadgar/_shared/retrieval/_reranking_heuristic.py::heuristic_rerank@9": {
     "cyclo": 27,
     "loc": 150,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/retrieval/_reranking_mmr.py::_MMRMixin@6": {
+  "yadgar/_shared/retrieval/_reranking_mmr.py::_MMRMixin@6": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/retrieval/_reranking_mmr.py::__file__": {
+  "yadgar/_shared/retrieval/_reranking_mmr.py::__file__": {
     "loc": 84
   },
-  "yadgar/retrieval/_reranking_mmr.py::cosine_sim@46": {
+  "yadgar/_shared/retrieval/_reranking_mmr.py::cosine_sim@46": {
     "cyclo": 4,
     "loc": 6,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/_reranking_mmr.py::mmr_rerank@9": {
+  "yadgar/_shared/retrieval/_reranking_mmr.py::mmr_rerank@9": {
     "cyclo": 20,
     "loc": 76,
     "nesting": 5,
     "params": 5
   },
-  "yadgar/retrieval/_reranking_multi_passage.py::_MultiPassageMixin@8": {
+  "yadgar/_shared/retrieval/_reranking_multi_passage.py::_MultiPassageMixin@8": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/retrieval/_reranking_multi_passage.py::__file__": {
+  "yadgar/_shared/retrieval/_reranking_multi_passage.py::__file__": {
     "loc": 47
   },
-  "yadgar/retrieval/_reranking_multi_passage.py::multi_passage_rerank@16": {
+  "yadgar/_shared/retrieval/_reranking_multi_passage.py::multi_passage_rerank@16": {
     "cyclo": 8,
     "loc": 32,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/retrieval/_reranking_nli.py::_NLIMixin@13": {
+  "yadgar/_shared/retrieval/_reranking_nli.py::_NLIMixin@13": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/retrieval/_reranking_nli.py::__file__": {
+  "yadgar/_shared/retrieval/_reranking_nli.py::__file__": {
     "loc": 43
   },
-  "yadgar/retrieval/_reranking_nli.py::nli_rerank@17": {
+  "yadgar/_shared/retrieval/_reranking_nli.py::nli_rerank@17": {
     "cyclo": 8,
     "loc": 27,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/retrieval/compare.py::__file__": {
+  "yadgar/_shared/retrieval/compare.py::__file__": {
     "loc": 96
   },
-  "yadgar/retrieval/compare.py::recall_compare@16": {
+  "yadgar/_shared/retrieval/compare.py::recall_compare@16": {
     "cyclo": 5,
     "loc": 81,
     "nesting": 3,
     "params": 7
   },
-  "yadgar/retrieval/core.py::Retriever@29": {
+  "yadgar/_shared/retrieval/core.py::Retriever@29": {
     "attrs": 10,
     "inh_depth": 0,
     "methods": 15
   },
-  "yadgar/retrieval/core.py::__file__": {
+  "yadgar/_shared/retrieval/core.py::__file__": {
     "loc": 510
   },
-  "yadgar/retrieval/core.py::__init__@33": {
+  "yadgar/_shared/retrieval/core.py::__init__@33": {
     "cyclo": 1,
     "loc": 19,
     "nesting": 0,
     "params": 6
   },
-  "yadgar/retrieval/core.py::_comet_expand_query@71": {
+  "yadgar/_shared/retrieval/core.py::_comet_expand_query@71": {
     "cyclo": 5,
     "loc": 26,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/retrieval/core.py::_dual_vector_search@100": {
+  "yadgar/_shared/retrieval/core.py::_dual_vector_search@100": {
     "cyclo": 4,
     "loc": 19,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/retrieval/core.py::_get_pipeline@299": {
+  "yadgar/_shared/retrieval/core.py::_get_pipeline@299": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/retrieval/core.py::_spreading_apply_activation@282": {
+  "yadgar/_shared/retrieval/core.py::_spreading_apply_activation@282": {
     "cyclo": 4,
     "loc": 14,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/retrieval/core.py::_spreading_bfs_step@257": {
+  "yadgar/_shared/retrieval/core.py::_spreading_bfs_step@257": {
     "cyclo": 5,
     "loc": 24,
     "nesting": 3,
     "params": 7
   },
-  "yadgar/retrieval/core.py::generate_contextual_prefix@190": {
+  "yadgar/_shared/retrieval/core.py::generate_contextual_prefix@190": {
     "cyclo": 4,
     "loc": 21,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/retrieval/core.py::ppr_retrieve@122": {
+  "yadgar/_shared/retrieval/core.py::ppr_retrieve@122": {
     "cyclo": 13,
     "loc": 65,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/retrieval/core.py::recall@364": {
+  "yadgar/_shared/retrieval/core.py::recall@364": {
     "cyclo": 12,
     "loc": 147,
     "nesting": 2,
     "params": 7
   },
-  "yadgar/retrieval/core.py::recall_via_pipeline@307": {
+  "yadgar/_shared/retrieval/core.py::recall_via_pipeline@307": {
     "cyclo": 2,
     "loc": 53,
     "nesting": 0,
     "params": 8
   },
-  "yadgar/retrieval/core.py::set_engram@53": {
+  "yadgar/_shared/retrieval/core.py::set_engram@53": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/core.py::set_metacognition@61": {
+  "yadgar/_shared/retrieval/core.py::set_metacognition@61": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/core.py::set_rules_engine@57": {
+  "yadgar/_shared/retrieval/core.py::set_rules_engine@57": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/core.py::spreading_activation@214": {
+  "yadgar/_shared/retrieval/core.py::spreading_activation@214": {
     "cyclo": 9,
     "loc": 42,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/retrieval/core.py::unload_rerankers_if_idle@65": {
+  "yadgar/_shared/retrieval/core.py::unload_rerankers_if_idle@65": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/entities.py::__file__": {
+  "yadgar/_shared/retrieval/entities.py::__file__": {
     "loc": 176
   },
-  "yadgar/retrieval/entities.py::_add@157": {
+  "yadgar/_shared/retrieval/entities.py::_add@157": {
     "cyclo": 4,
     "loc": 4,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/retrieval/entities.py::_extract_query_entities@152": {
+  "yadgar/_shared/retrieval/entities.py::_extract_query_entities@152": {
     "cyclo": 10,
     "loc": 25,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/fusion.py::_FusionMixin@100": {
+  "yadgar/_shared/retrieval/fusion.py::_FusionMixin@100": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/retrieval/fusion.py::_FusionMixin@108": {
+  "yadgar/_shared/retrieval/fusion.py::_FusionMixin@108": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/retrieval/fusion.py::__file__": {
+  "yadgar/_shared/retrieval/fusion.py::__file__": {
     "loc": 415
   },
-  "yadgar/retrieval/fusion.py::_build_initial_results@217": {
+  "yadgar/_shared/retrieval/fusion.py::_build_initial_results@217": {
     "cyclo": 16,
     "loc": 54,
     "nesting": 5,
     "params": 8
   },
-  "yadgar/retrieval/fusion.py::_build_initial_results@225": {
+  "yadgar/_shared/retrieval/fusion.py::_build_initial_results@225": {
     "cyclo": 16,
     "loc": 54,
     "nesting": 5,
     "params": 8
   },
-  "yadgar/retrieval/fusion.py::_build_initial_results@241": {
+  "yadgar/_shared/retrieval/fusion.py::_build_initial_results@241": {
     "cyclo": 16,
     "loc": 54,
     "nesting": 5,
     "params": 8
   },
-  "yadgar/retrieval/fusion.py::_build_initial_results@260": {
+  "yadgar/_shared/retrieval/fusion.py::_build_initial_results@260": {
     "cyclo": 16,
     "loc": 54,
     "nesting": 5,
     "params": 8
   },
-  "yadgar/retrieval/fusion.py::_comparison_dual_search@272": {
+  "yadgar/_shared/retrieval/fusion.py::_comparison_dual_search@272": {
     "cyclo": 10,
     "loc": 52,
     "nesting": 4,
     "params": 5
   },
-  "yadgar/retrieval/fusion.py::_comparison_dual_search@280": {
+  "yadgar/_shared/retrieval/fusion.py::_comparison_dual_search@280": {
     "cyclo": 10,
     "loc": 52,
     "nesting": 4,
     "params": 5
   },
-  "yadgar/retrieval/fusion.py::_comparison_dual_search@296": {
+  "yadgar/_shared/retrieval/fusion.py::_comparison_dual_search@296": {
     "cyclo": 10,
     "loc": 52,
     "nesting": 4,
     "params": 5
   },
-  "yadgar/retrieval/fusion.py::_comparison_dual_search@315": {
+  "yadgar/_shared/retrieval/fusion.py::_comparison_dual_search@315": {
     "cyclo": 10,
     "loc": 52,
     "nesting": 4,
     "params": 5
   },
-  "yadgar/retrieval/fusion.py::_convex_fuse@62": {
+  "yadgar/_shared/retrieval/fusion.py::_convex_fuse@62": {
     "cyclo": 11,
     "loc": 36,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/retrieval/fusion.py::_convex_fuse@70": {
+  "yadgar/_shared/retrieval/fusion.py::_convex_fuse@70": {
     "cyclo": 11,
     "loc": 36,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/retrieval/fusion.py::_fuse_scores@107": {
+  "yadgar/_shared/retrieval/fusion.py::_fuse_scores@107": {
     "cyclo": 35,
     "loc": 109,
     "nesting": 6,
     "params": 4
   },
-  "yadgar/retrieval/fusion.py::_fuse_scores@115": {
+  "yadgar/_shared/retrieval/fusion.py::_fuse_scores@115": {
     "cyclo": 46,
     "loc": 144,
     "nesting": 6,
     "params": 4
   },
-  "yadgar/retrieval/fusion.py::_search_profiles_and_beliefs@325": {
+  "yadgar/_shared/retrieval/fusion.py::_search_profiles_and_beliefs@325": {
     "cyclo": 8,
     "loc": 48,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/retrieval/fusion.py::_search_profiles_and_beliefs@333": {
+  "yadgar/_shared/retrieval/fusion.py::_search_profiles_and_beliefs@333": {
     "cyclo": 8,
     "loc": 48,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/retrieval/fusion.py::_search_profiles_and_beliefs@349": {
+  "yadgar/_shared/retrieval/fusion.py::_search_profiles_and_beliefs@349": {
     "cyclo": 8,
     "loc": 48,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/retrieval/fusion.py::_search_profiles_and_beliefs@368": {
+  "yadgar/_shared/retrieval/fusion.py::_search_profiles_and_beliefs@368": {
     "cyclo": 8,
     "loc": 48,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/retrieval/fusion.py::_wrrf_fuse@36": {
+  "yadgar/_shared/retrieval/fusion.py::_wrrf_fuse@36": {
     "cyclo": 4,
     "loc": 24,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/retrieval/fusion.py::_wrrf_fuse@44": {
+  "yadgar/_shared/retrieval/fusion.py::_wrrf_fuse@44": {
     "cyclo": 4,
     "loc": 24,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/retrieval/graph_helpers.py::_GraphHelpersMixin@8": {
+  "yadgar/_shared/retrieval/graph_helpers.py::_GraphHelpersMixin@8": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/retrieval/graph_helpers.py::__file__": {
+  "yadgar/_shared/retrieval/graph_helpers.py::__file__": {
     "loc": 79
   },
-  "yadgar/retrieval/graph_helpers.py::_build_networkx_graph@15": {
+  "yadgar/_shared/retrieval/graph_helpers.py::_build_networkx_graph@15": {
     "cyclo": 8,
     "loc": 31,
     "nesting": 4,
     "params": 3
   },
-  "yadgar/retrieval/graph_helpers.py::_find_entities_in_content@51": {
+  "yadgar/_shared/retrieval/graph_helpers.py::_find_entities_in_content@51": {
     "cyclo": 3,
     "loc": 9,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/retrieval/graph_helpers.py::_find_memories_for_entity@47": {
+  "yadgar/_shared/retrieval/graph_helpers.py::_find_memories_for_entity@47": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/graph_helpers.py::_get_top_cooccurring_entities@61": {
+  "yadgar/_shared/retrieval/graph_helpers.py::_get_top_cooccurring_entities@61": {
     "cyclo": 7,
     "loc": 19,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/retrieval/pipeline.py::RetrievalPipeline@72": {
+  "yadgar/_shared/retrieval/pipeline.py::RetrievalPipeline@72": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 3
   },
-  "yadgar/retrieval/pipeline.py::__file__": {
+  "yadgar/_shared/retrieval/pipeline.py::__file__": {
     "loc": 198
   },
-  "yadgar/retrieval/pipeline.py::__init__@86": {
+  "yadgar/_shared/retrieval/pipeline.py::__init__@86": {
     "cyclo": 2,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/pipeline.py::_observe_candidates@46": {
+  "yadgar/_shared/retrieval/pipeline.py::_observe_candidates@46": {
     "cyclo": 2,
     "loc": 12,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/retrieval/pipeline.py::_observe_profile_invocation@60": {
+  "yadgar/_shared/retrieval/pipeline.py::_observe_profile_invocation@60": {
     "cyclo": 2,
     "loc": 10,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/pipeline.py::_observe_stage_metric@32": {
+  "yadgar/_shared/retrieval/pipeline.py::_observe_stage_metric@32": {
     "cyclo": 2,
     "loc": 12,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/retrieval/pipeline.py::from_retriever@90": {
+  "yadgar/_shared/retrieval/pipeline.py::from_retriever@90": {
     "cyclo": 1,
     "loc": 33,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/pipeline.py::run@124": {
+  "yadgar/_shared/retrieval/pipeline.py::run@124": {
     "cyclo": 9,
     "loc": 75,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/retrieval/profiles.py::__file__": {
+  "yadgar/_shared/retrieval/profiles.py::__file__": {
     "loc": 111
   },
-  "yadgar/retrieval/profiles.py::get_profile@104": {
+  "yadgar/_shared/retrieval/profiles.py::get_profile@104": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/quality.py::_QualityMixin@4": {
+  "yadgar/_shared/retrieval/quality.py::_QualityMixin@4": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 3
   },
-  "yadgar/retrieval/quality.py::__file__": {
+  "yadgar/_shared/retrieval/quality.py::__file__": {
     "loc": 26
   },
-  "yadgar/retrieval/quality.py::_cluster_memories@24": {
+  "yadgar/_shared/retrieval/quality.py::_cluster_memories@24": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/quality.py::_compute_signal_confidence@12": {
+  "yadgar/_shared/retrieval/quality.py::_compute_signal_confidence@12": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/retrieval/quality.py::_detect_adversarial@20": {
+  "yadgar/_shared/retrieval/quality.py::_detect_adversarial@20": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/query_analysis.py::__file__": {
+  "yadgar/_shared/retrieval/query_analysis.py::__file__": {
     "loc": 560
   },
-  "yadgar/retrieval/query_analysis.py::_add@250": {
+  "yadgar/_shared/retrieval/query_analysis.py::_add@250": {
     "cyclo": 4,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_add@294": {
+  "yadgar/_shared/retrieval/query_analysis.py::_add@294": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_add_unique_hint@387": {
+  "yadgar/_shared/retrieval/query_analysis.py::_add_unique_hint@387": {
     "cyclo": 3,
     "loc": 6,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/retrieval/query_analysis.py::_build_boosted_fts_query@228": {
+  "yadgar/_shared/retrieval/query_analysis.py::_build_boosted_fts_query@228": {
     "cyclo": 5,
     "loc": 15,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_build_open_domain_subqueries@245": {
+  "yadgar/_shared/retrieval/query_analysis.py::_build_open_domain_subqueries@245": {
     "cyclo": 12,
     "loc": 32,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/retrieval/query_analysis.py::_classify_query_type@456": {
+  "yadgar/_shared/retrieval/query_analysis.py::_classify_query_type@456": {
     "cyclo": 8,
     "loc": 26,
     "nesting": 1,
     "params": 6
   },
-  "yadgar/retrieval/query_analysis.py::_collect_left@187": {
+  "yadgar/_shared/retrieval/query_analysis.py::_collect_left@187": {
     "cyclo": 5,
     "loc": 13,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_collect_right@201": {
+  "yadgar/_shared/retrieval/query_analysis.py::_collect_right@201": {
     "cyclo": 5,
     "loc": 13,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_collect_semantic_expansions@447": {
+  "yadgar/_shared/retrieval/query_analysis.py::_collect_semantic_expansions@447": {
     "cyclo": 3,
     "loc": 7,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_compact_fact_object@279": {
+  "yadgar/_shared/retrieval/query_analysis.py::_compact_fact_object@279": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/query_analysis.py::_derive_implied_fact_passages@286": {
+  "yadgar/_shared/retrieval/query_analysis.py::_derive_implied_fact_passages@286": {
     "cyclo": 46,
     "loc": 107,
     "nesting": 4,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_derive_implied_fact_passages@395": {
+  "yadgar/_shared/retrieval/query_analysis.py::_derive_implied_fact_passages@395": {
     "cyclo": 12,
     "loc": 35,
     "nesting": 4,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_extract_comparison_options@167": {
+  "yadgar/_shared/retrieval/query_analysis.py::_extract_comparison_options@167": {
     "cyclo": 15,
     "loc": 59,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_extract_content_terms@151": {
+  "yadgar/_shared/retrieval/query_analysis.py::_extract_content_terms@151": {
     "cyclo": 7,
     "loc": 14,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/retrieval/query_analysis.py::_extract_named_entities@437": {
+  "yadgar/_shared/retrieval/query_analysis.py::_extract_named_entities@437": {
     "cyclo": 4,
     "loc": 8,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_infer_said_line_hints@344": {
+  "yadgar/_shared/retrieval/query_analysis.py::_infer_said_line_hints@344": {
     "cyclo": 9,
     "loc": 12,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/query_analysis.py::_infer_subject_keyword_hints@358": {
+  "yadgar/_shared/retrieval/query_analysis.py::_infer_subject_keyword_hints@358": {
     "cyclo": 11,
     "loc": 16,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/retrieval/query_analysis.py::_other_speaker@300": {
+  "yadgar/_shared/retrieval/query_analysis.py::_other_speaker@300": {
     "cyclo": 5,
     "loc": 7,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_parse_setting_keywords@432": {
+  "yadgar/_shared/retrieval/query_analysis.py::_parse_setting_keywords@432": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_pseudo_hyde_expand@78": {
+  "yadgar/_shared/retrieval/query_analysis.py::_pseudo_hyde_expand@78": {
     "cyclo": 14,
     "loc": 50,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_question_to_statement@130": {
+  "yadgar/_shared/retrieval/query_analysis.py::_question_to_statement@130": {
     "cyclo": 5,
     "loc": 19,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/retrieval/query_analysis.py::_resolve_other_speaker@376": {
+  "yadgar/_shared/retrieval/query_analysis.py::_resolve_other_speaker@376": {
     "cyclo": 5,
     "loc": 9,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/query_analysis.py::analyze_query@396": {
+  "yadgar/_shared/retrieval/query_analysis.py::analyze_query@396": {
     "cyclo": 29,
     "loc": 103,
     "nesting": 7,
     "params": 2
   },
-  "yadgar/retrieval/query_analysis.py::analyze_query@485": {
+  "yadgar/_shared/retrieval/query_analysis.py::analyze_query@485": {
     "cyclo": 14,
     "loc": 76,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/reranking.py::Reranker@32": {
+  "yadgar/_shared/retrieval/reranking.py::Reranker@32": {
     "attrs": 3,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/reranking.py::_RerankingMixin@60": {
+  "yadgar/_shared/retrieval/reranking.py::_RerankingMixin@60": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/retrieval/reranking.py::__file__": {
+  "yadgar/_shared/retrieval/reranking.py::__file__": {
     "loc": 237
   },
-  "yadgar/retrieval/reranking.py::__init__@46": {
+  "yadgar/_shared/retrieval/reranking.py::__init__@46": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/retrieval/reranking.py::_apply_rerank_pipeline@69": {
+  "yadgar/_shared/retrieval/reranking.py::_apply_rerank_pipeline@69": {
     "cyclo": 37,
     "loc": 156,
     "nesting": 4,
     "params": 11
   },
-  "yadgar/retrieval/reranking.py::_gte_reranker@235": {
+  "yadgar/_shared/retrieval/reranking.py::_gte_reranker@235": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/retrieval/reranking.py::_multi_passage_rerank@230": {
+  "yadgar/_shared/retrieval/reranking.py::_multi_passage_rerank@230": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/retrieval/reranking.py::_observe_recall_stage@22": {
+  "yadgar/_shared/retrieval/reranking.py::_observe_recall_stage@22": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/retrieval/reranking.py::_score_single_pair@226": {
+  "yadgar/_shared/retrieval/reranking.py::_score_single_pair@226": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/retrieval/reranking.py::unload_if_idle@55": {
+  "yadgar/_shared/retrieval/reranking.py::unload_if_idle@55": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/scoring.py::_ScoringMixin@25": {
+  "yadgar/_shared/retrieval/scoring.py::_ScoringMixin@25": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 5
   },
-  "yadgar/retrieval/scoring.py::__file__": {
+  "yadgar/_shared/retrieval/scoring.py::__file__": {
     "loc": 297
   },
-  "yadgar/retrieval/scoring.py::_collect_fts_scores@35": {
+  "yadgar/_shared/retrieval/scoring.py::_collect_fts_scores@35": {
     "cyclo": 28,
     "loc": 105,
     "nesting": 5,
     "params": 9
   },
-  "yadgar/retrieval/scoring.py::_collect_ppr_scores@209": {
+  "yadgar/_shared/retrieval/scoring.py::_collect_ppr_scores@209": {
     "cyclo": 8,
     "loc": 18,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/retrieval/scoring.py::_collect_spreading_scores@228": {
+  "yadgar/_shared/retrieval/scoring.py::_collect_spreading_scores@228": {
     "cyclo": 9,
     "loc": 21,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/retrieval/scoring.py::_collect_temporal_scores@250": {
+  "yadgar/_shared/retrieval/scoring.py::_collect_temporal_scores@250": {
     "cyclo": 12,
     "loc": 48,
     "nesting": 5,
     "params": 6
   },
-  "yadgar/retrieval/scoring.py::_collect_vector_scores@141": {
+  "yadgar/_shared/retrieval/scoring.py::_collect_vector_scores@141": {
     "cyclo": 16,
     "loc": 67,
     "nesting": 3,
     "params": 8
   },
-  "yadgar/retrieval/scoring.py::_observe_stage@12": {
+  "yadgar/_shared/retrieval/scoring.py::_observe_stage@12": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/retrieval/stages/__init__.py::__file__": {
+  "yadgar/_shared/retrieval/stages/__init__.py::__file__": {
     "loc": 31
   },
-  "yadgar/retrieval/stages/adversarial.py::AdversarialStage@9": {
+  "yadgar/_shared/retrieval/stages/adversarial.py::AdversarialStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/adversarial.py::__file__": {
+  "yadgar/_shared/retrieval/stages/adversarial.py::__file__": {
     "loc": 24
   },
-  "yadgar/retrieval/stages/adversarial.py::__init__@19": {
+  "yadgar/_shared/retrieval/stages/adversarial.py::__init__@19": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/adversarial.py::apply@22": {
+  "yadgar/_shared/retrieval/stages/adversarial.py::apply@22": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/base.py::RetrievalStage@10": {
+  "yadgar/_shared/retrieval/stages/base.py::RetrievalStage@10": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/base.py::__file__": {
+  "yadgar/_shared/retrieval/stages/base.py::__file__": {
     "loc": 44
   },
-  "yadgar/retrieval/stages/base.py::apply@27": {
+  "yadgar/_shared/retrieval/stages/base.py::apply@27": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/base.py::is_enabled@35": {
+  "yadgar/_shared/retrieval/stages/base.py::is_enabled@35": {
     "cyclo": 1,
     "loc": 10,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/retrieval/stages/ce_rerank.py::CEReRankStage@56": {
+  "yadgar/_shared/retrieval/stages/ce_rerank.py::CEReRankStage@56": {
     "attrs": 2,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/ce_rerank.py::_ReRankPipelineStage@21": {
+  "yadgar/_shared/retrieval/stages/ce_rerank.py::_ReRankPipelineStage@21": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/ce_rerank.py::__file__": {
+  "yadgar/_shared/retrieval/stages/ce_rerank.py::__file__": {
     "loc": 66
   },
-  "yadgar/retrieval/stages/ce_rerank.py::__init__@33": {
+  "yadgar/_shared/retrieval/stages/ce_rerank.py::__init__@33": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/ce_rerank.py::__init__@61": {
+  "yadgar/_shared/retrieval/stages/ce_rerank.py::__init__@61": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/ce_rerank.py::apply@36": {
+  "yadgar/_shared/retrieval/stages/ce_rerank.py::apply@36": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/ce_rerank.py::apply@65": {
+  "yadgar/_shared/retrieval/stages/ce_rerank.py::apply@65": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/fts.py::FTSStage@9": {
+  "yadgar/_shared/retrieval/stages/fts.py::FTSStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/fts.py::__file__": {
+  "yadgar/_shared/retrieval/stages/fts.py::__file__": {
     "loc": 73
   },
-  "yadgar/retrieval/stages/fts.py::__init__@18": {
+  "yadgar/_shared/retrieval/stages/fts.py::__init__@18": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/fts.py::apply@21": {
+  "yadgar/_shared/retrieval/stages/fts.py::apply@21": {
     "cyclo": 6,
     "loc": 53,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/stages/fusion.py::FusionStage@9": {
+  "yadgar/_shared/retrieval/stages/fusion.py::FusionStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/fusion.py::__file__": {
+  "yadgar/_shared/retrieval/stages/fusion.py::__file__": {
     "loc": 50
   },
-  "yadgar/retrieval/stages/fusion.py::__init__@24": {
+  "yadgar/_shared/retrieval/stages/fusion.py::__init__@24": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/fusion.py::apply@27": {
+  "yadgar/_shared/retrieval/stages/fusion.py::apply@27": {
     "cyclo": 1,
     "loc": 24,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/knn.py::KNNStage@9": {
+  "yadgar/_shared/retrieval/stages/knn.py::KNNStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/knn.py::__file__": {
+  "yadgar/_shared/retrieval/stages/knn.py::__file__": {
     "loc": 60
   },
-  "yadgar/retrieval/stages/knn.py::__init__@19": {
+  "yadgar/_shared/retrieval/stages/knn.py::__init__@19": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/knn.py::apply@22": {
+  "yadgar/_shared/retrieval/stages/knn.py::apply@22": {
     "cyclo": 5,
     "loc": 39,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/stages/mmr.py::MMRStage@9": {
+  "yadgar/_shared/retrieval/stages/mmr.py::MMRStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/mmr.py::__file__": {
+  "yadgar/_shared/retrieval/stages/mmr.py::__file__": {
     "loc": 25
   },
-  "yadgar/retrieval/stages/mmr.py::__init__@20": {
+  "yadgar/_shared/retrieval/stages/mmr.py::__init__@20": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/mmr.py::apply@23": {
+  "yadgar/_shared/retrieval/stages/mmr.py::apply@23": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/nli.py::NLIStage@9": {
+  "yadgar/_shared/retrieval/stages/nli.py::NLIStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 3
   },
-  "yadgar/retrieval/stages/nli.py::__file__": {
+  "yadgar/_shared/retrieval/stages/nli.py::__file__": {
     "loc": 30
   },
-  "yadgar/retrieval/stages/nli.py::__init__@21": {
+  "yadgar/_shared/retrieval/stages/nli.py::__init__@21": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/nli.py::apply@24": {
+  "yadgar/_shared/retrieval/stages/nli.py::apply@24": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/nli.py::is_enabled@28": {
+  "yadgar/_shared/retrieval/stages/nli.py::is_enabled@28": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/retrieval/stages/ppr.py::PPRStage@9": {
+  "yadgar/_shared/retrieval/stages/ppr.py::PPRStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/ppr.py::__file__": {
+  "yadgar/_shared/retrieval/stages/ppr.py::__file__": {
     "loc": 43
   },
-  "yadgar/retrieval/stages/ppr.py::__init__@18": {
+  "yadgar/_shared/retrieval/stages/ppr.py::__init__@18": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/ppr.py::apply@21": {
+  "yadgar/_shared/retrieval/stages/ppr.py::apply@21": {
     "cyclo": 4,
     "loc": 23,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/stages/query_analysis.py::QueryAnalysisStage@9": {
+  "yadgar/_shared/retrieval/stages/query_analysis.py::QueryAnalysisStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/query_analysis.py::__file__": {
+  "yadgar/_shared/retrieval/stages/query_analysis.py::__file__": {
     "loc": 49
   },
-  "yadgar/retrieval/stages/query_analysis.py::__init__@24": {
+  "yadgar/_shared/retrieval/stages/query_analysis.py::__init__@24": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/query_analysis.py::apply@27": {
+  "yadgar/_shared/retrieval/stages/query_analysis.py::apply@27": {
     "cyclo": 2,
     "loc": 23,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/rules.py::RulesStage@9": {
+  "yadgar/_shared/retrieval/stages/rules.py::RulesStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/rules.py::__file__": {
+  "yadgar/_shared/retrieval/stages/rules.py::__file__": {
     "loc": 24
   },
-  "yadgar/retrieval/stages/rules.py::__init__@19": {
+  "yadgar/_shared/retrieval/stages/rules.py::__init__@19": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/rules.py::apply@22": {
+  "yadgar/_shared/retrieval/stages/rules.py::apply@22": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/spreading.py::SpreadingStage@9": {
+  "yadgar/_shared/retrieval/stages/spreading.py::SpreadingStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/spreading.py::__file__": {
+  "yadgar/_shared/retrieval/stages/spreading.py::__file__": {
     "loc": 37
   },
-  "yadgar/retrieval/stages/spreading.py::__init__@19": {
+  "yadgar/_shared/retrieval/stages/spreading.py::__init__@19": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/spreading.py::apply@22": {
+  "yadgar/_shared/retrieval/stages/spreading.py::apply@22": {
     "cyclo": 3,
     "loc": 16,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/stages/temporal.py::TemporalStage@9": {
+  "yadgar/_shared/retrieval/stages/temporal.py::TemporalStage@9": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/retrieval/stages/temporal.py::__file__": {
+  "yadgar/_shared/retrieval/stages/temporal.py::__file__": {
     "loc": 46
   },
-  "yadgar/retrieval/stages/temporal.py::__init__@19": {
+  "yadgar/_shared/retrieval/stages/temporal.py::__init__@19": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/retrieval/stages/temporal.py::apply@22": {
+  "yadgar/_shared/retrieval/stages/temporal.py::apply@22": {
     "cyclo": 3,
     "loc": 25,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/retrieval/state.py::RetrievalState@9": {
+  "yadgar/_shared/retrieval/state.py::RetrievalState@9": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 0
   },
-  "yadgar/retrieval/state.py::__file__": {
+  "yadgar/_shared/retrieval/state.py::__file__": {
     "loc": 68
   },
-  "yadgar/retrieval/temporal.py::__file__": {
+  "yadgar/_shared/retrieval/temporal.py::__file__": {
     "loc": 115
   },
-  "yadgar/retrieval/temporal.py::_add_expr@65": {
+  "yadgar/_shared/retrieval/temporal.py::_add_expr@65": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/retrieval/temporal.py::parse_temporal_expression@44": {
+  "yadgar/_shared/retrieval/temporal.py::parse_temporal_expression@44": {
     "cyclo": 15,
     "loc": 72,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/rules_engine.py::RulesEngine@166": {
+  "yadgar/_shared/rules_engine.py::RulesEngine@166": {
     "attrs": 3,
     "inh_depth": 0,
     "methods": 10
   },
-  "yadgar/rules_engine.py::__file__": {
+  "yadgar/_shared/rules_engine.py::__file__": {
     "loc": 517
   },
-  "yadgar/rules_engine.py::__init__@170": {
+  "yadgar/_shared/rules_engine.py::__init__@170": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/rules_engine.py::_get_field_value@143": {
+  "yadgar/_shared/rules_engine.py::_get_field_value@143": {
     "cyclo": 9,
     "loc": 21,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/rules_engine.py::_parse_action@119": {
+  "yadgar/_shared/rules_engine.py::_parse_action@119": {
     "cyclo": 6,
     "loc": 22,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/rules_engine.py::_parse_condition@59": {
+  "yadgar/_shared/rules_engine.py::_parse_condition@59": {
     "cyclo": 9,
     "loc": 35,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/rules_engine.py::_parse_write_action@96": {
+  "yadgar/_shared/rules_engine.py::_parse_write_action@96": {
     "cyclo": 4,
     "loc": 21,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/rules_engine.py::add_rule@175": {
+  "yadgar/_shared/rules_engine.py::add_rule@175": {
     "cyclo": 8,
     "loc": 63,
     "nesting": 3,
     "params": 7
   },
-  "yadgar/rules_engine.py::apply_rules@281": {
+  "yadgar/_shared/rules_engine.py::apply_rules@281": {
     "cyclo": 10,
     "loc": 40,
     "nesting": 7,
     "params": 3
   },
-  "yadgar/rules_engine.py::check_write_policy@420": {
+  "yadgar/_shared/rules_engine.py::check_write_policy@420": {
     "cyclo": 12,
     "loc": 66,
     "nesting": 4,
     "params": 4
   },
-  "yadgar/rules_engine.py::delete_rule@405": {
+  "yadgar/_shared/rules_engine.py::delete_rule@405": {
     "cyclo": 2,
     "loc": 10,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/rules_engine.py::evaluate_condition@322": {
+  "yadgar/_shared/rules_engine.py::evaluate_condition@322": {
     "cyclo": 25,
     "loc": 82,
     "nesting": 5,
     "params": 3
   },
-  "yadgar/rules_engine.py::export_rules@487": {
+  "yadgar/_shared/rules_engine.py::export_rules@487": {
     "cyclo": 2,
     "loc": 13,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/rules_engine.py::get_all_rules@416": {
+  "yadgar/_shared/rules_engine.py::get_all_rules@416": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/rules_engine.py::get_applicable_rules@239": {
+  "yadgar/_shared/rules_engine.py::get_applicable_rules@239": {
     "cyclo": 8,
     "loc": 41,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/rules_engine.py::import_rules@501": {
+  "yadgar/_shared/rules_engine.py::import_rules@501": {
     "cyclo": 3,
     "loc": 17,
     "nesting": 3,
@@ -7252,69 +7252,69 @@
     "nesting": 6,
     "params": 1
   },
-  "yadgar/sensory_buffer.py::ActionLogger@9": {
+  "yadgar/_shared/sensory_buffer.py::ActionLogger@9": {
     "attrs": 7,
     "inh_depth": 0,
     "methods": 10
   },
-  "yadgar/sensory_buffer.py::__file__": {
+  "yadgar/_shared/sensory_buffer.py::__file__": {
     "loc": 122
   },
-  "yadgar/sensory_buffer.py::__init__@10": {
+  "yadgar/_shared/sensory_buffer.py::__init__@10": {
     "cyclo": 1,
     "loc": 9,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/sensory_buffer.py::_rotate_episode@99": {
+  "yadgar/_shared/sensory_buffer.py::_rotate_episode@99": {
     "cyclo": 2,
     "loc": 24,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/sensory_buffer.py::capture@32": {
+  "yadgar/_shared/sensory_buffer.py::capture@32": {
     "cyclo": 3,
     "loc": 7,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/sensory_buffer.py::capture_action@60": {
+  "yadgar/_shared/sensory_buffer.py::capture_action@60": {
     "cyclo": 2,
     "loc": 23,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/sensory_buffer.py::flush@40": {
+  "yadgar/_shared/sensory_buffer.py::flush@40": {
     "cyclo": 3,
     "loc": 13,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/sensory_buffer.py::get_action_summary@88": {
+  "yadgar/_shared/sensory_buffer.py::get_action_summary@88": {
     "cyclo": 3,
     "loc": 10,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/sensory_buffer.py::get_current_episode@54": {
+  "yadgar/_shared/sensory_buffer.py::get_current_episode@54": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/sensory_buffer.py::get_recent_actions@84": {
+  "yadgar/_shared/sensory_buffer.py::get_recent_actions@84": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/sensory_buffer.py::get_session_episodes@57": {
+  "yadgar/_shared/sensory_buffer.py::get_session_episodes@57": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/sensory_buffer.py::start_session@20": {
+  "yadgar/_shared/sensory_buffer.py::start_session@20": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
@@ -7383,7 +7383,7 @@
     "nesting": 3,
     "params": 4
   },
-  "yadgar/server/_state.py::__file__": {
+  "yadgar/_shared/runtime/state.py::__file__": {
     "loc": 139
   },
   "yadgar/server/admin_config.py::__file__": {
@@ -8103,160 +8103,160 @@
     "nesting": 0,
     "params": 1
   },
-  "yadgar/server/lifecycle.py::__file__": {
+  "yadgar/_shared/runtime/lifecycle.py::__file__": {
     "loc": 620
   },
-  "yadgar/server/lifecycle.py::_emit_sd_ready@242": {
+  "yadgar/_shared/runtime/lifecycle.py::_emit_sd_ready@242": {
     "cyclo": 2,
     "loc": 12,
     "nesting": 2,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_buffer@101": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_buffer@101": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_consolidation@106": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_consolidation@106": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_embeddings@94": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_embeddings@94": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_engram@131": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_engram@131": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_file_queue@141": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_file_queue@141": {
     "cyclo": 5,
     "loc": 36,
     "nesting": 4,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_replay@136": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_replay@136": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_retriever@121": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_retriever@121": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_staleness@111": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_staleness@111": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_storage@89": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_storage@89": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_thermo@116": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_thermo@116": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_get_write_gate@126": {
+  "yadgar/_shared/runtime/lifecycle.py::_get_write_gate@126": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_lc_heartbeat@66": {
+  "yadgar/_shared/runtime/lifecycle.py::_lc_heartbeat@66": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/server/lifecycle.py::_lc_record_exc@76": {
+  "yadgar/_shared/runtime/lifecycle.py::_lc_record_exc@76": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/server/lifecycle.py::_lifecycle_span@50": {
+  "yadgar/_shared/runtime/lifecycle.py::_lifecycle_span@50": {
     "cyclo": 2,
     "loc": 11,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/server/lifecycle.py::_load_default_rules@182": {
+  "yadgar/_shared/runtime/lifecycle.py::_load_default_rules@182": {
     "cyclo": 3,
     "loc": 18,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/server/lifecycle.py::_maybe_auto_check_for_update@502": {
+  "yadgar/_shared/runtime/lifecycle.py::_maybe_auto_check_for_update@502": {
     "cyclo": 2,
     "loc": 22,
     "nesting": 1,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_metrics_thread@327": {
+  "yadgar/_shared/runtime/lifecycle.py::_metrics_thread@327": {
     "cyclo": 5,
     "loc": 16,
     "nesting": 4,
     "params": 3
   },
-  "yadgar/server/lifecycle.py::_reranker_idle_thread@347": {
+  "yadgar/_shared/runtime/lifecycle.py::_reranker_idle_thread@347": {
     "cyclo": 5,
     "loc": 10,
     "nesting": 4,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_run_update_check@471": {
+  "yadgar/_shared/runtime/lifecycle.py::_run_update_check@471": {
     "cyclo": 3,
     "loc": 29,
     "nesting": 2,
     "params": 0
   },
-  "yadgar/server/lifecycle.py::_run_wiki_embedding_backfill@205": {
+  "yadgar/_shared/runtime/lifecycle.py::_run_wiki_embedding_backfill@205": {
     "cyclo": 5,
     "loc": 32,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/server/lifecycle.py::_signal_handler@464": {
+  "yadgar/_shared/runtime/lifecycle.py::_signal_handler@464": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/server/lifecycle.py::_viz_thread@367": {
+  "yadgar/_shared/runtime/lifecycle.py::_viz_thread@367": {
     "cyclo": 3,
     "loc": 10,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/server/lifecycle.py::init_engines@256": {
+  "yadgar/_shared/runtime/lifecycle.py::init_engines@256": {
     "cyclo": 18,
     "loc": 141,
     "nesting": 5,
     "params": 4
   },
-  "yadgar/server/lifecycle.py::main@526": {
+  "yadgar/_shared/runtime/lifecycle.py::main@526": {
     "cyclo": 9,
     "loc": 95,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/server/lifecycle.py::shutdown@399": {
+  "yadgar/_shared/runtime/lifecycle.py::shutdown@399": {
     "cyclo": 9,
     "loc": 63,
     "nesting": 2,
@@ -10493,2067 +10493,2067 @@
     "nesting": 2,
     "params": 1
   },
-  "yadgar/sleep_compute/__init__.py::SleepComputeEngine@17": {
+  "yadgar/_shared/sleep_compute/__init__.py::SleepComputeEngine@17": {
     "attrs": 7,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/sleep_compute/__init__.py::__file__": {
+  "yadgar/_shared/sleep_compute/__init__.py::__file__": {
     "loc": 72
   },
-  "yadgar/sleep_compute/__init__.py::__init__@28": {
+  "yadgar/_shared/sleep_compute/__init__.py::__init__@28": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 7
   },
-  "yadgar/sleep_compute/__init__.py::run_sleep_cycle@48": {
+  "yadgar/_shared/sleep_compute/__init__.py::run_sleep_cycle@48": {
     "cyclo": 1,
     "loc": 25,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/sleep_compute/community.py::_CommunityMixin@23": {
+  "yadgar/_shared/sleep_compute/community.py::_CommunityMixin@23": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/sleep_compute/community.py::__file__": {
+  "yadgar/_shared/sleep_compute/community.py::__file__": {
     "loc": 259
   },
-  "yadgar/sleep_compute/community.py::_create_root_clusters@215": {
+  "yadgar/_shared/sleep_compute/community.py::_create_root_clusters@215": {
     "cyclo": 10,
     "loc": 45,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/sleep_compute/community.py::_find_memories_for_entities@105": {
+  "yadgar/_shared/sleep_compute/community.py::_find_memories_for_entities@105": {
     "cyclo": 6,
     "loc": 18,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/sleep_compute/community.py::detect_communities@27": {
+  "yadgar/_shared/sleep_compute/community.py::detect_communities@27": {
     "cyclo": 15,
     "loc": 77,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/sleep_compute/community.py::generate_cluster_summaries@125": {
+  "yadgar/_shared/sleep_compute/community.py::generate_cluster_summaries@125": {
     "cyclo": 18,
     "loc": 89,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/sleep_compute/dream.py::_DreamMixin@10": {
+  "yadgar/_shared/sleep_compute/dream.py::_DreamMixin@10": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/sleep_compute/dream.py::__file__": {
+  "yadgar/_shared/sleep_compute/dream.py::__file__": {
     "loc": 134
   },
-  "yadgar/sleep_compute/dream.py::_create_dream_connection@89": {
+  "yadgar/_shared/sleep_compute/dream.py::_create_dream_connection@89": {
     "cyclo": 1,
     "loc": 13,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/sleep_compute/dream.py::_create_dream_insight@112": {
+  "yadgar/_shared/sleep_compute/dream.py::_create_dream_insight@112": {
     "cyclo": 1,
     "loc": 23,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/sleep_compute/dream.py::_ensure_memory_entity@103": {
+  "yadgar/_shared/sleep_compute/dream.py::_ensure_memory_entity@103": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/sleep_compute/dream.py::dream_replay@14": {
+  "yadgar/_shared/sleep_compute/dream.py::dream_replay@14": {
     "cyclo": 20,
     "loc": 74,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/sleep_compute/embed_compress.py::_EmbedCompressMixin@24": {
+  "yadgar/_shared/sleep_compute/embed_compress.py::_EmbedCompressMixin@24": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/sleep_compute/embed_compress.py::__file__": {
+  "yadgar/_shared/sleep_compute/embed_compress.py::__file__": {
     "loc": 96
   },
-  "yadgar/sleep_compute/embed_compress.py::compress_old_memories@52": {
+  "yadgar/_shared/sleep_compute/embed_compress.py::compress_old_memories@52": {
     "cyclo": 10,
     "loc": 45,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/sleep_compute/embed_compress.py::reembed_stale@28": {
+  "yadgar/_shared/sleep_compute/embed_compress.py::reembed_stale@28": {
     "cyclo": 6,
     "loc": 22,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/staleness.py::StalenessDetector@50": {
+  "yadgar/_shared/staleness.py::StalenessDetector@50": {
     "attrs": 5,
     "inh_depth": 0,
     "methods": 9
   },
-  "yadgar/staleness.py::_FileChangeHandler@18": {
+  "yadgar/_shared/staleness.py::_FileChangeHandler@18": {
     "attrs": 1,
     "inh_depth": 0,
     "methods": 6
   },
-  "yadgar/staleness.py::__file__": {
+  "yadgar/_shared/staleness.py::__file__": {
     "loc": 188
   },
-  "yadgar/staleness.py::__init__@19": {
+  "yadgar/_shared/staleness.py::__init__@19": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/staleness.py::__init__@51": {
+  "yadgar/_shared/staleness.py::__init__@51": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/staleness.py::_compute_file_hash@174": {
+  "yadgar/_shared/staleness.py::_compute_file_hash@174": {
     "cyclo": 3,
     "loc": 6,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/staleness.py::_flag_memories_for_file@89": {
+  "yadgar/_shared/staleness.py::_flag_memories_for_file@89": {
     "cyclo": 4,
     "loc": 17,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/staleness.py::_handle_event@32": {
+  "yadgar/_shared/staleness.py::_handle_event@32": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/staleness.py::_handle_file_change@80": {
+  "yadgar/_shared/staleness.py::_handle_file_change@80": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/staleness.py::_is_binary@182": {
+  "yadgar/_shared/staleness.py::_is_binary@182": {
     "cyclo": 3,
     "loc": 7,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/staleness.py::_should_ignore@23": {
+  "yadgar/_shared/staleness.py::_should_ignore@23": {
     "cyclo": 5,
     "loc": 8,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/staleness.py::on_created@41": {
+  "yadgar/_shared/staleness.py::on_created@41": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/staleness.py::on_deleted@44": {
+  "yadgar/_shared/staleness.py::on_deleted@44": {
     "cyclo": 3,
     "loc": 4,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/staleness.py::on_modified@38": {
+  "yadgar/_shared/staleness.py::on_modified@38": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/staleness.py::scan_directory@129": {
+  "yadgar/_shared/staleness.py::scan_directory@129": {
     "cyclo": 12,
     "loc": 43,
     "nesting": 5,
     "params": 2
   },
-  "yadgar/staleness.py::start@58": {
+  "yadgar/_shared/staleness.py::start@58": {
     "cyclo": 4,
     "loc": 13,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/staleness.py::stop@72": {
+  "yadgar/_shared/staleness.py::stop@72": {
     "cyclo": 3,
     "loc": 7,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/staleness.py::validate_memory@107": {
+  "yadgar/_shared/staleness.py::validate_memory@107": {
     "cyclo": 5,
     "loc": 21,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/__init__.py::__file__": {
+  "yadgar/_shared/storage/__init__.py::__file__": {
     "loc": 353
   },
-  "yadgar/storage/__init__.py::_chunk_by_bytes@103": {
+  "yadgar/_shared/storage/__init__.py::_chunk_by_bytes@103": {
     "cyclo": 8,
     "loc": 43,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/storage/__init__.py::_get_enrichment_pipeline@89": {
+  "yadgar/_shared/storage/__init__.py::_get_enrichment_pipeline@89": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/bitemporal.py::__file__": {
+  "yadgar/_shared/storage/bitemporal.py::__file__": {
     "loc": 97
   },
-  "yadgar/storage/bitemporal.py::as_of_filter@69": {
+  "yadgar/_shared/storage/bitemporal.py::as_of_filter@69": {
     "cyclo": 2,
     "loc": 29,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/bitemporal.py::invalidate_edge@30": {
+  "yadgar/_shared/storage/bitemporal.py::invalidate_edge@30": {
     "cyclo": 3,
     "loc": 37,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/storage/blocks.py::_BlocksMixin@88": {
+  "yadgar/_shared/storage/blocks.py::_BlocksMixin@88": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 9
   },
-  "yadgar/storage/blocks.py::__file__": {
+  "yadgar/_shared/storage/blocks.py::__file__": {
     "loc": 469
   },
-  "yadgar/storage/blocks.py::_block_dir_clause@91": {
+  "yadgar/_shared/storage/blocks.py::_block_dir_clause@91": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/blocks.py::_canonical_dir@77": {
+  "yadgar/_shared/storage/blocks.py::_canonical_dir@77": {
     "cyclo": 4,
     "loc": 9,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/blocks.py::_count_blocks_in_scope@100": {
+  "yadgar/_shared/storage/blocks.py::_count_blocks_in_scope@100": {
     "cyclo": 3,
     "loc": 12,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/blocks.py::_default_char_limit@51": {
+  "yadgar/_shared/storage/blocks.py::_default_char_limit@51": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/storage/blocks.py::_hard_char_limit@55": {
+  "yadgar/_shared/storage/blocks.py::_hard_char_limit@55": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/storage/blocks.py::_max_per_scope@47": {
+  "yadgar/_shared/storage/blocks.py::_max_per_scope@47": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/storage/blocks.py::_settings@40": {
+  "yadgar/_shared/storage/blocks.py::_settings@40": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/storage/blocks.py::_validate_block_name@63": {
+  "yadgar/_shared/storage/blocks.py::_validate_block_name@63": {
     "cyclo": 5,
     "loc": 12,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/blocks.py::append_block@433": {
+  "yadgar/_shared/storage/blocks.py::append_block@433": {
     "cyclo": 6,
     "loc": 37,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/storage/blocks.py::create_block@114": {
+  "yadgar/_shared/storage/blocks.py::create_block@114": {
     "cyclo": 10,
     "loc": 117,
     "nesting": 2,
     "params": 6
   },
-  "yadgar/storage/blocks.py::delete_block@319": {
+  "yadgar/_shared/storage/blocks.py::delete_block@319": {
     "cyclo": 3,
     "loc": 17,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/storage/blocks.py::get_block@233": {
+  "yadgar/_shared/storage/blocks.py::get_block@233": {
     "cyclo": 4,
     "loc": 23,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/storage/blocks.py::list_blocks@338": {
+  "yadgar/_shared/storage/blocks.py::list_blocks@338": {
     "cyclo": 5,
     "loc": 37,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/storage/blocks.py::replace_block@377": {
+  "yadgar/_shared/storage/blocks.py::replace_block@377": {
     "cyclo": 7,
     "loc": 54,
     "nesting": 2,
     "params": 6
   },
-  "yadgar/storage/blocks.py::update_block@258": {
+  "yadgar/_shared/storage/blocks.py::update_block@258": {
     "cyclo": 6,
     "loc": 59,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/storage/bookmarks.py::_BookmarksMixin@32": {
+  "yadgar/_shared/storage/bookmarks.py::_BookmarksMixin@32": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 6
   },
-  "yadgar/storage/bookmarks.py::__file__": {
+  "yadgar/_shared/storage/bookmarks.py::__file__": {
     "loc": 166
   },
-  "yadgar/storage/bookmarks.py::_normalise_slug@38": {
+  "yadgar/_shared/storage/bookmarks.py::_normalise_slug@38": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/bookmarks.py::add_bookmark@48": {
+  "yadgar/_shared/storage/bookmarks.py::add_bookmark@48": {
     "cyclo": 8,
     "loc": 44,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/bookmarks.py::get_bookmark@110": {
+  "yadgar/_shared/storage/bookmarks.py::get_bookmark@110": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/bookmarks.py::list_bookmarks@120": {
+  "yadgar/_shared/storage/bookmarks.py::list_bookmarks@120": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/bookmarks.py::remove_bookmark@94": {
+  "yadgar/_shared/storage/bookmarks.py::remove_bookmark@94": {
     "cyclo": 2,
     "loc": 14,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/bookmarks.py::reorder_bookmark@126": {
+  "yadgar/_shared/storage/bookmarks.py::reorder_bookmark@126": {
     "cyclo": 5,
     "loc": 41,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/branch.py::BranchFilter@9": {
+  "yadgar/_shared/storage/branch.py::BranchFilter@9": {
     "attrs": 2,
     "inh_depth": 0,
     "methods": 2
   },
-  "yadgar/storage/branch.py::__file__": {
+  "yadgar/_shared/storage/branch.py::__file__": {
     "loc": 49
   },
-  "yadgar/storage/branch.py::__init__@23": {
+  "yadgar/_shared/storage/branch.py::__init__@23": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/branch.py::__repr__@27": {
+  "yadgar/_shared/storage/branch.py::__repr__@27": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/branch.py::_build_branch_clause@31": {
+  "yadgar/_shared/storage/branch.py::_build_branch_clause@31": {
     "cyclo": 3,
     "loc": 19,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/causal.py::_CausalMixin@18": {
+  "yadgar/_shared/storage/causal.py::_CausalMixin@18": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/storage/causal.py::__file__": {
+  "yadgar/_shared/storage/causal.py::__file__": {
     "loc": 111
   },
-  "yadgar/storage/causal.py::clear_causal_dag_edges@89": {
+  "yadgar/_shared/storage/causal.py::clear_causal_dag_edges@89": {
     "cyclo": 6,
     "loc": 23,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/causal.py::get_all_causal_edges@63": {
+  "yadgar/_shared/storage/causal.py::get_all_causal_edges@63": {
     "cyclo": 3,
     "loc": 25,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/storage/causal.py::get_causal_edges_for_entity@55": {
+  "yadgar/_shared/storage/causal.py::get_causal_edges_for_entity@55": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/causal.py::insert_causal_edge@23": {
+  "yadgar/_shared/storage/causal.py::insert_causal_edge@23": {
     "cyclo": 2,
     "loc": 31,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/client.py::_ClientMixin@205": {
+  "yadgar/_shared/storage/client.py::_ClientMixin@205": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 18
   },
-  "yadgar/storage/client.py::_ClientMixin@207": {
+  "yadgar/_shared/storage/client.py::_ClientMixin@207": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 18
   },
-  "yadgar/storage/client.py::_ClientMixin@209": {
+  "yadgar/_shared/storage/client.py::_ClientMixin@209": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 18
   },
-  "yadgar/storage/client.py::__file__": {
+  "yadgar/_shared/storage/client.py::__file__": {
     "loc": 664
   },
-  "yadgar/storage/client.py::_build_chunk_body@474": {
+  "yadgar/_shared/storage/client.py::_build_chunk_body@474": {
     "cyclo": 14,
     "loc": 62,
     "nesting": 5,
     "params": 2
   },
-  "yadgar/storage/client.py::_build_chunk_body@476": {
+  "yadgar/_shared/storage/client.py::_build_chunk_body@476": {
     "cyclo": 14,
     "loc": 62,
     "nesting": 5,
     "params": 2
   },
-  "yadgar/storage/client.py::_build_chunk_body@478": {
+  "yadgar/_shared/storage/client.py::_build_chunk_body@478": {
     "cyclo": 14,
     "loc": 62,
     "nesting": 5,
     "params": 2
   },
-  "yadgar/storage/client.py::_bytes_to_floats@268": {
+  "yadgar/_shared/storage/client.py::_bytes_to_floats@268": {
     "cyclo": 4,
     "loc": 8,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/client.py::_bytes_to_floats@270": {
+  "yadgar/_shared/storage/client.py::_bytes_to_floats@270": {
     "cyclo": 4,
     "loc": 8,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/client.py::_bytes_to_floats@272": {
+  "yadgar/_shared/storage/client.py::_bytes_to_floats@272": {
     "cyclo": 4,
     "loc": 8,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/client.py::_db@209": {
+  "yadgar/_shared/storage/client.py::_db@209": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/client.py::_db@211": {
+  "yadgar/_shared/storage/client.py::_db@211": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/client.py::_db@213": {
+  "yadgar/_shared/storage/client.py::_db@213": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/client.py::_enrich_content_for_fts@623": {
+  "yadgar/_shared/storage/client.py::_enrich_content_for_fts@623": {
     "cyclo": 5,
     "loc": 13,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_enrich_content_for_fts@625": {
+  "yadgar/_shared/storage/client.py::_enrich_content_for_fts@625": {
     "cyclo": 5,
     "loc": 13,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_enrich_content_for_fts@627": {
+  "yadgar/_shared/storage/client.py::_enrich_content_for_fts@627": {
     "cyclo": 5,
     "loc": 13,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_extract_id@280": {
+  "yadgar/_shared/storage/client.py::_extract_id@280": {
     "cyclo": 6,
     "loc": 8,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/client.py::_extract_id@282": {
+  "yadgar/_shared/storage/client.py::_extract_id@282": {
     "cyclo": 6,
     "loc": 8,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/client.py::_extract_id@284": {
+  "yadgar/_shared/storage/client.py::_extract_id@284": {
     "cyclo": 6,
     "loc": 8,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/client.py::_floats_to_bytes@277": {
+  "yadgar/_shared/storage/client.py::_floats_to_bytes@277": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/client.py::_floats_to_bytes@279": {
+  "yadgar/_shared/storage/client.py::_floats_to_bytes@279": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/client.py::_floats_to_bytes@281": {
+  "yadgar/_shared/storage/client.py::_floats_to_bytes@281": {
     "cyclo": 1,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/client.py::_next_id@289": {
+  "yadgar/_shared/storage/client.py::_next_id@289": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/client.py::_next_id@291": {
+  "yadgar/_shared/storage/client.py::_next_id@291": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/client.py::_next_id@293": {
+  "yadgar/_shared/storage/client.py::_next_id@293": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/client.py::_now_iso@348": {
+  "yadgar/_shared/storage/client.py::_now_iso@348": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/client.py::_now_iso@350": {
+  "yadgar/_shared/storage/client.py::_now_iso@350": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/client.py::_now_iso@352": {
+  "yadgar/_shared/storage/client.py::_now_iso@352": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/client.py::_observe_query_metrics@188": {
+  "yadgar/_shared/storage/client.py::_observe_query_metrics@188": {
     "cyclo": 2,
     "loc": 15,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_observe_query_metrics@190": {
+  "yadgar/_shared/storage/client.py::_observe_query_metrics@190": {
     "cyclo": 2,
     "loc": 15,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_observe_query_metrics@192": {
+  "yadgar/_shared/storage/client.py::_observe_query_metrics@192": {
     "cyclo": 2,
     "loc": 15,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_preprocess_fts_query@637": {
+  "yadgar/_shared/storage/client.py::_preprocess_fts_query@637": {
     "cyclo": 6,
     "loc": 24,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_preprocess_fts_query@639": {
+  "yadgar/_shared/storage/client.py::_preprocess_fts_query@639": {
     "cyclo": 6,
     "loc": 24,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_preprocess_fts_query@641": {
+  "yadgar/_shared/storage/client.py::_preprocess_fts_query@641": {
     "cyclo": 6,
     "loc": 24,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_q@404": {
+  "yadgar/_shared/storage/client.py::_q@404": {
     "cyclo": 21,
     "loc": 68,
     "nesting": 5,
     "params": 3
   },
-  "yadgar/storage/client.py::_q@406": {
+  "yadgar/_shared/storage/client.py::_q@406": {
     "cyclo": 21,
     "loc": 68,
     "nesting": 5,
     "params": 3
   },
-  "yadgar/storage/client.py::_q@408": {
+  "yadgar/_shared/storage/client.py::_q@408": {
     "cyclo": 21,
     "loc": 68,
     "nesting": 5,
     "params": 3
   },
-  "yadgar/storage/client.py::_q_timeout@353": {
+  "yadgar/_shared/storage/client.py::_q_timeout@353": {
     "cyclo": 14,
     "loc": 50,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/storage/client.py::_q_timeout@355": {
+  "yadgar/_shared/storage/client.py::_q_timeout@355": {
     "cyclo": 14,
     "loc": 50,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/storage/client.py::_q_timeout@357": {
+  "yadgar/_shared/storage/client.py::_q_timeout@357": {
     "cyclo": 14,
     "loc": 50,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/storage/client.py::_reserve_ids@295": {
+  "yadgar/_shared/storage/client.py::_reserve_ids@295": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/client.py::_reserve_ids@297": {
+  "yadgar/_shared/storage/client.py::_reserve_ids@297": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/client.py::_reserve_ids@299": {
+  "yadgar/_shared/storage/client.py::_reserve_ids@299": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/client.py::_restore_from_backup@243": {
+  "yadgar/_shared/storage/client.py::_restore_from_backup@243": {
     "cyclo": 3,
     "loc": 22,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/client.py::_restore_from_backup@245": {
+  "yadgar/_shared/storage/client.py::_restore_from_backup@245": {
     "cyclo": 3,
     "loc": 22,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/client.py::_restore_from_backup@247": {
+  "yadgar/_shared/storage/client.py::_restore_from_backup@247": {
     "cyclo": 3,
     "loc": 22,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/client.py::_row_to_dict@304": {
+  "yadgar/_shared/storage/client.py::_row_to_dict@304": {
     "cyclo": 11,
     "loc": 40,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_row_to_dict@306": {
+  "yadgar/_shared/storage/client.py::_row_to_dict@306": {
     "cyclo": 11,
     "loc": 40,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_row_to_dict@308": {
+  "yadgar/_shared/storage/client.py::_row_to_dict@308": {
     "cyclo": 11,
     "loc": 40,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::_rows_to_dicts@345": {
+  "yadgar/_shared/storage/client.py::_rows_to_dicts@345": {
     "cyclo": 2,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/client.py::_rows_to_dicts@347": {
+  "yadgar/_shared/storage/client.py::_rows_to_dicts@347": {
     "cyclo": 2,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/client.py::_rows_to_dicts@349": {
+  "yadgar/_shared/storage/client.py::_rows_to_dicts@349": {
     "cyclo": 2,
     "loc": 2,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/client.py::_send_chunk@537": {
+  "yadgar/_shared/storage/client.py::_send_chunk@537": {
     "cyclo": 7,
     "loc": 36,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/storage/client.py::_send_chunk@539": {
+  "yadgar/_shared/storage/client.py::_send_chunk@539": {
     "cyclo": 7,
     "loc": 36,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/storage/client.py::_send_chunk@541": {
+  "yadgar/_shared/storage/client.py::_send_chunk@541": {
     "cyclo": 7,
     "loc": 36,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/storage/client.py::_sql_op@178": {
+  "yadgar/_shared/storage/client.py::_sql_op@178": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/client.py::_sql_op@180": {
+  "yadgar/_shared/storage/client.py::_sql_op@180": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/client.py::_sql_op@182": {
+  "yadgar/_shared/storage/client.py::_sql_op@182": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/client.py::_verify_health@215": {
+  "yadgar/_shared/storage/client.py::_verify_health@215": {
     "cyclo": 9,
     "loc": 27,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/storage/client.py::_verify_health@217": {
+  "yadgar/_shared/storage/client.py::_verify_health@217": {
     "cyclo": 9,
     "loc": 27,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/storage/client.py::_verify_health@219": {
+  "yadgar/_shared/storage/client.py::_verify_health@219": {
     "cyclo": 9,
     "loc": 27,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/storage/client.py::batch_writes@574": {
+  "yadgar/_shared/storage/client.py::batch_writes@574": {
     "cyclo": 5,
     "loc": 48,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::batch_writes@576": {
+  "yadgar/_shared/storage/client.py::batch_writes@576": {
     "cyclo": 5,
     "loc": 48,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/client.py::batch_writes@578": {
+  "yadgar/_shared/storage/client.py::batch_writes@578": {
     "cyclo": 5,
     "loc": 48,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/cluster.py::_ClusterMixin@10": {
+  "yadgar/_shared/storage/cluster.py::_ClusterMixin@10": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 8
   },
-  "yadgar/storage/cluster.py::__file__": {
+  "yadgar/_shared/storage/cluster.py::__file__": {
     "loc": 137
   },
-  "yadgar/storage/cluster.py::get_all_memory_similarity_links@134": {
+  "yadgar/_shared/storage/cluster.py::get_all_memory_similarity_links@134": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/cluster.py::get_cluster@42": {
+  "yadgar/_shared/storage/cluster.py::get_cluster@42": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/cluster.py::get_clusters_by_level@47": {
+  "yadgar/_shared/storage/cluster.py::get_clusters_by_level@47": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/cluster.py::get_memory_similarity_link@85": {
+  "yadgar/_shared/storage/cluster.py::get_memory_similarity_link@85": {
     "cyclo": 3,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/cluster.py::insert_cluster@16": {
+  "yadgar/_shared/storage/cluster.py::insert_cluster@16": {
     "cyclo": 2,
     "loc": 25,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/cluster.py::insert_memory_similarity_link@95": {
+  "yadgar/_shared/storage/cluster.py::insert_memory_similarity_link@95": {
     "cyclo": 3,
     "loc": 31,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/storage/cluster.py::reinforce_memory_similarity_link@127": {
+  "yadgar/_shared/storage/cluster.py::reinforce_memory_similarity_link@127": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/cluster.py::update_cluster@54": {
+  "yadgar/_shared/storage/cluster.py::update_cluster@54": {
     "cyclo": 7,
     "loc": 28,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/dbsize.py::_DbSizeMixin@17": {
+  "yadgar/_shared/storage/dbsize.py::_DbSizeMixin@17": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 1
   },
-  "yadgar/storage/dbsize.py::__file__": {
+  "yadgar/_shared/storage/dbsize.py::__file__": {
     "loc": 147
   },
-  "yadgar/storage/dbsize.py::get_db_size@20": {
+  "yadgar/_shared/storage/dbsize.py::get_db_size@20": {
     "cyclo": 17,
     "loc": 128,
     "nesting": 5,
     "params": 1
   },
-  "yadgar/storage/entity.py::RelationshipMeta@12": {
+  "yadgar/_shared/storage/entity.py::RelationshipMeta@12": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 0
   },
-  "yadgar/storage/entity.py::_EntityMixin@27": {
+  "yadgar/_shared/storage/entity.py::_EntityMixin@27": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 21
   },
-  "yadgar/storage/entity.py::__file__": {
+  "yadgar/_shared/storage/entity.py::__file__": {
     "loc": 307
   },
-  "yadgar/storage/entity.py::_insert_typed_relationship_impl@252": {
+  "yadgar/_shared/storage/entity.py::_insert_typed_relationship_impl@252": {
     "cyclo": 6,
     "loc": 39,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/storage/entity.py::archive_entity@83": {
+  "yadgar/_shared/storage/entity.py::archive_entity@83": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/entity.py::get_all_entities@60": {
+  "yadgar/_shared/storage/entity.py::get_all_entities@60": {
     "cyclo": 2,
     "loc": 12,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/entity.py::get_all_entities_for_decay@79": {
+  "yadgar/_shared/storage/entity.py::get_all_entities_for_decay@79": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/entity.py::get_all_relationships@138": {
+  "yadgar/_shared/storage/entity.py::get_all_relationships@138": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/entity.py::get_entity_by_id@96": {
+  "yadgar/_shared/storage/entity.py::get_entity_by_id@96": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/entity.py::get_entity_by_name@53": {
+  "yadgar/_shared/storage/entity.py::get_entity_by_name@53": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/entity.py::get_relationship_between@129": {
+  "yadgar/_shared/storage/entity.py::get_relationship_between@129": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/entity.py::get_relationship_by_source_and_type@299": {
+  "yadgar/_shared/storage/entity.py::get_relationship_by_source_and_type@299": {
     "cyclo": 2,
     "loc": 9,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/entity.py::get_relationships_among_entities@159": {
+  "yadgar/_shared/storage/entity.py::get_relationships_among_entities@159": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/entity.py::get_relationships_by_type_and_weight@209": {
+  "yadgar/_shared/storage/entity.py::get_relationships_by_type_and_weight@209": {
     "cyclo": 1,
     "loc": 9,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/entity.py::get_relationships_by_types@147": {
+  "yadgar/_shared/storage/entity.py::get_relationships_by_types@147": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/entity.py::get_relationships_for_entity@181": {
+  "yadgar/_shared/storage/entity.py::get_relationships_for_entity@181": {
     "cyclo": 7,
     "loc": 27,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/entity.py::get_typed_relationship@171": {
+  "yadgar/_shared/storage/entity.py::get_typed_relationship@171": {
     "cyclo": 2,
     "loc": 9,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/storage/entity.py::insert_entity@33": {
+  "yadgar/_shared/storage/entity.py::insert_entity@33": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/entity.py::insert_relationship@105": {
+  "yadgar/_shared/storage/entity.py::insert_relationship@105": {
     "cyclo": 1,
     "loc": 22,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/entity.py::insert_typed_relationship@234": {
+  "yadgar/_shared/storage/entity.py::insert_typed_relationship@234": {
     "cyclo": 2,
     "loc": 17,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/storage/entity.py::reinforce_entity@89": {
+  "yadgar/_shared/storage/entity.py::reinforce_entity@89": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/entity.py::reinforce_relationship@292": {
+  "yadgar/_shared/storage/entity.py::reinforce_relationship@292": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/entity.py::update_entity_heat@73": {
+  "yadgar/_shared/storage/entity.py::update_entity_heat@73": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/entity.py::update_relationship_fields@219": {
+  "yadgar/_shared/storage/entity.py::update_relationship_fields@219": {
     "cyclo": 5,
     "loc": 13,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/episode.py::_EpisodeMixin@9": {
+  "yadgar/_shared/storage/episode.py::_EpisodeMixin@9": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 8
   },
-  "yadgar/storage/episode.py::__file__": {
+  "yadgar/_shared/storage/episode.py::__file__": {
     "loc": 92
   },
-  "yadgar/storage/episode.py::get_all_episodes@53": {
+  "yadgar/_shared/storage/episode.py::get_all_episodes@53": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/episode.py::get_episode_session_id@90": {
+  "yadgar/_shared/storage/episode.py::get_episode_session_id@90": {
     "cyclo": 2,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/episode.py::get_episodes_since@40": {
+  "yadgar/_shared/storage/episode.py::get_episodes_since@40": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/episode.py::get_max_episode_id@47": {
+  "yadgar/_shared/storage/episode.py::get_max_episode_id@47": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/episode.py::get_recent_episodes@58": {
+  "yadgar/_shared/storage/episode.py::get_recent_episodes@58": {
     "cyclo": 1,
     "loc": 12,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/episode.py::get_session_episodes@33": {
+  "yadgar/_shared/storage/episode.py::get_session_episodes@33": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/episode.py::insert_episode@14": {
+  "yadgar/_shared/storage/episode.py::insert_episode@14": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/episode.py::prune_old_episodes@71": {
+  "yadgar/_shared/storage/episode.py::prune_old_episodes@71": {
     "cyclo": 3,
     "loc": 18,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/memory.py::_MemoryMixin@86": {
+  "yadgar/_shared/storage/memory.py::_MemoryMixin@86": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 35
   },
-  "yadgar/storage/memory.py::__file__": {
+  "yadgar/_shared/storage/memory.py::__file__": {
     "loc": 882
   },
-  "yadgar/storage/memory.py::_get_consts@76": {
+  "yadgar/_shared/storage/memory.py::_get_consts@76": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 0
   },
-  "yadgar/storage/memory.py::_validate_provenance_agent@50": {
+  "yadgar/_shared/storage/memory.py::_validate_provenance_agent@50": {
     "cyclo": 4,
     "loc": 18,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/memory.py::count_memories_by_compression_level@664": {
+  "yadgar/_shared/storage/memory.py::count_memories_by_compression_level@664": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/memory.py::count_memories_by_store_type@657": {
+  "yadgar/_shared/storage/memory.py::count_memories_by_store_type@657": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/memory.py::delete_memory@294": {
+  "yadgar/_shared/storage/memory.py::delete_memory@294": {
     "cyclo": 4,
     "loc": 46,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/memory.py::find_memory_ids_by_entity_name@671": {
+  "yadgar/_shared/storage/memory.py::find_memory_ids_by_entity_name@671": {
     "cyclo": 4,
     "loc": 18,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/memory.py::get_all_memories_for_decay@361": {
+  "yadgar/_shared/storage/memory.py::get_all_memories_for_decay@361": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/memory.py::get_all_memories_with_embeddings@367": {
+  "yadgar/_shared/storage/memory.py::get_all_memories_with_embeddings@367": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/memory.py::get_anchored_memories@717": {
+  "yadgar/_shared/storage/memory.py::get_anchored_memories@717": {
     "cyclo": 1,
     "loc": 15,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/memory.py::get_anchored_memories_scoped@733": {
+  "yadgar/_shared/storage/memory.py::get_anchored_memories_scoped@733": {
     "cyclo": 3,
     "loc": 46,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/storage/memory.py::get_memories_by_file_hash@354": {
+  "yadgar/_shared/storage/memory.py::get_memories_by_file_hash@354": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/memory.py::get_memories_by_heat@274": {
+  "yadgar/_shared/storage/memory.py::get_memories_by_heat@274": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::get_memories_by_store_type@583": {
+  "yadgar/_shared/storage/memory.py::get_memories_by_store_type@583": {
     "cyclo": 6,
     "loc": 35,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/storage/memory.py::get_memories_for_directory@341": {
+  "yadgar/_shared/storage/memory.py::get_memories_for_directory@341": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::get_memories_with_embeddings@371": {
+  "yadgar/_shared/storage/memory.py::get_memories_with_embeddings@371": {
     "cyclo": 3,
     "loc": 23,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/memory.py::get_memories_without_embeddings@395": {
+  "yadgar/_shared/storage/memory.py::get_memories_without_embeddings@395": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/memory.py::get_memory@259": {
+  "yadgar/_shared/storage/memory.py::get_memory@259": {
     "cyclo": 3,
     "loc": 13,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/memory.py::get_memory_cofire_priors@839": {
+  "yadgar/_shared/storage/memory.py::get_memory_cofire_priors@839": {
     "cyclo": 5,
     "loc": 21,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/storage/memory.py::get_memory_graph_priors@799": {
+  "yadgar/_shared/storage/memory.py::get_memory_graph_priors@799": {
     "cyclo": 5,
     "loc": 25,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/storage/memory.py::get_recent_memories@780": {
+  "yadgar/_shared/storage/memory.py::get_recent_memories@780": {
     "cyclo": 2,
     "loc": 16,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/memory.py::get_stale_memories@350": {
+  "yadgar/_shared/storage/memory.py::get_stale_memories@350": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/memory.py::get_total_reconsolidation_count@653": {
+  "yadgar/_shared/storage/memory.py::get_total_reconsolidation_count@653": {
     "cyclo": 3,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/memory.py::insert_memory@92": {
+  "yadgar/_shared/storage/memory.py::insert_memory@92": {
     "cyclo": 40,
     "loc": 165,
     "nesting": 6,
     "params": 5
   },
-  "yadgar/storage/memory.py::protect_memory@692": {
+  "yadgar/_shared/storage/memory.py::protect_memory@692": {
     "cyclo": 2,
     "loc": 24,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/storage/memory.py::search_memories_by_content_date@444": {
+  "yadgar/_shared/storage/memory.py::search_memories_by_content_date@444": {
     "cyclo": 7,
     "loc": 38,
     "nesting": 2,
     "params": 7
   },
-  "yadgar/storage/memory.py::search_memories_by_month@499": {
+  "yadgar/_shared/storage/memory.py::search_memories_by_month@499": {
     "cyclo": 9,
     "loc": 52,
     "nesting": 3,
     "params": 5
   },
-  "yadgar/storage/memory.py::search_memories_by_timestamp_range@484": {
+  "yadgar/_shared/storage/memory.py::search_memories_by_timestamp_range@484": {
     "cyclo": 1,
     "loc": 13,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/storage/memory.py::search_memories_fts@400": {
+  "yadgar/_shared/storage/memory.py::search_memories_fts@400": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/storage/memory.py::search_memories_fts_scored@410": {
+  "yadgar/_shared/storage/memory.py::search_memories_fts_scored@410": {
     "cyclo": 3,
     "loc": 32,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/storage/memory.py::update_memory_cofire_prior@861": {
+  "yadgar/_shared/storage/memory.py::update_memory_cofire_prior@861": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::update_memory_compression@556": {
+  "yadgar/_shared/storage/memory.py::update_memory_compression@556": {
     "cyclo": 3,
     "loc": 24,
     "nesting": 1,
     "params": 6
   },
-  "yadgar/storage/memory.py::update_memory_excitability@799": {
+  "yadgar/_shared/storage/memory.py::update_memory_excitability@799": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::update_memory_excitability@839": {
+  "yadgar/_shared/storage/memory.py::update_memory_excitability@839": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::update_memory_excitability@875": {
+  "yadgar/_shared/storage/memory.py::update_memory_excitability@875": {
     "cyclo": 1,
     "loc": 8,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::update_memory_fields@621": {
+  "yadgar/_shared/storage/memory.py::update_memory_fields@621": {
     "cyclo": 9,
     "loc": 24,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/storage/memory.py::update_memory_graph_prior@825": {
+  "yadgar/_shared/storage/memory.py::update_memory_graph_prior@825": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::update_memory_heat@281": {
+  "yadgar/_shared/storage/memory.py::update_memory_heat@281": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::update_memory_last_accessed@646": {
+  "yadgar/_shared/storage/memory.py::update_memory_last_accessed@646": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/memory.py::update_memory_staleness@287": {
+  "yadgar/_shared/storage/memory.py::update_memory_staleness@287": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/migrations.py::_MigrationsMixin@844": {
+  "yadgar/_shared/storage/migrations.py::_MigrationsMixin@844": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/storage/migrations.py::_MigrationsMixin@874": {
+  "yadgar/_shared/storage/migrations.py::_MigrationsMixin@874": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/storage/migrations.py::_MigrationsMixin@895": {
+  "yadgar/_shared/storage/migrations.py::_MigrationsMixin@895": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/storage/migrations.py::_MigrationsMixin@922": {
+  "yadgar/_shared/storage/migrations.py::_MigrationsMixin@922": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/storage/migrations.py::_MigrationsMixin@924": {
+  "yadgar/_shared/storage/migrations.py::_MigrationsMixin@924": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 4
   },
-  "yadgar/storage/migrations.py::__file__": {
+  "yadgar/_shared/storage/migrations.py::__file__": {
     "loc": 1153
   },
-  "yadgar/storage/migrations.py::_classify_directory_by_tags@505": {
+  "yadgar/_shared/storage/migrations.py::_classify_directory_by_tags@505": {
     "cyclo": 6,
     "loc": 21,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_schema@889": {
+  "yadgar/_shared/storage/migrations.py::_init_schema@889": {
     "cyclo": 6,
     "loc": 140,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_schema@919": {
+  "yadgar/_shared/storage/migrations.py::_init_schema@919": {
     "cyclo": 6,
     "loc": 140,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_schema@940": {
+  "yadgar/_shared/storage/migrations.py::_init_schema@940": {
     "cyclo": 6,
     "loc": 140,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_schema@967": {
+  "yadgar/_shared/storage/migrations.py::_init_schema@967": {
     "cyclo": 6,
     "loc": 140,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_schema@969": {
+  "yadgar/_shared/storage/migrations.py::_init_schema@969": {
     "cyclo": 6,
     "loc": 140,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_wiki_indexes@1030": {
+  "yadgar/_shared/storage/migrations.py::_init_wiki_indexes@1030": {
     "cyclo": 2,
     "loc": 44,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_wiki_indexes@1060": {
+  "yadgar/_shared/storage/migrations.py::_init_wiki_indexes@1060": {
     "cyclo": 2,
     "loc": 44,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_wiki_indexes@1081": {
+  "yadgar/_shared/storage/migrations.py::_init_wiki_indexes@1081": {
     "cyclo": 2,
     "loc": 44,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_wiki_indexes@1108": {
+  "yadgar/_shared/storage/migrations.py::_init_wiki_indexes@1108": {
     "cyclo": 2,
     "loc": 44,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_init_wiki_indexes@1110": {
+  "yadgar/_shared/storage/migrations.py::_init_wiki_indexes@1110": {
     "cyclo": 2,
     "loc": 44,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_001_hnsw_indexes@32": {
+  "yadgar/_shared/storage/migrations.py::_migration_001_hnsw_indexes@32": {
     "cyclo": 2,
     "loc": 23,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_002_relationship_indexes@57": {
+  "yadgar/_shared/storage/migrations.py::_migration_002_relationship_indexes@57": {
     "cyclo": 1,
     "loc": 10,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_003_memory_similarity_link_table@69": {
+  "yadgar/_shared/storage/migrations.py::_migration_003_memory_similarity_link_table@69": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_004_branch_field@97": {
+  "yadgar/_shared/storage/migrations.py::_migration_004_branch_field@97": {
     "cyclo": 1,
     "loc": 16,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_005_provenance_agent_field@78": {
+  "yadgar/_shared/storage/migrations.py::_migration_005_provenance_agent_field@78": {
     "cyclo": 1,
     "loc": 17,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_006_source_memory_id@150": {
+  "yadgar/_shared/storage/migrations.py::_migration_006_source_memory_id@150": {
     "cyclo": 1,
     "loc": 27,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_007_bitemporal_edges@115": {
+  "yadgar/_shared/storage/migrations.py::_migration_007_bitemporal_edges@115": {
     "cyclo": 2,
     "loc": 33,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_008_anchor_tier@199": {
+  "yadgar/_shared/storage/migrations.py::_migration_008_anchor_tier@199": {
     "cyclo": 3,
     "loc": 51,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_009_wiki_bookmark_table@179": {
+  "yadgar/_shared/storage/migrations.py::_migration_009_wiki_bookmark_table@179": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_010_bitemporal_user_profile@252": {
+  "yadgar/_shared/storage/migrations.py::_migration_010_bitemporal_user_profile@252": {
     "cyclo": 1,
     "loc": 27,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_011_bitemporal_derived_belief@281": {
+  "yadgar/_shared/storage/migrations.py::_migration_011_bitemporal_derived_belief@281": {
     "cyclo": 1,
     "loc": 21,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_012_memory_block_table@304": {
+  "yadgar/_shared/storage/migrations.py::_migration_012_memory_block_table@304": {
     "cyclo": 1,
     "loc": 22,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_013_wiki_page_version@328": {
+  "yadgar/_shared/storage/migrations.py::_migration_013_wiki_page_version@328": {
     "cyclo": 7,
     "loc": 98,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_014_wiki_page_embedding_backfill@428": {
+  "yadgar/_shared/storage/migrations.py::_migration_014_wiki_page_embedding_backfill@428": {
     "cyclo": 3,
     "loc": 29,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_015_wiki_draft_branch@459": {
+  "yadgar/_shared/storage/migrations.py::_migration_015_wiki_draft_branch@459": {
     "cyclo": 1,
     "loc": 16,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_016_directory_context@528": {
+  "yadgar/_shared/storage/migrations.py::_migration_016_directory_context@528": {
     "cyclo": 11,
     "loc": 123,
     "nesting": 5,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_018_directory_context_backfill_repair@653": {
+  "yadgar/_shared/storage/migrations.py::_migration_018_directory_context_backfill_repair@653": {
     "cyclo": 11,
     "loc": 125,
     "nesting": 5,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_019_wiki_page_type@780": {
+  "yadgar/_shared/storage/migrations.py::_migration_019_wiki_page_type@780": {
     "cyclo": 1,
     "loc": 24,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_019_wiki_page_type@799": {
+  "yadgar/_shared/storage/migrations.py::_migration_019_wiki_page_type@799": {
     "cyclo": 1,
     "loc": 22,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_019_wiki_page_type@822": {
+  "yadgar/_shared/storage/migrations.py::_migration_019_wiki_page_type@822": {
     "cyclo": 1,
     "loc": 22,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_019_wiki_page_type@824": {
+  "yadgar/_shared/storage/migrations.py::_migration_019_wiki_page_type@824": {
     "cyclo": 1,
     "loc": 22,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_020_memory_graph_prior@780": {
+  "yadgar/_shared/storage/migrations.py::_migration_020_memory_graph_prior@780": {
     "cyclo": 1,
     "loc": 17,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_migration_021_memory_cofire_prior@799": {
+  "yadgar/_shared/storage/migrations.py::_migration_021_memory_cofire_prior@799": {
     "cyclo": 1,
     "loc": 23,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations@849": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations@849": {
     "cyclo": 3,
     "loc": 24,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations@879": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations@879": {
     "cyclo": 3,
     "loc": 24,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations@900": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations@900": {
     "cyclo": 3,
     "loc": 24,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations@927": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations@927": {
     "cyclo": 3,
     "loc": 24,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations@929": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations@929": {
     "cyclo": 3,
     "loc": 24,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations_locked@874": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations_locked@874": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations_locked@904": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations_locked@904": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations_locked@925": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations_locked@925": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations_locked@952": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations_locked@952": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/migrations.py::_run_migrations_locked@954": {
+  "yadgar/_shared/storage/migrations.py::_run_migrations_locked@954": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/narrative.py::_NarrativeMixin@15": {
+  "yadgar/_shared/storage/narrative.py::_NarrativeMixin@15": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 12
   },
-  "yadgar/storage/narrative.py::__file__": {
+  "yadgar/_shared/storage/narrative.py::__file__": {
     "loc": 256
   },
-  "yadgar/storage/narrative.py::deactivate_prospective_memory@55": {
+  "yadgar/_shared/storage/narrative.py::deactivate_prospective_memory@55": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/narrative.py::get_active_prospective_memories@43": {
+  "yadgar/_shared/storage/narrative.py::get_active_prospective_memories@43": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/narrative.py::get_astrocyte_processes@118": {
+  "yadgar/_shared/storage/narrative.py::get_astrocyte_processes@118": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/narrative.py::get_beliefs_for_subject@233": {
+  "yadgar/_shared/storage/narrative.py::get_beliefs_for_subject@233": {
     "cyclo": 3,
     "loc": 24,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/storage/narrative.py::get_narratives_for_directory@86": {
+  "yadgar/_shared/storage/narrative.py::get_narratives_for_directory@86": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/narrative.py::insert_astrocyte_process@96": {
+  "yadgar/_shared/storage/narrative.py::insert_astrocyte_process@96": {
     "cyclo": 1,
     "loc": 21,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/narrative.py::insert_belief@153": {
+  "yadgar/_shared/storage/narrative.py::insert_belief@153": {
     "cyclo": 9,
     "loc": 63,
     "nesting": 4,
     "params": 9
   },
-  "yadgar/storage/narrative.py::insert_narrative_entry@63": {
+  "yadgar/_shared/storage/narrative.py::insert_narrative_entry@63": {
     "cyclo": 1,
     "loc": 22,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/narrative.py::insert_prospective_memory@20": {
+  "yadgar/_shared/storage/narrative.py::insert_prospective_memory@20": {
     "cyclo": 1,
     "loc": 22,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/narrative.py::search_beliefs_fts@217": {
+  "yadgar/_shared/storage/narrative.py::search_beliefs_fts@217": {
     "cyclo": 2,
     "loc": 15,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/storage/narrative.py::trigger_prospective_memory@47": {
+  "yadgar/_shared/storage/narrative.py::trigger_prospective_memory@47": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/narrative.py::update_astrocyte_process@122": {
+  "yadgar/_shared/storage/narrative.py::update_astrocyte_process@122": {
     "cyclo": 6,
     "loc": 28,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/storage/ops.py::_OpsMixin@31": {
+  "yadgar/_shared/storage/ops.py::_OpsMixin@31": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 16
   },
-  "yadgar/storage/ops.py::__file__": {
+  "yadgar/_shared/storage/ops.py::__file__": {
     "loc": 358
   },
-  "yadgar/storage/ops.py::get_memory_stats@60": {
+  "yadgar/_shared/storage/ops.py::get_memory_stats@60": {
     "cyclo": 8,
     "loc": 31,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/ops.py::insert_consolidation_log@38": {
+  "yadgar/_shared/storage/ops.py::insert_consolidation_log@38": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/ops.py::prune_old_rows@94": {
+  "yadgar/_shared/storage/ops.py::prune_old_rows@94": {
     "cyclo": 7,
     "loc": 49,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/storage/queue.py::_QueueMixin@14": {
+  "yadgar/_shared/storage/queue.py::_QueueMixin@14": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 7
   },
-  "yadgar/storage/queue.py::__file__": {
+  "yadgar/_shared/storage/queue.py::__file__": {
     "loc": 117
   },
-  "yadgar/storage/queue.py::get_file_hash@44": {
+  "yadgar/_shared/storage/queue.py::get_file_hash@44": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/queue.py::get_filepath_by_hash@51": {
+  "yadgar/_shared/storage/queue.py::get_filepath_by_hash@51": {
     "cyclo": 2,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/queue.py::get_unprocessed_actions@84": {
+  "yadgar/_shared/storage/queue.py::get_unprocessed_actions@84": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/queue.py::insert_action_log@60": {
+  "yadgar/_shared/storage/queue.py::insert_action_log@60": {
     "cyclo": 1,
     "loc": 23,
     "nesting": 0,
     "params": 6
   },
-  "yadgar/storage/queue.py::mark_actions_processed@91": {
+  "yadgar/_shared/storage/queue.py::mark_actions_processed@91": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/queue.py::prune_processed_action_log@97": {
+  "yadgar/_shared/storage/queue.py::prune_processed_action_log@97": {
     "cyclo": 3,
     "loc": 21,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/queue.py::upsert_file_hash@19": {
+  "yadgar/_shared/storage/queue.py::upsert_file_hash@19": {
     "cyclo": 2,
     "loc": 24,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/rules.py::_RulesMixin@17": {
+  "yadgar/_shared/storage/rules.py::_RulesMixin@17": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 16
   },
-  "yadgar/storage/rules.py::__file__": {
+  "yadgar/_shared/storage/rules.py::__file__": {
     "loc": 214
   },
-  "yadgar/storage/rules.py::delete_rule@83": {
+  "yadgar/_shared/storage/rules.py::delete_rule@83": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/rules.py::get_all_active_rules@107": {
+  "yadgar/_shared/storage/rules.py::get_all_active_rules@107": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/rules.py::get_all_active_rules_by_scope@89": {
+  "yadgar/_shared/storage/rules.py::get_all_active_rules_by_scope@89": {
     "cyclo": 1,
     "loc": 11,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/rules.py::get_all_transitions@194": {
+  "yadgar/_shared/storage/rules.py::get_all_transitions@194": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/rules.py::get_archives_for_memory@138": {
+  "yadgar/_shared/storage/rules.py::get_archives_for_memory@138": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/rules.py::get_memories_with_sr_coords@205": {
+  "yadgar/_shared/storage/rules.py::get_memories_with_sr_coords@205": {
     "cyclo": 2,
     "loc": 10,
     "nesting": 0,
     "params": 1
   },
-  "yadgar/storage/rules.py::get_rule@101": {
+  "yadgar/_shared/storage/rules.py::get_rule@101": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/rules.py::get_rules_for_scope@46": {
+  "yadgar/_shared/storage/rules.py::get_rules_for_scope@46": {
     "cyclo": 2,
     "loc": 13,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/rules.py::get_transition@171": {
+  "yadgar/_shared/storage/rules.py::get_transition@171": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/rules.py::get_transitions_from@187": {
+  "yadgar/_shared/storage/rules.py::get_transitions_from@187": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/rules.py::increment_transition@179": {
+  "yadgar/_shared/storage/rules.py::increment_transition@179": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/rules.py::insert_archive@116": {
+  "yadgar/_shared/storage/rules.py::insert_archive@116": {
     "cyclo": 2,
     "loc": 21,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/rules.py::insert_rule@23": {
+  "yadgar/_shared/storage/rules.py::insert_rule@23": {
     "cyclo": 1,
     "loc": 21,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/rules.py::insert_transition@148": {
+  "yadgar/_shared/storage/rules.py::insert_transition@148": {
     "cyclo": 2,
     "loc": 22,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/rules.py::update_memory_sr_coords@199": {
+  "yadgar/_shared/storage/rules.py::update_memory_sr_coords@199": {
     "cyclo": 1,
     "loc": 5,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/storage/rules.py::update_rule@60": {
+  "yadgar/_shared/storage/rules.py::update_rule@60": {
     "cyclo": 4,
     "loc": 22,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/user.py::_UserMixin@19": {
+  "yadgar/_shared/storage/user.py::_UserMixin@19": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 6
   },
-  "yadgar/storage/user.py::__file__": {
+  "yadgar/_shared/storage/user.py::__file__": {
     "loc": 252
   },
-  "yadgar/storage/user.py::get_memories_in_time_window@73": {
+  "yadgar/_shared/storage/user.py::get_memories_in_time_window@73": {
     "cyclo": 2,
     "loc": 17,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/storage/user.py::get_profiles_for_entity@229": {
+  "yadgar/_shared/storage/user.py::get_profiles_for_entity@229": {
     "cyclo": 3,
     "loc": 24,
     "nesting": 1,
     "params": 4
   },
-  "yadgar/storage/user.py::insert_profile@93": {
+  "yadgar/_shared/storage/user.py::insert_profile@93": {
     "cyclo": 8,
     "loc": 117,
     "nesting": 2,
     "params": 8
   },
-  "yadgar/storage/user.py::search_profiles_fts@212": {
+  "yadgar/_shared/storage/user.py::search_profiles_fts@212": {
     "cyclo": 2,
     "loc": 16,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/storage/user.py::update_memory_metamemory@50": {
+  "yadgar/_shared/storage/user.py::update_memory_metamemory@50": {
     "cyclo": 2,
     "loc": 22,
     "nesting": 1,
     "params": 6
   },
-  "yadgar/storage/user.py::update_memory_scores@24": {
+  "yadgar/_shared/storage/user.py::update_memory_scores@24": {
     "cyclo": 6,
     "loc": 25,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/storage/vector.py::_VectorMixin@10": {
+  "yadgar/_shared/storage/vector.py::_VectorMixin@10": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 11
   },
-  "yadgar/storage/vector.py::__file__": {
+  "yadgar/_shared/storage/vector.py::__file__": {
     "loc": 203
   },
-  "yadgar/storage/vector.py::delete_vector@23": {
+  "yadgar/_shared/storage/vector.py::delete_vector@23": {
     "cyclo": 1,
     "loc": 6,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/vector.py::get_memories_needing_reembedding@112": {
+  "yadgar/_shared/storage/vector.py::get_memories_needing_reembedding@112": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/vector.py::insert_implicit_vector@34": {
+  "yadgar/_shared/storage/vector.py::insert_implicit_vector@34": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/vector.py::insert_vector@15": {
+  "yadgar/_shared/storage/vector.py::insert_vector@15": {
     "cyclo": 1,
     "loc": 7,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/vector.py::probe_vector_indexes@176": {
+  "yadgar/_shared/storage/vector.py::probe_vector_indexes@176": {
     "cyclo": 4,
     "loc": 18,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/vector.py::rebuild_vector_indexes@195": {
+  "yadgar/_shared/storage/vector.py::rebuild_vector_indexes@195": {
     "cyclo": 2,
     "loc": 9,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/storage/vector.py::recreate_vector_table@135": {
+  "yadgar/_shared/storage/vector.py::recreate_vector_table@135": {
     "cyclo": 4,
     "loc": 40,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/storage/vector.py::search_implicit_vectors@86": {
+  "yadgar/_shared/storage/vector.py::search_implicit_vectors@86": {
     "cyclo": 3,
     "loc": 25,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/storage/vector.py::search_vectors@43": {
+  "yadgar/_shared/storage/vector.py::search_vectors@43": {
     "cyclo": 5,
     "loc": 41,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/storage/vector.py::update_memory_embedding@120": {
+  "yadgar/_shared/storage/vector.py::update_memory_embedding@120": {
     "cyclo": 3,
     "loc": 14,
     "nesting": 4,
     "params": 4
   },
-  "yadgar/storage/vector.py::update_vector@30": {
+  "yadgar/_shared/storage/vector.py::update_vector@30": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/storage/wiki.py::_WikiMixin@96": {
+  "yadgar/_shared/storage/wiki.py::_WikiMixin@96": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 26
   },
-  "yadgar/storage/wiki.py::__file__": {
+  "yadgar/_shared/storage/wiki.py::__file__": {
     "loc": 808
   },
-  "yadgar/storage/wiki.py::_compute_change_summary@57": {
+  "yadgar/_shared/storage/wiki.py::_compute_change_summary@57": {
     "cyclo": 9,
     "loc": 37,
     "nesting": 3,
     "params": 2
   },
-  "yadgar/storage/wiki.py::_diff_context_line@39": {
+  "yadgar/_shared/storage/wiki.py::_diff_context_line@39": {
     "cyclo": 3,
     "loc": 5,
     "nesting": 1,
     "params": 1
   },
-  "yadgar/storage/wiki.py::_find_nearby_heading@46": {
+  "yadgar/_shared/storage/wiki.py::_find_nearby_heading@46": {
     "cyclo": 4,
     "loc": 9,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/storage/wiki.py::delete_wiki_page@361": {
+  "yadgar/_shared/storage/wiki.py::delete_wiki_page@361": {
     "cyclo": 3,
     "loc": 22,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/storage/wiki.py::get_wiki_page@255": {
+  "yadgar/_shared/storage/wiki.py::get_wiki_page@255": {
     "cyclo": 2,
     "loc": 5,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/wiki.py::get_wiki_page_by_slug@262": {
+  "yadgar/_shared/storage/wiki.py::get_wiki_page_by_slug@262": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/storage/wiki.py::get_wiki_page_by_slug_and_branch@270": {
+  "yadgar/_shared/storage/wiki.py::get_wiki_page_by_slug_and_branch@270": {
     "cyclo": 5,
     "loc": 37,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/storage/wiki.py::get_wiki_page_by_slug_directory_branch@308": {
+  "yadgar/_shared/storage/wiki.py::get_wiki_page_by_slug_directory_branch@308": {
     "cyclo": 6,
     "loc": 51,
     "nesting": 2,
     "params": 4
   },
-  "yadgar/storage/wiki.py::insert_wiki_page@102": {
+  "yadgar/_shared/storage/wiki.py::insert_wiki_page@102": {
     "cyclo": 4,
     "loc": 69,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/storage/wiki.py::list_wiki_pages@385": {
+  "yadgar/_shared/storage/wiki.py::list_wiki_pages@385": {
     "cyclo": 9,
     "loc": 39,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/storage/wiki.py::update_wiki_page@173": {
+  "yadgar/_shared/storage/wiki.py::update_wiki_page@173": {
     "cyclo": 6,
     "loc": 80,
     "nesting": 1,
@@ -44197,69 +44197,69 @@
     "nesting": 0,
     "params": 3
   },
-  "yadgar/thermodynamics.py::MemoryThermodynamics@40": {
+  "yadgar/_shared/thermodynamics.py::MemoryThermodynamics@40": {
     "attrs": 3,
     "inh_depth": 0,
     "methods": 10
   },
-  "yadgar/thermodynamics.py::__file__": {
+  "yadgar/_shared/thermodynamics.py::__file__": {
     "loc": 282
   },
-  "yadgar/thermodynamics.py::__init__@47": {
+  "yadgar/_shared/thermodynamics.py::__init__@47": {
     "cyclo": 1,
     "loc": 9,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/thermodynamics.py::apply_session_coherence@254": {
+  "yadgar/_shared/thermodynamics.py::apply_session_coherence@254": {
     "cyclo": 4,
     "loc": 29,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/thermodynamics.py::apply_surprise_boost@84": {
+  "yadgar/_shared/thermodynamics.py::apply_surprise_boost@84": {
     "cyclo": 1,
     "loc": 4,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/thermodynamics.py::compute_decay@172": {
+  "yadgar/_shared/thermodynamics.py::compute_decay@172": {
     "cyclo": 2,
     "loc": 32,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/thermodynamics.py::compute_importance@91": {
+  "yadgar/_shared/thermodynamics.py::compute_importance@91": {
     "cyclo": 8,
     "loc": 29,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/thermodynamics.py::compute_surprise@59": {
+  "yadgar/_shared/thermodynamics.py::compute_surprise@59": {
     "cyclo": 6,
     "loc": 24,
     "nesting": 2,
     "params": 3
   },
-  "yadgar/thermodynamics.py::compute_valence@123": {
+  "yadgar/_shared/thermodynamics.py::compute_valence@123": {
     "cyclo": 2,
     "loc": 16,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/thermodynamics.py::get_reliability@238": {
+  "yadgar/_shared/thermodynamics.py::get_reliability@238": {
     "cyclo": 3,
     "loc": 13,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/thermodynamics.py::record_access@207": {
+  "yadgar/_shared/thermodynamics.py::record_access@207": {
     "cyclo": 4,
     "loc": 30,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/thermodynamics.py::synaptic_boost@142": {
+  "yadgar/_shared/thermodynamics.py::synaptic_boost@142": {
     "cyclo": 5,
     "loc": 27,
     "nesting": 2,
@@ -44654,560 +44654,560 @@
     "nesting": 1,
     "params": 4
   },
-  "yadgar/wiki.py::WikiStore@204": {
+  "yadgar/_shared/wiki.py::WikiStore@204": {
     "attrs": 2,
     "inh_depth": 0,
     "methods": 24
   },
-  "yadgar/wiki.py::WikiStore@206": {
+  "yadgar/_shared/wiki.py::WikiStore@206": {
     "attrs": 2,
     "inh_depth": 0,
     "methods": 24
   },
-  "yadgar/wiki.py::__file__": {
+  "yadgar/_shared/wiki.py::__file__": {
     "loc": 1076
   },
-  "yadgar/wiki.py::__init__@221": {
+  "yadgar/_shared/wiki.py::__init__@221": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::__init__@223": {
+  "yadgar/_shared/wiki.py::__init__@223": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::_collect_headings@194": {
+  "yadgar/_shared/wiki.py::_collect_headings@194": {
     "cyclo": 4,
     "loc": 8,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_collect_wiki_fts_scores@351": {
+  "yadgar/_shared/wiki.py::_collect_wiki_fts_scores@351": {
     "cyclo": 6,
     "loc": 19,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/wiki.py::_collect_wiki_fts_scores@369": {
+  "yadgar/_shared/wiki.py::_collect_wiki_fts_scores@369": {
     "cyclo": 6,
     "loc": 19,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/wiki.py::_collect_wiki_fts_scores@371": {
+  "yadgar/_shared/wiki.py::_collect_wiki_fts_scores@371": {
     "cyclo": 6,
     "loc": 19,
     "nesting": 3,
     "params": 4
   },
-  "yadgar/wiki.py::_collect_wiki_vector_scores@371": {
+  "yadgar/_shared/wiki.py::_collect_wiki_vector_scores@371": {
     "cyclo": 5,
     "loc": 20,
     "nesting": 4,
     "params": 4
   },
-  "yadgar/wiki.py::_collect_wiki_vector_scores@389": {
+  "yadgar/_shared/wiki.py::_collect_wiki_vector_scores@389": {
     "cyclo": 5,
     "loc": 20,
     "nesting": 4,
     "params": 4
   },
-  "yadgar/wiki.py::_collect_wiki_vector_scores@391": {
+  "yadgar/_shared/wiki.py::_collect_wiki_vector_scores@391": {
     "cyclo": 5,
     "loc": 20,
     "nesting": 4,
     "params": 4
   },
-  "yadgar/wiki.py::_compute_embedding@921": {
+  "yadgar/_shared/wiki.py::_compute_embedding@921": {
     "cyclo": 5,
     "loc": 42,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_compute_embedding@925": {
+  "yadgar/_shared/wiki.py::_compute_embedding@925": {
     "cyclo": 5,
     "loc": 44,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_compute_embedding@960": {
+  "yadgar/_shared/wiki.py::_compute_embedding@960": {
     "cyclo": 5,
     "loc": 44,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_compute_embedding@962": {
+  "yadgar/_shared/wiki.py::_compute_embedding@962": {
     "cyclo": 5,
     "loc": 44,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_diff_json@155": {
+  "yadgar/_shared/wiki.py::_diff_json@155": {
     "cyclo": 5,
     "loc": 37,
     "nesting": 3,
     "params": 5
   },
-  "yadgar/wiki.py::_extract_wikilinks@916": {
+  "yadgar/_shared/wiki.py::_extract_wikilinks@916": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::_extract_wikilinks@920": {
+  "yadgar/_shared/wiki.py::_extract_wikilinks@920": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::_extract_wikilinks@955": {
+  "yadgar/_shared/wiki.py::_extract_wikilinks@955": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::_extract_wikilinks@957": {
+  "yadgar/_shared/wiki.py::_extract_wikilinks@957": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::_find_section_end@92": {
+  "yadgar/_shared/wiki.py::_find_section_end@92": {
     "cyclo": 9,
     "loc": 26,
     "nesting": 4,
     "params": 3
   },
-  "yadgar/wiki.py::_find_section_headings@52": {
+  "yadgar/_shared/wiki.py::_find_section_headings@52": {
     "cyclo": 8,
     "loc": 38,
     "nesting": 4,
     "params": 1
   },
-  "yadgar/wiki.py::_inc_embed_failure@28": {
+  "yadgar/_shared/wiki.py::_inc_embed_failure@28": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
     "params": 1
   },
-  "yadgar/wiki.py::_link_memories@1023": {
+  "yadgar/_shared/wiki.py::_link_memories@1023": {
     "cyclo": 6,
     "loc": 13,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_link_memories@1029": {
+  "yadgar/_shared/wiki.py::_link_memories@1029": {
     "cyclo": 6,
     "loc": 13,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_link_memories@1064": {
+  "yadgar/_shared/wiki.py::_link_memories@1064": {
     "cyclo": 6,
     "loc": 13,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_link_memories@1066": {
+  "yadgar/_shared/wiki.py::_link_memories@1066": {
     "cyclo": 6,
     "loc": 13,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/wiki.py::_parse_section_heading_spec@41": {
+  "yadgar/_shared/wiki.py::_parse_section_heading_spec@41": {
     "cyclo": 3,
     "loc": 9,
     "nesting": 3,
     "params": 1
   },
-  "yadgar/wiki.py::_patch_section@120": {
+  "yadgar/_shared/wiki.py::_patch_section@120": {
     "cyclo": 9,
     "loc": 33,
     "nesting": 4,
     "params": 4
   },
-  "yadgar/wiki.py::_slugify@906": {
+  "yadgar/_shared/wiki.py::_slugify@906": {
     "cyclo": 2,
     "loc": 9,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::_slugify@910": {
+  "yadgar/_shared/wiki.py::_slugify@910": {
     "cyclo": 2,
     "loc": 9,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::_slugify@945": {
+  "yadgar/_shared/wiki.py::_slugify@945": {
     "cyclo": 2,
     "loc": 9,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::_slugify@947": {
+  "yadgar/_shared/wiki.py::_slugify@947": {
     "cyclo": 2,
     "loc": 9,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::_sync_crossrefs@1019": {
+  "yadgar/_shared/wiki.py::_sync_crossrefs@1019": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::_sync_crossrefs@1025": {
+  "yadgar/_shared/wiki.py::_sync_crossrefs@1025": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::_sync_crossrefs@1060": {
+  "yadgar/_shared/wiki.py::_sync_crossrefs@1060": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::_sync_crossrefs@1062": {
+  "yadgar/_shared/wiki.py::_sync_crossrefs@1062": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::_wiki_observe_stage@15": {
+  "yadgar/_shared/wiki.py::_wiki_observe_stage@15": {
     "cyclo": 2,
     "loc": 8,
     "nesting": 2,
     "params": 2
   },
-  "yadgar/wiki.py::add@227": {
+  "yadgar/_shared/wiki.py::add@227": {
     "cyclo": 11,
     "loc": 103,
     "nesting": 2,
     "params": 10
   },
-  "yadgar/wiki.py::add@229": {
+  "yadgar/_shared/wiki.py::add@229": {
     "cyclo": 11,
     "loc": 103,
     "nesting": 2,
     "params": 10
   },
-  "yadgar/wiki.py::append_section@807": {
+  "yadgar/_shared/wiki.py::append_section@807": {
     "cyclo": 15,
     "loc": 96,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/wiki.py::append_section@811": {
+  "yadgar/_shared/wiki.py::append_section@811": {
     "cyclo": 15,
     "loc": 96,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/wiki.py::append_section@846": {
+  "yadgar/_shared/wiki.py::append_section@846": {
     "cyclo": 15,
     "loc": 96,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/wiki.py::append_section@848": {
+  "yadgar/_shared/wiki.py::append_section@848": {
     "cyclo": 15,
     "loc": 96,
     "nesting": 2,
     "params": 5
   },
-  "yadgar/wiki.py::backfill_null_embeddings@1005": {
+  "yadgar/_shared/wiki.py::backfill_null_embeddings@1005": {
     "cyclo": 6,
     "loc": 54,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/wiki.py::backfill_null_embeddings@1007": {
+  "yadgar/_shared/wiki.py::backfill_null_embeddings@1007": {
     "cyclo": 6,
     "loc": 54,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/wiki.py::backfill_null_embeddings@964": {
+  "yadgar/_shared/wiki.py::backfill_null_embeddings@964": {
     "cyclo": 6,
     "loc": 54,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/wiki.py::backfill_null_embeddings@970": {
+  "yadgar/_shared/wiki.py::backfill_null_embeddings@970": {
     "cyclo": 6,
     "loc": 54,
     "nesting": 4,
     "params": 2
   },
-  "yadgar/wiki.py::delete@451": {
+  "yadgar/_shared/wiki.py::delete@451": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/wiki.py::delete@469": {
+  "yadgar/_shared/wiki.py::delete@469": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/wiki.py::delete@471": {
+  "yadgar/_shared/wiki.py::delete@471": {
     "cyclo": 2,
     "loc": 7,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/wiki.py::diff@719": {
+  "yadgar/_shared/wiki.py::diff@719": {
     "cyclo": 4,
     "loc": 35,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/wiki.py::diff@723": {
+  "yadgar/_shared/wiki.py::diff@723": {
     "cyclo": 4,
     "loc": 35,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/wiki.py::diff@758": {
+  "yadgar/_shared/wiki.py::diff@758": {
     "cyclo": 4,
     "loc": 35,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/wiki.py::diff@760": {
+  "yadgar/_shared/wiki.py::diff@760": {
     "cyclo": 4,
     "loc": 35,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/wiki.py::find_similar_wiki_pages@474": {
+  "yadgar/_shared/wiki.py::find_similar_wiki_pages@474": {
     "cyclo": 13,
     "loc": 93,
     "nesting": 2,
     "params": 7
   },
-  "yadgar/wiki.py::find_similar_wiki_pages@492": {
+  "yadgar/_shared/wiki.py::find_similar_wiki_pages@492": {
     "cyclo": 13,
     "loc": 93,
     "nesting": 2,
     "params": 7
   },
-  "yadgar/wiki.py::find_similar_wiki_pages@494": {
+  "yadgar/_shared/wiki.py::find_similar_wiki_pages@494": {
     "cyclo": 13,
     "loc": 93,
     "nesting": 2,
     "params": 7
   },
-  "yadgar/wiki.py::history@703": {
+  "yadgar/_shared/wiki.py::history@703": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::history@707": {
+  "yadgar/_shared/wiki.py::history@707": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::history@742": {
+  "yadgar/_shared/wiki.py::history@742": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::history@744": {
+  "yadgar/_shared/wiki.py::history@744": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/wiki.py::ingest@564": {
+  "yadgar/_shared/wiki.py::ingest@564": {
     "cyclo": 6,
     "loc": 41,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/wiki.py::ingest@568": {
+  "yadgar/_shared/wiki.py::ingest@568": {
     "cyclo": 6,
     "loc": 41,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/wiki.py::ingest@586": {
+  "yadgar/_shared/wiki.py::ingest@586": {
     "cyclo": 6,
     "loc": 41,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/wiki.py::ingest@588": {
+  "yadgar/_shared/wiki.py::ingest@588": {
     "cyclo": 6,
     "loc": 41,
     "nesting": 1,
     "params": 5
   },
-  "yadgar/wiki.py::lint@606": {
+  "yadgar/_shared/wiki.py::lint@606": {
     "cyclo": 14,
     "loc": 94,
     "nesting": 4,
     "params": 1
   },
-  "yadgar/wiki.py::lint@610": {
+  "yadgar/_shared/wiki.py::lint@610": {
     "cyclo": 14,
     "loc": 94,
     "nesting": 4,
     "params": 1
   },
-  "yadgar/wiki.py::lint@628": {
+  "yadgar/_shared/wiki.py::lint@628": {
     "cyclo": 15,
     "loc": 111,
     "nesting": 4,
     "params": 1
   },
-  "yadgar/wiki.py::lint@630": {
+  "yadgar/_shared/wiki.py::lint@630": {
     "cyclo": 15,
     "loc": 111,
     "nesting": 4,
     "params": 1
   },
-  "yadgar/wiki.py::list_pages@459": {
+  "yadgar/_shared/wiki.py::list_pages@459": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/wiki.py::list_pages@477": {
+  "yadgar/_shared/wiki.py::list_pages@477": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/wiki.py::list_pages@479": {
+  "yadgar/_shared/wiki.py::list_pages@479": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
     "params": 5
   },
-  "yadgar/wiki.py::query@393": {
+  "yadgar/_shared/wiki.py::query@393": {
     "cyclo": 15,
     "loc": 57,
     "nesting": 3,
     "params": 5
   },
-  "yadgar/wiki.py::query@411": {
+  "yadgar/_shared/wiki.py::query@411": {
     "cyclo": 15,
     "loc": 57,
     "nesting": 3,
     "params": 5
   },
-  "yadgar/wiki.py::query@413": {
+  "yadgar/_shared/wiki.py::query@413": {
     "cyclo": 15,
     "loc": 57,
     "nesting": 3,
     "params": 5
   },
-  "yadgar/wiki.py::read@313": {
+  "yadgar/_shared/wiki.py::read@313": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::read@331": {
+  "yadgar/_shared/wiki.py::read@331": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::read@333": {
+  "yadgar/_shared/wiki.py::read@333": {
     "cyclo": 1,
     "loc": 3,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/wiki.py::read_by_branch@317": {
+  "yadgar/_shared/wiki.py::read_by_branch@317": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/wiki.py::read_by_branch@335": {
+  "yadgar/_shared/wiki.py::read_by_branch@335": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/wiki.py::read_by_branch@337": {
+  "yadgar/_shared/wiki.py::read_by_branch@337": {
     "cyclo": 1,
     "loc": 14,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/wiki.py::read_by_directory_branch@332": {
+  "yadgar/_shared/wiki.py::read_by_directory_branch@332": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/wiki.py::read_by_directory_branch@350": {
+  "yadgar/_shared/wiki.py::read_by_directory_branch@350": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/wiki.py::read_by_directory_branch@352": {
+  "yadgar/_shared/wiki.py::read_by_directory_branch@352": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 4
   },
-  "yadgar/wiki.py::read_version@707": {
+  "yadgar/_shared/wiki.py::read_version@707": {
     "cyclo": 2,
     "loc": 11,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/wiki.py::read_version@711": {
+  "yadgar/_shared/wiki.py::read_version@711": {
     "cyclo": 2,
     "loc": 11,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/wiki.py::read_version@746": {
+  "yadgar/_shared/wiki.py::read_version@746": {
     "cyclo": 2,
     "loc": 11,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/wiki.py::read_version@748": {
+  "yadgar/_shared/wiki.py::read_version@748": {
     "cyclo": 2,
     "loc": 11,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/wiki.py::restore_version@755": {
+  "yadgar/_shared/wiki.py::restore_version@755": {
     "cyclo": 4,
     "loc": 51,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/wiki.py::restore_version@759": {
+  "yadgar/_shared/wiki.py::restore_version@759": {
     "cyclo": 4,
     "loc": 51,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/wiki.py::restore_version@794": {
+  "yadgar/_shared/wiki.py::restore_version@794": {
     "cyclo": 4,
     "loc": 51,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/wiki.py::restore_version@796": {
+  "yadgar/_shared/wiki.py::restore_version@796": {
     "cyclo": 4,
     "loc": 51,
     "nesting": 1,

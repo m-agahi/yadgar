@@ -257,7 +257,7 @@ def isolate_yadgar_paths(tmp_path, monkeypatch):
     # reset it per test so a prior test's failing /health probes can't leak a
     # latent-503 into an unrelated test.
     try:
-        import yadgar.server.http as _srv_http  # noqa: PLC0415
+        import yadgar.core.server.http as _srv_http  # noqa: PLC0415
 
         _srv_http._reset_readiness_state()
     except Exception:  # noqa: BLE001 — never block a test on this defensive reset
@@ -433,7 +433,7 @@ def _resync_get_settings_bindings():
     import sys
 
     try:
-        import yadgar.config as _cfg
+        import yadgar._shared.config as _cfg
 
         canonical_gs = _cfg.get_settings
     except Exception:
@@ -490,7 +490,7 @@ def _isolate_file_queue(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path / "yadgar_data"))
     # Reset lazy globals so the new data dir is picked up
-    from yadgar import server as _s
+    from yadgar.core import server as _s
 
     monkeypatch.setattr(_s, "_file_queue", None)
     monkeypatch.setattr(_s, "_queue_drainer", None)
@@ -523,7 +523,7 @@ def _isolate_surrealdb(surreal_server):
         yield
         return
 
-    from yadgar import storage as _sm
+    from yadgar._shared import storage as _sm
 
     original_init_schema = _sm.StorageEngine._init_schema
 
@@ -600,8 +600,8 @@ def _restore_mcp_server():
     test_security_headers.py are the primary fix; this is belt-and-suspenders.)
     """
     try:
-        import yadgar.server as _srv
-        import yadgar.server._app as _app
+        import yadgar.core.server as _srv
+        import yadgar.core.server._app as _app
 
         saved_app_mcp = _app.mcp_server
         saved_srv_mcp = _srv.__dict__.get("mcp_server")
@@ -610,8 +610,8 @@ def _restore_mcp_server():
         return
     yield
     try:
-        import yadgar.server as _srv
-        import yadgar.server._app as _app
+        import yadgar.core.server as _srv
+        import yadgar.core.server._app as _app
 
         _app.mcp_server = saved_app_mcp
         if saved_srv_mcp is not None:
@@ -631,7 +631,7 @@ def _reset_server_state():
     """
     yield
     try:
-        from yadgar import server as _s
+        from yadgar.core import server as _s
 
         _s._action_batch.clear()
         _s._project_roots.clear()
@@ -643,7 +643,7 @@ def _reset_server_state():
         _s._get_default_branch_cached.cache_clear()
         # Car 1 added @lru_cache to _resolve_project_root; clear it like its
         # siblings so stale git-root paths don't leak across tests.
-        from yadgar.server.tools import project as _proj  # noqa: PLC0415
+        from yadgar.core.server.tools import project as _proj  # noqa: PLC0415
 
         _proj._resolve_project_root.cache_clear()
     except Exception:
@@ -913,7 +913,7 @@ def _wipe_surrealdb_data():
 def _do_wipe_after_test(db_url: str, pre_test_namespaces: frozenset[str]) -> None:
     """Wipe all data tables after a test, tolerating server.shutdown() having run."""
     try:
-        from yadgar import server as _s
+        from yadgar.core import server as _s
 
         storage = _s._storage
     except Exception:
@@ -981,7 +981,7 @@ def embeddings():
     instance across tests in a worker process is safe and avoids redundant
     constructor overhead.
     """
-    from yadgar.embeddings import EmbeddingEngine
+    from yadgar._shared.embeddings import EmbeddingEngine
 
     return EmbeddingEngine("all-MiniLM-L6-v2")
 
@@ -1006,7 +1006,7 @@ def module_storage(tmp_path_factory, request):
     name so two converted files on the same xdist worker never collide on a
     namespace.
     """
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     safe = request.module.__name__.rsplit(".", 1)[-1]
     db_path = str(tmp_path_factory.mktemp(f"modstorage_{safe}") / "storage.db")
@@ -1025,7 +1025,7 @@ def flush_queue():
     `memorize() → recall()` in the same test and rely on the drainer to flush."""
 
     def _flush():
-        from yadgar import server as _s
+        from yadgar.core import server as _s
 
         if _s._queue_drainer is not None:
             _s._queue_drainer.drain_now()
@@ -1041,7 +1041,7 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
     {stored, queued, queue_id}; this helper flushes the drainer and fetches
     the memory so callers get a dict with 'id', 'content', 'heat', etc.
     """
-    from yadgar import server as _s
+    from yadgar.core import server as _s
 
     result = _s.memorize(content, context, tags, **kwargs)
     # Early-reject paths return synchronously without queuing
@@ -1129,9 +1129,9 @@ def recall_backend_bypass(monkeypatch):
     """
     import sys
 
-    from yadgar.server.tools._recall_pipeline import _fanout_recall
+    from yadgar._shared.runtime.recall_pipeline import _fanout_recall
 
-    _recall_module = sys.modules["yadgar.server.tools.recall"]
+    _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
     def _bypass_forward(  # noqa: PLR0913 — mirrors full recall() forwarding signature
         query,

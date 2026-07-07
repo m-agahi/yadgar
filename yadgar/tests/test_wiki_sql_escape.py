@@ -14,7 +14,7 @@ the fix. The conftest fixture starts a real SurrealDB process if `surreal` is on
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 ROUTE53_FIXTURE = """\
 # AWS Route53 glossary — account 488021763009

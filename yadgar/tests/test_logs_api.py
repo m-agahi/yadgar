@@ -37,8 +37,8 @@ def _make_app(monkeypatch, *, debug_apis_on: bool = False):
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", _TOKEN)
     monkeypatch.setenv("YADGAR_DEBUG_APIS_ENABLED", "on" if debug_apis_on else "off")
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
-    from yadgar.server.routes.logs import (
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.server.routes.logs import (
         logs_capabilities_handler,
         logs_poll_handler,
         logs_stream_handler,
@@ -68,7 +68,7 @@ def _auth() -> dict:
 @pytest.fixture(autouse=True)
 def _reset_ring():
     """Clear ring buffer before each test so tests are independent."""
-    import yadgar.server.routes.logs as _m
+    import yadgar.core.server.routes.logs as _m
 
     with _m._ring_lock:
         _m._ring.clear()
@@ -127,7 +127,7 @@ def test_poll_gated_off(monkeypatch):
 def test_poll_returns_buffered_lines(monkeypatch):
     """Emit a log record via the ring handler; poll returns it."""
     # Ensure handler is installed
-    import yadgar.server.routes.logs as _m
+    import yadgar.core.server.routes.logs as _m
 
     _m.install_ring_handler()
 
@@ -150,7 +150,7 @@ def test_poll_returns_buffered_lines(monkeypatch):
 
 
 def test_poll_since_seq(monkeypatch):
-    import yadgar.server.routes.logs as _m
+    import yadgar.core.server.routes.logs as _m
 
     _m._ring_append({"ts": 1.0, "level": "INFO", "name": "t", "message": "entry-1"})
     _m._ring_append({"ts": 2.0, "level": "INFO", "name": "t", "message": "entry-2"})
@@ -214,7 +214,7 @@ async def test_stream_content_type(monkeypatch):
 
     from starlette.responses import StreamingResponse
 
-    from yadgar.server.routes.logs import logs_stream_handler
+    from yadgar.core.server.routes.logs import logs_stream_handler
 
     # Minimal mock request
     class _MockRequest:
@@ -235,8 +235,8 @@ async def test_stream_content_type(monkeypatch):
 
 def test_route_module_self_registers():
     """Importing routes.logs must register routes on mcp_server.custom_route paths."""
-    import yadgar.server.routes.logs  # noqa: F401, I001 — side-effect import; order intentional (load routes before checking mcp_server)
-    from yadgar.server._app import mcp_server
+    import yadgar.core.server.routes.logs  # noqa: F401, I001 — side-effect import; order intentional (load routes before checking mcp_server)
+    from yadgar.core.server._app import mcp_server
 
     # mcp_server stores custom routes in _custom_starlette_routes
     registered_paths = set()
@@ -260,7 +260,7 @@ def test_auth_gate_via_middleware_denies_when_off(monkeypatch):
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", _TOKEN)
     monkeypatch.setenv("YADGAR_DEBUG_APIS_ENABLED", "off")
 
-    from yadgar.auth_middleware import _is_debug_api_path
+    from yadgar.core.auth_middleware import _is_debug_api_path
 
     # Verify the path IS in the debug-API prefix list
     assert _is_debug_api_path("/api/logs/_capabilities"), (
@@ -294,7 +294,7 @@ def test_auth_gate_via_middleware_allows_when_on(monkeypatch):
 
 
 def test_ring_byte_cap():
-    import yadgar.server.routes.logs as _m
+    import yadgar.core.server.routes.logs as _m
 
     # Temporarily lower cap to 200 bytes
     original_cap = _m.LOG_RING_BUFFER_MAX_BYTES
@@ -320,7 +320,7 @@ def test_ring_byte_cap():
 
 
 def test_ring_seq_monotonic():
-    import yadgar.server.routes.logs as _m
+    import yadgar.core.server.routes.logs as _m
 
     for i in range(5):
         _m._ring_append({"ts": float(i), "level": "INFO", "name": "t", "message": f"msg-{i}"})

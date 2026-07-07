@@ -25,8 +25,8 @@ from __future__ import annotations
 import threading
 import time
 
-from yadgar.file_queue import QueueDrainer
-from yadgar.file_queue.queue import FileQueue
+from yadgar.core.file_queue import QueueDrainer
+from yadgar.core.file_queue.queue import FileQueue
 
 
 def _make_drainer(tmp_path) -> QueueDrainer:

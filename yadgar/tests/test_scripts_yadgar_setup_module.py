@@ -1,4 +1,4 @@
-"""Unit tests for yadgar/scripts/yadgar_setup.py — Python shim.
+"""Unit tests for yadgar/core/scripts/yadgar_setup.py — Python shim.
 
 Wave 5 group B coverage. Strategy: import the module directly (normal Python
 import path works — no hyphen). Patch filesystem + os calls to exercise all
@@ -14,14 +14,14 @@ TDD: written before verifying coverage (red → green).
 
 from __future__ import annotations
 
-# The module lives at yadgar/scripts/yadgar_setup.py — importable normally.
+# The module lives at yadgar/core/scripts/yadgar_setup.py — importable normally.
 import importlib.util as _ilu
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-_MOD_PATH = Path(__file__).parent.parent / "scripts" / "yadgar_setup.py"
+_MOD_PATH = Path(__file__).parent.parent / "core" / "scripts" / "yadgar_setup.py"
 
 
 def _load_module():
@@ -74,8 +74,8 @@ class TestFindSetupShPrimary:
 class TestFindSetupShFallback:
     def test_returns_repo_path_when_share_missing(self, tmp_path):
         """Fallback: repo checkout layout scripts/install/yadgar-setup.sh found."""
-        # The module is at yadgar/scripts/yadgar_setup.py.
-        # repo_root = __file__.parent.parent.parent = yadgar/
+        # The module is at yadgar/core/scripts/yadgar_setup.py.
+        # repo_root = __file__.parent.parent.parent.parent = repo root
         # repo_path = repo_root / "scripts/install/yadgar-setup.sh"
         # We simulate this by patching Path(__file__) chain.
         mod = _load_module()
@@ -91,8 +91,8 @@ class TestFindSetupShFallback:
         fake_prefix = tmp_path / "nonexistent_prefix"
 
         # Patch __file__ on the module so repo_root resolves to fake_repo
-        # Module file is at <fake_repo>/yadgar/scripts/yadgar_setup.py
-        fake_module_file = fake_repo / "yadgar" / "scripts" / "yadgar_setup.py"
+        # Module file is at <fake_repo>/yadgar/core/scripts/yadgar_setup.py
+        fake_module_file = fake_repo / "yadgar" / "core" / "scripts" / "yadgar_setup.py"
 
         with (
             patch.object(mod.sys, "prefix", str(fake_prefix)),
@@ -111,7 +111,7 @@ class TestFindSetupShFallback:
         (install_dir / "yadgar-setup.sh").write_text("#!/bin/bash\n")
 
         fake_prefix = tmp_path / "nope"
-        fake_module_file = fake_repo / "yadgar" / "scripts" / "yadgar_setup.py"
+        fake_module_file = fake_repo / "yadgar" / "core" / "scripts" / "yadgar_setup.py"
 
         with (
             patch.object(mod.sys, "prefix", str(fake_prefix)),
@@ -134,7 +134,9 @@ class TestFindSetupShNotFound:
 
         fake_prefix = tmp_path / "nonexistent"
         # Point __file__ to a location where repo_root/scripts/install/ also won't exist
-        fake_module_file = tmp_path / "totally_absent" / "yadgar" / "scripts" / "yadgar_setup.py"
+        fake_module_file = (
+            tmp_path / "totally_absent" / "yadgar" / "core" / "scripts" / "yadgar_setup.py"
+        )
 
         with (
             patch.object(mod.sys, "prefix", str(fake_prefix)),
@@ -150,7 +152,7 @@ class TestFindSetupShNotFound:
         mod = _load_module()
 
         fake_prefix = tmp_path / "nonexistent"
-        fake_module_file = tmp_path / "x" / "yadgar" / "scripts" / "yadgar_setup.py"
+        fake_module_file = tmp_path / "x" / "yadgar" / "core" / "scripts" / "yadgar_setup.py"
 
         with (
             patch.object(mod.sys, "prefix", str(fake_prefix)),

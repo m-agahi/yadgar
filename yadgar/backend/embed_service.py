@@ -23,7 +23,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 
-import yadgar.paths as _paths
+import yadgar._shared.paths as _paths
+from yadgar._shared.config import resolve_knob
+from yadgar._shared.observability.observe import observe
 from yadgar.backend.embed_service_metrics import (
     cache_snapshot_age_seconds as _cache_snapshot_age_seconds,
 )
@@ -84,12 +86,10 @@ from yadgar.backend.embed_service_metrics import (
 from yadgar.backend.embed_service_metrics import (
     rerank_semaphore_held as _rerank_semaphore_held,
 )
-from yadgar.config import resolve_knob
-from yadgar.observability.observe import observe
 
 if TYPE_CHECKING:
+    from yadgar._shared.embeddings import EmbeddingEngine
     from yadgar.backend.ml_client import LocalMLClient
-    from yadgar.embeddings import EmbeddingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ _http_bearer = HTTPBearer(auto_error=False)
 
 
 def _make_rerank_semaphores() -> dict[str, asyncio.Semaphore]:
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     _n = int(get_settings().RERANK_MAX_CONCURRENCY)
     return {mode: asyncio.Semaphore(_n) for mode in ("ce", "nli", "pair")}
@@ -114,7 +114,7 @@ _rerank_semaphores: dict[str, asyncio.Semaphore] = _make_rerank_semaphores()
 
 
 def _rerank_acquire_timeout() -> float:
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     return float(get_settings().RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC)
 
@@ -130,7 +130,7 @@ _dbsize_cache_ts: float = 0.0  # time.time() when last computed
 
 def _dbsize_cache_ttl() -> int:
     """Return DBSIZE_CACHE_TTL_SEC from Settings (yaml/env/default 60). 0 = disabled."""
-    from yadgar.config import get_settings  # noqa: PLC0415
+    from yadgar._shared.config import get_settings  # noqa: PLC0415
 
     return int(get_settings().DBSIZE_CACHE_TTL_SEC)
 
@@ -326,7 +326,7 @@ async def _run_model_warmup() -> None:
     is not blocked.  Per-model errors are caught so one failure doesn't abort
     the others.  CancelledError propagates cleanly on lifespan exit.
     """
-    from yadgar.config import get_settings  # noqa: PLC0415
+    from yadgar._shared.config import get_settings  # noqa: PLC0415
 
     settings = get_settings()
     if not settings.MODEL_PRELOAD:
@@ -402,7 +402,7 @@ def _get_engine():
     if _engine is None:
         with _engine_lock:
             if _engine is None:
-                from yadgar.embeddings import EmbeddingEngine
+                from yadgar._shared.embeddings import EmbeddingEngine
 
                 model = resolve_knob(
                     "YADGAR_EMBEDDING_MODEL", "EMBEDDING_MODEL", str, "all-MiniLM-L6-v2"
@@ -418,8 +418,8 @@ def _get_reranker() -> LocalMLClient:
     if _reranker is None:
         with _reranker_lock:
             if _reranker is None:
+                from yadgar._shared.config import get_settings
                 from yadgar.backend.ml_client import LocalMLClient
-                from yadgar.config import get_settings
 
                 _reranker = LocalMLClient(get_settings())
                 # Mark all reranker model variants as loaded (lazy-load on first use)
@@ -474,7 +474,7 @@ async def lifespan(app: FastAPI):
     # I14: configure structured logging at backend boot.
     # Format reads from YADGAR_LOG_FORMAT (default 'json' for production).
     _level = resolve_knob("YADGAR_BACKEND_LOG_LEVEL", "BACKEND_LOG_LEVEL", str, "warn").upper()
-    from yadgar.log_config import configure_logging as _configure_logging  # noqa: PLC0415
+    from yadgar._shared.log_config import configure_logging as _configure_logging  # noqa: PLC0415
 
     _configure_logging(
         log_format=resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json"),
@@ -486,7 +486,7 @@ async def lifespan(app: FastAPI):
     # setup_tracing initialises LogSpanProcessor + sets global TracerProvider, and
     # (v5.101 R2) activates HTTPXClientInstrumentor itself — backend calls SurrealDB
     # via httpx, so this ensures outbound httpx calls auto-inject W3C traceparent.
-    from yadgar.tracing import setup_tracing as _setup_tracing  # noqa: PLC0415
+    from yadgar._shared.tracing import setup_tracing as _setup_tracing  # noqa: PLC0415
 
     _setup_tracing("yadgar-backend")
 
@@ -957,9 +957,12 @@ def _ensure_recall_engines() -> None:
     with _recall_engines_lock:
         if _recall_engines_ready:
             return
-        from yadgar.server.lifecycle import init_engines as _init_engines  # noqa: PLC0415
+        from yadgar._shared.runtime.lifecycle import init_engines as _init_engines  # noqa: PLC0415
 
-        _init_engines(local_engines=True)
+        # Car 3 (folder-split #17): slim engine set — build only the 14 engines
+        # the /recall path needs, skip the 10 CORE-ONLY engines. Behavior-neutral
+        # for recall (byte-identical output; a missing engine = immediate crash).
+        _init_engines(local_engines=True, engine_set="slim")
         _recall_engines_ready = True
 
 
@@ -1008,8 +1011,8 @@ def _run_landscape_backend(query: str, max_results: int, directory: str, storage
     Returns [] gracefully when _pool is None (pool unavailable / disabled).
     Directory post-filter via is_directory_eligible (same predicate as fanout path).
     """
-    import yadgar.server._state as _st  # noqa: PLC0415
-    from yadgar.storage.directory import is_directory_eligible  # noqa: PLC0415
+    import yadgar._shared.runtime.state as _st  # noqa: PLC0415
+    from yadgar._shared.storage.directory import is_directory_eligible  # noqa: PLC0415
 
     if _st._pool is None:
         logger.debug("landscape_backend: pool unavailable — returning []")
@@ -1049,8 +1052,10 @@ async def recall_route(
     # Bootstrap engines (idempotent, guarded by lock).
     await asyncio.to_thread(_ensure_recall_engines)
 
-    from yadgar.server.lifecycle import _get_storage as _backend_get_storage  # noqa: PLC0415
-    from yadgar.server.tools._recall_pipeline import (  # noqa: PLC0415
+    from yadgar._shared.runtime.lifecycle import (
+        _get_storage as _backend_get_storage,  # noqa: PLC0415
+    )
+    from yadgar._shared.runtime.recall_pipeline import (  # noqa: PLC0415
         _apply_recall_db_side_effects,
         _fanout_recall,
     )

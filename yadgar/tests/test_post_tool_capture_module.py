@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 # Module loader
 # ---------------------------------------------------------------------------
 
-_HOOK_PATH = Path(__file__).parent.parent / "hooks" / "post-tool-capture.py"
+_HOOK_PATH = Path(__file__).parent.parent / "core" / "hooks" / "post-tool-capture.py"
 
 
 def _load_module():

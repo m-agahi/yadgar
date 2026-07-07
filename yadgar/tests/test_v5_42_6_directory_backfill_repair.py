@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
-from yadgar.storage.migrations import (
+from yadgar._shared.storage.migrations import (
     _migration_016_directory_context,
     _migration_018_directory_context_backfill_repair,
 )
+from yadgar.core import server
 
 # ── fixture ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ def _engines(tmp_path_factory):
 
 
 def _storage():
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     return _st._storage
 
@@ -213,7 +213,7 @@ class TestMigration018UnbricksWikiList:
 
     def test_wiki_list_yadgar_returns_backfilled_rows(self):
         """wiki_list(directory=/home/max/git/yadgar) returns yadgar-tagged legacy pages."""
-        from yadgar.server.tools.wiki import wiki_list
+        from yadgar.core.server.tools.wiki import wiki_list
 
         _insert_legacy_wiki_page("Legacy Yadgar Doc", ["yadgar", "wiki"], slug="legacy-yadgar-doc")
         st = _storage()

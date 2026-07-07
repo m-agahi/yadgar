@@ -66,8 +66,8 @@ class _FakeStorage:
         self.full_slot_scans = 0  # unrestricted WHERE slot_index=$si scans
         self.recheck_queries = 0  # id-restricted fresh rechecks (warm hits)
 
-    from yadgar.storage.client import _ClientMixin
-    from yadgar.storage.ops import _OpsMixin
+    from yadgar._shared.storage.client import _ClientMixin
+    from yadgar._shared.storage.ops import _OpsMixin
 
     get_memories_in_slot = _OpsMixin.get_memories_in_slot
     assign_memory_slot = _OpsMixin.assign_memory_slot

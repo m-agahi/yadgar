@@ -17,7 +17,7 @@ class TestActionBatchLock:
 
     def test_action_batch_lock_exists(self):
         """_action_batch_lock must be an asyncio.Lock instance."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         assert hasattr(srv, "_action_batch_lock"), "_action_batch_lock must exist"
         assert isinstance(srv._action_batch_lock, asyncio.Lock), (
@@ -26,7 +26,7 @@ class TestActionBatchLock:
 
     def test_concurrent_batch_appends_no_race(self):
         """Concurrent requests must not corrupt the batch dict."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         orig_batch = srv._action_batch.copy()
         orig_storage = srv._storage
@@ -62,7 +62,7 @@ class TestStorageCallOffThread:
         """hook_auto_capture source must use asyncio.to_thread for insert_action_log."""
         import inspect
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         source = inspect.getsource(srv.hook_auto_capture)
         assert "asyncio.to_thread" in source, (
@@ -82,7 +82,7 @@ class TestHealthCheckAsync:
         """
         import inspect
 
-        import yadgar.server.http as srv_http
+        import yadgar.core.server.http as srv_http
 
         source = inspect.getsource(srv_http._build_health_payload)
         assert "AsyncClient" in source, (
@@ -98,7 +98,7 @@ class TestMetricsLock:
         """_metrics_lock must be a threading.Lock."""
         import threading
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         assert hasattr(srv, "_metrics_lock"), "_metrics_lock must exist"
         assert isinstance(srv._metrics_lock, type(threading.Lock())), (
@@ -109,7 +109,7 @@ class TestMetricsLock:
         """api_system handler must copy metrics dict under lock."""
         import inspect
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         source = inspect.getsource(srv.api_system)
         assert "_metrics_lock" in source, (
@@ -127,7 +127,7 @@ class TestBlockingCallsOffThread:
         """hook_post_compact must call replay.restore via asyncio.to_thread (#58)."""
         import inspect
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         source = inspect.getsource(srv.hook_post_compact)
         assert "asyncio.to_thread" in source, (
@@ -138,7 +138,7 @@ class TestBlockingCallsOffThread:
         """hook_post_compact must catch exceptions and return status_code=500 (#58)."""
         import inspect
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         source = inspect.getsource(srv.hook_post_compact)
         assert "status_code=500" in source, (
@@ -152,7 +152,7 @@ class TestBlockingCallsOffThread:
         """hook_session_context must call _pb (project_brief) via asyncio.to_thread (#58)."""
         import inspect
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         source = inspect.getsource(srv.hook_session_context)
         # The source must contain at least 3 asyncio.to_thread calls (one per blocking call).
@@ -166,7 +166,7 @@ class TestBlockingCallsOffThread:
         import inspect
         import re
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         source = inspect.getsource(srv.hook_session_context)
         # whitespace-tolerant: ruff may wrap the call across lines after `(`.
@@ -179,7 +179,7 @@ class TestBlockingCallsOffThread:
         import inspect
         import re
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         source = inspect.getsource(srv.hook_session_context)
         # whitespace-tolerant: ruff may wrap the call across lines after `(`.
@@ -195,7 +195,7 @@ class TestEventQueueLock:
         """SSE event drain must hold _event_lock while reading _event_queue (#58)."""
         import inspect
 
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         # The SSE drain loop lives in the module-level _make_event_stream generator
         # (api_graph_events just returns StreamingResponse(_make_event_stream(...))).

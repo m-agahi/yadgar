@@ -6,11 +6,11 @@ TDD: tests written before implementation — they will fail until fixes land.
 
 import pytest
 
-from yadgar import server
-from yadgar.config import Settings
-from yadgar.engram import EngramAllocator
-from yadgar.server import _run_check_invariants
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.engram import EngramAllocator
+from yadgar._shared.storage import StorageEngine
+from yadgar.core import server
+from yadgar.core.server import _run_check_invariants
 
 # ── Shared fixture ────────────────────────────────────────────────────────────
 
@@ -344,7 +344,7 @@ def test_per_table_size_in_memory_stats(tmp_path, monkeypatch):
     (db_dir / "vlog").mkdir()
     (db_dir / "vlog" / "x.vlog").write_bytes(b"\x00" * 1024)
 
-    from yadgar import server as _s
+    from yadgar.core import server as _s
 
     monkeypatch.setattr(_s.settings, "DB_PATH", str(db_dir), raising=False)
 
@@ -370,7 +370,7 @@ def test_caused_by_row_count_ceiling_prunes_oldest(monkeypatch):
     """
     import datetime
 
-    from yadgar import server as _s
+    from yadgar.core import server as _s
 
     monkeypatch.setattr(_s.settings, "MAX_CAUSED_BY_ROWS", 5, raising=True)
 

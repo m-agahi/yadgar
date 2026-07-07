@@ -7,11 +7,11 @@ import time
 import numpy as np
 import pytest
 
-from yadgar.config import Settings
-from yadgar.curation import MemoryCurator
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.storage import StorageEngine
-from yadgar.thermodynamics import MemoryThermodynamics
+from yadgar._shared.config import Settings
+from yadgar._shared.curation import MemoryCurator
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.thermodynamics import MemoryThermodynamics
 
 # Detect whether the embedding model can be loaded
 _engine = EmbeddingEngine()
@@ -469,8 +469,8 @@ def memory_curator_at_scale(tmp_path, embeddings, settings):
     Returns (MemoryCurator, StorageEngine).  Fixture setup time is NOT counted
     against the 30-second wall-time assertion — the timer starts after yield.
     """
-    from yadgar.storage import StorageEngine
-    from yadgar.thermodynamics import MemoryThermodynamics
+    from yadgar._shared.storage import StorageEngine
+    from yadgar._shared.thermodynamics import MemoryThermodynamics
 
     engine = StorageEngine(str(tmp_path / "scale_curation.db"), embedding_dim=384)
     thermo = MemoryThermodynamics(engine, embeddings, settings)
@@ -597,10 +597,10 @@ def test_consolidation_cycle_emits_all_phase_complete_markers(tmp_path, caplog):
     missing log call), this test will catch the missing marker.
     """
 
-    from yadgar.config import Settings
-    from yadgar.consolidation import ConsolidationScheduler
-    from yadgar.embeddings import EmbeddingEngine
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.config import Settings
+    from yadgar._shared.embeddings import EmbeddingEngine
+    from yadgar._shared.storage import StorageEngine
+    from yadgar.core.consolidation import ConsolidationScheduler
 
     storage = StorageEngine(str(tmp_path / "phase_log.db"))
     emb = EmbeddingEngine()
@@ -644,11 +644,11 @@ def test_memify_prune_auto_generated(tmp_path):
     """
     from datetime import UTC, datetime, timedelta
 
-    from yadgar.config import Settings
-    from yadgar.curation import MemoryCurator
-    from yadgar.embeddings import EmbeddingEngine
-    from yadgar.storage import StorageEngine
-    from yadgar.thermodynamics import MemoryThermodynamics
+    from yadgar._shared.config import Settings
+    from yadgar._shared.curation import MemoryCurator
+    from yadgar._shared.embeddings import EmbeddingEngine
+    from yadgar._shared.storage import StorageEngine
+    from yadgar._shared.thermodynamics import MemoryThermodynamics
 
     storage = StorageEngine(str(tmp_path / "autogen_prune.db"))
     emb = EmbeddingEngine()
@@ -741,13 +741,13 @@ def test_memify_derive_no_413_on_5000_statements(monkeypatch):
 
     import httpx
 
-    from yadgar.config import Settings
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.config import Settings
+    from yadgar._shared.storage import StorageEngine
 
     max_batch_bytes = 1_000_000  # 1 MB
 
     monkeypatch.setattr(
-        "yadgar.config.get_settings",
+        "yadgar._shared.config.get_settings",
         lambda: Settings(MAX_BATCH_STATEMENTS=500, MAX_BATCH_BYTES=max_batch_bytes),
     )
 
@@ -820,11 +820,11 @@ def test_memify_prune_auto_abstracted(tmp_path):
     """
     from datetime import UTC, datetime, timedelta
 
-    from yadgar.config import Settings
-    from yadgar.curation import MemoryCurator
-    from yadgar.embeddings import EmbeddingEngine
-    from yadgar.storage import StorageEngine
-    from yadgar.thermodynamics import MemoryThermodynamics
+    from yadgar._shared.config import Settings
+    from yadgar._shared.curation import MemoryCurator
+    from yadgar._shared.embeddings import EmbeddingEngine
+    from yadgar._shared.storage import StorageEngine
+    from yadgar._shared.thermodynamics import MemoryThermodynamics
 
     storage = StorageEngine(str(tmp_path / "aa_prune.db"))
     emb = EmbeddingEngine()
@@ -1011,11 +1011,11 @@ def test_memify_prune_dream_insights(tmp_path):
     """
     from datetime import UTC, datetime, timedelta
 
-    from yadgar.config import Settings
-    from yadgar.curation import MemoryCurator
-    from yadgar.embeddings import EmbeddingEngine
-    from yadgar.storage import StorageEngine
-    from yadgar.thermodynamics import MemoryThermodynamics
+    from yadgar._shared.config import Settings
+    from yadgar._shared.curation import MemoryCurator
+    from yadgar._shared.embeddings import EmbeddingEngine
+    from yadgar._shared.storage import StorageEngine
+    from yadgar._shared.thermodynamics import MemoryThermodynamics
 
     storage = StorageEngine(str(tmp_path / "dream_prune.db"))
     emb = EmbeddingEngine()

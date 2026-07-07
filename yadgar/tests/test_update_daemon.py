@@ -25,9 +25,9 @@ class TestDaemonAutoCheck:
         monkeypatch.setenv("YADGAR_UPDATE_CHECK_ON_START", "false")
 
         # Import and call the auto-check wiring function directly
-        from yadgar.server.lifecycle import _maybe_auto_check_for_update
+        from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
 
-        with patch("yadgar.update.check.probe_latest_version") as mock_probe:
+        with patch("yadgar.core.update.check.probe_latest_version") as mock_probe:
             _maybe_auto_check_for_update()
             # Give any threads time to run
             time.sleep(0.1)
@@ -45,12 +45,12 @@ class TestDaemonAutoCheck:
         def _probe(**kwargs):
             ran.set()
             barrier.wait(timeout=2.0)
-            from yadgar.update.check import LatestVersionInfo
+            from yadgar.core.update.check import LatestVersionInfo
 
             return LatestVersionInfo(available_version="9.99.0")
 
-        with patch("yadgar.update.check.probe_latest_version", side_effect=_probe):
-            from yadgar.server.lifecycle import _maybe_auto_check_for_update
+        with patch("yadgar.core.update.check.probe_latest_version", side_effect=_probe):
+            from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
 
             _maybe_auto_check_for_update()
             time.sleep(0.05)  # let thread register
@@ -68,12 +68,12 @@ class TestDaemonAutoCheck:
 
         def _slow_probe(**kwargs):
             barrier.wait(timeout=2.0)
-            from yadgar.update.check import LatestVersionInfo
+            from yadgar.core.update.check import LatestVersionInfo
 
             return LatestVersionInfo(available_version="9.99.0")
 
-        with patch("yadgar.update.check.probe_latest_version", side_effect=_slow_probe):
-            from yadgar.server.lifecycle import _maybe_auto_check_for_update
+        with patch("yadgar.core.update.check.probe_latest_version", side_effect=_slow_probe):
+            from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
 
             _maybe_auto_check_for_update()
             # Thread should be alive (blocked on barrier)
@@ -96,12 +96,12 @@ class TestDaemonAutoCheck:
 
         def _slow_probe(**kwargs):
             _time.sleep(2.0)  # simulate very slow PyPI response
-            from yadgar.update.check import LatestVersionInfo
+            from yadgar.core.update.check import LatestVersionInfo
 
             return LatestVersionInfo(available_version="9.99.0")
 
-        with patch("yadgar.update.check.probe_latest_version", side_effect=_slow_probe):
-            from yadgar.server.lifecycle import _maybe_auto_check_for_update
+        with patch("yadgar.core.update.check.probe_latest_version", side_effect=_slow_probe):
+            from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
 
             t0 = _time.monotonic()
             _maybe_auto_check_for_update()
@@ -124,10 +124,10 @@ class TestDaemonAutoCheck:
             completed.set()
             raise httpx.ConnectError("unreachable")
 
-        with patch("yadgar.update.check.probe_latest_version", side_effect=_failing_probe):
-            from yadgar.server.lifecycle import _maybe_auto_check_for_update
+        with patch("yadgar.core.update.check.probe_latest_version", side_effect=_failing_probe):
+            from yadgar._shared.runtime.lifecycle import _maybe_auto_check_for_update
 
-            with caplog.at_level(logging.WARNING, logger="yadgar.server.lifecycle"):
+            with caplog.at_level(logging.WARNING, logger="yadgar._shared.runtime.lifecycle"):
                 _maybe_auto_check_for_update()
                 # Wait for the background thread to complete
                 completed.wait(timeout=3.0)
@@ -148,14 +148,14 @@ class TestDaemonAutoCheck:
 
     def test_settings_update_check_on_start_default_is_false(self):
         """UPDATE_CHECK_ON_START default is False — no opt-in by default."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         s = Settings()
         assert s.UPDATE_CHECK_ON_START is False
 
     def test_settings_update_check_timeout_default(self):
         """UPDATE_CHECK_TIMEOUT_SECONDS default is 5."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         s = Settings()
         assert s.UPDATE_CHECK_TIMEOUT_SECONDS == 5

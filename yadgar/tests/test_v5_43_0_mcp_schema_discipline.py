@@ -39,7 +39,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
@@ -59,7 +59,7 @@ def _engines(tmp_path_factory):
 
 
 def _storage():
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     return _st._storage
 
@@ -120,7 +120,7 @@ def _insert_memory(content, branch, directory="/proj/test"):
 
 def test_q1_wiki_query_accepts_branch_hint_and_directory():
     """wiki_query signature must include branch_hint and directory params (Q1)."""
-    from yadgar.server.tools.wiki import wiki_query
+    from yadgar.core.server.tools.wiki import wiki_query
 
     sig = inspect.signature(wiki_query)
     params = sig.parameters
@@ -138,14 +138,14 @@ def test_q2_wiki_query_uses_branch_hint_when_detect_returns_none(tmp_path):
     With branch_hint="feat/schema", query should find and boost the page.
     Without branch_hint, it falls through to {None, default_branch} filter only.
     """
-    from yadgar.server.tools.wiki import wiki_query
+    from yadgar.core.server.tools.wiki import wiki_query
 
     slug = "schema-discipline-q2"
     _insert_wiki_page(slug, "Schema Discipline Q2", "Q2 content discipline schema", "feat/schema")
 
     with (
-        patch("yadgar.server._detect_branch", return_value=None),
-        patch("yadgar.server._get_default_branch", return_value=None),
+        patch("yadgar.core.server._detect_branch", return_value=None),
+        patch("yadgar.core.server._get_default_branch", return_value=None),
     ):
         # With branch_hint — should find the page and boost it
         results_with = wiki_query(
@@ -165,7 +165,7 @@ def test_q2_wiki_query_uses_branch_hint_when_detect_returns_none(tmp_path):
 
 def test_q3_wiki_query_scopes_to_directory(tmp_path):
     """wiki_query with directory scopes results to that dir + global (Q3)."""
-    from yadgar.server.tools.wiki import wiki_query
+    from yadgar.core.server.tools.wiki import wiki_query
 
     _insert_wiki_page(
         "schema-q3-proj-a",
@@ -183,8 +183,8 @@ def test_q3_wiki_query_scopes_to_directory(tmp_path):
     )
 
     with (
-        patch("yadgar.server._detect_branch", return_value=None),
-        patch("yadgar.server._get_default_branch", return_value=None),
+        patch("yadgar.core.server._detect_branch", return_value=None),
+        patch("yadgar.core.server._get_default_branch", return_value=None),
     ):
         results_a = wiki_query("schema discipline project", directory="/proj/alpha")
         results_b = wiki_query("schema discipline project", directory="/proj/beta")
@@ -208,7 +208,7 @@ def test_q4_wiki_query_requires_directory_v565():
     """
     import pytest
 
-    from yadgar.server.tools.wiki import wiki_query
+    from yadgar.core.server.tools.wiki import wiki_query
 
     with pytest.raises(ValueError, match="directory is required"):
         wiki_query("schema discipline query fallback smoke")
@@ -221,7 +221,7 @@ def test_q4_wiki_query_requires_directory_v565():
 
 def test_r1_recall_accepts_branch_hint():
     """recall signature must include branch_hint parameter (R1)."""
-    from yadgar.server.tools.recall import recall
+    from yadgar.core.server.tools.recall import recall
 
     sig = inspect.signature(recall)
     params = sig.parameters
@@ -239,15 +239,15 @@ def test_r2_recall_uses_branch_hint_when_detect_returns_none(tmp_path):
     Key assertion: the _current_branch variable is correctly set from branch_hint
     when daemon-side detection returns None.
     """
-    from yadgar.server.tools.recall import recall
+    from yadgar.core.server.tools.recall import recall
 
     _insert_memory(
         "unique phrase for recall branch hint test R2", branch="feat/schema", directory="/proj/r2"
     )
 
     with (
-        patch("yadgar.server._detect_branch", return_value=None),
-        patch("yadgar.server._get_default_branch", return_value=None),
+        patch("yadgar.core.server._detect_branch", return_value=None),
+        patch("yadgar.core.server._get_default_branch", return_value=None),
     ):
         results_with = recall(
             "unique phrase recall branch hint R2",
@@ -279,7 +279,7 @@ def test_r2_recall_uses_branch_hint_when_detect_returns_none(tmp_path):
 
 def test_r3_recall_branch_hint_boosts_matching_branch_memories(tmp_path):
     """recall with branch_hint boosts memories on that branch (R3)."""
-    from yadgar.server.tools.recall import recall
+    from yadgar.core.server.tools.recall import recall
 
     _insert_memory(
         "branch boost test content R3 matching branch feature recall",
@@ -293,8 +293,8 @@ def test_r3_recall_branch_hint_boosts_matching_branch_memories(tmp_path):
     )
 
     with (
-        patch("yadgar.server._detect_branch", return_value="feat/schema"),
-        patch("yadgar.server._get_default_branch", return_value="master"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/schema"),
+        patch("yadgar.core.server._get_default_branch", return_value="master"),
     ):
         results = recall(
             "branch boost test R3",
@@ -308,7 +308,7 @@ def test_r3_recall_branch_hint_boosts_matching_branch_memories(tmp_path):
 
 def test_r4_recall_directory_plus_branch_hint_combined(tmp_path):
     """recall with directory + branch_hint scopes to dir AND branch (R4)."""
-    from yadgar.server.tools.recall import recall
+    from yadgar.core.server.tools.recall import recall
 
     _insert_memory(
         "unique content for recall r4 directory branch combo test",
@@ -322,8 +322,8 @@ def test_r4_recall_directory_plus_branch_hint_combined(tmp_path):
     )
 
     with (
-        patch("yadgar.server._detect_branch", return_value=None),
-        patch("yadgar.server._get_default_branch", return_value=None),
+        patch("yadgar.core.server._detect_branch", return_value=None),
+        patch("yadgar.core.server._get_default_branch", return_value=None),
     ):
         results = recall(
             "unique content recall r4",
@@ -344,7 +344,7 @@ def test_r4_recall_directory_plus_branch_hint_combined(tmp_path):
 
 def test_a1_wiki_approve_propagates_draft_branch():
     """wiki_approve: draft with branch="feat/schema" → wiki_page.branch="feat/schema" (A1)."""
-    from yadgar.server.tools.wiki import wiki_approve
+    from yadgar.core.server.tools.wiki import wiki_approve
 
     st = _storage()
     slug = "approve-branch-a1"
@@ -372,7 +372,7 @@ def test_a1_wiki_approve_propagates_draft_branch():
 
 def test_a2_wiki_approve_legacy_null_branch():
     """wiki_approve: legacy draft with branch=None → wiki_page.branch=None (A2)."""
-    from yadgar.server.tools.wiki import wiki_approve
+    from yadgar.core.server.tools.wiki import wiki_approve
 
     st = _storage()
     slug = "approve-branch-a2"
@@ -400,7 +400,7 @@ def test_a2_wiki_approve_legacy_null_branch():
 
 def test_a3_wiki_approve_branch_propagated_without_directory():
     """wiki_approve branch propagated even when draft has no directory_context (A3)."""
-    from yadgar.server.tools.wiki import wiki_approve
+    from yadgar.core.server.tools.wiki import wiki_approve
 
     st = _storage()
     slug = "approve-branch-a3"
@@ -434,7 +434,7 @@ def test_a3_wiki_approve_branch_propagated_without_directory():
 
 def test_v1_wiki_history_accepts_directory_and_branch_hint():
     """wiki_history has directory + branch_hint (v5.42.5 F1 regression guard) (V1)."""
-    from yadgar.server.tools.wiki import wiki_history
+    from yadgar.core.server.tools.wiki import wiki_history
 
     sig = inspect.signature(wiki_history)
     params = sig.parameters
@@ -444,7 +444,7 @@ def test_v1_wiki_history_accepts_directory_and_branch_hint():
 
 def test_v2_wiki_read_version_accepts_directory_and_branch_hint():
     """wiki_read_version has directory + branch_hint (V2)."""
-    from yadgar.server.tools.wiki import wiki_read_version
+    from yadgar.core.server.tools.wiki import wiki_read_version
 
     sig = inspect.signature(wiki_read_version)
     params = sig.parameters
@@ -454,7 +454,7 @@ def test_v2_wiki_read_version_accepts_directory_and_branch_hint():
 
 def test_v3_wiki_diff_accepts_directory_and_branch_hint():
     """wiki_diff has directory + branch_hint (V3)."""
-    from yadgar.server.tools.wiki import wiki_diff
+    from yadgar.core.server.tools.wiki import wiki_diff
 
     sig = inspect.signature(wiki_diff)
     params = sig.parameters
@@ -464,7 +464,7 @@ def test_v3_wiki_diff_accepts_directory_and_branch_hint():
 
 def test_v4_wiki_restore_accepts_directory_and_branch_hint():
     """wiki_restore has directory + branch_hint (V4)."""
-    from yadgar.server.tools.wiki import wiki_restore
+    from yadgar.core.server.tools.wiki import wiki_restore
 
     sig = inspect.signature(wiki_restore)
     params = sig.parameters
@@ -474,7 +474,7 @@ def test_v4_wiki_restore_accepts_directory_and_branch_hint():
 
 def test_v5_wiki_append_section_accepts_directory_and_branch_hint():
     """wiki_append_section has directory + branch_hint (V5)."""
-    from yadgar.server.tools.wiki import wiki_append_section
+    from yadgar.core.server.tools.wiki import wiki_append_section
 
     sig = inspect.signature(wiki_append_section)
     params = sig.parameters
@@ -489,7 +489,7 @@ def test_v5_wiki_append_section_accepts_directory_and_branch_hint():
 
 def test_b1_block_create_rejects_project_scope_without_directory():
     """block_create(scope='project', directory=None) → missing_directory (B1, v5.42.5 guard)."""
-    from yadgar.server.tools.blocks import block_create
+    from yadgar.core.server.tools.blocks import block_create
 
     result = block_create(name="guard-b1", content="guard content", scope="project", directory=None)
     assert result.get("error") == "missing_directory", (
@@ -499,7 +499,7 @@ def test_b1_block_create_rejects_project_scope_without_directory():
 
 def test_b2_agent_prompt_save_rejects_missing_directory():
     """agent_prompt_save without directory → missing_directory error (B2, v5.42.5 guard)."""
-    from yadgar.server.tools.agent_prompts import agent_prompt_save
+    from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
     result = agent_prompt_save(pattern="guard-b2-prompt", content="guard content", directory=None)
     assert result.get("error") == "missing_directory", (
@@ -519,8 +519,8 @@ def test_i1_long_running_agent_flow_with_branch_hint(tmp_path):
     where daemon os.getcwd() is unrelated. Agent passes branch_hint throughout.
     Recall and wiki_query should both surface branch-correct results.
     """
-    from yadgar.server.tools.recall import recall
-    from yadgar.server.tools.wiki import wiki_query
+    from yadgar.core.server.tools.recall import recall
+    from yadgar.core.server.tools.wiki import wiki_query
 
     agent_branch = "feat/agent-work"
     agent_dir = str(tmp_path / "agent-repo")
@@ -543,8 +543,8 @@ def test_i1_long_running_agent_flow_with_branch_hint(tmp_path):
 
     # Step 3: Simulate container where _detect_branch always returns None
     with (
-        patch("yadgar.server._detect_branch", return_value=None),
-        patch("yadgar.server._get_default_branch", return_value=None),
+        patch("yadgar.core.server._detect_branch", return_value=None),
+        patch("yadgar.core.server._get_default_branch", return_value=None),
     ):
         recall_results = recall(
             "integration agent flow memory i1",

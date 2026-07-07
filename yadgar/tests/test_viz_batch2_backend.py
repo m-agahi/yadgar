@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from yadgar.graph_api import GraphAPI
-from yadgar.viz_meta import EDGE_TYPES, build_legend
+from yadgar.core.graph_api import GraphAPI
+from yadgar.core.viz_meta import EDGE_TYPES, build_legend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -104,7 +104,7 @@ class TestImportsCallsDroppedFromViz:
 
     def test_imports_calls_absent_from_legend(self):
         """The dynamic legend (driven by EDGE_TYPES) no longer advertises imports/calls."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         settings = get_settings()

@@ -40,7 +40,7 @@ def _ci_branch_fallback(monkeypatch):
 # Hook script helpers
 # ---------------------------------------------------------------------------
 
-HOOK_SCRIPT = Path(__file__).parent.parent / "hooks" / "session-end-capture.py"
+HOOK_SCRIPT = Path(__file__).parent.parent / "core" / "hooks" / "session-end-capture.py"
 
 
 def _run_hook(
@@ -146,7 +146,7 @@ def _transcript_with_tool_use(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("session_end_capture")
-    from yadgar import server
+    from yadgar.core import server
 
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
@@ -445,7 +445,7 @@ def test_hook_idempotent_overwrite(tmp_path):
 
 def test_signals_sentinel_emits_extract_action(flush_queue):
     """project_brief signals mode with pending sentinel → extract_last_session_findings."""
-    from yadgar import server
+    from yadgar.core import server
     from yadgar.tests.conftest import memorize_sync
 
     directory = "/tmp/sentinel_signals_test"
@@ -481,7 +481,7 @@ def test_signals_sentinel_emits_extract_action(flush_queue):
 
 def test_signals_sentinel_action_has_required_fields(flush_queue):
     """extract_last_session_findings action has transcript_path, sentinel_id, reason."""
-    from yadgar import server
+    from yadgar.core import server
     from yadgar.tests.conftest import memorize_sync
 
     directory = "/tmp/sentinel_fields_test"
@@ -521,7 +521,7 @@ def test_signals_sentinel_action_has_required_fields(flush_queue):
 
 def test_signals_no_sentinel_no_extract_action(flush_queue):
     """Without sentinel row, extract_last_session_findings is NOT in actions."""
-    from yadgar import server
+    from yadgar.core import server
 
     result = server.project_brief("/tmp/no_sentinel_dir_xyz", mode="signals")
     actions = result.get("recommended_actions", [])
@@ -531,7 +531,7 @@ def test_signals_no_sentinel_no_extract_action(flush_queue):
 
 def test_signals_sentinel_different_dir_not_surfaced(flush_queue):
     """Sentinel from a different directory is NOT surfaced for current dir."""
-    from yadgar import server
+    from yadgar.core import server
     from yadgar.tests.conftest import memorize_sync
 
     other_dir = "/tmp/sentinel_other_dir"
@@ -571,7 +571,7 @@ def test_signals_sentinel_different_dir_not_surfaced(flush_queue):
 
 def test_signals_missing_transcript_tombstone(flush_queue):
     """When sentinel transcript_path doesn't exist → tombstone note in action."""
-    from yadgar import server
+    from yadgar.core import server
     from yadgar.tests.conftest import memorize_sync
 
     directory = "/tmp/sentinel_tombstone_test"
@@ -612,7 +612,7 @@ def test_signals_missing_transcript_tombstone(flush_queue):
 
 def test_signals_missing_transcript_suggested_call_has_forget(flush_queue):
     """When transcript missing → suggested_call directs forget(sentinel_id)."""
-    from yadgar import server
+    from yadgar.core import server
     from yadgar.tests.conftest import memorize_sync
 
     directory = "/tmp/sentinel_forget_test"
@@ -655,7 +655,7 @@ def test_signals_missing_transcript_suggested_call_has_forget(flush_queue):
 
 def test_session_context_imports_sentinel_file(tmp_path, monkeypatch, flush_queue):
     """hook_session_context scans YADGAR_SESSION_END_DIR and imports pending sentinels."""
-    from yadgar import server
+    from yadgar.core import server
 
     sentinel_dir = tmp_path / "session-ends"
     sentinel_dir.mkdir(parents=True, exist_ok=True)
@@ -680,7 +680,7 @@ def test_session_context_imports_sentinel_file(tmp_path, monkeypatch, flush_queu
     monkeypatch.setenv("YADGAR_SESSION_END_DIR", str(sentinel_dir))
 
     # Trigger import by calling the function directly
-    from yadgar.server import http as http_mod
+    from yadgar.core.server import http as http_mod
 
     http_mod._import_pending_sentinels(str(sentinel_dir))
     flush_queue()
@@ -697,7 +697,7 @@ def test_session_context_imports_sentinel_file(tmp_path, monkeypatch, flush_queu
 
 def test_session_context_import_failure_leaves_file_retries(tmp_path, monkeypatch):
     """Import failure leaves sentinel file with incremented retries field."""
-    from yadgar.server import http as http_mod
+    from yadgar.core.server import http as http_mod
 
     sentinel_dir = tmp_path / "session-ends"
     sentinel_dir.mkdir(parents=True, exist_ok=True)
@@ -718,7 +718,7 @@ def test_session_context_import_failure_leaves_file_retries(tmp_path, monkeypatc
     sentinel_file.write_text(json.dumps(record), encoding="utf-8")
 
     # Patch memorize to raise
-    with patch("yadgar.server.http._sentinel_memorize", side_effect=RuntimeError("db down")):
+    with patch("yadgar.core.server.http._sentinel_memorize", side_effect=RuntimeError("db down")):
         http_mod._import_pending_sentinels(str(sentinel_dir))
 
     # File should still exist (not deleted on failure)
@@ -730,7 +730,7 @@ def test_session_context_import_failure_leaves_file_retries(tmp_path, monkeypatc
 
 def test_session_context_import_moves_to_failed_after_3_retries(tmp_path, monkeypatch):
     """After 3 failed imports, sentinel moves to session-ends/failed/."""
-    from yadgar.server import http as http_mod
+    from yadgar.core.server import http as http_mod
 
     sentinel_dir = tmp_path / "session-ends"
     sentinel_dir.mkdir(parents=True, exist_ok=True)
@@ -752,7 +752,7 @@ def test_session_context_import_moves_to_failed_after_3_retries(tmp_path, monkey
     sentinel_file = sentinel_dir / "fail3-sess.json"
     sentinel_file.write_text(json.dumps(record), encoding="utf-8")
 
-    with patch("yadgar.server.http._sentinel_memorize", side_effect=RuntimeError("db down")):
+    with patch("yadgar.core.server.http._sentinel_memorize", side_effect=RuntimeError("db down")):
         http_mod._import_pending_sentinels(str(sentinel_dir))
 
     # Should be in failed/ dir
@@ -767,7 +767,7 @@ def test_session_context_import_moves_to_failed_after_3_retries(tmp_path, monkey
 
 def test_vacuum_prunes_old_sentinel_rows(monkeypatch, flush_queue):
     """vacuum_sentinels prunes _session_end_sentinel rows older than retention days."""
-    from yadgar import server
+    from yadgar.core import server
     from yadgar.tests.conftest import memorize_sync
 
     directory = "/tmp/vacuum_sentinel_test"
@@ -800,7 +800,7 @@ def test_vacuum_prunes_old_sentinel_rows(monkeypatch, flush_queue):
 
     # Prune with retention = 0 days (prune everything)
     monkeypatch.setenv("SESSION_END_RETENTION_DAYS", "0")
-    from yadgar.server.http import _vacuum_stale_sentinels
+    from yadgar.core.server.http import _vacuum_stale_sentinels
 
     _vacuum_stale_sentinels(retention_days=0)
     flush_queue()
@@ -818,7 +818,7 @@ def test_vacuum_prunes_old_sentinel_rows(monkeypatch, flush_queue):
 
 def test_session_end_config_knobs_registered():
     """All 4 SESSION_END_* knobs registered in config_registry (with YADGAR_ prefix)."""
-    from yadgar.config_registry import list_config
+    from yadgar._shared.config_registry import list_config
 
     names = {e.name for e in list_config()}
     expected = {
@@ -833,7 +833,7 @@ def test_session_end_config_knobs_registered():
 
 def test_session_end_config_knob_defaults():
     """SESSION_END_* knobs have expected default values in Settings."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     cfg = get_settings()
     assert cfg.SESSION_END_CAPTURE_ENABLED is True
@@ -849,7 +849,7 @@ def test_session_end_config_knob_defaults():
 
 def test_install_hooks_registers_session_end(tmp_path):
     """install_hooks_impl with scope=global adds SessionEnd to settings.json."""
-    from yadgar.install_hooks_lib import install_hooks_impl
+    from yadgar.core.install_hooks_lib import install_hooks_impl
 
     result = install_hooks_impl(
         home_dir=tmp_path,

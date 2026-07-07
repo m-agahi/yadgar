@@ -20,8 +20,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar import server
-from yadgar.storage.migrations import _migration_013_wiki_page_version
+from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
+from yadgar.core import server
 
 UTC = UTC
 
@@ -85,7 +85,7 @@ _VALID_ADR_PARAMS = dict(
 class TestAdrAddValidation:
     def test_adr_add_rejects_missing_field(self):
         """adr_add with an empty required field returns error containing 'missing' or 'required'."""
-        from yadgar.server.tools.adr import adr_add
+        from yadgar.core.server.tools.adr import adr_add
 
         # Pass title="" (empty string) — a present but empty required field.
         # This exercises our validation code (not Python's positional-arg check).
@@ -103,7 +103,7 @@ class TestAdrAddValidation:
 
     def test_adr_add_rejects_invalid_status(self):
         """adr_add with status='INVALID' returns error mentioning 'status'."""
-        from yadgar.server.tools.adr import adr_add
+        from yadgar.core.server.tools.adr import adr_add
 
         params = dict(_VALID_ADR_PARAMS)
         params["status"] = "INVALID"
@@ -122,16 +122,17 @@ class TestAdrAddValidation:
 class TestAdrAddIdAssignment:
     def test_adr_add_assigns_adr_0001_on_empty_log(self, tmp_path):
         """adr_add against a project with no ADR log assigns ADR-0001."""
-        from yadgar.server.tools.adr import adr_add
+        from yadgar.core.server.tools.adr import adr_add
 
         project_dir = str(tmp_path)
         params = dict(_VALID_ADR_PARAMS, directory=project_dir)
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
-            patch("yadgar.server.tools.adr.wiki_read", return_value={"error": "not found"}),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr.wiki_read", return_value={"error": "not found"}),
             patch(
-                "yadgar.server.tools.adr.wiki_add", return_value={"stored": True, "committed": True}
+                "yadgar.core.server.tools.adr.wiki_add",
+                return_value={"stored": True, "committed": True},
             ),
         ):
             result = adr_add(**params)
@@ -139,7 +140,7 @@ class TestAdrAddIdAssignment:
 
     def test_adr_add_assigns_sequential_id(self, tmp_path):
         """adr_add after a log with ADR-0003 as last header assigns ADR-0004."""
-        from yadgar.server.tools.adr import adr_add
+        from yadgar.core.server.tools.adr import adr_add
 
         project_dir = str(tmp_path)
         existing_log = (
@@ -150,11 +151,11 @@ class TestAdrAddIdAssignment:
         )
         params = dict(_VALID_ADR_PARAMS, directory=project_dir)
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
-            patch("yadgar.server.tools.adr.wiki_read", return_value={"content": existing_log}),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr.wiki_read", return_value={"content": existing_log}),
             patch(
-                "yadgar.server.tools.adr.wiki_append_section",
+                "yadgar.core.server.tools.adr.wiki_append_section",
                 return_value={
                     "page_id": 1,
                     "new_version": 4,
@@ -170,7 +171,7 @@ class TestAdrAddIdAssignment:
 
     def test_adr_add_id_scan_uses_headers_only(self, tmp_path):
         """ID scan is anchored to ## ADR-NNNN headers only, ignores body references."""
-        from yadgar.server.tools.adr import adr_add
+        from yadgar.core.server.tools.adr import adr_add
 
         project_dir = str(tmp_path)
         # ADR-0003 is the last header; body contains ADR-0009 ref
@@ -182,11 +183,11 @@ class TestAdrAddIdAssignment:
         )
         params = dict(_VALID_ADR_PARAMS, directory=project_dir)
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
-            patch("yadgar.server.tools.adr.wiki_read", return_value={"content": existing_log}),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr.wiki_read", return_value={"content": existing_log}),
             patch(
-                "yadgar.server.tools.adr.wiki_append_section",
+                "yadgar.core.server.tools.adr.wiki_append_section",
                 return_value={
                     "page_id": 1,
                     "new_version": 4,
@@ -204,7 +205,7 @@ class TestAdrAddIdAssignment:
 
     def test_adr_add_branch_scope_pin(self, tmp_path):
         """ADR log is read with branch_hint=default_branch regardless of cwd branch."""
-        from yadgar.server.tools.adr import adr_add
+        from yadgar.core.server.tools.adr import adr_add
 
         project_dir = str(tmp_path)
         # Log seeded with ADR-0006 as last entry
@@ -219,11 +220,11 @@ class TestAdrAddIdAssignment:
             return {"content": existing_log}
 
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
-            patch("yadgar.server.tools.adr.wiki_read", side_effect=mock_wiki_read),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr.wiki_read", side_effect=mock_wiki_read),
             patch(
-                "yadgar.server.tools.adr.wiki_append_section",
+                "yadgar.core.server.tools.adr.wiki_append_section",
                 return_value={
                     "page_id": 1,
                     "new_version": 7,
@@ -251,7 +252,7 @@ class TestAdrAddIdAssignment:
 class TestAdrAddAppend:
     def test_adr_add_appends_to_log(self, tmp_path):
         """adr_add appends new ADR section; wiki_read of log shows it."""
-        from yadgar.server.tools.adr import adr_add
+        from yadgar.core.server.tools.adr import adr_add
 
         project_dir = str(tmp_path)
         project_name = "tmpproject"  # basename of tmp_path is randomised — mock it
@@ -283,13 +284,14 @@ class TestAdrAddAppend:
 
         params = dict(_VALID_ADR_PARAMS, directory=project_dir)
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
             patch("os.path.basename", return_value=project_name),
             patch(
-                "yadgar.server.tools.adr.wiki_read", return_value={"content": existing_log_content}
+                "yadgar.core.server.tools.adr.wiki_read",
+                return_value={"content": existing_log_content},
             ),
-            patch("yadgar.server.tools.adr.wiki_append_section", side_effect=mock_wiki_append),
+            patch("yadgar.core.server.tools.adr.wiki_append_section", side_effect=mock_wiki_append),
         ):
             result = adr_add(**params)
 
@@ -316,7 +318,7 @@ class TestAdrAddAppend:
 class TestAdrAddAutoCreate:
     def test_adr_add_creates_log_when_absent(self, tmp_path):
         """adr_add on fresh project auto-creates the ADR log wiki page."""
-        from yadgar.server.tools.adr import adr_add
+        from yadgar.core.server.tools.adr import adr_add
 
         project_dir = str(tmp_path)
         project_name = "newproject"
@@ -330,12 +332,12 @@ class TestAdrAddAutoCreate:
 
         params = dict(_VALID_ADR_PARAMS, directory=project_dir)
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
             patch("os.path.basename", return_value=project_name),
             # wiki_read returns not-found → triggers auto-create path
-            patch("yadgar.server.tools.adr.wiki_read", return_value={"error": "not found"}),
-            patch("yadgar.server.tools.adr.wiki_add", side_effect=mock_wiki_add),
+            patch("yadgar.core.server.tools.adr.wiki_read", return_value={"error": "not found"}),
+            patch("yadgar.core.server.tools.adr.wiki_add", side_effect=mock_wiki_add),
         ):
             result = adr_add(**params)
 
@@ -362,8 +364,8 @@ class TestAdrAddRoundTrip:
 
     def test_adr_add_create_then_append_sequential_ids(self, tmp_path):
         """Two successive adr_add calls produce ADR-0001 then ADR-0002; both appear in log."""
-        from yadgar.server.tools.adr import adr_add
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.adr import adr_add
+        from yadgar.core.server.tools.wiki import wiki_read
 
         project_dir = str(tmp_path / "myproj")
         __import__("os").makedirs(project_dir, exist_ok=True)
@@ -371,8 +373,8 @@ class TestAdrAddRoundTrip:
         params = dict(_VALID_ADR_PARAMS, directory=project_dir)
 
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
         ):
             result1 = adr_add(**params)
             result2 = adr_add(**dict(params, title="Adopt SQLite for embedding cache"))
@@ -397,8 +399,8 @@ class TestAdrAddRoundTrip:
         """
         import re
 
-        from yadgar.server.tools.adr import adr_add
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.adr import adr_add
+        from yadgar.core.server.tools.wiki import wiki_read
 
         project_dir = str(tmp_path / "myproj")
         __import__("os").makedirs(project_dir, exist_ok=True)
@@ -411,8 +413,8 @@ class TestAdrAddRoundTrip:
         )
 
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
         ):
             result1 = adr_add(**poison_params)
             result2 = adr_add(**dict(_VALID_ADR_PARAMS, directory=project_dir, title="Second ADR"))
@@ -442,8 +444,8 @@ class TestAdrAddRoundTrip:
         """
         import re
 
-        from yadgar.server.tools.adr import adr_add
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.adr import adr_add
+        from yadgar.core.server.tools.wiki import wiki_read
 
         project_dir = str(tmp_path / "myproj")
         __import__("os").makedirs(project_dir, exist_ok=True)
@@ -470,8 +472,8 @@ class TestAdrAddRoundTrip:
         )
 
         with (
-            patch("yadgar.server.tools.adr._resolve_project_root", return_value=project_dir),
-            patch("yadgar.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
         ):
             r1 = adr_add(**params)
             r2 = adr_add(**dict(params, title="Second multi-line ADR"))
@@ -534,7 +536,7 @@ class TestAdrDueSignal:
 
     def test_adr_due_fires_when_active_work_recent_but_adr_log_stale(self):
         """capture_adr action fires when active_work updated recently but ADR log is stale."""
-        from yadgar.server.tools.project import _apply_adr_signal
+        from yadgar.core.server.tools.project import _apply_adr_signal
 
         now = time.time()
         # active_work updated 30 min ago, ADR log updated 25 hours ago
@@ -543,7 +545,7 @@ class TestAdrDueSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             _apply_adr_signal("/tmp/testproject", storage, actions)
         assert len(actions) == 1, f"Expected 1 action, got: {actions}"
@@ -553,7 +555,7 @@ class TestAdrDueSignal:
 
     def test_adr_due_silent_when_adr_log_fresh(self):
         """No capture_adr action when ADR log was updated recently."""
-        from yadgar.server.tools.project import _apply_adr_signal
+        from yadgar.core.server.tools.project import _apply_adr_signal
 
         now = time.time()
         # active_work updated 30 min ago, ADR log updated 1 hour ago (fresh)
@@ -562,7 +564,7 @@ class TestAdrDueSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             _apply_adr_signal("/tmp/testproject", storage, actions)
         capture_actions = [a for a in actions if a.get("action") == "capture_adr"]
@@ -572,7 +574,7 @@ class TestAdrDueSignal:
 
     def test_adr_due_silent_when_no_activity(self):
         """No capture_adr action when active_work is absent (no recent session activity)."""
-        from yadgar.server.tools.project import _apply_adr_signal
+        from yadgar.core.server.tools.project import _apply_adr_signal
 
         now = time.time()
         # No active_work; ADR log also old
@@ -581,7 +583,7 @@ class TestAdrDueSignal:
             active_work_ts=None,  # absent
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             _apply_adr_signal("/tmp/testproject", storage, actions)
         capture_actions = [a for a in actions if a.get("action") == "capture_adr"]
@@ -591,7 +593,7 @@ class TestAdrDueSignal:
 
     def test_adr_due_suggested_call_names_adr_add(self):
         """When capture_adr fires, its suggested_call contains 'adr_add'."""
-        from yadgar.server.tools.project import _apply_adr_signal
+        from yadgar.core.server.tools.project import _apply_adr_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -599,7 +601,7 @@ class TestAdrDueSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             _apply_adr_signal("/tmp/testproject", storage, actions)
         assert len(actions) == 1
@@ -643,7 +645,7 @@ class TestAgentPromptSignal:
 
     def test_fires_when_active_work_recent_but_toc_stale(self):
         """capture_agent_prompt fires when active_work is recent but the TOC is stale."""
-        from yadgar.server.tools.project import _apply_agent_prompt_signal
+        from yadgar.core.server.tools.project import _apply_agent_prompt_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -651,7 +653,7 @@ class TestAgentPromptSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
@@ -662,7 +664,7 @@ class TestAgentPromptSignal:
 
     def test_silent_when_toc_fresh(self):
         """No capture_agent_prompt when the TOC was updated recently."""
-        from yadgar.server.tools.project import _apply_agent_prompt_signal
+        from yadgar.core.server.tools.project import _apply_agent_prompt_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -670,7 +672,7 @@ class TestAgentPromptSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
@@ -679,7 +681,7 @@ class TestAgentPromptSignal:
 
     def test_silent_when_no_activity(self):
         """No capture_agent_prompt when active_work is absent (no session activity)."""
-        from yadgar.server.tools.project import _apply_agent_prompt_signal
+        from yadgar.core.server.tools.project import _apply_agent_prompt_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -687,7 +689,7 @@ class TestAgentPromptSignal:
             active_work_ts=None,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
@@ -697,7 +699,7 @@ class TestAgentPromptSignal:
     def test_silent_when_library_disabled(self):
         """KILL-GATE: AGENT_PROMPT_LIBRARY_ENABLED=False → fully silent, even when
         every other trigger condition is met."""
-        from yadgar.server.tools.project import _apply_agent_prompt_signal
+        from yadgar.core.server.tools.project import _apply_agent_prompt_signal
 
         now = time.time()
         # Conditions that WOULD fire if enabled: recent activity, stale TOC.
@@ -706,7 +708,7 @@ class TestAgentPromptSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = False
             _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
@@ -717,7 +719,7 @@ class TestAgentPromptSignal:
 
     def test_suggested_call_names_agent_prompt_save(self):
         """When it fires, suggested_call is a valid agent_prompt_save call."""
-        from yadgar.server.tools.project import _apply_agent_prompt_signal
+        from yadgar.core.server.tools.project import _apply_agent_prompt_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -725,7 +727,7 @@ class TestAgentPromptSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.ADR_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_agent_prompt_signal("/tmp/testproject", storage, actions)
@@ -773,7 +775,7 @@ class TestDispatchPreludeSignal:
 
     def test_fires_when_active_work_recent_but_prelude_stale(self):
         """use_agent_prompt_library fires when active_work fresh but prelude marker stale."""
-        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+        from yadgar.core.server.tools.project import _apply_dispatch_prelude_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -781,7 +783,7 @@ class TestDispatchPreludeSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
@@ -792,7 +794,7 @@ class TestDispatchPreludeSignal:
 
     def test_fires_when_prelude_marker_absent_but_active_work_present(self):
         """Fires when prelude marker absent (never used) but active_work present."""
-        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+        from yadgar.core.server.tools.project import _apply_dispatch_prelude_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -800,7 +802,7 @@ class TestDispatchPreludeSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
@@ -809,7 +811,7 @@ class TestDispatchPreludeSignal:
 
     def test_silent_when_prelude_fresh(self):
         """No use_agent_prompt_library when prelude marker was updated recently."""
-        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+        from yadgar.core.server.tools.project import _apply_dispatch_prelude_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -817,7 +819,7 @@ class TestDispatchPreludeSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
@@ -826,7 +828,7 @@ class TestDispatchPreludeSignal:
 
     def test_silent_when_no_active_work(self):
         """No use_agent_prompt_library when active_work is absent."""
-        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+        from yadgar.core.server.tools.project import _apply_dispatch_prelude_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -834,7 +836,7 @@ class TestDispatchPreludeSignal:
             active_work_ts=None,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
@@ -843,7 +845,7 @@ class TestDispatchPreludeSignal:
 
     def test_silent_when_library_disabled(self):
         """KILL-GATE: AGENT_PROMPT_LIBRARY_ENABLED=False → fully silent."""
-        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+        from yadgar.core.server.tools.project import _apply_dispatch_prelude_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -851,7 +853,7 @@ class TestDispatchPreludeSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = False
             _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)
@@ -862,7 +864,7 @@ class TestDispatchPreludeSignal:
 
     def test_suggested_call_names_agent_dispatch_prelude(self):
         """When it fires, suggested_call references agent_dispatch_prelude."""
-        from yadgar.server.tools.project import _apply_dispatch_prelude_signal
+        from yadgar.core.server.tools.project import _apply_dispatch_prelude_signal
 
         now = time.time()
         storage = self._make_mock_storage(
@@ -870,7 +872,7 @@ class TestDispatchPreludeSignal:
             active_work_ts=now - 0.5 * 3600,
         )
         actions: list = []
-        with patch("yadgar.server.tools.project.get_settings") as mock_settings:
+        with patch("yadgar.core.server.tools.project.get_settings") as mock_settings:
             mock_settings.return_value.DISPATCH_PRELUDE_DUE_WARN_HOURS = 12.0
             mock_settings.return_value.AGENT_PROMPT_LIBRARY_ENABLED = True
             _apply_dispatch_prelude_signal("/tmp/testproject", storage, actions)

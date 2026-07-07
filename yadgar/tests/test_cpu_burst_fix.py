@@ -31,7 +31,7 @@ class TestHookLightweightProfile:
         import asyncio
         from unittest.mock import patch
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         # Spy on the forward-to-backend call the hook now drives.
         forward_kwargs: dict = {}
@@ -46,14 +46,16 @@ class TestHookLightweightProfile:
         monkeypatch.setattr(_st, "_last_prompt_recall", {})
 
         # Import and call the handler directly in asyncio
-        import yadgar.server.http  # noqa: F401 — ensures routes registered
-        from yadgar.server.http import hook_prompt_recall
+        import yadgar.core.server.http  # noqa: F401 — ensures routes registered
+        from yadgar.core.server.http import hook_prompt_recall
 
         class _FakeRequest:
             query_params = {"query": "test query", "directory": "/tmp"}
 
         async def _run():
-            with patch("yadgar.server.tools.recall._forward_to_backend", side_effect=_spy_forward):
+            with patch(
+                "yadgar.core.server.tools.recall._forward_to_backend", side_effect=_spy_forward
+            ):
                 return await hook_prompt_recall(_FakeRequest())
 
         asyncio.run(_run())
@@ -73,13 +75,13 @@ class TestCEBatchCap:
 
     def test_batch_capped_to_top_k(self, monkeypatch):
         """With 50 input memories and TOP_K=10, score_cross_encoder sees ≤20 texts."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CROSS_ENCODER_TOP_K", "10")
         cfg.get_settings.cache_clear()
 
-        from yadgar.config import Settings
-        from yadgar.retrieval._reranking_cross_encoder import _CrossEncoderMixin
+        from yadgar._shared.config import Settings
+        from yadgar._shared.retrieval._reranking_cross_encoder import _CrossEncoderMixin
 
         settings = Settings()
         assert settings.CROSS_ENCODER_TOP_K == 10
@@ -120,7 +122,7 @@ class TestRerankTimeout:
 
     def test_rerank_timeout_separate_from_general(self, monkeypatch):
         """RemoteMLClient has a dedicated _rerank_timeout using RERANK_BACKEND_TIMEOUT_SEC."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "5")
         monkeypatch.setenv("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "90")
@@ -147,7 +149,7 @@ class TestRerankTimeout:
 
     def test_rerank_call_uses_rerank_timeout(self, monkeypatch):
         """score_cross_encoder passes _rerank_timeout (not default) for non-probe calls."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "5")
         monkeypatch.setenv("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "90")
@@ -195,7 +197,7 @@ class TestNLIDefaultOff:
         """Without env override, NLI_RERANKING_ENABLED is False."""
         monkeypatch.delenv("YADGAR_NLI_RERANKING_ENABLED", raising=False)
 
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         s = Settings()
         assert s.NLI_RERANKING_ENABLED is False, (
@@ -206,7 +208,7 @@ class TestNLIDefaultOff:
         """YADGAR_NLI_RERANKING_ENABLED=true enables NLI."""
         monkeypatch.setenv("YADGAR_NLI_RERANKING_ENABLED", "true")
 
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         s = Settings()
         assert s.NLI_RERANKING_ENABLED is True, (
@@ -224,14 +226,14 @@ class TestHeavyRerankKillSwitch:
 
     def test_kill_switch_skips_all_heavy_rerank(self, monkeypatch):
         """With HEAVY_RERANK_ENABLED=False, _apply_rerank_pipeline returns early — no CE/NLI/MP."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_HEAVY_RERANK_ENABLED", "false")
         cfg.get_settings.cache_clear()
 
         try:
-            from yadgar.config import Settings
-            from yadgar.retrieval.reranking import _RerankingMixin
+            from yadgar._shared.config import Settings
+            from yadgar._shared.retrieval.reranking import _RerankingMixin
 
             settings = Settings()
             assert settings.HEAVY_RERANK_ENABLED is False
@@ -278,8 +280,8 @@ class TestHeavyRerankKillSwitch:
 
             retriever = _FakeRetriever()
             memories = [{"id": i, "content": f"mem {i}", "_retrieval_score": 0.5} for i in range(5)]
-            from yadgar.retrieval.fusion import PROFILES
-            from yadgar.retrieval.reranking import RerankContext
+            from yadgar._shared.retrieval.fusion import PROFILES
+            from yadgar._shared.retrieval.reranking import RerankContext
 
             profile = PROFILES["balanced"]
             ctx = RerankContext(
@@ -322,7 +324,7 @@ class TestApplyRerankPipelineCharacterization:
 
     def _make_retriever(self, settings):
         """Build a _RerankingMixin instance wired to a fake reranker."""
-        from yadgar.retrieval.reranking import _RerankingMixin
+        from yadgar._shared.retrieval.reranking import _RerankingMixin
 
         call_log = []
 
@@ -374,9 +376,9 @@ class TestApplyRerankPipelineCharacterization:
 
     def test_all_optional_stages_disabled(self, monkeypatch):
         """When all optional stages are off, pipeline runs without errors and trims to max_results."""
-        from yadgar.config import Settings
-        from yadgar.retrieval.fusion import PROFILES
-        from yadgar.retrieval.reranking import RerankContext
+        from yadgar._shared.config import Settings
+        from yadgar._shared.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.reranking import RerankContext
 
         s = Settings(
             RERANKER_ENABLED=False,
@@ -405,9 +407,9 @@ class TestApplyRerankPipelineCharacterization:
 
     def test_cross_encoder_called_when_enabled(self, monkeypatch):
         """CE runs when use_cross_encoder=True."""
-        from yadgar.config import Settings
-        from yadgar.retrieval.fusion import PROFILES
-        from yadgar.retrieval.reranking import RerankContext
+        from yadgar._shared.config import Settings
+        from yadgar._shared.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.reranking import RerankContext
 
         s = Settings(
             RERANKER_ENABLED=False,
@@ -435,9 +437,9 @@ class TestApplyRerankPipelineCharacterization:
 
     def test_heuristic_skipped_for_fast_profile(self, monkeypatch):
         """Heuristic reranker is skipped for 'fast' profile even when RERANKER_ENABLED=True."""
-        from yadgar.config import Settings
-        from yadgar.retrieval.fusion import PROFILES
-        from yadgar.retrieval.reranking import RerankContext
+        from yadgar._shared.config import Settings
+        from yadgar._shared.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.reranking import RerankContext
 
         s = Settings(
             RERANKER_ENABLED=True,
@@ -465,9 +467,9 @@ class TestApplyRerankPipelineCharacterization:
 
     def test_output_trimmed_to_max_results(self, monkeypatch):
         """Result list is always trimmed to max_results."""
-        from yadgar.config import Settings
-        from yadgar.retrieval.fusion import PROFILES
-        from yadgar.retrieval.reranking import RerankContext
+        from yadgar._shared.config import Settings
+        from yadgar._shared.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.reranking import RerankContext
 
         s = Settings(
             RERANKER_ENABLED=False,

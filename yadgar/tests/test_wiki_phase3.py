@@ -12,11 +12,11 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.server import _is_episodic_query
-from yadgar.storage import StorageEngine
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.wiki import WikiAddOptions
+from yadgar.core import server
+from yadgar.core.server import _is_episodic_query
 from yadgar.tests.conftest import memorize_sync
-from yadgar.wiki import WikiAddOptions
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ def _engines(tmp_path_factory):
         embedding_model="all-MiniLM-L6-v2",
     )
     # v5.42.3: /tmp is not a git repo; patch _detect_branch for test isolation.
-    with patch("yadgar.server._detect_branch", return_value="feat/test-branch"):
+    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
         yield
     server.shutdown()
 

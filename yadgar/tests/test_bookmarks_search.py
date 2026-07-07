@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -72,12 +72,12 @@ def _insert(slug, title="Test", content="content here", tags=None):
 class TestWikiQueryRouteRegistered:
     def test_http_wiki_versioning_module_importable(self):
         """http_wiki_versioning module imports without error."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         assert hasattr(http_wiki_versioning, "api_wiki_query")
 
     def test_api_wiki_query_is_callable(self):
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         assert callable(http_wiki_versioning.api_wiki_query)
 
@@ -85,7 +85,7 @@ class TestWikiQueryRouteRegistered:
         """Route source calls wiki.query() (embedding path)."""
         import pathlib  # noqa: PLC0415
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         src = pathlib.Path(http_wiki_versioning.__file__).read_text()
         assert "wiki.query" in src, "semantic mode must use WikiStore.query (embedding path)"
@@ -94,7 +94,7 @@ class TestWikiQueryRouteRegistered:
         """File must not contain SurrealDB FTS SQL syntax (DEFINE ANALYZER or search::score)."""
         import pathlib  # noqa: PLC0415
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         src = pathlib.Path(http_wiki_versioning.__file__).read_text()
         # These are the actual SurrealDB FTS constructs that would break embedded tests
@@ -113,7 +113,7 @@ class TestWikiQuerySemantic:
         """semantic mode must call wiki.query() (embedding path)."""
         _insert("embed-test-page", "Embed Test Page", "neural network embeddings for memory")
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         # Mock wiki.query to verify it is called, not a DB FULLTEXT query
         wiki_mock = MagicMock()
@@ -130,7 +130,7 @@ class TestWikiQuerySemantic:
 
     def test_semantic_mode_strips_embedding_field(self):
         """Response must not include 'embedding' key (heavy field)."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         wiki_mock = MagicMock()
         wiki_mock.query.return_value = [
@@ -164,7 +164,7 @@ class TestWikiQueryKeyword:
         _insert("alpha-page", "Alpha Testing Guide", "content")
         _insert("unrelated-page", "Unrelated Content", "content")
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         request = _make_request({"q": "alpha", "mode": "keyword"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_query(request))
@@ -181,7 +181,7 @@ class TestWikiQueryKeyword:
         _insert("benchmarks-q4", "Q4 Benchmarks", "content")
         _insert("other-page", "Other Page", "content")
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         request = _make_request({"q": "benchmarks", "mode": "keyword"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_query(request))
@@ -196,7 +196,7 @@ class TestWikiQueryKeyword:
         """keyword mode is case-insensitive."""
         _insert("competitor-catalog", "Competitor Catalog", "content")
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         request = _make_request({"q": "COMPETITOR", "mode": "keyword"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_query(request))
@@ -211,7 +211,7 @@ class TestWikiQueryKeyword:
         """Keyword mode uses Python .lower() filter — no SurrealDB FTS SQL constructs."""
         import pathlib  # noqa: PLC0415
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         src = pathlib.Path(http_wiki_versioning.__file__).read_text()
         assert "DEFINE ANALYZER" not in src
@@ -232,7 +232,7 @@ class TestWikiQuerySlug:
         _insert("roadmap-q1", "Roadmap Q1", "content")
         _insert("benchmarks-2026", "Benchmarks", "content")
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         request = _make_request({"q": "roadmap", "mode": "slug"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_query(request))
@@ -254,7 +254,7 @@ class TestWikiQuerySlug:
 class TestWikiQueryEdgeCases:
     def test_empty_q_returns_empty_list(self):
         """Empty query returns [] without error."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         request = _make_request({"q": ""})
         resp = asyncio.run(http_wiki_versioning.api_wiki_query(request))
@@ -266,7 +266,7 @@ class TestWikiQueryEdgeCases:
 
     def test_invalid_mode_defaults_to_semantic(self):
         """Unknown mode value is treated as semantic."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         wiki_mock = MagicMock()
         wiki_mock.query.return_value = []
@@ -286,7 +286,7 @@ class TestWikiQueryEdgeCases:
         for i in range(5):
             _insert(f"limit-test-{i}", f"Limit Test {i}", "content")
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         request = _make_request({"q": "limit", "mode": "keyword", "limit": "2"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_query(request))

@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from yadgar.curation.strengthen import _memify_derive
-from yadgar.storage.directory import dominant_directory
+from yadgar._shared.curation.strengthen import _memify_derive
+from yadgar._shared.storage.directory import dominant_directory
 
 # ── dominant_directory helper ─────────────────────────────────────────────────
 
@@ -281,7 +281,7 @@ def test_promote_stamps_originating_dir_not_system():
     """RED pre-fix: promoted memory got directory_context from directories[0] which
     could be 'system'. GREEN post-fix: gets dominant real project directory.
     """
-    from yadgar.cls_store.promotion import _PromotionMixin
+    from yadgar._shared.cls_store.promotion import _PromotionMixin
 
     engine = _make_cls_engine(insert_id=101)
     cluster_mems = [
@@ -311,7 +311,7 @@ def test_promote_stamps_originating_dir_not_system():
 
 def test_promote_stamps_global_for_cross_dir_cluster():
     """Cluster with members from multiple directories → 'global'."""
-    from yadgar.cls_store.promotion import _PromotionMixin
+    from yadgar._shared.cls_store.promotion import _PromotionMixin
 
     engine = _make_cls_engine(insert_id=102)
     cluster_mems = [
@@ -334,7 +334,7 @@ def test_promote_stamps_global_for_cross_dir_cluster():
 
 def test_promote_stamps_global_when_no_cluster_dir():
     """Empty cluster_mems (degenerate) → global fallback, never 'system'."""
-    from yadgar.cls_store.promotion import _PromotionMixin
+    from yadgar._shared.cls_store.promotion import _PromotionMixin
 
     engine = _make_cls_engine(insert_id=103)
     # All cluster members have sentinel directories
@@ -360,7 +360,7 @@ def test_promote_uses_cluster_mems_not_directories_list():
     """Fix verifies we use cluster_mems for dir derivation, not pattern['directories'].
     Even if pattern['directories'] has a misleading value, the real dir is used.
     """
-    from yadgar.cls_store.promotion import _PromotionMixin
+    from yadgar._shared.cls_store.promotion import _PromotionMixin
 
     engine = _make_cls_engine(insert_id=104)
     cluster_mems = [
@@ -401,7 +401,7 @@ def _make_dream_embeddings() -> MagicMock:
 
 
 def _make_dream_engine(storage, embeddings):
-    from yadgar.sleep_compute.dream import _DreamMixin
+    from yadgar._shared.sleep_compute.dream import _DreamMixin
 
     engine = MagicMock(spec=_DreamMixin)
     engine._storage = storage
@@ -413,7 +413,7 @@ def test_dream_insight_stamps_global_not_system():
     """RED pre-fix: dream insight got directory_context='system'.
     GREEN post-fix: stamps 'global' (dreams are cross-cutting by construction).
     """
-    from yadgar.sleep_compute.dream import _DreamMixin
+    from yadgar._shared.sleep_compute.dream import _DreamMixin
 
     storage = _make_dream_storage(insert_id=201)
     embeddings = _make_dream_embeddings()
@@ -436,7 +436,7 @@ def test_dream_insight_stamps_global_not_system():
 
 def test_dream_insight_content_mentions_both_mems():
     """Sanity check: dream content mentions both source memories."""
-    from yadgar.sleep_compute.dream import _DreamMixin
+    from yadgar._shared.sleep_compute.dream import _DreamMixin
 
     storage = _make_dream_storage(insert_id=202)
     embeddings = _make_dream_embeddings()
@@ -454,7 +454,7 @@ def test_dream_insight_content_mentions_both_mems():
 
 def test_dream_insight_global_regardless_of_mem_dirs():
     """Dream insight is always 'global' even when both source mems are same dir."""
-    from yadgar.sleep_compute.dream import _DreamMixin
+    from yadgar._shared.sleep_compute.dream import _DreamMixin
 
     storage = _make_dream_storage(insert_id=203)
     embeddings = _make_dream_embeddings()

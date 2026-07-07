@@ -29,10 +29,10 @@ must NOT ship.
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval.core import Retriever
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval.core import Retriever
+from yadgar._shared.storage import StorageEngine
 
 
 @pytest.fixture

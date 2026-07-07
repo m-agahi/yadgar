@@ -25,9 +25,9 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.server.tools.wiki import wiki_append_section, wiki_history, wiki_restore
-from yadgar.storage.migrations import _migration_013_wiki_page_version
+from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
+from yadgar.core import server
+from yadgar.core.server.tools.wiki import wiki_append_section, wiki_history, wiki_restore
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -216,7 +216,7 @@ class TestWaitTimeout:
         call returns {"stored": False, "reason": "wait_timeout", "queued": True}
         within the timeout budget.
         """
-        import yadgar.server._state as _state
+        import yadgar._shared.runtime.state as _state
 
         drainer = _state._queue_drainer
         if drainer is None:
@@ -228,7 +228,7 @@ class TestWaitTimeout:
         # Patch drain_now to no-op so signal_complete is never called.
         with patch.object(drainer, "drain_now", return_value=0):
             # Use a short timeout via config knob to keep test fast.
-            with patch("yadgar.config.get_settings") as _mock_cfg:
+            with patch("yadgar._shared.config.get_settings") as _mock_cfg:
                 _mock_cfg.return_value = type(
                     "_Cfg", (), {"WIKI_WRITE_WAIT_TIMEOUT_SECONDS": 0.3}
                 )()
@@ -261,7 +261,7 @@ class TestWaitFalsePerf:
         See v5.41.2 I9 violation: wait=False path running ~48ms p50 (9.6x over budget).
         Tracked for fix in v5.41.x. Assertion kept at 50ms to preserve green suite.
         """
-        from yadgar.file_queue import FileQueue
+        from yadgar.core.file_queue import FileQueue
 
         # Warm up
         title0 = _make_unique_title("Warmup Page")

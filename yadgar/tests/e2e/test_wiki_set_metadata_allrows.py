@@ -61,10 +61,10 @@ class TestWikiSetMetadataAllRows:
 
         Ref: BC-G10.
         """
-        from yadgar.server.tools.wiki import wiki_set_metadata
+        from yadgar.core.server.tools.wiki import wiki_set_metadata
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         storage = e2e_engines["storage"]
 
@@ -118,10 +118,10 @@ class TestWikiSetMetadataAllRows:
 
         Ref: BC-G10.
         """
-        from yadgar.server.tools.wiki import wiki_set_metadata
+        from yadgar.core.server.tools.wiki import wiki_set_metadata
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         storage = e2e_engines["storage"]
 
@@ -156,10 +156,10 @@ class TestWikiSetMetadataAllRows:
 
         Ref: BC-G10.
         """
-        from yadgar.server.tools.wiki import wiki_set_metadata
+        from yadgar.core.server.tools.wiki import wiki_set_metadata
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         storage = e2e_engines["storage"]
 

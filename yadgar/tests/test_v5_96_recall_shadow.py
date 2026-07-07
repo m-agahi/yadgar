@@ -19,7 +19,7 @@ pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
 @pytest.fixture(autouse=True)
 def _reset_shadow():
-    from yadgar.server.tools import _recall_shadow
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
 
     _recall_shadow._reset_for_test()
     yield
@@ -28,7 +28,7 @@ def _reset_shadow():
 
 def _counts():
     # v5.100.0: counters are labelled; tests use source="tool" (the default tool path).
-    from yadgar.metrics import (
+    from yadgar._shared.metrics import (
         yadgar_recall_shadow_cache_hits_total,
         yadgar_recall_shadow_cache_misses_total,
     )
@@ -40,7 +40,7 @@ def _counts():
 
 
 def _observe(**overrides):
-    from yadgar.server.tools._recall_shadow import RecallShadowParams, observe_recall
+    from yadgar._shared.runtime.cache_epoch import RecallShadowParams, observe_recall
 
     kwargs = {
         "query": "what is the deploy runbook",
@@ -75,7 +75,7 @@ class TestShadowCounter:
         assert m1 == m0, "no extra miss on the hit"
 
     def test_epoch_bump_forces_miss(self):
-        from yadgar.server.tools._recall_shadow import bump_epoch
+        from yadgar._shared.runtime.cache_epoch import bump_epoch
 
         _observe()  # records key at epoch 0
         _observe()  # hit
@@ -89,7 +89,7 @@ class TestShadowCounter:
     def test_global_bump_invalidates_directory_key(self):
         """A global bump (None directory — e.g. consolidation prior recompute)
         invalidates keys for EVERY directory, not just one."""
-        from yadgar.server.tools._recall_shadow import bump_epoch
+        from yadgar._shared.runtime.cache_epoch import bump_epoch
 
         _observe()  # records dir key at effective epoch 0
         _observe()  # hit
@@ -101,7 +101,7 @@ class TestShadowCounter:
         assert h1 == h0
 
     def test_bump_of_other_directory_does_not_affect(self):
-        from yadgar.server.tools._recall_shadow import bump_epoch
+        from yadgar._shared.runtime.cache_epoch import bump_epoch
 
         _observe()  # records key for /home/u/proj @ epoch 0
         bump_epoch("/some/other/dir")  # unrelated dir
@@ -127,7 +127,7 @@ class TestShadowCounter:
         assert h1 == h0
 
     def test_observe_never_raises(self):
-        from yadgar.server.tools._recall_shadow import RecallShadowParams, observe_recall
+        from yadgar._shared.runtime.cache_epoch import RecallShadowParams, observe_recall
 
         # Pathologically bad inputs must not raise.
         observe_recall(
@@ -146,7 +146,7 @@ class TestShadowCounter:
         )
 
     def test_bump_never_raises(self):
-        from yadgar.server.tools._recall_shadow import bump_epoch
+        from yadgar._shared.runtime.cache_epoch import bump_epoch
 
         bump_epoch(None)
         bump_epoch("")
@@ -166,8 +166,8 @@ def _call_real_recall(query: str, directory: str):
     """Invoke the real recall MCP tool with a stub retriever (no ML needed)."""
     from unittest.mock import MagicMock, patch
 
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import recall as recall_fn
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import recall as recall_fn
 
     mock_retriever = MagicMock()
     mock_retriever.recall.return_value = []
@@ -186,8 +186,8 @@ def _call_real_recall(query: str, directory: str):
         patch.object(_st, "_replay", None),
         patch.object(_st, "_wiki", mock_wiki),
         patch.object(_st, "_last_recalled_ids", {}),
-        patch("yadgar.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         return recall_fn(query=query, max_results=5, min_heat=0.0, directory=directory)
 
@@ -205,8 +205,8 @@ class TestRecallToolWiring:
 
     def test_memorize_bumps_epoch_via_phase(self):
         """The memorize post-write phase must bump the directory's shadow epoch."""
-        from yadgar.server.tools._memorize_phases._phase_post_write import _bump_shadow_epoch
-        from yadgar.server.tools._recall_shadow import _current_epoch
+        from yadgar._shared.runtime.cache_epoch import _current_epoch
+        from yadgar.core.server.tools._memorize_phases._phase_post_write import _bump_shadow_epoch
 
         directory = "/tmp/wiring_memorize_proj"
         before = _current_epoch(directory)
@@ -221,8 +221,8 @@ class TestRecallToolWiring:
 
     def test_consolidation_bumps_global_epoch(self):
         """The consolidation prior-recompute helper must bump the global generation."""
-        from yadgar.consolidation.cls import _bump_shadow_epoch_global
-        from yadgar.server.tools._recall_shadow import _current_epoch
+        from yadgar._shared.runtime.cache_epoch import _current_epoch
+        from yadgar.core.consolidation.cls import _bump_shadow_epoch_global
 
         before = _current_epoch("/any/dir")
         _bump_shadow_epoch_global(updated=5)  # non-zero → bumps

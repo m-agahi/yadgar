@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.rules_engine import RulesEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.rules_engine import RulesEngine
 
 # ── fixtures ────────────────────────────────────────────────────────────
 
@@ -148,7 +148,7 @@ def test_memorize_check_write_policy_query_count(settings, tmp_path):
     This is the C5 acceptance criterion: the async-enqueue path's latency
     budget is not blown by repeated DB round-trips per memorize() call.
     """
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     db_path = str(tmp_path / "c5_accept.db")
     real_storage = StorageEngine(db_path)

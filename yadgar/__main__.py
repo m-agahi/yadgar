@@ -72,7 +72,7 @@ def cli():
     )
 
     # Register all subcommands in original order
-    from yadgar.cli import (  # noqa: E402
+    from yadgar.core.cli import (  # noqa: E402
         capture,
         config,
         context,
@@ -113,7 +113,7 @@ def cli():
     args = parser.parse_args()
 
     if args.version:
-        from yadgar.cli.version import print_version_summary
+        from yadgar.core.cli.version import print_version_summary
 
         print_version_summary(json_mode=args.json)
         sys.exit(0)
@@ -127,17 +127,17 @@ def cli():
         if args.port:
             _os.environ["YADGAR_PORT"] = str(args.port)
 
-        from yadgar.config import get_settings as _get_settings
+        from yadgar._shared.config import get_settings as _get_settings
 
         _cfg = _get_settings()
         _log_level = _cfg.CORE_LOG_LEVEL
         _log_format = _cfg.LOG_FORMAT
         if _log_level and _log_level.upper() != "WARN" and _log_level.upper() != "WARNING":
-            from yadgar.log_config import configure_logging as _configure_logging
+            from yadgar._shared.log_config import configure_logging as _configure_logging
 
             _configure_logging(log_format=_log_format, level=_log_level, process="core")
         elif _log_format and _log_format.lower() == "json":
-            from yadgar.log_config import configure_logging as _configure_logging
+            from yadgar._shared.log_config import configure_logging as _configure_logging
 
             _configure_logging(log_format="json", level="WARNING", process="core")
 
@@ -152,7 +152,7 @@ def cli():
                 print(f"Database: {args.db_path}", file=sys.stderr)
             print(file=sys.stderr)
 
-        from yadgar.server import main
+        from yadgar.core.server import main
 
         main(port=args.port, db_path=args.db_path, transport=args.transport)
     else:
@@ -167,6 +167,6 @@ if __name__ == "__main__":
 # main_mod.cmd_vacuum(args) still work after the CLI was split into yadgar.cli.vacuum.
 def cmd_vacuum(args):
     """Delegate to yadgar.cli.vacuum.cmd_vacuum (v4.x public API preserved)."""
-    from yadgar.cli.vacuum import cmd_vacuum as _cmd_vacuum
+    from yadgar.core.cli.vacuum import cmd_vacuum as _cmd_vacuum
 
     return _cmd_vacuum(args)

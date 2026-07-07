@@ -37,8 +37,8 @@ class TestPromptRecallForwards:
     def test_forwards_with_profile_fast_and_dir(self):
         """hook_prompt_recall calls _forward_hook_recall with profile='fast',
         max_results=5, min_heat=0.0, and the caller directory."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         rows = [
             {"content": "m1", "directory_context": "/home/user/project"},
@@ -59,7 +59,9 @@ class TestPromptRecallForwards:
 
         async def _run():
             with patch.object(_st, "_retriever", MagicMock()):
-                with patch("yadgar.server.http._recall_with_timeout", side_effect=_fake_forward):
+                with patch(
+                    "yadgar.core.server.http._recall_with_timeout", side_effect=_fake_forward
+                ):
                     with patch.object(_st, "_last_session_context", {}):
                         with patch.object(_st, "_last_prompt_recall", {}):
                             return await _http.hook_prompt_recall(req)
@@ -81,8 +83,8 @@ class TestPromptRecallForwards:
     def test_recall_with_timeout_runs_forward_callable_not_retriever_recall(self):
         """The prompt-recall handler must route recall through the forward path,
         NOT retriever.recall. Proven by: retriever.recall is never called."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         retriever = MagicMock()
         retriever.recall = MagicMock(return_value=[{"content": "SHOULD_NOT_APPEAR"}])
@@ -92,7 +94,7 @@ class TestPromptRecallForwards:
         async def _run():
             with patch.object(_st, "_retriever", retriever):
                 with patch(
-                    "yadgar.server.http._forward_hook_recall",
+                    "yadgar.core.server.http._forward_hook_recall",
                     return_value=forwarded,
                 ):
                     with patch.object(_st, "_last_session_context", {}):
@@ -115,8 +117,8 @@ class TestForwardHookRecallTimeout:
     def test_passes_short_hook_timeout(self):
         """_forward_hook_recall must pass timeout_s == HOOK_RECALL_TIMEOUT_S to
         _forward_to_backend (NOT the 120s MCP default) — #81 starvation guard."""
-        import yadgar.server.http as _http
-        from yadgar.config import get_settings
+        import yadgar.core.server.http as _http
+        from yadgar._shared.config import get_settings
 
         captured: dict = {}
 
@@ -124,7 +126,9 @@ class TestForwardHookRecallTimeout:
             captured.update(kwargs)
             return []
 
-        with patch("yadgar.server.tools.recall._forward_to_backend", side_effect=_fake_backend):
+        with patch(
+            "yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend
+        ):
             _http._forward_hook_recall(
                 "q",
                 max_results=5,
@@ -142,7 +146,7 @@ class TestForwardHookRecallTimeout:
     def test_directory_normalized_trailing_slash(self):
         """A trailing-slash directory is stripped before forwarding, so backend
         exact-string is_directory_eligible scoping does not silently return empty."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         captured: dict = {}
 
@@ -150,7 +154,9 @@ class TestForwardHookRecallTimeout:
             captured.update(kwargs)
             return []
 
-        with patch("yadgar.server.tools.recall._forward_to_backend", side_effect=_fake_backend):
+        with patch(
+            "yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend
+        ):
             _http._forward_hook_recall(
                 "q",
                 max_results=5,
@@ -171,7 +177,7 @@ class TestDirectoryFilterStillApplied:
     def test_ineligible_rows_dropped(self):
         """_filter_prompt_recall_results drops rows whose directory_context does
         not match the caller dir (idempotent atop backend scoping)."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         rows = [
             {"content": "keep", "directory_context": "/home/user/project"},
@@ -193,15 +199,15 @@ class TestDirectoryFilterStillApplied:
 class TestGracefulDegradation:
     def test_backend_raise_returns_empty(self):
         """Backend raises -> handler returns {"text": ""} and does NOT raise."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         async def _boom(*_a, **_k):
             raise RuntimeError("YADGAR_EMBED_URL unreachable")
 
         async def _run():
             with patch.object(_st, "_retriever", MagicMock()):
-                with patch("yadgar.server.http._recall_with_timeout", side_effect=_boom):
+                with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_boom):
                     with patch.object(_st, "_last_session_context", {}):
                         with patch.object(_st, "_last_prompt_recall", {}):
                             req = _make_mock_request({"query": "q", "directory": "/d"})
@@ -213,13 +219,13 @@ class TestGracefulDegradation:
 
     def test_backend_timeout_returns_empty(self):
         """_recall_with_timeout returns None (timeout) -> {"text": ""}."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         async def _run():
             with patch.object(_st, "_retriever", MagicMock()):
                 with patch(
-                    "yadgar.server.http._recall_with_timeout",
+                    "yadgar.core.server.http._recall_with_timeout",
                     new_callable=AsyncMock,
                     return_value=None,
                 ):
@@ -243,7 +249,7 @@ class TestMcpRecallTimeoutDefaultUnchanged:
         """_forward_to_backend default timeout_s must remain 120.0 (MCP path)."""
         import inspect
 
-        from yadgar.server.tools.recall import _forward_to_backend
+        from yadgar.core.server.tools.recall import _forward_to_backend
 
         sig = inspect.signature(_forward_to_backend)
         assert sig.parameters["timeout_s"].default == 120.0, sig
@@ -258,8 +264,8 @@ class TestOtherHooksStayInCore:
     def test_instructions_loaded_still_uses_retriever_recall(self):
         """instructions-loaded must still drive retriever.recall via
         _recall_with_timeout (NOT forwarded) — scope decision guard."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         captured: dict = {}
 
@@ -275,7 +281,7 @@ class TestOtherHooksStayInCore:
 
         async def _run():
             with patch.object(_st, "_retriever", retriever):
-                with patch("yadgar.server.http._recall_with_timeout", side_effect=_capture):
+                with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
                     return await _http.hook_instructions_loaded(req)
 
         asyncio.run(_run())
@@ -287,8 +293,8 @@ class TestOtherHooksStayInCore:
         """When the request has NO directory, prompt-recall must NOT forward (the
         backend requires a directory to scope) — it falls back to the in-core
         retriever (whole-DB, old behavior), never regressing to always-empty."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         captured: dict = {}
 
@@ -301,7 +307,7 @@ class TestOtherHooksStayInCore:
 
         async def _run():
             with patch.object(_st, "_retriever", retriever):
-                with patch("yadgar.server.http._recall_with_timeout", side_effect=_capture):
+                with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
                     with patch.object(_st, "_last_session_context", {}):
                         with patch.object(_st, "_last_prompt_recall", {}):
                             return await _http.hook_prompt_recall(req)
@@ -312,8 +318,8 @@ class TestOtherHooksStayInCore:
         assert not isinstance(captured.get("retriever"), _http._HookRecallForwarder), captured
 
     def test_subagent_start_still_uses_retriever_recall(self):
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         captured: dict = {}
 
@@ -330,7 +336,7 @@ class TestOtherHooksStayInCore:
 
         async def _run():
             with patch.object(_st, "_retriever", retriever):
-                with patch("yadgar.server.http._recall_with_timeout", side_effect=_capture):
+                with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
                     return await _http.hook_subagent_start(req)
 
         asyncio.run(_run())

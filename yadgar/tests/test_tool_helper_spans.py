@@ -52,8 +52,8 @@ def _span_names(exporter) -> set[str]:
 
 def test_compute_valid_until_emits_span(span_exporter):
     """memorize._compute_valid_until opens a hot span (pure ttl compute)."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools.memorize import _compute_valid_until
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools.memorize import _compute_valid_until
 
     _compute_valid_until("semantic_immortal", None, None, get_settings())
     assert "tools.memorize._compute_valid_until" in _span_names(span_exporter), _span_names(
@@ -63,7 +63,7 @@ def test_compute_valid_until_emits_span(span_exporter):
 
 def test_slug_prefix_emits_span(span_exporter):
     """project._slug_prefix opens a hot span (pure string derive)."""
-    from yadgar.server.tools.project import _slug_prefix
+    from yadgar.core.server.tools.project import _slug_prefix
 
     _slug_prefix("some-wiki-slug-here")
     assert "tools.project._slug_prefix" in _span_names(span_exporter), _span_names(span_exporter)
@@ -71,7 +71,7 @@ def test_slug_prefix_emits_span(span_exporter):
 
 def test_omit_sentinel_emits_span(span_exporter):
     """project._omit_sentinel opens a hot span (pure conditional dict set)."""
-    from yadgar.server.tools.project import _omit_sentinel
+    from yadgar.core.server.tools.project import _omit_sentinel
 
     _omit_sentinel({}, "k", "v", None)
     assert "tools.project._omit_sentinel" in _span_names(span_exporter), _span_names(span_exporter)
@@ -79,7 +79,7 @@ def test_omit_sentinel_emits_span(span_exporter):
 
 def test_cosine_similarity_emits_span(span_exporter):
     """project._cosine_similarity opens a hot span (pure math)."""
-    from yadgar.server.tools.project import _cosine_similarity
+    from yadgar.core.server.tools.project import _cosine_similarity
 
     _cosine_similarity([1.0, 0.0, 1.0], [1.0, 1.0, 0.0])
     assert "tools.project._cosine_similarity" in _span_names(span_exporter), _span_names(

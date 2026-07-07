@@ -37,7 +37,7 @@ EXPECTED_METRIC_FAMILIES = {
 
 def _make_client(monkeypatch, max_concurrency: int = 1, acquire_timeout: float = 2.0):
     """Return a fresh FastAPI TestClient with embed_service patched to avoid model load."""
-    import yadgar.config as cfg
+    import yadgar._shared.config as cfg
 
     monkeypatch.setenv("YADGAR_RERANK_MAX_CONCURRENCY", str(max_concurrency))
     monkeypatch.setenv("YADGAR_RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC", str(acquire_timeout))

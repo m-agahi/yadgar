@@ -2,8 +2,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from yadgar.config import Settings
-from yadgar.enrichment import (
+from yadgar._shared.config import Settings
+from yadgar._shared.enrichment import (
     HARDCODED_EXPANSIONS,
     ConceptNetExpander,
     EnrichmentPipeline,
@@ -245,6 +245,6 @@ class TestCometRetiredDefault:
     """ADR-0004: COMET retired to dormant — flag default must be False."""
 
     def test_comet_enrichment_default_is_false(self):
-        from yadgar.config import Settings as _Settings
+        from yadgar._shared.config import Settings as _Settings
 
         assert _Settings().COMET_ENRICHMENT_ENABLED is False

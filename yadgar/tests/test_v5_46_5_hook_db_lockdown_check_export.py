@@ -9,12 +9,12 @@ from __future__ import annotations
 
 def test_hook_db_lockdown_check_importable():
     """Function must be importable from yadgar.scripts.hook_runner."""
-    from yadgar.scripts.hook_runner import hook_db_lockdown_check  # noqa: F401
+    from yadgar.core.scripts.hook_runner import hook_db_lockdown_check  # noqa: F401
 
 
 def test_hook_db_lockdown_check_callable():
     """Imported function must be callable."""
-    from yadgar.scripts.hook_runner import hook_db_lockdown_check
+    from yadgar.core.scripts.hook_runner import hook_db_lockdown_check
 
     assert callable(hook_db_lockdown_check)
 
@@ -26,7 +26,7 @@ def test_hook_db_lockdown_check_allow_schema():
     import sys
     from unittest.mock import patch
 
-    from yadgar.scripts.hook_runner import hook_db_lockdown_check
+    from yadgar.core.scripts.hook_runner import hook_db_lockdown_check
 
     output = io.StringIO()
     with patch.object(sys, "stdin", io.StringIO(json.dumps({"tool_input": {"command": "ls"}}))):
@@ -45,7 +45,7 @@ def test_hook_db_lockdown_check_deny_schema():
     import sys
     from unittest.mock import patch
 
-    from yadgar.scripts.hook_runner import hook_db_lockdown_check
+    from yadgar.core.scripts.hook_runner import hook_db_lockdown_check
 
     output = io.StringIO()
     with patch.object(

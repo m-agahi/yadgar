@@ -34,9 +34,9 @@ def test_local_engines_bypasses_offload_guard(monkeypatch):
     local-engine request the backend recall bootstrap must build LocalMLClient +
     in-process EmbeddingEngine, NOT trip the core offload guard.
     """
+    from yadgar._shared.config import get_settings
+    from yadgar._shared.runtime.lifecycle import _init_embedding_client
     from yadgar.backend.ml_client import LocalMLClient
-    from yadgar.config import get_settings
-    from yadgar.server.lifecycle import _init_embedding_client
 
     # Prod BACKEND container condition: shared offload flag ON, but it IS the
     # embed service so no EMBED_URL is set.
@@ -60,8 +60,8 @@ def test_core_offload_guard_still_fires(monkeypatch):
     engines for GIL-safety).  The fix must NOT weaken it: without an explicit
     local-engine request the guard fires exactly as before.
     """
-    from yadgar.config import get_settings
-    from yadgar.server.lifecycle import _init_embedding_client
+    from yadgar._shared.config import get_settings
+    from yadgar._shared.runtime.lifecycle import _init_embedding_client
 
     monkeypatch.setenv("YADGAR_OFFLOAD_TOOLS", "1")
     monkeypatch.delenv("YADGAR_EMBED_URL", raising=False)

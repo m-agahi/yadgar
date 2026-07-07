@@ -11,7 +11,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    include: ['../yadgar/static/**/*.test.js'],
+    include: ['../yadgar/core/static/**/*.test.js'],
     exclude: [],
   },
 });

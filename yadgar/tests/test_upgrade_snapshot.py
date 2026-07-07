@@ -33,7 +33,7 @@ def _ts_fmt() -> str:
 
 def test_create_snapshot_writes_timestamped_dir(tmp_path: Path) -> None:
     """create_snapshot() creates a dir with ISO-8601-derived name + chmod 700."""
-    from yadgar.update.snapshot import create_snapshot
+    from yadgar.core.update.snapshot import create_snapshot
 
     snap = create_snapshot(base_dir=tmp_path)
 
@@ -51,7 +51,7 @@ def test_create_snapshot_writes_timestamped_dir(tmp_path: Path) -> None:
 
 def test_write_and_read_prev_image_tag(tmp_path: Path) -> None:
     """write_prev_image_tag() persists; read_prev_image_tag() returns same value."""
-    from yadgar.update.snapshot import create_snapshot
+    from yadgar.core.update.snapshot import create_snapshot
 
     snap = create_snapshot(base_dir=tmp_path)
     tag = "docker.io/openfantasy/yadgar:5.48.0"
@@ -63,7 +63,7 @@ def test_write_and_read_prev_image_tag(tmp_path: Path) -> None:
 
 def test_write_and_read_prev_unit_file(tmp_path: Path) -> None:
     """write_prev_unit_file() / read_prev_unit_file() round-trip multi-line content."""
-    from yadgar.update.snapshot import create_snapshot
+    from yadgar.core.update.snapshot import create_snapshot
 
     snap = create_snapshot(base_dir=tmp_path)
     content = "[Unit]\nDescription=yadgar\n\n[Service]\nExecStart=/usr/bin/yadgar\n"
@@ -75,7 +75,7 @@ def test_write_and_read_prev_unit_file(tmp_path: Path) -> None:
 
 def test_write_and_read_prev_cli_version(tmp_path: Path) -> None:
     """write_prev_cli_version() / read_prev_cli_version() round-trip."""
-    from yadgar.update.snapshot import create_snapshot
+    from yadgar.core.update.snapshot import create_snapshot
 
     snap = create_snapshot(base_dir=tmp_path)
     snap.write_prev_cli_version("5.48.0")
@@ -85,7 +85,7 @@ def test_write_and_read_prev_cli_version(tmp_path: Path) -> None:
 
 def test_append_forward_log_creates_then_appends(tmp_path: Path) -> None:
     """append_forward_log() creates the JSON array and appends subsequent entries."""
-    from yadgar.update.snapshot import create_snapshot
+    from yadgar.core.update.snapshot import create_snapshot
 
     snap = create_snapshot(base_dir=tmp_path)
     snap.append_forward_log("PROBING", {"version": "5.49.0"})
@@ -106,7 +106,7 @@ def test_append_forward_log_creates_then_appends(tmp_path: Path) -> None:
 
 def test_append_rollback_log_separate_file(tmp_path: Path) -> None:
     """append_rollback_log() writes rollback_log.json, separate from forward_log.json."""
-    from yadgar.update.snapshot import create_snapshot
+    from yadgar.core.update.snapshot import create_snapshot
 
     snap = create_snapshot(base_dir=tmp_path)
     snap.append_rollback_log("ROLLING_BACK", {"reason": "health-check-failed"})
@@ -123,7 +123,7 @@ def test_append_rollback_log_separate_file(tmp_path: Path) -> None:
 
 def test_atomic_write_no_partial_file(tmp_path: Path) -> None:
     """If os.replace raises mid-write, original file is unaffected (atomic)."""
-    from yadgar.update.snapshot import create_snapshot
+    from yadgar.core.update.snapshot import create_snapshot
 
     snap = create_snapshot(base_dir=tmp_path)
     original_tag = "docker.io/openfantasy/yadgar:5.47.0"
@@ -154,7 +154,7 @@ def test_atomic_write_no_partial_file(tmp_path: Path) -> None:
 
 def test_list_snapshots_sorted_newest_first(tmp_path: Path) -> None:
     """list_snapshots() returns all snapshots newest-first by timestamp."""
-    from yadgar.update.snapshot import create_snapshot, list_snapshots
+    from yadgar.core.update.snapshot import create_snapshot, list_snapshots
 
     s1 = create_snapshot(base_dir=tmp_path)
     time.sleep(0.02)  # ensure distinct microsecond timestamps
@@ -177,7 +177,7 @@ def test_list_snapshots_sorted_newest_first(tmp_path: Path) -> None:
 
 def test_prune_keeps_n_newest(tmp_path: Path) -> None:
     """prune_old_snapshots(retention=2) keeps 2 newest, deletes the rest."""
-    from yadgar.update.snapshot import create_snapshot, prune_old_snapshots
+    from yadgar.core.update.snapshot import create_snapshot, prune_old_snapshots
 
     snaps = []
     for _ in range(5):
@@ -188,7 +188,7 @@ def test_prune_keeps_n_newest(tmp_path: Path) -> None:
 
     assert deleted == 3
     # Use list_snapshots to count only valid snapshot dirs (not conftest fixtures)
-    from yadgar.update.snapshot import list_snapshots as _ls
+    from yadgar.core.update.snapshot import list_snapshots as _ls
 
     remaining = _ls(base_dir=tmp_path)
     assert len(remaining) == 2
@@ -204,17 +204,17 @@ def test_prune_retention_zero_or_negative_keeps_all(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """prune_old_snapshots(retention=0) keeps all and emits a WARNING."""
-    from yadgar.update.snapshot import create_snapshot, prune_old_snapshots
+    from yadgar.core.update.snapshot import create_snapshot, prune_old_snapshots
 
     for _ in range(3):
         create_snapshot(base_dir=tmp_path)
         time.sleep(0.01)
 
-    with caplog.at_level(logging.WARNING, logger="yadgar.update.snapshot"):
+    with caplog.at_level(logging.WARNING, logger="yadgar.core.update.snapshot"):
         deleted = prune_old_snapshots(retention=0, base_dir=tmp_path)
 
     assert deleted == 0
-    from yadgar.update.snapshot import list_snapshots as _ls
+    from yadgar.core.update.snapshot import list_snapshots as _ls
 
     assert len(_ls(base_dir=tmp_path)) == 3
     assert any("retention" in r.message.lower() for r in caplog.records)
@@ -227,9 +227,9 @@ def test_prune_retention_zero_or_negative_keeps_all(
 
 def test_snapshot_retention_config_three_way() -> None:
     """UPDATE_SNAPSHOT_RETENTION registered in Settings + registry + FIELD_META."""
-    from yadgar.config import Settings
-    from yadgar.config_registry import list_config
-    from yadgar.config_yaml import FIELD_META
+    from yadgar._shared.config import Settings
+    from yadgar._shared.config_registry import list_config
+    from yadgar._shared.config_yaml import FIELD_META
 
     # Settings has the field
     assert "UPDATE_SNAPSHOT_RETENTION" in Settings.model_fields

@@ -62,7 +62,7 @@ def _make_transcript(tmp_path: Path, human_count: int) -> Path:
 # Locate hook file
 # ---------------------------------------------------------------------------
 
-_HOOK_PATH = Path(__file__).parent.parent / "hooks" / "stop-memory-checkpoint.py"
+_HOOK_PATH = Path(__file__).parent.parent / "core" / "hooks" / "stop-memory-checkpoint.py"
 
 
 def test_hook_file_exists():

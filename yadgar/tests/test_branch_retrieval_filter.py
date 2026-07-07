@@ -10,7 +10,7 @@ Covers:
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
@@ -69,8 +69,8 @@ class TestRecallBranchFilter:
 
     def test_recall_returns_current_branch_memory(self, monkeypatch):
         """Memory tagged with current branch is returned by recall."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/my-feature")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/my-feature")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         storage = server._get_storage()
         _insert_memory_with_branch(
             storage, "unique-current-branch-content xyz987", "feat/my-feature"
@@ -85,8 +85,8 @@ class TestRecallBranchFilter:
 
     def test_recall_returns_default_branch_memory(self, monkeypatch):
         """Memory tagged with default branch is returned from any branch."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/other")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/other")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         storage = server._get_storage()
         _insert_memory_with_branch(storage, "unique-default-branch-content abc123", "master")
 
@@ -96,8 +96,8 @@ class TestRecallBranchFilter:
 
     def test_recall_returns_none_branch_memory(self, monkeypatch):
         """Memory with branch=NONE (legacy) is always returned."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/other")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/other")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         storage = server._get_storage()
         _insert_memory_with_branch(storage, "unique-no-branch-content leg456", None)
 
@@ -107,8 +107,8 @@ class TestRecallBranchFilter:
 
     def test_recall_excludes_other_branch_memory(self, monkeypatch):
         """Memory on a different feature branch is excluded."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/current")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/current")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         storage = server._get_storage()
         mid = _insert_memory_with_branch(
             storage, "unique-other-branch-content zzz999", "feat/completely-different"
@@ -122,8 +122,8 @@ class TestRecallBranchFilter:
 
     def test_recall_current_branch_gets_boost(self, monkeypatch):
         """Current-branch memory scores 1.5x relative to default-branch memory."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/boosted")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/boosted")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         storage = server._get_storage()
 
         # Insert two very similar memories, one on current, one on default
@@ -153,8 +153,8 @@ class TestRecallBranchFilter:
 
     def test_recall_non_git_no_current_filter(self, monkeypatch):
         """Non-git directory: current=None, filter degenerates to IN (default, NONE)."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         storage = server._get_storage()
 
         mid_master = _insert_memory_with_branch(
@@ -186,8 +186,8 @@ class TestWikiQueryBranchFilter:
 
     def test_wiki_query_returns_current_branch_page(self, monkeypatch):
         """Wiki page on current branch is returned."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/wiki-filter")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/wiki-filter")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         wiki = server._wiki
         assert wiki is not None
         _insert_wiki_with_branch(
@@ -202,8 +202,8 @@ class TestWikiQueryBranchFilter:
 
     def test_wiki_query_excludes_other_branch_page(self, monkeypatch):
         """Wiki page on unrelated branch is excluded."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/current-wiki")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/current-wiki")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         wiki = server._wiki
         slug = _insert_wiki_with_branch(
             wiki,
@@ -222,8 +222,8 @@ class TestWikiQueryBranchFilter:
 
     def test_wiki_query_current_branch_boost(self, monkeypatch):
         """Current-branch wiki page ranks above default-branch page for same query."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/wiki-boost")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/wiki-boost")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         wiki = server._wiki
         _insert_wiki_with_branch(
             wiki,
@@ -254,8 +254,8 @@ class TestWikiQueryBranchFilter:
 
     def test_wiki_query_non_git_no_current_filter(self, monkeypatch):
         """Non-git: no current filter, master + NONE pages returned, feature excluded."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         wiki = server._wiki
         slug_master = _insert_wiki_with_branch(
             wiki, "Wiki Non Git Master Eee", "wiki non-git content eee111 master", "master"

@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 def _run_hook(stdin_data: dict) -> dict:
     """Run hook_db_lockdown_check with given stdin JSON, return parsed stdout dict."""
-    from yadgar.scripts.hook_runner import hook_db_lockdown_check
+    from yadgar.core.scripts.hook_runner import hook_db_lockdown_check
 
     stdin_payload = json.dumps(stdin_data)
     output = io.StringIO()
@@ -32,7 +32,7 @@ def _run_hook(stdin_data: dict) -> dict:
 
 def _run_hook_bad_stdin() -> dict:
     """Run hook_db_lockdown_check with malformed stdin, return parsed stdout."""
-    from yadgar.scripts.hook_runner import hook_db_lockdown_check
+    from yadgar.core.scripts.hook_runner import hook_db_lockdown_check
 
     output = io.StringIO()
     with patch.object(sys, "stdin", io.StringIO("not json {")):

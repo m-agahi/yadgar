@@ -31,7 +31,7 @@ def _patch_state():
     mock_wiki = MagicMock()
 
     with (
-        patch("yadgar.server.http._st") as mock_st,
+        patch("yadgar.core.server.http._st") as mock_st,
     ):
         mock_st._retriever = mock_retriever
         mock_st._wiki = mock_wiki
@@ -49,7 +49,7 @@ class TestVizSearchEndpoint:
         from starlette.applications import Starlette
         from starlette.routing import Route
 
-        from yadgar.server.http import api_viz_search
+        from yadgar.core.server.http import api_viz_search
 
         app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
         client = TestClient(app)
@@ -62,7 +62,7 @@ class TestVizSearchEndpoint:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from yadgar.server.http import api_viz_search
+        from yadgar.core.server.http import api_viz_search
 
         app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
         client = TestClient(app)
@@ -81,7 +81,7 @@ class TestVizSearchEndpoint:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from yadgar.server.http import api_viz_search
+        from yadgar.core.server.http import api_viz_search
 
         app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
         client = TestClient(app)
@@ -100,7 +100,7 @@ class TestVizSearchEndpoint:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from yadgar.server.http import api_viz_search
+        from yadgar.core.server.http import api_viz_search
 
         app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
         client = TestClient(app)
@@ -119,7 +119,7 @@ class TestVizSearchEndpoint:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from yadgar.server.http import api_viz_search
+        from yadgar.core.server.http import api_viz_search
 
         app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
         client = TestClient(app)
@@ -136,7 +136,7 @@ class TestVizSearchEndpoint:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from yadgar.server.http import api_viz_search
+        from yadgar.core.server.http import api_viz_search
 
         app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
         client = TestClient(app)
@@ -147,7 +147,7 @@ class TestVizSearchEndpoint:
         assert "wiki:3" in data["node_ids"]
 
     def test_no_retriever_no_wiki_returns_empty(self) -> None:
-        with patch("yadgar.server.http._st") as mock_st:
+        with patch("yadgar.core.server.http._st") as mock_st:
             mock_st._retriever = None
             mock_st._wiki = None
             mock_st._storage = None
@@ -156,7 +156,7 @@ class TestVizSearchEndpoint:
             from starlette.routing import Route
             from starlette.testclient import TestClient
 
-            from yadgar.server.http import api_viz_search
+            from yadgar.core.server.http import api_viz_search
 
             app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
             client = TestClient(app)
@@ -190,7 +190,7 @@ class TestVizSearchEndpoint:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from yadgar.server.http import api_viz_search
+        from yadgar.core.server.http import api_viz_search
 
         app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
         client = TestClient(app)
@@ -213,7 +213,7 @@ class TestVizSearchEndpoint:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from yadgar.server.http import api_viz_search
+        from yadgar.core.server.http import api_viz_search
 
         app = Starlette(routes=[Route("/api/viz/search", api_viz_search, methods=["GET"])])
         client = TestClient(app)

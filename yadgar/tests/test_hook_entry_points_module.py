@@ -24,7 +24,7 @@ from unittest.mock import MagicMock, patch
 # Module paths
 # ---------------------------------------------------------------------------
 
-_HOOKS_DIR = Path(__file__).parent.parent / "hooks"
+_HOOKS_DIR = Path(__file__).parent.parent / "core" / "hooks"
 _FILE_CHANGED_PATH = _HOOKS_DIR / "file-changed.py"
 _SUBAGENT_START_PATH = _HOOKS_DIR / "subagent-start.py"
 _INSTRUCTIONS_LOADED_PATH = _HOOKS_DIR / "instructions-loaded.py"
@@ -66,7 +66,7 @@ def _load_with_import_error(path: Path, module_name: str, block_module: str):
 
 class TestFileChangedDelegation:
     def test_main_called_via_package(self):
-        with patch("yadgar.hooks.file_changed.main") as mock_main:
+        with patch("yadgar.core.hooks.file_changed.main") as mock_main:
             mod = _load_normal(_FILE_CHANGED_PATH, "file_changed_entry")
             payload = json.dumps(
                 {
@@ -80,7 +80,7 @@ class TestFileChangedDelegation:
         mock_main.assert_called_once()
 
     def test_if_name_main_calls_main(self):
-        with patch("yadgar.hooks.file_changed.main") as mock_main:
+        with patch("yadgar.core.hooks.file_changed.main") as mock_main:
             mod = _load_normal(_FILE_CHANGED_PATH, "file_changed_entry")
             mod.main()
         mock_main.assert_called_once()
@@ -94,7 +94,7 @@ class TestFileChangedDelegation:
 class TestFileChangedFallback:
     def _load(self):
         return _load_with_import_error(
-            _FILE_CHANGED_PATH, "fc_fallback", "yadgar.hooks.file_changed"
+            _FILE_CHANGED_PATH, "fc_fallback", "yadgar.core.hooks.file_changed"
         )
 
     def test_team_inbox_file_posts(self):
@@ -211,7 +211,7 @@ class TestFileChangedFallback:
 
 class TestSubagentStartDelegation:
     def test_main_called_via_package(self):
-        with patch("yadgar.hooks.subagent_start.main") as mock_main:
+        with patch("yadgar.core.hooks.subagent_start.main") as mock_main:
             mod = _load_normal(_SUBAGENT_START_PATH, "subagent_start_entry")
             mod.main()
         mock_main.assert_called_once()
@@ -225,7 +225,7 @@ class TestSubagentStartDelegation:
 class TestSubagentStartFallback:
     def _load(self):
         return _load_with_import_error(
-            _SUBAGENT_START_PATH, "ss_fallback", "yadgar.hooks.subagent_start"
+            _SUBAGENT_START_PATH, "ss_fallback", "yadgar.core.hooks.subagent_start"
         )
 
     def test_posts_to_subagent_start_endpoint(self):
@@ -296,7 +296,7 @@ class TestSubagentStartFallback:
 
 class TestInstructionsLoadedDelegation:
     def test_main_called_via_package(self):
-        with patch("yadgar.hooks.instructions_loaded.main") as mock_main:
+        with patch("yadgar.core.hooks.instructions_loaded.main") as mock_main:
             mod = _load_normal(_INSTRUCTIONS_LOADED_PATH, "instructions_loaded_entry")
             mod.main()
         mock_main.assert_called_once()
@@ -310,7 +310,7 @@ class TestInstructionsLoadedDelegation:
 class TestInstructionsLoadedFallback:
     def _load(self):
         return _load_with_import_error(
-            _INSTRUCTIONS_LOADED_PATH, "il_fallback", "yadgar.hooks.instructions_loaded"
+            _INSTRUCTIONS_LOADED_PATH, "il_fallback", "yadgar.core.hooks.instructions_loaded"
         )
 
     def test_session_start_reason_posts(self):

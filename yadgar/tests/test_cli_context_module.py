@@ -10,7 +10,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from yadgar.cli.context import cmd_context, register
+from yadgar.core.cli.context import cmd_context, register
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,8 +79,8 @@ class TestCmdContext:
         hot = [{"content": "important note about project", "heat": 9.5}]
         mock_storage = _make_storage_mock(hot_rows=hot, anchored_rows=[])
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
         out = capsys.readouterr().out
@@ -90,8 +90,8 @@ class TestCmdContext:
         anchored = [{"content": "critical fact about system"}]
         mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=anchored)
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
         out = capsys.readouterr().out
@@ -100,8 +100,8 @@ class TestCmdContext:
     def test_empty_results_no_output(self, capsys):
         mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=[])
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
         out = capsys.readouterr().out
@@ -110,8 +110,8 @@ class TestCmdContext:
     def test_exception_returns_silently(self, capsys):
         mock_storage = _make_storage_mock(raise_on_q=True)
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
         # No output, no exception
@@ -121,8 +121,8 @@ class TestCmdContext:
     def test_storage_closed_after_query(self, capsys):
         mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=[])
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
         mock_storage.close.assert_called_once()
@@ -130,8 +130,8 @@ class TestCmdContext:
     def test_storage_closed_even_on_exception(self, capsys):
         mock_storage = _make_storage_mock(raise_on_q=True)
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
         mock_storage.close.assert_called_once()
@@ -141,8 +141,8 @@ class TestCmdContext:
         hot = [{"content": long_content, "heat": 5.0}]
         mock_storage = _make_storage_mock(hot_rows=hot, anchored_rows=[])
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
         out = capsys.readouterr().out
@@ -153,8 +153,8 @@ class TestCmdContext:
         hot = [{"content": "note", "heat": 1.0}]
         mock_storage = _make_storage_mock(hot_rows=hot, anchored_rows=[])
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args(directory="/my/project"))
         out = capsys.readouterr().out
@@ -164,8 +164,8 @@ class TestCmdContext:
         anchored = [{"content": "fact"}]
         mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=anchored)
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
         out = capsys.readouterr().out

@@ -86,8 +86,8 @@ def test_project_scripts_has_yadgar_setup():
     """[project.scripts] must have yadgar-setup entry."""
     content = _read_pyproject()
     assert "yadgar-setup" in content, "yadgar-setup missing from [project.scripts]"
-    assert "yadgar.scripts.yadgar_setup:main" in content, (
-        "yadgar-setup must point to yadgar.scripts.yadgar_setup:main"
+    assert "yadgar.core.scripts.yadgar_setup:main" in content, (
+        "yadgar-setup must point to yadgar.core.scripts.yadgar_setup:main"
     )
 
 

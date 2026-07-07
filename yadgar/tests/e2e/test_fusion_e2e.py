@@ -46,8 +46,8 @@ def _insert_wiki(title: str, content: str, source_memory_ids: list | None = None
 
     Returns the slug (as computed by WikiStore._slugify).
     """
-    from yadgar.server import _state as _st
-    from yadgar.wiki import WikiAddOptions
+    from yadgar._shared.runtime import state as _st
+    from yadgar._shared.wiki import WikiAddOptions
 
     assert _st._wiki is not None, "WikiStore must be initialized in e2e_engines"
     opts = WikiAddOptions(
@@ -71,12 +71,12 @@ def _run_fanout_recall(
     """Run fan-out recall (UNIFIED_RECALL_ENABLED=True) via the MCP tool."""
     import sys
 
-    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-    _rm = sys.modules.get("yadgar.server.tools.recall")
+    _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
-        import yadgar.server.tools.recall as _rm
+        import yadgar.core.server.tools.recall as _rm
 
     recall_fn = _rm.recall
     return recall_fn(query=query, directory=directory, max_results=max_results)
@@ -103,7 +103,7 @@ class TestFusionE2E:
             content=f"fusion wiki knowledge page {unique}",
         )
 
-        from yadgar import server
+        from yadgar.core import server
 
         # Query has tokens present in both entries
         results = _run_fanout_recall(server, monkeypatch, f"fusion {unique}")
@@ -147,7 +147,7 @@ class TestFusionE2E:
             content=wiki_content,
         )
 
-        from yadgar import server
+        from yadgar.core import server
 
         query = f"unified recall fusion CE rerank {unique}"
         results = _run_fanout_recall(server, monkeypatch, query)
@@ -186,7 +186,7 @@ class TestFusionE2E:
             source_memory_ids=[mem_id],
         )
 
-        from yadgar import server
+        from yadgar.core import server
 
         results = _run_fanout_recall(server, monkeypatch, f"provenance dedup {unique}")
 
@@ -237,7 +237,7 @@ class TestFusionE2E:
             )
             wiki_slugs.append(slug)
 
-        from yadgar import server
+        from yadgar.core import server
 
         results = _run_fanout_recall(
             server, monkeypatch, f"quota starvation test {unique}", max_results=20
@@ -272,7 +272,7 @@ class TestFusionE2E:
         # Force CE to be unavailable by patching the retriever's reranker
         from unittest.mock import patch
 
-        from yadgar.server import _state as _st
+        from yadgar._shared.runtime import state as _st
 
         # Patch the CE scoring method to raise an exception
         if _st._retriever is not None and hasattr(_st._retriever, "_reranker"):
@@ -289,14 +289,14 @@ class TestFusionE2E:
                     },
                 ),
             ):
-                from yadgar import server
+                from yadgar.core import server
 
                 # Should NOT raise — fallback to native_score
                 results = _run_fanout_recall(server, monkeypatch, f"ce fallback test {unique}")
                 assert isinstance(results, list), "Fallback must return a list, not crash"
         else:
             # Retriever not available — just verify basic recall works
-            from yadgar import server
+            from yadgar.core import server
 
             results = _run_fanout_recall(server, monkeypatch, f"ce fallback test {unique}")
             assert isinstance(results, list), "Fallback must return a list"

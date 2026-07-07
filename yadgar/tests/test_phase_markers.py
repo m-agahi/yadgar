@@ -52,7 +52,7 @@ def phase_capture():
 
 def test_consolidation_emits_phase_start_markers(tmp_path, phase_capture):
     """_consolidation_cycle must emit at least one phase_start log line."""
-    from yadgar import server
+    from yadgar.core import server
 
     server.init_engines(
         db_path=str(tmp_path / "phase_test.db"),
@@ -73,7 +73,7 @@ def test_consolidation_emits_phase_start_markers(tmp_path, phase_capture):
 
 def test_consolidation_emits_phase_end_markers(tmp_path, phase_capture):
     """_consolidation_cycle must emit at least one phase_end log line."""
-    from yadgar import server
+    from yadgar.core import server
 
     server.init_engines(
         db_path=str(tmp_path / "phase_test2.db"),
@@ -94,7 +94,7 @@ def test_consolidation_emits_phase_end_markers(tmp_path, phase_capture):
 
 def test_consolidation_phase_end_has_duration_ms(tmp_path, phase_capture):
     """Every phase_end log line must include a duration_ms value."""
-    from yadgar import server
+    from yadgar.core import server
 
     server.init_engines(
         db_path=str(tmp_path / "phase_test3.db"),
@@ -115,7 +115,7 @@ def test_consolidation_phase_end_has_duration_ms(tmp_path, phase_capture):
 
 def test_consolidation_phase_start_end_paired(tmp_path, phase_capture):
     """Each phase must have matching phase_start and phase_end lines."""
-    from yadgar import server
+    from yadgar.core import server
 
     server.init_engines(
         db_path=str(tmp_path / "phase_test4.db"),
@@ -136,7 +136,7 @@ def test_consolidation_phase_start_end_paired(tmp_path, phase_capture):
 
 def test_consolidation_apply_decay_phase_present(tmp_path, phase_capture):
     """apply_decay phase must appear in log output."""
-    from yadgar import server
+    from yadgar.core import server
 
     server.init_engines(
         db_path=str(tmp_path / "phase_test5.db"),

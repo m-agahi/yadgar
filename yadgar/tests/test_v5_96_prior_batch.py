@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -36,7 +36,7 @@ def _engines(tmp_path_factory):
 
 @pytest.fixture()
 def storage(_engines):
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 
@@ -137,7 +137,7 @@ class TestCofirePriorParity:
 
 class TestSingleQuery:
     def test_graph_priors_issues_one_query_for_n_ids(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock(return_value=[{"id": 1, "graph_prior": 0.5}])
@@ -149,7 +149,7 @@ class TestSingleQuery:
         )
 
     def test_cofire_priors_issues_one_query_for_n_ids(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock(return_value=[{"id": 2, "cofire_prior": 0.9}])
@@ -162,7 +162,7 @@ class TestSingleQuery:
 
     def test_id_is_int_sanitised_in_query(self):
         """The inlined IN-list must use int(id) — closes injection, matches get_memory."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         captured: dict = {}

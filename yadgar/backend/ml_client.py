@@ -14,10 +14,9 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
 
-from yadgar.config import resolve_knob
-from yadgar.observability.observe import observe
+from yadgar._shared.config import resolve_knob
+from yadgar._shared.observability.observe import observe
 
 
 def _rpc_span(name: str, attributes: dict | None = None):
@@ -197,7 +196,7 @@ class _CircuitBreaker:
         """Update the circuit breaker state gauge. Non-fatal."""
         try:
             if self._metrics is None:
-                import yadgar.metrics as _m  # noqa: PLC0415
+                import yadgar._shared.metrics as _m  # noqa: PLC0415
 
                 self._metrics = _m
             self._metrics.yadgar_circuit_breaker_state.labels(endpoint=self._endpoint).set(value)
@@ -208,7 +207,7 @@ class _CircuitBreaker:
         """Update backend reachability gauge (1=reachable, 0=unreachable). Non-fatal."""
         try:
             if self._metrics is None:
-                import yadgar.metrics as _m  # noqa: PLC0415
+                import yadgar._shared.metrics as _m  # noqa: PLC0415
 
                 self._metrics = _m
             self._metrics.yadgar_backend_reachable.labels(endpoint=self._endpoint).set(value)
@@ -318,29 +317,14 @@ class _CircuitBreaker:
 # ---------------------------------------------------------------------------
 
 
-@runtime_checkable
-class MLClient(Protocol):
-    """Protocol for ML scoring clients."""
+# Car 2 (folder-split #17): the ML scoring Protocol moved to yadgar/_shared/protocols.py
+# (the single home for cross-boundary seams). Re-exported here under the historical
+# name ``MLClient`` for back-compat; ``LocalMLClient``/``RemoteMLClient`` below
+# structurally satisfy it. The ``as MLClient`` redundant alias + ``__all__`` entry
+# mark this as an intentional re-export (ruff F401 pass).
+from yadgar._shared.protocols import MLClientProtocol as MLClient  # noqa: E402
 
-    def score_cross_encoder(self, query: str, texts: list[str]) -> list[float] | None:
-        """Score query-text pairs using a cross-encoder. Returns raw scores or None on circuit-open."""
-        ...
-
-    def score_nli(self, query: str, texts: list[str]) -> list[float] | None:
-        """Score query-text pairs using NLI entailment. Returns raw scores or None on circuit-open."""
-        ...
-
-    def score_pair(self, query: str, text: str) -> float | None:
-        """Score a single query-text pair. Returns raw score or None on circuit-open."""
-        ...
-
-    def unload_if_idle(self, idle_seconds: float | None = None) -> None:
-        """Unload models if unused for idle_seconds.
-
-        idle_seconds: override threshold. None = use YADGAR_MODEL_IDLE_EVICTION_SECONDS
-                      env (0 by default, meaning never evict). Explicit value bypasses env.
-        """
-        ...
+__all__ = ["LocalMLClient", "MLClient", "RemoteMLClient"]
 
 
 class LocalMLClient:
@@ -441,7 +425,7 @@ class LocalMLClient:
             # Do NOT silently fall back — propagate the loud, distinct error.
             raise
         except Exception as e:
-            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
 
             record_exception("ml_client.reranker_fallback", e)
             logger.warning("LocalMLClient: GTE-Reranker failed, falling back: %s", e)
@@ -516,7 +500,7 @@ class LocalMLClient:
                 # Histogram + OTel span for cold load (v5.6.7 PR-G)
                 _record_model_load("ce", _load_dur)
             except Exception as e:
-                from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+                from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
 
                 record_exception("ml_client.score_pair", e)
                 return [0.0] * len(texts)
@@ -526,7 +510,7 @@ class LocalMLClient:
             scores = self._cross_encoder.predict(pairs, show_progress_bar=False)
             return [float(s) for s in scores]
         except Exception as e:
-            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
 
             record_exception("ml_client.score_pair", e)
             return [0.0] * len(texts)
@@ -599,7 +583,7 @@ class LocalMLClient:
             return result
 
         except Exception as e:
-            from yadgar.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
 
             record_exception("ml_client.score_nli", e)
             logger.warning("LocalMLClient: NLI scoring failed: %s", e)
@@ -686,7 +670,7 @@ class RemoteMLClient:
     def __init__(self, base_url: str) -> None:
         import httpx
 
-        from yadgar.config import get_settings as _get_settings
+        from yadgar._shared.config import get_settings as _get_settings
 
         settings = _get_settings()
 
@@ -763,7 +747,7 @@ class RemoteMLClient:
         # the breaker-open None path — never block the worker (it would leak its slot).
         _gated = False
         if not _is_probe:
-            from yadgar.server._offload import acquire_rerank_slot  # noqa: PLC0415
+            from yadgar._shared.runtime.offload import acquire_rerank_slot  # noqa: PLC0415
 
             if not acquire_rerank_slot():
                 logger.warning(
@@ -803,7 +787,7 @@ class RemoteMLClient:
             return None
         finally:
             if _gated:
-                from yadgar.server._offload import release_rerank_slot  # noqa: PLC0415
+                from yadgar._shared.runtime.offload import release_rerank_slot  # noqa: PLC0415
 
                 release_rerank_slot()
 

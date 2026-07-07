@@ -18,8 +18,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.file_queue import FileQueue, QueueDrainer
+from yadgar.core import server
+from yadgar.core.file_queue import FileQueue, QueueDrainer
 
 # ── Content for sim gate tests ────────────────────────────────────────────────
 
@@ -62,8 +62,8 @@ def _drainer_env(tmp_path):
     )
     real_fq = FileQueue(tmp_path)
 
-    import yadgar.server._state as _state_mod
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
+    import yadgar._shared.runtime.state as _state_mod
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -76,7 +76,7 @@ def _drainer_env(tmp_path):
 
     with (
         patch.object(_lc, "_get_file_queue", _get_fq),
-        patch("yadgar.server.tools.wiki._get_file_queue", _get_fq),
+        patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
     ):
@@ -87,7 +87,7 @@ def _drainer_env(tmp_path):
 
 def _write_sync(title: str, content: str, **kwargs) -> dict:
     """Write via is_draining=True (sync path, bypasses queue and gate)."""
-    import yadgar.file_queue._locals as _loc
+    import yadgar.core.file_queue._locals as _loc
 
     _loc._drain_local.active = True
     try:
@@ -106,14 +106,14 @@ class TestTaxonomyFieldsInSidecar:
         """_move_to_dlq() without kwargs writes failure_reason='permanent_error'."""
         fq = FileQueue(tmp_path)
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         drainer = QueueDrainer(
             queue=fq,
             storage_factory=lambda: _st._storage,
             drain_interval=9999,
         )
-        from yadgar.file_queue import _Attempt
+        from yadgar.core.file_queue import _Attempt
 
         path = fq.queue_dir / "0001_test.json"
         path.write_text(json.dumps({"op": "memorize", "payload": {"content": "x"}}))
@@ -130,14 +130,14 @@ class TestTaxonomyFieldsInSidecar:
         """_move_to_dlq() with failure_reason='duplicate_detected' writes correct sidecar."""
         fq = FileQueue(tmp_path)
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         drainer = QueueDrainer(
             queue=fq,
             storage_factory=lambda: _st._storage,
             drain_interval=9999,
         )
-        from yadgar.file_queue import _Attempt
+        from yadgar.core.file_queue import _Attempt
 
         path = fq.queue_dir / "0002_dup.json"
         path.write_text(
@@ -181,8 +181,8 @@ class TestTaxonomyFieldsInSidecar:
 
         # dlq_inspect should still list it, treating absent failure_reason as permanent_error
         with (
-            patch("yadgar.server.lifecycle._get_file_queue", return_value=fq),
-            patch("yadgar.server.tools.admin_dlq._get_file_queue", return_value=fq),
+            patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
+            patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
         ):
             entries = server.dlq_inspect()
         assert any(e["file"] == fname for e in entries)
@@ -258,7 +258,7 @@ class TestDrainerReroutesRejectionToDLQ:
         metric_fired = []
 
         try:
-            from yadgar.metrics import yadgar_wiki_add_rejected_total as _m
+            from yadgar._shared.metrics import yadgar_wiki_add_rejected_total as _m
 
             labels_obj = _m.labels(reason="duplicate_detected")
 

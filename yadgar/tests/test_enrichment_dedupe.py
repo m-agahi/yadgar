@@ -18,7 +18,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _fresh_enrichment():
     """Re-import enrichment so module-level state is reset between tests."""
-    import yadgar.enrichment as m
+    import yadgar._shared.enrichment as m
 
     yield m
     # Reset any cached unavailable flags
@@ -26,7 +26,7 @@ def _fresh_enrichment():
 
 
 def test_helper_is_importable():
-    from yadgar.enrichment import _load_seq2seq_model  # noqa: F401
+    from yadgar._shared.enrichment import _load_seq2seq_model  # noqa: F401
 
 
 def test_comet_delegates_to_helper(_fresh_enrichment):
@@ -62,7 +62,7 @@ def test_identical_failure_mode(_fresh_enrichment):
 
 def test_helper_returns_none_on_import_error(_fresh_enrichment):
     """_load_seq2seq_model returns None when model loading fails."""
-    from yadgar.enrichment import _load_seq2seq_model
+    from yadgar._shared.enrichment import _load_seq2seq_model
 
     result = _load_seq2seq_model("nonexistent-model-xyz-9999")
     assert result is None

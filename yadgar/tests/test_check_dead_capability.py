@@ -95,7 +95,7 @@ def _make_fixture(
 
     Returns tmp_path (the fake repo root).
     """
-    yadgar_dir = tmp_path / "yadgar"
+    yadgar_dir = tmp_path / "yadgar" / "core"
     yadgar_dir.mkdir(parents=True, exist_ok=True)
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -258,7 +258,7 @@ def test_list_all_exits_zero_on_violations(tmp_path):
 
 def test_multi_type_contract_row(tmp_path):
     """A contract row listing multiple backtick types covers all of them."""
-    yadgar_dir = tmp_path / "yadgar"
+    yadgar_dir = tmp_path / "yadgar" / "core"
     yadgar_dir.mkdir(parents=True, exist_ok=True)
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)

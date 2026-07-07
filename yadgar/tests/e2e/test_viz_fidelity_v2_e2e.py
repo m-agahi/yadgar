@@ -119,7 +119,7 @@ class TestBCVZR1_EdgeRoleVocabulary:
         Seeds temporal (slot-sharing) + transition edges so both role classes
         appear.  Asserts no edge has role="display" or any other invalid value.
         """
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -141,7 +141,7 @@ class TestBCVZR1_EdgeRoleVocabulary:
 
     def test_transition_edges_have_retrieval_role(self, e2e_engines):
         """BC-VZ-R1: transition edges must have role='retrieval'."""
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -162,7 +162,7 @@ class TestBCVZR1_EdgeRoleVocabulary:
 
         RED on current code — temporal role is 'display' in viz_meta.EDGE_TYPES.
         """
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -195,7 +195,7 @@ class TestBCVZR2_NoSemanticInDefaultPayload:
 
     def test_no_semantic_edges_in_default_payload(self, e2e_engines):
         """BC-VZ-R2: default /api/graph must never include 'semantic' typed edges."""
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -230,7 +230,7 @@ class TestBCVZR3_ClusterPayload:
 
         RED on current code — key is absent entirely.
         """
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
         result = GraphAPI(storage).get_full_graph()
@@ -248,7 +248,7 @@ class TestBCVZR3_ClusterPayload:
         Seeds a cluster, assigns two memories to it, asserts both appear
         in member_node_ids of the corresponding clusters[] entry.
         """
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -290,7 +290,7 @@ class TestBCVZR3_ClusterPayload:
 
     def test_cluster_entry_has_required_fields(self, e2e_engines):
         """BC-VZ-R3: each clusters[] entry must have id, source, label, level, member_node_ids."""
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -332,7 +332,7 @@ class TestBCVZR4_SimilarityLinkEdges:
 
     def test_seeded_similarity_link_appears_as_edge(self, e2e_engines):
         """BC-VZ-R4: seeded memory_similarity_link must appear in edges[] with type=memory_similarity_link."""
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -361,7 +361,7 @@ class TestBCVZR4_SimilarityLinkEdges:
 
     def test_similarity_link_edge_has_informational_role(self, e2e_engines):
         """BC-VZ-R4: memory_similarity_link edges must have role='informational'."""
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 

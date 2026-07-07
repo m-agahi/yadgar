@@ -59,9 +59,9 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _REGISTRY = _REPO_ROOT / "docs" / "CAPABILITY_REGISTRY.md"
 _CONTRACT = _REPO_ROOT / "docs" / "BEHAVIOR_CONTRACT.md"
-_CONFIG = _REPO_ROOT / "yadgar" / "config.py"
-_MIGRATIONS = _REPO_ROOT / "yadgar" / "storage" / "migrations.py"
-_TOOLS_DIR = _REPO_ROOT / "yadgar" / "server" / "tools"
+_CONFIG = _REPO_ROOT / "yadgar" / "_shared" / "config.py"
+_MIGRATIONS = _REPO_ROOT / "yadgar" / "_shared" / "storage" / "migrations.py"
+_TOOLS_DIR = _REPO_ROOT / "yadgar" / "core" / "server" / "tools"
 
 # Valid status enum for a capability entry.
 _VALID_STATUS: frozenset[str] = frozenset(
@@ -324,10 +324,10 @@ def check(repo_root: Path | None = None) -> list[str]:
         cov["bc"] |= e["bc"]
 
     # the four authoritative surfaces
-    settings = enumerate_settings(repo_root / "yadgar" / "config.py")
-    tools = enumerate_tools(repo_root / "yadgar" / "server" / "tools")
+    settings = enumerate_settings(repo_root / "yadgar" / "_shared" / "config.py")
+    tools = enumerate_tools(repo_root / "yadgar" / "core" / "server" / "tools")
     migrations = _normalise_migrations(
-        enumerate_migrations(repo_root / "yadgar" / "storage" / "migrations.py")
+        enumerate_migrations(repo_root / "yadgar" / "_shared" / "storage" / "migrations.py")
     )
     bcs = enumerate_bc(repo_root / "docs" / "BEHAVIOR_CONTRACT.md")
 
@@ -344,11 +344,11 @@ def check(repo_root: Path | None = None) -> list[str]:
 # ---------------------------------------------------------------------------
 def _collect_sets(repo_root: Path) -> dict:
     return {
-        "settings": sorted(enumerate_settings(repo_root / "yadgar" / "config.py")),
-        "tools": sorted(enumerate_tools(repo_root / "yadgar" / "server" / "tools")),
+        "settings": sorted(enumerate_settings(repo_root / "yadgar" / "_shared" / "config.py")),
+        "tools": sorted(enumerate_tools(repo_root / "yadgar" / "core" / "server" / "tools")),
         "migrations": sorted(
             _normalise_migrations(
-                enumerate_migrations(repo_root / "yadgar" / "storage" / "migrations.py")
+                enumerate_migrations(repo_root / "yadgar" / "_shared" / "storage" / "migrations.py")
             )
         ),
         "bc": sorted(enumerate_bc(repo_root / "docs" / "BEHAVIOR_CONTRACT.md")),

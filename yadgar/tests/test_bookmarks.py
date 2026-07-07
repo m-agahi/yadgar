@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
-from yadgar.storage import StorageEngine
+from yadgar._shared.storage import StorageEngine
+from yadgar.core import server
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +173,7 @@ class TestBookmarkLabelOverride:
 class TestBookmarkMCPAdd:
     def test_bookmark_mcp_add_creates_row(self) -> None:
         """bookmark_add MCP tool returns {added: true, slug: ...}."""
-        from yadgar.server.tools.bookmarks import bookmark_add
+        from yadgar.core.server.tools.bookmarks import bookmark_add
 
         result = bookmark_add("mcp-slug")
         assert result.get("added") is True
@@ -181,7 +181,7 @@ class TestBookmarkMCPAdd:
 
     def test_bookmark_mcp_add_idempotent(self) -> None:
         """bookmark_add called twice returns {added: true} both times without error."""
-        from yadgar.server.tools.bookmarks import bookmark_add
+        from yadgar.core.server.tools.bookmarks import bookmark_add
 
         r1 = bookmark_add("idem-slug")
         r2 = bookmark_add("idem-slug", label_override="New")
@@ -190,7 +190,7 @@ class TestBookmarkMCPAdd:
 
     def test_bookmark_mcp_add_empty_slug_rejected(self) -> None:
         """bookmark_add with empty slug returns {added: false, reason: ...}."""
-        from yadgar.server.tools.bookmarks import bookmark_add
+        from yadgar.core.server.tools.bookmarks import bookmark_add
 
         result = bookmark_add("")
         assert result.get("added") is False
@@ -200,7 +200,7 @@ class TestBookmarkMCPAdd:
 class TestBookmarkMCPRemove:
     def test_bookmark_mcp_remove_existing(self) -> None:
         """bookmark_remove returns {removed: true} for existing bookmark."""
-        from yadgar.server.tools.bookmarks import bookmark_add, bookmark_remove
+        from yadgar.core.server.tools.bookmarks import bookmark_add, bookmark_remove
 
         bookmark_add("rm-slug")
         result = bookmark_remove("rm-slug")
@@ -208,7 +208,7 @@ class TestBookmarkMCPRemove:
 
     def test_bookmark_mcp_remove_idempotent(self) -> None:
         """bookmark_remove on nonexistent slug returns {removed: false}."""
-        from yadgar.server.tools.bookmarks import bookmark_remove
+        from yadgar.core.server.tools.bookmarks import bookmark_remove
 
         result = bookmark_remove("ghost")
         assert result.get("removed") is False
@@ -217,7 +217,7 @@ class TestBookmarkMCPRemove:
 class TestBookmarkMCPList:
     def test_bookmark_mcp_list_ordered(self) -> None:
         """bookmark_list returns list ordered by position ascending."""
-        from yadgar.server.tools.bookmarks import bookmark_add, bookmark_list
+        from yadgar.core.server.tools.bookmarks import bookmark_add, bookmark_list
 
         bookmark_add("list-a")
         bookmark_add("list-b")
@@ -229,7 +229,7 @@ class TestBookmarkMCPList:
 
     def test_bookmark_mcp_list_empty(self) -> None:
         """bookmark_list returns [] when no bookmarks."""
-        from yadgar.server.tools.bookmarks import bookmark_list
+        from yadgar.core.server.tools.bookmarks import bookmark_list
 
         results = bookmark_list()
         assert results == []
@@ -238,7 +238,7 @@ class TestBookmarkMCPList:
 class TestBookmarkMCPReorder:
     def test_bookmark_mcp_reorder(self) -> None:
         """bookmark_reorder moves slug to new_position and returns {reordered: true}."""
-        from yadgar.server.tools.bookmarks import bookmark_add, bookmark_list, bookmark_reorder
+        from yadgar.core.server.tools.bookmarks import bookmark_add, bookmark_list, bookmark_reorder
 
         bookmark_add("reord-a")
         bookmark_add("reord-b")
@@ -251,7 +251,7 @@ class TestBookmarkMCPReorder:
 
     def test_bookmark_mcp_reorder_nonexistent(self) -> None:
         """bookmark_reorder on nonexistent slug returns {reordered: false}."""
-        from yadgar.server.tools.bookmarks import bookmark_reorder
+        from yadgar.core.server.tools.bookmarks import bookmark_reorder
 
         result = bookmark_reorder("ghost", 0)
         assert result.get("reordered") is False

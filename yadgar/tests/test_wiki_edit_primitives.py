@@ -35,8 +35,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.storage.migrations import _migration_013_wiki_page_version
+from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
+from yadgar.core import server
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "wiki_edit_test.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    with patch("yadgar.server._detect_branch", return_value="feat/test-branch"):
+    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
         _migration_013_wiki_page_version(_storage())
         yield
     server.shutdown()
@@ -418,7 +418,7 @@ class TestEditPrimitivesSecretGate:
     def test_replace_text_gate_called(self):
         """gate_or_reject called on new_text for wiki_replace_text."""
         _insert_page("gate-replace", content="old text here")
-        with patch("yadgar.server.tools.wiki.gate_or_reject") as mock_gate:
+        with patch("yadgar.core.server.tools.wiki.gate_or_reject") as mock_gate:
             mock_gate.return_value = None  # allow
             server.wiki_replace_text("gate-replace", "old text", "new text")
             mock_gate.assert_called()
@@ -426,7 +426,7 @@ class TestEditPrimitivesSecretGate:
     def test_insert_after_gate_called(self):
         """gate_or_reject called on new_text for wiki_insert_after."""
         _insert_page("gate-insert", content="anchor here")
-        with patch("yadgar.server.tools.wiki.gate_or_reject") as mock_gate:
+        with patch("yadgar.core.server.tools.wiki.gate_or_reject") as mock_gate:
             mock_gate.return_value = None
             server.wiki_insert_after("gate-insert", "anchor", " appended")
             mock_gate.assert_called()
@@ -434,7 +434,7 @@ class TestEditPrimitivesSecretGate:
     def test_delete_text_gate_not_called(self):
         """gate_or_reject NOT called for wiki_delete_text (nothing new written)."""
         _insert_page("gate-delete", content="delete this text")
-        with patch("yadgar.server.tools.wiki.gate_or_reject") as mock_gate:
+        with patch("yadgar.core.server.tools.wiki.gate_or_reject") as mock_gate:
             mock_gate.return_value = None
             server.wiki_delete_text("gate-delete", "delete this text")
             mock_gate.assert_not_called()

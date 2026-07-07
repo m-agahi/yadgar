@@ -46,18 +46,18 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from yadgar._surreal_runner import (
+from yadgar.core._surreal_runner import (
     allocate_port_with_retry,
     spawn_surreal,
     teardown_surreal_proc,
 )
-from yadgar.config import Settings
-from yadgar.curation import MemoryCurator
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import Retriever
-from yadgar.storage import StorageEngine
-from yadgar.thermodynamics import MemoryThermodynamics
+from yadgar._shared.config import Settings
+from yadgar._shared.curation import MemoryCurator
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval import Retriever
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.thermodynamics import MemoryThermodynamics
 
 # Directory the haystack is ingested under; recall must scope to the same value
 # when routed through the unified MCP path (directory-scoped fan-out).
@@ -588,9 +588,9 @@ def _unified_recall(
     """
     import sys as _sys
 
-    rm = _sys.modules.get("yadgar.server.tools.recall")
+    rm = _sys.modules.get("yadgar.core.server.tools.recall")
     if rm is None:
-        import yadgar.server.tools.recall as rm  # type: ignore[no-redef]
+        import yadgar.core.server.tools.recall as rm  # type: ignore[no-redef]
 
     rm.settings.UNIFIED_RECALL_ENABLED = True
     recall_fn = rm.recall
@@ -990,7 +990,7 @@ def run_benchmark(
     # DB via YADGAR_DB_URL (server mode). Done once before the loop. Without this,
     # the MCP recall path raises "StorageEngine not initialized".
     if unified:
-        from yadgar import server as _srv  # noqa: PLC0415
+        from yadgar.core import server as _srv  # noqa: PLC0415
 
         print("Unified mode: initializing server engines for MCP recall path ...")
         _srv.init_engines(db_path=os.environ.get("YADGAR_DB_PATH", settings.DB_PATH))

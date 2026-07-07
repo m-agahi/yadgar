@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from yadgar.metacognition.cognitive_load import _CognitiveLoadMixin
+from yadgar._shared.metacognition.cognitive_load import _CognitiveLoadMixin
 
 # ---------------------------------------------------------------------------
 # Minimal stub class
@@ -63,7 +63,9 @@ class TestManageContext:
 
     def test_within_limit_returns_all_with_metadata(self):
         mems = [_mem(f"mem {i}") for i in range(3)]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.manage_context(mems)
         assert len(result) == 3
         for i, r in enumerate(result):
@@ -72,21 +74,27 @@ class TestManageContext:
 
     def test_at_limit_returns_all(self):
         mems = [_mem(f"mem {i}") for i in range(4)]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.manage_context(mems)
         assert len(result) == 4
 
     def test_over_limit_truncates_and_adds_overflow(self):
         # 8 memories, limit=4 → should select top 4 + summarize overflow
         mems = [_mem(f"m{i}", importance=float(i) / 10) for i in range(8)]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.manage_context(mems)
         # Result must exist; some summaries or selected memories
         assert len(result) > 0
 
     def test_custom_max_chunks(self):
         mems = [_mem(f"m{i}") for i in range(6)]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.manage_context(mems, max_chunks=2)
         # With only 2 chunks selected, overflow summaries may appear but
         # total results ≥ 2
@@ -94,7 +102,9 @@ class TestManageContext:
 
     def test_overflow_summary_has_marker(self):
         mems = [_mem(f"overflow-{i}", importance=0.1) for i in range(10)]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.manage_context(mems, max_chunks=2)
         # Overflow summaries should be present when len >> limit
         overflow_items = [r for r in result if r.get("_position_reason") == "overflow_summary"]
@@ -111,13 +121,17 @@ class TestChunkMemories:
         self.engine = _StubEngine()
 
     def test_empty_returns_empty(self):
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.chunk_memories([])
         assert result == []
 
     def test_single_memory_becomes_single_chunk(self):
         mems = [_mem("only one")]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.chunk_memories(mems)
         assert len(result) == 1
         assert len(result[0]) == 1
@@ -126,7 +140,7 @@ class TestChunkMemories:
         # Both memories mention the same entity — Jaccard > 0.3
         mems = [_mem("foo bar baz"), _mem("foo bar qux")]
         with patch(
-            "yadgar.metacognition.cognitive_load._extract_entities",
+            "yadgar._shared.metacognition.cognitive_load._extract_entities",
             side_effect=[["foo", "bar", "baz"], ["foo", "bar", "qux"]],
         ):
             result = self.engine.chunk_memories(mems)
@@ -138,7 +152,7 @@ class TestChunkMemories:
     def test_memories_with_different_entities_stay_separate(self):
         mems = [_mem("apple"), _mem("zebra")]
         with patch(
-            "yadgar.metacognition.cognitive_load._extract_entities",
+            "yadgar._shared.metacognition.cognitive_load._extract_entities",
             side_effect=[["apple"], ["zebra"]],
         ):
             result = self.engine.chunk_memories(mems)
@@ -153,7 +167,9 @@ class TestChunkMemories:
             _mem("a", created=now),
             _mem("b", created=now + timedelta(minutes=30)),
         ]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.chunk_memories(mems)
         total = sum(len(c) for c in result)
         assert total == 2
@@ -167,14 +183,18 @@ class TestChunkMemories:
             _mem("a", created=now),
             _mem("b", created=now + timedelta(hours=3)),
         ]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.chunk_memories(mems)
         # Should be separate chunks
         assert len(result) == 2
 
     def test_invalid_timestamp_string_handled(self):
         mems = [_mem("a", created="not-a-date"), _mem("b", created="also-not")]
-        with patch("yadgar.metacognition.cognitive_load._extract_entities", return_value=[]):
+        with patch(
+            "yadgar._shared.metacognition.cognitive_load._extract_entities", return_value=[]
+        ):
             result = self.engine.chunk_memories(mems)
         assert len(result) >= 1  # no crash
 

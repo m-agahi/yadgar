@@ -108,7 +108,7 @@ def test_trace_span_satisfies(tmp_path):
         tmp_path,
         "mod.py",
         """
-        from yadgar.tracing import trace_span
+        from yadgar._shared.tracing import trace_span
 
         @trace_span("thing")
         def thing(items):
@@ -128,7 +128,7 @@ def test_observe_decorator_satisfies(tmp_path):
         tmp_path,
         "mod.py",
         """
-        from yadgar.observability.observe import observe
+        from yadgar._shared.observability.observe import observe
 
         @observe(tier="stage", name="thing")
         def thing(items):
@@ -314,7 +314,7 @@ def test_observe_exempt_empty_reason_not_satisfied(tmp_path):
         tmp_path,
         "mod.py",
         """
-        from yadgar.observability.observe import observe
+        from yadgar._shared.observability.observe import observe
 
         @observe(exempt="")
         def thing(items):
@@ -335,7 +335,7 @@ def test_observe_exempt_short_reason_hard_fails(tmp_path):
         tmp_path,
         "mod.py",
         """
-        from yadgar.observability.observe import observe
+        from yadgar._shared.observability.observe import observe
 
         @observe(exempt="too short")
         def thing(items):
@@ -363,7 +363,7 @@ def test_observe_exempt_valid_reason_is_exempt(tmp_path):
         tmp_path,
         "mod.py",
         """
-        from yadgar.observability.observe import observe
+        from yadgar._shared.observability.observe import observe
 
         @observe(exempt="pure in-memory formatter with no I/O or branching worth a span")
         def thing(items):
@@ -445,7 +445,7 @@ def test_glob_exempt_report_zero_globs_is_quiet_but_zero_exit(tmp_path, capsys):
         root,
         "mod.py",
         """
-        from yadgar.tracing import trace_span
+        from yadgar._shared.tracing import trace_span
 
         @trace_span("t")
         def thing(items):

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar.retrieval.scoring import FTSParams, _normalize_fts_hits, _ScoringMixin
+from yadgar._shared.retrieval.scoring import FTSParams, _normalize_fts_hits, _ScoringMixin
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -269,7 +269,7 @@ class TestCollectFtsScores:
 
     def test_branch_filter_forwarded(self):
         """branch_filter is forwarded to storage calls."""
-        from yadgar.storage import BranchFilter  # noqa: PLC0415
+        from yadgar._shared.storage import BranchFilter  # noqa: PLC0415
 
         bf = BranchFilter(current_branch="feat/x", default_branch="master")
         retriever = _make_retriever({"boosted": [(1, 1.0)]})

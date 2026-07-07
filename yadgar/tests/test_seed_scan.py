@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar.seed._scan import (
+from yadgar.core.seed._scan import (
     _MAX_FILE_SIZE,
     _MAX_MEMORY_CONTENT,
     _match_config,
@@ -196,7 +196,7 @@ def test_truncate_preserves_content_start():
 def test_on_walk_error_logs_warning(caplog):
     err = OSError("Permission denied")
     err.filename = "/some/path"
-    with caplog.at_level(logging.WARNING, logger="yadgar.seed._scan"):
+    with caplog.at_level(logging.WARNING, logger="yadgar.core.seed._scan"):
         _on_walk_error(err)
     assert "Skipped" in caplog.text or "/some/path" in caplog.text
 
@@ -204,7 +204,7 @@ def test_on_walk_error_logs_warning(caplog):
 def test_on_walk_error_no_filename(caplog):
     err = OSError("Permission denied")
     err.filename = None
-    with caplog.at_level(logging.WARNING, logger="yadgar.seed._scan"):
+    with caplog.at_level(logging.WARNING, logger="yadgar.core.seed._scan"):
         _on_walk_error(err)  # should not raise
 
 
@@ -413,7 +413,7 @@ def test_scan_project_permission_error_no_crash(tmp_path, monkeypatch):
             err.filename = "/some/locked/dir"
             onerror(err)
 
-    with patch("yadgar.seed._scan.os.walk", mock_walk):
+    with patch("yadgar.core.seed._scan.os.walk", mock_walk):
         result = scan_project(str(tmp_path))
     # Just verify it returned a valid result
     assert "project_name" in result

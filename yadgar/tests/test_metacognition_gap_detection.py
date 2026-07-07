@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar.metacognition.gap_detection import _GapDetectionMixin
+from yadgar._shared.metacognition.gap_detection import _GapDetectionMixin
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

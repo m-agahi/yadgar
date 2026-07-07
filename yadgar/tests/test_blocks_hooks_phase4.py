@@ -37,7 +37,7 @@ import json
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 _PROJ_DIR = "/home/test/project_ph4"
 
@@ -70,13 +70,13 @@ class TestBlocksRenderHelper:
     """render_blocks_section is a free function in yadgar.blocks_render."""
 
     def test_render_empty_returns_empty_string(self) -> None:
-        from yadgar.blocks_render import render_blocks_section
+        from yadgar._shared.blocks_render import render_blocks_section
 
         result = render_blocks_section([], "/any/dir")
         assert result == ""
 
     def test_render_project_blocks(self) -> None:
-        from yadgar.blocks_render import render_blocks_section
+        from yadgar._shared.blocks_render import render_blocks_section
 
         blocks = [
             {"scope": "project", "name": "current_task", "content": "Build Phase 4"},
@@ -87,7 +87,7 @@ class TestBlocksRenderHelper:
         assert "Project blocks" in result
 
     def test_render_global_blocks(self) -> None:
-        from yadgar.blocks_render import render_blocks_section
+        from yadgar._shared.blocks_render import render_blocks_section
 
         blocks = [
             {"scope": "global", "name": "rules", "content": "No terraform"},
@@ -98,7 +98,7 @@ class TestBlocksRenderHelper:
         assert "Global blocks" in result
 
     def test_render_both_scopes(self) -> None:
-        from yadgar.blocks_render import render_blocks_section
+        from yadgar._shared.blocks_render import render_blocks_section
 
         blocks = [
             {"scope": "global", "name": "rules", "content": "global rule"},
@@ -120,13 +120,13 @@ class TestPhase3ExportsPresent:
     """block_replace and block_append must be importable from yadgar.server.tools."""
 
     def test_block_replace_exported(self) -> None:
-        from yadgar.server import tools  # noqa: F401
-        from yadgar.server.tools import block_replace
+        from yadgar.core.server import tools  # noqa: F401
+        from yadgar.core.server.tools import block_replace
 
         assert callable(block_replace)
 
     def test_block_append_exported(self) -> None:
-        from yadgar.server.tools import block_append
+        from yadgar.core.server.tools import block_append
 
         assert callable(block_append)
 
@@ -142,7 +142,7 @@ def _make_block_reflect_client():
     from starlette.routing import Route
     from starlette.testclient import TestClient
 
-    from yadgar.server.http import hook_block_reflect
+    from yadgar.core.server.http import hook_block_reflect
 
     app = Starlette(routes=[Route("/hooks/block-reflect", hook_block_reflect, methods=["GET"])])
     return TestClient(app)
@@ -162,7 +162,7 @@ class TestBlockReflectEndpoint:
 
     def test_endpoint_text_contains_blocks(self) -> None:
         """With project blocks seeded, block-reflect returns block content."""
-        from yadgar.server.tools.blocks import block_create
+        from yadgar.core.server.tools.blocks import block_create
 
         block_create(
             name="reflect_test",
@@ -188,7 +188,7 @@ class TestHookBlockReflect:
 
     def test_block_reflect_registered(self) -> None:
         """_HOOKS must contain 'block-reflect' key."""
-        from yadgar.scripts.hook_runner import _HOOKS
+        from yadgar.core.scripts.hook_runner import _HOOKS
 
         assert "block-reflect" in _HOOKS, (
             "'block-reflect' not in hook_runner._HOOKS — wiring missing"
@@ -196,7 +196,7 @@ class TestHookBlockReflect:
 
     def test_non_matching_tool_emits_nothing(self, capsys, monkeypatch) -> None:
         """Non-block tool name causes hook_block_reflect to emit nothing."""
-        from yadgar.scripts.hook_runner import _HOOKS
+        from yadgar.core.scripts.hook_runner import _HOOKS
 
         handler = _HOOKS["block-reflect"]
         stdin_data = json.dumps({"tool_name": "Bash", "cwd": _PROJ_DIR})
@@ -207,7 +207,7 @@ class TestHookBlockReflect:
 
     def test_matching_tool_calls_endpoint(self, capsys, monkeypatch) -> None:
         """mcp__yadgar__block_update causes hook to call /hooks/block-reflect."""
-        from yadgar.scripts import hook_runner
+        from yadgar.core.scripts import hook_runner
 
         calls = []
 
@@ -244,8 +244,8 @@ class TestSessionContextBlocksInjection:
         from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from yadgar.server.http import hook_session_context
-        from yadgar.server.tools.blocks import block_create
+        from yadgar.core.server.http import hook_session_context
+        from yadgar.core.server.tools.blocks import block_create
 
         block_create(
             name="session_block",

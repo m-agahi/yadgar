@@ -59,7 +59,7 @@ class TestMemoryAddedSseType:
     """_phase_post_write._build_response must emit type='memory' in node dict."""
 
     def _call_build_response(self, captured: list) -> None:
-        from yadgar.server.tools._memorize_phases import _phase_post_write as pw
+        from yadgar.core.server.tools._memorize_phases import _phase_post_write as pw
 
         ctx = _make_ctx()
         storage = _make_storage()
@@ -119,7 +119,7 @@ class TestWikiSseType:
         This is NOT a copy-paste — we import the source function and have
         it execute up to the emit.
         """
-        import yadgar.server.tools.wiki as wiki_mod
+        import yadgar.core.server.tools.wiki as wiki_mod
 
         # Build the same result dict the real code produces (post-pop)
         result: dict = {
@@ -169,7 +169,7 @@ class TestWikiSseType:
 
     def test_wiki_wait_path_node_type_is_wiki(self) -> None:
         """The wait-path wiki_updated emit also includes type='wiki'."""
-        import yadgar.server.tools.wiki as wiki_mod
+        import yadgar.core.server.tools.wiki as wiki_mod
 
         captured: list[dict] = []
         result = {"id": 3, "slug": "test-slug", "title": "Test"}
@@ -215,7 +215,7 @@ class TestSseNodeTypePresentInSource:
     def test_phase_post_write_source_has_type_memory(self) -> None:
         import inspect
 
-        from yadgar.server.tools._memorize_phases import _phase_post_write as pw
+        from yadgar.core.server.tools._memorize_phases import _phase_post_write as pw
 
         src = inspect.getsource(pw._build_response)
         assert '"type": "memory"' in src or "'type': 'memory'" in src, (
@@ -226,7 +226,7 @@ class TestSseNodeTypePresentInSource:
     def test_wiki_source_has_type_wiki_at_both_emit_sites(self) -> None:
         import inspect
 
-        import yadgar.server.tools.wiki as wiki_mod
+        import yadgar.core.server.tools.wiki as wiki_mod
 
         # Find the enclosing function(s) that contain the wiki emit calls
         # We check the whole module source for robustness (both emit sites)

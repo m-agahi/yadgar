@@ -34,7 +34,7 @@ class TestStatsCacheHitWithinTTL:
 
     def test_cache_hit_within_ttl(self):
         """get_memory_stats is called only once for two requests within TTL."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         call_count = {"n": 0}
 
@@ -51,10 +51,10 @@ class TestStatsCacheHitWithinTTL:
 
             req = _make_stats_request()
             with patch("asyncio.to_thread", side_effect=_fake_to_thread):
-                with patch("yadgar.server.http._st") as mock_st:
+                with patch("yadgar.core.server.http._st") as mock_st:
                     mock_st._storage = mock_storage
                     with patch(
-                        "yadgar.config.get_settings",
+                        "yadgar._shared.config.get_settings",
                         return_value=MagicMock(STATS_CACHE_TTL_S=60),
                     ):
                         # Clear cache before test
@@ -88,7 +88,7 @@ class TestStatsCacheMissAfterTTL:
 
     def test_cache_miss_after_ttl(self):
         """After TTL, a new request triggers recompute."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         call_count = {"n": 0}
 
@@ -105,10 +105,10 @@ class TestStatsCacheMissAfterTTL:
 
             req = _make_stats_request()
             with patch("asyncio.to_thread", side_effect=_fake_to_thread):
-                with patch("yadgar.server.http._st") as mock_st:
+                with patch("yadgar.core.server.http._st") as mock_st:
                     mock_st._storage = mock_storage
                     with patch(
-                        "yadgar.config.get_settings",
+                        "yadgar._shared.config.get_settings",
                         return_value=MagicMock(STATS_CACHE_TTL_S=1),
                     ):
                         _http._stats_cache.clear()
@@ -131,7 +131,7 @@ class TestStatsCacheDisabledAtZero:
 
     def test_cache_disabled_when_ttl_zero(self):
         """With TTL=0, every request calls get_memory_stats (no caching)."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         call_count = {"n": 0}
 
@@ -148,10 +148,10 @@ class TestStatsCacheDisabledAtZero:
 
             req = _make_stats_request()
             with patch("asyncio.to_thread", side_effect=_fake_to_thread):
-                with patch("yadgar.server.http._st") as mock_st:
+                with patch("yadgar.core.server.http._st") as mock_st:
                     mock_st._storage = mock_storage
                     with patch(
-                        "yadgar.config.get_settings",
+                        "yadgar._shared.config.get_settings",
                         return_value=MagicMock(STATS_CACHE_TTL_S=0),
                     ):
                         _http._stats_cache.clear()
@@ -171,7 +171,7 @@ class TestStatsCacheDifferentProjectsDontCollide:
 
     def test_different_project_params_get_separate_cache_results(self):
         """Requests with different project params each trigger their own compute."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         call_log = []
 
@@ -189,10 +189,10 @@ class TestStatsCacheDifferentProjectsDontCollide:
             req_a = _make_stats_request(project="proj-a")
             req_b = _make_stats_request(project="proj-b")
             with patch("asyncio.to_thread", side_effect=_fake_to_thread):
-                with patch("yadgar.server.http._st") as mock_st:
+                with patch("yadgar.core.server.http._st") as mock_st:
                     mock_st._storage = mock_storage
                     with patch(
-                        "yadgar.config.get_settings",
+                        "yadgar._shared.config.get_settings",
                         return_value=MagicMock(STATS_CACHE_TTL_S=60),
                     ):
                         _http._stats_cache.clear()
@@ -208,7 +208,7 @@ class TestStatsCacheDifferentProjectsDontCollide:
 
     def test_same_project_within_ttl_hits_cache(self):
         """Same project param within TTL uses cache."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         call_log = []
 
@@ -226,10 +226,10 @@ class TestStatsCacheDifferentProjectsDontCollide:
             req1 = _make_stats_request(project="same-proj")
             req2 = _make_stats_request(project="same-proj")
             with patch("asyncio.to_thread", side_effect=_fake_to_thread):
-                with patch("yadgar.server.http._st") as mock_st:
+                with patch("yadgar.core.server.http._st") as mock_st:
                     mock_st._storage = mock_storage
                     with patch(
-                        "yadgar.config.get_settings",
+                        "yadgar._shared.config.get_settings",
                         return_value=MagicMock(STATS_CACHE_TTL_S=60),
                     ):
                         _http._stats_cache.clear()
@@ -249,7 +249,7 @@ class TestStatsCacheAgeSeconds:
 
     def test_cache_age_seconds_zero_on_fresh_compute(self):
         """Fresh compute returns cache_age_seconds=0."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         mock_storage = MagicMock()
         mock_storage.get_memory_stats.return_value = {"total_memories": 10}
@@ -260,10 +260,10 @@ class TestStatsCacheAgeSeconds:
 
             req = _make_stats_request()
             with patch("asyncio.to_thread", side_effect=_fake_to_thread):
-                with patch("yadgar.server.http._st") as mock_st:
+                with patch("yadgar.core.server.http._st") as mock_st:
                     mock_st._storage = mock_storage
                     with patch(
-                        "yadgar.config.get_settings",
+                        "yadgar._shared.config.get_settings",
                         return_value=MagicMock(STATS_CACHE_TTL_S=60),
                     ):
                         _http._stats_cache.clear()
@@ -278,7 +278,7 @@ class TestStatsCacheAgeSeconds:
 
     def test_cache_age_seconds_present_on_hit(self):
         """Cached response has cache_age_seconds present (non-negative)."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         mock_storage = MagicMock()
         mock_storage.get_memory_stats.return_value = {"total_memories": 10}
@@ -289,10 +289,10 @@ class TestStatsCacheAgeSeconds:
 
             req = _make_stats_request()
             with patch("asyncio.to_thread", side_effect=_fake_to_thread):
-                with patch("yadgar.server.http._st") as mock_st:
+                with patch("yadgar.core.server.http._st") as mock_st:
                     mock_st._storage = mock_storage
                     with patch(
-                        "yadgar.config.get_settings",
+                        "yadgar._shared.config.get_settings",
                         return_value=MagicMock(STATS_CACHE_TTL_S=60),
                     ):
                         _http._stats_cache.clear()

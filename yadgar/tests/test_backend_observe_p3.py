@@ -54,7 +54,7 @@ def span_provider():
 
 
 def _reload_es(monkeypatch, *, allow_root: bool = True):
-    import yadgar.config as cfg
+    import yadgar._shared.config as cfg
 
     monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1" if allow_root else "0")
     monkeypatch.delenv("YADGAR_DB_PATH", raising=False)

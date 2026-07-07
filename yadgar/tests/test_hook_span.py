@@ -66,7 +66,7 @@ class TestInstructionsLoadedHookSpan:
 
     def test_main_has_observe_sentinel(self):
         """@observe sets _yadgar_observe_has_span sentinel on main."""
-        from yadgar.hooks.instructions_loaded import main
+        from yadgar.core.hooks.instructions_loaded import main
 
         assert _has_observe_sentinel(main), (
             "instructions_loaded.main must have _yadgar_observe_has_span=True "
@@ -80,8 +80,8 @@ class TestInstructionsLoadedHookSpan:
         # Empty stdin → _should_fire returns False → early return, no daemon call
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
         # Patch shutdown_tracing to no-op (no OTel endpoint in test)
-        with patch("yadgar.hooks.instructions_loaded.shutdown_tracing"):
-            from yadgar.hooks.instructions_loaded import main as instructions_main
+        with patch("yadgar.core.hooks.instructions_loaded.shutdown_tracing"):
+            from yadgar.core.hooks.instructions_loaded import main as instructions_main
 
             instructions_main()
 
@@ -96,8 +96,8 @@ class TestInstructionsLoadedHookSpan:
         _tracer, exporter = in_memory_tracer
 
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
-        with patch("yadgar.hooks.instructions_loaded.shutdown_tracing"):
-            from yadgar.hooks.instructions_loaded import main as instructions_main
+        with patch("yadgar.core.hooks.instructions_loaded.shutdown_tracing"):
+            from yadgar.core.hooks.instructions_loaded import main as instructions_main
 
             instructions_main()
 
@@ -118,7 +118,7 @@ class TestFileChangedHookSpan:
     """file_changed.main() emits span on empty-input early-return."""
 
     def test_main_has_observe_sentinel(self):
-        from yadgar.hooks.file_changed import main
+        from yadgar.core.hooks.file_changed import main
 
         assert _has_observe_sentinel(main), (
             "file_changed.main must have _yadgar_observe_has_span=True"
@@ -129,8 +129,8 @@ class TestFileChangedHookSpan:
         _tracer, exporter = in_memory_tracer
 
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
-        with patch("yadgar.hooks.file_changed.shutdown_tracing"):
-            from yadgar.hooks.file_changed import main as file_changed_main
+        with patch("yadgar.core.hooks.file_changed.shutdown_tracing"):
+            from yadgar.core.hooks.file_changed import main as file_changed_main
 
             file_changed_main()
 
@@ -147,7 +147,7 @@ class TestSubagentStartHookSpan:
     """subagent_start.main() emits span; _call_daemon skipped via monkeypatch."""
 
     def test_main_has_observe_sentinel(self):
-        from yadgar.hooks.subagent_start import main
+        from yadgar.core.hooks.subagent_start import main
 
         assert _has_observe_sentinel(main), (
             "subagent_start.main must have _yadgar_observe_has_span=True"
@@ -159,9 +159,9 @@ class TestSubagentStartHookSpan:
 
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
         # Patch _call_daemon so we don't hit the 2s socket timeout
-        with patch("yadgar.hooks.subagent_start._call_daemon", return_value=""):
-            with patch("yadgar.hooks.subagent_start.shutdown_tracing"):
-                from yadgar.hooks.subagent_start import main as subagent_start_main
+        with patch("yadgar.core.hooks.subagent_start._call_daemon", return_value=""):
+            with patch("yadgar.core.hooks.subagent_start.shutdown_tracing"):
+                from yadgar.core.hooks.subagent_start import main as subagent_start_main
 
                 subagent_start_main()
 
@@ -178,7 +178,7 @@ class TestSubagentStopHookSpan:
     """subagent_stop.main() emits span on empty-input early-return."""
 
     def test_main_has_observe_sentinel(self):
-        from yadgar.hooks.subagent_stop import main
+        from yadgar.core.hooks.subagent_stop import main
 
         assert _has_observe_sentinel(main), (
             "subagent_stop.main must have _yadgar_observe_has_span=True"
@@ -189,8 +189,8 @@ class TestSubagentStopHookSpan:
         _tracer, exporter = in_memory_tracer
 
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
-        with patch("yadgar.hooks.subagent_stop.shutdown_tracing"):
-            from yadgar.hooks.subagent_stop import main as subagent_stop_main
+        with patch("yadgar.core.hooks.subagent_stop.shutdown_tracing"):
+            from yadgar.core.hooks.subagent_stop import main as subagent_stop_main
 
             subagent_stop_main()
 
@@ -212,10 +212,10 @@ class TestShutdownTracingFlush:
 
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
         with patch(
-            "yadgar.hooks.instructions_loaded.shutdown_tracing",
+            "yadgar.core.hooks.instructions_loaded.shutdown_tracing",
             side_effect=lambda *a, **kw: flush_called.append(True),
         ):
-            from yadgar.hooks.instructions_loaded import main as instructions_main
+            from yadgar.core.hooks.instructions_loaded import main as instructions_main
 
             instructions_main()
 
@@ -230,10 +230,10 @@ class TestShutdownTracingFlush:
 
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
         with patch(
-            "yadgar.hooks.file_changed.shutdown_tracing",
+            "yadgar.core.hooks.file_changed.shutdown_tracing",
             side_effect=lambda *a, **kw: flush_called.append(True),
         ):
-            from yadgar.hooks.file_changed import main as file_changed_main
+            from yadgar.core.hooks.file_changed import main as file_changed_main
 
             file_changed_main()
 
@@ -247,10 +247,10 @@ class TestShutdownTracingFlush:
 
         monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
         with patch(
-            "yadgar.hooks.subagent_stop.shutdown_tracing",
+            "yadgar.core.hooks.subagent_stop.shutdown_tracing",
             side_effect=lambda *a, **kw: flush_called.append(True),
         ):
-            from yadgar.hooks.subagent_stop import main as subagent_stop_main
+            from yadgar.core.hooks.subagent_stop import main as subagent_stop_main
 
             subagent_stop_main()
 

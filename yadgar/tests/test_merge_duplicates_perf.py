@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from yadgar.config import Settings
-from yadgar.consolidation import ConsolidationScheduler as ConsolidationEngine
+from yadgar._shared.config import Settings
+from yadgar.core.consolidation import ConsolidationScheduler as ConsolidationEngine
 
 # ---------------------------------------------------------------------------
 # Helpers

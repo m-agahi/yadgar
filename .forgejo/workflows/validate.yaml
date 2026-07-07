@@ -27,7 +27,13 @@ jobs:
       - name: Install pre-commit and uv
         # uv: required by pre-commit check-config-three-way-sync hook
         # (entry: uv run python -m pytest yadgar/tests/test_config_three_way_sync.py).
-        run: pip install pre-commit uv
+        # import-linter + editable yadgar: the import-linter hook (language: system,
+        # entry: lint-imports) needs the executable on PATH AND the yadgar package
+        # locatable — grimp parses the AST, so --no-deps is enough (no runtime deps).
+        # (folder-split #17: without this the hook aborts "Executable lint-imports not found".)
+        run: |
+          pip install pre-commit uv import-linter
+          pip install -e . --no-deps
 
       - name: Run pre-commit
         run: pre-commit run --all-files

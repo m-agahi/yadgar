@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.prospective import ProspectiveMemoryEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.prospective import ProspectiveMemoryEngine
 
 
 @pytest.fixture(scope="module")

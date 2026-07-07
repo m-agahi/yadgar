@@ -30,7 +30,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_shadow():
-    from yadgar.server.tools import _recall_shadow
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
 
     _recall_shadow._reset_for_test()
     yield
@@ -43,7 +43,7 @@ def _label_count(counter, source: str) -> float:
 
 
 def _observe_source(source: str, **overrides):
-    from yadgar.server.tools._recall_shadow import RecallShadowParams, observe_recall
+    from yadgar._shared.runtime.cache_epoch import RecallShadowParams, observe_recall
 
     kwargs = {
         "query": "deploy runbook",
@@ -68,21 +68,21 @@ def _observe_source(source: str, **overrides):
 
 class TestSourceLabel:
     def test_hook_first_observe_is_miss_under_hook_label(self):
-        from yadgar.metrics import yadgar_recall_shadow_cache_misses_total
+        from yadgar._shared.metrics import yadgar_recall_shadow_cache_misses_total
 
         m0 = _label_count(yadgar_recall_shadow_cache_misses_total, "hook")
         _observe_source("hook")
         assert _label_count(yadgar_recall_shadow_cache_misses_total, "hook") == m0 + 1
 
     def test_tool_first_observe_is_miss_under_tool_label(self):
-        from yadgar.metrics import yadgar_recall_shadow_cache_misses_total
+        from yadgar._shared.metrics import yadgar_recall_shadow_cache_misses_total
 
         m0 = _label_count(yadgar_recall_shadow_cache_misses_total, "tool")
         _observe_source("tool")
         assert _label_count(yadgar_recall_shadow_cache_misses_total, "tool") == m0 + 1
 
     def test_hook_hit_increments_hook_hits_label(self):
-        from yadgar.metrics import yadgar_recall_shadow_cache_hits_total
+        from yadgar._shared.metrics import yadgar_recall_shadow_cache_hits_total
 
         _observe_source("hook")  # miss
         h0 = _label_count(yadgar_recall_shadow_cache_hits_total, "hook")
@@ -90,7 +90,7 @@ class TestSourceLabel:
         assert _label_count(yadgar_recall_shadow_cache_hits_total, "hook") == h0 + 1
 
     def test_tool_hit_increments_tool_hits_label(self):
-        from yadgar.metrics import yadgar_recall_shadow_cache_hits_total
+        from yadgar._shared.metrics import yadgar_recall_shadow_cache_hits_total
 
         _observe_source("tool")  # miss
         h0 = _label_count(yadgar_recall_shadow_cache_hits_total, "tool")
@@ -99,7 +99,7 @@ class TestSourceLabel:
 
     def test_hook_traffic_does_not_affect_tool_counters(self):
         """Hook misses and hits must not bleed into the tool-labelled counters."""
-        from yadgar.metrics import (
+        from yadgar._shared.metrics import (
             yadgar_recall_shadow_cache_hits_total,
             yadgar_recall_shadow_cache_misses_total,
         )
@@ -117,7 +117,7 @@ class TestSourceLabel:
 
     def test_tool_traffic_does_not_affect_hook_counters(self):
         """Tool misses and hits must not bleed into the hook-labelled counters."""
-        from yadgar.metrics import (
+        from yadgar._shared.metrics import (
             yadgar_recall_shadow_cache_hits_total,
             yadgar_recall_shadow_cache_misses_total,
         )
@@ -140,7 +140,7 @@ class TestSourceLabel:
         would-be cache keyspaces.  This is correct: the hypothetical cache for
         issue #88 would serve only explicit tool recalls.
         """
-        from yadgar.metrics import (
+        from yadgar._shared.metrics import (
             yadgar_recall_shadow_cache_hits_total,
             yadgar_recall_shadow_cache_misses_total,
         )
@@ -163,7 +163,7 @@ class TestSourceLabel:
 
     def test_source_required_no_silent_unknown(self):
         """RecallShadowParams must have an explicit source field — no silent default."""
-        from yadgar.server.tools._recall_shadow import RecallShadowParams
+        from yadgar._shared.runtime.cache_epoch import RecallShadowParams
 
         # Must be constructable with explicit source
         p = RecallShadowParams(
@@ -210,8 +210,8 @@ def _call_real_hook_prompt_recall(query: str, directory: str):
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    import yadgar.server._state as _st
-    from yadgar.server.http import hook_prompt_recall
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.http import hook_prompt_recall
 
     mock_request = MagicMock()
     params_dict = {"query": query, "directory": directory}
@@ -222,7 +222,7 @@ def _call_real_hook_prompt_recall(query: str, directory: str):
             patch.object(_st, "_retriever", MagicMock()),
             patch.object(_st, "_last_session_context", {}),
             patch.object(_st, "_last_prompt_recall", {}),
-            patch("yadgar.server.http._recall_with_timeout", new=AsyncMock(return_value=[])),
+            patch("yadgar.core.server.http._recall_with_timeout", new=AsyncMock(return_value=[])),
         ):
             return await hook_prompt_recall(mock_request)
 
@@ -232,7 +232,7 @@ def _call_real_hook_prompt_recall(query: str, directory: str):
 class TestHookWiring:
     def test_hook_prompt_recall_records_hook_source_miss(self):
         """hook_prompt_recall must call observe_recall with source='hook'."""
-        from yadgar.metrics import yadgar_recall_shadow_cache_misses_total
+        from yadgar._shared.metrics import yadgar_recall_shadow_cache_misses_total
 
         m0 = _label_count(yadgar_recall_shadow_cache_misses_total, "hook")
         _call_real_hook_prompt_recall("wiring probe", "/tmp/wiring_hook_proj")
@@ -243,7 +243,7 @@ class TestHookWiring:
 
     def test_hook_prompt_recall_records_hook_source_hit(self):
         """Second identical hook recall at same epoch must register as source='hook' HIT."""
-        from yadgar.metrics import yadgar_recall_shadow_cache_hits_total
+        from yadgar._shared.metrics import yadgar_recall_shadow_cache_hits_total
 
         _call_real_hook_prompt_recall("wiring probe", "/tmp/wiring_hook_proj")  # miss
         h0 = _label_count(yadgar_recall_shadow_cache_hits_total, "hook")
@@ -255,7 +255,7 @@ class TestHookWiring:
 
     def test_hook_miss_does_not_increment_tool_counter(self):
         """A hook-path recall must not touch the tool-labelled counters."""
-        from yadgar.metrics import (
+        from yadgar._shared.metrics import (
             yadgar_recall_shadow_cache_hits_total,
             yadgar_recall_shadow_cache_misses_total,
         )
@@ -278,8 +278,8 @@ class TestHookWiring:
 def _call_real_tool_recall(query: str, directory: str):
     from unittest.mock import MagicMock, patch
 
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import recall as recall_fn
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import recall as recall_fn
 
     mock_retriever = MagicMock()
     mock_retriever.recall.return_value = []
@@ -298,15 +298,15 @@ def _call_real_tool_recall(query: str, directory: str):
         patch.object(_st, "_replay", None),
         patch.object(_st, "_wiki", mock_wiki),
         patch.object(_st, "_last_recalled_ids", {}),
-        patch("yadgar.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         return recall_fn(query=query, max_results=5, min_heat=0.0, directory=directory)
 
 
 class TestToolWiring:
     def test_tool_recall_records_tool_source_miss(self, recall_backend_bypass):
-        from yadgar.metrics import yadgar_recall_shadow_cache_misses_total
+        from yadgar._shared.metrics import yadgar_recall_shadow_cache_misses_total
 
         m0 = _label_count(yadgar_recall_shadow_cache_misses_total, "tool")
         _call_real_tool_recall("unique tool wiring probe", "/tmp/wiring_tool_proj")
@@ -316,7 +316,7 @@ class TestToolWiring:
         )
 
     def test_tool_recall_records_tool_source_hit(self, recall_backend_bypass):
-        from yadgar.metrics import yadgar_recall_shadow_cache_hits_total
+        from yadgar._shared.metrics import yadgar_recall_shadow_cache_hits_total
 
         _call_real_tool_recall("unique tool wiring probe", "/tmp/wiring_tool_proj")  # miss
         h0 = _label_count(yadgar_recall_shadow_cache_hits_total, "tool")
@@ -325,7 +325,7 @@ class TestToolWiring:
         assert h1 == h0 + 1, "identical recall() at same epoch must be source='tool' HIT"
 
     def test_tool_miss_does_not_increment_hook_counter(self, recall_backend_bypass):
-        from yadgar.metrics import (
+        from yadgar._shared.metrics import (
             yadgar_recall_shadow_cache_hits_total,
             yadgar_recall_shadow_cache_misses_total,
         )

@@ -22,7 +22,7 @@ import pytest
 # Module load
 # ---------------------------------------------------------------------------
 
-_SCRIPT_PATH = Path(__file__).parent.parent / "hooks" / "prompt-recall.py"
+_SCRIPT_PATH = Path(__file__).parent.parent / "core" / "hooks" / "prompt-recall.py"
 
 
 def _load_module():
@@ -244,7 +244,7 @@ class TestMain:
         payload = {"prompt": "", "cwd": "/project"}
         with (
             patch("sys.stdin", io.StringIO(json.dumps(payload))),
-            patch("yadgar.paths"),
+            patch("yadgar._shared.paths"),
         ):
             # Should complete without error; no output expected
             try:
@@ -260,7 +260,7 @@ class TestMain:
         mock_resp.read.return_value = json.dumps({"text": "found context"}).encode()
         with (
             patch("sys.stdin", io.StringIO(json.dumps(payload))),
-            patch("yadgar.paths"),
+            patch("yadgar._shared.paths"),
             patch("urllib.request.urlopen", return_value=mock_resp) as mock_open,
         ):
             try:
@@ -277,7 +277,7 @@ class TestMain:
         payload = {"prompt": "some query", "cwd": "/project"}
         with (
             patch("sys.stdin", io.StringIO(json.dumps(payload))),
-            patch("yadgar.paths"),
+            patch("yadgar._shared.paths"),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")),
         ):
             try:
@@ -293,7 +293,7 @@ class TestMain:
 
         with (
             patch("sys.stdin", io.StringIO("not-json")),
-            patch("yadgar.paths"),
+            patch("yadgar._shared.paths"),
         ):
             try:
                 runpy.run_path(str(_SCRIPT_PATH), run_name="__main__")

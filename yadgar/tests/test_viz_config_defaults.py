@@ -28,11 +28,11 @@ def _fresh_settings(monkeypatch, tmp_path):
     sets YADGAR_CONFIG_FILE=/nonexistent, but per-test isolation via monkeypatch
     ensures these tests pass even if the autouse fixture is bypassed (#133).
     """
-    from yadgar.config import get_settings  # noqa: PLC0415
+    from yadgar._shared.config import get_settings  # noqa: PLC0415
 
     monkeypatch.setenv("YADGAR_CONFIG_FILE", str(tmp_path / "nonexistent-config.yaml"))
     get_settings.cache_clear()
-    from yadgar.config import Settings  # noqa: PLC0415
+    from yadgar._shared.config import Settings  # noqa: PLC0415
 
     return Settings()
 
@@ -113,7 +113,7 @@ class TestConfigRegistryEntries:
     """config_registry.py _REGISTRY must have updated/new entries for v5.50.0."""
 
     def _registry(self):
-        from yadgar.config_registry import _REGISTRY  # noqa: PLC0415
+        from yadgar._shared.config_registry import _REGISTRY  # noqa: PLC0415
 
         return {e.name: e for e in _REGISTRY}
 
@@ -170,7 +170,7 @@ class TestConfigYamlFieldMeta:
     """config_yaml.py FIELD_META dict must have entries for new/updated viz knobs."""
 
     def _field_meta(self):
-        from yadgar.config_yaml import FIELD_META  # noqa: PLC0415
+        from yadgar._shared.config_yaml import FIELD_META  # noqa: PLC0415
 
         return FIELD_META
 
@@ -210,7 +210,7 @@ class TestVizConfigApiResponse:
         """GET /api/viz/config must include edge.opacity."""
         import inspect  # noqa: PLC0415
 
-        from yadgar.server import http  # noqa: PLC0415
+        from yadgar.core.server import http  # noqa: PLC0415
 
         src = inspect.getsource(http.api_viz_config)
         assert "opacity" in src, (
@@ -222,7 +222,7 @@ class TestVizConfigApiResponse:
         """GET /api/viz/config must include node.wiki_shape."""
         import inspect  # noqa: PLC0415
 
-        from yadgar.server import http  # noqa: PLC0415
+        from yadgar.core.server import http  # noqa: PLC0415
 
         src = inspect.getsource(http.api_viz_config)
         assert "wiki_shape" in src, (
@@ -234,7 +234,7 @@ class TestVizConfigApiResponse:
         """GET /api/viz/config must include edge.variant."""
         import inspect  # noqa: PLC0415
 
-        from yadgar.server import http  # noqa: PLC0415
+        from yadgar.core.server import http  # noqa: PLC0415
 
         src = inspect.getsource(http.api_viz_config)
         assert "variant" in src, (
@@ -254,7 +254,7 @@ class TestVizConfigJsDefaults:
     def _html(self) -> str:
         import pathlib  # noqa: PLC0415
 
-        static_dir = pathlib.Path(__file__).parent.parent / "static"
+        static_dir = pathlib.Path(__file__).parent.parent / "core" / "static"
         return (static_dir / "index.html").read_text(encoding="utf-8")
 
     def test_js_default_edge_width_3d_is_1_8(self) -> None:

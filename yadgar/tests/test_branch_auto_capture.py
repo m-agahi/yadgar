@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -115,8 +115,8 @@ class TestMemoriseBranchCapture:
 
     def test_memorize_sets_branch(self, monkeypatch):
         """Branch captured at memorize time appears in storage row."""
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/test-branch")
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/test-branch")
         result = server.memorize(
             content="test memory with branch",
             context="/tmp/test-dir",
@@ -135,8 +135,8 @@ class TestMemoriseBranchCapture:
     def test_memorize_branch_none_when_detect_returns_none(self, monkeypatch):
         """When branch detection returns None, memory is inserted with branch=NONE."""
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
         result = server.memorize(
             content="memory without branch context",
             context="/tmp/non-git-dir",
@@ -153,12 +153,12 @@ class TestMemoriseBranchCapture:
 
     def test_memorize_succeeds_when_detect_raises(self, monkeypatch):
         """detect_branch raising must not propagate — memory still stored."""
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
 
         def _raise(_d):
             raise RuntimeError("unexpected git failure")
 
-        monkeypatch.setattr("yadgar.server._detect_branch", _raise)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", _raise)
         result = server.memorize(
             content="memory despite detection failure",
             context="/tmp/dir",
@@ -174,8 +174,8 @@ class TestAnchorBranchCapture:
     """anchor() sets branch on insert when is_draining=True."""
 
     def test_anchor_sets_branch(self, monkeypatch):
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/anchor-branch")
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/anchor-branch")
         result = server.anchor(
             content="critical anchor fact",
             context="/tmp/anchor-dir",
@@ -190,8 +190,8 @@ class TestAnchorBranchCapture:
 
     def test_anchor_branch_none_when_non_git(self, monkeypatch):
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
         result = server.anchor(
             content="anchor outside git repo",
             context="/tmp/non-git",
@@ -209,8 +209,10 @@ class TestCheckpointBranchCapture:
 
     def test_checkpoint_completes_without_error(self, monkeypatch):
         """Checkpoint call succeeds with branch detection active."""
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/checkpoint-branch")
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr(
+            "yadgar.core.server._detect_branch", lambda _d: "feat/checkpoint-branch"
+        )
         result = server.checkpoint(
             directory="/tmp/checkpoint-dir",
             current_task="testing branch on checkpoint",
@@ -222,8 +224,8 @@ class TestCheckpointBranchCapture:
 
     def test_checkpoint_passes_branch_to_replay(self, monkeypatch, tmp_path):
         """Branch is passed through to CheckpointRestore.create_checkpoint."""
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/cp-branch")
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/cp-branch")
         captured_kwargs = {}
         replay = server._get_replay()
         orig_create = replay.create_checkpoint
@@ -253,7 +255,7 @@ class TestWikiAddBranchCapture:
         # v5.4 W1: _detect_branch fallback removed from wiki_add.
         # Callers must supply branch or branch_hint explicitly.
         # Use branch_hint to simulate what the host-side hook now provides.
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
         result = server.wiki_add(
             title="Branch Test Wiki Page",
             content="wiki content for branch test",
@@ -271,8 +273,8 @@ class TestWikiAddBranchCapture:
         )
 
     def test_wiki_add_branch_none_for_non_git(self, monkeypatch):
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
         result = server.wiki_add(
             title="Wiki Page No Branch",
             content="wiki content without branch",
@@ -294,7 +296,7 @@ class TestQueuePayloadBranch:
 
     def test_memorize_queue_payload_contains_branch(self, monkeypatch):
         """When not draining, memorize enqueues branch in payload."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/queue-branch")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/queue-branch")
         captured_payloads = []
         orig_enqueue = server._get_file_queue().__class__.enqueue
 
@@ -323,7 +325,7 @@ class TestQueuePayloadBranch:
 
     def test_anchor_queue_payload_contains_branch(self, monkeypatch):
         """When not draining, anchor enqueues branch in payload."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "feat/anchor-queue")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "feat/anchor-queue")
         captured_payloads = []
         fq = server._get_file_queue()
         monkeypatch.setattr(

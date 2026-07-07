@@ -59,8 +59,8 @@ class TestRecallDirectoryRequired:
     """recall() must raise ValueError immediately when directory not supplied."""
 
     def _call_recall(self, **kwargs):
-        import yadgar.server._state as _st
-        from yadgar.server.tools.recall import recall as recall_fn
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.recall import recall as recall_fn
 
         mock_retriever = _make_mock_retriever()
         mock_storage = _make_mock_storage()
@@ -75,8 +75,8 @@ class TestRecallDirectoryRequired:
             patch.object(_st, "_replay", None),
             patch.object(_st, "_wiki", None),
             patch.object(_st, "_last_recalled_ids", {}),
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             return recall_fn(**kwargs)
 
@@ -126,8 +126,8 @@ class TestRecallDirectoryRequired:
         Verify: if storage is None, directory-missing should still raise (not a
         storage-not-init error).
         """
-        import yadgar.server._state as _st
-        from yadgar.server.tools.recall import recall as recall_fn
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.recall import recall as recall_fn
 
         with (
             patch.object(_st, "_storage", None),
@@ -147,16 +147,16 @@ class TestWikiQueryDirectoryRequired:
     """wiki_query() must raise ValueError immediately when directory not supplied."""
 
     def _call_wiki_query(self, **kwargs):
-        import yadgar.server._state as _st
-        from yadgar.server.tools.wiki import wiki_query as wq_fn
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.wiki import wiki_query as wq_fn
 
         mock_wiki = MagicMock()
         mock_wiki.query.return_value = []
 
         with (
             patch.object(_st, "_wiki", mock_wiki),
-            patch("yadgar.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             return wq_fn(**kwargs)
 
@@ -186,8 +186,8 @@ class TestWikiQueryDirectoryRequired:
 
     def test_wiki_query_raises_before_wiki_access(self):
         """ValueError must fire before any wiki store access."""
-        import yadgar.server._state as _st
-        from yadgar.server.tools.wiki import wiki_query as wq_fn
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.wiki import wiki_query as wq_fn
 
         with patch.object(_st, "_wiki", None):
             with pytest.raises(ValueError, match="directory is required"):
@@ -261,9 +261,9 @@ class TestHookPromptRecallDirectoryFiltering:
 
         Returns the JSON response body dict.
         """
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http  # noqa: F401 — ensure routes registered
-        from yadgar.server.http import hook_prompt_recall
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http  # noqa: F401 — ensure routes registered
+        from yadgar.core.server.http import hook_prompt_recall
 
         # Build fake request
         query_params: dict[str, str] = {"query": query}
@@ -284,9 +284,9 @@ class TestHookPromptRecallDirectoryFiltering:
                 patch.object(_st, "_retriever", MagicMock()),
                 patch.object(_st, "_last_session_context", {}),
                 patch.object(_st, "_last_prompt_recall", {}),
-                patch("yadgar.server.http._build_dlq_alert_text", return_value=""),
+                patch("yadgar.core.server.http._build_dlq_alert_text", return_value=""),
                 patch(
-                    "yadgar.server.http._recall_with_timeout",
+                    "yadgar.core.server.http._recall_with_timeout",
                     side_effect=_recall_returns_injected,
                 ),
             ):

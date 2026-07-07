@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from yadgar.astrocyte_pool import DOMAIN_DEFINITIONS, AstrocytePool
-from yadgar.consolidation.heat_decay import _HeatDecayMixin
+from yadgar._shared.astrocyte_pool import DOMAIN_DEFINITIONS, AstrocytePool
+from yadgar.core.consolidation.heat_decay import _HeatDecayMixin
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -41,7 +41,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 # name_filter_fn(name) -> True if the function name should be checked.
 _OBSERVABLE_FILES: list[tuple[Path, bool, object]] = [
     (
-        _REPO_ROOT / "yadgar" / "server" / "http.py",
+        _REPO_ROOT / "yadgar" / "core" / "server" / "http.py",
         True,  # top-level only
         lambda name: not name.startswith("_"),  # skip private helpers
     ),
@@ -140,7 +140,7 @@ def scan(
 
     observable_files = [
         (
-            repo_root / "yadgar" / "server" / "http.py",
+            repo_root / "yadgar" / "core" / "server" / "http.py",
             True,
             lambda name: not name.startswith("_"),
         ),

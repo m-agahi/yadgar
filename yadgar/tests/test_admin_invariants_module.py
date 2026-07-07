@@ -133,8 +133,8 @@ def _make_settings(**overrides):
 
 
 def _run(storage=None, settings=None, engram=None):
-    import yadgar.server._state as _st
-    from yadgar.server.tools.admin_invariants import _run_check_invariants
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.admin_invariants import _run_check_invariants
 
     if storage is None:
         storage = FakeStorage()
@@ -146,9 +146,9 @@ def _run(storage=None, settings=None, engram=None):
     fake_server.settings = settings
     fake_server._engram = engram  # None by default
 
-    old = sys.modules.get("yadgar.server")
+    old = sys.modules.get("yadgar.core.server")
     try:
-        sys.modules["yadgar.server"] = fake_server
+        sys.modules["yadgar.core.server"] = fake_server
         # Also patch _st._engram and _st._db_size_warn_last_logged_hour
         with patch.object(_st, "_engram", engram):
             with patch.object(_st, "_db_size_warn_last_logged_hour", -1):
@@ -156,9 +156,9 @@ def _run(storage=None, settings=None, engram=None):
                     return _run_check_invariants(storage)
     finally:
         if old is None:
-            sys.modules.pop("yadgar.server", None)
+            sys.modules.pop("yadgar.core.server", None)
         else:
-            sys.modules["yadgar.server"] = old
+            sys.modules["yadgar.core.server"] = old
 
 
 # ── result shape ─────────────────────────────────────────────────────────────
@@ -402,7 +402,7 @@ def test_run_check_invariants_db_size_warning_ok(caplog):
 
     storage = BigStorage()
     settings = _make_settings(DB_SIZE_WARNING_BYTES=1 * 1024 * 1024 * 1024)
-    with caplog.at_level(logging.WARNING, logger="yadgar.server.tools.admin_invariants"):
+    with caplog.at_level(logging.WARNING, logger="yadgar.core.server.tools.admin_invariants"):
         result = _run(storage=storage, settings=settings)
     # Result must have db_size
     assert "db_size" in result

@@ -24,8 +24,8 @@ def _make_client(token: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", token)
 
-    from yadgar import server as _server
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core import server as _server
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     # Use streamable_http_app() to get the actual callable ASGI app
     asgi_app = _server.mcp_server.streamable_http_app()
@@ -35,7 +35,7 @@ def _make_client(token: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("session_context_endpoint")
-    from yadgar import server
+    from yadgar.core import server
 
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
@@ -122,7 +122,7 @@ def test_session_context_integrates_project_brief(tmp_path, monkeypatch):
         "recent_episode_count": 0,
     }
 
-    from yadgar import server as _server
+    from yadgar.core import server as _server
 
     with patch.object(_server, "project_brief", return_value=mock_brief) as mock_pb:
         client = _make_client(token, monkeypatch)
@@ -144,7 +144,7 @@ def test_session_context_integrates_project_brief(tmp_path, monkeypatch):
 def test_session_context_uses_directory_param(tmp_path, monkeypatch):
     """Endpoint passes directory query param to project_brief."""
     token = "tok4"
-    from yadgar import server as _server
+    from yadgar.core import server as _server
 
     captured_dir = {}
 
@@ -175,7 +175,7 @@ def test_session_context_uses_directory_param(tmp_path, monkeypatch):
 def test_session_context_graceful_on_storage_error(tmp_path, monkeypatch):
     """Endpoint returns 200 with empty text if project_brief fails."""
     token = "tok5"
-    from yadgar import server as _server
+    from yadgar.core import server as _server
 
     with patch.object(_server, "project_brief", side_effect=RuntimeError("DB down")):
         client = _make_client(token, monkeypatch)
