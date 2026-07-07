@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
-from yadgar.file_queue import FileQueue, QueueDrainer
+from yadgar.core import server
+from yadgar.core.file_queue import FileQueue, QueueDrainer
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -88,8 +88,8 @@ def _drainer_env(tmp_path):
     )
     real_fq = FileQueue(tmp_path)
 
-    import yadgar.server._state as _state_mod
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
+    import yadgar._shared.runtime.state as _state_mod
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -104,10 +104,10 @@ def _drainer_env(tmp_path):
     # v5.42.3: also patch _detect_branch so wiki_add calls without branch_hint work.
     with (
         patch.object(_lc, "_get_file_queue", _get_fq),
-        patch("yadgar.server.tools.wiki._get_file_queue", _get_fq),
+        patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
-        patch("yadgar.server._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield drainer, real_fq
 
@@ -116,7 +116,7 @@ def _drainer_env(tmp_path):
 
 def _write_sync(title: str, content: str, **kwargs) -> dict:
     """Write via is_draining=True (sync path, bypasses queue and gate)."""
-    import yadgar.file_queue._locals as _loc
+    import yadgar.core.file_queue._locals as _loc
 
     _loc._drain_local.active = True
     try:
@@ -328,7 +328,7 @@ class TestDrainerRejectionMetric:
         # Get before count
         def _get_count() -> float:
             try:
-                from yadgar.metrics import yadgar_wiki_add_rejected_total
+                from yadgar._shared.metrics import yadgar_wiki_add_rejected_total
 
                 return yadgar_wiki_add_rejected_total.labels(
                     reason="duplicate_detected"

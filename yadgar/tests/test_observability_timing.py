@@ -43,7 +43,7 @@ def _fresh_registry():
 class TestMakeStageTimer:
     def test_decorator_wraps_function(self):
         """_make_stage_timer returns a decorator; wrapped fn preserves __name__."""
-        from yadgar.observability.timing import _make_stage_timer
+        from yadgar._shared.observability.timing import _make_stage_timer
 
         reg = _fresh_registry()
 
@@ -55,7 +55,7 @@ class TestMakeStageTimer:
 
     def test_wrapped_function_returns_value(self):
         """Wrapped function passes return value through."""
-        from yadgar.observability.timing import _make_stage_timer
+        from yadgar._shared.observability.timing import _make_stage_timer
 
         reg = _fresh_registry()
 
@@ -69,7 +69,7 @@ class TestMakeStageTimer:
         """After calling wrapped function, histogram has count=1."""
         from prometheus_client import generate_latest
 
-        from yadgar.observability.timing import _make_stage_timer
+        from yadgar._shared.observability.timing import _make_stage_timer
 
         reg = _fresh_registry()
 
@@ -87,7 +87,7 @@ class TestMakeStageTimer:
         """Histogram sample carries the stage label passed to _make_stage_timer."""
         from prometheus_client import generate_latest
 
-        from yadgar.observability.timing import _make_stage_timer
+        from yadgar._shared.observability.timing import _make_stage_timer
 
         reg = _fresh_registry()
 
@@ -104,7 +104,7 @@ class TestMakeStageTimer:
         """Multiple calls accumulate count in histogram."""
         from prometheus_client import generate_latest
 
-        from yadgar.observability.timing import _make_stage_timer
+        from yadgar._shared.observability.timing import _make_stage_timer
 
         reg = _fresh_registry()
 
@@ -124,7 +124,7 @@ class TestMakeStageTimer:
         """Even if wrapped fn raises, histogram is still observed (finally block)."""
         from prometheus_client import generate_latest
 
-        from yadgar.observability.timing import _make_stage_timer
+        from yadgar._shared.observability.timing import _make_stage_timer
 
         reg = _fresh_registry()
 
@@ -141,7 +141,7 @@ class TestMakeStageTimer:
 
     def test_wraps_preserves_docstring(self):
         """functools.wraps preserves __doc__."""
-        from yadgar.observability.timing import _make_stage_timer
+        from yadgar._shared.observability.timing import _make_stage_timer
 
         reg = _fresh_registry()
 
@@ -153,7 +153,7 @@ class TestMakeStageTimer:
 
     def test_kwargs_passed_through(self):
         """Wrapped function receives positional and keyword arguments correctly."""
-        from yadgar.observability.timing import _make_stage_timer
+        from yadgar._shared.observability.timing import _make_stage_timer
 
         reg = _fresh_registry()
         received = {}
@@ -175,14 +175,14 @@ class TestMakeStageTimer:
 class TestStageTimer:
     def test_stage_timer_returns_callable(self):
         """stage_timer(stage) returns a decorator (callable)."""
-        from yadgar.observability.timing import stage_timer
+        from yadgar._shared.observability.timing import stage_timer
 
         decorator = stage_timer("encode")
         assert callable(decorator)
 
     def test_stage_timer_decorates_function(self):
         """@stage_timer wraps the function; original return value preserved."""
-        from yadgar.observability.timing import stage_timer
+        from yadgar._shared.observability.timing import stage_timer
 
         @stage_timer("encode")
         def fn():
@@ -192,7 +192,7 @@ class TestStageTimer:
 
     def test_stage_timer_wraps_name(self):
         """@stage_timer preserves __name__ via functools.wraps."""
-        from yadgar.observability.timing import stage_timer
+        from yadgar._shared.observability.timing import stage_timer
 
         @stage_timer("named_stage")
         def my_named_fn():
@@ -209,14 +209,14 @@ class TestStageTimer:
 class TestRequestTimer:
     def test_request_timer_returns_callable(self):
         """request_timer(name) returns a decorator."""
-        from yadgar.observability.timing import request_timer
+        from yadgar._shared.observability.timing import request_timer
 
         dec = request_timer("recall")
         assert callable(dec)
 
     def test_request_timer_wraps_function(self):
         """@request_timer decorated fn preserves __name__."""
-        from yadgar.observability.timing import request_timer
+        from yadgar._shared.observability.timing import request_timer
 
         @request_timer("recall")
         def recall_fn():
@@ -226,7 +226,7 @@ class TestRequestTimer:
 
     def test_request_timer_returns_value(self):
         """Wrapped fn return value passes through."""
-        from yadgar.observability.timing import request_timer
+        from yadgar._shared.observability.timing import request_timer
 
         @request_timer("recall")
         def fn():
@@ -236,7 +236,7 @@ class TestRequestTimer:
 
     def test_request_timer_histogram_found_path(self):
         """request_timer: when real metrics attr exists, function executes and returns value."""
-        from yadgar.observability.timing import request_timer
+        from yadgar._shared.observability.timing import request_timer
 
         # yadgar.metrics.yadgar_recall_duration_ms is a real Histogram; use it directly.
         # Verify: no exception, return value passes through, lazy bind doesn't crash.
@@ -249,7 +249,7 @@ class TestRequestTimer:
 
     def test_request_timer_histogram_missing_attr(self):
         """When yadgar.metrics lacks the attr, observe is skipped gracefully."""
-        from yadgar.observability.timing import request_timer
+        from yadgar._shared.observability.timing import request_timer
 
         # Use a metric name that definitely doesn't exist in yadgar.metrics
         @request_timer("__nonexistent_metric_xyz__")
@@ -265,8 +265,8 @@ class TestRequestTimer:
         Patch yadgar.metrics attribute directly on the module object to avoid
         the sys.modules / package-attribute mismatch issue.
         """
-        import yadgar.metrics as _real_metrics
-        from yadgar.observability.timing import request_timer
+        import yadgar._shared.metrics as _real_metrics
+        from yadgar._shared.observability.timing import request_timer
 
         mock_hist = MagicMock()
         mock_hist.observe.side_effect = RuntimeError("metric error")
@@ -292,7 +292,7 @@ class TestRequestTimer:
         """If yadgar.metrics import fails inside wrapper, exception swallowed; value returned."""
         # Remove yadgar.metrics from sys.modules so import inside wrapper re-imports
         # Replace with a broken module that raises on attribute access
-        from yadgar.observability.timing import request_timer
+        from yadgar._shared.observability.timing import request_timer
 
         class _BrokenMetrics:
             def __getattr__(self, name):
@@ -300,7 +300,7 @@ class TestRequestTimer:
 
         import sys as _sys
 
-        _sys.modules.get("yadgar.metrics")
+        _sys.modules.get("yadgar._shared.metrics")
         try:
             # Temporarily replace the yadgar.metrics attribute on the yadgar package
             # (not just sys.modules) so the import inside the wrapper gets the broken one
@@ -328,8 +328,8 @@ class TestRequestTimer:
         Patch attribute directly on yadgar.metrics module to bypass
         the sys.modules / package-attribute mismatch.
         """
-        import yadgar.metrics as _real_metrics
-        from yadgar.observability.timing import request_timer
+        import yadgar._shared.metrics as _real_metrics
+        from yadgar._shared.observability.timing import request_timer
 
         mock_hist = MagicMock()
 
@@ -361,14 +361,14 @@ class TestRequestTimer:
 class TestLabeledTimer:
     def test_labeled_timer_returns_callable(self):
         """labeled_timer returns a decorator."""
-        from yadgar.observability.timing import labeled_timer
+        from yadgar._shared.observability.timing import labeled_timer
 
         dec = labeled_timer("yadgar_recall_stage_ms", {"stage": "nli"})
         assert callable(dec)
 
     def test_labeled_timer_wraps_function(self):
         """@labeled_timer preserves __name__."""
-        from yadgar.observability.timing import labeled_timer
+        from yadgar._shared.observability.timing import labeled_timer
 
         @labeled_timer("yadgar_recall_stage_ms", {"stage": "nli"})
         def fn():
@@ -378,7 +378,7 @@ class TestLabeledTimer:
 
     def test_labeled_timer_returns_value(self):
         """Wrapped fn return value passes through."""
-        from yadgar.observability.timing import labeled_timer
+        from yadgar._shared.observability.timing import labeled_timer
 
         @labeled_timer("yadgar_recall_stage_ms", {"stage": "nli"})
         def fn():
@@ -392,8 +392,8 @@ class TestLabeledTimer:
         Patches the attribute directly on the module object to avoid
         sys.modules / package-attribute mismatch.
         """
-        import yadgar.metrics as _real_metrics
-        from yadgar.observability.timing import labeled_timer
+        import yadgar._shared.metrics as _real_metrics
+        from yadgar._shared.observability.timing import labeled_timer
 
         mock_labels = MagicMock()
         mock_hist = MagicMock()
@@ -421,7 +421,7 @@ class TestLabeledTimer:
 
     def test_labeled_timer_histogram_missing_attr(self):
         """When metric attr is missing, no error."""
-        from yadgar.observability.timing import labeled_timer
+        from yadgar._shared.observability.timing import labeled_timer
 
         # Use attr name that definitely doesn't exist in yadgar.metrics
         @labeled_timer("__nonexistent_labeled_metric_xyz__", {"stage": "nli"})
@@ -434,7 +434,7 @@ class TestLabeledTimer:
     def test_labeled_timer_import_exception_swallowed(self):
         """If yadgar.metrics getattr raises inside wrapper, exception swallowed; value returned."""
         import yadgar as _yadgar_pkg
-        from yadgar.observability.timing import labeled_timer
+        from yadgar._shared.observability.timing import labeled_timer
 
         class _BrokenMetrics:
             def __getattr__(self, name):
@@ -459,8 +459,8 @@ class TestLabeledTimer:
 
     def test_labeled_timer_observe_exception_swallowed(self):
         """observe() exception is swallowed; fn return value returned."""
-        import yadgar.metrics as _real_metrics
-        from yadgar.observability.timing import labeled_timer
+        import yadgar._shared.metrics as _real_metrics
+        from yadgar._shared.observability.timing import labeled_timer
 
         mock_labels = MagicMock()
         mock_labels.observe.side_effect = RuntimeError("observe error")

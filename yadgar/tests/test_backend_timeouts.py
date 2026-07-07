@@ -83,7 +83,7 @@ class TestRemoteMLClientTimeout:
 
     def test_score_cross_encoder_times_out(self, monkeypatch):
         """score_cross_encoder returns None quickly when backend is slow (N4: circuit breaker)."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         # v5.6.6: /rerank uses RERANK_BACKEND_TIMEOUT_SEC, not BACKEND_HTTP_TIMEOUT_SEC
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "2")
@@ -107,7 +107,7 @@ class TestRemoteMLClientTimeout:
 
     def test_score_nli_times_out(self, monkeypatch):
         """score_nli returns None quickly when backend is slow (N4: circuit breaker)."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         # v5.6.6: /rerank uses RERANK_BACKEND_TIMEOUT_SEC, not BACKEND_HTTP_TIMEOUT_SEC
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "2")
@@ -130,7 +130,7 @@ class TestRemoteMLClientTimeout:
 
     def test_env_override_lowers_timeout(self, monkeypatch):
         """Setting YADGAR_RERANK_BACKEND_TIMEOUT_SEC=1 fires sooner for /rerank."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "1")
         monkeypatch.setenv("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "1")
@@ -164,7 +164,7 @@ class TestStorageHttpTimeout:
         """StorageEngine._http.timeout matches BACKEND_HTTP_TIMEOUT_SEC."""
         import unittest.mock as mock
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "7")
         monkeypatch.setenv("YADGAR_DB_URL", "http://127.0.0.1:9999")
@@ -172,7 +172,7 @@ class TestStorageHttpTimeout:
         cfg.get_settings.cache_clear()
 
         try:
-            from yadgar.storage import StorageEngine
+            from yadgar._shared.storage import StorageEngine
 
             with mock.patch.object(StorageEngine, "_init_schema", return_value=None):
                 engine = StorageEngine(db_path="/tmp/test_yadgar_db")
@@ -196,14 +196,14 @@ class TestDbSizeTimeout:
 
     def test_dbsize_times_out_quickly(self, monkeypatch):
         """get_db_size returns zero dict quickly when backend slow."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "2")
         cfg.get_settings.cache_clear()
 
         server = _SlowServer(delay_s=30.0)
         try:
-            from yadgar.storage.dbsize import _DbSizeMixin
+            from yadgar._shared.storage.dbsize import _DbSizeMixin
 
             mixin = _DbSizeMixin.__new__(_DbSizeMixin)
             mixin._db_url = server.url
@@ -231,8 +231,8 @@ class TestVacuumPreflightTimeout:
         """cmd_vacuum_impl returns 1 quickly when backend unreachable."""
         import types
 
-        import yadgar.config as cfg
-        import yadgar.vacuum as vac
+        import yadgar._shared.config as cfg
+        import yadgar.core.vacuum as vac
 
         monkeypatch.setenv("YADGAR_BACKEND_HTTP_TIMEOUT_SEC", "2")
         cfg.get_settings.cache_clear()
@@ -269,7 +269,7 @@ class TestMigrationTimeout:
         """During _init_schema, _http uses migration timeout (30s); after init, uses operational (5s)."""
         import unittest.mock as mock
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_DB_URL", "http://127.0.0.1:9999")
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
@@ -281,7 +281,7 @@ class TestMigrationTimeout:
             captured["mid_init_read"] = self._http.timeout.read
 
         try:
-            from yadgar.storage import StorageEngine
+            from yadgar._shared.storage import StorageEngine
 
             with mock.patch.object(StorageEngine, "_init_schema", spy_init_schema):
                 engine = StorageEngine(db_path="/tmp/test_yadgar_db_mig")

@@ -40,7 +40,7 @@ def seeded_storage(tmp_db: str):
     This fixture uses the standard StorageEngine(path) pattern from the
     existing test suite (mirrors test_restoration.py, test_write_policy.py).
     """
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     storage = StorageEngine(tmp_db, embedding_dim=384)
 
@@ -163,7 +163,7 @@ def exported_db(seeded_storage, tmp_duckdb: Path, tmp_db: str):
     """Run the exporter against seeded_storage; return path to output .duckdb."""
     pytest.importorskip("duckdb", reason="duckdb not installed")
 
-    from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+    from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
     cfg = ExportConfig(embedding_dim=384)
     exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
@@ -268,7 +268,7 @@ class TestExporterRespectsSecretGate:
         pytest.importorskip("duckdb", reason="duckdb not installed")
         import duckdb
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         cfg = ExportConfig(include_secrets=False, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
@@ -283,7 +283,7 @@ class TestExporterRespectsSecretGate:
         pytest.importorskip("duckdb", reason="duckdb not installed")
         import duckdb
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         cfg = ExportConfig(include_secrets=True, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
@@ -316,7 +316,7 @@ class TestExporterActionLogWindow:
         pytest.importorskip("duckdb", reason="duckdb not installed")
         import duckdb
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         cfg = ExportConfig(action_log_limit=0, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
@@ -331,7 +331,7 @@ class TestExporterActionLogWindow:
         pytest.importorskip("duckdb", reason="duckdb not installed")
         import duckdb
 
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         storage = StorageEngine(tmp_db, embedding_dim=384)
         # Insert old row: 60 days ago (ISO string — SurrealDB accepts it)
@@ -345,7 +345,7 @@ class TestExporterActionLogWindow:
         )
         storage.close()
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         cfg = ExportConfig(action_log_since="30d", embedding_dim=384, create_views=False)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
@@ -408,7 +408,7 @@ class TestExporterExtraFields:
 
         import duckdb
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         # Insert a memory row with an unknown field
         seeded_storage._q(
@@ -448,7 +448,7 @@ class TestExporterHandlesMissingTable:
         pytest.importorskip("duckdb", reason="duckdb not installed")
         import duckdb
 
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         storage = StorageEngine(tmp_db, embedding_dim=384)
         storage._q(
@@ -460,7 +460,7 @@ class TestExporterHandlesMissingTable:
         )
         storage.close()
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         cfg = ExportConfig(create_views=False, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
@@ -542,7 +542,7 @@ class TestNoViewsFlag:
         pytest.importorskip("duckdb", reason="duckdb not installed")
         import duckdb
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         cfg = ExportConfig(create_views=False, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
@@ -566,7 +566,7 @@ class TestCliLazyImport:
 
     def test_missing_duckdb_exits_2(self, tmp_path, capsys):
         # Simulate ImportError by patching the import inside the run function
-        from yadgar.export import duckdb_exporter
+        from yadgar.core.export import duckdb_exporter
 
         with patch.object(
             duckdb_exporter,
@@ -574,7 +574,7 @@ class TestCliLazyImport:
             side_effect=ImportError("No module named 'duckdb'"),
         ):
             with pytest.raises(SystemExit) as exc:
-                from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+                from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
                 cfg = ExportConfig()
                 exporter = DuckDBExporter(
@@ -591,7 +591,7 @@ class TestCliLazyImport:
             # Re-import to test
             import importlib
 
-            import yadgar.cli.export as _mod  # noqa: F401
+            import yadgar.core.cli.export as _mod  # noqa: F401
 
             importlib.reload(_mod)
             # If we reach here without ImportError, the test passes
@@ -606,7 +606,7 @@ class TestForceFlag:
         # Create the file first
         tmp_duckdb.write_bytes(b"existing content")
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         with pytest.raises((SystemExit, FileExistsError)) as exc:
             cfg = ExportConfig(force=False, embedding_dim=384)
@@ -622,7 +622,7 @@ class TestForceFlag:
 
         tmp_duckdb.write_bytes(b"old content")
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         cfg = ExportConfig(force=True, embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)
@@ -647,7 +647,7 @@ class TestExportFullCorpusSmoke:
         pytest.importorskip("duckdb", reason="duckdb not installed")
         import duckdb
 
-        from yadgar.export.duckdb_exporter import DuckDBExporter, ExportConfig
+        from yadgar.core.export.duckdb_exporter import DuckDBExporter, ExportConfig
 
         cfg = ExportConfig(embedding_dim=384)
         exporter = DuckDBExporter(db_path=tmp_db, output_path=str(tmp_duckdb), config=cfg)

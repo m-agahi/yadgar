@@ -106,7 +106,7 @@ def test_embedding_cache_hit_counter_increments(monkeypatch):
     miss_calls = []
 
     # Monkeypatch the metrics import to use our test counters
-    import yadgar.embeddings as _emb_mod
+    import yadgar._shared.embeddings as _emb_mod
 
     def _patched_encode(self, text):
         if text in self._query_cache:
@@ -148,7 +148,7 @@ def test_embedding_cache_miss_counter_increments(monkeypatch):
     """yadgar_cache_miss_total{cache='embedding'} increments for new (unseen) inputs."""
     from collections import OrderedDict
 
-    import yadgar.embeddings as _emb_mod
+    import yadgar._shared.embeddings as _emb_mod
 
     miss_calls = []
 
@@ -186,7 +186,7 @@ def test_metrics_endpoint_exposes_new_counters():
     """generate_latest with the real _registry includes Q1 counter names."""
     from prometheus_client import generate_latest
 
-    from yadgar.metrics import _registry
+    from yadgar._shared.metrics import _registry
 
     output = generate_latest(_registry).decode()
     assert "yadgar_tool_token_estimate_total" in output
@@ -201,7 +201,7 @@ async def test_metrics_endpoint_handler_returns_200(monkeypatch):
 
     monkeypatch.setenv("YADGAR_METRICS_ENABLED", "1")
 
-    from yadgar.metrics import metrics_handler
+    from yadgar._shared.metrics import metrics_handler
 
     mock_request = MagicMock()
     response = await metrics_handler(mock_request)

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -110,7 +110,7 @@ def _insert_roadmap_wiki(updated_at_ts: float) -> None:
         directory=_TEST_DIR,
     )
     # Patch updated_at directly in storage to simulate wiki being refreshed at updated_at_ts
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     st = _get_storage()
     st._q(
@@ -134,7 +134,7 @@ def test_signal_present_when_master_newer(_engines, tmp_path, flush_queue, monke
     _insert_roadmap_wiki(roadmap_ts)
 
     # Patch _get_master_head_info to return our controlled repo's HEAD
-    from yadgar.server.tools import project as _proj
+    from yadgar.core.server.tools import project as _proj
 
     monkeypatch.setattr(
         _proj,
@@ -173,7 +173,7 @@ def test_signal_zero_when_roadmap_newer(_engines, tmp_path, monkeypatch):
 
     _insert_roadmap_wiki(roadmap_ts)
 
-    from yadgar.server.tools import project as _proj
+    from yadgar.core.server.tools import project as _proj
 
     monkeypatch.setattr(
         _proj,
@@ -206,7 +206,7 @@ def test_recommended_action_fires_on_ship_commit(_engines, tmp_path, monkeypatch
 
     _insert_roadmap_wiki(roadmap_ts)
 
-    from yadgar.server.tools import project as _proj
+    from yadgar.core.server.tools import project as _proj
 
     monkeypatch.setattr(
         _proj,
@@ -245,7 +245,7 @@ def test_recommended_action_skips_non_ship_commit(_engines, tmp_path, monkeypatc
 
     _insert_roadmap_wiki(roadmap_ts)
 
-    from yadgar.server.tools import project as _proj
+    from yadgar.core.server.tools import project as _proj
 
     monkeypatch.setattr(
         _proj,
@@ -290,7 +290,7 @@ def test_signal_uses_master_not_current_branch(_engines, tmp_path, monkeypatch):
 
     _insert_roadmap_wiki(roadmap_ts)
 
-    from yadgar.server.tools import project as _proj
+    from yadgar.core.server.tools import project as _proj
 
     # _get_master_head_info is called with resolved path — must return master info
     monkeypatch.setattr(
@@ -323,7 +323,7 @@ def test_signal_roadmap_wiki_not_found(_engines, tmp_path, monkeypatch):
     _commit(repo, "chore: init", pyproject_version="5.0.0")
     head_ts = _get_committer_ts(repo)
 
-    from yadgar.server.tools import project as _proj
+    from yadgar.core.server.tools import project as _proj
 
     monkeypatch.setattr(
         _proj,
@@ -365,7 +365,7 @@ def test_recommended_action_fires_on_squash_merge(_engines, tmp_path, monkeypatc
 
     _insert_roadmap_wiki(roadmap_ts)
 
-    from yadgar.server.tools import project as _proj
+    from yadgar.core.server.tools import project as _proj
 
     # Squash-merge commit message — no 'merge:' prefix, no 'chore: bump version'
     monkeypatch.setattr(

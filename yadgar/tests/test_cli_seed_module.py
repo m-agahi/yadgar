@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar.cli.seed import (
+from yadgar.core.cli.seed import (
     _daemon_health_ok,
     _load_anchors_yaml,
     _read_auth_token,
@@ -74,7 +74,7 @@ class TestReadAuthToken:
         secrets.write_text("YADGAR_MCP_AUTH_TOKEN=file-token\n")
         with (
             patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
-            patch("yadgar.cli.seed._paths") as mock_paths,
+            patch("yadgar.core.cli.seed._paths") as mock_paths,
         ):
             mock_paths.SECRETS_ENV_PATH = secrets
             result = _read_auth_token()
@@ -83,7 +83,7 @@ class TestReadAuthToken:
     def test_no_env_no_file_returns_empty(self, tmp_path):
         with (
             patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
-            patch("yadgar.cli.seed._paths") as mock_paths,
+            patch("yadgar.core.cli.seed._paths") as mock_paths,
         ):
             mock_paths.SECRETS_ENV_PATH = tmp_path / "missing.env"
             result = _read_auth_token()
@@ -94,7 +94,7 @@ class TestReadAuthToken:
         secrets.write_text('YADGAR_MCP_AUTH_TOKEN="quoted-token"\n')
         with (
             patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
-            patch("yadgar.cli.seed._paths") as mock_paths,
+            patch("yadgar.core.cli.seed._paths") as mock_paths,
         ):
             mock_paths.SECRETS_ENV_PATH = secrets
             result = _read_auth_token()
@@ -105,7 +105,7 @@ class TestReadAuthToken:
         secrets.write_text("# comment\nYADGAR_MCP_AUTH_TOKEN=tok\n")
         with (
             patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
-            patch("yadgar.cli.seed._paths") as mock_paths,
+            patch("yadgar.core.cli.seed._paths") as mock_paths,
         ):
             mock_paths.SECRETS_ENV_PATH = secrets
             result = _read_auth_token()
@@ -153,7 +153,7 @@ class TestSeedAnchors:
 
     def test_daemon_unreachable_skips_all(self, capsys):
         anchors = [{"content": "x", "tags": ["a"]}]
-        with patch("yadgar.cli.seed._daemon_health_ok", return_value=False):
+        with patch("yadgar.core.cli.seed._daemon_health_ok", return_value=False):
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
         assert result["skipped"] == 1
         assert result.get("reason") == "daemon_unreachable"
@@ -163,7 +163,7 @@ class TestSeedAnchors:
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps({"created": 1}).encode()
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
             patch("urllib.request.urlopen", return_value=mock_resp),
             patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
         ):
@@ -177,7 +177,7 @@ class TestSeedAnchors:
         anchors = [{"content": "duplicate", "tags": []}]
         http_err = urllib.error.HTTPError(url="", code=409, msg="Conflict", hdrs={}, fp=None)
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
             patch("urllib.request.urlopen", side_effect=http_err),
         ):
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
@@ -190,7 +190,7 @@ class TestSeedAnchors:
         anchors = [{"content": "x", "tags": []}]
         http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
             patch("urllib.request.urlopen", side_effect=http_err),
         ):
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
@@ -199,7 +199,7 @@ class TestSeedAnchors:
     def test_missing_content_skipped(self):
         anchors = [{"content": "", "tags": ["a"]}]
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
         ):
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
         assert result["skipped"] == 1
@@ -218,7 +218,7 @@ class TestSeedAnchors:
 
         anchors = [{"content": "no anchor tag", "tags": ["custom"]}]
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
             patch("urllib.request.urlopen", side_effect=capture_urlopen),
         ):
             _seed_anchors(anchors, db_path=None, dry_run=False)
@@ -261,7 +261,7 @@ class TestCmdSeedAnchors:
         p = tmp_path / "a.yaml"
         p.write_text("- content: anchor\n  tags: [t]\n")
         args = self._args(anchors=str(p), dry_run=False)
-        with patch("yadgar.cli.seed._daemon_health_ok", return_value=False):
+        with patch("yadgar.core.cli.seed._daemon_health_ok", return_value=False):
             cmd_seed(args)
         err = capsys.readouterr().err
         assert "daemon" in err.lower() or "unreachable" in err.lower()
@@ -273,7 +273,7 @@ class TestCmdSeedAnchors:
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps({"created": 1}).encode()
         with (
-            patch("yadgar.cli.seed._daemon_health_ok", return_value=True),
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
             patch("urllib.request.urlopen", return_value=mock_resp),
         ):
             cmd_seed(args)
@@ -306,7 +306,7 @@ class TestCmdSeedProjectMode:
             "replaced": 0,
             "memories": [{"tags": ["x"], "content": "memory content here"} for _ in range(5)],
         }
-        with patch("yadgar.seed.seed_project", return_value=mock_result):
+        with patch("yadgar.core.seed.seed_project", return_value=mock_result):
             cmd_seed(args)
         err = capsys.readouterr().err
         assert "DRY RUN" in err or "5" in err
@@ -320,7 +320,7 @@ class TestCmdSeedProjectMode:
             "replaced": 0,
             "memories": [],
         }
-        with patch("yadgar.seed.seed_project", return_value=mock_result):
+        with patch("yadgar.core.seed.seed_project", return_value=mock_result):
             cmd_seed(args)
         err = capsys.readouterr().err
         assert "my_project" in err or "8" in err
@@ -334,7 +334,7 @@ class TestCmdSeedProjectMode:
             "replaced": 0,
             "memories": [],
         }
-        with patch("yadgar.seed.seed_project", return_value=mock_result):
+        with patch("yadgar.core.seed.seed_project", return_value=mock_result):
             cmd_seed(args)
         out = capsys.readouterr().out
         parsed = json.loads(out.strip())
@@ -349,7 +349,7 @@ class TestCmdSeedProjectMode:
             "replaced": 2,
             "memories": [],
         }
-        with patch("yadgar.seed.seed_project", return_value=mock_result):
+        with patch("yadgar.core.seed.seed_project", return_value=mock_result):
             cmd_seed(args)
         err = capsys.readouterr().err
         assert "replaced" in err.lower() or "2" in err

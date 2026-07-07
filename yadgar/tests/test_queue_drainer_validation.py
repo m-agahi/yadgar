@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 MIN_WIKI_SCHEMA = 2
 

@@ -15,7 +15,7 @@ import pytest
 
 @pytest.fixture
 def storage(tmp_path):
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     engine = StorageEngine(str(tmp_path / "test_branch.db"))
     yield engine
@@ -82,13 +82,13 @@ class TestBranchMigrationIdempotent:
     """Running the migration twice produces same result with no errors."""
 
     def test_double_run_no_error(self, storage):
-        from yadgar.storage import _migration_004_branch_field
+        from yadgar._shared.storage import _migration_004_branch_field
 
         _migration_004_branch_field(storage)
         _migration_004_branch_field(storage)  # second run must not raise
 
     def test_double_run_same_row_count(self, storage):
-        from yadgar.storage import _migration_004_branch_field
+        from yadgar._shared.storage import _migration_004_branch_field
 
         _insert_bare_memory(storage, "idempotent test memory")
         _insert_bare_wiki_page(storage, "idempotent-slug")
@@ -108,7 +108,7 @@ class TestBranchBackfill:
     """Pre-existing rows without branch get backfilled to 'master'."""
 
     def test_memory_backfill(self, storage):
-        from yadgar.storage import _migration_004_branch_field
+        from yadgar._shared.storage import _migration_004_branch_field
 
         mid = _insert_bare_memory(storage, "pre-v5 memory backfill test")
 
@@ -121,7 +121,7 @@ class TestBranchBackfill:
         )
 
     def test_wiki_page_backfill(self, storage):
-        from yadgar.storage import _migration_004_branch_field
+        from yadgar._shared.storage import _migration_004_branch_field
 
         pid = _insert_bare_wiki_page(storage, "pre-v5-wiki-backfill")
 
@@ -135,7 +135,7 @@ class TestBranchBackfill:
 
     def test_already_master_row_stays_master(self, storage):
         """Row already tagged master must remain master after re-run."""
-        from yadgar.storage import _migration_004_branch_field
+        from yadgar._shared.storage import _migration_004_branch_field
 
         _migration_004_branch_field(storage)
 

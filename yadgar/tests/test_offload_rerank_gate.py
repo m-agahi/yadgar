@@ -28,7 +28,7 @@ import time
 
 import pytest
 
-from yadgar.server import _offload
+from yadgar._shared.runtime import offload as _offload
 
 
 @pytest.fixture(autouse=True)

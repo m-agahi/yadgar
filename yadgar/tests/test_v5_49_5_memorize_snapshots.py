@@ -109,10 +109,10 @@ def _build_sync_env(monkeypatch, *, memory_id=_FIXED_MEMORY_ID, get_memory_retur
 
     Returns dict with storage, embeddings, buffer mocks.
     """
-    import yadgar.file_queue as _fq
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.file_queue as _fq
 
-    _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
+    _mem_mod = importlib.import_module("yadgar.core.server.tools.memorize")
 
     # _phase_resolve_branch calls _file_queue.is_draining() via module — patch source
     monkeypatch.setattr(_fq, "is_draining", lambda: True)
@@ -165,7 +165,7 @@ def _build_sync_env(monkeypatch, *, memory_id=_FIXED_MEMORY_ID, get_memory_retur
     monkeypatch.setattr(_st, "_rules_engine", None)
 
     # Patch lifecycle getters at the lifecycle module (phases use _lifecycle.getter())
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
 
     monkeypatch.setattr(_lc, "_get_embeddings", lambda: mock_embeddings)
     monkeypatch.setattr(_lc, "_get_storage", lambda: mock_storage)
@@ -194,9 +194,9 @@ def test_memorize_accept_path_returns_expected_dict(monkeypatch, tmp_path):
     Snapshot: memorize_accept_v5_49_4.json
     """
     _build_sync_env(monkeypatch)
-    from yadgar.server.tools.memorize import memorize
+    from yadgar.core.server.tools.memorize import memorize
 
-    with patch("yadgar.server._detect_branch", return_value="feat/snapshot-test"):
+    with patch("yadgar.core.server._detect_branch", return_value="feat/snapshot-test"):
         result = memorize(
             content="snapshot test content",
             context="/tmp/snapshot-test",
@@ -221,7 +221,7 @@ def test_memorize_reject_write_gate_returns_expected_dict(monkeypatch, tmp_path)
 
     Snapshot: memorize_reject_write_gate_v5_49_4.json
     """
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     _build_sync_env(monkeypatch)
 
@@ -229,9 +229,9 @@ def test_memorize_reject_write_gate_returns_expected_dict(monkeypatch, tmp_path)
     mock_gate.should_store.return_value = (False, 0.05, "low_surprise")
     monkeypatch.setattr(_st, "_write_gate", mock_gate)
 
-    from yadgar.server.tools.memorize import memorize
+    from yadgar.core.server.tools.memorize import memorize
 
-    with patch("yadgar.server._detect_branch", return_value="feat/snapshot-test"):
+    with patch("yadgar.core.server._detect_branch", return_value="feat/snapshot-test"):
         result = memorize(
             content="snapshot test content for gate rejection",
             context="/tmp/snapshot-test",
@@ -256,14 +256,16 @@ def test_memorize_reject_missing_branch_returns_expected_dict(monkeypatch, tmp_p
     """
     import importlib
 
-    import yadgar.file_queue as _fq
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.file_queue as _fq
 
-    _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
+    _mem_mod = importlib.import_module("yadgar.core.server.tools.memorize")
     _resolve_branch_mod = importlib.import_module(
-        "yadgar.server.tools._memorize_phases._phase_resolve_branch"
+        "yadgar.core.server.tools._memorize_phases._phase_resolve_branch"
     )
-    _validate_mod = importlib.import_module("yadgar.server.tools._memorize_phases._phase_validate")
+    _validate_mod = importlib.import_module(
+        "yadgar.core.server.tools._memorize_phases._phase_validate"
+    )
 
     # NOT draining — fast path, branch check fires
     # _phase_resolve_branch uses _file_queue.is_draining() via module ref — patch source
@@ -273,11 +275,11 @@ def test_memorize_reject_missing_branch_returns_expected_dict(monkeypatch, tmp_p
     monkeypatch.setattr(_mem_mod, "settings", mock_settings)
     monkeypatch.setattr(_st, "_rules_engine", None)
 
-    from yadgar.server.tools.memorize import memorize
+    from yadgar.core.server.tools.memorize import memorize
 
     # No branch_hint, _detect_branch returns None, no YADGAR_CI_BRANCH env
     with (
-        patch("yadgar.server._detect_branch", return_value=None),
+        patch("yadgar.core.server._detect_branch", return_value=None),
         patch.dict("os.environ", {}, clear=False),
     ):
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
@@ -305,13 +307,13 @@ def test_memorize_reject_secret_leak_returns_expected_dict(monkeypatch, tmp_path
 
     Snapshot: memorize_reject_secret_leak_v5_49_4.json
     """
-    from yadgar.server.tools.memorize import memorize
+    from yadgar.core.server.tools.memorize import memorize
 
     # gate_or_reject returns a rejection dict for secrets
     _secret_reject = {"stored": False, "reason": "secret_detected", "pattern": "aws_key"}
 
     with patch(
-        "yadgar.server.tools._memorize_phases._phase_validate.gate_or_reject",
+        "yadgar.core.server.tools._memorize_phases._phase_validate.gate_or_reject",
         return_value=_secret_reject,
     ):
         result = memorize(
@@ -335,7 +337,7 @@ def test_memorize_reject_invalid_tier_returns_expected_dict(monkeypatch, tmp_pat
 
     Snapshot: memorize_reject_invalid_tier_v5_49_4.json
     """
-    from yadgar.server.tools.memorize import memorize
+    from yadgar.core.server.tools.memorize import memorize
 
     result = memorize(
         content="tier validation test",
@@ -363,14 +365,16 @@ def test_memorize_writes_to_queue(monkeypatch, tmp_path):
     """
     import importlib
 
-    import yadgar.file_queue as _fq
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.file_queue as _fq
 
-    _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
+    _mem_mod = importlib.import_module("yadgar.core.server.tools.memorize")
     _resolve_branch_mod = importlib.import_module(
-        "yadgar.server.tools._memorize_phases._phase_resolve_branch"
+        "yadgar.core.server.tools._memorize_phases._phase_resolve_branch"
     )
-    _validate_mod = importlib.import_module("yadgar.server.tools._memorize_phases._phase_validate")
+    _validate_mod = importlib.import_module(
+        "yadgar.core.server.tools._memorize_phases._phase_validate"
+    )
 
     # _phase_resolve_branch uses _file_queue.is_draining() via module ref — patch source
     monkeypatch.setattr(_fq, "is_draining", lambda: False)
@@ -390,10 +394,10 @@ def test_memorize_writes_to_queue(monkeypatch, tmp_path):
 
     monkeypatch.setattr(_resolve_branch_mod, "_get_file_queue", lambda: mock_fq)
 
-    from yadgar.server.tools.memorize import memorize
+    from yadgar.core.server.tools.memorize import memorize
 
     with (
-        patch("yadgar.server._detect_branch", return_value="feat/queue-test"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/queue-test"),
         patch.object(_validate_mod, "gate_or_reject", return_value=None),
     ):
         result = memorize(

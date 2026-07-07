@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.113.0"
+version = "5.114.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -73,8 +73,8 @@ dependencies = [
 
 [project.scripts]
 yadgar = "yadgar.__main__:cli"
-yadgar-nightly-cycle = "yadgar.scripts.nightly_cycle:main"
-yadgar-setup = "yadgar.scripts.yadgar_setup:main"
+yadgar-nightly-cycle = "yadgar.core.scripts.nightly_cycle:main"
+yadgar-setup = "yadgar.core.scripts.yadgar_setup:main"
 
 [project.urls]
 Homepage = "https://codeberg.org/maxagahi/yadgar"
@@ -88,11 +88,11 @@ packages = ["yadgar"]
 # Ship install assets inside the wheel so pipx-installed users can run setup
 "install_assets" = "share/yadgar/install_assets"
 # v5.88 seed consolidation: anchors.yaml moved to the canonical seed materials dir
-# (yadgar/seed/materials/) so all seed CONTENT is edited in one place. It still
-# ships at the historical share/ destination so the install script + wheel-bundle
-# test are unchanged. (agent_prompts.yaml needs no mapping — it ships as package
-# data under the yadgar/ tree automatically.)
-"yadgar/seed/materials/anchors.yaml" = "share/yadgar/install_assets/seeds/anchors.yaml"
+# (folder-split #17 Car 4a: yadgar/core/seed/materials/) so all seed CONTENT is
+# edited in one place. It still ships at the historical share/ destination so the
+# install script + wheel-bundle test are unchanged. (agent_prompts.yaml needs no
+# mapping — it ships as package data under the yadgar/ tree automatically.)
+"yadgar/core/seed/materials/anchors.yaml" = "share/yadgar/install_assets/seeds/anchors.yaml"
 # v5.46.10 fix: ship ALL scripts/install/ helpers (not just yadgar-setup.sh).
 # Previously only yadgar-setup.sh was bundled; helpers it calls were absent,
 # breaking pipx installs on fresh hosts since v5.45.0.
@@ -117,35 +117,35 @@ ignore = [
 # b27d218 enabled ruff --select=C901,PLR0913 without grandfathering existing code.
 # Each entry is technical debt; refactor target: v5.4.4.
 # DO NOT add new entries here — fix violations in new code.
-"yadgar/causal_discovery/pc.py" = ["C901"]
-"yadgar/cli/daemon.py" = ["C901"]
-"yadgar/cli/stats.py" = ["C901"]
-"yadgar/cls_store/clustering.py" = ["C901"]
-"yadgar/consolidation/cls.py" = ["C901"]
-"yadgar/curation/__init__.py" = ["PLR0913"]
-"yadgar/curation/ingestion.py" = ["PLR0913"]
-"yadgar/curation/prune_passes.py" = ["C901"]
-"yadgar/graph_api.py" = ["C901"]
-"yadgar/install_hooks_lib.py" = ["C901"]
-"yadgar/metacognition/cognitive_load.py" = ["C901"]
-"yadgar/metacognition/coverage.py" = ["C901"]
-"yadgar/metacognition/gap_detection.py" = ["C901"]
-"yadgar/predictive_coding.py" = ["C901"]
-"yadgar/restoration.py" = ["C901", "PLR0913"]
-"yadgar/retrieval/_reranking_heuristic.py" = ["C901"]
-"yadgar/retrieval/fusion.py" = ["C901"]
-"yadgar/retrieval/query_analysis.py" = ["C901"]
-"yadgar/retrieval/reranking.py" = ["C901", "PLR0913"]
-"yadgar/retrieval/scoring.py" = ["C901"]
-"yadgar/rules_engine.py" = ["C901"]
-"yadgar/seed/_generate.py" = ["C901"]
-"yadgar/seed/_scan.py" = ["C901"]
-"yadgar/server/tools/admin_invariants.py" = ["C901"]
-"yadgar/server/tools/admin_other.py" = ["C901"]
-"yadgar/server/tools/project.py" = ["C901"]
-"yadgar/server/tools/recall.py" = ["C901"]
-"yadgar/server/tools/wiki.py" = ["PLR0913"]
-"yadgar/storage/entity.py" = ["PLR0913"]
+"yadgar/_shared/causal_discovery/pc.py" = ["C901"]
+"yadgar/core/cli/daemon.py" = ["C901"]
+"yadgar/core/cli/stats.py" = ["C901"]
+"yadgar/_shared/cls_store/clustering.py" = ["C901"]
+"yadgar/core/consolidation/cls.py" = ["C901"]
+"yadgar/_shared/curation/__init__.py" = ["PLR0913"]
+"yadgar/_shared/curation/ingestion.py" = ["PLR0913"]
+"yadgar/_shared/curation/prune_passes.py" = ["C901"]
+"yadgar/core/graph_api.py" = ["C901"]
+"yadgar/core/install_hooks_lib.py" = ["C901"]
+"yadgar/_shared/metacognition/cognitive_load.py" = ["C901"]
+"yadgar/_shared/metacognition/coverage.py" = ["C901"]
+"yadgar/_shared/metacognition/gap_detection.py" = ["C901"]
+"yadgar/_shared/predictive_coding.py" = ["C901"]
+"yadgar/_shared/restoration.py" = ["C901", "PLR0913"]
+"yadgar/_shared/retrieval/_reranking_heuristic.py" = ["C901"]
+"yadgar/_shared/retrieval/fusion.py" = ["C901"]
+"yadgar/_shared/retrieval/query_analysis.py" = ["C901"]
+"yadgar/_shared/retrieval/reranking.py" = ["C901", "PLR0913"]
+"yadgar/_shared/retrieval/scoring.py" = ["C901"]
+"yadgar/_shared/rules_engine.py" = ["C901"]
+"yadgar/core/seed/_generate.py" = ["C901"]
+"yadgar/core/seed/_scan.py" = ["C901"]
+"yadgar/core/server/tools/admin_invariants.py" = ["C901"]
+"yadgar/core/server/tools/admin_other.py" = ["C901"]
+"yadgar/core/server/tools/project.py" = ["C901"]
+"yadgar/core/server/tools/recall.py" = ["C901"]
+"yadgar/core/server/tools/wiki.py" = ["PLR0913"]
+"yadgar/_shared/storage/entity.py" = ["PLR0913"]
 "yadgar/tests/test_metacognition.py" = ["PLR0913"]
 "yadgar/tests/test_rules_engine.py" = ["PLR0913"]
 
@@ -225,4 +225,129 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
+    # import-linter: core/backend/_shared boundary enforcement (folder-split #17).
+    # Car 0 lands the dep + .importlinter contracts in REPORT-ONLY mode (no
+    # blocking pre-commit/CI hook yet); the final car flips it to hard-fail.
+    "import-linter>=2.0",
+]
+
+# ── import-linter (folder-split #17) ─────────────────────────────────────────
+# REPORT-ONLY at Car 0: config present so the final car flips a switch rather
+# than authoring contracts. NOT wired into pre-commit or CI yet — run manually
+# with `uv run lint-imports`. NOTE: the `yadgar.core` subpackage does not exist
+# until the final car, so several contracts below cannot pass until then; this
+# is expected and is why no blocking hook references them yet.
+[tool.importlinter]
+root_package = "yadgar"
+
+[[tool.importlinter.contracts]]
+name = "shared must not import core or backend"
+type = "forbidden"
+source_modules = ["yadgar._shared"]
+forbidden_modules = ["yadgar.core", "yadgar.backend"]
+# Car 2 (folder-split #17): the sole sanctioned _shared→backend edge is the
+# COMPOSITION ROOT. lifecycle.init_engines must name the concrete Local/Remote
+# ML client + the backend cache singletons to SELECT and INJECT them (that is
+# what DI is — the edge exists *because* of DI, not despite it). Both concretes
+# physically live in yadgar/backend/, so this cannot be dissolved while the
+# composition root lives in _shared; pushing selection to callers only relocates
+# the same backend import (a core→backend edge, equally forbidden). Splitting
+# ml_client.py by consumer is Car 3 scope. This is a PERMANENT waiver for Car 2,
+# NOT a shrinking migration allowance. All CONSUMER edges (reranking, storage,
+# log_config) are clean — they receive injected Protocol handles.
+ignore_imports = [
+  "yadgar._shared.runtime.lifecycle -> yadgar.backend.ml_client",
+  "yadgar._shared.runtime.lifecycle -> yadgar.backend.cache",
+  # folder-split #17 composition-root: init_engines/_state wire the FULL
+  # engine set incl. CORE-only daemons (consolidation/file_queue/viz/etc). A
+  # composition root spans layers by nature (same as the backend DI waiver above).
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.consolidation",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.drain",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.file_queue",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.graph_api",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.sd_notify",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.sensitive_lock",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.update.check",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.viz_server",
+  "yadgar._shared.runtime.state -> yadgar.core.consolidation",
+  "yadgar._shared.runtime.state -> yadgar.core.file_queue",
+]
+
+[[tool.importlinter.contracts]]
+name = "backend must not import core"
+type = "forbidden"
+source_modules = ["yadgar.backend"]
+forbidden_modules = ["yadgar.core"]
+ignore_imports = [
+  # composition-root transitive chain (backend -> _shared.runtime -> core):
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.consolidation",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.drain",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.file_queue",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.graph_api",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.sd_notify",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.sensitive_lock",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.update.check",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.viz_server",
+  "yadgar._shared.runtime.state -> yadgar.core.consolidation",
+  "yadgar._shared.runtime.state -> yadgar.core.file_queue",
+]
+
+[[tool.importlinter.contracts]]
+name = "core and backend must not import each other's internals"
+type = "forbidden"
+source_modules = ["yadgar.core"]
+forbidden_modules = ["yadgar.backend"]
+# Composition-root waiver (folder-split #17, ADR-0056). core reaches backend
+# ONLY transitively through the DI composition root
+# (core.* -> _shared.runtime.lifecycle -> backend.ml_client/backend.cache).
+# lifecycle.init_engines must name the concrete Local/Remote ML client + backend
+# cache singletons to SELECT and INJECT them — that is the composition root, and
+# the concretes physically live in yadgar/backend/. Ignoring the sanctioned
+# lifecycle->backend edges here (same 2 edges waived on contract 1) removes the
+# transitive chain. All direct core->backend edges (e.g. admin_other) are FIXED,
+# not waived.
+ignore_imports = [
+  "yadgar._shared.runtime.lifecycle -> yadgar.backend.ml_client",
+  "yadgar._shared.runtime.lifecycle -> yadgar.backend.cache",
+  # folder-split #17 composition-root: init_engines/_state wire the FULL
+  # engine set incl. CORE-only daemons (consolidation/file_queue/viz/etc). A
+  # composition root spans layers by nature (same as the backend DI waiver above).
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.consolidation",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.drain",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.file_queue",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.graph_api",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.sd_notify",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.sensitive_lock",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.update.check",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.viz_server",
+  "yadgar._shared.runtime.state -> yadgar.core.consolidation",
+  "yadgar._shared.runtime.state -> yadgar.core.file_queue",
+]
+
+[[tool.importlinter.contracts]]
+name = "layered: core|backend -> _shared"
+type = "layers"
+layers = ["core | backend", "_shared"]
+containers = ["yadgar"]
+# Composition-root waiver (folder-split #17, ADR-0056). The layers contract
+# forbids _shared -> backend, but the DI composition root
+# (_shared.runtime.lifecycle) must name the concrete backend ML client + cache to
+# inject them. Same sanctioned edges waived on contracts 1 and 3. This is a
+# PERMANENT structural waiver, not a shrinking migration allowance.
+ignore_imports = [
+  "yadgar._shared.runtime.lifecycle -> yadgar.backend.ml_client",
+  "yadgar._shared.runtime.lifecycle -> yadgar.backend.cache",
+  # folder-split #17 composition-root: init_engines/_state wire the FULL
+  # engine set incl. CORE-only daemons (consolidation/file_queue/viz/etc). A
+  # composition root spans layers by nature (same as the backend DI waiver above).
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.consolidation",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.drain",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.file_queue",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.graph_api",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.sd_notify",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.sensitive_lock",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.update.check",
+  "yadgar._shared.runtime.lifecycle -> yadgar.core.viz_server",
+  "yadgar._shared.runtime.state -> yadgar.core.consolidation",
+  "yadgar._shared.runtime.state -> yadgar.core.file_queue",
 ]

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.storage import StorageEngine
+from yadgar._shared.storage import StorageEngine
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -143,7 +143,7 @@ class TestInvalidateEdge:
     """T3 — invalidate_edge() sets valid_until ≈ now()."""
 
     def test_invalidate_causal_edge(self, storage):
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
 
         e1 = _insert_bare_entity(storage, "C1")
         e2 = _insert_bare_entity(storage, "C2")
@@ -161,7 +161,7 @@ class TestInvalidateEdge:
         )
 
     def test_invalidate_relationship(self, storage):
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
 
         e1 = _insert_bare_entity(storage, "R1")
         e2 = _insert_bare_entity(storage, "R2")
@@ -177,8 +177,8 @@ class TestGetFullGraphFiltering:
     """T4 — get_full_graph() excludes invalidated edges by default."""
 
     def test_invalidated_causal_edge_excluded_by_default(self, storage):
-        from yadgar.graph_api import GraphAPI
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
+        from yadgar.core.graph_api import GraphAPI
 
         e1 = _insert_bare_entity(storage, "G1")
         e2 = _insert_bare_entity(storage, "G2")
@@ -201,8 +201,8 @@ class TestGetFullGraphIncludeInvalidated:
     """T5 — get_full_graph(include_invalidated=True) returns all edges."""
 
     def test_include_invalidated_returns_all(self, storage):
-        from yadgar.graph_api import GraphAPI
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
+        from yadgar.core.graph_api import GraphAPI
 
         e1 = _insert_bare_entity(storage, "H1")
         e2 = _insert_bare_entity(storage, "H2")

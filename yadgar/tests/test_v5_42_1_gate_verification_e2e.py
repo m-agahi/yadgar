@@ -25,8 +25,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.file_queue import FileQueue, QueueDrainer
+from yadgar.core import server
+from yadgar.core.file_queue import FileQueue, QueueDrainer
 
 # ---------------------------------------------------------------------------
 # Content
@@ -94,8 +94,8 @@ def _drainer_env(tmp_path, monkeypatch):
     )
     real_fq = FileQueue(tmp_path)
 
-    import yadgar.server._state as _state_mod
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
+    import yadgar._shared.runtime.state as _state_mod
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -108,7 +108,7 @@ def _drainer_env(tmp_path, monkeypatch):
 
     with (
         patch.object(_lc, "_get_file_queue", _get_fq),
-        patch("yadgar.server.tools.wiki._get_file_queue", _get_fq),
+        patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
     ):
@@ -119,7 +119,7 @@ def _drainer_env(tmp_path, monkeypatch):
 
 def _write_sync(title: str, content: str, **kwargs) -> dict:
     """Write via is_draining=True sync path — bypasses queue and gate."""
-    import yadgar.file_queue._locals as _loc
+    import yadgar.core.file_queue._locals as _loc
 
     _loc._drain_local.active = True
     try:
@@ -190,8 +190,8 @@ def test_v5_42_1_gate_fires_post_backfill_e2e(_drainer_env):
 
     # ── Step 5: dlq_inspect(filter="rejections") — expect 1 entry ────────────
     with (
-        patch("yadgar.server.lifecycle._get_file_queue", return_value=fq),
-        patch("yadgar.server.tools.admin_dlq._get_file_queue", return_value=fq),
+        patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
+        patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
     ):
         rejections = server.dlq_inspect(filter="rejections")
 
@@ -211,8 +211,8 @@ def test_v5_42_1_gate_fires_post_backfill_e2e(_drainer_env):
 
     # ── Step 6: dlq_dismiss the entry ────────────────────────────────────────
     with (
-        patch("yadgar.server.lifecycle._get_file_queue", return_value=fq),
-        patch("yadgar.server.tools.admin_dlq._get_file_queue", return_value=fq),
+        patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
+        patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
     ):
         dismiss_result = server.dlq_dismiss(filename=rejection["file"])
     assert dismiss_result.get("dismissed") is True or dismiss_result.get("status") == "ok", (

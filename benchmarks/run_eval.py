@@ -63,14 +63,14 @@ from benchmarks.run_longmemeval import (
     make_benchmark_settings,
     spawn_surreal_for_benchmark,
 )
-from yadgar._surreal_runner import teardown_surreal_proc
-from yadgar.config import Settings
-from yadgar.curation import MemoryCurator
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import Retriever
-from yadgar.storage import StorageEngine
-from yadgar.thermodynamics import MemoryThermodynamics
+from yadgar.core._surreal_runner import teardown_surreal_proc
+from yadgar._shared.config import Settings
+from yadgar._shared.curation import MemoryCurator
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval import Retriever
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.thermodynamics import MemoryThermodynamics
 
 # ── Constants ───────────────────────────────────────────────────────────────────
 
@@ -368,9 +368,9 @@ def evaluate_pair_unified(
 
     # Get the MCP recall tool (registered by @_tool() — module-level attribute)
     # Must go through sys.modules because @_tool() replaces the local name.
-    _recall_module = _sys.modules.get("yadgar.server.tools.recall")
+    _recall_module = _sys.modules.get("yadgar.core.server.tools.recall")
     if _recall_module is None:
-        import yadgar.server.tools.recall as _recall_module  # noqa: PLC0415
+        import yadgar.core.server.tools.recall as _recall_module  # noqa: PLC0415
 
     recall_fn = getattr(_recall_module, "recall")
 
@@ -688,14 +688,14 @@ def run_eval(
                 f"directory={eval_directory!r}"
             )
             # Unified path: init the server stack so the MCP tool can access storage.
-            from yadgar import server as _srv  # noqa: PLC0415
+            from yadgar.core import server as _srv  # noqa: PLC0415
 
             _srv.init_engines(db_path=os.environ.get("YADGAR_DB_PATH", settings.DB_PATH))
             # Enable unified recall for this run
             os.environ["YADGAR_UNIFIED_RECALL_ENABLED"] = "true"
             import importlib  # noqa: PLC0415
 
-            import yadgar.config as _ycfg  # noqa: PLC0415
+            import yadgar._shared.config as _ycfg  # noqa: PLC0415
 
             _ycfg.get_settings.cache_clear()
 

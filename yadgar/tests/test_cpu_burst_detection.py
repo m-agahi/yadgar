@@ -28,7 +28,7 @@ class TestPhaseDurationWarn:
 
     def _make_orchestrator(self):
         """Build a minimal _OrchestratorMixin instance with stubs."""
-        from yadgar.consolidation.orchestrator import _OrchestratorMixin
+        from yadgar.core.consolidation.orchestrator import _OrchestratorMixin
 
         class _Stub(_OrchestratorMixin):
             def __init__(self):
@@ -62,14 +62,14 @@ class TestPhaseDurationWarn:
 
     def test_phase_duration_warn_emits_critical_log(self, caplog, monkeypatch):
         """When apply_decay takes longer than PHASE_DURATION_WARN_MS, CRITICAL is emitted."""
-        import yadgar.consolidation.orchestrator as _orch_mod
+        import yadgar.core.consolidation.orchestrator as _orch_mod
 
         # Set threshold very low so any real execution exceeds it
         monkeypatch.setattr(_orch_mod, "PHASE_DURATION_WARN_MS", 1, raising=False)
 
         # Override settings to expose the constant if it's loaded from there
         try:
-            from yadgar.config import get_settings
+            from yadgar._shared.config import get_settings
 
             settings = get_settings()
             monkeypatch.setattr(settings, "PHASE_DURATION_WARN_MS", 1, raising=False)
@@ -100,13 +100,13 @@ class TestPhaseDurationWarn:
 
     def test_phase_duration_under_threshold_no_warn(self, caplog, monkeypatch):
         """When all phases complete within threshold, no CRITICAL duration log is emitted."""
-        import yadgar.consolidation.orchestrator as _orch_mod
+        import yadgar.core.consolidation.orchestrator as _orch_mod
 
         # Set very high threshold so nothing triggers it
         monkeypatch.setattr(_orch_mod, "PHASE_DURATION_WARN_MS", 60_000, raising=False)
 
         try:
-            from yadgar.config import get_settings
+            from yadgar._shared.config import get_settings
 
             settings = get_settings()
             monkeypatch.setattr(settings, "PHASE_DURATION_WARN_MS", 60_000, raising=False)
@@ -140,20 +140,20 @@ _YADGAR_SRC = _REPO_ROOT / "yadgar"
 # Add to this set only with explicit design review.
 _EXPECTED_SLEEP_CYCLE_CALLERS = frozenset(
     {
-        "sleep_compute/__init__.py",  # SleepEngine.run_sleep_cycle() definition
-        "consolidation/orchestrator.py",  # _maybe_sleep_cycle — calls self._sleep_engine.run_sleep_cycle()
-        "server/tools/admin_other.py",  # consolidate_now(mode='full') explicit MCP tool
+        "_shared/sleep_compute/__init__.py",  # SleepEngine.run_sleep_cycle() definition
+        "core/consolidation/orchestrator.py",  # _maybe_sleep_cycle — calls self._sleep_engine.run_sleep_cycle()
+        "core/server/tools/admin_other.py",  # consolidate_now(mode='full') explicit MCP tool
     }
 )
 
 # Expected callers/definers of force_consolidate — ONLY these files may reference it.
 _EXPECTED_FORCE_CONSOLIDATE_CALLERS = frozenset(
     {
-        "consolidation/__init__.py",  # ConsolidationScheduler.force_consolidate() definition
-        "consolidation/orchestrator.py",  # docstring reference (not a call)
-        "server/tools/admin_other.py",  # consolidate_now MCP tool
-        "scripts/nightly_cycle.py",  # nightly cron script
-        "server/http.py",  # startup/shutdown lifecycle call
+        "core/consolidation/__init__.py",  # ConsolidationScheduler.force_consolidate() definition
+        "core/consolidation/orchestrator.py",  # docstring reference (not a call)
+        "core/server/tools/admin_other.py",  # consolidate_now MCP tool
+        "core/scripts/nightly_cycle.py",  # nightly cron script
+        "core/server/http.py",  # startup/shutdown lifecycle call
     }
 )
 

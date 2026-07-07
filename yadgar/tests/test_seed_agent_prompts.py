@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server  # noqa: E402
+from yadgar.core import server  # noqa: E402
 
 _EXPECTED_SLUGS = [
     "agent-prompt-code-review",
@@ -53,7 +53,7 @@ def _engines(tmp_path_factory):
 @pytest.fixture
 def storage():
     """Expose the live _state storage for direct SQL assertions."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     return _st._storage
 
@@ -65,7 +65,7 @@ def storage():
 
 class TestSeedCreatesFourStarters:
     def test_seed_creates_four_starters(self, storage):
-        from yadgar.server.tools.agent_prompts import (
+        from yadgar.core.server.tools.agent_prompts import (
             _read_agent_prompt,
             seed_agent_prompts,
         )
@@ -89,7 +89,7 @@ class TestSeedCreatesFourStarters:
 
 class TestSeedIdempotent:
     def test_seed_idempotent(self, storage):
-        from yadgar.server.tools.agent_prompts import (
+        from yadgar.core.server.tools.agent_prompts import (
             _TOC_ROW_RE,
             _TOC_SLUG,
             seed_agent_prompts,
@@ -105,7 +105,7 @@ class TestSeedIdempotent:
         assert r2["skipped"] == 4
 
         # TOC must have exactly 4 pattern rows (not 8)
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         toc_page = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
         assert toc_page is not None, "TOC page absent after seed"
@@ -129,12 +129,12 @@ class TestSeedIdempotent:
 
 class TestSeedSingleAnchor:
     def test_seed_single_anchor(self, storage):
-        from yadgar.server.tools.agent_prompts import seed_agent_prompts
+        from yadgar.core.server.tools.agent_prompts import seed_agent_prompts
 
         seed_agent_prompts(storage=storage)
         seed_agent_prompts(storage=storage)
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         anchors = _st._storage._q(
             "SELECT id FROM memory "
@@ -152,14 +152,14 @@ class TestSeedSingleAnchor:
 
 class TestSeedToolRegistered:
     def test_seed_in_all(self):
-        from yadgar.server import tools
+        from yadgar.core.server import tools
 
         assert "seed_agent_prompts" in tools.__all__, (
             "seed_agent_prompts missing from yadgar.server.tools.__all__"
         )
 
     def test_seed_on_module(self):
-        import yadgar.server.tools.agent_prompts as m
+        import yadgar.core.server.tools.agent_prompts as m
 
         assert hasattr(m, "seed_agent_prompts"), (
             "seed_agent_prompts not found on yadgar.server.tools.agent_prompts"
@@ -173,7 +173,7 @@ class TestSeedToolRegistered:
 
 class TestStarterContentNonempty:
     def test_starter_content_nonempty(self):
-        from yadgar.server.tools.agent_prompts import STARTER_PROMPTS
+        from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
         assert len(STARTER_PROMPTS) == 4, f"expected 4 starters, got {len(STARTER_PROMPTS)}"
 

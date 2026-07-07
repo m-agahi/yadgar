@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.storage import StorageEngine
-from yadgar.storage.migrations import _migration_006_source_memory_id
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.storage.migrations import _migration_006_source_memory_id
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -211,7 +211,7 @@ def test_insert_memory_similarity_link_with_source_memory_id(storage):
 def test_graph_api_edges_include_source_memory_id(storage):
     """T4: graph_api returns source_memory_id in causal edge output."""
     _migration_006_source_memory_id(storage)
-    from yadgar.graph_api import GraphAPI
+    from yadgar.core.graph_api import GraphAPI
 
     eid_a = _insert_bare_entity(storage, "node_A")
     eid_b = _insert_bare_entity(storage, "node_B")

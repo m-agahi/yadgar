@@ -15,7 +15,7 @@ class TestAtomicSettingsWrite:
 
     def test_sync_instructions_leaves_original_intact_on_crash(self, tmp_path):
         """If sync_instructions crashes mid-write, original CLAUDE.md must be intact."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         # Create a real CLAUDE.md with known content
         claude_dir = tmp_path / ".claude"
@@ -44,7 +44,7 @@ class TestAtomicSettingsWrite:
 
     def test_sync_instructions_atomic_success(self, tmp_path):
         """sync_instructions succeeds and updates CLAUDE.md atomically."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
@@ -60,7 +60,7 @@ class TestAtomicSettingsWrite:
 
     def test_sync_instructions_creates_file_if_missing(self, tmp_path):
         """sync_instructions creates CLAUDE.md if it doesn't exist."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
@@ -74,7 +74,7 @@ class TestAtomicSettingsWrite:
 
     def test_sync_instructions_no_temp_files_left_on_success(self, tmp_path):
         """No temp files left after successful sync."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
@@ -89,7 +89,7 @@ class TestAtomicSettingsWrite:
 
     def test_sync_instructions_contains_agent_prompt_library_rule(self, tmp_path):
         """#70: synced CLAUDE.md must contain the read-side agent-prompt-library rule."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
@@ -109,7 +109,7 @@ class TestAtomicSettingsWrite:
     def test_install_hooks_settings_is_atomic(self, tmp_path, monkeypatch):
         """install_hooks writes settings.json atomically (tmp + os.replace)."""
         # Verify that os.replace is called with a .json destination
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         replace_calls = []
         original_replace = os.replace

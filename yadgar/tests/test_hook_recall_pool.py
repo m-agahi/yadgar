@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 def test_hook_recall_pool_is_bounded():
-    from yadgar.server.http import _HOOK_RECALL_POOL, _HOOK_RECALL_POOL_WORKERS
+    from yadgar.core.server.http import _HOOK_RECALL_POOL, _HOOK_RECALL_POOL_WORKERS
 
     assert isinstance(_HOOK_RECALL_POOL, ThreadPoolExecutor)
     # v5.95 (#81 residual): 2 -> 1 to halve loop-CPU competition on the --cpus-1 core.
@@ -27,7 +27,7 @@ def test_hook_recall_pool_is_bounded():
 def test_recall_runs_on_bounded_hook_pool_not_default_executor():
     """The recall must run on a 'hook-recall' pool thread, proving it's NOT on the
     loop and NOT on asyncio.to_thread's unbounded default executor."""
-    from yadgar.server import http as _http
+    from yadgar.core.server import http as _http
 
     seen: dict[str, str] = {}
 
@@ -43,12 +43,12 @@ def test_recall_runs_on_bounded_hook_pool_not_default_executor():
 
 def test_recall_returns_none_on_timeout(monkeypatch):
     """Slow recall past the budget → wait_for returns None (handler treats as empty)."""
-    from yadgar.server import http as _http
+    from yadgar.core.server import http as _http
 
     class _FastTimeoutSettings:
         HOOK_RECALL_TIMEOUT_S = 0.2
 
-    monkeypatch.setattr("yadgar.config.get_settings", lambda: _FastTimeoutSettings())
+    monkeypatch.setattr("yadgar._shared.config.get_settings", lambda: _FastTimeoutSettings())
 
     class SlowRetriever:
         def recall(self, *_a, **_k):
@@ -62,7 +62,7 @@ def test_recall_returns_none_on_timeout(monkeypatch):
 def test_pool_caps_concurrent_recall_threads():
     """Even with more concurrent calls than workers, at most _WORKERS recalls run
     at once — the leaked-thread cascade is bounded."""
-    from yadgar.server import http as _http
+    from yadgar.core.server import http as _http
 
     live = 0
     peak = 0

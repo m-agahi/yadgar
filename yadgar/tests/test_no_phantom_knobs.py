@@ -66,8 +66,8 @@ def _in_scope_fields() -> list[str]:
     A field is user-tunable (in scope) iff it is BOTH a Settings model field AND
     has a config_yaml.py FIELD_META entry (i.e. it is surfaced in the yaml/UI).
     """
-    from yadgar.config import Settings
-    from yadgar.config_yaml import FIELD_META
+    from yadgar._shared.config import Settings
+    from yadgar._shared.config_yaml import FIELD_META
 
     yaml_keys = set(FIELD_META.keys())
     fields = []

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +73,7 @@ class TestDlqRequeue:
     def test_requeue_resets_attempt_tracker(self):
         fname, _ = _seed_dlq_entry()
         # Pre-seed a stale tracker entry
-        from yadgar.file_queue import _Attempt
+        from yadgar.core.file_queue import _Attempt
 
         if server._queue_drainer is not None:
             server._queue_drainer._attempts[fname] = _Attempt(count=99, next_retry_at=1e18)

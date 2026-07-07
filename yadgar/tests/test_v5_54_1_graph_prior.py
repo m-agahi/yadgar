@@ -29,7 +29,7 @@ class TestComputeGraphPriors:
 
     def _make_consolidation_scheduler(self, storage, graph, settings):
         """Build a minimal ConsolidationScheduler with mocked sub-engines."""
-        from yadgar.consolidation import ConsolidationScheduler
+        from yadgar.core.consolidation import ConsolidationScheduler
 
         sched = object.__new__(ConsolidationScheduler)
         sched._storage = storage
@@ -131,7 +131,7 @@ class TestComputeGraphPriors:
         storage.get_memories_with_embeddings.return_value = []
         storage.batch_writes = MagicMock()
 
-        from yadgar.consolidation import ConsolidationScheduler
+        from yadgar.core.consolidation import ConsolidationScheduler
 
         sched = object.__new__(ConsolidationScheduler)
         sched._storage = storage
@@ -154,7 +154,7 @@ class TestComputeGraphPriors:
         ]
         storage.get_all_entities.return_value = []  # no entities at all
 
-        from yadgar.consolidation import ConsolidationScheduler
+        from yadgar.core.consolidation import ConsolidationScheduler
 
         sched = object.__new__(ConsolidationScheduler)
         sched._storage = storage
@@ -176,7 +176,7 @@ class TestFastProfileGraphPriorBoost:
 
     def _make_minimal_retriever(self, settings, storage):
         """Build a Retriever with mocked dependencies."""
-        from yadgar.retrieval.core import Retriever
+        from yadgar._shared.retrieval.core import Retriever
 
         embeddings = MagicMock()
         knowledge_graph = MagicMock()
@@ -196,7 +196,7 @@ class TestFastProfileGraphPriorBoost:
     def _make_settings_with_weight(self, weight: float):
         from unittest.mock import MagicMock as MM  # noqa: PLC0415
 
-        from yadgar.config import get_settings  # noqa: PLC0415
+        from yadgar._shared.config import get_settings  # noqa: PLC0415
 
         s = MM(spec=get_settings())
         s.WRRF_GRAPH_PRIOR_WEIGHT = weight
@@ -211,7 +211,7 @@ class TestFastProfileGraphPriorBoost:
 
     def test_high_prior_memory_ranks_higher_than_zero_prior(self):
         """Memory with graph_prior=0.8 ranks above identical memory with graph_prior=0.0."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         settings = self._make_settings_with_weight(0.2)
         storage = MagicMock()
@@ -253,7 +253,7 @@ class TestFastProfileGraphPriorBoost:
 
     def test_fast_profile_does_not_call_ppr_or_spreading(self):
         """fast path must NOT call PPR, spreading activation, or entity extraction."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         fast_profile = PROFILES["fast"]
 
@@ -267,7 +267,7 @@ class TestFastProfileGraphPriorBoost:
 
         # Verify graph_prior boost path calls NO graph traversal by inspecting
         # fusion.py source: the boost must read from storage, not call _graph methods
-        fusion_src = pathlib.Path(__file__).parent.parent / "retrieval" / "fusion.py"
+        fusion_src = pathlib.Path(__file__).parent.parent / "_shared" / "retrieval" / "fusion.py"
         source = fusion_src.read_text()
 
         # The boost section must use get_memory_graph_priors (storage read), not graph traversal
@@ -282,7 +282,7 @@ class TestFastProfileGraphPriorBoost:
 
     def test_fast_profile_graph_prior_no_traversal_at_runtime(self):
         """Runtime check: fast-profile recall does not invoke graph traversal methods."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         settings = self._make_settings_with_weight(0.2)
         storage = MagicMock()
@@ -338,7 +338,7 @@ class TestGraphPriorWeightZeroDisables:
 
     def test_weight_zero_ranking_unchanged(self):
         """With weight=0.0, fused scores must be identical to pre-boost values."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_GRAPH_PRIOR_WEIGHT = 0.0
@@ -393,7 +393,7 @@ class TestBalancedFullProfilesUnchanged:
 
     def test_balanced_profile_signals_unchanged(self):
         """balanced profile still includes ppr and spreading signals."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         balanced = PROFILES["balanced"]
         assert "ppr" in balanced["signals"], "balanced must include ppr signal"
@@ -402,7 +402,7 @@ class TestBalancedFullProfilesUnchanged:
 
     def test_full_profile_signals_unchanged(self):
         """full profile still includes ppr, spreading, and nli."""
-        from yadgar.retrieval.fusion import PROFILES
+        from yadgar._shared.retrieval.fusion import PROFILES
 
         full = PROFILES["full"]
         assert "ppr" in full["signals"], "full must include ppr signal"
@@ -411,7 +411,7 @@ class TestBalancedFullProfilesUnchanged:
 
     def test_graph_prior_is_additive_to_ppr(self):
         """graph_prior boost stacks on top of ppr+spreading; does not replace them."""
-        fusion_src = pathlib.Path(__file__).parent.parent / "retrieval" / "fusion.py"
+        fusion_src = pathlib.Path(__file__).parent.parent / "_shared" / "retrieval" / "fusion.py"
         source = fusion_src.read_text()
 
         # Signal weights dict must still include ppr and spread
@@ -440,7 +440,7 @@ class TestNullGraphPriorSafe:
 
     def test_null_prior_treated_as_zero_in_fusion(self):
         """Memory with no graph_prior in storage result is skipped (0.0 additive)."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_GRAPH_PRIOR_WEIGHT = 0.2
@@ -489,7 +489,7 @@ class TestNullGraphPriorSafe:
         storage = MagicMock()
         storage._q = MagicMock(return_value=[])
 
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock()
@@ -509,7 +509,7 @@ class TestMigration020Registered:
 
     def test_migration_020_in_list(self):
         """_MIGRATIONS must include 020_memory_graph_prior after 019_wiki_page_type."""
-        from yadgar.storage.migrations import _MIGRATIONS
+        from yadgar._shared.storage.migrations import _MIGRATIONS
 
         versions = [m["version"] for m in _MIGRATIONS]
         assert "020_memory_graph_prior" in versions, (
@@ -518,7 +518,7 @@ class TestMigration020Registered:
 
     def test_migration_020_after_019(self):
         """020 must come after 019 in the migrations list (append-only order)."""
-        from yadgar.storage.migrations import _MIGRATIONS
+        from yadgar._shared.storage.migrations import _MIGRATIONS
 
         versions = [m["version"] for m in _MIGRATIONS]
         idx_019 = versions.index("019_wiki_page_type")
@@ -532,7 +532,7 @@ class TestMigration020Registered:
 
     def test_migration_017_still_reserved(self):
         """017 slot must remain reserved (no migration using that version)."""
-        from yadgar.storage.migrations import _MIGRATIONS
+        from yadgar._shared.storage.migrations import _MIGRATIONS
 
         versions = [m["version"] for m in _MIGRATIONS]
         assert not any("017" in v for v in versions), (
@@ -541,7 +541,7 @@ class TestMigration020Registered:
 
     def test_migration_020_fn_callable(self):
         """Migration 020 function must be callable."""
-        from yadgar.storage.migrations import _migration_020_memory_graph_prior
+        from yadgar._shared.storage.migrations import _migration_020_memory_graph_prior
 
         assert callable(_migration_020_memory_graph_prior)
 
@@ -560,7 +560,7 @@ class TestGetMemoryGraphPriors:
         v5.96.0: batched query returns meta::id(id) AS id (a bare int) for all
         matched rows in ONE call — not one point-read per id.
         """
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
 
@@ -572,7 +572,7 @@ class TestGetMemoryGraphPriors:
 
     def test_absent_priors_not_in_result(self):
         """Memories without graph_prior are absent from result (not {mid: 0.0})."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         # Batched query returns empty (NULL → IS NOT NONE filter excludes all).
@@ -583,7 +583,7 @@ class TestGetMemoryGraphPriors:
 
     def test_empty_input_no_queries(self):
         """Empty memory_ids list: no DB calls, returns empty dict."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock()
@@ -603,14 +603,14 @@ class TestGraphPriorConfigRegistered:
 
     def test_settings_has_wrrf_graph_prior_weight(self):
         """Settings must have WRRF_GRAPH_PRIOR_WEIGHT with default 0.2."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         default_val = Settings.model_fields["WRRF_GRAPH_PRIOR_WEIGHT"].default
         assert default_val == 0.2, f"WRRF_GRAPH_PRIOR_WEIGHT default must be 0.2, got {default_val}"
 
     def test_registry_has_wrrf_graph_prior_weight(self):
         """config_registry must include YADGAR_WRRF_GRAPH_PRIOR_WEIGHT."""
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_WRRF_GRAPH_PRIOR_WEIGHT" in names, (
@@ -620,7 +620,7 @@ class TestGraphPriorConfigRegistered:
 
     def test_yaml_meta_has_wrrf_graph_prior_weight(self):
         """config_yaml.py FIELD_META must include wrrf_graph_prior_weight."""
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "wrrf_graph_prior_weight" in FIELD_META, (
             "FIELD_META must include 'wrrf_graph_prior_weight' for I25 three-way sync"
@@ -628,7 +628,9 @@ class TestGraphPriorConfigRegistered:
 
     def test_consolidation_phase_in_orchestrator(self):
         """orchestrator.py must wire compute_graph_priors phase."""
-        orch_src = pathlib.Path(__file__).parent.parent / "consolidation" / "orchestrator.py"
+        orch_src = (
+            pathlib.Path(__file__).parent.parent / "core" / "consolidation" / "orchestrator.py"
+        )
         source = orch_src.read_text()
 
         assert "compute_graph_priors" in source, (

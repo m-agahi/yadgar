@@ -49,35 +49,31 @@
     "rationale": "Scrape-time data source for CacheStatsCollector: lazy-imports embed_service and returns the CE/embed LRUCache instances. Framework primitive read at /metrics scrape only; instrumenting the metrics-collector's own accessor is recursive noise."
   },
   "_exempt_globs": {
-    "yadgar/cli/**": {
+    "yadgar/core/cli/**": {
       "category": "generated",
       "rationale": "operator-invoked CLI command glue: argparse wiring, table/summary printing, and thin dispatch to already-instrumented service tools. No unattended runtime ops path; a span/metric/log per CLI call adds noise, not insight (obs-standard section-5 'CLI glue' exempt-heavy)."
     },
-    "yadgar/seed/**": {
+    "yadgar/core/seed/**": {
       "category": "generated",
       "rationale": "one-shot project-bootstrap material generation/scan/analysis run interactively via seed_project; not a recurring runtime ops path, so per-function tri-signal instrumentation yields no dashboard value and only diff churn."
     },
-    "yadgar/scripts/**": {
+    "yadgar/core/scripts/**": {
       "category": "generated",
       "rationale": "standalone maintenance/entry scripts (nightly_cycle, hook_runner, wiki_snapshot, yadgar_setup): short-lived batch procs whose spans would not flush and whose outer flow is already logged; instrumenting them is cosmetic per obs-standard hooks/short-proc caveat."
     },
-    "yadgar/export/**": {
+    "yadgar/core/export/**": {
       "category": "generated",
       "rationale": "on-demand DuckDB export tooling (row coercion, schema build, table fetch/write): pure data-marshalling invoked from an operator export command, not a hot or unattended path; exempt per obs-standard 'seed/migration/codegen' exempt-heavy tail."
     },
-    "yadgar/storage/migrations.py": {
-      "category": "generated",
-      "rationale": "schema migration boilerplate run once per version bump at startup; generated-style DDL steps with no recurring ops signal to surface on a dashboard, matching the 'generated/migration boilerplate' exemption category."
-    },
-    "yadgar/viz_daemon_health.py": {
+    "yadgar/core/viz_daemon_health.py": {
       "category": "generated",
       "rationale": "viz daemon health-panel rendering helpers: format health data into presentation structures for the local dashboard; no service logic worth a span, presentation-layer exemption per obs-standard."
     },
-    "yadgar/viz_meta.py": {
+    "yadgar/core/viz_meta.py": {
       "category": "generated",
       "rationale": "viz metadata presentation helper: shapes metadata for the local viz dashboard render path; pure presentation glue with no ops signal, exempt per obs-standard presentation tail."
     },
-    "yadgar/graph_layout.py": {
+    "yadgar/core/graph_layout.py": {
       "category": "generated",
       "rationale": "graph layout geometry computation for the viz dashboard: pure coordinate math for presentation; no external I/O or ops decision to surface, presentation-layer exemption per obs-standard."
     },
@@ -85,17 +81,21 @@
       "category": "generated",
       "rationale": "package entrypoint argparse/dispatch shim: parses argv and hands off to the CLI, which itself dispatches to instrumented tools; a span here duplicates the CLI boundary with no added signal, entrypoint-glue exemption."
     },
-    "yadgar/log_config.py": {
+    "yadgar/_shared/log_config.py": {
       "category": "framework-instrumented",
       "rationale": "the ENTIRE logging subsystem is the sink @observe's own span+metric+log writes flow into: an @observe here opens a span per log record → LogSpanProcessor emits a 'span_end' log line → that record re-enters the observed log path (filter/format/emit) → more spans → per-log amplification flood that crash-looped core+backend under real OTLP (v5.105 → v5.106). Log-emission functions are un-instrumentable by construction; the thread-local re-entry guard stops infinite recursion but NOT the per-log fan-out. Path-glob so no future @observe on this file can re-open the flood."
     },
-    "yadgar/observability/observe.py": {
+    "yadgar/_shared/observability/observe.py": {
       "category": "framework-instrumented",
       "rationale": "the @observe decorator implementation itself: decorating the instrumentation framework with @observe is circular (a span emitter cannot span-source its own emit path); this IS the tri-signal machinery, exempt by construction."
     },
-    "yadgar/observability/timing.py": {
+    "yadgar/_shared/observability/timing.py": {
       "category": "framework-instrumented",
       "rationale": "the timing decorator factories (stage_timer/request_timer/labeled_timer) that the observe framework composes: framework plumbing that emits signals for other functions; instrumenting it is circular, exempt by construction."
+    },
+    "yadgar/_shared/storage/migrations.py": {
+      "category": "generated",
+      "rationale": "schema migration boilerplate run once per version bump at startup; generated-style DDL steps with no recurring ops signal to surface on a dashboard, matching the 'generated/migration boilerplate' exemption category."
     }
   },
   "blocks_render:render_blocks_section": {
@@ -182,7 +182,7 @@
     "category": "framework-instrumented",
     "rationale": "The async tool-call wrapper body that itself emits the shared per-tool RED span+metric+log for every tool invocation; this closure IS the instrumentation, decorating it with @observe would double-span each async tool call."
   },
-  "_offload:_ctx_wrap._runner": {
+  "offload:_ctx_wrap._runner": {
     "category": "hot-loop",
     "rationale": "Nested closure that runs the offloaded callable on the worker thread inside a copied contextvars context; the tool body it runs carries its own trace_span and the instrumented run_offloaded boundary wraps the offload, so a per-run signal here is redundant."
   },
@@ -598,11 +598,11 @@
     "category": "framework-instrumented",
     "rationale": "Opens a manual rpc.rerank.pair span via _rpc_span() around the _rerank_rpc HTTP call; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one RPC. Verified by test_remote_ml_client_score_methods_stay_exempt (must carry no sentinel)."
   },
-  "_recall_pipeline:_fuse_with_span": {
+  "recall_pipeline:_fuse_with_span": {
     "category": "pre-existing",
     "rationale": "Opens a manual 'recall.fanout.fuse' span via `with span(...)` and sets dynamic memory/wiki candidate-count attributes around the cross-type CE fusion pass; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one fusion and @observe's static attributes cannot replicate the per-call counts."
   },
-  "_recall_shadow:observe_recall": {
+  "cache_epoch:observe_recall": {
     "category": "framework-instrumented",
     "rationale": "Instrumentation-only shadow-cache primitive: records a would-HIT/would-MISS and increments yadgar_recall_shadow_cache_hits_total/_misses_total counters, fully guarded to never affect recall latency; wrapping a metric-emitting instrumentation helper in @observe is recursive span noise for a counter .inc() with no diagnostic value."
   },
@@ -773,5 +773,13 @@
   "embed_service:recall_route._run_pipeline": {
     "category": "framework-instrumented",
     "rationale": "Inner thread-pool closure dispatched via asyncio.to_thread() inside the @observe-decorated recall_route() handler. The outer handler already carries the tri-signal span; adding a second span for the closure body produces a double-span with no boundary value — the trace already attributes the thread duration under the parent recall_route span."
+  },
+  "_scan:_on_walk_error": {
+    "category": "trivial",
+    "rationale": "One-line os.walk onerror callback: logs a permission-denied warning and returns. No ops decision, no I/O beyond the warning log, not a runtime or observable path — a span/metric yields zero dashboard value (folder-split #17: exposed when seed moved to core/seed)."
+  },
+  "_surreal_runner:_kill_all_spawned_surreal_atexit": {
+    "category": "trivial",
+    "rationale": "Atexit-registered exception guard: wraps kill_all_spawned_surreal() in try/except so a shutdown-time logging error cannot force a non-zero process exit. No ops logic of its own, test-teardown infra only — a span/metric yields zero dashboard value (folder-split #17)."
   }
 }

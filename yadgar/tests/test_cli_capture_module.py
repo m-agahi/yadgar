@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar.cli.capture import cmd_capture, register
+from yadgar.core.cli.capture import cmd_capture, register
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -104,8 +104,8 @@ class TestCmdCaptureHappyPath:
         storage = MagicMock()
         args = _make_args()
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             cmd_capture(args)
         storage.insert_action_log.assert_called_once()
@@ -115,8 +115,8 @@ class TestCmdCaptureHappyPath:
         storage = MagicMock()
         args = _make_args(tool_name="Bash")
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             cmd_capture(args)
         call_kwargs = storage.insert_action_log.call_args.kwargs
@@ -127,8 +127,8 @@ class TestCmdCaptureHappyPath:
         storage = MagicMock()
         args = _make_args(summary="reading a file")
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             cmd_capture(args)
         call_kwargs = storage.insert_action_log.call_args.kwargs
@@ -139,8 +139,8 @@ class TestCmdCaptureHappyPath:
         storage = MagicMock()
         args = _make_args(directory="/project/dir")
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             cmd_capture(args)
         call_kwargs = storage.insert_action_log.call_args.kwargs
@@ -151,8 +151,8 @@ class TestCmdCaptureHappyPath:
         storage = MagicMock()
         args = _make_args(session="my-session")
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             cmd_capture(args)
         call_kwargs = storage.insert_action_log.call_args.kwargs
@@ -163,8 +163,8 @@ class TestCmdCaptureHappyPath:
         storage = MagicMock()
         args = _make_args()
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             cmd_capture(args)
         call_kwargs = storage.insert_action_log.call_args.kwargs
@@ -176,8 +176,8 @@ class TestCmdCaptureHappyPath:
         storage = MagicMock()
         args = _make_args()
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             cmd_capture(args)
         storage.close.assert_called_once()
@@ -194,8 +194,8 @@ class TestCmdCaptureDbPath:
         storage = MagicMock()
         args = _make_args(db_path=None)
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage) as mock_storage_cls,
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage) as mock_storage_cls,
         ):
             cmd_capture(args)
         called_path = mock_storage_cls.call_args.args[0]
@@ -206,8 +206,8 @@ class TestCmdCaptureDbPath:
         storage = MagicMock()
         args = _make_args(db_path="/explicit/path.db")
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage) as mock_storage_cls,
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage) as mock_storage_cls,
         ):
             cmd_capture(args)
         called_path = mock_storage_cls.call_args.args[0]
@@ -226,8 +226,8 @@ class TestCmdCaptureException:
         storage.insert_action_log.side_effect = Exception("db gone")
         args = _make_args()
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_capture(args)
@@ -239,8 +239,8 @@ class TestCmdCaptureException:
         storage.insert_action_log.side_effect = Exception("disk full")
         args = _make_args()
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             with pytest.raises(SystemExit):
                 cmd_capture(args)
@@ -253,8 +253,8 @@ class TestCmdCaptureException:
         storage.insert_action_log.side_effect = Exception("boom")
         args = _make_args()
         with (
-            patch("yadgar.config.Settings", return_value=settings),
-            patch("yadgar.storage.StorageEngine", return_value=storage),
+            patch("yadgar._shared.config.Settings", return_value=settings),
+            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
         ):
             with pytest.raises(SystemExit):
                 cmd_capture(args)

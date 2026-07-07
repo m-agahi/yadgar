@@ -4,15 +4,15 @@ import json
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.models import (
+from yadgar._shared.config import Settings
+from yadgar._shared.models import (
     CausalDAGEdge,
     Memory,
     MemoryArchive,
     MemoryRule,
     MemoryTransition,
 )
-from yadgar.storage import StorageEngine
+from yadgar._shared.storage import StorageEngine
 
 
 @pytest.fixture(scope="module")

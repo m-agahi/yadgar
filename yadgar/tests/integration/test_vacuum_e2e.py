@@ -149,7 +149,7 @@ def _vacuum_args(
 
 def _make_docker_service_controller(container_name: str, docker_cmd: str):
     """Return a patched ServiceController that stops/starts the named container."""
-    from yadgar.ops import ServiceController
+    from yadgar.core.ops import ServiceController
 
     class _ContainerController(ServiceController):
         """Manages the integration-test container instead of systemd/docker-compose."""
@@ -295,12 +295,12 @@ def test_vacuum_e2e_happy_path(live_backend_container):
         "YADGAR_RO_PASS": info.get("ro_pass", rw_pass),
     }
 
-    from yadgar.vacuum import cmd_vacuum_impl
+    from yadgar.core.vacuum import cmd_vacuum_impl
 
     exit_code = None
     with (
-        patch("yadgar.vacuum.ServiceController", new=ControllerClass),
-        patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True),
+        patch("yadgar.core.vacuum.ServiceController", new=ControllerClass),
+        patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
         patch.dict(os.environ, env_patch),
     ):
         # check_invariants is called via httpx.post — patch to return ok=True so
@@ -342,7 +342,7 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     # if data set is small enough that SurrealKV doesn't rewrite vlog)
     # We check via direct directory walk (embed service may report 0 if container
     # was restarted and embed took time to reinitialise).
-    from yadgar.vacuum.phases import _dir_bytes
+    from yadgar.core.vacuum.phases import _dir_bytes
 
     after_bytes_fs = _dir_bytes(db_path)
     assert after_bytes_fs >= 0, "After bytes should be non-negative"
@@ -439,7 +439,7 @@ def test_vacuum_e2e_import_failure_restores_original(live_backend_container):
 
     ControllerClass = _make_docker_service_controller(container_name, docker_cmd)
 
-    from yadgar.vacuum import cmd_vacuum_impl
+    from yadgar.core.vacuum import cmd_vacuum_impl
 
     args = _vacuum_args(
         backend_url=backend_url,
@@ -467,8 +467,8 @@ def test_vacuum_e2e_import_failure_restores_original(live_backend_container):
     _orig_stderr_write = _sys.stderr.write
 
     with (
-        patch("yadgar.vacuum.ServiceController", new=ControllerClass),
-        patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True),
+        patch("yadgar.core.vacuum.ServiceController", new=ControllerClass),
+        patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
         patch.dict(os.environ, env_patch),
         patch("httpx.post", side_effect=_inject_403_on_import),
     ):

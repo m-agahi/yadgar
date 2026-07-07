@@ -10,8 +10,8 @@ non-recursive behavior and confirms that writes propagate to ``_state``.
 
 from __future__ import annotations
 
-import yadgar.server as _server
-import yadgar.server._state as _state
+import yadgar._shared.runtime.state as _state
+import yadgar.core.server as _server
 
 
 def test_setattr_on_server_module_does_not_recurse() -> None:

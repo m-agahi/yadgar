@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import yadgar.server._state as _st
+import yadgar._shared.runtime.state as _st
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -63,9 +63,9 @@ class TestLightMode:
         """mode='light' must NOT call run_sleep_cycle."""
         mock_cons, mock_slp = mock_state
 
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             result = consolidate_now(mode="light")
 
@@ -76,14 +76,14 @@ class TestLightMode:
     def test_consolidate_now_light_mode_skips_anchor_audit(self, mock_state, monkeypatch, request):
         """mode='light' must NOT call _run_anchor_audit_pass even when ENABLED=True."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)  # reliably clears even if test fails
 
         audit_mock = MagicMock(return_value={"actions": []})
-        with patch("yadgar.server.tools.audit._run_anchor_audit_pass", audit_mock):
-            from yadgar.server.tools.admin_other import consolidate_now
+        with patch("yadgar.core.server.tools.audit._run_anchor_audit_pass", audit_mock):
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             result = consolidate_now(mode="light")
 
@@ -94,9 +94,9 @@ class TestLightMode:
         """Calling consolidate_now() without args behaves as mode='light'."""
         mock_cons, mock_slp = mock_state
 
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             result = consolidate_now()
 
@@ -108,9 +108,9 @@ class TestLightMode:
         mock_cons, mock_slp = mock_state
         mock_cons._last_sleep_cycle = None
 
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             consolidate_now(mode="light")
 
@@ -120,9 +120,9 @@ class TestLightMode:
         """v5.88: mode='light' must NOT trigger the graph-layout precompute."""
         mock_cons, mock_slp = mock_state
 
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             consolidate_now(mode="light")
 
@@ -141,9 +141,9 @@ class TestFullMode:
         """mode='full' must call run_sleep_cycle."""
         mock_cons, mock_slp = mock_state
 
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             result = consolidate_now(mode="full")
 
@@ -154,9 +154,9 @@ class TestFullMode:
         """v5.88: mode='full' is the manual trigger for the graph-layout precompute."""
         mock_cons, mock_slp = mock_state
 
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             consolidate_now(mode="full")
 
@@ -167,17 +167,19 @@ class TestFullMode:
     ):
         """mode='full' + ENABLED=True calls _run_anchor_audit_pass."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "true")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)  # reliably clears even if test fails
 
         audit_mock = MagicMock(return_value={"actions": []})
-        with patch("yadgar.server.tools.audit._run_anchor_audit_pass", audit_mock):
-            from yadgar.server.tools.admin_other import consolidate_now
+        with patch("yadgar.core.server.tools.audit._run_anchor_audit_pass", audit_mock):
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             # Also need _get_storage mock
-            with patch("yadgar.server.tools.admin_other._get_storage", return_value=MagicMock()):
+            with patch(
+                "yadgar.core.server.tools.admin_other._get_storage", return_value=MagicMock()
+            ):
                 result = consolidate_now(mode="full")
 
         audit_mock.assert_called_once()
@@ -188,14 +190,14 @@ class TestFullMode:
     ):
         """mode='full' + ENABLED=False skips _run_anchor_audit_pass."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED", "false")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
         request.addfinalizer(get_settings.cache_clear)  # reliably clears even if test fails
 
         audit_mock = MagicMock(return_value={"actions": []})
-        with patch("yadgar.server.tools.audit._run_anchor_audit_pass", audit_mock):
-            from yadgar.server.tools.admin_other import consolidate_now
+        with patch("yadgar.core.server.tools.audit._run_anchor_audit_pass", audit_mock):
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             result = consolidate_now(mode="full")
 
@@ -208,9 +210,9 @@ class TestFullMode:
         mock_cons._last_sleep_cycle = None
 
         before = datetime.now(UTC)
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             consolidate_now(mode="full")
 
@@ -224,9 +226,9 @@ class TestFullMode:
         mock_cons, mock_slp = mock_state
         mock_slp.run_sleep_cycle.side_effect = RuntimeError("sleep exploded")
 
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             result = consolidate_now(mode="full")
 
@@ -245,7 +247,7 @@ class TestInvalidMode:
     def test_consolidate_now_invalid_mode_returns_error(self, mock_state):
         """mode='invalid' returns error dict without calling force_consolidate."""
         mock_cons, _ = mock_state
-        from yadgar.server.tools.admin_other import consolidate_now
+        from yadgar.core.server.tools.admin_other import consolidate_now
 
         result = consolidate_now(mode="invalid")
 
@@ -263,17 +265,17 @@ class TestResultShape:
     """Result dict must include 'mode' key reflecting what was requested."""
 
     def test_consolidate_now_result_includes_mode_light(self, mock_state):
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             result = consolidate_now(mode="light")
         assert result.get("mode") == "light"
 
     def test_consolidate_now_result_includes_mode_full(self, mock_state):
-        with patch("yadgar.config.get_settings") as mock_cfg:
+        with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            from yadgar.server.tools.admin_other import consolidate_now
+            from yadgar.core.server.tools.admin_other import consolidate_now
 
             result = consolidate_now(mode="full")
         assert result.get("mode") == "full"

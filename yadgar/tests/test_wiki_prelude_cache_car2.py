@@ -20,9 +20,9 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_epoch_and_caches():
     """Isolate each test: reset the epoch bus + clear all three Car-2 caches."""
-    from yadgar.server.tools import _recall_shadow
-    from yadgar.server.tools import dispatch_helper as dh
-    from yadgar.server.tools import wiki as wtool
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
+    from yadgar.core.server.tools import dispatch_helper as dh
+    from yadgar.core.server.tools import wiki as wtool
 
     _recall_shadow._reset_for_test()
     for cache in (wtool._wiki_read_cache, wtool._wiki_query_cache, dh._prompt_cache):
@@ -62,7 +62,7 @@ class _FakeStorage:
     """Only implements the wiki mutation methods, each calling the REAL bump hook."""
 
     def __init__(self):
-        from yadgar.storage.wiki import _WikiMixin
+        from yadgar._shared.storage.wiki import _WikiMixin
 
         self._bump = _WikiMixin._bump_wiki_epoch.__get__(self)
 
@@ -84,8 +84,8 @@ class _FakeStorage:
 
 
 def _wire_fake_wiki(monkeypatch):
-    import yadgar.server._state as _state
-    from yadgar.server.tools import wiki as wtool
+    import yadgar._shared.runtime.state as _state
+    from yadgar.core.server.tools import wiki as wtool
 
     storage = _FakeStorage()
     fake = _FakeWikiStore(storage)
@@ -93,7 +93,7 @@ def _wire_fake_wiki(monkeypatch):
     # wiki_read resolves branch via yadgar.server module attrs — force stable values.
     import sys as _sys
 
-    srv = _sys.modules.get("yadgar.server")
+    srv = _sys.modules.get("yadgar.core.server")
     if srv is not None:
         monkeypatch.setattr(srv, "_detect_branch", lambda d: None, raising=False)
         monkeypatch.setattr(srv, "_get_default_branch", lambda d: "master", raising=False)
@@ -201,8 +201,8 @@ def test_wiki_read_deep_copy_isolation(monkeypatch):
 
 
 def _wire_fake_query(monkeypatch, results):
-    import yadgar.server._state as _state
-    from yadgar.server.tools import wiki as wtool
+    import yadgar._shared.runtime.state as _state
+    from yadgar.core.server.tools import wiki as wtool
 
     class _QStore:
         def __init__(self):
@@ -216,7 +216,7 @@ def _wire_fake_query(monkeypatch, results):
     monkeypatch.setattr(_state, "_wiki", store)
     import sys as _sys
 
-    srv = _sys.modules.get("yadgar.server")
+    srv = _sys.modules.get("yadgar.core.server")
     if srv is not None:
         monkeypatch.setattr(srv, "_detect_branch", lambda d: None, raising=False)
         monkeypatch.setattr(srv, "_get_default_branch", lambda d: "master", raising=False)
@@ -248,7 +248,7 @@ def test_wiki_query_deep_copy_isolation(monkeypatch):
 
 
 def test_wiki_query_epoch_bump_busts(monkeypatch):
-    from yadgar.server.tools import _recall_shadow
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
 
     store, wtool = _wire_fake_query(
         monkeypatch, [{"slug": "a", "branch": None, "_retrieval_score": 0.5}]
@@ -273,8 +273,8 @@ def test_wiki_query_distinct_keys(monkeypatch):
 
 
 def _wire_fake_prompt(monkeypatch):
-    from yadgar.server.tools import agent_prompts
-    from yadgar.server.tools import dispatch_helper as dh
+    from yadgar.core.server.tools import agent_prompts
+    from yadgar.core.server.tools import dispatch_helper as dh
 
     calls = []
 
@@ -304,7 +304,7 @@ def test_agent_prompt_save_epoch_bump_busts_prelude(monkeypatch):
     """agent_prompt_save is a wiki write → it bumps the global wiki epoch (via
     storage insert/update_wiki_page). Simulate that bump and prove the cached
     prompt lookup for the same pattern is busted (fresh content re-read)."""
-    from yadgar.server.tools import _recall_shadow
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
 
     calls, dh = _wire_fake_prompt(monkeypatch)
     dh._cached_agent_prompt("p", storage=object())  # miss → read
@@ -330,8 +330,8 @@ def test_prelude_deep_copy_isolation(monkeypatch):
 def test_bump_wiki_epoch_advances_global_gen(monkeypatch):
     """Unit: _bump_wiki_epoch bumps the GLOBAL generation (not a per-dir key), so it
     busts every dir's key regardless of read/write directory normalization."""
-    from yadgar.server.tools import _recall_shadow
-    from yadgar.storage.wiki import _WikiMixin
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
+    from yadgar._shared.storage.wiki import _WikiMixin
 
     e_a = _recall_shadow._current_epoch("/dir/a")
     e_b = _recall_shadow._current_epoch("/dir/b")
@@ -385,7 +385,7 @@ class _RealFunnelStorage:
 
 def _make_real_funnel():
     """Bind the real _WikiMixin methods onto a stubbed-primitive instance."""
-    from yadgar.storage.wiki import _WikiMixin
+    from yadgar._shared.storage.wiki import _WikiMixin
 
     inst = _RealFunnelStorage()
     # Attach the mixin's methods (unbound) so the REAL bodies run on inst.
@@ -398,7 +398,7 @@ def _make_real_funnel():
 
 
 def test_real_delete_wiki_page_bumps_epoch():
-    from yadgar.server.tools import _recall_shadow
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
 
     s = _make_real_funnel()
     before = _recall_shadow._current_epoch(None)
@@ -409,7 +409,7 @@ def test_real_delete_wiki_page_bumps_epoch():
 
 
 def test_real_update_wiki_page_bumps_epoch():
-    from yadgar.server.tools import _recall_shadow
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
 
     s = _make_real_funnel()
     before = _recall_shadow._current_epoch(None)
@@ -420,7 +420,7 @@ def test_real_update_wiki_page_bumps_epoch():
 
 
 def test_real_set_wiki_page_metadata_bumps_epoch():
-    from yadgar.server.tools import _recall_shadow
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
 
     s = _make_real_funnel()
     before = _recall_shadow._current_epoch(None)
@@ -431,7 +431,7 @@ def test_real_set_wiki_page_metadata_bumps_epoch():
 
 
 def test_real_insert_wiki_page_bumps_epoch():
-    from yadgar.server.tools import _recall_shadow
+    from yadgar._shared.runtime import cache_epoch as _recall_shadow
 
     s = _make_real_funnel()
     before = _recall_shadow._current_epoch(None)
@@ -448,7 +448,7 @@ def test_wiki_caches_emit_cold_tier_metrics(monkeypatch):
     """Car 2 caches are obs_tier='cold' → get() calls record_cache_hit/miss inline.
     (The generic emission path itself is covered by the Car 1 Cache-class tests; this
     asserts the wiki_read instance is wired to it.)"""
-    import yadgar.cache as cache_mod
+    import yadgar.core.cache as cache_mod
 
     hits, misses = [], []
     monkeypatch.setattr(cache_mod, "record_cache_hit", lambda name: hits.append(name))

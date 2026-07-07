@@ -1,6 +1,6 @@
 """Tests for built-in secret detection (yadgar/secrets.py)."""
 
-from yadgar.secrets import check_secrets
+from yadgar._shared.secrets import check_secrets
 
 
 class TestCheckSecretsBlocked:

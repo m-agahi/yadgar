@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -31,8 +31,8 @@ def _engines(tmp_path_factory):
     # v5.42.3: /tmp/* dirs are not git repos; patch _detect_branch so tests
     # exercise the tool logic without needing each call to supply branch_hint.
     with (
-        patch("yadgar.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.server._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield
     server.shutdown()
@@ -43,8 +43,8 @@ def _engines(tmp_path_factory):
 
 def test_soft_active_work_emitted_in_warn_window(monkeypatch, flush_queue):
     """When WARN_HOURS < age ≤ STALE_HOURS, emit consider_refresh_active_work."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_aw_warn_test"
@@ -74,8 +74,8 @@ def test_soft_active_work_emitted_in_warn_window(monkeypatch, flush_queue):
 
 def test_soft_active_work_not_emitted_below_warn(monkeypatch, flush_queue):
     """When age ≤ WARN_HOURS, no soft action emitted."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_aw_below_warn"
@@ -98,8 +98,8 @@ def test_soft_active_work_not_emitted_below_warn(monkeypatch, flush_queue):
 
 def test_soft_active_work_not_emitted_above_stale(monkeypatch, flush_queue):
     """When age > STALE_HOURS, hard action fires; soft must NOT fire too."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_aw_above_stale"
@@ -123,8 +123,8 @@ def test_soft_active_work_not_emitted_above_stale(monkeypatch, flush_queue):
 
 def test_soft_active_work_boundary_at_warn_hours(monkeypatch, flush_queue):
     """At exactly ACTIVE_WORK_WARN_HOURS, soft action NOT emitted (boundary > not >=)."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_aw_boundary_warn"
@@ -147,8 +147,8 @@ def test_soft_active_work_boundary_at_warn_hours(monkeypatch, flush_queue):
 
 def test_soft_active_work_boundary_at_stale_hours(monkeypatch, flush_queue):
     """At exactly ACTIVE_WORK_STALE_HOURS, hard action fires (age > stale is False); soft fires (age ≤ stale is True)."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_aw_boundary_stale"
@@ -176,8 +176,8 @@ def test_soft_active_work_boundary_at_stale_hours(monkeypatch, flush_queue):
 
 def test_soft_checkpoint_emitted_in_warn_window(monkeypatch, flush_queue):
     """When CHECKPOINT_WARN_HOURS < age ≤ CHECKPOINT_STALE_HOURS, emit consider_refresh_checkpoint."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_cp_warn_test"
@@ -207,8 +207,8 @@ def test_soft_checkpoint_emitted_in_warn_window(monkeypatch, flush_queue):
 
 def test_soft_checkpoint_not_emitted_below_warn(monkeypatch, flush_queue):
     """When age ≤ CHECKPOINT_WARN_HOURS, no soft action emitted."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_cp_below_warn"
@@ -236,8 +236,8 @@ def test_soft_checkpoint_not_emitted_below_warn(monkeypatch, flush_queue):
 
 def test_soft_checkpoint_not_emitted_above_stale(monkeypatch, flush_queue):
     """When age > CHECKPOINT_STALE_HOURS, hard fires; soft must NOT fire."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_cp_above_stale"
@@ -269,8 +269,8 @@ def test_soft_checkpoint_not_emitted_above_stale(monkeypatch, flush_queue):
 
 def test_no_double_emit_active_work(monkeypatch, flush_queue):
     """Soft + hard NEVER both emitted for active_work in same signals response."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/no_double_aw"
@@ -302,8 +302,8 @@ def test_no_double_emit_active_work(monkeypatch, flush_queue):
 
 def test_no_double_emit_checkpoint(monkeypatch, flush_queue):
     """Soft + hard NEVER both emitted for checkpoint in same signals response."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/no_double_cp"
@@ -340,8 +340,8 @@ def test_no_double_emit_checkpoint(monkeypatch, flush_queue):
 
 def test_soft_active_work_has_suggested_call(monkeypatch, flush_queue):
     """consider_refresh_active_work action includes suggested_call field."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_aw_suggested_call"
@@ -370,8 +370,8 @@ def test_soft_active_work_has_suggested_call(monkeypatch, flush_queue):
 
 def test_hard_active_work_has_suggested_call(monkeypatch, flush_queue):
     """refresh_active_work action includes suggested_call field."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/hard_aw_suggested_call"
@@ -398,8 +398,8 @@ def test_hard_active_work_has_suggested_call(monkeypatch, flush_queue):
 
 def test_soft_checkpoint_has_suggested_call(monkeypatch, flush_queue):
     """consider_refresh_checkpoint action includes suggested_call field."""
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/soft_cp_suggested_call"
@@ -458,8 +458,8 @@ def test_signals_token_budget_with_soft_actions_bounded(monkeypatch, flush_queue
     Real cost: ~10 stop-hook fires per long session × 175 token average
     (mix of empty + non-empty payloads) = ~1.75 KB — under 1% of 200K context.
     """
-    from yadgar.config import get_settings
-    from yadgar.server.tools import project as proj_mod
+    from yadgar._shared.config import get_settings
+    from yadgar.core.server.tools import project as proj_mod
 
     settings = get_settings()
     directory = "/tmp/token_budget_soft_test"
@@ -507,7 +507,7 @@ def test_update_active_work_writes_registry_marker(tmp_path, monkeypatch, flush_
     monkeypatch.setenv("YADGAR_ACTIVE_WORK_TRACKED_DIR", str(fake_tracked_dir))
 
     # Re-import to pick up env override (or use monkeypatching)
-    from yadgar.server.tools import project as proj_mod
+    from yadgar.core.server.tools import project as proj_mod
 
     # Monkeypatch the tracked dir constant in the module
     monkeypatch.setattr(
@@ -531,7 +531,7 @@ def test_registry_uses_resolved_directory(tmp_path, monkeypatch, flush_queue):
     import hashlib
 
     fake_tracked_dir = tmp_path / "active-work-tracked"
-    from yadgar.server.tools import project as proj_mod
+    from yadgar.core.server.tools import project as proj_mod
 
     monkeypatch.setattr(
         proj_mod,
@@ -545,7 +545,7 @@ def test_registry_uses_resolved_directory(tmp_path, monkeypatch, flush_queue):
     flush_queue()
 
     # The resolved dir is directory itself (no git root)
-    from yadgar.server.tools.project import _resolve_project_root
+    from yadgar.core.server.tools.project import _resolve_project_root
 
     resolved = _resolve_project_root(directory)
     expected_hash = hashlib.sha256(resolved.encode()).hexdigest()[:12]
@@ -558,7 +558,7 @@ def test_registry_uses_resolved_directory(tmp_path, monkeypatch, flush_queue):
 
 def test_active_work_warn_hours_knob_exists():
     """ACTIVE_WORK_WARN_HOURS Settings field exists with default 12.0."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     assert hasattr(settings, "ACTIVE_WORK_WARN_HOURS"), "ACTIVE_WORK_WARN_HOURS missing"
@@ -567,7 +567,7 @@ def test_active_work_warn_hours_knob_exists():
 
 def test_checkpoint_warn_hours_knob_exists():
     """CHECKPOINT_WARN_HOURS Settings field exists with default 12.0."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     assert hasattr(settings, "CHECKPOINT_WARN_HOURS"), "CHECKPOINT_WARN_HOURS missing"
@@ -576,7 +576,7 @@ def test_checkpoint_warn_hours_knob_exists():
 
 def test_auto_refresh_active_work_knob_exists():
     """AUTO_REFRESH_ACTIVE_WORK Settings field exists with default False."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     assert hasattr(settings, "AUTO_REFRESH_ACTIVE_WORK"), "AUTO_REFRESH_ACTIVE_WORK missing"

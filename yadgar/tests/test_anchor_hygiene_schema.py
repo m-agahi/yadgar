@@ -22,7 +22,7 @@ import pytest
 
 @pytest.fixture()
 def storage(tmp_path):
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     engine = StorageEngine(str(tmp_path / "test_hygiene.db"))
     yield engine
@@ -38,8 +38,8 @@ def storage(tmp_path):
 def engines(tmp_path):
     """Full server init for MCP tool tests — drain mode forced so memorize/anchor
     take the synchronous path and return a real ``id`` immediately."""
-    from yadgar import server
-    from yadgar.file_queue._locals import _drain_local
+    from yadgar.core import server
+    from yadgar.core.file_queue._locals import _drain_local
 
     # Force sync (drain) path so tool calls persist synchronously and return ids.
     _drain_local.active = True
@@ -559,7 +559,7 @@ class TestMigration008:
         """5 pre-v5.8 anchors → all get tier=conditional, valid_until=~now+90d, migration_grace=True."""
         from datetime import UTC, datetime, timedelta
 
-        from yadgar.storage.migrations import _migration_008_anchor_tier
+        from yadgar._shared.storage.migrations import _migration_008_anchor_tier
 
         ids = [self._insert_pre_v58_anchor(storage, f"old anchor {i}") for i in range(5)]
 
@@ -582,7 +582,7 @@ class TestMigration008:
 
     def test_migration_idempotent(self, storage):
         """Running migration twice does not change results."""
-        from yadgar.storage.migrations import _migration_008_anchor_tier
+        from yadgar._shared.storage.migrations import _migration_008_anchor_tier
 
         mid = self._insert_pre_v58_anchor(storage, "idempotent anchor")
         _migration_008_anchor_tier(storage)
@@ -603,7 +603,7 @@ class TestMigration008:
 
     def test_migration_does_not_overwrite_existing_tier(self, storage):
         """Anchors already with tier set are not overwritten."""
-        from yadgar.storage.migrations import _migration_008_anchor_tier
+        from yadgar._shared.storage.migrations import _migration_008_anchor_tier
 
         mid = storage._next_id("memory")
         now = storage._now_iso()
@@ -637,7 +637,7 @@ class TestMigration008:
 
     def test_migration_emits_count_signal(self, storage):
         """Migration returns dict with anchor_tier_migrated_count."""
-        from yadgar.storage.migrations import _migration_008_anchor_tier
+        from yadgar._shared.storage.migrations import _migration_008_anchor_tier
 
         for i in range(3):
             self._insert_pre_v58_anchor(storage, f"count anchor {i}")
@@ -657,79 +657,79 @@ class TestEnvKnobs:
     appear in Settings, FIELD_META, and _REGISTRY."""
 
     def test_conditional_ttl_in_settings(self):
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         fields = Settings.model_fields
         assert "ANCHOR_CONDITIONAL_TTL_DAYS" in fields
 
     def test_ephemeral_ttl_in_settings(self):
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         fields = Settings.model_fields
         assert "ANCHOR_EPHEMERAL_TTL_DAYS" in fields
 
     def test_semantic_immortal_requires_reason_in_settings(self):
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         fields = Settings.model_fields
         assert "ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON" in fields
 
     def test_conditional_ttl_in_registry(self):
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_CONDITIONAL_TTL_DAYS" in names
 
     def test_ephemeral_ttl_in_registry(self):
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_EPHEMERAL_TTL_DAYS" in names
 
     def test_semantic_immortal_requires_reason_in_registry(self):
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON" in names
 
     def test_conditional_ttl_in_field_meta(self):
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "anchor_conditional_ttl_days" in FIELD_META
 
     def test_ephemeral_ttl_in_field_meta(self):
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "anchor_ephemeral_ttl_days" in FIELD_META
 
     def test_semantic_immortal_requires_reason_in_field_meta(self):
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "anchor_semantic_immortal_requires_reason" in FIELD_META
 
     def test_conditional_ttl_default_is_90(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         s = get_settings()
         assert s.ANCHOR_CONDITIONAL_TTL_DAYS == 90
 
     def test_ephemeral_ttl_default_is_14(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         s = get_settings()
         assert s.ANCHOR_EPHEMERAL_TTL_DAYS == 14
 
     def test_semantic_immortal_requires_reason_default_true(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         s = get_settings()
         assert s.ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON is True
 
     def test_i25_three_way_sync_passes(self, tmp_path):
         """Full I25 invariant: all three knobs visible to test_config_three_way_sync."""
-        from yadgar.config import Settings
-        from yadgar.config_registry import list_config
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config import Settings
+        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config_yaml import FIELD_META
 
         registry_names = {e.name for e in list_config()}
         field_meta_keys = {k.upper() for k in FIELD_META.keys()}

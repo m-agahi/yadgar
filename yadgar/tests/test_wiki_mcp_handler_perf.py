@@ -38,8 +38,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar import server
-from yadgar.file_queue import FileQueue
+from yadgar.core import server
+from yadgar.core.file_queue import FileQueue
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -66,11 +66,11 @@ def _handler_env(tmp_path):
 
     # Patch server's file queue and drainer: real queue, no drainer.
     with (
-        patch("yadgar.server._state._file_queue", real_fq),
-        patch("yadgar.server._state._queue_drainer", None),
-        patch("yadgar.server.lifecycle._st") as _lifecycle_st,
+        patch("yadgar._shared.runtime.state._file_queue", real_fq),
+        patch("yadgar._shared.runtime.state._queue_drainer", None),
+        patch("yadgar._shared.runtime.lifecycle._st") as _lifecycle_st,
     ):
-        import yadgar.server._state as _state_mod
+        import yadgar._shared.runtime.state as _state_mod
 
         _lifecycle_st._file_queue = real_fq
         _lifecycle_st._queue_drainer = None
@@ -122,8 +122,8 @@ def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
     drainer_apply_mock = MagicMock()
 
     try:
-        import yadgar.server._state as _state_mod
-        import yadgar.server.lifecycle as _lifecycle_mod
+        import yadgar._shared.runtime.lifecycle as _lifecycle_mod
+        import yadgar._shared.runtime.state as _state_mod
 
         # Patch lifecycle so _get_file_queue() returns our real queue
         # without spawning a real drainer thread.
@@ -135,7 +135,7 @@ def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
             patch.object(_lifecycle_mod, "_get_file_queue", _patched_get_fq),
             patch.object(_state_mod, "_queue_drainer", None),
             patch(
-                "yadgar.file_queue.QueueDrainer._apply_with_stage_metrics",
+                "yadgar.core.file_queue.QueueDrainer._apply_with_stage_metrics",
                 drainer_apply_mock,
             ),
         ):

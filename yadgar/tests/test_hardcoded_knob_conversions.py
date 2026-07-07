@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.config_registry import clear_config_caches
+from yadgar._shared.config_registry import clear_config_caches
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +31,7 @@ def _isolate_config(monkeypatch, tmp_path):
 
 
 def _write_yaml(body: str) -> None:
-    from yadgar.config_yaml import get_config_path
+    from yadgar._shared.config_yaml import get_config_path
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -51,7 +51,7 @@ def _write_yaml(body: str) -> None:
 )
 def test_field_exists_and_yaml_respected(monkeypatch, field, yaml_key, yaml_val, expected, default):
     """Each new Settings field exists, has the right default, and honors config.yaml."""
-    from yadgar.config import Settings, get_settings
+    from yadgar._shared.config import Settings, get_settings
 
     # Field exists on the model with the documented default.
     assert field in Settings.model_fields, f"{field} missing from Settings"
@@ -75,7 +75,7 @@ def test_field_exists_and_yaml_respected(monkeypatch, field, yaml_key, yaml_val,
 )
 def test_env_overrides_yaml(monkeypatch, field, env_val, expected):
     """Env still overrides config.yaml for the converted knobs (pydantic env source)."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     monkeypatch.setenv(f"YADGAR_{field}", env_val)
     _write_yaml(f"{field.lower()}: 999\n")
@@ -84,7 +84,7 @@ def test_env_overrides_yaml(monkeypatch, field, env_val, expected):
 
 def test_new_knobs_registered_in_registry():
     """Each converted knob has a _REGISTRY ConfigEntry (I25 three-way)."""
-    from yadgar.config_registry import list_config
+    from yadgar._shared.config_registry import list_config
 
     names = {e.name for e in list_config()}
     for field in (

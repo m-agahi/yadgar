@@ -26,8 +26,8 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
-_ALLOWLIST_MODULE = _REPO_ROOT / "yadgar" / "security" / "allowlist.py"
-_SECRETS_MODULE = _REPO_ROOT / "yadgar" / "secrets.py"
+_ALLOWLIST_MODULE = _REPO_ROOT / "yadgar" / "core" / "security" / "allowlist.py"
+_SECRETS_MODULE = _REPO_ROOT / "yadgar" / "core" / "secrets.py"
 
 
 def _check_allowlist_module_has_write_audit() -> list[str]:

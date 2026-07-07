@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_SCRIPT = Path(__file__).parent.parent / "hooks" / "db-lockdown-check.py"
+HOOK_SCRIPT = Path(__file__).parent.parent / "core" / "hooks" / "db-lockdown-check.py"
 
 
 def _run_hook(stdin_data: str) -> dict:

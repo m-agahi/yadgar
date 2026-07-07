@@ -101,8 +101,8 @@ def _emb_bytes(seed: int) -> bytes:
 class _MemoryDocHost:
     """Minimal StorageEngine host exercising get_memories_by_ids with a spy cache."""
 
-    from yadgar.storage.client import _ClientMixin
-    from yadgar.storage.memory import _MemoryMixin
+    from yadgar._shared.storage.client import _ClientMixin
+    from yadgar._shared.storage.memory import _MemoryMixin
 
     get_memories_by_ids = _MemoryMixin.get_memories_by_ids
     _resolve_memory_doc_cache = _MemoryMixin._resolve_memory_doc_cache
@@ -171,8 +171,8 @@ def test_memory_doc_quality_neutral_spy_vs_null():
 class _GraphHost:
     """Minimal host exercising _get_adjacent_batch with a spy graph cache."""
 
-    from yadgar.knowledge_graph import KnowledgeGraph
-    from yadgar.storage.ops import _OpsMixin
+    from yadgar._shared.knowledge_graph import KnowledgeGraph
+    from yadgar._shared.storage.ops import _OpsMixin
 
     _get_adjacent_batch = KnowledgeGraph._get_adjacent_batch
     _resolve_graph_cache = _OpsMixin._resolve_graph_cache

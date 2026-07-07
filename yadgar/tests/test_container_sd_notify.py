@@ -42,7 +42,7 @@ _LIFECYCLE_PATCHES = {
 
 def _reset_state():
     """Reset lifecycle _state after each test to avoid cross-test pollution."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     _st._shutdown_done = False
     _st._storage = None
@@ -59,9 +59,9 @@ class TestLifecycleStartupEmitsReady:
         """sd_notify.ready() called exactly once when init_engines() succeeds."""
         ready_mock = MagicMock(return_value=True)
 
-        with patch.multiple("yadgar.server.lifecycle", **_LIFECYCLE_PATCHES):
-            with patch("yadgar.sd_notify.ready", ready_mock):
-                from yadgar.server import lifecycle
+        with patch.multiple("yadgar._shared.runtime.lifecycle", **_LIFECYCLE_PATCHES):
+            with patch("yadgar.core.sd_notify.ready", ready_mock):
+                from yadgar._shared.runtime import lifecycle
 
                 _reset_state()
                 lifecycle.init_engines(db_path=":memory:")
@@ -79,8 +79,8 @@ class TestLifecycleShutdownEmitsStopping:
 
         _reset_state()
 
-        with patch("yadgar.sd_notify.stopping", stopping_mock):
-            from yadgar.server import lifecycle
+        with patch("yadgar.core.sd_notify.stopping", stopping_mock):
+            from yadgar._shared.runtime import lifecycle
 
             lifecycle.shutdown()
 
@@ -96,8 +96,8 @@ class TestLifecycleNoSocketSilentNoop:
         """init_engines() + shutdown() complete without exception when NOTIFY_SOCKET unset."""
         monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
 
-        with patch.multiple("yadgar.server.lifecycle", **_LIFECYCLE_PATCHES):
-            from yadgar.server import lifecycle
+        with patch.multiple("yadgar._shared.runtime.lifecycle", **_LIFECYCLE_PATCHES):
+            from yadgar._shared.runtime import lifecycle
 
             _reset_state()
             # Must not raise even without NOTIFY_SOCKET

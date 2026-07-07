@@ -10,8 +10,8 @@ import math
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.thermodynamics import MemoryThermodynamics
+from yadgar._shared.config import Settings
+from yadgar._shared.thermodynamics import MemoryThermodynamics
 
 
 @pytest.fixture

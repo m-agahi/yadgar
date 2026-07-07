@@ -18,7 +18,7 @@ def storage(module_storage):
 
 class TestMigration025AgentPromptSlugCollapse:
     def test_collapses_v1_v2_to_bare_slug(self, storage):
-        from yadgar.storage.migrations import _migration_025_agent_prompt_slug_collapse
+        from yadgar._shared.storage.migrations import _migration_025_agent_prompt_slug_collapse
 
         # Seed two versioned pages
         storage.insert_wiki_page(
@@ -60,7 +60,7 @@ class TestMigration025AgentPromptSlugCollapse:
         assert storage.get_wiki_page_by_slug("agent-prompt-fix-bug-v2") is None
 
     def test_noop_when_no_versioned_slugs(self, storage):
-        from yadgar.storage.migrations import _migration_025_agent_prompt_slug_collapse
+        from yadgar._shared.storage.migrations import _migration_025_agent_prompt_slug_collapse
 
         # Add a regular (non-agent-prompt) page and a bare agent-prompt page
         storage.insert_wiki_page(
@@ -82,7 +82,7 @@ class TestMigration025AgentPromptSlugCollapse:
         assert storage.get_wiki_page_by_slug("some-other-page") is not None
 
     def test_idempotent_rerun(self, storage):
-        from yadgar.storage.migrations import _migration_025_agent_prompt_slug_collapse
+        from yadgar._shared.storage.migrations import _migration_025_agent_prompt_slug_collapse
 
         storage.insert_wiki_page(
             {

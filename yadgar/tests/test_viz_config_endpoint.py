@@ -25,8 +25,8 @@ def _make_auth_client(token: str, monkeypatch: pytest.MonkeyPatch):
 
     from starlette.testclient import TestClient
 
-    from yadgar import server as _server
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core import server as _server
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     asgi_app = _server.mcp_server.streamable_http_app()
     return TestClient(BearerAuthMiddleware(asgi_app), raise_server_exceptions=False)
@@ -35,7 +35,7 @@ def _make_auth_client(token: str, monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("viz_config_endpoint")
-    from yadgar import server
+    from yadgar.core import server
 
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
@@ -65,11 +65,10 @@ def test_viz_config_endpoint_returns_yaml_values(tmp_path, monkeypatch):
 
     from starlette.testclient import TestClient
 
-    from yadgar import server as _server
-    from yadgar.auth_middleware import BearerAuthMiddleware
-
     # Clear settings cache so new env / config file is picked up
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
+    from yadgar.core import server as _server
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     get_settings.cache_clear()
 
@@ -104,9 +103,9 @@ def _get_default_config(tmp_path, monkeypatch) -> dict:
 
     from starlette.testclient import TestClient
 
-    from yadgar import server as _server
-    from yadgar.auth_middleware import BearerAuthMiddleware
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
+    from yadgar.core import server as _server
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     get_settings.cache_clear()
     asgi_app = _server.mcp_server.streamable_http_app()
@@ -165,9 +164,9 @@ def test_viz_config_registry_complete():
 
     This is the I25 ratchet for viz knobs.
     """
-    from yadgar.config import Settings
-    from yadgar.config_registry import _REGISTRY
-    from yadgar.config_yaml import FIELD_META
+    from yadgar._shared.config import Settings
+    from yadgar._shared.config_registry import _REGISTRY
+    from yadgar._shared.config_yaml import FIELD_META
 
     registry_names = {e.name for e in _REGISTRY}
 

@@ -74,8 +74,8 @@ def _call_recall_with_wiki(
 
     Returns the list of results from recall().
     """
-    import yadgar.server._state as _st
-    from yadgar.server.tools.recall import recall as recall_fn
+    import yadgar._shared.runtime.state as _st
+    from yadgar.core.server.tools.recall import recall as recall_fn
 
     mock_retriever = _make_mock_retriever()
     mock_storage = _make_mock_storage()
@@ -92,8 +92,8 @@ def _call_recall_with_wiki(
         patch.object(_st, "_replay", None),
         patch.object(_st, "_wiki", mock_wiki),
         patch.object(_st, "_last_recalled_ids", {}),
-        patch("yadgar.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.server.tools.project._get_default_branch", return_value="master"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         return recall_fn(query=query, max_results=max_results, directory=directory)
 

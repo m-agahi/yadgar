@@ -17,7 +17,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
-from yadgar.consolidation.cold_retention import (
+from yadgar.core.consolidation.cold_retention import (
     _cold_memory_retention_report,
     _is_candidate,
 )
@@ -254,7 +254,7 @@ class TestMetricEmission:
         c2 = _mem(2, heat=0.0, access_count=0, created_days_ago=200)
         storage = _storage(c1, c2)
         with patch(
-            "yadgar.consolidation.cold_retention._emit_cold_purge_candidates_metric"
+            "yadgar.core.consolidation.cold_retention._emit_cold_purge_candidates_metric"
         ) as mock_emit:
             _cold_memory_retention_report(storage, _settings())
             mock_emit.assert_called_once_with(2)
@@ -263,7 +263,7 @@ class TestMetricEmission:
         warm = _mem(1, heat=0.5)
         storage = _storage(warm)
         with patch(
-            "yadgar.consolidation.cold_retention._emit_cold_purge_candidates_metric"
+            "yadgar.core.consolidation.cold_retention._emit_cold_purge_candidates_metric"
         ) as mock_emit:
             _cold_memory_retention_report(storage, _settings())
             mock_emit.assert_called_once_with(0)

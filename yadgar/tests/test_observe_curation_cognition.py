@@ -8,30 +8,30 @@ def _has_span(fn) -> bool:
 
 
 def test_curation_ingestion_instrumented():
-    from yadgar.curation import ingestion
+    from yadgar._shared.curation import ingestion
 
     assert _has_span(ingestion.merge_memory)
 
 
 def test_enrichment_pipeline_instrumented():
-    from yadgar.enrichment import EnrichmentPipeline
+    from yadgar._shared.enrichment import EnrichmentPipeline
 
     assert _has_span(EnrichmentPipeline.enrich)
 
 
 def test_metacognition_coverage_instrumented():
-    from yadgar.metacognition.coverage import _CoverageMixin
+    from yadgar._shared.metacognition.coverage import _CoverageMixin
 
     assert _has_span(_CoverageMixin.assess_coverage)
 
 
 def test_curation_contradiction_instrumented():
-    from yadgar.curation.contradiction import detect_contradictions
+    from yadgar._shared.curation.contradiction import detect_contradictions
 
     assert _has_span(detect_contradictions)
 
 
 def test_metacognition_gap_detection_instrumented():
-    from yadgar.metacognition.gap_detection import _GapDetectionMixin
+    from yadgar._shared.metacognition.gap_detection import _GapDetectionMixin
 
     assert _has_span(_GapDetectionMixin.detect_gaps)

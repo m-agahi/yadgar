@@ -52,7 +52,7 @@ class TestProbeLatestVersion:
 
         mock_resp = _mock_pypi_response("9.99.0")
         with patch("httpx.get", return_value=mock_resp):
-            from yadgar.update.check import probe_latest_version
+            from yadgar.core.update.check import probe_latest_version
 
             result = probe_latest_version()
 
@@ -63,7 +63,7 @@ class TestProbeLatestVersion:
         """probe_latest_version sends User-Agent: yadgar/<version>."""
         mock_resp = _mock_pypi_response("9.99.0")
         with patch("httpx.get", return_value=mock_resp) as mock_get:
-            from yadgar.update.check import probe_latest_version
+            from yadgar.core.update.check import probe_latest_version
 
             probe_latest_version()
 
@@ -81,7 +81,7 @@ class TestProbeLatestVersion:
         """probe_latest_version sends only User-Agent and Accept headers."""
         mock_resp = _mock_pypi_response("9.99.0")
         with patch("httpx.get", return_value=mock_resp) as mock_get:
-            from yadgar.update.check import probe_latest_version
+            from yadgar.core.update.check import probe_latest_version
 
             probe_latest_version()
 
@@ -95,7 +95,7 @@ class TestProbeLatestVersion:
         """probe_latest_version uses GET, no request body."""
         mock_resp = _mock_pypi_response("9.99.0")
         with patch("httpx.get", return_value=mock_resp) as mock_get:
-            from yadgar.update.check import probe_latest_version
+            from yadgar.core.update.check import probe_latest_version
 
             probe_latest_version()
 
@@ -106,7 +106,7 @@ class TestProbeLatestVersion:
         """probe_latest_version passes timeout to httpx.get."""
         mock_resp = _mock_pypi_response("9.99.0")
         with patch("httpx.get", return_value=mock_resp) as mock_get:
-            from yadgar.update.check import probe_latest_version
+            from yadgar.core.update.check import probe_latest_version
 
             probe_latest_version(timeout=3)
 
@@ -122,7 +122,7 @@ class TestProbeLatestVersion:
             "httpx.get",
             side_effect=httpx.HTTPStatusError("503", request=MagicMock(), response=MagicMock()),
         ):
-            from yadgar.update.check import probe_latest_version
+            from yadgar.core.update.check import probe_latest_version
 
             with pytest.raises((httpx.HTTPStatusError, Exception)):
                 probe_latest_version()
@@ -132,7 +132,7 @@ class TestProbeLatestVersion:
         import httpx
 
         with patch("httpx.get", side_effect=httpx.TimeoutException("timeout")):
-            from yadgar.update.check import probe_latest_version
+            from yadgar.core.update.check import probe_latest_version
 
             with pytest.raises((httpx.TimeoutException, TimeoutError, Exception)):
                 probe_latest_version()
@@ -143,7 +143,7 @@ class TestProbeLatestVersion:
         mock_resp = _mock_pypi_response("9.99.0")
         # Just assert no exception — httpx handles proxy via env automatically
         with patch("httpx.get", return_value=mock_resp):
-            from yadgar.update.check import probe_latest_version
+            from yadgar.core.update.check import probe_latest_version
 
             result = probe_latest_version()
         assert result is not None
@@ -167,7 +167,7 @@ class TestDetectInstallMethod:
             # Force reimport so mock takes effect
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -183,7 +183,7 @@ class TestDetectInstallMethod:
         with patch("subprocess.check_output", return_value=str(fake_bin)):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -201,7 +201,7 @@ class TestDetectInstallMethod:
         ):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -217,7 +217,7 @@ class TestDetectInstallMethod:
         with patch("subprocess.check_output", return_value=str(fake_shim)):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -247,7 +247,7 @@ class TestDetectInstallMethod:
             with patch("os.path.exists", side_effect=mock_exists):
                 import importlib
 
-                from yadgar.update import install_methods
+                from yadgar.core.update import install_methods
 
                 importlib.reload(install_methods)
                 result = install_methods.detect_install_method()
@@ -261,7 +261,7 @@ class TestDetectInstallMethod:
         ):
             import importlib
 
-            from yadgar.update import install_methods
+            from yadgar.core.update import install_methods
 
             importlib.reload(install_methods)
             result = install_methods.detect_install_method()
@@ -273,35 +273,35 @@ class TestUpgradeCommand:
     """Unit tests for yadgar.update.install_methods.upgrade_command."""
 
     def test_pipx_upgrade_command(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         assert upgrade_command("pipx") == "pipx upgrade yadgar"
 
     def test_brew_upgrade_command(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         assert upgrade_command("brew") == "brew upgrade yadgar"
 
     def test_nix_flake_upgrade_command(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("nix-flake")
         assert "nix" in cmd.lower()
 
     def test_container_upgrade_command(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("container")
         assert "docker pull" in cmd
 
     def test_source_upgrade_command(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("source")
         assert "pip install" in cmd or "git pull" in cmd
 
     def test_unknown_upgrade_command(self):
-        from yadgar.update.install_methods import upgrade_command
+        from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("unknown")
         assert "pypi.org" in cmd or "manual" in cmd.lower()
@@ -312,7 +312,7 @@ class TestCanSelfInstall:
 
     def test_pipx_can_self_install(self, tmp_path):
         """pipx with writable venv dir → True."""
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         # pipx with no specific path check → defaults to True
         result = can_self_install("pipx")
@@ -320,18 +320,18 @@ class TestCanSelfInstall:
 
     def test_nix_flake_cannot_self_install(self):
         """nix-flake → always False (read-only /nix/store)."""
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("nix-flake") is False
 
     def test_container_cannot_self_install(self):
         """container → always False."""
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("container") is False
 
     def test_brew_cannot_self_install(self):
         """brew → False (requires user to run manually)."""
-        from yadgar.update.install_methods import can_self_install
+        from yadgar.core.update.install_methods import can_self_install
 
         assert can_self_install("brew") is False

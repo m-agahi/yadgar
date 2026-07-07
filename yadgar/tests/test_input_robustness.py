@@ -8,7 +8,7 @@ from hypothesis import given
 from hypothesis import settings as hsettings
 from hypothesis import strategies as st
 
-from yadgar import server
+from yadgar.core import server
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -23,8 +23,8 @@ def _engines(tmp_path_factory):
     # v5.42.3: /tmp is not a git repo; patch _detect_branch so calls to
     # memorize/wiki_add without branch_hint don't get rejected.
     with (
-        patch("yadgar.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.server._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield
     server.shutdown()

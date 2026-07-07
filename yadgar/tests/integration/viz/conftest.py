@@ -82,7 +82,7 @@ def _daemon(tmp_path_factory):
 
     import uvicorn
 
-    from yadgar import server as _server
+    from yadgar.core import server as _server
 
     tmp_path = tmp_path_factory.mktemp("viz_daemon")
     db_path = str(tmp_path / "smoke.db")
@@ -96,7 +96,7 @@ def _daemon(tmp_path_factory):
 
     # Seed memories — brief wait for SurrealDB to finish startup
     time.sleep(2.0)
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     storage = _st._storage
     if storage is not None:
@@ -159,7 +159,7 @@ def viz_server(_daemon):
     Yields the viz server base URL for Playwright to connect to.
     """
 
-    from yadgar.viz_server import _Handler, _ThreadingHTTPServer
+    from yadgar.core.viz_server import _Handler, _ThreadingHTTPServer
 
     viz_port = _free_port()
 

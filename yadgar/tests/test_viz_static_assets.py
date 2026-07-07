@@ -16,7 +16,7 @@ import pathlib
 
 def _html() -> str:
     """Read index.html from the static directory."""
-    static_dir = pathlib.Path(__file__).parent.parent / "static"
+    static_dir = pathlib.Path(__file__).parent.parent / "core" / "static"
     return (static_dir / "index.html").read_text(encoding="utf-8")
 
 

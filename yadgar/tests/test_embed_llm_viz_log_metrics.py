@@ -56,8 +56,8 @@ def _gauge_value(gauge) -> float:
 
 def test_encode_duration_histogram_increments():
     """After M encode() calls → yadgar_encode_duration_ms._sum increases by > 0."""
-    from yadgar.embeddings import EmbeddingEngine
-    from yadgar.metrics import yadgar_encode_duration_ms
+    from yadgar._shared.embeddings import EmbeddingEngine
+    from yadgar._shared.metrics import yadgar_encode_duration_ms
 
     before = _labeled_hist_sum(yadgar_encode_duration_ms, model="all-MiniLM-L6-v2")
 
@@ -83,8 +83,8 @@ def test_encode_duration_histogram_increments():
 
 def test_entity_extract_duration_histogram_increments():
     """After M entity-extract calls → yadgar_entity_extract_duration_ms._sum increases."""
-    from yadgar.knowledge_graph import KnowledgeGraph
-    from yadgar.metrics import yadgar_entity_extract_duration_ms
+    from yadgar._shared.knowledge_graph import KnowledgeGraph
+    from yadgar._shared.metrics import yadgar_entity_extract_duration_ms
 
     before = _hist_sum(yadgar_entity_extract_duration_ms)
 
@@ -110,7 +110,7 @@ def test_entity_extract_duration_histogram_increments():
 
 def test_llm_call_duration_and_decision_counter():
     """After M LLM calls → duration histogram sum increases; decision counter increments."""
-    from yadgar.metrics import yadgar_llm_call_duration_ms, yadgar_llm_decision
+    from yadgar._shared.metrics import yadgar_llm_call_duration_ms, yadgar_llm_decision
 
     # Labeled by [provider, model, purpose] — grab sum across all children before
     before_sum = sum(c._sum.get() for c in yadgar_llm_call_duration_ms._metrics.values())
@@ -123,7 +123,7 @@ def test_llm_call_duration_and_decision_counter():
     }
     fake_response.raise_for_status = MagicMock()
 
-    import yadgar.conflict_resolver as cr
+    import yadgar.core.conflict_resolver as cr
 
     original_enabled = cr._ENABLED
     cr._ENABLED = True
@@ -159,7 +159,7 @@ def test_llm_call_duration_and_decision_counter():
 
 def test_subagent_dispatch_count_increments():
     """After M subagent dispatches via hook endpoint → dispatch counter increments."""
-    from yadgar.metrics import yadgar_subagent_dispatch_count
+    from yadgar._shared.metrics import yadgar_subagent_dispatch_count
 
     before = _labeled_counter_value(yadgar_subagent_dispatch_count, agent_type="general-purpose")
 
@@ -181,7 +181,7 @@ def test_subagent_dispatch_count_increments():
 
 def test_sse_clients_gauge_inc_dec():
     """SSE client gauge increments on connect, decrements on disconnect."""
-    from yadgar.metrics import yadgar_viz_sse_clients
+    from yadgar._shared.metrics import yadgar_viz_sse_clients
 
     before = _gauge_value(yadgar_viz_sse_clients)
 
@@ -196,8 +196,8 @@ def test_sse_clients_gauge_inc_dec():
 
 def test_sse_clients_gauge_via_make_event_stream():
     """_make_event_stream increments the SSE clients gauge on entry, decrements on exit."""
-    from yadgar.metrics import yadgar_viz_sse_clients
-    from yadgar.server import http as http_mod
+    from yadgar._shared.metrics import yadgar_viz_sse_clients
+    from yadgar.core.server import http as http_mod
 
     before = _gauge_value(yadgar_viz_sse_clients)
 
@@ -239,8 +239,8 @@ def test_sse_clients_gauge_via_make_event_stream():
 
 def test_viz_api_graph_duration_increments():
     """After a viz /api/graph call → yadgar_viz_api_graph_duration_ms._sum > before."""
-    from yadgar.metrics import yadgar_viz_api_graph_duration_ms
-    from yadgar.server import http as http_mod
+    from yadgar._shared.metrics import yadgar_viz_api_graph_duration_ms
+    from yadgar.core.server import http as http_mod
 
     before = _hist_sum(yadgar_viz_api_graph_duration_ms)
 
@@ -252,7 +252,7 @@ def test_viz_api_graph_duration_increments():
     fake_request.query_params.get = MagicMock(side_effect=lambda k, d: d)
 
     with patch.object(http_mod._st, "_storage", fake_storage):
-        with patch("yadgar.server.http.GraphAPI", return_value=fake_graph_api):
+        with patch("yadgar.core.server.http.GraphAPI", return_value=fake_graph_api):
 
             async def _run():
                 return await http_mod.api_graph(fake_request)
@@ -272,8 +272,8 @@ def test_viz_api_graph_duration_increments():
 
 def test_log_file_rotations_counter_increments(tmp_path):
     """Triggering one doRollover() → yadgar_log_file_rotations_total{logger=...} increments by 1."""
-    from yadgar.log_config import RotatingJSONLFileHandler
-    from yadgar.metrics import yadgar_log_file_rotations_total
+    from yadgar._shared.log_config import RotatingJSONLFileHandler
+    from yadgar._shared.metrics import yadgar_log_file_rotations_total
 
     before = _labeled_counter_value(yadgar_log_file_rotations_total, logger="test_rotation")
 
@@ -302,8 +302,8 @@ def test_log_file_rotations_counter_increments(tmp_path):
 
 def test_log_dropped_counter_increments():
     """Triggering N rate-limited drops → yadgar_log_dropped_total increments by N."""
-    from yadgar.log_config import RateLimitFilter
-    from yadgar.metrics import yadgar_log_dropped_total
+    from yadgar._shared.log_config import RateLimitFilter
+    from yadgar._shared.metrics import yadgar_log_dropped_total
 
     test_logger = "yadgar.test.drop_counter_prf"
     test_level = "DEBUG"

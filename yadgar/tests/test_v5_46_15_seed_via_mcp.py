@@ -24,7 +24,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-SEED_PY = REPO_ROOT / "yadgar" / "cli" / "seed.py"
+SEED_PY = REPO_ROOT / "yadgar" / "core" / "cli" / "seed.py"
 SETUP_SH = REPO_ROOT / "scripts" / "install" / "yadgar-setup.sh"
 
 

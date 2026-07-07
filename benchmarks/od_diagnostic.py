@@ -3,10 +3,10 @@
 import json
 import os
 
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import Retriever
-from yadgar.storage import StorageEngine
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval import Retriever
+from yadgar._shared.storage import StorageEngine
 
 EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
 EMBEDDING_DIM = 768

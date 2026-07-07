@@ -35,8 +35,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.storage.migrations import _migration_013_wiki_page_version
+from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
+from yadgar.core import server
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "wiki_l2l3_test.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    with patch("yadgar.server._detect_branch", return_value="feat/test-branch"):
+    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
         _migration_013_wiki_page_version(_storage())
         yield
     server.shutdown()

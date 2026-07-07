@@ -22,7 +22,7 @@ SERVICE_IN = REPO_ROOT / "scripts" / "install" / "yadgar.service.in"
 BACKEND_SERVICE_IN = REPO_ROOT / "scripts" / "install" / "yadgar-backend.service.in"
 SETUP_SH = REPO_ROOT / "scripts" / "install" / "yadgar-setup.sh"
 BOOTSTRAP_SH = REPO_ROOT / "scripts" / "install" / "bootstrap_secrets.sh"
-SEED_PY = REPO_ROOT / "yadgar" / "cli" / "seed.py"
+SEED_PY = REPO_ROOT / "yadgar" / "core" / "cli" / "seed.py"
 
 
 def _load_seed_module():

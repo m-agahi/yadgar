@@ -153,7 +153,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 
 def _default_metrics_files() -> list[Path]:
     return [
-        _REPO_ROOT / "yadgar" / "metrics.py",
+        _REPO_ROOT / "yadgar" / "_shared" / "metrics.py",
         _REPO_ROOT / "yadgar" / "backend" / "embed_service_metrics.py",
     ]
 
@@ -164,7 +164,7 @@ def _default_search_dirs() -> list[Path]:
 
 def _default_exclude_files() -> list[Path]:
     return [
-        _REPO_ROOT / "yadgar" / "metrics.py",
+        _REPO_ROOT / "yadgar" / "_shared" / "metrics.py",
         _REPO_ROOT / "yadgar" / "backend" / "embed_service_metrics.py",
     ]
 

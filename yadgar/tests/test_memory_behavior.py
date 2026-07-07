@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 from yadgar.tests.conftest import memorize_sync
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────

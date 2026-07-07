@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-import yadgar.config as cfg
+import yadgar._shared.config as cfg
 
 
 @pytest.fixture(autouse=True)

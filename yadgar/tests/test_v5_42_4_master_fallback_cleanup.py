@@ -43,8 +43,8 @@ import re
 
 import pytest
 
-from yadgar import server
-from yadgar.server.tools.wiki import wiki_history as _wiki_history
+from yadgar.core import server
+from yadgar.core.server.tools.wiki import wiki_history as _wiki_history
 
 # ---------------------------------------------------------------------------
 # Shared fixture
@@ -147,9 +147,9 @@ class TestWikiQueryNoGitContext:
         )
 
         # Patch _detect_branch to return None (non-git context)
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
         # Patch _get_default_branch to RAISE — this is what triggers the except block
-        monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", _raise_file_not_found)
 
         results = server.wiki_query("v5424 query test master slot", directory="/tmp/test")
         result_slugs = [r.get("slug") for r in results]
@@ -178,8 +178,8 @@ class TestWikiQueryNoGitContext:
             branch=None,
         )
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", _raise_file_not_found)
 
         results = server.wiki_query("v5424 null slot preservation test", directory="/tmp/test")
         result_slugs = [r.get("slug") for r in results]
@@ -239,8 +239,8 @@ class TestWikiReadNoGitContext:
             branch=None,
         )
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", _raise_file_not_found)
 
         result = server.wiki_read(slug=slug)
 
@@ -291,7 +291,7 @@ class TestWikiCheckDuplicateNoGitContext:
             branch=None,
         )
 
-        monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", _raise_file_not_found)
 
         # Spy on find_similar_wiki_pages to capture the branch arg
         original_find = wiki_store.find_similar_wiki_pages
@@ -347,8 +347,8 @@ class TestResolvePageIdBySlugNoGitContext:
             branch=None,
         )
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", _raise_file_not_found)
 
         # Spy on read_by_branch to capture default_branch argument
         original_rbr = wiki_store.read_by_branch
@@ -395,10 +395,10 @@ class TestRecallNoGitContext:
         """
         import sys
 
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", _raise_file_not_found)
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", _raise_file_not_found)
 
         captured: dict = {}
 

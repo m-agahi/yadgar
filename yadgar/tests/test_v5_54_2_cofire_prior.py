@@ -28,7 +28,7 @@ class TestComputeCofirePriors:
     """_compute_cofire_priors computes and stores correct co-recall scores."""
 
     def _make_consolidation_scheduler(self, storage, settings):
-        from yadgar.consolidation import ConsolidationScheduler
+        from yadgar.core.consolidation import ConsolidationScheduler
 
         sched = object.__new__(ConsolidationScheduler)
         sched._storage = storage
@@ -172,7 +172,7 @@ class TestFastProfileCofirePriorBoost:
     def _make_settings_with_weight(self, cofire_weight: float, graph_weight: float = 0.0):
         from unittest.mock import MagicMock as MM
 
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         s = MM(spec=get_settings())
         s.WRRF_COFIRE_PRIOR_WEIGHT = cofire_weight
@@ -188,7 +188,7 @@ class TestFastProfileCofirePriorBoost:
 
     def test_high_cofire_prior_ranks_higher(self):
         """Memory with cofire_prior=0.8 ranks above identical memory with prior=0."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         settings = self._make_settings_with_weight(0.15)
         storage = MagicMock()
@@ -228,7 +228,7 @@ class TestFastProfileCofirePriorBoost:
 
     def test_no_transition_table_calls_in_fuse_scores(self):
         """Runtime check: _fuse_scores must NOT call any transition-table method."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         settings = self._make_settings_with_weight(0.15)
         storage = MagicMock()
@@ -276,7 +276,7 @@ class TestFastProfileCofirePriorBoost:
 
     def test_fusion_source_uses_get_memory_cofire_priors(self):
         """fusion.py source must call get_memory_cofire_priors, not traverse transitions."""
-        fusion_src = pathlib.Path(__file__).parent.parent / "retrieval" / "fusion.py"
+        fusion_src = pathlib.Path(__file__).parent.parent / "_shared" / "retrieval" / "fusion.py"
         source = fusion_src.read_text()
 
         assert "get_memory_cofire_priors" in source, (
@@ -302,7 +302,7 @@ class TestCofirePriorWeightZeroDisables:
 
     def test_weight_zero_storage_not_called(self):
         """With weight=0.0, get_memory_cofire_priors must NOT be called."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_COFIRE_PRIOR_WEIGHT = 0.0
@@ -356,7 +356,7 @@ class TestNullCofirePriorSafe:
 
     def test_null_prior_no_crash(self):
         """Empty storage result → no crash, ranking based on raw signals."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_COFIRE_PRIOR_WEIGHT = 0.15
@@ -399,7 +399,7 @@ class TestNullCofirePriorSafe:
 
     def test_get_memory_cofire_priors_empty_input(self):
         """get_memory_cofire_priors([]) returns empty dict without DB calls."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock()
@@ -420,7 +420,7 @@ class TestBothBoostsCoexist:
     def test_both_boosts_applied_to_different_memories(self):
         """With both weights >0: memory with graph_prior ranks above the one with cofire_prior
         only if graph_prior boost is bigger; they coexist without overwriting."""
-        from yadgar.retrieval.fusion import _FusionMixin
+        from yadgar._shared.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_GRAPH_PRIOR_WEIGHT = 0.2
@@ -475,7 +475,7 @@ class TestBothBoostsCoexist:
 
     def test_graph_prior_source_still_present(self):
         """fusion.py must still contain WRRF_GRAPH_PRIOR_WEIGHT (5.54.1 intact)."""
-        fusion_src = pathlib.Path(__file__).parent.parent / "retrieval" / "fusion.py"
+        fusion_src = pathlib.Path(__file__).parent.parent / "_shared" / "retrieval" / "fusion.py"
         source = fusion_src.read_text()
 
         assert "WRRF_GRAPH_PRIOR_WEIGHT" in source, (
@@ -490,7 +490,7 @@ class TestBothBoostsCoexist:
 
     def test_cofire_boost_after_graph_prior_in_source(self):
         """fusion.py: cofire boost section must appear after graph_prior boost."""
-        fusion_src = pathlib.Path(__file__).parent.parent / "retrieval" / "fusion.py"
+        fusion_src = pathlib.Path(__file__).parent.parent / "_shared" / "retrieval" / "fusion.py"
         source = fusion_src.read_text()
 
         gp_idx = source.index("WRRF_GRAPH_PRIOR_WEIGHT")
@@ -511,7 +511,7 @@ class TestMigration021Registered:
 
     def test_migration_021_in_list(self):
         """_MIGRATIONS must include 021_memory_cofire_prior."""
-        from yadgar.storage.migrations import _MIGRATIONS
+        from yadgar._shared.storage.migrations import _MIGRATIONS
 
         versions = [m["version"] for m in _MIGRATIONS]
         assert "021_memory_cofire_prior" in versions, (
@@ -520,7 +520,7 @@ class TestMigration021Registered:
 
     def test_migration_021_after_020(self):
         """021 must come immediately after 020 in the list."""
-        from yadgar.storage.migrations import _MIGRATIONS
+        from yadgar._shared.storage.migrations import _MIGRATIONS
 
         versions = [m["version"] for m in _MIGRATIONS]
         idx_020 = versions.index("020_memory_graph_prior")
@@ -531,7 +531,7 @@ class TestMigration021Registered:
 
     def test_migration_017_still_reserved(self):
         """017 slot must remain reserved."""
-        from yadgar.storage.migrations import _MIGRATIONS
+        from yadgar._shared.storage.migrations import _MIGRATIONS
 
         versions = [m["version"] for m in _MIGRATIONS]
         assert not any("017" in v for v in versions), (
@@ -540,7 +540,7 @@ class TestMigration021Registered:
 
     def test_migration_021_fn_callable(self):
         """Migration 021 function must be callable."""
-        from yadgar.storage.migrations import _migration_021_memory_cofire_prior
+        from yadgar._shared.storage.migrations import _migration_021_memory_cofire_prior
 
         assert callable(_migration_021_memory_cofire_prior)
 
@@ -559,7 +559,7 @@ class TestGetMemoryCofirePriors:
         v5.96.0: batched query returns meta::id(id) AS id (a bare int) for all
         matched rows in ONE call — not one point-read per id.
         """
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock(return_value=[{"id": 1, "cofire_prior": 0.65}])
@@ -569,7 +569,7 @@ class TestGetMemoryCofirePriors:
 
     def test_absent_priors_not_in_result(self):
         """Memories without cofire_prior are absent from result."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock(return_value=[])
@@ -579,7 +579,7 @@ class TestGetMemoryCofirePriors:
 
     def test_empty_input_no_queries(self):
         """Empty memory_ids list: no DB calls, returns empty dict."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock()
@@ -599,7 +599,7 @@ class TestCofirePriorConfigRegistered:
 
     def test_settings_has_wrrf_cofire_prior_weight(self):
         """Settings must have WRRF_COFIRE_PRIOR_WEIGHT with default 0.15."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         default_val = Settings.model_fields["WRRF_COFIRE_PRIOR_WEIGHT"].default
         assert default_val == 0.15, (
@@ -608,7 +608,7 @@ class TestCofirePriorConfigRegistered:
 
     def test_registry_has_wrrf_cofire_prior_weight(self):
         """config_registry must include YADGAR_WRRF_COFIRE_PRIOR_WEIGHT."""
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_WRRF_COFIRE_PRIOR_WEIGHT" in names, (
@@ -618,7 +618,7 @@ class TestCofirePriorConfigRegistered:
 
     def test_yaml_meta_has_wrrf_cofire_prior_weight(self):
         """config_yaml.py FIELD_META must include wrrf_cofire_prior_weight."""
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "wrrf_cofire_prior_weight" in FIELD_META, (
             "FIELD_META must include 'wrrf_cofire_prior_weight' for I25 three-way sync"
@@ -626,7 +626,9 @@ class TestCofirePriorConfigRegistered:
 
     def test_consolidation_cofire_phase_in_orchestrator(self):
         """orchestrator.py must wire compute_cofire_priors phase."""
-        orch_src = pathlib.Path(__file__).parent.parent / "consolidation" / "orchestrator.py"
+        orch_src = (
+            pathlib.Path(__file__).parent.parent / "core" / "consolidation" / "orchestrator.py"
+        )
         source = orch_src.read_text()
 
         assert "compute_cofire_priors" in source, (

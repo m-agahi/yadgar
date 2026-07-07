@@ -32,42 +32,42 @@ class TestObserveSentinels:
     """Verify _yadgar_observe_has_span is set on instrumented storage methods."""
 
     def test_memory_get_by_ids_projected_has_sentinel(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         assert _has_observe_sentinel(_MemoryMixin.get_memories_by_ids_projected)
 
     def test_memory_get_candidate_ids_has_sentinel(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         assert _has_observe_sentinel(_MemoryMixin.get_candidate_memory_ids)
 
     def test_wiki_get_by_slug_has_sentinel(self):
-        from yadgar.storage.wiki import _WikiMixin
+        from yadgar._shared.storage.wiki import _WikiMixin
 
         assert _has_observe_sentinel(_WikiMixin.get_wiki_page_by_slug_and_branch)
 
     def test_entity_get_all_has_sentinel(self):
-        from yadgar.storage.entity import _EntityMixin
+        from yadgar._shared.storage.entity import _EntityMixin
 
         assert _has_observe_sentinel(_EntityMixin.get_all_entities)
 
     def test_queue_upsert_file_hash_has_sentinel(self):
-        from yadgar.storage.queue import _QueueMixin
+        from yadgar._shared.storage.queue import _QueueMixin
 
         assert _has_observe_sentinel(_QueueMixin.upsert_file_hash)
 
     def test_episode_insert_has_sentinel(self):
-        from yadgar.storage.episode import _EpisodeMixin
+        from yadgar._shared.storage.episode import _EpisodeMixin
 
         assert _has_observe_sentinel(_EpisodeMixin.insert_episode)
 
     def test_narrative_insert_belief_has_sentinel(self):
-        from yadgar.storage.narrative import _NarrativeMixin
+        from yadgar._shared.storage.narrative import _NarrativeMixin
 
         assert _has_observe_sentinel(_NarrativeMixin.insert_belief)
 
     def test_storage_engine_close_has_sentinel(self):
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         assert _has_observe_sentinel(StorageEngine.close)
 
@@ -107,7 +107,7 @@ class TestStorageReadSpanEmission:
         """get_candidate_memory_ids should emit a span named 'storage.memory._MemoryMixin.get_candidate_memory_ids'."""
         from unittest.mock import MagicMock
 
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         _tracer, exporter = in_memory_tracer
 
@@ -129,7 +129,7 @@ class TestStorageReadSpanEmission:
         """insert_episode should emit a stage span."""
         from unittest.mock import MagicMock
 
-        from yadgar.storage.episode import _EpisodeMixin
+        from yadgar._shared.storage.episode import _EpisodeMixin
 
         _tracer, exporter = in_memory_tracer
 

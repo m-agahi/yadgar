@@ -34,13 +34,13 @@ class TestRecallWithTimeoutHelper:
 
     def test_timeout_returns_none(self):
         """When asyncio.wait_for raises TimeoutError, helper returns None."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         mock_retriever = _slow_retriever()
 
         async def _run():
             with patch(
-                "yadgar.config.get_settings",
+                "yadgar._shared.config.get_settings",
                 return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
             ):
                 result = await _http._recall_with_timeout(
@@ -55,7 +55,7 @@ class TestRecallWithTimeoutHelper:
 
     def test_fast_recall_returns_results(self):
         """When recall completes within timeout, helper returns the results."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         expected = [{"content": "memory1"}, {"content": "memory2"}]
         mock_retriever = MagicMock()
@@ -67,7 +67,7 @@ class TestRecallWithTimeoutHelper:
 
             with patch("asyncio.to_thread", side_effect=_fake_to_thread):
                 with patch(
-                    "yadgar.config.get_settings",
+                    "yadgar._shared.config.get_settings",
                     return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=5.0),
                 ):
                     result = await _http._recall_with_timeout(
@@ -88,8 +88,8 @@ class TestRecallWithTimeoutHelper:
 
     def test_timeout_increments_prometheus_counter(self):
         """On timeout, yadgar_hook_recall_timeout_total{handler} is incremented."""
-        import yadgar.metrics as _metrics
-        import yadgar.server.http as _http
+        import yadgar._shared.metrics as _metrics
+        import yadgar.core.server.http as _http
 
         handler_name = "instructions-loaded"
 
@@ -100,7 +100,7 @@ class TestRecallWithTimeoutHelper:
 
         async def _run():
             with patch(
-                "yadgar.config.get_settings",
+                "yadgar._shared.config.get_settings",
                 return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
             ):
                 await _http._recall_with_timeout(mock_retriever, handler_name, "query")
@@ -117,7 +117,7 @@ class TestRecallWithTimeoutHelper:
 
     def test_non_timeout_exception_reraises(self):
         """Non-timeout exceptions from recall are NOT swallowed — they propagate."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         class _RecallError(RuntimeError):
             pass
@@ -131,7 +131,7 @@ class TestRecallWithTimeoutHelper:
 
         async def _run():
             with patch(
-                "yadgar.config.get_settings",
+                "yadgar._shared.config.get_settings",
                 return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=5.0),
             ):
                 await _http._recall_with_timeout(mock_retriever, "prompt-recall", "query")
@@ -161,8 +161,8 @@ class TestPromptRecallHandlerTimeout:
 
     def test_timeout_returns_empty_text(self):
         """On timeout, prompt_recall handler returns {"text": ""}."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_request = _make_mock_request(
@@ -176,7 +176,7 @@ class TestPromptRecallHandlerTimeout:
             # Patch _recall_with_timeout to return None (simulating timeout)
             with patch.object(_st, "_retriever", mock_retriever):
                 with patch(
-                    "yadgar.server.http._recall_with_timeout",
+                    "yadgar.core.server.http._recall_with_timeout",
                     new_callable=AsyncMock,
                     return_value=None,
                 ):
@@ -202,8 +202,8 @@ class TestInstructionsLoadedHandlerTimeout:
 
     def test_timeout_returns_empty_text(self):
         """On timeout, hook_instructions_loaded handler returns {"text": ""}."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_request = _make_mock_request(
@@ -216,7 +216,7 @@ class TestInstructionsLoadedHandlerTimeout:
         async def _run():
             with patch.object(_st, "_retriever", mock_retriever):
                 with patch(
-                    "yadgar.server.http._recall_with_timeout",
+                    "yadgar.core.server.http._recall_with_timeout",
                     new_callable=AsyncMock,
                     return_value=None,
                 ):
@@ -238,8 +238,8 @@ class TestSubagentStartHandlerTimeout:
 
     def test_timeout_returns_empty_text(self):
         """On timeout, hook_subagent_start handler returns {"text": ""}."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_request = _make_mock_request(
@@ -255,7 +255,7 @@ class TestSubagentStartHandlerTimeout:
         async def _run():
             with patch.object(_st, "_retriever", mock_retriever):
                 with patch(
-                    "yadgar.server.http._recall_with_timeout",
+                    "yadgar.core.server.http._recall_with_timeout",
                     new_callable=AsyncMock,
                     return_value=None,
                 ):
@@ -277,8 +277,8 @@ class TestTimeoutCounterAllHandlers:
 
     def test_counter_increments_for_prompt_recall(self):
         """yadgar_hook_recall_timeout_total{handler='prompt-recall'} increments on timeout."""
-        import yadgar.metrics as _metrics
-        import yadgar.server.http as _http
+        import yadgar._shared.metrics as _metrics
+        import yadgar.core.server.http as _http
 
         before = _metrics.yadgar_hook_recall_timeout_total.labels(
             handler="prompt-recall"
@@ -286,7 +286,7 @@ class TestTimeoutCounterAllHandlers:
 
         async def _run():
             with patch(
-                "yadgar.config.get_settings",
+                "yadgar._shared.config.get_settings",
                 return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
             ):
                 await _http._recall_with_timeout(_slow_retriever(), "prompt-recall", "q")
@@ -299,8 +299,8 @@ class TestTimeoutCounterAllHandlers:
 
     def test_counter_increments_for_subagent_start(self):
         """yadgar_hook_recall_timeout_total{handler='subagent-start'} increments on timeout."""
-        import yadgar.metrics as _metrics
-        import yadgar.server.http as _http
+        import yadgar._shared.metrics as _metrics
+        import yadgar.core.server.http as _http
 
         before = _metrics.yadgar_hook_recall_timeout_total.labels(
             handler="subagent-start"
@@ -308,7 +308,7 @@ class TestTimeoutCounterAllHandlers:
 
         async def _run():
             with patch(
-                "yadgar.config.get_settings",
+                "yadgar._shared.config.get_settings",
                 return_value=MagicMock(HOOK_RECALL_TIMEOUT_S=0.01),
             ):
                 await _http._recall_with_timeout(_slow_retriever(), "subagent-start", "q")
@@ -354,8 +354,8 @@ class TestHookCoreResidentDecision:
         import asyncio
         from unittest.mock import MagicMock, patch
 
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_request = MagicMock()
@@ -377,7 +377,7 @@ class TestHookCoreResidentDecision:
         async def _run():
             with patch.object(_st, "_retriever", mock_retriever):
                 with patch(
-                    "yadgar.server.http._recall_with_timeout",
+                    "yadgar.core.server.http._recall_with_timeout",
                     side_effect=_capture_recall,
                 ):
                     with patch.object(_st, "_last_session_context", {}):
@@ -397,8 +397,8 @@ class TestHookCoreResidentDecision:
         import asyncio
         from unittest.mock import MagicMock, patch
 
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_request = MagicMock()
@@ -419,7 +419,7 @@ class TestHookCoreResidentDecision:
         async def _run():
             with patch.object(_st, "_retriever", mock_retriever):
                 with patch(
-                    "yadgar.server.http._recall_with_timeout",
+                    "yadgar.core.server.http._recall_with_timeout",
                     side_effect=_capture_recall,
                 ):
                     await _http.hook_instructions_loaded(mock_request)
@@ -435,8 +435,8 @@ class TestHookCoreResidentDecision:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_request = MagicMock()
@@ -460,7 +460,7 @@ class TestHookCoreResidentDecision:
         async def _run():
             with patch.object(_st, "_retriever", mock_retriever):
                 with patch(
-                    "yadgar.server.http._recall_with_timeout",
+                    "yadgar.core.server.http._recall_with_timeout",
                     side_effect=_capture_recall,
                 ):
                     await _http.hook_subagent_start(mock_request)

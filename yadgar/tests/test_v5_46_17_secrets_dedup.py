@@ -36,9 +36,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BOOTSTRAP = REPO_ROOT / "scripts" / "install" / "bootstrap_secrets.sh"
-DAEMON_PY = REPO_ROOT / "yadgar" / "daemon.py"
-VACUUM_INIT = REPO_ROOT / "yadgar" / "vacuum" / "__init__.py"
-VACUUM_PHASES = REPO_ROOT / "yadgar" / "vacuum" / "phases.py"
+DAEMON_PY = REPO_ROOT / "yadgar" / "core" / "daemon.py"
+VACUUM_INIT = REPO_ROOT / "yadgar" / "core" / "vacuum" / "__init__.py"
+VACUUM_PHASES = REPO_ROOT / "yadgar" / "core" / "vacuum" / "phases.py"
 
 
 # ---------------------------------------------------------------------------

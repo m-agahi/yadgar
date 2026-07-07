@@ -21,7 +21,7 @@ import sys
 
 import pytest
 
-from yadgar import server  # noqa: E402
+from yadgar.core import server  # noqa: E402
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -37,7 +37,7 @@ def _engines(tmp_path_factory):
 
 
 def _save(pattern: str, content: str, purpose: str | None = None) -> dict:
-    from yadgar.server.tools.agent_prompts import agent_prompt_save
+    from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
     res = agent_prompt_save(pattern, content, directory="global", purpose=purpose)
     assert res.get("saved") is True, f"agent_prompt_save failed: {res}"
@@ -46,7 +46,7 @@ def _save(pattern: str, content: str, purpose: str | None = None) -> dict:
 
 def _read_toc() -> str | None:
     """Return the raw content of the global agent-prompt-toc page (or None)."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     page = _st._storage.get_wiki_page_by_slug("agent-prompt-toc")
     return page.get("content") if page else None
@@ -89,7 +89,7 @@ class TestBC_S6_TOC:
 
 
 def _library_anchors() -> list[dict]:
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     return _st._storage._q(
         "SELECT id, content, tags, directory_context FROM memory "
@@ -164,7 +164,7 @@ class TestBC_S6_Brief:
 
 
 def _recall_fn():
-    return sys.modules["yadgar.server.tools.recall"].recall
+    return sys.modules["yadgar.core.server.tools.recall"].recall
 
 
 class TestBC_S6_KillGate:
@@ -178,7 +178,7 @@ class TestBC_S6_KillGate:
 
     def _set_flag(self, monkeypatch, value: bool):
         """Flip AGENT_PROMPT_LIBRARY_ENABLED on the cached settings singleton."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "AGENT_PROMPT_LIBRARY_ENABLED", value)
 
@@ -222,8 +222,8 @@ class TestBC_S6_KillGate:
     def test_flag_off_dispatch_prelude_no_prompt(self, monkeypatch):
         self._setup(monkeypatch)
         self._set_flag(monkeypatch, False)
-        import yadgar.server._state as _st
-        from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         prelude = agent_dispatch_prelude("review-pr-security", "review task", storage=_st._storage)
         assert "Agent-prompt" not in prelude, (
@@ -233,8 +233,8 @@ class TestBC_S6_KillGate:
     def test_flag_on_dispatch_prelude_injects_prompt(self, monkeypatch):
         self._setup(monkeypatch)
         self._set_flag(monkeypatch, True)
-        import yadgar.server._state as _st
-        from yadgar.server.tools.dispatch_helper import agent_dispatch_prelude
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         prelude = agent_dispatch_prelude("review-pr-security", "review task", storage=_st._storage)
         assert "Agent-prompt" in prelude

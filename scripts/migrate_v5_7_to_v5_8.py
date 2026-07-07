@@ -50,8 +50,8 @@ def _migrate(db_url: str | None, dry_run: bool) -> int:
     if db_url:
         os.environ["YADGAR_DB_URL"] = db_url
 
-    from yadgar.config import get_settings
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.config import get_settings
+    from yadgar._shared.storage import StorageEngine
 
     s = get_settings()
     ttl_days = int(s.ANCHOR_CONDITIONAL_TTL_DAYS)

@@ -18,7 +18,7 @@ import pathlib
 
 
 def _bookmarks_html_path() -> pathlib.Path:
-    static_dir = pathlib.Path(__file__).parent.parent / "static"
+    static_dir = pathlib.Path(__file__).parent.parent / "core" / "static"
     return static_dir / "bookmarks.html"
 
 
@@ -66,7 +66,7 @@ class TestBookmarksRouteRedirect:
         """bookmarks_view handler must return a redirect, not FileResponse."""
         import inspect
 
-        from yadgar.server import http_bookmarks  # noqa: PLC0415
+        from yadgar.core.server import http_bookmarks  # noqa: PLC0415
 
         src = inspect.getsource(http_bookmarks.bookmarks_view)
         # Must use RedirectResponse (302) not FileResponse
@@ -83,7 +83,7 @@ class TestBookmarksRouteRedirect:
         """Redirect must point to /#bookmarks."""
         import inspect
 
-        from yadgar.server import http_bookmarks  # noqa: PLC0415
+        from yadgar.core.server import http_bookmarks  # noqa: PLC0415
 
         src = inspect.getsource(http_bookmarks.bookmarks_view)
         assert "/#bookmarks" in src, (
@@ -102,23 +102,23 @@ class TestBookmarkCRUDPreservation:
     def test_api_bookmarks_list_route_present(self) -> None:
         import inspect  # noqa: PLC0415
 
-        from yadgar.server import http_bookmarks  # noqa: PLC0415
+        from yadgar.core.server import http_bookmarks  # noqa: PLC0415
 
         assert hasattr(http_bookmarks, "api_bookmarks_list")
         src = inspect.getsource(http_bookmarks.api_bookmarks_list)
         assert "bookmark_list" in src
 
     def test_api_bookmarks_add_route_present(self) -> None:
-        from yadgar.server import http_bookmarks  # noqa: PLC0415
+        from yadgar.core.server import http_bookmarks  # noqa: PLC0415
 
         assert hasattr(http_bookmarks, "api_bookmarks_add")
 
     def test_api_bookmarks_remove_route_present(self) -> None:
-        from yadgar.server import http_bookmarks  # noqa: PLC0415
+        from yadgar.core.server import http_bookmarks  # noqa: PLC0415
 
         assert hasattr(http_bookmarks, "api_bookmarks_remove")
 
     def test_api_bookmarks_reorder_route_present(self) -> None:
-        from yadgar.server import http_bookmarks  # noqa: PLC0415
+        from yadgar.core.server import http_bookmarks  # noqa: PLC0415
 
         assert hasattr(http_bookmarks, "api_bookmarks_reorder")

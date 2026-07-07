@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar.cli.drain import cmd_drain, register
+from yadgar.core.cli.drain import cmd_drain, register
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,7 +79,9 @@ class TestRegister:
 class TestCmdDrainHappyPath:
     def test_prints_json_to_stdout(self, capsys):
         storage, replay = _make_storage_replay({"status": "ok", "saved": 5})
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_drain(_make_args())
         out = capsys.readouterr().out
         parsed = json.loads(out)
@@ -88,27 +90,33 @@ class TestCmdDrainHappyPath:
 
     def test_output_is_valid_json(self, capsys):
         storage, replay = _make_storage_replay({"x": 1})
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_drain(_make_args())
         out = capsys.readouterr().out
         json.loads(out)  # must not raise
 
     def test_calls_pre_compact_drain_with_directory(self):
         storage, replay = _make_storage_replay()
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_drain(_make_args(directory="/my/project"))
         replay.pre_compact_drain.assert_called_once_with("/my/project")
 
     def test_storage_closed_after_success(self):
         storage, replay = _make_storage_replay()
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_drain(_make_args())
         storage.close.assert_called_once()
 
     def test_init_called_with_db_path(self):
         storage, replay = _make_storage_replay()
         with patch(
-            "yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
         ) as mock_init:
             cmd_drain(_make_args(db_path="/some.db"))
         mock_init.assert_called_once_with("/some.db")
@@ -116,14 +124,16 @@ class TestCmdDrainHappyPath:
     def test_init_called_with_none_by_default(self):
         storage, replay = _make_storage_replay()
         with patch(
-            "yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
         ) as mock_init:
             cmd_drain(_make_args(db_path=None))
         mock_init.assert_called_once_with(None)
 
     def test_empty_dict_result_prints_empty_object(self, capsys):
         storage, replay = _make_storage_replay({})
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_drain(_make_args())
         out = capsys.readouterr().out
         assert json.loads(out) == {}
@@ -139,7 +149,9 @@ class TestCmdDrainFinally:
         storage = MagicMock()
         replay = MagicMock()
         replay.pre_compact_drain.side_effect = RuntimeError("drain failed")
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             with pytest.raises(RuntimeError):
                 cmd_drain(_make_args())
         storage.close.assert_called_once()

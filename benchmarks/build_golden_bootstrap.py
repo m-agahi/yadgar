@@ -133,8 +133,8 @@ def build_bootstrap(
     random.seed(seed)
 
     # ── Load memories from storage ──────────────────────────────────────────
-    from yadgar.config import Settings
-    from yadgar.storage.memory import MemoryStorage
+    from yadgar._shared.config import Settings
+    from yadgar._shared.storage.memory import MemoryStorage
 
     settings = Settings()
     actual_db_path = db_path or settings.DB_PATH

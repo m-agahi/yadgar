@@ -45,7 +45,7 @@ def _embed(e2e_engines, content: str) -> bytes:
 
 
 def _drain(e2e_engines) -> None:
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     drainer = _st._queue_drainer
     if drainer is not None:
@@ -124,9 +124,9 @@ class TestBCA2_WriteGateSurprise:
     """BC-A2 / BC-PCd2: the surprise gate stores novel content, gates near-dups."""
 
     def _make_gate(self, e2e_engines, threshold: float):
-        import yadgar.server._state as _st
-        from yadgar.config import Settings
-        from yadgar.predictive_coding import WriteGate
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.config import Settings
+        from yadgar._shared.predictive_coding import WriteGate
 
         storage = e2e_engines["storage"]
         embeddings = e2e_engines["embeddings"]
@@ -248,8 +248,8 @@ class TestBCH1_AutoCaptureStampsCwd:
 
     def test_action_log_stamped_with_caller_cwd(self, e2e_engines):
         """Five Write actions from cwd=D SHALL flush one action_log row stamped directory=D."""
-        import yadgar.server._state as _st
-        from yadgar.server.http import hook_auto_capture
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.http import hook_auto_capture
 
         storage = e2e_engines["storage"]
         caller_cwd = e2e_engines["yadgar_dir"]
@@ -308,7 +308,7 @@ class TestBCHK1_InstallHooksIdempotent:
         SHALL produce identical content (no duplicate hook entries)."""
         import json
 
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         home = tmp_path / "home"
         project = tmp_path / "project"
@@ -352,7 +352,7 @@ class TestBCHK2_SyncInstructions:
     def test_sync_writes_and_replaces_stale_block(self, e2e_engines, tmp_path):
         """sync_instructions SHALL write the '## Memory System — Yadgar' section, and a
         second sync over a pre-existing (stale) block SHALL leave exactly one such section."""
-        from yadgar.server.tools.misc import sync_instructions
+        from yadgar.core.server.tools.misc import sync_instructions
 
         md_path = tmp_path / "CLAUDE.md"
         # Seed a CLAUDE.md with a STALE Yadgar section + a trailing section.
@@ -396,7 +396,7 @@ class TestBCG1_WikiWriteReadScope:
     scoped to D (a read against another dir does NOT return it)."""
 
     def test_wiki_add_read_directory_scoped(self, e2e_engines):
-        from yadgar.server.tools.wiki import wiki_add, wiki_read
+        from yadgar.core.server.tools.wiki import wiki_add, wiki_read
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         other_dir = e2e_engines["other_dir"]
@@ -452,8 +452,8 @@ class TestBCHT1_HeatDecayCurve:
     """BC-HT1: entity heat decays as heat * factor^hours from the watermark."""
 
     def test_entity_decay_matches_pure_formula(self, e2e_engines):
-        import yadgar.server._state as _st
-        from yadgar.config import get_settings
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.config import get_settings
 
         storage = e2e_engines["storage"]
         settings = get_settings()
@@ -526,8 +526,8 @@ class TestBCC4_NightlySleepCycleRuns:
     """
 
     def _make_scheduler(self, e2e_engines):
-        from yadgar.config import Settings
-        from yadgar.consolidation import ConsolidationScheduler
+        from yadgar._shared.config import Settings
+        from yadgar.core.consolidation import ConsolidationScheduler
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
@@ -674,8 +674,8 @@ class TestBCSC4_ReembedStale:
     """
 
     def _make_scheduler(self, e2e_engines):
-        from yadgar.config import Settings
-        from yadgar.consolidation import ConsolidationScheduler
+        from yadgar._shared.config import Settings
+        from yadgar.core.consolidation import ConsolidationScheduler
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
@@ -760,8 +760,8 @@ class TestBCSC6_AutoNarrateWritesProjectStory:
     """
 
     def _make_scheduler(self, e2e_engines):
-        from yadgar.config import Settings
-        from yadgar.consolidation import ConsolidationScheduler
+        from yadgar._shared.config import Settings
+        from yadgar.core.consolidation import ConsolidationScheduler
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
@@ -830,9 +830,9 @@ class TestBCAC2_AstrocyteDomainConsolidation:
 
     def test_consolidate_domain_produces_summary(self, e2e_engines):
         """assign_memory → consolidate_domain SHALL produce a non-empty domain summary."""
-        import yadgar.server._state as _st
-        from yadgar.astrocyte_pool import AstrocytePool
-        from yadgar.config import get_settings
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.astrocyte_pool import AstrocytePool
+        from yadgar._shared.config import get_settings
 
         storage = e2e_engines["storage"]
         embeddings = e2e_engines["embeddings"]
@@ -929,7 +929,7 @@ class TestBCEN3a_Doc2QueryEnrichment:
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
 
-        from yadgar.config import get_settings  # noqa: PLC0415
+        from yadgar._shared.config import get_settings  # noqa: PLC0415
 
         _require_model_cached(get_settings().DOC2QUERY_MODEL)
 
@@ -1010,7 +1010,7 @@ class TestBCEN2a_CometEnrichment:
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
 
-        from yadgar.config import get_settings  # noqa: PLC0415
+        from yadgar._shared.config import get_settings  # noqa: PLC0415
 
         _require_model_cached(get_settings().COMET_MODEL)
 
@@ -1109,8 +1109,8 @@ class TestBCEN1a_ConceptNetHTTP:
                 "network-connected host."
             )
 
-        from yadgar.config import Settings
-        from yadgar.enrichment.conceptnet import HARDCODED_EXPANSIONS, ConceptNetExpander
+        from yadgar._shared.config import Settings
+        from yadgar._shared.enrichment.conceptnet import HARDCODED_EXPANSIONS, ConceptNetExpander
 
         # Confirm "database" is absent from hardcoded expansions so the result
         # cannot come from _try_hardcoded.
@@ -1184,8 +1184,8 @@ class TestBCCLS1_2_3_EpisodicToSemantic:
     repeated episodic patterns to a semantic memory stamped with the source directory."""
 
     def _make_cls(self, e2e_engines):
-        from yadgar.cls_store import DualStoreCLS
-        from yadgar.config import Settings
+        from yadgar._shared.cls_store import DualStoreCLS
+        from yadgar._shared.config import Settings
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return DualStoreCLS(
@@ -1288,8 +1288,8 @@ class TestBCRR7_MMRDiversification:
     """BC-RR7: MMR rerank selects a diverse candidate over a near-duplicate."""
 
     def _make_reranker(self, e2e_engines):
-        from yadgar.config import Settings
-        from yadgar.retrieval.reranking import Reranker
+        from yadgar._shared.config import Settings
+        from yadgar._shared.retrieval.reranking import Reranker
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         # Disable ML model — mmr_rerank only uses local embeddings from storage
@@ -1392,7 +1392,7 @@ class TestBCRR10_ConvexFusion:
         with equal weights.  This proves the function actually combines signals
         rather than passing through either one.
         """
-        from yadgar.retrieval.fusion import _convex_fuse
+        from yadgar._shared.retrieval.fusion import _convex_fuse
 
         # Memory IDs (arbitrary ints for this pure-function test)
         M1, M2, M3 = 1001, 1002, 1003
@@ -1447,8 +1447,8 @@ class TestBCRR5_ConfidenceGate:
     """BC-RR5: confidence gate / quality floor correctly scores and abstains."""
 
     def _make_reranker(self, e2e_engines):
-        from yadgar.config import Settings
-        from yadgar.retrieval.reranking import Reranker
+        from yadgar._shared.config import Settings
+        from yadgar._shared.retrieval.reranking import Reranker
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return Reranker(settings, e2e_engines["storage"], ml_client=None)

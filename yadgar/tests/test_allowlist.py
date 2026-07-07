@@ -40,11 +40,11 @@ class TestAllowlistPerTagBypass:
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(allowlist_yaml))
 
         # Force reload of allowlist module state
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         token = "ghp_" + "A" * 25  # gitleaks:allow — fake token, allowlisted
         result = gate_or_reject(
@@ -66,11 +66,11 @@ class TestAllowlistPerTagBypass:
         )
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(allowlist_yaml))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         token = "ghp_" + "B" * 25  # gitleaks:allow
         result = gate_or_reject(
@@ -93,11 +93,11 @@ class TestAllowlistPerTagBypass:
         )
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(allowlist_yaml))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         token = "ghp_" + "C" * 25  # gitleaks:allow
         result = gate_or_reject(f"TOKEN={token}")
@@ -127,11 +127,11 @@ class TestAllowlistAuditLogWritten:
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(allowlist_yaml))
         monkeypatch.setenv("YADGAR_SECRET_GATE_AUDIT_DIR", str(audit_dir))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         token = "sk-ant-" + "x" * 25  # gitleaks:allow
         result = gate_or_reject(
@@ -173,11 +173,11 @@ class TestAllowlistAuditLogWritten:
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(allowlist_yaml))
         monkeypatch.setenv("YADGAR_SECRET_GATE_AUDIT_DIR", str(audit_dir))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         long_content = "sk-ant-" + "y" * 25 + " " + "X" * 200  # gitleaks:allow
         gate_or_reject(long_content, tags=["plan-document"])
@@ -207,11 +207,11 @@ class TestAllowlistDefaultDeny:
         nonexistent = tmp_path / "does-not-exist.yaml"
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(nonexistent))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         token = "ghp_" + "Z" * 25  # gitleaks:allow
         result = gate_or_reject(
@@ -227,11 +227,11 @@ class TestAllowlistDefaultDeny:
         nonexistent = tmp_path / "does-not-exist.yaml"
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(nonexistent))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         result = gate_or_reject("Normal content about the architecture.")
         assert result is None
@@ -250,7 +250,7 @@ class TestAllowlistYamlInvalidFailsLoud:
         bad_yaml.write_text("allowlist: [unterminated bracket\n  - bad indent\n  bad: [")
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(bad_yaml))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         with pytest.raises((ValueError, Exception)) as exc_info:
             _al._reload_allowlist()
@@ -270,7 +270,7 @@ class TestAllowlistYamlInvalidFailsLoud:
         bad_schema.write_text("notallowlist:\n  - foo: bar\n")
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(bad_schema))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         with pytest.raises((ValueError, KeyError)):
             _al._reload_allowlist()
@@ -303,11 +303,11 @@ class TestSourceCallSiteDetection:
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(allowlist_yaml))
         monkeypatch.setenv("YADGAR_SECRET_GATE_AUDIT_DIR", str(audit_dir))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         # Call from test context (this file is a test)
         token = "ghp_" + "D" * 25  # gitleaks:allow
@@ -345,11 +345,11 @@ class TestSourceCallSiteDetection:
         monkeypatch.setenv("YADGAR_SECRET_GATE_ALLOWLIST_PATH", str(allowlist_yaml))
         monkeypatch.setenv("YADGAR_SECRET_GATE_AUDIT_DIR", str(audit_dir))
 
-        import yadgar.security.allowlist as _al
+        import yadgar._shared.security.allowlist as _al
 
         _al._reload_allowlist()
 
-        from yadgar.secrets import gate_or_reject
+        from yadgar._shared.secrets import gate_or_reject
 
         t1 = "ghp_" + "E" * 25  # gitleaks:allow
         t2 = "sk-ant-" + "F" * 25  # gitleaks:allow

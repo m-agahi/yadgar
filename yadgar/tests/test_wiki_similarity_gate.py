@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
-from yadgar.wiki import WikiAddOptions
+from yadgar._shared.wiki import WikiAddOptions
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -307,7 +307,7 @@ class TestWikiCheckDuplicate:
 
     def test_check_duplicate_returns_empty_when_no_pages(self, monkeypatch):
         """Empty DB -> no candidates."""
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
         result = server.wiki_check_duplicate(
             title="Test Page",
             content="Some content about testing.",
@@ -317,7 +317,7 @@ class TestWikiCheckDuplicate:
 
     def test_check_duplicate_finds_near_clone(self, monkeypatch):
         """Reproduces the 2026-05-30 incident: near-clone detected."""
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
 
         # Insert page A via wiki_add (sync path)
         server.wiki_add(
@@ -341,7 +341,7 @@ class TestWikiCheckDuplicate:
 
     def test_check_duplicate_does_not_write(self, monkeypatch):
         """wiki_check_duplicate never creates a wiki page."""
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
 
         server.wiki_check_duplicate(
             title="Some New Page",
@@ -353,7 +353,7 @@ class TestWikiCheckDuplicate:
 
     def test_check_duplicate_distinct_pages_empty(self, monkeypatch):
         """Distinct pages: check_duplicate returns empty candidates."""
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
 
         server.wiki_add(
             title="Yadgar Architecture",
@@ -378,7 +378,7 @@ class TestWikiCheckDuplicate:
 
 def _wiki_add_sync(monkeypatch, **kwargs) -> dict:
     """Call wiki_add on the sync (drain) path — bypasses queue and gate."""
-    monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+    monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
     return server.wiki_add(**kwargs)
 
 
@@ -386,7 +386,7 @@ def _drainer_gate(payload: dict) -> dict | None:
     """Call _sim_gate_for_drainer() directly to test gate logic in isolation."""
     import tempfile
 
-    from yadgar.file_queue import FileQueue, QueueDrainer
+    from yadgar.core.file_queue import FileQueue, QueueDrainer
 
     with tempfile.TemporaryDirectory() as tmp:
         fq = FileQueue(tmp)
@@ -481,7 +481,7 @@ class TestWikiAddSimilarityGate:
         """WIKI_SIM_GATE_ENABLED=False skips _sim_gate_for_drainer."""
         _add("Yadgar Roadmap Future Improvements", _ROADMAP_CONTENT_A)
 
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         orig_settings = get_settings()
 
@@ -491,7 +491,7 @@ class TestWikiAddSimilarityGate:
                     return False
                 return getattr(orig_settings, name)
 
-        import yadgar.config as _config_mod
+        import yadgar._shared.config as _config_mod
 
         monkeypatch.setattr(_config_mod, "get_settings", lambda: _DisabledSettings())
 
@@ -511,7 +511,7 @@ class TestWikiAddSimilarityGate:
         """WIKI_SIM_MODE=soft returns None from _sim_gate_for_drainer."""
         _add("Yadgar Roadmap Future Improvements", _ROADMAP_CONTENT_A)
 
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         orig_settings = get_settings()
 
@@ -521,7 +521,7 @@ class TestWikiAddSimilarityGate:
                     return "soft"
                 return getattr(orig_settings, name)
 
-        import yadgar.config as _config_mod
+        import yadgar._shared.config as _config_mod
 
         monkeypatch.setattr(_config_mod, "get_settings", lambda: _SoftSettings())
 

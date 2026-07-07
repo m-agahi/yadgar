@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
-from yadgar.curation.prune_passes import _memify_prune
+from yadgar._shared.curation.prune_passes import _memify_prune
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -305,7 +305,7 @@ class TestPass6DegenerateRecency:
         stats = {"pruned": 0}
 
         with patch(
-            "yadgar.curation.prune_passes._is_degenerate_auto_abstracted",
+            "yadgar._shared.curation.prune_passes._is_degenerate_auto_abstracted",
             return_value=True,
         ):
             _memify_prune(storage, _settings(), stats)
@@ -326,7 +326,7 @@ class TestPass6DegenerateRecency:
         stats = {"pruned": 0}
 
         with patch(
-            "yadgar.curation.prune_passes._is_degenerate_auto_abstracted",
+            "yadgar._shared.curation.prune_passes._is_degenerate_auto_abstracted",
             return_value=True,
         ):
             _memify_prune(storage, _settings(), stats)
@@ -345,7 +345,7 @@ class TestPass6DegenerateRecency:
         stats = {"pruned": 0}
 
         with patch(
-            "yadgar.curation.prune_passes._is_degenerate_auto_abstracted",
+            "yadgar._shared.curation.prune_passes._is_degenerate_auto_abstracted",
             return_value=False,
         ):
             _memify_prune(storage, _settings(), stats)

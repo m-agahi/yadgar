@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Path to the hook script under test
-_HOOK = Path(__file__).parent.parent / "hooks" / "session-start-context.py"
+_HOOK = Path(__file__).parent.parent / "core" / "hooks" / "session-start-context.py"
 
 
 def _load_hook():

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from yadgar.retrieval._reranking_cross_encoder import _CrossEncoderMixin
+from yadgar._shared.retrieval._reranking_cross_encoder import _CrossEncoderMixin
 
 # ---------------------------------------------------------------------------
 # Stub

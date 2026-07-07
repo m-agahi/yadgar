@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from yadgar.graph_api import GraphAPI
+from yadgar.core.graph_api import GraphAPI
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -224,7 +224,7 @@ class TestF1ConnectionCount:
 
         v5.86 VIZ Batch-2 (P0.4): imports/calls dropped from the viz set.
         """
-        from yadgar.viz_meta import EDGE_TYPES
+        from yadgar.core.viz_meta import EDGE_TYPES
 
         entity_rel_types = ["co_occurrence", "resolved_by", "caused_by"]
         entity_rows = [_entity_row(i) for i in range(1, 12)]

@@ -32,7 +32,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ── fixture ────────────────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ def _engines(tmp_path_factory):
 
 
 def _storage():
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     return _st._storage
 
@@ -97,7 +97,7 @@ class TestWikiReadBranchHint:
         so without branch_hint the row is unreachable via step 1.
         With branch_hint="master", step 1 uses the hint and finds the row.
         """
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.wiki import wiki_read
 
         slug = _insert_wiki_page(
             "Branch Hint Test Page",
@@ -106,7 +106,7 @@ class TestWikiReadBranchHint:
         )
 
         # Simulate container: _detect_branch always returns None
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             # Without branch_hint: should NOT find the page (step 2 needs branch IS NULL)
             # RED: wiki_read currently lacks branch_hint param — this verifies the hole
             result_no_hint = wiki_read(slug, directory="/home/max/git/yadgar")
@@ -127,7 +127,7 @@ class TestWikiReadBranchHint:
 
     def test_branch_hint_propagates_to_storage(self):
         """branch_hint passed to wiki_read reaches the storage resolution call."""
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.wiki import wiki_read
 
         slug = _insert_wiki_page(
             "Branch Propagation Test",
@@ -136,7 +136,7 @@ class TestWikiReadBranchHint:
         )
 
         # Spy on read_by_directory_branch to verify branch_hint is used
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         wiki_store = _st._wiki
         calls = []
@@ -149,7 +149,7 @@ class TestWikiReadBranchHint:
         wiki_store.read_by_directory_branch = _spy
 
         try:
-            with patch("yadgar.server._detect_branch", return_value=None):
+            with patch("yadgar.core.server._detect_branch", return_value=None):
                 wiki_read(slug, directory="/home/max/git/yadgar", branch_hint="master")
         finally:
             wiki_store.read_by_directory_branch = original
@@ -169,7 +169,7 @@ class TestWikiReadCanonicalSlotFallback:
 
     def test_no_branch_hint_finds_null_branch_page(self):
         """wiki_read(directory=...) without branch_hint finds canonical-slot page."""
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.wiki import wiki_read
 
         # Insert a page with branch=None (canonical slot)
         slug = _insert_wiki_page(
@@ -178,7 +178,7 @@ class TestWikiReadCanonicalSlotFallback:
             branch=None,
         )
 
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = wiki_read(slug, directory="/home/max/git/yadgar")
 
         assert "error" not in result, (
@@ -195,7 +195,7 @@ class TestWikiReadBranchIsolation:
 
     def test_wrong_branch_hint_returns_not_found(self):
         """wiki_read(branch_hint="feature-x") returns NOT FOUND when only master row exists."""
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.wiki import wiki_read
 
         slug = _insert_wiki_page(
             "Branch Isolation Test",
@@ -203,7 +203,7 @@ class TestWikiReadBranchIsolation:
             branch="master",
         )
 
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = wiki_read(slug, directory="/home/max/git/yadgar", branch_hint="feature-x")
 
         assert "error" in result, (
@@ -219,7 +219,7 @@ class TestWikiReadLegacyPath:
 
     def test_no_directory_uses_legacy_resolution(self):
         """wiki_read(slug) without directory still returns the page (no regression)."""
-        from yadgar.server.tools.wiki import wiki_read
+        from yadgar.core.server.tools.wiki import wiki_read
 
         slug = _insert_wiki_page(
             "Legacy Path Test",

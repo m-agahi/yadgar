@@ -105,7 +105,7 @@ def _insert_and_assign(e2e_engines, content: str, directory: str, heat: float = 
     Mirrors test_astrocyte_pool.py seeding: insert via storage.insert_memory(),
     then call _st._pool.assign_memory(mem).  Returns the inserted memory id.
     """
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     storage = e2e_engines["storage"]
     embeddings = e2e_engines["embeddings"]
@@ -146,12 +146,12 @@ def _run_landscape_recall(
     """Run recall(mode="landscape") via the MCP tool module."""
     import sys
 
-    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-    _rm = sys.modules.get("yadgar.server.tools.recall")
+    _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
-        import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+        import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
     return _rm.recall(
         query=query,
@@ -259,12 +259,12 @@ class TestLandscapeRecallE2E:
         """
         import sys
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-        _rm = sys.modules.get("yadgar.server.tools.recall")
+        _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
-            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+            import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
         with pytest.raises(ValueError, match="mode"):
             _rm.recall(
@@ -302,12 +302,12 @@ class TestLandscapeRecallE2E:
             }
         )
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-        _rm = sys.modules.get("yadgar.server.tools.recall")
+        _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
-            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+            import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
         # mode=None — must not raise, must not carry consensus_score keys.
         results = _rm.recall(

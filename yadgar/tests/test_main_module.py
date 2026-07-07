@@ -103,8 +103,8 @@ class TestCliVersion:
 
         mock_print_version = MagicMock()
 
-        with patch("yadgar.cli.version.print_version_summary", mock_print_version):
-            with patch("yadgar.server.main"):
+        with patch("yadgar.core.cli.version.print_version_summary", mock_print_version):
+            with patch("yadgar.core.server.main"):
                 import importlib
 
                 import yadgar.__main__ as main_mod
@@ -123,7 +123,7 @@ class TestCliVersion:
 
         mock_print_version = MagicMock()
 
-        with patch("yadgar.cli.version.print_version_summary", mock_print_version):
+        with patch("yadgar.core.cli.version.print_version_summary", mock_print_version):
             import importlib
 
             import yadgar.__main__ as main_mod
@@ -152,8 +152,8 @@ class TestCliDefaultServer:
         mock_settings.CORE_LOG_LEVEL = None
         mock_settings.LOG_FORMAT = None
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
                 import importlib
 
                 import yadgar.__main__ as main_mod
@@ -172,8 +172,8 @@ class TestCliDefaultServer:
         mock_settings.CORE_LOG_LEVEL = None
         mock_settings.LOG_FORMAT = None
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
                 import importlib
 
                 import yadgar.__main__ as main_mod
@@ -195,8 +195,8 @@ class TestCliDefaultServer:
         mock_settings.CORE_LOG_LEVEL = None
         mock_settings.LOG_FORMAT = None
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
                 import importlib
                 import os
 
@@ -216,8 +216,8 @@ class TestCliDefaultServer:
         mock_settings.CORE_LOG_LEVEL = None
         mock_settings.LOG_FORMAT = None
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
                 import importlib
                 import os
 
@@ -237,8 +237,8 @@ class TestCliDefaultServer:
         mock_settings.CORE_LOG_LEVEL = None
         mock_settings.LOG_FORMAT = None
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
                 import importlib
 
                 import yadgar.__main__ as main_mod
@@ -258,8 +258,8 @@ class TestCliDefaultServer:
         mock_settings.CORE_LOG_LEVEL = None
         mock_settings.LOG_FORMAT = None
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
                 import importlib
 
                 import yadgar.__main__ as main_mod
@@ -279,8 +279,8 @@ class TestCliDefaultServer:
         mock_settings.CORE_LOG_LEVEL = None
         mock_settings.LOG_FORMAT = None
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
                 import importlib
 
                 import yadgar.__main__ as main_mod
@@ -314,8 +314,8 @@ class TestCliDefaultServer:
         mock_settings.CORE_LOG_LEVEL = None
         mock_settings.LOG_FORMAT = None
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
                 import importlib
 
                 import yadgar.__main__ as main_mod
@@ -345,9 +345,9 @@ class TestCliLogging:
         mock_settings.LOG_FORMAT = "text"
         mock_configure = MagicMock()
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
-                with patch("yadgar.log_config.configure_logging", mock_configure):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
+                with patch("yadgar._shared.log_config.configure_logging", mock_configure):
                     import importlib
 
                     import yadgar.__main__ as main_mod
@@ -367,9 +367,9 @@ class TestCliLogging:
         mock_settings.LOG_FORMAT = "json"
         mock_configure = MagicMock()
 
-        with patch("yadgar.server.main", mock_server_main):
-            with patch("yadgar.config.get_settings", return_value=mock_settings):
-                with patch("yadgar.log_config.configure_logging", mock_configure):
+        with patch("yadgar.core.server.main", mock_server_main):
+            with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
+                with patch("yadgar._shared.log_config.configure_logging", mock_configure):
                     import importlib
 
                     import yadgar.__main__ as main_mod
@@ -399,7 +399,7 @@ class TestCliSubcommandDispatch:
             p = subparsers.add_parser("stats")
             p.set_defaults(func=mock_func)
 
-        with patch("yadgar.cli.stats.register", side_effect=_fake_register):
+        with patch("yadgar.core.cli.stats.register", side_effect=_fake_register):
             # Need other cli modules to register without error
             import importlib
 
@@ -422,7 +422,7 @@ class TestCmdVacuumReexport:
 
         mock_vacuum = MagicMock(return_value=None)
 
-        with patch("yadgar.cli.vacuum.cmd_vacuum", mock_vacuum):
+        with patch("yadgar.core.cli.vacuum.cmd_vacuum", mock_vacuum):
             import importlib
 
             import yadgar.__main__ as main_mod

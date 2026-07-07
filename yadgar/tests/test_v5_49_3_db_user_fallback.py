@@ -23,7 +23,7 @@ class TestResolveDbCredentials:
         monkeypatch.setenv("YADGAR_RW_USER", "rw_user")
         monkeypatch.setenv("YADGAR_RW_PASS", "rw_pass")
 
-        from yadgar.storage import _resolve_db_credentials
+        from yadgar._shared.storage import _resolve_db_credentials
 
         user, _pass = _resolve_db_credentials()
         assert user == "explicit_db_user"
@@ -39,7 +39,7 @@ class TestResolveDbCredentials:
         monkeypatch.setenv("YADGAR_RW_USER", "rw_user")
         monkeypatch.setenv("YADGAR_RW_PASS", "rw_pass")
 
-        from yadgar.storage import _resolve_db_credentials
+        from yadgar._shared.storage import _resolve_db_credentials
 
         user, _pass = _resolve_db_credentials()
         assert user == "rw_user"
@@ -52,7 +52,7 @@ class TestResolveDbCredentials:
         monkeypatch.delenv("YADGAR_RW_USER", raising=False)
         monkeypatch.delenv("YADGAR_RW_PASS", raising=False)
 
-        from yadgar.storage import _resolve_db_credentials
+        from yadgar._shared.storage import _resolve_db_credentials
 
         with pytest.raises((ValueError, RuntimeError)) as exc_info:
             _resolve_db_credentials()
@@ -71,7 +71,7 @@ class TestSecretsEnvAliasKeys:
     """Tests for yadgar.cli.setup._render_secrets_env()."""
 
     def _render(self) -> str:
-        from yadgar.cli.setup import _render_secrets_env
+        from yadgar.core.cli.setup import _render_secrets_env
 
         return _render_secrets_env(
             token="tok123",

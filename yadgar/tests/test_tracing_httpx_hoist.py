@@ -15,7 +15,7 @@ def test_setup_tracing_instruments_httpx():
     pytest.importorskip("opentelemetry.instrumentation.httpx")
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-    import yadgar.tracing as tracing
+    import yadgar._shared.tracing as tracing
 
     # Ensure a clean starting point.
     HTTPXClientInstrumentor().uninstrument()
@@ -38,7 +38,7 @@ def test_setup_tracing_httpx_instrument_idempotent():
     pytest.importorskip("opentelemetry.instrumentation.httpx")
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-    import yadgar.tracing as tracing
+    import yadgar._shared.tracing as tracing
 
     tracing._SETUP_DONE.discard("test-httpx-idem-a")
     tracing._SETUP_DONE.discard("test-httpx-idem-b")

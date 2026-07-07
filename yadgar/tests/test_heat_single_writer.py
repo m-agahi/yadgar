@@ -17,8 +17,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
-from yadgar.consolidation.heat_decay import _HeatDecayMixin
-from yadgar.storage.heat_writer import HeatWriter
+from yadgar._shared.storage.heat_writer import HeatWriter
+from yadgar.core.consolidation.heat_decay import _HeatDecayMixin
 
 # ---------------------------------------------------------------------------
 # Helpers

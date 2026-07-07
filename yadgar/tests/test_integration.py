@@ -5,22 +5,22 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar import server
-from yadgar.astrocyte_pool import AstrocytePool
-from yadgar.config import Settings
-from yadgar.consolidation import ConsolidationScheduler
-from yadgar.curation import CurateParams, MemoryCurator
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.narrative import NarrativeEngine
-from yadgar.prospective import ProspectiveMemoryEngine
-from yadgar.retrieval import Retriever
-from yadgar.sensory_buffer import ActionLogger
-from yadgar.sleep_compute import SleepComputeEngine
-from yadgar.staleness import StalenessDetector
-from yadgar.storage import StorageEngine
+from yadgar._shared.astrocyte_pool import AstrocytePool
+from yadgar._shared.config import Settings
+from yadgar._shared.curation import CurateParams, MemoryCurator
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.narrative import NarrativeEngine
+from yadgar._shared.prospective import ProspectiveMemoryEngine
+from yadgar._shared.retrieval import Retriever
+from yadgar._shared.sensory_buffer import ActionLogger
+from yadgar._shared.sleep_compute import SleepComputeEngine
+from yadgar._shared.staleness import StalenessDetector
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.thermodynamics import MemoryThermodynamics
+from yadgar.core import server
+from yadgar.core.consolidation import ConsolidationScheduler
 from yadgar.tests.conftest import memorize_sync
-from yadgar.thermodynamics import MemoryThermodynamics
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -113,8 +113,8 @@ def server_engines(tmp_path):
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
     # v5.42.3: /tmp/* and /proj* paths are not git repos; patch _detect_branch.
     with (
-        patch("yadgar.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.server._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield
     server.shutdown()

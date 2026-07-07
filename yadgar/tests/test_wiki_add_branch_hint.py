@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -36,7 +36,7 @@ def _get_page_branch(slug: str) -> str | None:
 
 def _wiki_add_sync(monkeypatch, **kwargs) -> dict:
     """Call wiki_add on the sync path (is_draining=True)."""
-    monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
+    monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
     return server.wiki_add(**kwargs)
 
 
@@ -45,7 +45,7 @@ class TestWikiAddBranchHint:
 
     def test_branch_explicit_used(self, monkeypatch):
         """Explicit branch= is stored as-is regardless of _detect_branch."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "should-not-be-used")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "should-not-be-used")
         result = _wiki_add_sync(
             monkeypatch,
             title="Explicit Branch Page",
@@ -61,7 +61,7 @@ class TestWikiAddBranchHint:
         # Patch _detect_branch to confirm it is NOT called (no fallback path)
         detect_calls: list[str] = []
         monkeypatch.setattr(
-            "yadgar.server._detect_branch",
+            "yadgar.core.server._detect_branch",
             lambda _d: detect_calls.append(_d) or "wrong-branch",
         )
         result = _wiki_add_sync(
@@ -81,7 +81,7 @@ class TestWikiAddBranchHint:
 
     def test_no_branch_no_hint_stores_null(self, monkeypatch):
         """Both branch and branch_hint omitted → stored with branch IS NULL (canonical)."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "should-not-be-used")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "should-not-be-used")
         result = _wiki_add_sync(
             monkeypatch,
             title="Canonical Null Branch Page",

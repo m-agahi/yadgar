@@ -17,7 +17,7 @@ class TestThrottleDecisions:
     """_should_fire returns True only for session_start / compact load_reason."""
 
     def test_session_start_fires(self):
-        from yadgar.hooks.instructions_loaded import _should_fire
+        from yadgar.core.hooks.instructions_loaded import _should_fire
 
         data = {
             "session_id": "abc",
@@ -29,37 +29,37 @@ class TestThrottleDecisions:
         assert _should_fire(data) is True
 
     def test_compact_fires(self):
-        from yadgar.hooks.instructions_loaded import _should_fire
+        from yadgar.core.hooks.instructions_loaded import _should_fire
 
         data = {"load_reason": "compact"}
         assert _should_fire(data) is True
 
     def test_nested_traversal_skipped(self):
-        from yadgar.hooks.instructions_loaded import _should_fire
+        from yadgar.core.hooks.instructions_loaded import _should_fire
 
         data = {"load_reason": "nested_traversal"}
         assert _should_fire(data) is False
 
     def test_path_glob_match_skipped(self):
-        from yadgar.hooks.instructions_loaded import _should_fire
+        from yadgar.core.hooks.instructions_loaded import _should_fire
 
         data = {"load_reason": "path_glob_match"}
         assert _should_fire(data) is False
 
     def test_include_skipped(self):
-        from yadgar.hooks.instructions_loaded import _should_fire
+        from yadgar.core.hooks.instructions_loaded import _should_fire
 
         data = {"load_reason": "include"}
         assert _should_fire(data) is False
 
     def test_missing_load_reason_skipped(self):
-        from yadgar.hooks.instructions_loaded import _should_fire
+        from yadgar.core.hooks.instructions_loaded import _should_fire
 
         data = {}
         assert _should_fire(data) is False
 
     def test_extracts_file_path(self):
-        from yadgar.hooks.instructions_loaded import _parse_payload
+        from yadgar.core.hooks.instructions_loaded import _parse_payload
 
         data = {
             "file_path": "/home/user/.claude/CLAUDE.md",
@@ -72,7 +72,7 @@ class TestThrottleDecisions:
         assert parsed["session_id"] == "test-session"
 
     def test_parse_payload_defaults(self):
-        from yadgar.hooks.instructions_loaded import _parse_payload
+        from yadgar.core.hooks.instructions_loaded import _parse_payload
 
         parsed = _parse_payload({})
         assert parsed["file_path"] == ""
@@ -87,7 +87,7 @@ class TestDaemonCall:
     """_call_daemon POSTs to /hooks/instructions-loaded with correct params."""
 
     def test_get_returns_text(self, monkeypatch):
-        from yadgar.hooks import instructions_loaded as _il
+        from yadgar.core.hooks import instructions_loaded as _il
 
         class _FakeResp:
             def read(self):
@@ -102,7 +102,7 @@ class TestDaemonCall:
         assert "Yadgar" in text
 
     def test_daemon_down_returns_empty(self, monkeypatch):
-        from yadgar.hooks import instructions_loaded as _il
+        from yadgar.core.hooks import instructions_loaded as _il
 
         def _raise(*a, **kw):
             raise ConnectionRefusedError("no daemon")
@@ -112,7 +112,7 @@ class TestDaemonCall:
         assert text == ""
 
     def test_uses_correct_url_params(self, monkeypatch):
-        from yadgar.hooks import instructions_loaded as _il
+        from yadgar.core.hooks import instructions_loaded as _il
 
         captured = {}
 
@@ -139,7 +139,7 @@ class TestInstallHooksInstructionsLoaded:
     """install_hooks registers InstructionsLoaded with append-if-absent semantics."""
 
     def test_fresh_install_adds_instructions_loaded(self, tmp_path):
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         result = install_hooks_impl(
             home_dir=tmp_path,
@@ -154,7 +154,7 @@ class TestInstallHooksInstructionsLoaded:
         assert isinstance(entries, list) and len(entries) > 0
 
     def test_idempotent_does_not_duplicate(self, tmp_path):
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         install_hooks_impl(
             home_dir=tmp_path, scope="global", project_directory=str(tmp_path), dry_run=False

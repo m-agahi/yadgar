@@ -15,7 +15,7 @@ import pytest
 
 @pytest.fixture
 def storage(tmp_path):
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     engine = StorageEngine(str(tmp_path / "test_prov.db"))
     yield engine
@@ -109,25 +109,25 @@ class TestProvenanceValidation:
     """_validate_provenance_agent rejects bad values."""
 
     def test_too_long_raises(self):
-        from yadgar.storage.memory import _validate_provenance_agent
+        from yadgar._shared.storage.memory import _validate_provenance_agent
 
         with pytest.raises(ValueError, match="provenance_agent"):
             _validate_provenance_agent("a" * 65)  # > 64 chars
 
     def test_special_chars_raise(self):
-        from yadgar.storage.memory import _validate_provenance_agent
+        from yadgar._shared.storage.memory import _validate_provenance_agent
 
         with pytest.raises(ValueError, match="provenance_agent"):
             _validate_provenance_agent("bad'; DROP TABLE memory; --")
 
     def test_empty_raises(self):
-        from yadgar.storage.memory import _validate_provenance_agent
+        from yadgar._shared.storage.memory import _validate_provenance_agent
 
         with pytest.raises(ValueError, match="provenance_agent"):
             _validate_provenance_agent("")
 
     def test_valid_passes(self):
-        from yadgar.storage.memory import _validate_provenance_agent
+        from yadgar._shared.storage.memory import _validate_provenance_agent
 
         # must not raise
         _validate_provenance_agent("general-purpose")
@@ -140,7 +140,7 @@ class TestMigration005:
     """Migration #005 sets provenance_agent='default' on existing rows."""
 
     def test_backfill_pre_v5_3_row(self, storage):
-        from yadgar.storage.migrations import _migration_005_provenance_agent_field
+        from yadgar._shared.storage.migrations import _migration_005_provenance_agent_field
 
         mid = _insert_bare_memory(storage, "pre-v5.3 memory for backfill test")
 
@@ -153,7 +153,7 @@ class TestMigration005:
         )
 
     def test_idempotent(self, storage):
-        from yadgar.storage.migrations import _migration_005_provenance_agent_field
+        from yadgar._shared.storage.migrations import _migration_005_provenance_agent_field
 
         mid = _insert_bare_memory(storage, "idempotent provenance test")
         _migration_005_provenance_agent_field(storage)
@@ -164,7 +164,7 @@ class TestMigration005:
 
     def test_existing_value_preserved(self, storage):
         """Row that already has provenance_agent set must not be overwritten."""
-        from yadgar.storage.migrations import _migration_005_provenance_agent_field
+        from yadgar._shared.storage.migrations import _migration_005_provenance_agent_field
 
         mid = storage.insert_memory(
             {

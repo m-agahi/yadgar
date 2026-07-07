@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.storage import StorageEngine
-from yadgar.storage.narrative import BeliefRecord
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.storage.narrative import BeliefRecord
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -312,7 +312,7 @@ class TestAsOfFilter:
 
     def test_as_of_filter_current_state_excludes_invalidated(self, storage):
         """as_of_filter(table, as_of=None) excludes invalidated rows."""
-        from yadgar.storage.bitemporal import as_of_filter, invalidate_edge
+        from yadgar._shared.storage.bitemporal import as_of_filter, invalidate_edge
 
         pid = storage.insert_profile(
             entity_name="Hank",
@@ -334,7 +334,7 @@ class TestAsOfFilter:
         """as_of_filter with as_of between two versions returns the older value."""
         from datetime import UTC, datetime, timedelta
 
-        from yadgar.storage.bitemporal import as_of_filter
+        from yadgar._shared.storage.bitemporal import as_of_filter
 
         # Insert v1 with explicit valid_from in the past
         past_ts = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
@@ -415,7 +415,7 @@ class TestUserProfileUniqueConstraint:
 
     def test_user_profile_unique_constraint_scoped_to_current(self, storage):
         """Close v1 (valid_until set), then insert v2 with same key — must succeed."""
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
 
         pid1 = storage.insert_profile(
             entity_name="Jack",
@@ -524,7 +524,7 @@ class TestBackwardCompat:
 
     def test_get_full_graph_default_unchanged(self, storage):
         """get_full_graph() with no args returns the same shape as before."""
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         api = GraphAPI(storage)
         graph = api.get_full_graph()
@@ -536,7 +536,7 @@ class TestBackwardCompat:
 
     def test_invalidate_user_profile_works(self, storage):
         """invalidate_edge now accepts 'user_profile' without ValueError."""
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
 
         pid = storage.insert_profile(
             entity_name="Lucy",
@@ -552,7 +552,7 @@ class TestBackwardCompat:
 
     def test_invalidate_derived_belief_works(self, storage):
         """invalidate_edge now accepts 'derived_belief' without ValueError."""
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
 
         bid = storage.insert_belief(
             BeliefRecord(
@@ -574,7 +574,7 @@ class TestBackwardCompat:
 
     def test_get_full_graph_as_of_default_unchanged(self, storage):
         """get_full_graph(as_of=None) behaves identically to old no-arg call."""
-        from yadgar.graph_api import GraphAPI
+        from yadgar.core.graph_api import GraphAPI
 
         api = GraphAPI(storage)
         graph_old = api.get_full_graph()
@@ -583,7 +583,7 @@ class TestBackwardCompat:
 
     def test_search_profiles_fts_include_invalidated_default_excludes(self, storage):
         """search_profiles_fts() default excludes invalidated rows."""
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
 
         pid = storage.insert_profile(
             entity_name="Max",
@@ -600,7 +600,7 @@ class TestBackwardCompat:
 
     def test_get_beliefs_for_subject_default_excludes_invalidated(self, storage):
         """get_beliefs_for_subject() default excludes invalidated rows."""
-        from yadgar.storage.bitemporal import invalidate_edge
+        from yadgar._shared.storage.bitemporal import invalidate_edge
 
         bid = storage.insert_belief(
             BeliefRecord(

@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -56,7 +56,7 @@ def test_no_candidates_when_no_branch_pages(tmp_path, flush_queue, monkeypatch):
     """No candidates when no wiki_page rows have a branch set."""
     # Force _detect_branch to None so wiki_add stores a canonical page (no branch)
     # — otherwise the runner's actual git branch leaks into the wiki entry.
-    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
+    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
 
     server.wiki_add(
         title="Canonical Page",

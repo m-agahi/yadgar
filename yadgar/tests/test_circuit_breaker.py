@@ -19,7 +19,7 @@ class TestBreakerOpensAfterThreshold:
         """Feed 3 consecutive timeouts → ce breaker is_open() == True."""
         import httpx
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
@@ -51,7 +51,7 @@ class TestBreakerOpensAfterThreshold:
 class TestBreakerReturnsNoneWhenOpen:
     def test_breaker_returns_none_when_open(self, monkeypatch):
         """Manually open the ce breaker → score_cross_encoder returns None, no HTTP call."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
@@ -83,7 +83,7 @@ class TestBreakerReturnsNoneWhenOpen:
 class TestBreakerHalfOpenAfterCooldown:
     def test_breaker_half_open_after_cooldown(self, monkeypatch):
         """Open breaker + simulated time past cooldown → breaker.is_half_open() == True."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
@@ -116,7 +116,7 @@ class TestBreakerHalfOpenAfterCooldown:
 class TestBreakerClosesOnProbeSuccess:
     def test_breaker_closes_on_probe_success(self, monkeypatch):
         """Half-open + successful HTTP call → breaker transitions to CLOSED."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
@@ -158,7 +158,7 @@ class TestBreakerReopensOnProbeFailure:
         """Half-open + failed HTTP call → breaker transitions back to OPEN."""
         import httpx
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
@@ -193,7 +193,7 @@ class TestBreakerReopensOnProbeFailure:
 class TestBreakerEnvDisabledPassesThrough:
     def test_breaker_env_disabled_passes_through(self, monkeypatch):
         """YADGAR_CIRCUIT_BREAKER_ENABLED=0 → calls always hit HTTP, no breaker behavior."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "0")
         cfg.get_settings.cache_clear()
@@ -226,7 +226,7 @@ class TestBreakerEnvDisabledPassesThrough:
 class TestPerEndpointIsolation:
     def test_per_endpoint_isolation(self, monkeypatch):
         """Opening the ce breaker must NOT affect nli or pair breakers."""
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
@@ -263,7 +263,7 @@ class TestProbeUsesShortTimeout:
         """When breaker is HALF_OPEN, score_cross_encoder must pass probe_timeout to httpx."""
         import httpx
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
@@ -308,7 +308,7 @@ class TestProbeUsesShortTimeout:
         v5.6.6: all non-probe /rerank calls use RERANK_BACKEND_TIMEOUT_SEC (90s)
         so CE inference (8-46s) doesn't trip the general 5s timeout.
         """
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")
@@ -352,7 +352,7 @@ class TestProbeUsesShortTimeout:
 
 class TestExponentialBackoffOnProbeFailure:
     def _make_client(self, monkeypatch, base_duration: float = 60.0):
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_ENABLED", "1")
         monkeypatch.setenv("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3")

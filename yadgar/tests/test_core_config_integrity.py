@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.config_registry import clear_config_caches
+from yadgar._shared.config_registry import clear_config_caches
 
 # ---------------------------------------------------------------------------
 # Shared fixture (mirrors test_config_yaml_aware_source.py)
@@ -37,7 +37,7 @@ def _isolate_config(monkeypatch, tmp_path):
 
 
 def _write_yaml(monkeypatch, tmp_path, body: str) -> None:
-    from yadgar.config_yaml import get_config_path
+    from yadgar._shared.config_yaml import get_config_path
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,7 +55,7 @@ def test_log_format_env_override(monkeypatch):
     monkeypatch.setenv("YADGAR_LOG_FORMAT", "text")
     # Access the knob indirectly through the private resolve path.
     # configure_logging stores the result in log_format local; test via resolve_knob directly.
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     val = resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json").lower()
     assert val == "text"
@@ -65,7 +65,7 @@ def test_log_format_yaml_respected(monkeypatch, tmp_path):
     """When YADGAR_LOG_FORMAT unset, config.yaml value is used."""
     monkeypatch.delenv("YADGAR_LOG_FORMAT", raising=False)
     _write_yaml(monkeypatch, tmp_path, "log_format: text\n")
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     val = resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json").lower()
     assert val == "text"
@@ -78,14 +78,14 @@ def test_log_format_yaml_respected(monkeypatch, tmp_path):
 
 def test_metrics_enabled_env_override_false(monkeypatch):
     monkeypatch.setenv("YADGAR_METRICS_ENABLED", "0")
-    from yadgar.metrics import _is_metrics_enabled
+    from yadgar._shared.metrics import _is_metrics_enabled
 
     assert _is_metrics_enabled() is False
 
 
 def test_metrics_enabled_env_override_true(monkeypatch):
     monkeypatch.setenv("YADGAR_METRICS_ENABLED", "true")
-    from yadgar.metrics import _is_metrics_enabled
+    from yadgar._shared.metrics import _is_metrics_enabled
 
     assert _is_metrics_enabled() is True
 
@@ -94,7 +94,7 @@ def test_metrics_enabled_yaml_respected(monkeypatch, tmp_path):
     """config.yaml metrics_enabled: false respected when env unset."""
     monkeypatch.delenv("YADGAR_METRICS_ENABLED", raising=False)
     _write_yaml(monkeypatch, tmp_path, "metrics_enabled: false\n")
-    from yadgar.metrics import _is_metrics_enabled
+    from yadgar._shared.metrics import _is_metrics_enabled
 
     assert _is_metrics_enabled() is False
 
@@ -106,14 +106,14 @@ def test_metrics_enabled_yaml_respected(monkeypatch, tmp_path):
 
 def test_debug_apis_enabled_env_override_true(monkeypatch):
     monkeypatch.setenv("YADGAR_DEBUG_APIS_ENABLED", "1")
-    from yadgar.auth_middleware import _is_debug_apis_enabled
+    from yadgar.core.auth_middleware import _is_debug_apis_enabled
 
     assert _is_debug_apis_enabled() is True
 
 
 def test_debug_apis_enabled_env_override_false(monkeypatch):
     monkeypatch.setenv("YADGAR_DEBUG_APIS_ENABLED", "false")
-    from yadgar.auth_middleware import _is_debug_apis_enabled
+    from yadgar.core.auth_middleware import _is_debug_apis_enabled
 
     assert _is_debug_apis_enabled() is False
 
@@ -121,7 +121,7 @@ def test_debug_apis_enabled_env_override_false(monkeypatch):
 def test_debug_apis_enabled_yaml_respected(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_DEBUG_APIS_ENABLED", raising=False)
     _write_yaml(monkeypatch, tmp_path, "debug_apis_enabled: true\n")
-    from yadgar.auth_middleware import _is_debug_apis_enabled
+    from yadgar.core.auth_middleware import _is_debug_apis_enabled
 
     assert _is_debug_apis_enabled() is True
 
@@ -133,7 +133,7 @@ def test_debug_apis_enabled_yaml_respected(monkeypatch, tmp_path):
 
 def test_logs_debug_apis_env_override(monkeypatch):
     monkeypatch.setenv("YADGAR_DEBUG_APIS_ENABLED", "on")
-    from yadgar.server.routes.logs import _is_debug_apis_enabled
+    from yadgar.core.server.routes.logs import _is_debug_apis_enabled
 
     assert _is_debug_apis_enabled() is True
 
@@ -141,7 +141,7 @@ def test_logs_debug_apis_env_override(monkeypatch):
 def test_logs_debug_apis_yaml_respected(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_DEBUG_APIS_ENABLED", raising=False)
     _write_yaml(monkeypatch, tmp_path, "debug_apis_enabled: true\n")
-    from yadgar.server.routes.logs import _is_debug_apis_enabled
+    from yadgar.core.server.routes.logs import _is_debug_apis_enabled
 
     assert _is_debug_apis_enabled() is True
 
@@ -153,14 +153,14 @@ def test_logs_debug_apis_yaml_respected(monkeypatch, tmp_path):
 
 def test_update_debug_apis_env_override_on(monkeypatch):
     monkeypatch.setenv("YADGAR_UPDATE_DEBUG_APIS_ENABLED", "on")
-    from yadgar.server.routes.control_update import _is_debug_apis_enabled
+    from yadgar.core.server.routes.control_update import _is_debug_apis_enabled
 
     assert _is_debug_apis_enabled() is True
 
 
 def test_update_debug_apis_env_override_off(monkeypatch):
     monkeypatch.setenv("YADGAR_UPDATE_DEBUG_APIS_ENABLED", "off")
-    from yadgar.server.routes.control_update import _is_debug_apis_enabled
+    from yadgar.core.server.routes.control_update import _is_debug_apis_enabled
 
     assert _is_debug_apis_enabled() is False
 
@@ -169,7 +169,7 @@ def test_update_debug_apis_yaml_respected(monkeypatch, tmp_path):
     """config.yaml update_debug_apis_enabled: on respected when env unset."""
     monkeypatch.delenv("YADGAR_UPDATE_DEBUG_APIS_ENABLED", raising=False)
     _write_yaml(monkeypatch, tmp_path, "update_debug_apis_enabled: on\n")
-    from yadgar.server.routes.control_update import _is_debug_apis_enabled
+    from yadgar.core.server.routes.control_update import _is_debug_apis_enabled
 
     assert _is_debug_apis_enabled() is True
 
@@ -181,7 +181,7 @@ def test_update_debug_apis_yaml_respected(monkeypatch, tmp_path):
 
 def test_auto_capture_rate_limit_env_override(monkeypatch):
     monkeypatch.setenv("YADGAR_AUTO_CAPTURE_RATE_LIMIT", "99")
-    from yadgar.server._state import _get_auto_capture_rate_limit
+    from yadgar._shared.runtime.state import _get_auto_capture_rate_limit
 
     assert _get_auto_capture_rate_limit() == 99
 
@@ -189,7 +189,7 @@ def test_auto_capture_rate_limit_env_override(monkeypatch):
 def test_auto_capture_rate_limit_yaml_respected(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_AUTO_CAPTURE_RATE_LIMIT", raising=False)
     _write_yaml(monkeypatch, tmp_path, "auto_capture_rate_limit: 60\n")
-    from yadgar.server._state import _get_auto_capture_rate_limit
+    from yadgar._shared.runtime.state import _get_auto_capture_rate_limit
 
     assert _get_auto_capture_rate_limit() == 60
 
@@ -201,7 +201,7 @@ def test_auto_capture_rate_limit_yaml_respected(monkeypatch, tmp_path):
 
 def test_sensitive_lock_ttl_env_override(monkeypatch):
     monkeypatch.setenv("YADGAR_SENSITIVE_LOCK_TTL_SEC", "3600")
-    from yadgar.sensitive_lock import _ttl_seconds
+    from yadgar.core.sensitive_lock import _ttl_seconds
 
     assert _ttl_seconds() == 3600.0
 
@@ -209,14 +209,14 @@ def test_sensitive_lock_ttl_env_override(monkeypatch):
 def test_sensitive_lock_ttl_yaml_respected(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_SENSITIVE_LOCK_TTL_SEC", raising=False)
     _write_yaml(monkeypatch, tmp_path, "sensitive_lock_ttl_sec: 1800\n")
-    from yadgar.sensitive_lock import _ttl_seconds
+    from yadgar.core.sensitive_lock import _ttl_seconds
 
     assert _ttl_seconds() == 1800.0
 
 
 def test_sensitive_lock_ttl_default(monkeypatch):
     monkeypatch.delenv("YADGAR_SENSITIVE_LOCK_TTL_SEC", raising=False)
-    from yadgar.sensitive_lock import _ttl_seconds
+    from yadgar.core.sensitive_lock import _ttl_seconds
 
     # Default is 7200 when no env and no yaml
     assert _ttl_seconds() == 7200.0
@@ -229,7 +229,7 @@ def test_sensitive_lock_ttl_default(monkeypatch):
 
 def test_readiness_fail_threshold_env_override(monkeypatch):
     monkeypatch.setenv("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "7")
-    from yadgar.server.http import _readiness_fail_threshold
+    from yadgar.core.server.http import _readiness_fail_threshold
 
     assert _readiness_fail_threshold() == 7
 
@@ -237,7 +237,7 @@ def test_readiness_fail_threshold_env_override(monkeypatch):
 def test_readiness_fail_threshold_yaml_respected(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", raising=False)
     _write_yaml(monkeypatch, tmp_path, "health_readiness_fail_threshold: 5\n")
-    from yadgar.server.http import _readiness_fail_threshold
+    from yadgar.core.server.http import _readiness_fail_threshold
 
     assert _readiness_fail_threshold() == 5
 
@@ -249,7 +249,7 @@ def test_readiness_fail_threshold_yaml_respected(monkeypatch, tmp_path):
 
 def test_allowed_origins_env_override(monkeypatch):
     monkeypatch.setenv("YADGAR_ALLOWED_ORIGINS", "https://example.com,https://other.com")
-    from yadgar.server._app import _get_allowed_origins
+    from yadgar.core.server._app import _get_allowed_origins
 
     result = _get_allowed_origins()
     assert "https://example.com" in result
@@ -259,7 +259,7 @@ def test_allowed_origins_env_override(monkeypatch):
 def test_allowed_origins_yaml_respected(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_ALLOWED_ORIGINS", raising=False)
     _write_yaml(monkeypatch, tmp_path, "allowed_origins: https://yaml-origin.com\n")
-    from yadgar.server._app import _get_allowed_origins
+    from yadgar.core.server._app import _get_allowed_origins
 
     result = _get_allowed_origins()
     assert "https://yaml-origin.com" in result
@@ -272,7 +272,7 @@ def test_allowed_origins_yaml_respected(monkeypatch, tmp_path):
 
 def test_update_check_on_start_env_override_true(monkeypatch):
     monkeypatch.setenv("YADGAR_UPDATE_CHECK_ON_START", "true")
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     val = resolve_knob(
         "YADGAR_UPDATE_CHECK_ON_START",
@@ -285,7 +285,7 @@ def test_update_check_on_start_env_override_true(monkeypatch):
 
 def test_update_check_on_start_env_override_false(monkeypatch):
     monkeypatch.setenv("YADGAR_UPDATE_CHECK_ON_START", "false")
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     val = resolve_knob(
         "YADGAR_UPDATE_CHECK_ON_START",
@@ -299,7 +299,7 @@ def test_update_check_on_start_env_override_false(monkeypatch):
 def test_update_check_on_start_yaml_respected(monkeypatch, tmp_path):
     monkeypatch.delenv("YADGAR_UPDATE_CHECK_ON_START", raising=False)
     _write_yaml(monkeypatch, tmp_path, "update_check_on_start: true\n")
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     val = resolve_knob(
         "YADGAR_UPDATE_CHECK_ON_START",

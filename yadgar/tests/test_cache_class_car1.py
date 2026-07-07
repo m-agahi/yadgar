@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.cache import _REGISTRY, TTL, Cache, KeyFn, Manual
+from yadgar.core.cache import _REGISTRY, TTL, Cache, KeyFn, Manual
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +76,7 @@ def test_stats_counts_hits_and_misses():
 
 def _two_entry_budget(payload) -> int:
     """A byte budget that holds ~2 copies of `payload` but not a 3rd."""
-    from yadgar.cache import _estimate_bytes
+    from yadgar.core.cache import _estimate_bytes
 
     per = _estimate_bytes(payload)
     return per * 2 + per // 2
@@ -214,7 +214,7 @@ def test_no_deep_copy_returns_reference():
 
 
 def test_cold_tier_emits_hit_miss_metric():
-    from yadgar import metrics
+    from yadgar._shared import metrics
 
     c = Cache(name="t_obs_cold", max_bytes=1_000_000, obs_tier="cold")
     h0 = metrics.yadgar_cache_hit_total.labels(cache="t_obs_cold")._value.get()
@@ -229,10 +229,10 @@ def test_cold_tier_emits_hit_miss_metric():
 
 
 def test_eviction_emits_metric():
-    from yadgar import metrics
+    from yadgar._shared import metrics
 
     payload = "x" * 1000
-    from yadgar.cache import _estimate_bytes
+    from yadgar.core.cache import _estimate_bytes
 
     c = Cache(name="t_obs_evict", max_bytes=_estimate_bytes(payload) + 1, obs_tier="cold")
     e0 = metrics.yadgar_cache_evictions_total.labels(cache="t_obs_evict")._value.get()
@@ -245,7 +245,7 @@ def test_eviction_emits_metric():
 def test_get_and_put_carry_observe_span_sentinel():
     # I33: the getters must carry a span source (@observe). The decorator sets a
     # sentinel attribute on the wrapped fn.
-    from yadgar.observability.observe import _OBSERVE_SPAN_SENTINEL
+    from yadgar._shared.observability.observe import _OBSERVE_SPAN_SENTINEL
 
     assert getattr(Cache.get, _OBSERVE_SPAN_SENTINEL, False)
     assert getattr(Cache.put, _OBSERVE_SPAN_SENTINEL, False)

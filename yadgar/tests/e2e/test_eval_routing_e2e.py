@@ -39,8 +39,8 @@ class TestEvalRoutesViaMCPTool:
         only memories — recall@10 = 0 for the wiki key (not retrievable).
         """
         from benchmarks.run_eval import evaluate_pair_unified
-        from yadgar.server import _state as _st
-        from yadgar.wiki import WikiAddOptions
+        from yadgar._shared.runtime import state as _st
+        from yadgar._shared.wiki import WikiAddOptions
 
         # Insert a wiki page via WikiStore.add() for correct integer ID + embedding + FTS.
         # Raw _q INSERT yields non-integer IDs and skips embedding → WikiStore.query() misses.
@@ -71,8 +71,8 @@ class TestEvalRoutesViaMCPTool:
         # Set up server state for wiki retrieval (already asserted above)
 
         # Patch branch detection to avoid real git calls
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         # Fan-out is now unconditional (Phase 2a: recall() is a pure forwarder).
         # recall_backend_bypass fixture routes _forward_to_backend → _fanout_recall.
@@ -110,7 +110,7 @@ class TestEvalRoutesViaMCPTool:
             "type": "wiki",
         }
 
-        from yadgar.server import _state as _st
+        from yadgar._shared.runtime import state as _st
 
         assert _st._retriever is not None, "Retriever must be initialized"
 

@@ -111,8 +111,8 @@ def collect_produced_types(repo_root: Path) -> set[str]:
       (a) Literal "type" strings in edge-shaped dicts in graph_api.py
       (b) EDGE_TYPES registry keys from viz_meta.py (static parse)
     """
-    graph_api = repo_root / "yadgar" / "graph_api.py"
-    viz_meta = repo_root / "yadgar" / "viz_meta.py"
+    graph_api = repo_root / "yadgar" / "core" / "graph_api.py"
+    viz_meta = repo_root / "yadgar" / "core" / "viz_meta.py"
 
     literal_types = _ast_edge_types_from_file(graph_api)
     if viz_meta.exists():

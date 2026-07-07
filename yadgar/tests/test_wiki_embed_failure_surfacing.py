@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -42,7 +42,7 @@ def _wiki():
 def _get_counter(reason: str) -> float:
     """Return current value of yadgar_wiki_embedding_compute_failed_total{reason}."""
     try:
-        from yadgar.metrics import yadgar_wiki_embedding_compute_failed_total
+        from yadgar._shared.metrics import yadgar_wiki_embedding_compute_failed_total
 
         return yadgar_wiki_embedding_compute_failed_total.labels(reason=reason)._value.get()
     except Exception:
@@ -175,7 +175,7 @@ class TestEmbedFailureBlocksWrite:
             MagicMock(side_effect=RuntimeError("service down")),
         )
 
-        from yadgar.config import get_settings as _get_settings
+        from yadgar._shared.config import get_settings as _get_settings
 
         orig_settings = _get_settings()
 
@@ -185,7 +185,7 @@ class TestEmbedFailureBlocksWrite:
                     return True
                 return getattr(orig_settings, name)
 
-        import yadgar.config as _config_mod
+        import yadgar._shared.config as _config_mod
 
         monkeypatch.setattr(_config_mod, "get_settings", lambda: _BlockingSettings())
         with pytest.raises(RuntimeError, match="WIKI_EMBED_FAILURE_BLOCKS_WRITE=True"):
@@ -199,7 +199,7 @@ class TestEmbedFailureBlocksWrite:
             MagicMock(return_value=None),
         )
 
-        from yadgar.config import get_settings as _get_settings
+        from yadgar._shared.config import get_settings as _get_settings
 
         orig_settings = _get_settings()
 
@@ -209,7 +209,7 @@ class TestEmbedFailureBlocksWrite:
                     return True
                 return getattr(orig_settings, name)
 
-        import yadgar.config as _config_mod
+        import yadgar._shared.config as _config_mod
 
         monkeypatch.setattr(_config_mod, "get_settings", lambda: _BlockingSettings())
         with pytest.raises(RuntimeError, match="WIKI_EMBED_FAILURE_BLOCKS_WRITE=True"):
@@ -217,7 +217,7 @@ class TestEmbedFailureBlocksWrite:
 
     def test_success_path_unaffected_by_block_knob(self, monkeypatch):
         """Success path returns bytes regardless of WIKI_EMBED_FAILURE_BLOCKS_WRITE."""
-        from yadgar.config import get_settings as _get_settings
+        from yadgar._shared.config import get_settings as _get_settings
 
         orig_settings = _get_settings()
 
@@ -227,7 +227,7 @@ class TestEmbedFailureBlocksWrite:
                     return True
                 return getattr(orig_settings, name)
 
-        import yadgar.config as _config_mod
+        import yadgar._shared.config as _config_mod
 
         monkeypatch.setattr(_config_mod, "get_settings", lambda: _BlockingSettings())
         # Real embed service is available — should succeed normally.
@@ -244,13 +244,13 @@ class TestEmbedFailureBlocksWrite:
 class TestEmbedFailureMetric:
     def test_counter_is_importable(self):
         """yadgar_wiki_embedding_compute_failed_total is importable from yadgar.metrics."""
-        from yadgar.metrics import yadgar_wiki_embedding_compute_failed_total
+        from yadgar._shared.metrics import yadgar_wiki_embedding_compute_failed_total
 
         assert yadgar_wiki_embedding_compute_failed_total is not None
 
     def test_counter_has_reason_label(self):
         """Counter accepts reason label without error."""
-        from yadgar.metrics import yadgar_wiki_embedding_compute_failed_total
+        from yadgar._shared.metrics import yadgar_wiki_embedding_compute_failed_total
 
         # Both valid reason values should work.
         yadgar_wiki_embedding_compute_failed_total.labels(reason="exception")

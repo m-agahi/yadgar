@@ -16,8 +16,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar import server
-from yadgar.storage.migrations import _MIGRATIONS, _migration_014_wiki_page_embedding_backfill
+from yadgar._shared.storage.migrations import (
+    _MIGRATIONS,
+    _migration_014_wiki_page_embedding_backfill,
+)
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Migration registry
@@ -63,7 +66,7 @@ def _wiki():
 
 
 def _storage():
-    import yadgar.server._state as _state_mod
+    import yadgar._shared.runtime.state as _state_mod
 
     return _state_mod._storage
 
@@ -114,7 +117,7 @@ class TestStorageMethods:
 
     def test_get_excludes_embedded_rows(self, _engines):
         """Rows with a real embedding do NOT appear in the list."""
-        import yadgar.file_queue._locals as _loc
+        import yadgar.core.file_queue._locals as _loc
 
         _loc._drain_local.active = True
         try:
@@ -222,7 +225,7 @@ class TestBackfillNullEmbeddings:
 
     def test_backfill_skips_existing_embeddings(self, _engines):
         """Rows with embeddings are skipped; only NULL rows are counted."""
-        import yadgar.file_queue._locals as _loc
+        import yadgar.core.file_queue._locals as _loc
 
         _loc._drain_local.active = True
         try:
@@ -240,7 +243,7 @@ class TestBackfillNullEmbeddings:
         _insert_null_page("Embed Fail Page", "Content.")
 
         with patch.object(_wiki(), "_compute_embedding", return_value=None):
-            with caplog.at_level("WARNING", logger="yadgar.wiki"):
+            with caplog.at_level("WARNING", logger="yadgar._shared.wiki"):
                 count = _wiki().backfill_null_embeddings()
 
         assert count == 0
@@ -263,7 +266,7 @@ class TestBackfillNullEmbeddings:
             return orig(title, content)
 
         with patch.object(_wiki(), "_compute_embedding", side_effect=_fail_first):
-            with caplog.at_level("WARNING", logger="yadgar.wiki"):
+            with caplog.at_level("WARNING", logger="yadgar._shared.wiki"):
                 count = _wiki().backfill_null_embeddings()
 
         # One succeeded, one failed
@@ -293,7 +296,7 @@ class TestMigration014Function:
         mock_storage = MagicMock()
         mock_storage._q.return_value = [{"c": 1}]
 
-        with caplog.at_level("WARNING", logger="yadgar.storage.migrations"):
+        with caplog.at_level("WARNING", logger="yadgar._shared.storage.migrations"):
             _migration_014_wiki_page_embedding_backfill(mock_storage)
 
         assert any(
@@ -306,7 +309,7 @@ class TestMigration014Function:
         mock_storage = MagicMock()
         mock_storage._q.return_value = [{"c": 0}]
 
-        with caplog.at_level("INFO", logger="yadgar.storage.migrations"):
+        with caplog.at_level("INFO", logger="yadgar._shared.storage.migrations"):
             _migration_014_wiki_page_embedding_backfill(mock_storage)
 
         assert any(

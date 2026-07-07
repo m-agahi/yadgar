@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -18,8 +18,8 @@ def _engines(tmp_path_factory):
     # tests that call anchor/checkpoint/memorize/update_active_work pass
     # branch context without each call needing an explicit branch_hint.
     with (
-        patch("yadgar.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.server._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
+        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield
     server.shutdown()
@@ -567,7 +567,7 @@ def test_branch_hint_used_when_passed():
 
 def test_branch_hint_overrides_get_current_branch(monkeypatch):
     """F6: branch_hint takes priority over _get_current_branch return value."""
-    from yadgar.server.tools import project as proj_mod
+    from yadgar.core.server.tools import project as proj_mod
 
     monkeypatch.setattr(proj_mod, "_get_current_branch", lambda _d: "container-branch")
     result = server.project_brief("/tmp/myproject", branch_hint="host-branch")
@@ -576,7 +576,7 @@ def test_branch_hint_overrides_get_current_branch(monkeypatch):
 
 def test_branch_hint_absent_falls_back_to_get_current_branch(monkeypatch):
     """F6: without branch_hint, falls back to _get_current_branch; None → None in dict."""
-    from yadgar.server.tools import project as proj_mod
+    from yadgar.core.server.tools import project as proj_mod
 
     monkeypatch.setattr(proj_mod, "_get_current_branch", lambda _d: None)
     result = server.project_brief("/tmp/myproject")

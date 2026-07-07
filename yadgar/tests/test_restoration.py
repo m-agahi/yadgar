@@ -5,10 +5,10 @@ import sys
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.restoration import CheckpointContext, CheckpointRestore
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.restoration import CheckpointContext, CheckpointRestore
+from yadgar._shared.storage import StorageEngine
 
 
 @pytest.fixture

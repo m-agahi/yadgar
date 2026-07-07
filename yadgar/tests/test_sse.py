@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import yadgar.server as server
+import yadgar.core.server as server
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

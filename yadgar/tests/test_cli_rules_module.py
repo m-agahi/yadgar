@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar.cli.rules import cmd_rules, cmd_rules_export, cmd_rules_import, register
+from yadgar.core.cli.rules import cmd_rules, cmd_rules_export, cmd_rules_import, register
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -68,9 +68,9 @@ class TestCmdRulesExport:
         mock_engine.export_rules.return_value = rules_data
 
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.rules_engine.RulesEngine", return_value=mock_engine),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.rules_engine.RulesEngine", return_value=mock_engine),
+            patch("yadgar._shared.config.Settings"),
             patch.dict("sys.modules", {"ruamel.yaml": None}),
         ):
             cmd_rules_export(_make_export_args())
@@ -87,9 +87,9 @@ class TestCmdRulesExport:
         mock_engine.export_rules.return_value = rules_data
 
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.rules_engine.RulesEngine", return_value=mock_engine),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.rules_engine.RulesEngine", return_value=mock_engine),
+            patch("yadgar._shared.config.Settings"),
             patch.dict("sys.modules", {"ruamel.yaml": None}),
         ):
             cmd_rules_export(_make_export_args())
@@ -102,9 +102,9 @@ class TestCmdRulesExport:
         mock_engine.export_rules.return_value = []
 
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.rules_engine.RulesEngine", return_value=mock_engine),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.rules_engine.RulesEngine", return_value=mock_engine),
+            patch("yadgar._shared.config.Settings"),
             patch.dict("sys.modules", {"ruamel.yaml": None}),
         ):
             cmd_rules_export(_make_export_args())
@@ -128,9 +128,9 @@ class TestCmdRulesImport:
         mock_engine.import_rules.return_value = 1
 
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.rules_engine.RulesEngine", return_value=mock_engine),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.rules_engine.RulesEngine", return_value=mock_engine),
+            patch("yadgar._shared.config.Settings"),
             patch.dict("sys.modules", {"ruamel.yaml": None}),
         ):
             cmd_rules_import(_make_import_args(rules_file))
@@ -164,9 +164,9 @@ class TestCmdRulesImport:
         mock_engine.import_rules.return_value = 0
 
         with (
-            patch("yadgar.storage.StorageEngine", return_value=mock_storage),
-            patch("yadgar.rules_engine.RulesEngine", return_value=mock_engine),
-            patch("yadgar.config.Settings"),
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.rules_engine.RulesEngine", return_value=mock_engine),
+            patch("yadgar._shared.config.Settings"),
             patch.dict("sys.modules", {"ruamel.yaml": None}),
         ):
             cmd_rules_import(_make_import_args(rules_file))
@@ -197,7 +197,7 @@ class TestCmdRulesDispatch:
     def test_export_subcommand_dispatches(self):
         args = SimpleNamespace(rules_command="export", db_path=None)
         mock_parser = MagicMock()
-        with patch("yadgar.cli.rules.cmd_rules_export") as mock_export:
+        with patch("yadgar.core.cli.rules.cmd_rules_export") as mock_export:
             cmd_rules(args, mock_parser)
         mock_export.assert_called_once_with(args)
 
@@ -206,6 +206,6 @@ class TestCmdRulesDispatch:
         rules_file.write_text("[]")
         args = SimpleNamespace(rules_command="import", file=str(rules_file), db_path=None)
         mock_parser = MagicMock()
-        with patch("yadgar.cli.rules.cmd_rules_import") as mock_import:
+        with patch("yadgar.core.cli.rules.cmd_rules_import") as mock_import:
             cmd_rules(args, mock_parser)
         mock_import.assert_called_once_with(args)

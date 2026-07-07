@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.cli.vacuum import _default_backend_url, _default_db_path
+from yadgar.core.cli.vacuum import _default_backend_url, _default_db_path
 
 
 class TestVacuumDbPathDefault:
@@ -41,7 +41,7 @@ class TestVizBindHost:
 
     def test_lifecycle_viz_thread_reads_settings_host(self) -> None:
         """Source-level assertion: lifecycle uses settings.HOST for viz bind."""
-        from yadgar.server import lifecycle
+        from yadgar._shared.runtime import lifecycle
 
         src = open(lifecycle.__file__).read()
         # Pin that the viz thread now picks host from settings, not hardcoded.
@@ -55,7 +55,7 @@ class TestVizBindHost:
         """run_viz_server must accept a host kwarg (regression check)."""
         import inspect
 
-        from yadgar.viz_server import run_viz_server
+        from yadgar.core.viz_server import run_viz_server
 
         sig = inspect.signature(run_viz_server)
         assert "host" in sig.parameters, "run_viz_server() missing host parameter"
@@ -70,9 +70,9 @@ class TestVizBindHost:
             captured["port"] = port
 
         # Patch the symbol BEFORE the thread function captures it via import.
-        import yadgar.viz_server
+        import yadgar.core.viz_server
 
-        monkeypatch.setattr(yadgar.viz_server, "run_viz_server", _fake_run_viz_server)
+        monkeypatch.setattr(yadgar.core.viz_server, "run_viz_server", _fake_run_viz_server)
 
         # Simulate the lifecycle code path with HOST=0.0.0.0
         class _FakeSettings:
@@ -84,7 +84,7 @@ class TestVizBindHost:
         _viz_host = getattr(_settings, "HOST", "127.0.0.1")
 
         # Inline simulate the body of _viz_thread
-        from yadgar.viz_server import run_viz_server  # picks up monkeypatch
+        from yadgar.core.viz_server import run_viz_server  # picks up monkeypatch
 
         run_viz_server(host=_viz_host, port=_viz_port)
 

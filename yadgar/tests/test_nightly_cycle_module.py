@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import yadgar.scripts.nightly_cycle as nc
+import yadgar.core.scripts.nightly_cycle as nc
 
 # ── OTLP suppression (#63) ────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ def test_run_systemctl_success(monkeypatch):
 
 def test_run_systemctl_raises_on_failure(monkeypatch):
     mock_result = MagicMock(returncode=1, stderr=b"Unit not found")
-    with patch("yadgar.scripts.nightly_cycle.time.sleep"):  # no real backoff sleep
+    with patch("yadgar.core.scripts.nightly_cycle.time.sleep"):  # no real backoff sleep
         with patch("subprocess.run", return_value=mock_result):
             with pytest.raises(RuntimeError, match="Unit not found"):
                 nc._run_systemctl("start", "yadgar")
@@ -68,7 +68,7 @@ def test_run_systemctl_raises_on_failure(monkeypatch):
 def test_run_systemctl_retries_then_succeeds(monkeypatch):
     """A transient D-Bus failure (fail once, then succeed) is absorbed by retry."""
     results = [MagicMock(returncode=1, stderr=b"transient dbus"), MagicMock(returncode=0)]
-    with patch("yadgar.scripts.nightly_cycle.time.sleep") as mock_sleep:
+    with patch("yadgar.core.scripts.nightly_cycle.time.sleep") as mock_sleep:
         with patch("subprocess.run", side_effect=results) as mock_run:
             nc._run_systemctl("stop", "yadgar-backend")  # must NOT raise
     assert mock_run.call_count == 2, "should retry once then succeed"
@@ -78,7 +78,7 @@ def test_run_systemctl_retries_then_succeeds(monkeypatch):
 def test_run_systemctl_exhausts_bounded_retries(monkeypatch):
     """Persistent failure raises after exactly _SYSTEMCTL_RETRIES attempts (bounded)."""
     mock_result = MagicMock(returncode=1, stderr=b"still down")
-    with patch("yadgar.scripts.nightly_cycle.time.sleep"):
+    with patch("yadgar.core.scripts.nightly_cycle.time.sleep"):
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             with pytest.raises(RuntimeError, match="after .* attempts: still down"):
                 nc._run_systemctl("start", "yadgar")
@@ -121,7 +121,7 @@ def test_step_pre_backup_success(tmp_path):
     db_path = tmp_path / "db"
     snapshot_dir = tmp_path / "snapshots"
     backend_url = "http://backend:8001"
-    with patch("yadgar.scripts.nightly_cycle.create_snapshot") as mock_snap:
+    with patch("yadgar.core.scripts.nightly_cycle.create_snapshot") as mock_snap:
         result = nc._step_pre_backup(db_path, snapshot_dir, backend_url)
     assert result == 0
     mock_snap.assert_called_once_with(
@@ -136,7 +136,7 @@ def test_step_pre_backup_passes_backend_url(tmp_path):
     backend_url = "http://backend:8001"
     captured = {}
     with patch(
-        "yadgar.scripts.nightly_cycle.create_snapshot",
+        "yadgar.core.scripts.nightly_cycle.create_snapshot",
         side_effect=lambda *a, **kw: captured.update(kw) or None,
     ):
         nc._step_pre_backup(db_path, snapshot_dir, backend_url)
@@ -148,8 +148,10 @@ def test_step_pre_backup_passes_backend_url(tmp_path):
 def test_step_pre_backup_failure(tmp_path):
     db_path = tmp_path / "db"
     snapshot_dir = tmp_path / "snapshots"
-    with patch("yadgar.scripts.nightly_cycle.create_snapshot", side_effect=OSError("disk full")):
-        with patch("yadgar.scripts.nightly_cycle.record_exception"):
+    with patch(
+        "yadgar.core.scripts.nightly_cycle.create_snapshot", side_effect=OSError("disk full")
+    ):
+        with patch("yadgar.core.scripts.nightly_cycle.record_exception"):
             result = nc._step_pre_backup(db_path, snapshot_dir, "http://backend:8001")
     assert result == 20
 
@@ -162,7 +164,7 @@ def test_step_vacuum_starts_backend_as_safety_noop():
     (backend is already up; starting an active unit is harmless). This preserves
     the fallback in case a prior step left the backend down unexpectedly."""
     with patch.object(nc, "_start_service") as mock_start:
-        with patch("yadgar.scripts.nightly_cycle.cmd_vacuum_impl", return_value=0):
+        with patch("yadgar.core.scripts.nightly_cycle.cmd_vacuum_impl", return_value=0):
             result = nc._step_vacuum("/tmp/db", "http://backend:8001", None)
     assert result == 0
     mock_start.assert_called_once_with(nc._UNIT_BACKEND)
@@ -170,7 +172,7 @@ def test_step_vacuum_starts_backend_as_safety_noop():
 
 def test_step_vacuum_success(tmp_path):
     with patch.object(nc, "_run_systemctl"):
-        with patch("yadgar.scripts.nightly_cycle.cmd_vacuum_impl", return_value=0):
+        with patch("yadgar.core.scripts.nightly_cycle.cmd_vacuum_impl", return_value=0):
             result = nc._step_vacuum(tmp_path / "db", "http://backend:8001", None)
     assert result == 0
 
@@ -178,23 +180,25 @@ def test_step_vacuum_success(tmp_path):
 def test_step_vacuum_degraded_returns_zero(tmp_path):
     # Exit code 2 from vacuum = degraded but not failure
     with patch.object(nc, "_run_systemctl"):
-        with patch("yadgar.scripts.nightly_cycle.cmd_vacuum_impl", return_value=2):
+        with patch("yadgar.core.scripts.nightly_cycle.cmd_vacuum_impl", return_value=2):
             result = nc._step_vacuum(tmp_path / "db", "http://backend:8001", None)
     assert result == 0
 
 
 def test_step_vacuum_unexpected_exit_code_returns_40(tmp_path):
     with patch.object(nc, "_run_systemctl"):
-        with patch("yadgar.scripts.nightly_cycle.cmd_vacuum_impl", return_value=99):
-            with patch("yadgar.scripts.nightly_cycle.record_exception"):
+        with patch("yadgar.core.scripts.nightly_cycle.cmd_vacuum_impl", return_value=99):
+            with patch("yadgar.core.scripts.nightly_cycle.record_exception"):
                 result = nc._step_vacuum(tmp_path / "db", "http://backend:8001", None)
     assert result == 40
 
 
 def test_step_vacuum_exception_returns_40(tmp_path):
     with patch.object(nc, "_run_systemctl"):
-        with patch("yadgar.scripts.nightly_cycle.cmd_vacuum_impl", side_effect=RuntimeError("err")):
-            with patch("yadgar.scripts.nightly_cycle.record_exception"):
+        with patch(
+            "yadgar.core.scripts.nightly_cycle.cmd_vacuum_impl", side_effect=RuntimeError("err")
+        ):
+            with patch("yadgar.core.scripts.nightly_cycle.record_exception"):
                 result = nc._step_vacuum(tmp_path / "db", "http://backend:8001", None)
     assert result == 40
 
@@ -207,7 +211,7 @@ def test_step_post_backup_success(tmp_path):
     db_path = tmp_path / "db"
     snapshot_dir = tmp_path / "snapshots"
     backend_url = "http://backend:8001"
-    with patch("yadgar.scripts.nightly_cycle.create_snapshot") as mock_snap:
+    with patch("yadgar.core.scripts.nightly_cycle.create_snapshot") as mock_snap:
         result = nc._step_post_backup(db_path, snapshot_dir, backend_url)
     assert result == 0
     mock_snap.assert_called_once_with(
@@ -222,7 +226,7 @@ def test_step_post_backup_passes_backend_url(tmp_path):
     backend_url = "http://backend:8001"
     captured = {}
     with patch(
-        "yadgar.scripts.nightly_cycle.create_snapshot",
+        "yadgar.core.scripts.nightly_cycle.create_snapshot",
         side_effect=lambda *a, **kw: captured.update(kw) or None,
     ):
         nc._step_post_backup(db_path, snapshot_dir, backend_url)
@@ -235,7 +239,7 @@ def test_step_post_backup_does_not_stop_any_unit(tmp_path):
     """#51: post-backup no longer stops any unit (backend stays up; HTTP export is consistent)."""
     db_path = tmp_path / "db"
     snapshot_dir = tmp_path / "snapshots"
-    with patch("yadgar.scripts.nightly_cycle.create_snapshot"):
+    with patch("yadgar.core.scripts.nightly_cycle.create_snapshot"):
         with patch.object(nc, "_stop_service") as mock_stop:
             nc._step_post_backup(db_path, snapshot_dir, "http://backend:8001")
     assert mock_stop.call_count == 0, (
@@ -246,8 +250,8 @@ def test_step_post_backup_does_not_stop_any_unit(tmp_path):
 def test_step_post_backup_snapshot_fails_returns_50(tmp_path):
     db_path = tmp_path / "db"
     snapshot_dir = tmp_path / "snapshots"
-    with patch("yadgar.scripts.nightly_cycle.create_snapshot", side_effect=OSError("fail")):
-        with patch("yadgar.scripts.nightly_cycle.record_exception"):
+    with patch("yadgar.core.scripts.nightly_cycle.create_snapshot", side_effect=OSError("fail")):
+        with patch("yadgar.core.scripts.nightly_cycle.record_exception"):
             result = nc._step_post_backup(db_path, snapshot_dir, "http://backend:8001")
     assert result == 50
 
@@ -257,7 +261,7 @@ def test_step_post_backup_snapshot_fails_returns_50(tmp_path):
 
 def test_step_prune_success(tmp_path):
     snapshot_dir = tmp_path / "snapshots"
-    with patch("yadgar.scripts.nightly_cycle.prune_snapshots", return_value=[]) as mock_prune:
+    with patch("yadgar.core.scripts.nightly_cycle.prune_snapshots", return_value=[]) as mock_prune:
         result = nc._step_prune(snapshot_dir, retention=3)
     assert result == 0
     mock_prune.assert_called_once()
@@ -265,8 +269,8 @@ def test_step_prune_success(tmp_path):
 
 def test_step_prune_failure_returns_60(tmp_path):
     snapshot_dir = tmp_path / "snapshots"
-    with patch("yadgar.scripts.nightly_cycle.prune_snapshots", side_effect=OSError("fail")):
-        with patch("yadgar.scripts.nightly_cycle.record_exception"):
+    with patch("yadgar.core.scripts.nightly_cycle.prune_snapshots", side_effect=OSError("fail")):
+        with patch("yadgar.core.scripts.nightly_cycle.record_exception"):
             result = nc._step_prune(snapshot_dir, retention=3)
     assert result == 60
 
@@ -275,7 +279,7 @@ def test_step_prune_passes_retention(tmp_path):
     snapshot_dir = tmp_path / "snapshots"
     captured = []
     with patch(
-        "yadgar.scripts.nightly_cycle.prune_snapshots",
+        "yadgar.core.scripts.nightly_cycle.prune_snapshots",
         side_effect=lambda *a, **kw: captured.append(kw) or [],
     ):
         nc._step_prune(snapshot_dir, retention=7)
@@ -297,7 +301,7 @@ def test_make_embedding_engine_remote_when_env_set(monkeypatch):
     settings = MagicMock()
     settings.EMBEDDING_MODEL = "test-model"
 
-    with patch.dict("sys.modules", {"yadgar.remote_embeddings": fake_module}):
+    with patch.dict("sys.modules", {"yadgar._shared.remote_embeddings": fake_module}):
         result = nc._make_embedding_engine(settings)
 
     assert result is fake_remote_instance
@@ -313,7 +317,7 @@ def test_make_embedding_engine_local_when_env_absent(monkeypatch):
 
     settings = MagicMock()
 
-    with patch("yadgar.scripts.nightly_cycle.EmbeddingEngine", fake_local_cls):
+    with patch("yadgar.core.scripts.nightly_cycle.EmbeddingEngine", fake_local_cls):
         result = nc._make_embedding_engine(settings)
 
     assert result is fake_local_instance

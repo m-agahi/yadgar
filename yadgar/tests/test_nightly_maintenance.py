@@ -20,7 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-_MODULE = "yadgar.scripts.nightly_cycle"
+_MODULE = "yadgar.core.scripts.nightly_cycle"
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ def _make_args(**kwargs):
 
 
 def _import_module():
-    import yadgar.scripts.nightly_cycle as _mod
+    import yadgar.core.scripts.nightly_cycle as _mod
 
     importlib.reload(_mod)
     return _mod

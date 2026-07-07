@@ -25,7 +25,7 @@ class TestInternalFlagBypassesBranchGate:
 
     def test_internal_flag_reaches_apply_inner(self, tmp_path):
         """Payload with _internal=True is not DLQ'd for missing_branch."""
-        from yadgar.file_queue import FileQueue, QueueDrainer
+        from yadgar.core.file_queue import FileQueue, QueueDrainer
 
         q = FileQueue(str(tmp_path / "q_internal"))
         q.enqueue(
@@ -51,7 +51,7 @@ class TestInternalFlagBypassesBranchGate:
 
     def test_without_internal_flag_dlq_fires(self, tmp_path):
         """Payload WITHOUT _internal=True and without branch is DLQ'd (reference behavior)."""
-        from yadgar.file_queue import FileQueue, QueueDrainer
+        from yadgar.core.file_queue import FileQueue, QueueDrainer
 
         q = FileQueue(str(tmp_path / "q_no_internal"))
         q.enqueue(
@@ -82,7 +82,7 @@ class TestBranchGateInDLQModule:
 
     def test_internal_flag_bypasses_branch_validation(self):
         """_validate_branch_context() returns (True, None) when _internal=True."""
-        from yadgar.file_queue.dlq import _DLQMixin
+        from yadgar.core.file_queue.dlq import _DLQMixin
 
         # _DLQMixin is a mixin — instantiate it via a minimal concrete class.
         class _TestDrainer(_DLQMixin):

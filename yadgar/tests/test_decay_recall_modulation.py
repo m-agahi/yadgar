@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.storage import StorageEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.storage import StorageEngine
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -80,9 +80,9 @@ def _insert_memory(
 
 def _run_decay(storage, settings: Settings) -> dict:
     """Instantiate ConsolidationScheduler-like context and run _apply_decay."""
-    from yadgar.consolidation.heat_decay import _HeatDecayMixin
-    from yadgar.embeddings import EmbeddingEngine
-    from yadgar.thermodynamics import MemoryThermodynamics
+    from yadgar._shared.embeddings import EmbeddingEngine
+    from yadgar._shared.thermodynamics import MemoryThermodynamics
+    from yadgar.core.consolidation.heat_decay import _HeatDecayMixin
 
     thermo = MemoryThermodynamics(storage, EmbeddingEngine(), settings)
 

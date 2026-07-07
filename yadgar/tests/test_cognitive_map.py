@@ -3,11 +3,11 @@
 import numpy as np
 import pytest
 
-from yadgar.cognitive_map import _MIN_TRANSITIONS, CognitiveMap
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import Retriever
+from yadgar._shared.cognitive_map import _MIN_TRANSITIONS, CognitiveMap
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval import Retriever
 
 
 @pytest.fixture(scope="module")

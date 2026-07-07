@@ -283,7 +283,7 @@ class TestCECacheIntegration:
     """Backend embed_service /rerank?mode=ce should hit LRU cache after first call."""
 
     def _reload_es(self, monkeypatch, *, ce_enabled: bool = True, max_entries: int = 1000):
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
         monkeypatch.setenv("YADGAR_CE_CACHE_ENABLED", "1" if ce_enabled else "0")

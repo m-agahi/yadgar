@@ -28,8 +28,8 @@ def _memorize_with_no_git_no_hint(monkeypatch, env_branch: str | None = None):
     else:
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
 
-    import yadgar.server as _srv
-    from yadgar.server.tools.memorize import memorize
+    import yadgar.core.server as _srv
+    from yadgar.core.server.tools.memorize import memorize
 
     with patch.object(_srv, "_detect_branch", return_value=None):
         return memorize(
@@ -47,8 +47,8 @@ def _anchor_with_no_git_no_hint(monkeypatch, env_branch: str | None = None):
     else:
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
 
-    import yadgar.server as _srv
-    from yadgar.server.tools.misc import anchor
+    import yadgar.core.server as _srv
+    from yadgar.core.server.tools.misc import anchor
 
     with patch.object(_srv, "_detect_branch", return_value=None):
         return anchor(
@@ -65,8 +65,8 @@ def _checkpoint_with_no_git_no_hint(monkeypatch, env_branch: str | None = None):
     else:
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
 
-    import yadgar.server as _srv
-    from yadgar.server.tools.misc import checkpoint
+    import yadgar.core.server as _srv
+    from yadgar.core.server.tools.misc import checkpoint
 
     with patch.object(_srv, "_detect_branch", return_value=None):
         return checkpoint(
@@ -88,10 +88,10 @@ def _update_active_work_with_no_git_no_hint(monkeypatch, env_branch: str | None 
     else:
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
 
-    from yadgar.server.tools.project import update_active_work
+    from yadgar.core.server.tools.project import update_active_work
 
     try:
-        with patch("yadgar.server.tools.project._detect_branch", return_value=None):
+        with patch("yadgar.core.server.tools.project._detect_branch", return_value=None):
             return update_active_work(
                 directory="/tmp/test-no-git",
                 content="active work content",

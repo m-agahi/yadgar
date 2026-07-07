@@ -56,7 +56,7 @@ _REPO_ROOT = _HERE.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from yadgar.secrets import check_secrets  # noqa: E402
+from yadgar._shared.secrets import check_secrets  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Mock data for --storage-mock mode (safe dummy rows, no real secrets)
@@ -157,7 +157,7 @@ def _ensure_storage_initialized() -> None:
     Defaults: YADGAR_DB_URL=http://127.0.0.1:8000, YADGAR_ALLOW_ROOT=1.
     Operator can override via env before invoking the script.
     """
-    from yadgar.server import _state as _st  # noqa: PLC0415
+    from yadgar._shared.runtime import state as _st
 
     if _st._storage is not None:
         return  # already initialized
@@ -185,7 +185,7 @@ def _ensure_storage_initialized() -> None:
     if not os.environ.get("YADGAR_DB_USER") or not os.environ.get("YADGAR_DB_PASS"):
         os.environ.setdefault("YADGAR_ALLOW_ROOT", "1")
 
-    from yadgar.server.lifecycle import init_engines  # noqa: PLC0415
+    from yadgar._shared.runtime.lifecycle import init_engines  # noqa: PLC0415
 
     init_engines()
 
@@ -194,7 +194,7 @@ def _fetch_memories_real(limit: int | None) -> list[dict[str, Any]]:
     """Fetch memory rows from real storage. Returns list of row dicts."""
     try:
         _ensure_storage_initialized()
-        from yadgar.server.lifecycle import _get_storage  # noqa: PLC0415
+        from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
 
         storage = _get_storage()
         # ORDER BY id DESC: scan newest rows first.
@@ -214,7 +214,7 @@ def _fetch_wiki_real(limit: int | None) -> list[dict[str, Any]]:
     """Fetch wiki page rows from real storage."""
     try:
         _ensure_storage_initialized()
-        from yadgar.server.lifecycle import _get_storage  # noqa: PLC0415
+        from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
 
         storage = _get_storage()
         # ORDER BY id DESC — same rationale as memory query.

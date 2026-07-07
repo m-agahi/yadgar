@@ -54,7 +54,7 @@ def _create_fake_snapshot(tmp_path: Path, target_version: str = "5.49.0") -> Pat
 
 def test_cli_install_runs_orchestrator(tmp_path: Path) -> None:
     """--install calls run_install once and exits 0 on DONE-like result (RE_EXECING)."""
-    from yadgar.update.orchestrator import OrchestratorResult, OrchestratorState
+    from yadgar.core.update.orchestrator import OrchestratorResult, OrchestratorState
 
     mock_result = OrchestratorResult(
         final_state=OrchestratorState.RE_EXECING,
@@ -66,8 +66,8 @@ def test_cli_install_runs_orchestrator(tmp_path: Path) -> None:
         error=None,
     )
 
-    with patch("yadgar.update.orchestrator.run_install", return_value=mock_result) as mock_run:
-        from yadgar.cli.update import cmd_update
+    with patch("yadgar.core.update.orchestrator.run_install", return_value=mock_result) as mock_run:
+        from yadgar.core.cli.update import cmd_update
 
         args = _make_args(install=True)
         with patch("sys.exit") as mock_exit:
@@ -98,15 +98,15 @@ def test_cli_finalize_marks_done_on_version_match(tmp_path: Path) -> None:
         resp.read.return_value = json.dumps({"version": "5.49.0"}).encode()
         return resp
 
-    from yadgar.cli.update import cmd_update
+    from yadgar.core.cli.update import cmd_update
 
     args = _make_args(finalize=True, snapshot=str(snap_dir))
 
     with (
         patch("urllib.request.urlopen", side_effect=_fake_urlopen),
-        patch("yadgar.cli.update._DEFAULT_LOCK_PATH", lock_path),
+        patch("yadgar.core.cli.update._DEFAULT_LOCK_PATH", lock_path),
         patch("sys.exit") as mock_exit,
-        patch("yadgar.cli.update._get_cli_version", return_value="5.49.0"),
+        patch("yadgar.core.cli.update._get_cli_version", return_value="5.49.0"),
     ):
         cmd_update(args)
 
@@ -142,7 +142,7 @@ def test_cli_finalize_logs_failure_when_version_mismatch(tmp_path: Path) -> None
         resp.read.return_value = json.dumps({"version": "5.48.0"}).encode()
         return resp
 
-    from yadgar.cli.update import cmd_update
+    from yadgar.core.cli.update import cmd_update
 
     args = _make_args(finalize=True, snapshot=str(snap_dir))
 
@@ -154,9 +154,9 @@ def test_cli_finalize_logs_failure_when_version_mismatch(tmp_path: Path) -> None
 
     with (
         patch("urllib.request.urlopen", side_effect=_fake_urlopen),
-        patch("yadgar.cli.update._DEFAULT_LOCK_PATH", lock_path),
+        patch("yadgar.core.cli.update._DEFAULT_LOCK_PATH", lock_path),
         patch("sys.exit") as mock_exit,
-        patch("yadgar.cli.update._get_cli_version", return_value="5.49.0"),
+        patch("yadgar.core.cli.update._get_cli_version", return_value="5.49.0"),
         patch("builtins.print", side_effect=_fake_print),
     ):
         cmd_update(args)
@@ -206,14 +206,14 @@ def test_cli_rollback_restores_prev_image_tag(tmp_path: Path) -> None:
 
     service_restart_mock = MagicMock()
 
-    from yadgar.cli.update import cmd_update
+    from yadgar.core.cli.update import cmd_update
 
     args = _make_args(rollback=True, snapshot=str(snap_dir))
 
     with (
         patch("urllib.request.urlopen", side_effect=_fake_urlopen),
-        patch("yadgar.cli.update._DEFAULT_UPGRADE_ENV_PATH", env_path),
-        patch("yadgar.cli.update._DEFAULT_SNAPSHOTS_BASE_DIR", tmp_path / "upgrade-snapshots"),
+        patch("yadgar.core.cli.update._DEFAULT_UPGRADE_ENV_PATH", env_path),
+        patch("yadgar.core.cli.update._DEFAULT_SNAPSHOTS_BASE_DIR", tmp_path / "upgrade-snapshots"),
         patch("subprocess.run", side_effect=service_restart_mock),
         patch("sys.exit") as mock_exit,
     ):

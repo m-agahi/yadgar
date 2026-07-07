@@ -11,7 +11,7 @@ Tests:
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -213,7 +213,9 @@ class TestWikiUpdate:
     # v5.41.0: version regression guards
     def test_wiki_update_produces_version_row(self):
         """Every wiki_update call produces a new wiki_page_version row (v5.41.0)."""
-        from yadgar.storage.migrations import _migration_013_wiki_page_version  # noqa: PLC0415
+        from yadgar._shared.storage.migrations import (
+            _migration_013_wiki_page_version,  # noqa: PLC0415
+        )
 
         storage = server._get_storage()
         _migration_013_wiki_page_version(storage)  # DDL + seed for existing pages

@@ -12,7 +12,7 @@ excluded from this unit test pass. Coverage floor: ~30% (_extract_entities only)
 
 from __future__ import annotations
 
-from yadgar.consolidation.cls import _CLSMixin
+from yadgar.core.consolidation.cls import _CLSMixin
 
 _extract = _CLSMixin._extract_entities
 

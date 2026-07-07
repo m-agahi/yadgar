@@ -31,7 +31,7 @@ def _make_app(require_auth: bool = False, token: str = "test-token"):
         return JSONResponse({"status": "ok"})
 
     # Import the middleware from server after env is set
-    import yadgar.server as _srv
+    import yadgar.core.server as _srv
 
     importlib.reload(_srv)
 
@@ -42,7 +42,7 @@ def _make_app(require_auth: bool = False, token: str = "test-token"):
         ]
     )
     # Wrap with the auth middleware
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     app = BearerAuthMiddleware(app)
     return app
@@ -57,7 +57,7 @@ def test_auth_disabled_passes_api_without_token(monkeypatch):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     async def api_hello(request):
         return JSONResponse({"ok": True})
@@ -77,7 +77,7 @@ def test_auth_enabled_returns_401_without_token(monkeypatch):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     async def api_hello(request):
         return JSONResponse({"ok": True})
@@ -97,7 +97,7 @@ def test_auth_enabled_passes_with_correct_token(monkeypatch):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     async def api_hello(request):
         return JSONResponse({"ok": True})
@@ -117,7 +117,7 @@ def test_auth_enabled_returns_401_with_wrong_token(monkeypatch):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     async def api_hello(request):
         return JSONResponse({"ok": True})
@@ -137,7 +137,7 @@ def test_health_accessible_without_token_when_auth_enabled(monkeypatch):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     async def health(request):
         return JSONResponse({"status": "ok"})
@@ -156,7 +156,7 @@ def test_cors_not_wildcard():
     from pathlib import Path
 
     # After v5.1 server split, CORS config lives in server/_app.py
-    server_src = (Path(__file__).parent.parent / "server" / "_app.py").read_text()
+    server_src = (Path(__file__).parent.parent / "core" / "server" / "_app.py").read_text()
     assert 'allow_origins=["*"]' not in server_src, (
         "server/_app.py must not set wildcard CORS allow_origins"
     )
@@ -172,8 +172,8 @@ def test_mcp_streamable_http_app_has_bearer_auth_middleware(monkeypatch):
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "test-token")
     monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
 
-    import yadgar.server as _srv
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    import yadgar.core.server as _srv
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     app = _srv.mcp_server.streamable_http_app()
 
@@ -204,15 +204,15 @@ def test_startup_fails_with_require_auth_and_empty_token(monkeypatch):
 
     import importlib
 
-    import yadgar.config as _cfg
-    import yadgar.server._app as _app
+    import yadgar._shared.config as _cfg
+    import yadgar.core.server._app as _app
 
     # Snapshot mcp_server before reload so the populated instance is restored after.
     # importlib.reload(yadgar.server) rebinds server.mcp_server from _app.mcp_server;
     # if _app.mcp_server was previously replaced by test_graceful_shutdown, the reload
     # propagates an empty FastMCP to all later tests (Root-A xdist pollution — v5.56 fix).
     _saved_app_mcp = _app.mcp_server
-    import yadgar.server as _srv
+    import yadgar.core.server as _srv
 
     _saved_srv_mcp = _srv.__dict__.get("mcp_server")
 
@@ -245,12 +245,12 @@ def test_startup_ok_with_require_auth_and_token(monkeypatch):
 
     import importlib
 
-    import yadgar.config as _cfg
-    import yadgar.server._app as _app
+    import yadgar._shared.config as _cfg
+    import yadgar.core.server._app as _app
 
     # Snapshot before reload — restore in finally (Root-A xdist pollution — v5.56 fix).
     _saved_app_mcp = _app.mcp_server
-    import yadgar.server as _srv
+    import yadgar.core.server as _srv
 
     _saved_srv_mcp = _srv.__dict__.get("mcp_server")
 
@@ -264,7 +264,7 @@ def test_startup_ok_with_require_auth_and_token(monkeypatch):
     # Guard: lifecycle.get_settings may be a plain monkeypatched fn (no cache_clear)
     # if a prior test patched it — calling cache_clear() directly raises AttributeError
     # (v5.58 fix, run-846).
-    from yadgar.server import lifecycle as _lifecycle
+    from yadgar._shared.runtime import lifecycle as _lifecycle
 
     if callable(getattr(_lifecycle.get_settings, "cache_clear", None)):
         _lifecycle.get_settings.cache_clear()
@@ -296,8 +296,8 @@ def test_sse_transport_requires_auth(monkeypatch):
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "test-token")
     monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
 
-    import yadgar.server as _srv
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    import yadgar.core.server as _srv
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     app = _srv.mcp_server.sse_app()
 
@@ -365,7 +365,7 @@ def test_index_html_no_raw_innerhtml_xss():
     """static/index.html must not assign untrusted JSON directly to innerHTML."""
     from pathlib import Path
 
-    html = Path(__file__).parent.parent / "static" / "index.html"
+    html = Path(__file__).parent.parent / "core" / "static" / "index.html"
     if not html.exists():
         pytest.skip("static/index.html not found")
     content = html.read_text()

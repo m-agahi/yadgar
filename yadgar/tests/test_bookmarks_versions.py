@@ -26,8 +26,8 @@ import json
 
 import pytest
 
-from yadgar import server
-from yadgar.storage.migrations import _migration_013_wiki_page_version
+from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -80,7 +80,7 @@ class TestWikiHistoryRoute:
         pid = _insert("hist-happy", "Hist Happy", "v1")
         _storage().update_wiki_page(pid, {"content": "v2"})
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_history", {"slug": "hist-happy"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_history(req))
@@ -97,7 +97,7 @@ class TestWikiHistoryRoute:
         """Each version entry has created_at, change_summary, size_bytes."""
         _insert("hist-fields", "Hist Fields", "content")
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_history", {"slug": "hist-fields"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_history(req))
@@ -113,7 +113,7 @@ class TestWikiHistoryRoute:
 
     def test_bad_slug_returns_404(self):
         """Unknown slug → 404."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_history", {"slug": "no-such-page-xyz"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_history(req))
@@ -124,7 +124,7 @@ class TestWikiHistoryRoute:
 
     def test_missing_slug_returns_400(self):
         """No slug param → 400."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_history", {})
         resp = asyncio.run(http_wiki_versioning.api_wiki_history(req))
@@ -143,7 +143,7 @@ class TestWikiReadVersionRoute:
         pid = _insert("ver-happy", "Ver Happy", "original content v1")
         _storage().update_wiki_page(pid, {"content": "updated v2"})
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_read_version", {"slug": "ver-happy", "version": "1"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_read_version(req))
@@ -160,7 +160,7 @@ class TestWikiReadVersionRoute:
         pid = _insert("ver-2", "Ver 2", "original")
         _storage().update_wiki_page(pid, {"content": "updated"})
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_read_version", {"slug": "ver-2", "version": "2"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_read_version(req))
@@ -173,7 +173,7 @@ class TestWikiReadVersionRoute:
         """Out-of-range version → 404 with max_version hint."""
         _insert("ver-missing", "Ver Missing", "content")
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_read_version", {"slug": "ver-missing", "version": "99"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_read_version(req))
@@ -184,7 +184,7 @@ class TestWikiReadVersionRoute:
 
     def test_bad_slug_returns_404(self):
         """Unknown slug → 404."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_read_version", {"slug": "no-such-page", "version": "1"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_read_version(req))
@@ -193,7 +193,7 @@ class TestWikiReadVersionRoute:
 
     def test_non_integer_version_returns_400(self):
         """Non-integer version param → 400."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_read_version", {"slug": "any", "version": "abc"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_read_version(req))
@@ -212,7 +212,7 @@ class TestWikiDiffRoute:
         pid = _insert("diff-route", "Diff Route", "line one\nline two\n")
         _storage().update_wiki_page(pid, {"content": "line one\nline three\n"})
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_diff", {"slug": "diff-route", "v1": "1", "v2": "2"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_diff(req))
@@ -227,7 +227,7 @@ class TestWikiDiffRoute:
 
     def test_bad_slug_returns_404(self):
         """Unknown slug → 404."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_diff", {"slug": "no-such", "v1": "1", "v2": "2"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_diff(req))
@@ -236,7 +236,7 @@ class TestWikiDiffRoute:
 
     def test_missing_v1_v2_returns_400(self):
         """Missing v1/v2 → 400."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _get_request("/api/wiki_diff", {"slug": "any"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_diff(req))
@@ -255,7 +255,7 @@ class TestWikiRestoreRoute:
         pid = _insert("restore-route", "Restore Route", "original content")
         _storage().update_wiki_page(pid, {"content": "overwritten"})
 
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _post_request("/api/wiki_restore", {"slug": "restore-route", "version": 1})
         resp = asyncio.run(http_wiki_versioning.api_wiki_restore(req))
@@ -269,7 +269,7 @@ class TestWikiRestoreRoute:
 
     def test_missing_slug_returns_400(self):
         """Body without slug → 400."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _post_request("/api/wiki_restore", {"version": 1})
         resp = asyncio.run(http_wiki_versioning.api_wiki_restore(req))
@@ -280,7 +280,7 @@ class TestWikiRestoreRoute:
 
     def test_bad_slug_returns_404(self):
         """Unknown slug → 404."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _post_request("/api/wiki_restore", {"slug": "no-such-page", "version": 1})
         resp = asyncio.run(http_wiki_versioning.api_wiki_restore(req))
@@ -289,7 +289,7 @@ class TestWikiRestoreRoute:
 
     def test_non_integer_version_returns_400(self):
         """Non-integer version in body → 400."""
-        from yadgar.server import http_wiki_versioning  # noqa: PLC0415
+        from yadgar.core.server import http_wiki_versioning  # noqa: PLC0415
 
         req = _post_request("/api/wiki_restore", {"slug": "any", "version": "bad"})
         resp = asyncio.run(http_wiki_versioning.api_wiki_restore(req))

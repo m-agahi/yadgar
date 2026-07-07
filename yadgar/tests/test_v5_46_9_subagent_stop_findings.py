@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -59,7 +59,7 @@ class TestSubagentStopFindingsF6:
 
     def test_stores_findings_branch_hint_accepted(self):
         """_fake_memorize with branch_hint param — stored count equals findings count."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         stored_calls = []
 
@@ -82,7 +82,7 @@ class TestSubagentStopFindingsF6:
             )
             return {"stored": True, "queued": True, "queue_id": "test-q"}
 
-        _srv = sys.modules.get("yadgar.server")
+        _srv = sys.modules.get("yadgar.core.server")
 
         with patch.object(_srv, "memorize", _fake_memorize, create=True):
             body = json.dumps(
@@ -110,7 +110,7 @@ class TestSubagentStopFindingsF6:
 
     def test_stores_zero_findings_when_empty(self):
         """Empty findings list → stored=0."""
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         stored_calls = []
 
@@ -125,7 +125,7 @@ class TestSubagentStopFindingsF6:
             stored_calls.append(content)
             return {"stored": True, "queued": True, "queue_id": "test-q"}
 
-        _srv = sys.modules.get("yadgar.server")
+        _srv = sys.modules.get("yadgar.core.server")
 
         with patch.object(_srv, "memorize", _fake_memorize, create=True):
             body = json.dumps(

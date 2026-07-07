@@ -49,7 +49,7 @@ def test_documented_keys_subset_of_settings() -> None:
     field (phantom doc). Fix by deleting the phantom row from the doc — never by
     inventing a field to satisfy it.
     """
-    from yadgar.config import Settings
+    from yadgar._shared.config import Settings
 
     fields = {f.lower() for f in Settings.model_fields}
     documented = _documented_keys()

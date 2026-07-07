@@ -11,7 +11,7 @@ venv.
 
 from __future__ import annotations
 
-import yadgar.install_hooks_lib as ihl
+import yadgar.core.install_hooks_lib as ihl
 
 
 def test_stable_python_rewrites_worktree_path_to_canonical_venv(monkeypatch, tmp_path):

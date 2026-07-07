@@ -39,7 +39,7 @@ class TestExtractFindings:
     """_extract_findings parses ## Yadgar findings section correctly."""
 
     def test_basic_bullets_extracted(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = """\
 Some analysis text.
@@ -61,21 +61,21 @@ Some analysis text.
         assert any("provenance_agent" in f for f in findings)
 
     def test_none_sentinel_skipped(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "## Yadgar findings\n- none\n"
         findings = _extract_findings(report)
         assert findings == []
 
     def test_section_absent_returns_empty(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "No findings section here.\n- Some bullet\n"
         findings = _extract_findings(report)
         assert findings == []
 
     def test_agent_tag_in_heading_handled(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "## Yadgar findings [agent: general-purpose]\n- fact: something useful\n"
         findings = _extract_findings(report)
@@ -83,7 +83,7 @@ Some analysis text.
         assert "something useful" in findings[0]
 
     def test_comment_lines_skipped(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "## Yadgar findings\n<!-- anchors: -->\n- fact: real finding\n"
         findings = _extract_findings(report)
@@ -98,7 +98,7 @@ class TestHookScriptPost:
     """_post_findings calls the right URL with the expected payload."""
 
     def test_posts_to_subagent_stop_url(self, monkeypatch):
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         captured = {}
 
@@ -122,7 +122,7 @@ class TestHookScriptPost:
 
     def test_post_silent_on_connection_error(self, monkeypatch):
         """Connection refused must not raise."""
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         def _raise(*a, **kw):
             raise ConnectionRefusedError("no daemon")
@@ -132,7 +132,7 @@ class TestHookScriptPost:
         _hs._post_findings("Explore", "/tmp", ["fact: something"])
 
     def test_empty_findings_does_not_post(self, monkeypatch):
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         called = []
 
@@ -178,7 +178,7 @@ class TestSubagentStopEndpoint:
         import asyncio
         import sys
 
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         stored_calls = []
 
@@ -195,7 +195,7 @@ class TestSubagentStopEndpoint:
             )
             return {"stored": True, "queued": True, "queue_id": "test-q"}
 
-        _srv = sys.modules.get("yadgar.server")
+        _srv = sys.modules.get("yadgar.core.server")
 
         with patch.object(_srv, "memorize", _fake_memorize, create=True):
             body = json.dumps(
@@ -220,7 +220,7 @@ class TestSubagentStopEndpoint:
     def test_endpoint_invalid_json_returns_400(self):
         import asyncio
 
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         req = _make_request(b"not-json")
         resp = asyncio.run(_http.hook_subagent_stop(req))
@@ -229,7 +229,7 @@ class TestSubagentStopEndpoint:
     def test_endpoint_empty_findings_returns_zero(self):
         import asyncio
 
-        import yadgar.server.http as _http
+        import yadgar.core.server.http as _http
 
         body = json.dumps({"agent_type": "Explore", "cwd": "/tmp", "findings": []}).encode()
         req = _make_request(body)
@@ -246,7 +246,7 @@ class TestInstallHooksSubagentStop:
     """install_hooks registers SubagentStop with append-if-absent semantics."""
 
     def test_fresh_install_adds_subagent_stop(self, tmp_path):
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         result = install_hooks_impl(
             home_dir=tmp_path,
@@ -261,7 +261,7 @@ class TestInstallHooksSubagentStop:
         assert isinstance(subagent_entries, list) and len(subagent_entries) > 0
 
     def test_idempotent_does_not_duplicate(self, tmp_path):
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         # First install (real write)
         install_hooks_impl(
@@ -281,7 +281,7 @@ class TestInstallHooksSubagentStop:
 
     def test_existing_user_hook_preserved(self, tmp_path):
         """User-defined SubagentStop hooks must not be removed."""
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         # Pre-populate settings with a user hook
         claude_dir = tmp_path / ".claude"
@@ -315,7 +315,7 @@ class TestExtractFindingsHeadingVariants:
     """Parser accepts all reasonable heading forms for the findings section."""
 
     def test_h3_heading_accepted(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "### Yadgar findings\n- fact: found via h3 heading\n"
         findings = _extract_findings(report)
@@ -323,7 +323,7 @@ class TestExtractFindingsHeadingVariants:
         assert "h3 heading" in findings[0]
 
     def test_reordered_findings_yadgar(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "## Findings (Yadgar)\n- fact: reordered heading form\n"
         findings = _extract_findings(report)
@@ -331,7 +331,7 @@ class TestExtractFindingsHeadingVariants:
         assert "reordered" in findings[0]
 
     def test_hyphenated_slug_form(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "## yadgar-findings\n- fact: hyphenated form\n"
         findings = _extract_findings(report)
@@ -339,21 +339,21 @@ class TestExtractFindingsHeadingVariants:
         assert "hyphenated" in findings[0]
 
     def test_h4_heading_accepted(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "#### Yadgar Findings\n- fact: deep heading\n"
         findings = _extract_findings(report)
         assert len(findings) == 1, "#### heading must be accepted"
 
     def test_mixed_case_findings_first(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "## FINDINGS — YADGAR\n- fact: all-caps reversed\n"
         findings = _extract_findings(report)
         assert len(findings) == 1, "## FINDINGS — YADGAR must be accepted"
 
     def test_completely_absent_returns_empty_no_exception(self):
-        from yadgar.hooks.subagent_stop import _extract_findings
+        from yadgar.core.hooks.subagent_stop import _extract_findings
 
         report = "No findings here.\n- random bullet\n## Other section\nmore content\n"
         findings = _extract_findings(report)
@@ -370,12 +370,12 @@ class TestParseOutcomeLogging:
         """When transcript_path is absent, outcome line must say transcript_missing."""
         import logging
 
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: None)
         data = json.dumps({"agent_type": "general-purpose", "cwd": str(tmp_path)})
 
-        with caplog.at_level(logging.DEBUG, logger="yadgar.hooks.subagent_stop"):
+        with caplog.at_level(logging.DEBUG, logger="yadgar.core.hooks.subagent_stop"):
             import io
             import sys
 
@@ -393,7 +393,7 @@ class TestParseOutcomeLogging:
         """Transcript with no findings heading logs heading_matched=false."""
         import logging
 
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         transcript = _make_transcript("Agent completed the task.\n\n## Summary\nDone.\n")
         monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: None)
@@ -405,7 +405,7 @@ class TestParseOutcomeLogging:
             }
         )
 
-        with caplog.at_level(logging.DEBUG, logger="yadgar.hooks.subagent_stop"):
+        with caplog.at_level(logging.DEBUG, logger="yadgar.core.hooks.subagent_stop"):
             import io
             import sys
 
@@ -425,7 +425,7 @@ class TestParseOutcomeLogging:
         """Transcript with findings heading logs positive outcome."""
         import logging
 
-        from yadgar.hooks import subagent_stop as _hs
+        from yadgar.core.hooks import subagent_stop as _hs
 
         transcript = _make_transcript(
             "Analysis done.\n\n## Yadgar findings\n- fact: something useful\n"
@@ -450,7 +450,7 @@ class TestParseOutcomeLogging:
             }
         )
 
-        with caplog.at_level(logging.DEBUG, logger="yadgar.hooks.subagent_stop"):
+        with caplog.at_level(logging.DEBUG, logger="yadgar.core.hooks.subagent_stop"):
             import io
             import sys
 
@@ -476,7 +476,7 @@ class TestPreludeFindingsTemplate:
 
     def test_prelude_must_emit_clause(self):
         """Prelude explicitly says MUST emit the ## Yadgar findings section."""
-        from yadgar.server.tools.dispatch_helper import _YADGAR_CONTRACT
+        from yadgar.core.server.tools.dispatch_helper import _YADGAR_CONTRACT
 
         contract_lower = _YADGAR_CONTRACT.lower()
         # Must contain both "must" (or imperative equivalent) and "yadgar findings"
@@ -487,7 +487,7 @@ class TestPreludeFindingsTemplate:
 
     def test_prelude_findings_heading_literal(self):
         """Contract includes the literal heading text so agents can copy-paste."""
-        from yadgar.server.tools.dispatch_helper import _YADGAR_CONTRACT
+        from yadgar.core.server.tools.dispatch_helper import _YADGAR_CONTRACT
 
         assert "## Yadgar findings" in _YADGAR_CONTRACT, (
             "Contract must show the literal '## Yadgar findings' heading"

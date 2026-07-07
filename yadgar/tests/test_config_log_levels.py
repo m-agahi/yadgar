@@ -1,6 +1,6 @@
 """Tests for core_log_level and backend_log_level Settings fields (Change 3)."""
 
-from yadgar.config import Settings
+from yadgar._shared.config import Settings
 
 
 def test_core_log_level_default():

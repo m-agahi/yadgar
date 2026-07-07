@@ -18,20 +18,20 @@ import sys
 
 import pytest
 
-from yadgar import server  # noqa: E402
+from yadgar.core import server  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
 
 # @_tool() replaces the module-level `recall` name — reach through sys.modules.
-_recall_module = sys.modules.get("yadgar.server.tools.recall")
+_recall_module = sys.modules.get("yadgar.core.server.tools.recall")
 if _recall_module is None:
-    import yadgar.server.tools.recall as _recall_module  # noqa: E402,F401
+    import yadgar.core.server.tools.recall as _recall_module  # noqa: E402,F401
 
 
 def _recall_fn():
     """Return the live (decorated) recall callable — re-fetched each call in case of reload."""
-    return sys.modules["yadgar.server.tools.recall"].recall
+    return sys.modules["yadgar.core.server.tools.recall"].recall
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ def _engines(tmp_path_factory):
 
 def _save_agent_prompt(pattern: str, content: str, directory: str = "global") -> None:
     """Save an agent-prompt page via agent_prompt_save and assert success."""
-    from yadgar.server.tools.agent_prompts import agent_prompt_save
+    from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
     res = agent_prompt_save(pattern, content, directory=directory)
     assert res.get("saved") is True, f"agent_prompt_save failed: {res}"
@@ -61,7 +61,7 @@ def _save_agent_prompt(pattern: str, content: str, directory: str = "global") ->
 
 def _add_unrelated_pages(count: int = 40) -> None:
     """Flood wiki with unrelated pages to test dilution resistance."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     for i in range(count):
         _st._wiki.add(
@@ -84,7 +84,7 @@ class TestBC_S3_Exclude:
 
     def test_exclude_from_all(self, monkeypatch):
         """type='all' — agent-prompt page must not leak into general recall results."""
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         _save_agent_prompt(
             "review-pr-security",
@@ -105,7 +105,7 @@ class TestBC_S3_Exclude:
 
     def test_exclude_from_wiki(self, monkeypatch):
         """type='wiki' — agent-prompt page must not appear in wiki-only recall."""
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         _save_agent_prompt(
             "review-pr-security",
@@ -134,7 +134,7 @@ class TestBC_S3_Include:
 
     def test_include_returns_only_agent_prompt(self, monkeypatch):
         """type='wiki', tags=['agent-prompt'] → all results have agent-prompt tag."""
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         _save_agent_prompt(
             "review-pr-security",
@@ -167,7 +167,7 @@ class TestBC_S3_Precedence:
 
     def test_exclude_active_without_tags(self, monkeypatch):
         """Without tags: agent-prompt excluded from wiki recall."""
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         _save_agent_prompt(
             "review-pr-security",
@@ -185,7 +185,7 @@ class TestBC_S3_Precedence:
 
     def test_include_suppresses_exclude_with_tags(self, monkeypatch):
         """With tags=["agent-prompt"]: agent-prompt IS in results (exclude suppressed)."""
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         _save_agent_prompt(
             "review-pr-security",
@@ -213,7 +213,7 @@ class TestBC_S3_Dilution:
 
     def test_agent_prompt_survives_corpus_dilution(self, monkeypatch):
         """40 distractors must not prevent agent-prompt from surfacing with pre-filter."""
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         _add_unrelated_pages(40)
         _save_agent_prompt(
@@ -249,7 +249,7 @@ class TestBC_S3_Ranking:
     """
 
     def test_relevant_agent_prompt_ranks_first(self, monkeypatch):
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         _save_agent_prompt(
             "review-pr-security",
@@ -284,9 +284,9 @@ class TestBC_S3_Noops:
 
     def test_no_agent_prompt_pages_returns_normal_results(self, monkeypatch):
         """Without agent-prompt pages, recall works normally (no errors)."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         # Add a normal wiki page (no agent-prompt tag).
         _st._wiki.add(
@@ -308,9 +308,9 @@ class TestBC_S3_Noops:
 
     def test_tags_none_is_no_op(self, monkeypatch):
         """Explicitly passing tags=None is identical to omitting it."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
-        _recall_module = sys.modules["yadgar.server.tools.recall"]
+        _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
         _st._wiki.add(
             title="Normal reference page",

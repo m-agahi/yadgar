@@ -94,7 +94,7 @@ def _server_url():
 
 def test_batched_wipe_clears_written_data(_server_url):
     """Write a row, run the wipe, assert the table is empty afterward."""
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     engine = StorageEngine("/tmp/yadgar_piecea_wipe_a.db")
     try:
@@ -112,7 +112,7 @@ def test_batched_wipe_clears_written_data(_server_url):
 
 def test_batched_wipe_no_cross_namespace_leak(_server_url):
     """Two engines (distinct namespaces): wiping one must not clear the other."""
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     a = StorageEngine("/tmp/yadgar_piecea_leak_a.db")
     b = StorageEngine("/tmp/yadgar_piecea_leak_b.db")
@@ -183,7 +183,7 @@ def test_wipe_uses_authoritative_url_not_env(monkeypatch, _server_url):
     redirect (and hang) the HTTP-fallback wipe."""
     monkeypatch.setenv("YADGAR_DB_URL", "http://yadgar-backend:8000")
     # Force the shut-down (HTTP-fallback) branch by clearing server._storage.
-    import yadgar.server as _srv
+    import yadgar.core.server as _srv
 
     monkeypatch.setattr(_srv, "_storage", None, raising=False)
     seen: list[str] = []

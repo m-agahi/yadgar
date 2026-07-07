@@ -35,7 +35,7 @@ def run_script(*args: str) -> subprocess.CompletedProcess:
 
 def _make_fake_repo(tmp_path: Path, http_src: str) -> Path:
     """Create a minimal fake repo layout under tmp_path with a custom http.py."""
-    server_dir = tmp_path / "yadgar" / "server"
+    server_dir = tmp_path / "yadgar" / "core" / "server"
     server_dir.mkdir(parents=True)
     (server_dir / "http.py").write_text(textwrap.dedent(http_src))
     return tmp_path

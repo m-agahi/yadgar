@@ -319,7 +319,7 @@ def test_run_benchmark_output_has_reproducibility_key(tmp_path, monkeypatch):
 
 def test_shared_runner_module_importable():
     """yadgar._surreal_runner must exist and export spawn_surreal."""
-    from yadgar._surreal_runner import (  # noqa: F401
+    from yadgar.core._surreal_runner import (  # noqa: F401
         allocate_port_with_retry,
         spawn_surreal,
         teardown_surreal_proc,
@@ -332,7 +332,7 @@ def test_shared_runner_module_importable():
 
 def test_helpers_shim_re_exports():
     """yadgar.tests._surreal_helpers still exports spawn_surreal (shim)."""
-    from yadgar._surreal_runner import spawn_surreal as r_spawn
+    from yadgar.core._surreal_runner import spawn_surreal as r_spawn
     from yadgar.tests._surreal_helpers import spawn_surreal as h_spawn  # noqa: F401
 
     assert h_spawn is r_spawn

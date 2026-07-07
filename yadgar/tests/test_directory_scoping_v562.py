@@ -39,7 +39,7 @@ class TestIsDirectoryEligible:
     """Unit tests for storage.directory.is_directory_eligible."""
 
     def setup_method(self):
-        from yadgar.storage.directory import is_directory_eligible
+        from yadgar._shared.storage.directory import is_directory_eligible
 
         self.elig = is_directory_eligible
 
@@ -84,20 +84,20 @@ class TestDirectoryFilter:
     """Unit tests for DirectoryFilter dataclass."""
 
     def test_repr(self):
-        from yadgar.storage.directory import DirectoryFilter
+        from yadgar._shared.storage.directory import DirectoryFilter
 
         df = DirectoryFilter("/home/max/git/yadgar")
         assert "caller_dir" in repr(df)
         assert "/home/max/git/yadgar" in repr(df)
 
     def test_slots(self):
-        from yadgar.storage.directory import DirectoryFilter
+        from yadgar._shared.storage.directory import DirectoryFilter
 
         df = DirectoryFilter(None)
         assert not hasattr(df, "__dict__")
 
     def test_none_caller_dir(self):
-        from yadgar.storage.directory import DirectoryFilter
+        from yadgar._shared.storage.directory import DirectoryFilter
 
         df = DirectoryFilter(None)
         assert df.caller_dir is None
@@ -107,7 +107,7 @@ class TestBuildDirectoryClause:
     """Unit tests for _build_directory_clause (structural / deferred SurrealQL helper)."""
 
     def setup_method(self):
-        from yadgar.storage.directory import DirectoryFilter, _build_directory_clause
+        from yadgar._shared.storage.directory import DirectoryFilter, _build_directory_clause
 
         self.build = _build_directory_clause
         self.DF = DirectoryFilter
@@ -151,7 +151,7 @@ class TestApplyQualityFloor:
     """Unit tests for recall._apply_quality_floor (synthetic dicts, no DB)."""
 
     def setup_method(self):
-        from yadgar.server.tools.recall import _apply_quality_floor
+        from yadgar.core.server.tools.recall import _apply_quality_floor
 
         self.floor = _apply_quality_floor
 
@@ -211,7 +211,7 @@ class TestDedupByContent:
     """Unit tests for recall._dedup_by_content (synthetic dicts, no DB)."""
 
     def setup_method(self):
-        from yadgar.server.tools.recall import _dedup_by_content
+        from yadgar.core.server.tools.recall import _dedup_by_content
 
         self.dedup = _dedup_by_content
 
@@ -265,7 +265,7 @@ AWS_DIR = "/home/max/aws-work"
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("directory_scoping_v562")
-    from yadgar import server
+    from yadgar.core import server
 
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
@@ -281,7 +281,7 @@ def _insert_mem(storage, content: str, directory: str, tags: list | None = None)
     recall falls back to FTS-only and the directory filter then drops the row
     before it is ever retrieved — making scoping assertions vacuously fail.
     """
-    from yadgar.server.lifecycle import _get_embeddings
+    from yadgar._shared.runtime.lifecycle import _get_embeddings
 
     embedding = _get_embeddings().encode(content)
     return storage.insert_memory(
@@ -345,9 +345,9 @@ class TestDirectoryScopingIntegration:
 
     def test_other_project_excluded(self, monkeypatch):
         """assertion (1): AWS-dir rows excluded when directory=yadgar_dir."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
-        from yadgar import server
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
+        from yadgar.core import server
 
         storage = server._get_storage()
         # Insert aws-work rows with a unique token that would appear in recall results
@@ -365,9 +365,9 @@ class TestDirectoryScopingIntegration:
 
     def test_genuine_yadgar_retained(self, monkeypatch):
         """assertion (5): genuine yadgar results are retained after scoping."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
-        from yadgar import server
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
+        from yadgar.core import server
 
         storage = server._get_storage()
         # Insert a single yadgar memory and verify it is retained.
@@ -396,9 +396,9 @@ class TestDirectoryScopingIntegration:
         v5.65 Fix D: directory=None no longer works (raises ValueError).
         Proof technique changed: compare YADGAR_DIR vs AWS_DIR scoping.
         """
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
-        from yadgar import server
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
+        from yadgar.core import server
 
         storage = server._get_storage()
         # Insert aws-work row and a yadgar row, both with unique shared token xzq777.
@@ -426,10 +426,10 @@ class TestDirectoryScopingIntegration:
         two creation events).  After recall + dedup, at most one should appear.
         The TestDedupByContent unit tests prove the dedup logic in isolation.
         """
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-        from yadgar import server
+        from yadgar.core import server
 
         storage = server._get_storage()
         # Use a token (xzq987) unique to this test — system sentinel passes filter.
@@ -479,20 +479,20 @@ class TestQualityFloorBehavioral:
         verifies that the genuine row is retained (floor contract: no CE = pass)
         and dedup still collapses any duplicates.
         """
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         import sys
 
         # Must retrieve module via sys.modules: `import yadgar.server.tools.recall as _rm`
         # returns the *function* re-exported by the package __init__, not the module.
-        _rm = sys.modules["yadgar.server.tools.recall"]
+        _rm = sys.modules["yadgar.core.server.tools.recall"]
 
         # Monkeypatch threshold to 0.2 for this test only.
         # settings is module-level and mutable (Pydantic BaseSettings without frozen).
         monkeypatch.setattr(_rm.settings, "RECALL_QUALITY_FLOOR", 0.2)
 
-        from yadgar import server
+        from yadgar.core import server
 
         storage = server._get_storage()
 
@@ -554,9 +554,9 @@ class TestWikiQueryDirectoryScoping:
 
     def test_wiki_query_uses_directory_eligible(self, monkeypatch):
         """wiki_query with directory= excludes other-project pages."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
-        from yadgar import server
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
+        from yadgar.core import server
 
         wiki = server._wiki
         assert wiki is not None
@@ -610,7 +610,7 @@ class TestWikiQueryDirectoryScoping:
 
         Legacy mode (caller_dir=None) still passes everything — that assertion stays True.
         """
-        from yadgar.storage.directory import is_directory_eligible
+        from yadgar._shared.storage.directory import is_directory_eligible
 
         # With a real caller dir, system must NOT be eligible
         assert not is_directory_eligible("system", YADGAR_DIR)
@@ -648,10 +648,10 @@ class TestProjectBriefWikiScoping:
         RED pre-fix: aws-work page appears in key_wiki_pages because list_wiki_pages
         is called without directory= arg.
         """
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server.tools.project._detect_branch", lambda _d: None)
-        from yadgar import server
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server.tools.project._detect_branch", lambda _d: None)
+        from yadgar.core import server
 
         wiki_storage = server._wiki._storage
         # Unique slug tokens to avoid collisions across test runs
@@ -684,10 +684,10 @@ class TestProjectBriefWikiScoping:
 
     def test_key_wiki_pages_excludes_other_project_in_full(self, monkeypatch):
         """full mode: key_wiki_pages must not include aws-work wiki pages."""
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server.tools.project._detect_branch", lambda _d: None)
-        from yadgar import server
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server.tools.project._detect_branch", lambda _d: None)
+        from yadgar.core import server
 
         wiki_storage = server._wiki._storage
         slug_yadgar = "test-brief-scope-yadgar-full-rr1"

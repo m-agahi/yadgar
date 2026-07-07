@@ -27,8 +27,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from yadgar import server
-from yadgar.retrieval.fusion import _FusionMixin
+from yadgar._shared.retrieval.fusion import _FusionMixin
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -43,7 +43,7 @@ def _engines(tmp_path_factory):
 
 @pytest.fixture()
 def storage(_engines):
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 
@@ -136,8 +136,8 @@ class TestSingleQuery:
         content/embedding fetch for the cache MISSES only. With a NullCache (every
         id misses ⇒ the pre-Car-2 shape) that is exactly 2 queries — still a bounded
         constant, never the N point-reads the v5.97 batch replaced."""
+        from yadgar._shared.storage.memory import _MemoryMixin
         from yadgar.backend.cache import NullCache
-        from yadgar.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         mixin._q = MagicMock(return_value=[])
@@ -155,7 +155,7 @@ class TestSingleQuery:
 
     def test_full_cache_hit_issues_one_query(self):
         """On a full cache hit the heavy fetch is elided ⇒ exactly ONE (light) query."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         class _HitCache:
             def get(self, key):
@@ -175,8 +175,8 @@ class TestSingleQuery:
         assert mixin._q.call_count == 1
 
     def test_ids_int_sanitised_and_inline_in_list(self):
+        from yadgar._shared.storage.memory import _MemoryMixin
         from yadgar.backend.cache import NullCache
-        from yadgar.storage.memory import _MemoryMixin
 
         mixin = object.__new__(_MemoryMixin)
         captured: list = []

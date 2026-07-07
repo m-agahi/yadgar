@@ -52,11 +52,11 @@ class TestRecentMemoriesTool:
 
     def test_recent_memories_importable(self):
         """recent_memories must be importable from server.tools.admin_other."""
-        from yadgar.server.tools.admin_other import recent_memories  # noqa: F401
+        from yadgar.core.server.tools.admin_other import recent_memories  # noqa: F401
 
     def test_recent_memories_returns_list(self):
         """recent_memories() must return a dict with 'memories' list."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         now = datetime.now(UTC)
         rows = [
@@ -67,7 +67,7 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = rows
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             result = recent_memories(limit=10, since="24h", directory="/home/user/project")
 
         assert "memories" in result
@@ -75,7 +75,7 @@ class TestRecentMemoriesTool:
 
     def test_recent_memories_limit_respected(self):
         """limit param must cap rows returned."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         now = datetime.now(UTC)
         rows = [_mem(i, created_at=(now - timedelta(hours=i)).isoformat()) for i in range(1, 6)]
@@ -83,14 +83,14 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = rows[:3]
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             result = recent_memories(limit=3, since="24h", directory="/home/user/project")
 
         assert len(result["memories"]) <= 3
 
     def test_recent_memories_fields_present(self):
         """Each entry must have id, created_at, content, tags, heat, is_protected."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         now = datetime.now(UTC)
         rows = [
@@ -107,7 +107,7 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = rows
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             result = recent_memories(limit=10, since="24h", directory="/home/user/project")
 
         assert result["memories"], "Should have at least one entry"
@@ -117,7 +117,7 @@ class TestRecentMemoriesTool:
 
     def test_recent_memories_content_truncated_at_300(self):
         """Content longer than 300 chars must be truncated."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         now = datetime.now(UTC)
         long_content = "x" * 500
@@ -126,7 +126,7 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = rows
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             result = recent_memories(limit=10, since="24h", directory="/home/user/project")
 
         entry = result["memories"][0]
@@ -134,12 +134,12 @@ class TestRecentMemoriesTool:
 
     def test_recent_memories_global_directory(self):
         """directory='global' must query without directory filter."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             result = recent_memories(limit=10, since="24h", directory="global")
 
         assert "memories" in result
@@ -149,13 +149,13 @@ class TestRecentMemoriesTool:
 
     def test_recent_memories_since_24h_default(self):
         """Default since='24h' must compute cutoff ~24h ago."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
         before = datetime.now(UTC)
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             recent_memories(limit=10, directory="/home/user/project")
         after = datetime.now(UTC)
 
@@ -175,12 +175,12 @@ class TestRecentMemoriesTool:
 
     def test_recent_memories_since_duration_strings(self):
         """since='1h', '7d' etc. must parse correctly."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             # These should not raise
             recent_memories(limit=5, since="1h", directory="/home/user/project")
             recent_memories(limit=5, since="7d", directory="/home/user/project")
@@ -188,12 +188,12 @@ class TestRecentMemoriesTool:
 
     def test_recent_memories_max_limit_100(self):
         """limit > 100 must be capped at 100."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             recent_memories(limit=9999, since="24h", directory="/home/user/project")
 
         # Check storage was called with limit <= 100
@@ -203,12 +203,12 @@ class TestRecentMemoriesTool:
 
     def test_recent_memories_empty_result(self):
         """Empty storage returns memories=[]."""
-        from yadgar.server.tools.admin_other import recent_memories
+        from yadgar.core.server.tools.admin_other import recent_memories
 
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
-        with patch("yadgar.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
             result = recent_memories(limit=10, since="24h", directory="/home/user/project")
 
         assert result["memories"] == []
@@ -224,7 +224,7 @@ class TestRestoreRecentWrites:
 
     def test_project_brief_restore_has_recent_writes(self):
         """_project_brief_restore must include 'recent_writes' key."""
-        from yadgar.server.tools.project import _project_brief_restore
+        from yadgar.core.server.tools.project import _project_brief_restore
 
         now = datetime.now(UTC)
         rows = [
@@ -238,7 +238,7 @@ class TestRestoreRecentWrites:
         # Provide empty list returns for all helper methods
         mock_storage._q.return_value = []
 
-        with patch("yadgar.server.tools.project._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.project._get_storage", return_value=mock_storage):
             result = _project_brief_restore(
                 resolved="/home/user/project",
                 mode="restore",
@@ -252,7 +252,7 @@ class TestRestoreRecentWrites:
 
     def test_restore_recent_writes_ordered_by_created_at_desc(self):
         """recent_writes entries must be newest first."""
-        from yadgar.server.tools.project import _project_brief_restore
+        from yadgar.core.server.tools.project import _project_brief_restore
 
         now = datetime.now(UTC)
         rows = [
@@ -267,7 +267,7 @@ class TestRestoreRecentWrites:
         )
         mock_storage._q.return_value = []
 
-        with patch("yadgar.server.tools.project._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.project._get_storage", return_value=mock_storage):
             result = _project_brief_restore(
                 resolved="/home/user/project",
                 mode="restore",
@@ -283,7 +283,7 @@ class TestRestoreRecentWrites:
 
     def test_restore_recent_writes_max_10_entries(self):
         """recent_writes must be capped at 10 entries."""
-        from yadgar.server.tools.project import _project_brief_restore
+        from yadgar.core.server.tools.project import _project_brief_restore
 
         now = datetime.now(UTC)
         rows = [_mem(i, created_at=(now - timedelta(hours=i)).isoformat()) for i in range(1, 20)]
@@ -293,7 +293,7 @@ class TestRestoreRecentWrites:
         mock_storage.get_recent_memories_since.return_value = rows[:10]
         mock_storage._q.return_value = []
 
-        with patch("yadgar.server.tools.project._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.project._get_storage", return_value=mock_storage):
             result = _project_brief_restore(
                 resolved="/home/user/project",
                 mode="restore",
@@ -306,14 +306,14 @@ class TestRestoreRecentWrites:
 
     def test_restore_recent_writes_empty_when_none(self):
         """recent_writes is [] when no recent memories."""
-        from yadgar.server.tools.project import _project_brief_restore
+        from yadgar.core.server.tools.project import _project_brief_restore
 
         mock_storage = MagicMock()
         mock_storage.get_anchored_memories_scoped.return_value = []
         mock_storage.get_recent_memories_since.return_value = []
         mock_storage._q.return_value = []
 
-        with patch("yadgar.server.tools.project._get_storage", return_value=mock_storage):
+        with patch("yadgar.core.server.tools.project._get_storage", return_value=mock_storage):
             result = _project_brief_restore(
                 resolved="/home/user/project",
                 mode="restore",
@@ -335,8 +335,8 @@ class TestMemorizeReturnsMemoryId:
 
     def test_build_response_includes_memory_id(self):
         """_build_response must set memory['memory_id'] = ctx.memory_id."""
-        from yadgar.server.tools._memorize_phases._phase_post_write import _build_response
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases._phase_post_write import _build_response
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         ctx = MemorizeContext(
             content="test content",
@@ -369,7 +369,7 @@ class TestMemorizeReturnsMemoryId:
         mock_settings = MagicMock()
         mock_settings.CRDT_AGENT_ID = "default"
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         saved_write_gate = _st._write_gate
         saved_thermo = _st._thermo
@@ -403,8 +403,8 @@ class TestMemorizeReturnsMemoryId:
 
     def test_build_response_fallback_includes_memory_id(self):
         """Even in fallback path (memory not found on readback), memory_id must be present."""
-        from yadgar.server.tools._memorize_phases._phase_post_write import _build_response
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases._phase_post_write import _build_response
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         ctx = MemorizeContext(
             content="test",
@@ -425,7 +425,7 @@ class TestMemorizeReturnsMemoryId:
 
         mock_settings = MagicMock()
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         saved_thermo = _st._thermo
         _st._thermo = None
@@ -441,8 +441,8 @@ class TestMemorizeReturnsMemoryId:
 
     def test_memorize_response_has_created_at(self):
         """memorize() response dict must include created_at."""
-        from yadgar.server.tools._memorize_phases._phase_post_write import _build_response
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases._phase_post_write import _build_response
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         ctx = MemorizeContext(
             content="test content",
@@ -476,7 +476,7 @@ class TestMemorizeReturnsMemoryId:
         mock_settings = MagicMock()
         mock_settings.CRDT_AGENT_ID = "default"
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         saved_states = (
             _st._write_gate,
@@ -520,7 +520,7 @@ class TestStorageGetRecentMemoriesSince:
 
     def test_get_recent_memories_since_importable(self):
         """StorageEngine must have get_recent_memories_since method."""
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         assert hasattr(StorageEngine, "get_recent_memories_since"), (
             "StorageEngine missing get_recent_memories_since method"
@@ -530,7 +530,7 @@ class TestStorageGetRecentMemoriesSince:
         """Method must accept since, limit, directory kwargs."""
         import inspect
 
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         sig = inspect.signature(StorageEngine.get_recent_memories_since)
         params = set(sig.parameters)

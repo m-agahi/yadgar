@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -43,7 +43,7 @@ def _engines(tmp_path_factory):
 
 @pytest.fixture()
 def storage(_engines):
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 
@@ -124,7 +124,7 @@ class TestNewSignalFields:
 
     def test_anchor_redundancy_candidates_field_present_when_non_empty(self, storage, monkeypatch):
         """anchor_redundancy_candidates appears when pairs exist (omitted when empty)."""
-        from yadgar.server.tools import project as proj_mod
+        from yadgar.core.server.tools import project as proj_mod
 
         original = proj_mod._compute_anchor_signals
 
@@ -211,7 +211,7 @@ class TestTokenBudget:
         import math
         import struct
 
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         dim = getattr(storage, "_embedding_dim", 384)
 
@@ -258,7 +258,7 @@ class TestTokenBudget:
         _truncated) must stay ≤100 tokens.  This isolates the budget impact of the new fields
         from the fixed-cost baseline (resolved_directory, mode, booleans, recommended_actions).
         """
-        from yadgar.server.tools.project import _SIGNALS_CANDIDATES_K
+        from yadgar.core.server.tools.project import _SIGNALS_CANDIDATES_K
 
         assert _SIGNALS_CANDIDATES_K == 3, f"Expected K=3, got {_SIGNALS_CANDIDATES_K}"
 
@@ -304,7 +304,7 @@ class TestRedundancyDetection:
 
     def test_redundancy_candidates_found_above_threshold(self, storage, monkeypatch):
         """Two near-identical embeddings in same dir → pair emitted."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         dim = self._make_dim(storage)
 
@@ -326,7 +326,7 @@ class TestRedundancyDetection:
 
     def test_redundancy_pair_compact_tuple_encoding(self, storage, monkeypatch):
         """Each pair is a 3-element list [id_a, id_b, similarity] (compact tuple encoding)."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         dim = self._make_dim(storage)
 
@@ -350,7 +350,7 @@ class TestRedundancyDetection:
 
     def test_redundancy_cross_directory_excluded(self, storage, monkeypatch):
         """Pairs from different directory_context are NOT emitted."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         dim = self._make_dim(storage)
 
@@ -370,7 +370,7 @@ class TestRedundancyDetection:
 
     def test_redundancy_cap_at_k3(self, storage, monkeypatch):
         """Candidate list capped at 3 pairs even if more qualify."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         dim = self._make_dim(storage)
 
@@ -387,7 +387,7 @@ class TestRedundancyDetection:
 
     def test_redundancy_truncated_flag_set_when_capped(self, storage, monkeypatch):
         """_truncated=True when any list is capped."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         dim = self._make_dim(storage)
 
@@ -505,7 +505,7 @@ class TestRecommendedActionsAudit:
     """
 
     def test_audit_anchors_not_emitted_below_threshold(self, storage, monkeypatch):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 15, raising=False)
         # Insert 10 healthy anchors — no expired/redundant/promotable
@@ -519,7 +519,7 @@ class TestRecommendedActionsAudit:
         self, storage, monkeypatch
     ):
         """Count > threshold alone does not fire audit_anchors if nothing is actionable."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 5, raising=False)
         # Insert 6 healthy anchors with no expired/redundant/promotable content
@@ -533,7 +533,7 @@ class TestRecommendedActionsAudit:
 
     def test_audit_anchors_emitted_when_expired_and_above_threshold(self, storage, monkeypatch):
         """audit_anchors fires when there are expired anchors (regardless of threshold)."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
@@ -546,7 +546,7 @@ class TestRecommendedActionsAudit:
 
     def test_audit_anchors_reason_names_actionable_items(self, storage, monkeypatch):
         """When audit_anchors fires, reason string names what is actionable."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
@@ -578,7 +578,7 @@ class TestRecommendedActionsRedundancy:
 
     def test_audit_anchors_emitted_when_pairs_present(self, storage, monkeypatch):
         """Redundancy pairs → audit_anchors recommended (not the phantom merge_redundant_anchors)."""
-        from yadgar.server.tools import project as proj_mod
+        from yadgar.core.server.tools import project as proj_mod
 
         original = proj_mod._compute_anchor_signals
 
@@ -596,7 +596,7 @@ class TestRecommendedActionsRedundancy:
 
     def test_audit_reason_contains_redundant_pairs_count(self, storage, monkeypatch):
         """audit_anchors reason mentions redundant pairs when they are present."""
-        from yadgar.server.tools import project as proj_mod
+        from yadgar.core.server.tools import project as proj_mod
 
         original = proj_mod._compute_anchor_signals
 
@@ -731,7 +731,7 @@ class TestRecommendedActionsOrder:
     """
 
     def test_deterministic_order_with_all_actions(self, storage, monkeypatch):
-        from yadgar.server.tools import project as proj_mod
+        from yadgar.core.server.tools import project as proj_mod
 
         # Trigger audit_anchors via expired anchor (actionability gate)
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
@@ -782,7 +782,7 @@ class TestEnvKnobs:
     """4 new env knobs registered in Settings, _REGISTRY, and FIELD_META."""
 
     def test_anchor_redundancy_cosine_in_settings(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         cfg = get_settings()
         assert hasattr(cfg, "ANCHOR_REDUNDANCY_COSINE")
@@ -790,7 +790,7 @@ class TestEnvKnobs:
         assert cfg.ANCHOR_REDUNDANCY_COSINE == pytest.approx(0.92)
 
     def test_anchor_promote_words_in_settings(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         cfg = get_settings()
         assert hasattr(cfg, "ANCHOR_PROMOTE_WORDS")
@@ -798,7 +798,7 @@ class TestEnvKnobs:
         assert cfg.ANCHOR_PROMOTE_WORDS == 500
 
     def test_anchor_promote_headers_in_settings(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         cfg = get_settings()
         assert hasattr(cfg, "ANCHOR_PROMOTE_HEADERS")
@@ -806,7 +806,7 @@ class TestEnvKnobs:
         assert cfg.ANCHOR_PROMOTE_HEADERS == 2
 
     def test_anchor_audit_threshold_in_settings(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         cfg = get_settings()
         assert hasattr(cfg, "ANCHOR_AUDIT_THRESHOLD")
@@ -814,7 +814,7 @@ class TestEnvKnobs:
         assert cfg.ANCHOR_AUDIT_THRESHOLD == 15
 
     def test_all_knobs_in_registry(self):
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_REDUNDANCY_COSINE" in names
@@ -823,7 +823,7 @@ class TestEnvKnobs:
         assert "YADGAR_ANCHOR_AUDIT_THRESHOLD" in names
 
     def test_all_knobs_in_field_meta(self):
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "anchor_redundancy_cosine" in FIELD_META
         assert "anchor_promote_words" in FIELD_META
@@ -851,7 +851,7 @@ class TestNoPhantomActionNames:
 
     def test_no_phantom_names_when_no_actionable(self, storage, monkeypatch):
         """16 healthy anchors (no expired/redundant/promotable) → no phantom names."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 5, raising=False)
         for i in range(16):
@@ -874,7 +874,7 @@ class TestNoPhantomActionNames:
 
     def test_no_phantom_names_when_redundancy_present(self, storage, monkeypatch):
         """Redundancy pairs present → audit_anchors recommended, NOT merge_redundant_anchors."""
-        from yadgar.server.tools import project as proj_mod
+        from yadgar.core.server.tools import project as proj_mod
 
         original = proj_mod._compute_anchor_signals
 
@@ -908,7 +908,7 @@ class TestAuditAnchorActionabilityGate:
     ):
         """16 healthy anchors (count > 15) with zero expired/redundant/promotable
         → audit_anchors NOT recommended. This is the core over-signal fix."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 15, raising=False)
         # Insert 16 healthy anchors: no expiry, no embeddings (no redundancy), no promo tags
@@ -922,7 +922,7 @@ class TestAuditAnchorActionabilityGate:
 
     def test_audit_signal_fires_when_expired_present(self, storage, monkeypatch):
         """audit_anchors fires when an expired (grace=False) anchor exists."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
@@ -935,8 +935,8 @@ class TestAuditAnchorActionabilityGate:
 
     def test_audit_signal_fires_when_redundancy_present(self, storage, monkeypatch):
         """audit_anchors fires when redundancy pairs exist."""
-        from yadgar.config import get_settings
-        from yadgar.server.tools import project as proj_mod
+        from yadgar._shared.config import get_settings
+        from yadgar.core.server.tools import project as proj_mod
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         original = proj_mod._compute_anchor_signals
@@ -955,7 +955,7 @@ class TestAuditAnchorActionabilityGate:
 
     def test_audit_signal_fires_when_promote_present(self, storage, monkeypatch):
         """audit_anchors fires when promote candidates exist."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         _insert_anchor(storage, _HEADERS_CONTENT, directory=_DIR, tags=["recipe"])
@@ -967,7 +967,7 @@ class TestAuditAnchorActionabilityGate:
 
     def test_audit_reason_names_actionable_items(self, storage, monkeypatch):
         """When audit_anchors fires, reason includes what is actionable."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()

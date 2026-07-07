@@ -9,9 +9,9 @@ import json
 
 import pytest
 
-from yadgar import server
-from yadgar.cognitive_map import CognitiveMap
-from yadgar.metacognition import MetaCognition
+from yadgar._shared.cognitive_map import CognitiveMap
+from yadgar._shared.metacognition import MetaCognition
+from yadgar.core import server
 from yadgar.tests.conftest import memorize_sync
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")

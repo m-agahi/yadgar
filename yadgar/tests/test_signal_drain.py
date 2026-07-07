@@ -24,7 +24,7 @@ import time
 
 import pytest
 
-from yadgar.server import lifecycle
+from yadgar._shared.runtime import lifecycle
 
 
 @pytest.fixture()

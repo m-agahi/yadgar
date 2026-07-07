@@ -59,7 +59,7 @@ def test_disabled_returns_noop_without_ollama_call():
     with patch("httpx.Client") as mock_client_cls:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("YADGAR_CONFLICT_RESOLVER", None)
-            import yadgar.conflict_resolver as cr
+            import yadgar.core.conflict_resolver as cr
 
             reload(cr)
             result = cr.resolve_conflict(_candidate())
@@ -74,15 +74,15 @@ def test_disabled_returns_noop_without_ollama_call():
 
 def test_enabled_ollama_add_returns_add():
     """ADD response from Ollama → op=ADD."""
-    import yadgar.conflict_resolver as cr
+    import yadgar.core.conflict_resolver as cr
 
     _reload_enabled(cr)
 
     mock_client = _mock_client(
         {"response": json.dumps({"op": "ADD", "target_id": None, "reason": "new fact"})}
     )
-    with patch("yadgar.conflict_resolver._get_client", return_value=mock_client):
-        with patch("yadgar.conflict_resolver._fetch_similar", return_value=[]):
+    with patch("yadgar.core.conflict_resolver._get_client", return_value=mock_client):
+        with patch("yadgar.core.conflict_resolver._fetch_similar", return_value=[]):
             result = cr.resolve_conflict(_candidate())
 
     assert result["op"] == "ADD"
@@ -93,7 +93,7 @@ def test_enabled_ollama_add_returns_add():
 
 def test_enabled_ollama_update_returns_update():
     """UPDATE response from Ollama → op=UPDATE with target_id."""
-    import yadgar.conflict_resolver as cr
+    import yadgar.core.conflict_resolver as cr
 
     _reload_enabled(cr)
 
@@ -104,8 +104,8 @@ def test_enabled_ollama_update_returns_update():
             )
         }
     )
-    with patch("yadgar.conflict_resolver._get_client", return_value=mock_client):
-        with patch("yadgar.conflict_resolver._fetch_similar", return_value=[{"id": 42}]):
+    with patch("yadgar.core.conflict_resolver._get_client", return_value=mock_client):
+        with patch("yadgar.core.conflict_resolver._fetch_similar", return_value=[{"id": 42}]):
             result = cr.resolve_conflict(_candidate())
 
     assert result["op"] == "UPDATE"
@@ -117,15 +117,15 @@ def test_enabled_ollama_update_returns_update():
 
 def test_enabled_ollama_delete_returns_delete():
     """DELETE response from Ollama → op=DELETE with target_id."""
-    import yadgar.conflict_resolver as cr
+    import yadgar.core.conflict_resolver as cr
 
     _reload_enabled(cr)
 
     mock_client = _mock_client(
         {"response": json.dumps({"op": "DELETE", "target_id": 7, "reason": "contradiction"})}
     )
-    with patch("yadgar.conflict_resolver._get_client", return_value=mock_client):
-        with patch("yadgar.conflict_resolver._fetch_similar", return_value=[{"id": 7}]):
+    with patch("yadgar.core.conflict_resolver._get_client", return_value=mock_client):
+        with patch("yadgar.core.conflict_resolver._fetch_similar", return_value=[{"id": 7}]):
             result = cr.resolve_conflict(_candidate())
 
     assert result["op"] == "DELETE"
@@ -137,15 +137,15 @@ def test_enabled_ollama_delete_returns_delete():
 
 def test_enabled_ollama_noop_returns_noop():
     """NOOP response from Ollama → op=NOOP, no insert."""
-    import yadgar.conflict_resolver as cr
+    import yadgar.core.conflict_resolver as cr
 
     _reload_enabled(cr)
 
     mock_client = _mock_client(
         {"response": json.dumps({"op": "NOOP", "target_id": None, "reason": "duplicate"})}
     )
-    with patch("yadgar.conflict_resolver._get_client", return_value=mock_client):
-        with patch("yadgar.conflict_resolver._fetch_similar", return_value=[{"id": 99}]):
+    with patch("yadgar.core.conflict_resolver._get_client", return_value=mock_client):
+        with patch("yadgar.core.conflict_resolver._fetch_similar", return_value=[{"id": 99}]):
             result = cr.resolve_conflict(_candidate())
 
     assert result["op"] == "NOOP"
@@ -156,15 +156,15 @@ def test_enabled_ollama_noop_returns_noop():
 
 def test_enabled_ollama_timeout_degrades_to_add():
     """Ollama timeout (httpx.TimeoutException) → fail-soft, returns ADD."""
-    import yadgar.conflict_resolver as cr
+    import yadgar.core.conflict_resolver as cr
 
     _reload_enabled(cr)
 
     mock_client = MagicMock(spec=httpx.Client)
     mock_client.post = MagicMock(side_effect=httpx.TimeoutException("timeout"))
 
-    with patch("yadgar.conflict_resolver._get_client", return_value=mock_client):
-        with patch("yadgar.conflict_resolver._fetch_similar", return_value=[]):
+    with patch("yadgar.core.conflict_resolver._get_client", return_value=mock_client):
+        with patch("yadgar.core.conflict_resolver._fetch_similar", return_value=[]):
             result = cr.resolve_conflict(_candidate())
 
     assert result["op"] == "ADD", f"Expected ADD on timeout, got {result['op']}"

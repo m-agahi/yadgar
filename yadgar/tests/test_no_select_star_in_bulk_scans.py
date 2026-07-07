@@ -37,8 +37,8 @@ import pytest  # noqa: F401 (used via pytest.approx, pytest.skip, pytest.fail)
 
 def _memory_py() -> Path:
     root = Path(__file__).parent.parent  # yadgar/ package root
-    p = root / "storage" / "memory.py"
-    assert p.exists(), f"storage/memory.py not found at {p}"
+    p = root / "_shared" / "storage" / "memory.py"
+    assert p.exists(), f"_shared/storage/memory.py not found at {p}"
     return p
 
 
@@ -162,7 +162,7 @@ class TestIterEmbeddingsMinimal:
 
     def _make_storage(self, rows):
         """Build a minimal storage mock with _q returning raw rows and _extract_id/decode."""
-        from yadgar.storage.client import _MemoryClient  # noqa: F401
+        from yadgar._shared.storage.client import _MemoryClient  # noqa: F401
 
         storage = MagicMock()
         storage._q.return_value = rows
@@ -176,7 +176,7 @@ class TestIterEmbeddingsMinimal:
 
     def test_returns_list_of_id_embedding_tuples(self):
         """iter_embeddings_minimal returns list[(int, bytes)] — correct ids and embeddings."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         emb1 = [0.1, 0.2, 0.3]
         emb2 = [0.4, 0.5, 0.6]
@@ -206,7 +206,7 @@ class TestIterEmbeddingsMinimal:
 
     def test_skips_rows_without_embedding(self):
         """Rows with None embedding are excluded."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         raw_rows = [
             {"id": "memory:1", "embedding": [0.1, 0.2]},
@@ -225,7 +225,7 @@ class TestIterEmbeddingsMinimal:
 
     def test_empty_store_returns_empty_list(self):
         """Empty DB returns empty list."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         storage = MagicMock()
         storage._q.return_value = []
@@ -234,7 +234,7 @@ class TestIterEmbeddingsMinimal:
 
     def test_embedding_bytes_round_trip(self):
         """Embedding bytes decode back to original float values (within float32 precision)."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         floats = [float(i) * 0.01 for i in range(384)]
         raw_rows = [{"id": "memory:42", "embedding": floats}]
@@ -256,7 +256,7 @@ class TestGetEmbeddingsByIds:
     """Unit tests for get_embeddings_by_ids(ids) — fetch projected rows for id list."""
 
     def test_returns_matching_ids_only(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         raw_rows = [
             {"id": "memory:5", "embedding": [0.1, 0.2]},
@@ -275,7 +275,7 @@ class TestGetEmbeddingsByIds:
         assert result[1][0] == 7
 
     def test_empty_id_list_returns_empty(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         storage = MagicMock()
         storage._q.return_value = []
@@ -285,7 +285,7 @@ class TestGetEmbeddingsByIds:
         # Allow either: early return or _q returning [] — both correct.
 
     def test_embedding_bytes_round_trip(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         floats = [1.0, 2.0, 3.0]
         storage = MagicMock()
@@ -407,7 +407,7 @@ class TestDecayScalarProjection:
     def test_heat_decay_calls_scalar_method(self):
         """heat_decay.py must call get_all_memories_for_decay_scalar, not get_all_memories_for_decay."""
         root = Path(__file__).parent.parent
-        decay_py = root / "consolidation" / "heat_decay.py"
+        decay_py = root / "core" / "consolidation" / "heat_decay.py"
         assert decay_py.exists(), f"heat_decay.py not found at {decay_py}"
         source = decay_py.read_text()
         assert "get_all_memories_for_decay_scalar" in source, (
@@ -428,7 +428,7 @@ class TestDecayScalarProjection:
 
     def test_scalar_method_returns_dicts_with_required_keys(self):
         """Unit test: scalar method returns list[dict] with all required decay fields."""
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         required_keys = {
             "id",
@@ -475,7 +475,7 @@ class TestGetIdsWithHeat:
     """Unit tests for get_ids_with_heat() — (id, heat) tuples for heat-decay scans."""
 
     def test_returns_id_heat_tuples(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         raw_rows = [
             {"id": "memory:10", "heat": 0.8},
@@ -494,7 +494,7 @@ class TestGetIdsWithHeat:
         assert result[1] == (20, pytest.approx(0.3))
 
     def test_empty_store_returns_empty(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         storage = MagicMock()
         storage._q.return_value = []
@@ -502,7 +502,7 @@ class TestGetIdsWithHeat:
         assert result == []
 
     def test_heat_is_float(self):
-        from yadgar.storage.memory import _MemoryMixin
+        from yadgar._shared.storage.memory import _MemoryMixin
 
         raw_rows = [{"id": "memory:3", "heat": 1}]  # int from DB
         storage = MagicMock()

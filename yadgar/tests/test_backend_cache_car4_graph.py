@@ -62,9 +62,9 @@ class _FakeStorage:
         self._next_rel_id = (max(rels) + 1) if rels else 1
         self.full_frontier_queries = 0  # get_relationships_for_frontier DB hits
 
-    from yadgar.knowledge_graph import KnowledgeGraph
-    from yadgar.storage.entity import _EntityMixin
-    from yadgar.storage.ops import _OpsMixin
+    from yadgar._shared.knowledge_graph import KnowledgeGraph
+    from yadgar._shared.storage.entity import _EntityMixin
+    from yadgar._shared.storage.ops import _OpsMixin
 
     # graph read seam (KnowledgeGraph) — bound onto the fake so `self._storage`
     # is the fake itself (it plays both StorageEngine and its own `_graph`).

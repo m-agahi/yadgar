@@ -6,7 +6,7 @@ H-9: config written without chmod 600 — credentials potentially world-readable
 
 import os
 
-from yadgar.config_yaml import cmd_config_set
+from yadgar._shared.config_yaml import cmd_config_set
 
 
 class TestConfigYamlPermissions:
@@ -15,7 +15,7 @@ class TestConfigYamlPermissions:
         monkeypatch.setenv("YADGAR_CONFIG", str(tmp_path / "config.yaml"))
         # get_config_path reads YADGAR_CONFIG env var when set
         monkeypatch.setattr(
-            "yadgar.config_yaml.get_config_path",
+            "yadgar._shared.config_yaml.get_config_path",
             lambda: tmp_path / "config.yaml",
         )
 
@@ -40,7 +40,7 @@ class TestConfigYamlPermissions:
         os.chmod(config_path, 0o644)
 
         monkeypatch.setattr(
-            "yadgar.config_yaml.get_config_path",
+            "yadgar._shared.config_yaml.get_config_path",
             lambda: config_path,
         )
 

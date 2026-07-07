@@ -51,27 +51,27 @@ class TestHookScriptFilter:
     """Hook script only acts on team_inbox paths; ignores everything else."""
 
     def test_team_inbox_path_detected(self, tmp_path):
-        from yadgar.hooks.file_changed import is_team_inbox_path
+        from yadgar.core.hooks.file_changed import is_team_inbox_path
 
         path = _team_inbox_path(str(tmp_path))
         assert is_team_inbox_path(path) is True
 
     def test_non_team_inbox_path_ignored(self, tmp_path):
-        from yadgar.hooks.file_changed import is_team_inbox_path
+        from yadgar.core.hooks.file_changed import is_team_inbox_path
 
         assert is_team_inbox_path(_other_path(str(tmp_path))) is False
         assert is_team_inbox_path("/home/user/projects/foo/bar.py") is False
         assert is_team_inbox_path("/home/user/.claude/settings.json") is False
 
     def test_team_inbox_with_nested_path_segments(self, tmp_path):
-        from yadgar.hooks.file_changed import is_team_inbox_path
+        from yadgar.core.hooks.file_changed import is_team_inbox_path
 
         path = _team_inbox_path(str(tmp_path), project="my-proj", team="teamA", agent="agentX")
         assert is_team_inbox_path(path) is True
 
     def test_main_skips_non_inbox_non_plan_path(self, tmp_path, monkeypatch):
         """main() exits without POSTing when path matches neither filter."""
-        from yadgar.hooks import file_changed
+        from yadgar.core.hooks import file_changed
 
         posted = []
         monkeypatch.setattr(file_changed, "_post_file_changed", lambda *a: posted.append(a))
@@ -86,7 +86,7 @@ class TestHookScriptFilter:
 
     def test_main_posts_for_team_inbox_path(self, tmp_path, monkeypatch):
         """main() calls _post_file_changed for a team_inbox path."""
-        from yadgar.hooks import file_changed
+        from yadgar.core.hooks import file_changed
 
         posted = []
         monkeypatch.setattr(file_changed, "_post_file_changed", lambda *a: posted.append(a))
@@ -118,8 +118,8 @@ class TestJsonlParse:
 
     def test_jsonl_lines_produce_action_log_entries(self, tmp_path, storage):
         """Each valid JSONL line → one action_log entry with tool=team_message."""
-        import yadgar.server._state as _st
-        from yadgar.server.http import _handle_team_inbox
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.http import _handle_team_inbox
 
         inbox_path = _team_inbox_path(str(tmp_path))
         messages = [
@@ -138,7 +138,7 @@ class TestJsonlParse:
 
     def test_missing_file_returns_skipped(self, tmp_path):
         """Non-existent file → skipped (no crash)."""
-        from yadgar.server.http import _handle_team_inbox
+        from yadgar.core.server.http import _handle_team_inbox
 
         inbox_path = _team_inbox_path(str(tmp_path), agent="ghost")
         match = _INBOX_RE.search(inbox_path)
@@ -156,8 +156,8 @@ class TestFilePositionTracking:
 
     def test_only_new_lines_ingested_on_second_read(self, tmp_path, storage):
         """Second call with same file only processes newly appended lines."""
-        import yadgar.server._state as _st
-        from yadgar.server.http import _handle_team_inbox
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.http import _handle_team_inbox
 
         inbox_path = _team_inbox_path(str(tmp_path), agent="tracker")
         Path(inbox_path).parent.mkdir(parents=True, exist_ok=True)
@@ -192,7 +192,7 @@ class TestFileChangedEndpoint:
 
         from starlette.requests import Request as StarRequest
 
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         inbox_path = _team_inbox_path(str(tmp_path), agent="e2e")
         Path(inbox_path).parent.mkdir(parents=True, exist_ok=True)
@@ -214,8 +214,8 @@ class TestFileChangedEndpoint:
 
         request = StarRequest(scope, receive)
 
-        with patch("yadgar.server._state._storage", storage):
-            from yadgar.server.http import hook_file_changed
+        with patch("yadgar._shared.runtime.state._storage", storage):
+            from yadgar.core.server.http import hook_file_changed
 
             result = json.loads(asyncio.run(hook_file_changed(request)).body)
 
@@ -231,8 +231,8 @@ class TestMalformedJsonl:
 
     def test_malformed_line_skipped_valid_lines_stored(self, tmp_path, storage):
         """Mixed valid/malformed JSONL → valid stored, malformed skipped."""
-        import yadgar.server._state as _st
-        from yadgar.server.http import _handle_team_inbox
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.http import _handle_team_inbox
 
         inbox_path = _team_inbox_path(str(tmp_path), agent="malformed")
         Path(inbox_path).parent.mkdir(parents=True, exist_ok=True)

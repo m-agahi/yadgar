@@ -57,7 +57,7 @@ def obs_registry(monkeypatch):
     """
     from prometheus_client import CollectorRegistry, Counter, Histogram
 
-    import yadgar.observability.observe as obs
+    import yadgar._shared.observability.observe as obs
 
     reg = CollectorRegistry()
     req_total = Counter(
@@ -96,7 +96,7 @@ def obs_registry(monkeypatch):
 
 def test_boundary_emits_span(in_memory_tracer, obs_registry):
     _, exporter = in_memory_tracer
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="boundary", name="my.boundary")
     def handler():
@@ -110,7 +110,7 @@ def test_boundary_emits_span(in_memory_tracer, obs_registry):
 def test_boundary_emits_red_metric(in_memory_tracer, obs_registry):
     from prometheus_client import generate_latest
 
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="boundary", name="my.boundary")
     def handler():
@@ -125,7 +125,7 @@ def test_boundary_emits_red_metric(in_memory_tracer, obs_registry):
 
 
 def test_boundary_emits_info_log(in_memory_tracer, obs_registry, caplog):
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="boundary", name="my.boundary", log_event="handled")
     def handler():
@@ -142,7 +142,7 @@ def test_boundary_emits_info_log(in_memory_tracer, obs_registry, caplog):
 def test_boundary_error_metric_and_log(in_memory_tracer, obs_registry, caplog):
     from prometheus_client import generate_latest
 
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="boundary", name="my.boundary", log_event="handled")
     def boom():
@@ -161,7 +161,7 @@ def test_boundary_error_metric_and_log(in_memory_tracer, obs_registry, caplog):
 
 def test_stage_emits_span(in_memory_tracer, obs_registry):
     _, exporter = in_memory_tracer
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="stage", name="scoring")
     def stage_fn():
@@ -175,7 +175,7 @@ def test_stage_emits_span(in_memory_tracer, obs_registry):
 def test_stage_uses_shared_histogram_family(in_memory_tracer, obs_registry):
     from prometheus_client import generate_latest
 
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="stage", name="scoring")
     def stage_fn():
@@ -194,7 +194,7 @@ def test_stage_uses_shared_histogram_family(in_memory_tracer, obs_registry):
 def test_stage_no_info_log_but_error_on_raise(in_memory_tracer, obs_registry, caplog):
     from prometheus_client import generate_latest
 
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="stage", name="scoring")
     def ok_fn():
@@ -225,7 +225,7 @@ def test_stage_no_info_log_but_error_on_raise(in_memory_tracer, obs_registry, ca
 def test_hot_no_metric_no_log(in_memory_tracer, obs_registry, caplog):
     from prometheus_client import generate_latest
 
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="hot", name="inner")
     def inner():
@@ -245,7 +245,7 @@ def test_hot_no_metric_no_log(in_memory_tracer, obs_registry, caplog):
 
 def test_exempt_is_passthrough(in_memory_tracer, obs_registry):
     _, exporter = in_memory_tracer
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(exempt="trivial")
     def pure():
@@ -270,7 +270,7 @@ def test_span_false_opens_no_span_but_keeps_stage_metric(in_memory_tracer, obs_r
     """
     from prometheus_client import generate_latest
 
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="stage", name="side_effects_stage", span=False)
     def stage_fn():
@@ -298,8 +298,8 @@ def test_span_false_inner_span_reparents_to_enclosing(in_memory_tracer, obs_regi
     under the enclosing op, not under a redundant @observe span layer."""
     from opentelemetry import trace
 
-    from yadgar.observability.observe import observe
-    from yadgar.tracing import span
+    from yadgar._shared.observability.observe import observe
+    from yadgar._shared.tracing import span
 
     _, exporter = in_memory_tracer
 
@@ -329,8 +329,8 @@ def test_span_false_inner_span_reparents_to_enclosing(in_memory_tracer, obs_regi
 def test_double_span_guard_emits_one_span(in_memory_tracer, obs_registry):
     """A fn carrying @trace_span AND @observe(boundary) must emit exactly ONE span."""
     _, exporter = in_memory_tracer
-    from yadgar.observability.observe import observe
-    from yadgar.tracing import trace_span
+    from yadgar._shared.observability.observe import observe
+    from yadgar._shared.tracing import trace_span
 
     @observe(tier="boundary", name="dup")
     @trace_span("dup.span")
@@ -350,7 +350,7 @@ def test_async_boundary(in_memory_tracer, obs_registry):
     import asyncio
 
     _, exporter = in_memory_tracer
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     @observe(tier="boundary", name="async.boundary")
     async def handler():
@@ -369,7 +369,7 @@ def test_async_boundary(in_memory_tracer, obs_registry):
 
 
 def test_observe_preserves_staticmethod(in_memory_tracer, obs_registry):
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     class C:
         @observe(tier="hot", name="static.hot")
@@ -384,7 +384,7 @@ def test_observe_preserves_staticmethod(in_memory_tracer, obs_registry):
 
 
 def test_observe_preserves_classmethod(in_memory_tracer, obs_registry):
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     class C:
         marker = "cls"
@@ -401,7 +401,7 @@ def test_observe_preserves_classmethod(in_memory_tracer, obs_registry):
 def test_observe_staticmethod_boundary_emits_metric(in_memory_tracer, obs_registry):
     from prometheus_client import generate_latest
 
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     class C:
         @observe(tier="boundary", name="static.boundary")
@@ -416,7 +416,7 @@ def test_observe_staticmethod_boundary_emits_metric(in_memory_tracer, obs_regist
 
 
 def test_observe_exempt_staticmethod(in_memory_tracer, obs_registry):
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     class C:
         @observe(exempt="trivial static")
@@ -440,7 +440,7 @@ def test_observe_exempt_staticmethod(in_memory_tracer, obs_registry):
 def test_observe_preserves_lru_cache_info(in_memory_tracer, obs_registry):
     import functools
 
-    from yadgar.observability.observe import observe
+    from yadgar._shared.observability.observe import observe
 
     calls = {"n": 0}
 
@@ -473,7 +473,7 @@ def test_observe_preserves_lru_cache_info(in_memory_tracer, obs_registry):
 def test_emit_success_survives_closed_log_stream(monkeypatch, in_memory_tracer, obs_registry):
     """At interpreter shutdown the log stream may be closed → logging raises
     `ValueError: I/O operation on closed file`. _emit_success must swallow it."""
-    import yadgar.observability.observe as obs
+    import yadgar._shared.observability.observe as obs
 
     def _boom_info(*a, **k):
         raise ValueError("I/O operation on closed file")
@@ -491,7 +491,7 @@ def test_emit_success_survives_closed_log_stream(monkeypatch, in_memory_tracer, 
 def test_emit_error_survives_closed_log_stream(monkeypatch, in_memory_tracer, obs_registry):
     """_emit_error's log emit must not raise at shutdown — and must NOT mask the
     original exception the wrapped fn raised."""
-    import yadgar.observability.observe as obs
+    import yadgar._shared.observability.observe as obs
 
     def _boom_error(*a, **k):
         raise ValueError("I/O operation on closed file")

@@ -11,7 +11,7 @@ not apply the CSS cascade, so this guard scans the CSS text directly: any
 import re
 from pathlib import Path
 
-_STATIC = Path(__file__).resolve().parent.parent / "static"
+_STATIC = Path(__file__).resolve().parent.parent / "core" / "static"
 _CSS_SOURCES = [
     _STATIC / "index.html",
     _STATIC / "bookmarks-tab.css",

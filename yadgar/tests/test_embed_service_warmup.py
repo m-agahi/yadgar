@@ -22,7 +22,7 @@ import pytest
 
 def _cleared_settings(monkeypatch, **env_overrides):
     """Set env vars + cache_clear so get_settings() returns fresh values."""
-    import yadgar.config as cfg
+    import yadgar._shared.config as cfg
 
     for key, val in env_overrides.items():
         monkeypatch.setenv(key, str(val))
@@ -228,7 +228,7 @@ class TestLifespanWarmupWiring:
         """Lifespan startup completes quickly even with long warmup delay."""
         import importlib
 
-        import yadgar.config as cfg
+        import yadgar._shared.config as cfg
 
         monkeypatch.setenv("YADGAR_MODEL_PRELOAD", "true")
         monkeypatch.setenv("YADGAR_MODEL_PRELOAD_DELAY_SEC", "9999")  # Would block if awaited

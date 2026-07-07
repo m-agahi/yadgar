@@ -18,7 +18,7 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-import yadgar.server._state as _st
+import yadgar._shared.runtime.state as _st
 
 _TOKEN = "test-maint-tok"
 
@@ -38,8 +38,8 @@ def _make_maintenance_app(monkeypatch):
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", _TOKEN)
     monkeypatch.setenv("YADGAR_DEBUG_APIS_ENABLED", "off")  # gate OFF — must NOT block these
 
-    from yadgar.auth_middleware import BearerAuthMiddleware
-    from yadgar.server.routes.control import (
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
+    from yadgar.core.server.routes.control import (
         maintenance_enter_handler,
         maintenance_exit_handler,
     )
@@ -78,7 +78,7 @@ def test_gate_on_returns_maintenance_dict_body_not_called():
     The sentinel body must NOT be called (proves early return before _traced_func).
     """
     # Import _tool here so the test reads the live import path.
-    from yadgar.server._app import _tool
+    from yadgar.core.server._app import _tool
 
     body_called = []
 
@@ -106,7 +106,7 @@ def test_gate_on_returns_maintenance_dict_body_not_called():
         # This is the exact pattern used by _tool() in _app.py.
         import functools
 
-        import yadgar.server._state as _st_ref
+        import yadgar._shared.runtime.state as _st_ref
 
         sentinel_hit = []
 
@@ -135,7 +135,7 @@ def test_gate_on_returns_maintenance_dict_body_not_called():
 
 def test_gate_off_normal_path_runs():
     """When _maintenance_mode=False, body is called normally."""
-    import yadgar.server._state as _st_ref
+    import yadgar._shared.runtime.state as _st_ref
 
     sentinel_hit = []
 

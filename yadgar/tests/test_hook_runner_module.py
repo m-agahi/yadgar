@@ -19,7 +19,7 @@ import io
 import json
 from unittest.mock import MagicMock, patch
 
-import yadgar.scripts.hook_runner as hr
+import yadgar.core.scripts.hook_runner as hr
 
 # ── _auth_headers ─────────────────────────────────────────────────────────────
 

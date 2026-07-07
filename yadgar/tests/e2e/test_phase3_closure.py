@@ -126,8 +126,8 @@ class TestBCCM1_SRTransitionMatrixBuilt:
         """compute_sr_matrix() SHALL return a non-empty square matrix
         when ≥ _MIN_TRANSITIONS transitions are present.
         """
-        from yadgar.cognitive_map import CognitiveMap
-        from yadgar.config import Settings
+        from yadgar._shared.cognitive_map import CognitiveMap
+        from yadgar._shared.config import Settings
 
         storage = e2e_engines["storage"]
         settings = Settings(DB_PATH=e2e_engines["db_path"])
@@ -162,8 +162,8 @@ class TestBCCM1_SRTransitionMatrixBuilt:
         → search_vectors() → aggregate → rank.  Proves the SR result is consumable
         for predictive retrieval (the path CheckpointRestore._predict_memories uses).
         """
-        from yadgar.cognitive_map import CognitiveMap
-        from yadgar.config import Settings
+        from yadgar._shared.cognitive_map import CognitiveMap
+        from yadgar._shared.config import Settings
 
         storage = e2e_engines["storage"]
         embeddings = e2e_engines["embeddings"]

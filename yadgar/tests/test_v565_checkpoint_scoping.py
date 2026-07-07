@@ -19,12 +19,12 @@ from pathlib import Path
 
 import pytest
 
-from yadgar.restoration import CheckpointContext, CheckpointRestore
-from yadgar.storage import StorageEngine
+from yadgar._shared.restoration import CheckpointContext, CheckpointRestore
+from yadgar._shared.storage import StorageEngine
 
 # Dynamic repo root — replaces hardcoded /home/max/git/yadgar paths (P2 fix v5.46.7).
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_HOOKS_DIR = _REPO_ROOT / "yadgar" / "hooks"
+_HOOKS_DIR = _REPO_ROOT / "yadgar" / "core" / "hooks"
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -38,8 +38,8 @@ def storage(tmp_path):
 
 @pytest.fixture()
 def replay(storage):
-    from yadgar.config import Settings
-    from yadgar.embeddings import EmbeddingEngine
+    from yadgar._shared.config import Settings
+    from yadgar._shared.embeddings import EmbeddingEngine
 
     settings = Settings(DB_PATH=str(storage._db_path))
     embeddings = EmbeddingEngine()
@@ -118,7 +118,7 @@ class TestVacuumCheckpoints:
                 },
             )
 
-        from yadgar.storage.ops import vacuum_checkpoints
+        from yadgar._shared.storage.ops import vacuum_checkpoints
 
         result = vacuum_checkpoints(storage, dry_run=True)
         assert result["stale_count"] == 2  # 3 rows - 1 winner = 2 stale
@@ -144,7 +144,7 @@ class TestVacuumCheckpoints:
                 },
             )
 
-        from yadgar.storage.ops import vacuum_checkpoints
+        from yadgar._shared.storage.ops import vacuum_checkpoints
 
         result = vacuum_checkpoints(storage, dry_run=False)
         assert result["deleted"] == 2
@@ -165,7 +165,7 @@ class TestVacuumCheckpoints:
                     {"id": cid, "dir": d, "task": f"{d}-{i}", "now": storage._now_iso()},
                 )
 
-        from yadgar.storage.ops import vacuum_checkpoints
+        from yadgar._shared.storage.ops import vacuum_checkpoints
 
         result = vacuum_checkpoints(storage, dry_run=False)
         assert result["deleted"] == 2  # 2 stale rows (one per dir)
@@ -214,7 +214,7 @@ class TestBug4TraceIdRegression:
         """
         from unittest.mock import patch
 
-        from yadgar.log_config import JSONLogFormatter
+        from yadgar._shared.log_config import JSONLogFormatter
 
         buf = io.StringIO()
         handler = logging.StreamHandler(buf)
@@ -227,8 +227,10 @@ class TestBug4TraceIdRegression:
 
         fake_trace_id = "aabbccdd0011223344556677aabbccdd"
 
-        with patch("yadgar.tracing.get_current_trace_id", return_value=fake_trace_id):
-            with patch("yadgar.tracing.get_current_span_id", return_value="0011223344556677"):
+        with patch("yadgar._shared.tracing.get_current_trace_id", return_value=fake_trace_id):
+            with patch(
+                "yadgar._shared.tracing.get_current_span_id", return_value="0011223344556677"
+            ):
                 test_logger.info(
                     "request",
                     extra={
@@ -253,7 +255,7 @@ class TestBug4TraceIdRegression:
         """Without an active span, trace_id must not appear as empty string."""
         from unittest.mock import patch
 
-        from yadgar.log_config import JSONLogFormatter
+        from yadgar._shared.log_config import JSONLogFormatter
 
         buf = io.StringIO()
         handler = logging.StreamHandler(buf)
@@ -264,8 +266,8 @@ class TestBug4TraceIdRegression:
         test_logger.setLevel(logging.INFO)
         test_logger.propagate = False
 
-        with patch("yadgar.tracing.get_current_trace_id", return_value=None):
-            with patch("yadgar.tracing.get_current_span_id", return_value=None):
+        with patch("yadgar._shared.tracing.get_current_trace_id", return_value=None):
+            with patch("yadgar._shared.tracing.get_current_span_id", return_value=None):
                 test_logger.info(
                     "request",
                     extra={

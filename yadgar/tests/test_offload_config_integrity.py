@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.config_registry import clear_config_caches
+from yadgar._shared.config_registry import clear_config_caches
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +28,7 @@ def _isolate_config(monkeypatch, tmp_path):
 
 
 def _write_yaml(body: str) -> None:
-    from yadgar.config_yaml import get_config_path
+    from yadgar._shared.config_yaml import get_config_path
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +41,7 @@ def _write_yaml(body: str) -> None:
 
 def test_offload_enabled_armed_by_yaml(monkeypatch):
     """config.yaml `offload_tools: true` ARMS offload with env unset (the #72 fix)."""
-    from yadgar.server._offload import offload_enabled
+    from yadgar._shared.runtime.offload import offload_enabled
 
     monkeypatch.delenv("YADGAR_OFFLOAD_TOOLS", raising=False)
     _write_yaml("offload_tools: true\n")
@@ -50,7 +50,7 @@ def test_offload_enabled_armed_by_yaml(monkeypatch):
 
 def test_offload_enabled_env_overrides_yaml(monkeypatch):
     """Env override still wins: YADGAR_OFFLOAD_TOOLS=0 disarms even with yaml true."""
-    from yadgar.server._offload import offload_enabled
+    from yadgar._shared.runtime.offload import offload_enabled
 
     monkeypatch.setenv("YADGAR_OFFLOAD_TOOLS", "0")
     _write_yaml("offload_tools: true\n")
@@ -59,7 +59,7 @@ def test_offload_enabled_env_overrides_yaml(monkeypatch):
 
 def test_offload_disabled_by_default(monkeypatch):
     """No env, no yaml → offload stays OFF (Settings default OFFLOAD_TOOLS=False)."""
-    from yadgar.server._offload import offload_enabled
+    from yadgar._shared.runtime.offload import offload_enabled
 
     monkeypatch.delenv("YADGAR_OFFLOAD_TOOLS", raising=False)
     _write_yaml("")  # empty config
@@ -70,7 +70,7 @@ def test_offload_disabled_by_default(monkeypatch):
 
 
 def test_tool_timeout_yaml_respected(monkeypatch):
-    from yadgar.server._offload import _tool_timeout_sec
+    from yadgar._shared.runtime.offload import _tool_timeout_sec
 
     monkeypatch.delenv("YADGAR_TOOL_TIMEOUT_SEC", raising=False)
     _write_yaml("tool_timeout_sec: 12.5\n")
@@ -78,7 +78,7 @@ def test_tool_timeout_yaml_respected(monkeypatch):
 
 
 def test_tool_timeout_env_overrides(monkeypatch):
-    from yadgar.server._offload import _tool_timeout_sec
+    from yadgar._shared.runtime.offload import _tool_timeout_sec
 
     monkeypatch.setenv("YADGAR_TOOL_TIMEOUT_SEC", "7")
     _write_yaml("tool_timeout_sec: 12.5\n")
@@ -90,7 +90,7 @@ def test_tool_timeout_env_overrides(monkeypatch):
 
 def test_heavy_concurrency_yaml_respected(monkeypatch):
     """yaml RECALL_HEAVY_CONCURRENCY respected, still clamped to [1, pool]."""
-    from yadgar.server._offload import _heavy_concurrency
+    from yadgar._shared.runtime.offload import _heavy_concurrency
 
     monkeypatch.delenv("YADGAR_RECALL_HEAVY_CONCURRENCY", raising=False)
     monkeypatch.delenv("YADGAR_TOOL_POOL_WORKERS", raising=False)
@@ -101,7 +101,7 @@ def test_heavy_concurrency_yaml_respected(monkeypatch):
 
 def test_heavy_concurrency_clamped_to_pool(monkeypatch):
     """A yaml value above the pool size is clamped down to the pool size."""
-    from yadgar.server._offload import _heavy_concurrency
+    from yadgar._shared.runtime.offload import _heavy_concurrency
 
     monkeypatch.delenv("YADGAR_RECALL_HEAVY_CONCURRENCY", raising=False)
     monkeypatch.delenv("YADGAR_TOOL_POOL_WORKERS", raising=False)
@@ -113,7 +113,7 @@ def test_heavy_concurrency_clamped_to_pool(monkeypatch):
 
 
 def test_rerank_gate_timeout_yaml_respected(monkeypatch):
-    from yadgar.server._offload import _rerank_gate_acquire_timeout_sec
+    from yadgar._shared.runtime.offload import _rerank_gate_acquire_timeout_sec
 
     monkeypatch.delenv("YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC", raising=False)
     _write_yaml("rerank_gate_acquire_timeout_sec: 3.5\n")
@@ -121,7 +121,7 @@ def test_rerank_gate_timeout_yaml_respected(monkeypatch):
 
 
 def test_rerank_gate_timeout_env_overrides(monkeypatch):
-    from yadgar.server._offload import _rerank_gate_acquire_timeout_sec
+    from yadgar._shared.runtime.offload import _rerank_gate_acquire_timeout_sec
 
     monkeypatch.setenv("YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC", "1.0")
     _write_yaml("rerank_gate_acquire_timeout_sec: 3.5\n")
@@ -132,7 +132,7 @@ def test_rerank_gate_timeout_env_overrides(monkeypatch):
 
 
 def test_saturation_grace_yaml_respected(monkeypatch):
-    from yadgar.server._offload import _saturation_grace_sec
+    from yadgar._shared.runtime.offload import _saturation_grace_sec
 
     monkeypatch.delenv("YADGAR_TOOL_SATURATION_GRACE_SEC", raising=False)
     _write_yaml("tool_saturation_grace_sec: 90\n")
@@ -140,7 +140,7 @@ def test_saturation_grace_yaml_respected(monkeypatch):
 
 
 def test_saturation_grace_env_overrides(monkeypatch):
-    from yadgar.server._offload import _saturation_grace_sec
+    from yadgar._shared.runtime.offload import _saturation_grace_sec
 
     monkeypatch.setenv("YADGAR_TOOL_SATURATION_GRACE_SEC", "20")
     _write_yaml("tool_saturation_grace_sec: 90\n")

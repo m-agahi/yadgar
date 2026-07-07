@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.file_queue import FileQueue
+from yadgar.core import server
+from yadgar.core.file_queue import FileQueue
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -31,8 +31,8 @@ def _profile_env(tmp_path):
     )
     real_fq = FileQueue(tmp_path)
 
-    import yadgar.server._state as _state_mod
-    import yadgar.server.lifecycle as _lifecycle_mod
+    import yadgar._shared.runtime.lifecycle as _lifecycle_mod
+    import yadgar._shared.runtime.state as _state_mod
 
     def _patched_get_fq():
         return real_fq
@@ -63,9 +63,9 @@ def _measure_substeps(real_fq) -> dict[str, list[float]]:
     """Run per-substep micro-benchmarks (n=100 each)."""
     import re as _re
 
-    import yadgar.secrets as _secrets_mod
-    import yadgar.server._state as _st
-    import yadgar.server.tools.wiki as _wt
+    import yadgar._shared.runtime.state as _st
+    import yadgar._shared.secrets as _secrets_mod
+    import yadgar.core.server.tools.wiki as _wt
 
     timings: dict[str, list[float]] = {}
 

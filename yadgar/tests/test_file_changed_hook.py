@@ -36,12 +36,12 @@ def _make_plan_file(
 
 def _run_plan_handler(plan_path, match, storage, memorize_fn=None):
     """Run _handle_plan_file with an optional fake memorize override."""
-    from yadgar.server.http import _handle_plan_file
+    from yadgar.core.server.http import _handle_plan_file
 
     if memorize_fn is not None:
         fake_srv = MagicMock()
         fake_srv.memorize = memorize_fn
-        with patch.dict(sys.modules, {"yadgar.server": fake_srv}):
+        with patch.dict(sys.modules, {"yadgar.core.server": fake_srv}):
             return asyncio.run(_handle_plan_file(str(plan_path), match, storage))
     return asyncio.run(_handle_plan_file(str(plan_path), match, storage))
 
@@ -54,7 +54,7 @@ class TestPlanFileMemorize:
 
     def test_plan_file_triggers_memorize(self, tmp_path):
         """PLAN_V5_3.md change → memorize called, response ok."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         plan_path = _make_plan_file(tmp_path, name="viz-data-fidelity.md")
         _st._plan_file_hashes.clear()
@@ -78,7 +78,7 @@ class TestPlanFileMemorize:
 
     def test_plan_file_memorize_includes_plan_tag(self, tmp_path):
         """Memorize call includes _plan tag."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         plan_path = _make_plan_file(tmp_path, name="viz-data-fidelity.md")
         _st._plan_file_hashes.clear()
@@ -105,13 +105,13 @@ class TestPlanPathFilter:
     """Only PLAN_*.md files under docs/ trigger memorize."""
 
     def test_plan_file_path_detected(self, tmp_path):
-        from yadgar.hooks.file_changed import is_plan_file_path
+        from yadgar.core.hooks.file_changed import is_plan_file_path
 
         plan_path = _make_plan_file(tmp_path)
         assert is_plan_file_path(str(plan_path)) is True
 
     def test_regular_markdown_not_detected(self, tmp_path):
-        from yadgar.hooks.file_changed import is_plan_file_path
+        from yadgar.core.hooks.file_changed import is_plan_file_path
 
         other_md = tmp_path / "docs" / "README.md"
         other_md.parent.mkdir(exist_ok=True)
@@ -119,7 +119,7 @@ class TestPlanPathFilter:
         assert is_plan_file_path(str(other_md)) is False
 
     def test_non_docs_plan_file_not_detected(self, tmp_path):
-        from yadgar.hooks.file_changed import is_plan_file_path
+        from yadgar.core.hooks.file_changed import is_plan_file_path
 
         wrong_dir = tmp_path / "other" / "plan.md"
         wrong_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -128,7 +128,7 @@ class TestPlanPathFilter:
 
     def test_archived_plan_not_detected(self, tmp_path):
         # docs/plans/archive/ holds shipped/dead plans — frozen, must NOT re-memorize.
-        from yadgar.hooks.file_changed import is_plan_file_path
+        from yadgar.core.hooks.file_changed import is_plan_file_path
 
         archived = tmp_path / "docs" / "plans" / "archive" / "PLAN_V5_3.md"
         archived.parent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +137,7 @@ class TestPlanPathFilter:
 
     def test_legacy_top_level_plan_not_detected(self, tmp_path):
         # Pre-migration docs/PLAN_*.md location is no longer the convention.
-        from yadgar.hooks.file_changed import is_plan_file_path
+        from yadgar.core.hooks.file_changed import is_plan_file_path
 
         legacy = tmp_path / "docs" / "PLAN_V5_3.md"
         legacy.parent.mkdir(parents=True, exist_ok=True)
@@ -148,7 +148,7 @@ class TestPlanPathFilter:
         """main() calls _post_file_changed for a docs/PLAN_*.md path."""
         import io
 
-        from yadgar.hooks import file_changed
+        from yadgar.core.hooks import file_changed
 
         posted = []
         monkeypatch.setattr(file_changed, "_post_file_changed", lambda *a: posted.append(a))
@@ -163,7 +163,7 @@ class TestPlanPathFilter:
         """main() does NOT post for non-PLAN markdown files."""
         import io
 
-        from yadgar.hooks import file_changed
+        from yadgar.core.hooks import file_changed
 
         posted = []
         monkeypatch.setattr(file_changed, "_post_file_changed", lambda *a: posted.append(a))
@@ -185,7 +185,7 @@ class TestPlanHashDedup:
 
     def test_unchanged_plan_skipped(self, tmp_path):
         """Second call with same content → status=skipped."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         plan_path = _make_plan_file(tmp_path, name="PLAN_V5_3.md")
         _st._plan_file_hashes.clear()
@@ -208,7 +208,7 @@ class TestPlanHashDedup:
 
     def test_changed_content_reruns_memorize(self, tmp_path):
         """Content change clears hash cache → memorize runs again."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         plan_path = _make_plan_file(tmp_path, name="PLAN_V5_3.md", content="# Version A")
         _st._plan_file_hashes.clear()
@@ -240,7 +240,7 @@ class TestInstallHooksFileChanged:
 
     def test_file_changed_registered(self, tmp_path):
         """install_hooks writes FileChanged hook to settings.json."""
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         result = install_hooks_impl(tmp_path, "global", str(tmp_path / "proj"), dry_run=True)
         preview = result["preview"]
@@ -253,7 +253,7 @@ class TestInstallHooksFileChanged:
 
     def test_file_changed_not_duplicated_on_rerun(self, tmp_path):
         """Second install_hooks call does not add duplicate FileChanged entry."""
-        from yadgar.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install_hooks_lib import install_hooks_impl
 
         r1 = install_hooks_impl(tmp_path, "global", str(tmp_path / "proj"), dry_run=True)
         preview1 = r1["preview"]

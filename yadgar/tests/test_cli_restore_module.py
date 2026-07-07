@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from yadgar.cli.restore import cmd_restore, register
+from yadgar.core.cli.restore import cmd_restore, register
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,7 +76,9 @@ class TestRegister:
 class TestCmdRestoreWithFormattedOutput:
     def test_prints_formatted_to_stdout(self, capsys):
         storage, replay = _make_storage_replay("# Context\nsome markdown")
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_restore(_make_args())
         out = capsys.readouterr().out
         assert "# Context" in out
@@ -84,20 +86,24 @@ class TestCmdRestoreWithFormattedOutput:
 
     def test_calls_replay_restore_with_directory(self):
         storage, replay = _make_storage_replay("something")
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_restore(_make_args(directory="/my/proj"))
         replay.restore.assert_called_once_with("/my/proj")
 
     def test_storage_closed_after_success(self):
         storage, replay = _make_storage_replay("text")
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_restore(_make_args())
         storage.close.assert_called_once()
 
     def test_init_called_with_db_path(self):
         storage, replay = _make_storage_replay("text")
         with patch(
-            "yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
         ) as mock_init:
             cmd_restore(_make_args(db_path="/custom.db"))
         mock_init.assert_called_once_with("/custom.db")
@@ -111,14 +117,18 @@ class TestCmdRestoreWithFormattedOutput:
 class TestCmdRestoreEmptyFormatted:
     def test_no_output_when_formatted_empty(self, capsys):
         storage, replay = _make_storage_replay("")
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_restore(_make_args())
         out = capsys.readouterr().out
         assert out == ""
 
     def test_storage_closed_even_when_empty(self):
         storage, replay = _make_storage_replay("")
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_restore(_make_args())
         storage.close.assert_called_once()
 
@@ -126,7 +136,9 @@ class TestCmdRestoreEmptyFormatted:
         storage = MagicMock()
         replay = MagicMock()
         replay.restore.return_value = {}
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             cmd_restore(_make_args())
         out = capsys.readouterr().out
         assert out == ""
@@ -142,7 +154,9 @@ class TestCmdRestoreFinally:
         storage = MagicMock()
         replay = MagicMock()
         replay.restore.side_effect = RuntimeError("boom")
-        with patch("yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)):
+        with patch(
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+        ):
             with pytest.raises(RuntimeError):
                 cmd_restore(_make_args())
         storage.close.assert_called_once()
@@ -150,7 +164,7 @@ class TestCmdRestoreFinally:
     def test_init_called_with_none_db_path_by_default(self):
         storage, replay = _make_storage_replay("ok")
         with patch(
-            "yadgar.cli._shared.init_replay_lightweight", return_value=(storage, replay)
+            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
         ) as mock_init:
             cmd_restore(_make_args(db_path=None))
         mock_init.assert_called_once_with(None)

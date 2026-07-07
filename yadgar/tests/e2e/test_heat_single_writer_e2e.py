@@ -91,7 +91,7 @@ class TestBCCSW1_HeatSingleWriterE2E:
         White-box spy: patch storage.batch_writes with wraps=real so the real DB
         write happens AND we can count/inspect calls.
         """
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         storage = e2e_engines["storage"]
         consolidation = _st._consolidation

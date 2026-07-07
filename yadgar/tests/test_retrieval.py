@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.retrieval import (
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.retrieval import (
     Retriever,
     _derive_implied_fact_passages,
     _extract_query_entities,

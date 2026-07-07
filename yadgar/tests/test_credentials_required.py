@@ -22,7 +22,7 @@ def test_storage_engine_raises_without_db_pass(monkeypatch, tmp_path):
     import importlib
 
     # Re-import storage with cleared env so the module sees the new values.
-    import yadgar.storage as _s
+    import yadgar._shared.storage as _s
 
     importlib.reload(_s)
 
@@ -39,7 +39,7 @@ def test_storage_engine_allow_root_escape_hatch(monkeypatch, tmp_path):
 
     import importlib
 
-    import yadgar.storage as _s
+    import yadgar._shared.storage as _s
 
     importlib.reload(_s)
 

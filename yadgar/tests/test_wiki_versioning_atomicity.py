@@ -42,8 +42,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.storage.migrations import _migration_013_wiki_page_version
+from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
+from yadgar.core import server
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

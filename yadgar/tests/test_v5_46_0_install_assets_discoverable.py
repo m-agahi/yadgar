@@ -7,7 +7,7 @@ Verifies:
 - top-level install_assets/ (shared-data, shipped via wheel.shared-data) has
   CLAUDE.md.fragment; anchors.yaml ships at share/.../seeds/ via per-file mapping
 
-The package-data path uses importlib.resources.files("yadgar.install_assets").
+The package-data path uses importlib.resources.files("yadgar.core.install_assets").
 The shared-data path uses top-level install_assets/ directory (repo-relative).
 """
 
@@ -22,13 +22,13 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 
 def test_package_install_assets_importable():
     """yadgar.install_assets must be importable as a package resource."""
-    pkg = files("yadgar.install_assets")
+    pkg = files("yadgar.core.install_assets")
     assert pkg is not None
 
 
 def test_package_install_assets_has_agents():
     """yadgar/install_assets/agents/ must exist with at least one template."""
-    agents_dir = Path(__file__).parent.parent / "install_assets" / "agents"
+    agents_dir = Path(__file__).parent.parent / "core" / "install_assets" / "agents"
     assert agents_dir.is_dir(), f"agents/ dir missing: {agents_dir}"
     templates = list(agents_dir.iterdir())
     assert templates, "yadgar/install_assets/agents/ is empty"
@@ -57,7 +57,9 @@ def test_package_install_assets_has_seeds():
     canonical seed materials dir yadgar/seed/materials/ (so all seed CONTENT is
     edited in one place). It ships as package data under the yadgar/ tree.
     """
-    anchors_materials = Path(__file__).parent.parent / "seed" / "materials" / "anchors.yaml"
+    anchors_materials = (
+        Path(__file__).parent.parent / "core" / "seed" / "materials" / "anchors.yaml"
+    )
     assert anchors_materials.is_file(), (
         f"anchors.yaml missing from canonical materials dir: {anchors_materials}"
     )
@@ -85,7 +87,7 @@ def test_top_level_install_assets_has_anchors_yaml():
     is edited in one place; it still ships at the historical share/ wheel
     destination via shared-data per-file mapping (see test_v5_46_10_wheel_bundle).
     """
-    anchors = REPO_ROOT / "yadgar" / "seed" / "materials" / "anchors.yaml"
+    anchors = REPO_ROOT / "yadgar" / "core" / "seed" / "materials" / "anchors.yaml"
     assert anchors.exists(), f"Missing: {anchors}"
 
 

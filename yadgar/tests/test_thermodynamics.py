@@ -5,10 +5,10 @@ from datetime import UTC, datetime, timedelta
 import numpy as np
 import pytest
 
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.storage import StorageEngine
-from yadgar.thermodynamics import MemoryThermodynamics
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.storage import StorageEngine
+from yadgar._shared.thermodynamics import MemoryThermodynamics
 
 # Detect whether the embedding model can be loaded
 _engine = EmbeddingEngine()

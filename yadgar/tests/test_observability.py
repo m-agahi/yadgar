@@ -54,7 +54,7 @@ def test_stage_timer_decorator_observe_called():
     """stage_timer from observability.timing wraps function and observes histogram."""
     from prometheus_client import CollectorRegistry, generate_latest
 
-    from yadgar.observability.timing import _make_stage_timer
+    from yadgar._shared.observability.timing import _make_stage_timer
 
     reg = CollectorRegistry()
     calls = []
@@ -98,7 +98,7 @@ def test_decorator_noop_without_prometheus_client():
 
         builtins.__import__ = fake_import
         try:
-            from yadgar.observability.timing import stage_timer  # noqa: PLC0415
+            from yadgar._shared.observability.timing import stage_timer  # noqa: PLC0415
 
             calls = []
 
@@ -140,7 +140,7 @@ def test_metrics_endpoint_returns_prometheus_format(monkeypatch):
     from starlette.routing import Route
     from starlette.testclient import TestClient
 
-    from yadgar.metrics import metrics_handler
+    from yadgar._shared.metrics import metrics_handler
 
     app = Starlette(routes=[Route("/metrics", metrics_handler, methods=["GET"])])
     client = TestClient(app, raise_server_exceptions=True)
@@ -207,7 +207,7 @@ def test_memory_stats_includes_metrics_summary(monkeypatch):
     mock_write_gate = MagicMock()
     mock_write_gate._rejection_count = 0
 
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     with (
         patch.object(_st, "_storage", mock_storage),
@@ -220,7 +220,7 @@ def test_memory_stats_includes_metrics_summary(monkeypatch):
         patch.object(_st, "_metacognition", None),
         patch.object(_st, "_consolidation", None),
     ):
-        from yadgar.server.tools.admin_other import memory_stats
+        from yadgar.core.server.tools.admin_other import memory_stats
 
         result = memory_stats()
 

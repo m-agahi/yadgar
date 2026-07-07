@@ -60,7 +60,7 @@ def _start_backend_argv(monkeypatch, tmp_path, secrets_exists: bool = True):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     daemon = YadgarDaemon()
     # Patch helper predicates
@@ -94,7 +94,7 @@ def _start_core_argv(monkeypatch, tmp_path):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     daemon = YadgarDaemon()
     daemon._container_running = lambda name: False
@@ -112,13 +112,13 @@ def _start_core_argv(monkeypatch, tmp_path):
 
 def _render_backend_unit(tmp_path) -> str:
     """Call install_systemd_service and return the backend unit content."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     service_dir = tmp_path / "systemd" / "user"
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     # Find the backend service file
@@ -230,7 +230,7 @@ def test_start_core_passes_e_flags_for_secrets(monkeypatch, tmp_path):
 
 def test_install_systemd_service_cli_does_not_crash(tmp_path, monkeypatch):
     """Bug 3: cmd_daemon install-service must not raise KeyError."""
-    import yadgar.cli.daemon as cli_mod
+    import yadgar.core.cli.daemon as cli_mod
 
     service_dir = tmp_path / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True)
@@ -254,7 +254,7 @@ def test_install_systemd_service_cli_does_not_crash(tmp_path, monkeypatch):
 
 def test_default_image_is_openfantasy():
     """Bug 4: YADGAR_IMAGE default must use docker.io/openfantasy/yadgar (not looseking)."""
-    from yadgar.config_registry import _REGISTRY
+    from yadgar._shared.config_registry import _REGISTRY
 
     entry = next(e for e in _REGISTRY if e.name == "YADGAR_IMAGE")
     assert entry.default.startswith("docker.io/openfantasy/yadgar"), (
@@ -272,7 +272,7 @@ def test_default_image_is_openfantasy():
 
 def test_default_backend_image_is_openfantasy():
     """Bug 4: YADGAR_BACKEND_IMAGE default must use docker.io/openfantasy/yadgar-backend."""
-    from yadgar.config_registry import _REGISTRY
+    from yadgar._shared.config_registry import _REGISTRY
 
     entry = next(e for e in _REGISTRY if e.name == "YADGAR_BACKEND_IMAGE")
     assert entry.default.startswith("docker.io/openfantasy/yadgar-backend"), (
@@ -292,7 +292,7 @@ def test_generated_backend_unit_uses_backend_version(tmp_path):
     """Bug 5: backend service ExecStart must use backend_version, not core version."""
     import json
 
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     # Load actual server.json to get real versions
     server_json = Path(__file__).resolve().parent.parent.parent / "server.json"
@@ -304,7 +304,7 @@ def test_generated_backend_unit_uses_backend_version(tmp_path):
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     # Read the backend service file
@@ -339,13 +339,13 @@ def test_generated_backend_unit_uses_backend_version(tmp_path):
 
 def test_generated_unit_environment_file_is_xdg_secrets_path(tmp_path):
     """Bug 6: EnvironmentFile must use XDG path ~/.config/yadgar/secrets.env."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     service_dir = tmp_path / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     # Collect all EnvironmentFile=...secrets.env lines from backend + core units
@@ -378,13 +378,13 @@ def test_generated_unit_environment_file_is_xdg_secrets_path(tmp_path):
 
 def test_generated_unit_upgrade_env_path_is_xdg_state(tmp_path):
     """Bug 7: upgrade.env EnvironmentFile must use ~/.local/state/yadgar/upgrade.env."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     service_dir = tmp_path / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     core_path = Path(result["core_service"])
@@ -414,13 +414,13 @@ def test_generated_unit_upgrade_env_path_is_xdg_state(tmp_path):
 
 def test_generated_backend_unit_is_type_notify(tmp_path):
     """Bug 8: backend unit must have Type=notify."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     service_dir = tmp_path / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     backend_path = Path(result.get("backend_service", result.get("db_service", "")))
@@ -442,13 +442,13 @@ def test_generated_backend_unit_is_type_notify(tmp_path):
 
 def test_generated_backend_unit_has_sdnotify_healthy_and_health_cmd(tmp_path):
     """Bug 8: backend unit ExecStart must include --sdnotify=healthy + --health-cmd curl."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     service_dir = tmp_path / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     backend_path = Path(result.get("backend_service", result.get("db_service", "")))
@@ -470,13 +470,13 @@ def test_generated_backend_unit_has_sdnotify_healthy_and_health_cmd(tmp_path):
 
 def test_generated_unit_filename_is_yadgar_backend_service(tmp_path):
     """Bug 9: install_systemd_service must write yadgar-backend.service (not yadgar-db.service)."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     service_dir = tmp_path / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     # backend_service key in result must point to yadgar-backend.service
@@ -500,13 +500,13 @@ def test_generated_unit_filename_is_yadgar_backend_service(tmp_path):
 
 def test_generated_backend_unit_memory_is_4g(tmp_path):
     """Bug 10: backend unit ExecStart must use --memory 4g (not 512m or any dynamic value)."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     service_dir = tmp_path / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     backend_path = Path(result.get("backend_service", result.get("db_service", "")))
@@ -525,13 +525,13 @@ def test_generated_backend_unit_memory_is_4g(tmp_path):
 
 def test_generated_unit_uses_host_bind_mount_for_data_dir(tmp_path):
     """Bug 11: backend unit must bind-mount XDG DATA_DIR, not named volume yadgar-db-data."""
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     service_dir = tmp_path / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True)
 
     daemon = YadgarDaemon()
-    with patch("yadgar.daemon.Path.home", return_value=tmp_path):
+    with patch("yadgar.core.daemon.Path.home", return_value=tmp_path):
         result = daemon.install_systemd_service()
 
     backend_path = Path(result.get("backend_service", result.get("db_service", "")))

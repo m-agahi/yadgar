@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -41,7 +41,7 @@ def _engines(tmp_path_factory):
 
 @pytest.fixture()
 def storage(_engines):
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 
@@ -111,7 +111,7 @@ def _count_archives(storage) -> int:
 
 def test_purge_respects_retention_age(storage):
     """Insert 3 archives at ages 30d/91d/180d; default 90d → only 91d+180d removed."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(storage, archived_at=_ago(30))  # younger — kept
     _insert_archive(storage, archived_at=_ago(91))  # older — purged
@@ -130,7 +130,7 @@ def test_purge_respects_retention_age(storage):
 
 def test_purge_skips_protected(storage):
     """is_protected=true archive at 180d must NOT be purged."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(storage, archived_at=_ago(180), is_protected=True)
 
@@ -148,7 +148,7 @@ def test_purge_skips_protected(storage):
 
 def test_purge_skips_anchor_tag(storage):
     """Archive tagged _anchor at 180d must NOT be purged."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(storage, archived_at=_ago(180), tags=["_anchor"])
 
@@ -166,7 +166,7 @@ def test_purge_skips_anchor_tag(storage):
 
 def test_purge_skips_legacy_anchor_no_underscore(storage):
     """Archive tagged anchor (no underscore, pre-v5.8) at 180d must NOT be purged."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(storage, archived_at=_ago(180), tags=["anchor"])
 
@@ -184,7 +184,7 @@ def test_purge_skips_legacy_anchor_no_underscore(storage):
 
 def test_purge_skips_recent_creation(storage):
     """archived_at=91d ago BUT created_at=3d ago → thrash-guard skip."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(storage, archived_at=_ago(91), created_at=_ago(3))
 
@@ -202,7 +202,7 @@ def test_purge_skips_recent_creation(storage):
 
 def test_purge_skips_migration_grace(storage):
     """migration_grace=true + valid_until future → skip."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(
         storage,
@@ -224,7 +224,7 @@ def test_purge_skips_migration_grace(storage):
 
 def test_purge_migration_grace_after_expiry(storage):
     """migration_grace=true + valid_until past → PURGED (grace expired)."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(
         storage,
@@ -246,7 +246,7 @@ def test_purge_migration_grace_after_expiry(storage):
 
 def test_circuit_breaker_caps_purge_count(storage, caplog):
     """600 eligible archives → only 500 purged + circuit_breaker_hit=True + CRITICAL."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     # Batch insert 600 eligible archives
     _BATCH = 600
@@ -285,7 +285,7 @@ def test_circuit_breaker_caps_purge_count(storage, caplog):
 
 def test_dry_run_no_delete(storage):
     """Eligible archives with dry_run=True → candidates reported, purged==0, rows intact."""
-    from yadgar.storage.ops import purge_expired_archives
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(storage, archived_at=_ago(91))
     _insert_archive(storage, archived_at=_ago(180))
@@ -304,8 +304,8 @@ def test_dry_run_no_delete(storage):
 
 def test_retention_disabled(storage, monkeypatch):
     """MEMORY_ARCHIVE_RETENTION_DAYS=0 → early return, all-zero dict."""
-    import yadgar.config as _cfg
-    from yadgar.storage.ops import purge_expired_archives
+    import yadgar._shared.config as _cfg
+    from yadgar._shared.storage.ops import purge_expired_archives
 
     _insert_archive(storage, archived_at=_ago(365))
 
@@ -339,9 +339,9 @@ def test_retention_disabled(storage, monkeypatch):
 
 def test_three_config_knobs_registered_three_way():
     """All 3 MEMORY_ARCHIVE_RETENTION_* knobs appear in Settings, registry, and FIELD_META."""
-    from yadgar.config import Settings
-    from yadgar.config_registry import list_config
-    from yadgar.config_yaml import FIELD_META
+    from yadgar._shared.config import Settings
+    from yadgar._shared.config_registry import list_config
+    from yadgar._shared.config_yaml import FIELD_META
 
     # Settings (Phase 1 added these)
     fields = Settings.model_fields
@@ -415,8 +415,8 @@ def test_nightly_cycle_invokes_purge(storage, monkeypatch):
     - purge_expired_archives was called exactly once.
     - yadgar_archive_purged_total incremented by >=3.
     """
-    import yadgar.config as _cfg
-    from yadgar.metrics import yadgar_archive_purged_total
+    import yadgar._shared.config as _cfg
+    from yadgar._shared.metrics import yadgar_archive_purged_total
 
     # Seed eligible archives
     _insert_archive(storage, archived_at=_ago(180))
@@ -442,7 +442,7 @@ def test_nightly_cycle_invokes_purge(storage, monkeypatch):
     monkeypatch.setattr(storage, "purge_expired_archives", _spy)
 
     # Build minimal consolidator with our storage
-    from yadgar.consolidation.cleanup import _CleanupMixin  # noqa: PLC0415
+    from yadgar.core.consolidation.cleanup import _CleanupMixin  # noqa: PLC0415
 
     class _FakeConsolidator(_CleanupMixin):
         def __init__(self, st, settings):
@@ -478,8 +478,8 @@ def test_metrics_emitted(storage, monkeypatch):
 
     Asserts counter deltas match result dict.
     """
-    import yadgar.config as _cfg
-    from yadgar.metrics import (
+    import yadgar._shared.config as _cfg
+    from yadgar._shared.metrics import (
         yadgar_archive_purged_total,
         yadgar_archive_retention_skipped_total,
     )
@@ -504,7 +504,7 @@ def test_metrics_emitted(storage, monkeypatch):
 
     monkeypatch.setattr(_cfg, "get_settings", _patched)
 
-    from yadgar.consolidation.cleanup import _CleanupMixin  # noqa: PLC0415
+    from yadgar.core.consolidation.cleanup import _CleanupMixin  # noqa: PLC0415
 
     class _FakeConsolidator(_CleanupMixin):
         def __init__(self, st, settings):
@@ -552,7 +552,7 @@ def test_metrics_emitted(storage, monkeypatch):
 # 14. archive_purge() default dry_run=True
 def test_archive_purge_dry_run_default(storage):
     """archive_purge() with no args: dry_run=True in result, no deletion, sample populated."""
-    from yadgar.server.tools.admin_archive import archive_purge
+    from yadgar.core.server.tools.admin_archive import archive_purge
 
     _insert_archive(storage, archived_at=_ago(180))
     _insert_archive(storage, archived_at=_ago(200))
@@ -570,7 +570,7 @@ def test_archive_purge_dry_run_default(storage):
 # 15. archive_purge(dry_run=False) performs deletion
 def test_archive_purge_explicit_run(storage):
     """archive_purge(dry_run=False): deletion occurs, purged>0, dry_run=False in result."""
-    from yadgar.server.tools.admin_archive import archive_purge
+    from yadgar.core.server.tools.admin_archive import archive_purge
 
     _insert_archive(storage, archived_at=_ago(180))
     _insert_archive(storage, archived_at=_ago(200))
@@ -585,7 +585,7 @@ def test_archive_purge_explicit_run(storage):
 # 16. retention_days override
 def test_archive_purge_retention_override(storage):
     """retention_days=40 → 45d + 91d archives purged; 30d untouched."""
-    from yadgar.server.tools.admin_archive import archive_purge
+    from yadgar.core.server.tools.admin_archive import archive_purge
 
     aid_30 = _insert_archive(storage, archived_at=_ago(30))  # kept
     _insert_archive(storage, archived_at=_ago(45))  # purged (>40d)
@@ -606,7 +606,7 @@ def test_archive_purge_retention_override(storage):
 # 17. Power gate — tool exported from server module
 def test_archive_purge_power_gated():
     """archive_purge must be accessible from the server module (power-gated pattern)."""
-    from yadgar import server
+    from yadgar.core import server
 
     assert hasattr(server, "archive_purge"), (
         "archive_purge must be exported from yadgar.server (power tool registration)"
@@ -618,7 +618,7 @@ def test_archive_purge_secret_gated(monkeypatch):
     """gate_or_reject must be called when archive_purge is invoked."""
     import importlib
 
-    _mod = importlib.import_module("yadgar.server.tools.admin_archive")
+    _mod = importlib.import_module("yadgar.core.server.tools.admin_archive")
 
     captured_calls = []
 

@@ -12,9 +12,9 @@ Covers:
 
 import pytest
 
-from yadgar import server
-from yadgar.wiki import WikiAddOptions
-from yadgar.wiki_meta import PAGE_TYPES, WIKI_SCHEMA_VERSION
+from yadgar._shared.wiki import WikiAddOptions
+from yadgar._shared.wiki_meta import PAGE_TYPES, WIKI_SCHEMA_VERSION
+from yadgar.core import server
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -306,7 +306,7 @@ class TestCatalogPageTypeGrouping:
 
     def test_typed_page_groups_by_page_type(self):
         """A page with page_type appears under its page_type key in the catalog."""
-        from yadgar.server.tools.project import _build_wiki_catalog
+        from yadgar.core.server.tools.project import _build_wiki_catalog
 
         _wiki().add(
             "Fn Example",
@@ -324,7 +324,7 @@ class TestCatalogPageTypeGrouping:
 
     def test_untyped_page_groups_by_category(self):
         """A page without page_type falls back to grouping by category."""
-        from yadgar.server.tools.project import _build_wiki_catalog
+        from yadgar.core.server.tools.project import _build_wiki_catalog
 
         _wiki().add(
             "Arch Overview",
@@ -342,7 +342,7 @@ class TestCatalogPageTypeGrouping:
 
     def test_catalog_coexists_typed_and_untyped(self):
         """Typed and untyped pages can coexist in the same catalog."""
-        from yadgar.server.tools.project import _build_wiki_catalog
+        from yadgar.core.server.tools.project import _build_wiki_catalog
 
         _wiki().add(
             "Fn Thing",

@@ -14,7 +14,7 @@ class TestInitEngramIntCast:
 
     @pytest.fixture
     def storage(self, tmp_path):
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.storage import StorageEngine
 
         engine = StorageEngine(str(tmp_path / "test.db"))
         yield engine
@@ -74,7 +74,7 @@ class TestShutdownIdempotency:
 
     def test_double_shutdown_no_exception(self, tmp_path):
         """Calling shutdown() twice must not raise."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         # Initialize a minimal engine set
         srv.init_engines(db_path=str(tmp_path / "test.db"), start_daemons=False)
@@ -86,7 +86,7 @@ class TestShutdownIdempotency:
 
     def test_shutdown_idempotent_globals_none(self, tmp_path):
         """After shutdown(), all engine globals must be None."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         srv.init_engines(db_path=str(tmp_path / "test.db"), start_daemons=False)
         srv.shutdown()
@@ -97,7 +97,7 @@ class TestShutdownIdempotency:
 
     def test_second_shutdown_is_noop(self, tmp_path):
         """Second shutdown does nothing (all globals already None)."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         srv.init_engines(db_path=str(tmp_path / "test.db"), start_daemons=False)
         srv.shutdown()
@@ -111,13 +111,13 @@ class TestFileQueueDrainerInit:
 
     def test_failed_start_leaves_file_queue_none(self, tmp_path, monkeypatch):
         """If QueueDrainer.start() raises, _file_queue must remain None."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         # Ensure _file_queue is None to start
         srv._file_queue = None
         srv._queue_drainer = None
 
-        from yadgar.file_queue import QueueDrainer
+        from yadgar.core.file_queue import QueueDrainer
 
         def failing_start(self):
             raise RuntimeError("Thread start failed")

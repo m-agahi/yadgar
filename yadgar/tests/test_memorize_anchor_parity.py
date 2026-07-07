@@ -45,12 +45,12 @@ def _build_memorize_sync_env(monkeypatch, tmp_path):
     """Set up sync (is_draining=True) environment for memorize tests."""
     import importlib
 
-    import yadgar.file_queue as _fq
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
+    import yadgar.core.file_queue as _fq
 
     monkeypatch.setattr(_fq, "is_draining", lambda: True)
     # Patch the direct reference inside memorize module (module-level import)
-    _mem_mod = importlib.import_module("yadgar.server.tools.memorize")
+    _mem_mod = importlib.import_module("yadgar.core.server.tools.memorize")
     monkeypatch.setattr(_mem_mod, "is_draining", lambda: True)
 
     mock_storage = MagicMock()
@@ -93,9 +93,9 @@ def _build_memorize_sync_env(monkeypatch, tmp_path):
     monkeypatch.setattr(_st, "_replay", None)
     monkeypatch.setattr(_st, "_rules_engine", None)
 
-    monkeypatch.setattr("yadgar.server.lifecycle._get_storage", lambda: mock_storage)
-    monkeypatch.setattr("yadgar.server.lifecycle._get_embeddings", lambda: mock_embeddings)
-    monkeypatch.setattr("yadgar.server.lifecycle._get_buffer", lambda: mock_buffer)
+    monkeypatch.setattr("yadgar._shared.runtime.lifecycle._get_storage", lambda: mock_storage)
+    monkeypatch.setattr("yadgar._shared.runtime.lifecycle._get_embeddings", lambda: mock_embeddings)
+    monkeypatch.setattr("yadgar._shared.runtime.lifecycle._get_buffer", lambda: mock_buffer)
 
     mock_settings = _make_mock_settings()
     monkeypatch.setattr(_mem_mod, "settings", mock_settings)
@@ -112,7 +112,7 @@ class TestProtectedAutoTier:
     def test_auto_sets_conditional_tier(self, monkeypatch, tmp_path):
         """memorize(is_protected=True) with no tier → tier auto-set to 'conditional'."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         # Capture the insert call to check tier
         insert_calls = []
@@ -148,7 +148,7 @@ class TestProtectedAutoTier:
     def test_provided_tier_respected(self, monkeypatch, tmp_path):
         """When tier='ephemeral' is given, it must not be overridden."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         insert_calls = []
 
@@ -188,7 +188,7 @@ class TestProtectedAutoAnchorTag:
     def test_auto_prepends_anchor_tag(self, monkeypatch, tmp_path):
         """memorize(is_protected=True) must add _anchor to tags."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         memorize(
             content="Important decision",
@@ -212,7 +212,7 @@ class TestProtectedAutoAnchorTag:
     def test_anchor_tag_not_duplicated(self, monkeypatch, tmp_path):
         """If _anchor already in tags, it must not be duplicated."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         memorize(
             content="Already anchored",
@@ -238,7 +238,7 @@ class TestProtectedReasonTag:
     def test_reason_adds_anchor_colon_tag(self, monkeypatch, tmp_path):
         """memorize(is_protected=True, reason='X') must add 'anchor:X' to tags."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         memorize(
             content="Schema choice",
@@ -260,7 +260,7 @@ class TestProtectedReasonTag:
     def test_empty_reason_no_colon_tag(self, monkeypatch, tmp_path):
         """Empty reason must not add 'anchor:' tag."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         memorize(
             content="Anchor without reason",
@@ -290,7 +290,7 @@ class TestProtectedTTLComputation:
     def test_conditional_tier_gets_90d_ttl(self, monkeypatch, tmp_path):
         """conditional tier → valid_until = now + 90d."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         insert_calls = []
 
@@ -322,7 +322,7 @@ class TestProtectedTTLComputation:
     def test_ephemeral_tier_gets_14d_ttl(self, monkeypatch, tmp_path):
         """ephemeral tier → valid_until = now + 14d."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         insert_calls = []
 
@@ -359,7 +359,7 @@ class TestSemanticImmortalRequiresReason:
         """semantic_immortal without reason must be rejected when flag is true."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
         env["settings"].ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON = True
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         result = memorize(
             content="Forever anchor",
@@ -377,7 +377,7 @@ class TestSemanticImmortalRequiresReason:
         """semantic_immortal with reason must be accepted."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
         env["settings"].ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON = True
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         result = memorize(
             content="Forever anchor with reason",
@@ -400,7 +400,7 @@ class TestUnprotectedNoDefaults:
     def test_unprotected_no_anchor_tag(self, monkeypatch, tmp_path):
         """is_protected=False must not add _anchor to tags."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         memorize(
             content="Normal non-protected memory",
@@ -427,7 +427,7 @@ class TestUnprotectedNoDefaults:
     def test_unprotected_no_tier_default(self, monkeypatch, tmp_path):
         """is_protected=False must not auto-set tier."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         insert_calls = []
 
@@ -462,11 +462,11 @@ class TestRowEquivalence:
     def test_both_produce_anchor_tag(self, monkeypatch, tmp_path):
         """Both paths must result in _anchor in tags."""
         env = _build_memorize_sync_env(monkeypatch, tmp_path)
-        import yadgar.file_queue as _fq
+        import yadgar.core.file_queue as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
-        from yadgar.server.tools.memorize import memorize
+        from yadgar.core.server.tools.memorize import memorize
 
         memorize_tags_captured = []
 

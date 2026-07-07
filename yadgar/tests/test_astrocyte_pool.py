@@ -4,11 +4,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar.astrocyte_pool import AstrocytePool
-from yadgar.config import Settings
-from yadgar.embeddings import EmbeddingEngine
-from yadgar.knowledge_graph import KnowledgeGraph
-from yadgar.thermodynamics import MemoryThermodynamics
+from yadgar._shared.astrocyte_pool import AstrocytePool
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.thermodynamics import MemoryThermodynamics
 
 
 def _hours_ago(hours: float) -> str:

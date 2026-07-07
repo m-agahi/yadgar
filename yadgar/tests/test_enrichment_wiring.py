@@ -19,9 +19,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from yadgar.config import Settings
-from yadgar.curation import MemoryCurator
-from yadgar.curation.ingestion import NewMemorySpec, insert_new_memory
+from yadgar._shared.config import Settings
+from yadgar._shared.curation import MemoryCurator
+from yadgar._shared.curation.ingestion import NewMemorySpec, insert_new_memory
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -211,7 +211,7 @@ class TestCuratorEnrichmentWiring:
         Skipped when the real pipeline raises (e.g. missing NLTK data in some
         envs) — this is a best-effort smoke test, not a hard regression gate.
         """
-        from yadgar.enrichment import EnrichmentPipeline
+        from yadgar._shared.enrichment import EnrichmentPipeline
 
         settings = _settings_logic_only()
         content = "went camping at Yellowstone last summer"
@@ -239,8 +239,8 @@ class TestDirectInsertSettings:
 
     def test_direct_insert_passes_settings(self):
         """Patch get_settings() and verify _direct_insert threads it through."""
-        from yadgar.server.tools._memorize_phases._phase_store import _direct_insert
-        from yadgar.server.tools._memorize_phases.context import MemorizeContext
+        from yadgar.core.server.tools._memorize_phases._phase_store import _direct_insert
+        from yadgar.core.server.tools._memorize_phases.context import MemorizeContext
 
         storage = _mock_storage()
         embeddings = _mock_embeddings()
@@ -268,7 +268,7 @@ class TestDirectInsertSettings:
         # get_settings`, so patch the SOURCE (yadgar.config.get_settings), not
         # the _phase_store module attr (which the local import never reads).
         with patch(
-            "yadgar.config.get_settings",
+            "yadgar._shared.config.get_settings",
             return_value=settings,
         ):
             _direct_insert(ctx, storage, embeddings, fhash=None)

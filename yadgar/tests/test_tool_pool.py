@@ -20,7 +20,7 @@ def test_pool_default_is_two():
 
     Mirrors test_hook_recall_pool.test_hook_recall_pool_is_bounded.
     """
-    from yadgar.server._offload import _pool_workers, shutdown_pool
+    from yadgar._shared.runtime.offload import _pool_workers, shutdown_pool
 
     old = os.environ.pop("YADGAR_TOOL_POOL_WORKERS", None)
     try:
@@ -37,7 +37,7 @@ def test_pool_env_override():
 
     Env-read must be live (not lru_cache-stale) so test override works.
     """
-    from yadgar.server._offload import _ensure_pool, _pool_workers, shutdown_pool
+    from yadgar._shared.runtime.offload import _ensure_pool, _pool_workers, shutdown_pool
 
     old = os.environ.get("YADGAR_TOOL_POOL_WORKERS")
     os.environ["YADGAR_TOOL_POOL_WORKERS"] = "5"
@@ -66,7 +66,7 @@ def test_pool_bounds_concurrency():
     """
     import asyncio
 
-    from yadgar.server._offload import run_offloaded, shutdown_pool
+    from yadgar._shared.runtime.offload import run_offloaded, shutdown_pool
 
     old_offload = os.environ.get("YADGAR_OFFLOAD_TOOLS")
     old_workers = os.environ.get("YADGAR_TOOL_POOL_WORKERS")

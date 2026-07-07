@@ -74,8 +74,12 @@ def _make_side_db(backend_url, filtered_path, side_path, source_counts):
 
 def _patch_p2_side_build(stack: ExitStack) -> None:
     """Patch the two surreal-touching P2 side-build seams into an ExitStack."""
-    stack.enter_context(patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}))
-    stack.enter_context(patch("yadgar.vacuum._build_and_verify_side_db", side_effect=_make_side_db))
+    stack.enter_context(
+        patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1})
+    )
+    stack.enter_context(
+        patch("yadgar.core.vacuum._build_and_verify_side_db", side_effect=_make_side_db)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +119,7 @@ class TestVacuumReadinessWait:
         monkeypatch.setattr(httpx, "post", fake_post)
         monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "test-token")
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         wait_mock = MagicMock(side_effect=health_side_effects)
 
@@ -128,11 +132,11 @@ class TestVacuumReadinessWait:
             monkeypatch.setenv("YADGAR_CLEANUP_SCRIPT", str(script))
 
             with ExitStack() as stack:
-                stack.enter_context(patch("yadgar.vacuum._log_consolidation_row"))
-                stack.enter_context(patch("yadgar.vacuum.ServiceController"))
-                stack.enter_context(patch("yadgar.vacuum._wait_for_health", return_value=True))
-                stack.enter_context(patch("yadgar.vacuum._wait_for_yadgar_health", wait_mock))
-                stack.enter_context(patch("yadgar.vacuum._redefine_users_post_import"))
+                stack.enter_context(patch("yadgar.core.vacuum._log_consolidation_row"))
+                stack.enter_context(patch("yadgar.core.vacuum.ServiceController"))
+                stack.enter_context(patch("yadgar.core.vacuum._wait_for_health", return_value=True))
+                stack.enter_context(patch("yadgar.core.vacuum._wait_for_yadgar_health", wait_mock))
+                stack.enter_context(patch("yadgar.core.vacuum._redefine_users_post_import"))
                 _patch_p2_side_build(stack)
                 result = cmd_vacuum_impl(_vacuum_args(db))
 
@@ -229,7 +233,7 @@ class TestVacuumReadinessWait:
         monkeypatch.setattr(httpx, "post", fake_post)
         monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "test-token")
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         def health_side_effect(*args, **kwargs):
             call_log.append(
@@ -246,13 +250,15 @@ class TestVacuumReadinessWait:
             monkeypatch.setenv("YADGAR_CLEANUP_SCRIPT", str(script))
 
             with ExitStack() as stack:
-                stack.enter_context(patch("yadgar.vacuum._log_consolidation_row"))
-                stack.enter_context(patch("yadgar.vacuum.ServiceController"))
-                stack.enter_context(patch("yadgar.vacuum._wait_for_health", return_value=True))
+                stack.enter_context(patch("yadgar.core.vacuum._log_consolidation_row"))
+                stack.enter_context(patch("yadgar.core.vacuum.ServiceController"))
+                stack.enter_context(patch("yadgar.core.vacuum._wait_for_health", return_value=True))
                 stack.enter_context(
-                    patch("yadgar.vacuum._wait_for_yadgar_health", side_effect=health_side_effect)
+                    patch(
+                        "yadgar.core.vacuum._wait_for_yadgar_health", side_effect=health_side_effect
+                    )
                 )
-                stack.enter_context(patch("yadgar.vacuum._redefine_users_post_import"))
+                stack.enter_context(patch("yadgar.core.vacuum._redefine_users_post_import"))
                 _patch_p2_side_build(stack)
                 cmd_vacuum_impl(_vacuum_args(db))
 

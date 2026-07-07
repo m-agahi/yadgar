@@ -43,7 +43,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SETUP_SH = REPO_ROOT / "scripts" / "install" / "yadgar-setup.sh"
-VERSION_MODULE = REPO_ROOT / "yadgar" / "cli" / "version.py"
+VERSION_MODULE = REPO_ROOT / "yadgar" / "core" / "cli" / "version.py"
 
 
 # ---------------------------------------------------------------------------

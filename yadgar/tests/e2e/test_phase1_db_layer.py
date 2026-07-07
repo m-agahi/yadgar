@@ -43,7 +43,7 @@ def _embed(e2e_engines, content: str) -> bytes:
 
 def _drain(e2e_engines) -> None:
     """Drain the file queue so memorize() writes actually land in SurrealDB."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     drainer = _st._queue_drainer
     if drainer is not None:
@@ -200,7 +200,7 @@ class TestBCA1_MemorizeRecallRoundTrip:
     """
 
     def test_memorize_recall_roundtrip(self, e2e_engines, recall_backend_bypass):
-        from yadgar.server.tools.recall import recall
+        from yadgar.core.server.tools.recall import recall
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         content = "BC-A1 unique sentinel content xbc1a1test real-memorize path"
@@ -263,7 +263,7 @@ class TestBCA2_SurpriseGateDedup:
         Seeds via insert_memory (correct: consolidation is the unit under test,
         not the write path; insert_memory bypasses the gate to guarantee two rows exist).
         """
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         storage = e2e_engines["storage"]
         yadgar_dir = e2e_engines["yadgar_dir"]
@@ -354,7 +354,7 @@ class TestBCB1_DirectoryFilter:
 
     def test_excludes_other_project(self, e2e_engines, recall_backend_bypass):
         """Memory stamped project-B MUST NOT appear in recall(directory=yadgar_dir)."""
-        from yadgar.server.tools.recall import recall
+        from yadgar.core.server.tools.recall import recall
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         other_dir = e2e_engines["other_dir"]
@@ -390,7 +390,7 @@ class TestBCB1_DirectoryFilter:
 
     def test_global_memory_included(self, e2e_engines, recall_backend_bypass):
         """Memory stamped directory_context='' (global) SHALL appear in any recall."""
-        from yadgar.server.tools.recall import recall
+        from yadgar.core.server.tools.recall import recall
 
         yadgar_dir = e2e_engines["yadgar_dir"]
 
@@ -419,8 +419,8 @@ class TestBCB2_WikiDirectoryFilter:
 
     def test_aws_wiki_excluded_from_yadgar_recall(self, e2e_engines, recall_backend_bypass):
         """A wiki page seeded with aws-dir MUST be excluded from recall(directory=yadgar_dir)."""
-        from yadgar.server.tools.recall import recall
-        from yadgar.server.tools.wiki import wiki_add
+        from yadgar.core.server.tools.recall import recall
+        from yadgar.core.server.tools.wiki import wiki_add
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         other_dir = e2e_engines["other_dir"]
@@ -473,8 +473,8 @@ class TestBCB2_WikiDirectoryFilter:
         Without this, the absence assertion above passes trivially if recall returns zero
         results for any reason (e.g. filter bug that silences everything).
         """
-        from yadgar.server.tools.recall import recall
-        from yadgar.server.tools.wiki import wiki_add
+        from yadgar.core.server.tools.recall import recall
+        from yadgar.core.server.tools.wiki import wiki_add
 
         yadgar_dir = e2e_engines["yadgar_dir"]
 
@@ -523,25 +523,25 @@ class TestBCB3_DirectoryRequired:
     """BC-B3: recall/wiki_query SHALL raise when directory is absent/empty."""
 
     def test_recall_raises_without_directory(self, e2e_engines):
-        from yadgar.server.tools.recall import recall
+        from yadgar.core.server.tools.recall import recall
 
         with pytest.raises(ValueError, match="directory"):
             recall("test query", directory=None)
 
     def test_recall_raises_with_empty_directory(self, e2e_engines):
-        from yadgar.server.tools.recall import recall
+        from yadgar.core.server.tools.recall import recall
 
         with pytest.raises(ValueError, match="directory"):
             recall("test query", directory="")
 
     def test_wiki_query_raises_without_directory(self, e2e_engines):
-        from yadgar.server.tools.wiki import wiki_query
+        from yadgar.core.server.tools.wiki import wiki_query
 
         with pytest.raises(ValueError, match="directory"):
             wiki_query("test query", directory=None)
 
     def test_wiki_query_raises_with_empty_directory(self, e2e_engines):
-        from yadgar.server.tools.wiki import wiki_query
+        from yadgar.core.server.tools.wiki import wiki_query
 
         with pytest.raises(ValueError, match="directory"):
             wiki_query("test query", directory="")
@@ -552,7 +552,7 @@ class TestBCB4_SystemTagExcluded:
 
     def test_system_memory_not_returned(self, e2e_engines, recall_backend_bypass):
         """A memory stamped directory_context='system' must not appear in user recall."""
-        from yadgar.server.tools.recall import recall
+        from yadgar.core.server.tools.recall import recall
 
         yadgar_dir = e2e_engines["yadgar_dir"]
 
@@ -589,7 +589,7 @@ class TestBCB5_ProfileRecallSurfaces:
     """
 
     def test_profile_appears_in_recall(self, e2e_engines, recall_backend_bypass):
-        from yadgar.server.tools.recall import recall
+        from yadgar.core.server.tools.recall import recall
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
@@ -636,8 +636,8 @@ class TestBCC1_ConsolidationRuns:
     """BC-C1: consolidation cycle SHALL run to completion with 0 invariant violations."""
 
     def test_consolidation_completes_no_violations(self, e2e_engines):
-        import yadgar.server._state as _st
-        from yadgar.server.tools.admin_invariants import check_invariants
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.tools.admin_invariants import check_invariants
 
         yadgar_dir = e2e_engines["yadgar_dir"]
 
@@ -671,7 +671,7 @@ class TestBCC2_HeatDecay:
 
     def test_heat_decay_lowers_heat(self, e2e_engines):
         """A memory with last_accessed far in the past must have heat lowered by decay."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
@@ -699,8 +699,8 @@ class TestBCC2_HeatDecay:
 
     def test_cold_memory_archived(self, e2e_engines):
         """A memory below cold_threshold after decay SHALL have heat set to 0.0 (archived marker)."""
-        import yadgar.server._state as _st
-        from yadgar.config import get_settings
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.config import get_settings
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
@@ -742,7 +742,7 @@ class TestBCC3_PurgeAndSpare:
 
     def test_old_unaccessed_purged(self, e2e_engines):
         """An old, unaccessed, derived/auto-abstracted memory SHALL be purged."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
@@ -776,7 +776,7 @@ class TestBCC3_PurgeAndSpare:
 
     def test_recently_accessed_spared(self, e2e_engines):
         """A recently-accessed memory SHALL be spared from purge."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
@@ -802,7 +802,7 @@ class TestBCC3_PurgeAndSpare:
 
     def test_protected_always_spared(self, e2e_engines):
         """Protected/_anchor memory SHALL always be spared regardless of heat/age."""
-        import yadgar.server._state as _st
+        import yadgar._shared.runtime.state as _st
 
         yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
@@ -838,9 +838,9 @@ class TestBCCK1_CheckpointRestore:
 
     def test_checkpoint_restore_roundtrip(self, e2e_engines):
         """checkpoint() + restore() must return the captured fields."""
-        from yadgar.config import Settings
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.restoration import CheckpointContext, CheckpointRestore
+        from yadgar._shared.config import Settings
+        from yadgar._shared.embeddings import EmbeddingEngine
+        from yadgar._shared.restoration import CheckpointContext, CheckpointRestore
 
         storage = e2e_engines["storage"]
         yadgar_dir = e2e_engines["yadgar_dir"]
@@ -881,7 +881,7 @@ class TestBCADM1_ReembedAll:
     """BC-ADM1: reembed_all SHALL re-embed every memory missing an embedding."""
 
     def test_reembed_fills_missing_embeddings(self, e2e_engines):
-        from yadgar.server.tools.admin_other import reembed_all
+        from yadgar.core.server.tools.admin_other import reembed_all
 
         storage = e2e_engines["storage"]
         yadgar_dir = e2e_engines["yadgar_dir"]

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from yadgar.retrieval._reranking_mmr import _MMRMixin
+from yadgar._shared.retrieval._reranking_mmr import _MMRMixin
 
 # ---------------------------------------------------------------------------
 # Stub class

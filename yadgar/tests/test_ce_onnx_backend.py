@@ -66,7 +66,7 @@ requires_ce_weights = pytest.mark.skipif(
 class TestCeBackendConfig:
     def test_ce_backend_default_is_st(self):
         """Settings().CROSS_ENCODER_BACKEND defaults to 'st' (fp32 unchanged)."""
-        from yadgar.config import Settings
+        from yadgar._shared.config import Settings
 
         assert Settings().CROSS_ENCODER_BACKEND == "st"
 
@@ -149,7 +149,7 @@ class TestCeOnnxBackendLoads:
         with (
             patch("yadgar.backend.ml_client.time") as mock_time,
             patch("yadgar.backend.ml_client._record_model_load"),
-            patch("yadgar.exception_telemetry.record_exception"),
+            patch("yadgar._shared.exception_telemetry.record_exception"),
             patch.dict("sys.modules", {"sentence_transformers": mock_st}),
         ):
             mock_time.monotonic.return_value = 0.0

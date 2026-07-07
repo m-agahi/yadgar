@@ -9,7 +9,7 @@ Coverage targets:
 
 from __future__ import annotations
 
-from yadgar.seed._generate import (
+from yadgar.core.seed._generate import (
     _HEAT_BY_TYPE,
     _PROJECT_INIT_CAP,
     _delete_existing_seed_memories,

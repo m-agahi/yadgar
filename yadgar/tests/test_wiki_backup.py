@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from yadgar.scripts.wiki_snapshot import prune_old_snapshots, snapshot_wiki_pages
+from yadgar.core.scripts.wiki_snapshot import prune_old_snapshots, snapshot_wiki_pages
 
 
 @pytest.fixture()

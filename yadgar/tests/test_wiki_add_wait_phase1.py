@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar.file_queue import FileQueue, QueueDrainer
+from yadgar.core.file_queue import FileQueue, QueueDrainer
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

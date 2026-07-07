@@ -44,8 +44,8 @@ def _insert_wiki(title: str, content: str) -> str:
 
     Returns the slug (as computed by WikiStore._slugify).
     """
-    from yadgar.server import _state as _st
-    from yadgar.wiki import WikiAddOptions
+    from yadgar._shared.runtime import state as _st
+    from yadgar._shared.wiki import WikiAddOptions
 
     assert _st._wiki is not None, "WikiStore must be initialized in e2e_engines"
     opts = WikiAddOptions(
@@ -73,12 +73,12 @@ def _run_recall(
     """Run recall MCP tool with UNIFIED_RECALL_ENABLED=True."""
     import sys
 
-    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-    _rm = sys.modules.get("yadgar.server.tools.recall")
+    _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
-        import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+        import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
     recall_fn = _rm.recall
     return recall_fn(
@@ -201,18 +201,18 @@ class TestTypeParamE2E:
         # memories and perturb the fan-out call's ranking.
         import sys
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         # Monkey-patch storage.update_memory_heat to a no-op for parity measurement
         monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
         monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
 
-        _rm = sys.modules.get("yadgar.server.tools.recall")
+        _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
-            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+            import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
-        from yadgar.server import _state as _st
+        from yadgar._shared.runtime import state as _st
 
         assert _st._retriever is not None, "Retriever must be initialized for order parity test"
 
@@ -327,12 +327,12 @@ class TestTypeParamE2E:
         """
         import sys
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-        _rm = sys.modules.get("yadgar.server.tools.recall")
+        _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
-            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+            import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
         recall_fn = _rm.recall
         with pytest.raises(ValueError, match="invalid"):
@@ -391,18 +391,18 @@ class TestTypeParamE2E:
 
         import sys
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         # Freeze heat updates to prevent the oracle call from perturbing the fanout call.
         monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
         monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
 
-        _rm = sys.modules.get("yadgar.server.tools.recall")
+        _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
-            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+            import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
-        from yadgar.server import _state as _st
+        from yadgar._shared.runtime import state as _st
 
         assert _st._retriever is not None, "Retriever must be initialized for order parity test"
 
@@ -496,12 +496,12 @@ class TestTypeParamE2E:
 
         import sys
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
         monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
 
-        from yadgar.server import _state as _st
+        from yadgar._shared.runtime import state as _st
 
         assert _st._retriever is not None, "Retriever must be initialized for order parity test"
 
@@ -520,9 +520,9 @@ class TestTypeParamE2E:
                 f"(got {legacy_mem_ids}); cannot assert order"
             )
 
-        _rm = sys.modules.get("yadgar.server.tools.recall")
+        _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
-            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+            import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
         # Force the wiki pool EMPTY for the type="all" call: with _st._wiki=None,
         # WikiProvider is never constructed and wiki_candidates stays [] →
@@ -569,16 +569,16 @@ class TestTypeParamE2E:
             content=f"wiki query alias test {unique}",
         )
 
-        monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-        _rm = sys.modules.get("yadgar.server.tools.recall")
+        _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
-            import yadgar.server.tools.recall as _rm  # type: ignore[no-redef]
+            import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
-        _wm = sys.modules.get("yadgar.server.tools.wiki")
+        _wm = sys.modules.get("yadgar.core.server.tools.wiki")
         if _wm is None:
-            import yadgar.server.tools.wiki as _wm  # type: ignore[no-redef]
+            import yadgar.core.server.tools.wiki as _wm  # type: ignore[no-redef]
 
         try:
             recall_fn = _rm.recall

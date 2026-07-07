@@ -31,13 +31,13 @@ def _has_span(fn) -> bool:
 
 
 def test_daemon_start_sentinel():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     assert _has_span(YadgarDaemon.start)
 
 
 def test_daemon_container_running_sentinel():
-    from yadgar.daemon import YadgarDaemon
+    from yadgar.core.daemon import YadgarDaemon
 
     assert _has_span(YadgarDaemon._container_running)
 
@@ -48,13 +48,13 @@ def test_daemon_container_running_sentinel():
 
 
 def test_embeddings_encode_query_sentinel():
-    from yadgar.embeddings import EmbeddingEngine
+    from yadgar._shared.embeddings import EmbeddingEngine
 
     assert _has_span(EmbeddingEngine.encode_query)
 
 
 def test_embeddings_similarity_sentinel():
-    from yadgar.embeddings import EmbeddingEngine
+    from yadgar._shared.embeddings import EmbeddingEngine
 
     assert _has_span(EmbeddingEngine.similarity)
 
@@ -65,7 +65,7 @@ def test_embeddings_similarity_sentinel():
 
 
 def test_remote_embeddings_encode_sentinel():
-    from yadgar.remote_embeddings import RemoteEmbeddingEngine
+    from yadgar._shared.remote_embeddings import RemoteEmbeddingEngine
 
     assert _has_span(RemoteEmbeddingEngine.encode)
 
@@ -76,13 +76,13 @@ def test_remote_embeddings_encode_sentinel():
 
 
 def test_rules_engine_add_rule_sentinel():
-    from yadgar.rules_engine import RulesEngine
+    from yadgar._shared.rules_engine import RulesEngine
 
     assert _has_span(RulesEngine.add_rule)
 
 
 def test_rules_engine_apply_rules_sentinel():
-    from yadgar.rules_engine import RulesEngine
+    from yadgar._shared.rules_engine import RulesEngine
 
     assert _has_span(RulesEngine.apply_rules)
 
@@ -93,7 +93,7 @@ def test_rules_engine_apply_rules_sentinel():
 
 
 def test_config_resolve_knob_sentinel():
-    from yadgar.config import resolve_knob
+    from yadgar._shared.config import resolve_knob
 
     assert _has_span(resolve_knob)
 
@@ -104,13 +104,13 @@ def test_config_resolve_knob_sentinel():
 
 
 def test_config_yaml_cmd_config_init_sentinel():
-    from yadgar.config_yaml import cmd_config_init
+    from yadgar._shared.config_yaml import cmd_config_init
 
     assert _has_span(cmd_config_init)
 
 
 def test_config_yaml_set_config_value_sentinel():
-    from yadgar.config_yaml import set_config_value
+    from yadgar._shared.config_yaml import set_config_value
 
     assert _has_span(set_config_value)
 
@@ -121,7 +121,7 @@ def test_config_yaml_set_config_value_sentinel():
 
 
 def test_config_registry_emit_startup_log_sentinel():
-    from yadgar.config_registry import emit_startup_config_log
+    from yadgar._shared.config_registry import emit_startup_config_log
 
     assert _has_span(emit_startup_config_log)
 
@@ -132,7 +132,7 @@ def test_config_registry_emit_startup_log_sentinel():
 
 
 def test_config_sync_cmd_sentinel():
-    from yadgar.config_sync import cmd_config_sync
+    from yadgar._shared.config_sync import cmd_config_sync
 
     assert _has_span(cmd_config_sync)
 
@@ -149,7 +149,7 @@ def test_config_sync_cmd_sentinel():
 
 
 def test_log_config_configure_logging_not_observed():
-    from yadgar.log_config import configure_logging
+    from yadgar._shared.log_config import configure_logging
 
     assert not _has_span(configure_logging), (
         "configure_logging must not be @observe'd — log-emission path span→log→span flood (v5.106)"
@@ -157,7 +157,7 @@ def test_log_config_configure_logging_not_observed():
 
 
 def test_log_config_is_sensitive_not_observed():
-    from yadgar.log_config import _is_sensitive
+    from yadgar._shared.log_config import _is_sensitive
 
     assert not _has_span(_is_sensitive), (
         "_is_sensitive must not be @observe'd — log-emission path span→log→span flood (v5.106)"
@@ -170,7 +170,7 @@ def test_log_config_is_sensitive_not_observed():
 
 
 def test_restoration_anchor_memory_sentinel():
-    from yadgar.restoration import CheckpointRestore
+    from yadgar._shared.restoration import CheckpointRestore
 
     assert _has_span(CheckpointRestore.anchor_memory)
 
@@ -181,7 +181,7 @@ def test_restoration_anchor_memory_sentinel():
 
 
 def test_staleness_scan_directory_sentinel():
-    from yadgar.staleness import StalenessDetector
+    from yadgar._shared.staleness import StalenessDetector
 
     assert _has_span(StalenessDetector.scan_directory)
 
@@ -192,7 +192,7 @@ def test_staleness_scan_directory_sentinel():
 
 
 def test_narrative_generate_narrative_sentinel():
-    from yadgar.narrative import NarrativeEngine
+    from yadgar._shared.narrative import NarrativeEngine
 
     assert _has_span(NarrativeEngine.generate_narrative)
 
@@ -203,7 +203,7 @@ def test_narrative_generate_narrative_sentinel():
 
 
 def test_conflict_resolver_resolve_sentinel():
-    from yadgar.conflict_resolver import resolve_conflict
+    from yadgar.core.conflict_resolver import resolve_conflict
 
     assert _has_span(resolve_conflict)
 
@@ -214,7 +214,7 @@ def test_conflict_resolver_resolve_sentinel():
 
 
 def test_prospective_create_trigger_sentinel():
-    from yadgar.prospective import ProspectiveMemoryEngine
+    from yadgar._shared.prospective import ProspectiveMemoryEngine
 
     assert _has_span(ProspectiveMemoryEngine.create_trigger)
 
@@ -225,7 +225,7 @@ def test_prospective_create_trigger_sentinel():
 
 
 def test_thermodynamics_compute_surprise_sentinel():
-    from yadgar.thermodynamics import MemoryThermodynamics
+    from yadgar._shared.thermodynamics import MemoryThermodynamics
 
     assert _has_span(MemoryThermodynamics.compute_surprise)
 
@@ -236,7 +236,7 @@ def test_thermodynamics_compute_surprise_sentinel():
 
 
 def test_sensory_buffer_capture_sentinel():
-    from yadgar.sensory_buffer import ActionLogger
+    from yadgar._shared.sensory_buffer import ActionLogger
 
     assert _has_span(ActionLogger.capture)
 
@@ -247,7 +247,7 @@ def test_sensory_buffer_capture_sentinel():
 
 
 def test_auth_middleware_is_protected_sentinel():
-    from yadgar.auth_middleware import _is_protected
+    from yadgar.core.auth_middleware import _is_protected
 
     assert _has_span(_is_protected)
 
@@ -258,7 +258,7 @@ def test_auth_middleware_is_protected_sentinel():
 
 
 def test_rate_limit_allow_sentinel():
-    from yadgar.rate_limit import TokenBucketRateLimiter
+    from yadgar._shared.rate_limit import TokenBucketRateLimiter
 
     assert _has_span(TokenBucketRateLimiter.allow)
 
@@ -269,7 +269,7 @@ def test_rate_limit_allow_sentinel():
 
 
 def test_sensitive_lock_acquire_sentinel():
-    from yadgar.sensitive_lock import acquire
+    from yadgar.core.sensitive_lock import acquire
 
     assert _has_span(acquire)
 
@@ -280,7 +280,7 @@ def test_sensitive_lock_acquire_sentinel():
 
 
 def test_secrets_gate_or_reject_sentinel():
-    from yadgar.secrets import gate_or_reject
+    from yadgar._shared.secrets import gate_or_reject
 
     assert _has_span(gate_or_reject)
 
@@ -291,7 +291,7 @@ def test_secrets_gate_or_reject_sentinel():
 
 
 def test_ops_detect_service_mode_sentinel():
-    from yadgar.ops import detect_service_mode
+    from yadgar.core.ops import detect_service_mode
 
     assert _has_span(detect_service_mode)
 
@@ -302,7 +302,7 @@ def test_ops_detect_service_mode_sentinel():
 
 
 def test_backup_create_snapshot_sentinel():
-    from yadgar.backup import create_snapshot
+    from yadgar.core.backup import create_snapshot
 
     assert _has_span(create_snapshot)
 
@@ -313,7 +313,7 @@ def test_backup_create_snapshot_sentinel():
 
 
 def test_drain_drain_in_flight_requests_sentinel():
-    from yadgar.drain import drain_in_flight_requests
+    from yadgar.core.drain import drain_in_flight_requests
 
     assert _has_span(drain_in_flight_requests)
 
@@ -324,7 +324,7 @@ def test_drain_drain_in_flight_requests_sentinel():
 
 
 def test_paths_data_dir_sentinel():
-    from yadgar.paths import _data_dir
+    from yadgar._shared.paths import _data_dir
 
     assert _has_span(_data_dir)
 
@@ -335,7 +335,7 @@ def test_paths_data_dir_sentinel():
 
 
 def test_platform_paths_get_claude_config_dir_sentinel():
-    from yadgar.platform_paths import get_claude_config_dir
+    from yadgar._shared.platform_paths import get_claude_config_dir
 
     assert _has_span(get_claude_config_dir)
 
@@ -346,7 +346,7 @@ def test_platform_paths_get_claude_config_dir_sentinel():
 
 
 def test_install_hooks_impl_sentinel():
-    from yadgar.install_hooks_lib import install_hooks_impl
+    from yadgar.core.install_hooks_lib import install_hooks_impl
 
     assert _has_span(install_hooks_impl)
 
@@ -357,7 +357,7 @@ def test_install_hooks_impl_sentinel():
 
 
 def test_install_subagents_impl_sentinel():
-    from yadgar.install_subagents_lib import install_subagents_impl
+    from yadgar.core.install_subagents_lib import install_subagents_impl
 
     assert _has_span(install_subagents_impl)
 
@@ -376,7 +376,7 @@ def test_exception_telemetry_record_exception_sentinel():
     which asserts exactly ONE span). So it is a categorized no-op exempt — the
     coverage lint counts a non-empty @observe(exempt=...) reason as satisfied.
     """
-    from yadgar.exception_telemetry import record_exception
+    from yadgar._shared.exception_telemetry import record_exception
 
     assert not _has_span(record_exception), "record_exception must not open its own span"
     reason = getattr(record_exception, "_yadgar_observe_exempt", None)
@@ -391,7 +391,7 @@ def test_exception_telemetry_record_exception_sentinel():
 
 
 def test_sanitize_log_field_sentinel():
-    from yadgar.sanitize import sanitize_log_field
+    from yadgar.core.sanitize import sanitize_log_field
 
     assert _has_span(sanitize_log_field)
 
@@ -402,7 +402,7 @@ def test_sanitize_log_field_sentinel():
 
 
 def test_sd_notify_sentinel():
-    from yadgar.sd_notify import notify
+    from yadgar.core.sd_notify import notify
 
     assert _has_span(notify)
 
@@ -413,7 +413,7 @@ def test_sd_notify_sentinel():
 
 
 def test_models_indent_continuation_sentinel():
-    from yadgar.models import _indent_continuation
+    from yadgar._shared.models import _indent_continuation
 
     assert _has_span(_indent_continuation)
 
@@ -424,12 +424,12 @@ def test_models_indent_continuation_sentinel():
 
 
 def test_surreal_runner_spawn_surreal_sentinel():
-    from yadgar._surreal_runner import spawn_surreal
+    from yadgar.core._surreal_runner import spawn_surreal
 
     assert _has_span(spawn_surreal)
 
 
 def test_surreal_runner_allocate_port_sentinel():
-    from yadgar._surreal_runner import allocate_port
+    from yadgar.core._surreal_runner import allocate_port
 
     assert _has_span(allocate_port)

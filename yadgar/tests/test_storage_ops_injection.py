@@ -10,7 +10,7 @@ Covers:
 
 import pytest
 
-from yadgar.storage import StorageEngine
+from yadgar._shared.storage import StorageEngine
 
 
 @pytest.fixture

@@ -24,8 +24,8 @@ def _make_client(token: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "1")
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", token)
 
-    from yadgar import server as _server
-    from yadgar.auth_middleware import BearerAuthMiddleware
+    from yadgar.core import server as _server
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     asgi_app = _server.mcp_server.streamable_http_app()
     return TestClient(BearerAuthMiddleware(asgi_app), raise_server_exceptions=False)
@@ -34,7 +34,7 @@ def _make_client(token: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("v579_smart_sessionstart")
-    from yadgar import server
+    from yadgar.core import server
 
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
@@ -73,7 +73,7 @@ class TestSourceCompact:
     def test_compact_no_restore_hint_without_checkpoint(self, tmp_path, monkeypatch):
         """source=compact + no checkpoint → text has compact-specific copy, NO restore hint."""
         token = "tok-compact-1"
-        from yadgar import server as _srv
+        from yadgar.core import server as _srv
 
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             client = _make_client(token, monkeypatch)
@@ -86,11 +86,11 @@ class TestSourceCompact:
 
     def test_compact_no_restore_hint_with_checkpoint(self, tmp_path, monkeypatch):
         """source=compact + checkpoint present → compact handler owns restore; no hint emitted."""
-        from yadgar import server as _srv
-        from yadgar.config import Settings
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.restoration import CheckpointContext, CheckpointRestore
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.config import Settings
+        from yadgar._shared.embeddings import EmbeddingEngine
+        from yadgar._shared.restoration import CheckpointContext, CheckpointRestore
+        from yadgar._shared.storage import StorageEngine
+        from yadgar.core import server as _srv
 
         storage = StorageEngine(str(tmp_path / "cp.db"))
         settings = Settings(DB_PATH=str(storage._db_path))
@@ -102,7 +102,7 @@ class TestSourceCompact:
         token = "tok-compact-2"
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             with patch(
-                "yadgar.server.lifecycle._get_storage",
+                "yadgar._shared.runtime.lifecycle._get_storage",
                 return_value=StorageEngine(str(tmp_path / "cp.db")),
             ):
                 client = _make_client(token, monkeypatch)
@@ -116,7 +116,7 @@ class TestSourceCompact:
     def test_compact_text_mentions_compaction(self, tmp_path, monkeypatch):
         """source=compact → emitted text mentions compaction context."""
         token = "tok-compact-3"
-        from yadgar import server as _srv
+        from yadgar.core import server as _srv
 
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             client = _make_client(token, monkeypatch)
@@ -136,11 +136,11 @@ class TestSourceCompact:
 class TestSourceClear:
     def test_clear_restore_hint_when_checkpoint_exists(self, tmp_path, monkeypatch):
         """source=clear + checkpoint → hint present (user may want to restore)."""
-        from yadgar import server as _srv
-        from yadgar.config import Settings
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.restoration import CheckpointContext, CheckpointRestore
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.config import Settings
+        from yadgar._shared.embeddings import EmbeddingEngine
+        from yadgar._shared.restoration import CheckpointContext, CheckpointRestore
+        from yadgar._shared.storage import StorageEngine
+        from yadgar.core import server as _srv
 
         storage = StorageEngine(str(tmp_path / "cp2.db"))
         settings = Settings(DB_PATH=str(storage._db_path))
@@ -152,7 +152,7 @@ class TestSourceClear:
         token = "tok-clear-1"
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             with patch(
-                "yadgar.server.lifecycle._get_storage",
+                "yadgar._shared.runtime.lifecycle._get_storage",
                 return_value=StorageEngine(str(tmp_path / "cp2.db")),
             ):
                 client = _make_client(token, monkeypatch)
@@ -167,7 +167,7 @@ class TestSourceClear:
     def test_clear_copy_mentions_cleared(self, tmp_path, monkeypatch):
         """source=clear → hint copy mentions 'cleared' or 'clear'."""
         token = "tok-clear-2"
-        from yadgar import server as _srv
+        from yadgar.core import server as _srv
 
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             client = _make_client(token, monkeypatch)
@@ -184,11 +184,11 @@ class TestSourceClear:
 class TestSourceStartup:
     def test_startup_restore_hint_when_checkpoint_exists(self, tmp_path, monkeypatch):
         """source=startup + checkpoint → restore hint present."""
-        from yadgar import server as _srv
-        from yadgar.config import Settings
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.restoration import CheckpointContext, CheckpointRestore
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.config import Settings
+        from yadgar._shared.embeddings import EmbeddingEngine
+        from yadgar._shared.restoration import CheckpointContext, CheckpointRestore
+        from yadgar._shared.storage import StorageEngine
+        from yadgar.core import server as _srv
 
         storage = StorageEngine(str(tmp_path / "cp3.db"))
         settings = Settings(DB_PATH=str(storage._db_path))
@@ -200,7 +200,7 @@ class TestSourceStartup:
         token = "tok-startup-1"
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             with patch(
-                "yadgar.server.lifecycle._get_storage",
+                "yadgar._shared.runtime.lifecycle._get_storage",
                 return_value=StorageEngine(str(tmp_path / "cp3.db")),
             ):
                 client = _make_client(token, monkeypatch)
@@ -215,7 +215,7 @@ class TestSourceStartup:
     def test_startup_copy_mentions_starting(self, tmp_path, monkeypatch):
         """source=startup → hint copy mentions 'starting' or 'startup'."""
         token = "tok-startup-2"
-        from yadgar import server as _srv
+        from yadgar.core import server as _srv
 
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             client = _make_client(token, monkeypatch)
@@ -232,11 +232,11 @@ class TestSourceStartup:
 class TestSourceResume:
     def test_resume_restore_hint_when_checkpoint_exists(self, tmp_path, monkeypatch):
         """source=resume + checkpoint → restore hint present."""
-        from yadgar import server as _srv
-        from yadgar.config import Settings
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.restoration import CheckpointContext, CheckpointRestore
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.config import Settings
+        from yadgar._shared.embeddings import EmbeddingEngine
+        from yadgar._shared.restoration import CheckpointContext, CheckpointRestore
+        from yadgar._shared.storage import StorageEngine
+        from yadgar.core import server as _srv
 
         storage = StorageEngine(str(tmp_path / "cp4.db"))
         settings = Settings(DB_PATH=str(storage._db_path))
@@ -248,7 +248,7 @@ class TestSourceResume:
         token = "tok-resume-1"
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             with patch(
-                "yadgar.server.lifecycle._get_storage",
+                "yadgar._shared.runtime.lifecycle._get_storage",
                 return_value=StorageEngine(str(tmp_path / "cp4.db")),
             ):
                 client = _make_client(token, monkeypatch)
@@ -263,7 +263,7 @@ class TestSourceResume:
     def test_resume_copy_mentions_resuming(self, tmp_path, monkeypatch):
         """source=resume → hint copy mentions 'resum'."""
         token = "tok-resume-2"
-        from yadgar import server as _srv
+        from yadgar.core import server as _srv
 
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             client = _make_client(token, monkeypatch)
@@ -280,11 +280,11 @@ class TestSourceResume:
 class TestSourceMissing:
     def test_missing_source_restore_hint_when_checkpoint(self, tmp_path, monkeypatch):
         """No source param + checkpoint → restore hint present (treated as startup)."""
-        from yadgar import server as _srv
-        from yadgar.config import Settings
-        from yadgar.embeddings import EmbeddingEngine
-        from yadgar.restoration import CheckpointContext, CheckpointRestore
-        from yadgar.storage import StorageEngine
+        from yadgar._shared.config import Settings
+        from yadgar._shared.embeddings import EmbeddingEngine
+        from yadgar._shared.restoration import CheckpointContext, CheckpointRestore
+        from yadgar._shared.storage import StorageEngine
+        from yadgar.core import server as _srv
 
         storage = StorageEngine(str(tmp_path / "cp5.db"))
         settings = Settings(DB_PATH=str(storage._db_path))
@@ -296,7 +296,7 @@ class TestSourceMissing:
         token = "tok-missing-1"
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             with patch(
-                "yadgar.server.lifecycle._get_storage",
+                "yadgar._shared.runtime.lifecycle._get_storage",
                 return_value=StorageEngine(str(tmp_path / "cp5.db")),
             ):
                 client = _make_client(token, monkeypatch)
@@ -311,7 +311,7 @@ class TestSourceMissing:
     def test_missing_source_not_compact(self, tmp_path, monkeypatch):
         """Missing source must NOT trigger compact suppression."""
         token = "tok-missing-2"
-        from yadgar import server as _srv
+        from yadgar.core import server as _srv
 
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             client = _make_client(token, monkeypatch)
@@ -346,7 +346,7 @@ class TestHookRunnerSourcePropagation:
 
         # Import hook_runner and patch its _http_get
 
-        import yadgar.scripts.hook_runner as hr
+        import yadgar.core.scripts.hook_runner as hr
 
         monkeypatch.setattr(hr, "_http_get", _fake_get)
 
@@ -372,7 +372,7 @@ class TestHookRunnerSourcePropagation:
             captured_url["params"] = params or {}
             return {"text": ""}
 
-        import yadgar.scripts.hook_runner as hr
+        import yadgar.core.scripts.hook_runner as hr
 
         monkeypatch.setattr(hr, "_http_get", _fake_get)
 
@@ -400,7 +400,7 @@ class TestHookRunnerSourcePropagation:
             captured_url["params"] = params or {}
             return {"text": ""}
 
-        import yadgar.scripts.hook_runner as hr
+        import yadgar.core.scripts.hook_runner as hr
 
         monkeypatch.setattr(hr, "_http_get", _fake_get)
 
@@ -421,7 +421,7 @@ class TestUnknownSource:
     def test_unknown_source_treated_as_startup(self, tmp_path, monkeypatch):
         """Unknown source value (e.g. 'magic') must not crash and behaves as startup."""
         token = "tok-unknown-1"
-        from yadgar import server as _srv
+        from yadgar.core import server as _srv
 
         with patch.object(_srv, "project_brief", return_value=_MOCK_BRIEF):
             client = _make_client(token, monkeypatch)

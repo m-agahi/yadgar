@@ -28,7 +28,7 @@ _PAYLOAD = {
 
 def _make_storage(db_url: str = "http://localhost:8000") -> object:
     """Return a real StorageEngine instance stub with _db_url set, no actual DB."""
-    from yadgar.storage import StorageEngine
+    from yadgar._shared.storage import StorageEngine
 
     s = object.__new__(StorageEngine)
     s._db_url = db_url  # type: ignore[attr-defined]

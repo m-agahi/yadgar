@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from yadgar.models import (
+from yadgar._shared.models import (
     ADR,
     AstrocyteProcess,
     CausalDAGEdge,

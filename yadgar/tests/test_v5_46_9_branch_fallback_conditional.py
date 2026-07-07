@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -47,7 +47,7 @@ class TestF1BranchFallbackConditional:
     def test_env_var_absent_detect_none_hard_rejects(self, monkeypatch):
         """No YADGAR_CI_BRANCH env + detect_branch=None → missing_branch error."""
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = server.memorize(
                 content="F1 test — env absent, detect=None",
                 context="/tmp/no-git",
@@ -89,7 +89,7 @@ class TestF1BranchFallbackConditional:
                 "YADGAR_CI_BRANCH set in environment — F1 env-fallback active. "
                 "Fix is test-side (monkeypatch.delenv in reject tests)."
             )
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = server.memorize(
                 content="F1 test — env absent (local dev), detect=None",
                 context="/tmp/no-git",
@@ -103,8 +103,8 @@ class TestF1BranchFallbackConditional:
         """No YADGAR_CI_BRANCH env + detect_branch='feat/ok' → stored=True."""
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
         # Simulate draining path (sync write) so memorize returns id
-        monkeypatch.setattr("yadgar.file_queue._drain_local.active", True, raising=False)
-        with patch("yadgar.server._detect_branch", return_value="feat/ok"):
+        monkeypatch.setattr("yadgar.core.file_queue._drain_local.active", True, raising=False)
+        with patch("yadgar.core.server._detect_branch", return_value="feat/ok"):
             result = server.memorize(
                 content="F1 test — env absent, detect=feat/ok",
                 context="/tmp/git-dir",

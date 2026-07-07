@@ -22,7 +22,7 @@ import pytest
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("viz_legend")
-    from yadgar import server
+    from yadgar.core import server
 
     server.init_engines(db_path=str(tmp_path / "test.db"), embedding_model="all-MiniLM-L6-v2")
     yield
@@ -39,9 +39,9 @@ def _get_legend(tmp_path, monkeypatch) -> dict:
 
     from starlette.testclient import TestClient
 
-    from yadgar import server as _server
-    from yadgar.auth_middleware import BearerAuthMiddleware
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
+    from yadgar.core import server as _server
+    from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     get_settings.cache_clear()
     client = TestClient(
@@ -62,7 +62,7 @@ def _get_legend(tmp_path, monkeypatch) -> dict:
 class TestLegendCategories:
     def test_legend_categories_keys_match_CATEGORIES(self, tmp_path, monkeypatch):
         """legend.categories keys exactly equal WikiStore.CATEGORIES."""
-        from yadgar.wiki import WikiStore
+        from yadgar._shared.wiki import WikiStore
 
         data = _get_legend(tmp_path, monkeypatch)
         assert "legend" in data, "legend block missing from /api/viz/config"
@@ -95,7 +95,7 @@ class TestLegendCategories:
 class TestLegendEdges:
     def test_legend_edges_keys_match_EDGE_TYPES(self, tmp_path, monkeypatch):
         """legend.edges keys exactly equal EDGE_TYPES keys."""
-        from yadgar.viz_meta import EDGE_TYPES
+        from yadgar.core.viz_meta import EDGE_TYPES
 
         data = _get_legend(tmp_path, monkeypatch)
         edges = data["legend"]["edges"]
@@ -171,8 +171,8 @@ class TestEdgeTypeDriftGuard:
         import ast
         import inspect
 
-        from yadgar import graph_api
-        from yadgar.viz_meta import EDGE_TYPES
+        from yadgar.core import graph_api
+        from yadgar.core.viz_meta import EDGE_TYPES
 
         tree = ast.parse(inspect.getsource(graph_api))
         emitted_types: set[str] = set()
@@ -198,7 +198,7 @@ class TestCategoryDriftGuard:
 
         Add a category → this fails until it's described.
         """
-        from yadgar.wiki import WikiStore
+        from yadgar._shared.wiki import WikiStore
 
         data = _get_legend(tmp_path, monkeypatch)
         returned_keys = {c["key"] for c in data["legend"]["categories"]}
@@ -217,7 +217,7 @@ class TestCategoryDriftGuard:
 class TestCategoryColorsIteration:
     def test_category_colors_covers_all_CATEGORIES(self, tmp_path, monkeypatch):
         """node.category_colors has a key for every category in CATEGORIES."""
-        from yadgar.wiki import WikiStore
+        from yadgar._shared.wiki import WikiStore
 
         data = _get_legend(tmp_path, monkeypatch)
         colors = data["node"]["category_colors"]
@@ -226,7 +226,7 @@ class TestCategoryColorsIteration:
 
     def test_category_colors_no_extra_hardcoded_keys(self, tmp_path, monkeypatch):
         """node.category_colors has ONLY keys that are in CATEGORIES (no extra literal keys)."""
-        from yadgar.wiki import WikiStore
+        from yadgar._shared.wiki import WikiStore
 
         data = _get_legend(tmp_path, monkeypatch)
         colors = data["node"]["category_colors"]
@@ -242,7 +242,7 @@ class TestCategoryColorsIteration:
 class TestEdgeColorIteration:
     def test_edge_color_covers_all_EDGE_TYPES(self, tmp_path, monkeypatch):
         """edge.color has a key for every entry in EDGE_TYPES."""
-        from yadgar.viz_meta import EDGE_TYPES
+        from yadgar.core.viz_meta import EDGE_TYPES
 
         data = _get_legend(tmp_path, monkeypatch)
         edge_color = data["edge"]["color"]

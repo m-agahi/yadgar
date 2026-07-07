@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -46,7 +46,7 @@ def _engines(tmp_path_factory):
 
 @pytest.fixture()
 def storage(_engines):
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 
@@ -145,14 +145,14 @@ class TestAuditAnchorsCrossProject:
 
     def test_cross_project_key_present_in_audit_result(self, storage):
         """Result dict always has cross_project_redundancy_candidates key."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         result = audit_anchors(directory=_DIR_A, dry_run=True)
         assert "cross_project_redundancy_candidates" in result
 
     def test_cross_project_candidate_detected(self, storage):
         """Two anchors with cosine >=0.95 + content_length_ratio>0.85 across dirs => candidate."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -169,7 +169,7 @@ class TestAuditAnchorsCrossProject:
     def test_candidate_dict_shape(self, storage):
         """Candidate dict has required fields: primary_id, duplicate_ids, similarity,
         directory_contexts, recommended_action."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -193,7 +193,7 @@ class TestAuditAnchorsCrossProject:
 
     def test_low_cosine_not_reported(self, storage):
         """Anchors with cosine < 0.95 across directories are NOT candidates."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -208,7 +208,7 @@ class TestAuditAnchorsCrossProject:
 
     def test_content_length_ratio_gate(self, storage):
         """Pairs where content_length_ratio <= 0.85 are rejected even with high cosine."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -228,7 +228,7 @@ class TestAuditAnchorsCrossProject:
     def test_same_directory_not_cross_project(self, storage):
         """Two anchors in the SAME directory are NOT cross-project candidates
         (they're handled by existing within-dir merge logic)."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -245,7 +245,7 @@ class TestAuditAnchorsCrossProject:
 
     def test_global_dir_excluded(self, storage):
         """Anchors with directory_context='global' are excluded from cross-project pairing."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -264,7 +264,7 @@ class TestAuditAnchorsCrossProject:
 
     def test_never_auto_mutates_cross_project(self, storage):
         """dry_run=False does NOT mutate cross-project candidates (audit-gated only)."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -283,7 +283,7 @@ class TestAuditAnchorsCrossProject:
 
     def test_primary_selection_by_access_count_plus_heat(self, storage):
         """Primary anchor = highest (access_count * heat); tie-broken by oldest created_at."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -322,7 +322,7 @@ class TestAuditAnchorsCrossProject:
 
     def test_three_way_cross_project_pair_grouping(self, storage):
         """Three anchors across three dirs with same embedding => grouped as single candidate."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         emb_a = _make_embedding_bytes(n_dims, 1.0)
@@ -398,7 +398,7 @@ class TestCrossProjectCosineKnob:
 
     def test_default_threshold_is_0_95(self):
         """Default ANCHOR_CROSS_PROJECT_COSINE is 0.95."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         cfg = get_settings()
         assert hasattr(cfg, "ANCHOR_CROSS_PROJECT_COSINE"), (
@@ -408,7 +408,7 @@ class TestCrossProjectCosineKnob:
 
     def test_pair_below_threshold_not_reported(self, storage):
         """Pair with cosine between 0.92-0.95 not reported at default 0.95 threshold."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         n_dims = 384
         # Create embeddings with cosine ~0.93 (above within-project 0.92 but below cross-project 0.95)

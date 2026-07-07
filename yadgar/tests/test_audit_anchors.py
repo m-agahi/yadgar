@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,7 +44,7 @@ def _engines(tmp_path_factory):
 
 @pytest.fixture()
 def storage(_engines):
-    from yadgar.server.lifecycle import _get_storage
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 
@@ -128,7 +128,7 @@ class TestDryRunTrue:
     """audit_anchors(dry_run=True) returns recommendations without mutating DB."""
 
     def test_returns_expected_keys(self):
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         result = audit_anchors(directory=_DIR, dry_run=True)
         assert "scanned" in result
@@ -137,14 +137,14 @@ class TestDryRunTrue:
         assert result["dry_run"] is True
 
     def test_no_applied_field_or_empty_when_dry_run(self):
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         result = audit_anchors(directory=_DIR, dry_run=True)
         assert result.get("applied", []) == []
 
     def test_no_db_mutations_on_dry_run(self, storage):
         """Expired anchor not deleted when dry_run=True."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         mid = _insert_anchor(storage, "expired anchor", valid_until=past)
@@ -156,7 +156,7 @@ class TestDryRunTrue:
 
     def test_forget_expired_action_present(self, storage):
         """forget_expired action appears when valid_until < now and migration_grace=False."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=3)).isoformat()
         _insert_anchor(storage, "old expired anchor", valid_until=past)
@@ -168,7 +168,7 @@ class TestDryRunTrue:
 
     def test_future_dated_not_flagged(self, storage):
         """Anchor with valid_until in the future must NOT appear in forget_expired."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         future = (datetime.now(UTC) + timedelta(days=30)).isoformat()
         _insert_anchor(storage, "future anchor", valid_until=future)
@@ -180,7 +180,7 @@ class TestDryRunTrue:
 
     def test_promote_action_returns_draft_not_wiki_add(self, storage):
         """promote action has draft field; wiki_add never called."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         _insert_anchor(storage, _PROMOTE_CONTENT, tags=["recipe"])
         result = audit_anchors(directory=_DIR, dry_run=True)
@@ -192,7 +192,7 @@ class TestDryRunTrue:
 
     def test_promote_draft_schema(self, storage):
         """promote draft must have required schema fields."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         _insert_anchor(storage, _PROMOTE_CONTENT, tags=["workflow"])
         result = audit_anchors(directory=_DIR, dry_run=True)
@@ -222,7 +222,7 @@ class TestDryRunFalse:
 
     def test_forget_expired_deletes_row(self, storage):
         """dry_run=False deletes expired anchor."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         mid = _insert_anchor(storage, "expired to delete", valid_until=past)
@@ -237,7 +237,7 @@ class TestDryRunFalse:
 
     def test_applied_list_populated(self, storage):
         """applied list has entries when mutations occurred."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "expired row", valid_until=past)
@@ -247,7 +247,7 @@ class TestDryRunFalse:
 
     def test_merge_redundant_keeps_higher_rank(self, storage):
         """Merge: keep anchor with higher last_accessed+access_count; forget lower."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         emb = _make_embedding_bytes(384, 0.9)
 
@@ -277,7 +277,7 @@ class TestDryRunFalse:
 
     def test_semantic_immortal_never_mutated(self, storage):
         """tier=semantic_immortal anchors are never auto-mutated even dry_run=False."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=10)).isoformat()
         mid = _insert_anchor(
@@ -298,7 +298,7 @@ class TestDryRunFalse:
         Pre-v5.8 anchors: is_protected=True, tier=None/absent. These are the legacy rows
         whose repurpose is deferred to v5.11.
         """
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         now = storage._now_iso()
@@ -329,7 +329,7 @@ class TestDryRunFalse:
 
     def test_idempotent_second_call(self, storage):
         """Second call on same state returns empty applied list."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "expire me", valid_until=past)
@@ -343,8 +343,8 @@ class TestDryRunFalse:
 
     def test_promote_not_auto_applied(self, storage):
         """dry_run=False must NOT auto-create wiki pages for promote candidates."""
-        from yadgar.server.tools.audit import audit_anchors
-        from yadgar.server.tools.wiki import wiki_list
+        from yadgar.core.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.wiki import wiki_list
 
         _insert_anchor(storage, _PROMOTE_CONTENT, tags=["recipe"])
         audit_anchors(directory=_DIR, dry_run=False)
@@ -356,7 +356,7 @@ class TestDryRunFalse:
 
     def test_action_log_written_on_mutation(self, storage):
         """Mutations are logged to action_log with tool_name=audit_anchors."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "log me", valid_until=past)
@@ -378,7 +378,7 @@ class TestIncludeGlobal:
     """include_global=True audits directory_context="global" separately."""
 
     def test_global_anchors_scanned_when_flag_set(self, storage):
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "global expired", directory="global", valid_until=past)
@@ -390,7 +390,7 @@ class TestIncludeGlobal:
 
     def test_global_anchors_not_scanned_by_default(self, storage):
         """Without include_global, global anchors are not in scope."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "global expired skip", directory="global", valid_until=past)
@@ -412,11 +412,11 @@ class TestMaxActionsCap:
     def test_cap_respected(self, storage, monkeypatch):
         """With cap=2 and 5 expired anchors, only 2 actions returned."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN", "2")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
 
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         for i in range(5):
@@ -431,11 +431,11 @@ class TestMaxActionsCap:
     def test_no_truncation_when_under_cap(self, storage, monkeypatch):
         """No _truncated flag when actions < max."""
         monkeypatch.setenv("YADGAR_ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN", "20")
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
 
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "just one", valid_until=past)
@@ -455,28 +455,28 @@ class TestEnvKnobs:
     """3 new env knobs present in Settings + config_registry + config_yaml."""
 
     def test_settings_has_audit_consolidation_enabled(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         s = get_settings()
         assert hasattr(s, "ANCHOR_AUDIT_CONSOLIDATION_ENABLED")
         assert s.ANCHOR_AUDIT_CONSOLIDATION_ENABLED is True
 
     def test_settings_has_max_actions_per_run(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         s = get_settings()
         assert hasattr(s, "ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN")
         assert s.ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN == 20
 
     def test_settings_has_history_retention_days(self):
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         s = get_settings()
         assert hasattr(s, "ANCHOR_AUDIT_HISTORY_RETENTION_DAYS")
         assert s.ANCHOR_AUDIT_HISTORY_RETENTION_DAYS == 30
 
     def test_registry_has_all_three_knobs(self):
-        from yadgar.config_registry import list_config
+        from yadgar._shared.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED" in names
@@ -484,7 +484,7 @@ class TestEnvKnobs:
         assert "YADGAR_ANCHOR_AUDIT_HISTORY_RETENTION_DAYS" in names
 
     def test_config_yaml_has_all_three_knobs(self):
-        from yadgar.config_yaml import FIELD_META
+        from yadgar._shared.config_yaml import FIELD_META
 
         assert "anchor_audit_consolidation_enabled" in FIELD_META
         assert "anchor_audit_max_actions_per_run" in FIELD_META
@@ -533,7 +533,7 @@ class TestMigrationGraceHandler:
 
     def test_verify_grace_action_present_for_expired_grace_row(self, storage):
         """verify_grace_expired_anchor action emitted for migration_grace=True + valid_until<now."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "grace expired anchor", valid_until=past, migration_grace=True)
@@ -545,7 +545,7 @@ class TestMigrationGraceHandler:
 
     def test_verify_grace_action_shape(self, storage):
         """verify_grace_expired_anchor action dict has required fields."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=3)).isoformat()
         mid = _insert_anchor(
@@ -564,7 +564,7 @@ class TestMigrationGraceHandler:
 
     def test_verify_grace_skipped_true_never_auto_applied(self, storage):
         """verify_grace_expired_anchor always has skipped=True — never auto-applied."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "grace do not delete", valid_until=past, migration_grace=True)
@@ -576,7 +576,7 @@ class TestMigrationGraceHandler:
 
     def test_grace_row_not_deleted_dry_run_false(self, storage):
         """migration_grace=True rows are NOT deleted even when dry_run=False."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         mid = _insert_anchor(storage, "grace protected row", valid_until=past, migration_grace=True)
@@ -588,7 +588,7 @@ class TestMigrationGraceHandler:
 
     def test_valid_grace_row_not_flagged(self, storage):
         """migration_grace=True row with valid_until in the future is NOT flagged."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         future = (datetime.now(UTC) + timedelta(days=60)).isoformat()
         _insert_anchor(storage, "grace still valid", valid_until=future, migration_grace=True)
@@ -600,7 +600,7 @@ class TestMigrationGraceHandler:
 
     def test_non_grace_expired_row_not_flagged_as_grace(self, storage):
         """migration_grace=False expired rows use forget_expired, not verify_grace_expired_anchor."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "normal expired", valid_until=past, migration_grace=False)
@@ -612,7 +612,7 @@ class TestMigrationGraceHandler:
 
     def test_grace_action_rationale_mentions_migration_grace(self, storage):
         """rationale field references migration_grace to aid user understanding."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         past = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         _insert_anchor(storage, "explain grace", valid_until=past, migration_grace=True)
@@ -667,7 +667,7 @@ class TestAnchoredByProseOnly:
     def test_audit_anchors_detects_prose_only(self, storage):
         """Archive with no _anchor tag + is_protected=false + heat=0 → count==1, sample contains ID,
         recommended_action present."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         aid = _insert_prose_only_archive(storage, "prose-only anchor content")
 
@@ -679,7 +679,7 @@ class TestAnchoredByProseOnly:
 
     def test_audit_anchors_skips_tagged_anchor(self, storage):
         """Archive with _anchor tag → not counted as prose-only (count == 0)."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         _insert_prose_only_archive(storage, "tagged anchor", tags=["_anchor"])
 
@@ -689,7 +689,7 @@ class TestAnchoredByProseOnly:
 
     def test_audit_anchors_skips_protected(self, storage):
         """Archive with is_protected=true → not counted as prose-only (count == 0)."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         _insert_prose_only_archive(storage, "protected archive", is_protected=True)
 
@@ -699,7 +699,7 @@ class TestAnchoredByProseOnly:
 
     def test_audit_anchors_empty_archive(self):
         """No archive rows at all → count == 0 and no recommended_action key."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         result = audit_anchors(directory=_DIR, dry_run=True)
         prose = result["anchored_by_prose_only"]
@@ -710,7 +710,7 @@ class TestAnchoredByProseOnly:
 
     def test_audit_anchors_skips_hot_archive(self, storage):
         """Archive with heat > 0 → not counted (recently accessed, not stale)."""
-        from yadgar.server.tools.audit import audit_anchors
+        from yadgar.core.server.tools.audit import audit_anchors
 
         _insert_prose_only_archive(storage, "hot archive", heat=0.5)
 

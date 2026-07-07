@@ -7,9 +7,9 @@ the NIGHTLY path only so it never blocks the light consolidate_now budget.
 
 import pytest
 
-from yadgar.config import Settings
-from yadgar.consolidation import ConsolidationScheduler
-from yadgar.embeddings import EmbeddingEngine
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar.core.consolidation import ConsolidationScheduler
 
 
 @pytest.fixture(scope="module")

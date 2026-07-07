@@ -51,12 +51,12 @@ def _run_fanout_recall(server, monkeypatch, query: str, directory: str, max_resu
     """Run fan-out recall (UNIFIED_RECALL_ENABLED=True) via the MCP tool."""
     import sys
 
-    monkeypatch.setattr("yadgar.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.server._get_default_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
+    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-    _rm = sys.modules.get("yadgar.server.tools.recall")
+    _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
-        import yadgar.server.tools.recall as _rm
+        import yadgar.core.server.tools.recall as _rm
 
     recall_fn = _rm.recall
     return recall_fn(query=query, directory=directory, max_results=max_results)
@@ -87,7 +87,7 @@ class TestScopeFilterE2E:
             storage, embeddings, f"global context {unique_token}", "global"
         )
 
-        from yadgar import server
+        from yadgar.core import server
 
         results = _run_fanout_recall(
             server, monkeypatch, f"genuine content {unique_token}", YADGAR_DIR
@@ -159,7 +159,7 @@ class TestScopeFilterE2E:
             # The Python-side is_directory_eligible post-filter handles them.
             # Verify that a fan-out recall with YADGAR_DIR doesn't return the field-absent row
             # if it lands in a different "eligibility bucket" (None → always eligible, so it SHOULD appear).
-            from yadgar import server
+            from yadgar.core import server
 
             results = _run_fanout_recall(
                 server, monkeypatch, f"field-absent test {unique_token}", YADGAR_DIR
@@ -225,7 +225,7 @@ class TestScopeFilterE2E:
             branch="master",
         )
 
-        from yadgar import server
+        from yadgar.core import server
 
         results = _run_fanout_recall(
             server, monkeypatch, f"branch dir compose {unique_token}", YADGAR_DIR
@@ -255,7 +255,7 @@ class TestScopeFilterE2E:
         Asserts the dataclass empty-case invariant and that fan-out recall
         with no scope returns a non-empty set when memories exist.
         """
-        from yadgar.storage.scope import ScopeFilter
+        from yadgar._shared.storage.scope import ScopeFilter
 
         # Verify the empty-case clause
         sf = ScopeFilter()
@@ -272,7 +272,7 @@ class TestScopeFilterE2E:
             storage, embeddings, f"scope noop test {unique_token}", YADGAR_DIR
         )
 
-        from yadgar import server
+        from yadgar.core import server
 
         results = _run_fanout_recall(
             server, monkeypatch, f"scope noop test {unique_token}", YADGAR_DIR

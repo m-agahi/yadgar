@@ -19,7 +19,7 @@ import sys
 
 def _get_mcp_install_hooks():
     """Return the install_hooks function exposed via yadgar.server."""
-    from yadgar import server as _s
+    from yadgar.core import server as _s
 
     return _s.install_hooks
 
@@ -109,7 +109,7 @@ def test_mcp_tool_works_on_host(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
 
     # Patch container detection so /.dockerenv presence on CI doesn't trip this test
-    import yadgar.install_hooks_lib as lib
+    import yadgar.core.install_hooks_lib as lib
 
     monkeypatch.setattr(lib, "is_running_in_container", lambda: False)
 

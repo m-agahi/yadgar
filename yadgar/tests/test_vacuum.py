@@ -55,8 +55,8 @@ def _patch_side_build_success():
         return True
 
     with (
-        patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}),
-        patch("yadgar.vacuum._build_and_verify_side_db", side_effect=_make_side),
+        patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1}),
+        patch("yadgar.core.vacuum._build_and_verify_side_db", side_effect=_make_side),
     ):
         yield
 
@@ -70,8 +70,8 @@ def _patch_side_build_abort():
     be left untouched, no `.old-*` ever created).
     """
     with (
-        patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}),
-        patch("yadgar.vacuum._build_and_verify_side_db", return_value=False),
+        patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1}),
+        patch("yadgar.core.vacuum._build_and_verify_side_db", return_value=False),
     ):
         yield
 
@@ -118,7 +118,7 @@ class TestStripActionLog:
     """Unit tests for strip_action_log() — pure text transformation."""
 
     def _import_strip(self):
-        from yadgar.vacuum import strip_action_log
+        from yadgar.core.vacuum import strip_action_log
 
         return strip_action_log
 
@@ -141,13 +141,13 @@ class TestStripExportForVacuum:
     """
 
     def _strip(self):
-        from yadgar.vacuum.strip import strip_export_for_vacuum
+        from yadgar.core.vacuum.strip import strip_export_for_vacuum
 
         return strip_export_for_vacuum
 
     def _import_strip(self):
         """Back-compat alias — same function now, used by the old test methods below."""
-        from yadgar.vacuum import strip_action_log
+        from yadgar.core.vacuum import strip_action_log
 
         return strip_action_log
 
@@ -261,7 +261,7 @@ class TestStripExportForVacuum:
 
     def test_strip_action_log_alias_still_works(self):
         """strip_action_log remains a back-compat alias for strip_export_for_vacuum."""
-        from yadgar.vacuum.strip import strip_action_log, strip_export_for_vacuum
+        from yadgar.core.vacuum.strip import strip_action_log, strip_export_for_vacuum
 
         surql = (
             "DEFINE USER yadgar-rw ON ROOT PASSWORD 'hash' ROLES OWNER;\n"
@@ -390,19 +390,19 @@ class TestStripExportForVacuum:
 
 class TestServiceModeDetection:
     def test_systemd_from_invocation_id(self, monkeypatch):
-        from yadgar.ops import detect_service_mode
+        from yadgar.core.ops import detect_service_mode
 
         monkeypatch.setenv("INVOCATION_ID", "abc123")
         monkeypatch.delenv("DOCKER_HOST", raising=False)
         assert detect_service_mode() == "systemd"
 
     def test_docker_from_dockerenv(self, monkeypatch, tmp_path):
-        from yadgar.ops import detect_service_mode
+        from yadgar.core.ops import detect_service_mode
 
         monkeypatch.delenv("INVOCATION_ID", raising=False)
         fake_dockerenv = tmp_path / ".dockerenv"
         fake_dockerenv.touch()
-        with patch("yadgar.ops.Path") as MockPath:
+        with patch("yadgar.core.ops.Path") as MockPath:
             # Make Path("/.dockerenv").exists() return True
             mock_p = MagicMock()
             mock_p.exists.return_value = True
@@ -411,10 +411,10 @@ class TestServiceModeDetection:
         assert result == "docker"
 
     def test_manual_fallback(self, monkeypatch):
-        from yadgar.ops import detect_service_mode
+        from yadgar.core.ops import detect_service_mode
 
         monkeypatch.delenv("INVOCATION_ID", raising=False)
-        with patch("yadgar.ops.Path") as MockPath:
+        with patch("yadgar.core.ops.Path") as MockPath:
             mock_p = MagicMock()
             mock_p.exists.return_value = False
             MockPath.return_value = mock_p
@@ -504,7 +504,7 @@ class TestCharacterization:
         The old no-op returns early because clog/ doesn't exist — it never
         creates any file. This assertion FAILS on the old code.
         """
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         self._mock_backend(tmp_path, monkeypatch)
 
@@ -520,11 +520,11 @@ class TestCharacterization:
         )
 
         with _patch_side_build_success():
-            with patch("yadgar.vacuum._log_consolidation_row", fake_log_row):
-                with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                            with patch("yadgar.vacuum._redefine_users_post_import"):
+            with patch("yadgar.core.vacuum._log_consolidation_row", fake_log_row):
+                with patch("yadgar.core.vacuum.ServiceController") as MockSVC:
+                    with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.core.vacuum._redefine_users_post_import"):
                                 mock_svc = MagicMock()
                                 MockSVC.return_value = mock_svc
 
@@ -579,11 +579,11 @@ class TestCharacterization:
         )
 
         with _patch_side_build_success():
-            with patch("yadgar.vacuum._log_consolidation_row"):
-                with patch("yadgar.vacuum.ServiceController"):
-                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                            with patch("yadgar.vacuum._redefine_users_post_import"):
+            with patch("yadgar.core.vacuum._log_consolidation_row"):
+                with patch("yadgar.core.vacuum.ServiceController"):
+                    with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.core.vacuum._redefine_users_post_import"):
                                 # Should not raise — exit_code 0 means no sys.exit call
                                 try:
                                     main_mod.cmd_vacuum(args)
@@ -607,7 +607,7 @@ class TestRelatePreservation:
         """After strip_action_log, RELATE / wiki_crossref rows must survive."""
         import httpx
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         fake_surql = (
             "-- TABLE DATA: memory ----\n"
@@ -648,11 +648,11 @@ class TestRelatePreservation:
         )
 
         with _patch_side_build_success():
-            with patch("yadgar.vacuum._log_consolidation_row"):
-                with patch("yadgar.vacuum.ServiceController"):
-                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                            with patch("yadgar.vacuum._redefine_users_post_import"):
+            with patch("yadgar.core.vacuum._log_consolidation_row"):
+                with patch("yadgar.core.vacuum.ServiceController"):
+                    with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.core.vacuum._redefine_users_post_import"):
                                 cmd_vacuum_impl(args)
 
         filtered = list(yadgar_home.glob("vacuum_export_*.filtered.surql"))
@@ -680,7 +680,7 @@ class TestFailureInjection:
         """NEW SAFE BEHAVIOR: /import 500 → surreal_db restored, no .bloated-* leftover."""
         import httpx
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         # Write a sentinel file so we can confirm original contents after restore
         sentinel = yadgar_home / "surreal_db" / "sentinel.txt"
@@ -714,9 +714,9 @@ class TestFailureInjection:
         # P2: drive the abort path for real — side-build/verify FAILS, so the
         # canonical must be left untouched (NEVER renamed → no `.old-*`).
         with _patch_side_build_abort():
-            with patch("yadgar.vacuum._log_consolidation_row"):
-                with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+            with patch("yadgar.core.vacuum._log_consolidation_row"):
+                with patch("yadgar.core.vacuum.ServiceController") as MockSVC:
+                    with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
                         mock_svc = MagicMock()
                         mock_svc.start_backend.side_effect = lambda: started_services.append(
                             "start_backend"
@@ -762,7 +762,7 @@ class TestFailureInjection:
         """HTTP 403 (original root-creds bug) also triggers DB restore."""
         import httpx
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         sentinel = yadgar_home / "surreal_db" / "sentinel.txt"
         sentinel.write_bytes(b"original")
@@ -790,9 +790,9 @@ class TestFailureInjection:
         )
 
         with _patch_side_build_abort():
-            with patch("yadgar.vacuum._log_consolidation_row"):
-                with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
+            with patch("yadgar.core.vacuum._log_consolidation_row"):
+                with patch("yadgar.core.vacuum.ServiceController") as MockSVC:
+                    with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
                         MockSVC.return_value = MagicMock()
                         exit_code = cmd_vacuum_impl(args)
 
@@ -827,8 +827,8 @@ class TestFailureInjection:
         """
         import httpx
 
-        import yadgar.vacuum as _vac
-        from yadgar.vacuum import cmd_vacuum_impl
+        import yadgar.core.vacuum as _vac
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         sentinel = yadgar_home / "surreal_db" / "sentinel.txt"
         sentinel.write_bytes(b"original")
@@ -857,9 +857,11 @@ class TestFailureInjection:
         # bootstrap (its real client would POST to a dead port and raise BEFORE
         # the /import branch, masking the abort under test).
         fake_proc = MagicMock()
-        monkeypatch.setattr("yadgar._surreal_runner.spawn_surreal", lambda *a, **kw: fake_proc)
-        monkeypatch.setattr("yadgar._surreal_runner.teardown_surreal_proc", lambda *a, **kw: None)
-        monkeypatch.setattr("yadgar.vacuum._bootstrap_namespace", lambda *a, **kw: None)
+        monkeypatch.setattr("yadgar.core._surreal_runner.spawn_surreal", lambda *a, **kw: fake_proc)
+        monkeypatch.setattr(
+            "yadgar.core._surreal_runner.teardown_surreal_proc", lambda *a, **kw: None
+        )
+        monkeypatch.setattr("yadgar.core.vacuum._bootstrap_namespace", lambda *a, **kw: None)
 
         # Spy-wrap the REAL function (NOT a stub) so its body runs end-to-end and
         # we can assert it actually returned False from the real abort branch.
@@ -879,11 +881,11 @@ class TestFailureInjection:
             db_path=str(yadgar_home / "surreal_db"),
         )
 
-        with patch("yadgar.vacuum._build_and_verify_side_db", side_effect=_spy_build):
-            with patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}):
-                with patch("yadgar.vacuum._log_consolidation_row"):
-                    with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                        with patch("yadgar.vacuum._wait_for_health", return_value=True):
+        with patch("yadgar.core.vacuum._build_and_verify_side_db", side_effect=_spy_build):
+            with patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1}):
+                with patch("yadgar.core.vacuum._log_consolidation_row"):
+                    with patch("yadgar.core.vacuum.ServiceController") as MockSVC:
+                        with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
                             mock_svc = MagicMock()
                             mock_svc.start_yadgar.side_effect = lambda: started_services.append(
                                 "start_yadgar"
@@ -933,7 +935,7 @@ class TestFailureInjection:
         """SUCCESS path (P2): compacted DB swapped in at canonical, no staging left."""
         import httpx
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         sentinel = yadgar_home / "surreal_db" / "sentinel.txt"
         sentinel.write_bytes(b"original")
@@ -966,11 +968,11 @@ class TestFailureInjection:
         )
 
         with _patch_side_build_success():
-            with patch("yadgar.vacuum._log_consolidation_row"):
-                with patch("yadgar.vacuum.ServiceController") as MockSVC:
-                    with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                        with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                            with patch("yadgar.vacuum._redefine_users_post_import"):
+            with patch("yadgar.core.vacuum._log_consolidation_row"):
+                with patch("yadgar.core.vacuum.ServiceController") as MockSVC:
+                    with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
+                        with patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True):
+                            with patch("yadgar.core.vacuum._redefine_users_post_import"):
                                 MockSVC.return_value = MagicMock()
                                 exit_code = cmd_vacuum_impl(args)
 
@@ -1009,7 +1011,7 @@ class TestAdminCreds:
         monkeypatch.setenv("YADGAR_DB_USER", "yadgar_rw")
         monkeypatch.setenv("YADGAR_DB_PASS", "yadgar_secret")
 
-        from yadgar.vacuum import _build_http_client
+        from yadgar.core.vacuum import _build_http_client
 
         client = _build_http_client("http://127.0.0.1:8080")
         auth_header = dict(client.headers).get("authorization", "")
@@ -1027,7 +1029,7 @@ class TestAdminCreds:
         monkeypatch.setenv("YADGAR_DB_USER", "yadgar_rw")
         monkeypatch.setenv("YADGAR_DB_PASS", "yadgar_secret")
 
-        from yadgar.vacuum import _build_http_client
+        from yadgar.core.vacuum import _build_http_client
 
         client = _build_http_client("http://127.0.0.1:8080")
         auth_header = dict(client.headers).get("authorization", "")
@@ -1045,7 +1047,7 @@ class TestAdminCreds:
         monkeypatch.delenv("YADGAR_DB_USER", raising=False)
         monkeypatch.delenv("YADGAR_DB_PASS", raising=False)
 
-        from yadgar.vacuum import _build_http_client
+        from yadgar.core.vacuum import _build_http_client
 
         client = _build_http_client("http://127.0.0.1:8080")
         auth_header = dict(client.headers).get("authorization", "")
@@ -1066,7 +1068,7 @@ class TestAdminCreds:
         monkeypatch.setenv("YADGAR_DB_USER", "yadgar_rw")
         monkeypatch.setenv("YADGAR_DB_PASS", "yadgar_secret")
 
-        from yadgar.vacuum.phases import _surreal_headers
+        from yadgar.core.vacuum.phases import _surreal_headers
 
         headers = _surreal_headers()
         user, _ = self._decode_auth(headers)
@@ -1079,7 +1081,7 @@ class TestAdminCreds:
         monkeypatch.setenv("YADGAR_DB_USER", "yadgar_rw")
         monkeypatch.setenv("YADGAR_DB_PASS", "yadgar_secret")
 
-        from yadgar.vacuum.phases import _surreal_headers
+        from yadgar.core.vacuum.phases import _surreal_headers
 
         headers = _surreal_headers()
         user, _ = self._decode_auth(headers)
@@ -1092,7 +1094,7 @@ class TestAdminCreds:
         monkeypatch.delenv("YADGAR_DB_USER", raising=False)
         monkeypatch.delenv("YADGAR_DB_PASS", raising=False)
 
-        from yadgar.vacuum.phases import _surreal_headers
+        from yadgar.core.vacuum.phases import _surreal_headers
 
         headers = _surreal_headers()
         user, password = self._decode_auth(headers)
@@ -1128,7 +1130,7 @@ class TestWaitForYadgarHealth:
 
         monkeypatch.setattr(httpx, "get", fake_get)
 
-        from yadgar.vacuum import _wait_for_yadgar_health
+        from yadgar.core.vacuum import _wait_for_yadgar_health
 
         result = _wait_for_yadgar_health("http://127.0.0.1:8765", timeout_s=5.0)
 
@@ -1163,7 +1165,7 @@ class TestWaitForYadgarHealthTimeout:
         """_wait_for_yadgar_health default timeout_s must be 180.0, not 60.0."""
         import inspect
 
-        from yadgar.vacuum import _wait_for_yadgar_health
+        from yadgar.core.vacuum import _wait_for_yadgar_health
 
         sig = inspect.signature(_wait_for_yadgar_health)
         default = sig.parameters["timeout_s"].default
@@ -1177,7 +1179,7 @@ class TestWaitForYadgarHealthTimeout:
         import ast
         import inspect
 
-        from yadgar import vacuum
+        from yadgar.core import vacuum
 
         source = inspect.getsource(vacuum)
         tree = ast.parse(source)
@@ -1238,7 +1240,7 @@ class TestRedefineUsersPostImport:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.post.return_value = mock_resp
 
-        with patch("yadgar.vacuum._build_http_client", return_value=mock_client):
+        with patch("yadgar.core.vacuum._build_http_client", return_value=mock_client):
 
             def _capture_post(path, content=None, headers=None, **kwargs):
                 posted_calls.append(
@@ -1252,7 +1254,7 @@ class TestRedefineUsersPostImport:
 
             mock_client.post.side_effect = _capture_post
 
-            from yadgar.vacuum import _redefine_users_post_import
+            from yadgar.core.vacuum import _redefine_users_post_import
 
             _redefine_users_post_import("http://127.0.0.1:8080")
 
@@ -1305,8 +1307,8 @@ class TestRedefineUsersPostImport:
 
         mock_client.post.side_effect = _capture_post
 
-        with patch("yadgar.vacuum._build_http_client", return_value=mock_client):
-            from yadgar.vacuum import _redefine_users_post_import
+        with patch("yadgar.core.vacuum._build_http_client", return_value=mock_client):
+            from yadgar.core.vacuum import _redefine_users_post_import
 
             _redefine_users_post_import("http://127.0.0.1:8080")
 
@@ -1324,7 +1326,7 @@ class TestRedefineUsersPostImport:
         monkeypatch.setenv("YADGAR_RW_USER", "yadgar-rw")
         monkeypatch.setenv("YADGAR_RO_USER", "yadgar-ro")
 
-        from yadgar.vacuum import _redefine_users_post_import
+        from yadgar.core.vacuum import _redefine_users_post_import
 
         with pytest.raises(RuntimeError, match="YADGAR_RW_PASS"):
             _redefine_users_post_import("http://127.0.0.1:8080")
@@ -1345,8 +1347,8 @@ class TestRedefineUsersPostImport:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.post.return_value = mock_resp
 
-        with patch("yadgar.vacuum._build_http_client", return_value=mock_client):
-            from yadgar.vacuum import _redefine_users_post_import
+        with patch("yadgar.core.vacuum._build_http_client", return_value=mock_client):
+            from yadgar.core.vacuum import _redefine_users_post_import
 
             with pytest.raises(RuntimeError, match="HTTP 500"):
                 _redefine_users_post_import("http://127.0.0.1:8080")
@@ -1385,7 +1387,7 @@ class TestCheckInvariantsBearer:
         # Drive cmd_vacuum_impl through phase 4 (check_invariants)
         import types as _types
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         monkeypatch._pytest_tmpdir if hasattr(monkeypatch, "_pytest_tmpdir") else None
         # Use pytest tmp_path indirectly via the yadgar_home fixture approach —
@@ -1427,11 +1429,13 @@ class TestCheckInvariantsBearer:
             monkeypatch.setattr(httpx, "get", fake_get)
 
             with _patch_side_build_success():
-                with patch("yadgar.vacuum._log_consolidation_row"):
-                    with patch("yadgar.vacuum.ServiceController"):
-                        with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                            with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                                with patch("yadgar.vacuum._redefine_users_post_import"):
+                with patch("yadgar.core.vacuum._log_consolidation_row"):
+                    with patch("yadgar.core.vacuum.ServiceController"):
+                        with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
+                            with patch(
+                                "yadgar.core.vacuum._wait_for_yadgar_health", return_value=True
+                            ):
+                                with patch("yadgar.core.vacuum._redefine_users_post_import"):
                                     cmd_vacuum_impl(args)
 
         # Find the check_invariants call
@@ -1501,14 +1505,16 @@ class TestCheckInvariantsBearer:
                 yes=True,
             )
 
-            from yadgar.vacuum import cmd_vacuum_impl
+            from yadgar.core.vacuum import cmd_vacuum_impl
 
             with _patch_side_build_success():
-                with patch("yadgar.vacuum._log_consolidation_row"):
-                    with patch("yadgar.vacuum.ServiceController"):
-                        with patch("yadgar.vacuum._wait_for_health", return_value=True):
-                            with patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True):
-                                with patch("yadgar.vacuum._redefine_users_post_import"):
+                with patch("yadgar.core.vacuum._log_consolidation_row"):
+                    with patch("yadgar.core.vacuum.ServiceController"):
+                        with patch("yadgar.core.vacuum._wait_for_health", return_value=True):
+                            with patch(
+                                "yadgar.core.vacuum._wait_for_yadgar_health", return_value=True
+                            ):
+                                with patch("yadgar.core.vacuum._redefine_users_post_import"):
                                     cmd_vacuum_impl(args)
 
         ci_calls = [c for c in captured_calls if "/api/check_invariants" in c["url"]]
@@ -1555,7 +1561,7 @@ class TestLogConsolidationRowURL:
             mock_client.post.return_value.__exit__ = MagicMock(return_value=False)
             return mock_client
 
-        from yadgar.vacuum import _log_consolidation_row
+        from yadgar.core.vacuum import _log_consolidation_row
 
         row = {
             "kind": "vacuum",
@@ -1568,7 +1574,7 @@ class TestLogConsolidationRowURL:
             "saved_pct": 20.0,
         }
 
-        with patch("yadgar.vacuum._build_http_client", _fake_build_http_client):
+        with patch("yadgar.core.vacuum._build_http_client", _fake_build_http_client):
             _log_consolidation_row(row)
 
         assert urls_used, "_build_http_client must be called"
@@ -1595,7 +1601,7 @@ class TestLogConsolidationRowURL:
             mock_client.post.return_value.__exit__ = MagicMock(return_value=False)
             return mock_client
 
-        from yadgar.vacuum import _log_consolidation_row
+        from yadgar.core.vacuum import _log_consolidation_row
 
         row = {
             "kind": "vacuum",
@@ -1608,7 +1614,7 @@ class TestLogConsolidationRowURL:
             "saved_pct": 20.0,
         }
 
-        with patch("yadgar.vacuum._build_http_client", _fake_build_http_client):
+        with patch("yadgar.core.vacuum._build_http_client", _fake_build_http_client):
             _log_consolidation_row(row)
 
         assert urls_used, "_build_http_client must be called"
@@ -1648,8 +1654,10 @@ class TestSpawnSurrealCredKwargs:
         """No kwargs → argv still contains --user root --pass root."""
         mock_proc = self._mock_proc()
 
-        with patch("yadgar._surreal_runner.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            from yadgar._surreal_runner import spawn_surreal
+        with patch(
+            "yadgar.core._surreal_runner.subprocess.Popen", return_value=mock_proc
+        ) as mock_popen:
+            from yadgar.core._surreal_runner import spawn_surreal
 
             spawn_surreal(port=9999, data_dir="/tmp/test")
 
@@ -1669,8 +1677,10 @@ class TestSpawnSurrealCredKwargs:
         """surreal_user/surreal_pass kwargs appear in the built argv, not hardcoded root."""
         mock_proc = self._mock_proc()
 
-        with patch("yadgar._surreal_runner.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            from yadgar._surreal_runner import spawn_surreal
+        with patch(
+            "yadgar.core._surreal_runner.subprocess.Popen", return_value=mock_proc
+        ) as mock_popen:
+            from yadgar.core._surreal_runner import spawn_surreal
 
             spawn_surreal(
                 port=9999, data_dir="/tmp/test", surreal_user="myuser", surreal_pass="mypass"
@@ -1692,8 +1702,10 @@ class TestSpawnSurrealCredKwargs:
         """surreal_user/surreal_pass do NOT leak into Popen kwargs."""
         mock_proc = self._mock_proc()
 
-        with patch("yadgar._surreal_runner.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            from yadgar._surreal_runner import spawn_surreal
+        with patch(
+            "yadgar.core._surreal_runner.subprocess.Popen", return_value=mock_proc
+        ) as mock_popen:
+            from yadgar.core._surreal_runner import spawn_surreal
 
             spawn_surreal(
                 port=9999,
@@ -1727,7 +1739,7 @@ class TestResolveDatabaseCreds:
         monkeypatch.setenv("YADGAR_DB_USER", "db_user")
         monkeypatch.setenv("YADGAR_DB_PASS", "db_pass")
 
-        from yadgar.vacuum import _resolve_db_creds
+        from yadgar.core.vacuum import _resolve_db_creds
 
         user, password = _resolve_db_creds()
         assert user == "surreal_admin"
@@ -1739,7 +1751,7 @@ class TestResolveDatabaseCreds:
         monkeypatch.delenv("YADGAR_RW_USER", raising=False)
         monkeypatch.delenv("YADGAR_DB_USER", raising=False)
 
-        from yadgar.vacuum import _resolve_db_creds
+        from yadgar.core.vacuum import _resolve_db_creds
 
         user, password = _resolve_db_creds()
         assert user == "surreal_admin"
@@ -1753,7 +1765,7 @@ class TestResolveDatabaseCreds:
         monkeypatch.setenv("YADGAR_DB_USER", "db_user")
         monkeypatch.setenv("YADGAR_DB_PASS", "db_pass")
 
-        from yadgar.vacuum import _resolve_db_creds
+        from yadgar.core.vacuum import _resolve_db_creds
 
         user, password = _resolve_db_creds()
         assert user == "rw_user"
@@ -1767,7 +1779,7 @@ class TestResolveDatabaseCreds:
         monkeypatch.setenv("YADGAR_DB_USER", "db_user")
         monkeypatch.setenv("YADGAR_DB_PASS", "db_pass")
 
-        from yadgar.vacuum import _resolve_db_creds
+        from yadgar.core.vacuum import _resolve_db_creds
 
         user, password = _resolve_db_creds()
         assert user == "db_user"
@@ -1781,7 +1793,7 @@ class TestResolveDatabaseCreds:
         monkeypatch.delenv("YADGAR_DB_USER", raising=False)
         monkeypatch.delenv("YADGAR_DB_PASS", raising=False)
 
-        from yadgar.vacuum import _resolve_db_creds
+        from yadgar.core.vacuum import _resolve_db_creds
 
         user, password = _resolve_db_creds()
         assert user == "root"
@@ -1815,10 +1827,10 @@ class TestBuildAndVerifySideDbCreds:
             filtered = Path(td) / "export.surql"
             filtered.write_bytes(b"INSERT INTO memory {};")
 
-            with patch("yadgar._surreal_runner.spawn_surreal", side_effect=_fake_spawn):
-                with patch("yadgar.vacuum._wait_for_health", return_value=False):
-                    with patch("yadgar._surreal_runner.teardown_surreal_proc"):
-                        from yadgar.vacuum import _build_and_verify_side_db
+            with patch("yadgar.core._surreal_runner.spawn_surreal", side_effect=_fake_spawn):
+                with patch("yadgar.core.vacuum._wait_for_health", return_value=False):
+                    with patch("yadgar.core._surreal_runner.teardown_surreal_proc"):
+                        from yadgar.core.vacuum import _build_and_verify_side_db
 
                         _build_and_verify_side_db(
                             "http://127.0.0.1:8080",

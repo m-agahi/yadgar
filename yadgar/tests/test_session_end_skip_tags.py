@@ -23,7 +23,7 @@ import pytest
 # Helpers (parallel to test_session_end_capture.py — hook runs as subprocess)
 # ---------------------------------------------------------------------------
 
-HOOK_SCRIPT = Path(__file__).parent.parent / "hooks" / "session-end-capture.py"
+HOOK_SCRIPT = Path(__file__).parent.parent / "core" / "hooks" / "session-end-capture.py"
 
 
 def _run_hook(
@@ -134,7 +134,7 @@ def _transcript_with_slash_commands(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("session_end_skip_tags")
-    from yadgar import server
+    from yadgar.core import server
 
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")

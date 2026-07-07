@@ -15,8 +15,8 @@ Tests verify:
 
 import pytest
 
-from yadgar import server
-from yadgar.wiki import WikiAddOptions
+from yadgar._shared.wiki import WikiAddOptions
+from yadgar.core import server
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
@@ -413,7 +413,9 @@ class TestVersioningRegression:
 
     def test_wiki_add_produces_version_1(self):
         """wiki_add (insert path) creates version=1 row (v5.41.0 regression guard)."""
-        from yadgar.storage.migrations import _migration_013_wiki_page_version  # noqa: PLC0415
+        from yadgar._shared.storage.migrations import (
+            _migration_013_wiki_page_version,  # noqa: PLC0415
+        )
 
         storage = server._get_storage()
         _migration_013_wiki_page_version(storage)  # DDL + seed (idempotent)
@@ -429,7 +431,9 @@ class TestVersioningRegression:
 
     def test_wiki_add_upsert_produces_version_2(self):
         """wiki_add upsert (update path) creates version=2 row (v5.41.0 regression guard)."""
-        from yadgar.storage.migrations import _migration_013_wiki_page_version  # noqa: PLC0415
+        from yadgar._shared.storage.migrations import (
+            _migration_013_wiki_page_version,  # noqa: PLC0415
+        )
 
         storage = server._get_storage()
         _migration_013_wiki_page_version(storage)

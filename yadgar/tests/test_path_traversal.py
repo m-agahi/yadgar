@@ -24,7 +24,7 @@ class TestFileHashWhitelist:
 
     def test_hash_outside_project_root_returns_none(self, tmp_path, monkeypatch):
         """With a registered root, files outside it must return None."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         orig_roots = srv._project_roots.copy()
         try:
@@ -49,7 +49,7 @@ class TestFileHashWhitelist:
 
     def test_hash_inside_project_root_returns_hash(self, tmp_path, monkeypatch):
         """Files inside a registered project root must be hashed."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         orig_roots = srv._project_roots.copy()
         try:
@@ -74,7 +74,7 @@ class TestFileHashWhitelist:
 
     def test_no_registered_roots_no_whitelist_applied(self, tmp_path):
         """When no project roots are registered, whitelist is not applied."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         orig_roots = srv._project_roots.copy()
         try:
@@ -97,8 +97,8 @@ class TestFileHashSizeCap:
 
     def test_large_file_skipped(self, tmp_path, monkeypatch):
         """File larger than MAX_HASH_BYTES must return None."""
-        import yadgar.server as srv
-        from yadgar.config import get_settings
+        import yadgar.core.server as srv
+        from yadgar._shared.config import get_settings
 
         # Create a file just over the limit
         large_file = tmp_path / "large.bin"
@@ -119,8 +119,8 @@ class TestFileHashSizeCap:
 
     def test_file_at_limit_hashed(self, tmp_path):
         """File exactly at MAX_HASH_BYTES must be hashed."""
-        import yadgar.server as srv
-        from yadgar.config import get_settings
+        import yadgar.core.server as srv
+        from yadgar._shared.config import get_settings
 
         max_bytes = get_settings().MAX_HASH_BYTES
         at_limit = tmp_path / "at_limit.bin"
@@ -137,7 +137,7 @@ class TestFileHashSizeCap:
 
     def test_max_hash_bytes_default_value(self):
         """MAX_HASH_BYTES default must be 10 MiB."""
-        from yadgar.config import get_settings
+        from yadgar._shared.config import get_settings
 
         max_bytes = get_settings().MAX_HASH_BYTES
         assert max_bytes > 0, "MAX_HASH_BYTES must be positive"
@@ -149,7 +149,7 @@ class TestFileHashStreaming:
 
     def test_does_not_call_read_bytes(self, tmp_path):
         """_file_hash must use open()+read() loop, not Path.read_bytes()."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         f = tmp_path / "file.txt"
         f.write_text("stream me")
@@ -175,7 +175,7 @@ class TestDlqRequeueFilenameValidation:
 
     def _call_dlq_requeue(self, filename: str) -> dict:
         """Call dlq_requeue, returning its result dict."""
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         return srv.dlq_requeue(filename)
 
@@ -219,7 +219,7 @@ class TestMemorizeOutsideProjectRoot:
     def test_memorize_does_not_hash_outside_root(self, tmp_path, monkeypatch):
         """memorize with context=outside path must not expose a file hash."""
         monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
-        import yadgar.server as srv
+        import yadgar.core.server as srv
 
         # Verify _file_hash returns None for an outside-root path
 

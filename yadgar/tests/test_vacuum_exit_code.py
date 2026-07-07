@@ -67,15 +67,19 @@ def _make_side_db(backend_url, filtered_path, side_path, source_counts):
 
 def _patch_stack(stack: ExitStack, monkeypatch) -> None:
     """Apply the standard vacuum mock patches via an ExitStack."""
-    stack.enter_context(patch("yadgar.vacuum._log_consolidation_row"))
-    stack.enter_context(patch("yadgar.vacuum.ServiceController"))
-    stack.enter_context(patch("yadgar.vacuum._wait_for_health", return_value=True))
-    stack.enter_context(patch("yadgar.vacuum._wait_for_yadgar_health", return_value=True))
-    stack.enter_context(patch("yadgar.vacuum._redefine_users_post_import"))
+    stack.enter_context(patch("yadgar.core.vacuum._log_consolidation_row"))
+    stack.enter_context(patch("yadgar.core.vacuum.ServiceController"))
+    stack.enter_context(patch("yadgar.core.vacuum._wait_for_health", return_value=True))
+    stack.enter_context(patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True))
+    stack.enter_context(patch("yadgar.core.vacuum._redefine_users_post_import"))
     # P2 side-build seams: capture a fixed source count + build/verify the side DB
     # hermetically (no surreal). The real export/strip/swap/finalize still run.
-    stack.enter_context(patch("yadgar.vacuum._capture_table_counts", return_value={"memory": 1}))
-    stack.enter_context(patch("yadgar.vacuum._build_and_verify_side_db", side_effect=_make_side_db))
+    stack.enter_context(
+        patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1})
+    )
+    stack.enter_context(
+        patch("yadgar.core.vacuum._build_and_verify_side_db", side_effect=_make_side_db)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +125,7 @@ class TestCheckInvariantsWarnOnly:
         monkeypatch.setattr(httpx, "post", fake_post)
         monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "test-token")
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         with tempfile.TemporaryDirectory() as td:
             db = _fake_db(td)
@@ -187,7 +191,7 @@ class TestCheckInvariantsWarnOnly:
         monkeypatch.setattr(httpx, "post", fake_post_violation)
         monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "test-token")
 
-        from yadgar.vacuum import cmd_vacuum_impl
+        from yadgar.core.vacuum import cmd_vacuum_impl
 
         with tempfile.TemporaryDirectory() as td:
             db = _fake_db(td)

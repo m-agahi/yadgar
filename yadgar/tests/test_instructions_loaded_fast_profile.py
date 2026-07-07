@@ -22,8 +22,8 @@ class TestInstructionsLoadedUseFastProfile:
 
     def test_recall_called_with_fast_profile(self):
         """retriever.recall kwarg profile must equal 'fast' on instructions_loaded."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
@@ -64,8 +64,8 @@ class TestInstructionsLoadedUseFastProfile:
 
     def test_fast_profile_present_alongside_other_kwargs(self):
         """profile='fast' must coexist with max_results and min_heat kwargs."""
-        import yadgar.server._state as _st
-        import yadgar.server.http as _http
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
 
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
@@ -104,7 +104,7 @@ class TestInstructionsLoadedUseFastProfile:
         """
         import pathlib
 
-        http_src = pathlib.Path(__file__).parent.parent / "server" / "http.py"
+        http_src = pathlib.Path(__file__).parent.parent / "core" / "server" / "http.py"
         source = http_src.read_text()
 
         # Count occurrences of profile="fast" in retriever.recall calls

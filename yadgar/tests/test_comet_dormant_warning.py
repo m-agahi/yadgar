@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import logging
 
-from yadgar.config import Settings
-from yadgar.config_registry import build_config_table, warn_comet_dormant
+from yadgar._shared.config import Settings
+from yadgar._shared.config_registry import build_config_table, warn_comet_dormant
 
 
 class TestBCEN2bStartupWarning:
     def test_disabled_emits_exactly_one_warning(self, caplog):
         settings = Settings(COMET_ENRICHMENT_ENABLED=False)
-        with caplog.at_level(logging.WARNING, logger="yadgar.config_registry"):
+        with caplog.at_level(logging.WARNING, logger="yadgar._shared.config_registry"):
             warn_comet_dormant(settings)
         comet_warnings = [
             r for r in caplog.records if r.levelno == logging.WARNING and "COMET" in r.getMessage()
@@ -30,7 +30,7 @@ class TestBCEN2bStartupWarning:
 
     def test_enabled_emits_no_warning(self, caplog):
         settings = Settings(COMET_ENRICHMENT_ENABLED=True)
-        with caplog.at_level(logging.WARNING, logger="yadgar.config_registry"):
+        with caplog.at_level(logging.WARNING, logger="yadgar._shared.config_registry"):
             warn_comet_dormant(settings)
         comet_warnings = [
             r for r in caplog.records if r.levelno == logging.WARNING and "COMET" in r.getMessage()
@@ -48,8 +48,8 @@ class TestBCEN2bWarningNotSwallowed:
     """
 
     def test_warning_fires_even_when_config_log_raises(self, caplog, monkeypatch):
-        import yadgar.config_registry as _cr
-        from yadgar.server.lifecycle import _emit_startup_diagnostics
+        import yadgar._shared.config_registry as _cr
+        from yadgar._shared.runtime.lifecycle import _emit_startup_diagnostics
 
         def _boom(*_a, **_k):
             raise RuntimeError("emit_startup_config_log exploded in the container")
@@ -57,7 +57,7 @@ class TestBCEN2bWarningNotSwallowed:
         monkeypatch.setattr(_cr, "emit_startup_config_log", _boom)
 
         settings = Settings(COMET_ENRICHMENT_ENABLED=False)
-        with caplog.at_level(logging.WARNING, logger="yadgar.config_registry"):
+        with caplog.at_level(logging.WARNING, logger="yadgar._shared.config_registry"):
             # Must NOT raise (diagnostics are non-fatal) AND must still warn.
             _emit_startup_diagnostics(settings)
 

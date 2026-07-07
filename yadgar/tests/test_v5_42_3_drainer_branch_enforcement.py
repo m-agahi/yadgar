@@ -32,8 +32,8 @@ from unittest.mock import patch
 
 import pytest
 
-from yadgar import server
-from yadgar.file_queue import FileQueue, QueueDrainer, _Attempt
+from yadgar.core import server
+from yadgar.core.file_queue import FileQueue, QueueDrainer, _Attempt
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ def _engines(tmp_path_factory):
 @pytest.fixture
 def bare_drainer(tmp_path):
     """Isolated FileQueue + QueueDrainer (no server state patching needed for unit tests)."""
-    import yadgar.server._state as _st
+    import yadgar._shared.runtime.state as _st
 
     fq = FileQueue(tmp_path)
     drainer = QueueDrainer(
@@ -109,8 +109,8 @@ def bare_drainer(tmp_path):
 @pytest.fixture
 def patched_drainer(tmp_path):
     """FileQueue + QueueDrainer with server lifecycle patches (for integration tests)."""
-    import yadgar.server._state as _state_mod
-    import yadgar.server.lifecycle as _lc
+    import yadgar._shared.runtime.lifecycle as _lc
+    import yadgar._shared.runtime.state as _state_mod
 
     real_fq = FileQueue(tmp_path)
     drainer = QueueDrainer(
@@ -124,7 +124,7 @@ def patched_drainer(tmp_path):
 
     with (
         patch.object(_lc, "_get_file_queue", _get_fq),
-        patch("yadgar.server.tools.wiki._get_file_queue", _get_fq),
+        patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
     ):
@@ -327,8 +327,8 @@ class TestDlqRequeueMissingBranch:
         fname = self._write_dlq_entry(fq, "missing_branch")
 
         with (
-            patch("yadgar.server.tools.admin_dlq._get_file_queue", return_value=fq),
-            patch("yadgar.server.lifecycle._get_file_queue", return_value=fq),
+            patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
+            patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
         ):
             result = server.dlq_requeue(filename=fname)
 
@@ -354,8 +354,8 @@ class TestDlqRequeueMissingBranch:
         fname = self._write_dlq_entry(fq, "missing_branch", payload)
 
         with (
-            patch("yadgar.server.tools.admin_dlq._get_file_queue", return_value=fq),
-            patch("yadgar.server.lifecycle._get_file_queue", return_value=fq),
+            patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
+            patch("yadgar._shared.runtime.lifecycle._get_file_queue", return_value=fq),
         ):
             result = server.dlq_requeue(filename=fname, force=True)
 
@@ -373,7 +373,7 @@ class TestMemorizeHardReject:
     def test_memorize_missing_branch_hard_rejects(self, patched_drainer, monkeypatch):
         """memorize with _detect_branch=None + no branch_hint → error dict returned."""
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = server.memorize(
                 content="Test content for branch reject",
                 context="/tmp/no-git",
@@ -387,7 +387,7 @@ class TestMemorizeHardReject:
     def test_memorize_with_branch_hint_passes(self, patched_drainer):
         """memorize with _detect_branch=None but branch_hint supplied → queued."""
         drainer, fq = patched_drainer
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = server.memorize(
                 content="Test content with branch hint",
                 context="/tmp/no-git",
@@ -405,7 +405,7 @@ class TestMemorizeHardReject:
         _, fq = patched_drainer
         initial_queue = list(fq.pending())
 
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             server.memorize(
                 content="Test reject no queue",
                 context="/tmp/no-git",
@@ -547,7 +547,7 @@ class TestMissingBranchMetric:
 
     def test_rejection_count_gauge_accessible(self):
         """yadgar_dlq_rejection_count metric is importable and a Gauge."""
-        from yadgar.metrics import yadgar_dlq_rejection_count
+        from yadgar._shared.metrics import yadgar_dlq_rejection_count
 
         # It should be a Gauge (has .set method)
         assert hasattr(yadgar_dlq_rejection_count, "set")
@@ -561,7 +561,7 @@ class TestMcpBoundaryValidators:
 
     def test_wiki_add_no_branch_returns_error_dict(self):
         """wiki_add without branch/branch_hint returns synchronous error dict."""
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = server.wiki_add(
                 title="No Branch Wiki Page",
                 content="Content without any branch context.",
@@ -588,7 +588,7 @@ class TestMcpBoundaryValidators:
     def test_memorize_no_branch_returns_error_dict(self, monkeypatch):
         """memorize without branch context returns synchronous missing_branch error."""
         monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)  # v5.46.9 F1: strip env fallback
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = server.memorize(
                 content="Memory without any branch context.",
                 context="/tmp/no-git",
@@ -600,7 +600,7 @@ class TestMcpBoundaryValidators:
 
     def test_memorize_with_branch_hint_no_error(self):
         """memorize with branch_hint → no error returned."""
-        with patch("yadgar.server._detect_branch", return_value=None):
+        with patch("yadgar.core.server._detect_branch", return_value=None):
             result = server.memorize(
                 content="Memory with branch hint.",
                 context="/tmp/no-git",

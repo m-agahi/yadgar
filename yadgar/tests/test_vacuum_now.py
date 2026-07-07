@@ -39,7 +39,7 @@ def _make_storage(db_size_bytes: int = 500 * 1024 * 1024) -> MagicMock:
 class TestFireVacuumService:
     def test_writes_trigger_file(self, tmp_path):
         """_fire_vacuum_service must write the trigger file at the configured path."""
-        from yadgar.ops import _fire_vacuum_service
+        from yadgar.core.ops import _fire_vacuum_service
 
         trigger = tmp_path / "vacuum_requested"
         with patch.dict(os.environ, {"YADGAR_VACUUM_TRIGGER_PATH": str(trigger)}):
@@ -49,7 +49,7 @@ class TestFireVacuumService:
 
     def test_trigger_file_contents_valid_json(self, tmp_path):
         """Trigger file must contain valid JSON with requested_at and source."""
-        from yadgar.ops import _fire_vacuum_service
+        from yadgar.core.ops import _fire_vacuum_service
 
         trigger = tmp_path / "vacuum_requested"
         with patch.dict(os.environ, {"YADGAR_VACUUM_TRIGGER_PATH": str(trigger)}):
@@ -61,7 +61,7 @@ class TestFireVacuumService:
 
     def test_write_is_atomic_no_tmp_file_after(self, tmp_path):
         """After success, no *.tmp file must remain (atomic rename)."""
-        from yadgar.ops import _fire_vacuum_service
+        from yadgar.core.ops import _fire_vacuum_service
 
         trigger = tmp_path / "vacuum_requested"
         with patch.dict(os.environ, {"YADGAR_VACUUM_TRIGGER_PATH": str(trigger)}):
@@ -72,7 +72,7 @@ class TestFireVacuumService:
 
     def test_returns_trigger_path(self, tmp_path):
         """_fire_vacuum_service must return the Path of the written trigger file."""
-        from yadgar.ops import _fire_vacuum_service
+        from yadgar.core.ops import _fire_vacuum_service
 
         trigger = tmp_path / "vacuum_requested"
         with patch.dict(os.environ, {"YADGAR_VACUUM_TRIGGER_PATH": str(trigger)}):
@@ -82,7 +82,7 @@ class TestFireVacuumService:
 
     def test_env_knob_override_honored(self, tmp_path):
         """YADGAR_VACUUM_TRIGGER_PATH env var must override the default path."""
-        from yadgar.ops import _fire_vacuum_service
+        from yadgar.core.ops import _fire_vacuum_service
 
         custom_path = tmp_path / "custom" / "vac_trigger"
         with patch.dict(os.environ, {"YADGAR_VACUUM_TRIGGER_PATH": str(custom_path)}):
@@ -92,7 +92,7 @@ class TestFireVacuumService:
 
     def test_creates_parent_dir_if_missing(self, tmp_path):
         """Parent directory must be created if it does not exist."""
-        from yadgar.ops import _fire_vacuum_service
+        from yadgar.core.ops import _fire_vacuum_service
 
         trigger = tmp_path / "nested" / "dirs" / "vacuum_requested"
         assert not trigger.parent.exists()
@@ -105,7 +105,7 @@ class TestFireVacuumService:
         """I/O failure writing trigger file must raise RuntimeError."""
         import pytest
 
-        from yadgar.ops import _fire_vacuum_service
+        from yadgar.core.ops import _fire_vacuum_service
 
         # Point at a path whose parent is an existing FILE (not a dir) → mkdir fails
         blocker = tmp_path / "blocker"
@@ -124,7 +124,7 @@ class TestFireVacuumService:
 class TestVacuumNowHappyPath:
     def test_started_true_with_before_bytes(self, tmp_path):
         """Happy path: returns started=True and before_bytes from DB size."""
-        from yadgar import server as srv
+        from yadgar.core import server as srv
 
         storage = _make_storage(db_size_bytes=500 * 1024 * 1024)
         trigger = tmp_path / "vacuum_requested"
@@ -141,7 +141,7 @@ class TestVacuumNowHappyPath:
 
     def test_returns_trigger_path_field(self, tmp_path):
         """Happy path: result must contain trigger_path field with the written path."""
-        from yadgar import server as srv
+        from yadgar.core import server as srv
 
         storage = _make_storage(db_size_bytes=500 * 1024 * 1024)
         trigger = tmp_path / "vacuum_requested"
@@ -157,7 +157,7 @@ class TestVacuumNowHappyPath:
 
     def test_trigger_file_actually_written(self, tmp_path):
         """vacuum_now() happy path must produce a trigger file on disk."""
-        from yadgar import server as srv
+        from yadgar.core import server as srv
 
         storage = _make_storage(db_size_bytes=500 * 1024 * 1024)
         trigger = tmp_path / "vacuum_requested"
@@ -172,7 +172,7 @@ class TestVacuumNowHappyPath:
 
     def test_no_service_unit_field(self, tmp_path):
         """service_unit field must no longer be present in the happy-path response."""
-        from yadgar import server as srv
+        from yadgar.core import server as srv
 
         storage = _make_storage(db_size_bytes=500 * 1024 * 1024)
         trigger = tmp_path / "vacuum_requested"
@@ -194,7 +194,7 @@ class TestVacuumNowHappyPath:
 class TestVacuumNowRefusals:
     def test_db_below_threshold_no_force(self):
         """DB < 200 MiB without force=True → skipped_reason=db_below_threshold."""
-        from yadgar import server as srv
+        from yadgar.core import server as srv
 
         storage = _make_storage(db_size_bytes=100 * 1024 * 1024)  # 100 MiB
 
@@ -206,7 +206,7 @@ class TestVacuumNowRefusals:
 
     def test_db_below_threshold_with_force_proceeds(self, tmp_path):
         """force=True bypasses the 200 MiB threshold check."""
-        from yadgar import server as srv
+        from yadgar.core import server as srv
 
         storage = _make_storage(db_size_bytes=100 * 1024 * 1024)  # 100 MiB
         trigger = tmp_path / "vacuum_requested"

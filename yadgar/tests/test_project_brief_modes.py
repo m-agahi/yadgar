@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from yadgar import server
+from yadgar.core import server
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -97,7 +97,7 @@ def test_signals_mode_no_bootstrap_when_init_present(flush_queue):
 
 def test_signals_mode_recommended_actions_refresh_active_work_when_stale(monkeypatch, flush_queue):
     """When active_work_age_hours > ACTIVE_WORK_STALE_HOURS, emit refresh_active_work."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     directory = "/tmp/stale_aw_test"
@@ -108,7 +108,7 @@ def test_signals_mode_recommended_actions_refresh_active_work_when_stale(monkeyp
     )
     flush_queue()
 
-    from yadgar.server.tools import project as proj_mod
+    from yadgar.core.server.tools import project as proj_mod
 
     def mock_age_stale(rows):
         if rows:
@@ -124,7 +124,7 @@ def test_signals_mode_recommended_actions_refresh_active_work_when_stale(monkeyp
 
 def test_signals_mode_recommended_actions_refresh_checkpoint_when_stale(monkeypatch, flush_queue):
     """When stale_checkpoint_hours > CHECKPOINT_STALE_HOURS, emit refresh_checkpoint."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     directory = "/tmp/stale_cp_test"
@@ -139,7 +139,7 @@ def test_signals_mode_recommended_actions_refresh_checkpoint_when_stale(monkeypa
     )
     flush_queue()
 
-    from yadgar.server.tools import project as proj_mod
+    from yadgar.core.server.tools import project as proj_mod
 
     def mock_age_stale(rows):
         if rows:
@@ -213,7 +213,7 @@ def test_restore_mode_no_anchor_scope_split():
 
 def test_restore_mode_top_anchors_truncated_at_max(monkeypatch, flush_queue):
     """top_anchors must be truncated at PROJECT_BRIEF_MAX_ANCHORS."""
-    from yadgar.server.tools import project as proj_mod
+    from yadgar.core.server.tools import project as proj_mod
 
     # Patch max anchors to 2 for deterministic test
     monkeypatch.setattr(proj_mod, "_get_max_anchors", lambda: 2)
@@ -429,7 +429,7 @@ def test_restore_mode_project_anchor_has_project_scope(flush_queue):
 
 def test_max_anchors_setting_exists():
     """PROJECT_BRIEF_MAX_ANCHORS must be a registered Settings field."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     assert hasattr(settings, "PROJECT_BRIEF_MAX_ANCHORS")
@@ -439,7 +439,7 @@ def test_max_anchors_setting_exists():
 
 def test_active_work_stale_hours_setting_exists():
     """ACTIVE_WORK_STALE_HOURS must be a registered Settings field."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     assert hasattr(settings, "ACTIVE_WORK_STALE_HOURS")
@@ -448,7 +448,7 @@ def test_active_work_stale_hours_setting_exists():
 
 def test_checkpoint_stale_hours_setting_exists():
     """CHECKPOINT_STALE_HOURS must be a registered Settings field."""
-    from yadgar.config import get_settings
+    from yadgar._shared.config import get_settings
 
     settings = get_settings()
     assert hasattr(settings, "CHECKPOINT_STALE_HOURS")

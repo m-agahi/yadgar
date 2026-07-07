@@ -159,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         # Find repo root relative to this script
         script_dir = Path(__file__).parent
         repo_root = script_dir.parent
-        tools_dir = repo_root / "yadgar" / "server" / "tools"
+        tools_dir = repo_root / "yadgar" / "core" / "server" / "tools"
 
     if not tools_dir.exists():
         print(f"ERROR: tools directory not found: {tools_dir}", file=sys.stderr)

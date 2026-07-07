@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.config import Settings
+from yadgar._shared.config import Settings
 
 
 @pytest.fixture

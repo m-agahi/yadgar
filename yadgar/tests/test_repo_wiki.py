@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from yadgar.repo_wiki.generator import (
+from yadgar.core.repo_wiki.generator import (
     _slugify,
     generate_module_page,
     generate_wiki_pages,
 )
-from yadgar.repo_wiki.scanner import (
+from yadgar.core.repo_wiki.scanner import (
     scan_python_module,
     scan_repo,
 )
@@ -329,7 +329,7 @@ class TestGenerateModulePage:
         """Generator SHA256(file bytes) must equal checker's _compute_source_hash([file])."""
         import hashlib
 
-        from yadgar.server.tools.project import _compute_source_hash
+        from yadgar.core.server.tools.project import _compute_source_hash
 
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
         page = generate_module_page(rec, str(fixture_repo))
