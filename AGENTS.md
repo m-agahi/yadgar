@@ -152,6 +152,26 @@ PYTHONUNBUFFERED=1 OTEL_SDK_DISABLED=true uv run --extra test --extra ml \
 
 53 MCP tools across memory, wiki, bookmarks, project, ops. Full table in `README.md § Tools`.
 
+### Where does new code go?
+
+Decide layer in 20 seconds — ask, in order:
+
+- **`core/`** — iff backend never needs it **and** the MCP-host / router /
+  lifecycle-supervisor does. *Test:* stateless transport + host-side control to
+  start/stop/restart/vacuum-swap the backend container.
+- **`backend/`** — iff core never imports it (reached only over the HTTP
+  boundary `/recall`+`/rerank` or a `Protocol`). *Test:* stateful compute — DB +
+  engines (embedding, retrieval, write-apply/drainer, consolidation).
+- **`_shared/`** — otherwise (both processes need it). *Test:* contracts
+  (protocols, config, models, paths, observability, tracing) + engines both
+  processes run. Tie-break vs `backend/` is runtime *usage*, not imports.
+
+**Forward-only:** refactor trains rip-and-replace — no backward-compat
+knobs/flags/dual-paths/re-export shims. Intermediate train states need only be
+CI-green, not runnable.
+
+Rules + enforcement (import-linter contracts, DI waivers): `docs/ARCHITECTURE_INVARIANTS.md` §I34 + `wiki:yadgar-adr-log` ADR-0062.
+
 ## Operations cheatsheet
 
 ```bash

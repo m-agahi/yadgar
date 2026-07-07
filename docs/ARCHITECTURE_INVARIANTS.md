@@ -5,7 +5,7 @@ Mirrored in wiki: `yadgar-architectural-invariants`.
 Anchored memory: project-scoped, `/home/max/git/yadgar`.
 Version-execution-order lives in the `yadgar-roadmap-future-improvements` wiki.
 
-Last updated: 2026-06-16 (I31 directory-scoping single-predicate — eligible-set rule, hard-require directory, no 'system' in eligible set; v5.62–v5.65). Prior: 2026-06-13 (I30 complexity-cap integrity — configurable caps + gated allowlist, no silent HARD baselining; v5.55.0). Prior: 2026-06-12 (I29 leverage-completeness / no-dead-capability — added this session from the KB-usability + graph-edge-leverage findings; planned via PLAN_V5_53 + PLAN_V5_54). Prior: 2026-05-31 (I26 secret-gate chokepoint v5.10.2; I27 plan-first for discoveries v5.10.x; I28 pre-commit allowlist audit v5.13.0).
+Last updated: 2026-07-07 (I34 modular layer coherence + forward-only — codifies ADR-0062: layer-classification decision tree + forward-only refactor discipline; import-linter 4-contract boundary + code-review; docs-only). Prior: 2026-06-16 (I31 directory-scoping single-predicate — eligible-set rule, hard-require directory, no 'system' in eligible set; v5.62–v5.65). Prior: 2026-06-13 (I30 complexity-cap integrity — configurable caps + gated allowlist, no silent HARD baselining; v5.55.0). Prior: 2026-06-12 (I29 leverage-completeness / no-dead-capability — added this session from the KB-usability + graph-edge-leverage findings; planned via PLAN_V5_53 + PLAN_V5_54). Prior: 2026-05-31 (I26 secret-gate chokepoint v5.10.2; I27 plan-first for discoveries v5.10.x; I28 pre-commit allowlist audit v5.13.0).
 
 ---
 
@@ -543,6 +543,84 @@ hard-flip landed **v5.105** (closes #8, MISSING **1564→0**). Plans:
 **Last updated:** 2026-07-04 (v5.105 — full rollout P1–P6, path-glob exemption +
 governed `@observe(exempt)`, global hard-fail flip, closes #8).
 
+### I34 — Modular layer coherence + forward-only (ADR-0062)
+
+Every new module or feature is placed in the correct layer (`core/`,
+`backend/`, or `_shared/`) per the classification rule below, and refactors are
+**forward-only** — rip-and-replace, no backward-compat scaffolding. This is the
+standing architecture directive codified in `wiki:yadgar-adr-log` **ADR-0062**.
+
+**What it enforces:** the three-layer split from the folder-split refactor
+(#17) does not erode. New code lands where the classification rule puts it, not
+where it is convenient; refactor trains replace the old shape whole rather than
+accreting compatibility shims beside it.
+
+**Classification rule (the decision tree).** Ask, in order:
+
+1. **`core/`** — iff (the backend process **never** needs it) **AND** (the core
+   MCP-host / router / lifecycle-supervisor **does** need it). Plain-language
+   test: *stateless transport + host-side lifecycle control* — request routing
+   and the ability to start / stop / restart / vacuum-swap the backend
+   container. If it is the host driving the backend's lifecycle, it is `core/`.
+2. **`backend/`** — iff core **never** imports it (it is reached only across the
+   HTTP boundary — `/recall` + `/rerank` — or behind a `Protocol`).
+   Plain-language test: *stateful compute* — the DB plus the engines (embedding,
+   retrieval, write-apply / drainer, consolidation). If core can only touch it
+   over HTTP or through an injected Protocol handle, it is `backend/`.
+3. **`_shared/`** — otherwise (both processes need it). Plain-language test:
+   *contracts + shared engines* — protocols, config, models, paths,
+   observability, tracing, and the engine code both processes actually run.
+
+The tie-breaker between `backend/` and `_shared/` is *usage*, not imports: an
+engine that only the backend runs is `backend/`; an engine both processes run
+is `_shared/`.
+
+**Forward-only.** Refactor trains rip-and-replace. Do **not** keep
+backward-compat knobs, feature flags, dual code paths, or re-export shims "for
+safety" — they are the erosion this invariant forbids. Intermediate train
+states need only be **CI-green, not runnable**: a mid-train commit may not boot,
+and that is fine — deploys wait for the **final** train's green CI, never for an
+intermediate one. Reference: **Train 1.5 (#45)** established this discipline
+(core `recall()` became a pure forward-only path with no legacy fallback).
+
+**Enforcement.**
+
+- **Mechanical (import boundary).** `import-linter` (`pyproject.toml
+  [tool.importlinter]`, `root_package = "yadgar"`) — **4 HARD contracts**:
+  1. `shared must not import core or backend` (`_shared` ↛ core/backend),
+  2. `backend must not import core` (backend ↛ core),
+  3. `core and backend must not import each other's internals` (core ↛ backend),
+  4. `layered: core|backend -> _shared` (both layers may depend on `_shared`,
+     never the reverse).
+  The **only** sanctioned edges are **2 PERMANENT DI waivers** —
+  `yadgar._shared.runtime.lifecycle -> yadgar.backend.ml_client` and
+  `… -> yadgar.backend.cache` — the composition root naming the concrete ML
+  client + cache singletons to inject them (ADR-0056). These are a permanent
+  structural waiver, **not** a shrinking migration allowance: **do NOT grow
+  them.** Any new `_shared`/`core` → `backend` edge is a violation, not a
+  candidate waiver. Wired **HARD-FAIL** into pre-commit (`import-linter` hook,
+  `entry: lint-imports`, `stages: [pre-commit]`) and CI
+  (`.forgejo/workflows/validate.yaml`); must stay **4 kept / 0 broken**. Run
+  manually with `lint-imports` (needs `pip install -e .` — it analyzes the
+  importable package, not staged files).
+- **Human (placement + forward-only).** Code review checks layer placement
+  against the classification rule above and rejects backward-compat scaffolding
+  in refactor PRs. This section is the reviewer's rubric.
+
+**Deferred — folder-misplacement auto-lint.** A static
+`scripts/check_layer_placement.py` that flags a file in the wrong folder is
+**DEFERRED**, deliberately. The `_shared/` criterion is *"used by both
+processes"* — a **runtime-usage** property, not a static-import one — so a
+purely static lint false-positives on any engine imported by one process but run
+by both (or vice versa). `import-linter` already covers the load-bearing case
+(the illegal cross-layer *import*); the residual placement judgment stays with
+human review until a usage-aware check is worth building.
+
+**History:** codified 2026-07-07 from the user's standing architecture directive
+(`wiki:yadgar-adr-log` ADR-0062). Import boundary predates this section
+(folder-split #17, ADR-0056; contracts in `pyproject.toml`). Forward-only
+discipline established by Train 1.5 (#45).
+
 ### Deferred (codify only when violations surface)
 
 - **I16 migration reversibility** — better as documented rollback procedure (restore-from-backup OR forward-fix script) verified by integration test.
@@ -913,6 +991,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 - 2026-06-12 (v5.54.4): I29 enforcement lint shipped — `scripts/check_dead_capability.py`. Scoped to EDGE_CONTRACT domain (graph_api.py + viz_meta.py EDGE_TYPES registry vs docs/EDGE_CONTRACT.md). Three failure modes: ORPHAN (produced but uncontracted), DROP-STILL-PRODUCED (marked drop but still in code), STALE (contracted but no longer produced). Lint passes on current codebase (all 11 edge types contracted; no drop types; no stale rows). Pre-commit hook `check-dead-capability` + CI step after I25. Tests: `yadgar/tests/test_check_dead_capability.py` (8 tests). Post-train no-GC finding confirmed: every edge has a consumer, drop set = empty.
 - 2026-06-16 (v5.62–v5.65): I31 added — directory-scoping single-predicate. `is_directory_eligible` in `storage/directory.py` is now the single source of truth for the eligible-set rule `{caller_dir, 'global', '', None}`. `'system'` removed from eligible set (v5.65); hard-require `directory` on `recall()`/`wiki_query()` (`ValueError` on absent); wiki-blend branch of `recall()` and `project_brief()` now filter with the same predicate; prompt-recall supplement WHERE corrected from `directory_context != $dir` to `directory_context IN ('', 'global')`. Write-time stamping (v5.64): `curation/strengthen.py`, `cls_store/promotion.py`, `sleep_compute/dream.py` now derive directory via `dominant_directory()` instead of hardcoding `'system'`. Quality floor (`RECALL_QUALITY_FLOOR`) + dedup of repeated co-occurrence rows (v5.62).
 - 2026-07-03 (v5.101): **I33 added** — tri-signal observability (span+metric+log, tiered + hard-enforced). ID reconciliation: invariant-audit proposed I33, plan proposed I34; highest *claimed* number in this file is I32 (`check_capability_coverage.py`, section never backfilled; I28 = `check_allowlist_audit.py` likewise) → next genuinely-free number is **I33** (I34 would skip a slot). I28/I32 sections stay un-backfilled (out of scope). P0 ships: `@observe(tier=boundary|stage|hot|exempt)` decorator (`yadgar/observability/observe.py`) composing `@trace_span` + shared bounded Prometheus families (`yadgar_observe_{requests_total,request_duration_seconds,stage_duration_seconds,stage_errors_total}`) + I14 logger, with a double-instrumentation guard (one span when `@trace_span`/`@_tool`/`_rpc_span` already present); `scripts/check_observe_coverage.py` I33 lint in **warn-mode** (baseline 1555 MISSING; allowlist integrity always hard, mirroring I30) wired into pre-commit + CI `invariant-checks`; `.observe-allowlist.json` seeded (2 hot-loop entries). Folded in: histogram-bucket p95 fix (extended `yadgar_recall_duration_ms`/`_recall_stage_ms`/`_mcp_request_duration_ms` to 300000ms + `_recall_stage_duration_seconds` to 300s — cold recalls reach ~75s, top finite bucket was 10s → p95 clamp). Core→backend propagation (already wired): E2E traceparent test added; `HTTPXClientInstrumentor` hoisted into `setup_tracing()` (closes stdio/daemon R2 hole), redundant explicit `instrument()` calls removed from `server/_app.py` + `backend/embed_service.py`. Extended I14 (log coverage-floor), I23 (in-scope fns emit via shared family), I24 (span scope → `server/tools/*`). NOT in scope: per-area rollout (P1–P5). Core 5.100.0 → 5.101.0; backend unchanged 5.10.0.
+- 2026-07-07: **I34 added** — modular layer coherence + forward-only. Codifies the user's standing architecture directive (`wiki:yadgar-adr-log` ADR-0062). Classification decision tree: `core/` iff (backend never needs it AND the MCP-host/router/lifecycle-supervisor needs it — stateless transport + host-side backend lifecycle control); `backend/` iff core never imports it (reached only via `/recall`+`/rerank` or a Protocol — stateful compute: DB + engines); `_shared/` otherwise (contracts + engines both processes run) — tie-break on runtime *usage*, not imports. Forward-only: refactor trains rip-and-replace, NO backward-compat knobs/flags/dual-paths/re-export shims; intermediate train states need only be CI-green (not runnable), deploys wait for the final train's green CI — ref Train 1.5 (#45). Enforcement: mechanical import boundary via `import-linter` (`pyproject.toml [tool.importlinter]`, 4 HARD contracts: `_shared`↛core/backend, backend↛core, core↛backend, layered `core|backend→_shared`) with 2 PERMANENT DI waivers (`lifecycle→backend.{ml_client,cache}`, ADR-0056 composition root — do NOT grow); human = code-review placement + this section. Deferred: `scripts/check_layer_placement.py` folder-misplacement auto-lint — the "used by both → `_shared`" criterion is runtime-usage, not static-import, so a static lint false-positives; import-linter covers the load-bearing import case. No code change; docs-only.
 
 ---
 
