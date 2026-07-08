@@ -13,7 +13,7 @@ Escape hatch: add ``# tamper-lint: no-assert <reason>`` (anywhere in the test
 function body's source lines) to acknowledge that a test legitimately has no
 assertion (e.g. tests that assert only via side-effects at the fixture level).
 
-Run as a plain (non-e2e) pytest: ``yadgar/tests/test_tamper_guards.py``.
+Run as a plain (non-e2e) pytest: ``yadgar/tests/core/test_tamper_guards.py``.
 Or standalone: ``python scripts/check_e2e_assertions.py`` (exit 0 = clean).
 """
 

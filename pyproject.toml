@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.116.0"
+version = "5.117.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -117,20 +117,20 @@ ignore = [
 # b27d218 enabled ruff --select=C901,PLR0913 without grandfathering existing code.
 # Each entry is technical debt; refactor target: v5.4.4.
 # DO NOT add new entries here — fix violations in new code.
-"yadgar/core/causal_discovery/pc.py" = ["C901"]
+"yadgar/backend/causal_discovery/pc.py" = ["C901"]
 "yadgar/core/cli/daemon.py" = ["C901"]
 "yadgar/core/cli/stats.py" = ["C901"]
-"yadgar/core/cls_store/clustering.py" = ["C901"]
-"yadgar/core/consolidation/cls.py" = ["C901"]
-"yadgar/core/curation/__init__.py" = ["PLR0913"]
-"yadgar/core/curation/ingestion.py" = ["PLR0913"]
-"yadgar/core/curation/prune_passes.py" = ["C901"]
+"yadgar/backend/cls_store/clustering.py" = ["C901"]
+"yadgar/backend/consolidation/cls.py" = ["C901"]
+"yadgar/backend/curation/__init__.py" = ["PLR0913"]
+"yadgar/backend/curation/ingestion.py" = ["PLR0913"]
+"yadgar/backend/curation/prune_passes.py" = ["C901"]
 "yadgar/core/graph_api.py" = ["C901"]
 "yadgar/core/install_hooks_lib.py" = ["C901"]
 "yadgar/_shared/metacognition/cognitive_load.py" = ["C901"]
 "yadgar/_shared/metacognition/coverage.py" = ["C901"]
 "yadgar/_shared/metacognition/gap_detection.py" = ["C901"]
-"yadgar/core/predictive_coding.py" = ["C901"]
+"yadgar/backend/predictive_coding.py" = ["C901"]
 "yadgar/_shared/restoration.py" = ["C901", "PLR0913"]
 "yadgar/_shared/retrieval/_reranking_heuristic.py" = ["C901"]
 "yadgar/_shared/retrieval/fusion.py" = ["C901"]
@@ -146,8 +146,8 @@ ignore = [
 "yadgar/core/server/tools/recall.py" = ["C901"]
 "yadgar/core/server/tools/wiki.py" = ["PLR0913"]
 "yadgar/_shared/storage/entity.py" = ["PLR0913"]
-"yadgar/tests/test_metacognition.py" = ["PLR0913"]
-"yadgar/tests/test_rules_engine.py" = ["PLR0913"]
+"yadgar/tests/_shared/test_metacognition.py" = ["PLR0913"]
+"yadgar/tests/_shared/test_rules_engine.py" = ["PLR0913"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15  # I13 hard cap

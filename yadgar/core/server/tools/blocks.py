@@ -25,6 +25,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.secrets import gate_or_reject
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,6 @@ def block_create(
         {id, name, scope, content, char_limit, created_at, updated_at} on success.
         {ok: False, error: "..."} on validation failure or duplicate.
     """
-    storage = _get_storage()
-    if storage is None:
-        return {"ok": False, "error": "storage_not_initialized"}
-
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -79,16 +76,17 @@ def block_create(
     if gate is not None:
         return gate
 
-    kwargs: dict = {"name": name, "content": content, "scope": scope, "directory": directory}
-    if char_limit is not None:
-        kwargs["char_limit"] = char_limit
-    try:
-        result = storage.create_block(**kwargs)
-    except Exception as exc:
-        logger.warning("block_create error name=%s: %s", name, exc)
-        return {"ok": False, "error": str(exc)}
-
-    return result
+    # R3 Car 3a: storage write forwards to backend /admin.
+    return _forward_admin(
+        "block_create",
+        {
+            "name": name,
+            "content": content,
+            "scope": scope,
+            "directory": directory,
+            "char_limit": char_limit,
+        },
+    )
 
 
 @_tool(power=True)
@@ -151,10 +149,6 @@ def block_update(
         Updated {id, name, scope, content, char_limit, updated_at} on success.
         {ok: False, error: "..."} on failure.
     """
-    storage = _get_storage()
-    if storage is None:
-        return {"ok": False, "error": "storage_not_initialized"}
-
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -165,18 +159,11 @@ def block_update(
     if gate is not None:
         return gate
 
-    try:
-        result = storage.update_block(
-            name=name,
-            content=content,
-            scope=scope,
-            directory=directory,
-        )
-    except Exception as exc:
-        logger.warning("block_update error name=%s: %s", name, exc)
-        return {"ok": False, "error": str(exc)}
-
-    return result
+    # R3 Car 3a: storage write forwards to backend /admin.
+    return _forward_admin(
+        "block_update",
+        {"name": name, "content": content, "scope": scope, "directory": directory},
+    )
 
 
 @_tool(power=True)
@@ -196,22 +183,13 @@ def block_delete(
         {deleted: True, name: str} on success.
         {ok: False, error: "..."} on unexpected failure.
     """
-    storage = _get_storage()
-    if storage is None:
-        return {"ok": False, "error": "storage_not_initialized"}
-
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
         return _dir_guard
 
-    try:
-        storage.delete_block(name=name, scope=scope, directory=directory)
-    except Exception as exc:
-        logger.warning("block_delete error name=%s: %s", name, exc)
-        return {"ok": False, "error": str(exc)}
-
-    return {"deleted": True, "name": name}
+    # R3 Car 3a: storage write forwards to backend /admin.
+    return _forward_admin("block_delete", {"name": name, "scope": scope, "directory": directory})
 
 
 @_tool(power=True)
@@ -276,10 +254,6 @@ def block_replace(
         Updated {id, name, scope, content, char_limit, updated_at} on success.
         {ok: False, error: "..."} on failure (not found, ambiguous, limit exceeded).
     """
-    storage = _get_storage()
-    if storage is None:
-        return {"ok": False, "error": "storage_not_initialized"}
-
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -290,19 +264,17 @@ def block_replace(
     if gate is not None:
         return gate
 
-    try:
-        result = storage.replace_block(
-            name=name,
-            old_text=old_text,
-            new_text=new_text,
-            scope=scope,
-            directory=directory,
-        )
-    except Exception as exc:
-        logger.warning("block_replace error name=%s: %s", name, exc)
-        return {"ok": False, "error": str(exc)}
-
-    return result
+    # R3 Car 3a: storage write forwards to backend /admin.
+    return _forward_admin(
+        "block_replace",
+        {
+            "name": name,
+            "old_text": old_text,
+            "new_text": new_text,
+            "scope": scope,
+            "directory": directory,
+        },
+    )
 
 
 @_tool(power=True)
@@ -327,10 +299,6 @@ def block_append(
         Updated {id, name, scope, content, char_limit, updated_at} on success.
         {ok: False, error: "..."} on failure (block not found, limit exceeded).
     """
-    storage = _get_storage()
-    if storage is None:
-        return {"ok": False, "error": "storage_not_initialized"}
-
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -341,15 +309,8 @@ def block_append(
     if gate is not None:
         return gate
 
-    try:
-        result = storage.append_block(
-            name=name,
-            text=text,
-            scope=scope,
-            directory=directory,
-        )
-    except Exception as exc:
-        logger.warning("block_append error name=%s: %s", name, exc)
-        return {"ok": False, "error": str(exc)}
-
-    return result
+    # R3 Car 3a: storage write forwards to backend /admin.
+    return _forward_admin(
+        "block_append",
+        {"name": name, "text": text, "scope": scope, "directory": directory},
+    )

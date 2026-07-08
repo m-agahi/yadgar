@@ -1152,12 +1152,23 @@ def recall_backend_bypass(monkeypatch):
         if mode == "landscape":
             # Landscape not fully wired in unit tests — return empty (no AstrocytePool)
             return []
+        # Unit tests store memories with branch=YADGAR_CI_BRANCH.  recall.py may
+        # detect current_branch=None for fake test directories (e.g. /home/user/project).
+        # With current_branch=None and default_branch='master' (git fallback), the
+        # BranchFilter clause is (branch IS NONE OR branch='master') — excluding
+        # feat/* memories.  Fix: fill current_branch from YADGAR_CI_BRANCH so the
+        # clause becomes (branch IS NONE OR branch='master' OR branch='feat/test-branch')
+        # — includes unit-test memories without disabling branch isolation.
+        import os as _os
+
+        _ci_branch = _os.environ.get("YADGAR_CI_BRANCH")
+        _effective_branch = current_branch or _ci_branch or None
         return _fanout_recall(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
             directory=directory,
-            current_branch=current_branch,
+            current_branch=_effective_branch,
             default_branch=default_branch,
             type_filter=type_filter,
             tags=tags,
@@ -1166,3 +1177,152 @@ def recall_backend_bypass(monkeypatch):
 
     monkeypatch.setattr(_recall_module, "_forward_to_backend", _bypass_forward)
     yield
+
+
+# ---------------------------------------------------------------------------
+# R3 Car 3a migration fixture: _forward_admin bypass
+#
+# After Car 3a, the pure-CRUD write tools (bookmark_*, block_*) are pure
+# forwarders to the backend /admin endpoint. Tests that call these tools
+# directly without mocking _forward_admin fail with "YADGAR_EMBED_URL is not
+# set" because there is no backend HTTP server in the unit-test environment.
+#
+# This fixture patches _forward_admin to call run_admin_op directly (bypassing
+# HTTP) against the same _st storage the test's engine fixture already wired.
+# The storage write still happens for real via run_admin_op — assertions on
+# rows / results stay meaningful (#52).
+#
+# Opt-in: add ``admin_backend_bypass`` as a fixture argument, or mark the module
+# with ``pytestmark = pytest.mark.usefixtures("admin_backend_bypass")``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def admin_backend_bypass(monkeypatch):
+    """Patch _forward_admin to call run_admin_op directly (no HTTP).
+
+    Car 3a migration fixture: provides a backend-equivalent call path for tests
+    that invoke the CRUD write tools directly without mocking _forward_admin.
+    The op runs against the same yadgar._shared.runtime.state (_st) storage the
+    test's engine fixture populated, so the storage write is real.
+    """
+    import sys
+
+    import yadgar.core.server.tools._forward as _forward_module
+    from yadgar.backend.admin_exec import run_admin_op
+
+    def _bypass_admin(op, payload, timeout_s=30.0):
+        """Direct run_admin_op call — bypasses HTTP, same _st storage."""
+        return run_admin_op(op, payload)
+
+    # Patch the source AND every consumer module: the CRUD tools bind the helper
+    # by name (``from ._forward import _forward_admin``), so patching only the
+    # source module would not rebind the consumers' local references.
+    monkeypatch.setattr(_forward_module, "_forward_admin", _bypass_admin)
+    for _consumer in (
+        "yadgar.core.server.tools.bookmarks",
+        "yadgar.core.server.tools.blocks",
+        # R3 Car 3b: memory/rules writes now forward too.
+        "yadgar.core.server.tools.admin_other",
+        "yadgar.core.server.tools.admin_archive",
+        # R3 Car 3c: wiki-edit family + agent_prompt_save now forward too.
+        "yadgar.core.server.tools.wiki",
+        "yadgar.core.server.tools.agent_prompts",
+        # R3 Car 3d: audit/invariants/project + dispatch marker forward too.
+        "yadgar.core.server.tools.audit",
+        "yadgar.core.server.tools.admin_invariants",
+        "yadgar.core.server.tools.project",
+        "yadgar.core.server.tools.dispatch_helper",
+    ):
+        _mod = sys.modules.get(_consumer)
+        if _mod is not None and hasattr(_mod, "_forward_admin"):
+            monkeypatch.setattr(_mod, "_forward_admin", _bypass_admin)
+    yield
+
+
+# ---------------------------------------------------------------------------
+# R3 write-path autouse harness for unit tests
+#
+# R3 Car 1 + Car 3 made write/admin/recall/consolidation forward-only to the
+# backend HTTP endpoint (YADGAR_EMBED_URL).  Unit tests have no backend server,
+# so three failure mechanics arise:
+#
+#   (a) RuntimeError "YADGAR_EMBED_URL is not set" from forwarders.
+#   (b) memorize/wiki writes return {stored,queued,queue_id} with no drainer to
+#       land them → reads find nothing (id-asserts, empty-data cascades).
+#   (c) consolidation hits _forward_to_backend → RuntimeError.
+#
+# This autouse fixture installs all four harness pieces (from _backend_harness)
+# for tests that use the engine stack.  The gate (engine fixture presence in
+# request.fixturenames) prevents applying the bypass to tests that deliberately
+# exercise the RuntimeError path (test_admin_forward_unit.py etc.) — those tests
+# run WITHOUT engine fixtures and must stay untouched.
+#
+# CALL-TIME guard: when YADGAR_EMBED_URL IS set (e.g. test sets it to exercise a
+# real backend contract), the bypass functions delegate to the original HTTP
+# forwarder — the real contract is tested, not the in-process shim.
+#
+# Engine fixture names that signal "this test uses the engine stack":
+#   _engines        — most unit test files define this module-scoped fixture
+#   module_storage  — shared module-scoped StorageEngine (conftest factory above)
+#   server_engines  — integration tests (test_integration.py) use this name
+#
+# The existing opt-in admin_backend_bypass / recall_backend_bypass fixtures
+# remain available for tests in Car 3c files that opt in explicitly.  Their
+# bodies are unchanged; the autouse fixture below delegates to the same harness
+# functions so there is one canonical implementation.
+# ---------------------------------------------------------------------------
+
+
+# Set of fixture names whose presence indicates an in-process engine stack.
+_ENGINE_FIXTURE_NAMES = frozenset({"_engines", "module_storage", "server_engines"})
+
+
+@pytest.fixture(autouse=True)
+def _unit_backend_harness(request, monkeypatch, _isolate_file_queue):
+    """Install in-process backend harness when the test uses an engine stack.
+
+    Gate: only wires when one of ``_ENGINE_FIXTURE_NAMES`` is in
+    ``request.fixturenames``.  Tests that deliberately test the forward-only
+    RuntimeError path (e.g. test_admin_forward_unit.py) carry NO engine fixture
+    and are unaffected.
+
+    Pieces installed (all CALL-TIME guarded on YADGAR_EMBED_URL):
+      1. QueueDrainer + ConsolidationScheduler in-process via ``wire_drainer``.
+      2. ``_forward_admin`` → ``run_admin_op`` (in-process).
+      3. Recall ``_forward_to_backend`` → ``_fanout_recall`` (in-process).
+      4. Orchestrator ``_forward_to_backend`` → ``run_consolidation_cycle``.
+
+    Depends on ``_isolate_file_queue`` so it runs AFTER the per-test FileQueue
+    reset; ``_get_file_queue()`` then returns the live per-test queue.
+    """
+    if not any(n in request.fixturenames for n in _ENGINE_FIXTURE_NAMES):
+        yield
+        return
+
+    from yadgar.core import server as _server
+    from yadgar.tests._backend_harness import (
+        patch_admin_bypass,
+        patch_consolidate_bypass,
+        patch_recall_bypass,
+        teardown_consolidate_bypass,
+        wire_drainer,
+    )
+
+    # Provide a default branch so memorize/anchor/wiki_add calls in unit tests
+    # don't need explicit branch_hint.  Tests that explicitly assert "no branch"
+    # behaviour already remove this via monkeypatch.delenv("YADGAR_CI_BRANCH").
+    monkeypatch.setenv("YADGAR_CI_BRANCH", "feat/test-branch")
+
+    # Install the three forward bypasses (monkeypatch unwinds at test teardown).
+    patch_admin_bypass(monkeypatch)
+    patch_recall_bypass(monkeypatch)
+    patch_consolidate_bypass(monkeypatch)
+
+    # Wire the drainer + consolidation scheduler in-process.
+    with wire_drainer(_server._get_file_queue) as drainer:
+        yield drainer
+
+    # Drop the memoised backend scheduler singleton after every test so the next
+    # test (or module) rebuilds it against its own live storage.
+    teardown_consolidate_bypass()

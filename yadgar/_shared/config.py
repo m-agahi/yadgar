@@ -185,7 +185,6 @@ class Settings(BaseSettings):
     CROSS_ENCODER_ENABLED: bool = True  # FlashRank ONNX is fast enough for CPU
     CROSS_ENCODER_TOP_K: int = 10
     CROSS_ENCODER_WEIGHT: float = 0.6  # CE weight in blend (retrieval gets 1-this)
-    CROSS_ENCODER_BACKEND: str = "st"  # "st" (fp32 default) | "onnx-int8" (opt-in quantized)
 
     # v12: Graph signal optimization settings
     GRAPH_MAX_HOPS: int = 2

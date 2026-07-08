@@ -25,8 +25,8 @@ import re
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.secrets import gate_or_reject
-from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -71,95 +71,11 @@ def _unwrap_purpose_prompt(content: str) -> str:
     return content
 
 
-def _toc_row(pattern: str, purpose: str) -> str:
-    return f"- `{pattern}` → {purpose}"
-
-
-@observe(tier="hot", metric="tools.agent_prompts._toc_with_row")
-def _toc_with_row(body: str, pattern: str, new_row: str) -> str:
-    """Return TOC body with `pattern`'s row upserted (replace if present, else append)."""
-    found = any(m.group("pattern") == pattern for m in _TOC_ROW_RE.finditer(body))
-    if found:
-        return _TOC_ROW_RE.sub(
-            lambda m: new_row if m.group("pattern") == pattern else m.group(0), body
-        )
-    return body.rstrip() + "\n" + new_row + "\n"
-
-
-@observe(tier="stage", metric="tools.agent_prompts._upsert_toc_row")
-def _upsert_toc_row(pattern: str, purpose: str, branch_hint: str | None) -> None:
-    """Scan-replace-or-add the `pattern → purpose` row in the global TOC page.
-
-    Idempotent: a second save for the same pattern replaces its row (no dupes).
-    Best-effort — any failure is logged, never raised (TOC is a discovery aid,
-    not a write barrier on the prompt save itself).
-    """
-    import yadgar._shared.runtime.state as _st_mod  # noqa: PLC0415
-
-    wiki = _st_mod._wiki
-    if wiki is None:
-        return
-    try:
-        existing = _st_mod._storage.get_wiki_page_by_slug(_TOC_SLUG)
-        new_row = _toc_row(pattern, purpose)
-        if existing and existing.get("content"):
-            content = _toc_with_row(existing["content"], pattern, new_row)
-        else:
-            content = (
-                "# Agent Prompt TOC\n\n"
-                "Reusable subagent dispatch prompts. "
-                "recall(type='wiki', tags=['agent-prompt']) to pull one.\n\n"
-                f"{new_row}\n"
-            )
-        wiki.add(
-            title=_TOC_TITLE,
-            content=content,
-            category="reference",
-            tags=["agent-prompt-toc"],
-            opts=WikiAddOptions(
-                source_memory_ids=[],
-                confidence="high",
-                branch=branch_hint,
-                directory_context="global",
-            ),
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.debug("agent_prompt_save: TOC upsert failed: %s", e)
-
-
-@observe(tier="stage", metric="tools.agent_prompts._ensure_library_anchor")
-def _ensure_library_anchor(branch_hint: str | None) -> None:
-    """Create the global discovery anchor pointing at the TOC, if absent.
-
-    Create-if-absent (keyed by reason tag) so repeat saves don't spam anchors.
-    Best-effort — failures are logged, never raised. NOT gated by
-    AGENT_PROMPT_LIBRARY_ENABLED (the anchor is a always-on signpost; only the
-    three discovery surfaces are gated).
-    """
-    try:
-        import yadgar._shared.runtime.state as _st_mod  # noqa: PLC0415
-
-        storage = _st_mod._storage
-        if storage is None:
-            return
-        existing = storage._q(
-            "SELECT id FROM memory WHERE '_anchor' INSIDE tags AND $reason INSIDE tags LIMIT 1",
-            {"reason": f"anchor:{_LIBRARY_ANCHOR_REASON}"},
-        )
-        if existing:
-            return
-        from yadgar._shared.runtime.lifecycle import _get_replay  # noqa: PLC0415
-
-        replay = _get_replay()
-        replay.anchor_memory(
-            _LIBRARY_ANCHOR_CONTENT,
-            "global",
-            [f"anchor:{_LIBRARY_ANCHOR_REASON}"],
-            _LIBRARY_ANCHOR_REASON,
-            branch=branch_hint,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.debug("agent_prompt_save: library anchor ensure failed: %s", e)
+# R3 Car 3c: the TOC-upsert + library-anchor writes (previously _upsert_toc_row /
+# _ensure_library_anchor here) moved backend-side into
+# yadgar.backend.admin_exec.wiki (they are DB writes on the agent_prompt_save path,
+# which now forwards to POST /admin). The _TOC_* / _LIBRARY_ANCHOR_* constants
+# above stay: _TOC_SLUG + _TOC_ROW_RE are still read core-side (project.py TOC scan).
 
 
 @_tool()
@@ -169,7 +85,8 @@ def agent_prompt_save(
     directory: str | None = None,
     branch_hint: str | None = None,
     purpose: str | None = None,
-    storage=None,
+    storage=None,  # noqa: ARG001 — kept for API back-compat (seed_agent_prompts passes it);
+    # R3 Car 3c: the DB write forwards to backend /admin, which uses its own storage.
 ) -> dict:
     """Save (upsert) an agent-prompt for the given task pattern.
 
@@ -183,17 +100,12 @@ def agent_prompt_save(
         directory: Absolute project path or 'global'. Required (v5.42.5).
         branch_hint: Caller branch context (optional).
         purpose: One-line description for the TOC. Derived from pattern if omitted.
-        storage: StorageEngine instance (injected for testing; otherwise
-                 resolved from server lifecycle).
+        storage: Accepted for API back-compat (R3 Car 3c: the storage write forwards
+                 to the backend /admin op, which resolves its own storage). Unused.
 
     Returns:
         {"saved": True, "version": N, "slug": "...", "page_id": ...}
     """
-    if storage is None:
-        from yadgar._shared.runtime.lifecycle import _get_storage
-
-        storage = _get_storage()
-
     # v5.42.5: directory required — reject at MCP boundary (same contract as wiki_add)
     _effective_dir = (directory or "").strip() or None
     if not _effective_dir:
@@ -208,6 +120,7 @@ def agent_prompt_save(
             "op_type": "agent_prompt_save",
         }
 
+    # I26 secret gate — STAYS core (scan content before any state mutation).
     _gate = gate_or_reject(content)
     if _gate is not None:
         return _gate
@@ -222,74 +135,25 @@ def agent_prompt_save(
     # Wrap content with required headings so wiki_lint passes for page_type="agent_prompt"
     full_content = f"## Purpose\n\n{_purpose}\n\n## Prompt\n\n{content}"
 
-    # v5.42.5: route through wiki_add machinery (branch + directory + similarity gate).
-    import yadgar._shared.runtime.state as _st_mod  # noqa: PLC0415
-
-    wiki = _st_mod._wiki
-    if wiki is not None:
-        result = wiki.add(
-            title=title,
-            content=full_content,
-            category="reference",
-            tags=tags,
-            opts=WikiAddOptions(
-                source_memory_ids=[],
-                confidence="high",
-                branch=branch_hint,
-                directory_context=_effective_dir,
-                page_type="agent_prompt",
-            ),
-        )
-        page_id = result.get("id")
-        version = storage.get_max_version_for_page(int(page_id)) if page_id is not None else 1
-    else:
-        # Fallback: direct storage upsert when wiki not initialised (tests)
-        existing = storage.get_wiki_page_by_slug(slug)
-        if existing is not None:
-            page_id = storage._extract_id(existing.get("id"))
-            storage.update_wiki_page(
-                page_id,
-                {
-                    "title": title,
-                    "content": full_content,
-                    "tags": tags,
-                    "category": "reference",
-                    "confidence": "high",
-                    "directory_context": _effective_dir,
-                    "page_type": "agent_prompt",
-                },
-            )
-            version = storage.get_max_version_for_page(page_id)
-        else:
-            page_id = storage.insert_wiki_page(
-                {
-                    "slug": slug,
-                    "title": title,
-                    "content": full_content,
-                    "tags": tags,
-                    "links": [],
-                    "category": "reference",
-                    "confidence": "high",
-                    "source_memory_ids": [],
-                    "directory_context": _effective_dir,
-                    "page_type": "agent_prompt",
-                    "wiki_schema_version": 1,
-                }
-            )
-            version = 1
-
-    # S6 discovery surface (best-effort; failures never block the save):
-    #   1. upsert the pattern → purpose row into the global TOC page.
-    #   2. ensure the global discovery anchor exists (create-if-absent).
-    _upsert_toc_row(pattern, _purpose, branch_hint)
-    _ensure_library_anchor(branch_hint)
-
-    return {
-        "saved": True,
-        "version": version,
-        "slug": slug,
-        "page_id": page_id,
-    }
+    # R3 Car 3c: directory-validation + I26 secret-gate + content-wrap stay core;
+    # the DB writes (wiki.add + TOC upsert + library anchor) forward to the backend
+    # /admin op. All three go backend-side (wiki + replay are in the slim engine
+    # set). The wiki.add → _bump_wiki_epoch hook busts the core agent_prompt_prelude
+    # cache namespace cross-process (file-backed epoch, Car 2). The `storage=` test
+    # seam is dropped on the forward path — bypass tests use admin_backend_bypass.
+    return _forward_admin(
+        "agent_prompt_save",
+        {
+            "slug": slug,
+            "title": title,
+            "full_content": full_content,
+            "tags": tags,
+            "pattern": pattern,
+            "purpose": _purpose,
+            "branch_hint": branch_hint,
+            "directory": _effective_dir,
+        },
+    )
 
 
 # ── S8 starter library ───────────────────────────────────────────────────────

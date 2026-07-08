@@ -35,13 +35,41 @@ v5.100.0 — source label ("hook" | "tool"):
   ``source`` is also included in the shadow cache key so that a hook call and a
   tool call for the identical query occupy independent keyspaces (a hook hit for
   query Q must not register as a tool hit for query Q).
+
+R3 Car 2 — cross-process shared epoch store:
+  The structural epoch is the cache-invalidation signal that lets core read-tool
+  caches (project_brief / wiki_read / wiki_query) know a backend write invalidated
+  their cached result.  Post-Car-1 the WRITE that bumps the epoch runs in the
+  BACKEND process while the READ that keys on it runs in the CORE process.  A
+  process-local counter (module dict) is therefore split-brained: core never sees
+  a backend bump and serves stale reads.
+
+  The epoch is now backed by small counter FILES under the SHARED QUEUE VOLUME
+  (the same volume both processes already mount for the file queue — see
+  MIGRATION_NOTES Car 0).  Layout under ``<base>/cache_epoch/``:
+    * per-directory counter → ``<safe(dir)>``  (sanitized + hashed dir name)
+    * global generation      → ``_global``
+  ``_current_epoch(dir)`` = per-dir counter + global counter, so a bump of either
+  advances the effective epoch (a global bump invalidates every dir).  Writes are
+  flock-serialised read→+1→atomic-replace (cross-process monotonic, bounded size —
+  a single int per file, never an append log).  Reads are lock-free (atomic
+  os.replace makes a partial read impossible) and default to 0 on a missing file
+  or any error, so the safe failure direction is a MISS (recompute), never a false
+  HIT (stale serve).
+
+  The ``_SHADOW_KEYS`` LRU + would-be-hit/miss instrumentation below stays
+  process-local — it is per-process measurement, not shared state.  Only the epoch
+  source moved to the shared files.
 """
 
 from __future__ import annotations
 
+import hashlib
+import os
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
 
@@ -75,44 +103,106 @@ class RecallShadowParams:
 # ── Bounded state (module-level, process-lifetime) ───────────────────────────
 _LOCK = threading.Lock()
 
-# directory -> structural epoch counter (monotonic; bumped on structural writes).
-_DIR_EPOCH: dict[str, int] = {}
-
-# global generation — bumped by cross-directory structural events (e.g. the
-# consolidation prior recompute rewrites prior scalars for every directory).  It is
-# folded into every key's effective epoch so a global bump invalidates ALL keys,
-# not just one directory's.
-_GLOBAL_GEN: list[int] = [0]
-
 # would-be-key -> effective-epoch-at-record.  Bounded LRU (can never grow unbounded).
+# NOTE: this LRU is per-process instrumentation only (see module docstring); it is
+# intentionally NOT shared across processes — unlike the epoch counters below.
 _MAX_SHADOW_KEYS = 4096
 _SHADOW_KEYS: OrderedDict[tuple, int] = OrderedDict()
+
+# ── Shared cross-process epoch store (R3 Car 2) ──────────────────────────────
+# Sentinel filename for the global generation counter (bumped by cross-directory
+# structural events, folded into every dir's effective epoch).
+_GLOBAL_FILE = "_global"
+_EPOCH_SUBDIR = "cache_epoch"
+
+
+@observe(tier="hot", metric="tools.recall_shadow.epoch_base_dir")
+def _epoch_base_dir() -> Path:
+    """Resolve the shared epoch directory under the shared queue volume.
+
+    Mirrors how the file queue resolves its base (core: YADGAR_DATA_DIR; backend:
+    YADGAR_QUEUE_BASE — both point at the SAME mounted volume, see MIGRATION_NOTES
+    Car 0).  Read at call time (never cached at import) so pytest's env monkeypatch
+    and the two deployed processes both resolve correctly.
+    """
+    base = os.environ.get("YADGAR_QUEUE_BASE") or os.environ.get("YADGAR_DATA_DIR")
+    if not base:
+        from yadgar._shared import paths as _paths  # noqa: PLC0415
+
+        base = str(_paths.DATA_DIR)
+    return Path(base) / _EPOCH_SUBDIR
+
+
+@observe(tier="hot", metric="tools.recall_shadow.epoch_counter_path")
+def _counter_path(directory: str | None) -> Path:
+    """Return the counter file path for *directory* (or the global sentinel).
+
+    A concrete directory is sanitized + hashed into a single stable filename so
+    arbitrary paths (slashes, length) never break the file name and two distinct
+    dirs never collide.
+    """
+    if not directory:
+        return _epoch_base_dir() / _GLOBAL_FILE
+    digest = hashlib.sha256(directory.encode("utf-8")).hexdigest()[:32]
+    return _epoch_base_dir() / f"d_{digest}"
+
+
+@observe(tier="hot", metric="tools.recall_shadow.read_counter")
+def _read_counter(path: Path) -> int:
+    """Read a single-int counter file. Missing/partial/error → 0 (safe MISS)."""
+    try:
+        return int(path.read_text().strip())
+    except Exception:  # pragma: no cover - missing file / transient error → 0
+        return 0
+
+
+@observe(tier="hot", metric="tools.recall_shadow.incr_counter")
+def _incr_counter(path: Path) -> None:
+    """flock-serialised read→+1→atomic-replace increment (cross-process safe)."""
+    import fcntl  # noqa: PLC0415
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    with open(lock_path, "w") as lock_fh:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        try:
+            current = _read_counter(path)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(str(current + 1))
+            os.replace(tmp, path)  # atomic → readers never see a partial write
+        finally:
+            fcntl.flock(lock_fh, fcntl.LOCK_UN)
 
 
 @observe(tier="hot", metric="tools.recall_shadow.bump_epoch")
 def bump_epoch(directory: str | None) -> None:
     """Advance the structural epoch for *directory* (called from write paths).
 
-    A concrete directory bumps only that directory's epoch (memorize/forget).
-    A None/empty directory bumps the GLOBAL generation, which invalidates keys for
-    every directory (used for cross-directory events like consolidation's prior
-    recompute).  Fully guarded: never raises, never blocks the write path.
+    A concrete directory bumps only that directory's counter file (memorize/forget).
+    A None/empty directory bumps the GLOBAL generation file, which invalidates keys
+    for every directory (used for cross-directory events like consolidation's prior
+    recompute).  Backed by the shared queue volume so a bump in the BACKEND process
+    is visible to reads in the CORE process.  Fully guarded: never raises, never
+    blocks the write path.
     """
     try:
-        with _LOCK:
-            if directory:
-                _DIR_EPOCH[directory] = _DIR_EPOCH.get(directory, 0) + 1
-            else:
-                _GLOBAL_GEN[0] += 1
+        _incr_counter(_counter_path(directory))
     except Exception:  # pragma: no cover - instrumentation must never break writes
         pass
 
 
 @observe(tier="hot", metric="tools.recall_shadow._current_epoch")
 def _current_epoch(directory: str | None) -> int:
-    # Effective epoch = per-directory epoch + the global generation.  Bumping either
-    # advances the effective epoch, so a prior key recorded at the old value misses.
-    return _DIR_EPOCH.get(directory or "global", 0) + _GLOBAL_GEN[0]
+    # Effective epoch = per-directory counter + the global generation counter.
+    # Bumping either advances the effective epoch, so a key recorded at the old
+    # value misses.  Lock-free file reads (atomic os.replace on write); any error
+    # → 0, i.e. a safe MISS, never a false HIT.
+    try:
+        dir_count = _read_counter(_counter_path(directory)) if directory else 0
+        global_count = _read_counter(_counter_path(None))
+        return int(dir_count + global_count)
+    except Exception:  # pragma: no cover - read must never break a cache-key build
+        return 0
 
 
 def _make_key(p: RecallShadowParams) -> tuple:
@@ -168,10 +258,25 @@ def observe_recall(params: RecallShadowParams) -> None:
         pass
 
 
+@observe(tier="hot", metric="tools.recall_shadow.unlink_quiet")
+def _unlink_quiet(path: Path) -> None:
+    """Best-effort unlink — swallows errors (test cleanup only)."""
+    try:
+        path.unlink()
+    except Exception:  # pragma: no cover - best-effort test cleanup
+        pass
+
+
 @observe(tier="hot", metric="tools.recall_shadow._reset_for_test")
 def _reset_for_test() -> None:
-    """Test hook: clear all shadow state."""
+    """Test hook: clear all shadow state — the process-local LRU AND the shared
+    on-disk epoch counter files."""
     with _LOCK:
-        _DIR_EPOCH.clear()
-        _GLOBAL_GEN[0] = 0
         _SHADOW_KEYS.clear()
+    try:
+        base = _epoch_base_dir()
+        children = list(base.iterdir()) if base.is_dir() else []
+    except Exception:  # pragma: no cover - best-effort test cleanup
+        children = []
+    for child in children:
+        _unlink_quiet(child)

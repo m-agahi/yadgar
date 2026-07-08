@@ -221,14 +221,6 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Cross-encoder score weight in blend (retrieval gets 1-this)",
         "section": "reranking",
     },
-    "cross_encoder_backend": {
-        "desc": (
-            "Cross-encoder inference backend: 'st' (fp32 torch, default) or "
-            "'onnx-int8' (opt-in quantized ONNX, requires onnxruntime). "
-            "Default 'st' preserves existing behavior."
-        ),
-        "section": "reranking",
-    },
     "gte_reranker_enabled": {
         "desc": "Enable GTE-Reranker (ModernBERT-based)",
         "section": "reranking",

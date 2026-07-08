@@ -29,36 +29,24 @@ env:
   YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
 
 jobs:
-  test:
+  # ── Subsystem test jobs (R3: CI regroup — subsystem split + least_duration) ──
+  # Four jobs replace the old 5-way matrix over yadgar/tests/ to give per-subsystem
+  # failure isolation and duration-aware splitting on the heaviest leg (core).
+  # All jobs share the same container image, cache, install, and marker flags as
+  # the old `test` job.  .test_durations is committed at repo root — pytest-split
+  # reads it for --splitting-algorithm least_duration.
+
+  test-fast:
     runs-on: ubuntu-latest
-    # Run in the yadgar-ci image which pins Python 3.14 + includes make, git,
-    # curl, and pre-installed test deps. Replaces python:3.14-slim (B6 fix).
-    # Image built locally and pushed to dockerhub per PD-42 carve-out.
+    # TODO: candidate for dropping ml extra after import-graph proof — scripts/,
+    # server/, hooks/ tests may not need heavy ML deps.
     container:
       image: docker.io/openfantasy/yadgar-ci:5.73.0
     env:
-      # HF_HUB_OFFLINE: any un-baked model download → immediate LocalEntryNotFoundError
-      # instead of hf_xet threadpool DEADLOCK (GIL held under native futex, signal
-      # timeout cannot fire). MiniLM is baked in yadgar-ci:5.73.0 — offline is safe.
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
-      # YADGAR_OTLP_ENDPOINT='': no OTLP collector in CI. Keep the OTEL SDK ENABLED
-      # (span-emission tests need real spans — OTEL_SDK_DISABLED makes every span a
-      # NonRecordingSpan and breaks ~36 test_tracing/test_stage_spans assertions) but
-      # disable span EXPORT so the BatchSpanProcessor can't block at teardown. The
-      # earlier SIGTERM-143 was host CPU contention, not an OTLP hang — do NOT disable
-      # the SDK.
       YADGAR_OTLP_ENDPOINT: ''
-    # fail-fast: false — each chunk runs independently; one failure does NOT
-    # abort the others.  Aggregation happens in the `test-gate` job below.
-    strategy:
-      fail-fast: false
-      matrix:
-        group: [1, 2, 3, 4, 5]
     steps:
-      # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
-      # No apt-get install step needed for these system deps.
-
       - uses: https://data.forgejo.org/actions/checkout@v6
 
       - name: Cache pip
@@ -69,35 +57,132 @@ jobs:
           restore-keys: pip-
 
       - name: Install dependencies
-        # SurrealDB v3.1.5 and HuggingFace all-MiniLM-L6-v2 are baked into
-        # yadgar-ci:5.73.0 — no cache/install steps needed.
-        # No --no-cache-dir: pip cache at /root/.cache/pip avoids re-downloading
-        # torch + sentence-transformers (~1 GB) on every run.
+        run: |
+          pip install -e ".[test,ml]"
+          pip install uv
+
+      - name: Run tests (scripts, server, hooks, _meta)
+        run: >
+          python -m pytest
+          yadgar/tests/scripts/
+          yadgar/tests/server/
+          yadgar/tests/hooks/
+          yadgar/tests/_meta/
+          -q --tb=short
+          -n auto --dist loadgroup
+          --reruns 2 --reruns-delay 2
+          -m 'not integration and not e2e'
+
+  test-shared:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.73.0
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      YADGAR_OTLP_ENDPOINT: ''
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[test,ml]"
+          pip install uv
+
+      - name: Run tests (_shared)
+        run: >
+          python -m pytest
+          yadgar/tests/_shared/
+          -q --tb=short
+          -n auto --dist loadgroup
+          --reruns 2 --reruns-delay 2
+          -m 'not integration and not e2e'
+
+  test-backend:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.73.0
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      YADGAR_OTLP_ENDPOINT: ''
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[test,ml]"
+          pip install uv
+
+      - name: Run tests (backend)
+        run: >
+          python -m pytest
+          yadgar/tests/backend/
+          -q --tb=short
+          -n auto --dist loadgroup
+          --reruns 2 --reruns-delay 2
+          -m 'not integration and not e2e'
+
+  test-core:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.73.0
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      YADGAR_OTLP_ENDPOINT: ''
+    # fail-fast: false — each chunk runs independently; one failure does NOT
+    # abort the others.  Aggregation happens in the `test-gate` job below.
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3]
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
         # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess)
         # and pre-commit check-config-three-way-sync hook.
         # pytest-split: parallel chunk partitioning via --splits/--group flags.
+        # .test_durations committed at repo root; least_duration reads it.
         run: |
           pip install -e ".[test,ml]"
           pip install uv
 
       # NOTE: Forgejo act_runner does NOT expand ${{ }} expressions in a step
-      # `name:` (only in `run:`/`if:`/`env:`). A literal name avoids the
-      # un-expanded `${{ matrix.group }}` showing in the UI — the chunk number
-      # is already visible in the matrix job name ("test (N)").
-      - name: Run tests (pytest-split chunk, 5-way)
-        # --splits/--group: pytest-split partitions the collected set into 5
-        # equal chunks and runs only chunk $group.  Every file in the suite is
-        # covered across all 5 legs; no manual list maintenance required.
-        # -n auto / --dist loadgroup / --reruns: unchanged from monolith run.
-        # -m 'not integration and not e2e': integration runs in viz-tests job;
-        #   e2e requires a local surreal binary not available in CI containers.
+      # `name:` (only in `run:`/`if:`/`env:`). Literal name used here.
+      - name: Run tests (core, pytest-split chunk, 3-way, least_duration)
         run: >
-          python -m pytest yadgar/tests/
+          python -m pytest yadgar/tests/core/
           -q --tb=short
-          -n auto --dist loadgroup
+          -n 4 --dist loadgroup
           --reruns 2 --reruns-delay 2
           -m 'not integration and not e2e'
-          --splits 5 --group ${{ matrix.group }}
+          --splits 3 --group ${{ matrix.group }}
+          --splitting-algorithm least_duration
+          # -n 4: capped — CI runner OOMs at auto worker count because /proc/meminfo
+          # reports host RAM, not the cgroup limit; 4 chosen conservatively — tune upward later
 
   invariant-checks:
     runs-on: ubuntu-latest
@@ -128,7 +213,7 @@ jobs:
         run: python scripts/check_observe_coverage.py
 
       - name: Check I25 — config three-way-sync (Settings + yaml + registry)
-        run: python -m pytest yadgar/tests/test_config_three_way_sync.py -q --tb=short
+        run: python -m pytest yadgar/tests/server/test_config_three_way_sync.py -q --tb=short
 
       - name: Check I29 — edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
         run: python scripts/check_dead_capability.py
@@ -136,21 +221,33 @@ jobs:
       - name: Check I32 — capability-registry coverage (every setting/tool/migration/BC catalogued)
         run: python scripts/check_capability_coverage.py
 
-  # Gateway: aggregates all 5 test chunks.
+  # Gateway: aggregates all four subsystem test jobs.
   # if: always() is required — without it this job is SKIPPED (not failed)
-  # when any test chunk fails, which would leave the PR green incorrectly.
+  # when any subsystem job fails, which would leave the PR green incorrectly.
   test-gate:
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test-fast, test-shared, test-backend, test-core]
     if: ${{ always() }}
     steps:
-      - name: Assert all test chunks passed
+      - name: Assert all subsystem test jobs passed
         run: |
-          if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "One or more test chunks failed (result: ${{ needs.test.result }})"
+          if [ "${{ needs.test-fast.result }}" != "success" ]; then
+            echo "test-fast failed (result: ${{ needs.test-fast.result }})"
             exit 1
           fi
-          echo "All test chunks passed."
+          if [ "${{ needs.test-shared.result }}" != "success" ]; then
+            echo "test-shared failed (result: ${{ needs.test-shared.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-backend.result }}" != "success" ]; then
+            echo "test-backend failed (result: ${{ needs.test-backend.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-core.result }}" != "success" ]; then
+            echo "test-core failed (result: ${{ needs.test-core.result }})"
+            exit 1
+          fi
+          echo "All subsystem test jobs passed."
 
   viz-tests:
     runs-on: ubuntu-latest
@@ -186,7 +283,7 @@ jobs:
 
       - name: Layer 1 — API contract integrity (Python)
         run: |
-          python -m pytest yadgar/tests/test_graph_api_contract.py \
+          python -m pytest yadgar/tests/server/test_graph_api_contract.py \
             -v --tb=short -q --reruns 1
 
       - name: Layer 2 — Playwright headless smoke

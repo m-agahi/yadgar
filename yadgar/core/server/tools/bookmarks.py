@@ -16,6 +16,7 @@ import logging
 
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -32,28 +33,12 @@ def bookmark_add(slug: str, label_override: str = "") -> dict:
         {added: bool, slug: str, position: int} on success.
         {added: false, reason: str} on validation failure.
     """
+    # R3 Car 3a: validate core-side; the storage write forwards to backend /admin.
     slug = (slug or "").strip()
     if not slug:
         return {"added": False, "reason": "slug_empty"}
 
-    storage = _get_storage()
-    if storage is None:
-        return {"added": False, "reason": "storage_not_initialized"}
-
-    try:
-        result = storage.add_bookmark(slug, label_override=label_override or "")
-    except ValueError as exc:
-        return {"added": False, "reason": str(exc)}
-    except Exception as exc:
-        logger.warning("bookmark_add error slug=%s: %s", slug, exc)
-        return {"added": False, "reason": str(exc)}
-
-    return {
-        "added": True,
-        "slug": result.get("slug", slug),
-        "position": result.get("position", 0),
-        "label_override": result.get("label_override"),
-    }
+    return _forward_admin("bookmark_add", {"slug": slug, "label_override": label_override or ""})
 
 
 @_tool()
@@ -66,18 +51,9 @@ def bookmark_remove(slug: str) -> dict:
     Returns:
         {removed: bool, slug: str}
     """
+    # R3 Car 3a: storage write forwards to backend /admin.
     slug = (slug or "").strip()
-    storage = _get_storage()
-    if storage is None:
-        return {"removed": False, "reason": "storage_not_initialized"}
-
-    try:
-        removed = storage.remove_bookmark(slug)
-    except Exception as exc:
-        logger.warning("bookmark_remove error slug=%s: %s", slug, exc)
-        return {"removed": False, "reason": str(exc)}
-
-    return {"removed": removed, "slug": slug}
+    return _forward_admin("bookmark_remove", {"slug": slug})
 
 
 @_tool()
@@ -121,15 +97,6 @@ def bookmark_reorder(slug: str, new_position: int) -> dict:
     Returns:
         {reordered: bool, slug: str, new_position: int}
     """
+    # R3 Car 3a: storage write forwards to backend /admin.
     slug = (slug or "").strip()
-    storage = _get_storage()
-    if storage is None:
-        return {"reordered": False, "reason": "storage_not_initialized"}
-
-    try:
-        reordered = storage.reorder_bookmark(slug, int(new_position))
-    except Exception as exc:
-        logger.warning("bookmark_reorder error slug=%s pos=%s: %s", slug, new_position, exc)
-        return {"reordered": False, "reason": str(exc)}
-
-    return {"reordered": reordered, "slug": slug, "new_position": int(new_position)}
+    return _forward_admin("bookmark_reorder", {"slug": slug, "new_position": int(new_position)})

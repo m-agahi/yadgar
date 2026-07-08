@@ -66,7 +66,6 @@ from yadgar.core.server.tools.admin import (
     dlq_inspect,
     dlq_requeue,
     dlq_dismiss,
-    _run_check_invariants,
     archive_purge,
 )
 from yadgar.core.server.tools.wiki import (
@@ -157,7 +156,6 @@ __all__ = [
     "dlq_inspect",
     "dlq_requeue",
     "dlq_dismiss",
-    "_run_check_invariants",
     "wiki_add",
     "wiki_query",
     "wiki_read",

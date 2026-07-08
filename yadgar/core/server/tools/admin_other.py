@@ -12,12 +12,12 @@ import yadgar._shared.runtime.state as _st
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import (
-    _get_embeddings,
     _get_storage,
 )
 from yadgar._shared.secrets import gate_or_reject
 from yadgar.core.server._app import _tool
 from yadgar.core.server._helpers import _q_with_timeout
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -36,28 +36,16 @@ _WIKI_UPDATE_ALLOWED: frozenset[str] = frozenset({"content", "tags", "category",
 @_tool()
 def forget(memory_id: int) -> dict:
     """Mark a memory for deletion by setting heat to 0, then delete it."""
-    storage = _get_storage()
-    memory = storage.get_memory(memory_id)
-    if memory is None:
-        return {"memory_id": memory_id, "status": "not_found"}
-    directory = memory.get("directory_context")
-    storage.delete_memory(memory_id)
-    # v5.111.0 (Car 1): a delete is a STRUCTURAL write — bump the directory's
-    # epoch (normalized to git-root, same key project_brief reads) so any cached
-    # project_brief for that dir busts. Guarded: must never break the delete.
-    try:
-        from yadgar.core.server.tools.project import _bump_epoch_for_context  # noqa: PLC0415
-
-        _bump_epoch_for_context(directory)
-    except Exception:  # noqa: BLE001 - instrumentation must never break the delete
-        pass
-    return {"memory_id": memory_id, "status": "deleted"}
+    # R3 Car 3b: the delete + structural-epoch bump forward to the backend /admin
+    # op. The epoch bump is file-backed on the shared queue volume (Car 2), so a
+    # backend-side bump still busts the core process's cached project_brief.
+    return _forward_admin("forget", {"memory_id": int(memory_id)})
 
 
 @_tool(power=True)
 def validate_memory(memory_id: int) -> dict:
     """Check memory validity against current file state."""
-    from yadgar.core.server._helpers import _file_hash
+    from yadgar._shared.server_helpers import _file_hash
 
     if _st._staleness is not None:
         result = _st._staleness.validate_memory(memory_id)
@@ -105,32 +93,16 @@ def consolidate_now(mode: str = "light") -> dict:
         break or after a large memory import. Also sets the 6-hour sleep cycle
         gate timestamp so the nightly cron does not double-fire.
     """
-    if _st._consolidation is None:
-        return {"status": "error", "message": "Consolidation engine not initialized"}
-
     if mode not in ("light", "full"):
         return {"status": "error", "message": f"Invalid mode {mode!r}. Use 'light' or 'full'."}
 
-    stats = _st._consolidation.force_consolidate()
+    # R3 Car 1 D3: the consolidation COMPUTE (cycle + sleep) lives in the backend.
+    # Forward to /consolidate; the core orchestrator runs the graph-layout
+    # precompute (full) + invariant-check + auto-vacuum tail around the result.
+    # Forward-only: backend unreachable → RuntimeError/HTTP error surfaces.
+    from yadgar.core.consolidation import run_consolidate_now  # noqa: PLC0415
 
-    if mode == "full" and _st._sleep is not None:
-        try:
-            sleep_stats = _st._sleep.run_sleep_cycle()
-            stats["sleep_cycle"] = sleep_stats
-            # Update the 6-hour gate timestamp so nightly cron sees the cycle ran
-            _st._consolidation._last_sleep_cycle = datetime.now(UTC)
-        except Exception:
-            logger.exception("Sleep cycle failed during consolidate_now(mode='full')")
-
-    # v5.88: graph-layout precompute — mode='full' is the manual trigger (the
-    # nightly cron triggers it via run_nightly_consolidation). Inert unless
-    # VIZ_PRECOMPUTED_LAYOUT_ENABLED; signature-gated so it is a fast no-op when
-    # the graph shape is unchanged. Never runs in light mode (≤30s budget).
-    if mode == "full":
-        try:
-            _st._consolidation._maybe_precompute_graph_layout()
-        except Exception:
-            logger.exception("Graph-layout precompute failed during consolidate_now (non-fatal)")
+    stats = run_consolidate_now(mode)
 
     # v5.9.0: anchor audit pass as final step — mode='full' only (gated on config flag)
     if mode == "full":
@@ -155,37 +127,10 @@ def reembed_all() -> dict:
     using the current embedding model, enabling similarity search and
     semantic relationship discovery during consolidation.
     """
-    storage = _get_storage()
-    embeddings = _get_embeddings()
-
-    rows = storage.get_memories_without_embeddings()
-
-    if not rows:
-        return {"status": "ok", "message": "All memories already have embeddings", "reembedded": 0}
-
-    batch_size = 64
-    total = 0
-    for i in range(0, len(rows), batch_size):
-        batch = rows[i : i + batch_size]
-        # Filter out rows with None/empty content — passing None to encode_batch
-        # causes the entire batch to fail on the backend (HTTP 500), returning
-        # all-None embeddings and leaving reembedded=0 even when other rows are valid.
-        valid = [(r["id"], r["content"]) for r in batch if r.get("content")]
-        if not valid:
-            continue
-        ids, texts = zip(*valid, strict=False)
-        encoded = embeddings.encode_batch(list(texts))
-        for mid, emb in zip(ids, encoded, strict=False):
-            if emb is not None:
-                storage.update_memory_embedding(mid, emb, embeddings.model_name)
-                total += 1
-
-    return {
-        "status": "ok",
-        "reembedded": total,
-        "total_missing": len(rows),
-        "model": embeddings.model_name,
-    }
+    # R3 Car 3b: heavy DB write (embeds every missing row). Forwards to backend
+    # /admin with a generous timeout so a large backlog does not trip the default
+    # 30s HTTP timeout.
+    return _forward_admin("reembed_all", {}, timeout_s=1800.0)
 
 
 # ── Duration parser for recent_memories ───────────────────────────────────
@@ -404,17 +349,19 @@ def memory_stats() -> dict:
     if _st._rules_engine is not None:
         stats["active_rules"] = len(_st._rules_engine.get_all_rules())
 
-    if _st._cls is not None:
-        stats["episodic_count"] = storage.count_memories_by_store_type("episodic")
-        stats["semantic_count"] = storage.count_memories_by_store_type("semantic")
+    # R3: episodic/semantic counts and causal-edge count are pure storage reads.
+    # They were previously gated on _st._cls / _st._causal being non-None, but
+    # those engines are backend-only now (None on the core process) while the
+    # features still run backend-side and their data still lands in storage —
+    # report the DB truth unconditionally.
+    stats["episodic_count"] = storage.count_memories_by_store_type("episodic")
+    stats["semantic_count"] = storage.count_memories_by_store_type("semantic")
+    stats["causal_edges"] = len(storage.get_all_causal_edges())
 
     if _st._cognitive_map is not None:
         stats["sr_dimensions"] = (
             "active" if _st._cognitive_map.has_sufficient_data() else "insufficient_data"
         )
-
-    if _st._causal is not None:
-        stats["causal_edges"] = len(storage.get_all_causal_edges())
 
     if _st._metacognition is not None:
         stats["cognitive_load_limit"] = _st._metacognition._chunk_limit
@@ -471,20 +418,22 @@ def add_rule(
     priority: Higher = applied first (default 0).
     scope_value: Directory path or file pattern for scoped rules.
     """
-    if _st._rules_engine is None:
-        return {"status": "error", "message": "RulesEngine not initialized"}
-    try:
-        rule_id = _st._rules_engine.add_rule(
-            rule_type=rule_type,
-            scope=scope,
-            condition=condition,
-            action=action,
-            priority=priority,
-            scope_value=scope_value or None,
-        )
-        return {"status": "created", "rule_id": rule_id}
-    except ValueError as e:
-        return {"status": "error", "message": str(e)}
+    # R3 Car 3b: the rules-engine DB write (insert_rule) forwards to backend /admin.
+    # rule_type/scope/action/condition validation runs backend-side inside
+    # RulesEngine.add_rule and surfaces as {status: "error", message}. The backend
+    # clears ITS rules cache, which is the one the drainer's write-policy
+    # enforcement (phase_validate) reads — so the enforcement path stays coherent.
+    return _forward_admin(
+        "add_rule",
+        {
+            "rule_type": rule_type,
+            "scope": scope,
+            "condition": condition,
+            "action": action,
+            "priority": int(priority),
+            "scope_value": scope_value or "",
+        },
+    )
 
 
 @_tool(power=True)
@@ -559,22 +508,10 @@ def memory_update(memory_id: int, fields: dict) -> dict:
             f"Disallowed field(s) for memory_update: {sorted(unknown)}. "
             f"Allowed: {sorted(_MEMORY_UPDATE_ALLOWED)}"
         )
-    if not fields:
-        result = _st._storage.get_memory(int(memory_id))
-        if result is None:
-            raise ValueError(f"Memory {memory_id} not found")
-        result.pop("embedding", None)
-        result.pop("centroid_embedding", None)
-        result.pop("implicit_embedding", None)
-        return result
-    _st._storage.update_memory_fields(int(memory_id), **fields)
-    updated = _st._storage.get_memory(int(memory_id))
-    if updated is None:
-        raise ValueError(f"Memory {memory_id} not found after update")
-    updated.pop("embedding", None)
-    updated.pop("centroid_embedding", None)
-    updated.pop("implicit_embedding", None)
-    return updated
+    # R3 Car 3b: allowed-key validation stays core (raises before any state touch);
+    # the DB write (update_memory_fields) forwards to backend /admin. The empty-
+    # fields read short-circuit is handled by the backend impl too.
+    return _forward_admin("memory_update", {"memory_id": int(memory_id), "fields": fields})
 
 
 @_tool(power=True)
@@ -623,21 +560,13 @@ def wiki_update(page_id: int, fields: dict, wait: bool = False) -> dict:
             f"Disallowed field(s) for wiki_update: {sorted(unknown)}. "
             f"Allowed: {sorted(_WIKI_UPDATE_ALLOWED)}"
         )
-    # v5.10.2: secret gate — scan content field before any state mutation
+    # v5.10.2: secret gate — scan content field before any state mutation (STAYS core, I26)
     _content_val = fields.get("content", "") if fields else ""
     _gate = gate_or_reject(_content_val)
     if _gate is not None:
         return _gate
 
-    if not fields:
-        result = _st._storage.get_wiki_page(int(page_id))
-        if result is None:
-            raise ValueError(f"Wiki page {page_id} not found")
-        result.pop("embedding", None)
-        return result
-    _st._storage.update_wiki_page(int(page_id), fields)
-    updated = _st._storage.get_wiki_page(int(page_id))
-    if updated is None:
-        raise ValueError(f"Wiki page {page_id} not found after update")
-    updated.pop("embedding", None)
-    return updated
+    # R3 Car 3c: allowed-key validation + secret-gate stay core (raise before any
+    # state touch); the DB write (update_wiki_page → epoch bump) forwards to the
+    # backend /admin op. The empty-fields read short-circuit is handled backend-side.
+    return _forward_admin("wiki_update", {"page_id": int(page_id), "fields": fields})

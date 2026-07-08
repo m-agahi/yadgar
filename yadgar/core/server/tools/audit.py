@@ -16,7 +16,6 @@ NEVER mutates:
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import UTC, datetime
@@ -25,6 +24,7 @@ from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._forward import _forward_admin
 from yadgar.core.server.tools.project import (
     _ANCHOR_PROMOTE_TAGS,
     _cosine_similarity,
@@ -521,22 +521,6 @@ def _is_safe_to_mutate(row: dict) -> bool:
     return True
 
 
-@observe(tier="stage", metric="tools.audit._log_audit_action")
-def _log_audit_action(storage, directory: str, action: str, payload: dict) -> None:
-    """Log an audit mutation to action_log using the existing insert_action_log API."""
-    try:
-        summary = json.dumps({"source": "audit_anchors", "action": action, **payload})[:500]
-        storage.insert_action_log(
-            tool_name="audit_anchors",
-            tool_input_summary=summary,
-            directory=directory,
-            session_id="audit",
-            timestamp=storage._now_iso(),
-        )
-    except Exception:
-        logger.debug("_log_audit_action failed (non-fatal)", exc_info=True)
-
-
 # ── Per-directory action builders ────────────────────────────────────────
 
 
@@ -638,87 +622,22 @@ def _build_merge_actions(storage, audit_dir: str, _now: str, threshold: float) -
 
 
 # ── Mutation application ──────────────────────────────────────────────────
-
-
-@observe(tier="stage", metric="tools.audit._apply_forget_expired")
-def _apply_forget_expired(storage, resolved: str, action_entry: dict) -> dict | None:
-    """Apply a single forget_expired action. Returns applied entry or None on skip/error."""
-    mid = action_entry["id"]
-    try:
-        row = storage._q(
-            "SELECT id FROM memory WHERE id = type::record('memory', $id) LIMIT 1",
-            {"id": mid},
-        )
-        if not row:
-            return None
-        storage.delete_memory(mid)
-        _log_audit_action(
-            storage,
-            resolved,
-            "forget_expired",
-            {"memory_id": mid, "expired_at": action_entry.get("expired_at", "")},
-        )
-        return {"action": "forget_expired", "id": mid, "status": "deleted"}
-    except Exception:
-        logger.debug("forget_expired failed for id=%s", mid, exc_info=True)
-        return None
-
-
-@observe(tier="stage", metric="tools.audit._apply_merge")
-def _apply_merge(storage, resolved: str, action_entry: dict) -> dict | None:
-    """Apply a single merge action. Returns applied entry or None on skip/error."""
-    forget_id = action_entry.get("forget_id")
-    keep_id = action_entry.get("keep_id")
-    if forget_id is None:
-        return None
-    try:
-        row = storage._q(
-            "SELECT id FROM memory WHERE id = type::record('memory', $id) LIMIT 1",
-            {"id": forget_id},
-        )
-        if not row:
-            return None
-        storage.delete_memory(forget_id)
-        _log_audit_action(
-            storage,
-            resolved,
-            "merge",
-            {
-                "kept_id": keep_id,
-                "forgotten_id": forget_id,
-                "similarity": action_entry.get("similarity"),
-            },
-        )
-        return {
-            "action": "merge",
-            "kept_id": keep_id,
-            "forgotten_id": forget_id,
-            "status": "merged",
-        }
-    except Exception:
-        logger.debug("merge failed for forget_id=%s", forget_id, exc_info=True)
-        return None
+# R3 Car 3d: the apply/write half (forget_expired + merge DELETEs, action_log,
+# epoch bump) moved to yadgar.backend.admin_exec.audit. The core dry-run BUILD
+# path (all _fetch_* / _build_* readers) stays here — reads are allowed in core,
+# and project_brief's signals path shares _fetch_cross_project_candidates. The
+# core audit_anchors shell forwards the built actions via _forward_admin below.
 
 
 @observe(tier="stage", metric="tools.audit._apply_mutations")
-def _apply_mutations(storage, resolved: str, actions: list[dict]) -> list[dict]:
-    """Apply all non-skipped, non-promote mutations. Returns list of applied entries."""
-    applied: list[dict] = []
-    _APPLY: dict = {
-        "forget_expired": _apply_forget_expired,
-        "merge": _apply_merge,
-    }
-    for action_entry in actions:
-        if action_entry.get("skipped"):
-            continue
-        act = action_entry.get("action")
-        fn = _APPLY.get(act)  # type: ignore[arg-type]
-        if fn is None:
-            continue  # promote and unknown actions not applied
-        result = fn(storage, resolved, action_entry)
-        if result is not None:
-            applied.append(result)
-    return applied
+def _apply_mutations(resolved: str, actions: list[dict]) -> list[dict]:
+    """Forward the (core-built) audit mutations to the backend /admin op.
+
+    The dry-run BUILD ran core-side (reads); the DELETEs + action_log + epoch
+    bump run in the backend. Returns the applied list the backend produced.
+    """
+    result = _forward_admin("audit_apply_mutations", {"resolved": resolved, "actions": actions})
+    return result.get("applied", [])
 
 
 # ── Public MCP tool ───────────────────────────────────────────────────────
@@ -783,7 +702,7 @@ def audit_anchors(
     if truncated:
         actions = actions[:max_actions]
 
-    applied = _apply_mutations(storage, resolved, actions) if not dry_run else []
+    applied = _apply_mutations(resolved, actions) if not dry_run else []
 
     # Cross-project candidates — computed globally (not per-directory).
     # Always present in result; empty list when no candidates.
@@ -851,7 +770,7 @@ def _run_anchor_audit_pass(storage) -> dict:
         if audit_result is None:
             continue
         dirs_audited += 1
-        if _write_audit_sentinel(storage, directory, audit_result):
+        if _write_audit_sentinel(directory, audit_result):
             sentinels_written += 1
 
     return {"directories_audited": dirs_audited, "sentinels_written": sentinels_written}
@@ -886,39 +805,19 @@ def _audit_dir_safe(directory: str) -> dict | None:
 
 
 @observe(tier="stage", metric="tools.audit._write_audit_sentinel")
-def _write_audit_sentinel(storage, directory: str, audit_result: dict) -> bool:
-    """Write _audit_anchors sentinel memory for a directory (latest-wins). Returns True on success."""
-    import json as _json  # noqa: PLC0415
+def _write_audit_sentinel(directory: str, audit_result: dict) -> bool:
+    """Write _audit_anchors sentinel memory for a directory (latest-wins). Returns True on success.
 
+    R3 Car 3d: the sentinel CREATE/DELETE is a DB write — forwarded to the backend
+    /admin op (write_audit_sentinel). No epoch bump (system marker, matches prior
+    behaviour). Any transport error degrades to False (non-fatal for the audit pass).
+    """
     try:
-        sentinel_content = _json.dumps(
-            {
-                "actions": audit_result.get("actions", []),
-                "scanned": audit_result.get("scanned", 0),
-                "_truncated": audit_result.get("_truncated", False),
-                "audited_at": storage._now_iso(),
-            }
+        result = _forward_admin(
+            "write_audit_sentinel",
+            {"directory": directory, "audit_result": audit_result},
         )
-        now = storage._now_iso()
-        storage._q(
-            "DELETE FROM memory WHERE directory_context = $dir AND '_audit_anchors' INSIDE tags",
-            {"dir": directory},
-        )
-        sid = storage._next_id("memory")
-        storage._q(
-            "CREATE type::record('memory', $id) SET "
-            "content = $content, directory_context = $dir, "
-            "tags = $tags, heat = 0.0, is_protected = false, "
-            "created_at = $now, last_accessed = $now, access_count = 0",
-            {
-                "id": sid,
-                "content": sentinel_content,
-                "dir": directory,
-                "tags": ["_audit_anchors", "_system"],
-                "now": now,
-            },
-        )
-        return True
+        return bool(result.get("written", False))
     except Exception:
-        logger.debug("_write_audit_sentinel: failed for dir=%s", directory, exc_info=True)
+        logger.debug("_write_audit_sentinel: forward failed for dir=%s", directory, exc_info=True)
         return False

@@ -53,7 +53,7 @@ jobs:
         run: pip install -e ".[test]"
 
       - name: Contract checker unit test (CI-runnable, no daemon)
-        run: python -m pytest yadgar/tests/test_perf_contract.py -q -p no:randomly
+        run: python -m pytest yadgar/tests/server/test_perf_contract.py -q -p no:randomly
 
       - name: Invoke harness (auto-skips without a live daemon)
         continue-on-error: true

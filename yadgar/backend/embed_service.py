@@ -1093,3 +1093,102 @@ async def recall_route(
 
     results = await asyncio.to_thread(_run_pipeline)
     return RecallResponse(results=results)
+
+
+# ---------------------------------------------------------------------------
+# R3 Car 1 D2: backend /consolidate route — runs the consolidation COMPUTE
+# backend-side (it uses the backend curator + phase engines). The core
+# orchestrator forwards here and layers its viz/admin tail on the result.
+# ---------------------------------------------------------------------------
+
+
+class ConsolidateRequest(BaseModel):
+    """Request body for POST /consolidate."""
+
+    mode: str = "light"
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        valid = {"light", "full", "nightly"}
+        if v not in valid:
+            raise ValueError(f"mode must be one of {sorted(valid)}; got {v!r}")
+        return v
+
+
+class ConsolidateResponse(BaseModel):
+    """Response body for POST /consolidate."""
+
+    stats: dict
+
+
+@app.post("/consolidate", response_model=ConsolidateResponse)
+@observe(tier="boundary", metric="backend.consolidate")
+async def consolidate_route(
+    req: ConsolidateRequest, _: None = Depends(_require_admin_token)
+) -> ConsolidateResponse:
+    """Run the consolidation compute cycle backend-side and return the stats.
+
+    Mirrors the /recall route: lazily builds the backend engine set (the
+    consolidation service reuses the slim /recall engines + builds its own
+    scheduler singleton), then runs one cycle in a worker thread so the event
+    loop is not blocked by the CPU/IO-bound compute (light ~30s, full 5–15 min).
+
+    Called by the core consolidation orchestrator (forward-only, R3 Car 1 D3).
+    """
+    from yadgar.backend.consolidation.service import (  # noqa: PLC0415
+        run_consolidation_cycle,
+    )
+
+    stats = await asyncio.to_thread(run_consolidation_cycle, req.mode)
+    return ConsolidateResponse(stats=stats)
+
+
+# ---------------------------------------------------------------------------
+# R3 Car 3a (R5 forward pattern): backend /admin route — runs the storage-WRITE
+# half of the pure-CRUD MCP tools (bookmarks, blocks, …). Core keeps the @_tool
+# shell + validation + secret-gate and forwards the write here via the core
+# _forward_admin helper. Goal: core touches zero DB directly.
+# ---------------------------------------------------------------------------
+
+
+class AdminRequest(BaseModel):
+    """Request body for POST /admin."""
+
+    op: str
+    payload: dict = {}  # noqa: RUF012 — Pydantic model field default, not a mutable class attr
+
+    model_config = {"extra": "forbid"}
+
+
+class AdminResponse(BaseModel):
+    """Response body for POST /admin."""
+
+    result: dict
+
+
+@app.post("/admin", response_model=AdminResponse)
+@observe(tier="boundary", metric="backend.admin")
+async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)) -> AdminResponse:
+    """Run a single admin op's storage-write body backend-side and return its result.
+
+    Mirrors the /recall + /consolidate routes: lazily builds the slim engine set
+    (which includes storage) via _ensure_recall_engines, then runs the op in a
+    worker thread so the event loop is not blocked by the storage IO.
+
+    op must be a registered admin op (yadgar.backend.admin_exec.run_admin_op).
+    Unknown ops → 400. Called by the core thin forwarders (_forward_admin).
+    """
+    from yadgar.backend.admin_exec import run_admin_op  # noqa: PLC0415
+
+    # Bootstrap engines (idempotent, guarded by lock) — the op needs storage.
+    await asyncio.to_thread(_ensure_recall_engines)
+
+    try:
+        result = await asyncio.to_thread(run_admin_op, req.op, req.payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return AdminResponse(result=result)

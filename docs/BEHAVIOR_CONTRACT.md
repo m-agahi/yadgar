@@ -182,7 +182,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-SC6 auto_narrate writes a project story. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCSC6_AutoNarrateWritesProjectStory::test_auto_narrate_inserts_narrative_for_active_directory` P2
 
 ### Astrocyte pool
-- BC-AC1 assign_memory routes a memory to a domain. ✅ `tests/test_astrocyte_pool.py::TestMemoryAssignment` P2
+- BC-AC1 assign_memory routes a memory to a domain. ✅ `tests/_shared/test_astrocyte_pool.py::TestMemoryAssignment` P2
 - BC-AC2 domain consolidation runs per domain. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCAC2_AstrocyteDomainConsolidation::test_consolidate_domain_produces_summary` P2
 - BC-AC3a consensus_retrieve merges results across domains into one ranked set. ✅ `tests/e2e/test_landscape_recall_e2e.py::TestLandscapeRecallE2E` P2
 - BC-AC3b if consensus_retrieve is disabled/removed, config reports it absent + emits exactly one startup warning. ⏳ #41 P2
@@ -208,7 +208,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-EN1a ConceptNet expansion adds related terms to a query/memory. ⏳ #64 P2 (HTTP path wired — ConceptNetExpander(http_enabled=True); e2e `tests/e2e/test_phase2_subsystems.py::TestBCEN1a_ConceptNetHTTP` is network-gated to api.conceptnet.io → skips offline, provable only on a networked runner; lite-DB ~9GB not bundled)
 - BC-EN1b if ConceptNet expansion is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
 - BC-EN2a COMET commonsense expansion adds inferred commonsense triples. ❌ WON'T-IMPLEMENT — COMET retired to dormant per ADR-0004 (en2a ablation `benchmarks/reports/en2a_comet_ablation_2026-06-24.md` decided un-FPA'd COMET does NOT help recall: multi-session R@5 −4.2pt, ~17h/10-core → net-negative). COMET DOES infer (verified yadgar-ci:5.72.0) but the FPA filter (FPA_SIMILARITY_THRESHOLD=0.25) drops its abstract traits → enrichment_comet empty. Code retained dormant (flag off by default); test stays xfail/skip to guard the dormant path (`tests/e2e/test_phase2_subsystems.py::TestBCEN2a_CometEnrichment`). #64 P2
-- BC-EN2b if COMET expansion is disabled, config reports it disabled + emits exactly one startup warning. ✅ `tests/test_comet_dormant_warning.py::TestBCEN2bStartupWarning::test_disabled_emits_exactly_one_warning` P2 — `config_registry.warn_comet_dormant()` called once at startup (`server/lifecycle.py` `main()`) emits exactly one WARNING when disabled, none when enabled; `YADGAR_COMET_ENRICHMENT_ENABLED` registered in `_REGISTRY` so `/admin/config` + startup.config report it disabled. #39
+- BC-EN2b if COMET expansion is disabled, config reports it disabled + emits exactly one startup warning. ✅ `tests/_shared/test_comet_dormant_warning.py::TestBCEN2bStartupWarning::test_disabled_emits_exactly_one_warning` P2 — `config_registry.warn_comet_dormant()` called once at startup (`server/lifecycle.py` `main()`) emits exactly one WARNING when disabled, none when enabled; `YADGAR_COMET_ENRICHMENT_ENABLED` registered in `_REGISTRY` so `/admin/config` + startup.config report it disabled. #39
 - BC-EN3a doc2query generates synthetic queries for a stored memory. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCEN3a_Doc2QueryEnrichment::test_stored_memory_has_synthetic_queries` P2 (proven in yadgar-ci:5.72.0; model-skip-guarded so host make-e2e skips)
 - BC-EN3b if doc2query is disabled, config reports it disabled + emits exactly one startup warning. ⏳ #39 P2
 

@@ -102,7 +102,7 @@ def _get_replay() -> CheckpointRestore:
 
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle — it imported
-# yadgar.core.file_queue (a _shared → core edge). The core-side home re-exports
+# yadgar.backend.queue_drainer (a _shared → core edge). The core-side home re-exports
 # via yadgar.core.server so all `server._get_file_queue` callers are unchanged.
 
 

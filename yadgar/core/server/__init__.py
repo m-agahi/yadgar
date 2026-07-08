@@ -62,13 +62,15 @@ from yadgar._shared.runtime.state import (  # noqa: F401
 # ── 3. Shared helpers ─────────────────────────────────────────────────
 from yadgar.core.server._helpers import (  # noqa: F401
     _q_with_timeout,
-    _has_unpaired_surrogate,
-    _push_event,
     _bounded_set,
     _is_episodic_query,
-    _file_hash,
     _build_dlq_alert_text,
+)
+from yadgar._shared.server_helpers import (  # noqa: F401
     _DECISION_STRONG_RE,
+    _file_hash,
+    _has_unpaired_surrogate,
+    _push_event,
 )
 
 # ── 4. Lifecycle (getters, init, shutdown, main) ──────────────────────
@@ -167,7 +169,6 @@ from yadgar.core.server.tools import (  # noqa: F401
     dlq_inspect,
     dlq_requeue,
     dlq_dismiss,
-    _run_check_invariants,
     archive_purge,
     wiki_add,
     wiki_query,

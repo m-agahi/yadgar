@@ -483,19 +483,9 @@ class LocalMLClient:
                 if settings is not None
                 else "cross-encoder/ms-marco-MiniLM-L-6-v2"
             )
-            ce_backend = (
-                getattr(settings, "CROSS_ENCODER_BACKEND", "st") if settings is not None else "st"
-            )
             try:
                 _t0 = time.monotonic()
-                if ce_backend == "onnx-int8":
-                    self._cross_encoder = CrossEncoder(
-                        ce_model,
-                        backend="onnx",
-                        model_kwargs={"file_name": "model_qint8_avx512.onnx"},
-                    )
-                else:
-                    self._cross_encoder = CrossEncoder(ce_model)
+                self._cross_encoder = CrossEncoder(ce_model)
                 _load_dur = time.monotonic() - _t0
                 # Histogram + OTel span for cold load (v5.6.7 PR-G)
                 _record_model_load("ce", _load_dur)

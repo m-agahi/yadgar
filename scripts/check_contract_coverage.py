@@ -30,7 +30,7 @@ Tamper-protection extensions (task #52):
      enclosing class if the node is a method) MUST NOT carry a skip/skipif/xfail
      decorator.  Catches the pattern "flip ✅ but the mapped test is xfail/skipped."
 
-Run as a plain (non-e2e) pytest: ``yadgar/tests/test_contract_coverage.py``.
+Run as a plain (non-e2e) pytest: ``yadgar/tests/server/test_contract_coverage.py``.
 Or standalone: ``python scripts/check_contract_coverage.py`` (exit 0 = clean).
 """
 

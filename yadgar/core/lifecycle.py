@@ -32,7 +32,6 @@ import time
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.runtime.lifecycle import shutdown as _shared_shutdown
 
 logger = logging.getLogger(__name__)
@@ -43,44 +42,34 @@ logger = logging.getLogger(__name__)
 
 @observe(tier="stage")
 def _get_file_queue():
+    """Return the process-wide FileQueue, building it on first use (enqueue side).
+
+    R3 Car 1 (write-half): core owns ONLY the FileQueue (the enqueue endpoint).
+    The QueueDrainer (drain-replay) is a backend concern started by the backend
+    lifecycle half — it assigns _st._queue_drainer. Core no longer constructs or
+    starts the drainer here; that removes the core → drainer construction edge on
+    the enqueue path.
+    """
     if _st._file_queue is None:
         with _st._queue_lock:
             if _st._file_queue is None:
-                from yadgar.core.file_queue import DrainerConfig, FileQueue, QueueDrainer
-
-                _settings = get_settings()
-                base = os.environ.get("YADGAR_DATA_DIR", _settings.DATA_DIR)
                 from pathlib import Path  # noqa: PLC0415
 
-                base = Path(base)
-                # Build FileQueue first, then drainer, then start() — assign _file_queue
-                # only after start() succeeds so a failed start leaves _file_queue=None.
+                from yadgar._shared.file_queue.queue import FileQueue
+
+                _settings = get_settings()
+                base = Path(os.environ.get("YADGAR_DATA_DIR", _settings.DATA_DIR))
                 fq = FileQueue(base, wiki_prefix=_settings.WIKI_SLUG_PREFIX)
-                drainer = QueueDrainer(
-                    fq,
-                    _get_storage,
-                    drain_interval=float(_settings.QUEUE_DRAIN_INTERVAL),
-                    config=DrainerConfig(
-                        max_permanent_attempts=_settings.QUEUE_MAX_PERMANENT_ATTEMPTS,
-                        max_transient_attempts=_settings.QUEUE_MAX_TRANSIENT_ATTEMPTS,
-                        backoff_base_s=float(_settings.QUEUE_BACKOFF_BASE_S),
-                        backoff_max_s=float(_settings.QUEUE_BACKOFF_MAX_S),
-                        dlq_retention_days=_settings.QUEUE_DLQ_RETENTION_DAYS,
-                    ),
-                )
-                drainer.start()  # may raise — do NOT assign globals before this
-                _st._queue_drainer = drainer
                 _st._file_queue = fq
                 # Sync back to the server module's __dict__ so tests that
-                # monkeypatch.setattr(server, "_queue_drainer", None) and then
-                # call _get_file_queue() see the live objects instead of stale None.
+                # monkeypatch.setattr(server, "_file_queue", None) and then call
+                # _get_file_queue() see the live object instead of stale None.
                 import sys as _sys  # noqa: PLC0415
 
                 _srv = _sys.modules.get("yadgar.core.server")
                 if _srv is not None:
                     # Use setattr so _ServerModule.__setattr__ keeps both
                     # server.__dict__ and _state.__dict__ in sync.
-                    _srv._queue_drainer = drainer
                     _srv._file_queue = fq
     return _st._file_queue
 

@@ -36,7 +36,7 @@ volumes:
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.25.0}
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.30.0}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -48,11 +48,18 @@ services:
     volumes:
       - yadgar-db-data:/data:ro
       - yadgar-backend-logs:/data/logs
+      # R3: backend runs the queue drainer → needs the file queue r/w. Backend's /data is
+      # the read-only DB, so mount the shared queue volume at a distinct path. Core mounts
+      # the SAME volume at /data → both see volume-root/queue (see YADGAR_QUEUE_BASE below).
+      - yadgar-queue-data:/queue-data
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     environment:
       SURREAL_USER: ${SURREAL_USER:?must set SURREAL_USER}
       SURREAL_PASS: ${SURREAL_PASS:?must set SURREAL_PASS}
       YADGAR_BACKEND_LOG_LEVEL: ${YADGAR_BACKEND_LOG_LEVEL:-warn}
+      # R3: queue root for the backend drainer. Core omits this → falls back to YADGAR_DATA_DIR
+      # (/data). Both resolve to <shared yadgar-queue-data volume>/queue.
+      YADGAR_QUEUE_BASE: /queue-data
     security_opt:
       - "no-new-privileges:true"
     read_only: true
@@ -66,7 +73,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: openfantasy/yadgar:${CORE_VERSION:-5.116.0}
+    image: openfantasy/yadgar:${CORE_VERSION:-5.117.0}
     build:
       context: .
       dockerfile: Dockerfile
