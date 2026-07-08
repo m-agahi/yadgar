@@ -32,6 +32,7 @@ import logging
 
 from yadgar._shared.observability.observe import observe
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -126,13 +127,19 @@ def _record_prelude_marker(storage, directory: str | None) -> None:
 
     Writes a _dispatch_prelude marker so _apply_dispatch_prelude_signal can
     determine when agent_dispatch_prelude was last called.  Never raises.
+
+    R3 Car 3d: agent_dispatch_prelude itself STAYS core (a read/prompt-builder
+    that calls recall + wiki_query). Only this best-effort marker WRITE forwards
+    to the backend /admin op. ``storage`` is kept for signature stability but the
+    write no longer touches it directly. Transport errors are swallowed — the
+    marker is a nudge, never load-bearing.
     """
     if not directory:
         return
     try:
-        storage.upsert_dispatch_prelude_marker(directory)
+        _forward_admin("record_prelude_marker", {"directory": directory})
     except Exception as _e:  # noqa: BLE001
-        logger.debug("agent_dispatch_prelude: upsert_dispatch_prelude_marker failed: %s", _e)
+        logger.debug("agent_dispatch_prelude: record_prelude_marker forward failed: %s", _e)
 
 
 @_tool(always_load=True)

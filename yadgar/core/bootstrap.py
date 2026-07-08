@@ -6,17 +6,18 @@ root — it builds only the engines the backend ``/recall`` bootstrap needs
 and has NO ``yadgar.core`` import for the engine set. That removed the
 ``_shared -> core.consolidation`` edge.
 
-The 9 CORE-ONLY engines that used to live in ``lifecycle`` (behind ``if _full:``)
-are built HERE instead:
-
-    _curator, _consolidation, _staleness, _prospective, _narrative,
-    _write_gate, _causal, _sleep, _cls
+R3 Car 1 F: the consolidation compute engines moved to the BACKEND
+(ConsolidationScheduler + MemoryCurator, NarrativeEngine, WriteGate,
+ProspectiveMemoryEngine, CausalDiscovery, and the inner sleep/cls engines).
+Core no longer imports or instantiates them — they are built backend-side (the
+``/consolidate`` service singleton + the ``/recall`` slim engine set), and the
+core consolidation entrypoints FORWARD to the backend rather than reaching those
+slots. The only CORE-ONLY engine still built HERE is StalenessDetector.
 
 ``core_init_engines`` is the seam ``yadgar.core.server.init_engines`` resolves to
 (re-exported from ``core.server.__init__``). It calls the shared
 ``lifecycle.init_engines`` first (``core -> _shared``, legal), then constructs the
-core-only engines on the shared ``_state`` module — so a FULL server-init still
-populates all 24 engines exactly as before (behavior-neutral).
+core-only engine (StalenessDetector) on the shared ``_state`` module.
 
 engine_set="slim" short-circuits: the shared call builds the slim set and the
 core-only block is skipped, so ``core_init_engines(slim)`` is byte-identical to
@@ -24,8 +25,7 @@ core-only block is skipped, so ``core_init_engines(slim)`` is byte-identical to
 embed_service.py). Keeping them identical prevents a false-green where the
 test-facing seam builds engines the real backend does not.
 
-The engine classes are imported from ``yadgar._shared.*`` (``core -> _shared``,
-legal) EXCEPT ConsolidationScheduler, which lives in ``yadgar.core.consolidation``
+The StalenessDetector class is imported from ``yadgar.core.staleness``
 (``core -> core``, in-layer).
 """
 
@@ -35,38 +35,28 @@ import yadgar._shared.runtime.state as _st
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import init_engines as _shared_init_engines
-from yadgar.core.causal_discovery import CausalDiscovery
-from yadgar.core.consolidation import ConsolidationScheduler
-from yadgar.core.curation import MemoryCurator
-from yadgar.core.narrative import NarrativeEngine
-from yadgar.core.predictive_coding import WriteGate
-from yadgar.core.prospective import ProspectiveMemoryEngine
 from yadgar.core.staleness import StalenessDetector
 
 
 @observe(tier="stage")
 def _build_core_only_engines(_settings) -> None:
-    """Construct the 9 CORE-ONLY engines onto _state (full-path only).
+    """Construct the CORE-ONLY engines onto _state (full-path only).
+
+    R3 Car 1 F: the consolidation compute engines moved to the BACKEND
+    (ConsolidationScheduler, MemoryCurator, NarrativeEngine, WriteGate,
+    ProspectiveMemoryEngine, CausalDiscovery, and the inner sleep/cls engines).
+    They are built backend-side (the ``/consolidate`` service singleton +
+    ``/recall`` slim engine set); core no longer imports or instantiates them.
+    Their core ``_st`` slots stay None on the core process — the consolidation
+    entrypoints forward to the backend rather than reaching those slots.
+
+    StalenessDetector stays core (host-side stale-file detection); it is the sole
+    surviving core-only engine and is still built here.
 
     Preconditions: the shared engines are already built (storage, embeddings,
-    thermo, kg, retriever, and the standalone _st._pool). Order + guards are
-    copied verbatim from lifecycle's old ``if _full:`` blocks.
+    thermo, kg, retriever, and the standalone _st._pool).
     """
-    _st._curator = MemoryCurator(_st._storage, _st._embeddings, _st._thermo, _settings)
-    # R2a Car A: _st._pool was built STANDALONE by the shared root and is injected
-    # here via pool= so the scheduler reuses that exact object (no double-build,
-    # no second init_processes) and _st._consolidation.pool IS _st._pool.
-    _st._consolidation = ConsolidationScheduler(
-        _st._storage, _st._embeddings, _settings, pool=_st._pool
-    )
     _st._staleness = StalenessDetector(_st._storage, _settings)
-    _st._prospective = ProspectiveMemoryEngine(_st._storage, _settings)
-    _st._narrative = NarrativeEngine(_st._storage, _st._kg, _settings)
-    _st._write_gate = WriteGate(_st._storage, _st._embeddings, _st._retriever, _settings)
-    _st._causal = CausalDiscovery(_st._storage, _st._kg, _settings)
-    # Expose inner engines as server-level globals for direct access.
-    _st._sleep = _st._consolidation._sleep_engine
-    _st._cls = _st._consolidation.cls
 
 
 @observe(tier="boundary")

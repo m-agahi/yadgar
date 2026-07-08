@@ -4,7 +4,9 @@ Shim module: imports all per-domain admin submodules so @_tool decorators fire
 at import time, and re-exports all public names for backward compatibility.
 
 Submodules:
-- admin_invariants: _run_check_invariants + check_invariants tool
+- admin_invariants: check_invariants tool (thin shell → backend /admin; the
+                    _run_check_invariants compute lives in
+                    yadgar.backend.admin_exec.invariants as of R3 Car 3d)
 - admin_vacuum:     vacuum_now tool
 - admin_dlq:        dlq_inspect + dlq_requeue tools
 - admin_other:      forget, validate_memory, consolidate_now, reembed_all,
@@ -18,10 +20,7 @@ Submodules:
 # Import submodules to trigger @_tool decorator registration
 from yadgar.core.server.tools.admin_archive import archive_purge
 from yadgar.core.server.tools.admin_dlq import dlq_dismiss, dlq_inspect, dlq_requeue
-from yadgar.core.server.tools.admin_invariants import (
-    _run_check_invariants,
-    check_invariants,
-)
+from yadgar.core.server.tools.admin_invariants import check_invariants
 from yadgar.core.server.tools.admin_other import (
     _MEMORY_UPDATE_ALLOWED,
     _WIKI_UPDATE_ALLOWED,
@@ -40,7 +39,6 @@ from yadgar.core.server.tools.admin_other import (
 from yadgar.core.server.tools.admin_vacuum import vacuum_now
 
 __all__ = [
-    "_run_check_invariants",
     "check_invariants",
     "vacuum_now",
     "dlq_inspect",

@@ -29,35 +29,38 @@ from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
 from yadgar._shared.wiki import WikiStore
 
-# R2a Car B/C: the core-only engine slots are annotated `Any` so this shared leaf
-# module carries NO `yadgar.core` import. ConsolidationScheduler
-# (yadgar.core.consolidation), FileQueue/QueueDrainer (yadgar.core.file_queue),
-# and the 8 core-only engines — StalenessDetector, MemoryCurator,
-# ProspectiveMemoryEngine, NarrativeEngine, SleepComputeEngine, WriteGate,
-# DualStoreCLS, CausalDiscovery (all yadgar.core.*) — are constructed by
-# core/bootstrap + lifecycle; the concrete types are not needed at the
-# slot-declaration site. This keeps state.py free of any `state -> core.*` edge.
+# R2a Car B/C + R3 Car 1 H: the non-shared engine slots are annotated `Any` so
+# this shared leaf module carries NO `yadgar.core` / `yadgar.backend` import.
+# StalenessDetector (yadgar.core.staleness) is constructed by core/bootstrap.
+# FileQueue/QueueDrainer live in yadgar.backend.queue_drainer. The consolidation
+# compute engines — ConsolidationScheduler, MemoryCurator, ProspectiveMemoryEngine,
+# NarrativeEngine, SleepComputeEngine, WriteGate, DualStoreCLS, CausalDiscovery —
+# moved to yadgar.backend.* (R3 Car 1) and are constructed backend-side (the
+# /consolidate service singleton + the /recall slim engine set); their core slots
+# stay None on the core process (the consolidation entrypoints forward to the
+# backend). The concrete types are not needed at the slot-declaration site — this
+# keeps state.py free of any edge into core.* or backend.*.
 
 # Global instances — initialized in main()
 _storage: StorageEngine | None = None
 _embeddings: EmbeddingEngine | None = None
 _buffer: ActionLogger | None = None
-_consolidation: Any = None  # core: ConsolidationScheduler
+_consolidation: Any = None  # backend: ConsolidationScheduler (None core-side)
 _staleness: Any = None  # core: StalenessDetector
 _thermo: MemoryThermodynamics | None = None
 _retriever: Retriever | None = None
-_curator: Any = None  # core: MemoryCurator
-_prospective: Any = None  # core: ProspectiveMemoryEngine
-_narrative: Any = None  # core: NarrativeEngine
-_sleep: Any = None  # core: SleepComputeEngine
+_curator: Any = None  # backend: MemoryCurator (None core-side)
+_prospective: Any = None  # backend: ProspectiveMemoryEngine (None core-side)
+_narrative: Any = None  # backend: NarrativeEngine (None core-side)
+_sleep: Any = None  # backend: SleepComputeEngine (None core-side)
 _pool: AstrocytePool | None = None
 _kg: KnowledgeGraph | None = None
-_write_gate: Any = None  # core: WriteGate
+_write_gate: Any = None  # backend: WriteGate (None core-side)
 _engram: EngramAllocator | None = None
 _rules_engine: RulesEngine | None = None
-_cls: Any = None  # core: DualStoreCLS
+_cls: Any = None  # backend: DualStoreCLS (None core-side)
 _cognitive_map: CognitiveMap | None = None
-_causal: Any = None  # core: CausalDiscovery
+_causal: Any = None  # backend: CausalDiscovery (None core-side)
 _metacognition: MetaCognition | None = None
 _replay: CheckpointRestore | None = None
 _wiki: WikiStore | None = None

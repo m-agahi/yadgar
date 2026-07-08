@@ -71,4 +71,4 @@ echo
 echo "Or install direnv and add a .envrc (already in repo) — it will auto-activate."
 echo
 echo "Smoke test:"
-echo "  pytest yadgar/tests/test_consolidation.py -k cooldown"
+echo "  pytest yadgar/tests/backend/test_consolidation.py -k cooldown"

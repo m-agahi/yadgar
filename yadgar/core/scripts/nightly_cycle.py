@@ -58,36 +58,20 @@ os.environ.setdefault("YADGAR_OTLP_ENDPOINT", "")
 
 import yadgar._shared.paths as _paths
 from yadgar._shared.config import Settings
-from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.exception_telemetry import record_exception
 from yadgar._shared.log_config import configure_logging
 from yadgar._shared.storage import StorageEngine
 from yadgar.core.backup import create_snapshot, default_retention, prune_snapshots
-from yadgar.core.consolidation import ConsolidationScheduler
+from yadgar.core.consolidation import run_nightly_consolidation
 from yadgar.core.vacuum import cmd_vacuum_impl
 
 _log = logging.getLogger("yadgar.nightly_cycle")
 
 _UNIT_CORE = "yadgar"
 
-
-def _make_embedding_engine(settings) -> object:
-    """Return the appropriate embedding engine based on YADGAR_EMBED_URL.
-
-    Mirrors the selector in yadgar/server/lifecycle.py (_init_embedding_client).
-    Imports are lazy (inside the function) so that heavy ML dependencies are not
-    loaded at module import time — only when this function is actually called.
-
-    When YADGAR_EMBED_URL is set: returns RemoteEmbeddingEngine (no local model
-    needed — embeddings computed by the remote service).
-    Otherwise: returns a local EmbeddingEngine (existing behaviour).
-    """
-    if os.environ.get("YADGAR_EMBED_URL"):
-        from yadgar._shared.remote_embeddings import RemoteEmbeddingEngine  # noqa: PLC0415
-
-        return RemoteEmbeddingEngine(settings.EMBEDDING_MODEL)
-    return EmbeddingEngine()
-
+# R3 Car 1 D3: _make_embedding_engine removed — the consolidation compute (its
+# only caller) is now forwarded to the backend, which builds its own embedding
+# engine. The nightly script no longer constructs a local embedding engine.
 
 _UNIT_BACKEND = "yadgar-backend"
 
@@ -298,6 +282,12 @@ def _step_pre_backup(db_path: Path, snapshot_dir: Path, backend_url: str) -> int
 def _step_consolidation(db_path: Path, settings: Settings) -> int:
     """Step 3: Consolidation in server mode. Returns 0 on success, 30 on failure.
 
+    R3 Car 1 D3: the consolidation COMPUTE (cycle + gated sleep) lives in the
+    backend. This step calls the CORE nightly orchestrator, which forwards the
+    compute to the backend ``/consolidate`` endpoint (mode="nightly") and then
+    runs the core viz/admin tail (graph-layout precompute + invariant check +
+    auto-vacuum) against the local StorageEngine.
+
     YADGAR_DB_URL remains set so StorageEngine opens in server mode (HTTP
     connection to the live backend). No embedded open, no surrealkv file lock —
     eliminates the SDK 2.0.0 vs server 3.0.5 format-skew failure (BC-D1 / #51).
@@ -306,14 +296,11 @@ def _step_consolidation(db_path: Path, settings: Settings) -> int:
     t0 = time.monotonic()
     storage = None
     try:
+        # Storage is still opened locally for the core tail (invariants +
+        # auto-vacuum + graph-layout precompute); the compute itself is forwarded
+        # to the backend, which builds its own engines.
         storage = StorageEngine(str(db_path))
-        embeddings = _make_embedding_engine(settings)
-        scheduler = ConsolidationScheduler(storage, embeddings, settings)
-        # PR-1 wiring (#37): nightly path runs consolidation + the gated sleep
-        # cycle (dream/community/cluster/reembed/compress/narrate). The sleep
-        # cycle had been dead since v5.7.0 PR-0 dropped the daemon loop — no
-        # call site invoked _maybe_sleep_cycle until this entrypoint.
-        stats = scheduler.run_nightly_consolidation()
+        stats = run_nightly_consolidation(storage=storage, settings=settings)
         _log_step("consolidation", "ok", (time.monotonic() - t0) * 1000, stats=str(stats))
         return 0
     except Exception as exc:

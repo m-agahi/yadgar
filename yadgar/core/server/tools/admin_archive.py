@@ -11,6 +11,7 @@ import logging
 
 from yadgar._shared.secrets import gate_or_reject
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +41,8 @@ def archive_purge(
         "retention_days": int,         # effective value used
       }
     """
-    import sys as _sys
-
     # I26 secret gate — args are bool/int, never trip gate, but call is required.
+    # The gate stays CORE-side (per the R5 forward pattern); only the DB write forwards.
     _gate = gate_or_reject(
         f"archive_purge:dry_run={dry_run}:retention_days={retention_days}",
         source="archive_purge",
@@ -50,48 +50,8 @@ def archive_purge(
     if _gate is not None:
         return _gate
 
-    # Resolve storage singleton (same pattern as admin_vacuum.py).
-    _srv = _sys.modules.get("yadgar.core.server")
-    if _srv is not None and hasattr(_srv, "_get_storage"):
-        _get_storage_fn = _srv._get_storage
-    else:
-        from yadgar._shared.runtime.lifecycle import (
-            _get_storage as _get_storage_fn,  # noqa: PLC0415
-        )
-
-    storage = _get_storage_fn()
-
-    from yadgar._shared.storage.ops import purge_expired_archives as _purge  # noqa: PLC0415
-
-    raw = _purge(storage, dry_run=dry_run, retention_days_override=retention_days)
-
-    # Resolve effective retention_days for caller visibility.
-    effective_days: int
-    if retention_days is not None:
-        effective_days = retention_days
-    else:
-        from yadgar._shared.config import get_settings  # noqa: PLC0415
-
-        effective_days = get_settings().MEMORY_ARCHIVE_RETENTION_DAYS
-
-    result = {
-        "candidates": raw["candidates"],
-        "purged": raw["purged"],
-        "skipped_protected": raw["skipped_protected"],
-        "skipped_anchor": raw["skipped_anchor"],
-        "skipped_recent": raw["skipped_recent"],
-        "circuit_breaker_hit": raw["circuit_breaker_hit"],
-        "sample": raw.get("candidate_ids", [])[:10],
-        "dry_run": dry_run,
-        "retention_days": effective_days,
-    }
-
-    logger.info(
-        "archive_purge: dry_run=%s retention_days=%d candidates=%d purged=%d",
-        dry_run,
-        effective_days,
-        result["candidates"],
-        result["purged"],
+    # R3 Car 3b: the memory_archive purge (DB delete) forwards to backend /admin.
+    return _forward_admin(
+        "archive_purge",
+        {"dry_run": dry_run, "retention_days": retention_days},
     )
-
-    return result

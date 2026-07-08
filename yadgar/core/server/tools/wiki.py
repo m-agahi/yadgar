@@ -6,18 +6,17 @@ import logging
 import os
 
 import yadgar._shared.runtime.state as _st
+from yadgar._shared.enforcement import _enforcement_on, _inc_relaxed
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.secrets import gate_or_reject
+from yadgar._shared.server_helpers import _has_unpaired_surrogate, _push_event
 from yadgar._shared.storage.directory import is_directory_eligible
-from yadgar._shared.wiki import WikiAddOptions
-from yadgar.core.file_queue import is_draining
-from yadgar.core.file_queue.dlq import _enforcement_on, _inc_relaxed
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
-from yadgar.core.server._helpers import _has_unpaired_surrogate, _push_event
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -72,194 +71,32 @@ def _check_wiki_add_context(branch: str | None, directory: str | None) -> dict |
     return None
 
 
-@observe(tier="stage", metric="tools.wiki._wiki_add_sync_write")
-def _wiki_add_sync_write(
-    title: str,
-    content: str,
-    category: str,
-    tags: list[str] | None,
-    source_memory_ids: list[int] | None,
-    confidence: str,
-    branch: str | None,
-    append: bool,
-    replace_slug: str | None,
-    directory_context: str | None = None,
-    page_type: str | None = None,
-) -> dict:
-    """Execute the sync wiki_add write path (QueueDrainer or fallback).
-
-    Handles replace_slug overwrite, append merge, and normal upsert.
-    v5.42.5: directory_context threaded through to WikiStore.add().
-    v5.53.2: page_type threaded through to WikiStore.add().
-    """
-    # replace_slug: overwrite a named existing page (gate already bypassed)
-    if replace_slug is not None:
-        existing = _st._wiki._storage.get_wiki_page_by_slug(replace_slug)
-        if existing is not None:
-            result = _st._wiki.add(
-                title,
-                content,
-                category,
-                tags or [],
-                opts=WikiAddOptions(
-                    source_memory_ids=source_memory_ids,
-                    confidence=confidence,
-                    branch=branch,
-                    directory_context=directory_context,
-                    page_type=page_type,
-                ),
-            )
-            result.pop("embedding", None)
-            _push_event(
-                {
-                    "event": "wiki_updated",
-                    "node": {
-                        "id": f"wiki:{result.get('id', '')}",
-                        "type": "wiki",
-                        "slug": result.get("slug", ""),
-                        "title": result.get("title", ""),
-                    },
-                }
-            )
-            try:
-                _get_file_queue().write_wiki(result.get("slug", title), content)
-            except Exception as exc:
-                logger.debug("File queue wiki mirror failed (non-fatal): %s", exc)
-            return result
-
-    if append:
-        result = _st._wiki.ingest(content, title, tags, source_memory_ids)
-    else:
-        result = _st._wiki.add(
-            title,
-            content,
-            category,
-            tags or [],
-            opts=WikiAddOptions(
-                source_memory_ids=source_memory_ids,
-                confidence=confidence,
-                branch=branch,
-                directory_context=directory_context,
-                page_type=page_type,
-            ),
-        )
-    result.pop("embedding", None)
-    event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
-    _push_event(
-        {
-            "event": event_type,
-            "node": {
-                "id": f"wiki:{result.get('id', '')}",
-                "type": "wiki",
-                "slug": result.get("slug", ""),
-                "title": result.get("title", ""),
-            },
-        }
-    )
-    try:
-        _get_file_queue().write_wiki(result.get("slug", title), content)
-    except Exception as exc:
-        logger.debug("File queue wiki mirror failed (non-fatal): %s", exc)
-    return result
-
-
 @observe(tier="stage", metric="tools.wiki._wiki_add_wait_path")
-def _wiki_add_wait_path(
-    title: str,
-    content: str,
-    category: str,
-    tags: list[str] | None,
-    source_memory_ids: list[int] | None,
-    confidence: str,
-    branch: str | None,
-    append: bool,
-    replace_slug: str | None,
-    new_slug: str,
-    force: bool = False,
-    directory_context: str | None = None,
-    page_type: str | None = None,
-) -> dict:
-    """Handle wiki_add(wait=True): enqueue + wait_for_job to preserve FIFO ordering.
+def _wiki_add_wait_path(payload: dict, new_slug: str, title: str) -> dict:
+    """Handle wiki_add(wait=True): enqueue then poll for the terminal file.
 
-    v5.41.5: similarity gate runs in the drainer pre-apply stage. On rejection,
-    the drainer signals wait_for_job with the rejection payload; this function
-    retrieves it via get_job_result() and returns the rejection dict to the caller
-    (synchronous rejection, same observable contract as v5.39 for wait=True callers).
-
-    Falls back to sync write when no drainer is running or replace_slug is set
-    (queue path doesn't carry replace_slug semantics; named overwrite has no
-    FIFO hazard anyway).
+    R3 Car 1 (write-half): the sync write body lives in the backend drainer
+    (yadgar.backend.write_exec.run_wiki_add_replay). This shell enqueues and polls
+    the shared archive/dlq dirs for the job's terminal state (FileQueue.wait_for_job).
+    The drainer runs the similarity gate; a rejection lands in the DLQ .error.json
+    sidecar and is surfaced here synchronously.
 
     Returns:
-      {"committed": True}                          — success
+      {"stored": True, "committed": True}          — archived (committed)
       {"stored": False, "reason": "duplicate_detected", "candidates": [...]} — gate rejected
-      {"stored": False, "reason": "wait_timeout"}  — drainer timeout
-      sync-write result + committed=True           — fallback (no drainer)
+      {"stored": False, "reason": "wait_timeout", "queued": True}  — drainer timeout
     """
-    drainer = _st._queue_drainer
+    fq = _get_file_queue()
+    job_id = fq.enqueue("wiki_add", payload)
 
-    # Sync fallback: no drainer running, or replace_slug requires sync path.
-    if drainer is None or replace_slug is not None:
-        result = _wiki_add_sync_write(
-            title,
-            content,
-            category,
-            tags,
-            source_memory_ids,
-            confidence,
-            branch,
-            append,
-            replace_slug,
-            directory_context=directory_context,
-            page_type=page_type,
-        )
-        result["stored"] = True
-        result["queued"] = False
-        result["committed"] = True
-        return result
-
-    # Enqueue like the async path so FIFO ordering is preserved.
-    # v5.41.5: include force + replace_slug so drainer knows when to bypass gate.
-    # v5.53.2: include page_type so typed pages survive the queue path.
-    try:
-        job_id = _get_file_queue().enqueue(
-            "wiki_add",
-            {
-                "wiki_schema_version": 2,
-                "slug": new_slug,
-                "title": title,
-                "content": content,
-                "category": category or "reference",
-                "tags": tags,
-                "source_memory_ids": source_memory_ids,
-                "confidence": confidence,
-                "append": append,
-                "branch": branch,
-                "force": force,
-                "replace_slug": replace_slug,
-                "directory_context": directory_context,
-                "page_type": page_type,
-            },
-        )
-    except Exception as fq_exc:
-        logger.warning("wait=True enqueue failed, falling back to sync write: %s", fq_exc)
-        result = _wiki_add_sync_write(
-            title,
-            content,
-            category,
-            tags,
-            source_memory_ids,
-            confidence,
-            branch,
-            append,
-            replace_slug,
-            directory_context=directory_context,
-            page_type=page_type,
-        )
-        result["stored"] = True
-        result["queued"] = False
-        result["committed"] = True
-        return result
+    # Nudge the background drainer to flush promptly so the caller does not wait a
+    # full drain interval. Runtime shared-state access — guarded, non-fatal.
+    _drainer = _st._queue_drainer
+    if _drainer is not None:
+        try:
+            _drainer.drain_now()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("wiki_add wait: drain_now() failed (non-fatal): %s", exc)
 
     try:
         from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
@@ -268,12 +105,9 @@ def _wiki_add_wait_path(
     except Exception:
         timeout = 5.0
 
-    completed = drainer.wait_for_job(job_id, timeout=timeout)
-    # v5.41.5: always retrieve result before cleanup (may carry rejection payload).
-    rejection = _get_file_queue().get_job_result(job_id)
-    _get_file_queue()._cleanup_job(job_id)
+    outcome = fq.wait_for_job(job_id, timeout=timeout)
 
-    if not completed:
+    if outcome["status"] == "timeout":
         return {
             "stored": False,
             "reason": "wait_timeout",
@@ -282,9 +116,17 @@ def _wiki_add_wait_path(
             "hint": "Write still queued — will commit on next drain or hit DLQ on repeated failure.",
         }
 
-    if rejection is not None:
-        # Gate fired in drainer — return rejection synchronously (DP-B).
-        return rejection
+    if outcome["status"] == "rejected":
+        rejection = outcome.get("result")
+        if rejection is not None:
+            # Gate fired in drainer — return rejection synchronously.
+            return rejection
+        return {
+            "stored": False,
+            "reason": "rejected",
+            "queued": False,
+            "slug": new_slug,
+        }
 
     return {
         "stored": True,
@@ -293,72 +135,6 @@ def _wiki_add_wait_path(
         "slug": new_slug,
         "title": title,
     }
-
-
-@observe(tier="stage", metric="tools.wiki._check_similarity_gate")
-def _check_similarity_gate(
-    title: str,
-    content: str,
-    branch: str | None,
-    force: bool,
-    replace_slug: str | None,
-    append: bool,
-    new_slug: str,
-) -> dict | None:
-    """Run the v5.39.0 similarity gate.
-
-    Returns a rejection dict if gate fires in hard mode, None otherwise.
-    Gate is skipped when: force=True, replace_slug set, append=True, or disabled via config.
-    """
-    if force:
-        logger.info("wiki_add similarity gate bypassed via force=True for '%s'", title)
-        return None
-    if replace_slug is not None or append:
-        return None  # update ops skip gate
-
-    try:
-        from yadgar._shared.config import get_settings  # noqa: PLC0415
-
-        cfg = get_settings()
-        if not getattr(cfg, "WIKI_SIM_GATE_ENABLED", True):
-            return None
-
-        sim_mode = getattr(cfg, "WIKI_SIM_MODE", "hard")
-        sim_threshold = getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
-        sim_top_k = getattr(cfg, "WIKI_SIM_TOP_K", 5)
-
-        candidates = _st._wiki.find_similar_wiki_pages(
-            title=title,
-            content=content,
-            branch=branch,
-            threshold=sim_threshold,
-            top_k=sim_top_k,
-            exclude_slug=new_slug,  # skip self (upsert path)
-        )
-        if not candidates:
-            return None
-
-        if sim_mode == "soft":
-            logger.warning(
-                "wiki_add similarity gate (soft): near-duplicate for '%s', candidates=%s — allowing",
-                title,
-                [c["slug"] for c in candidates],
-            )
-            return None
-
-        # hard mode: reject
-        return {
-            "stored": False,
-            "reason": "duplicate_detected",
-            "candidates": candidates,
-            "hint": (
-                "Use force=True to bypass, or replace_slug=<existing-slug> "
-                "to overwrite the existing page."
-            ),
-        }
-    except Exception as exc:
-        logger.debug("wiki_add similarity gate error (non-fatal): %s", exc)
-        return None
 
 
 @_tool()
@@ -453,12 +229,12 @@ def wiki_add(
     if not branch and branch_hint:
         branch = branch_hint
     # v5.42.3/v5.42.6: MCP boundary context check — branch + directory.
-    # is_draining() path is exempt (drainer validates at its own boundary).
-    # _check_wiki_add_context gates enforcement; YADGAR_*_ENFORCEMENT=false relaxes.
-    if not is_draining():
-        _ctx_err = _check_wiki_add_context(branch, directory)
-        if _ctx_err is not None:
-            return _ctx_err
+    # Enqueue-only shell: always runs on the request thread (never draining);
+    # the drainer validates at its own boundary. _check_wiki_add_context gates
+    # enforcement; YADGAR_*_ENFORCEMENT=false relaxes.
+    _ctx_err = _check_wiki_add_context(branch, directory)
+    if _ctx_err is not None:
+        return _ctx_err
 
     _effective_dir: str | None = (directory or "").strip() or None
     # DP-3: strip trailing slash (preserve "global" sentinel as-is)
@@ -475,94 +251,43 @@ def wiki_add(
     # wait=False callers get {queued: True, similarity_check: "deferred"} — see below.
     # wait=True callers get sync rejection via wait_for_job + get_job_result.
     # I26: secret-gate (above) still runs on request thread (cheap regex, stays here).
-    # I6 no-double-pay: gate runs once in drainer; is_draining()=True path below skips it.
+    # I6 no-double-pay: gate runs once in the drainer (backend write-exec).
 
-    # QueueDrainer replay path: is_draining() means we're inside _apply().
-    # Must not re-enqueue — write directly and return.
-    if is_draining():
-        return _wiki_add_sync_write(
-            title,
-            content,
-            category,
-            tags,
-            source_memory_ids,
-            confidence,
-            branch,
-            append,
-            replace_slug,
-            directory_context=_effective_dir,
-            page_type=page_type,
-        )
+    _payload = {
+        "wiki_schema_version": 2,
+        "slug": _new_slug,
+        "title": title,
+        "content": content,
+        "category": category or "reference",
+        "tags": tags,
+        "source_memory_ids": source_memory_ids,
+        "confidence": confidence,
+        "append": append,
+        "branch": branch,
+        # v5.41.5: pass bypass flags so drainer can skip gate for these paths
+        "force": force,
+        "replace_slug": replace_slug,
+        "directory_context": _effective_dir,
+        "page_type": page_type,
+    }
 
-    # wait=True: enqueue first (preserves FIFO), then block until drainer commits.
-    # v5.41.5: drainer runs similarity gate; rejection surfaces synchronously via
-    # get_job_result() inside _wiki_add_wait_path. See DP-B in plan.
+    # wait=True: enqueue first (preserves FIFO), then poll until the drainer commits.
+    # The drainer runs the similarity gate; rejection surfaces synchronously via the
+    # DLQ terminal-file poll inside _wiki_add_wait_path.
     if wait:
-        return _wiki_add_wait_path(
-            title,
-            content,
-            category,
-            tags,
-            source_memory_ids,
-            confidence,
-            branch,
-            append,
-            replace_slug,
-            _new_slug,
-            force=force,
-            directory_context=_effective_dir,
-            page_type=page_type,
-        )
+        return _wiki_add_wait_path(_payload, _new_slug, title)
 
     # Async path (wait=False default): enqueue and return immediately.
     # v5.41.5: similarity gate is deferred to drainer — caller gets
     # {similarity_check: "deferred"} and must use wait=True for sync rejection.
-    # v5.53.2: include page_type so typed pages survive the queue path.
-    try:
-        _get_file_queue().enqueue(
-            "wiki_add",
-            {
-                "wiki_schema_version": 2,
-                "slug": _new_slug,
-                "title": title,
-                "content": content,
-                "category": category or "reference",
-                "tags": tags,
-                "source_memory_ids": source_memory_ids,
-                "confidence": confidence,
-                "append": append,
-                "branch": branch,
-                # v5.41.5: pass bypass flags so drainer can skip gate for these paths
-                "force": force,
-                "replace_slug": replace_slug,
-                "directory_context": _effective_dir,
-                "page_type": page_type,
-            },
-        )
-        return {
-            "stored": True,
-            "queued": True,
-            "similarity_check": "deferred",
-            "slug": _new_slug,
-            "title": title,
-        }
-    except Exception as _fq_exc:
-        logger.warning("File queue enqueue failed, falling back to sync write: %s", _fq_exc)
-
-    # Queue fallback sync path
-    return _wiki_add_sync_write(
-        title,
-        content,
-        category,
-        tags,
-        source_memory_ids,
-        confidence,
-        branch,
-        append,
-        replace_slug,
-        directory_context=_effective_dir,
-        page_type=page_type,
-    )
+    _get_file_queue().enqueue("wiki_add", _payload)
+    return {
+        "stored": True,
+        "queued": True,
+        "similarity_check": "deferred",
+        "slug": _new_slug,
+        "title": title,
+    }
 
 
 # ── Car 2 (v5.113): wiki_read / wiki_query result caches ──────────────────────
@@ -864,8 +589,11 @@ def wiki_read(
 @_tool(power=True)
 def wiki_delete(slug: str) -> dict:
     """Delete a wiki page by slug."""
-    assert _st._wiki is not None, "WikiStore not initialized"
-    deleted = _st._wiki.delete(slug)
+    # R3 Car 3c: the DB delete (+ epoch bump) forwards to the backend /admin op.
+    # The SSE push_event and file-queue mirror cleanup are CORE-side side-effects
+    # (core's SSE bus + the shared file-queue mirror) — they stay here, after the
+    # forward reports the delete succeeded.
+    deleted = _forward_admin("wiki_delete", {"slug": slug}).get("deleted", False)
     if deleted:
         _push_event({"event": "wiki_deleted", "slug": slug})
         try:
@@ -965,15 +693,20 @@ def wiki_autolink(
     Returns {applied, dry_run, proposals:[{page,target,title}], pages_changed,
              links_added}.
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
+    # R3 Car 3c: forward the whole tool — it writes when dry_run=False (upsert +
+    # crossref re-sync + epoch bump). Forwarding the dry-run compute too keeps a
+    # single path (harmless — no write on dry_run).
     _dir = (directory or "").strip().rstrip("/") or None
-    return _st._wiki.autolink(
-        directory=_dir,
-        dry_run=dry_run,
-        min_title_len=min_title_len,
-        max_links_per_page=max_links_per_page,
-        similarity_threshold=similarity_threshold,
-        semantic_guard=semantic_guard,
+    return _forward_admin(
+        "wiki_autolink",
+        {
+            "directory": _dir,
+            "dry_run": dry_run,
+            "min_title_len": min_title_len,
+            "max_links_per_page": max_links_per_page,
+            "similarity_threshold": similarity_threshold,
+            "semantic_guard": semantic_guard,
+        },
     )
 
 
@@ -1004,34 +737,20 @@ def wiki_approve(slug: str) -> dict:
     (pre-v5.42.3 or explicit canonical-slot drafts) write to the NULL-branch
     canonical slot — this is now explicit rather than accidental.
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-    storage = _get_storage()
-    draft = storage.get_wiki_draft_by_slug(slug)
-    if draft is None:
-        return {"approved": False, "error": f"Draft '{slug}' not found"}
-
-    # v5.42.3: propagate branch from draft to wiki page.
-    # branch=None → canonical slot (backward-compat for legacy drafts).
-    draft_branch: str | None = draft.get("branch")
-
-    result = _st._wiki.add(
-        title=draft["title"],
-        content=draft["content"],
-        category=draft.get("category", "reference"),
-        tags=draft.get("tags", []),
-        opts=WikiAddOptions(
-            source_memory_ids=draft.get("source_memory_ids", []),
-            confidence=draft.get("confidence", "medium"),
-            branch=draft_branch,
-        ),
-    )
-    result.pop("embedding", None)
-    storage.delete_wiki_draft(slug)
+    # R3 Car 3c: the draft→page promotion (wiki.add + draft delete + epoch bump)
+    # forwards to the backend /admin op. The file-queue mirror (write_wiki) is a
+    # CORE-side side-effect — it stays here, driven by the draft content the impl
+    # surfaces back.
+    result = _forward_admin("wiki_approve", {"slug": slug})
+    if not result.get("approved"):
+        return {"approved": False, "error": result.get("error", f"Draft '{slug}' not found")}
+    page = result.get("page", {})
+    content = result.get("content", "")
     try:
-        _get_file_queue().write_wiki(result.get("slug", slug), draft["content"])
+        _get_file_queue().write_wiki(page.get("slug", slug), content)
     except Exception as _fq_exc:
         logger.debug("File queue wiki mirror failed (non-fatal): %s", _fq_exc)
-    return {"approved": True, "slug": slug, "page": result}
+    return {"approved": True, "slug": slug, "page": page}
 
 
 @_tool(power=True)
@@ -1040,8 +759,8 @@ def wiki_discard(slug: str) -> dict:
 
     Permanently deletes the draft. Use for incorrect or low-value drafts.
     """
-    storage = _get_storage()
-    deleted = storage.delete_wiki_draft(slug)
+    # R3 Car 3c: draft delete forwards to the backend /admin op.
+    deleted = _forward_admin("wiki_discard", {"slug": slug}).get("deleted", False)
     if deleted:
         return {"discarded": True, "slug": slug}
     return {"discarded": False, "error": f"Draft '{slug}' not found"}
@@ -1288,13 +1007,13 @@ def wiki_restore(
 
     Returns: {"page_id": N, "restored_from_version": V, "new_version": N+1, "note": "..."}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
+    # R3 Car 3c: slug→page_id resolution stays CORE (backend has no git/cwd, so
+    # backend-side _detect_branch would resolve the wrong row); the restore write
+    # forwards keyed by page_id.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
-    result = _st._wiki.restore_version(page_id, version)
-    result["slug"] = slug
-    return result
+    return _forward_admin("wiki_restore", {"page_id": page_id, "version": version, "slug": slug})
 
 
 @_tool(power=True)
@@ -1341,20 +1060,28 @@ def wiki_append_section(
     Returns: {"page_id": N, "new_version": M, "section_heading": "...",
               "action": "appended", "size_before": X, "size_after": Y}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
-    # I26: secret-gate on written content
+    # I26: secret-gate on written content (STAYS core)
     _gate = gate_or_reject(content, tags=[])
     if _gate is not None:
         return _gate
 
+    # R3 Car 3c: slug→page_id resolution stays core (backend has no git/cwd); the
+    # section write forwards keyed by page_id.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.append_section(page_id, section_heading, content, position, heading_type)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_append_section",
+        {
+            "page_id": page_id,
+            "section_heading": section_heading,
+            "content": content,
+            "position": position,
+            "heading_type": heading_type,
+            "slug": slug,
+        },
+    )
 
 
 # ── v5.61.0: Layer 4 — Metadata primitives ───────────────────────────────────
@@ -1397,8 +1124,9 @@ def wiki_set_metadata(
     Returns: {ok, slug, rows_updated, page_ids} or {ok: False, error}.
     Preserved keys for back-compat callers that inspect {ok, slug}.
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-    return _st._wiki.set_metadata_by_slug(slug, field, value)
+    # R3 Car 3c: slug-keyed all-rows metadata write forwards to backend /admin.
+    # No §25 page_id resolution needed (impl reaches every row for the slug).
+    return _forward_admin("wiki_set_metadata", {"slug": slug, "field": field, "value": value})
 
 
 # ── v5.61.0: Layer 1 — Anchor-text primitives ────────────────────────────────
@@ -1436,20 +1164,26 @@ def wiki_replace_text(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
-    # I26: secret gate on new written content
+    # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
+    # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.replace_text(page_id, old_text, new_text, occurrences)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_replace_text",
+        {
+            "page_id": page_id,
+            "old_text": old_text,
+            "new_text": new_text,
+            "occurrences": occurrences,
+            "slug": slug,
+        },
+    )
 
 
 @_tool(power=True)
@@ -1478,15 +1212,16 @@ def wiki_delete_text(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
+    # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
+    # No secret gate (nothing new is written).
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.delete_text(page_id, text, occurrences)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_delete_text",
+        {"page_id": page_id, "text": text, "occurrences": occurrences, "slug": slug},
+    )
 
 
 @_tool(power=True)
@@ -1511,20 +1246,20 @@ def wiki_insert_after(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
-    # I26: secret gate on new written content
+    # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
+    # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.insert_after(page_id, anchor_text, new_text)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_insert_after",
+        {"page_id": page_id, "anchor_text": anchor_text, "new_text": new_text, "slug": slug},
+    )
 
 
 @_tool(power=True)
@@ -1549,20 +1284,20 @@ def wiki_insert_before(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
-    # I26: secret gate on new written content
+    # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
+    # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.insert_before(page_id, anchor_text, new_text)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_insert_before",
+        {"page_id": page_id, "anchor_text": anchor_text, "new_text": new_text, "slug": slug},
+    )
 
 
 # ── v5.61.0: Layer 2 — Positional primitives ─────────────────────────────────
@@ -1601,20 +1336,28 @@ def wiki_replace_at(
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
-    # I26: secret gate on new written content
+    # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
+    # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.replace_at(page_id, line, col, length, new_text, anchor_hint)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_replace_at",
+        {
+            "page_id": page_id,
+            "line": line,
+            "col": col,
+            "length": length,
+            "new_text": new_text,
+            "anchor_hint": anchor_hint,
+            "slug": slug,
+        },
+    )
 
 
 @_tool(power=True)
@@ -1649,15 +1392,23 @@ def wiki_delete_at(
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
+    # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
+    # No secret gate (nothing new is written).
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.delete_at(page_id, line, col, length, anchor_hint)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_delete_at",
+        {
+            "page_id": page_id,
+            "line": line,
+            "col": col,
+            "length": length,
+            "anchor_hint": anchor_hint,
+            "slug": slug,
+        },
+    )
 
 
 @_tool(power=True)
@@ -1691,20 +1442,27 @@ def wiki_insert_at(
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
-    # I26: secret gate on new written content
+    # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
+    # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.insert_at(page_id, line, col, new_text, anchor_hint)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_insert_at",
+        {
+            "page_id": page_id,
+            "line": line,
+            "col": col,
+            "new_text": new_text,
+            "anchor_hint": anchor_hint,
+            "slug": slug,
+        },
+    )
 
 
 # ── v5.61.0: Layer 3 — Structural primitives ─────────────────────────────────
@@ -1741,17 +1499,23 @@ def wiki_replace_markdown_block(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    assert _st._wiki is not None, "WikiStore not initialized"
-
-    # I26: secret gate on new written content
+    # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_content, tags=[])
     if _gate is not None:
         return _gate
 
+    # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
-    result = _st._wiki.replace_markdown_block(page_id, block_type, block_index, new_content)
-    result["slug"] = slug
-    return result
+    return _forward_admin(
+        "wiki_replace_markdown_block",
+        {
+            "page_id": page_id,
+            "block_type": block_type,
+            "block_index": block_index,
+            "new_content": new_content,
+            "slug": slug,
+        },
+    )

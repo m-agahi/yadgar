@@ -21,19 +21,17 @@ import yadgar._shared.runtime.state as _st
 from yadgar import __version__
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.restoration import CheckpointContext
 from yadgar._shared.runtime.lifecycle import (
     _get_consolidation,
     _get_replay,
     _get_storage,
 )
 from yadgar._shared.secrets import gate_or_reject
-from yadgar.core.file_queue import is_draining
+from yadgar._shared.server_helpers import _has_unpaired_surrogate
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool, mcp_server
-from yadgar.core.server._helpers import _has_unpaired_surrogate
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +122,8 @@ def _resolve_checkpoint_branch(
         _branch = os.environ.get("YADGAR_CI_BRANCH") or None
 
     # v5.42.3: hard-reject at MCP boundary when branch context is absent.
-    if not _branch and not is_draining():
+    # Enqueue-only shell: always runs on the request thread (never draining).
+    if not _branch:
         return None, {
             "error": "missing_branch",
             "stored": False,
@@ -137,38 +136,6 @@ def _resolve_checkpoint_branch(
         }
 
     return _branch, None
-
-
-@observe(tier="stage", metric="tools.misc._enrich_checkpoint_context")
-def _enrich_checkpoint_context(custom_context: str) -> str:
-    """Enrich custom_context with the action buffer summary if available."""
-    buffer = _st._buffer
-    if buffer is not None:
-        action_summary = buffer.get_action_summary()
-        if action_summary:
-            return f"{custom_context}\n\n{action_summary}" if custom_context else action_summary
-    return custom_context
-
-
-def _build_checkpoint_ctx(  # noqa: PLR0913
-    current_task: str,
-    files_being_edited: list[str] | None,
-    key_decisions: list[str] | None,
-    open_questions: list[str] | None,
-    next_steps: list[str] | None,
-    active_errors: list[str] | None,
-    enriched_context: str,
-) -> CheckpointContext:
-    """Construct a CheckpointContext from checkpoint parameters."""
-    return CheckpointContext(
-        current_task=current_task,
-        files_being_edited=files_being_edited or [],
-        key_decisions=key_decisions or [],
-        open_questions=open_questions or [],
-        next_steps=next_steps or [],
-        active_errors=active_errors or [],
-        custom_context=enriched_context,
-    )
 
 
 @_tool(always_load=True)
@@ -221,41 +188,22 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     if _branch_err is not None:
         return _branch_err
 
-    # Async path: enqueue and return immediately (skip during drain replay)
-    if not is_draining():
-        try:
-            _get_file_queue().enqueue(
-                "checkpoint",
-                {
-                    "directory": directory,
-                    "current_task": current_task,
-                    "files_being_edited": files_being_edited,
-                    "key_decisions": key_decisions,
-                    "open_questions": open_questions,
-                    "next_steps": next_steps,
-                    "active_errors": active_errors,
-                    "custom_context": custom_context,
-                    "branch": _branch,
-                },
-            )
-            return {"queued": True, "directory": directory}
-        except Exception as _fq_exc:
-            logger.warning("File queue enqueue failed, falling back to sync: %s", _fq_exc)
-
-    # Sync path — only runs during drain replay (is_draining=True) or queue fallback
-    replay = _get_replay()
-
-    enriched_context = _enrich_checkpoint_context(custom_context)
-    ctx = _build_checkpoint_ctx(
-        current_task,
-        files_being_edited,
-        key_decisions,
-        open_questions,
-        next_steps,
-        active_errors,
-        enriched_context,
+    # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
+    _get_file_queue().enqueue(
+        "checkpoint",
+        {
+            "directory": directory,
+            "current_task": current_task,
+            "files_being_edited": files_being_edited,
+            "key_decisions": key_decisions,
+            "open_questions": open_questions,
+            "next_steps": next_steps,
+            "active_errors": active_errors,
+            "custom_context": custom_context,
+            "branch": _branch,
+        },
     )
-    return replay.create_checkpoint(directory, ctx)
+    return {"queued": True, "directory": directory}
 
 
 @_tool(always_load=True)
@@ -340,7 +288,7 @@ def _validate_anchor_inputs(
         )
 
     # v5.8.0: compute valid_until at API boundary
-    from yadgar.core.server.tools.memorize import _compute_valid_until
+    from yadgar._shared.server_helpers import _compute_valid_until
 
     _computed_valid_until: str | None = None
     try:
@@ -376,7 +324,8 @@ def _resolve_anchor_branch(context: str, branch_hint: str | None) -> tuple[str |
         _branch = os.environ.get("YADGAR_CI_BRANCH") or None
 
     # v5.42.3: hard-reject at MCP boundary when branch context is absent.
-    if not _branch and not is_draining():
+    # Enqueue-only shell: always runs on the request thread (never draining).
+    if not _branch:
         return None, {
             "error": "missing_branch",
             "stored": False,
@@ -434,45 +383,19 @@ def anchor(
     if _branch_err is not None:
         return _branch_err
 
-    # Async path: enqueue and return immediately (skip during drain replay)
-    if not is_draining():
-        try:
-            _enqueue_payload: dict = {
-                "content": content,
-                "context": context,
-                "reason": reason,
-                "branch": _branch,
-                "tier": _tier,
-            }
-            if _computed_valid_until is not None:
-                _enqueue_payload["valid_until"] = _computed_valid_until
-            _get_file_queue().enqueue("anchor", _enqueue_payload)
-            return {
-                "queued": True,
-                "status": "anchored",
-                "is_protected": True,
-                "reason": reason,
-                "tier": _tier,
-            }
-        except Exception as _fq_exc:
-            logger.warning("File queue enqueue failed, falling back to sync: %s", _fq_exc)
-
-    # Sync path — only runs during drain replay (is_draining=True) or queue fallback
-    replay = _get_replay()
-    tags = ["_anchor"]
-    if reason:
-        tags.append(f"anchor:{reason}")
-    memory_id = replay.anchor_memory(
-        content,
-        context,
-        tags,
-        reason,
-        branch=_branch,
-        tier=_tier,
-        valid_until=_computed_valid_until,
-    )
+    # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
+    _enqueue_payload: dict = {
+        "content": content,
+        "context": context,
+        "reason": reason,
+        "branch": _branch,
+        "tier": _tier,
+    }
+    if _computed_valid_until is not None:
+        _enqueue_payload["valid_until"] = _computed_valid_until
+    _get_file_queue().enqueue("anchor", _enqueue_payload)
     return {
-        "memory_id": memory_id,
+        "queued": True,
         "status": "anchored",
         "is_protected": True,
         "reason": reason,

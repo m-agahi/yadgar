@@ -126,7 +126,7 @@ class TestBCA2_WriteGateSurprise:
     def _make_gate(self, e2e_engines, threshold: float):
         import yadgar._shared.runtime.state as _st
         from yadgar._shared.config import Settings
-        from yadgar.core.predictive_coding import WriteGate
+        from yadgar.backend.predictive_coding import WriteGate
 
         storage = e2e_engines["storage"]
         embeddings = e2e_engines["embeddings"]
@@ -527,7 +527,7 @@ class TestBCC4_NightlySleepCycleRuns:
 
     def _make_scheduler(self, e2e_engines):
         from yadgar._shared.config import Settings
-        from yadgar.core.consolidation import ConsolidationScheduler
+        from yadgar.backend.consolidation import ConsolidationScheduler
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
@@ -675,7 +675,7 @@ class TestBCSC4_ReembedStale:
 
     def _make_scheduler(self, e2e_engines):
         from yadgar._shared.config import Settings
-        from yadgar.core.consolidation import ConsolidationScheduler
+        from yadgar.backend.consolidation import ConsolidationScheduler
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
@@ -761,7 +761,7 @@ class TestBCSC6_AutoNarrateWritesProjectStory:
 
     def _make_scheduler(self, e2e_engines):
         from yadgar._shared.config import Settings
-        from yadgar.core.consolidation import ConsolidationScheduler
+        from yadgar.backend.consolidation import ConsolidationScheduler
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return ConsolidationScheduler(e2e_engines["storage"], e2e_engines["embeddings"], settings)
@@ -1185,7 +1185,7 @@ class TestBCCLS1_2_3_EpisodicToSemantic:
 
     def _make_cls(self, e2e_engines):
         from yadgar._shared.config import Settings
-        from yadgar.core.cls_store import DualStoreCLS
+        from yadgar.backend.cls_store import DualStoreCLS
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return DualStoreCLS(

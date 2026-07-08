@@ -33,7 +33,7 @@
     "added_by": "recall-backend-train1"
   },
   {
-    "path": "yadgar/core/causal_discovery/pc.py",
+    "path": "yadgar/backend/causal_discovery/pc.py",
     "function": "pc_algorithm",
     "lineno": 105,
     "metrics": {
@@ -170,18 +170,6 @@
     "added_by": "complexity-governance-agent"
   },
   {
-    "path": "yadgar/core/server/tools/project.py",
-    "function": "wiki_cleanup_merged_branches",
-    "lineno": 2081,
-    "metrics": {
-      "cyclomatic": 19,
-      "nesting": 5
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
     "path": "yadgar/core/server/tools/recall.py",
     "function": "recall",
     "lineno": 111,
@@ -190,29 +178,7 @@
       "fn_loc": 180,
       "params": 10
     },
-    "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436→180 and cyclomatic 55→17, but both remain above HARD caps due to: (1) multi-path input validation (type_filter, mode, profile, branch_hint, consolidation, shadow observe), (2) branch detection with fallback logic. params=10: all 10 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
-    "path": "yadgar/core/server/tools/wiki.py",
-    "function": "_wiki_add_sync_write",
-    "lineno": 68,
-    "metrics": {
-      "params": 11
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
-  },
-  {
-    "path": "yadgar/core/server/tools/wiki.py",
-    "function": "_wiki_add_wait_path",
-    "lineno": 154,
-    "metrics": {
-      "params": 13
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436\u2192180 and cyclomatic 55\u219217, but both remain above HARD caps due to: (1) multi-path input validation (type_filter, mode, profile, branch_hint, consolidation, shadow observe), (2) branch detection with fallback logic. params=10: all 10 are required by the MCP schema \u2014 splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -222,10 +188,9 @@
     "lineno": 351,
     "metrics": {
       "cyclomatic": 25,
-      "fn_loc": 201,
       "params": 14
     },
-    "rationale": "PERMANENT. Public MCP tool: 14 params are the LLM-facing schema and cannot be bundled without breaking the API. Sync/wait execution paths (_wiki_add_sync_write, _wiki_add_wait_path) are already extracted helpers; residual cyclo and fn_loc are essential orchestration glue across those two paths plus validation, approval gating, and error normalization.",
+    "rationale": "PERMANENT. Public MCP tool: 14 params are the LLM-facing schema and cannot be bundled without breaking the API. R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -269,7 +234,7 @@
     "metrics": {
       "file_loc": 1923
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) — pure data, not logic; the module is a single-responsibility config loader by design.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) \u2014 pure data, not logic; the module is a single-responsibility config loader by design.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -280,7 +245,7 @@
     "metrics": {
       "cyclomatic": 17
     },
-    "rationale": "v5.100.0: shadow-observe try/except block added for source-label instrumentation incremented cyclomatic from pre-existing 16 to 17. Function handles request/body parsing, throttle, agent_type dispatch, subagent count metric, shadow observe, retriever timeout, context assembly, and anchor injection — 8 distinct responsibilities; structural extract deferred to wave N refactor.",
+    "rationale": "v5.100.0: shadow-observe try/except block added for source-label instrumentation incremented cyclomatic from pre-existing 16 to 17. Function handles request/body parsing, throttle, agent_type dispatch, subagent count metric, shadow observe, retriever timeout, context assembly, and anchor injection \u2014 8 distinct responsibilities; structural extract deferred to wave N refactor.",
     "added": "2026-07-03",
     "added_by": "feat/shadow-counter-source-label"
   },
@@ -302,7 +267,7 @@
     "metrics": {
       "file_loc": 2660
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module — keeping them co-located is the established pattern; refactor remains deferred to the wave N split.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module \u2014 keeping them co-located is the established pattern; refactor remains deferred to the wave N split.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -362,7 +327,7 @@
     "added_by": "complexity-governance-agent"
   },
   {
-    "path": "yadgar/tests/test_integration.py",
+    "path": "yadgar/tests/server/test_integration.py",
     "function": "<file>",
     "lineno": 1,
     "metrics": {
@@ -373,7 +338,7 @@
     "added_by": "refactor/v5.55-curate-params"
   },
   {
-    "path": "yadgar/tests/test_integration.py",
+    "path": "yadgar/tests/server/test_integration.py",
     "function": "test_clean_startup_and_shutdown",
     "lineno": 999,
     "metrics": {
@@ -390,7 +355,7 @@
     "metrics": {
       "cyclomatic": 20
     },
-    "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count — cohesive enrichment pipeline, single responsibility.",
+    "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count \u2014 cohesive enrichment pipeline, single responsibility.",
     "added": "2026-06-14",
     "added_by": "insert-memory-refactor"
   },
@@ -401,7 +366,7 @@
     "metrics": {
       "file_loc": 1241
     },
-    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) — the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately.",
+    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) \u2014 the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately.",
     "added": "2026-06-25",
     "added_by": "feat/v5.104-perf-train"
   },
@@ -445,7 +410,7 @@
     "metrics": {
       "file_loc": 1059
     },
-    "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry — every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split.",
+    "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry \u2014 every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split.",
     "added": "2026-07-01",
     "added_by": "fix/daemon-obs-gauges"
   },
@@ -467,7 +432,7 @@
     "metrics": {
       "params": 9
     },
-    "rationale": "Phase 1 backend contract widen (#45): added profile: str | None = None as the 9th param to thread rerank_level through the fanout. The 8-param SOFT cap is exceeded by 1; the function signature matches the backend RecallRequest contract (query/max_results/min_heat/directory/current_branch/default_branch/type_filter/tags/profile). Introducing a config-object wrapper would require changing all callers (core + backend) simultaneously, which couples Phase 1 to Phase 2 — Phase 2 is the planned refactor pass. Allowlisted until Phase 2 can wrap params cleanly.",
+    "rationale": "Phase 1 backend contract widen (#45): added profile: str | None = None as the 9th param to thread rerank_level through the fanout. The 8-param SOFT cap is exceeded by 1; the function signature matches the backend RecallRequest contract (query/max_results/min_heat/directory/current_branch/default_branch/type_filter/tags/profile). Introducing a config-object wrapper would require changing all callers (core + backend) simultaneously, which couples Phase 1 to Phase 2 \u2014 Phase 2 is the planned refactor pass. Allowlisted until Phase 2 can wrap params cleanly.",
     "added": "2026-07-05",
     "added_by": "recall-backend-phase1"
   },
@@ -478,7 +443,7 @@
     "metrics": {
       "params": 10
     },
-    "rationale": "Phase 2a: pure forwarder function — mirrors full recall() MCP signature (10 params) plus positional context (current_branch, default_branch) needed for backend. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site — not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
+    "rationale": "Phase 2a: pure forwarder function \u2014 mirrors full recall() MCP signature (10 params) plus positional context (current_branch, default_branch) needed for backend. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site \u2014 not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
     "added": "2026-07-05",
     "added_by": "phase2a-cutover-agent"
   },
@@ -489,8 +454,19 @@
     "metrics": {
       "params": 9
     },
-    "rationale": "Backend caching train Car 0 (#49): the unified backend Cache constructor mirrors the core yadgar/cache.py Cache (which sits at the 8-param cap: name/max_bytes/invalidation/key_fn/deep_copy/obs_tier/clock) plus one backend-only param, checkpoint_hash, needed to ckpt-gate the msgpack snapshot (a snapshot written under a different model hash must be discarded on load — the ce/embed model-swap contract). Each param is an independent, orthogonal cache policy bound once at construction; wrapping them in a config-object would add a dataclass indirection for a single construction site (the two _make_*_cache factories) with no readability gain. Allowlisted: Car 0, #49.",
+    "rationale": "Backend caching train Car 0 (#49): the unified backend Cache constructor mirrors the core yadgar/cache.py Cache (which sits at the 8-param cap: name/max_bytes/invalidation/key_fn/deep_copy/obs_tier/clock) plus one backend-only param, checkpoint_hash, needed to ckpt-gate the msgpack snapshot (a snapshot written under a different model hash must be discarded on load \u2014 the ce/embed model-swap contract). Each param is an independent, orthogonal cache policy bound once at construction; wrapping them in a config-object would add a dataclass indirection for a single construction site (the two _make_*_cache factories) with no readability gain. Allowlisted: Car 0, #49.",
     "added": "2026-07-06",
     "added_by": "backend-cache-train-car0"
+  },
+  {
+    "path": "yadgar/backend/write_exec/memorize_impl.py",
+    "function": "run_memorize_replay",
+    "lineno": 32,
+    "metrics": {
+      "params": 9
+    },
+    "rationale": "R3 write-path regression fix: 'reason' (semantic_immortal anchor reason) must survive the enqueue->drain boundary so drainer-side phase_validate can re-check the require-reason invariant. The signature mirrors the memorize MCP schema (already noqa'd PLR0913); all 9 params are queue-payload fields \u2014 a params dataclass would just relocate the field list without reducing essential complexity.",
+    "added": "2026-07-08",
+    "added_by": "reorg3-test-migration"
   }
 ]

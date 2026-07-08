@@ -230,3 +230,106 @@ def e2e_engines(tmp_path_factory):
     finally:
         server.shutdown()
         monkeypatch.undo()
+
+
+# ---------------------------------------------------------------------------
+# R3 write-path harness adaptation (single-process e2e)
+# ---------------------------------------------------------------------------
+#
+# R3 relocated the write path to the backend: Car 1 removed the QueueDrainer
+# construction from core lifecycle (core now owns ONLY the enqueue-side
+# FileQueue), and Car 3/R5 turned the write + recall + consolidation tools into
+# thin forwarders that POST to the backend HTTP endpoints (/admin, /recall,
+# /consolidate) derived from YADGAR_EMBED_URL.
+#
+# The single-process e2e harness has no backend HTTP server, so:
+#   1. Enqueued writes (memorize/wiki_add/anchor/checkpoint) never drain
+#      (_st._queue_drainer is None) → reads find nothing.
+#   2. Forwarding tools raise "YADGAR_EMBED_URL is not set".
+#   3. _st._consolidation is None (built only backend-side in service._get_scheduler).
+#
+# The correct e2e adaptation is to run the backend logic IN-PROCESS against the
+# same _st storage the e2e engine stack already wired — NOT to weaken assertions
+# (#52). This mirrors the unit/integration conftest fixtures admin_backend_bypass
+# + recall_backend_bypass, extended here to:
+#   * autouse (every write-path e2e test gets them uniformly), and
+#   * CALL-TIME guarded on YADGAR_EMBED_URL: when a test sets EMBED_URL and wires
+#     a real backend (the recall-forwarder / landscape ASGI e2e tests), the
+#     bypass delegates to the ORIGINAL forwarder so the real HTTP contract is
+#     exercised unchanged. Only when EMBED_URL is unset (the write-path files)
+#     does the in-process backend impl run. This keeps the real-backend e2e
+#     files (test_recall_backend_contract_e2e / _variants / _landscape / _fusion)
+#     green while unblocking the 20 write-path failures.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _e2e_backend_drainer(request, _isolate_file_queue):
+    """Construct the backend QueueDrainer in-process against the e2e storage.
+
+    Delegates to ``_backend_harness.wire_drainer``.  Only wires when the test
+    actually uses ``e2e_engines`` (the write-path files); autouse but gated on
+    ``request.fixturenames`` so it does NOT force the module engine stack + a
+    live drainer onto tests that deliberately run WITHOUT it (e.g.
+    test_vacuum_backup_safety's BC-E3 signal-handler test).
+
+    Depends on ``_isolate_file_queue`` (parent conftest autouse) so it runs
+    AFTER the per-test FileQueue reset — ``_get_file_queue()`` then returns the
+    LIVE per-test queue.
+    """
+    if "e2e_engines" not in request.fixturenames:
+        yield None
+        return
+
+    # Materialise the engine stack (module-scoped) for this test.
+    request.getfixturevalue("e2e_engines")
+
+    from yadgar.core import server as _server
+    from yadgar.tests._backend_harness import wire_drainer
+
+    with wire_drainer(_server._get_file_queue) as drainer:
+        yield drainer
+
+
+@pytest.fixture(autouse=True)
+def _e2e_admin_bypass(monkeypatch):
+    """Route ``_forward_admin`` → in-process ``run_admin_op`` when no backend URL.
+
+    Delegates to ``_backend_harness.patch_admin_bypass``.  CALL-TIME guarded on
+    YADGAR_EMBED_URL: if a test sets EMBED_URL (real-backend e2e), the original
+    HTTP forwarder is used unchanged.
+    """
+    from yadgar.tests._backend_harness import patch_admin_bypass
+
+    patch_admin_bypass(monkeypatch)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _e2e_recall_bypass(monkeypatch):
+    """Route recall's ``_forward_to_backend`` → in-process ``_fanout_recall``.
+
+    Delegates to ``_backend_harness.patch_recall_bypass``.  CALL-TIME guarded on
+    YADGAR_EMBED_URL: real-backend recall e2e tests exercise the real HTTP path.
+    """
+    from yadgar.tests._backend_harness import patch_recall_bypass
+
+    patch_recall_bypass(monkeypatch)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _e2e_consolidate_bypass(monkeypatch):
+    """Route the consolidation orchestrator's ``_forward_to_backend`` in-process.
+
+    Delegates to ``_backend_harness.patch_consolidate_bypass``.  CALL-TIME
+    guarded on YADGAR_EMBED_URL.  Drops the memoized backend scheduler on
+    teardown so the next module rebuilds it against its own live storage.
+    """
+    from yadgar.tests._backend_harness import patch_consolidate_bypass, teardown_consolidate_bypass
+
+    patch_consolidate_bypass(monkeypatch)
+    try:
+        yield
+    finally:
+        teardown_consolidate_bypass()

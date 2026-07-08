@@ -46,18 +46,18 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from yadgar.core._surreal_runner import (
-    allocate_port_with_retry,
-    spawn_surreal,
-    teardown_surreal_proc,
-)
 from yadgar._shared.config import Settings
-from yadgar.core.curation import MemoryCurator
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.retrieval import Retriever
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
+from yadgar.backend.curation import MemoryCurator
+from yadgar.core._surreal_runner import (
+    allocate_port_with_retry,
+    spawn_surreal,
+    teardown_surreal_proc,
+)
 
 # Directory the haystack is ingested under; recall must scope to the same value
 # when routed through the unified MCP path (directory-scoped fan-out).

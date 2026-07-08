@@ -252,7 +252,7 @@ clean:
 
 ## check: Run v5.45.x + v5.46.x tests
 check:
-	python3 -m pytest yadgar/tests/test_v5_45_*.py yadgar/tests/test_v5_46_*.py --noconftest --override-ini="addopts=" -q
+	python3 -m pytest yadgar/tests/scripts/test_v5_45_*.py yadgar/tests/scripts/test_v5_46_*.py --noconftest --override-ini="addopts=" -q
 
 ## test-clean: Kill orphaned test SurrealDB procs left by crashed runs (never touches prod)
 test-clean:

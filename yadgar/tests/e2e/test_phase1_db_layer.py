@@ -219,11 +219,19 @@ class TestBCA1_MemorizeRecallRoundTrip:
             f"BC-A1: directory_context must equal {yadgar_dir!r}, got {row.get('directory_context')!r}"
         )
 
-        # Verify recall surfaces the row from this directory
+        # Verify recall surfaces the row from this directory.
+        # branch_hint=_E2E_BRANCH mirrors the memorize() write branch: R3 made the
+        # write path honor branch_hint when _detect_branch(directory) fails (the
+        # documented _detect_branch → branch_hint resolution). The e2e yadgar_dir
+        # is a synthetic (non-git) path, so both write and read must supply the
+        # branch_hint to land on the same branch slot — in production the hooks
+        # pass branch_hint to both memorize and recall. Pre-R3 the write ignored
+        # branch_hint (stamped branch=None) so an unstamped read matched by luck.
         results = recall(
             "BC-A1 unique sentinel content",
             directory=yadgar_dir,
             max_results=10,
+            branch_hint=_E2E_BRANCH,
         )
         result_ids = _ids_from_results(results)
         # Also check by content string if id type mismatch
@@ -635,7 +643,7 @@ class TestBCB5_ProfileRecallSurfaces:
 class TestBCC1_ConsolidationRuns:
     """BC-C1: consolidation cycle SHALL run to completion with 0 invariant violations."""
 
-    def test_consolidation_completes_no_violations(self, e2e_engines):
+    def test_consolidation_completes_no_violations(self, e2e_engines, admin_backend_bypass):
         import yadgar._shared.runtime.state as _st
         from yadgar.core.server.tools.admin_invariants import check_invariants
 
@@ -880,7 +888,7 @@ class TestBCCK1_CheckpointRestore:
 class TestBCADM1_ReembedAll:
     """BC-ADM1: reembed_all SHALL re-embed every memory missing an embedding."""
 
-    def test_reembed_fills_missing_embeddings(self, e2e_engines):
+    def test_reembed_fills_missing_embeddings(self, e2e_engines, admin_backend_bypass):
         from yadgar.core.server.tools.admin_other import reembed_all
 
         storage = e2e_engines["storage"]

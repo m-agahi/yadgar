@@ -18,25 +18,25 @@
 
 | Substep | p50 (ms) | p90 (ms) | p99 (ms) | min (ms) | max (ms) |
 |---------|----------|----------|----------|----------|----------|
-| Secret-gate regex scan (I26) | 0.161 | 0.187 | 0.198 | 0.120 | 0.220 |
-| Rules engine write-policy check | 0.105 | 0.131 | 0.322 | 0.076 | 1.105 |
-| Branch resolution + slug generation | 0.003 | 0.003 | 0.007 | 0.003 | 0.027 |
-| Similarity gate (embed + KNN) | 43.094 | 51.320 | 70.163 | 32.633 | 81.865 |
-| File queue enqueue (Path.write\_text) | 0.113 | 0.153 | 0.454 | 0.105 | 0.524 |
-| **E2E handler (server.wiki\_add)** | 0.601 | 0.773 | 1.354 | 0.482 | 1.375 |
+| Secret-gate regex scan (I26) | 0.104 | 0.110 | 0.134 | 0.101 | 0.149 |
+| Rules engine write-policy check | 0.052 | 0.056 | 0.075 | 0.050 | 0.079 |
+| Branch resolution + slug generation | 0.002 | 0.002 | 0.007 | 0.001 | 0.014 |
+| Similarity gate (embed + KNN) | 39.391 | 64.732 | 190.725 | 33.291 | 453.479 |
+| File queue enqueue (Path.write\_text) | 0.079 | 0.147 | 0.451 | 0.072 | 0.549 |
+| **E2E handler (server.wiki\_add)** | 0.422 | 0.519 | 0.753 | 0.402 | 0.782 |
 
 ## Key Findings
 
-- **E2E p50 = 0.60ms** → PASS
-- Similarity gate p50 = 43.09ms (7167% of e2e)
-- Secret-gate p50 = 0.161ms
-- Rules engine p50 = 0.105ms
-- Branch/slug gen p50 = 0.003ms
-- Enqueue (file write) p50 = 0.113ms
+- **E2E p50 = 0.42ms** → PASS
+- Similarity gate p50 = 39.39ms (9333% of e2e)
+- Secret-gate p50 = 0.104ms
+- Rules engine p50 = 0.052ms
+- Branch/slug gen p50 = 0.002ms
+- Enqueue (file write) p50 = 0.079ms
 
 ## Decision Point Resolution
 
-**DP-A CONFIRMED:** Similarity gate = 43.09ms = 7167% of e2e. Option A (move to drainer) is correct fix.
+**DP-A CONFIRMED:** Similarity gate = 39.39ms = 9333% of e2e. Option A (move to drainer) is correct fix.
 
 ## v5.41.5 Fix Plan
 
@@ -52,4 +52,4 @@
 - Perf test (xfail): `yadgar/tests/test_wiki_mcp_handler_perf.py`
 - I9 invariant: `docs/ARCHITECTURE_INVARIANTS.md`
 - Baseline (task header): ~28.89ms p50 / xfail comment: ~48ms p50
-- This measurement: 0.60ms p50
+- This measurement: 0.42ms p50

@@ -13,7 +13,6 @@ from __future__ import annotations
 import functools
 import hashlib
 import logging
-import math
 import os
 import re
 import subprocess
@@ -28,6 +27,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.secrets import gate_or_reject
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -35,65 +35,19 @@ settings = get_settings()
 
 
 # ── Git helpers ────────────────────────────────────────────────────────
-
-
-def _git_safe_env() -> dict:
-    """Return an env dict that prevents .git/config code-execution attacks (H-10).
-
-    A malicious .git/config in a user-supplied directory can set
-    core.fsmonitor or core.sshCommand to execute arbitrary commands on
-    the next git invocation.  Passing GIT_CONFIG_NOSYSTEM + pointing
-    GIT_CONFIG_GLOBAL at /dev/null plus disabling network protocols
-    eliminates all git-config-driven execution paths.
-    """
-    return {
-        **os.environ,
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_CONFIG_SYSTEM": "/dev/null",
-    }
-
-
-# Extra argv to pass to every git invocation — disable network protocols
-# so a crafted .git/config cannot trigger remote fetch/clone helpers.
-_GIT_SAFE_ARGS = [
-    "-c",
-    "protocol.allow=never",
-    "-c",
-    "protocol.file.allow=never",
-    "-c",
-    "uploadpack.allowFilter=false",
-]
-
-
-@observe(tier="stage", metric="tools.project._resolve_project_root")
-@functools.lru_cache(maxsize=1024)
-def _resolve_project_root(directory: str) -> str:
-    """Resolve the git project root for a directory (walk-up via git rev-parse).
-
-    Falls back to the given directory if not inside a git repo or git is unavailable.
-
-    Cached with no TTL: a directory's git-root is process-stable (unlike branch,
-    which uses a 30s bucket because it changes). Caching keeps the memorize/forget
-    write-path epoch normalization (which resolves via this helper) off a git
-    subprocess after the first touch per directory — within the I9 ≤5ms budget.
-    """
-    try:
-        out = (
-            subprocess.check_output(
-                ["git", *_GIT_SAFE_ARGS, "-C", directory, "rev-parse", "--show-toplevel"],
-                stderr=subprocess.DEVNULL,
-                timeout=2,
-                env=_git_safe_env(),
-            )
-            .decode()
-            .strip()
-        )
-        if out:
-            return out
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
-        pass
-    return directory
+#
+# R3 Car 1 (write-half): _git_safe_env, _GIT_SAFE_ARGS, _resolve_project_root,
+# and _bump_epoch_for_context moved to yadgar._shared.server_helpers so the
+# backend write path (memorize post-write epoch bump) imports only _shared.
+# Re-imported here — project.py's other git invocations use the same helpers.
+from yadgar._shared.server_helpers import (  # noqa: E402
+    _ANCHOR_PROMOTE_TAGS,
+    _GIT_SAFE_ARGS,
+    _cosine_similarity,
+    _count_markdown_headers,
+    _git_safe_env,
+    _resolve_project_root,
+)
 
 
 @observe(tier="stage", metric="tools.project._get_current_branch")
@@ -344,20 +298,9 @@ def _render_project_brief(brief: dict) -> str:
 
 
 # ── Anchor hygiene constants (v5.8.0 PR-B) ────────────────────────────────
-
-# Tag set that qualifies an anchor for promote-to-wiki detection.
-# Triple AND: word_count > ANCHOR_PROMOTE_WORDS AND header_count >= ANCHOR_PROMOTE_HEADERS
-# AND tags ∩ _ANCHOR_PROMOTE_TAGS ≠ ∅.
-_ANCHOR_PROMOTE_TAGS: frozenset[str] = frozenset(
-    {"rule", "pattern", "convention", "playbook", "workflow", "recipe"}
-)
-
-# Compiled regex to strip fenced code blocks before counting markdown headers.
-# Handles ``` and ~~~ delimiters; DOTALL so . matches newlines inside blocks.
-_FENCED_CODE_BLOCK_RE = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
-
-# Compiled regex for markdown headers (after code-block stripping).
-_MD_HEADER_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+# R3 Car 3d: _ANCHOR_PROMOTE_TAGS + the markdown-header/cosine helpers moved to
+# yadgar._shared.server_helpers so the backend anchor-audit exec imports only
+# _shared. Re-imported at the top of this module for project.py's own use.
 
 # Max candidates per list (redundancy pairs + promote IDs) before hard truncation.
 # K=3 chosen to keep signals mode payload ≤100 tokens even under pathological load.
@@ -726,27 +669,6 @@ def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
         )
 
     return merged[:max_anchors]
-
-
-def _count_markdown_headers(content: str) -> int:
-    """Count level-1..6 markdown headers in content, excluding fenced code blocks.
-
-    Strips ``` and ~~~ fenced blocks first to avoid counting # comments inside
-    code blocks (e.g. Python # comment, shell ## heading).
-    """
-    stripped = _FENCED_CODE_BLOCK_RE.sub("", content)
-    return len(_MD_HEADER_RE.findall(stripped))
-
-
-@observe(tier="hot", metric="tools.project._cosine_similarity")
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Compute cosine similarity between two float vectors."""
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 0.0
-    return dot / (norm_a * norm_b)
 
 
 @observe(tier="stage", metric="tools.project._fetch_anchor_redundancy_pairs")
@@ -2093,24 +2015,6 @@ def _make_project_brief_cache():
 _project_brief_cache = _make_project_brief_cache()
 
 
-@observe(tier="hot", metric="tools.project._bump_epoch_for_context")
-def _bump_epoch_for_context(context: str | None) -> None:
-    """Advance the structural epoch for `context`, normalized to its git-root.
-
-    The single shared bump helper for every structural write (memorize, forget).
-    Normalizing to git-root here — the SAME resolution project_brief's key uses —
-    is what makes the epoch actually bust the cached brief instead of landing on a
-    different, never-read _DIR_EPOCH key (the decorative-epoch bug). Fully guarded:
-    instrumentation must never break or block the write path."""
-    try:
-        from yadgar._shared.runtime.cache_epoch import bump_epoch  # noqa: PLC0415
-
-        resolved = _resolve_project_root(context) if context else None
-        bump_epoch(resolved)
-    except Exception:  # pragma: no cover - must never break writes
-        pass
-
-
 @_tool(always_load=True)
 def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None = None) -> dict:
     """Return a layered project context snapshot for the given directory.
@@ -2363,9 +2267,11 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
             "op_type": "update_active_work",
         }
 
+    # R3 Car 3d: secret-gate + branch resolution stay core (above); the atomic
+    # _active_work delete-then-insert (+ project_brief epoch bump) forwards to the
+    # backend /admin op. The host-FS watchdog marker stays core (host lifecycle).
     resolved = _resolve_project_root(directory)
-    storage = _get_storage()
-    result = storage.upsert_active_work(resolved, content)
+    result = _forward_admin("update_active_work", {"resolved": resolved, "content": content})
     _register_active_work_directory(resolved)
     return result
 
@@ -2838,10 +2744,12 @@ def wiki_cleanup_merged_branches(directory: str, dry_run: bool = True) -> dict:
             "dry_run": bool,
         }
     """
-    storage = _get_storage()
     resolved = _resolve_project_root(directory)
 
-    # Get live branch set
+    # R3 Car 3d: the git-branch enumeration is HOST-only — the backend container
+    # cannot reach the host .git (the very reason branch_hint exists), so it stays
+    # core. The wiki_page query + deletes (DB write + wiki-epoch bump) forward to
+    # the backend /admin op with the live-branch set.
     try:
         raw = subprocess.check_output(
             ["git", *_GIT_SAFE_ARGS, "-C", resolved, "branch", "-a", "--format=%(refname:short)"],
@@ -2871,60 +2779,7 @@ def wiki_cleanup_merged_branches(directory: str, dry_run: bool = True) -> dict:
             "dry_run": dry_run,
         }
 
-    # Query wiki_page rows with a branch set, excluding canonical branches
-    try:
-        rows = storage._q(
-            "SELECT id, slug, branch FROM wiki_page "
-            "WHERE branch IS NOT NONE "
-            "AND branch != 'master' AND branch != 'main'"
-        )
-    except Exception as _e:
-        logger.warning("wiki_cleanup_merged_branches: DB query failed: %s", _e)
-        rows = []
-
-    candidates = []
-    for row in rows:
-        row_branch = row.get("branch") or ""
-        if row_branch in live_branches:
-            continue
-        # Store both integer id (for delete_wiki_page) and raw id string (fallback)
-        try:
-            int_id = storage._extract_id(row.get("id"))
-        except (ValueError, TypeError) as _e:
-            int_id = None
-        raw_id = row.get("id")
-        candidates.append(
-            {
-                "id": int_id,
-                "_raw_id": raw_id,
-                "slug": row.get("slug", ""),
-                "branch": row_branch,
-            }
-        )
-
-    deleted_count = 0
-    if not dry_run and candidates:
-        for candidate in candidates:
-            try:
-                slug = candidate.get("slug", "")
-                if candidate["id"] is not None:
-                    storage.delete_wiki_page(candidate["id"])
-                    deleted_count += 1
-                elif slug:
-                    # Fallback for auto-generated (non-integer) IDs: delete by slug
-                    storage._q(
-                        "DELETE wiki_page WHERE slug = $slug",
-                        {"slug": slug},
-                    )
-                    deleted_count += 1
-            except Exception as _e:
-                logger.warning("wiki_cleanup_merged_branches: delete of page failed: %s", _e)
-
-    # Strip internal fields from returned candidates
-    return_candidates = [{k: v for k, v in c.items() if not k.startswith("_")} for c in candidates]
-
-    return {
-        "candidates": return_candidates,
-        "deleted_count": deleted_count,
-        "dry_run": dry_run,
-    }
+    return _forward_admin(
+        "wiki_cleanup_merged_branches",
+        {"live_branches": sorted(live_branches), "dry_run": dry_run},
+    )

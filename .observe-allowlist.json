@@ -382,7 +382,7 @@
     "category": "framework-instrumented",
     "rationale": "Opens the manual 'drainer.apply' span per replayed record via _apply_span() and sets the op attribute; @observe's guard only detects decorator spans, so decorating this body-span opener would produce TWO spans and break test_drainer_apply_span_emits (op-attr assertion)."
   },
-  "dlq:_inc_relaxed": {
+  "enforcement:_inc_relaxed": {
     "category": "framework-instrumented",
     "rationale": "Metric-emitting primitive: sole body is yadgar_writes_with_enforcement_relaxed.labels(...).inc(); wrapping a single counter .inc() in @observe is recursive span noise for one metric touch, no diagnostic value."
   },
@@ -397,6 +397,34 @@
   "queue:FileQueue._cleanup_date_dir": {
     "category": "hot-loop",
     "rationale": "Deletes stale files in one dated archive sub-directory; called per date-dir inside the cleanup_archive iterdir loop (per-directory). A span/metric per call is per-item cardinality bloat. Parent cleanup_archive carries the stage span."
+  },
+  "queue:FileQueue._find_terminal": {
+    "category": "hot-loop",
+    "rationale": "Non-recursive directory glob for a terminal job file; called per poll iteration inside the already-@observe'd wait_for_job (queue.wait_for_job) spin loop. A span/metric per poll is per-iteration cardinality bloat with no dashboard value; the parent stage span covers the wait."
+  },
+  "queue:FileQueue._archive_has": {
+    "category": "hot-loop",
+    "rationale": "Scans archive/memories/<date>/ for a success-terminal job file; called per poll iteration inside the already-@observe'd wait_for_job (queue.wait_for_job) spin loop. A span/metric per poll is per-iteration cardinality bloat with no dashboard value; the parent stage span covers the wait."
+  },
+  "queue:FileQueue._read_dlq_rejection": {
+    "category": "hot-loop",
+    "rationale": "Reads a DLQ .error.json sidecar to surface a synchronous duplicate_detected rejection; called per poll iteration on the DLQ-terminal branch of the already-@observe'd wait_for_job (queue.wait_for_job) loop. A span/metric per poll is per-iteration cardinality bloat; the parent stage span covers the wait."
+  },
+  "embed_service:ConsolidateRequest.validate_mode": {
+    "category": "framework-instrumented",
+    "rationale": "Pydantic v2 field_validator classmethod invoked by the model's validation machinery during request parsing; decorating a validator can perturb pydantic's classmethod/validator resolution and adds a span per field-validate with no dashboard value. Pure input validation, not an observable op."
+  },
+  "checkpoint_impl:_enrich_checkpoint_context": {
+    "category": "trivial",
+    "rationale": "Pure string helper: appends the action-buffer summary to custom_context (no I/O, no ops decision). Called from the already-@observe'd run_checkpoint_replay (write_exec.checkpoint_replay); a span here double-instruments the same replay with zero dashboard value."
+  },
+  "wiki_add_impl:_mirror_wiki": {
+    "category": "trivial",
+    "rationale": "Non-fatal thin delegation to FileQueue.write_wiki (itself @observe'd as queue.write_wiki) to mirror a page to a .md; wraps the call in a debug-log try/except. Called from the already-@observe'd run_wiki_add_replay; a span here recursively re-instruments the write_wiki op with no added diagnostic value."
+  },
+  "orchestrator:_in_window": {
+    "category": "trivial",
+    "rationale": "Pure time-arithmetic predicate: parses HH:MM start/end and returns whether now falls in the (possibly cross-midnight) window. No I/O, no ops decision. Called from the @observe'd maybe_auto_vacuum / core_post_cycle gate checks; a span per call is cardinality bloat on a string-in-window test."
   },
   "cleanup:_observe_action_batch": {
     "category": "framework-instrumented",

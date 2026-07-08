@@ -142,7 +142,6 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | `cross_encoder_model` | `YADGAR_CROSS_ENCODER_MODEL` | str | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model name. |
 | `cross_encoder_top_k` | `YADGAR_CROSS_ENCODER_TOP_K` | int | `10` | Top-k passed to cross-encoder. |
 | `cross_encoder_weight` | `YADGAR_CROSS_ENCODER_WEIGHT` | float | `0.6` | Cross-encoder score weight in blend (retrieval gets 1-this). |
-| `cross_encoder_backend` | `YADGAR_CROSS_ENCODER_BACKEND` | str | `st` | Inference backend: `st` (fp32 torch, default) or `onnx-int8` (opt-in quantized ONNX, requires onnxruntime). |
 | `gte_reranker_enabled` | `YADGAR_GTE_RERANKER_ENABLED` | bool | `true` | Enable GTE-Reranker (ModernBERT-based). |
 | `gte_reranker_model` | `YADGAR_GTE_RERANKER_MODEL` | str | `Alibaba-NLP/gte-reranker-modernbert-base` | GTE reranker model name. |
 | `gte_reranker_max_length` | `YADGAR_GTE_RERANKER_MAX_LENGTH` | int | `512` | Max token length for GTE reranker. |

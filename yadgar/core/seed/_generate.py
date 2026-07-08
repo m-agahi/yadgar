@@ -383,14 +383,12 @@ def seed_project(
         from yadgar._shared.knowledge_graph import KnowledgeGraph
         from yadgar._shared.storage import StorageEngine
         from yadgar._shared.thermodynamics import MemoryThermodynamics
-        from yadgar.core.curation import MemoryCurator
 
         settings = Settings()
         storage = StorageEngine(db_path or settings.DB_PATH)
         embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
         KnowledgeGraph(storage, settings)
         thermo = MemoryThermodynamics(storage, embeddings, settings)
-        MemoryCurator(storage, embeddings, thermo, settings)
 
     created = 0
     replaced = 0
