@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — train shipped #164/#165 (Car 1 project_brief, Car 2 wiki/prelude, Car 3 killed ADR-0071 — 0% tool-path hit-rate). Shadow surface removed.
+
 # Caching Train — buildable per-car spec (Cache class + observability unification)
 
 **Status:** BUILD SPEC. Turns the CONFIRMED, user-approved design into a per-car,

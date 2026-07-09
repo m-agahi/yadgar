@@ -262,6 +262,27 @@ def isolate_yadgar_paths(tmp_path, monkeypatch):
         _srv_http._reset_readiness_state()
     except Exception:  # noqa: BLE001 — never block a test on this defensive reset
         pass
+    # Clear the process-lifetime epoch-keyed read-tool caches (Car 1/Car 2). The
+    # per-test YADGAR_DATA_DIR above restarts the on-disk epoch counters from 0,
+    # so each test replays the SAME deterministic bump sequence — cache keys from
+    # a PREVIOUS test collide exactly with the current test's keys and the cache
+    # serves the previous test's payload (stale brief/wiki/prelude). Epoch-in-key
+    # is correct in prod (one persistent data dir) but decorative under per-test
+    # tmp dirs; the caches must start empty alongside the fresh DB + data dir.
+    for _mod_name, _attr in (
+        ("yadgar.core.server.tools.project", "_project_brief_cache"),
+        ("yadgar.core.server.tools.wiki", "_wiki_read_cache"),
+        ("yadgar.core.server.tools.wiki", "_wiki_query_cache"),
+        ("yadgar.core.server.tools.dispatch_helper", "_prompt_cache"),
+    ):
+        try:
+            import importlib  # noqa: PLC0415
+
+            _cache = getattr(importlib.import_module(_mod_name), _attr, None)
+            if _cache is not None:
+                _cache.clear()
+        except Exception:  # noqa: BLE001 — never block a test on this defensive reset
+            pass
 
 
 def _find_free_port() -> int:

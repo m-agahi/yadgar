@@ -240,17 +240,6 @@
   },
   {
     "path": "yadgar/core/server/http.py",
-    "function": "hook_subagent_start",
-    "lineno": 1549,
-    "metrics": {
-      "cyclomatic": 17
-    },
-    "rationale": "v5.100.0: shadow-observe try/except block added for source-label instrumentation incremented cyclomatic from pre-existing 16 to 17. Function handles request/body parsing, throttle, agent_type dispatch, subagent count metric, shadow observe, retriever timeout, context assembly, and anchor injection \u2014 8 distinct responsibilities; structural extract deferred to wave N refactor.",
-    "added": "2026-07-03",
-    "added_by": "feat/shadow-counter-source-label"
-  },
-  {
-    "path": "yadgar/core/server/http.py",
     "function": "<file>",
     "lineno": 1,
     "metrics": {

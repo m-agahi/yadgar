@@ -39,28 +39,32 @@ def phase_post_write(ctx: MemorizeContext, settings) -> dict:
     _run_engram(ctx)
     _run_zero_gap(ctx, storage, buffer, settings)
     _run_tool_call_record()
-    _bump_shadow_epoch(ctx)
+    _bump_cache_epoch(ctx)
 
     return _build_response(ctx, storage, settings)
 
 
 @observe(tier="stage")
-def _bump_shadow_epoch(ctx: MemorizeContext) -> None:
-    """v5.96.0: a memorize is a structural write → bump the directory's shadow epoch
-    so the recall shadow-cache counter treats prior would-be keys as stale (miss).
+def _bump_cache_epoch(ctx: MemorizeContext) -> None:
+    """Bump the directory's cache-invalidation epoch after a memorize write.
 
-    Instrumentation only, fully guarded — must never break or block the write path.
+    A memorize is a structural write → the project_brief (Car 1) cache for this
+    directory must be invalidated so the next read reflects the new memory.
+    NOT the removed recall-output shadow counter (killed ADR-0071).
+
+    v5.111.0 (Car 1): normalize ctx.context to its git-root before bumping so
+    the epoch lands on the SAME key project_brief reads. bump_epoch(ctx.context)
+    (raw dir) would land on a different _DIR_EPOCH key than the resolved git-root
+    project_brief keys on → the epoch would be decorative and never bust a cached
+    brief on a memorize into a subdir.
+
+    Fully guarded — must never break or block the write path.
     """
     try:
-        # v5.111.0 (Car 1): normalize ctx.context to its git-root before bumping so
-        # the epoch lands on the SAME key project_brief reads. bump_epoch(ctx.context)
-        # (raw dir) would land on a different _DIR_EPOCH key than the resolved git-root
-        # project_brief keys on → the epoch would be decorative and never bust a cached
-        # brief on a memorize into a subdir.
         from yadgar._shared.server_helpers import _bump_epoch_for_context  # noqa: PLC0415
 
         _bump_epoch_for_context(ctx.context)
-    except Exception:  # pragma: no cover - instrumentation must never break writes
+    except Exception:  # pragma: no cover - must never break writes
         pass
 
 

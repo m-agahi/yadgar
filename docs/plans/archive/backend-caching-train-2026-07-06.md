@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — train shipped #164/#165 (Car 1 project_brief, Car 2 wiki/prelude, Car 3 killed ADR-0071 — 0% tool-path hit-rate). Shadow surface removed.
+
 # Backend Caching Train — Unified Backend Cache (2026-07-06)
 
 Shave ms/seconds off backend recall stages via ONE unified backend `Cache` class

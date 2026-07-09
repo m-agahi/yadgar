@@ -28,15 +28,13 @@ each recall; the delta is exact.
 ```sh
 snap() {
   curl -sf http://localhost:8765/metrics | grep -E \
-    '^yadgar_recall_duration_ms_(sum|count)|^yadgar_recall_shadow_cache_(hits|misses)_total|^yadgar_tool_pool'
+    '^yadgar_recall_duration_ms_(sum|count)|^yadgar_tool_pool'
 }
 ```
 
 - **Per-recall latency (ms)** = `Δ(yadgar_recall_duration_ms_sum) / Δ(yadgar_recall_duration_ms_count)`.
   (For a single recall between two snaps, Δcount=1 → the delta *is* that recall's ms.)
-- **Cache hit vs miss** = `Δyadgar_recall_shadow_cache_hits_total` vs `_misses_total`
-  (cold/first-seen key → miss; repeat identical key, no intervening write to that
-  directory → hit).
+- **Cache hit/miss** — use Car 1/Car 2 `yadgar_cache_{hit,miss}_total{cache=<name>}` counters for project_brief / wiki / prelude caches. The recall-output shadow counters were removed (ADR-0071).
 - **Saturation** = `yadgar_tool_pool` `inflight` / `saturated` during concurrent runs.
 - **Per-stage (coarse)**: Tempo traces — spans `retrieval.recall` (total) +
   `retrieval.rerank`. Finer stages (embed / surreal search / priors / spreading /

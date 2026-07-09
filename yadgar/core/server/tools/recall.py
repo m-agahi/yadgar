@@ -238,30 +238,6 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         if not _current_branch and branch_hint:
             _current_branch = branch_hint
 
-        # v5.96.0: shadow recall result-cache hit-rate counter (instrumentation ONLY).
-        try:
-            from yadgar._shared.runtime.cache_epoch import (  # noqa: PLC0415
-                RecallShadowParams,
-                observe_recall,
-            )
-
-            observe_recall(
-                RecallShadowParams(
-                    query=query,
-                    directory=_dir_stripped,
-                    branch=_current_branch,
-                    type_filter=type,
-                    mode=mode,
-                    profile=profile,
-                    max_results=max_results,
-                    min_heat=min_heat,
-                    tags=tags,
-                    source="tool",
-                )
-            )
-        except Exception:  # instrumentation must never break recall
-            pass
-
         # Phase 2a: forward-only — raise loud on backend error (no in-core fallback).
         merged = _forward_to_backend(
             query=query,
