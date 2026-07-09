@@ -56,10 +56,35 @@ File-queue users (`tools/wiki.py`, `memorize.py`, `misc.py`, `project.py`, `admi
 | **A — `_shared`→core moves** | `config_sync.py`, `platform_paths.py` → core pkgs, PEP-562 shims | ~2 modules + 2 test files | none |
 | **B — `_shared`→backend moves** | `cognitive_map.py` → backend pkg + `POST /restore` (or `/sr/predict`) forward; core restore tool becomes thin forwarder (recall Train-1 pattern) | `cli/_shared.py`, `admin_other.py`, new backend endpoint, cognitive tests; BACKEND_VERSION bump | Car C (restoration split) |
 | **D — lone-file→package conversions** | D1 `_shared` (29), D2 backend (8), D3 core (21); mechanical, PEP-562 shims, test-mirror moves | biggest churn, low risk | rebase AFTER hardening Car 1 merges (conftest churn) |
-| **E — core DB write-path forwarding** | the 5 raw-write paths → backend endpoints / drain seams; staleness/heat-decay relocated to backend consolidation | seed, http, staleness, capture, admin_other + backend endpoints | flag: touches `_get_storage()` seam shared with prelude-contract branch — land after it merges |
+| **E — core DB/compute path forwarding** | E1: the 5 raw-write paths → backend endpoints / drain seams; staleness/heat-decay relocated to backend consolidation. E2: **landscape recall forward** (`mode=landscape` consensus_retrieve → backend, closing the last ADR-0078 flagged violation; AFTER this, `retrieval/*` stops being dual → **sinks `_shared`→backend** as a follow-on move in this same car). E3: **viz data-assembly + graph-layout compute → backend** (user verdict 2026-07-09; viz HTTP server stays core; layout precompute already runs in the backend sleep cycle — E3 consolidates the remaining core-side assembly onto that seam) | seed, http, staleness, capture, admin_other, retrieval/*, graph_api/viz_meta/graph_layout + backend endpoints | flag: touches `_get_storage()` seam shared with prelude-contract branch — land after it merges |
 | **F — verification (no-op)** | import-linter ALREADY enforcing via pre-commit hook; fix STALE `pyproject.toml:229-239` REPORT-ONLY comment; assert contracts still pass post-moves; update contracts when future storage-sink lands | comment + CI assert | all cars |
 
 Every car: one PR, behavior-neutral, tests green, plan-archival rules per ADR-0081/0082 (first commit of the COMPLETING car moves this file to archive).
+
+## Core functionality census — USER VERDICTS (2026-07-09, all confirmed)
+
+| # | Functionality | Home |
+|---|---|---|
+| 1 | MCP tool surface (`server/_app`, `tools/*`) | CORE |
+| 2 | HTTP endpoints (`server/http`) | CORE; 2 raw writes forward (Car E1) |
+| 3 | Forward/offload/queue plumbing | CORE |
+| 4 | Response caches | CORE |
+| 5 | Session state (SR/action buffers) | CORE |
+| 6 | Landscape recall execution | **BACKEND** (Car E2) |
+| 7 | restore/checkpoint compute (CheckpointRestore + CognitiveMap) | **BACKEND** (Car B; live-proven: post-#178 restore() runs but exceeds the 95s offload ceiling on core's 1 CPU) |
+| 8 | staleness.py heat-decay | **BACKEND** consolidation (Car E1) |
+| 9 | seed/_generate DB writes | **BACKEND** endpoint/drainer (Car E1) |
+| 10 | cli/ | CORE entrypoint; DB writes forward |
+| 11 | viz: HTTP server CORE; **data assembly + layout compute → BACKEND** (Car E3) | split |
+| 12 | backup.py | **CORE** (user-confirmed): host-ops — quiesced snapshots run with BOTH containers STOPPED, so orchestration cannot live in backend runtime; logical export already delegates to backend `GET /export` |
+| 13 | _surreal_runner.py | **CORE** (user-confirmed): host-ops next to vacuum; imports only `_shared.observability.observe` |
+| 14-17 | install/bootstrap, middleware/security, daemon lifecycle, claude-hook scripts | CORE |
+
+**Pattern codified:** anything that must run while containers are down = host/ops = core wheel. Anything compute/stateless-over-DB = backend. Core = router + session + ops entrypoints.
+
+**Post-train `_shared` expected shape (leaner):** contracts (`models`, `protocols`, `engram`, dataclasses), genuinely dual libs (storage until post-T2 sink, config, observability, paths, security, runtime/offload/lifecycle, embeddings client, wiki contract) — retrieval GONE (→backend after E2), cognitive_map GONE (→backend), restoration impl GONE (→backend), config_sync/platform_paths GONE (→core).
+
+**EVERYTHING MODULAR (user directive):** every module a package dir; per-module docs/version policy = separate decision (see companion discussion; not blocking this train's cars).
 
 ## Exit criteria
 
