@@ -3,7 +3,7 @@
 
 Companion to `trace_to_boxes.py` (which keeps EVERY distinct stage — the
 detailed `mcp-traces/*.svg` view). This tool produces the SIMPLIFIED view in
-the style of `out/recall-cold-trace-2026-07-04.png`: two lanes (blue CORE
+the style of `archive/2026-07-04/recall-cold-trace-2026-07-04.png`: two lanes (blue CORE
 left, orange BACKEND right), rounded boxes for MAJOR pipeline stages only,
 numbered arrows following the data flow, title carrying tool + trace id +
 total + the key-cost callout.

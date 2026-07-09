@@ -4,7 +4,7 @@
 **Date:** 2026-07-04. **REORDERED 2026-07-09 (user decision, ADR-0072):** restructure is now Train 2, Ettin swap is now Train 3 — the 2026-07-09 trace sweep supplied the clean current-model baseline that the old ordering wanted the swap to produce, so the restructure is scoped by TODAY's numbers and the model swap lands last on the restructured pipeline.
 **Scope:** The flagship `recall` pipeline — architecture (core→backend), structure (bounded-parallel restructure), and model (CE swap + keep-warm).
 **Related tasks / ADRs:** #85 (recall→backend endpoint), #32 (SOTA CE model / Ettin research — doc being written in parallel), #161 (CE top-k decouple/knobs — **CLOSED unmerged**, superseded), ADR-0030 (recall is surreal-IO bound), ADR-0034 (obs standard + traceparent — SHIPPED), ADR-0043 (CE onnx dynamic-int8 REJECTED), ADR-0044 (CE model decision — **forthcoming**, being written in parallel with the #32 research), ADR-0072 (train reorder).
-**Reference docs:** `docs/plans/recall-pipeline-to-backend-2026-07-04.md` (Train 1 detail + Statefulness/Fanout audit), `docs/diagrams/specs/recall-proposed-optimized-2026-07-04.yaml` (Train 2 target structure, commit `f9de7cef`; supersedes the earlier `3c16b33b` merged-CE mock), `docs/diagrams/mcp-tool-traces-2026-07-09.md` (current baselines: cold 24.6 s / CE 3-pass 19.0 s = 77% of wall / hot CE-cache-hit 4.1 s).
+**Reference docs:** `docs/plans/recall-pipeline-to-backend-2026-07-04.md` (Train 1 detail + Statefulness/Fanout audit), `docs/diagrams/archive/2026-07-04/recall-proposed-optimized-2026-07-04.yaml` (Train 2 target structure, commit `f9de7cef`; supersedes the earlier `3c16b33b` merged-CE mock), `docs/diagrams/mcp-tool-traces-2026-07-09.md` (current baselines: cold 24.6 s / CE 3-pass 19.0 s = 77% of wall / hot CE-cache-hit 4.1 s).
 
 ---
 
@@ -34,7 +34,7 @@ Shipped as `8ae9e52c` (Train 1) + `219dd61f` (Train 1.5 forward-only, #163). Bac
 
 ### Train 2 — Restructure, SCOPED BY THE 2026-07-09 BASELINE
 
-**Scope.** Implement the proposed structure (`docs/diagrams/specs/recall-proposed-optimized-2026-07-04.yaml`, `f9de7cef`) — **but only the parts the current-model numbers justify.** Baseline that scopes this train: 2026-07-09 sweep — cold 24,596 ms with CE 3-pass = 19.0 s (77% of wall); warm CE-cache-hit 4,068 ms. The design is a mock; the build is gated per-piece, cheapest-first.
+**Scope.** Implement the proposed structure (`docs/diagrams/archive/2026-07-04/recall-proposed-optimized-2026-07-04.yaml`, `f9de7cef`) — **but only the parts the current-model numbers justify.** Baseline that scopes this train: 2026-07-09 sweep — cold 24,596 ms with CE 3-pass = 19.0 s (77% of wall); warm CE-cache-hit 4,068 ms. The design is a mock; the build is gated per-piece, cheapest-first.
 
 **Deliverables (each gated on the 2026-07-09 numbers + LongMemEval where it touches ranking; build in this order).**
 - **Async side-effects fork (cheap + safe — the low-risk keeper, FIRST).** Finalize (node 19) fans to BOTH the return path (node 21, critical) AND the side-effect path (node 20, async, off the critical path). Removes the blocking heat-boost/SR write from response latency. Low risk, high certainty — build this.
@@ -131,8 +131,8 @@ Each train produces the measurement that scopes the next. This is the spine of t
 ## References
 
 - **Train 1 detail + audit:** `docs/plans/recall-pipeline-to-backend-2026-07-04.md` (BLUF, target architecture, migration strategy, measure-first gate, and the Statefulness + Fanout audit whose verdict was GO-WITH-CAVEATS; shipped).
-- **Train 2 target structure:** `docs/diagrams/specs/recall-proposed-optimized-2026-07-04.yaml` (commit `f9de7cef` — the current design-for-scaling mock; supersedes the earlier `3c16b33b` merged-CE mock).
-- **Baselines:** `docs/diagrams/mcp-tool-traces-2026-07-09.md` (canonical, post-R3); historical: `docs/diagrams/specs/recall-cold-trace-2026-07-04.yaml`, `recall-warm-cache-hit.yaml`, `recall-warm-cache-miss.yaml`.
+- **Train 2 target structure:** `docs/diagrams/archive/2026-07-04/recall-proposed-optimized-2026-07-04.yaml` (commit `f9de7cef` — the current design-for-scaling mock; supersedes the earlier `3c16b33b` merged-CE mock).
+- **Baselines:** `docs/diagrams/mcp-tool-traces-2026-07-09.md` (canonical, post-R3); historical: `docs/diagrams/archive/2026-07-04/recall-cold-trace-2026-07-04.yaml`, `docs/diagrams/archive/2026-07-06/recall-warm-cache-hit.yaml`, `docs/diagrams/archive/2026-07-06/recall-warm-cache-miss.yaml`.
 - **#32 research doc** (Ettin / SOTA CE model) — being written in parallel.
 - **ADR-0044** (CE model decision) — forthcoming, parallel with #32. **ADR-0072** (train reorder, 2026-07-09).
 - **ADR-0030** (recall is surreal-IO bound), **ADR-0034** (obs standard + traceparent, SHIPPED), **ADR-0043** (onnx dynamic-int8 REJECTED), **ADR-0067** (onnx backend removed), **ADR-0071** (recall-output cache killed).
