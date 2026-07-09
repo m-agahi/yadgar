@@ -150,6 +150,13 @@ class _RulesMixin:
 
     @observe(tier="stage")
     def insert_transition(self, transition: dict) -> int:
+        from_id = transition["from_memory_id"]
+        to_id = transition["to_memory_id"]
+        if not isinstance(from_id, int) or not isinstance(to_id, int):
+            raise ValueError(
+                f"insert_transition: from_memory_id and to_memory_id must be int, "
+                f"got from={from_id!r} to={to_id!r}"
+            )
         existing = self.get_transition(transition["from_memory_id"], transition["to_memory_id"])
         if existing is not None:
             raise ValueError(
