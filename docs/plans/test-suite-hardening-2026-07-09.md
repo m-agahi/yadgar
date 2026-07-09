@@ -25,7 +25,15 @@ The durable fix for the CI-OOM class (4 collisions on 2026-07-09 alone despite d
 4. Verify: RAM profile of a full leg before/after (peak RSS per worker); full sweep parity (same pass/skip counts as Car 1 baseline); e2e untouched (own conftest).
 5. Interaction with Car 1: import-guard skips (e.g. optional deps) become lazy-import failures if mishandled — the Car 1 inventory is the checklist.
 
-## Car 3 — Zero-warning gate (1d)
+## Car 3 — Zero-warning gate + skip-gate hardening (1d)
+
+**Skip-gate hardening (ADR-0087, user 2026-07-09 "no skips added without a valid reason"):**
+- Keep all 13 sanctioned skips (macOS ruled a shipping target — pipx/PyPI wheel installs there).
+- Pre-commit static check: staged test files with NEW skip/skipif markers whose reason isn't
+  in `yadgar/tests/skip_inventory.json` → fail AT COMMIT, not first-CI. Scoped to marker
+  decorators + module-level skips; dynamic `pytest.skip()` calls stay the CI gate's job.
+- Inventory governance (I30/I33 pattern): reason ≥40 chars, stale-entry hard-fail (test
+  gone → entry must go), no wildcard entries.
 
 1. Fix our two starlette deprecation classes at the source:
    - `httpx`+`starlette.testclient` → install/migrate `httpx2` (~5 test files: test_v579_smart_sessionstart, test_graph_api_contract, test_daemon_obs_gauges, +grep).
