@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED: T1.5 #163 (219dd61f) — forward-only core, RECALL_BACKEND_ENABLED flag deleted, FANOUT_BOOST_SCOPE knob + alwaysLoad shipped.
+
 # Plan: Forward-only recall — core becomes a pure forwarder, one unified backend pipeline
 
 **Status:** DRAFT — planning only. No code in this doc. Supersedes the dual-path/measure-first framing of `recall-pipeline-to-backend-2026-07-04.md` for the *decision* (forward is now the committed default), while inheriting its audit facts.

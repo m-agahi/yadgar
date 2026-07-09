@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED: all phases shipped — P0 #121 (eeaec40), P1 adr_add tool + P2 project_brief ADR surfacing + P3 models.py ADR shape + #19 read-side branch_hint all in #124 (6e1629cb); B5 anchor-signal shipped #177 (a4390c4e).
+
 # PLAN — ADR capture system (Yadgar wiki as source of truth)
 
 Status: **PHASED — P0 SHIPPED (PR #121, `eeaec40`); P1–P3 + #19-read-side open.** Designed 2026-06-24 (human + instance, item-by-item review + opus design agent + advisor).

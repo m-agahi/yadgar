@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SUPERSEDED: settings-panel-redesign-2026-06-29.md explicitly supersedes this plan; all open scope transferred there.
+
 # viz-config-control-panel
 
 **Status:** PARTIAL — #8 (v5.85) shipped the /api/control extend + SOURCE badges; full NEURAL-CONSOLE redesign deferred.
