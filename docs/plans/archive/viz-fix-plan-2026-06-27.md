@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — shipped v5.86 PR #127; deferrals re-homed to tasks #60/#55/#53
+
 # Viz fix plan — 2026-06-27
 
 **STATUS: SHIPPED in v5.86 (PR #127) — Batch 1/2/3 + config-panel P1/P2 + the OT-C4 car. DEFERRED to v5.87 (task #60): config-panel P3/P4 (restart/destructive/audit) + Prometheus retention (#53, nix). Viz triage #55 (90-item wiki checklist) still ~22/90 user-verified.**

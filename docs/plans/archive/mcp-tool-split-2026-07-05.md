@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — R3-SHIPPED PR #171 / core 5.117.0; hot-tool always-load landed
+
 # Plan — Fix Yadgar MCP Tool Deferral (Hot-Tool Always-Load)
 
 **Date:** 2026-07-05

@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — DEFERRED indefinitely v5.99; partially mitigated v5.41.4; resume only if drift persists
+
 # PLAN — v5.99.0: Roadmap freshness mechanism (DEFERRED)
 
 **Renumbered:** v5.30.0 → v5.99.0 on 2026-05-30. Reason: skip-1 minor convention adopted 2026-05-30. Far-future deferred slot bumped to v5.99.0 to maintain clear gap ahead of the active pipeline (now extending to v5.37.0) and to signal indefinite deferral.

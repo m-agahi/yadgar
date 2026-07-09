@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — CLOSED; evaluation done, verdicts recorded, offload-A shipped v5.90.0
+
 # Daemon Concurrency Design — Evaluation of the Redesign Suspicions (2026-06-30)
 
 **Status:** DESIGN / EVALUATION. Read-only against live source; every verdict
