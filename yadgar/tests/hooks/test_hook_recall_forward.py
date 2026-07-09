@@ -1,17 +1,18 @@
-"""TDD — prompt-recall hook forwards to the backend /recall path.
+"""TDD — ALL THREE hook sites forward to the backend /recall path.
 
-Plan: docs/plans/hook-recall-forward-2026-07-06.md (reverses forward-only §5.4
-for prompt-recall ONLY; instructions-loaded + subagent-start stay in-core).
+Plans: docs/plans/hook-recall-forward-2026-07-06.md (#166: prompt-recall) +
+ADR-0077/ADR-0078 (this hotfix: subagent-start + instructions-loaded too —
+ADR-0078 kills ALL core DB paths; hooks are HTTP forwards only).
 
 Properties under test:
-- prompt-recall forwards to backend with profile="fast" + right args + caller dir.
-- _forward_hook_recall passes the SHORT timeout (HOOK_RECALL_TIMEOUT_S) to
-  _forward_to_backend, NOT the 120s MCP default (#81 pool-starvation guard).
+- ALL hooks forward via _HookRecallForwarder with profile="fast" + right args.
+- _forward_hook_recall passes the SHORT timeout (HOOK_RECALL_TIMEOUT_S) AND the
+  deadline_ms budget to _forward_to_backend (#81 guard + ADR-0077 cancellation).
 - The directory post-filter is still applied to forwarded results.
 - Graceful degradation: backend raise / timeout -> {"text": ""}, never raises.
 - Quality-neutral: handler emits backend rows unchanged (modulo dir filter).
 - MCP recall keeps _forward_to_backend default timeout_s == 120.0.
-- instructions-loaded + subagent-start stay in-core (still drive retriever.recall).
+- NO hook handler references _st._retriever anymore (source-level assert).
 """
 
 from __future__ import annotations
@@ -256,75 +257,46 @@ class TestMcpRecallTimeoutDefaultUnchanged:
 
 
 # ---------------------------------------------------------------------------
-# 8. instructions-loaded + subagent-start stay in-core (scope guard)
+# 8. ALL hooks forward (ADR-0078 — no in-core retrieval left in hook paths)
 # ---------------------------------------------------------------------------
 
 
-class TestOtherHooksStayInCore:
-    def test_instructions_loaded_still_uses_retriever_recall(self):
-        """instructions-loaded must still drive retriever.recall via
-        _recall_with_timeout (NOT forwarded) — scope decision guard."""
-        import yadgar._shared.runtime.state as _st
+class TestAllHooksForward:
+    def test_instructions_loaded_forwards_via_forwarder(self):
+        """instructions-loaded now drives a _HookRecallForwarder (ADR-0078).
+        It has no caller directory -> forwards with directory "" (whole-DB
+        semantics server-side: empty scope.directory -> caller_dir None)."""
         import yadgar.core.server.http as _http
 
         captured: dict = {}
 
-        async def _capture(retriever, handler_name, *args, **kwargs):
-            captured["retriever"] = retriever
+        async def _capture(target, handler_name, *args, **kwargs):
+            captured["target"] = target
             captured["profile"] = kwargs.get("profile")
             return []
 
         req = _make_mock_request(
             {"file_path": "/home/user/.claude/CLAUDE.md", "load_reason": "session_start"}
         )
-        retriever = MagicMock()
 
         async def _run():
-            with patch.object(_st, "_retriever", retriever):
-                with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
-                    return await _http.hook_instructions_loaded(req)
+            with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
+                return await _http.hook_instructions_loaded(req)
 
         asyncio.run(_run())
-        # in-core: the retriever singleton is passed into _recall_with_timeout
-        assert captured.get("retriever") is retriever, captured
+        assert isinstance(captured.get("target"), _http._HookRecallForwarder), captured
+        assert captured["target"]._directory == "", captured
         assert captured.get("profile") == "fast", captured
 
-    def test_prompt_recall_no_directory_falls_back_in_core(self):
-        """When the request has NO directory, prompt-recall must NOT forward (the
-        backend requires a directory to scope) — it falls back to the in-core
-        retriever (whole-DB, old behavior), never regressing to always-empty."""
-        import yadgar._shared.runtime.state as _st
+    def test_subagent_start_forwards_via_forwarder_bound_to_cwd(self):
+        """subagent-start forwards bound to its cwd (ADR-0078; the whole-DB ->
+        directory-scoped change is the accepted behavior shift)."""
         import yadgar.core.server.http as _http
 
         captured: dict = {}
 
-        async def _capture(retriever, handler_name, *args, **kwargs):
-            captured["retriever"] = retriever
-            return []
-
-        retriever = MagicMock()
-        req = _make_mock_request({"query": "real query"})  # no directory
-
-        async def _run():
-            with patch.object(_st, "_retriever", retriever):
-                with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
-                    with patch.object(_st, "_last_session_context", {}):
-                        with patch.object(_st, "_last_prompt_recall", {}):
-                            return await _http.hook_prompt_recall(req)
-
-        asyncio.run(_run())
-        # directory absent -> in-core fallback: the raw retriever is used, NOT a forwarder
-        assert captured.get("retriever") is retriever, captured
-        assert not isinstance(captured.get("retriever"), _http._HookRecallForwarder), captured
-
-    def test_subagent_start_still_uses_retriever_recall(self):
-        import yadgar._shared.runtime.state as _st
-        import yadgar.core.server.http as _http
-
-        captured: dict = {}
-
-        async def _capture(retriever, handler_name, *args, **kwargs):
-            captured["retriever"] = retriever
+        async def _capture(target, handler_name, *args, **kwargs):
+            captured["target"] = target
             captured["profile"] = kwargs.get("profile")
             return []
 
@@ -332,13 +304,98 @@ class TestOtherHooksStayInCore:
         req.json = AsyncMock(
             return_value={"description": "analyze code", "cwd": "/home/user/project"}
         )
-        retriever = MagicMock()
 
         async def _run():
-            with patch.object(_st, "_retriever", retriever):
-                with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
-                    return await _http.hook_subagent_start(req)
+            with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
+                return await _http.hook_subagent_start(req)
 
         asyncio.run(_run())
-        assert captured.get("retriever") is retriever, captured
+        assert isinstance(captured.get("target"), _http._HookRecallForwarder), captured
+        assert captured["target"]._directory == "/home/user/project", captured
         assert captured.get("profile") == "fast", captured
+
+    def test_prompt_recall_no_directory_still_forwards(self):
+        """ADR-0078 deletes the in-core fallback: a directory-less prompt-recall
+        forwards with directory "" (whole-DB semantics server-side) instead of
+        falling back to _st._retriever."""
+        import yadgar.core.server.http as _http
+
+        captured: dict = {}
+
+        async def _capture(target, handler_name, *args, **kwargs):
+            captured["target"] = target
+            return []
+
+        req = _make_mock_request({"query": "real query"})  # no directory
+
+        async def _run():
+            import yadgar._shared.runtime.state as _st
+
+            with patch("yadgar.core.server.http._recall_with_timeout", side_effect=_capture):
+                with patch.object(_st, "_last_session_context", {}):
+                    with patch.object(_st, "_last_prompt_recall", {}):
+                        return await _http.hook_prompt_recall(req)
+
+        asyncio.run(_run())
+        assert isinstance(captured.get("target"), _http._HookRecallForwarder), captured
+        assert captured["target"]._directory == "", captured
+
+
+# ---------------------------------------------------------------------------
+# 9. Source-level guard: no in-core retriever reference left in hook paths
+# ---------------------------------------------------------------------------
+
+
+class TestNoInCoreRetrieverInHookPaths:
+    def test_hook_handlers_have_no_retriever_reference(self):
+        """ADR-0078: hook handlers are HTTP forwards only — no _st._retriever,
+        no retriever.recall. Source-level grep-assert (caller-audit pattern)."""
+        import inspect
+
+        import yadgar.core.server.http as _http
+
+        for handler in (
+            _http.hook_prompt_recall,
+            _http.hook_instructions_loaded,
+            _http.hook_subagent_start,
+        ):
+            src = inspect.getsource(handler)
+            assert "_st._retriever" not in src, (
+                f"{handler.__name__} still references _st._retriever (ADR-0078 violation)"
+            )
+            assert "retriever.recall" not in src, (
+                f"{handler.__name__} still calls retriever.recall (ADR-0078 violation)"
+            )
+
+
+# ---------------------------------------------------------------------------
+# 10. ADR-0077: the hook forward carries the client deadline budget
+# ---------------------------------------------------------------------------
+
+
+class TestForwardHookRecallDeadline:
+    def test_passes_deadline_ms_budget(self):
+        """_forward_hook_recall must pass deadline_ms == HOOK_RECALL_TIMEOUT_S in
+        ms so the backend aborts stages once the client has given up."""
+        import yadgar.core.server.http as _http
+        from yadgar._shared.config import get_settings
+
+        captured: dict = {}
+
+        def _fake_backend(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        with patch(
+            "yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend
+        ):
+            _http._forward_hook_recall(
+                "q",
+                max_results=5,
+                min_heat=0.0,
+                directory="/home/user/project",
+                profile="fast",
+            )
+
+        expected_ms = int(get_settings().HOOK_RECALL_TIMEOUT_S * 1000)
+        assert captured.get("deadline_ms") == expected_ms, captured

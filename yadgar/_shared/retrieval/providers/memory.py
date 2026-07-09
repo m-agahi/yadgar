@@ -36,9 +36,17 @@ class MemoryProvider(SourceProvider):
     fan-out orchestrator can return it directly to callers without schema changes.
     """
 
-    def __init__(self, retriever: Retriever, profile: str | None = None) -> None:
+    def __init__(
+        self,
+        retriever: Retriever,
+        profile: str | None = None,
+        deadline: float | None = None,
+    ) -> None:
         self._retriever = retriever
         self._profile = profile
+        # ADR-0077: monotonic deadline threaded into Retriever.recall so the
+        # signal-collection stages can abort once the client budget is exceeded.
+        self._deadline = deadline
 
     @property
     def type(self) -> str:
@@ -67,6 +75,7 @@ class MemoryProvider(SourceProvider):
             current_branch=scope.branch,
             default_branch=scope.default_branch,
             profile=self._profile,
+            deadline=self._deadline,
         )
 
         # Step 3: Python-side directory post-filter (same semantics as legacy path).

@@ -957,11 +957,12 @@ FIELD_META: dict[str, dict[str, object]] = {
     "hook_recall_pool_workers": {
         "desc": (
             "SEPARATE pool just for hook auto-recalls (SessionStart/UserPrompt), isolated so "
-            "hook bursts cannot starve MCP tool calls (ADR-0025). Default 1. 1 minimizes CPU "
-            "competition with the event loop on the --cpus-1 core (freeze-safest). Raise only "
-            "if hook serialization is measurably a bottleneck (check yadgar_hook_recall_timeout_total). "
-            "Changing this pool size does NOT affect the tool-offload pool (TOOL_POOL_WORKERS) — "
-            "they are independent. Restart to apply."
+            "hook bursts cannot starve MCP tool calls (ADR-0025). Default 2 (ADR-0077): "
+            "post-#166 the hook recall is a forwarded HTTP wait (idle thread, not a "
+            "GIL-holding in-core recall); pool=1 starved the second of every concurrent "
+            "session pair. Lower back to 1 only if loop-lag returns on the --cpus-1 core "
+            "(check yadgar_event_loop_lag_max + yadgar_hook_recall_timeout_total). "
+            "Independent of the tool-offload pool (TOOL_POOL_WORKERS). Restart to apply."
         ),
         "section": "hooks",
     },
@@ -1315,7 +1316,11 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "retrieval_fusion",
     },
     "retrieval_profile": {
-        "desc": "Default retrieval preset: fast, balanced, or full (default balanced).",
+        "desc": (
+            "Default retrieval preset: fast, balanced, or full (default balanced). "
+            "fast = memory-only BM25+HNSW+fusion: no CE/NLI/MP, no wiki fanout, "
+            "no engram-link enrichment (ADR-0077 — the hook-latency-budget profile)."
+        ),
         "section": "retrieval_fusion",
         "choices": ["fast", "balanced", "full"],
     },

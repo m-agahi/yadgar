@@ -317,7 +317,11 @@ class _RerankingMixin:
 
         result_memories = self._rerank_adversarial_detect(result_memories)
         result_memories = self._rerank_rules(result_memories, ctx)
-        result_memories = self._rerank_engram_links(result_memories)
+        # ADR-0077 hotfix: engram-link enrichment is one get_temporally_linked
+        # DB query PER result row (measured 250-560ms) — profiles may disable it
+        # (fast does; see profiles.py). Default True preserves legacy behavior.
+        if ctx.profile.get("engram_links", True):
+            result_memories = self._rerank_engram_links(result_memories)
         result_memories = self._rerank_metacognition(result_memories)
 
         # P11: observe rerank_final covering the full post-fusion pipeline duration.

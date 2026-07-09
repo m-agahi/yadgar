@@ -369,10 +369,11 @@ class Settings(BaseSettings):
 
     # v5.95 (#81 residual): size of the dedicated hook-recall thread pool. Hook
     # recalls run bounded here so a slow uncancellable recall cannot cascade into
-    # event-loop starvation. 1 minimizes CPU competition with the loop on the
-    # --cpus-1 core (freeze-safest); raise only if hook serialization is a
-    # bottleneck. Read once at import (restart to apply).
-    HOOK_RECALL_POOL_WORKERS: int = 1
+    # event-loop starvation. ADR-0077: default 1 -> 2 — post-#166 the hook recall
+    # is a forwarded HTTP wait (idle thread, not a GIL-holding in-core recall);
+    # pool=1 structurally starved the second of every concurrent session pair
+    # (measured 32-52% hook timeout rate). Read once at import (restart to apply).
+    HOOK_RECALL_POOL_WORKERS: int = 2
 
     # v5.51.0: /api/stats TTL cache (I25 three-way registered).
     # Seconds before a cached /api/stats result is invalidated and recomputed.

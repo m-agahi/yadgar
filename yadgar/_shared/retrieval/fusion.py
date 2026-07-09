@@ -27,6 +27,12 @@ PROFILES: dict[str, dict] = {
         "multi_passage": False,
         "skip_query_analysis": True,
         "use_fast_candidate_multiplier": True,
+        # ADR-0077 hotfix: fast must actually be fast — memory-only fanout
+        # (skip WikiProvider, ~450ms) + no engram-link rerank (250-560ms/call:
+        # one get_temporally_linked DB query PER result row). Keep in sync with
+        # profiles.py PROFILES["fast"] (two dicts until the pipeline port lands).
+        "wiki": False,
+        "engram_links": False,
     },
     "balanced": {
         "signals": ["vector", "fts", "ppr", "spreading"],

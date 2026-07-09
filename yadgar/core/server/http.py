@@ -53,18 +53,21 @@ _CORS = {"Cache-Control": "no-cache"}
 # v5.95 (#81 residual): dropped 2 -> 1. Live obs (yadgar_event_loop_lag_max)
 # caught a ~17s loop-lag on an agent-spawn under concurrent box load: the core is
 # --cpus 1, so a slow (box-saturated) recall thread competes with the event loop
-# for the single CPU. 1 worker halves that competition (loop vs 1 thread, not 2)
-# and is strictly freeze-safer. Hooks serialize under a burst, but each still has
-# its own 2s wait_for so none hangs. Root cause is box-saturation of the 1-CPU
-# core (mitigated here; eliminated by the track-A cache, which removes the
-# hot-path recall entirely). Now a tunable knob (default 1) —
+# for the single CPU.
+#
+# ADR-0077: raised back 1 -> 2. Post-#166 the hook recall thread is a forwarded
+# HTTP wait (idle in httpx), NOT a GIL-holding in-core recall, so the v5.95
+# loop-vs-thread CPU-competition rationale no longer applies. pool=1 structurally
+# starved the second of every concurrent session pair (measured 32-52% hook
+# timeout rate: the first forward occupies the single worker for up to 2.0s while
+# the second waits queued and times out). Tunable knob (default 2) —
 # Settings.HOOK_RECALL_POOL_WORKERS; read once at import, restart to apply.
 try:
     from yadgar._shared.config import get_settings as _get_settings
 
     _HOOK_RECALL_POOL_WORKERS = int(_get_settings().HOOK_RECALL_POOL_WORKERS)
 except Exception:  # noqa: BLE001 — defensive: never block route import on config load
-    _HOOK_RECALL_POOL_WORKERS = 1
+    _HOOK_RECALL_POOL_WORKERS = 2
 _HOOK_RECALL_POOL = ThreadPoolExecutor(
     max_workers=_HOOK_RECALL_POOL_WORKERS, thread_name_prefix="hook-recall"
 )
@@ -93,15 +96,37 @@ async def _recall_with_timeout(
 
     timeout_s = get_settings().HOOK_RECALL_TIMEOUT_S
     loop = asyncio.get_running_loop()
+
+    recall_fn = functools.partial(retriever.recall, *args, **kwargs)
+
+    # ADR-0077 (D): propagate the OTel context into the executor thread.
+    # run_in_executor does NOT carry contextvars across threads, so the
+    # forwarded hook recall previously started a NEW trace — orphaning the
+    # backend /recall span tree from the hook route span. attach/detach the
+    # caller's context around the callable so the spans share one trace.
+    # Best-effort: if opentelemetry is unavailable, run the callable bare.
+    try:
+        from opentelemetry import context as _otel_context  # noqa: PLC0415
+
+        _parent_ctx = _otel_context.get_current()
+
+        def _recall_in_ctx():
+            token = _otel_context.attach(_parent_ctx)
+            try:
+                return recall_fn()
+            finally:
+                _otel_context.detach(token)
+
+        run_fn = _recall_in_ctx
+    except Exception:  # noqa: BLE001 — tracing must never break the hook path
+        run_fn = recall_fn
+
     try:
         # #81: run in the BOUNDED hook-recall pool (not asyncio.to_thread's
         # unbounded default executor) so a slow uncancellable recall that runs
         # past its wait_for timeout cannot accumulate beyond the pool cap.
         return await asyncio.wait_for(
-            loop.run_in_executor(
-                _HOOK_RECALL_POOL,
-                functools.partial(retriever.recall, *args, **kwargs),
-            ),
+            loop.run_in_executor(_HOOK_RECALL_POOL, run_fn),
             timeout=timeout_s,
         )
     except TimeoutError:
@@ -195,16 +220,23 @@ def _forward_hook_recall(
         mode=None,
         profile=profile,
         timeout_s=timeout_s,
+        # ADR-0077: forward the client budget so the backend aborts pipeline
+        # stages once this hook has already given up (partial-result contract).
+        deadline_ms=int(timeout_s * 1000),
     )
 
 
 class _HookRecallForwarder:
-    """Adapter exposing a .recall(...) surface so the prompt-recall hook can reuse
+    """Adapter exposing a .recall(...) surface so ALL hook handlers can reuse
     _recall_with_timeout (bounded pool + wait_for guard) verbatim while executing
     the forward-to-backend path instead of the in-core Retriever.recall.
 
-    Bound to the caller directory (the backend requires it to scope). The .recall
-    signature matches what the hook passes: recall(query, max_results, min_heat, profile).
+    ADR-0078: hooks are HTTP forwards only — no core DB path remains. Bound to
+    the caller directory; pass "" when the hook has none (instructions-loaded):
+    the backend converts an empty scope directory to caller_dir=None, which is
+    the legacy whole-DB eligibility mode, preserving that hook's old semantics.
+    The .recall signature matches what the hooks pass:
+    recall(query, max_results, min_heat, profile).
     """
 
     __slots__ = ("_directory",)
@@ -227,18 +259,6 @@ class _HookRecallForwarder:
             directory=self._directory,
             profile=profile,
         )
-
-
-def _prompt_recall_target(retriever, directory: str | None):
-    """Select the recall executor for the prompt-recall hook.
-
-    With a directory → forward to the backend (_HookRecallForwarder). Without one
-    → fall back to the in-core retriever (whole-DB, old behavior): the backend
-    RecallRequest.directory is required+non-null, so a directory-less forward
-    would scope to nothing and always return empty. The deployed hook script
-    always passes ?directory=, so the fallback is defensive only.
-    """
-    return _HookRecallForwarder(directory) if directory else retriever
 
 
 # ---------------------------------------------------------------------------
@@ -995,33 +1015,26 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if now - _st._last_prompt_recall.get(throttle_key, 0) < 120:
             return JSONResponse({"text": "", "skipped": "rate_limited"})
 
-        retriever = _st._retriever
-        if retriever is None:
-            return JSONResponse({"text": ""})
-
         try:
-            # v5.113.0 (docs/plans/hook-recall-forward-2026-07-06.md): prompt-recall
-            # FORWARDS to the backend /recall path, REVERSING the §5.4 core-resident
-            # disposition (recall-forward-only-2026-07-05.md) for THIS hook only. §5.4
-            # left the choice measurement-gated ("Revisit if..."); the cache train
-            # (this branch) is the trigger — forwarding lets the backend data caches
-            # (memory_doc/engram_slot/graph, wired in e0959a98) serve hook recalls too,
-            # and consolidates the several core→backend(embed)+DB hops into ONE backend
-            # call (core has NO ML models — the in-core hook already round-tripped for
-            # embed). The deployed hook script always passes ?directory= so the backend
-            # can scope (is_directory_eligible, same predicate as the post-filter below).
-            # instructions-loaded + subagent-start stay in-core (no directory / whole-DB —
-            # forwarding them would regress; see the plan's Trap 4).
+            # v5.113.0 (#166) forwarded this hook; ADR-0078 now forwards ALL THREE
+            # hook sites — hooks are HTTP forwards only, no core DB path remains
+            # (the old in-core short-circuit and the directory-less in-core
+            # fallback are deleted). A directory-less request forwards with "" —
+            # the backend treats an empty scope directory as legacy whole-DB
+            # eligibility, preserving the old fallback's semantics server-side.
             #
             # _HookRecallForwarder exposes a .recall(...) surface so we reuse
-            # _recall_with_timeout VERBATIM: the bounded 1-worker hook-recall pool
-            # (#81 freeze fix) + asyncio.wait_for(HOOK_RECALL_TIMEOUT_S) guard + the
-            # None-on-timeout degradation are all preserved. The httpx timeout inside
-            # the forward is ALSO HOOK_RECALL_TIMEOUT_S so a hung backend cannot outlive
-            # the wait_for budget on the single pool worker.
-            # profile="fast": backend runs BM25+HNSW only (no CE/NLI/MP).
+            # _recall_with_timeout VERBATIM: the bounded hook-recall pool
+            # (#81 freeze fix; ADR-0077: 2 workers so a concurrent session pair
+            # no longer serializes into a timeout) + asyncio.wait_for guard + the
+            # None-on-timeout degradation are all preserved. The httpx timeout
+            # inside the forward is ALSO HOOK_RECALL_TIMEOUT_S, and the forward
+            # carries deadline_ms so the backend aborts stages once this client
+            # has given up (ADR-0077).
+            # profile="fast": backend runs memory-only BM25+HNSW+fusion
+            # (no CE/NLI/MP, no wiki fanout, no engram links — ADR-0077).
             results = await _recall_with_timeout(
-                _prompt_recall_target(retriever, directory),
+                _HookRecallForwarder(directory or ""),
                 "prompt-recall",
                 query,
                 max_results=5,
@@ -1036,8 +1049,9 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if results is None:
             return JSONResponse({"text": ""})
 
-        # v5.65 Fix D: apply directory filter to retriever results.
-        # retriever.recall returns unscoped results; filter here by caller directory.
+        # v5.65 Fix D: directory post-filter. The backend already scopes with the
+        # SAME is_directory_eligible predicate, so this is idempotent on forwarded
+        # rows — kept as the defense-in-depth contract (#166 Trap 2).
         results = _filter_prompt_recall_results(results, directory)
 
         if not results:
@@ -1585,10 +1599,6 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
         file_path = request.query_params.get("file_path", "")
         load_reason = request.query_params.get("load_reason", "")
 
-        retriever = _st._retriever
-        if retriever is None:
-            return JSONResponse({"text": ""})
-
         # Build a query from the filename + load_reason for relevant memories
         import pathlib as _pathlib
 
@@ -1596,14 +1606,16 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
         query = f"{filename} {load_reason} instructions context".strip()
 
         try:
-            # v5.25.3: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
-            # Fires on every session_start + compact event — highest-frequency burst path.
-            # Siblings prompt_recall (~line 524) and subagent_start (~line 1048) already
-            # use profile="fast" with same rationale. Same fix now applied here.
+            # ADR-0078: forwards to the backend /recall path like its siblings —
+            # no core DB path remains. This hook has NO caller directory (only
+            # file_path/load_reason), so it forwards with directory "": the
+            # backend treats an empty scope directory as legacy whole-DB
+            # eligibility, preserving this hook's historical unscoped behavior.
+            # profile="fast": memory-only BM25+HNSW+fusion (ADR-0077).
             # v5.51.0: wrapped in _recall_with_timeout (asyncio.wait_for) to bound latency.
             # On timeout, _recall_with_timeout returns None (logs WARN + increments counter).
             results = await _recall_with_timeout(
-                retriever,
+                _HookRecallForwarder(""),
                 "instructions-loaded",
                 query,
                 max_results=3,
@@ -1685,10 +1697,6 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
         if not cwd:
             cwd = sanitize_log_field(str(body.get("cwd", os.getcwd())), max_len=500)
 
-        retriever = _st._retriever
-        if retriever is None:
-            return JSONResponse({"text": ""})
-
         # P11: count the dispatch now that we know the agent_type is valid.
         try:
             from yadgar._shared.metrics import yadgar_subagent_dispatch_count  # noqa: PLC0415
@@ -1701,14 +1709,16 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
         query = description.strip() or f"agent {agent_type}"
 
         try:
-            # v5.25.2: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
-            # Hooks fire on every agent dispatch; full rerank pipeline causes 2.5-10s
-            # CPU bursts. Sibling prompt_recall (~line 524) already used profile="fast"
-            # with same rationale — same fix now applied here.
+            # ADR-0078: forwards to the backend /recall path like its siblings —
+            # no core DB path remains. Forwards bound to the subagent's cwd: the
+            # backend scopes server-side (is_directory_eligible). NAMED behavior
+            # shift accepted by ADR-0078: this hook used to run whole-DB unscoped;
+            # it is now directory-scoped to the dispatching project (+ global).
+            # profile="fast": memory-only BM25+HNSW+fusion (ADR-0077).
             # v5.51.0: wrapped in _recall_with_timeout (asyncio.wait_for) to bound latency.
             # On timeout, _recall_with_timeout returns None (logs WARN + increments counter).
             results = await _recall_with_timeout(
-                retriever,
+                _HookRecallForwarder(cwd or ""),
                 "subagent-start",
                 query,
                 max_results=5,

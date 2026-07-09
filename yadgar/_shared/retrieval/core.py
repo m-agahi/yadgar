@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -24,6 +25,12 @@ from yadgar._shared.retrieval.scoring import FTSParams, _ScoringMixin
 from yadgar._shared.storage import BranchFilter, StorageEngine
 
 logger = logging.getLogger(__name__)
+
+
+@observe(tier="hot", metric="retrieval.recall.deadline_passed", span=False)
+def _deadline_passed(deadline: float | None) -> bool:
+    """True when the ADR-0077 client deadline is set and already exceeded."""
+    return deadline is not None and time.monotonic() >= deadline
 
 
 class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin, _QualityMixin):
@@ -484,8 +491,38 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             candidate_k,
         )
 
+    @observe(tier="stage", metric="retrieval.recall.graph_temporal_scores", span=False)
+    def _collect_graph_temporal_scores(
+        self,
+        fts_params: FTSParams,
+        scores: dict,
+        vector_memory_ids: list,
+        deadline: float | None,
+    ) -> tuple[float, bool]:
+        """Run PPR + spreading + temporal collections with ADR-0077 deadline checks.
+
+        Extracted from recall() (I13 cap). Reuses the FTSParams bundle recall()
+        already built (query / enabled_signals / candidate_k / min_heat /
+        branch_filter). Returns (w_temporal, deadline_hit); once the deadline is
+        exceeded, remaining collections are skipped and deadline_hit=True tells
+        recall() to also skip the rerank pipeline.
+        """
+        p = fts_params
+        self._collect_ppr_scores(p.query, scores, p.enabled_signals, p.candidate_k)
+        if _deadline_passed(deadline):
+            return 0.0, True
+
+        self._collect_spreading_scores(scores, p.enabled_signals, vector_memory_ids)
+        if _deadline_passed(deadline):
+            return 0.0, True
+
+        w_temporal = self._collect_temporal_scores(
+            p.query, scores, p.min_heat, p.candidate_k, branch_filter=p.branch_filter
+        )
+        return w_temporal, _deadline_passed(deadline)
+
     @observe(tier="boundary", metric="retrieval.recall")
-    def recall(
+    def recall(  # noqa: PLR0913 — 8 args; deadline added per ADR-0077
         self,
         query: str,
         max_results: int = 5,
@@ -493,6 +530,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         current_branch: str | None = None,
         default_branch: str | None = None,
         profile: str | None = None,
+        deadline: float | None = None,
     ) -> list[dict]:
         """Combine retrieval signals via Weighted Reciprocal Rank Fusion (WRRF).
 
@@ -509,6 +547,11 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             default_branch: Repository default branch (e.g. 'master', 'main').
                 Must be provided alongside current_branch to enable filtering.
                 When None (default), no branch filter is applied — all rows pass.
+            deadline: Monotonic deadline (time.monotonic() epoch) derived from the
+                client's deadline_ms budget (ADR-0077). Checked between signal-
+                collection stages: once exceeded, remaining collections and the
+                rerank pipeline are skipped and the partial fusion result is
+                returned. None (default) = no deadline, full pipeline.
         """
         # P11: set dynamic span attributes on the active retrieval.recall span.
         try:
@@ -561,41 +604,47 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             self._resolve_query_and_candidate_k(query, profile, profile_signals, max_results)
         )
 
-        # 1 + 1b + 1c. FTS, entity-FTS, and COMET expansion scores
-        self._collect_fts_scores(
-            scores,
-            FTSParams(
-                query=query,
-                enabled_signals=enabled_signals,
-                open_domain_subqueries=open_domain_subqueries,
-                open_domain_mode=open_domain_mode,
-                candidate_k=candidate_k,
-                min_heat=min_heat,
-                branch_filter=branch_filter,
-            ),
-        )
-
-        # 2. Vector similarity via SurrealDB KNN
-        vector_memory_ids, query_embedding = self._collect_vector_scores(
-            query,
-            scores,
-            enabled_signals,
-            open_domain_subqueries,
-            candidate_k,
-            min_heat,
+        # ADR-0077: between-stage deadline checks. Once the client's budget is
+        # exceeded, remaining signal collections are skipped (partial fusion of
+        # whatever was gathered) — a hook client that already gave up at 2.0s
+        # must not keep the backend collecting.
+        vector_memory_ids: list = []
+        query_embedding = None
+        w_temporal = 0.0
+        fts_params = FTSParams(
+            query=query,
+            enabled_signals=enabled_signals,
+            open_domain_subqueries=open_domain_subqueries,
+            open_domain_mode=open_domain_mode,
+            candidate_k=candidate_k,
+            min_heat=min_heat,
             branch_filter=branch_filter,
         )
+        _deadline_hit = _deadline_passed(deadline)
 
-        # 3. PPR graph retrieval
-        self._collect_ppr_scores(query, scores, enabled_signals, candidate_k)
+        # 1 + 1b + 1c. FTS, entity-FTS, and COMET expansion scores
+        if not _deadline_hit:
+            self._collect_fts_scores(scores, fts_params)
+            _deadline_hit = _deadline_passed(deadline)
 
-        # 4. Spreading activation from top vector results
-        self._collect_spreading_scores(scores, enabled_signals, vector_memory_ids)
+        # 2. Vector similarity via SurrealDB KNN
+        if not _deadline_hit:
+            vector_memory_ids, query_embedding = self._collect_vector_scores(
+                query,
+                scores,
+                enabled_signals,
+                open_domain_subqueries,
+                candidate_k,
+                min_heat,
+                branch_filter=branch_filter,
+            )
+            _deadline_hit = _deadline_passed(deadline)
 
-        # 5. Temporal retrieval boost
-        w_temporal = self._collect_temporal_scores(
-            query, scores, min_heat, candidate_k, branch_filter=branch_filter
-        )
+        # 3 + 4 + 5. PPR graph, spreading activation, temporal boost
+        if not _deadline_hit:
+            w_temporal, _deadline_hit = self._collect_graph_temporal_scores(
+                fts_params, scores, vector_memory_ids, deadline
+            )
 
         # Fusion: confidence gating + WRRF/convex combination
         fused, fused_scores = self._fuse_scores(scores, w_temporal, open_domain_mode)
@@ -604,6 +653,12 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         result_memories, seen_ids, use_cross_encoder = self._build_initial_results(
             fused, fused_scores, scores, profile, open_domain_mode, max_results, min_heat
         )
+
+        # ADR-0077: deadline exceeded → skip the rerank pipeline, return the
+        # partial fusion result (embedding-free per the retriever contract).
+        if _deadline_hit:
+            logger.debug("recall deadline exceeded — returning partial result (rerank skipped)")
+            return self._strip_embeddings(result_memories[:max_results])
 
         # Post-fusion reranking pipeline
         ctx = RerankContext(

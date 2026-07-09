@@ -328,24 +328,21 @@ class TestTimeoutCounterAllHandlers:
 
 
 class TestHookCoreResidentDecision:
-    """Assert the SPLIT hook disposition (v5.113.0, hook-recall-forward-2026-07-06.md).
+    """Assert the UNIFIED hook disposition (ADR-0077/ADR-0078 hotfix).
 
-    §5.4 (recall-forward-only-2026-07-05.md) originally kept ALL THREE hook sites
-    core-resident. v5.113.0 REVERSES that for prompt-recall ONLY (the cache-train
-    trigger; the deployed prompt-recall hook always passes ?directory= so the
-    backend can scope, making the forward quality-neutral). instructions-loaded +
-    subagent-start STAY core-resident (no directory / whole-DB — forwarding would
-    regress; see the plan's Trap 4).
+    History: §5.4 (recall-forward-only-2026-07-05.md) kept all three hook sites
+    core-resident; v5.113.0 (#166) forwarded prompt-recall only; ADR-0078 now
+    kills ALL core DB paths — instructions-loaded + subagent-start forward too.
 
-    So:
-      - prompt-recall → FORWARDS: _recall_with_timeout drives a _HookRecallForwarder
-        (profile='fast'), NOT the raw Retriever.
-      - instructions-loaded + subagent-start → still drive retriever.recall(profile='fast')
-        in the bounded pool.
+    So ALL THREE hooks drive _recall_with_timeout with a _HookRecallForwarder
+    (profile='fast'), never the raw Retriever. instructions-loaded has no caller
+    directory and forwards with directory "" (whole-DB semantics server-side);
+    subagent-start forwards bound to its cwd (whole-DB -> scoped is the accepted
+    ADR-0078 behavior shift).
 
-    This class encodes that split. The prompt-recall case is the authorized
-    forward-path assertion the OLD docstring pointed to ("replace this test with a
-    forward-path assertion") — an intentional #52 substitution, not weakening.
+    The in-core assertions this class used to hold were themselves the
+    authorized-substitution replacements of the original §5.4 encodings; this is
+    the second authorized #52 substitution, decided by ADR-0078 — cite it.
     """
 
     def test_prompt_recall_hook_forwards_via_forwarder(self):
@@ -392,15 +389,14 @@ class TestHookCoreResidentDecision:
         )
         assert captured["retriever"]._directory == "/home/user/project", captured
 
-    def test_instructions_loaded_hook_passes_profile_fast(self):
-        """instructions-loaded handler calls _recall_with_timeout with profile='fast'."""
+    def test_instructions_loaded_hook_forwards_with_profile_fast(self):
+        """instructions-loaded drives a _HookRecallForwarder with profile='fast'
+        (ADR-0078 — no directory, forwards with directory "")."""
         import asyncio
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
-        import yadgar._shared.runtime.state as _st
         import yadgar.core.server.http as _http
 
-        mock_retriever = MagicMock()
         mock_request = MagicMock()
         mock_request.query_params = MagicMock()
         mock_request.query_params.get = MagicMock(
@@ -410,35 +406,35 @@ class TestHookCoreResidentDecision:
             }.get(k, d)
         )
 
-        captured_kwargs = {}
+        captured: dict = {}
 
-        async def _capture_recall(retriever, handler_name, *args, **kwargs):
-            captured_kwargs.update(kwargs)
+        async def _capture_recall(target, handler_name, *args, **kwargs):
+            captured["target"] = target
+            captured.update(kwargs)
             return []
 
         async def _run():
-            with patch.object(_st, "_retriever", mock_retriever):
-                with patch(
-                    "yadgar.core.server.http._recall_with_timeout",
-                    side_effect=_capture_recall,
-                ):
-                    await _http.hook_instructions_loaded(mock_request)
+            with patch(
+                "yadgar.core.server.http._recall_with_timeout",
+                side_effect=_capture_recall,
+            ):
+                await _http.hook_instructions_loaded(mock_request)
 
         asyncio.run(_run())
-        assert captured_kwargs.get("profile") == "fast", (
-            f"instructions-loaded hook must call _recall_with_timeout with profile='fast'. "
-            f"Got profile={captured_kwargs.get('profile')!r}."
+        assert captured.get("profile") == "fast", captured
+        assert isinstance(captured.get("target"), _http._HookRecallForwarder), (
+            "instructions-loaded must forward via _HookRecallForwarder (ADR-0078), "
+            f"got {type(captured.get('target')).__name__}."
         )
+        assert captured["target"]._directory == "", captured
 
     def test_subagent_start_hook_passes_profile_fast(self):
-        """hook_subagent_start handler calls _recall_with_timeout with profile='fast'."""
+        """hook_subagent_start forwards via _HookRecallForwarder with profile='fast'."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        import yadgar._shared.runtime.state as _st
         import yadgar.core.server.http as _http
 
-        mock_retriever = MagicMock()
         mock_request = MagicMock()
         mock_request.query_params = MagicMock()
         mock_request.query_params.get = MagicMock(
@@ -453,20 +449,25 @@ class TestHookCoreResidentDecision:
 
         captured_kwargs = {}
 
-        async def _capture_recall(retriever, handler_name, *args, **kwargs):
+        async def _capture_recall(target, handler_name, *args, **kwargs):
+            captured_kwargs["_target"] = target
             captured_kwargs.update(kwargs)
             return []
 
         async def _run():
-            with patch.object(_st, "_retriever", mock_retriever):
-                with patch(
-                    "yadgar.core.server.http._recall_with_timeout",
-                    side_effect=_capture_recall,
-                ):
-                    await _http.hook_subagent_start(mock_request)
+            with patch(
+                "yadgar.core.server.http._recall_with_timeout",
+                side_effect=_capture_recall,
+            ):
+                await _http.hook_subagent_start(mock_request)
 
         asyncio.run(_run())
         assert captured_kwargs.get("profile") == "fast", (
             f"subagent-start hook must call _recall_with_timeout with profile='fast'. "
             f"Got profile={captured_kwargs.get('profile')!r}."
         )
+        assert isinstance(captured_kwargs.get("_target"), _http._HookRecallForwarder), (
+            "subagent-start must forward via _HookRecallForwarder (ADR-0078), "
+            f"got {type(captured_kwargs.get('_target')).__name__}."
+        )
+        assert captured_kwargs["_target"]._directory == "/home/user/project", captured_kwargs

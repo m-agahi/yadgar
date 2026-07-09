@@ -41,7 +41,7 @@ _VALID_RECALL_MODES: frozenset[str] = frozenset({"landscape"})
 
 
 @observe(tier="boundary", metric="tools.recall._forward_to_backend")
-def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signature
+def _forward_to_backend(  # noqa: PLR0913 — 12 args match full recall signature
     query: str,
     max_results: int,
     min_heat: float,
@@ -53,6 +53,7 @@ def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signatur
     mode: str | None = None,
     profile: str | None = None,
     timeout_s: float = 120.0,
+    deadline_ms: int | None = None,
 ) -> list[dict]:
     """Forward recall to the backend /recall endpoint.
 
@@ -70,6 +71,14 @@ def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signatur
         The prompt-recall HOOK path passes a SHORT timeout (HOOK_RECALL_TIMEOUT_S)
         so a hung backend cannot keep the hook's bounded-pool thread alive past
         its budget (#81 pool-starvation guard — see hook-recall-forward plan).
+
+    deadline_ms: client compute budget forwarded to the backend (ADR-0077).
+        When set, the backend converts it to a monotonic deadline and aborts
+        remaining pipeline stages once exceeded (partial results) — so a hook
+        whose httpx client already gave up does not keep the backend computing.
+        Included in the payload ONLY when not None (wire-compatible with older
+        backends whose RecallRequest is extra="forbid"). MCP recall path leaves
+        it None.
 
     Raises:
         RuntimeError: if YADGAR_EMBED_URL is not configured.
@@ -101,6 +110,8 @@ def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signatur
         "mode": mode,
         "profile": profile,
     }
+    if deadline_ms is not None:
+        payload["deadline_ms"] = deadline_ms
 
     resp = httpx.post(
         f"{backend_base}/recall",
