@@ -1,7 +1,7 @@
 # Full-Observability Standard — span + metric + log on every function, tiered + enforced
 
-**Status:** P0 SHIPPED v5.101 (`@observe` + I33 + histogram p95 fix + core→backend traceparent). Per-area rollout (flip I33 lint hard-fail per area) + backend fine-spans REMAIN. See ADR-0034. **Date:** 2026-07-03.
-**Author:** agent (bot). **Branch:** `docs/full-observability-plan`.
+**Status:** STANDARD COMPLETE — full tri-signal `@observe` rollout shipped across waves P0–P6 (v5.101 P0 scaffolding → v5.105 P1–P6, ADR-0034, closes #8). I33 coverage lint went **1564 MISSING → 0** and is now **GLOBAL HARD-FAIL** (`check_observe_coverage.py` runs with NO `--warn`/`--area` in both `.pre-commit-config.yaml` and `.forgejo/workflows/ci-pr.yaml`). The per-area-flip rollout table (old §5) is therefore OBSOLETE — every area is already at hard-fail. **Sole remaining work: Phase P-SB** (§5b) — I33 v2 span-budget refinement + hot-loop sweep (ADR-0074 ACCEPTED 2026-07-09), sequenced AFTER recall-3-train T3 (Ettin swap). Backend fine-spans already shipped in wave P3 (backend instrumented, `BACKEND_VERSION` 5.10.0→5.11.0 at v5.105; now 5.33.0) — NOT remaining work. **Refreshed:** 2026-07-09 (post folder-split reorg R2a/R2b + I33 hard-flip). **Original date:** 2026-07-03.
+**Author:** agent (bot). **Branch:** `docs/full-observability-plan` (original); refresh on `master`.
 **Directive (verbatim):** *"every function emits a trace span + a metric + a
 structured log — unless there is a documented, categorized reason not to."*
 **Scope:** yadgar-core, yadgar-backend, MCP tools, hooks. After this lands,
@@ -15,10 +15,14 @@ NOTHING is un-instrumented without an explicit, categorized exemption.
    **~1,626 functions** in scope (see Inventory §1). A duration histogram on every
    one, at ~12 buckets each, is **~19,500 Prometheus series from a single metric
    type** — a cardinality bomb that will OOM the scrape and tell you nothing. A span
-   per function in the recall hot loop blows the ~1.6s warm-recall floor
-   (`wiki:yadgar-adr-log` ADR-0026/0030/0031). A per-function INFO log is noise that
-   drowns the signal. **So the deliverable is a STANDARD + EXEMPTION POLICY +
-   ENFORCEMENT RATCHET — not a blind span+metric+log sweep.**
+   per function in the recall hot loop blows the warm-recall floor
+   (`wiki:yadgar-adr-log` ADR-0026/0030/0031; the floor has since moved — hot recall
+   ~4.1s at the 2026-07-09 recall-3-train baseline, backend-CE-bound). A per-function
+   INFO log is noise that drowns the signal. **So the deliverable is a STANDARD +
+   EXEMPTION POLICY + ENFORCEMENT RATCHET — not a blind span+metric+log sweep.** (This
+   thesis was vindicated: the tiered rollout shipped with NO measurable recall
+   slowdown, v5.106 — see §3.6; and the ADR-0074 span-budget amendment §5b confirms
+   the hot-loop danger was real — an un-budgeted sweep DID storm 42k spans/op.)
 
 2. **The mechanism is one decorator, `@observe(tier=...)`, that composes the three
    existing signal paths** (`@trace_span` for the span, a bounded metrics helper,
@@ -37,28 +41,41 @@ NOTHING is un-instrumented without an explicit, categorized exemption.
 
 4. **The task's headline P0 — "core→backend traceparent is NOT propagated" — is
    FALSE against observed code.** `opentelemetry-instrumentation-httpx>=0.51b0` IS a
-   declared, resolved dependency (`pyproject.toml`, `uv.lock` → 0.63b1);
-   `HTTPXClientInstrumentor().instrument()` runs globally at core import
-   (`server/_app.py:43`); backend has `FastAPIInstrumentor`
-   (`backend/embed_service.py:539`); **both** backend calls are explicitly
-   span-wrapped (`/rerank` → `_rpc_span` at `backend/ml_client.py:796-814`; `/embed`
-   → `@trace_span("rpc.embed")` at `remote_embeddings.py:55`). **Propagation is
-   already wired.** P0 is reframed (§5) from "fix the gap" to "add an end-to-end
-   verification test + close the stdio/daemon-mode instrumentation hole + seed the
-   coverage lint in warn-mode." Later executors: do not trust the original "KNOWN
-   GAP" framing — it was a task-prompt assumption, refuted here by grep.
+   declared, resolved dependency (`pyproject.toml`, `uv.lock` → 0.63b1). At refresh
+   time (post-reorg) `HTTPXClientInstrumentor().instrument()` runs inside
+   `setup_tracing()` (`yadgar/_shared/tracing.py:521-533`, the `_instrument_httpx`
+   helper called from `setup_tracing` at `:540`) — the v5.101 R2 hoist that closed
+   the stdio/daemon hole is DONE (see §2.2); backend has `FastAPIInstrumentor`
+   (`yadgar/backend/embed_service.py:736`); **both** backend calls are explicitly
+   span-wrapped (`/rerank` → `_rpc_span` at `yadgar/backend/ml_client.py:785-800`;
+   `/embed` → `@trace_span()` at `yadgar/_shared/remote_embeddings.py:58`).
+   **Propagation is already wired** and the E2E verification + stdio/daemon hoist
+   both shipped in P0. Later executors: do not trust the original "KNOWN GAP"
+   framing — it was a task-prompt assumption, refuted by grep and since fully
+   closed.
 
-5. **The ratchet is a new I-invariant lint (`I34 / check_observe_coverage.py`)** that
+5. **The ratchet is the invariant lint `I33 / check_observe_coverage.py`** (shipped —
+   the plan originally called it "I34"; the landed invariant number is **I33**) that
    AST-walks every function, classifies it (needs-`@observe` / auto-trivial /
    allowlisted-exempt), and FAILS if a non-exempt function lacks a span source AND is
    not in `.observe-allowlist.json`. Modeled 1:1 on the existing
-   `check_trace_spans.py` (I24) + `.complexity-allowlist.json` (I30) machinery.
-   Warn-mode first, flipped to hard-fail per area as each reaches 100%. **Without
-   this lint the standard is a one-time sweep that rots.**
+   `check_trace_spans.py` (I24) + `.complexity-allowlist.json` (I30) machinery. It
+   shipped warn-mode first (v5.101 P0) then flipped to **GLOBAL hard-fail** at v5.105
+   once every area reached 0-MISSING. **Without this lint the standard is a one-time
+   sweep that rots** — it is now closed and enforcing.
 
 ---
 
 ## 1. Inventory — the "list everything" step
+
+> **HISTORICAL BASELINE — 2026-07-03, PRE-REORG.** The table below is the original
+> pre-folder-split (`_shared/`+`core/`+`backend/`) inventory that motivated the
+> standard. Do NOT treat its paths/counts as current. **Current authoritative
+> coverage figure:** the I33 lint went **1564 MISSING → 0** and is GLOBAL hard-fail
+> (CHANGELOG v5.105) — every in-scope function is now either instrumented or carries
+> a governed exemption. Re-deriving the ~1,626 raw AST count post-reorg was
+> deliberately skipped (task-scoped ≤15 min); the 0-MISSING lint state is the
+> truthful current-state signal, not a fresh grep.
 
 Counts are AST-derived (`ast.FunctionDef` + `AsyncFunctionDef`) and cross-checked
 with ripgrep, over `/home/max/git/yadgar/yadgar/`. Instrumentation columns count
@@ -92,34 +109,40 @@ existing span sources (`@trace_span` / `with span(` / `start_as_current_span` /
   silent (storage: 1). Lifecycle/IO code logs; data-transform code does not — a
   reasonable existing pattern the standard should preserve, not invert.
 
-**Version anchors:** core `pyproject.toml:1` → `5.99.0`; backend
-`yadgar/__init__.py:21` → `BACKEND_VERSION = "5.10.0"` (mirrored in `server.json`).
-Backend-input changes require a `BACKEND_VERSION` bump (gated by
-`check_backend_bump.py`, see #83).
+**Version anchors (CURRENT, refreshed 2026-07-09):** core `pyproject.toml` →
+`5.120.1` (was 5.99.0 at plan authoring; 5.101 at P0, 5.105 at standard-complete);
+backend `yadgar/__init__.py:21` → `BACKEND_VERSION = "5.33.0"` (was 5.10.0 at plan
+authoring; bumped to 5.11.0 at P3/v5.105 when backend was instrumented, since
+advanced to 5.33.0 by later trains). Backend-input changes require a
+`BACKEND_VERSION` bump (gated by `check_backend_bump.py --ci`, #83).
 
 ---
 
 ## 2. Current-state analysis — the "analyse what's implemented" step
 
-### 2.1 Tracing (`yadgar/tracing.py`)
+### 2.1 Tracing (`yadgar/_shared/tracing.py`)
 Three span idioms (source: `wiki:Yadgar OTEL Tracing — Span Mechanism & Coverage`,
-PR #148 v5.100):
-- **`@trace_span("name", attributes=...)`** (`tracing.py:614`) — wraps sync/async,
+PR #148 v5.100; paths below refreshed to post-reorg `_shared/` layout):
+- **`@trace_span(name=None, attributes=...)`** (`tracing.py:665`) — wraps sync/async,
   records exception + `status=ERROR` on raise, no-op identity decorator when OTel
-  absent. **This is the codebase idiom — decorate extracted stage methods.**
-- **`span("name", **attrs)`** inline CM (v5.100) — for genuinely inline blocks;
-  no-ops to `nullcontext`.
+  absent. Since R2b (v5.116) the name defaults to `module.qualname` (dynamic span
+  naming, enforced by `check_dynamic_span_names.py`). **This is the codebase idiom —
+  decorate extracted stage methods.**
+- **`span("name", **attrs)`** inline CM (`tracing.py:748`, v5.100) — for genuinely
+  inline blocks; no-ops to `nullcontext`.
 - **`get_tracer(...).start_as_current_span`** — single-use generator CM (drainer).
   Enter EXACTLY once via `with`; double-enter → `RuntimeError`.
 
-**Export is async and safe:** `setup_tracing` (`tracing.py:494`) registers
-`BatchSpanProcessor` (`:516`, opt-in via `YADGAR_OTLP_ENDPOINT`) — off the event
-loop. `LogSpanProcessor` (always on) emits one I14 JSON line per span, routed off
-the loop via a QueueHandler/QueueListener (C2 P2). Spans add no blocking I/O.
+**Export is async and safe:** `setup_tracing` (`tracing.py:540`) registers
+`LogSpanProcessor` (`:557`, always on) and `BatchSpanProcessor` (`:564`, opt-in via
+`YADGAR_OTLP_ENDPOINT`) — off the event loop. `LogSpanProcessor` emits one I14 JSON
+line per span, routed off the loop via a QueueHandler/QueueListener (C2 P2). Spans
+add no blocking I/O.
 
 **Context propagation across the offload boundary:** `@_tool()`
-(`server/_app.py:373`) wraps every tool in `@trace_span("tool.<name>")`. When
-`OFFLOAD_TOOLS=True`, `run_offloaded` (`server/_offload.py`) uses
+(`yadgar/core/server/_app.py:347`) wraps every tool in `@trace_span("tool.<name>")`
+(`_app.py:380`). When `OFFLOAD_TOOLS=True`, `run_offloaded`
+(`yadgar/_shared/runtime/offload.py`, called at `_app.py:474`) uses
 `contextvars.copy_context()`, which captures the parent span — inner spans nest
 correctly on the worker. No per-stage plumbing.
 
@@ -127,26 +150,24 @@ correctly on the worker. No per-stage plumbing.
 wiki/checkpoint/storage. `recall()` and `_apply_rerank_pipeline` are I13-HARD-capped
 — do NOT add nested `with span()` there; decorate the extracted stage methods.
 
-### 2.2 Core→backend propagation — VERIFIED WIRED (task premise refuted)
-| Fact | Evidence |
+### 2.2 Core→backend propagation — VERIFIED WIRED (task premise refuted; paths refreshed post-reorg)
+| Fact | Evidence (current paths, 2026-07-09) |
 |---|---|
 | httpx auto-instrumentor is a real dep | `pyproject.toml`: `opentelemetry-instrumentation-httpx>=0.51b0`; `uv.lock` → 0.63b1 |
-| It's activated globally at core import | `server/_app.py:41-45` — `HTTPXClientInstrumentor().instrument()`, unconditional, try/except-guarded |
-| RemoteMLClient uses a plain httpx.Client (auto-injected) | `backend/ml_client.py:684` |
-| `/rerank` has an explicit span | `_rpc_span("rpc.rerank.{ce,nli,pair}")` — `ml_client.py:796-814` |
-| `/embed` has an explicit span | `@trace_span("rpc.embed")` + `httpx.Client` — `remote_embeddings.py:36,55` |
-| Backend extracts incoming traceparent | `FastAPIInstrumentor.instrument_app(app)` — `backend/embed_service.py:539` |
+| It's activated inside `setup_tracing()` (R2 hoist — DONE) | `yadgar/_shared/tracing.py:521-533` (`_instrument_httpx` helper) called from `setup_tracing` (`:540`); `_app.py:38` comment confirms "activated INSIDE setup_tracing() (v5.101 R2)". Every entry mode (stdio/daemon incl.) now gets it. |
+| RemoteMLClient uses a plain httpx.Client (auto-injected) | `yadgar/backend/ml_client.py:672` |
+| `/rerank` has an explicit span | `_rpc_span("rpc.rerank.{ce,nli,pair}")` — `yadgar/backend/ml_client.py:785-800` |
+| `/embed` has an explicit span | `@trace_span()` + `httpx.Client` — `yadgar/_shared/remote_embeddings.py:58` |
+| Backend extracts incoming traceparent | `FastAPIInstrumentor` (`_FAI`) — `yadgar/backend/embed_service.py:736` |
 
-**Residual (real) gaps** — NOT the claimed disconnection:
-- **(R1) No end-to-end assertion.** Nothing verifies traceparent actually crosses
-  the wire and nests. A silent regression (dep drop, instrument() moved) would go
-  unnoticed. → P0 adds a test.
-- **(R2) stdio/daemon-only entry paths** that never import `server/_app.py` never
-  call `HTTPXClientInstrumentor().instrument()` — so any backend HTTP from those
-  paths roots a disconnected trace. → P0 hoists instrumentation into
-  `setup_tracing()` itself (single choke-point) so every entry mode gets it.
+**Residual gaps — BOTH CLOSED in P0 (v5.101):**
+- **(R1) No end-to-end assertion.** → P0 added the traceparent E2E verification test.
+- **(R2) stdio/daemon-only entry paths.** → P0 hoisted `HTTPXClientInstrumentor`
+  instrumentation into `setup_tracing()` itself (`tracing.py:521-533`, the single
+  choke-point), so every entry mode gets it. No longer a residual gap — retained
+  here as the record of what was fixed.
 
-### 2.3 Metrics (`yadgar/metrics.py` + `backend/embed_service_metrics.py`)
+### 2.3 Metrics (`yadgar/_shared/metrics.py` + `yadgar/backend/embed_service_metrics.py`)
 - **83 core + 21 backend** Prometheus objects (Counter/Histogram/Gauge/Summary),
   **private registry** (independent of OTLP, safe — ADR-0001).
 - Naming convention observed: `yadgar_<subsystem>_<measure>_<unit>` (e.g.
@@ -155,12 +176,22 @@ wiki/checkpoint/storage. `recall()` and `_apply_rerank_pipeline` are I13-HARD-ca
 - **I23 (`check_metric_writers.py`)** already gates "every declared metric has ≥1
   writer" (allowlist: `yadgar_subagent_capture_rate` = intentional zero).
 
-### 2.4 Structured logs (I14, `yadgar/log_config.py:1-49`)
+### 2.4 Structured logs (I14, `yadgar/_shared/log_config.py`)
 JSON logger, default in production. Fields: `ts`, `level`, `component`, `action`,
 `outcome`, `event`, `latency_ms?`, `error?`, `traceback?`. `ContentRedactor` filter
 (v5.4.7) strips secrets from `extra=`. **`trace_id` is already emitted per span line**
 (LogSpanProcessor), so log↔trace correlation exists — the standard leans on it
 instead of duplicating per-function logs.
+
+**Post-rollout amendment (v5.106, ADR-0041):** the ENTIRE log-emission subsystem is
+categorically `@observe`-EXEMPT (`framework-instrumented`). Under real OTLP, an
+`@observe` on a log-emission fn opens a span → `LogSpanProcessor` emits a `span_end`
+log line → re-enters the observed log path → per-log amplification flood (crash-looped
+core+backend at v5.105). Fix: path-glob exempted `yadgar/_shared/log_config.py` +
+`observe.py`/`timing.py` in `.observe-allowlist.json._exempt_globs`, and a
+`_SpanEndFilter` on `LogRingHandler` drops `span_end` records (ADR-0041, 3rd
+occurrence). The 4th ADR-0041 occurrence (`_ring_append`, `logs.py:59`) was fixed via
+`@observe(span=False)` in #173 — precedent the P-SB span-budget phase (§5b) builds on.
 
 ### 2.5 OTLP export (live)
 `BatchSpanProcessor` async → OTLP → **Tempo (PLT stack on nixos-quinyx)**; Grafana
@@ -176,15 +207,19 @@ private registry endpoint.
 | I32 | `scripts/check_capability_coverage.py` | Settings/tools/migrations/BC rows all have registry entries | `CAPABILITY_REGISTRY.md` status enum |
 
 Wired in `.pre-commit-config.yaml` (local hooks) + `.forgejo/workflows/ci-pr.yaml`
-(`invariant-checks` job). **`check_observe_coverage.py` slots into both, same shape.**
+(`invariant-checks` job). **`check_observe_coverage.py` (I33) shipped into both, same
+shape — now runs with NO `--warn`/`--area` (global hard-fail, MISSING=0 enforced).**
+`scripts/check_trace_spans.py` (I24) is now scoped to `yadgar/core/server/http.py`.
 
 ---
 
 ## 3. The STANDARD + method decision — the "decide best method and standard" step
 
 ### 3.1 The mechanism: one decorator, `@observe`
-Add `@observe(...)` to `yadgar/observe.py` (new module; keeps `tracing.py`
-single-purpose). It **composes**, not replaces, the existing signal paths:
+`@observe(...)` lives in `yadgar/_shared/observability/observe.py` (SHIPPED v5.101;
+308 lines; keeps `tracing.py` single-purpose). It **composes**, not replaces, the
+existing signal paths. The shipped signature added a `span: bool = True` param (see
+§5b) beyond the design sketch below:
 
 ```python
 def observe(
@@ -290,12 +325,18 @@ exemption a mandatory ≥40-char `rationale` field (same as I30). The `exempt=` 
 stays legal for co-located clarity but is a mirror, not a second registry.
 
 ### 3.6 The no-slowness budget
-- **Ceiling:** warm recall stays at its measured floor (**~1.6s**, per
-  `wiki:yadgar-adr-log` ADR-0026/0030/0031 and the recall-perf checklist).
-  **CAVEAT:** ADR-0033 (**status: open**) reports a live recall slowdown of 24–76s
-  whose cause is *not isolated* (backend/deploy vs core). **The baseline is currently
-  contested** — the overhead-measurement method (§6) MUST control for ADR-0033, not
-  assume a clean 1.6s.
+- **Ceiling:** warm recall stays at its measured floor. **SETTLED (2026-07-09):** the
+  `@observe` overhead question was independently resolved — **NO measurable slowdown**
+  from the tri-signal rollout (fee2f129, "v5.106 recall perf — @observe overhead
+  verdict = NO measurable slowdown", record-only loadtest in `benchmarks/`, #160). So
+  the tiering held as designed.
+- **CAVEAT (still open):** ADR-0033 (**status: open**) reports a live recall slowdown
+  of 24–76s whose cause is *not isolated* (backend/deploy vs core) — a SEPARATE issue
+  from `@observe` overhead. The absolute warm floor has since moved (recall-3-train
+  2026-07-09 baseline: cold ~24.6s, CE 3-pass ~19s, **hot ~4.1s** per op — the
+  backend CE cost, not observe). Use these current numbers, not the historical ~1.6s.
+  ADR-0033 no longer blocks the observe question specifically; it remains open for the
+  general recall-latency baseline (recall-3-train overhaul, `docs/plans/recall-3-train-overhaul-2026-07-04.md`).
 - **How the tiering protects it:** the recall hot path is `stage` + `hot` tiers.
   Stage spans are already-extracted methods (zero added nesting; v5.100 rules). Hot
   tier adds ZERO spans/metrics/logs per item — only a small integer attribute on the
@@ -305,10 +346,12 @@ stays legal for co-located clarity but is a mirror, not a second registry.
 
 ---
 
-## 4. Enforcement — `I34 / check_observe_coverage.py` (the ratchet)
+## 4. Enforcement — `I33 / check_observe_coverage.py` (the ratchet) — SHIPPED, GLOBAL HARD
 
-A new invariant lint, modeled on `check_trace_spans.py` (I24) + I30's allowlist
-discipline. It is what makes "nothing missed" durable rather than a decaying sweep.
+The invariant lint (called **I33**, not "I34" as the draft named it), modeled on
+`check_trace_spans.py` (I24) + I30's allowlist discipline. It is what makes "nothing
+missed" durable rather than a decaying sweep. **Status: SHIPPED and now GLOBAL
+hard-fail** — the classification algorithm and allowlist schema below are as-built.
 
 ### 4.1 Classification algorithm (pseudocode — the crux, stated unambiguously)
 ```
@@ -344,65 +387,126 @@ for each *.py file under yadgar/ (excluding tests/, scripts/ if configured):
 - **Exit code:** non-zero if any `MISSING` (in hard-fail mode) or any allowlist entry
   is stale / lacks rationale / has an invalid category (always hard, like I30).
 
-### 4.2 Modes & rollout wiring
-- **`--warn`** (phase P0): prints MISSING, exits 0. Establishes the baseline count
-  per area without blocking commits.
-- **`--area <name> --hard`**: hard-fail only for a named area. As each rollout phase
-  reaches 100%, flip that area to `--hard` in `.pre-commit-config.yaml` +
-  `.forgejo/workflows/ci-pr.yaml` (`invariant-checks` job). Ratchet is monotonic:
-  an area at `--hard` never regresses.
-- **`.observe-allowlist.json`** schema (mirrors `.complexity-allowlist.json`):
+### 4.2 Modes & rollout wiring — ROLLOUT COMPLETE (global hard-fail)
+The mode flags still exist in the script, but the rollout they drove is DONE:
+- **`--warn`**: prints MISSING, exits 0. Used at P0 (v5.101) to establish the
+  baseline. No longer used in CI/pre-commit.
+- **`--area <name>`**: restricts scan to a path substring. Was the per-area-flip
+  mechanism during P1–P6; **no longer used** — the lint now runs whole-repo hard.
+- **CURRENT wiring (v5.105+):** `check_observe_coverage.py` runs with NO flags in
+  both `.pre-commit-config.yaml` (`check-observe-coverage`, `files:
+  ^(yadgar/.*\.py|\.observe-allowlist\.json)$`) and `.forgejo/workflows/ci-pr.yaml`
+  (`invariant-checks` job) → **default hard-fail, MISSING=0, whole codebase**
+  (closes #8). The ratchet is monotonic and now fully closed.
+- **`.observe-allowlist.json`** schema (mirrors `.complexity-allowlist.json`); per-fn
+  entries are keyed `module:qualname` → `{category, rationale}`, e.g.:
   ```json
-  { "yadgar.retrieval.scoring:_inner_score": {
+  { "_reranking_mmr:_cosine_sim": {
         "category": "hot-loop",
         "rationale": "per-candidate scorer; span/metric per call = 50+/op bloat" } }
   ```
+  Plus an `_exempt_globs` section (ADR-0040 option B): path-globs for CATEGORICALLY
+  non-observable dirs/files only (CLI glue, seed/export/migration codegen,
+  logging/observe/timing framework, pure-render presentation). MIXED-logic files
+  (viz_server.py, graph_api.py) were pulled OUT of the glob and their real fns
+  per-fn instrumented/exempted, so a new fn there is not auto-invisible.
 - **Anti-stale (like I30 invariant c):** every allowlist key must map to a currently
   existing function; a removed function → hard fail (forces cleanup).
 
-### 4.3 Where it plugs in
-- `.pre-commit-config.yaml`: new local hook `check-observe-coverage`, `files:
-  ^yadgar/.*\.py$`, initially `args: [--warn]`, flipped per area.
-- `.forgejo/workflows/ci-pr.yaml`: add to the `invariant-checks` job alongside I23/
-  I24/I25/I29/I32.
-- `scripts/check_observe_coverage.py` + `tests/.../test_check_observe_coverage.py`
-  (a `test_live_codebase` test, warn-mode asserting the script *runs*, plus unit
-  tests on `is_trivial` / allowlist validation).
+### 4.3 Where it plugs in — AS SHIPPED
+- `.pre-commit-config.yaml`: local hook `check-observe-coverage`, `files:
+  ^(yadgar/.*\.py|\.observe-allowlist\.json)$`, NO `args` (hard). (The draft's
+  `args: [--warn]` was the P0-only state.)
+- `.forgejo/workflows/ci-pr.yaml`: in the `invariant-checks` job alongside
+  I23/I24/I25/etc. — step "Check I33 — tri-signal observe-coverage (HARD; MISSING=0
+  enforced, closes #8)".
+- `scripts/check_observe_coverage.py` + its tests (`test_live_codebase` asserting the
+  script runs at 0-MISSING, plus unit tests on `is_trivial` / allowlist validation).
 
 ---
 
-## 5. Phased rollout
+## 5. Phased rollout — ALL SHIPPED (P0–P6, v5.101→v5.105)
 
-Each phase = its own PR + version bump. Backend-touching phases bump
-`BACKEND_VERSION` (gated by `check_backend_bump.py`, #83) and force a backend image
-rebuild. Overhead gate = recall-perf warm-floor before/after (§6), controlling for
-ADR-0033.
+> **HISTORICAL — the rollout below is COMPLETE.** Every phase landed by v5.105
+> (ADR-0034, closes #8). Paths in the "Key files" column are the ORIGINAL pre-reorg
+> paths; the code now lives under `yadgar/_shared/`, `yadgar/core/`, `yadgar/backend/`.
+> The "Version" and "Exit criteria" columns are updated to reflect what actually
+> shipped. The remaining work is **§5b Phase P-SB only**.
 
-| Phase | Scope | Key files | Version | Exit criteria |
-|---|---|---|---|---|
-| **P0 — Standard + ratchet + propagation-verify** | `@observe` module; `check_observe_coverage.py` in `--warn`; hoist `HTTPXClientInstrumentor` into `setup_tracing()` (fixes stdio/daemon-mode R2); add end-to-end traceparent test (R1) | `yadgar/observe.py`, `tracing.py`, `scripts/check_observe_coverage.py`, `tests/`, `.pre-commit-config.yaml`, `.forgejo/…` | core minor (5.100→5.101) | decorator + lint land; lint warn-mode green (runs, reports baseline); traceparent E2E test passes; no warm-floor regression |
-| **P1 — Recall read path** | boundary on `recall` tool (already `@_tool` — metric+log only); `stage` on retrieval scoring/fusion/reranking extracted methods; `hot` exemptions allowlisted for per-candidate inner fns | `retrieval/scoring.py`, `retrieval/fusion.py`, `retrieval/reranking.py`, `server/tools/recall.py`, `.observe-allowlist.json` | core minor | retrieval area 100% classified; flip `--area retrieval --hard`; warm-floor within budget |
-| **P2 — Write / consolidation / drainer** | `stage` on memorize phases, WriteGate, drainer apply, consolidation phases | `server/tools/_memorize_phases/*`, `predictive_coding.py`, `file_queue/apply.py`, `consolidation/*` | core minor | those areas 100%; flip `--hard`; write-path perf unregressed |
-| **P3 — Backend** | `boundary` RED on FastAPI endpoints (mostly FastAPI-instrumented already → metric+log only); `stage` on rerank/embed internals; keep `_rpc_span`/`rpc.embed` as span sources | `backend/embed_service.py`, `backend/ml_client.py`, `backend/embed_service_metrics.py` | **BACKEND_VERSION bump** (5.10→5.11) + image rebuild | backend area 100%; flip `--hard`; backend RED dashboards live |
-| **P4 — MCP tool surface** | `@_tool` already spans all 245 → lint counts them; add metric+log-only `@observe` where a tool needs RED beyond the pool metrics; allowlist private helpers as trivial/hot | `server/tools/*`, `server/_app.py`, `.observe-allowlist.json` | core minor | tools area 100%; flip `--hard` |
-| **P5 — Hooks + core-top-level + storage sweep + global hard-fail** | hook endpoints in `server/http.py` (already I24-gated); remaining core/storage/wiki functions classified/allowlisted; flip lint to global `--hard` | `server/http.py`, `yadgar/*.py`, `storage/*`, `repo_wiki/*` | core minor | **whole codebase 100% classified; lint global `--hard`; ratchet closed** |
+Each phase was its own PR + version bump. Backend-touching phases bumped
+`BACKEND_VERSION` (gated by `check_backend_bump.py --ci`, #83). The CHANGELOG (v5.105)
+records the whole rollout landing as waves P1–P6; the draft's P4/P5 split was folded
+into that wave sequence.
 
-**Ordering rationale:** value/risk. P0 is pure scaffolding + the one real
-propagation fix (low risk, unblocks measurement). P1 first among rollouts because
-recall is the hottest path — proving the tiering holds the warm-floor there de-risks
-everything else. Backend (P3) is isolated behind a version bump + rebuild, so it's
-sequenced where its image cost is a discrete step. Global hard-fail (P5) last, once
-every area is individually green.
+| Phase | Scope | Status / shipped as |
+|---|---|---|
+| **P0 — Standard + ratchet + propagation-verify** | `@observe` module (`yadgar/_shared/observability/observe.py`); `check_observe_coverage.py` (warn-mode); hoist `HTTPXClientInstrumentor` into `setup_tracing()` (R2); traceparent E2E test (R1); histogram p95 fix | ✅ **SHIPPED v5.101** (#150). Lint warn-mode green; R1+R2 both closed. |
+| **P1 — Recall read path** | boundary on `recall`/`RetrievalPipeline.run`; all 26 `@trace_span("retrieval.*")` → `@observe(tier="stage")`; `hot`/hot-loop exemptions allowlisted | ✅ **SHIPPED v5.105** (#159, ADR-0034). Retrieval area 0-MISSING. |
+| **P2 — Write / consolidation / drainer** | `stage` on memorize phases, WriteGate, drainer apply, consolidation phases | ✅ **SHIPPED v5.105** (wave P2). |
+| **P3 — Backend** | RED on FastAPI endpoints; `stage` on rerank/embed internals; `_rpc_span`/`rpc.embed` kept as span sources | ✅ **SHIPPED v5.105** — `BACKEND_VERSION` 5.10.0→5.11.0 + image rebuild (backend instrumented). NOT remaining work. |
+| **P4 — MCP tool surface** | all 22 MCP tools; `@_tool` counted as span source; metric+log-only `@observe` where RED needed; private helpers allowlisted | ✅ **SHIPPED v5.105** (wave). |
+| **P5/P6 — Hooks + core-top-level + storage + root-service sweep + GLOBAL hard-fail** | hook endpoints; remaining core/storage/wiki/server/cognitive residual classified/allowlisted; lint flipped to global `--hard` | ✅ **SHIPPED v5.105** — **1564 MISSING → 0; lint GLOBAL hard-fail; ratchet CLOSED.** |
+
+**Post-rollout hotfix (v5.106):** the log-emission path was exempted from `@observe`
+(span→log→span amplification flood under real OTLP crash-looped core+backend) — see
+§2.4 amendment. `@observe` overhead verdict on recall: **NO measurable slowdown**
+(fee2f129, benchmarks/, #160).
 
 ---
+
+## 5b. Phase P-SB — I33 v2 span-budget refinement + hot-loop sweep (ADR-0074 ACCEPTED 2026-07-09) — THE SOLE REMAINING PHASE
+
+**Why:** the I33 coverage ratchet over-applied spans to hot-loop micro-helpers —
+`audit_anchors` emitted ~42k `_cosine_similarity` spans, recall 27–35k per-row
+`_row_to_dict`/`_extract_id` spans per op → OTLP queue saturation → BOUNDARY SPANS
+DROPPED (`tool.audit_anchors` unfindable in Tempo). ADR-0074 sets the policy; this
+phase makes the lint enforce it. **Order is load-bearing: refine I33 FIRST, then
+sweep** — a sweep without the lint counterpart is a one-time fix that rots (the
+same argument §TL;DR-5 makes for I33 itself).
+
+**Commit 1 — I33 v2 (lint refinement):**
+1. `.observe-allowlist.json` gains a `_span_budget` section: `fq → {rationale}`
+   meaning "this fn must NOT open a per-call span". Lint HARD-FAILS if a listed fn
+   carries a span-opening decorator without `span=False`. Same governance as
+   existing sections: ≥40-char rationale, stale-entry hard-fail.
+2. Advisory channel (non-failing, like the ADR-0040 glob-audit report): a
+   span-decorated fn called inside a `For`/`While` body in the same module →
+   stdout warning. Catches NEW hot-loop spans before they storm.
+3. ADR-0041 hard rule: span-opening decorators forbidden in the logging-handler
+   module set (small explicit file list — `log_config.py`, LogSpanProcessor
+   module).
+4. Widen `span=False` / `tier="hot"` semantics + docstrings (`observe.py:240-246`
+   currently scopes `span=False` to the explicit-inner-span nesting case
+   only; the hot-loop budget case is a second legitimate reason; `tier="hot"`
+   doc wording "span only" (module docstring `observe.py:13`) is muddled — fix to
+   "attributes on enclosing span, NO per-call span").
+
+**Commit 2 — sweep (under the refined lint):**
+- Populate `_span_budget` with the storm offenders: `_cosine_similarity`,
+  `_row_to_dict`, `_extract_id`, plus grep `tier="stage"` inside loops for others.
+- Flip them to `@observe(span=False)` (metrics only — the _ring_append/ADR-0041
+  treatment, precedent #173) or decorator-level aggregation (one span with
+  count+total) where an aggregate is genuinely useful.
+- Verify: re-run the trace sweep on a deploy; `tool.audit_anchors` and recall
+  boundary spans present in Tempo; per-op span count for audit_anchors/recall
+  drops from tens-of-thousands to tens.
+
+**Sequencing (user 2026-07-09):** queued AFTER recall T3 (Ettin swap) completes.
+Independent car — touches lint + allowlist + hot helpers only; no conflict with
+hardening train or prelude worktree if slots free up earlier, but the queue
+position is after-Ettin unless user pulls it forward.
 
 ## 6. Risks + open questions
 
-- **Contested baseline (ADR-0033, OPEN).** Live recall spiked 24–76s, cause not
-  isolated. **Every phase's overhead gate must A/B on the same deploy** (warm-floor
-  before vs after within one image/config), not compare against a historical 1.6s
-  that may already be contaminated. Measurement method = the recall-perf warm-floor
-  checklist, ≥6 warm runs, median, same box, backend fixed.
+- **Contested baseline (ADR-0033, OPEN) — but the observe-overhead question is now
+  SETTLED.** The `@observe` rollout was measured to add **no measurable slowdown**
+  (v5.106, `benchmarks/`, #160), so the standard's own overhead risk is retired. The
+  ADR-0033 contested baseline persists for the GENERAL recall-latency question (live
+  spike 24–76s, cause not isolated) and is being worked in the recall-3-train
+  overhaul (2026-07-09 baseline: cold ~24.6s, CE 3-pass ~19s, hot ~4.1s). Any FUTURE
+  overhead gate (e.g. for §5b) must still A/B on the same deploy, not compare against
+  a historical floor. Measurement method = the recall-perf warm-floor checklist, ≥6
+  warm runs, median, same box, backend fixed.
 - **Cardinality (quantified §3.3).** Chosen surface ~6,500 incremental series vs
   ~19,500 naive floor. Risk: stage-label cardinality creeps if executors invent new
   stage names freely. Mitigation: lint rejects new `Histogram(...)` objects outside
@@ -428,16 +532,26 @@ every area is individually green.
   exemption.** Full literal per-function span+metric+log is rejected on the
   cardinality + overhead + noise math above — that rejection IS the architect's job
   the directive asked for.
-- **OPEN — `is_trivial` threshold (≤3 statements) may over- or under-exempt.** Tune
-  empirically in P0 warn-mode by inspecting the auto-exempt list before flipping any
-  area to hard.
+- **RESOLVED — `is_trivial` threshold (≤3 statements).** Tuned empirically during the
+  P0→P6 warn-then-hard rollout; the landed `is_trivial` classifier + `_exempt_globs` +
+  per-fn allowlist together drove MISSING to 0 with no known false-exemption
+  complaints. The threshold is settled unless P-SB's hot-loop sweep surfaces a new
+  edge.
 
 ---
 
 ## Related
 - `wiki:Yadgar OTEL Tracing — Span Mechanism & Coverage` (span mechanism, no-slowness rules, I24)
-- `wiki:yadgar-adr-log` — ADR-0001 (obs train, OTLP+metrics ON), ADR-0026/0030/0031 (recall IO-bound, warm-floor), **ADR-0033 (OPEN — contested baseline)**
-- `docs/DECISIONS.md` — record P0-refuted-premise + any deferrals here on merge
-- Existing lints: `scripts/check_trace_spans.py` (I24), `check_metric_writers.py`
-  (I23), `check_complexity_allowlist.py` (I30), `check_capability_coverage.py` (I32)
-- Overhead method: recall-perf warm-floor checklist
+- `wiki:yadgar-adr-log` — ADR-0001 (obs train, OTLP+metrics ON), ADR-0026/0030/0031
+  (recall IO-bound, warm-floor), **ADR-0033 (OPEN — contested baseline, general
+  recall latency)**, **ADR-0034 (the standard itself; implementation COMPLETE at
+  v5.105)**, **ADR-0040** (I33 glob blind-spot → `_exempt_globs` option B),
+  **ADR-0041** (span-in-log-path flood, 4 occurrences), **ADR-0074 (ACCEPTED
+  2026-07-09 — span-budget policy, the basis for §5b P-SB)**
+- `docs/DECISIONS.md` — P0-refuted-premise + deferrals recorded on merge
+- Existing lints: `scripts/check_observe_coverage.py` (**I33**, global hard),
+  `scripts/check_trace_spans.py` (I24), `check_metric_writers.py` (I23),
+  `check_complexity_allowlist.py` (I30), `check_capability_coverage.py` (I32),
+  `scripts/check_dynamic_span_names.py` (R2b — dynamic span names)
+- Overhead method: recall-perf warm-floor checklist; `benchmarks/` record-only
+  loadtest (#79); recall-3-train overhaul (`docs/plans/recall-3-train-overhaul-2026-07-04.md`)
