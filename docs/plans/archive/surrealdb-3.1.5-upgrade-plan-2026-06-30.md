@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED as b02f6397 (#136): backend+CI images on 3.1.5; prod verified live (surreal version = 3.1.5). Header was never updated at ship time (pre-ADR-0081).
+
 # SurrealDB server upgrade 3.0.5 → 3.1.5 — implementation plan
 
 Date: 2026-06-30
