@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED as #166 (31169f4f): hook sites forward via tools.recall._forward_to_backend; ADR-0054 records the §5.4 reversal.
+
 # Plan: Wire the prompt-recall HOOKS through the forward-to-backend recall path
 
 **Status:** BUILD — implement to this spec (decided, TDD).
