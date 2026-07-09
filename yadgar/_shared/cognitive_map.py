@@ -67,7 +67,21 @@ class CognitiveMap:
 
         T[i,j] = count(i→j) / sum(count(i→*))
         """
-        transitions = self._storage.get_all_transitions()
+        raw_transitions = self._storage.get_all_transitions()
+        if not raw_transitions:
+            self._memory_index = {}
+            self._index_memory = {}
+            return np.zeros((0, 0), dtype=np.float64)
+
+        # Filter out rows with None IDs (can arrive from SurrealDB NONE or
+        # historical corrupt rows).  Coercing to 0 would map bad transitions
+        # onto a phantom memory — skip instead.
+        transitions = [
+            t
+            for t in raw_transitions
+            if isinstance(t.get("from_memory_id"), int) and isinstance(t.get("to_memory_id"), int)
+        ]
+
         if not transitions:
             self._memory_index = {}
             self._index_memory = {}

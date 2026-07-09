@@ -169,6 +169,24 @@ class TestTransitionMatrix:
         T = cmap.build_transition_matrix()
         assert T.shape == (0, 0)
 
+    def test_transition_matrix_none_ids_skipped(self, cmap, monkeypatch):
+        """Regression: None from/to_memory_id in DB row must not crash sorted().
+
+        Pre-fix: sorted({None, 5}) → TypeError: '<' not supported between
+        instances of 'NoneType' and 'int'.  Post-fix: None row silently skipped.
+        """
+        bad_rows = [
+            {"from_memory_id": None, "to_memory_id": 5, "count": 1},
+            {"from_memory_id": 3, "to_memory_id": None, "count": 2},
+            {"from_memory_id": 3, "to_memory_id": 5, "count": 3},
+        ]
+        monkeypatch.setattr(cmap._storage, "get_all_transitions", lambda: bad_rows)
+        # Pre-fix this raises TypeError; post-fix it returns a 2×2 matrix (ids 3,5)
+        T = cmap.build_transition_matrix()
+        assert T.shape == (2, 2)
+        # ids {3,5} — sorted to [3, 5]
+        assert set(cmap._memory_index.keys()) == {3, 5}
+
     def test_transition_matrix_values(self, storage, cmap):
         """Transition probabilities reflect counts."""
         m1 = storage.insert_memory(
