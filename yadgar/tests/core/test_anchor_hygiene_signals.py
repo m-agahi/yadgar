@@ -987,3 +987,75 @@ class TestAuditAnchorActionabilityGate:
         result = server.project_brief(_DIR, mode="signals")
         action_names = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" not in action_names
+
+
+# ---------------------------------------------------------------------------
+# 10. Predicate parity — signal fires ⇔ audit_anchors has ≥1 non-skipped action
+# ---------------------------------------------------------------------------
+
+#: Unique directory for parity tests — isolated from accumulated module-scope rows.
+_DIR_PARITY = "/tmp/test_anchor_signal_parity_dir"
+_DIR_PARITY_OTHER = "/tmp/test_anchor_signal_parity_other_dir"
+
+
+class TestSignalAuditParity:
+    """Signal fires iff audit_anchors(dir, dry_run=True) has ≥1 non-skipped action.
+
+    Reproduces the 2026-07-09 live-daemon bug: expired anchor in OTHER directory
+    caused audit_anchors recommendation for THIS directory while dry_run returned
+    actions=[].  Root cause: _fetch_expired_anchor_count had no directory filter,
+    so it counted expired rows across ALL directories regardless of the resolved dir.
+    """
+
+    def test_cross_dir_expired_does_not_trigger_signal(self, storage):
+        """Expired non-grace anchor in _DIR_PARITY_OTHER must NOT fire audit_anchors
+        for _DIR_PARITY.  This is the exact 2026-07-09 regression case."""
+        from yadgar.core.server.tools.audit import audit_anchors
+
+        past = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
+        # Expired anchor sits in a DIFFERENT directory
+        _insert_anchor(
+            storage,
+            "expired in other dir",
+            directory=_DIR_PARITY_OTHER,
+            valid_until=past,
+            migration_grace=False,
+        )
+        # _DIR_PARITY itself has no expired anchors
+        result = server.project_brief(_DIR_PARITY, mode="signals")
+        action_names = [a["action"] for a in result["recommended_actions"]]
+        assert "audit_anchors" not in action_names, (
+            "audit_anchors fired for _DIR_PARITY but the expired anchor is in "
+            "_DIR_PARITY_OTHER — cross-directory scope leak in expired count predicate"
+        )
+        # Sanity-check: audit for the TARGET dir agrees (empty)
+        dry = audit_anchors(directory=_DIR_PARITY, dry_run=True)
+        non_skipped = [a for a in dry["actions"] if not a.get("skipped")]
+        assert non_skipped == [], (
+            "audit_anchors(dry_run=True) has non-skipped actions for _DIR_PARITY, "
+            "but signal should only fire when audit would produce work in the SAME dir"
+        )
+
+    def test_same_dir_expired_fires_signal_and_audit_agrees(self, storage):
+        """Expired non-grace anchor in _DIR_PARITY fires both signal AND audit action."""
+        from yadgar.core.server.tools.audit import audit_anchors
+
+        past = (datetime.now(UTC) - timedelta(hours=4)).isoformat()
+        _insert_anchor(
+            storage,
+            "expired in target dir",
+            directory=_DIR_PARITY,
+            valid_until=past,
+            migration_grace=False,
+        )
+        result = server.project_brief(_DIR_PARITY, mode="signals")
+        action_names = [a["action"] for a in result["recommended_actions"]]
+        assert "audit_anchors" in action_names, (
+            "audit_anchors must fire when expired non-grace anchor exists in the target dir"
+        )
+        dry = audit_anchors(directory=_DIR_PARITY, dry_run=True)
+        non_skipped = [a for a in dry["actions"] if not a.get("skipped")]
+        assert non_skipped, (
+            "audit_anchors(dry_run=True) returned no non-skipped actions, "
+            "but signal fired — predicate mismatch"
+        )

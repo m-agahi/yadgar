@@ -758,17 +758,24 @@ def _fetch_anchor_promote_ids(storage, resolved: str, _now: str, cfg) -> tuple[l
 
 
 @observe(tier="stage", metric="tools.project._fetch_expired_anchor_count")
-def _fetch_expired_anchor_count(storage, _now: str) -> int:
-    """Count expired anchors (valid_until < now) that are not in migration grace period."""
+def _fetch_expired_anchor_count(storage, _now: str, directory: str) -> int:
+    """Count expired anchors (valid_until < now) that are not in migration grace period.
+
+    Scoped to *directory* so signal parity matches audit_anchors(directory=...) which
+    also runs per-directory.  Using a global count here (no dir filter) caused phantom
+    audit_anchors recommendations when expired anchors existed in other projects
+    (2026-07-09 live-daemon regression, fix/anchor-signal-predicate-parity).
+    """
     try:
         exp_rows = storage._q(
             "SELECT count() AS cnt FROM memory "
             "WHERE '_anchor' INSIDE tags "
+            "AND directory_context = $dir "
             "AND valid_until IS NOT NONE "
             "AND valid_until < $now "
             "AND (migration_grace IS NONE OR migration_grace = false) "
             "GROUP ALL",
-            {"now": _now},
+            {"dir": directory, "now": _now},
         )
         return int(exp_rows[0]["cnt"]) if exp_rows else 0
     except Exception:
@@ -1053,7 +1060,7 @@ def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
         storage, resolved, _now, float(cfg.ANCHOR_REDUNDANCY_COSINE)
     )
     promote_ids, trunc_p = _fetch_anchor_promote_ids(storage, resolved, _now, cfg)
-    expired_no_grace_count = _fetch_expired_anchor_count(storage, _now)
+    expired_no_grace_count = _fetch_expired_anchor_count(storage, _now, resolved)
     cross_project_candidates = _fetch_cross_project_candidates_for_signals(storage, _now, cfg)
 
     return {
