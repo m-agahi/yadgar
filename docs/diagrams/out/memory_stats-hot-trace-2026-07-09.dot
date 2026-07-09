@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="memory_stats-hot — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace d5cc6763 · total 734.9 ms · key cost: _q ×6 = 284.98 ms (39%)";
+trace d5cc6763 · total 734.9 ms · key cost: SurrealDB query ×6 = 284.98 ms (39%)";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -17,11 +17,11 @@ trace d5cc6763 · total 734.9 ms · key cost: _q ×6 = 284.98 ms (39%)";
     fontcolor="#26456b";
     fontname="Helvetica-Bold";
     "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="memory_stats() entry\nMCP dispatch → tool.memory_stats\n@7ms\n7.12 ms"];
-    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_q ×6\n_shared.storage.client._ClientMixin._q\n@7ms\n284.98 ms"];
-    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="EngramAllocator.get_slot_statistics\n_shared.engram.EngramAllocator.get_slot_statistics\n@292ms\n94.95 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="get_all_causal_edges\n….storage.causal._CausalMixin.get_all_causal_edges\n@512ms\n24.56 ms"];
-    "s3" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="CognitiveMap.has_sufficient_data\n…ed.cognitive_map.CognitiveMap.has_sufficient_data\n@536ms\n21.87 ms"];
-    "s5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_ms_per_table_stats\ncore.server.tools.admin_other._ms_per_table_stats\n@568ms\n165.78 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="SurrealDB query ×6\n_ClientMixin._q\n@7ms\n284.98 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="engram slot statistics\nEngramAllocator.get_slot_statistics\n@292ms\n94.95 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch causal DAG\n_CausalMixin.get_all_causal_edges\n@512ms\n24.56 ms"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check SR data sufficiency\nCognitiveMap.has_sufficient_data\n@536ms\n21.87 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="per-table row/byte stats\nadmin_other._ms_per_table_stats\n@568ms\n165.78 ms"];
     "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@735ms\n1.12 ms"];
   }
   subgraph "cluster_backend" {
@@ -31,7 +31,7 @@ trace d5cc6763 · total 734.9 ms · key cost: _q ×6 = 284.98 ms (39%)";
     color="#b5744a";
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
-    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="GET /admin/dbsize\nGET /admin/dbsize\n@566ms\n1.82 ms"];
+    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="backend DB-size query\nGET /admin/dbsize\n@566ms\n1.82 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];
   "s0" -> "s1" [color="#333333", style="solid", label="2"];

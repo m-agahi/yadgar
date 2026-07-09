@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="wiki_add-hot — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace ce2bfcea · total 4.9 ms · key cost: FileQueue.enqueue = 0.24 ms (5%)\nsecond enqueue — no dup check at boundary";
+trace ce2bfcea · total 4.9 ms · key cost: file-queue enqueue = 0.24 ms (5%)\nsecond enqueue — no dup check at boundary";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -17,9 +17,9 @@ trace ce2bfcea · total 4.9 ms · key cost: FileQueue.enqueue = 0.24 ms (5%)\nse
     fontcolor="#26456b";
     fontname="Helvetica-Bold";
     "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="wiki_add() entry\nMCP dispatch → tool.wiki_add\n@2.9ms\n2.87 ms"];
-    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="gate_or_reject\n_shared.secrets.gate_or_reject\n@2.9ms\n0.17 ms"];
-    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="RulesEngine.check_write_policy\n…hared.rules_engine.RulesEngine.check_write_policy\n@3.1ms\n0.06 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FileQueue.enqueue\n_shared.file_queue.queue.FileQueue.enqueue\n@3.4ms\n0.24 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="secret gate check\nsecrets.gate_or_reject\n@2.9ms\n0.17 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="write-policy rule check\nRulesEngine.check_write_policy\n@3.1ms\n0.06 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="file-queue enqueue\nFileQueue.enqueue\n@3.4ms\n0.24 ms"];
     "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@4.9ms\n1.29 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];

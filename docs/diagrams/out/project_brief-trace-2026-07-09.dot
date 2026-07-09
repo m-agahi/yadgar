@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="project_brief — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace cef79f78 · total 536.4 ms · key cost: _fetch_presence_rows = 99.2 ms (18%)";
+trace cef79f78 · total 536.4 ms · key cost: fetch init/active/checkpoint presence = 99.2 ms (18%)";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -17,13 +17,13 @@ trace cef79f78 · total 536.4 ms · key cost: _fetch_presence_rows = 99.2 ms (18
     fontcolor="#26456b";
     fontname="Helvetica-Bold";
     "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="project_brief() entry\nMCP dispatch → tool.project_brief\n@4ms\n3.56 ms"];
-    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_presence_rows\ncore.server.tools.project._fetch_presence_rows\n@5ms\n99.2 ms"];
-    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_build_anchor_rows_catalog\n…e.server.tools.project._build_anchor_rows_catalog\n@104ms\n93.42 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_scan_stale_wiki_slugs_db\n…re.server.tools.project._scan_stale_wiki_slugs_db\n@233ms\n33.53 ms"];
-    "s3" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_build_hot_memories\ncore.server.tools.project._build_hot_memories\n@267ms\n54.25 ms"];
-    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_build_wiki_pages\ncore.server.tools.project._build_wiki_pages\n@321ms\n94.35 ms"];
-    "s5" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="list_wiki_catalog\n_shared.storage.wiki._WikiMixin.list_wiki_catalog\n@416ms\n89.03 ms"];
-    "s6" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_slug_prefix ×486\ncore.server.tools.project._slug_prefix\n@505ms\n5.43 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch init/active/checkpoint presence\nproject._fetch_presence_rows\n@5ms\n99.2 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="build anchor catalog\nproject._build_anchor_rows_catalog\n@104ms\n93.42 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="scan stale wiki slugs\nproject._scan_stale_wiki_slugs_db\n@233ms\n33.53 ms"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="build hot-memories section\nproject._build_hot_memories\n@267ms\n54.25 ms"];
+    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="build wiki-pages section\nproject._build_wiki_pages\n@321ms\n94.35 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="list wiki catalog\n_WikiMixin.list_wiki_catalog\n@416ms\n89.03 ms"];
+    "s6" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="compute slug prefix ×486\nproject._slug_prefix\n@505ms\n5.43 ms"];
     "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@536ms\n9.38 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];

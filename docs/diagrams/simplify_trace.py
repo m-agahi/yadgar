@@ -148,6 +148,122 @@ NOTES: dict[str, dict] = {
     "wiki_delete": {"note": "traced the not-found path (probe page never committed)"},
 }
 
+# Friendly human-readable labels for every span that appears as a kept box.
+# Keys are the *exact* `.short` values (last 1-2 dotted segments produced by
+# `Span.short`).  Keying on the short form keeps this dict reorg-stable — the
+# module prefix changes constantly in this repo, the leaf name does not.
+ALIASES: dict[str, str] = {
+    # ── retrieval pipeline ──────────────────────────────────────────────────
+    "_run_fts_bm25": "FTS BM25 keyword search",
+    "_collect_vector_scores": "vector KNN search",
+    "Retriever.ppr_retrieve": "personalized PageRank",
+    "Retriever.spreading_activation": "spreading activation BFS",
+    "_search_profiles_and_beliefs": "profile & belief search",
+    "_fuse_scores": "convex score fusion",
+    "_inject_ce_diversity": "cross-encoder diversity inject",
+    "_rerank_engram_links": "engram-link rerank",
+    "mmr_rerank": "MMR diversity rerank",
+    "LocalMLClient._try_gte_reranker": "cross-encoder rerank (GTE)",
+    "RulesEngine.apply_rules": "rules engine — apply rules",
+    # ── wiki retrieval ───────────────────────────────────────────────────────
+    "WikiStore._collect_wiki_fts_scores": "wiki FTS BM25",
+    "WikiStore._collect_wiki_vector_scores": "wiki vector KNN",
+    "EmbeddingEngine.encode": "embed query",
+    "search_wiki_vectors": "wiki KNN (storage)",
+    # ── storage reads ────────────────────────────────────────────────────────
+    "get_memories_by_ids": "fetch memories by ID",
+    "get_recent_memories_since": "fetch recent memories",
+    "get_anchored_memories_scoped": "fetch anchored memories",
+    "boost_memories_access": "boost heat on results",
+    "MemoryThermodynamics.record_access": "record access heat",
+    "get_wiki_page": "fetch wiki page",
+    "list_wiki_catalog": "list wiki catalog",
+    "get_active_checkpoint": "fetch active checkpoint",
+    "get_all_causal_edges": "fetch causal DAG",
+    "EngramAllocator.get_slot_statistics": "engram slot statistics",
+    # ── cognitive map / restore ──────────────────────────────────────────────
+    "CognitiveMap.build_transition_matrix": "build SR transition matrix",
+    "CognitiveMap.has_sufficient_data": "check SR data sufficiency",
+    "CheckpointRestore._fetch_hot_memories": "fetch hot memories (restore)",
+    "CheckpointRestore._fetch_recent_memories_safe": "fetch recent memories (restore)",
+    "CheckpointRestore._predict_memories": "SR predictive recall",
+    # ── write pipeline / validation ──────────────────────────────────────────
+    "phase_validate": "validate memorize inputs",
+    "_validate_content_and_provenance": "validate content & provenance",
+    "_validate_gate_and_policy": "gate & write-policy check",
+    "gate_or_reject": "secret gate check",
+    "is_allowlisted": "allowlist check",
+    "RulesEngine.check_write_policy": "write-policy rule check",
+    "_enqueue": "enqueue memorize job",
+    "FileQueue.enqueue": "file-queue enqueue",
+    # ── project_brief pipeline ───────────────────────────────────────────────
+    "_fetch_presence_rows": "fetch init/active/checkpoint presence",
+    "_build_wiki_pages": "build wiki-pages section",
+    "_build_hot_memories": "build hot-memories section",
+    "_build_anchor_rows_catalog": "build anchor catalog",
+    "_scan_stale_wiki_slugs_db": "scan stale wiki slugs",
+    "_slug_prefix": "compute slug prefix",
+    "_current_epoch": "epoch cache hit",
+    # ── branch / identity helpers ────────────────────────────────────────────
+    "_detect_branch": "detect git branch",
+    "_detect_branch_cached": "detect git branch (cached)",
+    "_get_default_branch_cached": "detect default branch (cached)",
+    # ── anchor / checkpoint validation ───────────────────────────────────────
+    "_validate_anchor_inputs": "validate anchor inputs",
+    "_validate_checkpoint_surrogates": "validate checkpoint fields",
+    # ── rules & misc ─────────────────────────────────────────────────────────
+    "RulesEngine.get_applicable_rules": "fetch applicable rules",
+    "_get_file_queue": "get DLQ file-queue handle",
+    # ── forward / admin boundary ─────────────────────────────────────────────
+    "_forward_admin": "forward to backend /admin",
+    "POST": "HTTP POST to backend",
+    "GET /admin/dbsize": "backend DB-size query",
+    # ── admin tools / invariant checks ───────────────────────────────────────
+    "_count_q": "DB count query",
+    "_check_per_table_size": "check per-table size",
+    "_check_relationships": "check entity relationships",
+    "_check_memory_entity_orphans": "check memory/entity orphans",
+    "_check_memory_similarity_link": "check memory similarity links",
+    "_check_memory_transition": "check memory transitions",
+    "_check_engram_slot_distribution": "check engram slot distribution",
+    "_check_wiki_crossref": "check wiki cross-references",
+    "_ms_per_table_stats": "per-table row/byte stats",
+    # ── audit_anchors pipeline ───────────────────────────────────────────────
+    "_fetch_expired_rows": "fetch expired anchors",
+    "_fetch_grace_expired_rows": "fetch grace-period anchors",
+    "_fetch_cross_project_anchor_pool": "fetch cross-project anchor pool",
+    "_fetch_promote_rows": "fetch promote candidates",
+    "_fetch_redundant_pairs": "fetch redundant anchor pairs",
+    "_cosine_similarity": "cosine similarity",
+    # ── backend writes ───────────────────────────────────────────────────────
+    "embed": "embed & store (backend)",
+    "block_create": "create memory block",
+    "bookmark_add": "add bookmark",
+    "update_active_work": "update active work",
+    "WikiStore.delete": "delete wiki page",
+    # ── storage plumbing (opaque-box survivors) ───────────────────────────────
+    "_q": "SurrealDB query",
+}
+
+
+def _humanize(name: str) -> str:
+    """Fallback label for spans not in ALIASES.
+
+    Strips module path, splits snake_case and CamelCase, title-cases result.
+    E.g. "yadgar._shared.foo.Bar._do_something" → "Do Something".
+    """
+    tail = name.rsplit(".", 1)[-1].lstrip("_")
+    # split CamelCase
+    tail = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", tail)
+    # split snake_case
+    tail = tail.replace("_", " ")
+    return tail.strip().title() or name
+
+
+def _friendly(s: Span) -> str:
+    """Return the friendly display label for a span (alias or humanized fallback)."""
+    return ALIASES.get(s.short, _humanize(s.name))
+
 
 # --------------------------------------------------------------------------- #
 # Span tree
@@ -473,8 +589,15 @@ def _fmt_at(rel: float, total: float) -> str:
 
 
 def _pathline(name: str) -> str:
-    p = name.removeprefix("yadgar.")
-    return ("…" + p[-49:]) if len(p) > 50 else p
+    """Return a compact 2-segment tail for line-2 of a box label.
+
+    E.g. "yadgar._shared.retrieval.scoring._ScoringMixin._run_fts_bm25"
+    → "_ScoringMixin._run_fts_bm25"
+    Bare names like "POST" or "GET /admin/dbsize" pass through unchanged.
+    """
+    parts = name.split(".")
+    tail = ".".join(parts[-2:]) if len(parts) >= 2 else name
+    return tail
 
 
 def find_tool_span(root: Span, tool_base: str) -> Span | None:
@@ -521,12 +644,12 @@ def _stage_nodes(
     for i, s in enumerate(stages):
         nid = f"s{i}"
         used.add(nid)
-        head = s.short + (f" ×{s.count}" if s.count > 1 else "")
+        friendly = _friendly(s) + (f" ×{s.count}" if s.count > 1 else "")
         if s.note:
             # machine-derived owner attribution can be misled by interleaved
             # spans — allow a hand-tuned per-label override
-            head += f" ({meta.get('opaque_note', s.note)})"
-        lbl = f"{head}\\n{_pathline(s.name)}\\n{_fmt_at(s.rel, total)}"
+            friendly += f" ({meta.get('opaque_note', s.note)})"
+        lbl = f"{friendly}\\n{_pathline(s.name)}\\n{_fmt_at(s.rel, total)}"
         if any(s.name.endswith(e) for e in error_names):
             lbl = "✖ ERROR  " + lbl
         nodes.append(
@@ -546,7 +669,7 @@ def _callout(stages: list[Span], meta: dict, total: float) -> str:
         return ""
     top = max(stages, key=lambda s: s.dur)
     pct = 100.0 * top.dur / total if total else 0.0
-    head = top.short + (f" ×{top.count}" if top.count > 1 else "")
+    head = _friendly(top) + (f" ×{top.count}" if top.count > 1 else "")
     if top.note:
         head += f" ({meta.get('opaque_note', top.note)})"
     return f" · key cost: {head} = {_fmt_ms(top.dur)} ({pct:.0f}%)"

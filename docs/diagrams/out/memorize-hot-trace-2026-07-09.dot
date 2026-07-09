@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="memorize-hot — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace b2422c6c · total 5.4 ms · key cost: _detect_branch_cached = 0.42 ms (8%)\nsame spans as cold: dup-reject no longer at boundary (drainer-side now)";
+trace b2422c6c · total 5.4 ms · key cost: detect git branch (cached) = 0.42 ms (8%)\nsame spans as cold: dup-reject no longer at boundary (drainer-side now)";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -17,12 +17,12 @@ trace b2422c6c · total 5.4 ms · key cost: _detect_branch_cached = 0.42 ms (8%)
     fontcolor="#26456b";
     fontname="Helvetica-Bold";
     "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="memorize() entry\nMCP dispatch → tool.memorize\n@2.7ms\n2.73 ms"];
-    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="phase_validate\n_shared.write_exec.validate.phase_validate\n@2.8ms\n0.22 ms"];
-    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_validate_gate_and_policy\n…red.write_exec.validate._validate_gate_and_policy\n@3.0ms\n0.1 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="gate_or_reject\n_shared.secrets.gate_or_reject\n@3.0ms\n0.14 ms"];
-    "s3" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="RulesEngine.check_write_policy\n…hared.rules_engine.RulesEngine.check_write_policy\n@3.2ms\n0.06 ms"];
-    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_detect_branch_cached\ncore.server.tools.project._detect_branch_cached\n@3.4ms\n0.42 ms"];
-    "s5" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_enqueue\ncore.server.tools.memorize._enqueue\n@3.9ms\n0.26 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="validate memorize inputs\nvalidate.phase_validate\n@2.8ms\n0.22 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="gate & write-policy check\nvalidate._validate_gate_and_policy\n@3.0ms\n0.1 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="secret gate check\nsecrets.gate_or_reject\n@3.0ms\n0.14 ms"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="write-policy rule check\nRulesEngine.check_write_policy\n@3.2ms\n0.06 ms"];
+    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="detect git branch (cached)\nproject._detect_branch_cached\n@3.4ms\n0.42 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="enqueue memorize job\nmemorize._enqueue\n@3.9ms\n0.26 ms"];
     "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@5.4ms\n1.23 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];

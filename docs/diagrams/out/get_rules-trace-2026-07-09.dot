@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="get_rules — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace f7d14c9c · total 5.3 ms · key cost: RulesEngine.get_applicable_rules = 0.02 ms (0%)";
+trace f7d14c9c · total 5.3 ms · key cost: fetch applicable rules = 0.02 ms (0%)";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -17,7 +17,7 @@ trace f7d14c9c · total 5.3 ms · key cost: RulesEngine.get_applicable_rules = 0
     fontcolor="#26456b";
     fontname="Helvetica-Bold";
     "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="get_rules() entry\nMCP dispatch → tool.get_rules\n@3.1ms\n3.07 ms"];
-    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="RulesEngine.get_applicable_rules\n…red.rules_engine.RulesEngine.get_applicable_rules\n@3.1ms\n0.02 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="fetch applicable rules\nRulesEngine.get_applicable_rules\n@3.1ms\n0.02 ms"];
     "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@5.3ms\n2.14 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];
