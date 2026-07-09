@@ -1,5 +1,9 @@
 # PLAN — anchor-signal gap: project_brief over-signals audit_anchors (#20)
 
+**STATUS: SHIPPED 6e1629cb (#124) except shared-helper extraction; residual predicate drift fixed in fix/anchor-signal-predicate-parity (core 5.121.0).**
+
+See docs/plans/archive/ for archived copy.
+
 Created 2026-06-25 (improvement-train #29, group C). Root-caused against current code,
 read-only. theme: signals / anchors / project_brief. priority: medium (annoyance +
 trust erosion — a recommendation that resolves to zero work trains the instance to
