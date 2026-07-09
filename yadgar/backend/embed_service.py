@@ -1137,6 +1137,11 @@ class RecallRequest(BaseModel):
     stage_overrides: dict | None = None
     tags: list[str] | None = None
     knobs: dict = {}  # noqa: B006 — Pydantic default_factory not needed here
+    # ADR-0077: client compute budget in ms. When set, the route converts it to
+    # a monotonic deadline and the pipeline aborts remaining stages once it is
+    # exceeded (partial results) — a hook client that already timed out at 2.0s
+    # must not keep the backend computing. None = no deadline (MCP recall path).
+    deadline_ms: int | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -1216,6 +1221,13 @@ async def recall_route(
         _fanout_recall,
     )
 
+    # ADR-0077: convert the client's compute budget to a monotonic deadline ONCE,
+    # at route entry — the pipeline checks it between stages and aborts remaining
+    # work (partial results) when exceeded. None = no deadline.
+    deadline: float | None = (
+        time.monotonic() + req.deadline_ms / 1000.0 if req.deadline_ms else None
+    )
+
     # Run the pipeline in a thread (CPU-bound + IO-bound mix; don't block the event loop).
     def _run_pipeline() -> list[dict]:
         storage = _backend_get_storage()
@@ -1242,6 +1254,7 @@ async def recall_route(
                 type_filter=req.type,
                 tags=req.tags,
                 profile=req.profile,
+                deadline=deadline,
             )
 
         _apply_recall_db_side_effects(merged, req.query, storage)

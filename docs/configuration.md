@@ -117,7 +117,7 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
-| `retrieval_profile` | `YADGAR_RETRIEVAL_PROFILE` | str | `balanced` | Preset: `fast`, `balanced`, or `full`. *(no FIELD_META)* |
+| `retrieval_profile` | `YADGAR_RETRIEVAL_PROFILE` | str | `balanced` | Preset: `fast`, `balanced`, or `full`. `fast` = memory-only BM25+HNSW+fusion: no CE/NLI/MP, no wiki fanout, no engram-link enrichment (ADR-0077 — the hook-latency-budget profile). |
 | `wrrf_candidate_multiplier` | `YADGAR_WRRF_CANDIDATE_MULTIPLIER` | int | `10` | Candidate pool size = `max_results * this`. |
 | `wrrf_vector_weight` | `YADGAR_WRRF_VECTOR_WEIGHT` | float | `1.0` | Weight of vector similarity signal in WRRF fusion. |
 | `wrrf_fts_weight` | `YADGAR_WRRF_FTS_WEIGHT` | float | `0.5` | Weight of full-text search signal in WRRF fusion. |
@@ -438,7 +438,7 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
 | `hook_recall_timeout_s` | `YADGAR_HOOK_RECALL_TIMEOUT_S` | float | `2.0` | Maximum seconds `asyncio.wait_for` waits for `retriever.recall` in hook handlers (prompt-recall, instructions-loaded, subagent-start). On timeout: WARN log + `yadgar_hook_recall_timeout_total` incremented + empty result. Raise to 5.0 if the counter rate is too high. |
-| `hook_recall_pool_workers` | `YADGAR_HOOK_RECALL_POOL_WORKERS` | int | `1` | **SEPARATE pool just for hook auto-recalls** (SessionStart/UserPrompt), isolated so hook bursts cannot starve MCP tool calls (ADR-0025). `1` minimizes CPU competition with the event loop on the `--cpus 1` core (freeze-safest). Changing this does NOT affect `tool_pool_workers` — the two pools are independent. Raise only if hook serialization is measurably a bottleneck (`yadgar_hook_recall_timeout_total` metric). Restart to apply. |
+| `hook_recall_pool_workers` | `YADGAR_HOOK_RECALL_POOL_WORKERS` | int | `2` | **SEPARATE pool just for hook auto-recalls** (SessionStart/UserPrompt), isolated so hook bursts cannot starve MCP tool calls (ADR-0025). Default 2 (ADR-0077): post-#166 the hook recall is a forwarded HTTP wait (idle thread, not a GIL-holding in-core recall); pool=1 starved the second of every concurrent session pair. Changing this does NOT affect `tool_pool_workers` — the two pools are independent. Lower back to 1 only if loop-lag returns on the `--cpus 1` core (`yadgar_event_loop_lag_max` + `yadgar_hook_recall_timeout_total` metrics). Restart to apply. |
 
 ---
 

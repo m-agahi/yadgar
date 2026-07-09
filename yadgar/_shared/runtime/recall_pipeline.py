@@ -49,10 +49,12 @@ recall.py re-imports all of these so its existing call sites are unchanged.
 from __future__ import annotations
 
 import logging
+import time
 
 import yadgar._shared.runtime.state as _st  # sibling; avoid server/__init__ re-entry (Car 1)
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.retrieval.profiles import PROFILES
 from yadgar._shared.retrieval.providers.base import Scope
 from yadgar._shared.retrieval.providers.fusion import fuse_candidates
 from yadgar._shared.retrieval.providers.memory import MemoryProvider
@@ -284,8 +286,43 @@ def _apply_fanout_boosts(
     return pooled
 
 
+@observe(tier="hot", metric="tools.recall._should_skip_wiki", span=False)
+def _should_skip_wiki(
+    query: str,
+    type_filter: str,
+    profile: str | None,
+    deadline: float | None,
+) -> bool:
+    """Return True when the WikiProvider arm of the fanout must be skipped.
+
+    All suppression rules apply ONLY under type_filter="all" (the default that
+    mirrors the legacy path) — an explicit type="wiki" honors caller intent.
+
+    Rules (any one suffices):
+      - Episodic/temporal query ("what happened yesterday") — wants memories,
+        not reference docs (legacy-path parity).
+      - ADR-0077: the profile declares wiki=False (fast does — the wiki arm cost
+        ~450ms per hook recall and pushed hook p50 to the 2.0s budget). Unknown
+        profile strings fail open (wiki stays on).
+      - ADR-0077: the client deadline is already exceeded — abort remaining
+        stages and return the partial (memory-only) result rather than keep
+        computing past client abandonment.
+    """
+    if type_filter != "all":
+        return False
+    if _is_episodic_query(query):
+        return True
+    if deadline is not None and time.monotonic() >= deadline:
+        return True
+    if profile is not None:
+        profile_def = PROFILES.get(profile)
+        if profile_def is not None and not profile_def.get("wiki", True):
+            return True
+    return False
+
+
 @observe(tier="stage", metric="tools.recall._fanout_recall", span=False)
-def _fanout_recall(  # noqa: PLR0913 — 9 params allowlisted (I30); Phase 2 wraps params
+def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wraps params
     query: str,
     max_results: int,
     min_heat: float,
@@ -295,6 +332,7 @@ def _fanout_recall(  # noqa: PLR0913 — 9 params allowlisted (I30); Phase 2 wra
     type_filter: str = "all",
     tags: list[str] | None = None,
     profile: str | None = None,
+    deadline: float | None = None,
 ) -> list[dict]:
     """Fan out recall to MemoryProvider + WikiProvider, fuse + dedup results.
 
@@ -336,6 +374,9 @@ def _fanout_recall(  # noqa: PLR0913 — 9 params allowlisted (I30); Phase 2 wra
         tags: Tag include filter for wiki retrieval. When set, triggers SQL pre-filter
               (search_wiki_vectors_tagged) and suppresses the default agent-prompt exclude.
               None (default) = general recall with agent-prompt exclusion active.
+        deadline: Monotonic deadline from the client's deadline_ms budget
+              (ADR-0077): exceeded → remaining stages skipped, partial result.
+              Threaded into MemoryProvider → Retriever.recall. None = off.
 
     Returns:
         List of raw memory/wiki dicts from providers, fused by CE rerank,
@@ -376,16 +417,18 @@ def _fanout_recall(  # noqa: PLR0913 — 9 params allowlisted (I30); Phase 2 wra
 
     # Memory provider — active when type_filter is "all" or "memory"
     if type_filter in ("all", "memory") and _st._retriever is not None:
-        memory_provider = MemoryProvider(_st._retriever, profile=profile)
+        memory_provider = MemoryProvider(_st._retriever, profile=profile, deadline=deadline)
         memory_candidates = memory_provider.candidates(query, scope, limit=pool_limit)
 
-    # Wiki provider — active when type_filter is "all" or "wiki".
-    # Parity with the legacy path (recall() body): wiki blending is skipped for
-    # episodic/temporal queries ("what happened yesterday"), which want memories
-    # not reference docs. Only suppress under type="all" (the default that mirrors
-    # legacy); an explicit type="wiki" honors the caller's stated intent.
-    _skip_wiki_episodic = type_filter == "all" and _is_episodic_query(query)
-    if type_filter in ("all", "wiki") and _st._wiki is not None and not _skip_wiki_episodic:
+    # Wiki provider — active when type_filter is "all" or "wiki". Suppression
+    # rules (episodic query / fast profile / deadline exceeded) live in
+    # _should_skip_wiki and apply ONLY under type="all" — an explicit
+    # type="wiki" honors the caller's stated intent.
+    if (
+        type_filter in ("all", "wiki")
+        and _st._wiki is not None
+        and not _should_skip_wiki(query, type_filter, profile, deadline)
+    ):
         wiki_provider = WikiProvider(_st._wiki, tags=tags, exclude_tags=_wiki_exclude)
         wiki_candidates = wiki_provider.candidates(query, scope, limit=pool_limit)
 

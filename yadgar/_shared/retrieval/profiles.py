@@ -8,6 +8,18 @@ Profile dicts carry two representations for backward compatibility:
 - Legacy keys (``signals``, ``cross_encoder``, ``nli``, ``multi_passage``):
   still consumed by ``_RerankingMixin._apply_rerank_pipeline`` and
   ``_FusionMixin._build_initial_results`` until those are fully ported.
+
+ADR-0077 extension (fast profile is memory-only):
+- ``wiki`` (bool, default True): when False, ``_fanout_recall`` skips the
+  WikiProvider arm entirely on the default ``type_filter="all"`` path
+  (an explicit ``type="wiki"`` still honors caller intent). Measured: the
+  wiki arm cost ~450ms per hook recall.
+- ``engram_links`` (bool, default True): when False,
+  ``_apply_rerank_pipeline`` skips ``_rerank_engram_links`` (one
+  ``get_temporally_linked`` DB query per result row — measured 250-560ms).
+
+So ``fast`` = memory-only BM25+HNSW+fusion: no CE/NLI/MP, no wiki fanout,
+no engram-link enrichment — the hook-latency-budget profile (~0.8s target).
 """
 
 from __future__ import annotations
@@ -32,6 +44,10 @@ PROFILES: dict[str, dict] = {
         "cross_encoder": False,
         "nli": False,
         "multi_passage": False,
+        # ADR-0077 hotfix: fast must actually be fast — memory-only fanout
+        # (skip WikiProvider, ~450ms) + no engram-link rerank (250-560ms).
+        "wiki": False,
+        "engram_links": False,
     },
     "balanced": {
         # Current default — reproduces legacy behavior exactly

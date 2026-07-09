@@ -149,26 +149,21 @@ def test_hook_instructions_loaded_failure_counter_on_exception():
         yadgar_hook_failure_total, hook="instructions_loaded", reason="ValueError"
     )
 
-    import yadgar._shared.runtime.state as _st
     import yadgar.core.server.http as _http
-
-    # Make retriever.recall raise ValueError
-    mock_retriever = MagicMock()
-    mock_retriever.recall.side_effect = ValueError("deliberate test error")
 
     mock_request = MagicMock()
     mock_request.query_params = MagicMock()
     mock_request.query_params.get = MagicMock(side_effect=lambda k, d="": d)
 
-    with patch.object(_st, "_retriever", mock_retriever):
-        # This handler currently catches exceptions internally and returns {"text": ""}
-        # After PR-K, a re-raise path should increment the failure counter.
-        # For now, we test that when the handler encounters an unhandled exception
-        # from within asyncio.to_thread (which should propagate), the counter fires.
-        # We simulate by patching asyncio.to_thread to raise directly.
-        with patch("asyncio.to_thread", side_effect=ValueError("deliberate test error")):
-            # The handler should catch this — but PR-K must still increment the counter
-            asyncio.run(_http.hook_instructions_loaded(mock_request))
+    # ADR-0078: the hook forwards to the backend — make the FORWARD raise
+    # ValueError (the seam replacing the old in-core retriever.recall raise).
+    # The handler catches it and returns {"text": ""}, but the failure counter
+    # must still increment with the exception class as the reason label.
+    with patch(
+        "yadgar.core.server.http._forward_hook_recall",
+        side_effect=ValueError("deliberate test error"),
+    ):
+        asyncio.run(_http.hook_instructions_loaded(mock_request))
 
     after = _labeled_counter_value(
         yadgar_hook_failure_total, hook="instructions_loaded", reason="ValueError"

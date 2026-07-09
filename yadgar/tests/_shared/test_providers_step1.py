@@ -180,6 +180,7 @@ class TestMemoryProvider:
         provider.candidates("test query", default_scope, limit=10)
         # Phase 2a forward-only: MemoryProvider now threads a `profile` kwarg
         # (None when constructed without one) into Retriever.recall().
+        # ADR-0077: it also threads `deadline` (None when constructed without one).
         mock_retriever.recall.assert_called_once_with(
             "test query",
             max_results=10,
@@ -187,6 +188,7 @@ class TestMemoryProvider:
             current_branch="feat/test",
             default_branch="master",
             profile=None,
+            deadline=None,
         )
 
     def test_candidates_returns_candidate_objects(self, mock_retriever, default_scope):

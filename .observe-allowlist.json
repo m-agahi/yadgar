@@ -186,6 +186,10 @@
     "category": "hot-loop",
     "rationale": "Nested closure that runs the offloaded callable on the worker thread inside a copied contextvars context; the tool body it runs carries its own trace_span and the instrumented run_offloaded boundary wraps the offload, so a per-run signal here is redundant."
   },
+  "http:_recall_with_timeout._recall_in_ctx": {
+    "category": "hot-loop",
+    "rationale": "Nested closure that runs the hook recall callable on the bounded pool thread inside an attached OTel context (ADR-0077 D); _recall_with_timeout is the observed boundary and _forward_hook_recall carries its own boundary signal, so a per-run signal here is redundant."
+  },
   "http:api_heat_histogram._compute": {
     "category": "hot-loop",
     "rationale": "Nested compute closure run under the api_heat_histogram handler; the handler is the request boundary that carries the span, a separate per-call signal on the inner bucket-computation adds cardinality with no additional ops insight."
