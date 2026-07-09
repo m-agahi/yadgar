@@ -69,7 +69,7 @@ jobs:
           yadgar/tests/hooks/
           yadgar/tests/_meta/
           -q --tb=short
-          -n auto --dist loadgroup
+          -n 4 --dist loadgroup
           --reruns 2 --reruns-delay 2
           -m 'not integration and not e2e'
 
@@ -101,12 +101,18 @@ jobs:
           python -m pytest
           yadgar/tests/_shared/
           -q --tb=short
-          -n auto --dist loadgroup
+          -n 4 --dist loadgroup
           --reruns 2 --reruns-delay 2
           -m 'not integration and not e2e'
 
   test-backend:
     runs-on: ubuntu-latest
+    # Round-4 stagger: even at -n 4/leg, 3 concurrent heavy legs (12 surreal+model
+    # workers) still spiked host RAM — backend leg saw 8 setup ERRORS (httpx
+    # ConnectError, surreal child died mid-leg). Chain backend behind test-fast
+    # (the shortest leg) so peak wave-1 concurrency drops to 2 heavy legs
+    # (shared + backend-after-fast).
+    needs: [test-fast]
     container:
       image: docker.io/openfantasy/yadgar-ci:5.73.0
     env:
@@ -133,12 +139,32 @@ jobs:
           python -m pytest
           yadgar/tests/backend/
           -q --tb=short
-          -n auto --dist loadgroup
+          -n 4 --dist loadgroup
           --reruns 2 --reruns-delay 2
           -m 'not integration and not e2e'
 
   test-core:
     runs-on: ubuntu-latest
+    # Wave-2 stagger: run AFTER the three lighter jobs (test-fast, test-shared,
+    # test-backend) finish so all six legs + viz don't race for host RAM at once.
+    # Host OOM observed 2026-07-09 (three rounds): (1) test-core group 3 (a surreal
+    # child killed 137 mid-leg) + viz Playwright Layer 2 (845 Killed);
+    # (2) wave-1 legs at -n auto — surreal-OOM cascade ("namespace 'yadgar' does
+    # not exist" + httpx ConnectError, mid-leg surreal death);
+    # (3) even at -n 4/leg, 3 concurrent heavy legs (12 surreal+model workers)
+    # still spiked — backend leg got 8 setup ERRORS (httpx ConnectError), so
+    # test-backend is now chained behind test-fast (see its needs: above);
+    # (4) wave 2 hit the SAME peak: 3 core matrix legs concurrent = 12 workers →
+    # 30 setup ERRORS (httpx ConnectError, surreal child death). The ceiling is
+    # per-WAVE: max 2 heavy legs / 8 workers concurrent — so the core matrix is
+    # reduced 3→2 splits (least_duration rebalances, ~equal to the shared leg).
+    # The runner host OOMs with concurrent legs at -n auto: each auto leg spawns
+    # workers = ALL runner cores (/proc/meminfo reports host RAM, not the cgroup
+    # limit), each worker carrying surreal + model RAM. Fix: 4 workers/leg cap on
+    # ALL test legs + wave staggering + ≤2 legs per wave. Group packing is
+    # duration-based (--splitting-algorithm least_duration) and memory-blind —
+    # the cap, the waves, and the per-wave leg count are the only levers.
+    needs: [test-fast, test-shared, test-backend]
     container:
       image: docker.io/openfantasy/yadgar-ci:5.73.0
     env:
@@ -150,7 +176,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [1, 2, 3]
+        group: [1, 2]
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -172,14 +198,14 @@ jobs:
 
       # NOTE: Forgejo act_runner does NOT expand ${{ }} expressions in a step
       # `name:` (only in `run:`/`if:`/`env:`). Literal name used here.
-      - name: Run tests (core, pytest-split chunk, 3-way, least_duration)
+      - name: Run tests (core, pytest-split chunk, 2-way, least_duration)
         run: >
           python -m pytest yadgar/tests/core/
           -q --tb=short
           -n 4 --dist loadgroup
           --reruns 2 --reruns-delay 2
           -m 'not integration and not e2e'
-          --splits 3 --group ${{ matrix.group }}
+          --splits 2 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
           # -n 4: capped — CI runner OOMs at auto worker count because /proc/meminfo
           # reports host RAM, not the cgroup limit; 4 chosen conservatively — tune upward later

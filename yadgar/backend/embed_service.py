@@ -66,6 +66,9 @@ from yadgar.backend.embed_service_metrics import (
     embed_dbsize_cache_misses_total as _dbsize_cache_misses,
 )
 from yadgar.backend.embed_service_metrics import (
+    embed_drainer_running as _drainer_running,
+)
+from yadgar.backend.embed_service_metrics import (
     embed_restart_reason_total as _restart_reason_total,
 )
 from yadgar.backend.embed_service_metrics import (
@@ -371,6 +374,146 @@ async def _run_model_warmup() -> None:
             )
 
 
+# ---------------------------------------------------------------------------
+# backend 5.30.1 — queue drainer lifecycle (P0 fix)
+#
+# R3 Car 1 (87143dd0) moved QueueDrainer core→backend and removed the
+# construction from core _get_file_queue with the note "started by the backend
+# lifecycle half" — but no backend startup code ever built it, so production
+# writes sat in queue/ forever. This is the missing wiring; the FileQueue +
+# DrainerConfig construction mirrors what Car 1 removed from core exactly.
+# ---------------------------------------------------------------------------
+
+_queue_drainer = None  # live QueueDrainer | None — module-level for /health + shutdown
+
+
+@observe(tier="stage")
+def _queue_base_path() -> Path | None:
+    """Resolve the shared file-queue root from YADGAR_QUEUE_BASE (R3 Car 0).
+
+    The backend container mounts the shared queue volume rw at /queue-data and
+    sets YADGAR_QUEUE_BASE; core mounts the SAME volume at /data. No fallback
+    to YADGAR_DATA_DIR here: on the backend /data is the read-only DB mount,
+    and unit tests always set YADGAR_DATA_DIR — falling back would silently
+    start a drainer where none belongs. Unset → drainer disabled (gauge 0).
+    """
+    base = os.environ.get("YADGAR_QUEUE_BASE", "").strip()
+    return Path(base) if base else None
+
+
+@observe(tier="stage")
+def _start_queue_drainer():
+    """Construct + start the backend QueueDrainer (the R3 Car 1 write-half).
+
+    Wiring mirrors the pre-R3 core _get_file_queue construction: FileQueue on
+    the queue root + QueueDrainer(storage_factory=_get_storage) with
+    drain_interval and DrainerConfig from settings. Ensures the recall engine
+    stack (incl. _st._storage / _st._embeddings) is up BEFORE the first drain
+    pass — ensure_write_engines and the write_exec replay impls read _st.*.
+
+    Fail-loud: queue root missing/unwritable, or any construction error →
+    ERROR log + yadgar_embed_queue_drainer_running=0 + /health drainer=false.
+    Never raises — the embed/rerank service must still come up.
+
+    Returns the started QueueDrainer, or None when disabled/failed.
+    """
+    global _queue_drainer
+    base = _queue_base_path()
+    if base is None:
+        _drainer_running.set(0)
+        logger.warning(
+            "queue_drainer_disabled",
+            extra={
+                "event": "queue_drainer_disabled",
+                "reason": "YADGAR_QUEUE_BASE unset (production backend must set it — R3 Car 0)",
+            },
+        )
+        return None
+
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        _probe = base / ".drainer-write-probe"
+        _probe.write_text("1")
+        _probe.unlink()
+    except OSError as exc:
+        _drainer_running.set(0)
+        logger.error(
+            "queue_drainer_start_failed",
+            extra={
+                "event": "queue_drainer_start_failed",
+                "queue_base": str(base),
+                "error": str(exc),
+            },
+        )
+        return None
+
+    try:
+        import yadgar._shared.runtime.state as _st  # noqa: PLC0415
+        from yadgar._shared.config import get_settings  # noqa: PLC0415
+        from yadgar._shared.file_queue.queue import FileQueue  # noqa: PLC0415
+        from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+        from yadgar.backend.queue_drainer import DrainerConfig, QueueDrainer  # noqa: PLC0415
+
+        # Engines first: replay impls + ensure_write_engines read _st._storage.
+        _ensure_recall_engines()
+
+        settings = get_settings()
+        fq = FileQueue(base, wiki_prefix=settings.WIKI_SLUG_PREFIX)
+        drainer = QueueDrainer(
+            fq,
+            _get_storage,
+            drain_interval=float(settings.QUEUE_DRAIN_INTERVAL),
+            config=DrainerConfig(
+                max_permanent_attempts=settings.QUEUE_MAX_PERMANENT_ATTEMPTS,
+                max_transient_attempts=settings.QUEUE_MAX_TRANSIENT_ATTEMPTS,
+                backoff_base_s=float(settings.QUEUE_BACKOFF_BASE_S),
+                backoff_max_s=float(settings.QUEUE_BACKOFF_MAX_S),
+                dlq_retention_days=settings.QUEUE_DLQ_RETENTION_DAYS,
+            ),
+        )
+        drainer.start()
+    except Exception as exc:  # noqa: BLE001 — embed/rerank must still serve
+        _drainer_running.set(0)
+        logger.error(
+            "queue_drainer_start_failed",
+            extra={
+                "event": "queue_drainer_start_failed",
+                "queue_base": str(base),
+                "error": str(exc),
+            },
+        )
+        return None
+
+    _st._file_queue = fq
+    _st._queue_drainer = drainer
+    _queue_drainer = drainer
+    _drainer_running.set(1)
+    logger.info(
+        "queue_drainer_started",
+        extra={
+            "event": "queue_drainer_started",
+            "queue_base": str(base),
+            "drain_interval_s": drainer._drain_interval,
+        },
+    )
+    return drainer
+
+
+@observe(tier="stage")
+def _stop_queue_drainer() -> None:
+    """Stop the QueueDrainer on shutdown (no-op when never started)."""
+    global _queue_drainer
+    if _queue_drainer is None:
+        return
+    try:
+        _queue_drainer.stop()  # sets stop event + joins (5s cap)
+        logger.info("queue_drainer_stopped", extra={"event": "queue_drainer_stopped"})
+    except Exception as exc:  # noqa: BLE001 — shutdown must proceed
+        logger.warning("queue_drainer stop error: %s", exc)
+    _queue_drainer = None
+    _drainer_running.set(0)
+
+
 async def _require_admin_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ) -> None:
@@ -538,6 +681,12 @@ async def lifespan(app: FastAPI):
     except Exception as _exc:
         logger.warning("cache restore failed: %s", _exc)
 
+    # backend 5.30.1 (P0): start the queue drainer — the R3 Car 1 write-half.
+    # Blocking construction (engine init + thread start) runs in a worker
+    # thread so the event loop stays free; awaited so the drainer is running
+    # (or fail-loud logged) before the app reports ready.
+    await asyncio.to_thread(_start_queue_drainer)
+
     # Start periodic snapshot background task (ExceptionGroup-safe: task is
     # cancelled on lifespan exit).
     _snap_task = asyncio.create_task(_run_cache_snapshot_task())
@@ -545,6 +694,9 @@ async def lifespan(app: FastAPI):
     _warmup_task = asyncio.create_task(_run_model_warmup())
 
     yield
+
+    # backend 5.30.1: stop the queue drainer first (join capped at 5s).
+    await asyncio.to_thread(_stop_queue_drainer)
 
     # Cancel snapshot task on shutdown
     _snap_task.cancel()
@@ -835,6 +987,10 @@ async def health(response: Response):
         "status": "ok" if (db_ok and engine_loaded) else "degraded",
         "db": db_ok,
         "model": engine_loaded,
+        # backend 5.30.1: drainer state is informational (alerting via the
+        # yadgar_embed_queue_drainer_running gauge) — does NOT gate 503, so a
+        # queue-mount misconfig cannot restart-loop the embed/rerank service.
+        "drainer": _queue_drainer is not None and _queue_drainer.is_alive(),
     }
     if not db_ok or not engine_loaded:
         response.status_code = 503
