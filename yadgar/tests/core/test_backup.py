@@ -81,8 +81,11 @@ class TestCreateSnapshot:
                 assert dst_file.exists(), f"Missing {rel} in snapshot"
                 assert dst_file.read_bytes() == src_file.read_bytes()
 
-    def test_default_snapshot_dir_is_parent_of_db(self, tmp_path: Path) -> None:
-        """When snapshot_dir=None, parent of db_path is used."""
+    def test_default_snapshot_dir_is_backups_surql(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When snapshot_dir=None, DATA_DIR/backups/surql/ is used (ADR-0076 D4)."""
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
         from yadgar.core.backup import create_snapshot
 
         db_parent = tmp_path / "yadgar_home"
@@ -90,7 +93,7 @@ class TestCreateSnapshot:
         db = _make_dummy_db(db_parent / "surreal_db")
         result = create_snapshot(db)
 
-        assert result.parent == db_parent
+        assert result.parent == tmp_path / "backups" / "surql"
 
     def test_raises_runtime_error_on_missing_source(self, tmp_path: Path) -> None:
         """Missing db_path must raise RuntimeError."""
@@ -585,3 +588,81 @@ class TestRoundTripIntegrity:
         assert snap_utf8.read_bytes() == src_utf8.read_bytes(), (
             "UTF-8 file must be byte-identical in snapshot"
         )
+
+
+# ---------------------------------------------------------------------------
+# D4 path-layout: create_snapshot default → {DATA_DIR}/backups/surql/
+# ---------------------------------------------------------------------------
+
+
+class TestBackupPathLayout:
+    """ADR-0076 D4: default snapshot_dir must be DATA_DIR/backups/surql/ (mkdir parents)."""
+
+    def test_default_snapshot_dir_is_backups_surql(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """create_snapshot(db) with no snapshot_dir uses DATA_DIR/backups/surql/."""
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        from yadgar.core.backup import create_snapshot
+
+        db = _make_dummy_db(tmp_path / "surreal_db")
+        result = create_snapshot(db)
+
+        expected_parent = tmp_path / "backups" / "surql"
+        assert result.parent == expected_parent, (
+            f"Expected snapshot under {expected_parent}, got {result.parent}"
+        )
+
+    def test_default_snapshot_dir_mkdir_parents(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """backups/surql/ is created (parents=True) if absent."""
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        from yadgar.core.backup import create_snapshot
+
+        db = _make_dummy_db(tmp_path / "surreal_db")
+        assert not (tmp_path / "backups" / "surql").exists()
+        create_snapshot(db)
+        assert (tmp_path / "backups" / "surql").is_dir()
+
+    def test_explicit_snapshot_dir_overrides_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Passing snapshot_dir= overrides the default path (no regression)."""
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        custom_dir = tmp_path / "custom"
+        custom_dir.mkdir()
+        from yadgar.core.backup import create_snapshot
+
+        db = _make_dummy_db(tmp_path / "surreal_db")
+        result = create_snapshot(db, snapshot_dir=custom_dir)
+        assert result.parent == custom_dir
+
+    def test_prune_snapshots_in_backups_surql(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """prune_snapshots works with backups/surql/ as snapshot_dir."""
+        import time as _time
+
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        from yadgar.core.backup import prune_snapshots
+
+        snap_dir = tmp_path / "backups" / "surql"
+        snap_dir.mkdir(parents=True)
+        for i in range(5):
+            p = snap_dir / f"surreal_db.nightly-2026-07-09-10000{i}.surql"
+            p.write_bytes(b"content")
+            old_ts = _time.time() - (5 - i) * 100
+            os.utime(p, (old_ts, old_ts))
+
+        removed = prune_snapshots(snap_dir, "surreal_db.nightly-*.surql", retention=3)
+        assert len(removed) == 2
+        remaining = list(snap_dir.glob("surreal_db.nightly-*.surql"))
+        assert len(remaining) == 3
+
+    def test_knob_in_config_registry(self) -> None:
+        """YADGAR_BACKUP_RETENTION is registered in config_registry (no regression)."""
+        from yadgar._shared.config_registry import list_config
+
+        names = [e.name for e in list_config()]
+        assert "YADGAR_BACKUP_RETENTION" in names

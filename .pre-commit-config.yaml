@@ -41,7 +41,13 @@ repos:
         name: Enforce backend_version bump on backend build input changes
         language: system
         entry: python3 scripts/check_backend_bump.py
-        files: ^(entrypoint-backend\.sh|Dockerfile\.backend|backend/.*)$
+        # always_run (PR #175 local/CI parity): the script evaluates the
+        # cumulative branch diff vs merge-base(origin/master), exactly like the
+        # CI gate — so it must fire on EVERY commit, not only when a backend
+        # input is staged.  The old `files:` filter also missed yadgar/backend/**
+        # (matched top-level backend/ only) while the script matches a backend
+        # dir at any depth — hook silently skipped locally, CI failed.
+        always_run: true
         pass_filenames: false
 
       - id: check-complexity

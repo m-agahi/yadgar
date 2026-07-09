@@ -1070,9 +1070,11 @@ class TestBCD1_NightlyCompletesExitZero:
         _seed_memories(backend.url, 8)
         assert _table_count(backend.url, "memory") == 8, "BC-D1 setup: 8 rows expected"
 
-        # Snapshots land beside the DB dir (db_path.parent) — assert it's temp.
-        snapshot_dir = backend.db_path.parent
-        _assert_not_real_data_dir(snapshot_dir)
+        # ADR-0076 D4: snapshots now land in <data-root>/backups/surql/ (not
+        # directly in db_path.parent).  data-root == db_path.parent in tests.
+        # assert it's temp, not the real data dir.
+        snapshot_dir = backend.db_path.parent / "backups" / "surql"
+        _assert_not_real_data_dir(backend.db_path.parent)
 
         # Pass db_path + backend_url via args (no reliance on cached _paths.DB_PATH).
         args = SimpleNamespace(

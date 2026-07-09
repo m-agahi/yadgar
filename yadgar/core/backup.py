@@ -37,6 +37,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+from yadgar._shared import paths as _paths
 from yadgar._shared.observability.observe import observe
 
 _log = logging.getLogger(__name__)
@@ -88,7 +89,8 @@ def create_snapshot(
         db_path:      Source database directory (must exist for both modes; for
                       the export mode it identifies the snapshot basename).
         snapshot_dir: Directory in which to create the snapshot. Defaults to
-                      ``db_path.parent`` (i.e. the same directory as the DB).
+                      ``{DATA_DIR}/backups/surql/`` (created if absent) — the
+                      ADR-0076 D4 canonical location for surql backups.
         label:        Label component of the snapshot name (default ``"nightly"``).
         backend_url:  If given, take a logical ``.surql`` export from this live
                       SurrealDB backend instead of copying the on-disk dir.
@@ -104,7 +106,11 @@ def create_snapshot(
     if not db_path.exists():
         raise RuntimeError(f"create_snapshot: source db_path does not exist: {db_path}")
 
-    dest_dir = snapshot_dir if snapshot_dir is not None else db_path.parent
+    if snapshot_dir is not None:
+        dest_dir = snapshot_dir
+    else:
+        dest_dir = _paths.DATA_DIR / "backups" / "surql"
+        dest_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(UTC).strftime("%Y-%m-%d-%H%M%S")
     base_name = f"{db_path.name}.{label}-{ts}"
 

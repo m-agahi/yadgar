@@ -7250,3 +7250,73 @@ three prerequisites — hand these to whoever owns the prod deploy (no infra app
 3. **Nightly consolidation cron needs `YADGAR_EMBED_URL` in its env.** Consolidation now forwards to the
    backend too. The nightly cron/systemd-timer that triggers consolidation must have `YADGAR_EMBED_URL` set
    in its environment, or the consolidation pass fails to reach the compute node.
+
+---
+
+## Data-dir hygiene — one-time migration (core 5.118.0 / backend 5.31.0, ADR-0076)
+
+**Root causes this fixes:**
+1. `surreal_db.old-*` accumulation (~5.5 GB, 23 dirs): `_vacuum_finalize()` reaped `.old` only on
+   `check_invariants` PASS, but PR #173's 120 s per-op timeout was merged in the same window — every nightly
+   since June had a 34 s `check_invariants` vs 30 s client timeout, meaning CI never passed and `.old` was
+   never retired. PR #173 fixed the timeout; this plan adds the `VACUUM_OLD_MAX_AGE_DAYS=7` age-backstop so
+   accumulation cannot happen again even if CI is slow.
+2. `vacuum_export_*.surql` orphans (~3.5 GB, 54 files, ~70 MB each): mid-vacuum scratch written by
+   `_vacuum_export()` but never deleted. No retention anywhere. This build deletes them on successful finalize.
+3. Wiki JSONL volume (~900 MB, 42 files at 6-hourly cadence): cadence now 24 h; output moves to
+   `backups/wiki/`. Retention stays 14 d.
+4. Nightly surql dumps at volume root (3 files, ~65 MB): path moves to `backups/surql/` on next run.
+5. June incident debris (`.bloated-*` ×2, `.EMPTY-postvacuum-*`, `.bak`): ~1.4 GB dead artifacts.
+
+**One-time migration — run these commands manually (never executed by Claude):**
+
+```bash
+DATA="$HOME/.local/share/yadgar"
+
+# 1. Create new layout dirs
+mkdir -p "$DATA/backups/surql" "$DATA/backups/wiki"
+
+# 2. Move existing nightly surql backups into backups/surql/
+mv "$DATA"/surreal_db.nightly-*.surql "$DATA/backups/surql/" 2>/dev/null || true
+
+# 3. Move existing wiki JSONL snapshots into backups/wiki/
+mv "$DATA"/wiki_*.jsonl "$DATA/backups/wiki/" 2>/dev/null || true
+
+# 4. DELETE June incident debris (~1.4 GB — confirm sizes below before running)
+#    surreal_db.bak                       177 MB
+#    surreal_db.bloated-20260614_021847   728 MB
+#    surreal_db.bloated-20260616_190014   480 MB
+#    surreal_db.EMPTY-postvacuum-20260616   1 MB
+rm -rf \
+  "$DATA/surreal_db.bak" \
+  "$DATA/surreal_db.bloated-20260614_021847" \
+  "$DATA/surreal_db.bloated-20260616_190014" \
+  "$DATA/surreal_db.EMPTY-postvacuum-20260616"
+
+# 5. DELETE all orphaned vacuum_export_*.surql scratch files (~3.5 GB, 54 files)
+rm -f "$DATA"/vacuum_export_*.surql "$DATA"/vacuum_export_*.filtered.surql
+
+# 6. DELETE excess surreal_db.old-* dirs — keep 3 newest, delete 20 oldest (~4.8 GB)
+#    (Keep: 20260706, 20260707, 20260708)
+ls -dt "$DATA"/surreal_db.old-* | tail -n +4 | xargs rm -rf
+
+# 7. Verify
+du -sh "$DATA/"
+ls "$DATA/backups/surql/" "$DATA/backups/wiki/"
+```
+
+**Sizes to delete (2026-07-09 inventory):**
+| Artifact | Count | Size |
+|---|---|---|
+| `vacuum_export_*.surql` + `.filtered.surql` | 54 files | ~3.5 GB |
+| `surreal_db.old-*` (excess beyond newest 3) | 20 dirs | ~4.8 GB |
+| `surreal_db.bak` | 1 dir | 177 MB |
+| `surreal_db.bloated-*` | 2 dirs | ~1.2 GB |
+| `surreal_db.EMPTY-postvacuum-*` | 1 dir | ~1 MB |
+| **Total freed** | | **~9.7 GB** |
+
+**Post-deploy verification:**
+- First nightly run writes pre/post backups to `~/.local/share/yadgar/backups/surql/`, prunes to 3.
+- Vacuum finalize: export scratch files absent after CI pass; `surreal_db.old-*` count ≤ 1 + age-backstop.
+- Container: one new wiki JSONL per day under `/data/backups/wiki/`; count trends to ≤ 14.
+- `du -sh ~/.local/share/yadgar/` should be ≈ 2.5 GB (surreal_db + 3 backups + wiki 14-day window).

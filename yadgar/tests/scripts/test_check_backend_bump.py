@@ -21,7 +21,12 @@ _SCRIPTS_DIR = str(Path(__file__).parent.parent.parent.parent / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from check_backend_bump import _is_backend_build_input, check, collect_ci_inputs  # noqa: E402
+from check_backend_bump import (  # noqa: E402
+    _is_backend_build_input,
+    check,
+    collect_ci_inputs,
+    collect_precommit_inputs,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -332,3 +337,126 @@ class TestCollectCiInputs:
         ok, msg = check(changed, base_srv, head_srv)
         assert ok is True
         assert "5.0.2" in msg
+
+
+# ---------------------------------------------------------------------------
+# collect_precommit_inputs — local/CI parity (PR #175 regression)
+#
+# Local pre-commit mode must use the SAME baseline as CI (merge-base of the
+# base branch and HEAD) so a branch whose version number was consumed by a
+# master merge under it fails locally exactly as it fails in CI.
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_precommit_git(
+    merge_base: str,
+    branch_files: list[str],
+    staged_files: list[str],
+    base_server_json: str | None,
+    index_server_json: str | None,
+) -> object:
+    """Stub git for collect_precommit_inputs tests.
+
+    merge_base="" simulates an unreachable base ref (no remote / fresh clone).
+    """
+
+    def run_git(args: list[str]) -> str:
+        cmd = args[0] if args else ""
+        if cmd == "merge-base":
+            return (merge_base + "\n") if merge_base else ""
+        if cmd == "diff":
+            if "--cached" in args:
+                return "\n".join(staged_files) + ("\n" if staged_files else "")
+            # branch diff <merge_base>..HEAD; empty when base fell back to HEAD
+            if "HEAD" in args and merge_base and merge_base in args:
+                return "\n".join(branch_files) + ("\n" if branch_files else "")
+            return ""
+        if cmd == "show":
+            ref_and_path = args[1] if len(args) > 1 else ""
+            if ref_and_path == ":server.json":
+                return index_server_json or ""
+            if ref_and_path.endswith(":server.json"):
+                return base_server_json or ""
+        return ""
+
+    return run_git
+
+
+class TestCollectPrecommitInputs:
+    """Pre-commit mode mirrors CI: merge-base baseline + branch-diff ∪ staged."""
+
+    def test_pr175_regression_master_consumed_version(self) -> None:
+        """THE #175 case: backend input committed earlier on the branch, master
+        merged another PR that consumed the same backend_version. Branch-level
+        comparison vs merge-base shows 'unchanged' → local must FAIL like CI.
+        Old per-commit HEAD comparison passed (bump looked real vs parent)."""
+        fake_git = _make_fake_precommit_git(
+            merge_base="mb0000",
+            branch_files=["entrypoint-backend.sh", "server.json"],
+            staged_files=["yadgar/core/backup.py"],  # current commit: no backend input
+            base_server_json=_SERVER_JSON_502,  # master consumed 5.0.2
+            index_server_json=_SERVER_JSON_502,  # branch also claims 5.0.2
+        )
+        changed, base_srv, index_srv = collect_precommit_inputs("origin/master", fake_git)
+        ok, msg = check(changed, base_srv, index_srv)
+        assert ok is False
+        assert "unchanged" in msg
+
+    def test_branch_diff_and_staged_union(self) -> None:
+        """Changed set = branch commits ∪ staged files, deduplicated."""
+        fake_git = _make_fake_precommit_git(
+            merge_base="mb0000",
+            branch_files=["entrypoint-backend.sh", "server.json"],
+            staged_files=["entrypoint-backend.sh", "yadgar/core/backup.py"],
+            base_server_json=_SERVER_JSON_501,
+            index_server_json=_SERVER_JSON_502,
+        )
+        changed, _base, _index = collect_precommit_inputs("origin/master", fake_git)
+        assert changed.count("entrypoint-backend.sh") == 1
+        assert "yadgar/core/backup.py" in changed
+        assert "server.json" in changed
+
+    def test_bump_in_earlier_branch_commit_passes(self) -> None:
+        """CI parity in the other direction: bump landed in an earlier branch
+        commit; a later commit stages a backend input WITHOUT a further bump.
+        CI passes (branch-level bump exists) → local must pass too.
+        Old per-commit logic failed this (staged ver == HEAD ver)."""
+        fake_git = _make_fake_precommit_git(
+            merge_base="mb0000",
+            branch_files=["server.json"],  # earlier commit bumped it
+            staged_files=["entrypoint-backend.sh"],  # this commit: input, no bump
+            base_server_json=_SERVER_JSON_501,
+            index_server_json=_SERVER_JSON_502,  # index carries the branch bump
+        )
+        changed, base_srv, index_srv = collect_precommit_inputs("origin/master", fake_git)
+        ok, msg = check(changed, base_srv, index_srv)
+        assert ok is True
+        assert "5.0.2" in msg
+
+    def test_fallback_to_head_when_base_unreachable(self) -> None:
+        """No origin/master (fresh clone, no remote) → merge-base empty →
+        legacy per-commit behavior: staged files vs HEAD server.json."""
+        fake_git = _make_fake_precommit_git(
+            merge_base="",  # merge-base fails
+            branch_files=[],  # unused — HEAD..HEAD diff is empty
+            staged_files=["entrypoint-backend.sh", "server.json"],
+            base_server_json=_SERVER_JSON_501,  # HEAD:server.json in fallback
+            index_server_json=_SERVER_JSON_502,
+        )
+        changed, base_srv, index_srv = collect_precommit_inputs("origin/master", fake_git)
+        assert changed == ["entrypoint-backend.sh", "server.json"]
+        ok, _msg = check(changed, base_srv, index_srv)
+        assert ok is True
+
+    def test_no_backend_inputs_anywhere_passes(self) -> None:
+        """Neither branch diff nor staged files touch backend inputs → pass."""
+        fake_git = _make_fake_precommit_git(
+            merge_base="mb0000",
+            branch_files=["yadgar/core/vacuum/__init__.py"],
+            staged_files=["docs/configuration.md"],
+            base_server_json=_SERVER_JSON_501,
+            index_server_json=_SERVER_JSON_501,
+        )
+        changed, base_srv, index_srv = collect_precommit_inputs("origin/master", fake_git)
+        ok, _msg = check(changed, base_srv, index_srv)
+        assert ok is True

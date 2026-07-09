@@ -131,12 +131,14 @@ EMBED_PID=$!
 # Authorization uses a base64-encoded Basic auth header instead of
 # -u / --netrc-file so credentials do NOT appear in /proc/<pid>/cmdline.
 _wiki_backup_loop() {
+    # ADR-0076 D3: output dir is /data/backups/wiki/ (D4 layout); cadence 24 h.
+    mkdir -p /data/backups/wiki
     while true; do
-        sleep 21600  # 6 hours
+        sleep 86400  # 24 hours (ADR-0076 D3: was 6 h)
         if [[ "${YADGAR_ALLOW_ROOT:-0}" == "1" ]] || \
            { [[ -n "${SURREAL_USER}" ]] && [[ -n "${SURREAL_PASS}" ]]; }; then
             _b64_creds="$(printf '%s:%s' "${SURREAL_USER:?SURREAL_USER must be set}" "${SURREAL_PASS:?SURREAL_PASS must be set}" | base64 -w0)"
-            _snap_file="/data/wiki_$(date +%Y%m%d_%H%M%S).jsonl"
+            _snap_file="/data/backups/wiki/wiki_$(date +%Y%m%d_%H%M%S).jsonl"
             if curl -sf \
                 -H "Authorization: Basic ${_b64_creds}" \
                 -H "Surreal-NS: yadgar" -H "Surreal-DB: main" \
@@ -150,7 +152,7 @@ _wiki_backup_loop() {
                 rm -f "${_snap_file}"
             fi
             # Retention: prune snapshots older than 14 days
-            find /data -name 'wiki_*.jsonl' -mtime +14 -delete
+            find /data/backups/wiki -name 'wiki_*.jsonl' -mtime +14 -delete
         fi
     done
 }

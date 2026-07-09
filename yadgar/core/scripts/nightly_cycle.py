@@ -455,7 +455,12 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
     # that points at a non-existent directory, causing snapshot to fail.
     db_path_str: str = getattr(args, "db_path", None) or str(_paths.DB_PATH)
     db_path = Path(db_path_str).expanduser()
-    snapshot_dir = db_path.parent
+    # ADR-0076 D4: surql backups go to <data-root>/backups/surql/.
+    # Derive from db_path.parent (always the data root, whether set from env or args)
+    # so tests with custom db_path get the correct relative layout without
+    # requiring YADGAR_DATA_DIR to be monkeypatched.
+    snapshot_dir = db_path.parent / "backups" / "surql"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     backend_url: str = getattr(args, "backend_url", None) or os.environ.get(
         "YADGAR_DB_URL", "http://127.0.0.1:8080"
