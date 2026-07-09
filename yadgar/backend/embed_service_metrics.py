@@ -107,6 +107,18 @@ for _m in ("ce", "nli", "pair", "embedding"):
     model_loaded.labels(model=_m).set(0)
 
 # ---------------------------------------------------------------------------
+# backend 5.30.1 — queue drainer lifecycle (P0 fix: R3 Car 1 left the drainer
+# unconstructed in production; this gauge makes "drainer not running" alertable)
+# ---------------------------------------------------------------------------
+
+embed_drainer_running = Gauge(
+    "yadgar_embed_queue_drainer_running",
+    "1 if the backend QueueDrainer thread is running, 0 if not started / failed / stopped",
+    registry=_registry,
+)
+embed_drainer_running.set(0)
+
+# ---------------------------------------------------------------------------
 # v5.6.7 PR-G — idle eviction telemetry
 # ---------------------------------------------------------------------------
 

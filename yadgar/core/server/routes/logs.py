@@ -55,9 +55,17 @@ def _entry_bytes(entry: dict) -> int:
     return len(json.dumps(entry, default=str))
 
 
-@observe(tier="stage")
+@observe(tier="stage", span=False)
 def _ring_append(entry: dict) -> None:
-    """Append an entry to the ring, evicting oldest when byte cap is exceeded."""
+    """Append an entry to the ring, evicting oldest when byte cap is exceeded.
+
+    span=False: _ring_append is called from LogRingHandler.emit, which fires on EVERY
+    log record — including logs emitted by @observe itself. A span-per-log-append creates
+    a span→log→ring→span feedback loop: handler() @observe emits INFO → LogRingHandler →
+    _ring_append → new span → captured by exporter → test sees 2 spans instead of 1.
+    Stage metrics still emit; only the span is suppressed. LogRingHandler.emit already
+    documents this class of bug (v5.106, ADR-0041).
+    """
     global _ring_bytes, _ring_seq
     size = _entry_bytes(entry)
     with _ring_lock:

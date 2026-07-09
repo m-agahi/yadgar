@@ -26,9 +26,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1001
+      "file_loc": 1350
     },
-    "rationale": "Train 1: added /recall route + RecallRequest/RecallResponse models + _ensure_recall_engines bootstrap (~126 LOC). Backend was 875 lines; new route pushed past 1000 HARD cap. Route is cohesive with the other three HTTP endpoints in this file (embed, rerank, recall). Splitting would create a thin 1-route sub-module for no readability gain.",
+    "rationale": "Train 1 added /recall route + models + _ensure_recall_engines (~126 LOC, 875 -> 1001). R3 Car 1 D2 added /consolidate (+51, -> 1194). backend 5.30.1 P0 fix added the queue-drainer lifecycle (_start/_stop_queue_drainer + fail-loud gating, ~150 LOC, -> 1350) — the wiring Car 1 removed from core without a backend construction point; lifespan-cohesive with the other startup/shutdown blocks here. All growth is HTTP-boundary + lifecycle glue around the same FastAPI app; splitting would scatter the lifespan across thin sub-modules for no readability gain. Next structural addition should split (e.g. drainer/lifespan into embed_service_lifecycle.py).",
     "added": "2026-07-04",
     "added_by": "recall-backend-train1"
   },
