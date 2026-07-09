@@ -9,245 +9,245 @@
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 641.25)">
 <title>G</title>
 <polygon fill="white" stroke="none" points="-4,4 -4,-641.25 1815,-641.25 1815,4 -4,4"/>
-<text text-anchor="middle" x="905.5" y="-619.95" font-family="monospace" font-size="14.00">wiki_list &#160;| &#160;117ms &#160;| &#160;31 spans (collapsed)</text>
-<!-- n1581940008 -->
+<text text-anchor="middle" x="905.5" y="-619.95" font-family="monospace" font-size="14.00">wiki_list &#160;| &#160;108ms &#160;| &#160;61 spans (collapsed)</text>
+<!-- n3294232728 -->
 <g id="node1" class="node">
-<title>n1581940008</title>
+<title>n3294232728</title>
 <polygon fill="#e8f0fe" stroke="black" points="880,-612 810,-612 810,-576 880,-576 880,-612"/>
 <text text-anchor="middle" x="845" y="-597.25" font-family="monospace" font-size="10.00">POST /mcp</text>
-<text text-anchor="middle" x="845" y="-584.5" font-family="monospace" font-size="10.00">117ms</text>
+<text text-anchor="middle" x="845" y="-584.5" font-family="monospace" font-size="10.00">108ms</text>
 </g>
-<!-- n440559577 -->
+<!-- n4200997058 -->
 <g id="node2" class="node">
-<title>n440559577</title>
+<title>n4200997058</title>
 <polygon fill="#e8f0fe" stroke="black" points="880,-540 810,-540 810,-504 880,-504 880,-540"/>
 <text text-anchor="middle" x="845" y="-525.25" font-family="monospace" font-size="10.00">POST /mcp</text>
-<text text-anchor="middle" x="845" y="-512.5" font-family="monospace" font-size="10.00">117ms</text>
+<text text-anchor="middle" x="845" y="-512.5" font-family="monospace" font-size="10.00">107ms</text>
 </g>
-<!-- n1581940008&#45;&gt;n440559577 -->
-<g id="edge6" class="edge">
-<title>n1581940008&#45;&gt;n440559577</title>
+<!-- n3294232728&#45;&gt;n4200997058 -->
+<g id="edge1" class="edge">
+<title>n3294232728&#45;&gt;n4200997058</title>
 <path fill="none" stroke="black" d="M845,-575.7C845,-568.41 845,-559.73 845,-551.54"/>
 <polygon fill="black" stroke="black" points="848.5,-551.62 845,-541.62 841.5,-551.62 848.5,-551.62"/>
 </g>
-<!-- n137477504 -->
+<!-- n2636857794 -->
 <g id="node3" class="node">
-<title>n137477504</title>
+<title>n2636857794</title>
 <polygon fill="#e8f0fe" stroke="black" points="652,-468 504,-468 504,-432 652,-432 652,-468"/>
 <text text-anchor="middle" x="578" y="-453.25" font-family="monospace" font-size="10.00">POST /mcp http receive</text>
-<text text-anchor="middle" x="578" y="-440.5" font-family="monospace" font-size="10.00">115ms x2</text>
+<text text-anchor="middle" x="578" y="-440.5" font-family="monospace" font-size="10.00">99ms x2</text>
 </g>
-<!-- n440559577&#45;&gt;n137477504 -->
-<g id="edge10" class="edge">
-<title>n440559577&#45;&gt;n137477504</title>
+<!-- n4200997058&#45;&gt;n2636857794 -->
+<g id="edge2" class="edge">
+<title>n4200997058&#45;&gt;n2636857794</title>
 <path fill="none" stroke="black" d="M809.54,-511.7C770.49,-501.47 706.49,-484.69 655.67,-471.36"/>
 <polygon fill="black" stroke="black" points="656.73,-468.02 646.17,-468.87 654.95,-474.79 656.73,-468.02"/>
 </g>
-<!-- n1493565297 -->
+<!-- n1878124822 -->
 <g id="node4" class="node">
-<title>n1493565297</title>
+<title>n1878124822</title>
 <polygon fill="#e8f0fe" stroke="black" points="800,-468 670,-468 670,-432 800,-432 800,-468"/>
 <text text-anchor="middle" x="735" y="-453.25" font-family="monospace" font-size="10.00">POST /mcp http send</text>
 <text text-anchor="middle" x="735" y="-440.5" font-family="monospace" font-size="10.00">0ms x3</text>
 </g>
-<!-- n440559577&#45;&gt;n1493565297 -->
-<g id="edge11" class="edge">
-<title>n440559577&#45;&gt;n1493565297</title>
+<!-- n4200997058&#45;&gt;n1878124822 -->
+<g id="edge6" class="edge">
+<title>n4200997058&#45;&gt;n1878124822</title>
 <path fill="none" stroke="black" d="M817.53,-503.52C803.64,-494.68 786.6,-483.84 771.62,-474.3"/>
 <polygon fill="black" stroke="black" points="773.72,-471.49 763.4,-469.07 769.96,-477.39 773.72,-471.49"/>
 </g>
-<!-- n118669643 -->
+<!-- n914709087 -->
 <g id="node5" class="node">
-<title>n118669643</title>
+<title>n914709087</title>
 <polygon fill="#e8f0fe" stroke="black" points="1092,-468 818,-468 818,-432 1092,-432 1092,-468"/>
 <text text-anchor="middle" x="955" y="-453.25" font-family="monospace" font-size="10.00">yadgar.core.server.routes.logs._ring_append</text>
 <text text-anchor="middle" x="955" y="-440.5" font-family="monospace" font-size="10.00">0ms</text>
 </g>
-<!-- n440559577&#45;&gt;n118669643 -->
-<g id="edge13" class="edge">
-<title>n440559577&#45;&gt;n118669643</title>
+<!-- n4200997058&#45;&gt;n914709087 -->
+<g id="edge15" class="edge">
+<title>n4200997058&#45;&gt;n914709087</title>
 <path fill="none" stroke="black" d="M872.47,-503.52C886.36,-494.68 903.4,-483.84 918.38,-474.3"/>
 <polygon fill="black" stroke="black" points="920.04,-477.39 926.6,-469.07 916.28,-471.49 920.04,-477.39"/>
 </g>
-<!-- n2745478429 -->
+<!-- n3555390413 -->
 <g id="node6" class="node">
-<title>n2745478429</title>
+<title>n3555390413</title>
 <polygon fill="#e8f0fe" stroke="black" points="1390,-468 1110,-468 1110,-432 1390,-432 1390,-468"/>
 <text text-anchor="middle" x="1250" y="-453.25" font-family="monospace" font-size="10.00">yadgar._shared.runtime.offload.run_offloaded</text>
-<text text-anchor="middle" x="1250" y="-440.5" font-family="monospace" font-size="10.00">113ms</text>
+<text text-anchor="middle" x="1250" y="-440.5" font-family="monospace" font-size="10.00">96ms</text>
 </g>
-<!-- n440559577&#45;&gt;n2745478429 -->
-<g id="edge16" class="edge">
-<title>n440559577&#45;&gt;n2745478429</title>
+<!-- n4200997058&#45;&gt;n3555390413 -->
+<g id="edge13" class="edge">
+<title>n4200997058&#45;&gt;n3555390413</title>
 <path fill="none" stroke="black" d="M880.23,-514.91C937.02,-505.1 1051.16,-485.37 1137.69,-470.41"/>
 <polygon fill="black" stroke="black" points="1138.15,-473.88 1147.41,-468.73 1136.96,-466.99 1138.15,-473.88"/>
 </g>
-<!-- n3331547268 -->
+<!-- n3726036004 -->
 <g id="node7" class="node">
-<title>n3331547268</title>
+<title>n3726036004</title>
 <polygon fill="#e8f0fe" stroke="black" points="947,-396 727,-396 727,-360 947,-360 947,-396"/>
 <text text-anchor="middle" x="837" y="-381.25" font-family="monospace" font-size="10.00">yadgar._shared.config.resolve_knob</text>
 <text text-anchor="middle" x="837" y="-368.5" font-family="monospace" font-size="10.00">0ms x2</text>
 </g>
-<!-- n2745478429&#45;&gt;n3331547268 -->
-<g id="edge8" class="edge">
-<title>n2745478429&#45;&gt;n3331547268</title>
+<!-- n3555390413&#45;&gt;n3726036004 -->
+<g id="edge4" class="edge">
+<title>n3555390413&#45;&gt;n3726036004</title>
 <path fill="none" stroke="black" d="M1146.85,-431.52C1087.36,-421.43 1012.45,-408.74 951.18,-398.35"/>
 <polygon fill="black" stroke="black" points="951.85,-394.92 941.4,-396.7 950.68,-401.82 951.85,-394.92"/>
 </g>
-<!-- n706896329 -->
+<!-- n3415245208 -->
 <g id="node8" class="node">
-<title>n706896329</title>
+<title>n3415245208</title>
 <polygon fill="#e8f0fe" stroke="black" points="1239,-396 965,-396 965,-360 1239,-360 1239,-396"/>
 <text text-anchor="middle" x="1102" y="-381.25" font-family="monospace" font-size="10.00">yadgar._shared.runtime.offload._ensure_pool</text>
 <text text-anchor="middle" x="1102" y="-368.5" font-family="monospace" font-size="10.00">0ms</text>
 </g>
-<!-- n2745478429&#45;&gt;n706896329 -->
-<g id="edge17" class="edge">
-<title>n2745478429&#45;&gt;n706896329</title>
+<!-- n3555390413&#45;&gt;n3415245208 -->
+<g id="edge12" class="edge">
+<title>n3555390413&#45;&gt;n3415245208</title>
 <path fill="none" stroke="black" d="M1213.04,-431.52C1193.63,-422.34 1169.64,-410.99 1148.93,-401.2"/>
 <polygon fill="black" stroke="black" points="1150.65,-398.14 1140.12,-397.03 1147.66,-404.47 1150.65,-398.14"/>
 </g>
-<!-- n2821114095 -->
+<!-- n1195136177 -->
 <g id="node9" class="node">
-<title>n2821114095</title>
+<title>n1195136177</title>
 <polygon fill="#e8f0fe" stroke="black" points="1537,-396 1257,-396 1257,-360 1537,-360 1537,-396"/>
 <text text-anchor="middle" x="1397" y="-381.25" font-family="monospace" font-size="10.00">yadgar._shared.runtime.offload._inc_inflight</text>
 <text text-anchor="middle" x="1397" y="-368.5" font-family="monospace" font-size="10.00">0ms</text>
 </g>
-<!-- n2745478429&#45;&gt;n2821114095 -->
-<g id="edge12" class="edge">
-<title>n2745478429&#45;&gt;n2821114095</title>
+<!-- n3555390413&#45;&gt;n1195136177 -->
+<g id="edge8" class="edge">
+<title>n3555390413&#45;&gt;n1195136177</title>
 <path fill="none" stroke="black" d="M1286.72,-431.52C1305.91,-422.38 1329.6,-411.09 1350.11,-401.33"/>
 <polygon fill="black" stroke="black" points="1351.61,-404.49 1359.13,-397.03 1348.6,-398.17 1351.61,-404.49"/>
 </g>
-<!-- n2561518445 -->
+<!-- n3234819543 -->
 <g id="node10" class="node">
-<title>n2561518445</title>
+<title>n3234819543</title>
 <polygon fill="#e8f0fe" stroke="black" points="1811,-396 1555,-396 1555,-360 1811,-360 1811,-396"/>
 <text text-anchor="middle" x="1683" y="-381.25" font-family="monospace" font-size="10.00">yadgar._shared.runtime.offload._ctx_wrap</text>
 <text text-anchor="middle" x="1683" y="-368.5" font-family="monospace" font-size="10.00">0ms</text>
 </g>
-<!-- n2745478429&#45;&gt;n2561518445 -->
+<!-- n3555390413&#45;&gt;n3234819543 -->
 <g id="edge14" class="edge">
-<title>n2745478429&#45;&gt;n2561518445</title>
+<title>n3555390413&#45;&gt;n3234819543</title>
 <path fill="none" stroke="black" d="M1358.15,-431.52C1420.78,-421.39 1499.71,-408.63 1564.09,-398.22"/>
 <polygon fill="black" stroke="black" points="1564.3,-401.74 1573.61,-396.68 1563.18,-394.82 1564.3,-401.74"/>
 </g>
-<!-- n1551704353 -->
+<!-- n5262917 -->
 <g id="node11" class="node">
-<title>n1551704353</title>
+<title>n5262917</title>
 <polygon fill="#e8f0fe" stroke="black" points="887,-324 787,-324 787,-288 887,-288 887,-324"/>
 <text text-anchor="middle" x="837" y="-309.25" font-family="monospace" font-size="10.00">tool.wiki_list</text>
-<text text-anchor="middle" x="837" y="-296.5" font-family="monospace" font-size="10.00">76ms</text>
+<text text-anchor="middle" x="837" y="-296.5" font-family="monospace" font-size="10.00">95ms</text>
 </g>
-<!-- n3331547268&#45;&gt;n1551704353 -->
-<g id="edge1" class="edge">
-<title>n3331547268&#45;&gt;n1551704353</title>
+<!-- n3726036004&#45;&gt;n5262917 -->
+<g id="edge9" class="edge">
+<title>n3726036004&#45;&gt;n5262917</title>
 <path fill="none" stroke="black" d="M837,-359.7C837,-352.41 837,-343.73 837,-335.54"/>
 <polygon fill="black" stroke="black" points="840.5,-335.62 837,-325.62 833.5,-335.62 840.5,-335.62"/>
 </g>
-<!-- n3506408157 -->
+<!-- n1198461532 -->
 <g id="node12" class="node">
-<title>n3506408157</title>
-<polygon fill="#e8f0fe" stroke="black" points="929,-252 745,-252 745,-216 929,-216 929,-252"/>
-<text text-anchor="middle" x="837" y="-237.25" font-family="monospace" font-size="10.00">storage.wiki.list_wiki_pages</text>
-<text text-anchor="middle" x="837" y="-224.5" font-family="monospace" font-size="10.00">73ms</text>
+<title>n1198461532</title>
+<polygon fill="#e8f0fe" stroke="black" points="1007,-252 667,-252 667,-216 1007,-216 1007,-252"/>
+<text text-anchor="middle" x="837" y="-237.25" font-family="monospace" font-size="10.00">yadgar._shared.storage.wiki._WikiMixin.list_wiki_pages</text>
+<text text-anchor="middle" x="837" y="-224.5" font-family="monospace" font-size="10.00">95ms</text>
 </g>
-<!-- n1551704353&#45;&gt;n3506408157 -->
-<g id="edge5" class="edge">
-<title>n1551704353&#45;&gt;n3506408157</title>
+<!-- n5262917&#45;&gt;n1198461532 -->
+<g id="edge17" class="edge">
+<title>n5262917&#45;&gt;n1198461532</title>
 <path fill="none" stroke="black" d="M837,-287.7C837,-280.41 837,-271.73 837,-263.54"/>
 <polygon fill="black" stroke="black" points="840.5,-263.62 837,-253.62 833.5,-263.62 840.5,-263.62"/>
 </g>
-<!-- n3099516919 -->
+<!-- n3113264998 -->
 <g id="node13" class="node">
-<title>n3099516919</title>
+<title>n3113264998</title>
 <polygon fill="#e8f0fe" stroke="black" points="733,-180 447,-180 447,-144 733,-144 733,-180"/>
 <text text-anchor="middle" x="590" y="-165.25" font-family="monospace" font-size="10.00">yadgar._shared.storage.client._ClientMixin._q</text>
-<text text-anchor="middle" x="590" y="-152.5" font-family="monospace" font-size="10.00">73ms</text>
+<text text-anchor="middle" x="590" y="-152.5" font-family="monospace" font-size="10.00">94ms</text>
 </g>
-<!-- n3506408157&#45;&gt;n3099516919 -->
-<g id="edge9" class="edge">
-<title>n3506408157&#45;&gt;n3099516919</title>
+<!-- n1198461532&#45;&gt;n3113264998 -->
+<g id="edge7" class="edge">
+<title>n1198461532&#45;&gt;n3113264998</title>
 <path fill="none" stroke="black" d="M775.31,-215.52C740.99,-205.79 698.1,-193.64 662.22,-183.47"/>
 <polygon fill="black" stroke="black" points="663.36,-180.15 652.79,-180.79 661.46,-186.89 663.36,-180.15"/>
 </g>
-<!-- n1639263597 -->
+<!-- n2736524450 -->
 <g id="node14" class="node">
-<title>n1639263597</title>
+<title>n2736524450</title>
 <polygon fill="#e8f0fe" stroke="black" points="1258,-180 912,-180 912,-144 1258,-144 1258,-180"/>
 <text text-anchor="middle" x="1085" y="-165.25" font-family="monospace" font-size="10.00">yadgar._shared.storage.client._ClientMixin._row_to_dict</text>
-<text text-anchor="middle" x="1085" y="-152.5" font-family="monospace" font-size="10.00">0ms x5</text>
+<text text-anchor="middle" x="1085" y="-152.5" font-family="monospace" font-size="10.00">1ms x20</text>
 </g>
-<!-- n3506408157&#45;&gt;n1639263597 -->
-<g id="edge2" class="edge">
-<title>n3506408157&#45;&gt;n1639263597</title>
+<!-- n1198461532&#45;&gt;n2736524450 -->
+<g id="edge18" class="edge">
+<title>n1198461532&#45;&gt;n2736524450</title>
 <path fill="none" stroke="black" d="M898.94,-215.52C933.4,-205.79 976.46,-193.64 1012.48,-183.47"/>
 <polygon fill="black" stroke="black" points="1013.29,-186.88 1021.96,-180.79 1011.39,-180.14 1013.29,-186.88"/>
 </g>
-<!-- n3524841933 -->
+<!-- n775987525 -->
 <g id="node15" class="node">
-<title>n3524841933</title>
+<title>n775987525</title>
 <polygon fill="#e8f0fe" stroke="black" points="328,-108 0,-108 0,-72 328,-72 328,-108"/>
 <text text-anchor="middle" x="164" y="-93.25" font-family="monospace" font-size="10.00">yadgar._shared.storage.client._ClientMixin._q_server</text>
-<text text-anchor="middle" x="164" y="-80.5" font-family="monospace" font-size="10.00">72ms</text>
+<text text-anchor="middle" x="164" y="-80.5" font-family="monospace" font-size="10.00">94ms</text>
 </g>
-<!-- n3099516919&#45;&gt;n3524841933 -->
-<g id="edge4" class="edge">
-<title>n3099516919&#45;&gt;n3524841933</title>
+<!-- n3113264998&#45;&gt;n775987525 -->
+<g id="edge10" class="edge">
+<title>n3113264998&#45;&gt;n775987525</title>
 <path fill="none" stroke="black" d="M483.6,-143.52C422.11,-133.41 344.65,-120.68 281.38,-110.29"/>
 <polygon fill="black" stroke="black" points="282.08,-106.86 271.64,-108.69 280.94,-113.76 282.08,-106.86"/>
 </g>
-<!-- n4025969662 -->
+<!-- n3767095314 -->
 <g id="node16" class="node">
-<title>n4025969662</title>
+<title>n3767095314</title>
 <polygon fill="#e8f0fe" stroke="black" points="674,-108 346,-108 346,-72 674,-72 674,-108"/>
 <text text-anchor="middle" x="510" y="-93.25" font-family="monospace" font-size="10.00">yadgar._shared.storage.client._observe_query_metrics</text>
 <text text-anchor="middle" x="510" y="-80.5" font-family="monospace" font-size="10.00">0ms</text>
 </g>
-<!-- n3099516919&#45;&gt;n4025969662 -->
-<g id="edge18" class="edge">
-<title>n3099516919&#45;&gt;n4025969662</title>
+<!-- n3113264998&#45;&gt;n3767095314 -->
+<g id="edge11" class="edge">
+<title>n3113264998&#45;&gt;n3767095314</title>
 <path fill="none" stroke="black" d="M570.22,-143.7C560.61,-135.28 548.88,-125.02 538.33,-115.79"/>
 <polygon fill="black" stroke="black" points="540.79,-113.29 530.96,-109.34 536.19,-118.56 540.79,-113.29"/>
 </g>
-<!-- n329742604 -->
+<!-- n1935875728 -->
 <g id="node17" class="node">
-<title>n329742604</title>
+<title>n1935875728</title>
 <polygon fill="#e8f0fe" stroke="black" points="978,-108 692,-108 692,-72 978,-72 978,-108"/>
 <text text-anchor="middle" x="835" y="-93.25" font-family="monospace" font-size="10.00">yadgar._shared.storage.client._normalize_rows</text>
 <text text-anchor="middle" x="835" y="-80.5" font-family="monospace" font-size="10.00">0ms</text>
 </g>
-<!-- n3099516919&#45;&gt;n329742604 -->
+<!-- n3113264998&#45;&gt;n1935875728 -->
 <g id="edge3" class="edge">
-<title>n3099516919&#45;&gt;n329742604</title>
+<title>n3113264998&#45;&gt;n1935875728</title>
 <path fill="none" stroke="black" d="M651.19,-143.52C685.23,-133.79 727.78,-121.64 763.36,-111.47"/>
 <polygon fill="black" stroke="black" points="764.06,-114.91 772.71,-108.8 762.13,-108.18 764.06,-114.91"/>
 </g>
-<!-- n3723325060 -->
+<!-- n4263868940 -->
 <g id="node18" class="node">
-<title>n3723325060</title>
+<title>n4263868940</title>
 <polygon fill="#e8f0fe" stroke="black" points="1336,-108 996,-108 996,-72 1336,-72 1336,-108"/>
 <text text-anchor="middle" x="1166" y="-93.25" font-family="monospace" font-size="10.00">yadgar._shared.storage.client._ClientMixin._extract_id</text>
-<text text-anchor="middle" x="1166" y="-80.5" font-family="monospace" font-size="10.00">0ms x5</text>
+<text text-anchor="middle" x="1166" y="-80.5" font-family="monospace" font-size="10.00">0ms x20</text>
 </g>
-<!-- n1639263597&#45;&gt;n3723325060 -->
-<g id="edge7" class="edge">
-<title>n1639263597&#45;&gt;n3723325060</title>
+<!-- n2736524450&#45;&gt;n4263868940 -->
+<g id="edge16" class="edge">
+<title>n2736524450&#45;&gt;n4263868940</title>
 <path fill="none" stroke="black" d="M1105.02,-143.7C1114.76,-135.28 1126.64,-125.02 1137.31,-115.79"/>
 <polygon fill="black" stroke="black" points="1139.5,-118.52 1144.78,-109.34 1134.93,-113.23 1139.5,-118.52"/>
 </g>
-<!-- n2748192454 -->
+<!-- n4283504065 -->
 <g id="node19" class="node">
-<title>n2748192454</title>
+<title>n4283504065</title>
 <polygon fill="#e8f0fe" stroke="black" points="191,-36 137,-36 137,0 191,0 191,-36"/>
 <text text-anchor="middle" x="164" y="-21.25" font-family="monospace" font-size="10.00">POST</text>
-<text text-anchor="middle" x="164" y="-8.5" font-family="monospace" font-size="10.00">69ms</text>
+<text text-anchor="middle" x="164" y="-8.5" font-family="monospace" font-size="10.00">86ms</text>
 </g>
-<!-- n3524841933&#45;&gt;n2748192454 -->
-<g id="edge15" class="edge">
-<title>n3524841933&#45;&gt;n2748192454</title>
+<!-- n775987525&#45;&gt;n4283504065 -->
+<g id="edge5" class="edge">
+<title>n775987525&#45;&gt;n4283504065</title>
 <path fill="none" stroke="black" d="M164,-71.7C164,-64.41 164,-55.73 164,-47.54"/>
 <polygon fill="black" stroke="black" points="167.5,-47.62 164,-37.62 160.5,-47.62 167.5,-47.62"/>
 </g>

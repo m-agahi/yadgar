@@ -1,0 +1,67 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="recall-cold — simplified trace (2026-07-09, core 5.117 / backend 5.30)
+trace 42cdd435 · total 24.5956 s · key cost: LocalMLClient._try_gte_reranker = 12.5488 s (51%)\nCE 3-pass = the wall (cold model)";
+  subgraph "cluster_core" {
+    label="Core process (yadgar-core)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="recall() entry\nMCP dispatch → tool.recall\n@3ms\n2.88 ms"];
+    "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@24596ms\n5.87 ms"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (yadgar-backend)";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_run_fts_bm25\n…red.retrieval.scoring._ScoringMixin._run_fts_bm25\n@13ms\n32.65 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_collect_vector_scores\n…eval.scoring._ScoringMixin._collect_vector_scores\n@46ms\n64.86 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="Retriever.ppr_retrieve\n_shared.retrieval.core.Retriever.ppr_retrieve\n@111ms\n170.64 ms"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="Retriever.spreading_activation\n…red.retrieval.core.Retriever.spreading_activation\n@282ms\n2.10787 s"];
+    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_fuse_scores\n_shared.retrieval.fusion._FusionMixin._fuse_scores\n@2390ms\n312.92 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="get_memories_by_ids\n…d.storage.memory._MemoryMixin.get_memories_by_ids\n@2703ms\n1.64925 s"];
+    "s6" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_inject_ce_diversity\n…etrieval.fusion._FusionMixin._inject_ce_diversity\n@4353ms\n95.62 ms"];
+    "s7" [shape="box", style="filled", fillcolor="#f5e1f5", label="LocalMLClient._try_gte_reranker\nbackend.ml_client.LocalMLClient._try_gte_reranker\n@4456ms\n12.5488 s"];
+    "s8" [shape="box", style="filled", fillcolor="#f5e1f5", label="LocalMLClient._try_gte_reranker\nbackend.ml_client.LocalMLClient._try_gte_reranker\n@17009ms\n2.49711 s"];
+    "s9" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_search_profiles_and_beliefs\n….fusion._FusionMixin._search_profiles_and_beliefs\n@19508ms\n82.66 ms"];
+    "s10" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="RulesEngine.apply_rules\n_shared.rules_engine.RulesEngine.apply_rules\n@19594ms\n10.2 ms"];
+    "s11" [shape="box", style="filled", fillcolor="#f5e1f5", label="_rerank_engram_links\n…al.reranking._RerankingMixin._rerank_engram_links\n@19604ms\n352.26 ms"];
+    "s12" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="WikiStore._collect_wiki_fts_scores\n_shared.wiki.WikiStore._collect_wiki_fts_scores\n@19964ms\n22.12 ms"];
+    "s13" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="WikiStore._collect_wiki_vector_scores\n_shared.wiki.WikiStore._collect_wiki_vector_scores\n@19986ms\n26.47 ms"];
+    "s14" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="get_wiki_page ×18\n_shared.storage.wiki._WikiMixin.get_wiki_page\n@20013ms\n388.12 ms"];
+    "s15" [shape="box", style="filled", fillcolor="#f5e1f5", label="LocalMLClient._try_gte_reranker\nbackend.ml_client.LocalMLClient._try_gte_reranker\n@20406ms\n4.00218 s"];
+    "s16" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="MemoryThermodynamics.record_access\n…thermodynamics.MemoryThermodynamics.record_access\n@24411ms\n82.86 ms"];
+    "s17" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="boost_memories_access\n…storage.memory._MemoryMixin.boost_memories_access\n@24494ms\n91.57 ms"];
+  }
+  "entry" -> "s0" [color="#333333", style="solid", label="1"];
+  "s0" -> "s1" [color="#333333", style="solid", label="2"];
+  "s1" -> "s2" [color="#333333", style="solid", label="3"];
+  "s2" -> "s3" [color="#333333", style="solid", label="4"];
+  "s3" -> "s4" [color="#333333", style="solid", label="5"];
+  "s4" -> "s5" [color="#333333", style="solid", label="6"];
+  "s5" -> "s6" [color="#333333", style="solid", label="7"];
+  "s6" -> "s7" [color="#333333", style="solid", label="8"];
+  "s7" -> "s8" [color="#333333", style="solid", label="9"];
+  "s8" -> "s9" [color="#333333", style="solid", label="10"];
+  "s9" -> "s10" [color="#333333", style="solid", label="11"];
+  "s10" -> "s11" [color="#333333", style="solid", label="12"];
+  "s11" -> "s12" [color="#333333", style="solid", label="13"];
+  "s12" -> "s13" [color="#333333", style="solid", label="14"];
+  "s13" -> "s14" [color="#333333", style="solid", label="15"];
+  "s14" -> "s15" [color="#333333", style="solid", label="16"];
+  "s15" -> "s16" [color="#333333", style="solid", label="17"];
+  "s16" -> "s17" [color="#333333", style="solid", label="18"];
+  "s17" -> "done" [color="#333333", style="solid", label="19"];
+}

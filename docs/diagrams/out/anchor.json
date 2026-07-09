@@ -1,0 +1,233 @@
+{
+ "label": "anchor",
+ "tool_span": "tool.anchor",
+ "trace_id": "40fa8cbd6ff3c46a1e269cea42625f06",
+ "total_ms": 7.0,
+ "span_count": 32,
+ "spans": [
+  {
+   "rel_ms": 0.0,
+   "dur_ms": 7.05,
+   "depth": 0,
+   "svc": "yadgar-core",
+   "name": "POST /mcp"
+  },
+  {
+   "rel_ms": 0.23,
+   "dur_ms": 6.44,
+   "depth": 1,
+   "svc": "yadgar-core",
+   "name": "POST /mcp"
+  },
+  {
+   "rel_ms": 1.53,
+   "dur_ms": 0.03,
+   "depth": 2,
+   "svc": "yadgar-core",
+   "name": "POST /mcp http receive"
+  },
+  {
+   "rel_ms": 2.2,
+   "dur_ms": 0.03,
+   "depth": 2,
+   "svc": "yadgar-core",
+   "name": "POST /mcp http send"
+  },
+  {
+   "rel_ms": 2.62,
+   "dur_ms": 0.03,
+   "depth": 2,
+   "svc": "yadgar-core",
+   "name": "yadgar.core.server.routes.logs._ring_append"
+  },
+  {
+   "rel_ms": 2.93,
+   "dur_ms": 3.83,
+   "depth": 2,
+   "svc": "yadgar-core",
+   "name": "POST /mcp http receive"
+  },
+  {
+   "rel_ms": 3.27,
+   "dur_ms": 2.52,
+   "depth": 2,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.runtime.offload.run_offloaded"
+  },
+  {
+   "rel_ms": 3.31,
+   "dur_ms": 0.02,
+   "depth": 3,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.config.resolve_knob"
+  },
+  {
+   "rel_ms": 3.39,
+   "dur_ms": 0.01,
+   "depth": 3,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.runtime.offload._ensure_pool"
+  },
+  {
+   "rel_ms": 3.45,
+   "dur_ms": 0.01,
+   "depth": 3,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.runtime.offload._inc_inflight"
+  },
+  {
+   "rel_ms": 3.5,
+   "dur_ms": 0.01,
+   "depth": 3,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.runtime.offload._ctx_wrap"
+  },
+  {
+   "rel_ms": 3.59,
+   "dur_ms": 0.01,
+   "depth": 3,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.config.resolve_knob"
+  },
+  {
+   "rel_ms": 3.96,
+   "dur_ms": 1.63,
+   "depth": 4,
+   "svc": "yadgar-core",
+   "name": "tool.anchor"
+  },
+  {
+   "rel_ms": 4.06,
+   "dur_ms": 0.57,
+   "depth": 5,
+   "svc": "yadgar-core",
+   "name": "yadgar.core.server.tools.misc._validate_anchor_inputs"
+  },
+  {
+   "rel_ms": 4.11,
+   "dur_ms": 0.01,
+   "depth": 6,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.server_helpers._has_unpaired_surrogate"
+  },
+  {
+   "rel_ms": 4.19,
+   "dur_ms": 0.01,
+   "depth": 6,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.server_helpers._has_unpaired_surrogate"
+  },
+  {
+   "rel_ms": 4.24,
+   "dur_ms": 0.0,
+   "depth": 6,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.server_helpers._has_unpaired_surrogate"
+  },
+  {
+   "rel_ms": 4.29,
+   "dur_ms": 0.26,
+   "depth": 6,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.secrets.gate_or_reject"
+  },
+  {
+   "rel_ms": 4.32,
+   "dur_ms": 0.04,
+   "depth": 7,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.security.allowlist.is_allowlisted"
+  },
+  {
+   "rel_ms": 4.34,
+   "dur_ms": 0.0,
+   "depth": 8,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.security.allowlist._ensure_loaded"
+  },
+  {
+   "rel_ms": 4.42,
+   "dur_ms": 0.03,
+   "depth": 7,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.secrets.check_secrets"
+  },
+  {
+   "rel_ms": 4.47,
+   "dur_ms": 0.03,
+   "depth": 7,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.security.allowlist.is_allowlisted"
+  },
+  {
+   "rel_ms": 4.5,
+   "dur_ms": 0.0,
+   "depth": 8,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.security.allowlist._ensure_loaded"
+  },
+  {
+   "rel_ms": 4.54,
+   "dur_ms": 0.0,
+   "depth": 7,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.secrets.check_secrets"
+  },
+  {
+   "rel_ms": 4.58,
+   "dur_ms": 0.03,
+   "depth": 6,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.server_helpers._compute_valid_until"
+  },
+  {
+   "rel_ms": 4.65,
+   "dur_ms": 0.58,
+   "depth": 5,
+   "svc": "yadgar-core",
+   "name": "yadgar.core.server.tools.misc._resolve_anchor_branch"
+  },
+  {
+   "rel_ms": 4.69,
+   "dur_ms": 0.54,
+   "depth": 6,
+   "svc": "yadgar-core",
+   "name": "yadgar.core.server.tools.project._detect_branch"
+  },
+  {
+   "rel_ms": 4.72,
+   "dur_ms": 0.46,
+   "depth": 7,
+   "svc": "yadgar-core",
+   "name": "yadgar.core.server.tools.project._detect_branch_cached"
+  },
+  {
+   "rel_ms": 5.28,
+   "dur_ms": 0.01,
+   "depth": 5,
+   "svc": "yadgar-core",
+   "name": "yadgar.core.lifecycle._get_file_queue"
+  },
+  {
+   "rel_ms": 5.32,
+   "dur_ms": 0.24,
+   "depth": 5,
+   "svc": "yadgar-core",
+   "name": "yadgar._shared.file_queue.queue.FileQueue.enqueue"
+  },
+  {
+   "rel_ms": 6.42,
+   "dur_ms": 0.01,
+   "depth": 2,
+   "svc": "yadgar-core",
+   "name": "POST /mcp http send"
+  },
+  {
+   "rel_ms": 6.59,
+   "dur_ms": 0.01,
+   "depth": 2,
+   "svc": "yadgar-core",
+   "name": "POST /mcp http send"
+  }
+ ]
+}

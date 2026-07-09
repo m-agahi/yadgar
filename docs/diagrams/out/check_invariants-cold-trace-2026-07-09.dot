@@ -1,0 +1,49 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="check_invariants-cold — simplified trace (2026-07-09, core 5.117 / backend 5.30)
+trace 298efe7b · total 33.7846 s · key cost: POST (slow SurrealDB invariant scan — THE wall) = 27.3905 s (81%)\nbackend /admin runs ~34 s but core client TIMES OUT at 30 s — MCP call always errors";
+  subgraph "cluster_core" {
+    label="Core process (yadgar-core)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check_invariants() entry\nMCP dispatch → tool.check_invariants\n@3ms\n2.73 ms"];
+    "done" [shape="box", style="rounded,filled,bold", fillcolor="#fbd9d9", color="#b03030", fontcolor="#7a1f1f", label="✖ MCP client timeout at 30 s — tool ERRORS,\nbackend keeps burning CPU to @34s\n@33785ms\n3.73973 s"];
+  }
+  subgraph "cluster_backend" {
+    label="Backend (yadgar-backend)";
+    style=filled;
+    bgcolor="#fbf0ea";
+    color="#b5744a";
+    fontcolor="#7a4620";
+    fontname="Helvetica-Bold";
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_count_q ×8\nbackend.admin_exec.invariants._count_q\n@10ms\n157.73 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_memory_similarity_link\n…min_exec.invariants._check_memory_similarity_link\n@34ms\n132.38 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_memory_transition\n…nd.admin_exec.invariants._check_memory_transition\n@167ms\n5.01409 s"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="POST (slow SurrealDB invariant scan — THE wall)\nPOST\n@167ms\n27.3905 s"];
+    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_relationships\nbackend.admin_exec.invariants._check_relationships\n@32590ms\n82.74 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_wiki_crossref\nbackend.admin_exec.invariants._check_wiki_crossref\n@32699ms\n80.66 ms"];
+    "s6" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_memory_entity_orphans\n…dmin_exec.invariants._check_memory_entity_orphans\n@32780ms\n153.78 ms"];
+    "s7" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_engram_slot_distribution\n…n_exec.invariants._check_engram_slot_distribution\n@33007ms\n589.38 ms"];
+    "s8" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_per_table_size\n…ckend.admin_exec.invariants._check_per_table_size\n@33619ms\n164.55 ms"];
+  }
+  "entry" -> "s0" [color="#333333", style="solid", label="1"];
+  "s0" -> "s1" [color="#333333", style="solid", label="2"];
+  "s1" -> "s2" [color="#333333", style="solid", label="3"];
+  "s2" -> "s3" [color="#333333", style="solid", label="4"];
+  "s3" -> "s4" [color="#333333", style="solid", label="5"];
+  "s4" -> "s5" [color="#333333", style="solid", label="6"];
+  "s5" -> "s6" [color="#333333", style="solid", label="7"];
+  "s6" -> "s7" [color="#333333", style="solid", label="8"];
+  "s7" -> "s8" [color="#333333", style="solid", label="9"];
+  "s8" -> "done" [color="#333333", style="solid", label="10"];
+}
