@@ -45,6 +45,13 @@ uv run python docs/diagrams/simplify_trace.py out/recall-cold.json
 Outputs: `out/<label>-trace-<capture-date>.{dot,svg,png}`. Rendering reuses
 `generate.py`'s DOT pipeline (same palette); re-capture + re-run to refresh.
 
+> **Raw capture size policy:** `out/<tool>.json` span captures above the
+> pre-commit large-file gate (span-storm traces — `audit_anchors*`,
+> `recall-cold`, `recall-hot` at 4–6 MB each) are NOT committed and are
+> deleted after analysis. Their rendered `.dot`/`.svg`/`.png` ARE committed;
+> storm counts live in ADR-0074 + the observability plan §5b. Regenerate raw
+> JSON any time with `capture_trace.py` against a live deploy.
+
 ## Usage
 
 ```bash
