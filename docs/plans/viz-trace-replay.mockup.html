@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yadgar · Trace Deck — animated trace replay (mockup)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Michroma&family=Spline+Sans+Mono:ital,wght@0,300..700;1,300..700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     TRACE DECK — phosphor-oscilloscope observability instrument
+     signature: phosphor comet pulses w/ afterglow along the mesh
+     ============================================================ */
+  :root{
+    --bg-0:#03070b;            /* abyssal blue-black */
+    --bg-1:#060d13;            /* panel */
+    --bg-2:#0a141c;            /* raised */
+    --bg-3:#101d27;            /* hover */
+    --hair:#14232e;            /* hairline */
+    --hair-soft:#0d1922;
+
+    --ph:#49ffa4;              /* phosphor green — core lane */
+    --ph-dim:#1d6b48;
+    --ph-glow:rgba(73,255,164,.16);
+    --cy:#3ec9ff;              /* signal cyan — backend lane */
+    --cy-dim:#1a5f80;
+    --cy-glow:rgba(62,201,255,.15);
+    --amber:#ffc35c;           /* caution / p95 hot */
+    --err:#ff4059;             /* fault */
+    --err-glow:rgba(255,64,89,.22);
+
+    --tx-0:#e8f4ec;
+    --tx-1:#9fc0ae;
+    --tx-2:#5c7a68;
+    --tx-3:#354a3e;
+
+    --disp:'Michroma',ui-sans-serif,sans-serif;
+    --mono:'Spline Sans Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg-0);
+    color:var(--tx-1);
+    font-family:var(--mono);
+    font-size:12.5px;
+    line-height:1.5;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* CRT scanlines + vignette — kept faint, texture not gimmick */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:40;pointer-events:none;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);
+    opacity:.5;
+  }
+  body::after{
+    content:"";position:fixed;inset:0;z-index:41;pointer-events:none;
+    background:radial-gradient(ellipse 130% 100% at 50% 40%,transparent 55%,rgba(0,0,0,.55) 100%);
+  }
+
+  .shell{height:100vh;display:flex;flex-direction:column;position:relative;z-index:2}
+
+  /* ===== header / tab strip ===== */
+  header{
+    display:flex;align-items:center;gap:28px;
+    padding:0 24px;height:58px;flex:none;
+    border-bottom:1px solid var(--hair);
+    background:linear-gradient(180deg,rgba(10,20,28,.85),rgba(3,7,11,.6));
+    animation:dropIn .6s cubic-bezier(.2,.9,.3,1) both;
+  }
+  @keyframes dropIn{from{transform:translateY(-100%);opacity:0}to{transform:none;opacity:1}}
+  .brand{display:flex;align-items:center;gap:12px}
+  .brand .mark{
+    width:26px;height:26px;border:1px solid var(--ph-dim);border-radius:4px;position:relative;flex:none;
+    box-shadow:0 0 14px var(--ph-glow),inset 0 0 8px var(--ph-glow);
+  }
+  .brand .mark::before{ /* tiny scope blip */
+    content:"";position:absolute;left:4px;right:4px;top:50%;height:1px;background:var(--ph-dim);
+  }
+  .brand .mark::after{
+    content:"";position:absolute;top:9px;left:11px;width:4px;height:8px;
+    border-left:1px solid var(--ph);border-right:1px solid var(--ph);
+    box-shadow:0 0 6px var(--ph);
+  }
+  .brand h1{font-family:var(--disp);font-size:14px;letter-spacing:.22em;color:var(--tx-0);font-weight:400}
+  .brand h1 em{font-style:normal;color:var(--ph);text-shadow:0 0 12px var(--ph-glow)}
+
+  nav.tabs{display:flex;gap:4px;height:100%}
+  .tab{
+    display:flex;align-items:center;padding:0 18px;cursor:pointer;position:relative;
+    font-family:var(--disp);font-size:10px;letter-spacing:.2em;color:var(--tx-2);
+    transition:color .18s;
+  }
+  .tab:hover{color:var(--tx-1)}
+  .tab.on{color:var(--ph);text-shadow:0 0 10px var(--ph-glow)}
+  .tab.on::after{
+    content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;
+    background:var(--ph);box-shadow:0 0 10px var(--ph);
+  }
+  .hstat{margin-left:auto;display:flex;gap:22px;font-size:11px;color:var(--tx-2)}
+  .hstat b{color:var(--tx-0);font-weight:500}
+  .hstat .led{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ph);
+    box-shadow:0 0 8px var(--ph);margin-right:6px;vertical-align:1px;animation:led 2.6s ease-in-out infinite}
+  @keyframes led{0%,100%{opacity:.55}50%{opacity:1}}
+
+  /* ===== layout ===== */
+  .deck{flex:1;display:grid;grid-template-columns:252px 1fr 336px;min-height:0}
+
+  /* ===== recent-traces sidebar ===== */
+  aside.recent{
+    border-right:1px solid var(--hair);background:rgba(6,13,19,.6);
+    padding:16px 10px;overflow-y:auto;
+    animation:slideR .7s .12s cubic-bezier(.2,.9,.3,1) both;
+  }
+  @keyframes slideR{from{transform:translateX(-24px);opacity:0}to{transform:none;opacity:1}}
+  .side-lbl{font-family:var(--disp);font-size:8.5px;letter-spacing:.28em;color:var(--tx-3);margin:2px 8px 12px}
+  .trace-item{
+    padding:9px 10px 8px;border:1px solid transparent;border-radius:6px;cursor:pointer;
+    margin-bottom:4px;transition:.16s;position:relative;
+  }
+  .trace-item:hover{background:var(--bg-2)}
+  .trace-item.sel{
+    background:linear-gradient(90deg,var(--ph-glow),transparent 70%);
+    border-color:var(--ph-dim);
+  }
+  .trace-item .row1{display:flex;align-items:baseline;gap:8px}
+  .trace-item .tool{color:var(--tx-0);font-weight:500;font-size:12.5px}
+  .trace-item .play{font-size:8px;color:var(--ph);opacity:.85}
+  .trace-item .ms{margin-left:auto;font-size:11px;color:var(--tx-1)}
+  .trace-item .row2{display:flex;align-items:center;gap:7px;margin-top:2px;font-size:10.5px;color:var(--tx-2)}
+  .trace-item .st{width:6px;height:6px;border-radius:50%;flex:none}
+  .trace-item .st.ok{background:var(--ph);box-shadow:0 0 6px var(--ph)}
+  .trace-item .st.err{background:var(--err);box-shadow:0 0 8px var(--err);animation:led 1.1s ease-in-out infinite}
+  .trace-item .sub-err{color:var(--err);text-shadow:0 0 8px var(--err-glow)}
+  .trace-item.err-item.sel{background:linear-gradient(90deg,var(--err-glow),transparent 70%);border-color:#5c1620}
+  .side-note{margin:14px 8px 0;font-size:10px;color:var(--tx-3);line-height:1.55}
+  .side-note b{color:var(--tx-2);font-weight:500}
+
+  /* ===== stage / mesh view ===== */
+  main.stage{display:flex;flex-direction:column;min-width:0;position:relative}
+  .mesh-wrap{
+    flex:1;position:relative;min-height:0;
+    background:
+      linear-gradient(var(--hair-soft) 1px,transparent 1px),
+      linear-gradient(90deg,var(--hair-soft) 1px,transparent 1px);
+    background-size:44px 44px;
+    animation:fadeUp .8s .2s both;
+  }
+  @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  .mesh-wrap::before{ /* graticule center-lines, scope style */
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:
+      linear-gradient(rgba(73,255,164,.05) 1px,transparent 1px) 0 50%/100% 50% no-repeat,
+      radial-gradient(ellipse 90% 80% at 50% 45%,var(--ph-glow) 0%,transparent 62%);
+    opacity:.5;
+  }
+  svg#mesh{position:absolute;inset:0;width:100%;height:100%}
+
+  .lane-tag{
+    font-family:var(--disp);font-size:8px;letter-spacing:.3em;fill:var(--tx-3);
+  }
+  .lane-line{stroke:var(--hair);stroke-dasharray:2 6}
+
+  .edge{stroke:var(--hair);stroke-width:1.4;fill:none;transition:stroke .3s}
+  .edge.lit{stroke:var(--ph-dim)}
+  .edge.lit.to-backend,.edge.lit.from-backend{stroke:var(--cy-dim)}
+  .edge-glow{stroke-width:2.4;fill:none;opacity:0;stroke:var(--ph);filter:url(#glow)}
+  .edge-glow.hot{opacity:.85}
+  .edge-glow.to-backend,.edge-glow.from-backend{stroke:var(--cy)}
+
+  .node{cursor:pointer}
+  .node .halo{fill:none;stroke-width:1;opacity:0}
+  .node .ring{fill:var(--bg-1);stroke:var(--tx-3);stroke-width:1.2;transition:stroke .25s}
+  .node .core{fill:var(--tx-3);transition:fill .25s}
+  .node .nlabel{font-family:var(--disp);font-size:8.4px;letter-spacing:.14em;fill:var(--tx-2);text-anchor:middle;transition:fill .25s}
+  .node .nsub{font-size:8.6px;fill:var(--tx-3);text-anchor:middle}
+  .node .nmet{font-size:8.4px;fill:var(--tx-3);text-anchor:middle}
+  .node .nmet .hot{fill:var(--amber)}
+  .node .ndwell{font-size:9px;fill:var(--tx-3);text-anchor:middle;opacity:0;transition:opacity .3s}
+
+  .node.armed .ring{stroke:var(--ph);filter:url(#glow)}
+  .node.armed .core{fill:var(--ph)}
+  .node.armed .nlabel{fill:var(--ph)}
+  .node.armed .halo{opacity:1;stroke:var(--ph);animation:haloPing 1.2s ease-out infinite}
+  .node.done .ring{stroke:var(--ph-dim)}
+  .node.done .core{fill:var(--ph-dim)}
+  .node.done .nlabel{fill:var(--tx-1)}
+  .node.done .ndwell{opacity:1;fill:var(--tx-2)}
+  .node.armed .ndwell{opacity:1;fill:var(--ph)}
+  .node.backend.armed .ring,.node.backend.armed .halo{stroke:var(--cy)}
+  .node.backend.armed .core{fill:var(--cy)}
+  .node.backend.armed .nlabel{fill:var(--cy)}
+  .node.backend.done .ring{stroke:var(--cy-dim)}
+  .node.backend.done .core{fill:var(--cy-dim)}
+  .node.picked .ring{stroke-width:2.2}
+  .node.picked .nlabel{fill:var(--tx-0)}
+  @keyframes haloPing{0%{transform:scale(.8);opacity:.8}100%{transform:scale(1.7);opacity:0}}
+  .node .halo{transform-box:fill-box;transform-origin:center}
+
+  .pulse-head{fill:#eafff3;filter:url(#glow2)}
+  .pulse-head.backend{fill:#e7f7ff}
+  .pulse-trail{fill:var(--ph)}
+  .pulse-trail.backend{fill:var(--cy)}
+
+  .mesh-legend{
+    position:absolute;top:12px;left:16px;font-size:10px;color:var(--tx-3);
+    display:flex;gap:16px;align-items:center;pointer-events:none;
+  }
+  .mesh-legend .k{display:flex;gap:6px;align-items:center}
+  .mesh-legend .sw{width:14px;height:2px}
+  .trace-title{
+    position:absolute;top:10px;right:18px;text-align:right;pointer-events:none;
+  }
+  .trace-title .t{font-family:var(--disp);font-size:11px;letter-spacing:.18em;color:var(--tx-0)}
+  .trace-title .id{font-size:9.5px;color:var(--tx-3)}
+
+  /* ===== transport / scrubber ===== */
+  .transport{
+    flex:none;border-top:1px solid var(--hair);background:rgba(6,13,19,.8);
+    padding:10px 18px 14px;display:flex;gap:16px;align-items:flex-end;
+    animation:fadeUp .8s .32s both;
+  }
+  .tbtns{display:flex;gap:8px;align-items:center;padding-bottom:2px}
+  button.tb{
+    background:var(--bg-2);border:1px solid var(--hair);color:var(--tx-1);
+    font-family:var(--mono);font-size:11px;border-radius:6px;cursor:pointer;
+    padding:8px 0;width:44px;text-align:center;transition:.15s;
+  }
+  button.tb:hover{border-color:var(--ph-dim);color:var(--tx-0)}
+  button.tb.play{
+    width:52px;color:var(--ph);border-color:var(--ph-dim);
+    box-shadow:0 0 12px var(--ph-glow) inset;font-size:12px;
+  }
+  button.tb.play:hover{box-shadow:0 0 16px var(--ph-glow) inset,0 0 10px var(--ph-glow)}
+  .clock{
+    padding-bottom:2px;min-width:158px;
+  }
+  .clock .big{font-family:var(--disp);font-size:15px;color:var(--ph);text-shadow:0 0 10px var(--ph-glow);letter-spacing:.06em}
+  .clock .small{font-size:9.5px;color:var(--tx-3);letter-spacing:.14em}
+  .scrub{flex:1;min-width:0;position:relative;cursor:crosshair;user-select:none}
+  .scrub svg{display:block;width:100%;height:74px}
+  .wf-span{fill:var(--tx-3);opacity:.35}
+  .wf-span.lit{fill:var(--ph);opacity:.95}
+  .wf-span.backend{fill:var(--tx-3)}
+  .wf-span.backend.lit{fill:var(--cy)}
+  .scrub .track{stroke:var(--hair);stroke-width:2}
+  .scrub .track-fill{stroke:var(--ph);stroke-width:2;filter:url(#sglow)}
+  .playhead{stroke:#eafff3;stroke-width:1.1;filter:url(#sglow)}
+  .playhead-cap{fill:#eafff3;filter:url(#sglow)}
+  .scrub .ticklbl{font-size:8.5px;fill:var(--tx-3)}
+
+  /* ===== detail / drill-down panel ===== */
+  aside.detail{
+    border-left:1px solid var(--hair);background:rgba(6,13,19,.6);
+    display:flex;flex-direction:column;min-height:0;
+    animation:slideL .7s .18s cubic-bezier(.2,.9,.3,1) both;
+  }
+  @keyframes slideL{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+  .d-head{padding:16px 16px 12px;border-bottom:1px solid var(--hair)}
+  .d-kicker{font-family:var(--disp);font-size:8px;letter-spacing:.3em;color:var(--tx-3);margin-bottom:7px}
+  .d-title{font-family:var(--disp);font-size:13px;letter-spacing:.1em;color:var(--tx-0);line-height:1.45}
+  .d-title.errc{color:var(--err);text-shadow:0 0 12px var(--err-glow)}
+  .d-sub{font-size:11px;color:var(--tx-2);margin-top:4px}
+  .d-stats{display:flex;gap:0;border-bottom:1px solid var(--hair)}
+  .d-stat{flex:1;padding:10px 14px;border-right:1px solid var(--hair)}
+  .d-stat:last-child{border-right:none}
+  .d-stat .v{font-family:var(--disp);font-size:13px;color:var(--ph);letter-spacing:.04em}
+  .d-stat .v.cyv{color:var(--cy)}
+  .d-stat .v.errv{color:var(--err)}
+  .d-stat .k{font-size:8.5px;letter-spacing:.18em;color:var(--tx-3);text-transform:uppercase;margin-top:2px}
+  .d-body{flex:1;overflow-y:auto;padding:12px 12px 18px}
+  .agg-lbl{font-size:9px;letter-spacing:.22em;color:var(--tx-3);text-transform:uppercase;margin:6px 4px 8px}
+  .aggs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;padding:0 2px}
+  .agg{
+    font-size:10px;padding:3px 9px;border-radius:999px;
+    border:1px solid var(--cy-dim);color:var(--cy);background:var(--cy-glow);
+  }
+  .agg.storm{border-color:var(--amber);color:var(--amber);background:rgba(255,195,92,.08)}
+  table.spans{width:100%;border-collapse:collapse;font-size:10.5px}
+  table.spans th{
+    text-align:left;font-weight:400;font-size:8.5px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--tx-3);padding:4px 6px;border-bottom:1px solid var(--hair);
+  }
+  table.spans td{padding:4px 6px;border-bottom:1px solid var(--hair-soft);vertical-align:top}
+  table.spans td.num{text-align:right;color:var(--tx-1);white-space:nowrap;font-variant-numeric:tabular-nums}
+  table.spans td.nm{color:var(--tx-0);word-break:break-all}
+  table.spans td .durbar{display:inline-block;height:3px;background:var(--ph);border-radius:2px;vertical-align:2px;margin-left:6px;box-shadow:0 0 5px var(--ph-glow)}
+  table.spans tr.brow td .durbar{background:var(--cy)}
+  .d-empty{color:var(--tx-3);font-size:11px;padding:18px 8px;line-height:1.7}
+  .err-card{
+    margin:4px 2px 12px;border:1px solid #5c1620;border-radius:8px;padding:12px 14px;
+    background:linear-gradient(180deg,var(--err-glow),transparent);
+  }
+  .err-card .ec-t{font-family:var(--disp);font-size:9px;letter-spacing:.24em;color:var(--err);margin-bottom:8px}
+  .err-card .ec-stage{color:var(--err);font-size:11.5px;word-break:break-all;text-shadow:0 0 10px var(--err-glow)}
+  .err-card .ec-msg{color:var(--tx-1);font-size:10.5px;margin-top:7px;line-height:1.6}
+  .stage-list{list-style:none;margin:2px 2px 12px}
+  .stage-list li{padding:5px 6px;border-bottom:1px solid var(--hair-soft);font-size:11px;color:var(--tx-1);display:flex;gap:8px}
+  .stage-list li::before{content:"▸";color:var(--ph);font-size:9px;padding-top:1px}
+  .stage-list li .lms{margin-left:auto;color:var(--tx-2);font-size:10px}
+  .noreplay{
+    margin:12px 2px;font-size:10px;color:var(--tx-3);border:1px dashed var(--hair);
+    border-radius:6px;padding:9px 11px;line-height:1.6;
+  }
+
+  footer{
+    flex:none;border-top:1px solid var(--hair);padding:6px 24px;
+    font-size:9.5px;color:var(--tx-3);letter-spacing:.08em;
+    display:flex;gap:18px;background:rgba(3,7,11,.8);
+  }
+  footer .r{margin-left:auto}
+
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:4px}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="brand">
+      <div class="mark"></div>
+      <h1>YADGAR <em>· TRACE DECK</em></h1>
+    </div>
+    <nav class="tabs">
+      <div class="tab">GRAPH</div>
+      <div class="tab on">TRACES</div>
+      <div class="tab">CONFIG</div>
+      <div class="tab">WIKI</div>
+    </nav>
+    <div class="hstat">
+      <span><span class="led"></span>TEMPO LINK <b>live</b></span>
+      <span>SPAN INGEST <b>412/min</b></span>
+      <span>RETENTION <b>72 h</b></span>
+    </div>
+  </header>
+
+  <div class="deck">
+
+    <!-- ═══ recent traces ═══ -->
+    <aside class="recent">
+      <div class="side-lbl">RECENT TRACES · LAST 5 TOOL CALLS</div>
+      <div id="traceList"></div>
+      <div class="side-note">
+        <b>▶</b> entries carry a captured span set and replay on the mesh.
+        Others show capture summary only (mockup).
+      </div>
+    </aside>
+
+    <!-- ═══ mesh + transport ═══ -->
+    <main class="stage">
+      <div class="mesh-wrap">
+        <div class="mesh-legend">
+          <span class="k"><span class="sw" style="background:var(--ph);box-shadow:0 0 6px var(--ph)"></span>core lane</span>
+          <span class="k"><span class="sw" style="background:var(--cy);box-shadow:0 0 6px var(--cy)"></span>backend lane</span>
+          <span class="k"><span class="sw" style="background:var(--err);box-shadow:0 0 6px var(--err)"></span>fault</span>
+          <span class="k">badges = live p95 · call rate</span>
+        </div>
+        <div class="trace-title">
+          <div class="t" id="meshTraceLabel">tool.wiki_read</div>
+          <div class="id" id="meshTraceId">trace —</div>
+        </div>
+        <svg id="mesh" viewBox="0 0 1180 430" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="2.6" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="glow2" x="-200%" y="-200%" width="500%" height="500%">
+              <feGaussianBlur stdDeviation="3.4" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g id="meshLanes"></g>
+          <g id="meshEdges"></g>
+          <g id="meshPulses"></g>
+          <g id="meshNodes"></g>
+        </svg>
+      </div>
+
+      <div class="transport">
+        <div class="tbtns">
+          <button class="tb play" id="btnPlay" title="play / pause">▶</button>
+          <button class="tb" id="btnSpeed" title="replay speed">×1</button>
+          <button class="tb" id="btnRestart" title="restart">⟲</button>
+        </div>
+        <div class="clock">
+          <div class="big" id="clockNow">T+00.00 ms</div>
+          <div class="small">OF <span id="clockTotal">30.5</span> ms · DILATION 150:1</div>
+        </div>
+        <div class="scrub" id="scrub">
+          <svg id="scrubSvg" viewBox="0 0 1000 74" preserveAspectRatio="none">
+            <defs>
+              <filter id="sglow" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="1.6" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            <g id="wf"></g>
+            <line class="track" x1="0" y1="66" x2="1000" y2="66"/>
+            <line class="track-fill" id="trackFill" x1="0" y1="66" x2="0" y2="66"/>
+            <line class="playhead" id="playhead" x1="0" y1="2" x2="0" y2="66"/>
+            <circle class="playhead-cap" id="playheadCap" cx="0" cy="66" r="3.4"/>
+          </svg>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══ drill-down panel ═══ -->
+    <aside class="detail">
+      <div class="d-head">
+        <div class="d-kicker" id="dKicker">TRACE OVERVIEW</div>
+        <div class="d-title" id="dTitle">tool.wiki_read</div>
+        <div class="d-sub" id="dSub">click a stage node to drill into its spans</div>
+      </div>
+      <div class="d-stats" id="dStats"></div>
+      <div class="d-body" id="dBody"></div>
+    </aside>
+
+  </div>
+
+  <footer>
+    <span>TRACE DECK · concept mockup — replay drives from a real Tempo capture (wiki_read, 2026-07-09 sweep)</span>
+    <span class="r">phosphor=core · cyan=backend · not wired to live Tempo</span>
+  </footer>
+</div>
+
+<script>
+/* ================================================================
+   EMBEDDED REAL CAPTURE — docs/diagrams/out/wiki_read.json verbatim
+   ================================================================ */
+const TRACE_WIKI_READ = {
+ "label": "wiki_read",
+ "tool_span": "tool.wiki_read",
+ "trace_id": "3686bfacebc2bf602f68d514932148b9",
+ "total_ms": 30.5,
+ "span_count": 35,
+ "spans": [
+  {"rel_ms":0.0,"dur_ms":30.51,"depth":0,"svc":"yadgar-core","name":"POST /mcp"},
+  {"rel_ms":0.2,"dur_ms":29.94,"depth":1,"svc":"yadgar-core","name":"POST /mcp"},
+  {"rel_ms":1.24,"dur_ms":0.02,"depth":2,"svc":"yadgar-core","name":"POST /mcp http receive"},
+  {"rel_ms":1.76,"dur_ms":0.02,"depth":2,"svc":"yadgar-core","name":"POST /mcp http send"},
+  {"rel_ms":2.04,"dur_ms":0.02,"depth":2,"svc":"yadgar-core","name":"yadgar.core.server.routes.logs._ring_append"},
+  {"rel_ms":2.28,"dur_ms":27.94,"depth":2,"svc":"yadgar-core","name":"POST /mcp http receive"},
+  {"rel_ms":2.52,"dur_ms":26.83,"depth":2,"svc":"yadgar-core","name":"yadgar._shared.runtime.offload.run_offloaded"},
+  {"rel_ms":2.55,"dur_ms":0.01,"depth":3,"svc":"yadgar-core","name":"yadgar._shared.config.resolve_knob"},
+  {"rel_ms":2.61,"dur_ms":0.01,"depth":3,"svc":"yadgar-core","name":"yadgar._shared.runtime.offload._ensure_pool"},
+  {"rel_ms":2.66,"dur_ms":0.01,"depth":3,"svc":"yadgar-core","name":"yadgar._shared.runtime.offload._inc_inflight"},
+  {"rel_ms":2.7,"dur_ms":0.01,"depth":3,"svc":"yadgar-core","name":"yadgar._shared.runtime.offload._ctx_wrap"},
+  {"rel_ms":2.79,"dur_ms":0.01,"depth":3,"svc":"yadgar-core","name":"yadgar._shared.config.resolve_knob"},
+  {"rel_ms":2.96,"dur_ms":26.2,"depth":4,"svc":"yadgar-core","name":"tool.wiki_read"},
+  {"rel_ms":3.03,"dur_ms":0.64,"depth":5,"svc":"yadgar-core","name":"yadgar.core.server.tools.project._detect_branch"},
+  {"rel_ms":3.08,"dur_ms":0.54,"depth":6,"svc":"yadgar-core","name":"yadgar.core.server.tools.project._detect_branch_cached"},
+  {"rel_ms":3.75,"dur_ms":0.52,"depth":5,"svc":"yadgar-core","name":"yadgar.core.server.tools.project._get_default_branch"},
+  {"rel_ms":3.8,"dur_ms":0.43,"depth":6,"svc":"yadgar-core","name":"yadgar.core.server.tools.project._get_default_branch_cached"},
+  {"rel_ms":4.35,"dur_ms":0.17,"depth":5,"svc":"yadgar-core","name":"yadgar._shared.runtime.cache_epoch._current_epoch"},
+  {"rel_ms":4.38,"dur_ms":0.06,"depth":6,"svc":"yadgar-core","name":"yadgar._shared.runtime.cache_epoch._counter_path"},
+  {"rel_ms":4.41,"dur_ms":0.02,"depth":7,"svc":"yadgar-core","name":"yadgar._shared.runtime.cache_epoch._epoch_base_dir"},
+  {"rel_ms":4.47,"dur_ms":0.04,"depth":6,"svc":"yadgar-core","name":"yadgar._shared.runtime.cache_epoch._read_counter"},
+  {"rel_ms":4.55,"dur_ms":0.03,"depth":5,"svc":"yadgar-core","name":"yadgar.core.cache.Cache.get"},
+  {"rel_ms":4.7,"dur_ms":24.29,"depth":5,"svc":"yadgar-core","name":"yadgar._shared.storage.wiki._WikiMixin.get_wiki_page_by_slug_directory_branch"},
+  {"rel_ms":4.75,"dur_ms":24.13,"depth":6,"svc":"yadgar-core","name":"yadgar._shared.storage.client._ClientMixin._q"},
+  {"rel_ms":4.79,"dur_ms":23.86,"depth":7,"svc":"yadgar-core","name":"yadgar._shared.storage.client._ClientMixin._q_server"},
+  {"rel_ms":5.15,"dur_ms":22.85,"depth":8,"svc":"yadgar-core","name":"POST"},
+  {"rel_ms":28.78,"dur_ms":0.03,"depth":7,"svc":"yadgar-core","name":"yadgar._shared.storage.client._observe_query_metrics"},
+  {"rel_ms":28.86,"dur_ms":0.01,"depth":7,"svc":"yadgar-core","name":"yadgar._shared.storage.client._normalize_rows"},
+  {"rel_ms":28.92,"dur_ms":0.06,"depth":6,"svc":"yadgar-core","name":"yadgar._shared.storage.client._ClientMixin._row_to_dict"},
+  {"rel_ms":28.94,"dur_ms":0.01,"depth":7,"svc":"yadgar-core","name":"yadgar._shared.storage.client._ClientMixin._extract_id"},
+  {"rel_ms":29.03,"dur_ms":0.12,"depth":5,"svc":"yadgar-core","name":"yadgar.core.cache.Cache.put"},
+  {"rel_ms":29.07,"dur_ms":0.03,"depth":6,"svc":"yadgar-core","name":"yadgar.core.cache._estimate_bytes"},
+  {"rel_ms":29.14,"dur_ms":0.01,"depth":6,"svc":"yadgar-core","name":"yadgar.core.cache.Cache._evict_to_budget_locked"},
+  {"rel_ms":29.93,"dur_ms":0.01,"depth":2,"svc":"yadgar-core","name":"POST /mcp http send"},
+  {"rel_ms":30.07,"dur_ms":0.01,"depth":2,"svc":"yadgar-core","name":"POST /mcp http send"}
+ ]
+};
+
+/* second embedded mini-trace — synthesized from the real capture, halved
+   timings (demonstrates warm-cache replay + trace-swap interaction)      */
+function synthWarm(base){
+  const t = JSON.parse(JSON.stringify(base));
+  t.label = "wiki_read · warm";
+  t.trace_id = "f21e00c4d1a95b7734e0a1cc09d0beef";
+  t.total_ms = Math.round(base.total_ms/2*10)/10;
+  t.synthetic = true;
+  t.spans.forEach(s=>{
+    s.rel_ms = Math.round(s.rel_ms/2*100)/100;
+    s.dur_ms = Math.max(0.01, Math.round(s.dur_ms/2*100)/100);
+  });
+  return t;
+}
+const TRACE_WARM = synthWarm(TRACE_WIKI_READ);
+
+/* ================================================================
+   STAGE MESH — friendly stage names mapped from raw span names.
+   Order = pipeline order (chronological in the wiki_read capture).
+   p95 / rate = mock live-metrics overlay values.
+   ================================================================ */
+const STAGE_DEFS = [
+ {id:"ingress",   label:"MCP INGRESS",      sub:"ASGI receive · ring log",     lane:"core",    p95:"1.3ms",  rate:"41/m",
+   match:n => n==="POST /mcp" || n==="POST /mcp http receive" || n.endsWith("_ring_append")},
+ {id:"offload",   label:"OFFLOAD DISPATCH", sub:"worker-pool hand-off",        lane:"core",    p95:"0.4ms",  rate:"41/m",
+   match:n => n.includes("runtime.offload") || n.includes("config.resolve_knob")},
+ {id:"toolentry", label:"TOOL ENTRY",       sub:"tool.wiki_read span",         lane:"core",    p95:"0.1ms",  rate:"12/m",
+   match:n => n.startsWith("tool.")},
+ {id:"branch",    label:"BRANCH RESOLVE",   sub:"git context + cache epoch",   lane:"core",    p95:"1.9ms",  rate:"12/m",
+   match:n => n.includes("_detect_branch") || n.includes("_get_default_branch") || n.includes("cache_epoch")},
+ {id:"cprobe",    label:"CACHE PROBE",      sub:"read-through lookup",         lane:"core",    p95:"0.1ms",  rate:"12/m",
+   match:n => n.endsWith("Cache.get")},
+ {id:"lookup",    label:"WIKI SLUG LOOKUP", sub:"§25 dir/branch resolution",   lane:"core",    p95:"2.2ms",  rate:"12/m",
+   match:n => n.includes("storage.wiki") || n.endsWith("._q") || n.endsWith("._q_server")},
+ {id:"db",        label:"SURREALDB QUERY",  sub:"storage backend · HTTP",      lane:"backend", p95:"23.1ms", rate:"38/m", hot:true,
+   match:n => n==="POST"},
+ {id:"rows",      label:"ROW NORMALIZE",    sub:"decode + query metrics",      lane:"core",    p95:"0.2ms",  rate:"38/m",
+   match:n => n.includes("_observe_query_metrics") || n.includes("_normalize_rows") || n.includes("_row_to_dict") || n.includes("_extract_id")},
+ {id:"cwrite",    label:"CACHE WRITE",      sub:"byte-budget eviction",        lane:"core",    p95:"0.3ms",  rate:"12/m",
+   match:n => n.endsWith("Cache.put") || n.includes("_estimate_bytes") || n.includes("_evict_to_budget")},
+ {id:"egress",    label:"RESPONSE SEND",    sub:"ASGI send · flush",           lane:"core",    p95:"0.1ms",  rate:"41/m",
+   match:n => n==="POST /mcp http send"},
+];
+
+/* ================================================================
+   RECENT-TRACES SIDEBAR — real numbers from the 2026-07-09 sweep.
+   Only wiki_read entries are playable (embedded captures).
+   ================================================================ */
+const SIDEBAR = [
+ {key:"wiki_read", tool:"wiki_read", ms:"30.5 ms", ok:true,  playable:true,  trace:TRACE_WIKI_READ,
+  sub:"35 spans · SurrealDB slug lookup"},
+ {key:"warm",      tool:"wiki_read", ms:"15.3 ms", ok:true,  playable:true,  trace:TRACE_WARM,
+  sub:"synth warm replay · ½ timings"},
+ {key:"recall",    tool:"recall",    ms:"24.6 s",  ok:true,  playable:false,
+  sub:"27 133 spans · span storm",
+  card:{
+    kicker:"CAPTURE SUMMARY · NO EMBEDDED REPLAY",
+    title:"tool.recall", subtitle:"cold == hot — no output cache (#88)",
+    stats:[{v:"24.6 s",k:"total"},{v:"27 133",k:"spans",cls:"cyv"},{v:"OK",k:"status"}],
+    stages:[
+      {n:"FTS BM25 keyword search", ms:"312 ms"},
+      {n:"personalized PageRank",   ms:"1.4 s"},
+      {n:"cosine similarity fan-out", ms:"9.8 s"},
+      {n:"cross-encoder rerank (GTE)", ms:"5.2 s"},
+      {n:"NLI verification",        ms:"2.1 s"},
+    ],
+    aggs:["cosine similarity ×30424","candidate score ×27k","astrocyte domain ×8"],
+  }},
+ {key:"memorize",  tool:"memorize",  ms:"8 ms",    ok:true,  playable:false,
+  sub:"35 spans · WriteGate near-dup reject",
+  card:{
+    kicker:"CAPTURE SUMMARY · NO EMBEDDED REPLAY",
+    title:"tool.memorize (hot)", subtitle:"WriteGate near-duplicate short-circuit",
+    stats:[{v:"8 ms",k:"total"},{v:"35",k:"spans",cls:"cyv"},{v:"OK",k:"status"}],
+    stages:[
+      {n:"WriteGate similarity check", ms:"5 ms"},
+      {n:"near-dup reject · early return", ms:"1 ms"},
+    ],
+    aggs:["cold path: 6 618 spans / 6.8 s (drainer + embed)"],
+  }},
+ {key:"restore",   tool:"restore",   ms:"—",       ok:false, playable:false,
+  sub:"CheckpointRestore._predict_memories", subErr:true,
+  card:{
+    kicker:"FAULT CAPTURE",
+    title:"tool.restore", titleErr:true, subtitle:"intermittent — clean trace on retry",
+    stats:[{v:"ERROR",k:"status",cls:"errv"},{v:"1 572",k:"spans",cls:"cyv"},{v:"—",k:"total"}],
+    error:{
+      stage:"CheckpointRestore._predict_memories",
+      msg:"TypeError: '<' not supported between instances of 'NoneType' and 'int' — null-field guard missing on SR cognitive-map score compare.",
+    },
+    stages:[
+      {n:"checkpoint fetch", ms:"22 ms"},
+      {n:"anchor collect",   ms:"148 ms"},
+      {n:"memory prediction (SR map)", ms:"✗ raised", err:true},
+    ],
+    aggs:["per-memory span ×1572 (storm — issue #48)"],
+  }},
+];
+
+/* ================================================================ */
+const DILATION = 150;                 // 1 trace-ms → 150 wall-ms at ×1
+const SPEEDS = [0.5, 1, 2, 4];
+const SVGNS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+
+const state = {
+  trace: null, stages: [], edges: [],
+  t: 0, playing: false, speedIdx: 1,
+  pickedStage: null, lastFrame: null,
+};
+
+/* ---------- stage timing from a trace ---------- */
+function computeStages(trace){
+  const stages = STAGE_DEFS.map(d => Object.assign({}, d, {members:[], start:Infinity}));
+  trace.spans.forEach(s => {
+    const st = stages.find(d => d.match(s.name));
+    if (st){ st.members.push(s); st.start = Math.min(st.start, s.rel_ms); }
+  });
+  // monotonic pipeline starts: a stage cannot begin before its predecessor.
+  // (guards against early HTTP-lifecycle spans, e.g. the rel≈1.7ms
+  //  "POST /mcp http send" that shares a name with the real egress sends)
+  for (let i=0;i<stages.length;i++){
+    const prev = i ? stages[i-1].start : 0;
+    const cands = stages[i].members.map(m=>m.rel_ms).filter(r => r >= prev);
+    if (cands.length) stages[i].start = Math.min(...cands);
+    else stages[i].start = isFinite(stages[i].start) ? Math.max(stages[i].start, prev) : prev;
+  }
+  // end = next stage start (sequential pipeline dwell), last = total
+  for (let i=0;i<stages.length;i++){
+    stages[i].end = (i < stages.length-1) ? Math.max(stages[i].start, stages[i+1].start) : trace.total_ms;
+    stages[i].dwell = Math.max(0.01, stages[i].end - stages[i].start);
+  }
+  return stages;
+}
+
+/* ---------- mesh build (SVG) ---------- */
+const MESH = {w:1180, h:430, coreY:150, backY:318, x0:80, x1:1108, r:15};
+
+function laneX(i, n){ return MESH.x0 + (MESH.x1-MESH.x0) * (n===1 ? .5 : i/(n-1)); }
+
+function buildMesh(){
+  const nodesG = $("meshNodes"), edgesG = $("meshEdges"), pulsesG = $("meshPulses"), lanesG = $("meshLanes");
+  nodesG.innerHTML = ""; edgesG.innerHTML = ""; pulsesG.innerHTML = ""; lanesG.innerHTML = "";
+
+  // lane guides
+  [["CORE LANE — yadgar-core", MESH.coreY],["BACKEND LANE — yadgar-backend / storage", MESH.backY]].forEach(([txt,y])=>{
+    const ln = document.createElementNS(SVGNS,"line");
+    ln.setAttribute("class","lane-line");
+    ln.setAttribute("x1",30); ln.setAttribute("x2",MESH.w-30);
+    ln.setAttribute("y1",y);  ln.setAttribute("y2",y);
+    lanesG.appendChild(ln);
+    const t = document.createElementNS(SVGNS,"text");
+    t.setAttribute("class","lane-tag");
+    t.setAttribute("x",30); t.setAttribute("y",y-58);
+    t.textContent = txt;
+    lanesG.appendChild(t);
+  });
+
+  const n = state.stages.length;
+  state.stages.forEach((st,i)=>{
+    st.x = laneX(i,n);
+    st.y = st.lane==="backend" ? MESH.backY : MESH.coreY;
+  });
+
+  // edges
+  state.edges = [];
+  for (let i=0;i<n-1;i++){
+    const a = state.stages[i], b = state.stages[i+1];
+    const dx = (b.x - a.x);
+    const d = `M ${a.x+MESH.r} ${a.y} C ${a.x+dx*.55} ${a.y}, ${b.x-dx*.55} ${b.y}, ${b.x-MESH.r} ${b.y}`;
+    const laneCls = (b.lane==="backend") ? "to-backend" : (a.lane==="backend" ? "from-backend" : "");
+
+    const base = document.createElementNS(SVGNS,"path");
+    base.setAttribute("class",`edge ${laneCls}`); base.setAttribute("d",d);
+    $("meshEdges").appendChild(base);
+
+    const glow = document.createElementNS(SVGNS,"path");
+    glow.setAttribute("class",`edge-glow ${laneCls}`); glow.setAttribute("d",d);
+    $("meshEdges").appendChild(glow);
+
+    // phosphor comet: head + afterglow trail
+    const backend = laneCls !== "";
+    const grp = document.createElementNS(SVGNS,"g");
+    grp.setAttribute("visibility","hidden");
+    const trail = [];
+    for (let k=6;k>=1;k--){
+      const c = document.createElementNS(SVGNS,"circle");
+      c.setAttribute("class","pulse-trail"+(backend?" backend":""));
+      c.setAttribute("r",(k*0.62).toFixed(2));
+      c.setAttribute("opacity",(k/6*0.55).toFixed(2));
+      grp.appendChild(c); trail.push(c);
+    }
+    const head = document.createElementNS(SVGNS,"circle");
+    head.setAttribute("class","pulse-head"+(backend?" backend":""));
+    head.setAttribute("r","3.4");
+    grp.appendChild(head);
+    pulsesG.appendChild(grp);
+
+    state.edges.push({from:a, to:b, base, glow, grp, head, trail:trail.reverse(),
+                      len: base.getTotalLength(), hist: []});
+  }
+
+  // nodes
+  state.stages.forEach((st,i)=>{
+    const g = document.createElementNS(SVGNS,"g");
+    g.setAttribute("class","node"+(st.lane==="backend"?" backend":""));
+    g.setAttribute("transform",`translate(${st.x},${st.y})`);
+    g.style.opacity = 0;
+    g.style.transition = "opacity .5s";
+    setTimeout(()=>{ g.style.opacity = 1; }, 350 + i*90);   // boot stagger
+
+    const halo = document.createElementNS(SVGNS,"circle");
+    halo.setAttribute("class","halo"); halo.setAttribute("r",MESH.r+4);
+    const ring = document.createElementNS(SVGNS,"circle");
+    ring.setAttribute("class","ring"); ring.setAttribute("r",MESH.r);
+    const core = document.createElementNS(SVGNS,"circle");
+    core.setAttribute("class","core"); core.setAttribute("r",3.6);
+
+    const dwell = document.createElementNS(SVGNS,"text");
+    dwell.setAttribute("class","ndwell"); dwell.setAttribute("y",-26);
+    dwell.setAttribute("text-anchor","middle");
+    dwell.textContent = st.dwell.toFixed(st.dwell<1?2:1)+" ms";
+
+    const stagger = (i%2===0) ? 0 : 16;   // de-collide labels
+    const lbl = document.createElementNS(SVGNS,"text");
+    lbl.setAttribute("class","nlabel"); lbl.setAttribute("y",36+stagger);
+    lbl.textContent = st.label;
+    const sub = document.createElementNS(SVGNS,"text");
+    sub.setAttribute("class","nsub"); sub.setAttribute("y",49+stagger);
+    sub.textContent = st.sub;
+    const met = document.createElementNS(SVGNS,"text");
+    met.setAttribute("class","nmet"); met.setAttribute("y",62+stagger);
+    const p95 = document.createElementNS(SVGNS,"tspan");
+    if (st.hot) p95.setAttribute("class","hot");
+    p95.textContent = "p95 "+st.p95;
+    const rate = document.createElementNS(SVGNS,"tspan");
+    rate.textContent = " · "+st.rate;
+    met.appendChild(p95); met.appendChild(rate);
+
+    g.appendChild(halo); g.appendChild(ring); g.appendChild(core);
+    g.appendChild(dwell); g.appendChild(lbl); g.appendChild(sub); g.appendChild(met);
+    g.addEventListener("click", ()=> pickStage(st));
+    $("meshNodes").appendChild(g);
+    st.el = g;
+    st.dwellEl = dwell;
+  });
+}
+
+/* ---------- waterfall scrubber ---------- */
+const WF = {w:1000, top:2, rowH:6.4, maxH:56};
+function buildWaterfall(){
+  const wf = $("wf"); wf.innerHTML = "";
+  const total = state.trace.total_ms;
+  state.trace.spans.forEach(s=>{
+    const r = document.createElementNS(SVGNS,"rect");
+    const isDb = s.name==="POST";
+    r.setAttribute("class","wf-span"+(isDb?" backend":""));
+    r.setAttribute("x",(s.rel_ms/total*WF.w).toFixed(2));
+    r.setAttribute("width",Math.max(1.6, s.dur_ms/total*WF.w).toFixed(2));
+    r.setAttribute("y",(WF.top + Math.min(s.depth,8)*WF.rowH).toFixed(2));
+    r.setAttribute("height",4.4);
+    r.setAttribute("rx",1);
+    wf.appendChild(r);
+    s._wfEl = r;
+  });
+}
+
+/* ---------- render loop ---------- */
+function setTime(ms){
+  state.t = Math.max(0, Math.min(state.trace.total_ms, ms));
+  renderFrame();
+}
+
+function renderFrame(){
+  const t = state.t, total = state.trace.total_ms;
+
+  // clock + playhead
+  $("clockNow").textContent = "T+"+t.toFixed(2).padStart(5,"0")+" ms";
+  const px = t/total*WF.w;
+  $("playhead").setAttribute("x1",px); $("playhead").setAttribute("x2",px);
+  $("playheadCap").setAttribute("cx",px);
+  $("trackFill").setAttribute("x2",px);
+
+  // waterfall lighting
+  state.trace.spans.forEach(s=>{
+    s._wfEl.classList.toggle("lit", s.rel_ms <= t);
+  });
+
+  // stage node states
+  state.stages.forEach(st=>{
+    const armed = t >= st.start && t < st.end;
+    const done  = t >= st.end;
+    st.el.classList.toggle("armed", armed);
+    st.el.classList.toggle("done",  done);
+  });
+
+  // pulses along edges
+  state.edges.forEach(e=>{
+    const t0 = e.from.start, t1 = e.to.start;
+    const active = t >= t0 && t < t1 && (t1-t0) > 0.001;
+    e.glow.classList.toggle("hot", active);
+    e.base.classList.toggle("lit", t >= t1);
+    if (active){
+      const p = (t - t0) / (t1 - t0);
+      const pt = e.base.getPointAtLength(p * e.len);
+      e.grp.setAttribute("visibility","visible");
+      e.head.setAttribute("cx",pt.x); e.head.setAttribute("cy",pt.y);
+      e.hist.unshift(pt);
+      if (e.hist.length > 7) e.hist.pop();
+      e.trail.forEach((c,k)=>{
+        const h = e.hist[Math.min(k+1, e.hist.length-1)];
+        c.setAttribute("cx",h.x); c.setAttribute("cy",h.y);
+      });
+    } else {
+      e.grp.setAttribute("visibility","hidden");
+      e.hist.length = 0;
+    }
+  });
+}
+
+function tick(now){
+  if (state.lastFrame == null) state.lastFrame = now;
+  const dt = (now - state.lastFrame); state.lastFrame = now;
+  if (state.playing){
+    const speed = SPEEDS[state.speedIdx];
+    setTime(state.t + dt / DILATION * speed);
+    if (state.t >= state.trace.total_ms){ setPlaying(false); }
+  }
+  requestAnimationFrame(tick);
+}
+
+function setPlaying(on){
+  state.playing = on;
+  $("btnPlay").textContent = on ? "❚❚" : "▶";
+}
+
+/* ---------- transport controls ---------- */
+$("btnPlay").addEventListener("click", ()=>{
+  if (!state.playing && state.t >= state.trace.total_ms) setTime(0);
+  setPlaying(!state.playing);
+});
+$("btnRestart").addEventListener("click", ()=>{ setTime(0); setPlaying(true); });
+$("btnSpeed").addEventListener("click", ()=>{
+  state.speedIdx = (state.speedIdx+1) % SPEEDS.length;
+  $("btnSpeed").textContent = "×"+SPEEDS[state.speedIdx];
+});
+
+// scrub: click + drag anywhere on the waterfall
+(function(){
+  const scrub = $("scrub");
+  let dragging = false;
+  function seek(ev){
+    const rect = scrub.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+    setTime(frac * state.trace.total_ms);
+  }
+  scrub.addEventListener("pointerdown", ev=>{ dragging = true; scrub.setPointerCapture(ev.pointerId); seek(ev); });
+  scrub.addEventListener("pointermove", ev=>{ if (dragging) seek(ev); });
+  scrub.addEventListener("pointerup",   ()=>{ dragging = false; });
+})();
+
+/* ---------- drill-down panel ---------- */
+function shortName(n){
+  if (!n.includes(".")) return n;
+  const parts = n.split(".");
+  return parts.slice(-2).join(".");
+}
+
+function pickStage(st){
+  state.pickedStage = st;
+  state.stages.forEach(s => s.el.classList.toggle("picked", s===st));
+  $("dKicker").textContent = "STAGE DRILL-DOWN · " + (st.lane==="backend" ? "BACKEND LANE" : "CORE LANE");
+  $("dTitle").textContent  = st.label;
+  $("dTitle").className    = "d-title";
+  $("dSub").textContent    = st.sub + " — " + st.members.length + " child span" + (st.members.length===1?"":"s");
+
+  $("dStats").innerHTML = [
+    {v:st.dwell.toFixed(st.dwell<1?2:1)+" ms", k:"dwell"},
+    {v:st.start.toFixed(2), k:"t-start ms", cls:"cyv"},
+    {v:"p95 "+st.p95, k:"live "+st.rate},
+  ].map(s=>`<div class="d-stat"><div class="v ${s.cls||""}">${s.v}</div><div class="k">${s.k}</div></div>`).join("");
+
+  // storm aggregations: repeated span names collapse to ×N chips
+  const counts = {};
+  st.members.forEach(m => { const k = shortName(m.name); counts[k]=(counts[k]||0)+1; });
+  const aggs = Object.entries(counts).filter(([,c])=>c>1)
+    .map(([k,c])=>`<span class="agg storm">${k} ×${c}</span>`).join("");
+
+  const maxDur = Math.max(...st.members.map(m=>m.dur_ms), 0.01);
+  const rows = st.members.map(m=>{
+    const bar = Math.max(3, m.dur_ms/maxDur*54);
+    const brow = m.name==="POST" ? ' class="brow"' : "";
+    return `<tr${brow}>
+      <td class="num">${m.rel_ms.toFixed(2)}</td>
+      <td class="num">${m.dur_ms.toFixed(2)}<span class="durbar" style="width:${bar.toFixed(0)}px"></span></td>
+      <td class="num">${m.depth}</td>
+      <td class="nm">${shortName(m.name)}</td>
+    </tr>`;
+  }).join("");
+
+  $("dBody").innerHTML =
+    (aggs ? `<div class="agg-lbl">Aggregations</div><div class="aggs">${aggs}</div>` : "") +
+    `<div class="agg-lbl">Child spans</div>
+     <table class="spans">
+       <thead><tr><th>rel ms</th><th>dur ms</th><th>d</th><th>span</th></tr></thead>
+       <tbody>${rows}</tbody>
+     </table>`;
+}
+
+function showTraceOverview(){
+  state.pickedStage = null;
+  state.stages.forEach(s => s.el.classList.remove("picked"));
+  const tr = state.trace;
+  $("dKicker").textContent = "TRACE OVERVIEW" + (tr.synthetic ? " · SYNTHETIC" : " · REAL CAPTURE");
+  $("dTitle").textContent  = tr.tool_span;
+  $("dTitle").className    = "d-title";
+  $("dSub").textContent    = "click a stage node to drill into its spans";
+  $("dStats").innerHTML = [
+    {v:tr.total_ms+" ms", k:"total"},
+    {v:tr.span_count, k:"spans", cls:"cyv"},
+    {v:"OK", k:"status"},
+  ].map(s=>`<div class="d-stat"><div class="v ${s.cls||""}">${s.v}</div><div class="k">${s.k}</div></div>`).join("");
+  $("dBody").innerHTML = `
+    <div class="agg-lbl">Pipeline dwell</div>
+    <ul class="stage-list">
+      ${state.stages.map(st=>`<li>${st.label.toLowerCase()}<span class="lms">${st.dwell.toFixed(st.dwell<1?2:1)} ms</span></li>`).join("")}
+    </ul>
+    <div class="d-empty">trace ${tr.trace_id.slice(0,16)}… · ${tr.synthetic ? "synthesized from the real wiki_read capture (½ timings) to demo trace-swap" : "captured via Tempo, 2026-07-09 sweep"}</div>`;
+}
+
+/* static (non-playable) sidebar cards */
+function showStaticCard(entry){
+  const c = entry.card;
+  $("dKicker").textContent = c.kicker;
+  $("dTitle").textContent  = c.title;
+  $("dTitle").className    = "d-title" + (c.titleErr ? " errc" : "");
+  $("dSub").textContent    = c.subtitle;
+  $("dStats").innerHTML = c.stats.map(s=>
+    `<div class="d-stat"><div class="v ${s.cls||""}">${s.v}</div><div class="k">${s.k}</div></div>`).join("");
+
+  let body = "";
+  if (c.error){
+    body += `<div class="err-card">
+      <div class="ec-t">FAULT · FAILING STAGE</div>
+      <div class="ec-stage">${c.error.stage}</div>
+      <div class="ec-msg">${c.error.msg}</div>
+    </div>`;
+  }
+  body += `<div class="agg-lbl">Stages</div><ul class="stage-list">` +
+    c.stages.map(s=>`<li style="${s.err?'color:var(--err)':''}">${s.n}<span class="lms" style="${s.err?'color:var(--err)':''}">${s.ms}</span></li>`).join("") +
+    `</ul>`;
+  if (c.aggs && c.aggs.length){
+    body += `<div class="agg-lbl">Aggregations</div><div class="aggs">` +
+      c.aggs.map(a=>`<span class="agg storm">${a}</span>`).join("") + `</div>`;
+  }
+  body += `<div class="noreplay">▷ replay unavailable — span set not embedded in this mockup. Playable entries are marked ▶ in the sidebar.</div>`;
+  $("dBody").innerHTML = body;
+}
+
+/* ---------- sidebar ---------- */
+function buildSidebar(){
+  const list = $("traceList"); list.innerHTML = "";
+  SIDEBAR.forEach(e=>{
+    const div = document.createElement("div");
+    div.className = "trace-item" + (e.ok ? "" : " err-item");
+    div.dataset.key = e.key;
+    div.innerHTML = `
+      <div class="row1">
+        ${e.playable ? '<span class="play">▶</span>' : ''}
+        <span class="tool">${e.tool}</span>
+        <span class="ms">${e.ms}</span>
+      </div>
+      <div class="row2">
+        <span class="st ${e.ok?'ok':'err'}"></span>
+        <span class="${e.subErr?'sub-err':''}">${e.sub}</span>
+      </div>`;
+    div.addEventListener("click", ()=> selectEntry(e));
+    list.appendChild(div);
+    e.el = div;
+  });
+}
+
+function selectEntry(entry){
+  SIDEBAR.forEach(e => e.el.classList.toggle("sel", e===entry));
+  if (entry.playable){
+    loadTrace(entry.trace);
+    setTime(0);
+    setPlaying(true);
+  } else {
+    setPlaying(false);
+    showStaticCard(entry);
+  }
+}
+
+/* ---------- trace load ---------- */
+function loadTrace(trace){
+  state.trace = trace;
+  state.stages = computeStages(trace);
+  buildMesh();
+  buildWaterfall();
+  $("clockTotal").textContent = trace.total_ms;
+  $("meshTraceLabel").textContent = "tool." + trace.label.split(" ")[0] + (trace.synthetic ? " · warm" : "");
+  $("meshTraceId").textContent = "trace " + trace.trace_id.slice(0,20) + "…" + (trace.synthetic ? " (synthetic)" : "");
+  showTraceOverview();
+  renderFrame();
+}
+
+/* ---------- boot ---------- */
+buildSidebar();
+SIDEBAR[0].el.classList.add("sel");
+loadTrace(TRACE_WIKI_READ);
+setTime(0);
+requestAnimationFrame(tick);
+setTimeout(()=> setPlaying(true), 1400);   // load reveal, then auto-replay
+</script>
+</body>
+</html>
