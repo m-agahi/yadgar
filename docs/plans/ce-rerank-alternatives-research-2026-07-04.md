@@ -1,5 +1,7 @@
 # CE Rerank Alternatives — Research Synthesis (2026-07-04)
 
+**Status (updated 2026-07-09):** CONCLUDED — research input to recall Train 3 (Ettin model swap). Ettin-32M/68M winner; benchmark against LongMemEval recall@k required before swap. ADR-0044 forthcoming on swap decision.
+
 **Sources synthesized:**
 - Report A: SOTA reranker model replacements (model survey, CPU benchmarks, same-harness table)
 - Report B: Accelerating the current model on CPU (threading, quantization, graph fusion)

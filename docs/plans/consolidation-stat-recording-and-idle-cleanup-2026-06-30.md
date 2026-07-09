@@ -1,6 +1,6 @@
 # Consolidation stat-recording fix + idle dead-knob cleanup
 
-**Status:** PLANNED. Sequenced **after SurrealDB 3.1.5 (PR #136) deploys** — the `consolidation_log` schema add should land on 3.1.5, not race the surreal upgrade.
+**Status (updated 2026-07-09):** OPEN — sequencing gate lifted (SurrealDB 3.1.5 shipped #136, b02f6397). Fix B (stat recording) still needed: `insert_consolidation_log` in `_shared/storage/ops.py:52` whitelists only 5 fields and drops `memify_pruned`, `cls_promoted`, `actions_processed`, etc. — orchestrator passes `{**stats}` but the impl discards them. Schema is SCHEMALESS so no migration needed; the fix is expanding the SET clause in `insert_consolidation_log`.
 
 Source: 2026-06-30 drift diagnosis. Both findings are the same disease — *self-reporting the user can't trust*: a UI/registry asserts truth the runtime contradicts, and no automated check closes the loop ("discover by accident").
 

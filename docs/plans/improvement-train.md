@@ -1,6 +1,6 @@
 # Improvement Train (#29) — umbrella
 
-**Status:** umbrella #29 — #4 + #9 shipped v5.85; B1-B5 + C4 still open.
+**Status (updated 2026-07-09):** umbrella #29 — Group B ALL SHIPPED (#124, 6e1629cb): B1 read-side branch_hint (#19), B2 adr_add tool (#12), B3 project_brief ADR surfacing (#13), B4 models.py ADR shape (#14), B5 anchor-signal (#177, a4390c4e). Group C: C1 stale_wiki_count fix shipped #124; C3 CLOSED (warning reachable); C4 test unskipped #124 (scoring investigation remains open). A2 REJECTED (ADR-0043/ADR-0067 — onnx-int8 removed). Open: A1 (cpu-burst Part 2, #30–33) + A3 (process-exporter nix hand-off, #34) + C4 diagnosis/fix.
 
 Created 2026-06-25. Umbrella for issue **#29**: a batch of independent improvements
 grouped into **three coherent sub-PRs** (A perf, B ADR-capture, C bugs/cleanup) — NOT
@@ -50,12 +50,12 @@ OPEN and out of scope — hand to user.**
 
 | Car | Task | Plan | Scope (one line) | Status |
 |-----|------|------|------------------|--------|
-| B0 | (P0) | [adr-capture-system](adr-capture-system.md) §P0 | stop-hook capture-first + ADR schema + branch_hint write-side | **DONE — shipped PR #121 (`eeaec40`)** |
-| B1 | #19 | [adr-capture-system](adr-capture-system.md) §P0.5 | stop-hook ADR prompt READ-side branch_hint (wiki_read/wiki_history miss default-branch ADR page on a feature branch) | NEW section; verified gap, one-template edit |
-| B2 | #12 | [adr-capture-system](adr-capture-system.md) §P1 | `adr_add`/`decide` MCP tool (11-field typed/validated) + `adr_due` nudge in project_brief/checkpoint | PLANNED (P1, unbuilt) |
-| B3 | #13 | [adr-capture-system](adr-capture-system.md) §P2 | project_brief surfaces the ADR page first-class (read-first) | PLANNED (P2, unbuilt) |
-| B4 | #14 | [adr-capture-system](adr-capture-system.md) §P3 | consolidate record shapes → `models.py` (ADR shape first) | PLANNED (P3; `models.py` already 234 lines/16 classes — add the ADR type) |
-| B5 | #20 | [anchor-signal-gap](anchor-signal-gap.md) | project_brief over-signals `audit_anchors` (count>15 gate ignores actionable items) + phantom action names; the stop-hook step-4 anchor-hygiene flow consumes this signal | NEW; root-caused. **Correction: audit_anchors DOES handle expired — fix is over-signal + name indirection, NOT "add expired handling"** |
+| B0 | (P0) | [adr-capture-system](archive/adr-capture-system.md) §P0 | stop-hook capture-first + ADR schema + branch_hint write-side | **DONE — shipped PR #121 (`eeaec40`)** |
+| B1 | #19 | [adr-capture-system](archive/adr-capture-system.md) §P0.5 | stop-hook ADR prompt READ-side branch_hint (wiki_read/wiki_history miss default-branch ADR page on a feature branch) | NEW section; verified gap, one-template edit |
+| B2 | #12 | [adr-capture-system](archive/adr-capture-system.md) §P1 | `adr_add`/`decide` MCP tool (11-field typed/validated) + `adr_due` nudge in project_brief/checkpoint | PLANNED (P1, unbuilt) |
+| B3 | #13 | [adr-capture-system](archive/adr-capture-system.md) §P2 | project_brief surfaces the ADR page first-class (read-first) | PLANNED (P2, unbuilt) |
+| B4 | #14 | [adr-capture-system](archive/adr-capture-system.md) §P3 | consolidate record shapes → `models.py` (ADR shape first) | PLANNED (P3; `models.py` already 234 lines/16 classes — add the ADR type) |
+| B5 | #20 | [anchor-signal-gap](archive/anchor-signal-gap.md) | project_brief over-signals `audit_anchors` (count>15 gate ignores actionable items) + phantom action names; the stop-hook step-4 anchor-hygiene flow consumes this signal | NEW; root-caused. **Correction: audit_anchors DOES handle expired — fix is over-signal + name indirection, NOT "add expired handling"** |
 
 **Sequencing inside B:** B1 first (tiny, closes the P0 dedup gap). Then B2 (the durable
 fix — moves capture off the prompt); B3 depends on B2 (surface what B2 structures); B4
@@ -72,8 +72,8 @@ land anytime in B or as its own small PR. So: **B1 → (B4-adr-shape + B2) → B
 
 | Car | Task | Plan | Scope (one line) | Status |
 |-----|------|------|------------------|--------|
-| C1 | #9 | [adr-capture-system](adr-capture-system.md) §Bug fixes (Bug A) | `stale_wiki_count` dead gate — `project.py:1862` reads `source_files`/`sources`, disk has `source_file` → always 0 | VERIFIED still broken; fix = add `source_file` key |
-| C2 | #10 | [adr-capture-system](adr-capture-system.md) §Bug fixes (Bug B) | wiki_add/approve convention text | **in-repo already correct** (`sync_instructions` misc.py:517); real fix is out-of-repo nix dotfiles — **hand to user** |
+| C1 | #9 | [adr-capture-system](archive/adr-capture-system.md) §Bug fixes (Bug A) | `stale_wiki_count` dead gate — `project.py:1862` reads `source_files`/`sources`, disk has `source_file` → always 0 | VERIFIED still broken; fix = add `source_file` key |
+| C2 | #10 | [adr-capture-system](archive/adr-capture-system.md) §Bug fixes (Bug B) | wiki_add/approve convention text | **in-repo already correct** (`sync_instructions` misc.py:517); real fix is out-of-repo nix dotfiles — **hand to user** |
 | C3 | #25 | [comet-dormant-startup-warning](comet-dormant-startup-warning.md) | COMET-dormant startup warning reachability | **LIKELY CLOSED** — warning fires on streamable-http path; reduces to user decision (server-log vs client-visible) |
 | C4 | #21 | [recall-content-integrity-flake](recall-content-integrity-flake.md) | unquarantine `test_specific_detail_preserved` (recall ranking miss, not content drop) | NEW; needs investigate→diagnose→fix; **don't overfit recall to one fixture (user judgment)** |
 
