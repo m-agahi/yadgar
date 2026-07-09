@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED: #175 (db36e1e5) "fix: data-dir hygiene — backups/ layout, retention backstops, wiki cadence (ADR-0076)".
+
 # Plan: Data-dir hygiene — backups layout, retention, wiki-snapshot cadence
 
 **Status:** AGREED (user blessed all six decision points 2026-07-09). ADR-0076.

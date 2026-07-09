@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED: T1 #162 (8ae9e52c) — recall pipeline moved to backend /recall behind RECALL_BACKEND_ENABLED; superseded by forward-only T1.5 (#163) which deleted the flag.
+
 # Plan: Move the recall pipeline from core into a stateless backend `/recall` endpoint
 
 **Status:** DRAFT — **CONDITIONAL / measure-first gated.** Do NOT build until the gate in §7 passes.

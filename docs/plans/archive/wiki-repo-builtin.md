@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SUPERSEDED: wiki-repo-full-buildout-2026-06-29.md explicitly supersedes the open portion of this plan; store-bridge shipped v5.85 (#36).
+
 # PLAN — Wiki-repo BUILT-IN + shared stale-hash (absorbs #36 residual)
 
 **Status:** PARTIAL — store-bridge shipped v5.85 (#36); fn/index hash parity deferred to #47 (XL).

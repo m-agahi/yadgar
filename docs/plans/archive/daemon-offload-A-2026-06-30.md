@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED: v5.90.0 (#134, 2febcedb) — YADGAR_OFFLOAD_TOOLS (default-OFF), dual-wrapper, O2 pool-saturation health gate, hook-route git in to_thread. Flip-to-ON is immediate follow-up (not yet shipped).
+
 # Fix A — Offload Sync MCP Tool Bodies Off the Asyncio Loop (2026-06-30)
 
 **STATUS: IN REVIEW.** Plan only — NO implementation. This document will be

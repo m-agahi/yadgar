@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED: companion to daemon-offload-A; all build decisions (dual-wrapper, default-OFF, pool, locks) incorporated in v5.90.0 (#134, 2febcedb).
+
 # Fix A — BUILD NOTES (feat/daemon-offload-A)
 
 Companion to `daemon-offload-A-2026-06-30.md` + its `## AUDIT`. Records the

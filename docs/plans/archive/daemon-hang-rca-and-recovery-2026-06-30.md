@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — SHIPPED: P0 healthcheck-kill shipped (e783510, nix); P1 hook-route inline git wrapped in asyncio.to_thread shipped v5.90.0 (#134, 2febcedb). Both fixes live.
+
 # Core MCP Daemon Hang — RCA + Recovery Plan (2026-06-30)
 
 **Status:** IN REVIEW. Read-only RCA + fix design.
