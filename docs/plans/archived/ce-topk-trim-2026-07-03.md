@@ -14,7 +14,7 @@
 
 ## CORRECTION (2026-07-04): CE runs THREE passes, not one
 
-**Source:** real cold recall trace 242cc546 (`docs/diagrams/out/recall-cold-trace-2026-07-04.svg`, task #41).
+**Source:** real cold recall trace 242cc546 (`docs/diagrams/archive/2026-07-04/recall-cold-trace-2026-07-04.svg`, task #41).
 
 The plan above was written assuming CE is a single span ("87% of recall"). That is **incomplete**. The trace reveals **three separate serial CE passes** totalling ~20s = 77% of the 26.1s cold recall:
 
