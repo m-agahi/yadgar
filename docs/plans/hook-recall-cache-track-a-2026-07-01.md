@@ -1,6 +1,6 @@
 # Track A — hook-recall caching (PARKED discussion)
 
-**Status:** PARKED. The #81 freeze is already fixed by **track B** (bounded hook-recall pool, v5.92.0). Track A is a **speed** optimization only, not a fix. Revisit if the bounded-but-still-~1.5s hook recall proves too heavy in practice.
+**Status:** PARKED — pending ADR-0077 re-measure gate. Track B (bounded hook-recall pool, v5.92.0) fixed the #81 freeze; pool bumped back to 2 workers (ADR-0077/#166 post-R3 HTTP forward). Track A is a speed optimization only. Gate: passive Tempo re-measure of `yadgar.core.server.http._forward_hook_recall` span (≥15 organic fires); if p95 latency is acceptable under pool=2, Track A deferred indefinitely.
 
 ## Background
 Agent-lifecycle hooks (`/hooks/prompt-recall`, `/hooks/subagent-start`, `/hooks/instructions-loaded`) inject auto-context by running `retriever.recall(profile="fast")` ≈ **1.5s** (FTS + vector-embed + KNN + fusion on ~4800 records; rerank/PPR/spreading already skipped). Track B made the *thread pool* bounded so a slow uncancellable recall can no longer starve the loop. Track A would make the recall itself cheap.

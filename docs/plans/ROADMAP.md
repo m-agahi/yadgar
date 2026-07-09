@@ -39,9 +39,8 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 ### Active / next
 | Plan | Theme | Status | Notes |
 |------|-------|--------|-------|
-| [improvement-train](improvement-train.md) | umbrella (#29) | **NEW — 3 PRs (A perf / B adr / C bugs)** | Umbrella for issue #29: A=embedding-scan perf + int8 CE + scrape tune; B=ADR-capture follow-through (P0 shipped, P0.5/#19 + P1/P2/P3 open); C=bug fixes (#9 stale-gate, #10 convention, #25 COMET-warn likely-closed, #21 recall flake). Suggested order C→B→A. Several cars already DONE/CLOSED — see umbrella. |
+| [improvement-train](improvement-train.md) | umbrella (#29) | **B+C mostly shipped; A1+A3+C4 remain** | Umbrella for issue #29. Group B ALL SHIPPED (#124): B1–B4 + B5 (#177). Group C: C1+C3 shipped; C4 test unskipped (#124), scoring investigation open. A2 REJECTED (ADR-0043/0067). Open: A1 (cpu-burst Part 2) + A3 (nix scrape) + C4 (recall ranking). |
 | [en2a-comet-fpa-v5.82](archive/en2a-comet-fpa-v5.82.md) + [comet-retire-dormant](archive/comet-retire-dormant.md) | enrichment / eval | **SHIPPED → archived — ADR-0004 RETIRE (in CHANGELOG `[Unreleased]`)** | Ablation concluded: un-FPA'd COMET net-negative recall (−4.2pt) at ~17h/10-core → retired to dormant (flag default True→False), BC-EN2b warning shipped. NOT improvement-train #29. Both plan docs archived 2026-06-25; verdict report `benchmarks/reports/en2a_comet_ablation_2026-06-24.md`. |
-| [adr-capture-system](adr-capture-system.md) | memory / decisions | **P0 SHIPPED (#121); P0.5/#19 + P1–P3 open** | ADR capture into Yadgar wiki (per-project page, source of truth). P0 (stop-hook capture-first + 11-field schema) shipped `eeaec40`. Open: #19 read-side branch_hint (P0.5), `adr_add`+`adr_due` (P1), project_brief surfacing (P2), models.py ADR shape (P3). Group B of improvement-train. |
 | [db-audit-fix](db-audit-fix.md) | data-integrity | **skeleton — discuss first** | Audit + fix live-store issues (legacy `last_decay_at`, 6-week-dead aftermath, entity heat, wiki↔memory link, archive tier, orphans). User has thoughts to bring before scoping. |
 
 ### In-flight migrations / investigations
@@ -58,11 +57,11 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 | [full-observability-standard-2026-07-03](full-observability-standard-2026-07-03.md) | observability | **P0 SHIPPED v5.101; per-area rollout remains** | Tri-signal standard (span+metric+log per function). P0 shipped v5.101 (`@observe` + I33 lint warn-mode + histogram fix + traceparent; ADR-0034). Remaining: per-area rollout (flip I33 lint to hard-fail per area) + backend fine-spans. |
 | [cpu-burst-rootcause-and-embedding-scan-fix](cpu-burst-rootcause-and-embedding-scan-fix.md) | perf | **Part 2 buildable; Part 1 OPEN (host-side)** | Part 2 = kill `SELECT *` consolidation scans (projection + server-side decay + sample-then-fetch + incremental linking). Part 1 = fan-burst still open (observer-effect / surrealkv suspect, hand to user). improvement-train A1 / #30–33. |
 | [process-exporter-scrape-interval](process-exporter-scrape-interval.md) | observability / nix | **nix-only — hand to user** | High-res Prometheus scrape 2s→5s (observer-effect diagnostic). No in-repo change; edit `~/git/nix/modules/observability/prometheus.nix`. improvement-train A3 / #34. |
-| [anchor-signal-gap](anchor-signal-gap.md) | signals / anchors | **NEW — buildable** | project_brief over-signals `audit_anchors` (count>15 gate ignores actionable items) + phantom action names (`forget_expired_anchors` etc. aren't tools). improvement-train B5 / #20. |
+| [anchor-signal-gap](archive/anchor-signal-gap.md) | signals / anchors | **SHIPPED → archived #177 (a4390c4e)** | project_brief over-signals fix + per-directory scope shipped. improvement-train B5 / #20. Archived 2026-07-09. |
 | [comet-dormant-startup-warning](archive/comet-dormant-startup-warning.md) | observability | **CLOSED / ARCHIVED** | #25: warning IS reached on streamable-http (refutes ticket premise); residual = server-log vs client-visible. improvement-train C3. |
-| [recall-content-integrity-flake](recall-content-integrity-flake.md) | recall / test | **NEW — investigate** | #21: unquarantine `test_specific_detail_preserved`; it's a ranking miss (PAT vs "personal access token"), not content drop. Don't overfit recall. improvement-train C4. |
+| [recall-content-integrity-flake](recall-content-integrity-flake.md) | recall / test | **test unskipped (#124); scoring diagnosis open** | #21: skip removed (#124, 6e1629cb); it's a ranking miss (PAT vs "personal access token"). Diagnose per-signal scores → choose fix (tie-break vs test-realism vs re-weight). Don't overfit recall. improvement-train C4. |
 | [roadmap-freshness](archive/roadmap-freshness.md) | infra-ops | **DEFERRED indefinitely / ARCHIVED** | Roadmap-staleness signal; deferred on an async-write-queue design problem; partially mitigated v5.41.4. |
-| [viz-config-control-panel](viz-config-control-panel.md) | viz / config / ops | **skeleton — discuss first** | Browser config control panel in the viz UI: view/edit all 299 settings (source/restart/destructive metadata) via extended `/admin/config` + `PATCH /admin/config/<key>` sanctioned writer; guarded restart + armed destructive confirm + audit. Motivated by the CLI `COLD_MEMORY_PURGE_ENABLED` flip + manual restart this session. Mockup: `viz-config-control-panel.mockup.html`. |
+| [viz-config-control-panel](archive/viz-config-control-panel.md) | viz / config / ops | **SUPERSEDED → archived** | Superseded by [settings-panel-redesign-2026-06-29](settings-panel-redesign-2026-06-29.md). Archived 2026-07-09. |
 | [ci-velocity-train-2026-07-03](ci-velocity-train-2026-07-03.md) | test-perf / ci | **test-speed leg SHIPPED v5.104; #83/#79 remain** | Unified velocity plan. #84 test-speed leg SHIPPED v5.104 (PR #156, ADR-0036 — module-scope `storage` fixture + batched wipe → CI shards ~2×; corrected ADR-0027's schema-init premise). Feeder [test-suite-speedup-2026-07-01](archive/test-suite-speedup-2026-07-01.md) archived. Remaining: #83 backend-bump CI gate + conditional image builds, #79 load-test contract. |
 
 ### Horizon — v6 / v7 (skeletons + indices, not ready to build)
@@ -79,7 +78,18 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 - **wiki AWS-inventory archive** — ~1547 inventory-tier wiki pages flagged in the v5.58 wiki audit (source_count=0, orphaned). Cleanup decision parked.
 
 ## Archive
-`archive/` holds ~108 shipped/dead plan docs (v5.2 → v5.117). Reference only — do not edit.
+`archive/` holds ~117 shipped/dead plan docs (v5.2 → v5.120). Reference only — do not edit.
+
+Verification sweep (archived 2026-07-09 — evidence-based, ADR-0081):
+- `adr-capture-system.md` — SHIPPED: all phases #121 (P0) + #124 (P1–P3/B1–B4/C1) + #177 (B5).
+- `data-dir-hygiene-2026-07-09.md` — SHIPPED: #175 (db36e1e5, ADR-0076).
+- `daemon-hang-rca-and-recovery-2026-06-30.md` — SHIPPED: P0 e783510 (nix) + P1 v5.90.0 to_thread.
+- `daemon-offload-A-2026-06-30.md` — SHIPPED: v5.90.0 (#134, 2febcedb), default-OFF.
+- `daemon-offload-A-BUILD-NOTES.md` — SHIPPED: companion to v5.90.0.
+- `recall-pipeline-to-backend-2026-07-04.md` — SHIPPED: T1 #162 (8ae9e52c).
+- `recall-forward-only-2026-07-05.md` — SHIPPED: T1.5 #163 (219dd61f), flag deleted.
+- `viz-config-control-panel.md` — SUPERSEDED by `settings-panel-redesign-2026-06-29.md`.
+- `wiki-repo-builtin.md` — SUPERSEDED by `wiki-repo-full-buildout-2026-06-29.md`.
 
 Caching train (archived 2026-07-09 — shipped #164/#165, Car 3 killed ADR-0071):
 `backend-caching-train-2026-07-06.md`, `caching-train-build-2026-07-05.md`,

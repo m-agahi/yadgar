@@ -1,6 +1,6 @@
 # PLAN — v5.11+: Cross-Encoder Inference Performance Options (menu, version-assigned)
 
-**Status:** option B (int8-onnx) shipped v5.85; options E/G/A/C remain open (decision record).
+**Status (corrected 2026-07-09):** option B (int8-onnx) REJECTED — controlled A/B proved 2× slower than torch (ADR-0043); onnx backend removed (ADR-0067). ROADMAP notes "onnx-int8 REJECTED — needs new approach." Next lever: recall Train 3 Ettin model swap (see ce-rerank-alternatives-research-2026-07-04.md). Options E/G/A/C remain as candidates if Ettin underperforms.
 
 **Master at draft time:** core v5.10.3 + backend v5.4.0 deployed.
 
