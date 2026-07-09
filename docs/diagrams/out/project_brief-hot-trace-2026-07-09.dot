@@ -1,0 +1,25 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="project_brief-hot — simplified trace (2026-07-09, core 5.117 / backend 5.30)
+trace d187de2d · total 5.6 ms · key cost: _current_epoch = 0.3 ms (5%)\nepoch-cache HIT on catalog repeat";
+  subgraph "cluster_core" {
+    label="Core process (yadgar-core)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="project_brief() entry\nMCP dispatch → tool.project_brief\n@2.7ms\n2.69 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_current_epoch\n_shared.runtime.cache_epoch._current_epoch\n@2.8ms\n0.3 ms"];
+    "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@5.6ms\n2.2 ms"];
+  }
+  "entry" -> "s0" [color="#333333", style="solid", label="1"];
+  "s0" -> "done" [color="#333333", style="solid", label="2"];
+}

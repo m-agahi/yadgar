@@ -1,0 +1,25 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="dlq_inspect — simplified trace (2026-07-09, core 5.117 / backend 5.30)
+trace a0a428d6 · total 8.1 ms · key cost: _get_file_queue = 0.01 ms (0%)";
+  subgraph "cluster_core" {
+    label="Core process (yadgar-core)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="dlq_inspect() entry\nMCP dispatch → tool.dlq_inspect\n@5.7ms\n5.69 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_get_file_queue\ncore.lifecycle._get_file_queue\n@5.7ms\n0.01 ms"];
+    "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@8.1ms\n2.26 ms"];
+  }
+  "entry" -> "s0" [color="#333333", style="solid", label="1"];
+  "s0" -> "done" [color="#333333", style="solid", label="2"];
+}

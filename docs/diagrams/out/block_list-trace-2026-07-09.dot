@@ -1,0 +1,25 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="block_list — simplified trace (2026-07-09, core 5.117 / backend 5.30)
+trace da251106 · total 28.2 ms · key cost: POST (in list_blocks) = 21.03 ms (75%)";
+  subgraph "cluster_core" {
+    label="Core process (yadgar-core)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="block_list() entry\nMCP dispatch → tool.block_list\n@3.3ms\n3.31 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="POST (in list_blocks)\nPOST\n@3.8ms\n21.03 ms"];
+    "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@28.2ms\n2.85 ms"];
+  }
+  "entry" -> "s0" [color="#333333", style="solid", label="1"];
+  "s0" -> "done" [color="#333333", style="solid", label="2"];
+}

@@ -1,0 +1,37 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="audit_anchors — simplified trace (2026-07-09, core 5.117 / backend 5.30)
+trace a0e188dd · total 3.5138 s · key cost: _cosine_similarity ×30424 = 1.15209 s (33%)\nboundary span DROPPED (span-queue full) — 42 k cosine explosion runs in CORE";
+  subgraph "cluster_core" {
+    label="Core process (yadgar-core)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="audit_anchors() entry\ntool.audit_anchors (boundary span DROPPED)\n@0ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_expired_rows\ncore.server.tools.audit._fetch_expired_rows\n@46ms\n36.45 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_grace_expired_rows\ncore.server.tools.audit._fetch_grace_expired_rows\n@82ms\n40.98 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_promote_rows\ncore.server.tools.audit._fetch_promote_rows\n@123ms\n55.83 ms"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_redundant_pairs\ncore.server.tools.audit._fetch_redundant_pairs\n@179ms\n383.82 ms"];
+    "s4" [shape="box", style="filled", fillcolor="#f5e1f5", label="_cosine_similarity ×11476\n_shared.server_helpers._cosine_similarity\n@314ms\n522.35 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_cross_project_anchor_pool\n…rver.tools.audit._fetch_cross_project_anchor_pool\n@1085ms\n182.42 ms"];
+    "s6" [shape="box", style="filled", fillcolor="#f5e1f5", label="_cosine_similarity ×30424\n_shared.server_helpers._cosine_similarity\n@1268ms\n1.15209 s"];
+    "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@3514ms"];
+  }
+  "entry" -> "s0" [color="#333333", style="solid", label="1"];
+  "s0" -> "s1" [color="#333333", style="solid", label="2"];
+  "s1" -> "s2" [color="#333333", style="solid", label="3"];
+  "s2" -> "s3" [color="#333333", style="solid", label="4"];
+  "s3" -> "s4" [color="#333333", style="solid", label="5"];
+  "s4" -> "s5" [color="#333333", style="solid", label="6"];
+  "s5" -> "s6" [color="#333333", style="solid", label="7"];
+  "s6" -> "done" [color="#333333", style="solid", label="8"];
+}

@@ -23,6 +23,28 @@ A small, **YAML-driven** flow-diagram generator. Each diagram is a data file in
 
 Outputs: `out/<spec-name>.svg`, `.png`, and the intermediate `.dot`.
 
+## Simplified per-tool trace diagrams (`simplify_trace.py`)
+
+Auto-generated companion to the detailed `mcp-traces/*.svg` (from
+`trace_to_boxes.py`): [`simplify_trace.py`](simplify_trace.py) reads the raw
+span JSONs in `out/<tool>.json` (from `capture_trace.py`) and renders a
+SIMPLIFIED two-lane diagram per tool in the style of
+`out/recall-cold-trace-2026-07-04.png` — major pipeline stages only (>= 1% of
+total or >= 10 ms), lane-crossing hops always kept, span storms collapsed to
+one `name ×N` box (e.g. audit_anchors' 42 k `_cosine_similarity`), plumbing
+(`_q`/`POST` chains, offload scaffolding) folded into its semantic stage,
+<= 20 boxes per diagram. Known-failing stages are drawn red via per-label
+annotations in the script's `NOTES` dict (restore's `_predict_memories`,
+check_invariants' 30 s client-timeout death).
+
+```bash
+uv run python docs/diagrams/simplify_trace.py --all           # every out/*.json
+uv run python docs/diagrams/simplify_trace.py out/recall-cold.json
+```
+
+Outputs: `out/<label>-trace-<capture-date>.{dot,svg,png}`. Rendering reuses
+`generate.py`'s DOT pipeline (same palette); re-capture + re-run to refresh.
+
 ## Usage
 
 ```bash

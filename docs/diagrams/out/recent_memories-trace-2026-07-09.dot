@@ -1,0 +1,25 @@
+digraph flow {
+  rankdir="TB";
+  newrank=true;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.55;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t"];
+  node  [fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+  label="recent_memories — simplified trace (2026-07-09, core 5.117 / backend 5.30)
+trace 396a3e81 · total 50.5 ms · key cost: POST (in get_recent_memories_since) = 43.6 ms (86%)";
+  subgraph "cluster_core" {
+    label="Core process (yadgar-core)";
+    style=filled;
+    bgcolor="#eef4fb";
+    color="#4a72a8";
+    fontcolor="#26456b";
+    fontname="Helvetica-Bold";
+    "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="recent_memories() entry\nMCP dispatch → tool.recent_memories\n@3.4ms\n3.35 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="POST (in get_recent_memories_since)\nPOST\n@3.9ms\n43.6 ms"];
+    "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@50.5ms\n1.53 ms"];
+  }
+  "entry" -> "s0" [color="#333333", style="solid", label="1"];
+  "s0" -> "done" [color="#333333", style="solid", label="2"];
+}
