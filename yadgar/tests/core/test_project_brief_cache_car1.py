@@ -136,6 +136,41 @@ def test_epoch_bump_busts_catalog_cache(monkeypatch):
     assert len(calls) == 2
 
 
+def test_memorize_phase_bumps_epoch_for_car1(tmp_path):
+    """The memorize post-write phase must bump the directory epoch so Car 1 cache
+    is invalidated on structural writes (guards against try/except no-op regression)."""
+    from yadgar._shared.runtime.cache_epoch import _current_epoch
+    from yadgar.backend.write_exec._memorize_phases._phase_post_write import _bump_cache_epoch
+
+    directory = str(tmp_path / "wiring_memorize")
+    before = _current_epoch(directory)
+
+    class _Ctx:
+        context = directory
+
+    _bump_cache_epoch(_Ctx())
+    assert _current_epoch(directory) == before + 1, (
+        "memorize post-write phase must bump the directory epoch for Car 1 invalidation"
+    )
+
+
+def test_consolidation_bumps_global_epoch_for_car1(tmp_path):
+    """The consolidation prior-recompute helper must bump the global generation so
+    Car 1/Car 2 caches for ALL directories are invalidated after consolidation."""
+    from yadgar._shared.runtime.cache_epoch import _current_epoch
+    from yadgar.backend.consolidation.cls import _bump_cache_epoch_global
+
+    before = _current_epoch("/any/dir")
+    _bump_cache_epoch_global(updated=5)  # non-zero → bumps
+    assert _current_epoch("/any/dir") == before + 1, (
+        "consolidation prior recompute must bump the global generation for Car 1/Car 2"
+    )
+    # updated=0 → no-op
+    mid = _current_epoch("/any/dir")
+    _bump_cache_epoch_global(updated=0)
+    assert _current_epoch("/any/dir") == mid, "no-op when nothing was updated"
+
+
 def test_deep_copy_isolation_returned_brief(monkeypatch):
     """Mutating the returned brief dict must not corrupt the cached value."""
     from yadgar.core.server.tools import project

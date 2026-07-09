@@ -458,9 +458,9 @@
     "category": "framework-instrumented",
     "rationale": "Metric-emitting primitive: sole body is yadgar_cold_purge_candidates.set(count); wrapping a single gauge .set() in @observe is recursive span noise for one metric touch, no diagnostic value."
   },
-  "cls:_bump_shadow_epoch_global": {
+  "cls:_bump_cache_epoch_global": {
     "category": "framework-instrumented",
-    "rationale": "Instrumentation-only shadow-cache epoch bumper: fully-guarded call to _recall_shadow.bump_epoch(None) that invalidates stale prior keys after a prior recompute; it exists to touch a cache generation counter, so wrapping it in @observe is recursive noise with no ops value."
+    "rationale": "Cache-invalidation epoch bumper for Car 1/Car 2 caches: fully-guarded call to bump_epoch(None) that advances the global generation after a consolidation prior recompute, so project_brief / wiki caches see the structural change. Wrapping a single bump_epoch() in @observe is recursive span noise."
   },
   "cls:_CLSMixin._build_entity_map": {
     "category": "hot-loop",
@@ -629,10 +629,6 @@
   "recall_pipeline:_fuse_with_span": {
     "category": "pre-existing",
     "rationale": "Opens a manual 'recall.fanout.fuse' span via `with span(...)` and sets dynamic memory/wiki candidate-count attributes around the cross-type CE fusion pass; @observe's guard only detects decorator spans, so decorating this body-span opener would emit TWO spans for one fusion and @observe's static attributes cannot replicate the per-call counts."
-  },
-  "cache_epoch:observe_recall": {
-    "category": "framework-instrumented",
-    "rationale": "Instrumentation-only shadow-cache primitive: records a would-HIT/would-MISS and increments yadgar_recall_shadow_cache_hits_total/_misses_total counters, fully guarded to never affect recall latency; wrapping a metric-emitting instrumentation helper in @observe is recursive span noise for a counter .inc() with no diagnostic value."
   },
   "audit:_anchor_rank": {
     "category": "hot-loop",

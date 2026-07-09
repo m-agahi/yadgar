@@ -9,13 +9,15 @@ from yadgar._shared.observability.observe import observe
 logger = logging.getLogger("yadgar.consolidation")
 
 
-def _bump_shadow_epoch_global(updated: int) -> None:
-    """v5.96.0: consolidation prior recompute changes prior scalars across all
-    directories → coarsely bump the shadow-cache epoch (global bucket) so the
-    recall shadow-cache counter treats prior would-be keys as stale.  No-op when
-    nothing was updated (nothing structurally changed).
+def _bump_cache_epoch_global(updated: int) -> None:
+    """Bump the global cache-invalidation epoch after a consolidation prior recompute.
 
-    Instrumentation only, fully guarded — must never break the consolidation cycle.
+    Consolidation prior recompute changes prior scalars across all directories →
+    bump the global epoch so Car 1 (project_brief) and Car 2 (wiki/prelude) caches
+    for ALL directories are invalidated.  No-op when nothing was updated.
+    NOT the removed recall-output shadow counter (killed ADR-0071).
+
+    Fully guarded — must never break the consolidation cycle.
     """
     if not updated:
         return
@@ -23,7 +25,7 @@ def _bump_shadow_epoch_global(updated: int) -> None:
         from yadgar._shared.runtime.cache_epoch import bump_epoch  # noqa: PLC0415
 
         bump_epoch(None)  # None → the shared "global" generation
-    except Exception:  # pragma: no cover - instrumentation must never break consolidation
+    except Exception:  # pragma: no cover - must never break consolidation
         pass
 
 
@@ -351,7 +353,7 @@ class _CLSMixin:
 
         stats["graph_prior_updated"] = updated
         logger.info("graph_prior: computed and stored for %d memories", updated)
-        _bump_shadow_epoch_global(updated)
+        _bump_cache_epoch_global(updated)
 
     @observe(tier="stage", metric="consolidation.cofire_priors")
     def _compute_cofire_priors(self, stats: dict) -> None:
@@ -422,7 +424,7 @@ class _CLSMixin:
 
         stats["cofire_prior_updated"] = updated
         logger.info("cofire_prior: computed and stored for %d memories", updated)
-        _bump_shadow_epoch_global(updated)
+        _bump_cache_epoch_global(updated)
 
     # ── _link_similar_memories helpers ────────────────────────────────────────
 

@@ -79,4 +79,9 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 - **wiki AWS-inventory archive** — ~1547 inventory-tier wiki pages flagged in the v5.58 wiki audit (source_count=0, orphaned). Cleanup decision parked.
 
 ## Archive
-`archive/` holds ~103 shipped/dead plan docs (v5.2 → v5.117). Reference only — do not edit.
+`archive/` holds ~108 shipped/dead plan docs (v5.2 → v5.117). Reference only — do not edit.
+
+Caching train (archived 2026-07-09 — shipped #164/#165, Car 3 killed ADR-0071):
+`backend-caching-train-2026-07-06.md`, `caching-train-build-2026-07-05.md`,
+`caching-opportunities-2026-07-05.md`, `unified-cache-2026-07-05.md`,
+`cache-refactor-2026-07-01.md`.

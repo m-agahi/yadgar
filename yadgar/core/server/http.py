@@ -999,32 +999,6 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if retriever is None:
             return JSONResponse({"text": ""})
 
-        # v5.100.0: shadow counter observe (source="hook") — instrumentation only.
-        # Placed after throttle gates and retriever-None check (mirrors recall.py
-        # placement: before dispatch, covers only calls that reach retrieval).
-        try:
-            from yadgar._shared.runtime.cache_epoch import (  # noqa: PLC0415
-                RecallShadowParams,
-                observe_recall,
-            )
-
-            observe_recall(
-                RecallShadowParams(
-                    query=query,
-                    directory=directory,
-                    branch=None,
-                    type_filter="all",
-                    mode=None,
-                    profile="fast",
-                    max_results=5,
-                    min_heat=0.0,
-                    tags=None,
-                    source="hook",
-                )
-            )
-        except Exception:  # instrumentation must never break hooks
-            pass
-
         try:
             # v5.113.0 (docs/plans/hook-recall-forward-2026-07-06.md): prompt-recall
             # FORWARDS to the backend /recall path, REVERSING the §5.4 core-resident
@@ -1621,30 +1595,6 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
         filename = _pathlib.Path(file_path).name if file_path else "CLAUDE.md"
         query = f"{filename} {load_reason} instructions context".strip()
 
-        # v5.100.0: shadow counter observe (source="hook") — instrumentation only.
-        try:
-            from yadgar._shared.runtime.cache_epoch import (  # noqa: PLC0415
-                RecallShadowParams,
-                observe_recall,
-            )
-
-            observe_recall(
-                RecallShadowParams(
-                    query=query,
-                    directory=None,
-                    branch=None,
-                    type_filter="all",
-                    mode=None,
-                    profile="fast",
-                    max_results=3,
-                    min_heat=0.0,
-                    tags=None,
-                    source="hook",
-                )
-            )
-        except Exception:  # instrumentation must never break hooks
-            pass
-
         try:
             # v5.25.3: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
             # Fires on every session_start + compact event — highest-frequency burst path.
@@ -1749,30 +1699,6 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
 
         # Use description as primary query; fall back to agent_type if empty
         query = description.strip() or f"agent {agent_type}"
-
-        # v5.100.0: shadow counter observe (source="hook") — instrumentation only.
-        try:
-            from yadgar._shared.runtime.cache_epoch import (  # noqa: PLC0415
-                RecallShadowParams,
-                observe_recall,
-            )
-
-            observe_recall(
-                RecallShadowParams(
-                    query=query,
-                    directory=cwd if cwd else None,
-                    branch=None,
-                    type_filter="all",
-                    mode=None,
-                    profile="fast",
-                    max_results=5,
-                    min_heat=0.0,
-                    tags=None,
-                    source="hook",
-                )
-            )
-        except Exception:  # instrumentation must never break hooks
-            pass
 
         try:
             # v5.25.2: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
