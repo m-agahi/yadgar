@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="block_create — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace ca8a53c4 · total 129.7 ms · key cost: block_create = 107.48 ms (83%)";
+trace ca8a53c4 · total 129.7 ms · key cost: create memory block = 107.48 ms (83%)";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -26,7 +26,7 @@ trace ca8a53c4 · total 129.7 ms · key cost: block_create = 107.48 ms (83%)";
     color="#b5744a";
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
-    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="block_create\nbackend.admin_exec.blocks.block_create\n@12ms\n107.48 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="create memory block\nblocks.block_create\n@12ms\n107.48 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];
   "s0" -> "done" [color="#333333", style="solid", label="2"];

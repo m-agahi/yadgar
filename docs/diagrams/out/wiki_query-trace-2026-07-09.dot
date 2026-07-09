@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="wiki_query — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace 32acbd12 · total 357.5 ms · key cost: get_wiki_page ×9 = 199.2 ms (56%)";
+trace 32acbd12 · total 357.5 ms · key cost: fetch wiki page ×9 = 199.2 ms (56%)";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -17,9 +17,9 @@ trace 32acbd12 · total 357.5 ms · key cost: get_wiki_page ×9 = 199.2 ms (56%)
     fontcolor="#26456b";
     fontname="Helvetica-Bold";
     "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="wiki_query() entry\nMCP dispatch → tool.wiki_query\n@4ms\n3.65 ms"];
-    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="WikiStore._collect_wiki_fts_scores\n_shared.wiki.WikiStore._collect_wiki_fts_scores\n@4ms\n33.06 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="search_wiki_vectors\n…hared.storage.wiki._WikiMixin.search_wiki_vectors\n@59ms\n92.05 ms"];
-    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="get_wiki_page ×9\n_shared.storage.wiki._WikiMixin.get_wiki_page\n@151ms\n199.2 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="wiki FTS BM25\nWikiStore._collect_wiki_fts_scores\n@4ms\n33.06 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="wiki KNN (storage)\n_WikiMixin.search_wiki_vectors\n@59ms\n92.05 ms"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch wiki page ×9\n_WikiMixin.get_wiki_page\n@151ms\n199.2 ms"];
     "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@358ms\n4 ms"];
   }
   subgraph "cluster_backend" {
@@ -29,7 +29,7 @@ trace 32acbd12 · total 357.5 ms · key cost: get_wiki_page ×9 = 199.2 ms (56%)
     color="#b5744a";
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
-    "s1" [shape="box", style="filled", fillcolor="#f5e1f5", label="EmbeddingEngine.encode\n_shared.embeddings.EmbeddingEngine.encode\n@41ms\n12.55 ms"];
+    "s1" [shape="box", style="filled", fillcolor="#f5e1f5", label="embed query\nEmbeddingEngine.encode\n@41ms\n12.55 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];
   "s0" -> "s1" [color="#333333", style="solid", label="2"];

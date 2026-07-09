@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="anchor-hot — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace 7ec0cb6f · total 5.3 ms · key cost: _validate_anchor_inputs = 0.45 ms (8%)\nR3 enqueue-only boundary";
+trace 7ec0cb6f · total 5.3 ms · key cost: validate anchor inputs = 0.45 ms (8%)\nR3 enqueue-only boundary";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -17,9 +17,9 @@ trace 7ec0cb6f · total 5.3 ms · key cost: _validate_anchor_inputs = 0.45 ms (8
     fontcolor="#26456b";
     fontname="Helvetica-Bold";
     "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="anchor() entry\nMCP dispatch → tool.anchor\n@2.7ms\n2.73 ms"];
-    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_validate_anchor_inputs\ncore.server.tools.misc._validate_anchor_inputs\n@2.8ms\n0.45 ms"];
-    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_detect_branch_cached\ncore.server.tools.project._detect_branch_cached\n@3.3ms\n0.42 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FileQueue.enqueue\n_shared.file_queue.queue.FileQueue.enqueue\n@3.9ms\n0.24 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="validate anchor inputs\nmisc._validate_anchor_inputs\n@2.8ms\n0.45 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="detect git branch (cached)\nproject._detect_branch_cached\n@3.3ms\n0.42 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="file-queue enqueue\nFileQueue.enqueue\n@3.9ms\n0.24 ms"];
     "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@5.3ms\n1.18 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];

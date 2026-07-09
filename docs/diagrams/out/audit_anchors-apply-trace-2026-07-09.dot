@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="audit_anchors-apply — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace 9061f3d7 · total 3.318 s · key cost: _cosine_similarity ×31620 = 1.40198 s (42%)\nboundary span DROPPED (span-queue full) — 42 k cosine explosion runs in CORE";
+trace 9061f3d7 · total 3.318 s · key cost: cosine similarity ×31620 = 1.40198 s (42%)\nboundary span DROPPED (span-queue full) — 42 k cosine explosion runs in CORE";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -17,14 +17,14 @@ trace 9061f3d7 · total 3.318 s · key cost: _cosine_similarity ×31620 = 1.4019
     fontcolor="#26456b";
     fontname="Helvetica-Bold";
     "entry" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="audit_anchors() entry\ntool.audit_anchors (boundary span DROPPED)\n@0ms"];
-    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_expired_rows\ncore.server.tools.audit._fetch_expired_rows\n@50ms\n37.34 ms"];
-    "s1" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_grace_expired_rows\ncore.server.tools.audit._fetch_grace_expired_rows\n@87ms\n38.82 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_promote_rows\ncore.server.tools.audit._fetch_promote_rows\n@126ms\n59.01 ms"];
-    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_redundant_pairs\ncore.server.tools.audit._fetch_redundant_pairs\n@185ms\n401.95 ms"];
-    "s4" [shape="box", style="filled", fillcolor="#f5e1f5", label="_cosine_similarity ×10223\n_shared.server_helpers._cosine_similarity\n@319ms\n431.8 ms"];
-    "s5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_forward_admin\ncore.server.tools._forward._forward_admin\n@1019ms\n14.8 ms"];
-    "s6" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_fetch_cross_project_anchor_pool\n…rver.tools.audit._fetch_cross_project_anchor_pool\n@1034ms\n181.6 ms"];
-    "s7" [shape="box", style="filled", fillcolor="#f5e1f5", label="_cosine_similarity ×31620\n_shared.server_helpers._cosine_similarity\n@1216ms\n1.40198 s"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch expired anchors\naudit._fetch_expired_rows\n@50ms\n37.34 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch grace-period anchors\naudit._fetch_grace_expired_rows\n@87ms\n38.82 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch promote candidates\naudit._fetch_promote_rows\n@126ms\n59.01 ms"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch redundant anchor pairs\naudit._fetch_redundant_pairs\n@185ms\n401.95 ms"];
+    "s4" [shape="box", style="filled", fillcolor="#f5e1f5", label="cosine similarity ×10223\nserver_helpers._cosine_similarity\n@319ms\n431.8 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="forward to backend /admin\n_forward._forward_admin\n@1019ms\n14.8 ms"];
+    "s6" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch cross-project anchor pool\naudit._fetch_cross_project_anchor_pool\n@1034ms\n181.6 ms"];
+    "s7" [shape="box", style="filled", fillcolor="#f5e1f5", label="cosine similarity ×31620\nserver_helpers._cosine_similarity\n@1216ms\n1.40198 s"];
     "done" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="result returned\n@3318ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];

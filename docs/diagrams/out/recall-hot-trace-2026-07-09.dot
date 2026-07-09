@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="recall-hot — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace 6b3a4568 · total 4.0679 s · key cost: Retriever.spreading_activation = 1.88091 s (46%)\nrepeat query: CE spans ~0 ms (CE cache hit on repeat) — 6x faster than cold";
+trace 6b3a4568 · total 4.0679 s · key cost: spreading activation BFS = 1.88091 s (46%)\nrepeat query: CE spans ~0 ms (CE cache hit on repeat) — 6x faster than cold";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -26,21 +26,21 @@ trace 6b3a4568 · total 4.0679 s · key cost: Retriever.spreading_activation = 1
     color="#b5744a";
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
-    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_run_fts_bm25\n…red.retrieval.scoring._ScoringMixin._run_fts_bm25\n@15ms\n24.54 ms"];
-    "s1" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="_collect_vector_scores\n…eval.scoring._ScoringMixin._collect_vector_scores\n@40ms\n43.47 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="Retriever.ppr_retrieve\n_shared.retrieval.core.Retriever.ppr_retrieve\n@84ms\n183.26 ms"];
-    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="Retriever.spreading_activation\n…red.retrieval.core.Retriever.spreading_activation\n@267ms\n1.88091 s"];
-    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_fuse_scores\n_shared.retrieval.fusion._FusionMixin._fuse_scores\n@2149ms\n317.8 ms"];
-    "s5" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="get_memories_by_ids\n…d.storage.memory._MemoryMixin.get_memories_by_ids\n@2467ms\n559.91 ms"];
-    "s6" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_inject_ce_diversity\n…etrieval.fusion._FusionMixin._inject_ce_diversity\n@3027ms\n104.19 ms"];
-    "s7" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_search_profiles_and_beliefs\n….fusion._FusionMixin._search_profiles_and_beliefs\n@3140ms\n41.31 ms"];
-    "s8" [shape="box", style="filled", fillcolor="#f5e1f5", label="mmr_rerank\n…red.retrieval._reranking_mmr._MMRMixin.mmr_rerank\n@3182ms\n49.2 ms"];
-    "s9" [shape="box", style="filled", fillcolor="#f5e1f5", label="_rerank_engram_links\n…al.reranking._RerankingMixin._rerank_engram_links\n@3238ms\n329 ms"];
-    "s10" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="WikiStore._collect_wiki_fts_scores\n_shared.wiki.WikiStore._collect_wiki_fts_scores\n@3572ms\n18.18 ms"];
-    "s11" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="WikiStore._collect_wiki_vector_scores\n_shared.wiki.WikiStore._collect_wiki_vector_scores\n@3590ms\n21.87 ms"];
-    "s12" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="get_wiki_page ×18\n_shared.storage.wiki._WikiMixin.get_wiki_page\n@3612ms\n346.1 ms"];
-    "s13" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="MemoryThermodynamics.record_access\n…thermodynamics.MemoryThermodynamics.record_access\n@3963ms\n39.44 ms"];
-    "s14" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="boost_memories_access\n…storage.memory._MemoryMixin.boost_memories_access\n@4002ms\n60.03 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="FTS BM25 keyword search\n_ScoringMixin._run_fts_bm25\n@15ms\n24.54 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="vector KNN search\n_ScoringMixin._collect_vector_scores\n@40ms\n43.47 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="personalized PageRank\nRetriever.ppr_retrieve\n@84ms\n183.26 ms"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="spreading activation BFS\nRetriever.spreading_activation\n@267ms\n1.88091 s"];
+    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="convex score fusion\n_FusionMixin._fuse_scores\n@2149ms\n317.8 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch memories by ID\n_MemoryMixin.get_memories_by_ids\n@2467ms\n559.91 ms"];
+    "s6" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="cross-encoder diversity inject\n_FusionMixin._inject_ce_diversity\n@3027ms\n104.19 ms"];
+    "s7" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="profile & belief search\n_FusionMixin._search_profiles_and_beliefs\n@3140ms\n41.31 ms"];
+    "s8" [shape="box", style="filled", fillcolor="#f5e1f5", label="MMR diversity rerank\n_MMRMixin.mmr_rerank\n@3182ms\n49.2 ms"];
+    "s9" [shape="box", style="filled", fillcolor="#f5e1f5", label="engram-link rerank\n_RerankingMixin._rerank_engram_links\n@3238ms\n329 ms"];
+    "s10" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="wiki FTS BM25\nWikiStore._collect_wiki_fts_scores\n@3572ms\n18.18 ms"];
+    "s11" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="wiki vector KNN\nWikiStore._collect_wiki_vector_scores\n@3590ms\n21.87 ms"];
+    "s12" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="fetch wiki page ×18\n_WikiMixin.get_wiki_page\n@3612ms\n346.1 ms"];
+    "s13" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="record access heat\nMemoryThermodynamics.record_access\n@3963ms\n39.44 ms"];
+    "s14" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="boost heat on results\n_MemoryMixin.boost_memories_access\n@4002ms\n60.03 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];
   "s0" -> "s1" [color="#333333", style="solid", label="2"];

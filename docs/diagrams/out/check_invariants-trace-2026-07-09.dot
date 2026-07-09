@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="check_invariants — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace d0d1ff98 · total 34.0009 s · key cost: POST (slow SurrealDB invariant scan — THE wall) = 28.0917 s (83%)\nbackend /admin runs ~34 s but core client TIMES OUT at 30 s — MCP call always errors";
+trace d0d1ff98 · total 34.0009 s · key cost: HTTP POST to backend (slow SurrealDB invariant scan — THE wall) = 28.0917 s (83%)\nbackend /admin runs ~34 s but core client TIMES OUT at 30 s — MCP call always errors";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -26,15 +26,15 @@ trace d0d1ff98 · total 34.0009 s · key cost: POST (slow SurrealDB invariant sc
     color="#b5744a";
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
-    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_count_q ×8\nbackend.admin_exec.invariants._count_q\n@12ms\n158.51 ms"];
-    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_memory_similarity_link\n…min_exec.invariants._check_memory_similarity_link\n@36ms\n159.56 ms"];
-    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_memory_transition\n…nd.admin_exec.invariants._check_memory_transition\n@195ms\n5.01445 s"];
-    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="POST (slow SurrealDB invariant scan — THE wall)\nPOST\n@196ms\n28.0917 s"];
-    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_relationships\nbackend.admin_exec.invariants._check_relationships\n@33322ms\n90.09 ms"];
-    "s5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_wiki_crossref\nbackend.admin_exec.invariants._check_wiki_crossref\n@33435ms\n79.53 ms"];
-    "s6" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_memory_entity_orphans\n…dmin_exec.invariants._check_memory_entity_orphans\n@33515ms\n152.28 ms"];
-    "s7" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_engram_slot_distribution\n…n_exec.invariants._check_engram_slot_distribution\n@33743ms\n72.35 ms"];
-    "s8" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="_check_per_table_size\n…ckend.admin_exec.invariants._check_per_table_size\n@33840ms\n159.04 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="DB count query ×8\ninvariants._count_q\n@12ms\n158.51 ms"];
+    "s1" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check memory similarity links\ninvariants._check_memory_similarity_link\n@36ms\n159.56 ms"];
+    "s2" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check memory transitions\ninvariants._check_memory_transition\n@195ms\n5.01445 s"];
+    "s3" [shape="box", style="rounded,filled", fillcolor="#fce3d6", label="HTTP POST to backend (slow SurrealDB invariant scan — THE wall)\nPOST\n@196ms\n28.0917 s"];
+    "s4" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check entity relationships\ninvariants._check_relationships\n@33322ms\n90.09 ms"];
+    "s5" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check wiki cross-references\ninvariants._check_wiki_crossref\n@33435ms\n79.53 ms"];
+    "s6" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check memory/entity orphans\ninvariants._check_memory_entity_orphans\n@33515ms\n152.28 ms"];
+    "s7" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check engram slot distribution\ninvariants._check_engram_slot_distribution\n@33743ms\n72.35 ms"];
+    "s8" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="check per-table size\ninvariants._check_per_table_size\n@33840ms\n159.04 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];
   "s0" -> "s1" [color="#333333", style="solid", label="2"];

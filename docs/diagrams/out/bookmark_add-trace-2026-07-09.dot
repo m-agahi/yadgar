@@ -8,7 +8,7 @@ digraph flow {
   node  [fontname="Helvetica", fontsize=10];
   edge  [fontname="Helvetica", fontsize=9];
   label="bookmark_add — simplified trace (2026-07-09, core 5.117 / backend 5.30)
-trace 16fb7eb0 · total 134.6 ms · key cost: bookmark_add = 120.59 ms (90%)";
+trace 16fb7eb0 · total 134.6 ms · key cost: add bookmark = 120.59 ms (90%)";
   subgraph "cluster_core" {
     label="Core process (yadgar-core)";
     style=filled;
@@ -26,7 +26,7 @@ trace 16fb7eb0 · total 134.6 ms · key cost: bookmark_add = 120.59 ms (90%)";
     color="#b5744a";
     fontcolor="#7a4620";
     fontname="Helvetica-Bold";
-    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="bookmark_add\nbackend.admin_exec.bookmarks.bookmark_add\n@10ms\n120.59 ms"];
+    "s0" [shape="box", style="rounded,filled", fillcolor="#dbe9fb", label="add bookmark\nbookmarks.bookmark_add\n@10ms\n120.59 ms"];
   }
   "entry" -> "s0" [color="#333333", style="solid", label="1"];
   "s0" -> "done" [color="#333333", style="solid", label="2"];
