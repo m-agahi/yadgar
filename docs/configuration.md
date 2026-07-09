@@ -606,6 +606,7 @@ Rows older than these thresholds are pruned each consolidation cycle. Set to `0`
 
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
+| `vacuum_old_max_age_days` | `VACUUM_OLD_MAX_AGE_DAYS` | int | `7` | Age backstop for surreal_db.old-* rollback dirs (ADR-0076 D1): reap any .old dir older than this many days on each vacuum finalize. The current-run .old is always exempted. |
 | `vacuum_snapshot_retention` | `YADGAR_VACUUM_SNAPSHOT_RETENTION` | int | `3` | Number of pre-vacuum DB snapshots to retain. |
 | `vacuum_auto_enabled` | `YADGAR_VACUUM_AUTO_ENABLED` | bool | `true` | Enable the backstop threshold trigger (emergency backstop only from v5.7.0; nightly cron is primary). |
 | `vacuum_auto_threshold_bytes` | `YADGAR_VACUUM_AUTO_THRESHOLD_BYTES` | int | `2147483648` | Backstop fires when the DB exceeds this size (default 2 GiB). |

@@ -525,6 +525,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS", "30", "int"),
     ConfigEntry("YADGAR_DREAM_INSIGHT_MAX_AGE_DAYS", "21", "int"),
     # vacuum
+    ConfigEntry("VACUUM_OLD_MAX_AGE_DAYS", "7", "int"),
     ConfigEntry("YADGAR_VACUUM_SNAPSHOT_RETENTION", "3", "int"),
     ConfigEntry("YADGAR_VACUUM_AUTO_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_VACUUM_AUTO_THRESHOLD_BYTES", "2147483648", "int"),

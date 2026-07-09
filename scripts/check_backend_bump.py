@@ -2,7 +2,15 @@
 """Backend-version bump enforcer: pre-commit hook AND CI gate (#83).
 
 Pre-commit mode (default, no args):
-    Checks staged files vs index. Run by pre-commit framework.
+    Local/CI parity (PR #175 fix): evaluates the SAME question as CI — the
+    cumulative branch diff (merge-base of origin/master and HEAD, plus the
+    files staged for this commit) vs the backend_version delta between the
+    merge-base and the index.  This catches the case where master merged
+    another PR that consumed this branch's backend_version number: every
+    per-commit check would pass (the bump looks real vs the parent commit)
+    while CI's branch-level check fails.  When origin/master is unreachable
+    (fresh clone, no remote) it degrades to the legacy per-commit comparison
+    (staged files vs HEAD).
 
 CI mode (--ci --base <ref>):
     Checks files changed between the merge-base of <ref> and HEAD vs the
@@ -12,6 +20,8 @@ CI mode (--ci --base <ref>):
 
     The version comparison is merge-base vs HEAD (not <ref> tip vs HEAD) so a
     branch that merely lags behind master's backend_version is not a false pass.
+
+Both modes feed the same pure ``check()`` — same inputs → same verdict.
 
 Exit 0 → OK.  Exit 1 → error (describes offending files).
 """
@@ -147,6 +157,42 @@ def collect_ci_inputs(
     return changed_files, base_server, head_server
 
 
+def collect_precommit_inputs(
+    base_ref: str,
+    run_git: GitRunner,
+) -> tuple[list[str], str | None, str | None]:
+    """Gather inputs for check() in pre-commit mode — CI parity (PR #175).
+
+    Mirrors collect_ci_inputs: baseline is the merge-base of *base_ref* and
+    HEAD, so the local verdict matches what CI will say for the same repo
+    state.  The changed-file set is the cumulative branch diff PLUS the files
+    staged for the commit being created (the about-to-exist branch state).
+    server.json content is read from the index (a bump in an earlier branch
+    commit counts — no re-bump required per commit).
+
+    Fallback: when *base_ref* has no merge-base with HEAD (no remote, fresh
+    clone, unborn HEAD), the baseline degrades to HEAD — the branch diff is
+    empty and the comparison reduces to the legacy per-commit check
+    (staged files vs HEAD server.json).
+
+    Returns:
+        (changed_files, server_json_base, server_json_index)
+    """
+    merge_base = run_git(["merge-base", base_ref, "HEAD"]).strip()
+    if not merge_base:
+        merge_base = "HEAD"  # legacy per-commit fallback
+
+    branch_raw = run_git(["diff", "--name-only", merge_base, "HEAD"])
+    staged_raw = run_git(["diff", "--cached", "--name-only"])
+    changed_files = [f for f in branch_raw.splitlines() if f]
+    changed_files += [f for f in staged_raw.splitlines() if f and f not in changed_files]
+
+    base_server = run_git(["show", f"{merge_base}:server.json"]) or None
+    index_server = run_git(["show", ":server.json"]) or None
+
+    return changed_files, base_server, index_server
+
+
 # ---------------------------------------------------------------------------
 # Entry point — called by pre-commit framework (pass_filenames: false)
 #                OR directly as `python scripts/check_backend_bump.py --ci --base <ref>`
@@ -187,19 +233,14 @@ def main() -> int:
         print(f"check-backend-bump [CI]: OK — {message}")
         return 0
 
-    # ── Pre-commit mode (default) ─────────────────────────────────────────────
-    staged_files_raw = _git(["diff", "--cached", "--name-only"])
-    staged_files = [f for f in staged_files_raw.splitlines() if f]
+    # ── Pre-commit mode (default) — CI parity (PR #175) ─────────────────────
+    # Same baseline as CI: merge-base of origin/master and HEAD; changed set =
+    # branch diff ∪ staged.  Same inputs → same verdict as the CI gate.
+    changed_files, server_json_base, server_json_index = collect_precommit_inputs(
+        "origin/master", _git
+    )
 
-    # Read server.json from the index (staged version).
-    server_json_staged_raw = _git(["show", ":server.json"])
-    server_json_staged = server_json_staged_raw if server_json_staged_raw else None
-
-    # Read server.json at HEAD (prior to this commit).
-    server_json_head_raw = _git(["show", "HEAD:server.json"])
-    server_json_head = server_json_head_raw if server_json_head_raw else None
-
-    ok, message = check(staged_files, server_json_head, server_json_staged)
+    ok, message = check(changed_files, server_json_base, server_json_index)
     if not ok:
         print(f"check-backend-bump: ERROR: {message}", file=sys.stderr)
         return 1

@@ -665,6 +665,66 @@ def _side_build_swap_and_start(
 # ---------------------------------------------------------------------------
 
 
+def _vacuum_old_max_age_days() -> int:
+    """Return VACUUM_OLD_MAX_AGE_DAYS (default 7).
+
+    Reads os.getenv live so tests can monkeypatch without module reload.
+    """
+    return int(os.getenv("VACUUM_OLD_MAX_AGE_DAYS", "7"))
+
+
+@observe(tier="stage")
+def _reap_stale_old_dirs(yadgar_home: Path, current_old: Path) -> None:
+    """Age-backstop reap for surreal_db.old-* dirs (ADR-0076 D1).
+
+    Removes any surreal_db.old-* dir whose mtime exceeds VACUUM_OLD_MAX_AGE_DAYS,
+    EXCEPT for ``current_old`` (the .old created by THIS vacuum run — it is the
+    immediate rollback anchor and must not be reaped until check_invariants passes
+    and the normal retirement path handles it).
+
+    Runs every vacuum finalize regardless of check_invariants outcome — the
+    backstop fires even on CI warn/fail so accumulated stale .old dirs are cleaned
+    up independently of whether the current run fully validated.  This closes the
+    check_invariants-timeout-induced accumulation loop documented in ADR-0076.
+    """
+    import time as _time
+
+    max_age_sec = _vacuum_old_max_age_days() * 86400
+    cutoff = _time.time() - max_age_sec
+    for candidate in sorted(yadgar_home.glob("surreal_db.old-*")):
+        if candidate == current_old:
+            continue  # never touch the current-run .old
+        try:
+            if candidate.stat().st_mtime < cutoff:
+                print(
+                    f"[vacuum] age-backstop: reaping stale .old dir "
+                    f"({candidate.name}, >{_vacuum_old_max_age_days()}d old)",
+                    flush=True,
+                )
+                shutil.rmtree(str(candidate), ignore_errors=True)
+        except OSError as exc:
+            print(f"[vacuum] age-backstop: could not stat {candidate}: {exc}", file=sys.stderr)
+
+
+@observe(tier="stage")
+def _delete_export_scratch(raw_path: Path | None, filtered_path: Path | None) -> None:
+    """D2: delete vacuum export scratch files after a successful check_invariants pass.
+
+    Best-effort: logs warnings on OSError but does not propagate.  Called only
+    when CI passes — on any failure path the files are kept for forensics.
+    """
+    for export_file in (raw_path, filtered_path):
+        if export_file is not None and export_file.exists():
+            try:
+                export_file.unlink()
+                print(f"[vacuum] removed export scratch: {export_file.name}", flush=True)
+            except OSError as exc:
+                print(
+                    f"[vacuum] WARNING: could not remove {export_file}: {exc}",
+                    file=sys.stderr,
+                )
+
+
 @observe(tier="stage")
 def _vacuum_finalize(
     backend_url: str,
@@ -673,12 +733,25 @@ def _vacuum_finalize(
     snapshot_path: Path,
     svc: ServiceController,
     keep_n: int = 3,
+    raw_path: Path | None = None,
+    filtered_path: Path | None = None,
 ) -> bool:
     """Start yadgar, wait for health, run check_invariants, retire the .old dir.
 
     ``old_path`` is the previous-canonical retained by the atomic swap
     (``surreal_db.old-<ts>``).  It is removed only after check_invariants passes
     on the swapped-in compacted DB; until then it is kept as a rollback anchor.
+
+    ``raw_path`` / ``filtered_path``: the vacuum export scratch files written by
+    ``_vacuum_export`` (ADR-0076 D2).  Deleted on a successful check_invariants
+    pass (no diagnostic value once the vacuum is confirmed sound); kept on any
+    failure path (connection error, non-ok response) so the operator has the
+    full export for forensics.
+
+    Age-backstop (ADR-0076 D1): surreal_db.old-* dirs older than
+    VACUUM_OLD_MAX_AGE_DAYS are reaped on every finalize, regardless of CI
+    outcome.  ``old_path`` (the current-run .old) is always exempted — it
+    survives until check_invariants determines whether it is safe to retire.
 
     Returns:
         True if all checks pass and cleanup succeeded.
@@ -695,6 +768,8 @@ def _vacuum_finalize(
             f"Previous DB retained for rollback: {old_path}",
             file=sys.stderr,
         )
+        # Age-backstop still runs — health failure does not exempt stale .old dirs.
+        _reap_stale_old_dirs(yadgar_home, old_path)
         return False
 
     # Wait up to 30s for API layer readiness before check_invariants.
@@ -729,6 +804,8 @@ def _vacuum_finalize(
             # Safe to retire the previous-canonical (.old) dir.
             print(f"[vacuum] removing previous DB dir: {old_path}", flush=True)
             shutil.rmtree(str(old_path), ignore_errors=True)
+            # D2: delete export scratch files — no diagnostic value once CI passes.
+            _delete_export_scratch(raw_path, filtered_path)
         else:
             # Non-2xx (e.g. 404 when core hasn't finished booting post-restart)
             # or 200 with ok=false: log a warning but do NOT fail the vacuum.
@@ -753,6 +830,12 @@ def _vacuum_finalize(
             f"previous DB retained for rollback: {old_path}",
             file=sys.stderr,
         )
+
+    # D1: Age-backstop — reap stale .old dirs older than VACUUM_OLD_MAX_AGE_DAYS.
+    # Runs unconditionally (CI pass OR fail) so stale .old dirs accumulated from
+    # prior timeout-induced CI misses are cleaned up regardless of this run's
+    # check_invariants outcome.  current_old (old_path) is always exempted.
+    _reap_stale_old_dirs(yadgar_home, old_path)
 
     # Prune pre-vacuum snapshots
     _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", keep_n)
@@ -972,8 +1055,10 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         return 1
 
     # -- Phase 1: Export (real backend still UP — no lost writes vs. count capture) --
+    raw_path: Path | None = None
+    filtered_path: Path | None = None
     try:
-        _raw_path, filtered_path = _vacuum_export(backend_url, yadgar_home)
+        raw_path, filtered_path = _vacuum_export(backend_url, yadgar_home)
     except Exception as exc:
         print(f"[vacuum] ERROR in export phase: {exc}", file=sys.stderr)
         return 1
@@ -1006,7 +1091,16 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     saved_bytes = before_bytes - after_bytes
     saved_pct = int(100 * saved_bytes / before_bytes) if before_bytes else 0
 
-    finalize_ok = _vacuum_finalize(backend_url, yadgar_home, old_path, snapshot_path, svc, keep_n)
+    finalize_ok = _vacuum_finalize(
+        backend_url,
+        yadgar_home,
+        old_path,
+        snapshot_path,
+        svc,
+        keep_n,
+        raw_path=raw_path,
+        filtered_path=filtered_path,
+    )
 
     # -- Report + consolidation_log (best-effort) --
     _vacuum_report_and_log(

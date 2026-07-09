@@ -1640,6 +1640,10 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "table_retention",
     },
     # vacuum
+    "vacuum_old_max_age_days": {
+        "desc": "Age backstop for surreal_db.old-* rollback dirs (ADR-0076 D1): reap any .old dir older than this many days on each vacuum finalize. Default 7. The current-run .old is always exempted.",
+        "section": "vacuum",
+    },
     "vacuum_snapshot_retention": {
         "desc": "Number of pre-vacuum DB snapshots to retain; older ones are pruned after a successful vacuum (default 3).",
         "section": "vacuum",

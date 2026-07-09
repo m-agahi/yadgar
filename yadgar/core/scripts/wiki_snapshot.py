@@ -1,22 +1,29 @@
 """Wiki snapshot utility for §16 Wiki backup automation.
 
-Provides two functions used by entrypoint-backend.sh and tests:
+Provides one function used by the backend container entrypoint and tests:
 
   snapshot_wiki_pages(pages, output_dir) -> str
       Write pages as JSONL to output_dir/wiki_YYYYMMDD_HHMMSS.jsonl.
       Returns the full path of the written file.
 
-  prune_old_snapshots(output_dir, max_age_days=14) -> int
-      Delete wiki_*.jsonl files older than max_age_days.
-      Returns the number of files deleted.
+Pruning is owned exclusively by the entrypoint-backend.sh loop via:
+  ``find /data/backups/wiki -name 'wiki_*.jsonl' -mtime +14 -delete``
 
-The entrypoint also calls these via a background loop every 6 hours.
+The previous ``prune_old_snapshots`` function in this module was dead code
+(it was never called from anywhere) and has been removed (ADR-0076 D3).
+The container's ``find -mtime`` prune is the single pruning owner; two
+owners was never implemented and would have been a no-op collision.
+
+ADR-0076 D3 context:
+- Output dir: /data/backups/wiki/ (was /data directly; see D4 layout).
+- Cadence: 24 h (was 6 h) — reduces snapshot volume from ~1.9 GB to ~0.6 GB
+  for a 14-day retention window.
+- The entrypoint loop handles pruning; this module's only job is snapshot_wiki_pages.
 """
 
 from __future__ import annotations
 
 import json
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -26,6 +33,9 @@ def snapshot_wiki_pages(pages: list[dict], output_dir: str) -> str:
 
     Each page is serialized to one JSON object per line.
     The output filename is wiki_YYYYMMDD_HHMMSS.jsonl.
+
+    Output directory (ADR-0076 D3/D4): should be DATA_DIR/backups/wiki/ —
+    the entrypoint-backend.sh loop ensures this dir exists via ``mkdir -p``.
 
     Args:
         pages: list of wiki page dicts (from storage.list_wiki_pages or similar).
@@ -44,25 +54,3 @@ def snapshot_wiki_pages(pages: list[dict], output_dir: str) -> str:
             fh.write(json.dumps(row, default=str) + "\n")
 
     return str(output_path)
-
-
-def prune_old_snapshots(output_dir: str, max_age_days: int = 14) -> int:
-    """Delete wiki_*.jsonl files older than max_age_days.
-
-    Only wiki_*.jsonl files are touched — other files in the directory
-    are left alone.
-
-    Args:
-        output_dir: directory to scan.
-        max_age_days: files older than this are deleted.
-
-    Returns:
-        Number of files deleted.
-    """
-    cutoff = time.time() - max_age_days * 86400
-    deleted = 0
-    for path in Path(output_dir).glob("wiki_*.jsonl"):
-        if path.stat().st_mtime < cutoff:
-            path.unlink()
-            deleted += 1
-    return deleted
