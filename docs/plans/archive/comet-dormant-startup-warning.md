@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — CLOSED; issue premise refuted, warning already wired on all transports
+
 # PLAN — COMET-dormant startup warning reachability (#25)
 
 Created 2026-06-25 (improvement-train #29, group C). theme: observability / startup /

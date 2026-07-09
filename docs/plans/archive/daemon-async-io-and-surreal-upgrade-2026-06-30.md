@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — CLOSED; design/decision doc, decision made: httpx.AsyncClient swap path identified; no implementation needed here
+
 # Daemon async-I/O refactor + SurrealDB upgrade — evaluation & recommendation
 
 Date: 2026-06-30

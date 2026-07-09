@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-09 — R3-SHIPPED PR #171 / core 5.117.0 / backend 5.30; see ADR-0062
+
 # Core / Backend Monorepo Folder Split (task #17)
 
 - **Date:** 2026-07-06
