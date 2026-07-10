@@ -9,6 +9,8 @@ from loader logic. This test pins:
   2. The implement-tdd starter carries the YAGNI least-code ladder (new content).
   3. The materials dir holds both seed data files (anchors.yaml + agent_prompts.yaml).
   4. _load_anchors_yaml still loads the relocated anchors.yaml.
+  5. v5.123.0 seed backflow: 10 battle-tested live patterns added to the genesis
+     corpus (entries 5..14), each pinned by pattern + load-bearing content markers.
 
 Behaviour-preservation guard: the 3 unchanged starters (code-review,
 debug-investigate, explore-codebase) match master's content exactly; only the
@@ -114,11 +116,11 @@ def test_starter_prompts_loaded_from_materials():
 
 
 def test_starter_prompts_is_list_of_3_tuples():
-    """Interface preserved: list of (pattern, purpose, content) 3-tuples, length 5."""
+    """Interface preserved: list of (pattern, purpose, content) 3-tuples, length 15."""
     from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
     assert isinstance(STARTER_PROMPTS, list)
-    assert len(STARTER_PROMPTS) == 5
+    assert len(STARTER_PROMPTS) == 15
     for entry in STARTER_PROMPTS:
         assert isinstance(entry, tuple) and len(entry) == 3
 
@@ -157,6 +159,95 @@ def test_implement_tdd_has_yagni_ladder():
     for rung in range(1, 8):
         assert f"  {rung}. " in content, f"rung {rung} missing from implement-tdd prompt"
     assert "no code exists that a higher rung" in content
+
+
+# ── v5.123.0 seed backflow: live-corpus growth ───────────────────────────────
+# 10 battle-tested, generally-reusable live wiki patterns synced into the genesis
+# corpus (user directive 2026-07-10 "improving the seeds"). Each pinned by
+# load-bearing content markers (verbatim substrings of the live page body).
+
+_BACKFLOW_MARKERS: dict[str, list[str]] = {
+    "stacked-car-parallel-build": [
+        "ADR-0088",
+        "MUST NOT push to the train branch",
+        "[[agent-discipline-plan-lifecycle]]",
+    ],
+    "feature-kill-closeout": [
+        "zero residue",
+        "docs/plans/archive/",
+        "[[agent-discipline-branch-state]]",
+    ],
+    "dispatch-fix-test-migration": [
+        "NO TEST BENDING",
+        "agent-prompt-plan-executing-build",
+        "hollow-pass",
+    ],
+    "mechanical-refactor-chunk-commit-early": [
+        "ONE chunk",
+        "COMMIT immediately",
+        "sys.modules",
+    ],
+    "plan-corpus-status-sweep": [
+        "SHIPPED",
+        "PARTIAL",
+        "read-only",
+    ],
+    "plan-audit": [
+        "INDEPENDENT skeptic",
+        "VERIFIED / CRACKED / UNCERTAIN",
+        "DO-NOT-BUILD",
+    ],
+    "crash-rca": [
+        "OFF PROD",
+        "PROVE or EXCLUDE",
+        "load-bearing ROOT flaw",
+    ],
+    "drift-audit": [
+        "PHANTOM",
+        "MISSING",
+        "STALE",
+        "MALFORMED",
+    ],
+    "feasibility-design": [
+        "BUILDABLE",
+        "FEASIBILITY first",
+        "loop-safety",
+    ],
+    "perf-anomaly-metrics": [
+        "query_range",
+        "topk",
+        "Correlation ≠ causation",
+    ],
+}
+
+
+def test_backflow_patterns_pinned():
+    """v5.123.0: the 10 backflow patterns are present (entries 5..14, file order
+    preserved) and each carries its load-bearing content markers."""
+    from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
+
+    backflow = STARTER_PROMPTS[5:]
+    patterns = [p for p, _, _ in backflow]
+    assert patterns == list(_BACKFLOW_MARKERS), f"backflow patterns/order mismatch: {patterns}"
+    for pattern, purpose, content in backflow:
+        assert purpose, f"empty purpose for {pattern!r}"
+        for marker in _BACKFLOW_MARKERS[pattern]:
+            assert marker in content, f"marker {marker!r} missing from {pattern!r} content"
+
+
+def test_backflow_bodies_survive_unwrap():
+    """No backflow body may start with a bare '## Purpose … ## Prompt' wrapper that
+    _unwrap_purpose_prompt would strip (inner '## Prompt block (...)' headings are
+    safe; a bare leading wrapper would lose content on seed)."""
+    from yadgar.core.server.tools.agent_prompts import (
+        STARTER_PROMPTS,
+        _unwrap_purpose_prompt,
+    )
+
+    for pattern, _purpose, content in STARTER_PROMPTS:
+        assert _unwrap_purpose_prompt(content) == content, (
+            f"starter {pattern!r} body would be mangled by _unwrap_purpose_prompt"
+        )
 
 
 def test_loader_reads_yaml_not_inline_tuples():

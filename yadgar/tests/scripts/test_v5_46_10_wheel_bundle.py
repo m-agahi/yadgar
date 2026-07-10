@@ -53,6 +53,16 @@ REQUIRED_INSTALL_ASSETS = [
     "share/yadgar/install_assets/seeds/anchors.yaml",
 ]
 
+# Package-data files under the yadgar/ tree that MUST ship inside the wheel
+# (hatchling packages the whole tree; these are load-bearing at runtime —
+# importlib.resources reads them, so a missing file = broken install).
+REQUIRED_PACKAGE_DATA = [
+    # v5.123.0 Car 3 (#34): stop-hook checkpoint prompt template
+    "yadgar/core/hooks/templates/stop_checkpoint_prompt.md",
+    # v5.88/v5.122.0: seed genesis corpus (agent prompts + contract + disciplines)
+    "yadgar/core/seed/materials/agent_prompts.yaml",
+]
+
 
 def _find_wheel() -> Path:
     """Return path to the most recent yadgar wheel in dist/."""
@@ -125,6 +135,18 @@ def test_wheel_contains_install_asset(built_wheel: Path, expected_path: str) -> 
     assert expected_path in names, (
         f"Regression — install_asset missing from wheel: {expected_path}\n"
         f"  Wheel: {built_wheel.name}"
+    )
+
+
+@pytest.mark.parametrize("expected_path", REQUIRED_PACKAGE_DATA)
+def test_wheel_contains_package_data(built_wheel: Path, expected_path: str) -> None:
+    """Runtime-load-bearing package data must ship inside the wheel."""
+    names = _wheel_names_normalised(built_wheel)
+    assert expected_path in names, (
+        f"Package data missing from wheel: {expected_path}\n"
+        f"  Wheel: {built_wheel.name}\n"
+        f"  Fix: hatchling ships all files under yadgar/ by default — check the "
+        f"file exists in the source tree and is not excluded by build config"
     )
 
 

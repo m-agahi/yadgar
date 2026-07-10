@@ -1,6 +1,8 @@
+> ARCHIVED 2026-07-10 — all 3 cars assembled on feat/seed-backflow-agent-prompts, ships with the train PR (ADR-0088/0090/0091, P0 #37).
+
 # Plan: seed+safe-stop+stop-hook train — ONE PR (user 2026-07-10)
 
-**Status:** AGREED (user: "put the seed improvement and the surreal rca fixes in one big pr" + stop-hook external file + "increase the budget as you see fit with the seed improvements"). ONE PR, one version claim (ADR-0088): core 5.123.0 + BACKEND_VERSION 5.35.0 (Car 2 touches entrypoint-backend.sh).
+**Status:** ASSEMBLED — all 3 cars on the train branch (Car 1 seed+budget 9cd7d97d, Car 2 safe-stop+guards, Car 3 stop-hook template). ONE PR (ADR-0088): core 5.123.0 + BACKEND_VERSION 5.35.0.
 **Date:** 2026-07-10. **Branch:** `feat/seed-backflow-agent-prompts` (already in flight as Car 1) becomes the train branch.
 **Plan lifecycle:** the car that finishes LAST does the archive-first commit for this file (ADR-0081/0082).
 

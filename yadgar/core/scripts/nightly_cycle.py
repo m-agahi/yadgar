@@ -340,10 +340,22 @@ def _step_vacuum(db_path: Path, backend_url: str, service_mode: str | None) -> i
             yes=True,
         )
         vac_code = cmd_vacuum_impl(vacuum_args)
-        if vac_code not in (0, 2):
+        if vac_code == 2:
+            # P0 #37 item 3: exit 2 now means the swap was ROLLED BACK (the
+            # post-swap verification failed) — data is safe on the original DB,
+            # the compaction was discarded. Surface as a step FAILURE (40) so
+            # the nightly unit goes red; the 07-09 incident hid exactly this
+            # state behind a warn-only "[vacuum] complete." for 16 h.
+            _log_step("vacuum", "rolled_back", (time.monotonic() - t0) * 1000)
+            _log.error(
+                "step 4 (vacuum) ROLLED BACK — swap could not be verified; "
+                "data safe on the original DB, compaction discarded (P0 #37)",
+                extra={"component": "nightly_cycle", "action": "vacuum", "outcome": "rolled_back"},
+            )
+            return 40
+        if vac_code != 0:
             raise RuntimeError(f"cmd_vacuum_impl returned exit code {vac_code}")
-        outcome = "degraded" if vac_code == 2 else "ok"
-        _log_step("vacuum", outcome, (time.monotonic() - t0) * 1000)
+        _log_step("vacuum", "ok", (time.monotonic() - t0) * 1000)
         return 0
     except Exception as exc:
         record_exception("nightly_cycle.vacuum", exc)

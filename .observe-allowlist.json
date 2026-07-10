@@ -48,6 +48,14 @@
     "category": "framework-instrumented",
     "rationale": "Scrape-time data source for CacheStatsCollector: lazy-imports embed_service and returns the CE/embed LRUCache instances. Framework primitive read at /metrics scrape only; instrumenting the metrics-collector's own accessor is recursive noise."
   },
+  "embed_service_metrics:_swap_state_flags": {
+    "category": "framework-instrumented",
+    "rationale": "Scrape-time data source for the yadgar_store_swap_state gauge (P0 #37 5c): reads on-disk marker/dir flags on every /metrics scrape via Gauge.set_function. Instrumenting the metrics-collector's own flag reader is recursive noise, same class as _default_backend_cache_instances."
+  },
+  "embed_service_metrics:_bind_swap_state_collectors": {
+    "category": "framework-instrumented",
+    "rationale": "Import-time registration glue that binds one Gauge.set_function per swap-state label (P0 #37 5c). Runs once at module import inside the metrics module itself; wrapping registry wiring in @observe is recursive metric noise (framework primitive)."
+  },
   "_exempt_globs": {
     "yadgar/core/cli/**": {
       "category": "generated",

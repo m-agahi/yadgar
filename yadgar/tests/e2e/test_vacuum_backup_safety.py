@@ -296,6 +296,9 @@ class TestBCE1_RowCountsPreserved:
         with (
             _drive_backend(backend) as svc,
             patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
+            # P0 #37: no yadgar core in e2e — stub CI verification (rollback is
+            # unit-tested in test_vacuum_safestop.py; e2e tests data safety).
+            patch("yadgar.core.vacuum._check_invariants_verified", return_value=(True, "ok")),
         ):
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -408,6 +411,9 @@ class TestBCE2_VacuumAtomicity:
             _drive_backend(backend, fail_stop_backend=True),
             patch("yadgar.core.vacuum.httpx.post", side_effect=_import_fails),
             patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
+            # P0 #37: no yadgar core in e2e — stub CI verification (rollback is
+            # unit-tested in test_vacuum_safestop.py; e2e tests data safety).
+            patch("yadgar.core.vacuum._check_invariants_verified", return_value=(True, "ok")),
         ):
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -457,6 +463,9 @@ class TestBCE2_VacuumAtomicity:
             _drive_backend(backend),
             patch("yadgar.core.vacuum._capture_table_counts", side_effect=_short_side_count),
             patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
+            # P0 #37: no yadgar core in e2e — stub CI verification (rollback is
+            # unit-tested in test_vacuum_safestop.py; e2e tests data safety).
+            patch("yadgar.core.vacuum._check_invariants_verified", return_value=(True, "ok")),
         ):
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -493,6 +502,9 @@ class TestBCE2_VacuumAtomicity:
         with (
             _drive_backend(backend),
             patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
+            # P0 #37: no yadgar core in e2e — stub CI verification (rollback is
+            # unit-tested in test_vacuum_safestop.py; e2e tests data safety).
+            patch("yadgar.core.vacuum._check_invariants_verified", return_value=(True, "ok")),
         ):
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -632,6 +644,9 @@ class TestBCE2_VacuumAtomicity:
         with (
             _drive_backend(backend),
             patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
+            # P0 #37: no yadgar core in e2e — stub CI verification (rollback is
+            # unit-tested in test_vacuum_safestop.py; e2e tests data safety).
+            patch("yadgar.core.vacuum._check_invariants_verified", return_value=(True, "ok")),
         ):
             cmd_vacuum_impl(_vacuum_args(backend))
 
@@ -1093,6 +1108,8 @@ class TestBCD1_NightlyCompletesExitZero:
                 patch("yadgar.core.ops.ServiceController", _NightlySvc),
                 patch("yadgar.core.vacuum.ServiceController", _NightlySvc),
                 patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
+                # P0 #37: no yadgar core in e2e — stub CI verification.
+                patch("yadgar.core.vacuum._check_invariants_verified", return_value=(True, "ok")),
                 caplog.at_level(logging.WARNING, logger="yadgar.nightly_cycle"),
             ):
                 code = nc.main(args)

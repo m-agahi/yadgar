@@ -41,6 +41,7 @@ The top-level cmd_vacuum(args) in __main__.py delegates here.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import sys
@@ -122,6 +123,34 @@ def _build_http_client(backend_url: str) -> httpx.Client:
         },
         timeout=120.0,
     )
+
+
+@observe(tier="stage")
+def _assert_backend_quiesced(backend_url: str) -> bool:
+    """True iff NOTHING answers GET <backend_url>/health — the store is quiesced.
+
+    P0 #37 item 6 (the RCA §4 root defect): ``svc.stop()`` runs in Phase 2,
+    but the swap happens minutes later (export write-out, snapshot copytree,
+    and the side-build /import all sit in between). Nothing re-verified the
+    backend was still DOWN at swap time, so any external (re)start in that
+    window — a nix deploy, a manual ``systemctl start``, systemd recovery —
+    re-opens the ORIGINAL canonical, and the swap then renames the dir under
+    a live store: the live inode becomes ``.old`` while the path holds a
+    stale decoy (the 07-09 16 h split-brain). The swap must verify quiescence
+    or ABORT with the canonical untouched.
+
+    Any HTTP answer (even 5xx) means SOMETHING holds the port → not quiesced.
+    """
+    try:
+        r = httpx.get(f"{backend_url}/health", timeout=2.0)
+    except Exception:
+        return True  # connection refused / timeout → nothing serving → quiesced
+    print(
+        f"[vacuum] ERROR: backend at {backend_url} is LIVE (HTTP {r.status_code}) at swap "
+        "time — an external restart re-opened the canonical during the side-build window.",
+        file=sys.stderr,
+    )
+    return False
 
 
 @observe(tier="stage")
@@ -632,6 +661,20 @@ def _side_build_swap_and_start(
         )
         return None
 
+    # 3b-pre: QUIESCENCE GATE (P0 #37 item 6). svc.stop() ran minutes ago in
+    # Phase 2; an external restart in the side-build window would have
+    # re-opened the ORIGINAL canonical. Renaming under a live store is exactly
+    # the 07-09 path/inode split-brain — verify quiescence or ABORT.
+    if not _assert_backend_quiesced(backend_url):
+        shutil.rmtree(str(side_path), ignore_errors=True)
+        print(
+            "[vacuum] ABORT: the real backend is LIVE at swap time — refusing to rename "
+            "the canonical under an open store (07-09 split-brain guard). "
+            "Canonical untouched; the running backend stays on the original DB.",
+            file=sys.stderr,
+        )
+        return None
+
     # 3b: atomic same-dir swap (canonical → .old, side → canonical).
     try:
         old_path = _atomic_swap(db_path, side_path)
@@ -706,6 +749,104 @@ def _reap_stale_old_dirs(yadgar_home: Path, current_old: Path) -> None:
             print(f"[vacuum] age-backstop: could not stat {candidate}: {exc}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------------------
+# P0 #37 item 5a — live-store inode-coherence check (host-side /proc fd scan)
+# ---------------------------------------------------------------------------
+
+#: Matches the surreal_db dir-name variant inside an fd link target. Container
+#: fd targets are container-ns paths (/data/surreal_db/...), host processes use
+#: host paths — either way the DIR NAME identifies canonical vs staging.
+_STORE_DIR_RE = re.compile(
+    r"/(surreal_db(?:\.(?:old|new|building|pre-vacuum|CORRUPT)-[^/]+)?)(?:/|$)"
+)
+
+
+@observe(span=False)
+def _fd_store_dir_names(fd_dir: Path) -> set[str]:
+    """surreal_db* dir-name variants referenced by the fd links under *fd_dir*."""
+    names: set[str] = set()
+    try:
+        fds = list(fd_dir.iterdir())
+    except OSError:
+        return names
+    for fd in fds:
+        try:
+            target = os.readlink(fd)
+        except OSError:
+            continue
+        m = _STORE_DIR_RE.search(target)
+        if m:
+            names.add(m.group(1))
+    return names
+
+
+@observe(tier="stage")
+def _surreal_open_dir_names(proc_root: Path = Path("/proc")) -> set[str]:
+    """Scan *proc_root* for live ``surreal start`` processes; return the set of
+    surreal_db* DIR-name variants their open fds resolve into.
+
+    Works for the rootless-podman backend: its processes are user-owned, so
+    ``/proc/<pid>/fd`` is readable from the host, and the fd link targets show
+    the container-ns path (``/data/surreal_db.old-*/...``) whose dir name
+    still identifies canonical vs staging. Unreadable pids are skipped.
+    """
+    names: set[str] = set()
+    for pid_dir in proc_root.glob("[0-9]*"):
+        try:
+            argv = (pid_dir / "cmdline").read_bytes().split(b"\x00")
+        except OSError:
+            continue
+        if not argv or b"surreal" not in argv[0] or b"start" not in argv:
+            continue
+        names |= _fd_store_dir_names(pid_dir / "fd")
+    return names
+
+
+@observe(tier="stage")
+def _verify_live_store_coherence(proc_root: Path = Path("/proc")) -> tuple[bool, set[str]]:
+    """Post-swap invariant (P0 #37 item 5a): the store a live surreal has OPEN
+    must be the CANONICAL ``surreal_db`` path — never a ``.old``/staging dir.
+
+    The 07-09 incident was exactly this state persisting silently for 16 h:
+    the live inode sat at ``surreal_db.old-*`` while the canonical path held a
+    stale decoy. Returns ``(coherent, dir_names)``; no scannable surreal at
+    all → coherent (absence must not false-alarm — the in-container guard loop
+    covers the long tail).
+    """
+    names = _surreal_open_dir_names(proc_root)
+    bad = {n for n in names if n != "surreal_db"}
+    return (not bad, bad if bad else names)
+
+
+@observe(tier="stage")
+def _rollback_swap_on_finalize_failure(
+    reason: str,
+    old_path: Path,
+    db_path: Path,
+    svc: ServiceController,
+    backend_url: str,
+) -> None:
+    """P0 #37 item 3: NEVER retain a half-swapped state — roll the swap back.
+
+    The 07-09 incident: check_invariants came back non-ok (HTTP 404) and the
+    ``.old`` was merely RETAINED while the running backend kept writing the
+    original inode (= ``.old``) for 16 h — path/inode split-brain. On ANY
+    finalize failure the swap is now ROLLED BACK so the path and the live
+    inode re-converge: the unverified compacted canonical is discarded (the
+    ``.pre-vacuum`` snapshot and the re-promoted original keep the data safe)
+    and ``.old`` is promoted back to canonical. Deliberately reverses the
+    v5.7.0 PR-2 warn-only policy: an UNVERIFIED vacuum is a discarded vacuum.
+    """
+    print(
+        f"[vacuum] CRITICAL: {reason}\n"
+        f"[vacuum] ROLLING BACK the swap: discarding the unverified compacted canonical and "
+        f"promoting {old_path.name} back to {db_path.name} so the canonical path and the live "
+        "store re-converge (07-09 split-brain guard — never retain a half-swapped state).",
+        file=sys.stderr,
+    )
+    _restore_db(old_path, db_path, svc, backend_url)
+
+
 @observe(tier="stage")
 def _delete_export_scratch(raw_path: Path | None, filtered_path: Path | None) -> None:
     """D2: delete vacuum export scratch files after a successful check_invariants pass.
@@ -726,65 +867,15 @@ def _delete_export_scratch(raw_path: Path | None, filtered_path: Path | None) ->
 
 
 @observe(tier="stage")
-def _vacuum_finalize(
-    backend_url: str,
-    yadgar_home: Path,
-    old_path: Path,
-    snapshot_path: Path,
-    svc: ServiceController,
-    keep_n: int = 3,
-    raw_path: Path | None = None,
-    filtered_path: Path | None = None,
-) -> bool:
-    """Start yadgar, wait for health, run check_invariants, retire the .old dir.
+def _check_invariants_verified(yadgar_url: str) -> tuple[bool, str]:
+    """POST /api/check_invariants; return (verified, detail).
 
-    ``old_path`` is the previous-canonical retained by the atomic swap
-    (``surreal_db.old-<ts>``).  It is removed only after check_invariants passes
-    on the swapped-in compacted DB; until then it is kept as a rollback anchor.
-
-    ``raw_path`` / ``filtered_path``: the vacuum export scratch files written by
-    ``_vacuum_export`` (ADR-0076 D2).  Deleted on a successful check_invariants
-    pass (no diagnostic value once the vacuum is confirmed sound); kept on any
-    failure path (connection error, non-ok response) so the operator has the
-    full export for forensics.
-
-    Age-backstop (ADR-0076 D1): surreal_db.old-* dirs older than
-    VACUUM_OLD_MAX_AGE_DAYS are reaped on every finalize, regardless of CI
-    outcome.  ``old_path`` (the current-run .old) is always exempted — it
-    survives until check_invariants determines whether it is safe to retire.
-
-    Returns:
-        True if all checks pass and cleanup succeeded.
+    ANY non-verification — non-2xx (e.g. 404 while core boots), 200 with
+    ok=false, or a connection error — counts as NOT verified.  The caller
+    ROLLS BACK the swap on not-verified (P0 #37 item 3); this deliberately
+    reverses the v5.7.0 PR-2 warn-only policy after the 07-09 incident showed
+    that retaining a half-swapped state on a mere 404 is silent split-brain.
     """
-    yadgar_url = f"http://127.0.0.1:{os.environ.get('YADGAR_PORT', '8765')}"
-
-    print("[vacuum] starting yadgar ...", flush=True)
-    svc.start_yadgar()
-
-    print(f"[vacuum] waiting for {yadgar_url}/health ...", flush=True)
-    if not _wait_for_yadgar_health(yadgar_url, timeout_s=180.0):
-        print(
-            f"[vacuum] WARNING: yadgar did not become healthy. "
-            f"Previous DB retained for rollback: {old_path}",
-            file=sys.stderr,
-        )
-        # Age-backstop still runs — health failure does not exempt stale .old dirs.
-        _reap_stale_old_dirs(yadgar_home, old_path)
-        return False
-
-    # Wait up to 30s for API layer readiness before check_invariants.
-    # The 180s wait above confirms /health=200 (process up), but API routes
-    # (/api/check_invariants) may not be registered yet — this short window
-    # closes that gap.  PR-2's warn-only handling is the fallback.
-    print(f"[vacuum] waiting up to 30s for {yadgar_url}/health (API readiness) ...", flush=True)
-    if not _wait_for_yadgar_health(yadgar_url, timeout_s=30.0):
-        print(
-            "[vacuum] WARNING: core /health not ready after 30s — "
-            "proceeding to check_invariants anyway",
-            file=sys.stderr,
-        )
-
-    # Run check_invariants
     _ci_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
     if not _ci_token:
         print(
@@ -799,48 +890,125 @@ def _vacuum_finalize(
             headers=_ci_headers,
             timeout=120.0,
         )
-        if ci_resp.status_code == 200 and ci_resp.json().get("ok"):
-            print("[vacuum] check_invariants: ok", flush=True)
-            # Safe to retire the previous-canonical (.old) dir.
-            print(f"[vacuum] removing previous DB dir: {old_path}", flush=True)
-            shutil.rmtree(str(old_path), ignore_errors=True)
-            # D2: delete export scratch files — no diagnostic value once CI passes.
-            _delete_export_scratch(raw_path, filtered_path)
-        else:
-            # Non-2xx (e.g. 404 when core hasn't finished booting post-restart)
-            # or 200 with ok=false: log a warning but do NOT fail the vacuum.
-            # The vacuum operation itself succeeded; post-flight verification is
-            # informational.  The 30s readiness wait above reduces the probability
-            # of this branch, but the warn-only path remains as the safety net.
-            body = ci_resp.text[:300] if ci_resp.status_code != 200 else str(ci_resp.json())
-            print(
-                f"[vacuum] WARNING: check_invariants returned non-ok "
-                f"(HTTP {ci_resp.status_code}): {body} "
-                f"— core may not be fully ready post-restart; "
-                f"previous DB retained for rollback: {old_path}",
-                file=sys.stderr,
-            )
     except Exception as exc:
-        # Connection-refused / timeout: core hasn't finished booting yet.
-        # Warn-only — vacuum itself succeeded.  The 30s readiness wait above
-        # reduces the probability of this branch; this path is the safety net.
+        return False, f"check_invariants request failed: {exc}"
+    if ci_resp.status_code == 200 and ci_resp.json().get("ok"):
+        return True, "ok"
+    body = ci_resp.text[:300] if ci_resp.status_code != 200 else str(ci_resp.json())
+    return False, f"check_invariants returned non-ok (HTTP {ci_resp.status_code}): {body}"
+
+
+@observe(tier="stage")
+def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_path rollback target (P0 #37)
+    backend_url: str,
+    yadgar_home: Path,
+    old_path: Path,
+    snapshot_path: Path,
+    svc: ServiceController,
+    keep_n: int = 3,
+    raw_path: Path | None = None,
+    filtered_path: Path | None = None,
+    db_path: Path | None = None,
+) -> bool:
+    """Start yadgar, verify the swapped-in DB, retire the .old dir — or ROLL BACK.
+
+    ``old_path`` is the previous-canonical retained by the atomic swap
+    (``surreal_db.old-<ts>``).  It is removed only after check_invariants passes
+    on the swapped-in compacted DB.  P0 #37 item 3: on ANY failure to verify
+    (core health timeout, inode-coherence violation, check_invariants non-ok or
+    unreachable) the swap is ROLLED BACK — ``.old`` promoted back to canonical,
+    the unverified compacted DB discarded — instead of retaining a half-swapped
+    state (the 07-09 silent split-brain).  The vacuum then exits non-zero so the
+    nightly unit goes red (silence must be impossible).
+
+    ``raw_path`` / ``filtered_path``: the vacuum export scratch files written by
+    ``_vacuum_export`` (ADR-0076 D2).  Deleted on a successful check_invariants
+    pass (no diagnostic value once the vacuum is confirmed sound); kept on any
+    failure path so the operator has the full export for forensics.
+
+    ``db_path``: the canonical DB path (rollback target). Defaults to
+    ``yadgar_home / "surreal_db"``.
+
+    Age-backstop (ADR-0076 D1): surreal_db.old-* dirs older than
+    VACUUM_OLD_MAX_AGE_DAYS are reaped on every finalize, regardless of
+    outcome.  ``old_path`` (the current-run .old) is always exempted.
+
+    Returns:
+        True if all checks pass and cleanup succeeded; False when the swap
+        was rolled back.
+    """
+    yadgar_url = f"http://127.0.0.1:{os.environ.get('YADGAR_PORT', '8765')}"
+    if db_path is None:
+        db_path = yadgar_home / "surreal_db"
+
+    print("[vacuum] starting yadgar ...", flush=True)
+    svc.start_yadgar()
+
+    print(f"[vacuum] waiting for {yadgar_url}/health ...", flush=True)
+    if not _wait_for_yadgar_health(yadgar_url, timeout_s=180.0):
+        _rollback_swap_on_finalize_failure(
+            "yadgar core did not become healthy on the swapped-in DB (180s)",
+            old_path,
+            db_path,
+            svc,
+            backend_url,
+        )
+        # Age-backstop still runs — failure does not exempt stale .old dirs.
+        _reap_stale_old_dirs(yadgar_home, old_path)
+        return False
+
+    # Wait up to 30s for API layer readiness before check_invariants.
+    # The 180s wait above confirms /health=200 (process up), but API routes
+    # (/api/check_invariants) may not be registered yet — this short window
+    # closes that gap.
+    print(f"[vacuum] waiting up to 30s for {yadgar_url}/health (API readiness) ...", flush=True)
+    if not _wait_for_yadgar_health(yadgar_url, timeout_s=30.0):
         print(
-            f"[vacuum] WARNING: check_invariants request failed: {exc} "
-            f"— core may not be fully ready post-restart; "
-            f"previous DB retained for rollback: {old_path}",
+            "[vacuum] WARNING: core /health not ready after 30s — "
+            "proceeding to check_invariants anyway",
             file=sys.stderr,
         )
 
+    # P0 #37 item 5a: post-swap inode-coherence invariant — the store the live
+    # surreal has OPEN must be the canonical path, never .old/staging.
+    coherent, store_names = _verify_live_store_coherence()
+    if not coherent:
+        _rollback_swap_on_finalize_failure(
+            f"store inode SPLIT-BRAIN detected post-swap — a live surreal holds open fds in "
+            f"{sorted(store_names)} instead of the canonical surreal_db",
+            old_path,
+            db_path,
+            svc,
+            backend_url,
+        )
+        _reap_stale_old_dirs(yadgar_home, old_path)
+        return False
+
+    verified, detail = _check_invariants_verified(yadgar_url)
+    if verified:
+        print("[vacuum] check_invariants: ok", flush=True)
+        # Safe to retire the previous-canonical (.old) dir.
+        print(f"[vacuum] removing previous DB dir: {old_path}", flush=True)
+        shutil.rmtree(str(old_path), ignore_errors=True)
+        # D2: delete export scratch files — no diagnostic value once CI passes.
+        _delete_export_scratch(raw_path, filtered_path)
+    else:
+        _rollback_swap_on_finalize_failure(
+            f"{detail} — an UNVERIFIED swap is never retained",
+            old_path,
+            db_path,
+            svc,
+            backend_url,
+        )
+
     # D1: Age-backstop — reap stale .old dirs older than VACUUM_OLD_MAX_AGE_DAYS.
-    # Runs unconditionally (CI pass OR fail) so stale .old dirs accumulated from
-    # prior timeout-induced CI misses are cleaned up regardless of this run's
-    # check_invariants outcome.  current_old (old_path) is always exempted.
+    # Runs unconditionally (verified OR rolled back).  current_old exempted.
     _reap_stale_old_dirs(yadgar_home, old_path)
 
     # Prune pre-vacuum snapshots
     _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", keep_n)
 
-    return True
+    return verified
 
 
 # ---------------------------------------------------------------------------
@@ -1100,10 +1268,13 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         keep_n,
         raw_path=raw_path,
         filtered_path=filtered_path,
+        db_path=db_path,
     )
 
     # -- Report + consolidation_log (best-effort) --
     _vacuum_report_and_log(
         backend_url, started_ts, started_at, before_bytes, after_bytes, saved_bytes, saved_pct
     )
-    return 0 if finalize_ok else 2  # 2 = succeeded but check_invariants warn
+    # 2 = swap ROLLED BACK (could not verify) — data safe on the original DB,
+    # compaction discarded; the nightly unit goes red instead of silent (#37).
+    return 0 if finalize_ok else 2

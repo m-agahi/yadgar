@@ -177,12 +177,13 @@ def test_step_vacuum_success(tmp_path):
     assert result == 0
 
 
-def test_step_vacuum_degraded_returns_zero(tmp_path):
-    # Exit code 2 from vacuum = degraded but not failure
+def test_step_vacuum_rollback_returns_40(tmp_path):
+    # Exit code 2 from vacuum = swap ROLLED BACK (P0 #37) -> cycle goes red (40).
+    # Supersedes the 05-23 warn-only policy: unverified swap = discarded swap, never silent.
     with patch.object(nc, "_run_systemctl"):
         with patch("yadgar.core.scripts.nightly_cycle.cmd_vacuum_impl", return_value=2):
             result = nc._step_vacuum(tmp_path / "db", "http://backend:8001", None)
-    assert result == 0
+    assert result == 40
 
 
 def test_step_vacuum_unexpected_exit_code_returns_40(tmp_path):

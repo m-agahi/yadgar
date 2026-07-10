@@ -176,7 +176,7 @@ def _seed_anchors(anchors: list[dict], db_path: str | None, dry_run: bool) -> di
 
 
 def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
-    """Seed the 5 built-in starter agent-prompts via daemon REST endpoint.
+    """Seed the 15 built-in starter agent-prompts via daemon REST endpoint.
 
     Mirrors _seed_anchors. POST to /hooks/seed-agent-prompts; daemon handles
     the idempotency (create-if-absent per pattern).
@@ -188,6 +188,17 @@ def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
         "explore-codebase",
         "implement-tdd",
         "plan-executing-build",
+        # v5.123.0 seed backflow (live-corpus growth):
+        "stacked-car-parallel-build",
+        "feature-kill-closeout",
+        "dispatch-fix-test-migration",
+        "mechanical-refactor-chunk-commit-early",
+        "plan-corpus-status-sweep",
+        "plan-audit",
+        "crash-rca",
+        "drift-audit",
+        "feasibility-design",
+        "perf-anomaly-metrics",
     ]
     results = {"seeded": True, "created": 0, "skipped": 0, "dry_run": dry_run}
 

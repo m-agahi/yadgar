@@ -25,6 +25,9 @@ not absolute values.
 
 from __future__ import annotations
 
+import os as _os
+from pathlib import Path as _Path
+
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -394,6 +397,73 @@ class CacheStatsCollector:
 
 # Register the dual-emit collector on the backend registry (idempotent per-import).
 _registry.register(CacheStatsCollector())
+
+
+# ---------------------------------------------------------------------------
+# P0 #37 item 5c — store swap/stop state (split-brain + torn-stop observability)
+#
+# The 07-09 split-brain persisted silently for 16 h; the torn-stop warning
+# lived only in journalctl. This gauge surfaces the on-disk stop/swap state at
+# every scrape so PLT dashboards/alerting (task #23) can page on it:
+#
+#   torn_marker  — SURREAL_UNCLEAN_STOP marker (safe-stop caught a torn stop)
+#   split_brain  — SURREAL_SPLIT_BRAIN marker (inode guard caught fds outside
+#                  the canonical store dir)
+#   retained_old — a surreal_db.old-* dir exists (a half-swapped state the #37
+#                  vacuum rollback should make impossible — investigate)
+#   clean        — none of the above
+#
+# Flags are computed AT SCRAPE TIME (Gauge.set_function) from
+# SURREAL_DATA_ROOT (default /data) and YADGAR_LOG_DIR (default /data/logs) —
+# no backend restart needed for a state change to become visible.
+# ---------------------------------------------------------------------------
+
+_SWAP_STATES = ("clean", "retained_old", "torn_marker", "split_brain")
+
+
+def _swap_state_flags(
+    data_dir: _Path | None = None, log_dir: _Path | None = None
+) -> dict[str, int]:
+    """Compute the swap/stop state flags from on-disk markers (scrape-time)."""
+    data = (
+        data_dir if data_dir is not None else _Path(_os.environ.get("SURREAL_DATA_ROOT", "/data"))
+    )
+    logs = (
+        log_dir if log_dir is not None else _Path(_os.environ.get("YADGAR_LOG_DIR", "/data/logs"))
+    )
+    try:
+        retained_old = int(any(True for _ in data.glob("surreal_db.old-*")))
+    except OSError:
+        retained_old = 0
+    flags = {
+        "torn_marker": int((logs / "SURREAL_UNCLEAN_STOP").is_file()),
+        "split_brain": int((logs / "SURREAL_SPLIT_BRAIN").is_file()),
+        "retained_old": retained_old,
+    }
+    flags["clean"] = int(not any(flags.values()))
+    return flags
+
+
+store_swap_state = Gauge(
+    "yadgar_store_swap_state",
+    "Surrealkv store stop/swap state flags (1=active): clean / retained_old / "
+    "torn_marker / split_brain. Computed at scrape time from on-disk markers.",
+    ["state"],
+    registry=_registry,
+)
+
+
+def _bind_swap_state_collectors() -> None:
+    """Bind one scrape-time set_function per state label (closure-safe)."""
+
+    def _make(state: str):
+        return lambda: float(_swap_state_flags()[state])
+
+    for _state in _SWAP_STATES:
+        store_swap_state.labels(state=_state).set_function(_make(_state))
+
+
+_bind_swap_state_collectors()
 
 
 # ---------------------------------------------------------------------------

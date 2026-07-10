@@ -1,461 +1,472 @@
 [
-  {
-    "path": "yadgar/_shared/log_config.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1002
-    },
-    "rationale": "Folder-split #17 Car 4b: rewriting call-site imports to the real layer paths made several import statements longer (yadgar.tracing -> yadgar._shared.tracing, etc.); ruff-format wrapped one multi-symbol import across parenthesized lines, pushing file_loc from ~999 to 1002, just over the 1000 HARD cap. Net +3 lines are import-path formatting, not logic; module's essential complexity is unchanged. Splitting to shed 3 lines is churn with no readability gain.",
-    "added": "2026-07-07",
-    "added_by": "reorg-car4b"
+ {
+  "path": "yadgar/_shared/log_config.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1002
   },
-  {
-    "path": "yadgar/core/vacuum/__init__.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1015
-    },
-    "rationale": "I33 obs rollout (STEP 2, #8): +18 @observe decorator lines on the vacuum orchestration helpers pushed file_loc from ~997 to 1015, just over the 1000 HARD cap. The added lines are single-line tri-signal decorators (annotation, not logic); the module's essential complexity is unchanged. Splitting the file to shed ~15 decorator lines is churn with no readability gain.",
-    "added": "2026-07-04",
-    "added_by": "obs-i33-rollout"
+  "rationale": "Folder-split #17 Car 4b: rewriting call-site imports to the real layer paths made several import statements longer (yadgar.tracing -> yadgar._shared.tracing, etc.); ruff-format wrapped one multi-symbol import across parenthesized lines, pushing file_loc from ~999 to 1002, just over the 1000 HARD cap. Net +3 lines are import-path formatting, not logic; module's essential complexity is unchanged. Splitting to shed 3 lines is churn with no readability gain.",
+  "added": "2026-07-07",
+  "added_by": "reorg-car4b"
+ },
+ {
+  "path": "yadgar/core/vacuum/__init__.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1280
   },
-  {
-    "path": "yadgar/backend/embed_service.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1350
-    },
-    "rationale": "Train 1 added /recall route + models + _ensure_recall_engines (~126 LOC, 875 -> 1001). R3 Car 1 D2 added /consolidate (+51, -> 1194). backend 5.30.1 P0 fix added the queue-drainer lifecycle (_start/_stop_queue_drainer + fail-loud gating, ~150 LOC, -> 1350) — the wiring Car 1 removed from core without a backend construction point; lifespan-cohesive with the other startup/shutdown blocks here. All growth is HTTP-boundary + lifecycle glue around the same FastAPI app; splitting would scatter the lifespan across thin sub-modules for no readability gain. Next structural addition should split (e.g. drainer/lifespan into embed_service_lifecycle.py).",
-    "added": "2026-07-04",
-    "added_by": "recall-backend-train1"
+  "rationale": "P0 #37 safe-stop train (2026-07-10): +~265 LOC for the swap quiescence gate, finalize rollback-on-unverified, and the /proc inode-coherence scan (all with incident-context docstrings — the 07-09 split-brain postmortem lives next to the code it guards). Prior entry: I33 obs rollout 1015. The honest fix is splitting finalize/guards out of __init__ — that restructure belongs to the parked T2 layer-boundary train (#5), not a P0 incident-fix branch.",
+  "added": "2026-07-10",
+  "added_by": "safestop-car2"
+ },
+ {
+  "path": "yadgar/backend/embed_service.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1350
   },
-  {
-    "path": "yadgar/backend/causal_discovery/pc.py",
-    "function": "pc_algorithm",
-    "lineno": 105,
-    "metrics": {
-      "cyclomatic": 53,
-      "fn_loc": 175,
-      "nesting": 6
-    },
-    "rationale": "PERMANENT. Textbook PC constraint-based causal-discovery algorithm; the branching structure (skeleton phase, v-structure orientation, Meek propagation) is the algorithm itself. Extraction scatters the invariants across helpers and harms readability without reducing essential complexity.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "Train 1 added /recall route + models + _ensure_recall_engines (~126 LOC, 875 -> 1001). R3 Car 1 D2 added /consolidate (+51, -> 1194). backend 5.30.1 P0 fix added the queue-drainer lifecycle (_start/_stop_queue_drainer + fail-loud gating, ~150 LOC, -> 1350) — the wiring Car 1 removed from core without a backend construction point; lifespan-cohesive with the other startup/shutdown blocks here. All growth is HTTP-boundary + lifecycle glue around the same FastAPI app; splitting would scatter the lifespan across thin sub-modules for no readability gain. Next structural addition should split (e.g. drainer/lifespan into embed_service_lifecycle.py).",
+  "added": "2026-07-04",
+  "added_by": "recall-backend-train1"
+ },
+ {
+  "path": "yadgar/backend/causal_discovery/pc.py",
+  "function": "pc_algorithm",
+  "lineno": 105,
+  "metrics": {
+   "cyclomatic": 53,
+   "fn_loc": 175,
+   "nesting": 6
   },
-  {
-    "path": "yadgar/core/server/http.py",
-    "function": "hook_auto_capture",
-    "lineno": 393,
-    "metrics": {
-      "cyclomatic": 16
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "PERMANENT. Textbook PC constraint-based causal-discovery algorithm; the branching structure (skeleton phase, v-structure orientation, Meek propagation) is the algorithm itself. Extraction scatters the invariants across helpers and harms readability without reducing essential complexity.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/http.py",
+  "function": "hook_auto_capture",
+  "lineno": 393,
+  "metrics": {
+   "cyclomatic": 16
   },
-  {
-    "path": "yadgar/core/server/http.py",
-    "function": "hook_session_context",
-    "lineno": 488,
-    "metrics": {
-      "cyclomatic": 18,
-      "nesting": 5
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/http.py",
+  "function": "hook_session_context",
+  "lineno": 488,
+  "metrics": {
+   "cyclomatic": 18,
+   "nesting": 5
   },
-  {
-    "path": "yadgar/core/server/http.py",
-    "function": "hook_prompt_recall",
-    "lineno": 603,
-    "metrics": {
-      "cyclomatic": 17
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/http.py",
+  "function": "hook_prompt_recall",
+  "lineno": 603,
+  "metrics": {
+   "cyclomatic": 17
   },
-  {
-    "path": "yadgar/core/server/http.py",
-    "function": "hook_subagent_stop",
-    "lineno": 689,
-    "metrics": {
-      "cyclomatic": 17
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/http.py",
+  "function": "hook_subagent_stop",
+  "lineno": 689,
+  "metrics": {
+   "cyclomatic": 17
   },
-  {
-    "path": "yadgar/core/server/http.py",
-    "function": "_handle_team_inbox",
-    "lineno": 954,
-    "metrics": {
-      "cyclomatic": 16
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/http.py",
+  "function": "_handle_team_inbox",
+  "lineno": 954,
+  "metrics": {
+   "cyclomatic": 16
   },
-  {
-    "path": "yadgar/core/server/http.py",
-    "function": "_make_event_stream",
-    "lineno": 1564,
-    "metrics": {
-      "cyclomatic": 16,
-      "nesting": 5
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/http.py",
+  "function": "_make_event_stream",
+  "lineno": 1564,
+  "metrics": {
+   "cyclomatic": 16,
+   "nesting": 5
   },
-  {
-    "path": "yadgar/core/server/http.py",
-    "function": "api_viz_search",
-    "lineno": 1697,
-    "metrics": {
-      "cyclomatic": 18,
-      "nesting": 7
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/http.py",
+  "function": "api_viz_search",
+  "lineno": 1697,
+  "metrics": {
+   "cyclomatic": 18,
+   "nesting": 7
   },
-  {
-    "path": "yadgar/core/server/tools/memorize.py",
-    "function": "memorize",
-    "lineno": 68,
-    "metrics": {
-      "params": 10
-    },
-    "rationale": "PERMANENT. The 10 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/memorize.py",
+  "function": "memorize",
+  "lineno": 68,
+  "metrics": {
+   "params": 10
   },
-  {
-    "path": "yadgar/core/server/tools/misc.py",
-    "function": "checkpoint",
-    "lineno": 36,
-    "metrics": {
-      "params": 9
-    },
-    "rationale": "PERMANENT. The 9 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "PERMANENT. The 10 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/misc.py",
+  "function": "checkpoint",
+  "lineno": 36,
+  "metrics": {
+   "params": 9
   },
-  {
-    "path": "yadgar/core/server/tools/project.py",
-    "function": "_render_project_brief",
-    "lineno": 213,
-    "metrics": {
-      "cyclomatic": 35
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "PERMANENT. The 9 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/project.py",
+  "function": "_render_project_brief",
+  "lineno": 213,
+  "metrics": {
+   "cyclomatic": 35
   },
-  {
-    "path": "yadgar/core/server/tools/project.py",
-    "function": "_wiki_refresh_stale_impl",
-    "lineno": 1930,
-    "metrics": {
-      "cyclomatic": 24
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/project.py",
+  "function": "_wiki_refresh_stale_impl",
+  "lineno": 1930,
+  "metrics": {
+   "cyclomatic": 24
   },
-  {
-    "path": "yadgar/core/server/tools/recall.py",
-    "function": "recall",
-    "lineno": 111,
-    "metrics": {
-      "cyclomatic": 17,
-      "fn_loc": 180,
-      "params": 10
-    },
-    "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436\u2192180 and cyclomatic 55\u219217, but both remain above HARD caps due to: (1) multi-path input validation (type_filter, mode, profile, branch_hint, consolidation, shadow observe), (2) branch detection with fallback logic. params=10: all 10 are required by the MCP schema \u2014 splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/recall.py",
+  "function": "recall",
+  "lineno": 111,
+  "metrics": {
+   "cyclomatic": 17,
+   "fn_loc": 180,
+   "params": 10
   },
-  {
-    "path": "yadgar/core/server/tools/wiki.py",
-    "function": "wiki_add",
-    "lineno": 351,
-    "metrics": {
-      "cyclomatic": 25,
-      "params": 14
-    },
-    "rationale": "PERMANENT. Public MCP tool: 14 params are the LLM-facing schema and cannot be bundled without breaking the API. R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436→180 and cyclomatic 55→17, but both remain above HARD caps due to: (1) multi-path input validation (type_filter, mode, profile, branch_hint, consolidation, shadow observe), (2) branch detection with fallback logic. params=10: all 10 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/wiki.py",
+  "function": "wiki_add",
+  "lineno": 351,
+  "metrics": {
+   "cyclomatic": 25,
+   "params": 14
   },
-  {
-    "path": "yadgar/core/server/tools/wiki.py",
-    "function": "wiki_query",
-    "lineno": 555,
-    "metrics": {
-      "cyclomatic": 20
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "PERMANENT. Public MCP tool: 14 params are the LLM-facing schema and cannot be bundled without breaking the API. R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/wiki.py",
+  "function": "wiki_query",
+  "lineno": 555,
+  "metrics": {
+   "cyclomatic": 20
   },
-  {
-    "path": "yadgar/_shared/storage/migrations.py",
-    "function": "_migration_016_directory_context",
-    "lineno": 528,
-    "metrics": {
-      "nesting": 5
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/_shared/storage/migrations.py",
+  "function": "_migration_016_directory_context",
+  "lineno": 528,
+  "metrics": {
+   "nesting": 5
   },
-  {
-    "path": "yadgar/_shared/storage/migrations.py",
-    "function": "_migration_018_directory_context_backfill_repair",
-    "lineno": 653,
-    "metrics": {
-      "nesting": 5
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/_shared/storage/migrations.py",
+  "function": "_migration_018_directory_context_backfill_repair",
+  "lineno": 653,
+  "metrics": {
+   "nesting": 5
   },
-  {
-    "path": "yadgar/_shared/config_yaml.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1923
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) \u2014 pure data, not logic; the module is a single-responsibility config loader by design.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/_shared/config_yaml.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1923
   },
-  {
-    "path": "yadgar/core/server/http.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 2284
-    },
-    "rationale": "pre-existing large file; updated from 1842 in v5.100.0 after three hook endpoints received shadow-observe instrumentation blocks (~90 LoC) plus accumulated growth from v5.97-v5.100 hook additions. Scheduled for wave N split.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) — pure data, not logic; the module is a single-responsibility config loader by design.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/http.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 2284
   },
-  {
-    "path": "yadgar/core/server/tools/project.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 2660
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module \u2014 keeping them co-located is the established pattern; refactor remains deferred to the wave N split.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing large file; updated from 1842 in v5.100.0 after three hook endpoints received shadow-observe instrumentation blocks (~90 LoC) plus accumulated growth from v5.97-v5.100 hook additions. Scheduled for wave N split.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/project.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 2660
   },
-  {
-    "path": "yadgar/core/server/tools/wiki.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1579
-    },
-    "rationale": "pre-existing; v5.61.0 +412 LOC for L2+L3 MCP tool registrations (wiki_replace_at/delete_at/insert_at/replace_markdown_block + heading_type param for wiki_append_section); scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module — keeping them co-located is the established pattern; refactor remains deferred to the wave N split.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/core/server/tools/wiki.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1579
   },
-  {
-    "path": "yadgar/_shared/storage/migrations.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1153
-    },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; v5.61.0 +412 LOC for L2+L3 MCP tool registrations (wiki_replace_at/delete_at/insert_at/replace_markdown_block + heading_type param for wiki_append_section); scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/_shared/storage/migrations.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1153
   },
-  {
-    "path": "yadgar/_shared/wiki.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 2251
-    },
-    "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended).",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/_shared/wiki.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 2251
   },
-  {
-    "path": "scripts/check_complexity.py",
-    "function": "_check_function",
-    "lineno": 279,
-    "metrics": {
-      "cyclomatic": 26
-    },
-    "rationale": "PERMANENT. Central dispatch for function-level complexity checks; each branch handles one metric (cyclo/loc/nesting/params). Splitting would scatter the check logic with no single place to see all enforcement rules. Self-referential: the checker itself cannot be split without undermining the policy it enforces.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended).",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "scripts/check_complexity.py",
+  "function": "_check_function",
+  "lineno": 279,
+  "metrics": {
+   "cyclomatic": 26
   },
-  {
-    "path": "scripts/check_complexity.py",
-    "function": "_check_class",
-    "lineno": 422,
-    "metrics": {
-      "cyclomatic": 21
-    },
-    "rationale": "PERMANENT. Central dispatch for class-level complexity checks (methods, attrs, inheritance depth). Mirrors _check_function structure; splitting would break the parallel check pattern without improving clarity. Self-referential: the checker itself cannot be split without undermining the policy it enforces.",
-    "added": "2026-06-13",
-    "added_by": "complexity-governance-agent"
+  "rationale": "PERMANENT. Central dispatch for function-level complexity checks; each branch handles one metric (cyclo/loc/nesting/params). Splitting would scatter the check logic with no single place to see all enforcement rules. Self-referential: the checker itself cannot be split without undermining the policy it enforces.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "scripts/check_complexity.py",
+  "function": "_check_class",
+  "lineno": 422,
+  "metrics": {
+   "cyclomatic": 21
   },
-  {
-    "path": "yadgar/tests/server/test_integration.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1104
-    },
-    "rationale": "pre-existing large integration test file; not caused by this refactor",
-    "added": "2026-06-14",
-    "added_by": "refactor/v5.55-curate-params"
+  "rationale": "PERMANENT. Central dispatch for class-level complexity checks (methods, attrs, inheritance depth). Mirrors _check_function structure; splitting would break the parallel check pattern without improving clarity. Self-referential: the checker itself cannot be split without undermining the policy it enforces.",
+  "added": "2026-06-13",
+  "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/tests/server/test_integration.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1104
   },
-  {
-    "path": "yadgar/tests/server/test_integration.py",
-    "function": "test_clean_startup_and_shutdown",
-    "lineno": 999,
-    "metrics": {
-      "cyclomatic": 28
-    },
-    "rationale": "pre-existing complex integration test; not caused by this refactor",
-    "added": "2026-06-14",
-    "added_by": "refactor/v5.55-curate-params"
+  "rationale": "pre-existing large integration test file; not caused by this refactor",
+  "added": "2026-06-14",
+  "added_by": "refactor/v5.55-curate-params"
+ },
+ {
+  "path": "yadgar/tests/server/test_integration.py",
+  "function": "test_clean_startup_and_shutdown",
+  "lineno": 999,
+  "metrics": {
+   "cyclomatic": 28
   },
-  {
-    "path": "yadgar/_shared/storage/memory.py",
-    "function": "_enrich_memory_if_enabled",
-    "lineno": 202,
-    "metrics": {
-      "cyclomatic": 20
-    },
-    "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count \u2014 cohesive enrichment pipeline, single responsibility.",
-    "added": "2026-06-14",
-    "added_by": "insert-memory-refactor"
+  "rationale": "pre-existing complex integration test; not caused by this refactor",
+  "added": "2026-06-14",
+  "added_by": "refactor/v5.55-curate-params"
+ },
+ {
+  "path": "yadgar/_shared/storage/memory.py",
+  "function": "_enrich_memory_if_enabled",
+  "lineno": 202,
+  "metrics": {
+   "cyclomatic": 20
   },
-  {
-    "path": "yadgar/_shared/storage/memory.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1241
-    },
-    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) \u2014 the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately.",
-    "added": "2026-06-25",
-    "added_by": "feat/v5.104-perf-train"
+  "rationale": "PERMANENT. v5.55 extract from insert_memory: 5-term enable guard + 6-field result mapping + set_parts loop/conditional re-encode; further splitting degrades locality without reducing branch count — cohesive enrichment pipeline, single responsibility.",
+  "added": "2026-06-14",
+  "added_by": "insert-memory-refactor"
+ },
+ {
+  "path": "yadgar/_shared/storage/memory.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1241
   },
-  {
-    "path": "yadgar/core/server/tools/adr.py",
-    "function": "_build_adr_body",
-    "lineno": 70,
-    "metrics": {
-      "params": 11
-    },
-    "rationale": "PERMANENT. ADR schema has 10 mandatory content fields (title, status, date, context, decision, rationale, alternatives, consequences, revisit_trigger, supersedes) plus adr_id. Each field maps to a distinct semantic slot in the ADR template; collapsing into a dict or dataclass would break the FastMCP tool signature (which must be flat keyword args for schema generation). The 11-param limit is inherent to the ADR structure, not accidental complexity.",
-    "added": "2026-06-25",
-    "added_by": "feat/improvement-train"
+  "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) — the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately.",
+  "added": "2026-06-25",
+  "added_by": "feat/v5.104-perf-train"
+ },
+ {
+  "path": "yadgar/core/server/tools/adr.py",
+  "function": "_build_adr_body",
+  "lineno": 70,
+  "metrics": {
+   "params": 11
   },
-  {
-    "path": "yadgar/core/server/tools/adr.py",
-    "function": "adr_add",
-    "lineno": 104,
-    "metrics": {
-      "params": 11
-    },
-    "rationale": "PERMANENT. Same ADR-schema constraint as _build_adr_body: 10 mandatory content fields + directory = 11 total. FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement. The 11-field ADR structure is a conscious design choice (matches Nygard ADR format) and must be preserved as a flat tool signature.",
-    "added": "2026-06-25",
-    "added_by": "feat/improvement-train"
+  "rationale": "PERMANENT. ADR schema has 10 mandatory content fields (title, status, date, context, decision, rationale, alternatives, consequences, revisit_trigger, supersedes) plus adr_id. Each field maps to a distinct semantic slot in the ADR template; collapsing into a dict or dataclass would break the FastMCP tool signature (which must be flat keyword args for schema generation). The 11-param limit is inherent to the ADR structure, not accidental complexity.",
+  "added": "2026-06-25",
+  "added_by": "feat/improvement-train"
+ },
+ {
+  "path": "yadgar/core/server/tools/adr.py",
+  "function": "adr_add",
+  "lineno": 104,
+  "metrics": {
+   "params": 11
   },
-  {
-    "path": "yadgar/_shared/storage/wiki.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1012
-    },
-    "rationale": "v5.89 #69: upsert_dispatch_prelude_marker added ~37 lines to mirror upsert_active_work. The _WikiMixin class holds all memory/wiki upsert helpers; splitting the file creates import cycles. Scheduled for mixin decomposition in a dedicated refactor.",
-    "added": "2026-06-30",
-    "added_by": "feat/v5.89-settings-redesign"
+  "rationale": "PERMANENT. Same ADR-schema constraint as _build_adr_body: 10 mandatory content fields + directory = 11 total. FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement. The 11-field ADR structure is a conscious design choice (matches Nygard ADR format) and must be preserved as a flat tool signature.",
+  "added": "2026-06-25",
+  "added_by": "feat/improvement-train"
+ },
+ {
+  "path": "yadgar/_shared/storage/wiki.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1012
   },
-  {
-    "path": "yadgar/_shared/metrics.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1059
-    },
-    "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry \u2014 every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split.",
-    "added": "2026-07-01",
-    "added_by": "fix/daemon-obs-gauges"
+  "rationale": "v5.89 #69: upsert_dispatch_prelude_marker added ~37 lines to mirror upsert_active_work. The _WikiMixin class holds all memory/wiki upsert helpers; splitting the file creates import cycles. Scheduled for mixin decomposition in a dedicated refactor.",
+  "added": "2026-06-30",
+  "added_by": "feat/v5.89-settings-redesign"
+ },
+ {
+  "path": "yadgar/_shared/metrics.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1059
   },
-  {
-    "path": "yadgar/_shared/config.py",
-    "function": "<file>",
-    "lineno": 1,
-    "metrics": {
-      "file_loc": 1006
-    },
-    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split.",
-    "added": "2026-07-03",
-    "added_by": "feat/obs-p1-recall-readpath"
+  "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry — every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split.",
+  "added": "2026-07-01",
+  "added_by": "fix/daemon-obs-gauges"
+ },
+ {
+  "path": "yadgar/_shared/config.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1006
   },
-  {
-    "path": "yadgar/_shared/runtime/recall_pipeline.py",
-    "function": "_fanout_recall",
-    "lineno": 202,
-    "metrics": {
-      "params": 9
-    },
-    "rationale": "Phase 1 backend contract widen (#45): added profile: str | None = None as the 9th param to thread rerank_level through the fanout. The 8-param SOFT cap is exceeded by 1; the function signature matches the backend RecallRequest contract (query/max_results/min_heat/directory/current_branch/default_branch/type_filter/tags/profile). Introducing a config-object wrapper would require changing all callers (core + backend) simultaneously, which couples Phase 1 to Phase 2 \u2014 Phase 2 is the planned refactor pass. Allowlisted until Phase 2 can wrap params cleanly.",
-    "added": "2026-07-05",
-    "added_by": "recall-backend-phase1"
+  "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split.",
+  "added": "2026-07-03",
+  "added_by": "feat/obs-p1-recall-readpath"
+ },
+ {
+  "path": "yadgar/_shared/runtime/recall_pipeline.py",
+  "function": "_fanout_recall",
+  "lineno": 202,
+  "metrics": {
+   "params": 9
   },
-  {
-    "path": "yadgar/core/server/tools/recall.py",
-    "function": "_forward_to_backend",
-    "lineno": 44,
-    "metrics": {
-      "params": 10
-    },
-    "rationale": "Phase 2a: pure forwarder function \u2014 mirrors full recall() MCP signature (10 params) plus positional context (current_branch, default_branch) needed for backend. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site \u2014 not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
-    "added": "2026-07-05",
-    "added_by": "phase2a-cutover-agent"
+  "rationale": "Phase 1 backend contract widen (#45): added profile: str | None = None as the 9th param to thread rerank_level through the fanout. The 8-param SOFT cap is exceeded by 1; the function signature matches the backend RecallRequest contract (query/max_results/min_heat/directory/current_branch/default_branch/type_filter/tags/profile). Introducing a config-object wrapper would require changing all callers (core + backend) simultaneously, which couples Phase 1 to Phase 2 — Phase 2 is the planned refactor pass. Allowlisted until Phase 2 can wrap params cleanly.",
+  "added": "2026-07-05",
+  "added_by": "recall-backend-phase1"
+ },
+ {
+  "path": "yadgar/core/server/tools/recall.py",
+  "function": "_forward_to_backend",
+  "lineno": 44,
+  "metrics": {
+   "params": 10
   },
-  {
-    "path": "yadgar/backend/cache.py",
-    "function": "__init__",
-    "lineno": 340,
-    "metrics": {
-      "params": 9
-    },
-    "rationale": "Backend caching train Car 0 (#49): the unified backend Cache constructor mirrors the core yadgar/cache.py Cache (which sits at the 8-param cap: name/max_bytes/invalidation/key_fn/deep_copy/obs_tier/clock) plus one backend-only param, checkpoint_hash, needed to ckpt-gate the msgpack snapshot (a snapshot written under a different model hash must be discarded on load \u2014 the ce/embed model-swap contract). Each param is an independent, orthogonal cache policy bound once at construction; wrapping them in a config-object would add a dataclass indirection for a single construction site (the two _make_*_cache factories) with no readability gain. Allowlisted: Car 0, #49.",
-    "added": "2026-07-06",
-    "added_by": "backend-cache-train-car0"
+  "rationale": "Phase 2a: pure forwarder function — mirrors full recall() MCP signature (10 params) plus positional context (current_branch, default_branch) needed for backend. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site — not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
+  "added": "2026-07-05",
+  "added_by": "phase2a-cutover-agent"
+ },
+ {
+  "path": "yadgar/backend/cache.py",
+  "function": "__init__",
+  "lineno": 340,
+  "metrics": {
+   "params": 9
   },
-  {
-    "path": "yadgar/backend/write_exec/memorize_impl.py",
-    "function": "run_memorize_replay",
-    "lineno": 32,
-    "metrics": {
-      "params": 9
-    },
-    "rationale": "R3 write-path regression fix: 'reason' (semantic_immortal anchor reason) must survive the enqueue->drain boundary so drainer-side phase_validate can re-check the require-reason invariant. The signature mirrors the memorize MCP schema (already noqa'd PLR0913); all 9 params are queue-payload fields \u2014 a params dataclass would just relocate the field list without reducing essential complexity.",
-    "added": "2026-07-08",
-    "added_by": "reorg3-test-migration"
-  }
+  "rationale": "Backend caching train Car 0 (#49): the unified backend Cache constructor mirrors the core yadgar/cache.py Cache (which sits at the 8-param cap: name/max_bytes/invalidation/key_fn/deep_copy/obs_tier/clock) plus one backend-only param, checkpoint_hash, needed to ckpt-gate the msgpack snapshot (a snapshot written under a different model hash must be discarded on load — the ce/embed model-swap contract). Each param is an independent, orthogonal cache policy bound once at construction; wrapping them in a config-object would add a dataclass indirection for a single construction site (the two _make_*_cache factories) with no readability gain. Allowlisted: Car 0, #49.",
+  "added": "2026-07-06",
+  "added_by": "backend-cache-train-car0"
+ },
+ {
+  "path": "yadgar/backend/write_exec/memorize_impl.py",
+  "function": "run_memorize_replay",
+  "lineno": 32,
+  "metrics": {
+   "params": 9
+  },
+  "rationale": "R3 write-path regression fix: 'reason' (semantic_immortal anchor reason) must survive the enqueue->drain boundary so drainer-side phase_validate can re-check the require-reason invariant. The signature mirrors the memorize MCP schema (already noqa'd PLR0913); all 9 params are queue-payload fields — a params dataclass would just relocate the field list without reducing essential complexity.",
+  "added": "2026-07-08",
+  "added_by": "reorg3-test-migration"
+ },
+ {
+  "path": "yadgar/core/vacuum/__init__.py",
+  "function": "_vacuum_finalize",
+  "lineno": 902,
+  "metrics": {
+   "params": 9
+  },
+  "rationale": "P0 #37 item 3: the finalize gained db_path (the rollback target — cannot be derived when --db-path names a non-standard canonical) on top of the pre-existing 8-param signature (url, home, old, snapshot, svc, keep_n, raw/filtered scratch). Bundling params into a context object means rewriting ~10 positional call sites across the legacy vacuum test suites — churn deferred to the T2 layer-boundary restructure (#5); a P0 incident branch keeps the seam stable.",
+  "added": "2026-07-10",
+  "added_by": "safestop-car2"
+ }
 ]
