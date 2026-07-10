@@ -365,6 +365,7 @@ def test_health_ok_true_on_503_degraded():
     )
     with patch("urllib.request.urlopen", side_effect=err):
         assert d._health_ok(8765) is True
+    err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
 
 
 def test_health_ok_false_on_urlerror():
@@ -393,6 +394,7 @@ def test_status_shows_degraded_detail_on_503():
     with patch.object(d, "_container_running", return_value=True):
         with patch("urllib.request.urlopen", side_effect=err):
             result = d.status()
+    err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
 
     assert result["running"] is True
     assert result["status"] == "degraded"

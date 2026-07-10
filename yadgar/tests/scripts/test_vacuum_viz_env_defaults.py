@@ -7,6 +7,8 @@ systemd unit ExecStart doesn't need to repeat each flag.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from yadgar.core.cli.vacuum import _default_backend_url, _default_db_path
@@ -43,7 +45,7 @@ class TestVizBindHost:
         """Source-level assertion: viz thread uses settings.HOST for viz bind."""
         from yadgar.core import daemons
 
-        src = open(daemons.__file__).read()
+        src = Path(daemons.__file__).read_text(encoding="utf-8")
         # Pin that the viz thread now picks host from settings, not hardcoded.
         assert 'getattr(_settings, "HOST"' in src or "_settings.HOST" in src, (
             "core/daemons.py viz thread must read host from settings"

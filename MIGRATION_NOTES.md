@@ -1,5 +1,21 @@
 # Migration Notes
 
+## Hardening Car 3 — CI image rebuild required BEFORE merging train PR #179
+
+`Dockerfile.ci` gained `graphviz` (so `test_diagram_generator` render tests RUN
+in CI instead of skipping) and its version label moved to `5.121.0`. All
+workflow files now reference `docker.io/openfantasy/yadgar-ci:5.121.0` — that
+tag does not exist yet. CI on the train PR will fail at image pull until you
+build + push it (PD-42 carve-out: yadgar-ci is the one image that pushes to
+dockerhub):
+
+```bash
+podman build -f Dockerfile.ci -t docker.io/openfantasy/yadgar-ci:5.121.0 .
+podman push docker.io/openfantasy/yadgar-ci:5.121.0
+```
+
+---
+
 ## R3 — CROSS_ENCODER_BACKEND knob removed (ADR-0043 NO-GO → full removal)
 
 `YADGAR_CROSS_ENCODER_BACKEND` has been removed. The onnx-int8 CE backend was

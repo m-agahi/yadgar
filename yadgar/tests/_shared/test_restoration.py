@@ -180,8 +180,15 @@ class TestRestore:
         assert "API key" in result["formatted"]
 
 
+@pytest.mark.usefixtures("surreal_server")
 class TestCLISubcommands:
-    """Test the drain/restore CLI subcommands."""
+    """Test the drain/restore CLI subcommands.
+
+    Car 2: requests ``surreal_server`` explicitly — the DB demand lives in the
+    CHILD process (``python -m yadgar drain/restore`` inherits YADGAR_DB_URL
+    and constructs its own StorageEngine there), so the lazy in-process spawn
+    trigger never fires for these tests.
+    """
 
     def test_cli_drain(self, temp_db):
         import subprocess

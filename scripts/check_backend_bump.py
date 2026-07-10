@@ -60,6 +60,10 @@ def _is_backend_build_input(path: str) -> bool:
     p = Path(path)
     if p.name in BACKEND_BUILD_INPUTS:
         return True
+    # Test code never ships in the backend image — the Car 1 test reorg put
+    # suites under yadgar/tests/backend/, which must not demand a version bump.
+    if "tests" in p.parts:
+        return False
     # Match a "backend" dir at ANY depth: top-level backend/ and the v5.60
     # yadgar/backend/ subpackage (cache, ml_client, embed_service, metrics).
     for d in BACKEND_BUILD_DIRS:

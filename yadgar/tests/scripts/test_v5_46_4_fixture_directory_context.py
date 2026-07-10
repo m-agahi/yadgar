@@ -45,13 +45,3 @@ def test_export_duckdb_seeded_storage_has_directory_context():
     assert "directory_context" in src, (
         "seeded_storage wiki_page INSERT missing directory_context — B1 fix not applied"
     )
-
-
-def test_anchor_surfacing_empty_string_test_is_skipped():
-    """test_empty_string_directory_context_treated_as_global must be skip-marked (schema rejects empty string)."""
-    src = _source("_shared/test_anchor_surfacing.py")
-    # The test should be marked skip or have pytest.skip
-    assert "pytest.mark.skip" in src or "pytest.skip" in src, (
-        "test_empty_string_directory_context_treated_as_global must be skip-marked — "
-        "schema now rejects empty string, behavior change deferred to v5.46.6"
-    )

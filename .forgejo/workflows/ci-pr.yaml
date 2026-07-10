@@ -41,7 +41,7 @@ jobs:
     # TODO: candidate for dropping ml extra after import-graph proof — scripts/,
     # server/, hooks/ tests may not need heavy ML deps.
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.73.0
+      image: docker.io/openfantasy/yadgar-ci:5.121.1
     env:
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
@@ -57,26 +57,41 @@ jobs:
           restore-keys: pip-
 
       - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
         run: |
-          pip install -e ".[test,ml]"
-          pip install uv
+          uv pip install --system --no-deps -e .
 
       - name: Run tests (scripts, server, hooks, _meta)
-        run: >
-          python -m pytest
-          yadgar/tests/scripts/
-          yadgar/tests/server/
-          yadgar/tests/hooks/
-          yadgar/tests/_meta/
-          -q --tb=short
-          -n 4 --dist loadgroup
-          --reruns 2 --reruns-delay 2
-          -m 'not integration and not e2e'
+        # -rs + tee: the skip-summary output feeds the wave-3 check-skip-inventory
+        # gate as an artifact — the gate parses this text instead of re-running
+        # the suite a 5th time. pipefail keeps pytest's exit code through the tee.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            yadgar/tests/scripts/ \
+            yadgar/tests/server/ \
+            yadgar/tests/hooks/ \
+            yadgar/tests/_meta/ \
+            -q -rs --tb=short \
+            -n 4 --dist loadgroup \
+            --reruns 2 --reruns-delay 2 \
+            -m 'not integration and not e2e' \
+            2>&1 | tee pytest-rs-fast.txt
+
+      - name: Upload -rs output for skip gate
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: pytest-rs-fast
+          path: pytest-rs-fast.txt
+          retention-days: 1
 
   test-shared:
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.73.0
+      image: docker.io/openfantasy/yadgar-ci:5.121.1
     env:
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
@@ -92,18 +107,30 @@ jobs:
           restore-keys: pip-
 
       - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
         run: |
-          pip install -e ".[test,ml]"
-          pip install uv
+          uv pip install --system --no-deps -e .
 
       - name: Run tests (_shared)
-        run: >
-          python -m pytest
-          yadgar/tests/_shared/
-          -q --tb=short
-          -n 4 --dist loadgroup
-          --reruns 2 --reruns-delay 2
-          -m 'not integration and not e2e'
+        run: |
+          set -o pipefail
+          python -m pytest \
+            yadgar/tests/_shared/ \
+            -q -rs --tb=short \
+            -n 4 --dist loadgroup \
+            --reruns 2 --reruns-delay 2 \
+            -m 'not integration and not e2e' \
+            2>&1 | tee pytest-rs-shared.txt
+
+      - name: Upload -rs output for skip gate
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: pytest-rs-shared
+          path: pytest-rs-shared.txt
+          retention-days: 1
 
   test-backend:
     runs-on: ubuntu-latest
@@ -114,7 +141,7 @@ jobs:
     # (shared + backend-after-fast).
     needs: [test-fast]
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.73.0
+      image: docker.io/openfantasy/yadgar-ci:5.121.1
     env:
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
@@ -130,18 +157,30 @@ jobs:
           restore-keys: pip-
 
       - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
         run: |
-          pip install -e ".[test,ml]"
-          pip install uv
+          uv pip install --system --no-deps -e .
 
       - name: Run tests (backend)
-        run: >
-          python -m pytest
-          yadgar/tests/backend/
-          -q --tb=short
-          -n 4 --dist loadgroup
-          --reruns 2 --reruns-delay 2
-          -m 'not integration and not e2e'
+        run: |
+          set -o pipefail
+          python -m pytest \
+            yadgar/tests/backend/ \
+            -q -rs --tb=short \
+            -n 4 --dist loadgroup \
+            --reruns 2 --reruns-delay 2 \
+            -m 'not integration and not e2e' \
+            2>&1 | tee pytest-rs-backend.txt
+
+      - name: Upload -rs output for skip gate
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: pytest-rs-backend
+          path: pytest-rs-backend.txt
+          retention-days: 1
 
   test-core:
     runs-on: ubuntu-latest
@@ -166,7 +205,7 @@ jobs:
     # the cap, the waves, and the per-wave leg count are the only levers.
     needs: [test-fast, test-shared, test-backend]
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.73.0
+      image: docker.io/openfantasy/yadgar-ci:5.121.1
     env:
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
@@ -192,28 +231,98 @@ jobs:
         # and pre-commit check-config-three-way-sync hook.
         # pytest-split: parallel chunk partitioning via --splits/--group flags.
         # .test_durations committed at repo root; least_duration reads it.
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
         run: |
-          pip install -e ".[test,ml]"
-          pip install uv
+          uv pip install --system --no-deps -e .
 
       # NOTE: Forgejo act_runner does NOT expand ${{ }} expressions in a step
       # `name:` (only in `run:`/`if:`/`env:`). Literal name used here.
+      # -n 4: capped — CI runner OOMs at auto worker count because /proc/meminfo
+      # reports host RAM, not the cgroup limit; 4 chosen conservatively — tune upward later
       - name: Run tests (core, pytest-split chunk, 2-way, least_duration)
-        run: >
-          python -m pytest yadgar/tests/core/
-          -q --tb=short
-          -n 4 --dist loadgroup
-          --reruns 2 --reruns-delay 2
-          -m 'not integration and not e2e'
-          --splits 2 --group ${{ matrix.group }}
-          --splitting-algorithm least_duration
-          # -n 4: capped — CI runner OOMs at auto worker count because /proc/meminfo
-          # reports host RAM, not the cgroup limit; 4 chosen conservatively — tune upward later
+        run: |
+          set -o pipefail
+          python -m pytest yadgar/tests/core/ \
+            -q -rs --tb=short \
+            -n 4 --dist loadgroup \
+            --reruns 2 --reruns-delay 2 \
+            -m 'not integration and not e2e' \
+            --splits 2 --group ${{ matrix.group }} \
+            --splitting-algorithm least_duration \
+            2>&1 | tee pytest-rs-core-${{ matrix.group }}.txt
+
+      - name: Upload -rs output for skip gate
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: pytest-rs-core-${{ matrix.group }}
+          path: pytest-rs-core-${{ matrix.group }}.txt
+          retention-days: 1
+
+  check-skip-inventory:
+    runs-on: ubuntu-latest
+    # Wave 3 — validates the four legs' pytest -rs skip summaries WITHOUT
+    # re-running any test.  The original Car 1 gate re-ran all four leg paths
+    # as a 5th full-suite run: doubled CI wall time, added another OOM-class
+    # load to the co-hosted runner (ADR-0079), and its pipe buffered so the
+    # job looked hung for 20+ minutes.  Now the legs tee their own -rs output
+    # to artifacts and this job just parses the text — runtime is seconds.
+    # No pip install: check_skip_inventory.py is stdlib-only.
+    needs: [test-fast, test-shared, test-backend, test-core]
+    container:
+      image: docker.io/openfantasy/yadgar-ci:5.121.1
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Download leg -rs output (fast)
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: pytest-rs-fast
+          path: rs-logs/
+      - name: Download leg -rs output (shared)
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: pytest-rs-shared
+          path: rs-logs/
+      - name: Download leg -rs output (backend)
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: pytest-rs-backend
+          path: rs-logs/
+      - name: Download leg -rs output (core-1)
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: pytest-rs-core-1
+          path: rs-logs/
+      - name: Download leg -rs output (core-2)
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: pytest-rs-core-2
+          path: rs-logs/
+
+      - name: Gate skip inventory (parse leg artifacts — no test execution)
+        # All five leg outputs must be present (missing artifact = fail loudly,
+        # never a silently-narrower gate), then the concatenated text is piped
+        # through check_skip_inventory.py's stdin mode.
+        run: |
+          set -o pipefail
+          count=$(ls rs-logs/pytest-rs-*.txt | wc -l)
+          if [ "$count" -ne 5 ]; then
+            echo "expected 5 leg -rs artifacts, found $count:" >&2
+            ls -la rs-logs/ >&2
+            exit 1
+          fi
+          cat rs-logs/pytest-rs-*.txt | python scripts/check_skip_inventory.py
+
+      - name: Validate inventory governance (ADR-0087 — stale entries, note length, wildcards)
+        run: python scripts/check_skip_inventory.py --validate-inventory
 
   invariant-checks:
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.73.0
+      image: docker.io/openfantasy/yadgar-ci:5.121.1
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -225,9 +334,12 @@ jobs:
           restore-keys: pip-
 
       - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
         run: |
-          pip install -e ".[test,ml]"
-          pip install uv
+          uv pip install --system --no-deps -e .
 
       - name: Check I23 — declared metrics must have writers
         run: python scripts/check_metric_writers.py
@@ -252,7 +364,7 @@ jobs:
   # when any subsystem job fails, which would leave the PR green incorrectly.
   test-gate:
     runs-on: ubuntu-latest
-    needs: [test-fast, test-shared, test-backend, test-core]
+    needs: [test-fast, test-shared, test-backend, test-core, check-skip-inventory]
     if: ${{ always() }}
     steps:
       - name: Assert all subsystem test jobs passed
@@ -273,6 +385,10 @@ jobs:
             echo "test-core failed (result: ${{ needs.test-core.result }})"
             exit 1
           fi
+          if [ "${{ needs.check-skip-inventory.result }}" != "success" ]; then
+            echo "check-skip-inventory failed (result: ${{ needs.check-skip-inventory.result }})"
+            exit 1
+          fi
           echo "All subsystem test jobs passed."
 
   viz-tests:
@@ -280,7 +396,7 @@ jobs:
     # Use yadgar-ci-viz which extends yadgar-ci with Playwright + Chromium pre-baked.
     # Saves ~75s vs inline apt-get install on every run (v5.46.9 CI speedup).
     container:
-      image: docker.io/openfantasy/yadgar-ci-viz:5.46.9
+      image: docker.io/openfantasy/yadgar-ci-viz:5.121.1
     steps:
       # Playwright + Chromium + SurrealDB + HF model pre-baked in yadgar-ci-viz.
       # No apt-get install or binary download steps needed.
@@ -303,9 +419,12 @@ jobs:
 
       - name: Install Python dependencies
         # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess).
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
         run: |
-          pip install -e ".[test,ml]"
-          pip install uv
+          uv pip install --system --no-deps -e .
 
       - name: Layer 1 — API contract integrity (Python)
         run: |

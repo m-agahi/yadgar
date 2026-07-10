@@ -65,6 +65,18 @@ class TestIsBackendBuildInput:
     def test_yadgar_source_not_backend(self) -> None:
         assert _is_backend_build_input("yadgar/vacuum/__init__.py") is False
 
+    def test_backend_tests_not_build_input(self) -> None:
+        # Car 2 false-positive fix: the Car 1 test reorg put suites under
+        # yadgar/tests/backend/ — test code never ships in the backend image,
+        # so it must not demand a backend_version bump.
+        assert _is_backend_build_input("yadgar/tests/backend/test_consolidation.py") is False
+
+    def test_backend_test_fixtures_not_build_input(self) -> None:
+        assert (
+            _is_backend_build_input("yadgar/tests/backend/fixtures/causal_discovery_expected.json")
+            is False
+        )
+
 
 # ---------------------------------------------------------------------------
 # Scenario (a): backend file changed, no version bump → FAIL

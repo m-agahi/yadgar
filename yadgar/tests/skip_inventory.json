@@ -1,0 +1,101 @@
+{
+  "_meta": {
+    "version": "1",
+    "description": "Sanctioned skips for yadgar test suite. Every skip must appear here or CI gate fails.",
+    "updated": "2026-07-10",
+    "adr": "Car 1 of test-suite hardening train (fix/test-hardening-car1-skips)"
+  },
+  "entries": [
+    {
+      "id": "scan-script-live-db-01",
+      "file": "yadgar/tests/scripts/test_scan_script.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "Live-DB scan skipped unless YADGAR_TEST_LIVE_SCAN=1",
+      "note": "Requires live DB and YADGAR_TEST_LIVE_SCAN=1 env var; CI does not set this"
+    },
+    {
+      "id": "v5-45-1-launchd-install-01",
+      "file": "yadgar/tests/scripts/test_v5_45_1_launchd_install.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "requires macOS host",
+      "note": "launchd install — macOS-only feature; covers all 3 macOS skips in this file"
+    },
+    {
+      "id": "v5-45-1-uninstall-macos-01",
+      "file": "yadgar/tests/scripts/test_v5_45_1_uninstall_macos.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "requires macOS host",
+      "note": "uninstall launchd cleanup path — macOS-only feature, cannot run on Linux CI"
+    },
+    {
+      "id": "v5-45-1-podman-machine-socket-01",
+      "file": "yadgar/tests/scripts/test_v5_45_1_podman_machine_socket.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "requires macOS host",
+      "note": "podman machine socket resolution — macOS-only feature, cannot run on Linux CI"
+    },
+    {
+      "id": "v5-46-0-sbom-generation-01",
+      "file": "yadgar/tests/scripts/test_v5_46_0_sbom_generation.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "cyclonedx-bom not installed",
+      "note": "cyclonedx-bom is in [dist]/[sbom] optional extras, not [test] — CI does not install it"
+    },
+    {
+      "id": "v5-46-0-yadgar-setup-render-01",
+      "file": "yadgar/tests/scripts/test_v5_46_0_yadgar_setup_render.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "shellcheck not in PATH",
+      "note": "test requires shellcheck binary; CI image (python:3.14-slim) does not include it"
+    },
+    {
+      "id": "v5-49-2-hotfix-t7",
+      "file": "yadgar/tests/scripts/test_v5_49_2_hotfix.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "entrypoint-backend.sh uses SURREAL_USER/PASS",
+      "note": "T7 — investigation showed backend does not require YADGAR_DB_USER; test body is pass by design"
+    },
+    {
+      "id": "v5-46-9-branch-fallback-ci-env",
+      "file": "yadgar/tests/scripts/test_v5_46_9_branch_fallback_conditional.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "YADGAR_CI_BRANCH set in environment",
+      "note": "Documents v5.46.7 regression: daemon unconditionally uses YADGAR_CI_BRANCH as branch fallback. Fix is test-side in other tests (monkeypatch.delenv). Cannot be exercised in CI where YADGAR_CI_BRANCH=master is set globally."
+    },
+    {
+      "id": "causal-discovery-char-regen",
+      "file": "yadgar/tests/backend/test_causal_discovery_characterization.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "Set YADGAR_REGEN_FIXTURES=1 to regenerate",
+      "note": "Regen-on-demand skip by design. Fixture committed at yadgar/tests/backend/fixtures/causal_discovery_expected.json (Car 2: generated INSIDE the yadgar-ci container — scipy FP sensitivity across BLAS builds). Regenerate only inside the CI container; command in the test module docstring."
+    },
+    {
+      "id": "consolidation-perf-xdist",
+      "file": "yadgar/tests/backend/test_consolidation.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "timing-sensitive perf guard unreliable under xdist parallel CPU contention",
+      "note": "Performance gate test; unreliable under xdist parallel CPU contention. Correct design: run serially for perf gating."
+    },
+    {
+      "id": "export-duckdb-01",
+      "file": "yadgar/tests/core/test_export_duckdb.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "duckdb not installed",
+      "note": "duckdb is an optional dep not included in [test] extras or CI image (python:3.14-slim). All 18 duckdb skips are covered by this entry."
+    },
+    {
+      "id": "nix-flake-eval-01",
+      "file": "yadgar/tests/scripts/test_v5_46_0_nix_flake_eval.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "nix not in PATH",
+      "note": "nix binary absent in CI container; flake checks run on dev machines (NixOS). Stays a skip — nix-in-container is unreasonable weight."
+    },
+    {
+      "id": "retrieval-core-char-regen",
+      "file": "yadgar/tests/core/test_retrieval_core_characterization.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "Set YADGAR_REGEN_FIXTURES=1 to regenerate",
+      "note": "Regen-on-demand skip by design. Fixture committed at yadgar/tests/core/fixtures/retrieval_core_expected.json."
+    }
+  ]
+}

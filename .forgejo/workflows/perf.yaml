@@ -38,7 +38,7 @@ jobs:
   perf:
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.73.0
+      image: docker.io/openfantasy/yadgar-ci:5.121.1
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 

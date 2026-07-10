@@ -121,7 +121,7 @@ class TestNormalPath:
 
 
 class TestFallbackPath:
-    """Force the inline fallback by making 'from yadgar.hooks.subagent_stop import main' fail."""
+    """Force the inline fallback by making 'from yadgar.core.hooks.subagent_stop import main' fail."""
 
     def _load_inline_ns(self):
         """Load the script in a way that forces the fallback inline impl."""
@@ -131,7 +131,7 @@ class TestFallbackPath:
         _real_import = builtins.__import__
 
         def _patched_import(name, *args, **kwargs):
-            if name == "yadgar.hooks.subagent_stop":
+            if name == "yadgar.core.hooks.subagent_stop":
                 raise ImportError("test-forced import error")
             return _real_import(name, *args, **kwargs)
 
