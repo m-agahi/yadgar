@@ -179,11 +179,16 @@ class TestAgentDispatchPreludeX1:
         assert "branch_hint=" in source, "_build_context_block must pass branch_hint= to recall"
 
     def test_contract_text_updated_for_long_running(self):
-        """v5.44.0 contract allows long_running agents to call memorize directly."""
-        from yadgar.core.server.tools.dispatch_helper import _YADGAR_CONTRACT
+        """v5.44.0 contract allows long_running agents to call memorize directly.
+
+        v5.122.0: _YADGAR_CONTRACT constant removed — contract genesis lives in
+        seed materials (CONTRACT_GENESIS); wiki page is the runtime source.
+        """
+        from yadgar.core.server.tools.agent_prompts import CONTRACT_GENESIS
 
         # DP-1: long_running carve-out must be documented
-        lower = _YADGAR_CONTRACT.lower()
+        _, _, _contract = CONTRACT_GENESIS
+        lower = _contract.lower()
         has_exception = (
             "long_running" in lower
             or "long-running" in lower
@@ -777,12 +782,17 @@ Work done.
         assert posted[0]["branch_hint"] == caller_branch
 
 
-# ── Regression: _YADGAR_CONTRACT still has findings heading ───────────────────
+# ── Regression: contract genesis still has findings heading ───────────────────
 
 
 class TestContractRegression:
     def test_contract_has_findings_heading_literal(self):
-        """_YADGAR_CONTRACT must still have '## Yadgar findings' — regression guard."""
-        from yadgar.core.server.tools.dispatch_helper import _YADGAR_CONTRACT
+        """Contract genesis must still have '## Yadgar findings' — regression guard.
 
-        assert "## Yadgar findings" in _YADGAR_CONTRACT
+        v5.122.0: _YADGAR_CONTRACT constant removed — genesis lives in seed
+        materials (CONTRACT_GENESIS); wiki page is the runtime source.
+        """
+        from yadgar.core.server.tools.agent_prompts import CONTRACT_GENESIS
+
+        _, _, _contract = CONTRACT_GENESIS
+        assert "## Yadgar findings" in _contract

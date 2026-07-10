@@ -3,6 +3,32 @@
 # Each entry: pattern (slug), purpose (one-line TOC desc), content (prompt body).
 # content uses a |- block scalar (strip final newline) — bodies have NO trailing newline.
 
+# contract: the genesis prelude contract (NOT a dispatch-pattern starter — excluded from
+# STARTER_PROMPTS; seeded separately by _seed_contract_page in agent_prompts.py).
+# Runtime source of truth is the WIKI PAGE agent-prompt-contract; this block is the
+# packaged genesis/schema copy used for first seed, seed-on-miss, and last-resort fallback.
+contract:
+  pattern: contract
+  purpose: Yadgar subagent protocol contract (prelude injected before every dispatch).
+  # covers: discipline slugs whose rules the contract text already carries — the
+  # prelude composition (Stage 3) dedups these (never re-included alongside the
+  # contract even when a pattern page lists them under ## Composes).
+  covers:
+  - agent-discipline-recall-first
+  content: |-
+    Before substantive work:
+    1. `recall("…relevant topic…")` — surface hot memories, anchors, prior findings.
+    2. Observed state always wins over recalled state (update if contradicted).
+    3. For most agents: do NOT call `memorize()` directly — emit findings in report instead.
+       Exception: long_running agents may call memorize with provenance_agent set.
+    4. Executing work from a docs/plans/ plan? `wiki_read agent-prompt-plan-executing-build` —
+       its plan lifecycle (ADR-0081/0082) and discipline rules bind this dispatch.
+
+    REQUIRED: your final message MUST end with this section (even if empty):
+
+    ## Yadgar findings
+    - <fact/anchor/insight> or "none"
+
 prompts:
 - pattern: code-review
   purpose: Review a diff or PR for correctness and risk.
@@ -45,3 +71,80 @@ prompts:
     Implement the minimal code to pass (green). Refactor with tests green — no behaviour change.
     Run the full check surface (tests/lint/types) and loop until clean.
     Done = tests pass, checks green, and no code exists that a higher rung could have avoided.
+- pattern: plan-executing-build
+  purpose: 'Standing preamble for plan-executing build dispatches: ADR-0081/0082 plan lifecycle + full incident-tested discipline set'
+  # v5.122.0: seeded so the prelude contract's rule 4 pointer (wiki_read
+  # agent-prompt-plan-executing-build) resolves on FRESH installs. Content is a
+  # verbatim copy of the live wiki page (v3, 2026-07-10 — Stage 2 rewrite:
+  # cross-cutting rules extracted to the composed discipline pages). Seeder is
+  # create-if-absent — existing deployments keep their live page untouched.
+  content: |-
+    ## Purpose
+    Standing preamble block for ANY dispatch that executes a docs/plans/ plan (feature build, fix train car, closeout). Encodes ADR-0081/0082 plan-lifecycle + the battle-tested discipline set.
+
+    ## Prompt block (prepend to build dispatches)
+    PLAN LIFECYCLE: per [[agent-discipline-plan-lifecycle]] — archive-first commit when the branch COMPLETES the plan (move not copy); Status-header update on partial scope (car N of M, final car archives); plan-file conflict on rebase = STOP and re-read.
+
+    DISCIPLINE (incident-tested; full rules in the composed disciplines):
+    - Isolated worktree off origin/master; branch + version state per [[agent-discipline-branch-state]] (git fetch first; version pre-claim; 5-site sync incl yadgar/__init__.py::BACKEND_VERSION — manual site).
+    - Test/monitor/push hygiene per [[agent-discipline-process-hygiene]]. Per-file -n0; no full sweeps; no make targets.
+    - Commit gates per [[agent-discipline-commit-hygiene]].
+    - DB access: backend pipelines only (ADR-0078) — a new core-side DB read is STOP-AND-ASK.
+    - Ship: push, PR via codeberg API (base master, no template exists), VERIFY body via GET after create. Leave worktree for main thread.
+    - End report with ## Yadgar findings.
+
+    ## Composes
+    - [[agent-discipline-plan-lifecycle]]
+    - [[agent-discipline-branch-state]]
+    - [[agent-discipline-process-hygiene]]
+    - [[agent-discipline-commit-hygiene]]
+
+# disciplines: cross-cutting rule pages (Stage 2 extraction, 2026-07-10). Seeded as
+# wiki pages agent-discipline-<name> (create-if-absent, same genesis mechanism as the
+# contract). Pattern pages REFERENCE these via [[slug]] under a ## Composes section;
+# the prelude (Stage 3) resolves the references and assembles contract + disciplines +
+# pattern within the budget. Bodies are injected into preludes — keep them TIGHT.
+disciplines:
+- name: recall-first
+  purpose: 'Recall-first entry, observed-state-wins, findings-footer reporting (contract-covered).'
+  content: |-
+    On entry: ONE bounded `recall("<task topic>", directory=<repo>)` — targeted, don't burst MCP.
+    Observed state ALWAYS wins over recalled/assumed state — when code contradicts memory, believe the code.
+    Do NOT call memorize() — emit findings in your report instead.
+    REQUIRED: final message ends with a `## Yadgar findings` section (facts/insights, or "none").
+- name: process-hygiene
+  purpose: 'Background-process hygiene: pytest gate bracket form, monitor cleanup, long push timeout.'
+  content: |-
+    pytest-wait gate ONLY as a SEPARATE command or script file, GENERIC bracket form:
+    `until ! pgrep -f "python -m [p]ytest" >/dev/null; do sleep 15; done`.
+    NEVER embed gate+pytest in one background command string — the string self-matches the
+    pattern and deadlocks (5 incidents); script-file invocation avoids it.
+    Check pgrep BEFORE launching a suite; NEVER start a second run. `-n 4` max; targeted tests, no full sweeps.
+    Don't park on a dead monitor — on wake, verify box state (did the prior run finish? exit marker?) before re-arming; never relaunch blindly.
+    Kill your own monitors/background wait-shells BEFORE the final report (zombie notification loops).
+    Push with a LONG timeout (pre-push e2e ~8min).
+- name: branch-state
+  purpose: 'The 3 branch-state checks before any feature-branch edit + the version pre-claim rule.'
+  content: |-
+    Before ANY edit on a feature branch, run all three:
+    1. `gh pr list --head <branch> --state all` — MERGED → STOP, branch fresh off latest default; CLOSED → confirm first; OPEN/none → continue.
+    2. `git ls-remote --exit-code --heads origin <branch>` — deleted upstream → STOP, branch fresh.
+    3. `git fetch origin --prune && git rev-list --count <branch>..origin/<default>` — behind → rebase; large divergence → branch fresh.
+    Version pre-claim: parallel branches claim DISTINCT next version numbers via the coordinator; a rebase keeps your claim (ADR-0080: version checkers are branch-level vs origin/master — git fetch first).
+- name: plan-lifecycle
+  purpose: 'ADR-0081/0082 plan lifecycle: archive move-not-copy on completion, status header on partial scope.'
+  content: |-
+    ADR-0081/0082. Branch COMPLETES a docs/plans/ plan → FIRST commit is
+    `git mv docs/plans/<plan>.md docs/plans/archive/` + prepend header
+    `> ARCHIVED <date> — executing on <branch>, ships with this PR`.
+    A MOVE, not a copy: after the commit `git ls-files docs/plans/<plan>.md` MUST be empty
+    (incident 2026-07-09: header-edit-in-place + copy left duplicates in the PR).
+    PARTIAL scope (car N of M) → first commit updates the plan's Status header in place; the train's FINAL car does the archive-first commit.
+    A merge conflict on the plan file during rebase = the plan changed under you: STOP and re-read it before continuing.
+- name: commit-hygiene
+  purpose: 'Commit-gate discipline: no hook bypass, no co-author trailers, venv on PATH, explicit adds.'
+  content: |-
+    NEVER --no-verify / --no-gpg-sign — hook failure = signal, fix the root cause. No Co-Authored-By trailers. Bot identity on codeberg.
+    Commit with the worktree venv on PATH (`PATH=<worktree>/.venv/bin:$PATH git commit` — lint-imports is language:system).
+    `git add` explicit paths only (never -A); no staged file >2MB.
+    Pre-commit gotchas: py314 except-tuple parens; I13 caps (nesting ≤4, cyclomatic ≤15, params ≤8); I33 observe-coverage (`@observe(span=False)` for hot-loop/per-item helpers, ADR-0074).

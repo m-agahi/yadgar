@@ -64,6 +64,7 @@ _ADMIN_OPS: dict[str, Callable[[dict], dict]] = {
     "wiki_insert_at": wiki.wiki_insert_at,
     "wiki_replace_markdown_block": wiki.wiki_replace_markdown_block,
     "agent_prompt_save": wiki.agent_prompt_save,
+    "increment_prompt_usage": wiki.increment_prompt_usage,
     # anchor-audit + invariants + project writes (R3 Car 3d / R5 final group)
     "audit_apply_mutations": audit.audit_apply_mutations,
     "write_audit_sentinel": audit.write_audit_sentinel,

@@ -1,11 +1,15 @@
 """TDD (RED-first) — S8: seed_agent_prompts seeder tool.
 
+v5.122.0: 5th starter added (plan-executing-build) so the packaged prelude
+contract's rule-4 pointer resolves on fresh installs. All counts 4 → 5.
+
 Tests:
-  1. test_seed_creates_four_starters   — fresh store → 4 pages created, all slugs exist
-  2. test_seed_idempotent              — second call creates 0, skips 4; TOC has exactly 4 rows
+  1. test_seed_creates_five_starters   — fresh store → 5 pages created, all slugs exist
+  2. test_seed_idempotent              — second call creates 0, skips 5; TOC has exactly 6 rows
+                                         (5 starters + the separately-seeded contract page)
   3. test_seed_single_anchor           — two seed calls → exactly 1 library anchor
   4. test_seed_tool_registered         — seed_agent_prompts in __all__ and on module
-  5. test_starter_content_nonempty     — all 4 starters have non-empty multi-line content
+  5. test_starter_content_nonempty     — all 5 starters have non-empty multi-line content
 """
 
 from __future__ import annotations
@@ -22,12 +26,14 @@ _EXPECTED_SLUGS = [
     "agent-prompt-debug-investigate",
     "agent-prompt-explore-codebase",
     "agent-prompt-implement-tdd",
+    "agent-prompt-plan-executing-build",
 ]
 _EXPECTED_PATTERNS = [
     "code-review",
     "debug-investigate",
     "explore-codebase",
     "implement-tdd",
+    "plan-executing-build",
 ]
 
 
@@ -62,12 +68,12 @@ def storage():
 
 
 # ---------------------------------------------------------------------------
-# Test 1: fresh store → 4 pages created
+# Test 1: fresh store → 5 pages created
 # ---------------------------------------------------------------------------
 
 
-class TestSeedCreatesFourStarters:
-    def test_seed_creates_four_starters(self, storage):
+class TestSeedCreatesFiveStarters:
+    def test_seed_creates_five_starters(self, storage):
         from yadgar.core.server.tools.agent_prompts import (
             _read_agent_prompt,
             seed_agent_prompts,
@@ -75,7 +81,7 @@ class TestSeedCreatesFourStarters:
 
         result = seed_agent_prompts(storage=storage)
         assert result["seeded"] is True
-        assert result["created"] == 4, f"expected 4 created, got {result}"
+        assert result["created"] == 5, f"expected 5 created, got {result}"
         assert result["skipped"] == 0
         assert sorted(result["patterns"]) == sorted(_EXPECTED_PATTERNS)
 
@@ -86,7 +92,7 @@ class TestSeedCreatesFourStarters:
 
 
 # ---------------------------------------------------------------------------
-# Test 2: idempotent — second call creates 0, skips 4; TOC has exactly 4 rows
+# Test 2: idempotent — second call creates 0, skips 5; TOC has exactly 5 rows
 # ---------------------------------------------------------------------------
 
 
@@ -100,22 +106,27 @@ class TestSeedIdempotent:
 
         # First call
         r1 = seed_agent_prompts(storage=storage)
-        assert r1["created"] == 4, f"first call should create 4, got {r1}"
+        assert r1["created"] == 5, f"first call should create 5, got {r1}"
 
         # Second call — must skip all 4
         r2 = seed_agent_prompts(storage=storage)
         assert r2["created"] == 0, f"second call should create 0, got {r2}"
-        assert r2["skipped"] == 4
+        assert r2["skipped"] == 5
 
-        # TOC must have exactly 4 pattern rows (not 8)
+        # TOC must have exactly 11 rows (5 starters + 1 contract page + 5
+        # discipline pages), not 22. v5.122.0: the contract page is seeded
+        # alongside the starters by _seed_contract_page; Stage 2 adds the
+        # discipline pages via _seed_discipline_pages. All rows go through the
+        # same agent_prompt_save machinery (idempotent on re-seed).
         import yadgar._shared.runtime.state as _st
 
         toc_page = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
         assert toc_page is not None, "TOC page absent after seed"
         content = toc_page.get("content", "")
         row_matches = list(_TOC_ROW_RE.finditer(content))
-        assert len(row_matches) == 4, (
-            f"TOC should have exactly 4 rows, found {len(row_matches)}:\n{content}"
+        assert len(row_matches) == 11, (
+            f"TOC should have exactly 11 rows (5 starters + contract + 5 disciplines), "
+            f"found {len(row_matches)}:\n{content}"
         )
 
         # No duplicate pages for any pattern
@@ -178,7 +189,7 @@ class TestStarterContentNonempty:
     def test_starter_content_nonempty(self):
         from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
-        assert len(STARTER_PROMPTS) == 4, f"expected 4 starters, got {len(STARTER_PROMPTS)}"
+        assert len(STARTER_PROMPTS) == 5, f"expected 5 starters, got {len(STARTER_PROMPTS)}"
 
         seen_patterns: set[str] = set()
         for entry in STARTER_PROMPTS:

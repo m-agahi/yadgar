@@ -1,0 +1,38 @@
+# Wiki page-type schema registry (Stage 3 externalization, 2026-07-10).
+# Single source of truth for PAGE_TYPES — loaded at import by
+# yadgar/_shared/wiki_meta.py via importlib.resources (packaged resource, no
+# $HOME copy: ships tested with each version). Zero schema literals in code.
+#
+# Per page type:
+#   required: section headings (## / ###, case-insensitive) wiki_lint warns on
+#             when absent (ADVISORY — wiki_add never rejects on page_type mismatch).
+#   optional: recognised extra sections — documented shape, never linted against.
+#   metadata: free-form descriptors of page-level metadata conventions.
+#
+# WIKI_SCHEMA_VERSION is stamped on new pages at write time. Existing pages
+# that predate this field are treated as schema_version=0 / untyped.
+schema_version: 1
+page_types:
+  function:
+    required: [Purpose, Signature, Behaviour]
+  module:
+    required: [Purpose, Exports, Design]
+  service:
+    required: [Purpose, Interface, Dependencies]
+  architecture:
+    required: [Overview, Components]
+  decision:
+    required: [Context, Decision, Consequences]
+  analysis:
+    required: [Summary, Findings]
+  agent_prompt:
+    required: [Purpose, Prompt]
+    optional: [Preconditions, Failure modes, Verification, Composes]
+    metadata:
+      composes_with: >-
+        [[slug]] links under the ## Composes section — discipline pages
+        (agent-discipline-*) this prompt composes with; resolved by
+        agent_dispatch_prelude at assembly time (Stage 3 composition).
+      applies_to: >-
+        Task shapes this prompt applies to (free text; surfaced in the
+        agent-prompt-toc purpose column).

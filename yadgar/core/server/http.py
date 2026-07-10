@@ -1280,7 +1280,7 @@ async def hook_seed_anchor(request: Request) -> JSONResponse:
 @mcp_server.custom_route("/hooks/seed-agent-prompts", methods=["POST"])
 @trace_span()
 async def hook_seed_agent_prompts(request: Request) -> JSONResponse:
-    """Seed the 4 built-in starter agent-prompts via daemon (v5.85 S8).
+    """Seed the 5 built-in starter agent-prompts via daemon (v5.85 S8).
 
     Called by `yadgar seed --agent-prompts` CLI after daemon start.
     Accepts an empty POST body (no required fields).

@@ -27,8 +27,8 @@ class TestSeedAgentPromptsHelper:
             result = _seed_agent_prompts(db_path=None, dry_run=True)
         mock_urlopen.assert_not_called()
         assert result["dry_run"] is True
-        # dry run "creates" the 4 starters (printed without actual HTTP)
-        assert result.get("created", 0) == 4 or result.get("skipped", 0) >= 0
+        # dry run "creates" the 5 starters (printed without actual HTTP)
+        assert result.get("created", 0) == 5 or result.get("skipped", 0) >= 0
 
     def test_daemon_unreachable_graceful(self):
         from yadgar.core.cli.seed import _seed_agent_prompts

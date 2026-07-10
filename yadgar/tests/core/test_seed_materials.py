@@ -3,8 +3,9 @@
 Static seed CONTENT now lives in yadgar/seed/materials/ (data files), separated
 from loader logic. This test pins:
 
-  1. STARTER_PROMPTS loads from materials/agent_prompts.yaml (not Python tuples)
-     and equals the expected 4-starter list byte-for-byte.
+  1. STARTER_PROMPTS loads from materials/agent_prompts.yaml (not Python tuples);
+     the first 4 starters equal the expected list byte-for-byte, and the 5th
+     (plan-executing-build, v5.122.0) is pinned by pattern + content markers.
   2. The implement-tdd starter carries the YAGNI least-code ladder (new content).
   3. The materials dir holds both seed data files (anchors.yaml + agent_prompts.yaml).
   4. _load_anchors_yaml still loads the relocated anchors.yaml.
@@ -104,20 +105,46 @@ def test_materials_dir_has_both_seed_files():
 
 
 def test_starter_prompts_loaded_from_materials():
-    """STARTER_PROMPTS equals the expected 4-starter list, loaded from yaml."""
+    """The first 4 starters equal the expected list byte-for-byte (loaded from yaml)."""
     from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
-    assert STARTER_PROMPTS == _EXPECTED, "STARTER_PROMPTS does not match expected materials content"
+    assert STARTER_PROMPTS[:4] == _EXPECTED, (
+        "first 4 STARTER_PROMPTS do not match expected materials content"
+    )
 
 
 def test_starter_prompts_is_list_of_3_tuples():
-    """Interface preserved: list of (pattern, purpose, content) 3-tuples, length 4."""
+    """Interface preserved: list of (pattern, purpose, content) 3-tuples, length 5."""
     from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
     assert isinstance(STARTER_PROMPTS, list)
-    assert len(STARTER_PROMPTS) == 4
+    assert len(STARTER_PROMPTS) == 5
     for entry in STARTER_PROMPTS:
         assert isinstance(entry, tuple) and len(entry) == 3
+
+
+def test_plan_executing_build_starter_pinned():
+    """5th starter (v5.122.0): plan-executing-build — verbatim copy of the live
+    wiki page so the packaged prelude contract's rule-4 pointer resolves on
+    fresh installs. Pinned by pattern + load-bearing content markers."""
+    from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
+
+    pattern, purpose, content = STARTER_PROMPTS[4]
+    assert pattern == "plan-executing-build"
+    assert "ADR-0081/0082" in purpose
+    # Stage 2 (genesis synced to live page v3): the cross-cutting rule text was
+    # EXTRACTED to composed discipline pages — the pattern genesis now carries
+    # ## Composes references instead of the inline rules.
+    assert "## Composes" in content
+    assert "[[agent-discipline-plan-lifecycle]]" in content
+    assert "## Yadgar findings" in content
+
+    # The move-not-copy rule lives in the plan-lifecycle DISCIPLINE genesis.
+    from yadgar.core.server.tools.agent_prompts import DISCIPLINES
+
+    lifecycle = {name: body for name, _purpose, body in DISCIPLINES}["plan-lifecycle"]
+    assert "git mv docs/plans/" in lifecycle
+    assert "git ls-files docs/plans/" in lifecycle
 
 
 def test_implement_tdd_has_yagni_ladder():
