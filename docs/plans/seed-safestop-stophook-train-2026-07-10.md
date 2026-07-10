@@ -16,6 +16,8 @@ RCA LANDED (7b670d6a) — verdict: warning is UPSTREAM-UNCONDITIONAL (surrealkv 
 2. **Option D (belt-and-braces):** startup torn-manifest detection → auto-restore per the RCA runbook (pick restore source by newest INNER-file mtime + row counts, never dir name — dir mtime lies under os.rename).
 3. **NEW from RCA — vacuum split-brain fix:** the 07-09 vacuum swap failed `check_invariants` (404) and RETAINED `.old` while the running backend kept writing to the ORIGINAL inode (= `.old`) for 16h — path/inode split-brain that made `surreal_db` a stale decoy. Fix: on invariants-fail, ROLL BACK the swap (restore original path), never retain a half-swapped state.
 4. Tests: TDD at the entrypoint/script + vacuum-swap seams (subprocess harness per repo precedent); e2e stays green.
+5. **Split-brain GUARDS (user 2026-07-10: rollback alone insufficient — the state must be impossible to hold silently):** (a) post-swap inode assertion — surreal's OPEN inode (/proc/<pid>/fd) must equal the `surreal_db` path inode, mismatch → loud error + rollback; (b) startup check — leftover `.old` with newer inner-file mtimes than the live path → REFUSE to start, fail loud with runbook (human decides, no silent auto-pick); (c) `yadgar_store_swap_state` gauge (clean|retained_old|torn_marker) for PLT alerting (#23) — silence impossible.
+6. **Root-question pin:** determine definitively whether the swap ran under a LIVE backend (if yes: swap must verify quiescence or abort — that check gets built too).
 
 ## Car 3 — stop-hook prompt → external template file (task #34)
 
