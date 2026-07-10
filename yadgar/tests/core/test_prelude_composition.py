@@ -175,6 +175,44 @@ class TestCompositionAssembly:
         dropped_warnings = [r for r in caplog.records if "dropping discipline" in r.message]
         assert dropped_warnings, "expected a warning for dropped disciplines"
 
+    def test_stacked_car_pattern_and_disciplines_fit_base_budget(self, storage, caplog):
+        """v5.123.0 regression (train Car 1): at the raised base budget (3 500),
+        the stacked-car-parallel-build pattern + ALL 3 of its composed disciplines
+        must survive assembly. At the old 2 000 budget every discipline was
+        dropped — the composition was invisible (observed live 2026-07-10)."""
+        import logging
+
+        from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
+        from yadgar.core.server.tools.dispatch_helper import (
+            _TOTAL_BUDGET,
+            agent_dispatch_prelude,
+        )
+
+        _seed_all(storage)
+        by_pattern = {p: c for p, _, c in STARTER_PROMPTS}
+        _save_pattern(
+            storage,
+            "stacked-car-parallel-build",
+            by_pattern["stacked-car-parallel-build"],
+        )
+        with caplog.at_level(logging.WARNING):
+            prelude = agent_dispatch_prelude(
+                "stacked-car-parallel-build", "car N+1 build", storage=storage
+            )
+        assert len(prelude) <= _TOTAL_BUDGET
+        assert "## Yadgar subagent contract" in prelude
+        assert "## Agent-prompt [stacked-car-parallel-build" in prelude
+        for slug in (
+            "agent-discipline-process-hygiene",
+            "agent-discipline-commit-hygiene",
+            "agent-discipline-plan-lifecycle",
+        ):
+            assert f"## Discipline [{slug}]" in prelude, (
+                f"{slug} dropped at base budget — composition regressed"
+            )
+        dropped = [r for r in caplog.records if "dropping discipline" in r.message]
+        assert not dropped, f"unexpected discipline drops at base budget: {dropped}"
+
     def test_seed_on_miss_for_absent_discipline(self, storage):
         """Discipline page deleted → composition reseeds from genesis and the
         discipline text still lands in the prelude."""

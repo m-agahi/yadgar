@@ -99,6 +99,207 @@ prompts:
     - [[agent-discipline-process-hygiene]]
     - [[agent-discipline-commit-hygiene]]
 
+# ── v5.123.0 seed backflow (2026-07-10, "improving the seeds") ────────────────
+# 10 battle-tested live wiki patterns synced into the genesis corpus verbatim
+# (body = live page content minus the outer ## Purpose / ## Prompt wrapper the
+# seeder re-adds). Selection criterion: reusable-on-fresh-install. Excluded as
+# yadgar-session-specific: build-cache-car-tdd, measure-recall-perf,
+# recall-perf-check, profile-latency-standalone, audited-plan-perf-lever,
+# measure-first-investigation, investigate-plan-advisor,
+# drift-axis-remediation-sweep, debug-flaky-ci-via-local-repro,
+# relocate-tool-group-to-backend-forward, viz-frontend-fix, cleanup.
+- pattern: stacked-car-parallel-build
+  purpose: 'Parallel car N+1 on a stacked branch off the train branch — disjoint seams, no train pushes, main thread rebases in (ADR-0088)'
+  content: |-
+    ## Purpose
+    Dispatch shape for building train car N+1 IN PARALLEL with car N when their file seams are disjoint (ADR-0088 one-PR trains). Car N owns the train branch; car N+1 builds on a STACKED branch and is rebased in by the main thread.
+
+    ## Prompt block (adapt bracketed parts)
+    You are in an isolated worktree. Base yourself on the TRAIN branch: `git fetch origin && git checkout -b [car-branch] origin/[train-branch]`. Car [N] is being built in parallel ON the train branch by another agent — you MUST NOT touch [car N's seam, e.g. root conftest] and MUST NOT push to the train branch. Push ONLY your own branch; the main thread rebases it onto the train branch after car [N] lands and re-validates any order-dependent final commit. NO PR (one train PR exists: #[PR]). NO version bump (train's claimed version stands).
+
+    Plan lifecycle per [[agent-discipline-plan-lifecycle]]: your car COMPLETES the plan → archive-first commit; otherwise first commit updates the plan Status header.
+
+    Order-dependent commits (e.g. a gate flip) go LAST and get re-validated after the rebase.
+
+    Discipline: TDD where testable; process + commit rules per [[agent-discipline-process-hygiene]] and [[agent-discipline-commit-hygiene]].
+
+    Final report: per-item commit hashes, before/after metrics for your car's goal, push confirmation, and any cross-car collision you noticed.
+
+    ## Main-thread follow-up (not the agent's job)
+    After car N lands: `git rebase origin/[train-branch]` in the stacked worktree → re-run the order-dependent validation → `git merge --ff-only` on the train branch → push. Expect version-file conflicts if master moved; the train's claimed version wins.
+
+    ## Composes
+
+    - [[agent-discipline-process-hygiene]]
+    - [[agent-discipline-commit-hygiene]]
+    - [[agent-discipline-plan-lifecycle]]
+- pattern: feature-kill-closeout
+  purpose: 'Complete removal of a decision-killed feature: code+knobs+registries+tests+plans (archived in-PR per ADR-0081), zero residue'
+  content: |-
+    ## Purpose
+    Remove a decision-killed feature completely — code, knobs, registries, tests, plans — leaving zero residue. Used for: onnx CE backend (ADR-0067), recall-output cache (ADR-0071).
+
+    ## Prompt (adapt bracketed parts)
+    Isolated worktree off origin/master (other agents may hold the main checkout): `git worktree add /tmp/<name> -b chore/<feature>-closeout origin/master`.
+    1. HUNT the feature surface by grep (feature terms + knob names): implementation branches, config knob (I25 three-way sync + I32 capability-registry are pre-commit ENFORCED — scrub Settings, config_registry.py, config_yaml, CAPABILITY_REGISTRY.md, configuration.md, env-only allowlist), metrics/instrumentation, tests OF the feature (delete those only — never neighboring tests). Distinguish look-alike features and preserve them (e.g. GTE onnx vs CE onnx). CAUTION from #174: shared modules may mix dead shadow code with LIVE invalidation/bump logic under misleading names — verify each removal candidate has no live consumers (bisect-grade care); rename-not-delete when the function does real work.
+    2. ARCHIVE the feature's plan docs → docs/plans/archive/ IN THIS PR (ADR-0081: archival is part of done; lifecycle per [[agent-discipline-plan-lifecycle]]) — git mv + `> ARCHIVED <date> — <verdict, ADR-ref, this PR>` header; verify each file's own status doesn't contradict; flag instead of archive if it does.
+    3. ROADMAP.md rows updated. MIGRATION_NOTES if a knob dies (state unknown-knob behavior — pydantic extra=ignore → silent).
+    4. Version bump per convention if code removed (backend vs core by location; check_versions/check_backend_bump arbitrate; version pre-claim per [[agent-discipline-branch-state]]); docs-only → none.
+    5. Gates before commit: ruff check+format + commit rules per [[agent-discipline-commit-hygiene]]; pytest-quiet wait per [[agent-discipline-process-hygiene]]; affected tests -n0.
+    6. PR via codeberg API, verify body via GET. Kill your own monitors per [[agent-discipline-process-hygiene]]. Leave worktree for main thread.
+    Report: surface found+removed (with live-vs-dead verdicts), archived/flagged plans, bump y/n, PR URL. End with ## Yadgar findings.
+
+    ## Composes
+
+    - [[agent-discipline-process-hygiene]]
+    - [[agent-discipline-commit-hygiene]]
+    - [[agent-discipline-plan-lifecycle]]
+    - [[agent-discipline-branch-state]]
+- pattern: dispatch-fix-test-migration
+  purpose: 'Migrate tests broken by architecture changes without bending — v2 composes with plan-executing-build discipline'
+  content: |-
+    # Pattern: dispatch-fix-test-migration (v2)
+
+    Use when an architecture change (cutover/refactor) broke unit tests that assert OLD behavior, and the fix is proper MIGRATION not bending. Main thread MUST first diagnose per-test (delegate a read-only classifier) BEFORE dispatching edits — a blind "make tests pass" agent will hollow-pass or bend.
+
+    ## COMPOSE WITH: agent-prompt-plan-executing-build
+    Prepend that pattern's PLAN LIFECYCLE (ADR-0081/0082: first commit = plan archive-move if completing / header-update if partial; move-not-copy, git ls-files verify) and DISCIPLINE block (bracket pytest-wait, 5-site version sync, ADR-0078 DB stop-and-ask, ADR-0080 fetch-first, I13/I33 gates, zombie-monitor cleanup) to every dispatch built from this pattern.
+
+    ## Contract (prepend to every dispatch)
+    - Yadgar: `recall(<topic>, directory=<abs path>)` on entry; observed state wins; END with `## Yadgar findings`.
+    - ⚠️ NO TEST BENDING (machine-enforced #52 guard). FORBIDDEN: delete/weaken assertions, change expected value to buggy output, add skips (skip-inventory gate rejects unsanctioned skips), hollow-pass.
+    - Seam-migration is legitimate: when the architecture moved the behavior (e.g. write-phases to the drainer seam, ADR-0069), migrate the ASSERTION SEAM with rigor and cite the ADR — that is not bending.
+    - A test that fails when un-skipped/un-gated was hiding a real break: fix properly or STOP-and-flag; never re-skip.
+    - Diagnostic discipline: reproduce before editing; bisect against master before assuming the PR caused a CI failure (xdist reshuffling surfaces latent pollution in unrelated files); OOM signature (namespace-not-exist + ConnectError cascades) = environmental, rerun in quiet window (ADR-0079).
+- pattern: mechanical-refactor-chunk-commit-early
+  purpose: 'Big file-move/codemod refactor — ONE chunk per agent, commit before returning, so a stream-timeout can''t wipe work. Fill PLACEHOLDERS.'
+  content: |-
+    Caveman prose; code normal. TIGHT SCOPE — do ONLY <THIS CHUNK> then COMMIT. Do NOT do later chunks (<LIST>). A prior mega-agent doing everything at once timed out at ~75 tool calls with ZERO commits → all work lost + half-broken worktree. You do ONE chunk and COMMIT before returning. Entry per [[agent-discipline-recall-first]]: ONE `recall("<TOPIC>", directory="<REPO>")`.
+
+    ⚠️ BEHAVIOR-NEUTRAL (git mv + import-path rewrites only). ⚠️ SHIM = sys.modules ALIAS (`sys.modules[__name__]=_m`) for leaf modules (write-through, patch-compatible) — NOT `__getattr__` (read-only, breaks test patch()); PACKAGES = `__init__` getattr shim (preserve `__path__`) + per-submodule `sys.modules` alias (aliasing the pkg object → `__path__` double-load → two instances → desync). ⚠️ REPOINT path-keyed guards proactively (they silently vacuously-pass against shim files: complexity baseline/allowlist, observe-allowlist, ruff per-file-ignores, capability-coverage, metric-writers, three-way-sync globs). ⚠️ import-linter catches FUNCTION-LOCAL imports (AST) — func-local does NOT hide the edge. ⚠️ SAFETY: import-smoke + targeted only (final CI is the gate) — per [[agent-discipline-process-hygiene]]. Commit rules per [[agent-discipline-commit-hygiene]]. WORK IN worktree `<PATH>` — branch `<BRANCH>` @ <SHA>. Confirm branch+HEAD. STACK a commit. Do NOT push. guards WITHOUT cd out of the worktree.
+
+    CHUNK (this dispatch only): <WHAT MOVES / WHAT CODEMODS>. Method: `git mv` + codemod (sed/libcst), isolate mechanical diff from logic.
+
+    VERIFY (light — next chunks do the rest): broad import-smoke (`python -c "import <new+old paths>"` → NO ImportError/cycle/double-load; for aliases assert `new is old` identity + write-through). Do NOT run the full suite.
+
+    COMMIT immediately ("<clear chunk msg>") before returning. If a circular import/double-load the shim pattern can't fix appears → STOP + report (don't hack).
+
+    REPORT: what moved/rewrote (+ skipped/ambiguous), shim mechanism per module/package, import-smoke result (cycle/double-load check), guards repointed, commit sha, + what's LEFT for the next chunks.
+
+    ## Yadgar findings
+    - (facts or "none")
+
+    ## Composes
+
+    - [[agent-discipline-recall-first]]
+    - [[agent-discipline-process-hygiene]]
+    - [[agent-discipline-commit-hygiene]]
+- pattern: plan-corpus-status-sweep
+  purpose: 'Classify plan-corpus files shipped vs remaining for task-list rebuild / archive sweep'
+  content: |-
+    Read-only Explore agent. Input: plans directory path, current shipped versions (core/backend), any in-flight branches whose plans count as PARTIAL-pending-merge.
+
+    For each top-level plan file (exclude living docs like ROADMAP.md, exclude archive/ subdirs):
+    1. Read header/first ~40 lines only; go deeper only when status unclear.
+    2. Evidence priority: in-file status markers ("Status:", SHIPPED, checkboxes) → git log + CHANGELOG version markers → grep key feature names in codebase.
+    3. Bucket: SHIPPED (archive candidate) / PARTIAL (list remaining items, 1 line each) / OPEN / SUPERSEDED-RETIRED (name replacement).
+
+    Output: compact table `file | BUCKET | evidence | remaining-if-partial`, then per-bucket counts + explicit SHIPPED list.
+    Rules: read-only, no moves/edits/git writes. End with ## Yadgar findings.
+
+    ## When to use
+    "which plans are actually remaining", task-list rebuild from plan corpus, pre-archive sweep.
+- pattern: plan-audit
+  purpose: 'Adversarially audit an implementation plan BEFORE building — verify its load-bearing claims against the actual code, try to break it, return build / build-with-changes / don''t-build.'
+  content: |-
+    You are an INDEPENDENT skeptic. The plan may be wrong; its prose is not evidence. Your job: verify every LOAD-BEARING claim against the actual code (cite file:line), try to BREAK the design, and gate the build.
+
+    Read the plan fully + its risk list. For each foundation claim the design rests on, VERIFY against source — trace the real code path, do NOT trust the plan's framing (it has been wrong before: an "all-remote" claim turned out runtime-conditional on an env var; a feared "1-connection singleton" was actually default-100). Mark each claim VERIFIED / CRACKED / UNCERTAIN with file:line.
+
+    Hunt specifically for:
+    - A fix that introduces a NEW failure mode worse than the status quo — especially trading a LOUD, monitored failure for a SILENT one the existing safety net can't catch. That is a hard gate, not a footnote.
+    - Shared mutable state the plan missed (grep: module-level dicts, lru_caches, breakers, counters) and over-scoped (things that are actually single-thread-only).
+    - Concurrency hazards: loop-affine primitives touched off-loop, cancellation that leaks resources (a wedged uncancellable worker), a downstream bottleneck the change amplifies into a storm.
+    - Test adequacy: would the mandated test ACTUALLY fail before + pass after, and catch the SUBTLE failure mode (not just the obvious one)? Or is it mock theater that passes while prod breaks?
+
+    Verdict: a per-claim table, a RANKED must-fix-before-build list, and a bottom line — BUILD AS-IS / BUILD WITH CHANGES (list) / DO-NOT-BUILD (foundation crack). Be brutal: a passed audit you don't believe is worse than none.
+
+    ## Recall hint
+
+    Recall the plan's domain + any prior RCA/audit on the same subsystem before starting.
+- pattern: crash-rca
+  purpose: 'Root-cause a production crash/hang/restart-loop OFF PROD — reproduce it in a controlled repro, exclude candidate mechanisms against code, find the load-bearing flaw.'
+  content: |-
+    Root-cause a production crash / hang / restart-loop OFF PROD — do NOT keep crashing the live system to study it.
+
+    Reproduce from the symptom first: the exact failure mode (crash-loop? hang? self-restart?) and WHAT changed when it started (which config/version flipped). The mechanism is usually the INTERACTION of a recent change with a PRE-EXISTING fragility, not the change alone.
+
+    Capture the real evidence: if the process restarts, its logs get wiped — so build a minimal LOCAL repro (a script/test exercising the real code path) that triggers the failure deterministically, and capture the actual traceback / exit code / failing signal. CRITICAL distinction: a Python crash (traceback / SIGSEGV) vs an EXTERNAL kill (a healthcheck returning a designed error → the orchestrator SIGKILLs) — totally different fixes. A clean exit-0 with no traceback points at an external killer, not a code crash.
+
+    Enumerate candidate mechanisms; for EACH, PROVE or EXCLUDE it against the code (cite file:line) — do not stop at the first plausible one. A theory that matches the symptom but is excluded by the code is WRONG (e.g. "thread-safety race" excluded because all clients are sync; "timeout leak" excluded because the configured timeout exceeds the operation; "saturation" excluded because the grace never trips at prod knobs).
+
+    State the single proximate trigger + the load-bearing ROOT flaw (often a latent fragility the change EXPOSED, not created). Flag any step you modeled with a STUB vs proven against the real system — don't overclaim.
+
+    Fix plan: the minimal change addressing the load-bearing flaw + the regression test that reproduces the failure — and name WHY the original tests missed it (e.g. a synthetic stand-in that never exercised the real dependency/load pattern).
+
+    Call `advisor` on the root-cause hypothesis before committing to it.
+
+    ## Recall hint
+
+    Recall prior RCA/incident findings on the same subsystem + the relevant design docs before starting.
+- pattern: drift-audit
+  purpose: 'Detect drift/garbage/gaps between a source-of-truth and the artifacts that should mirror it (docs, config metadata, registries, generated content, wiki) — find divergence on purpose, not by accident.'
+  content: |-
+    Name the SOURCE OF TRUTH (the authoritative definition — e.g. the code: the Settings fields, the tool/function registry, the DB schema, the AST) and the DERIVED artifact(s) that must mirror it (a doc, FIELD_META, a capability registry, wiki pages, generated files).
+
+    Enumerate BOTH sides COMPLETELY (do not sample) and diff by identity (name/key). Bucket every discrepancy:
+    - PHANTOM — in the derived artifact but NOT in the source (documented-but-nonexistent, dead registry rows, orphans). Silently misleads — highest priority.
+    - MISSING — in the source but absent from the derived artifact (undocumented knob, uncovered capability, un-described field).
+    - STALE — in both, but the derived value disagrees with the source (wrong default, outdated description, drifted type/enum).
+    - MALFORMED — structurally broken entries (corrupt / duplicated / double-wrapped / unparseable).
+
+    Rules: the source of truth ALWAYS wins. NEVER invent a value to fill a MISSING gap — flag it, do not fabricate. Quantify every bucket: total-in-source / total-in-derived / phantom / missing / stale / malformed (a clean audit = all non-source buckets zero).
+
+    Report a diff table: identity | bucket | source value (file:line) | derived value. Propose fixes but DO NOT apply unless asked. End by naming any OTHER derived artifact that mirrors the same source but was NOT checked — the next audit target.
+
+    Prefer an INVARIANT over a re-run: if a source/derived pair can be diffed mechanically, the durable fix is a test/ratchet that fails on drift — flag that as the real remediation. This audit is the manual complement for pairs an invariant cannot express.
+
+    ## Recall hint
+    Recall the I25/I29/I32 invariants + prior drift findings (phantom config knobs, corrupt prompts) before starting.
+- pattern: feasibility-design
+  purpose: 'Verify a mechanism is buildable on the target platform (docs + existing precedent) BEFORE designing it — then design only what the platform actually supports.'
+  content: |-
+    Verify a mechanism is BUILDABLE on the target platform BEFORE designing it — then design only what the platform actually supports, not what you assume.
+
+    FEASIBILITY first (cite the platform docs + existing-code precedent; do NOT assume):
+    - Can the platform do the thing at all? Identify the exact API / hook / extension point that would carry it.
+    - What's the EXACT capability + its LIMITS? Read the real docs + version notes (capabilities differ by version). Distinguish the IDEAL mechanism from the FALLBACK the platform actually allows.
+    - Is there existing precedent in THIS codebase/setup doing something similar? Reuse its pattern.
+
+    DESIGN second, gated on the feasibility:
+    - Pick the STRONGEST mechanism the platform allows; design the fallback for if the ideal isn't supported.
+    - Make it CHEAP at the point of action — no heavy/LLM call in a hot or blocking path (it gets disabled if it adds friction; cache, fast-path, fire only when warranted).
+    - Loop-safety / idempotence: the mechanism must not re-trigger on the action it itself induced.
+    - Scope + ship path: global vs local, and how it installs via the existing mechanism.
+
+    Call `advisor` on the design. Deliver: the feasibility verdict (can-it / how, with citations), the concrete design (mechanism + fallback + anti-friction + loop-safety + ship path), and a build/no-build recommendation. Do NOT claim a capability exists without proving it.
+
+    ## Recall hint
+
+    Recall prior findings on the platform's extension points + any existing hooks/mechanisms in the codebase before starting.
+- pattern: perf-anomaly-metrics
+  purpose: 'Root-cause a recurring CPU / memory / IO resource anomaly (spike, burst, leak) from observability metrics + live profiling — when logs alone can''t attribute it.'
+  content: |-
+    Observe before theorizing — confirm the anomaly's signature in metrics FIRST.
+
+    1. Find the spike TIME(s) via Prometheus `query_range` on the host signal (CPU non-idle `1 - avg(rate(node_cpu_seconds_total{mode="idle"}[1m]))`, RSS, disk IO). Note magnitude + whether PERIODIC (what interval?) or one-off. Discount one-off deploy/restart spikes if hunting a recurring issue.
+    2. Attribute the PROCESS: at those timestamps, `topk` on per-process rate (process-exporter `namedprocess_namegroup_cpu_seconds_total`, `_memory_bytes`, `_read_bytes_total`, `_write_bytes_total`, `_num_threads`). Cross-check threads / RSS / IO co-spiking to distinguish compute-bound vs IO-bound vs internal GC/compaction.
+    3. Correlate the TRIGGER: align spike times with app cycle logs, scheduled jobs/timers, or a fixed clock interval. Periodic → a scheduler; aligned to a scrape interval → observer-effect; aligned to an app cycle → that cycle.
+    4. Live catch if reproducible: watch `stats`/`top -H` for the next spike; `py-spy dump --pid <PID>` (or `perf`) on the offending process MID-spike for the stack.
+    5. Verdict: the single most-likely root cause with evidence (exact timestamps, process, stack/IO signature). Distinguish internal-engine vs observer-effect vs application-job. Propose a fix DIRECTION — do NOT implement (ops issue; cause may be config or engine-internal, not a code bug).
+
+    Constraints: READ-ONLY observation — no DB exec / direct DB queries; container logs/stats/inspect + `curl` Prometheus/exporters + host `py-spy`/`perf` only. Be quantitative: cite exact PromQL, timestamps, values. Correlation ≠ causation — rule out the observer.
+
 # disciplines: cross-cutting rule pages (Stage 2 extraction, 2026-07-10). Seeded as
 # wiki pages agent-discipline-<name> (create-if-absent, same genesis mechanism as the
 # contract). Pattern pages REFERENCE these via [[slug]] under a ## Composes section;

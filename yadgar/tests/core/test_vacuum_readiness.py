@@ -6,8 +6,10 @@ give core time to finish registering API routes after /health already reports
 200 from process-boot, so check_invariants actually gets a 2xx + report
 instead of a transient 404 / connection-refused.
 
-PR-2's warn-only handling stays in place as the fallback if the 30s window
-is still not enough.
+P0 #37 item 3 (2026-07-10) REVERSED PR-2's warn-only fallback: a check_invariants
+non-verification now ROLLS BACK the swap and exits 2 (see test 3 + the rewritten
+test_vacuum_exit_code.py). The 30s readiness wait is what keeps that rollback
+rare on the happy path.
 """
 
 from __future__ import annotations
@@ -79,6 +81,12 @@ def _patch_p2_side_build(stack: ExitStack) -> None:
     )
     stack.enter_context(
         patch("yadgar.core.vacuum._build_and_verify_side_db", side_effect=_make_side_db)
+    )
+    # P0 #37: backend quiesced at swap time (the httpx.get fake answers 200 for
+    # everything, which the gate would read as LIVE) + hermetic inode coherence.
+    stack.enter_context(patch("yadgar.core.vacuum._assert_backend_quiesced", return_value=True))
+    stack.enter_context(
+        patch("yadgar.core.vacuum._verify_live_store_coherence", return_value=(True, set()))
     )
 
 
@@ -200,16 +208,20 @@ class TestVacuumReadinessWait:
     # Test 3: readiness timeout + check_invariants also fails — still exit 0 (PR-2 applies)
     # ------------------------------------------------------------------
 
-    def test_readiness_timeout_plus_ci_404_still_exits_0(self, monkeypatch):
-        """PR-3+PR-2: both readiness timeout AND check_invariants 404 → exit 0."""
+    def test_readiness_timeout_plus_ci_404_rolls_back_exit_2(self, monkeypatch):
+        """P0 #37 item 3 (policy reversal): readiness timeout + CI 404 → rollback + exit 2.
+
+        Pre-#37 this asserted exit 0 (PR-2 warn-only). The 07-09 incident showed
+        that retaining the half-swapped state on a 404 is silent split-brain —
+        an unverified swap is now rolled back and the nightly goes red.
+        """
         result, _ = self._run(
             monkeypatch,
             health_side_effects=[True, False],
             ci_status=404,
         )
-        assert result == 0, (
-            f"Readiness timeout + CI 404 must not fail vacuum; got exit {result}. "
-            "PR-2's warn-only on CI errors must still apply."
+        assert result == 2, (
+            f"Readiness timeout + CI 404 must roll back the swap and exit 2; got {result}."
         )
 
     # ------------------------------------------------------------------

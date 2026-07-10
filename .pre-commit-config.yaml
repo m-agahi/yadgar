@@ -34,7 +34,13 @@ repos:
         name: Check version consistency
         language: system
         entry: python3 scripts/check_versions.py
-        files: ^(pyproject\.toml|server\.json|docker-compose\.yml|uv\.lock|flake\.nix)$
+        # always_run: a rebase/assembly can produce an inconsistent version set
+        # WITHOUT staging any version file (2026-07-10: Car 2 bumped backend in 3
+        # of 4 surfaces, assembly unioned server.json, flake.nix stayed at 5.34.0
+        # and every file-triggered hook reported Skipped). Consistency must be
+        # checked on every commit regardless of which files are staged — same
+        # gate-blindness class as ADR-0080's check_backend_bump fix.
+        always_run: true
         pass_filenames: false
 
       - id: check-backend-bump

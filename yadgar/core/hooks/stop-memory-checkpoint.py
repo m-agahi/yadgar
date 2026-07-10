@@ -25,87 +25,49 @@ from yadgar._shared.tracing import shutdown_tracing
 
 INTERVAL = 25  # human messages between checkpoints
 
-_PROMPT_TEMPLATE = """\
-Yadgar checkpoint. CAPTURE FIRST (steps 1-3), then maintenance (steps 4-5).
-Decisions and findings scroll out of context and are lost forever; maintenance
-signals re-fire next checkpoint. Capture is the irreplaceable work — if you must
-triage anything away under length pressure, drop maintenance, NEVER capture.
 
-1. ADR CAPTURE (always run; the Yadgar wiki is the source of truth — no file,
-   works for non-git projects too).
-   Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
-   - Read existing ADRs FIRST: wiki_read("{project}-adr-log", directory="{directory}",
-     branch_hint="{default_branch}"). If the page is absent the log is empty — no
-     prior ADRs to dedup against. Do NOT create the log manually; adr_add handles
-     creation automatically.
-   - Scan THIS session for durable decisions since the last checkpoint.
-     KEEP (precision over recall): a clear durable decision — architecture, a
-     tool/config choice, an approach committed-to, a scope cut; a conclusion we
-     commit to and stop investing in (NOT a passing status report); a fix that
-     changes an approach or contract. A user "record this" ALWAYS qualifies.
-     SKIP: routine work (git push, branch cleanup, progress/status checks),
-     in-flux or abandoned ideas, pure status ("tests pass"), routine corrections
-     (typos, lint).
-   - Dedup by decision, NOT by wording: if the substance of a decision is already
-     logged in the ADRs you read above, SKIP it — even if the wording differs.
-     Only call adr_add for genuinely new decisions.
-   - For each new decision call:
-       adr_add(
-           directory="{directory}",
-           title=<short human-readable title>,
-           status=<open|accepted|superseded|rejected|deprecated>,
-           date=<ISO date>,
-           context=<what triggered this decision>,
-           decision=<what was decided>,
-           rationale=<why — the reasoning>,
-           alternatives=<options considered + why rejected; "none" if none>,
-           consequences=<trade-offs / costs / caveats / flags; "none" if none>,
-           revisit_trigger=<condition to reconsider; "none" if none>,
-           supersedes=<ADR-NNNN or "none">,
-       )
-     adr_add assigns the ADR-NNNN id, formats, and branch-pins the entry.
-     ALL fields mandatory — write "none" if truly empty (keeps it machine-parseable).
-     A decision still unresolved this session → status: open, revisit_trigger = pending question.
+@observe(tier="stage")
+def _load_prompt_template() -> str:
+    """Load the checkpoint prompt template from package data (task #34).
 
-2. STRUCTURAL WRITE-BACK (always consider). Durable repo-structure / convention /
-   module-purpose findings from THIS session → the EXISTING wiki page that owns
-   the topic (wiki_list → slug → wiki_read; update via wiki_add(replace_slug=<slug>,
-   ..., directory="{directory}", branch_hint="{default_branch}", wait=True); no
-   near-duplicate pages). If no page fits, create one with wiki_add(tags=[...],
-   directory="{directory}", branch_hint="{default_branch}", wait=True).
-   Verify wiki_history. Facts/structure only — decisions go in step 1.
+    The template ships as package data at
+    yadgar/core/hooks/templates/stop_checkpoint_prompt.md and is resolved via
+    importlib.resources — works from a source checkout, an installed wheel, AND
+    the standalone copy under ~/.claude/hooks (that copy already requires the
+    yadgar package importable for the yadgar._shared imports above, so
+    package-resource resolution adds no new runtime dependency; the installer
+    does NOT need to copy the template alongside the script).
 
-3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
-   Scan THIS session for a reusable SUBAGENT DISPATCH PROMPT you crafted or
-   refined — one worth reusing for a recurring task shape (review, debug, explore,
-   implement, etc.). If genuinely reusable (NOT a one-off, NOT trivial), call
-   agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
-   content=<the prompt>, purpose=<one line>). Skip one-offs and trivial prompts.
+    Fail-loud: a missing or empty template is a packaging bug — raise
+    RuntimeError instead of silently emitting a broken checkpoint prompt.
+    """
+    from importlib.resources import files
 
-4. Call project_brief("{directory}", mode="signals").
+    try:
+        text = (
+            files("yadgar.core.hooks")
+            .joinpath("templates")
+            .joinpath("stop_checkpoint_prompt.md")
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, ModuleNotFoundError) as exc:
+        raise RuntimeError(
+            "yadgar stop-hook prompt template missing: "
+            "yadgar/core/hooks/templates/stop_checkpoint_prompt.md is not "
+            "resolvable as package data — broken install/packaging"
+        ) from exc
+    if not text.strip():
+        raise RuntimeError(
+            "yadgar stop-hook prompt template is empty: "
+            "yadgar/core/hooks/templates/stop_checkpoint_prompt.md"
+        )
+    return text
 
-5. MAINTENANCE — for each entry in recommended_actions:
-   - ANCHOR HYGIENE: if audit_anchors appears, run it once:
-     audit_anchors("{directory}", dry_run=True) → review actions list →
-     audit_anchors("{directory}", dry_run=False) to apply forget/merge. The tool
-     self-guards (never drops semantic_immortal or protected-legacy anchors). For
-     any promote draft it returns, wiki_add it only if wiki-worthy (step-2 rules),
-     else skip. Run this flow at most once.
-   - Else if the action has a `suggested_call`: run it verbatim, supplying content
-     from THIS session for placeholders (content='...', key_decisions=[...]) — the
-     suggested_call is the exact shape; supply only the content, don't invent it.
-     (Covers refresh_active_work, consider_refresh_active_work, refresh_checkpoint,
-     consider_refresh_checkpoint, extract_last_session_findings, update_roadmap,
-     review_rejections.)
-   - bootstrap_project (no suggested_call): propose a <=1500-char project-summary
-     memory, then bootstrap_project("{directory}", content).
-   - Any action type NOT covered above AND with no suggested_call → SKIP and flag
-     it in your reply (do not improvise the mechanics).
 
-[yadgar] Checkpoint cadence reached — capture, then continue. If you were
-mid-thought, repeat your last question so the conversation continues. Resume after
-/clear or session end: restore(directory="{directory}").
-"""
+# Loaded at import time so a broken install fails loud on the first hook fire,
+# not silently mid-session. Placeholders ({directory}, {project},
+# {default_branch}) are rendered in main() via str.format.
+_PROMPT_TEMPLATE = _load_prompt_template()
 
 
 @observe(tier="hot")

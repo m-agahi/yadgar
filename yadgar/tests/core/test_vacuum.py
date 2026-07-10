@@ -12,6 +12,25 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _p0_37_hermetic_guards():
+    """P0 #37 seams, stubbed for this legacy suite.
+
+    These tests fake ``httpx.get`` with a 200-for-everything mock, which the
+    new swap-time quiescence gate would read as a LIVE backend (→ abort), and
+    the finalize inode-coherence check would scan the real /proc.  Both guards
+    are behaviour-tested in test_vacuum_safestop.py; here they are pinned to
+    their happy-path values so the pre-existing orchestration assertions keep
+    testing what they always tested.
+    """
+    with (
+        patch("yadgar.core.vacuum._assert_backend_quiesced", return_value=True),
+        patch("yadgar.core.vacuum._verify_live_store_coherence", return_value=(True, set())),
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Helper: build a minimal argparse namespace for cmd_vacuum
 # ---------------------------------------------------------------------------

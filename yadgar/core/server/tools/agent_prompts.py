@@ -157,9 +157,10 @@ def agent_prompt_save(
 
 
 # ── S8 starter library ───────────────────────────────────────────────────────
-# Pinned patterns and content for the 5 built-in dispatch starters (v5.122.0:
+# Pinned patterns and content for the 15 built-in dispatch starters (v5.122.0:
 # plan-executing-build added so the contract's rule-4 pointer resolves on
-# fresh installs).
+# fresh installs; v5.123.0 seed backflow: 10 battle-tested live patterns
+# promoted into the genesis corpus).
 # Slug for each: agent-prompt-<pattern>  (MUST match test assertions exactly).
 #
 # v5.88 seed consolidation: the editable content lives in the canonical seed
@@ -170,7 +171,7 @@ def agent_prompt_save(
 # v5.122.0: the prelude contract genesis also lives in agent_prompts.yaml under
 # the "contract:" key (NOT in "prompts:" — excluded from STARTER_PROMPTS so the
 # 4-starter semantics are preserved). _load_contract_genesis() reads it;
-# _seed_contract_page() seeds it idempotently alongside the 5 starters.
+# _seed_contract_page() seeds it idempotently alongside the starters.
 
 
 @observe(tier="stage", metric="tools.agent_prompts._load_genesis_yaml")
@@ -355,10 +356,10 @@ def seed_agent_prompts(
     storage=None,
     branch_hint: str | None = None,
 ) -> dict:
-    """Idempotently seed the 5 starter agent-prompts + contract + disciplines (global).
+    """Idempotently seed the 15 starter agent-prompts + contract + disciplines (global).
 
     Skips any pattern whose page already exists (create-if-absent per pattern).
-    Calling twice is safe: second call returns created=0, skipped=5.
+    Calling twice is safe: second call returns created=0, skipped=15.
 
     The TOC and global discovery anchor are managed by agent_prompt_save —
     this function does NOT duplicate that logic.
@@ -374,7 +375,7 @@ def seed_agent_prompts(
         branch_hint: Caller branch context (optional).
 
     Returns:
-        {"seeded": True, "created": N, "skipped": M, "patterns": [...all 5...],
+        {"seeded": True, "created": N, "skipped": M, "patterns": [...all 15...],
          "disciplines_created": D, "disciplines_skipped": E, "disciplines": [...]}
     """
     if storage is None:

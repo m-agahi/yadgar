@@ -39,9 +39,15 @@ logger = logging.getLogger(__name__)
 # Budget: contract + recall hint ≈ 700 chars. Leave ~1 300 chars for prompt body.
 # (v5.122.0: contract body now wiki-sourced; genesis is ~676 chars with header.)
 _AGENT_PROMPT_BUDGET = 1_400
-_TOTAL_BUDGET = 2_000
+# v5.123.0 (train Car 1): base 2 000 → 3 500 so contract (~676) + a 3-discipline
+# Composes set (~2 000) + pattern snippet + recall hint fit without dropping
+# disciplines (observed live: stacked-car-parallel-build lost ALL disciplines at
+# 2 000 — the composition was invisible; the 2 000 cap predates disciplines).
+# Overflow rule (drop disciplines last-listed-first + warning) stays as the
+# safety valve. With-context total: 3 500 + 2 500 = 6 000 (was 4 000).
+_TOTAL_BUDGET = 3_500
 # X1 extension: extra budget for auto-fetched context block
-_CONTEXT_BUDGET = 2_000
+_CONTEXT_BUDGET = 2_500
 
 # Slug for the prelude contract wiki page (global scope).
 _CONTRACT_SLUG = "agent-prompt-contract"
@@ -349,7 +355,7 @@ def agent_dispatch_prelude(
 
     The prelude contains the Yadgar protocol contract, the latest stored
     agent-prompt for *pattern* (if any), and a recall hint for *task_topic*.
-    Total length is capped at 2 000 characters (orchestrator context budget).
+    Total length is capped at 3 500 characters (orchestrator context budget).
 
     v5.44.0 X1 extension: when include_context=True (opt-in, per DP-X1-1),
     auto-fetches yadgar context using recall(directory, branch_hint) and
@@ -377,7 +383,7 @@ def agent_dispatch_prelude(
                         frontmatter declares prompt_uses_yadgar_context: true.
 
     Returns:
-        Markdown string. Base cap: 2 000 chars. With context: up to 4 000 chars.
+        Markdown string. Base cap: 3 500 chars. With context: up to 6 000 chars.
     """
     if storage is None:
         from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415

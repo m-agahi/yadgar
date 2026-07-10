@@ -525,8 +525,10 @@ class TestVacuumFailure:
         assert len(snap_calls) == 2, f"Expected pre + post snapshots, got: {snap_calls}"
         mock_prune.assert_called_once()
 
-    def test_vacuum_exit_code_2_treated_as_success(self, tmp_path: Path) -> None:
-        """cmd_vacuum_impl exit code 2 (succeeded, warn-only invariants) must not fail the cycle."""
+    def test_vacuum_exit_code_2_fails_cycle_red(self, tmp_path: Path) -> None:
+        """cmd_vacuum_impl exit code 2 = swap ROLLED BACK (P0 #37): unverified swap is
+        discarded, and the cycle must go RED (step-failure 40) so the rollback is
+        never silent. Supersedes the 05-23 warn-only policy this test used to pin."""
         mod = _import_module()
 
         mock_sched = MagicMock()
@@ -542,7 +544,7 @@ class TestVacuumFailure:
             _maintenance_http=MagicMock(return_value=None),  # v5.50.3
             create_snapshot=MagicMock(return_value=tmp_path / "snap"),
             prune_snapshots=MagicMock(return_value=[]),
-            cmd_vacuum_impl=MagicMock(return_value=2),  # degraded-success: warn-only invariants
+            cmd_vacuum_impl=MagicMock(return_value=2),  # rolled back: unverified swap discarded
             StorageEngine=MagicMock(return_value=MagicMock()),
             run_nightly_consolidation=mock_sched.run_nightly_consolidation,
             Settings=MagicMock(return_value=SimpleNamespace(DB_PATH=str(db_dir))),
@@ -551,7 +553,7 @@ class TestVacuumFailure:
         ):
             code = mod.main(args)
 
-        assert code == 0, f"Exit code 2 from vacuum must yield overall exit 0, got {code}"
+        assert code == 40, f"Exit code 2 (rollback) must fail the cycle with 40, got {code}"
 
     def test_vacuum_failure_post_backup_uses_nightly_post_label(self, tmp_path: Path) -> None:
         mod = _import_module()

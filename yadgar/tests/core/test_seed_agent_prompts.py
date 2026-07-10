@@ -2,14 +2,16 @@
 
 v5.122.0: 5th starter added (plan-executing-build) so the packaged prelude
 contract's rule-4 pointer resolves on fresh installs. All counts 4 → 5.
+v5.123.0 seed backflow: 10 battle-tested live patterns added to the genesis
+corpus. All counts 5 → 15; TOC rows 11 → 21.
 
 Tests:
-  1. test_seed_creates_five_starters   — fresh store → 5 pages created, all slugs exist
-  2. test_seed_idempotent              — second call creates 0, skips 5; TOC has exactly 6 rows
-                                         (5 starters + the separately-seeded contract page)
+  1. test_seed_creates_starters        — fresh store → 15 pages created, all slugs exist
+  2. test_seed_idempotent              — second call creates 0, skips 15; TOC has exactly
+                                         21 rows (15 starters + contract + 5 disciplines)
   3. test_seed_single_anchor           — two seed calls → exactly 1 library anchor
   4. test_seed_tool_registered         — seed_agent_prompts in __all__ and on module
-  5. test_starter_content_nonempty     — all 5 starters have non-empty multi-line content
+  5. test_starter_content_nonempty     — all 15 starters have non-empty multi-line content
 """
 
 from __future__ import annotations
@@ -21,20 +23,25 @@ from yadgar.core import server  # noqa: E402
 # R3 Car 3c: seed_agent_prompts calls agent_prompt_save which forwards to backend /admin.
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
-_EXPECTED_SLUGS = [
-    "agent-prompt-code-review",
-    "agent-prompt-debug-investigate",
-    "agent-prompt-explore-codebase",
-    "agent-prompt-implement-tdd",
-    "agent-prompt-plan-executing-build",
-]
 _EXPECTED_PATTERNS = [
     "code-review",
     "debug-investigate",
     "explore-codebase",
     "implement-tdd",
     "plan-executing-build",
+    # v5.123.0 seed backflow (live-corpus growth):
+    "stacked-car-parallel-build",
+    "feature-kill-closeout",
+    "dispatch-fix-test-migration",
+    "mechanical-refactor-chunk-commit-early",
+    "plan-corpus-status-sweep",
+    "plan-audit",
+    "crash-rca",
+    "drift-audit",
+    "feasibility-design",
+    "perf-anomaly-metrics",
 ]
+_EXPECTED_SLUGS = [f"agent-prompt-{p}" for p in _EXPECTED_PATTERNS]
 
 
 # ---------------------------------------------------------------------------
@@ -68,12 +75,12 @@ def storage():
 
 
 # ---------------------------------------------------------------------------
-# Test 1: fresh store → 5 pages created
+# Test 1: fresh store → 15 pages created
 # ---------------------------------------------------------------------------
 
 
-class TestSeedCreatesFiveStarters:
-    def test_seed_creates_five_starters(self, storage):
+class TestSeedCreatesStarters:
+    def test_seed_creates_starters(self, storage):
         from yadgar.core.server.tools.agent_prompts import (
             _read_agent_prompt,
             seed_agent_prompts,
@@ -81,7 +88,7 @@ class TestSeedCreatesFiveStarters:
 
         result = seed_agent_prompts(storage=storage)
         assert result["seeded"] is True
-        assert result["created"] == 5, f"expected 5 created, got {result}"
+        assert result["created"] == 15, f"expected 15 created, got {result}"
         assert result["skipped"] == 0
         assert sorted(result["patterns"]) == sorted(_EXPECTED_PATTERNS)
 
@@ -92,7 +99,7 @@ class TestSeedCreatesFiveStarters:
 
 
 # ---------------------------------------------------------------------------
-# Test 2: idempotent — second call creates 0, skips 5; TOC has exactly 5 rows
+# Test 2: idempotent — second call creates 0, skips 15; TOC has exactly 21 rows
 # ---------------------------------------------------------------------------
 
 
@@ -106,26 +113,27 @@ class TestSeedIdempotent:
 
         # First call
         r1 = seed_agent_prompts(storage=storage)
-        assert r1["created"] == 5, f"first call should create 5, got {r1}"
+        assert r1["created"] == 15, f"first call should create 15, got {r1}"
 
-        # Second call — must skip all 4
+        # Second call — must skip all 15
         r2 = seed_agent_prompts(storage=storage)
         assert r2["created"] == 0, f"second call should create 0, got {r2}"
-        assert r2["skipped"] == 5
+        assert r2["skipped"] == 15
 
-        # TOC must have exactly 11 rows (5 starters + 1 contract page + 5
-        # discipline pages), not 22. v5.122.0: the contract page is seeded
+        # TOC must have exactly 21 rows (15 starters + 1 contract page + 5
+        # discipline pages), not 42. v5.122.0: the contract page is seeded
         # alongside the starters by _seed_contract_page; Stage 2 adds the
-        # discipline pages via _seed_discipline_pages. All rows go through the
-        # same agent_prompt_save machinery (idempotent on re-seed).
+        # discipline pages via _seed_discipline_pages; v5.123.0 backflow grows
+        # the starters to 15. All rows go through the same agent_prompt_save
+        # machinery (idempotent on re-seed).
         import yadgar._shared.runtime.state as _st
 
         toc_page = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
         assert toc_page is not None, "TOC page absent after seed"
         content = toc_page.get("content", "")
         row_matches = list(_TOC_ROW_RE.finditer(content))
-        assert len(row_matches) == 11, (
-            f"TOC should have exactly 11 rows (5 starters + contract + 5 disciplines), "
+        assert len(row_matches) == 21, (
+            f"TOC should have exactly 21 rows (15 starters + contract + 5 disciplines), "
             f"found {len(row_matches)}:\n{content}"
         )
 
@@ -189,7 +197,7 @@ class TestStarterContentNonempty:
     def test_starter_content_nonempty(self):
         from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
-        assert len(STARTER_PROMPTS) == 5, f"expected 5 starters, got {len(STARTER_PROMPTS)}"
+        assert len(STARTER_PROMPTS) == 15, f"expected 15 starters, got {len(STARTER_PROMPTS)}"
 
         seen_patterns: set[str] = set()
         for entry in STARTER_PROMPTS:

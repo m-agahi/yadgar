@@ -10,7 +10,8 @@ Tests:
   2. test_discipline_content_nonempty — every discipline has purpose + multi-line content
   3. test_seed_creates_disciplines    — fresh store → 5 discipline pages created
   4. test_seed_disciplines_idempotent — second call creates 0, skips 5
-  5. test_toc_rows_include_disciplines— TOC has 11 rows (5 starters + contract + 5 disciplines)
+  5. test_toc_rows_include_disciplines— TOC rows include the 5 discipline slugs
+     (total row count is pinned in test_seed_agent_prompts: 21 as of v5.123.0)
   6. test_contract_covers_subset      — CONTRACT_COVERS ⊆ discipline slugs
   7. test_genesis_discipline_refs_seeded — every [[agent-discipline-*]] ref in any
      genesis body corresponds to a seeded discipline (dangling-pointer guard,
