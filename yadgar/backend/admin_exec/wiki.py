@@ -59,6 +59,10 @@ _LIBRARY_ANCHOR_CONTENT = (
 )
 
 
+# Existing " (uses: N)" suffix on a TOC row (Stage 3.4 usage counter surfacing).
+_TOC_USES_RE = re.compile(r" \(uses: \d+\)\s*$")
+
+
 def _toc_row(pattern: str, purpose: str) -> str:
     return f"- `{pattern}` → {purpose}"
 
@@ -532,4 +536,82 @@ def agent_prompt_save(payload: dict) -> dict:
         "version": version,
         "slug": slug,
         "page_id": page_id,
+    }
+
+
+# ── increment_prompt_usage (Stage 3.4 usage counter, #33) ─────────────────────
+
+
+@observe(tier="stage", metric="backend.admin.agent_prompt._set_toc_row_count")
+def _set_toc_row_count(pattern: str, count: int) -> bool:
+    """Stamp ` (uses: N)` on *pattern*'s TOC row (replace any prior suffix).
+
+    Returns True when the TOC row was found + rewritten, False otherwise
+    (pattern not in TOC, TOC absent, wiki uninitialised). Best-effort —
+    failures logged, never raised.
+    """
+    wiki = _st._wiki
+    if wiki is None:
+        return False
+    try:
+        existing = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
+        if not existing or not existing.get("content"):
+            return False
+        content = existing["content"]
+        lines = content.splitlines()
+        updated = False
+        for i, line in enumerate(lines):
+            m = _TOC_ROW_RE.match(line)
+            if m and m.group("pattern") == pattern:
+                base = _TOC_USES_RE.sub("", line)
+                lines[i] = f"{base} (uses: {count})"
+                updated = True
+        if not updated:
+            return False
+        new_body = "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+        wiki.add(
+            title=_TOC_TITLE,
+            content=new_body,
+            category="reference",
+            tags=["agent-prompt-toc"],
+            opts=WikiAddOptions(
+                source_memory_ids=[],
+                confidence="high",
+                branch=None,
+                directory_context="global",
+            ),
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.debug("increment_prompt_usage: TOC count update failed: %s", e)
+        return False
+
+
+@observe(tier="boundary", metric="backend.admin.increment_prompt_usage")
+def increment_prompt_usage(payload: dict) -> dict:
+    """Increment the per-pattern prelude-usage counter. Storage-write half.
+
+    payload: {"pattern": str}
+    Called (best-effort) by agent_dispatch_prelude on each assembly that
+    resolved a pattern page. Counts persist in the single global
+    '_prompt_usage' memory row; the pattern's agent-prompt-toc row gains a
+    ` (uses: N)` suffix — THROTTLED to count == 1 or count % 10 == 0 so the
+    TOC page (wiki-versioned) does not churn a version per prelude call.
+    Dead patterns stay visible in the TOC: no suffix = never dispatched.
+
+    Returns {"incremented": bool, "pattern": str, "count": int, "toc_updated": bool}.
+    """
+    pattern = (payload.get("pattern") or "").strip()
+    if not pattern:
+        return {"incremented": False, "pattern": "", "count": 0, "toc_updated": False}
+    storage = _get_storage()
+    count = storage.increment_prompt_usage(pattern)
+    toc_updated = False
+    if count == 1 or count % 10 == 0:
+        toc_updated = _set_toc_row_count(pattern, count)
+    return {
+        "incremented": True,
+        "pattern": pattern,
+        "count": count,
+        "toc_updated": toc_updated,
     }

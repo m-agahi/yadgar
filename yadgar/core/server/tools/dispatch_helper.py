@@ -36,27 +36,15 @@ from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
-# Fixed-cost contract section (always present, ~500 chars)
-_YADGAR_CONTRACT = """\
-## Yadgar subagent contract
-
-Before substantive work:
-1. `recall("…relevant topic…")` — surface hot memories, anchors, prior findings.
-2. Observed state always wins over recalled state (update if contradicted).
-3. For most agents: do NOT call `memorize()` directly — emit findings in report instead.
-   Exception: long_running agents may call memorize with provenance_agent set.
-
-REQUIRED: your final message MUST end with this section (even if empty):
-
-## Yadgar findings
-- <fact/anchor/insight> or "none"
-""".strip()
-
-# Budget: contract + recall hint ≈ 600 chars. Leave ~1 400 chars for prompt body.
+# Budget: contract + recall hint ≈ 700 chars. Leave ~1 300 chars for prompt body.
+# (v5.122.0: contract body now wiki-sourced; genesis is ~676 chars with header.)
 _AGENT_PROMPT_BUDGET = 1_400
 _TOTAL_BUDGET = 2_000
 # X1 extension: extra budget for auto-fetched context block
 _CONTEXT_BUDGET = 2_000
+
+# Slug for the prelude contract wiki page (global scope).
+_CONTRACT_SLUG = "agent-prompt-contract"
 
 
 # ── Car 2 (v5.113): agent-prompt lookup cache ─────────────────────────────────
@@ -105,20 +93,224 @@ def _make_prompt_cache():
 _prompt_cache = _make_prompt_cache()
 
 
+@observe(tier="stage", metric="tools.dispatch_helper._cached_slug_read")
+def _cached_slug_read(slug: str, storage) -> dict | None:
+    """Epoch-cached exact-slug page read (Stage 3 generalization of the Car 2
+    pattern cache — discipline slugs share the same namespace + epoch key).
+    Cache-miss result is IDENTICAL to a direct _read_agent_prompt call."""
+    from yadgar.core.server.tools.agent_prompts import _read_agent_prompt  # noqa: PLC0415
+
+    key = (slug, _current_wiki_epoch())
+    hit = _prompt_cache.get(key)
+    if hit is not None:
+        return hit
+    result = _read_agent_prompt(slug, storage=storage)
+    if result is not None:  # do not cache None misses (cheap; create bumps epoch)
+        _prompt_cache.put(key, result)
+    return result
+
+
 @observe(tier="stage", metric="tools.dispatch_helper._cached_agent_prompt")
 def _cached_agent_prompt(pattern: str, storage) -> dict | None:
     """Epoch-cached wrapper around _read_agent_prompt for the prelude's pattern-static
     lookup. Cache-miss result is IDENTICAL to a direct _read_agent_prompt call."""
-    from yadgar.core.server.tools.agent_prompts import _read_agent_prompt  # noqa: PLC0415
+    return _cached_slug_read(f"agent-prompt-{pattern}", storage)
 
-    key = (pattern, _current_wiki_epoch())
-    hit = _prompt_cache.get(key)
-    if hit is not None:
-        return hit
-    result = _read_agent_prompt(f"agent-prompt-{pattern}", storage=storage)
-    if result is not None:  # do not cache None misses (cheap; create bumps epoch)
-        _prompt_cache.put(key, result)
-    return result
+
+# ── Stage 3 (2026-07-10): ## Composes resolution ──────────────────────────────
+#
+# Pattern pages reference discipline pages ([[agent-discipline-*]]) under a
+# ## Composes section. The prelude resolves those references and assembles
+# contract → disciplines (Composes order) → pattern → recall hint, deterministic,
+# deduped (CONTRACT_COVERS + repeated slugs), within the budget. Overflow drops
+# disciplines last-listed-first with a warning. Seed-on-miss applies to
+# referenced disciplines (genesis text is the last-resort fallback).
+
+import re as _re  # noqa: E402
+
+_COMPOSES_SECTION_RE = _re.compile(
+    r"^##+\s+Composes\s*$(?P<body>.*?)(?=^##+\s|\Z)",
+    _re.MULTILINE | _re.DOTALL | _re.IGNORECASE,
+)
+_WIKI_LINK_RE = _re.compile(r"\[\[([a-zA-Z0-9_-]+)\]\]")
+
+
+@observe(tier="hot", metric="tools.dispatch_helper._parse_composes")
+def _parse_composes(content: str) -> list[str]:
+    """Extract [[slug]] references from the ## Composes section, in order, deduped.
+
+    Links outside the Composes section are ignored. Returns [] when the section
+    is absent or the content is not a string (MagicMock-storage X1 safety).
+    """
+    if not isinstance(content, str):
+        return []
+    m = _COMPOSES_SECTION_RE.search(content)
+    if m is None:
+        return []
+    slugs: list[str] = []
+    for slug in _WIKI_LINK_RE.findall(m.group("body")):
+        if slug not in slugs:
+            slugs.append(slug)
+    return slugs
+
+
+@observe(tier="hot", metric="tools.dispatch_helper._strip_composes_section")
+def _strip_composes_section(content: str) -> str:
+    """Remove the ## Composes section from a pattern snippet (the resolved
+    discipline sections replace it in the assembled prelude)."""
+    if not isinstance(content, str):
+        return content
+    return _COMPOSES_SECTION_RE.sub("", content).rstrip()
+
+
+@observe(tier="stage", metric="tools.dispatch_helper._resolve_discipline_text")
+def _resolve_discipline_text(slug: str, storage) -> str | None:
+    """Resolve a composed discipline slug to its prompt body.
+
+    Resolution: epoch-cached slug read → seed-on-miss from the disciplines
+    genesis (create-if-absent, mirrors the contract path) → genesis text as
+    in-memory fallback. Unknown slugs (no page, no genesis) return None and
+    are skipped. Never raises — composition must not crash the prelude.
+    """
+    from yadgar.core.server.tools.agent_prompts import (  # noqa: PLC0415
+        DISCIPLINE_SLUG_PREFIX,
+        DISCIPLINES,
+        _read_agent_prompt,
+        _seed_discipline_pages,
+        _unwrap_purpose_prompt,
+    )
+
+    genesis = {f"{DISCIPLINE_SLUG_PREFIX}{n}": c for n, _, c in DISCIPLINES}
+    try:
+        result = _cached_slug_read(slug, storage)
+        if result is None and slug in genesis:
+            # Seed-on-miss: re-create the discipline page from packaged genesis.
+            _seed_discipline_pages(storage=storage, only=slug[len(DISCIPLINE_SLUG_PREFIX) :])
+            logger.info("prelude_discipline_reseeded slug=%s", slug)
+            result = _read_agent_prompt(slug, storage=storage)
+        if result is None:
+            return genesis.get(slug)  # genesis fallback, or None for unknown slugs
+        body = _unwrap_purpose_prompt(result.get("content", "")).strip()
+        return body or genesis.get(slug)
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("prelude_discipline_resolution_failed slug=%s: %s", slug, _e)
+        return genesis.get(slug)
+
+
+@observe(tier="stage", metric="tools.dispatch_helper._build_discipline_sections")
+def _build_discipline_sections(composes: list[str], storage) -> list[str]:
+    """Render composed discipline slugs into prelude sections.
+
+    Dedup rule: slugs in CONTRACT_COVERS are never re-included (the contract —
+    always present — already carries those rules).
+    """
+    from yadgar.core.server.tools.agent_prompts import CONTRACT_COVERS  # noqa: PLC0415
+
+    sections: list[str] = []
+    for slug in composes:
+        if slug in CONTRACT_COVERS:
+            continue
+        body = _resolve_discipline_text(slug, storage)
+        if body:
+            sections.append(f"## Discipline [{slug}]\n\n{body}")
+    return sections
+
+
+@observe(tier="hot", metric="tools.dispatch_helper._drop_disciplines_over_budget")
+def _drop_disciplines_over_budget(
+    head: list[str],
+    disciplines: list[str],
+    tail: list[str],
+    budget: int,
+) -> str:
+    """Assemble head + disciplines + tail; drop disciplines last-listed-first
+    while the joined prelude exceeds *budget* (warning per drop)."""
+    kept = list(disciplines)
+    while True:
+        prelude = "\n\n".join(head + kept + tail)
+        if len(prelude) <= budget or not kept:
+            return prelude
+        dropped = kept.pop()
+        logger.warning(
+            "agent_dispatch_prelude: budget overflow — dropping discipline section %r",
+            dropped.splitlines()[0],
+        )
+
+
+@observe(tier="stage", metric="tools.dispatch_helper._get_contract_text")
+def _get_contract_text(storage) -> str:
+    """Return the Yadgar subagent contract text for injection into the prelude.
+
+    v5.122.0: contract is wiki-sourced via agent-prompt-contract page (same
+    epoch-keyed cache as pattern pages). Three-tier resolution:
+
+    1. Cache hit (normal path, fast) → unwrap Purpose/Prompt wrapper → return body.
+    2. Cache miss / page absent → SEED-ON-MISS: re-seed from packaged genesis via
+       _seed_contract_page(), INFO log 'prelude_contract_reseeded'. Re-read once.
+       If re-read succeeds → return unwrapped body.
+    3. Seed write failure, re-read still None, OR any unexpected error (bad
+       storage seam, non-string content) → ERROR log, return genesis text from
+       CONTRACT_GENESIS (in-memory fallback). Never emits a contract-less
+       prelude and never lets contract resolution crash the prelude build.
+
+    The contract header ("## Yadgar subagent contract") is prepended here so the
+    caller receives a ready-to-inject section string.
+    """
+    from yadgar.core.server.tools.agent_prompts import (  # noqa: PLC0415
+        CONTRACT_GENESIS,
+        _read_agent_prompt,
+        _seed_contract_page,
+        _unwrap_purpose_prompt,
+    )
+
+    # Genesis fallback text — always available regardless of wiki state.
+    _, _, genesis_content = CONTRACT_GENESIS
+    genesis_text = f"## Yadgar subagent contract\n\n{genesis_content}"
+
+    try:
+        # Normal path: read via epoch-keyed cache (reuses pattern-prompt cache key space).
+        result = _cached_agent_prompt("contract", storage)
+
+        if result is None:
+            # Seed-on-miss: contract page absent — re-seed from packaged genesis.
+            _seed_contract_page(storage=storage)
+            logger.info("prelude_contract_reseeded")
+            # Re-read (cache doesn't cache None, epoch bumped by seed write).
+            result = _read_agent_prompt("agent-prompt-contract", storage=storage)
+
+        if result is None:
+            # Seed succeeded but read-your-write gap: use genesis fallback.
+            logger.error("prelude_contract_read_after_reseed_failed — using genesis fallback")
+            return genesis_text
+
+        # Unwrap Purpose/Prompt wrapper added by agent_prompt_save.
+        raw = result.get("content", "")
+        body = _unwrap_purpose_prompt(raw).strip()
+        if not body:
+            logger.error("prelude_contract_empty_after_unwrap — using genesis fallback")
+            return genesis_text
+
+        return f"## Yadgar subagent contract\n\n{body}"
+    except Exception as _e:  # noqa: BLE001
+        # Covers seed-write failure AND any unexpected resolution error (e.g. a
+        # test double returning non-string content). The prelude must never crash.
+        logger.error("prelude_contract_resolution_failed: %s — using genesis fallback", _e)
+        return genesis_text
+
+
+@observe(tier="stage", metric="tools.dispatch_helper._record_pattern_usage")
+def _record_pattern_usage(pattern: str) -> None:
+    """Best-effort per-pattern usage-counter increment (Stage 3.4, #33).
+
+    Fires once per prelude assembly that RESOLVED a pattern page (unresolved
+    patterns are not counted). The DB write forwards to the backend
+    increment_prompt_usage admin op (ADR-0078); transport errors are swallowed
+    — the counter is telemetry, never load-bearing.
+    """
+    try:
+        _forward_admin("increment_prompt_usage", {"pattern": pattern})
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("agent_dispatch_prelude: increment_prompt_usage forward failed: %s", _e)
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._record_prelude_marker")
@@ -195,7 +387,15 @@ def agent_dispatch_prelude(
     # Record that agent_dispatch_prelude was called (read-side nudge, #69).
     _record_prelude_marker(storage, directory)
 
-    sections: list[str] = [_YADGAR_CONTRACT]
+    # v5.122.0: contract sourced from wiki page (agent-prompt-contract) via cache,
+    # with seed-on-miss + genesis fallback. Fetched BEFORE the kill-gate so the
+    # contract is always present even when AGENT_PROMPT_LIBRARY_ENABLED=False.
+    # Assembly order (Stage 3, deterministic): contract → disciplines (Composes
+    # order) → pattern → recall hint → context block.
+    contract_text = _get_contract_text(storage)
+    head: list[str] = [contract_text]
+    discipline_sections: list[str] = []
+    tail: list[str] = []
 
     # Optional: latest agent_prompt for pattern.
     # v5.85 S5: deterministic internal slug-read (the agent_prompt_get tool was
@@ -209,18 +409,26 @@ def agent_dispatch_prelude(
             if prompt_result and prompt_result.get("content"):
                 raw_content = prompt_result["content"]
                 version = prompt_result.get("version", "?")
-                # Truncate if needed to respect overall budget
-                used = sum(len(s) for s in sections) + 100  # 100 for separators
+                # Stage 3: resolve ## Composes refs (seed-on-miss + dedup inside),
+                # then strip the section from the injected pattern snippet.
+                discipline_sections = _build_discipline_sections(
+                    _parse_composes(raw_content), storage
+                )
+                body = _strip_composes_section(raw_content)
+                # Truncate if needed to respect the pattern-snippet budget
+                used = len(contract_text) + 100  # 100 for separators
                 available = _AGENT_PROMPT_BUDGET - used
                 if available > 80:
-                    snippet = raw_content[:available]
-                    sections.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
+                    snippet = body[:available]
+                    tail.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
+                # Stage 3.4: count the assembly (pattern resolved → real usage).
+                _record_pattern_usage(pattern)
         except Exception as _e:
             logger.debug("agent_dispatch_prelude: _read_agent_prompt failed: %s", _e)
 
     # Recall hint
     if task_topic:
-        sections.append(f'## Recall hint\n\nSuggest: `recall("{task_topic}")` before starting.')
+        tail.append(f'## Recall hint\n\nSuggest: `recall("{task_topic}")` before starting.')
 
     # v5.44.0 X1: auto-prefetch context block (opt-in per DP-X1-1)
     if include_context:
@@ -232,12 +440,14 @@ def agent_dispatch_prelude(
             storage=storage,
         )
         if context_block:
-            sections.append(context_block)
+            tail.append(context_block)
 
-    prelude = "\n\n".join(sections)
-
-    # Hard cap — extended when context block included
+    # Budget — extended when context block included. Overflow drops disciplines
+    # last-listed-first (warning per drop); contract + pattern + hint survive.
     budget = _TOTAL_BUDGET + _CONTEXT_BUDGET if include_context else _TOTAL_BUDGET
+    prelude = _drop_disciplines_over_budget(head, discipline_sections, tail, budget)
+
+    # Hard cap backstop (contract/pattern alone exceeding the budget)
     if len(prelude) > budget:
         prelude = prelude[: budget - 3] + "..."
 

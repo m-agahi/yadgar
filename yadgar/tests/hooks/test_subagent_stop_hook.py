@@ -475,10 +475,15 @@ class TestPreludeFindingsTemplate:
     """agent_dispatch_prelude output includes MUST-emit findings clause."""
 
     def test_prelude_must_emit_clause(self):
-        """Prelude explicitly says MUST emit the ## Yadgar findings section."""
-        from yadgar.core.server.tools.dispatch_helper import _YADGAR_CONTRACT
+        """Prelude explicitly says MUST emit the ## Yadgar findings section.
 
-        contract_lower = _YADGAR_CONTRACT.lower()
+        v5.122.0: _YADGAR_CONTRACT constant removed — contract genesis lives in
+        seed materials (CONTRACT_GENESIS); wiki page is the runtime source.
+        """
+        from yadgar.core.server.tools.agent_prompts import CONTRACT_GENESIS
+
+        _, _, _contract = CONTRACT_GENESIS
+        contract_lower = _contract.lower()
         # Must contain both "must" (or imperative equivalent) and "yadgar findings"
         has_must = "must" in contract_lower or "required" in contract_lower
         has_findings_ref = "yadgar findings" in contract_lower
@@ -487,8 +492,9 @@ class TestPreludeFindingsTemplate:
 
     def test_prelude_findings_heading_literal(self):
         """Contract includes the literal heading text so agents can copy-paste."""
-        from yadgar.core.server.tools.dispatch_helper import _YADGAR_CONTRACT
+        from yadgar.core.server.tools.agent_prompts import CONTRACT_GENESIS
 
-        assert "## Yadgar findings" in _YADGAR_CONTRACT, (
+        _, _, _contract = CONTRACT_GENESIS
+        assert "## Yadgar findings" in _contract, (
             "Contract must show the literal '## Yadgar findings' heading"
         )

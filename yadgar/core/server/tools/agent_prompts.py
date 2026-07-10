@@ -157,42 +157,197 @@ def agent_prompt_save(
 
 
 # ── S8 starter library ───────────────────────────────────────────────────────
-# Pinned patterns and content for the 4 built-in dispatch starters.
+# Pinned patterns and content for the 5 built-in dispatch starters (v5.122.0:
+# plan-executing-build added so the contract's rule-4 pointer resolves on
+# fresh installs).
 # Slug for each: agent-prompt-<pattern>  (MUST match test assertions exactly).
 #
 # v5.88 seed consolidation: the editable content lives in the canonical seed
 # materials dir (yadgar/seed/materials/agent_prompts.yaml), not inline here.
 # This module only loads it — edit the yaml, not this file. STARTER_PROMPTS keeps
 # its public shape: list[tuple[pattern, purpose, content]].
+#
+# v5.122.0: the prelude contract genesis also lives in agent_prompts.yaml under
+# the "contract:" key (NOT in "prompts:" — excluded from STARTER_PROMPTS so the
+# 4-starter semantics are preserved). _load_contract_genesis() reads it;
+# _seed_contract_page() seeds it idempotently alongside the 5 starters.
 
 
-@observe(tier="stage", metric="tools.agent_prompts._load_starter_prompts")
-def _load_starter_prompts() -> list[tuple[str, str, str]]:
-    """Load the built-in starter prompts from materials/agent_prompts.yaml.
+@observe(tier="stage", metric="tools.agent_prompts._load_genesis_yaml")
+def _load_genesis_yaml() -> dict:
+    """Load + parse materials/agent_prompts.yaml (the packaged genesis corpus).
 
     Read via importlib.resources so it works both from source and from an
-    installed wheel (the yaml ships as package data under yadgar/seed/materials/).
-    Returns a list of (pattern, purpose, content) 3-tuples in file order.
+    installed wheel (the yaml ships as package data under yadgar/core/seed/materials/).
+    ruamel.yaml is the hard dependency (see pyproject); PyYAML is optional. Mirror
+    _load_anchors_yaml: prefer PyYAML when present, fall back to ruamel otherwise.
     """
     from importlib.resources import files  # noqa: PLC0415
 
     text = (
         files("yadgar.core.seed").joinpath("materials").joinpath("agent_prompts.yaml").read_text()
     )
-    # ruamel.yaml is the hard dependency (see pyproject); PyYAML is optional. Mirror
-    # _load_anchors_yaml: prefer PyYAML when present, fall back to ruamel otherwise.
     try:
         import yaml  # noqa: PLC0415
 
-        data = yaml.safe_load(text)
+        return yaml.safe_load(text)
     except ImportError:
         from ruamel.yaml import YAML  # noqa: PLC0415
 
-        data = YAML(typ="safe").load(text)
-    return [(e["pattern"], e["purpose"], e["content"]) for e in data["prompts"]]
+        return YAML(typ="safe").load(text)
 
+
+@observe(tier="stage", metric="tools.agent_prompts._load_starter_prompts")
+def _load_starter_prompts() -> list[tuple[str, str, str]]:
+    """Load the built-in starter prompts from materials/agent_prompts.yaml.
+
+    Returns a list of (pattern, purpose, content) 3-tuples in file order.
+    """
+    return [(e["pattern"], e["purpose"], e["content"]) for e in _load_genesis_yaml()["prompts"]]
+
+
+@observe(tier="stage", metric="tools.agent_prompts._load_contract_genesis")
+def _load_contract_genesis() -> tuple[str, str, str]:
+    """Load the prelude contract genesis from materials/agent_prompts.yaml.
+
+    Returns (pattern, purpose, content) for the 'contract:' entry.
+    This is the packaged genesis copy — the authoritative source for seeding
+    and for the in-memory fallback in dispatch_helper when the wiki page is absent.
+
+    Separated from STARTER_PROMPTS so the 4-starter semantics are preserved.
+    """
+    entry = _load_genesis_yaml()["contract"]
+    return (entry["pattern"], entry["purpose"], entry["content"])
+
+
+@observe(tier="stage", metric="tools.agent_prompts._load_disciplines")
+def _load_disciplines() -> list[tuple[str, str, str]]:
+    """Load the discipline-page genesis entries from materials/agent_prompts.yaml.
+
+    Stage 2 (2026-07-10): cross-cutting rule pages extracted from the pattern
+    corpus. Returns a list of (name, purpose, content) 3-tuples in file order.
+    Slug convention: agent-discipline-<name> (NOT agent-prompt-<name> — these
+    are not dispatch patterns).
+    """
+    return [(e["name"], e["purpose"], e["content"]) for e in _load_genesis_yaml()["disciplines"]]
+
+
+# Module-level genesis tuple: (pattern, purpose, content).
+CONTRACT_GENESIS: tuple[str, str, str] = _load_contract_genesis()
+
+# Discipline slugs whose rules the contract text already carries — composition
+# (Stage 3) dedups these out of assembled preludes. Loaded from the contract
+# entry's `covers:` key in the genesis yaml.
+CONTRACT_COVERS: tuple[str, ...] = tuple(_load_genesis_yaml()["contract"].get("covers", []))
 
 STARTER_PROMPTS: list[tuple[str, str, str]] = _load_starter_prompts()
+
+# Discipline genesis entries: (name, purpose, content) per page.
+DISCIPLINES: list[tuple[str, str, str]] = _load_disciplines()
+
+# Slug for the prelude contract wiki page (global scope, like other seeded prompts).
+CONTRACT_SLUG = f"agent-prompt-{CONTRACT_GENESIS[0]}"  # "agent-prompt-contract"
+
+# Slug prefix for discipline pages (Stage 2).
+DISCIPLINE_SLUG_PREFIX = "agent-discipline-"
+
+
+@observe(tier="stage", metric="tools.agent_prompts._seed_contract_page")
+def _seed_contract_page(
+    storage,
+    branch_hint: str | None = None,
+) -> bool:
+    """Idempotently seed the prelude contract wiki page (create-if-absent).
+
+    Separate from seed_agent_prompts so the 4-starter counts/assertions are
+    not disturbed. Returns True if a new page was created, False if skipped.
+    """
+    existing = _read_agent_prompt(CONTRACT_SLUG, storage=storage)
+    if existing is not None:
+        return False
+
+    pattern, purpose, content = CONTRACT_GENESIS
+    agent_prompt_save(
+        pattern,
+        content,
+        directory="global",
+        purpose=purpose,
+        branch_hint=branch_hint,
+        storage=storage,
+    )
+    return True
+
+
+@observe(tier="stage", metric="tools.agent_prompts._save_discipline_page")
+def _save_discipline_page(
+    name: str,
+    purpose: str,
+    content: str,
+    branch_hint: str | None = None,
+) -> dict:
+    """Save (upsert) a discipline page under slug agent-discipline-<name>.
+
+    Same write path as agent_prompt_save (I26 secret gate core-side, DB write
+    forwarded to the backend agent_prompt_save admin op — the op keys everything
+    off the payload slug, so discipline slugs ride the existing machinery, incl.
+    the TOC row + wiki-epoch bump). page_type stays agent_prompt: disciplines
+    are prompt-text fragments and get the same Purpose/Prompt wrap + lint.
+    """
+    _gate = gate_or_reject(content)
+    if _gate is not None:
+        return _gate
+
+    slug = f"{DISCIPLINE_SLUG_PREFIX}{name}"
+    title = f"Agent Discipline: {name}"
+    tags = ["agent-prompt", "agent-discipline", f"discipline:{name}"]
+    content = _unwrap_purpose_prompt(content)
+    full_content = f"## Purpose\n\n{purpose}\n\n## Prompt\n\n{content}"
+    return _forward_admin(
+        "agent_prompt_save",
+        {
+            "slug": slug,
+            "title": title,
+            "full_content": full_content,
+            "tags": tags,
+            # TOC row keys on the full slug so discipline rows are unambiguous
+            # next to dispatch-pattern rows.
+            "pattern": slug,
+            "purpose": purpose,
+            "branch_hint": branch_hint,
+            "directory": "global",
+        },
+    )
+
+
+@observe(tier="stage", metric="tools.agent_prompts._seed_discipline_pages")
+def _seed_discipline_pages(
+    storage,
+    branch_hint: str | None = None,
+    only: str | None = None,
+) -> tuple[int, int]:
+    """Idempotently seed the discipline pages (create-if-absent per name).
+
+    Args:
+        storage: StorageEngine used for the existence check.
+        branch_hint: Caller branch context (optional).
+        only: When set, seed just this discipline name (Stage-3 seed-on-miss
+              path from prelude composition). Unknown names are a no-op.
+
+    Returns:
+        (created, skipped) counts over the names considered.
+    """
+    created = 0
+    skipped = 0
+    for name, purpose, content in DISCIPLINES:
+        if only is not None and name != only:
+            continue
+        slug = f"{DISCIPLINE_SLUG_PREFIX}{name}"
+        if _read_agent_prompt(slug, storage=storage) is not None:
+            skipped += 1
+            continue
+        _save_discipline_page(name, purpose, content, branch_hint=branch_hint)
+        created += 1
+    return created, skipped
 
 
 @_tool(power=True)
@@ -200,13 +355,18 @@ def seed_agent_prompts(
     storage=None,
     branch_hint: str | None = None,
 ) -> dict:
-    """Idempotently seed the 4 built-in starter agent-prompts (global).
+    """Idempotently seed the 5 starter agent-prompts + contract + disciplines (global).
 
     Skips any pattern whose page already exists (create-if-absent per pattern).
-    Calling twice is safe: second call returns created=0, skipped=4.
+    Calling twice is safe: second call returns created=0, skipped=5.
 
     The TOC and global discovery anchor are managed by agent_prompt_save —
     this function does NOT duplicate that logic.
+
+    The prelude contract page (agent-prompt-contract) is seeded separately via
+    _seed_contract_page, and the discipline pages (agent-discipline-<name>,
+    Stage 2) via _seed_discipline_pages — so the starter counts/pattern list
+    are unchanged; discipline counts are reported under their own keys.
 
     Args:
         storage: StorageEngine instance (injected for testing; otherwise
@@ -214,7 +374,8 @@ def seed_agent_prompts(
         branch_hint: Caller branch context (optional).
 
     Returns:
-        {"seeded": True, "created": N, "skipped": M, "patterns": [...all 4...]}
+        {"seeded": True, "created": N, "skipped": M, "patterns": [...all 5...],
+         "disciplines_created": D, "disciplines_skipped": E, "disciplines": [...]}
     """
     if storage is None:
         from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
@@ -239,11 +400,22 @@ def seed_agent_prompts(
             )
             created += 1
 
+    # Seed the prelude contract page alongside (idempotent, does not affect counts).
+    _seed_contract_page(storage=storage, branch_hint=branch_hint)
+
+    # Stage 2: seed the discipline pages (idempotent; separate count keys).
+    disciplines_created, disciplines_skipped = _seed_discipline_pages(
+        storage=storage, branch_hint=branch_hint
+    )
+
     return {
         "seeded": True,
         "created": created,
         "skipped": skipped,
         "patterns": [p for p, _, _ in STARTER_PROMPTS],
+        "disciplines_created": disciplines_created,
+        "disciplines_skipped": disciplines_skipped,
+        "disciplines": [n for n, _, _ in DISCIPLINES],
     }
 
 

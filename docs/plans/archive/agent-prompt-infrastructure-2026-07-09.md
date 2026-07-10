@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-10 — executing on feat/prelude-contract-wiki, ships with the train PR (stages 1+2+3)
+
 # Plan: Agent-prompt infrastructure — stages 2–3 (discipline extraction + schema)
 
 **Status:** AGREED (design final 2026-07-09 after 3 iterations — do NOT re-litigate the split).

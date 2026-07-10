@@ -1,16 +1,21 @@
 """Wiki page-type registry and templates (v5.53.2 — Phase B-schema).
 
-PAGE_TYPES maps page_type string → required section headings (case-insensitive
-for lint matching). Templates are kept small (2-4 sections each) to avoid
-over-constraining the wiki corpus.
+Stage 3 externalization (2026-07-10): the schema itself lives in the packaged
+resource yadgar/_shared/schemas/wiki_page_types.yaml — loaded here at import
+via importlib.resources. This module keeps ZERO schema literals; edit the yaml,
+not this file.
+
+PAGE_TYPE_SCHEMAS maps page_type string → full schema dict (required /
+optional / metadata). PAGE_TYPES keeps the historical dict[str, list[str]]
+required-sections shape for existing consumers (wiki lint, tests).
 
 Design:
 - page_type is OPTIONAL on all pages. Pages without page_type are never
   format-checked by wiki_lint.
 - Required sections must appear as ## headings (case-insensitive) in the page
-  content for wiki_lint format checks to pass.
-- 6 types cover ~90% of the corpus (fn-, mod-, services-, arch-,
-  decision-, analysis-* slug prefixes identified in 5.53.2 audit).
+  content for wiki_lint format checks to pass. Lint is ADVISORY — wiki_add
+  never rejects a write on page_type/template mismatch.
+- Optional sections are documented shape only — never linted against.
 
 WIKI_SCHEMA_VERSION is stamped on new pages at write time. Existing pages
 that predate this field are treated as schema_version=0 / untyped.
@@ -18,44 +23,40 @@ that predate this field are treated as schema_version=0 / untyped.
 
 from yadgar._shared.observability.observe import observe
 
-WIKI_SCHEMA_VERSION: int = 1
 
-#: Registry of page types → required markdown section headings.
+@observe(tier="stage")
+def _load_page_type_schemas() -> dict:
+    """Load + parse schemas/wiki_page_types.yaml (packaged resource).
+
+    Read via importlib.resources so it works both from source and from an
+    installed wheel. ruamel.yaml is the hard dependency (see pyproject);
+    PyYAML is optional — prefer PyYAML when present, fall back to ruamel.
+    """
+    from importlib.resources import files  # noqa: PLC0415
+
+    text = files("yadgar._shared").joinpath("schemas").joinpath("wiki_page_types.yaml").read_text()
+    try:
+        import yaml  # noqa: PLC0415
+
+        return yaml.safe_load(text)
+    except ImportError:
+        from ruamel.yaml import YAML  # noqa: PLC0415
+
+        return YAML(typ="safe").load(text)
+
+
+_SCHEMA_DATA: dict = _load_page_type_schemas()
+
+WIKI_SCHEMA_VERSION: int = int(_SCHEMA_DATA["schema_version"])
+
+#: Full per-type schema dicts: {page_type: {required: [...], optional: [...], metadata: {...}}}.
+PAGE_TYPE_SCHEMAS: dict[str, dict] = _SCHEMA_DATA["page_types"]
+
+#: Registry of page types → required markdown section headings (historical shape).
 #: Keys are canonical page_type values (lowercase, hyphen-separated).
 #: Values are lists of heading texts (case-insensitive match at lint time).
 PAGE_TYPES: dict[str, list[str]] = {
-    "function": [
-        "Purpose",
-        "Signature",
-        "Behaviour",
-    ],
-    "module": [
-        "Purpose",
-        "Exports",
-        "Design",
-    ],
-    "service": [
-        "Purpose",
-        "Interface",
-        "Dependencies",
-    ],
-    "architecture": [
-        "Overview",
-        "Components",
-    ],
-    "decision": [
-        "Context",
-        "Decision",
-        "Consequences",
-    ],
-    "analysis": [
-        "Summary",
-        "Findings",
-    ],
-    "agent_prompt": [
-        "Purpose",
-        "Prompt",
-    ],
+    page_type: list(schema.get("required", [])) for page_type, schema in PAGE_TYPE_SCHEMAS.items()
 }
 
 
@@ -65,6 +66,8 @@ def check_page_type_format(slug: str, page_type: str, content: str) -> list[dict
 
     Called by wiki_lint. Returns list of issue dicts (empty = no violations).
     Pages with unknown page_type return []. Case-insensitive heading match.
+    Optional sections (PAGE_TYPE_SCHEMAS[type]["optional"]) are never checked —
+    lint stays ADVISORY on the richer agent_prompt schema (Stage 3).
     Heading extraction is delegated to the caller via the content string —
     the caller (wiki.py lint()) uses _find_section_headings which skips fenced blocks.
     """

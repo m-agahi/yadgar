@@ -1057,3 +1057,63 @@ class _WikiMixin:
             },
         )
         return {"id": mid, "created_at": now}
+
+    @observe(tier="stage")
+    def get_prompt_usage_counts(self) -> dict:
+        """Return the per-pattern prelude-usage counts (Stage 3.4, #33).
+
+        Counts live in a single global memory row tagged '_prompt_usage' whose
+        content is a JSON dict {pattern: count}. Missing row → {}.
+        """
+        import json  # noqa: PLC0415
+
+        rows = self._q("SELECT content FROM memory WHERE '_prompt_usage' INSIDE tags LIMIT 1")
+        if not rows:
+            return {}
+        try:
+            counts = json.loads(rows[0].get("content") or "{}")
+        except (ValueError, TypeError):  # fmt: skip
+            return {}
+        return counts if isinstance(counts, dict) else {}
+
+    @observe(tier="stage")
+    def increment_prompt_usage(self, pattern: str) -> int:
+        """Increment the prelude-usage counter for *pattern*; return the new count.
+
+        Read-modify-write on the single '_prompt_usage' row via the same atomic
+        delete-then-insert as upsert_dispatch_prelude_marker (memory rows are not
+        wiki-versioned — no churn). Best-effort counter: a lost increment under
+        concurrent prelude calls is acceptable.
+        """
+        import json  # noqa: PLC0415
+
+        counts = self.get_prompt_usage_counts()
+        counts[pattern] = int(counts.get(pattern, 0)) + 1
+        now = self._now_iso()
+        mid = self._next_id("memory")
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            "DELETE FROM memory WHERE '_prompt_usage' INSIDE tags;\n"
+            "CREATE type::record('memory', $id) SET "
+            "content = $content, embedding = NONE, tags = $tags, "
+            "source_episode_id = NONE, directory_context = $dir, "
+            "created_at = $now, last_accessed = $now, "
+            "heat = $heat, is_stale = false, file_hash = NONE, "
+            "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
+            "excitability = 1.0, store_type = $store_type, "
+            "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
+            "reconsolidation_count = 0, provenance_agent = $agent, "
+            "vector_clock = '{}', is_protected = true;\n"
+            "COMMIT TRANSACTION",
+            {
+                "id": mid,
+                "content": json.dumps(counts, sort_keys=True),
+                "tags": ["_prompt_usage"],
+                "dir": "global",
+                "now": now,
+                "heat": 1.0,
+                "store_type": "episodic",
+                "agent": "default",
+            },
+        )
+        return counts[pattern]
