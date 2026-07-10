@@ -11,12 +11,11 @@
 
 ## Car 2 — surrealkv safe-stop fixes (input: RCA agent's docs/plans/surrealkv-safe-stop-2026-07-10.md, task #37/ADR-0090)
 
-Build the RCA plan's recommended primary + belt-and-braces mitigations. Expected shape (finalize from the RCA plan when it lands; do NOT start before it does):
-- entrypoint-backend.sh SIGTERM ordering: stop writers → signal surreal → WAIT for clean exit before container exit (BACKEND_VERSION bump).
-- Startup torn-manifest detection → fail loud with runbook pointer (or auto-restore latest quiesced copy if RCA recommends).
-- Pre-stop export safety artifact if RCA recommends (systemd ExecStop / entrypoint trap).
-- Upstream pin bump instead/in addition IF the RCA finds a fixed surrealdb release (backup-first, e2e-gated).
-- Tests: TDD what is testable at the entrypoint/script seam (bats-style or python subprocess harness per repo precedent); e2e must stay green.
+RCA LANDED (7b670d6a) — verdict: warning is UPSTREAM-UNCONDITIONAL (surrealkv `impl Drop for Tree` skips async close when `Handle::try_current()` fails; v3.1.5 SIGTERM tears the runtime down first; no fixed release exists — corruption class open as surrealdb#5001). Pin bump is OFF the table. Build:
+1. **Option B (primary):** entrypoint-backend.sh SIGTERM ordering — stop writers first, signal surreal, WAIT for clean exit, write a torn-stop marker on abnormal exit (BACKEND_VERSION 5.35.0).
+2. **Option D (belt-and-braces):** startup torn-manifest detection → auto-restore per the RCA runbook (pick restore source by newest INNER-file mtime + row counts, never dir name — dir mtime lies under os.rename).
+3. **NEW from RCA — vacuum split-brain fix:** the 07-09 vacuum swap failed `check_invariants` (404) and RETAINED `.old` while the running backend kept writing to the ORIGINAL inode (= `.old`) for 16h — path/inode split-brain that made `surreal_db` a stale decoy. Fix: on invariants-fail, ROLL BACK the swap (restore original path), never retain a half-swapped state.
+4. Tests: TDD at the entrypoint/script + vacuum-swap seams (subprocess harness per repo precedent); e2e stays green.
 
 ## Car 3 — stop-hook prompt → external template file (task #34)
 
