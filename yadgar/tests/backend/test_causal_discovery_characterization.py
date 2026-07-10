@@ -12,7 +12,17 @@ R3 precondition (not adjacency[z1][z2]). These tests capture post-fix behavior s
 Stage 11 decomposition cannot accidentally regress those fixes.
 
 Fixture generation: set YADGAR_REGEN_FIXTURES=1 to regenerate
-yadgar/tests/fixtures/causal_discovery_expected.json.
+yadgar/tests/backend/fixtures/causal_discovery_expected.json.
+
+IMPORTANT: regenerate INSIDE the CI container (docker.io/openfantasy/yadgar-ci)
+— pc_algorithm's scipy partial-correlation tests are FP-sensitive across BLAS
+builds, so a fixture generated on a dev box may not match CI.  Car 2 command:
+
+    podman run --rm -v "$PWD":/work -w /work -e YADGAR_REGEN_FIXTURES=1 \
+        docker.io/openfantasy/yadgar-ci:<tag> bash -c \
+        "pip install -e '.[test,ml]' -q && python -m pytest \
+         yadgar/tests/backend/test_causal_discovery_characterization.py \
+         -q --override-ini=addopts="
 """
 
 from __future__ import annotations

@@ -60,15 +60,19 @@ def _health(port: int, timeout: float) -> tuple[int | None, float, dict | None]:
     """
     t0 = time.monotonic()
     try:
-        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=timeout)
-        body = resp.read()
-        return resp.status, time.monotonic() - t0, json.loads(body)
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=timeout) as resp:
+            body = resp.read()
+            return resp.status, time.monotonic() - t0, json.loads(body)
     except urllib.error.HTTPError as e:
         # A 503 is STILL a responsive loop — read its body for the pool fields.
+        # HTTPError is file-like; close it or py3.14 emits ResourceWarning at GC
+        # (an error under the zero-warning gate).
         try:
             payload = json.loads(e.read())
         except Exception:
             payload = None
+        finally:
+            e.close()
         return e.code, time.monotonic() - t0, payload
     except Exception:
         return None, time.monotonic() - t0, None
@@ -95,7 +99,11 @@ def _call_tool(
         },
     )
     try:
-        raw = urllib.request.urlopen(req, timeout=timeout).read().decode()
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode()
+    except urllib.error.HTTPError as e:
+        e.close()  # file-like; unclosed → ResourceWarning at GC (zero-warning gate)
+        return None
     except Exception:
         return None
     for line in raw.splitlines():

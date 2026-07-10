@@ -12,7 +12,7 @@ FROM python:3.14-slim
 
 LABEL org.opencontainers.image.source="https://codeberg.org/maxagahi/yadgar"
 LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model"
-LABEL org.opencontainers.image.version="5.73.0"
+LABEL org.opencontainers.image.version="5.121.1"
 
 # System deps needed in CI:
 #   make             — Makefile integration tests (B6 fix)
@@ -22,6 +22,8 @@ LABEL org.opencontainers.image.version="5.73.0"
 #   build-essential  — C extension builds (scipy, numpy, etc.)
 #   nodejs           — JS actions runtime used by Forgejo actions checkout
 #   bsdmainutils     — provides `column` binary used by `make help` (F5 fix, v5.46.9)
+#   graphviz         — `dot` binary so test_diagram_generator render tests RUN
+#                      instead of skipping (hardening Car 3, ADR-0087)
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
         make \
@@ -30,7 +32,8 @@ RUN apt-get update -qq && \
         ca-certificates \
         build-essential \
         nodejs \
-        bsdmainutils && \
+        bsdmainutils \
+        graphviz && \
     rm -rf /var/lib/apt/lists/*
 
 # Bake SurrealDB v3.1.5 into image (saves 15-30s CI per run — no download step).
@@ -49,21 +52,21 @@ RUN curl -fsSL \
 # Copies pyproject.toml only so this layer caches across source changes.
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
+COPY uv.lock /app/uv.lock
 
-# Install test + ml dependencies without the package itself (just deps).
-# --no-cache-dir keeps layer small; deps are re-resolved on cache miss.
-RUN pip install --no-cache-dir \
-        pytest \
-        pytest-asyncio \
-        anyio \
-        pytest-xdist \
-        pytest-timeout \
-        pytest-rerunfailures \
-        hypothesis \
-        defusedxml \
-        sentence-transformers \
-        hf-xet && \
-    rm -rf /root/.cache/pip
+# Install the FULL [test,ml] extras (deps only — the package itself is installed
+# per-run) FROM uv.lock, not from pyproject's open constraints. LOCK PARITY IS
+# LOAD-BEARING: an unpinned resolve here pulled starlette>1.0.0 whose testclient
+# deprecates plain httpx — invisible while warnings were tolerated, fatal under
+# the Car 3 filterwarnings=error gate (57 CI failures, 2026-07-10). CI must run
+# the exact versions the repo locks. Legs install only the package itself
+# (`uv pip install --system --no-deps -e .`) so nothing re-resolves at run time.
+RUN pip install --no-cache-dir uv && \
+    uv export --frozen --no-emit-project --extra test --extra ml \
+        -o /tmp/requirements-lock.txt && \
+    uv pip install --system --no-cache -r /tmp/requirements-lock.txt && \
+    rm -f /tmp/requirements-lock.txt && \
+    rm -rf /root/.cache/pip /root/.cache/uv
 
 # Bake HuggingFace all-MiniLM-L6-v2 model weights into image
 # (saves 30-60s CI per run — no HF download step needed in test jobs).

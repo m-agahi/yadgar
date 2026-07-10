@@ -361,19 +361,18 @@ class TestSeedIdempotency:
         conflict_resp.__enter__ = lambda s: s
         conflict_resp.__exit__ = MagicMock(return_value=False)
 
+        conflict_err = urllib.error.HTTPError(
+            url="http://localhost:8765/hooks/seed-anchor",
+            code=409,
+            msg="Conflict",
+            hdrs={},
+            fp=None,
+        )
         with patch("urllib.request.urlopen") as mock_urlopen:
             # Health call returns OK, anchor POST raises 409 HTTPError
-            mock_urlopen.side_effect = [
-                health,
-                urllib.error.HTTPError(
-                    url="http://localhost:8765/hooks/seed-anchor",
-                    code=409,
-                    msg="Conflict",
-                    hdrs={},
-                    fp=None,
-                ),
-            ]
+            mock_urlopen.side_effect = [health, conflict_err]
             result = mod._seed_anchors(anchors, db_path=None, dry_run=False)
+        conflict_err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
 
         assert result["created"] == 0, f"409 must not count as created: {result}"
         assert result["skipped"] == 1, f"409 must count as skipped: {result}"

@@ -145,6 +145,23 @@ repos:
         pass_filenames: false
         files: ^yadgar/tests/e2e/.*\.py$
 
+      - id: check-skip-inventory
+        name: Validate skip_inventory.json (ADR-0087 governance — note >=40, stale hard-fail, no wildcards)
+        language: system
+        entry: python scripts/check_skip_inventory.py --validate-inventory
+        pass_filenames: false
+        # Also fires on test-file changes: deleting/renaming a test can strand
+        # an inventory entry — the stale-entry hard-fail catches it at commit.
+        files: ^yadgar/tests/(skip_inventory\.json|.*\.py)$
+
+      - id: check-skip-markers
+        name: Block new unsanctioned skip markers in staged test files (ADR-0087)
+        language: system
+        entry: python scripts/check_skip_markers.py
+        types: [python]
+        pass_filenames: true
+        files: ^yadgar/tests/.*\.py$
+
   - repo: local
     hooks:
       - id: check-image-size-backend

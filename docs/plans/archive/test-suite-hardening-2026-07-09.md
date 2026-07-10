@@ -1,6 +1,9 @@
+> ARCHIVED 2026-07-10 — executing on fix/test-hardening-car1-skips, ships with train PR #179 (ADR-0087)
+
 # Plan: Test-suite hardening train — lazy fixtures + zero-skip + zero-warning
 
 **Status:** AGREED (user combined the two tasks 2026-07-09). Three cars, sequential, one worktree; car = PR.
+> STATUS 2026-07-09: Car 1 (skip audit) DONE — PR #179, commits feac5ac8 + 61e442c7. Car 2 (lazy fixtures) EXECUTING on fix/test-hardening-car1-skips (same branch, one PR for the train). Car 3 pending.
 **Date:** 2026-07-09
 **Why one train:** all three rework the same seams (root conftest, fixture graph, pyproject). Car order is load-bearing: skips audited before fixtures are built for dead tests; warnings gate flips after the fixture churn so the rework can't ship new warnings.
 

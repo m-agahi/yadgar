@@ -7,11 +7,11 @@
 # core test job image pull (v5.46.9 CI speedup).
 #
 # Version: must track yadgar-ci base version. Bump both together.
-FROM docker.io/openfantasy/yadgar-ci:5.46.9
+FROM docker.io/openfantasy/yadgar-ci:5.121.1
 
 LABEL org.opencontainers.image.source="https://codeberg.org/maxagahi/yadgar"
 LABEL org.opencontainers.image.description="yadgar viz CI runner — yadgar-ci + Playwright/Chromium"
-LABEL org.opencontainers.image.version="5.46.9"
+LABEL org.opencontainers.image.version="5.121.1"
 
 # Install Playwright + Chromium system deps.
 # chromium-driver: Selenium/WebDriver binary (Playwright uses it via PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH).

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.120.2"
+version = "5.121.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -218,6 +218,26 @@ markers = [
 ]
 # v5.46.3 — B7 fix: auto mode avoids per-test @pytest.mark.asyncio decoration noise
 asyncio_mode = "auto"
+# ── Zero-warning gate (hardening train Car 3, ADR-0087) ──────────────────────
+# Warnings are test failures permanently. Every ignore below is a NARROW,
+# message-pinned third-party exception with a revisit note — never add a bare
+# category-wide ignore. First-party warnings get FIXED, not ignored.
+filterwarnings = [
+    "error",
+    # torch emits this on Python 3.14 when sentence-transformers loads TorchScript
+    # modules. Third-party; nothing actionable on our side. REVISIT: drop when a
+    # torch release supports py3.14 TorchScript or sentence-transformers stops
+    # using torch.jit (check on each torch bump in uv.lock).
+    "ignore:`torch\\.jit\\.script_method` is not supported in Python 3\\.14:DeprecationWarning",
+    # uvicorn's websockets protocol imports websockets.legacy at import time
+    # (deprecated since websockets 14.0). Third-party import chain — fires in any
+    # test that pulls in uvicorn's websockets impl. REVISIT: drop when uvicorn
+    # migrates off websockets.legacy (check uvicorn changelog on next bump).
+    "ignore:websockets.legacy is deprecated:DeprecationWarning",
+    # Same uvicorn import chain: websockets.server.WebSocketServerProtocol is a
+    # deprecated alias. REVISIT: same trigger as above (next uvicorn bump).
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+]
 
 [dependency-groups]
 dev = [

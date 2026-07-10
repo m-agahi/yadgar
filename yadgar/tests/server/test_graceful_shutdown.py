@@ -9,6 +9,7 @@ Two test levels:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 
@@ -142,7 +143,9 @@ async def _slow_handler(request: Request) -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
+@contextlib.asynccontextmanager
 async def _lifespan(app):
+    # starlette 1.0 deprecates bare async-generator lifespans (Car 3 zero-warning gate)
     yield
 
 

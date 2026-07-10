@@ -4,6 +4,7 @@ import hashlib
 import os
 import socket
 import tempfile
+import threading
 import time
 import urllib.parse
 
@@ -72,12 +73,12 @@ os.environ.setdefault("YADGAR_MODEL_PRELOAD", "false")
 # or pytest's own usage error (2).
 #
 # How CI avoids the guard: the CI runner starts with YADGAR_DB_URL unset;
-# the session-scoped `surreal_server` fixture sets it to a random free port
-# after collection completes, so the guard never fires.
+# the session-scoped `_surreal_url_reserve` fixture sets it to a random free
+# port after collection completes, so the guard never fires.
 #
 # How to run locally against a test URL: set YADGAR_TEST=1 (or true/yes/on)
-# alongside any YADGAR_DB_URL, or leave YADGAR_DB_URL unset (the fixture
-# will start its own SurrealDB instance).
+# alongside any YADGAR_DB_URL, or leave YADGAR_DB_URL unset (the harness
+# will lazily start its own SurrealDB instance on first DB demand).
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_HOSTS = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1", "yadgar-backend"})
@@ -309,6 +310,117 @@ def _wait_for_health(port: int, timeout: float = 30.0) -> None:
 # signals genuine infra instability that should surface, not be papered over.
 _MAX_SURREAL_RESPAWNS = 8
 
+# ---------------------------------------------------------------------------
+# Car 2 (test-suite hardening): LAZY session SurrealDB
+#
+# Pre-Car-2 the session `surreal_server` fixture was autouse: EVERY xdist
+# worker spawned a SurrealDB subprocess (~300MB) at its first test regardless
+# of whether any test on that worker touched the DB — the dominant per-worker
+# RAM floor alongside the eager embedding-model warmup (see
+# `_defer_embed_warmup_in_init_engines` below).
+#
+# New shape (request-scoped demand, no hand-markers):
+#   1. `_surreal_url_reserve` (session, autouse) reserves a free port and sets
+#      YADGAR_DB_URL WITHOUT spawning.  Env-dependent behavior (StorageEngine
+#      mode selection, guards, CLI subprocess inheritance) is unchanged from
+#      the eager era — only the subprocess itself is deferred.
+#   2. `_ensure_surreal_spawned()` spawns on FIRST demand (idempotent).
+#      Demand points:
+#        * `_isolate_surrealdb`'s `_patched_init_schema` — fires on the first
+#          StorageEngine construction against the reserved URL, wherever it
+#          happens (module fixtures, local fixtures, test bodies).  A test's
+#          needs derive from what it (transitively) constructs.
+#        * the `surreal_server` fixture — tests whose DB demand lives in a
+#          CHILD process (CLI subprocess tests) request it explicitly.
+#   3. Logic-only tests never trigger either point: no spawn, no per-test
+#      HTTP wipe, no liveness poll.
+#
+# Embedded-mode tests (monkeypatch.delenv YADGAR_DB_URL) are unaffected: their
+# engines see no URL, `_patched_init_schema` sees `self._db_url is None`, and
+# no spawn fires for them.
+# ---------------------------------------------------------------------------
+
+# Handle for the lazily-spawned session server: {proc, port, data_dir, respawns}.
+# None until the first DB demand (or forever, on logic-only workers).
+_SURREAL_HANDLE: dict | None = None
+
+# Port reserved by `_surreal_url_reserve` (None → embedded mode or external URL).
+_SURREAL_RESERVED_PORT: int | None = None
+
+# YADGAR_DB_URL that was already present at conftest import (user-provided
+# external server, e.g. YADGAR_TEST=1 runs).  We never spawn/teardown for it,
+# but per-test wipes stay active against it.
+_EXTERNAL_DB_URL: str | None = os.environ.get("YADGAR_DB_URL") or None
+
+# Guards concurrent spawn attempts from engine constructions on worker threads.
+_SURREAL_SPAWN_LOCK = threading.Lock()
+
+
+def _ensure_surreal_spawned() -> dict | None:
+    """Spawn the session SurrealDB on first demand (idempotent, per worker).
+
+    Returns the live handle, or None when no port was reserved (no `surreal`
+    binary → embedded mode; or an external YADGAR_DB_URL is in charge).
+    """
+    global _SURREAL_HANDLE
+    if _SURREAL_HANDLE is not None:
+        return _SURREAL_HANDLE
+    if _SURREAL_RESERVED_PORT is None:
+        return None
+    with _SURREAL_SPAWN_LOCK:
+        if _SURREAL_HANDLE is not None:  # lost the race — already spawned
+            return _SURREAL_HANDLE
+        import tempfile
+
+        from yadgar.tests._surreal_helpers import spawn_surreal
+
+        data_dir = tempfile.mkdtemp(prefix="surreal_session_")
+        proc = spawn_surreal(port=_SURREAL_RESERVED_PORT, data_dir=data_dir)
+        _wait_for_health(_SURREAL_RESERVED_PORT)
+        _SURREAL_HANDLE = {
+            "proc": proc,
+            "port": _SURREAL_RESERVED_PORT,
+            "data_dir": data_dir,
+            "respawns": 0,
+        }
+    return _SURREAL_HANDLE
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _surreal_url_reserve():
+    """Reserve the session SurrealDB URL WITHOUT spawning the server.
+
+    Sets YADGAR_DB_URL (and `_REAL_DB_URL`) at session start so mode selection
+    and subprocess env inheritance match the pre-Car-2 eager era; the actual
+    subprocess is spawned lazily by `_ensure_surreal_spawned()` on first DB
+    demand.  No-op when the `surreal` binary is absent (embedded mode) or when
+    an external YADGAR_DB_URL was already provided.
+    """
+    global _REAL_DB_URL, _SURREAL_HANDLE, _SURREAL_RESERVED_PORT
+    import shutil
+
+    if _EXTERNAL_DB_URL is not None or not shutil.which("surreal"):
+        yield
+        return
+
+    port = _find_free_port()
+    _SURREAL_RESERVED_PORT = port
+    real_url = f"http://127.0.0.1:{port}"
+    os.environ["YADGAR_DB_URL"] = real_url
+    _REAL_DB_URL = real_url
+    try:
+        yield
+    finally:
+        handle = _SURREAL_HANDLE
+        if handle is not None:
+            from yadgar.tests._surreal_helpers import teardown_surreal_proc
+
+            teardown_surreal_proc(handle["proc"], wait_timeout=5)
+        _SURREAL_HANDLE = None
+        _SURREAL_RESERVED_PORT = None
+        os.environ.pop("YADGAR_DB_URL", None)
+        _REAL_DB_URL = None
+
 
 def _ensure_surreal_alive(handle: dict) -> bool:
     """Respawn the session SurrealDB subprocess if it died, on the SAME port.
@@ -345,51 +457,27 @@ def _ensure_surreal_alive(handle: dict) -> bool:
     return True
 
 
-@pytest.fixture(scope="session", autouse=True)
-def surreal_server(tmp_path_factory):
-    """Start a real SurrealDB HTTP server for the test session.
+@pytest.fixture(scope="session")
+def surreal_server(_surreal_url_reserve):
+    """Session SurrealDB handle — LAZY: requesting this fixture spawns the server.
 
-    Falls back to embedded mode if the `surreal` binary is not on PATH.
+    Car 2: no longer autouse.  Most DB tests never request this directly — the
+    spawn fires from `_patched_init_schema` on their first StorageEngine
+    construction.  Request it explicitly when the DB demand lives OUTSIDE this
+    process's fixture graph: CLI-subprocess tests whose child process inherits
+    YADGAR_DB_URL and connects to it, and e2e suites that hand the URL to a
+    daemon.
+
+    Returns None in embedded mode (no `surreal` binary) or when an external
+    YADGAR_DB_URL is in charge — same contract as the pre-Car-2 fixture.
     Spawn is delegated to _surreal_helpers.spawn_surreal() which registers
     the PID for atexit cleanup (v5.10.0 orphan-reap hardening).
     """
-    import shutil
-
-    from yadgar.tests._surreal_helpers import spawn_surreal, teardown_surreal_proc
-
-    if not shutil.which("surreal"):
-        yield
-        return
-
-    db = tmp_path_factory.mktemp("surreal_data")
-    port = _find_free_port()
-    proc = spawn_surreal(port=port, data_dir=str(db))
-
-    # Track PID so workers can identify the process in case of cleanup races.
-    pid_file = db / "surreal.pid"
-    pid_file.write_text(str(proc.pid))
-
-    global _REAL_DB_URL
-    real_url = f"http://127.0.0.1:{port}"
-    os.environ["YADGAR_DB_URL"] = real_url
-    # PIECE C: capture the authoritative URL so the post-test wipe never follows a
-    # per-test monkeypatched YADGAR_DB_URL to an unreachable host and hangs.
-    _REAL_DB_URL = real_url
-    # Mutable handle so the function-scoped _surreal_liveness gate can respawn a
-    # dead server in place (same port) and update the proc reference here.
-    handle = {"proc": proc, "port": port, "data_dir": str(db), "respawns": 0}
-    try:
-        _wait_for_health(port)
-        yield handle
-    finally:
-        teardown_surreal_proc(handle["proc"], wait_timeout=5)
-        pid_file.unlink(missing_ok=True)
-        os.environ.pop("YADGAR_DB_URL", None)
-        _REAL_DB_URL = None
+    return _ensure_surreal_spawned()
 
 
 @pytest.fixture(autouse=True)
-def _surreal_liveness(surreal_server):
+def _surreal_liveness():
     """Respawn a dead SurrealDB server before each test (server-mode only).
 
     Converts the failure mode where one xdist worker's surreal dies mid-run and
@@ -399,8 +487,12 @@ def _surreal_liveness(surreal_server):
     fixture populated the ``server._storage`` singleton against the now-wiped DB
     and won't re-run ``_init_schema``.  It bounds the blast radius to the current
     module instead of the whole session.
+
+    Car 2: reads the lazy module-level handle instead of depending on the
+    ``surreal_server`` fixture (which would force an eager spawn on every
+    worker).  Before the first DB demand there is nothing to keep alive.
     """
-    handle = surreal_server
+    handle = _SURREAL_HANDLE
     if handle is None or not os.environ.get("YADGAR_DB_URL"):
         yield
         return
@@ -524,7 +616,7 @@ def _isolate_file_queue(tmp_path, monkeypatch):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _isolate_surrealdb(surreal_server):
+def _isolate_surrealdb(_surreal_url_reserve):
     """Route every StorageEngine to its own SurrealDB database, derived from
     the storage path, by patching _init_schema to swap the surreal-db header
     before any schema work runs.
@@ -538,6 +630,12 @@ def _isolate_surrealdb(surreal_server):
     on the *first* schema call instead of being re-applied after — avoids
     doubling up on _run_migrations()'s global flock under xdist parallelism.
 
+    Car 2: this patch is ALSO the lazy-spawn demand point.  A StorageEngine
+    constructed against the reserved (not-yet-spawned) session URL triggers
+    `_ensure_surreal_spawned()` right before its first schema call — so the
+    server exists exactly when the first DB test needs it, wherever the engine
+    is constructed (module fixtures, local fixtures, test bodies).
+
     In embedded mode (no YADGAR_DB_URL), this fixture is a no-op.
     """
     if not os.environ.get("YADGAR_DB_URL"):
@@ -549,6 +647,9 @@ def _isolate_surrealdb(surreal_server):
     original_init_schema = _sm.StorageEngine._init_schema
 
     def _patched_init_schema(self):
+        if self._db_url and self._db_url == _REAL_DB_URL and _SURREAL_HANDLE is None:
+            # First DB demand on this worker — spawn the reserved session server.
+            _ensure_surreal_spawned()
         if self._db_url and hasattr(self, "_http"):
             path_hash = hashlib.md5(str(self._db_path).encode()).hexdigest()[:12]
             ns = f"t{path_hash}"
@@ -766,8 +867,9 @@ _WIPE_TABLES = (
 # to catch CLI-subprocess writes that bypass the isolation patch.
 _USED_SURREAL_NAMESPACES: set[str] = set()
 
-# Authoritative test-surreal URL captured by the session-scoped `surreal_server`
-# fixture at spawn time (v5.104 PIECE C).  `_wipe_surrealdb_data` MUST use THIS,
+# Authoritative test-surreal URL captured by the session-scoped
+# `_surreal_url_reserve` fixture at reserve time (v5.104 PIECE C; Car 2 made the
+# spawn itself lazy).  `_wipe_surrealdb_data` MUST use THIS,
 # not ``os.environ["YADGAR_DB_URL"]`` — a test may monkeypatch YADGAR_DB_URL to an
 # unreachable host (e.g. test_admin_config sets ``http://yadgar-backend:8000``, a
 # Docker-internal name unresolvable from the runner).  Reading the env there made
@@ -923,7 +1025,12 @@ def _wipe_surrealdb_data():
     # registered their namespaces via _patched_init_schema at this point.
     pre_test_namespaces: frozenset[str] = frozenset(_USED_SURREAL_NAMESPACES)
     yield
-    # PIECE C: use the URL captured at surreal_server spawn, NOT os.environ — a test
+    # Car 2: nothing to wipe when no server was ever spawned on this worker
+    # (logic-only tests).  Wiping against the reserved-but-unspawned URL would
+    # burn a connect timeout per test.  External URLs (user-provided) still wipe.
+    if _SURREAL_HANDLE is None and _EXTERNAL_DB_URL is None:
+        return
+    # PIECE C: use the URL captured at session reserve, NOT os.environ — a test
     # may have monkeypatched YADGAR_DB_URL to an unreachable host (hang on connect).
     db_url = _authoritative_db_url()
     if not db_url:
@@ -1000,11 +1107,52 @@ def embeddings():
 
     The model weights are cached at the class level anyway, so sharing one
     instance across tests in a worker process is safe and avoids redundant
-    constructor overhead.
+    constructor overhead.  Construction does NOT load the model — every encode
+    path lazy-loads via _ensure_model() on first use.
     """
     from yadgar._shared.embeddings import EmbeddingEngine
 
     return EmbeddingEngine("all-MiniLM-L6-v2")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _defer_embed_warmup_in_init_engines():
+    """Defer init_engines' eager embedding-model warmup (Car 2).
+
+    ``lifecycle.init_engines()`` ends with ``_st._embeddings._ensure_model()``
+    — an eager warmup so the daemon's first recall isn't slow.  In tests that
+    warmup costs ~700MB RSS (torch + sentence-transformers + weights) on every
+    xdist worker that inits engines, even for modules that never encode.
+    Every encode path calls ``_ensure_model()`` itself, so skipping ONLY the
+    direct warmup call is behavior-neutral: the model loads on the first
+    actual encode.  Mirrors the v5.54.5 ``YADGAR_MODEL_PRELOAD=false`` rerank
+    deferral at the top of this file.
+
+    The warmup call is distinguished from real load requests by the immediate
+    caller's code name — only the direct ``init_engines`` frame is skipped.
+    encode()/dimension()/backfill paths load normally even when they run
+    INSIDE init_engines (e.g. ``_run_wiki_embedding_backfill`` → encode →
+    _ensure_model has ``encode``'s frame as the immediate caller, not
+    ``init_engines``).  Pinned by
+    ``_meta/test_lazy_fixtures_car2.py::test_init_engines_defers_model_load``,
+    which fails loudly if lifecycle renames the function.
+    """
+    import sys as _sys
+
+    from yadgar._shared.embeddings import EmbeddingEngine
+
+    _orig_ensure_model = EmbeddingEngine._ensure_model
+
+    def _lazy_ensure_model(self):
+        if _sys._getframe(1).f_code.co_name == "init_engines":
+            return  # deferred: first encode loads on demand
+        return _orig_ensure_model(self)
+
+    EmbeddingEngine._ensure_model = _lazy_ensure_model
+    try:
+        yield
+    finally:
+        EmbeddingEngine._ensure_model = _orig_ensure_model
 
 
 @pytest.fixture(scope="module")

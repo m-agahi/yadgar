@@ -181,6 +181,7 @@ class TestSeedAnchors:
             patch("urllib.request.urlopen", side_effect=http_err),
         ):
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
+        http_err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
         assert result["skipped"] == 1
         assert result["created"] == 0
 
@@ -194,6 +195,7 @@ class TestSeedAnchors:
             patch("urllib.request.urlopen", side_effect=http_err),
         ):
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
+        http_err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
         assert result["skipped"] == 1
 
     def test_missing_content_skipped(self):
