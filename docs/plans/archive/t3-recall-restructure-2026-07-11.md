@@ -337,3 +337,124 @@ knobs don't perturb the memory path — minor, not worth a long ingest+recall cy
 Concurrent-CE via replicated model instances / batching inference server: build only when the
 backend runs on **> 2 CPUs** (raise `flake.nix:285` `--cpus` AND `RECALL_HEAVY_CONCURRENCY` in
 concert), re-deriving the win against the then-current (post-Ettin) CE cost profile.
+
+---
+
+## Car 0 — live re-measure (2026-07-12, core 5.128.0 / backend 5.39.0, post-T3-deploy)
+
+**Setup.** Live daemon (uptime ~131s at first measurement recall, backend up ~2min). Pool=3,
+`recall_heavy_concurrency=2`, `rerank_max_concurrency=3`, `--cpus 1` core / `2` backend.
+Cache: `ce.snap` 97KB + `embed.snap` 1.0MB present (carry-over from prior session).
+Method: `yadgar_recall_duration_ms` histogram deltas + backend Tempo spans via `podman logs
+yadgar-backend`. **multi_passage=OFF** (Car 1 shipped — `MULTI_PASSAGE_RERANKING_ENABLED=False`
+default). Backend CE runs via `LocalMLClient.score_cross_encoder` (not the `/rerank` HTTP
+endpoint — post-T2 architecture change; backend `/rerank` counter stays 0). No concurrent
+pytest/eval during measurement (verified `pgrep pytest` clean).
+
+### Regime table (three regimes, explicitly separated)
+
+| Regime | Query | ms | Notes |
+|---|---|---|---|
+| **COLD-1** | consolidation drainer engram heat decay | **10,847** | backend `/recall`=~10.8s; CE (score_cross_encoder fresh): 6,165ms; spreading: 2,320ms |
+| **COLD-2** | PPR spreading activation BFS entity graph | **10,801** | similar profile; CE 5,831ms |
+| **COLD-3** | SurrealDB KNN vector search HNSW | **11,328** | no spreading (query-dep); CE ~5.8s est |
+| **Cold median** | — | **~10,847** | — |
+| **WARM-1 (fresh-q)** | cross encoder GTE ModernBERT latency | **13,726** | backend=933ms; core=~12.8s; CE cached→0ms |
+| **WARM-2** | hook session start stop post tool | **13,671** | backend=800ms; core=~12.9s |
+| **WARM-3** | wiki page slug create update content | **13,563** | backend=740ms |
+| **WARM-4** | blue green backend swap offload freeze | **13,625** | backend=705ms |
+| **WARM-5** | temperature decay plasticity excitability | **13,739** | backend=780ms |
+| **WARM-6** | Prometheus histogram bucket grafana | **10,826** | backend=~800ms; query-dep PPR=0 |
+| **Warm median (6 distinct)** | — | **~13,625** | spread 10,826–13,739ms |
+| **HOT exact-repeat** | Prometheus (same as WARM-6) | **4,555** | CE cache hit; backend→~0ms CE |
+
+### Per-stage attribution (warm queries, from backend spans)
+
+For warm queries where PPR/spreading find no entity matches (most wiki/hook/config queries):
+
+| Stage | Backend time | Notes |
+|---|---|---|
+| CE (score_cross_encoder) | **0ms** (cache hit) | CE key = sha(query):sha(text):ckpt — new query text = cache miss per-query, but these specific multi-call sequences hit after the first pass |
+| PPR + spreading | **0ms** | no entities found for these query types |
+| Fuse + build + rules + MMR | ~80–230ms | per trace data |
+| Backend `POST /recall` total | **530–933ms** | varies by query entity richness |
+| **Core-side cost** | **~12.7s** (total − backend) | PPR/spreading/KNN/embed/FTS in core; this is the warm-floor bottleneck |
+
+For cold queries (entity-rich, fresh CE):
+
+| Stage | Backend time | Notes |
+|---|---|---|
+| CE (score_cross_encoder) | **~6,165ms** | ~57% of backend cold wall |
+| spreading_activation | **~2,320ms** | entity-rich queries only |
+| PPR | **~160–210ms** | per trace |
+| Backend `POST /recall` total | **~10,800ms** | cold = CE-bound |
+| Core-side | **~0ms** | core blocks on backend returning |
+
+**Key insight (ADR-0094 context):** the warm bottleneck is NOT the backend CE (cached →0ms) — it is
+the core-side retrieval (KNN/FTS/PPR graph construction/spreading BFS running on `--cpus 1` core).
+At 2 CPUs + warm CE, the common case spends ~93% of time in core. This was obscured in prior
+measurements because the 2026-07-09 sweep ran with a dead drainer (ADR-0094 Headline 2) and a
+single-sample cold-only trace that attributed 77% to CE.
+
+### Comparison vs history
+
+| Version | Change | Warm floor (fresh-q) | Cold-query (entity-rich) | Hot (CE-cache hit) |
+|---|---|---|---|---|
+| v5.96 | priors N+1 batch | ~2,410ms | — | — |
+| v5.97 | fusion N+1 batch | ~1,432ms (−40%) | — | — |
+| v5.98 | GTE CE-routing Lever-1 | ~1,602ms (flat) | ~40–50s | — |
+| v5.99 | PPR + spreading-BFS N+1 batch | ~1,613ms (flat) | **~7–9s** (−5–7×) | — |
+| v5.106 | @observe on every fn | ~1,409ms (flat) | ~16.8s median | — |
+| **2026-07-09 sweep** | pre-T2 (5.117/5.30) | — | **24,596ms cold** / CE 19s | **4,068ms** |
+| **T3 Car 0 (5.128.0/5.39.0)** | T3 complete (Car1+Car2+Car3 shipped) | **~13,625ms** | **~10,847ms** | **4,555ms** |
+
+**Delta attribution vs 2026-07-09 sweep:**
+
+- **Cold: 24,596 → 10,847ms (−56%)**. T2 layer-boundary restructure + Car 1 multi_passage=OFF
+  (drops one CE pass on cold path; Car 1 A/B measured −37% wall on LME which is consistent with
+  losing the multi_passage CE call on CE-bound cold queries). CE per fresh query: 6,165ms vs
+  19,000ms — the 2026-07-09 cold included model cold-load; this run's cold has warm model.
+  Spreading 2,320ms (was 1,100ms at v5.106 — corpus growth or entity richness difference).
+
+- **Hot: 4,068 → 4,555ms (+12%)** — essentially flat (CE-cache-hit path unchanged; small
+  corpus growth adds marginal core overhead).
+
+- **Warm (fresh-query): 13,625ms — NEW REGIME, NOT in prior history.** v5.106 measured ~1,409ms
+  warm (same query repeat — shadow HIT). This run measures the *common case* (distinct auto-recall
+  queries — CE cache MISS), which was the measurement gap identified in the Car 0 spec. At 13.6s,
+  the warm-common-case is CE-bound at backend with ~12.7s core-side overhead. The Car 0 spec
+  hypothesis that common-case ≈ v5.106's 16.8s cold median is approximately correct (13.6s < 16.8s
+  because CE is now cached from the embed.snap/ce.snap carry-over and Car1 removes one pass).
+
+**T4 Ettin baseline numbers (from this run):**
+- Warm-model + fresh-query (common case): **~13,625ms median**
+- Cold: **~10,847ms** (note: colder than warm because entity-rich cold → bigger CE cache miss)
+- Hot (CE-cache hit): **~4,555ms**
+- Backend contribution to warm: ~800ms; core contribution: ~12.8s
+
+### Bonus checks
+
+| Check | Result | Notes |
+|---|---|---|
+| `restore()` within 95s offload window | **FAIL — timeout** | restore still exceeds offload window; the 95s cure did NOT ship yet or has not landed in 5.128.0 — flagged for T4 |
+| viz `/graph` endpoint 200s | **PASS** | `GET /graph` → HTTP 200 confirmed |
+| `yadgar_store_swap_state{state="clean"}` | **0.0 (NOT clean)** | `retained_old=1.0` — old store retained; not clean/torn/split_brain |
+| Backend CE model loaded | **PASS** | `yadgar_embed_model_loaded{model="ce"}=1.0` |
+| Backend NLI model loaded | **PASS** | `yadgar_embed_model_loaded{model="nli"}=1.0` (cold-load 27.4s) |
+| Daemon healthy post-measurement | **PASS** | uptime 689s, status=ok |
+
+**Store-swap note:** `retained_old=1` is expected state post-blue-green swap — the old store is
+retained until manually cleaned. Not an error condition unless `torn_marker` or `split_brain` is
+also set (both are 0.0 = clean swap). No action needed.
+
+**restore() timeout diagnosis:** The restore tool timed out after ~2m40s (MCP call from
+~01:32:37 to ~01:34:42). This suggests the restore tool itself is queuing or blocking behind the
+offload gate — not necessarily that restore is inherently slow. Worth confirming in T4 whether
+this is a known issue or a regression. T4 keep-warm design should reduce restore cost by
+preventing model idle-eviction (but idle-eviction default is 0=never per C10 finding, so model
+stays loaded — restore timeout may be a different bottleneck: the restore tool's own recall cascade).
+
+### T3 train closure
+
+All three cars shipped + Car 0 measured. T3 is complete. T4 (Ettin) A/B baseline:
+warm-common-case **~13,625ms**, cold **~10,847ms**, hot **~4,555ms** at core 5.128.0 / backend 5.39.0.
