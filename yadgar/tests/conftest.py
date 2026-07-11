@@ -771,6 +771,19 @@ def _reset_server_state():
         _proj._resolve_project_root.cache_clear()
     except Exception:
         pass
+    # T3 Car 2: drain + drop the deferred recall side-effect executors so a
+    # deferred session worker (or a forked DB task) from one test cannot fire
+    # after its fixtures tear down and pollute the next test's _st state.
+    try:
+        from yadgar._shared.runtime.recall_side_effects_fork import (  # noqa: PLC0415
+            reset_db_tasks,
+            reset_session_executor,
+        )
+
+        reset_session_executor()
+        reset_db_tasks()
+    except Exception:  # noqa: BLE001 — never block a test on this defensive reset
+        pass
     _reset_backend_caches()
 
 

@@ -442,6 +442,15 @@ class TestRecallCoreForwarderE2E:
             assert "id" in r, f"Result missing 'id': {r}"
             assert "content" in r, f"Result missing 'content': {r}"
 
+        # T3 Car 2: the session half is now DEFERRED off the response path
+        # (eventually-consistent). Drain the fork so the deferred SR write lands
+        # deterministically before asserting the side-effect fired.
+        from yadgar._shared.runtime.recall_side_effects_fork import (
+            drain_session_side_effects as _drain_session,
+        )
+
+        _drain_session(timeout=10.0)
+
         # Assert 2: session side-effect fired — _last_recalled_ids mutated.
         ids_after = dict(_st_module._last_recalled_ids)
         assert ids_after != ids_before or len(results) == 0, (

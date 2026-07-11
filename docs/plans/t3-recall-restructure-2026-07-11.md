@@ -1,6 +1,9 @@
 # T3 — Recall restructure: build-ready plan (adversarial re-audit)
 
-**Status:** BUILD-READY — supersedes the "Train 2 — Restructure" section of
+**Status:** Car 2 EXECUTING (`feat/t3-car2-sideeffect-fork`, core 5.126.0 / backend
+5.38.0) — async side-effects fork, both halves. Cars 0/1 not in this branch; the
+train's FINAL car does the archive-first move (ADR-0081/0082, partial-scope rule).
+BUILD-READY — supersedes the "Train 2 — Restructure" section of
 `docs/plans/recall-3-train-overhaul-2026-07-04.md` for build purposes. That
 program doc stays the north-star narrative; THIS file is the build spec after a
 full re-audit against the current tree.

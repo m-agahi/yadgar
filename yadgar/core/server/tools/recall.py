@@ -14,6 +14,14 @@ from yadgar._shared.observability.observe import observe
 # which is _shared by the dual-import law. The old F401 re-exports of the
 # pipeline internals are gone: core must not bind the executor.
 from yadgar._shared.runtime.recall_session import _apply_recall_session_side_effects
+
+# T3 Car 2: the session half (SR transition storage writes + action buffer +
+# replay tick) is deferred off the tool-response critical path via a single-FIFO
+# worker (per-session ordering preserved). Imported under a private alias so the
+# integration test can patch the seam.
+from yadgar._shared.runtime.recall_side_effects_fork import (
+    submit_session_side_effect as _submit_session_side_effect,
+)
 from yadgar.core.server._app import _tool
 
 logger = logging.getLogger(__name__)
@@ -257,7 +265,13 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         )
         # Session-side bookkeeping runs in core (SR transitions, buffer, replay).
         # DB-side bookkeeping (heat boost, thermo) already ran in the backend.
-        _apply_recall_session_side_effects(merged, query)
+        # T3 Car 2: defer the session half off the response critical path — the
+        # SR transition storage writes are I/O on the 1-CPU core and were
+        # blocking the tool response. The single-FIFO worker preserves the
+        # per-session SR from→to chain ordering. `merged` is captured by value
+        # (the closure holds the same list the caller returns — pure side-state,
+        # no mutation of the response payload).
+        _submit_session_side_effect(lambda: _apply_recall_session_side_effects(merged, query))
         return merged
 
     finally:

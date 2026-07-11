@@ -770,6 +770,16 @@ class Settings(BaseSettings):
     # before /health degrades → 503. MUST be > TOOL_TIMEOUT_SEC so legit ops keep
     # resetting the clock and only leaked workers trip the signal.
     TOOL_SATURATION_GRACE_SEC: float = 120.0
+    # T3 Car 2 — recall side-effect fork. Forks BOTH inline side-effect halves off
+    # the recall response path: the core session half (SR transition writes) to a
+    # single-FIFO worker, and the backend batched heat DB write (~407ms tail) to a
+    # tracked asyncio task. Default ON; flip False to restore inline behavior.
+    RECALL_SIDEEFFECT_FORK: bool = True
+    # Max QUEUED core session side-effects before submit backpressures to inline
+    # (bounds memory under recall storms; overflow runs inline — slower, never lost).
+    RECALL_SIDEEFFECT_SESSION_MAX_PENDING: int = 64
+    # Max in-flight backend DB-write tasks before schedule refuses (inline write).
+    RECALL_SIDEEFFECT_DB_MAX_INFLIGHT: int = 64
 
     # v5.95 config-integrity Phase 4 — hot-path literals promoted to knobs so ops
     # can tune them without a rebuild. Each is read via get_settings() at the
