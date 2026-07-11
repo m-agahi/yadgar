@@ -144,3 +144,23 @@ class TestAllFeaturesToggleable:
         _make_memory(storage, embeddings, "test memory for toggle check")
         results = r.recall("test", max_results=5)
         assert isinstance(results, list)
+
+
+# ── Config default pins (T3 Car 1) ──────────────────────────────────────
+
+
+class TestMultiPassageConfigDefault:
+    """Pin: MULTI_PASSAGE_RERANKING_ENABLED default is False (T3 Car 1, core 5.125.0).
+
+    Gated on LongMemEval recall@k parity — flipped from True in this car.
+    """
+
+    def test_multi_passage_default_is_false(self):
+        """Settings() with no overrides must default MULTI_PASSAGE_RERANKING_ENABLED to False."""
+        s = Settings()
+        assert s.MULTI_PASSAGE_RERANKING_ENABLED is False
+
+    def test_multi_passage_enabled_via_override(self):
+        """Toggle still works: explicit True restores the old behaviour."""
+        s = Settings(MULTI_PASSAGE_RERANKING_ENABLED=True)
+        assert s.MULTI_PASSAGE_RERANKING_ENABLED is True

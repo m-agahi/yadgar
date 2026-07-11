@@ -30,8 +30,21 @@ _SCRIPT_PATH = Path(__file__).parent.parent.parent / "core" / "hooks" / "session
 
 
 def _load_module_disabled():
-    """Load the hook script with the kill-switch on so sys.exit(0) is a no-op."""
-    with patch.dict(os.environ, {"SESSION_END_CAPTURE_ENABLED": "false"}):
+    """Load the hook script with the kill-switch on so sys.exit(0) is a no-op.
+
+    YADGAR_SESSION_END_DIR points at a throwaway tmp dir for BOTH exec passes:
+    the module-level load otherwise writes its sentinel into the real
+    ~/.local/state/yadgar/session-ends/, which does not exist in the CI
+    container (Errno 2 on the atomic rename) — the load failed and every test
+    in this file skip-fired with a dynamic, un-sanctionable reason.
+    """
+    import tempfile
+
+    _sentinel_dir = tempfile.mkdtemp(prefix="yadgar-session-end-test-")
+    with patch.dict(
+        os.environ,
+        {"SESSION_END_CAPTURE_ENABLED": "false", "YADGAR_SESSION_END_DIR": _sentinel_dir},
+    ):
         # runpy runs the script; sys.exit(0) is raised and caught here
         import runpy
 
@@ -44,7 +57,10 @@ def _load_module_disabled():
     mod = importlib.util.module_from_spec(spec)
     # Patch sys.exit to prevent it from running during exec_module
     with (
-        patch.dict(os.environ, {"SESSION_END_CAPTURE_ENABLED": "false"}),
+        patch.dict(
+            os.environ,
+            {"SESSION_END_CAPTURE_ENABLED": "false", "YADGAR_SESSION_END_DIR": _sentinel_dir},
+        ),
         patch("sys.exit"),
         patch("sys.stdin") as mock_stdin,
     ):
