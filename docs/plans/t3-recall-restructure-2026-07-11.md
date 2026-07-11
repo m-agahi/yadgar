@@ -169,3 +169,26 @@ that T4's Ettin A/B runs against — unchanged intent from the program doc.
    override for the B-arm? Confirm in Car 1 before promising the A/B.
 3. `recall.side_effects` span cost on 5.124/5.36 — single-digit ms ⇒ Car 2 defers.
 4. multi_passage: kept-as-toggle vs removed-entirely — decided by Car 1's per-query-class recall@k (Open-Q #4 from the program doc).
+
+## Car 3 — CPU-aware parallel-ready pipeline (user decision 2026-07-11: option B, capability-first)
+
+User reversal of the audit's defer (the defer overrode the recorded floor-not-ceiling
+principle): build the capability NOW so raising `--cpus` fans out without another train.
+"I need this fully cpu aware and parallel ready."
+
+1. **`available_cpus()` shared helper** — cgroup-v2 aware (cpu.max quota; os.cpu_count
+   lies in containers), cached, both services. ALL pool/thread budgets derive from it:
+   `RECALL_HEAVY_CONCURRENCY` default becomes f(ncpu), rerank gate size, executor sizes.
+2. **Bounded-parallel gather for non-CE stages** — fan-out providers / pool build
+   (storage I/O — parallelizes well), fusion/PPR/spreading where numpy releases the GIL;
+   thread budget = f(available_cpus), degrades to sequential at ≤2 CPUs (today's behavior
+   preserved, byte-identical results — ordering-stable merges).
+3. **CE stage CPU-awareness, cheapest-first**: (a) torch intra-op threads =
+   f(available_cpus) for the batched CE pass — zero RAM cost, model-agnostic, likely the
+   dominant CE win; (b) multi_passage (if re-enabled) shares the same budget; (c) model
+   REPLICATION / batching-server = designed-but-deferred fallback, decision gated on
+   measurement at >2 CPUs post-Ettin (replicating a 32M Ettin is cheap; GTE is not).
+4. **Gates**: byte-identical recall results at any ncpu (ordering-stability tests);
+   no thrash at low cores (bounded pools, ADR-0011-class onnx lesson); LongMemEval parity;
+   perf table at 2 vs 4+ CPUs in the PR (measured via cgroup-limited local runs).
+5. Ships as the remaining T3 PR (train rule: this + Car 0 docs close T3).
