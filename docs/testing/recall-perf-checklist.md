@@ -249,3 +249,54 @@ container CPU 157%→103%). Fix requires code-level `SessionOptions.intra_op_num
 Unconstrained datapoint (0.83×) still slower → no latency win expected even with fix.
 
 **Decision:** `GTE_RERANKER_BACKEND` stays `torch`. See ADR-0043.
+
+## Run log — 2026-07-12 (core 5.128.0 / backend 5.39.0 — T3 complete, Car 0 re-measure)
+
+**Context:** T3 train fully shipped (Car 1 multi_passage=OFF, Car 2 async side-effects fork,
+Car 3 CPU-aware parallel pipeline). This is the Car 0 live re-measure on the just-deployed
+stack, becomes the T4 Ettin A/B baseline. Pool=3, `recall_heavy_concurrency=2`,
+`rerank_max_concurrency=3`, `--cpus 1` core / `2` backend. Cache: `ce.snap` 97KB +
+`embed.snap` 1.0MB (carry-over). **multi_passage=OFF** (Car 1). Method: `yadgar_recall_duration_ms`
+histogram deltas + `podman logs yadgar-backend` Tempo spans. Backend uptime ~2min at first
+measurement; no concurrent pytest/eval (pgrep gate clean).
+
+**Three regimes (explicitly separated, per T3 Car 0 spec):**
+
+| Regime | ms | N | spread | Notes |
+|---|---|---|---|---|
+| COLD (warm model + fresh CE, entity-rich) | **10,847** | 3 | 10,801–11,328 | CE=6.2s (~57% backend), spreading=2.3s; backend total=10.8s |
+| WARM (warm model + fresh query, CE-cache miss — **common case**) | **13,625** | 6 | 10,826–13,739 | backend=530–933ms; core=~12.7s (dominant); CE cached→0ms backend |
+| HOT (exact-repeat, CE-cache hit) | **4,555** | 1 | — | CE 0ms backend; residual = core KNN/FTS/PPR |
+
+**Per-stage attribution (backend spans):**
+
+Cold: CE 6,165ms (57%) + spreading 2,320ms (21%) + other 2,315ms (22%) = ~10,800ms backend.
+Warm: backend 800ms total; CE cached ~0ms; core-side (KNN/FTS/PPR/spreading on --cpus 1 core) ~12.7s = **dominant cost**.
+
+**Key finding:** warm-common-case bottleneck is the CORE-SIDE retrieval (not backend CE).
+At 2 CPUs + warm CE, ~93% of warm time is in core. This is the correct T4 baseline — prior
+history conflated same-query warm (shadow HIT + CE cached = 1.4s) with the common case of
+distinct auto-recall queries that miss CE.
+
+**Comparison vs history:**
+
+| Version | Warm (fresh-q) | Cold | Hot |
+|---|---|---|---|
+| v5.106 (2026-07-04) | ~1,409ms *(same-query repeat — CE cached, not common case)* | ~16.8s median | — |
+| 2026-07-09 sweep (5.117/5.30, pre-T2) | — | 24,596ms (model-load inclusive) | 4,068ms |
+| **T3 Car 0 (5.128.0/5.39.0)** | **~13,625ms** (common case, NEW) | **~10,847ms** | **4,555ms** |
+
+Cold delta 2026-07-09 → T3: −56% (24,596 → 10,847ms). Multi_passage=OFF (Car 1) removes
+one CE pass → accounts for much of the cold-CE reduction (LME showed −37% wall). Hot
+essentially flat (+12%).
+
+**Bonus checks:**
+
+| Check | Result |
+|---|---|
+| `restore()` within offload window | **FAIL — timeout** (~2min40s; not within 95s offload) |
+| viz `/graph` 200s | **PASS** |
+| `yadgar_store_swap_state{state="clean"}` | `0.0` — `retained_old=1.0` (expected post-swap; no torn/split) |
+| CE/NLI models loaded | **PASS** (both =1.0; NLI cold-load 27.4s at backend start) |
+
+**T4 Ettin baseline locked:** warm-common-case **~13,625ms**, cold **~10,847ms**, hot **~4,555ms**.
