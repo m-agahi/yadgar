@@ -498,6 +498,10 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC", "2.0", "float"),
     ConfigEntry("YADGAR_TOOL_TIMEOUT_SEC", "95.0", "float"),
     ConfigEntry("YADGAR_TOOL_SATURATION_GRACE_SEC", "120.0", "float"),
+    # ── T3 Car 2: recall side-effect fork (both halves off the response path) ────
+    ConfigEntry("YADGAR_RECALL_SIDEEFFECT_FORK", "true", "bool"),
+    ConfigEntry("YADGAR_RECALL_SIDEEFFECT_SESSION_MAX_PENDING", "64", "int"),
+    ConfigEntry("YADGAR_RECALL_SIDEEFFECT_DB_MAX_INFLIGHT", "64", "int"),
     ConfigEntry("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "3", "int"),
     # v5.95 config-integrity Phase 4 — hot-path literals promoted to knobs
     ConfigEntry("YADGAR_RERANKER_IDLE_UNLOAD_SEC", "600.0", "float"),

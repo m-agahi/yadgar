@@ -498,6 +498,20 @@ def shutdown(on_stopping=None, snapshot_caches=None):
     # v5.7.0 PR-0: consolidation daemon removed; no stop() needed.
     if _st._staleness is not None:
         _st._staleness.stop()
+    # T3 Car 2: drain deferred recall session side-effects (SR transition storage
+    # writes, buffer captures, replay ticks) BEFORE _buffer.flush() AND before
+    # storage.close() — the deferred worker both appends to _st._buffer (so it must
+    # drain before the flush or the capture is lost) and writes through
+    # _st._storage (so it must drain before close). Best-effort so a wedged
+    # side-effect can't hang graceful stop past the systemd stop-timeout.
+    try:
+        from yadgar._shared.runtime.recall_side_effects_fork import (  # noqa: PLC0415
+            drain_session_side_effects,
+        )
+
+        drain_session_side_effects(timeout=10.0)
+    except Exception:  # noqa: BLE001 — shutdown must proceed
+        pass
     if _st._buffer is not None:
         _st._buffer.flush()
     # v5.49.0 Phase 6: snapshot embed caches before closing storage (core callback)

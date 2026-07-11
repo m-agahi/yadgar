@@ -1525,6 +1525,29 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "circuit_breaker",
     },
+    # T3 Car 2 — recall side-effect fork.
+    "recall_sideeffect_fork": {
+        "desc": (
+            "Fork BOTH inline recall side-effect halves off the response path: the core session "
+            "half (SR transition writes → single-FIFO worker) and the backend batched heat DB write "
+            "(~407ms tail → tracked asyncio task). Default true; false restores inline behavior."
+        ),
+        "section": "circuit_breaker",
+    },
+    "recall_sideeffect_session_max_pending": {
+        "desc": (
+            "Max QUEUED core session side-effects before submit backpressures to inline (default 64). "
+            "Bounds memory under recall storms; overflow runs inline — slower, never lost."
+        ),
+        "section": "circuit_breaker",
+    },
+    "recall_sideeffect_db_max_inflight": {
+        "desc": (
+            "Max in-flight backend DB-write tasks before schedule refuses and the caller runs the "
+            "boost write inline (default 64). Bounds forked-task pile-up under recall storms."
+        ),
+        "section": "circuit_breaker",
+    },
     # v5.95 config-integrity Phase 4 — hot-path literals promoted to knobs.
     "reranker_idle_unload_sec": {
         "desc": (

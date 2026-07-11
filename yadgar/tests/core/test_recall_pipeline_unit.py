@@ -288,12 +288,17 @@ def test_forward_to_backend_no_url_raises():
 
 
 def test_recall_forward_only_calls_session_side_effects():
-    """recall() calls _apply_recall_session_side_effects on returned results.
+    """recall() routes _apply_recall_session_side_effects on returned results.
 
     Phase 2a: forward-only path — no flag needed. recall() unconditionally
-    forwards to _forward_to_backend and runs session half on returned list.
+    forwards to _forward_to_backend and runs the session half on the returned
+    list. T3 Car 2: the session half is DEFERRED off the response path, so the
+    test drains the fork before asserting the (eventually-consistent) call.
     """
     import yadgar.core.server.tools  # noqa: F401
+    from yadgar._shared.runtime.recall_side_effects_fork import (
+        drain_session_side_effects,
+    )
 
     _recall_module = sys.modules["yadgar.core.server.tools.recall"]
     _recall_fn = _recall_module.recall
@@ -314,6 +319,8 @@ def test_recall_forward_only_calls_session_side_effects():
         ):
             result = _recall_fn(query="forward test", directory="/tmp", max_results=5)
 
+        # Deferred session half — drain so the assertion is deterministic.
+        drain_session_side_effects(timeout=10.0)
         mock_session.assert_called_once_with(fake_results, "forward test")
         assert result == fake_results
 

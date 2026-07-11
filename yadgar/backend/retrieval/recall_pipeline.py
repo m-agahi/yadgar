@@ -482,12 +482,45 @@ def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wr
     return pooled[:max_results]
 
 
+@observe(tier="stage", metric="tools.recall._compute_db_boost", span=False)
+def _compute_db_boost(merged: list[dict], storage) -> tuple[list[int], str]:
+    """RESPONSE-FEEDING half of the DB side-effects — must stay INLINE.
+
+    Applies the +0.1 heat boost + last_accessed stamp to each recalled MEMORY
+    IN PLACE (wiki rows and id-less synthetic dicts skipped) and records the
+    thermo access (local in-process). These mutations are visible in the recall
+    RESPONSE payload, so they CANNOT be deferred — deferring them would ship an
+    un-boosted (non-byte-identical) response (T3 Car 2 behavior contract).
+
+    Returns ``(boosted_ids, now)`` so the caller can either issue the batched DB
+    write inline (``storage.boost_memories_access``) or fork it off the response
+    path via ``recall_side_effects_fork.schedule_db_write``. This function does
+    NOT issue that write — it is the cheap, latency-safe compute only.
+    """
+    now = storage._now_iso()
+    thermo = _st._thermo
+
+    boosted_ids: list[int] = []
+    for m in merged:
+        mid = m.get("id")
+        if mid is None or m.get("_source") == "wiki":
+            continue
+        m["heat"] = min(m.get("heat", 0.0) + 0.1, 1.0)
+        m["last_accessed"] = now
+        boosted_ids.append(mid)
+        if thermo is not None:
+            thermo.record_access(mid, was_useful=True)
+    return boosted_ids, now
+
+
 @observe(tier="stage", metric="tools.recall._apply_recall_db_side_effects")
 def _apply_recall_db_side_effects(merged: list[dict], query: str, storage) -> None:  # noqa: ARG001
     """DB-side bookkeeping half: heat boost + thermo access record.
 
-    Runs inside the backend handler when RECALL_BACKEND_ENABLED=True.  Also
-    runs inside the combined _apply_recall_side_effects for the in-core paths.
+    Runs inside the combined _apply_recall_side_effects for the in-core paths
+    (legacy/landscape/tests). The flag-ON backend handler decomposes this into
+    the inline ``_compute_db_boost`` + a forked ``boost_memories_access`` write
+    (T3 Car 2) — see embed_service.recall_route.
 
     Writes performed:
       - thermo.record_access(mid, was_useful=True) per memory id (local in-process)
@@ -505,21 +538,7 @@ def _apply_recall_db_side_effects(merged: list[dict], query: str, storage) -> No
 
     # span(): curated landmark name — inline CM can't auto-derive (ADR-0061 exception)
     with span("recall.side_effects.db", results=len(merged)):
-        now = storage._now_iso()
-        thermo = _st._thermo
-
-        boosted_ids: list[int] = []
-        for m in merged:
-            mid = m.get("id")
-            if mid is None or m.get("_source") == "wiki":
-                continue
-            new_heat = min(m.get("heat", 0.0) + 0.1, 1.0)
-            m["heat"] = new_heat
-            m["last_accessed"] = now
-            boosted_ids.append(mid)
-            if thermo is not None:
-                thermo.record_access(mid, was_useful=True)
-
+        boosted_ids, now = _compute_db_boost(merged, storage)
         if boosted_ids:
             storage.boost_memories_access(boosted_ids, now)
 

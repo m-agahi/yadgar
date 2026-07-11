@@ -699,6 +699,18 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # T3 Car 2: drain forked recall DB-write side-effects BEFORE stopping the
+    # queue drainer / surreal (the #181 writers-stop seam) so no forked heat
+    # boost is lost on shutdown. Bounded; overruns cancel (idempotent writes).
+    from yadgar._shared.runtime.recall_side_effects_fork import (  # noqa: PLC0415
+        drain_db_tasks as _drain_db_tasks,
+    )
+
+    try:
+        await _drain_db_tasks(timeout=10.0)
+    except Exception as _exc:  # noqa: BLE001 — shutdown must proceed
+        logger.warning("recall side-effect drain error: %s", _exc)
+
     # backend 5.30.1: stop the queue drainer first (join capped at 5s).
     await asyncio.to_thread(_stop_queue_drainer)
 
@@ -1200,6 +1212,22 @@ def _run_landscape_backend(query: str, max_results: int, directory: str, storage
     return scoped[:max_results]
 
 
+@observe(tier="stage")
+async def _forked_boost_write(storage, boosted_ids: list[int], now: str) -> None:
+    """T3 Car 2: the forked backend heat DB write (the ~407ms recall tail).
+
+    Runs the batched ``storage.boost_memories_access`` off the recall response
+    critical path (as a tracked task via ``schedule_db_write``, or awaited inline
+    under backpressure). The ``recall.side_effects.db`` span nests under the
+    recall request trace because the task is created while that span is current
+    (contextvars carry the OTEL parent across ``create_task``).
+    """
+    from yadgar._shared.observability.tracing import span as _span  # noqa: PLC0415
+
+    with _span("recall.side_effects.db", results=len(boosted_ids)):
+        await asyncio.to_thread(storage.boost_memories_access, boosted_ids, now)
+
+
 @app.post("/recall", response_model=RecallResponse)
 @observe(tier="boundary", metric="backend.recall")
 async def recall_route(
@@ -1232,8 +1260,11 @@ async def recall_route(
     from yadgar._shared.runtime.lifecycle import (
         _get_storage as _backend_get_storage,  # noqa: PLC0415
     )
+    from yadgar._shared.runtime.recall_side_effects_fork import (  # noqa: PLC0415
+        schedule_db_write,
+    )
     from yadgar.backend.retrieval.recall_pipeline import (  # noqa: PLC0415
-        _apply_recall_db_side_effects,
+        _compute_db_boost,
         _fanout_recall,
     )
 
@@ -1244,8 +1275,12 @@ async def recall_route(
         time.monotonic() + req.deadline_ms / 1000.0 if req.deadline_ms else None
     )
 
-    # Run the pipeline in a thread (CPU-bound + IO-bound mix; don't block the event loop).
-    def _run_pipeline() -> list[dict]:
+    # Run the RETRIEVAL + the response-feeding heat mutations in a thread
+    # (CPU-bound + IO-bound mix; don't block the event loop). T3 Car 2: the
+    # in-place heat/last_accessed mutations stay INLINE here (they feed the
+    # response payload — must be byte-identical), but the batched DB WRITE
+    # (~407ms tail) is forked off the response path below.
+    def _run_pipeline() -> tuple[list[dict], list[int], str]:
         storage = _backend_get_storage()
 
         if req.mode == "landscape":
@@ -1273,10 +1308,23 @@ async def recall_route(
                 deadline=deadline,
             )
 
-        _apply_recall_db_side_effects(merged, req.query, storage)
-        return merged
+        # Inline, latency-safe: mutate heat/last_accessed in place + thermo record.
+        boosted_ids, now = _compute_db_boost(merged, storage)
+        return merged, boosted_ids, now
 
-    results = await asyncio.to_thread(_run_pipeline)
+    results, boosted_ids, boost_now = await asyncio.to_thread(_run_pipeline)
+
+    # T3 Car 2: fork the batched heat DB write off the response critical path.
+    # create_task runs while THIS request span is current → contextvars carry the
+    # OTEL parent so recall.side_effects.db nests under the recall trace. If the
+    # fork is disabled OR the in-flight cap is hit, await the SAME coroutine
+    # inline (backpressure — the side-effect always executes, never dropped).
+    if boosted_ids:
+        storage = _backend_get_storage()
+        _coro = _forked_boost_write(storage, boosted_ids, boost_now)
+        if not schedule_db_write(_coro):
+            await _coro
+
     return RecallResponse(results=results)
 
 
