@@ -1,61 +1,35 @@
-"""Cross-platform path resolution for Claude Code config directories.
+"""Back-compat shim — platform_paths moved to ``yadgar.core.install`` (T2 Car A).
 
-Supports Linux, macOS, and Windows.
-Used by install-subagents and config-sync commands (v5.44.0).
+Dual-import law (layer-boundary train): the only prod importer was core's
+install_subagents flow, so the module left `_shared` for
+``yadgar/core/install/platform_paths.py`` (install-adjacent per plan Car A).
 
-No hardcoded /home/<user> paths — always derives from pathlib.Path.home().
+PEP-562 shim (Car 0 #167 precedent): ``from yadgar._shared.platform_paths
+import get_claude_config_dir`` keeps working. New code must import from
+``yadgar.core.install.platform_paths`` instead. The forward is a lazy
+string-based importlib call ON PURPOSE — a static ``from yadgar.core ...
+import`` here would create a forbidden _shared→core edge (import-linter
+contract 1).
 """
 
-from __future__ import annotations
+from typing import Final
 
-import os
-import platform
-import shutil
-from pathlib import Path
-
-from yadgar._shared.observability.observe import observe
-
-
-@observe(tier="stage")
-def get_claude_config_dir() -> Path:
-    """Return the Claude Code user config directory for the current OS.
-
-    - Linux / other POSIX: ~/.claude/
-    - macOS:               ~/Library/Application Support/Claude/
-    - Windows:             %APPDATA%\\Claude\\
-    """
-    system = platform.system()
-    if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "Claude"
-    if system == "Windows":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            return Path(appdata) / "Claude"
-        return Path.home() / "AppData" / "Roaming" / "Claude"
-    # Linux and other POSIX
-    return Path.home() / ".claude"
+_TARGET: Final = "yadgar.core.install.platform_paths"
+_EXPORTS: Final = (
+    "get_claude_config_dir",
+    "get_claude_agents_dir",
+    "get_claude_settings_path",
+    "is_nix_managed",
+)
 
 
-def get_claude_agents_dir() -> Path:
-    """Return the Claude Code agents directory (~/.claude/agents/ or OS equivalent)."""
-    return get_claude_config_dir() / "agents"
+def __getattr__(name: str):
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib  # noqa: PLC0415 — lazy by design (PEP-562 shim)
+
+    return getattr(importlib.import_module(_TARGET), name)
 
 
-def get_claude_settings_path() -> Path:
-    """Return the Claude Code settings.json path."""
-    return get_claude_config_dir() / "settings.json"
-
-
-@observe(tier="hot")
-def is_nix_managed() -> bool:
-    """True if the system is NixOS or nix-managed — install scripts should be skipped.
-
-    Detects:
-    - /etc/NIXOS file exists
-    - nixos-version command is available on PATH
-    """
-    if Path("/etc/NIXOS").exists():
-        return True
-    if shutil.which("nixos-version") is not None:
-        return True
-    return False
+def __dir__() -> list[str]:
+    return list(globals()) + list(_EXPORTS)

@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 def cmd_install_hooks(args) -> None:
-    from yadgar.core.install_hooks_lib import install_hooks_impl
+    from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
     result = install_hooks_impl(
         home_dir=Path.home(),

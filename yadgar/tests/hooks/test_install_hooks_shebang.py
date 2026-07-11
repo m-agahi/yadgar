@@ -13,7 +13,7 @@ import stat
 import sys
 from pathlib import Path
 
-from yadgar.core.install_hooks_lib import _copy_hook
+from yadgar.core.install.install_hooks_lib import _copy_hook
 
 
 def test_copy_hook_rewrites_env_python3_shebang(tmp_path: Path) -> None:

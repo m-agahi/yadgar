@@ -59,7 +59,7 @@ def _wire_drainer(tmp_path, _isolate_file_queue):
     calling thread — no background thread is started.
     """
     import yadgar._shared.runtime.state as _state_mod
-    import yadgar.core.lifecycle as _cl
+    import yadgar.core.lifecycle.lifecycle as _cl
     from yadgar.backend.queue_drainer import FileQueue, QueueDrainer
 
     real_fq = FileQueue(tmp_path / "wait_queue")

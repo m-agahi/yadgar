@@ -27,7 +27,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from yadgar._shared.retrieval.fusion import _FusionMixin
+from yadgar.backend.retrieval.fusion import _FusionMixin
 from yadgar.core import server
 
 

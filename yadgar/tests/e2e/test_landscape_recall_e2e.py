@@ -49,7 +49,7 @@ def landscape_asgi_wiring(e2e_engines, monkeypatch):
     Phase 2 test-fix (Pattern 2): mirrors TestRecallCoreForwarderE2E.test_forwarder_e2e_flag_on.
     Required for landscape tests because recall_backend_bypass returns [] for landscape.
     """
-    import yadgar.backend.embed_service as _svc
+    import yadgar.backend.embed_service.embed_service as _svc
     from yadgar.backend.embed_service import app as _backend_app
 
     _svc._recall_engines_ready = True

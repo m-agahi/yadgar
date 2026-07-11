@@ -8,19 +8,12 @@ import yadgar._shared.runtime.state as _st
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 
-# Pipeline functions extracted to _recall_pipeline.py (app-free; shared with backend).
-# Import them here so existing call sites in this file and in tests are unchanged.
-from yadgar._shared.runtime.recall_pipeline import (  # noqa: F401 (re-exported for monkeypatch)
-    _apply_quality_floor,
-    _apply_recall_db_side_effects,
-    _apply_recall_session_side_effects,
-    _apply_recall_side_effects,
-    _candidates_to_dicts,
-    _dedup_by_content,
-    _fanout_recall,
-    _fuse_with_span,
-    _record_recall_sr_transition,
-)
+# T2 Car E2: the recall PIPELINE (retrieval executor) sank to
+# yadgar.backend.retrieval.recall_pipeline — core imports ONLY the session-side
+# bookkeeping half (SR transitions / action buffer / auto-checkpoint tick),
+# which is _shared by the dual-import law. The old F401 re-exports of the
+# pipeline internals are gone: core must not bind the executor.
+from yadgar._shared.runtime.recall_session import _apply_recall_session_side_effects
 from yadgar.core.server._app import _tool
 
 logger = logging.getLogger(__name__)
@@ -272,7 +265,7 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         try:
             import time as _time_f  # noqa: PLC0415
 
-            from yadgar._shared.metrics import (  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (  # noqa: PLC0415
                 yadgar_recall_duration_ms,
                 yadgar_recall_result_count,
             )

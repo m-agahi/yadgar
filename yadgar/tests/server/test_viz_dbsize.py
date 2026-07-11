@@ -25,7 +25,7 @@ class TestSampleSystemMetricsDbSize:
         """In server mode, db_size_mb comes from storage.get_db_size(), not local walk."""
         storage = _make_storage(db_url="http://db:8000", db_size_bytes=20 * 1024 * 1024)
 
-        from yadgar.core.graph_api import sample_system_metrics
+        from yadgar.core.daemon.system_metrics import sample_system_metrics
 
         result = sample_system_metrics(pid=1, db_path=str(tmp_path), storage=storage)
 
@@ -36,7 +36,7 @@ class TestSampleSystemMetricsDbSize:
         """db_size_bytes is divided by 1024² and rounded to 1 decimal."""
         storage = _make_storage(db_url="http://db:8000", db_size_bytes=1_572_864)  # 1.5 MB
 
-        from yadgar.core.graph_api import sample_system_metrics
+        from yadgar.core.daemon.system_metrics import sample_system_metrics
 
         result = sample_system_metrics(pid=1, db_path=str(tmp_path), storage=storage)
         assert result["db_size_mb"] == 1.5
@@ -48,7 +48,7 @@ class TestSampleSystemMetricsDbSize:
 
         storage = _make_storage(db_url=None, db_size_bytes=0)
 
-        from yadgar.core.graph_api import sample_system_metrics
+        from yadgar.core.daemon.system_metrics import sample_system_metrics
 
         result = sample_system_metrics(pid=1, db_path=str(tmp_path), storage=storage)
 
@@ -59,7 +59,7 @@ class TestSampleSystemMetricsDbSize:
         """storage=None still returns a valid db_size_mb from local walk."""
         (tmp_path / "db.bin").write_bytes(b"y" * 1024 * 50)  # 50 KB
 
-        from yadgar.core.graph_api import sample_system_metrics
+        from yadgar.core.daemon.system_metrics import sample_system_metrics
 
         result = sample_system_metrics(pid=1, db_path=str(tmp_path), storage=None)
         assert "db_size_mb" in result
@@ -72,7 +72,7 @@ class TestSampleSystemMetricsDbSize:
 
         (tmp_path / "fallback.bin").write_bytes(b"z" * 512)
 
-        from yadgar.core.graph_api import sample_system_metrics
+        from yadgar.core.daemon.system_metrics import sample_system_metrics
 
         result = sample_system_metrics(pid=1, db_path=str(tmp_path), storage=storage)
         assert "db_size_mb" in result

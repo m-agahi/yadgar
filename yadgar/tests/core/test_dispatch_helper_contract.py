@@ -94,6 +94,30 @@ class TestContractFromWikiNormal:
         prelude = agent_dispatch_prelude("", "test topic", storage=storage)
         assert "Yadgar findings" in prelude
 
+    def test_contract_footer_memorization_note_in_genesis(self):
+        """ADR-0093: the findings-footer paragraph explains bullets ARE memorized
+        verbatim (one memory per bullet, standalone + context-complete). Pinned
+        so genesis and the live wiki page stay in sync."""
+        from yadgar.core.server.tools.agent_prompts import CONTRACT_GENESIS
+
+        _, _, content = CONTRACT_GENESIS
+        assert (
+            "This footer IS memorized verbatim — one memory per bullet. Write each "
+            "bullet as a standalone, context-complete memory (durable fact, not "
+            "status); note candidates as you go and finalize at the end." in content
+        ), "ADR-0093 footer-memorization sentence missing from CONTRACT_GENESIS"
+
+    def test_contract_footer_memorization_note_in_seeded_prelude(self, storage):
+        """ADR-0093 sentence survives seeding + prelude assembly."""
+        from yadgar.core.server.tools.agent_prompts import _seed_contract_page
+        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
+
+        _seed_contract_page(storage=storage)
+        _flush_prompt_cache()
+
+        prelude = agent_dispatch_prelude("", "test topic", storage=storage)
+        assert "memorized verbatim — one memory per bullet" in prelude
+
 
 # ---------------------------------------------------------------------------
 # 2. Cache invalidation: edited page → new text served

@@ -38,8 +38,8 @@ import os
 import re as _re
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.secrets import SecretLeakBlocked, check_secrets
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.security.secrets import SecretLeakBlocked, check_secrets
 
 _log = logging.getLogger(__name__)
 
@@ -182,7 +182,9 @@ class _MemoryMixin:
                 _blocked, _reason, _preview = check_secrets(_reason_str)
             if _blocked:
                 try:
-                    from yadgar._shared.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+                    from yadgar._shared.observability.metrics import (
+                        yadgar_writegate_outcome,  # noqa: PLC0415
+                    )
 
                     yadgar_writegate_outcome.labels(outcome="rejected_secret_at_storage").inc()
                 except Exception:
@@ -422,7 +424,7 @@ class _MemoryMixin:
         # fallback is deleted (it was a _shared→backend edge). The composition root
         # (lifecycle.init_engines) injects the REAL registered instance; the bare
         # default is a _shared NullCache (all-miss ≡ today's single-query fetch).
-        from yadgar._shared.protocols import NullCache  # noqa: PLC0415
+        from yadgar._shared.contracts.protocols import NullCache  # noqa: PLC0415
 
         cache = NullCache()
         self._memory_doc_cache = cache

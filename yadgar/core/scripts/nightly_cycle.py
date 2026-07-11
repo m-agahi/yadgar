@@ -58,8 +58,8 @@ os.environ.setdefault("YADGAR_OTLP_ENDPOINT", "")
 
 import yadgar._shared.paths as _paths
 from yadgar._shared.config import Settings
-from yadgar._shared.exception_telemetry import record_exception
-from yadgar._shared.log_config import configure_logging
+from yadgar._shared.observability.exception_telemetry import record_exception
+from yadgar._shared.observability.log_config import configure_logging
 from yadgar._shared.storage import StorageEngine
 from yadgar.core.backup import create_snapshot, default_retention, prune_snapshots
 from yadgar.core.consolidation import run_nightly_consolidation

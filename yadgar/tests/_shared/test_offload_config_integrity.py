@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar._shared.config_registry import clear_config_caches
+from yadgar._shared.config.config_registry import clear_config_caches
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +28,7 @@ def _isolate_config(monkeypatch, tmp_path):
 
 
 def _write_yaml(body: str) -> None:
-    from yadgar._shared.config_yaml import get_config_path
+    from yadgar._shared.config.config_yaml import get_config_path
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)

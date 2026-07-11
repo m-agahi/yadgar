@@ -159,6 +159,75 @@ def add_rule(payload: dict) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
+@observe(tier="boundary", metric="backend.admin.update_memory_staleness")
+def update_memory_staleness(payload: dict) -> dict:
+    """Set the is_stale flag on a memory. Storage-write half (T2 Car E1).
+
+    payload: {"memory_id": int, "is_stale": bool}
+    Core caller: the validate_memory fallback path in admin_other.py (the
+    file-hash comparison runs core-side — host FS — and only the flag write
+    forwards here).
+    """
+    memory_id = int(payload["memory_id"])
+    is_stale = bool(payload.get("is_stale", True))
+    storage = _get_storage()
+    storage.update_memory_staleness(memory_id, is_stale)
+    return {"memory_id": memory_id, "is_stale": is_stale}
+
+
+@observe(tier="boundary", metric="backend.admin.vacuum_stale_sentinels")
+def vacuum_stale_sentinels(payload: dict) -> dict:
+    """Delete _session_end_sentinel memory rows older than retention_days.
+
+    Storage read+delete half (T2 Car E1) — relocated whole from
+    ``core/server/http.py`` (stateless-over-DB compute; the only trigger is
+    ops/debug usage). Never raises.
+
+    payload: {"retention_days": int | None} — None resolves the configured
+    SESSION_END_RETENTION_DAYS backend-side.
+    Returns {"deleted": int, "retention_days": int}.
+    """
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    retention_days = payload.get("retention_days")
+    if retention_days is None:
+        from yadgar._shared.config import get_settings  # noqa: PLC0415
+
+        retention_days = get_settings().SESSION_END_RETENTION_DAYS
+    retention_days = int(retention_days)
+
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+    deleted = 0
+    try:
+        storage = _get_storage()
+        rows = storage._q(
+            "SELECT id FROM memory "
+            "WHERE '_session_end_sentinel' INSIDE tags "
+            "AND created_at < $cutoff",
+            {"cutoff": cutoff},
+        )
+        deleted = _vacuum_delete_rows(storage, rows)
+    except Exception as e:  # noqa: BLE001 — ops path: log, never raise
+        logger.warning("sentinel vacuum error: %s", e)
+    return {"deleted": deleted, "retention_days": retention_days}
+
+
+@observe(tier="stage", metric="backend.admin.vacuum_delete_rows")
+def _vacuum_delete_rows(storage, rows: list) -> int:
+    """Delete memory rows by id. Returns count deleted."""
+    deleted = 0
+    for row in rows:
+        mid = storage._extract_id(row.get("id"))
+        if mid is None:
+            continue
+        try:
+            storage.delete_memory(mid)
+            deleted += 1
+        except Exception as e:  # noqa: BLE001 — per-row: log and continue
+            logger.warning("sentinel vacuum: delete_memory(%s) failed: %s", mid, e)
+    return deleted
+
+
 @observe(tier="boundary", metric="backend.admin.archive_purge")
 def archive_purge(payload: dict) -> dict:
     """Purge memory_archive rows older than retention threshold. Storage-write half.

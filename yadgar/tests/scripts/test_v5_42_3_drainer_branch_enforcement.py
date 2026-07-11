@@ -110,7 +110,7 @@ def bare_drainer(tmp_path):
 def patched_drainer(tmp_path):
     """FileQueue + QueueDrainer with server lifecycle patches (for integration tests)."""
     import yadgar._shared.runtime.state as _state_mod
-    import yadgar.core.lifecycle as _cl
+    import yadgar.core.lifecycle.lifecycle as _cl
 
     real_fq = FileQueue(tmp_path)
     drainer = QueueDrainer(
@@ -328,7 +328,7 @@ class TestDlqRequeueMissingBranch:
 
         with (
             patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
-            patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
+            patch("yadgar.core.lifecycle.lifecycle._get_file_queue", return_value=fq),
         ):
             result = server.dlq_requeue(filename=fname)
 
@@ -355,7 +355,7 @@ class TestDlqRequeueMissingBranch:
 
         with (
             patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
-            patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
+            patch("yadgar.core.lifecycle.lifecycle._get_file_queue", return_value=fq),
         ):
             result = server.dlq_requeue(filename=fname, force=True)
 
@@ -547,7 +547,7 @@ class TestMissingBranchMetric:
 
     def test_rejection_count_gauge_accessible(self):
         """yadgar_dlq_rejection_count metric is importable and a Gauge."""
-        from yadgar._shared.metrics import yadgar_dlq_rejection_count
+        from yadgar._shared.observability.metrics import yadgar_dlq_rejection_count
 
         # It should be a Gauge (has .set method)
         assert hasattr(yadgar_dlq_rejection_count, "set")

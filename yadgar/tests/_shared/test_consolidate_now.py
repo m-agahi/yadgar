@@ -140,7 +140,7 @@ class TestLightMode:
         with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
             with patch(
-                "yadgar.core.consolidation.orchestrator._maybe_precompute_graph_layout"
+                "yadgar.backend.consolidation.service._maybe_precompute_graph_layout"
             ) as precompute_mock:
                 from yadgar.core.server.tools.admin_other import consolidate_now
 
@@ -165,7 +165,7 @@ class TestFullMode:
         """
         with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            with patch("yadgar.core.consolidation.orchestrator._maybe_precompute_graph_layout"):
+            with patch("yadgar.backend.consolidation.service._maybe_precompute_graph_layout"):
                 from yadgar.core.server.tools.admin_other import consolidate_now
 
                 result = consolidate_now(mode="full")
@@ -173,15 +173,25 @@ class TestFullMode:
         assert result.get("status") == "completed"
 
     def test_consolidate_now_full_mode_triggers_layout_precompute(self, mock_state):
-        """v5.88: mode='full' is the manual trigger for the graph-layout precompute."""
-        with patch("yadgar._shared.config.get_settings") as mock_cfg:
-            mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            with patch(
-                "yadgar.core.consolidation.orchestrator._maybe_precompute_graph_layout"
-            ) as precompute_mock:
-                from yadgar.core.server.tools.admin_other import consolidate_now
+        """v5.88: mode='full' is the manual trigger for the graph-layout precompute.
 
-                consolidate_now(mode="full")
+        T2 Car E3: the precompute moved INSIDE the backend cycle
+        (run_consolidation_cycle full/nightly tail) — mock_state mocks the
+        forward, so drive the backend cycle directly with a stub scheduler and
+        assert the tail fires.
+        """
+        import yadgar.backend.consolidation.service as svc
+
+        with patch(
+            "yadgar.backend.consolidation.service._maybe_precompute_graph_layout"
+        ) as precompute_mock:
+
+            class _FakeScheduler:
+                def run_full_consolidation(self):
+                    return {"mode": "full"}
+
+            with patch.object(svc, "_get_scheduler", return_value=_FakeScheduler()):
+                svc.run_consolidation_cycle("full")
 
         precompute_mock.assert_called_once()
 
@@ -202,7 +212,7 @@ class TestFullMode:
             with patch(
                 "yadgar.core.server.tools.admin_other._get_storage", return_value=MagicMock()
             ):
-                with patch("yadgar.core.consolidation.orchestrator._maybe_precompute_graph_layout"):
+                with patch("yadgar.backend.consolidation.service._maybe_precompute_graph_layout"):
                     result = consolidate_now(mode="full")
 
         audit_mock.assert_called_once()
@@ -222,7 +232,7 @@ class TestFullMode:
         with patch("yadgar.core.server.tools.audit._run_anchor_audit_pass", audit_mock):
             from yadgar.core.server.tools.admin_other import consolidate_now
 
-            with patch("yadgar.core.consolidation.orchestrator._maybe_precompute_graph_layout"):
+            with patch("yadgar.backend.consolidation.service._maybe_precompute_graph_layout"):
                 result = consolidate_now(mode="full")
 
         audit_mock.assert_not_called()
@@ -237,7 +247,7 @@ class TestFullMode:
         """
         with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            with patch("yadgar.core.consolidation.orchestrator._maybe_precompute_graph_layout"):
+            with patch("yadgar.backend.consolidation.service._maybe_precompute_graph_layout"):
                 from yadgar.core.server.tools.admin_other import consolidate_now
 
                 result = consolidate_now(mode="full")
@@ -314,7 +324,7 @@ class TestResultShape:
     def test_consolidate_now_result_includes_mode_full(self, mock_state):
         with patch("yadgar._shared.config.get_settings") as mock_cfg:
             mock_cfg.return_value.ANCHOR_AUDIT_CONSOLIDATION_ENABLED = False
-            with patch("yadgar.core.consolidation.orchestrator._maybe_precompute_graph_layout"):
+            with patch("yadgar.backend.consolidation.service._maybe_precompute_graph_layout"):
                 from yadgar.core.server.tools.admin_other import consolidate_now
 
                 result = consolidate_now(mode="full")

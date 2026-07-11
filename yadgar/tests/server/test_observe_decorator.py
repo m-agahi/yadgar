@@ -301,7 +301,7 @@ def test_span_false_inner_span_reparents_to_enclosing(in_memory_tracer, obs_regi
     from opentelemetry import trace
 
     from yadgar._shared.observability.observe import observe
-    from yadgar._shared.tracing import span
+    from yadgar._shared.observability.tracing import span
 
     _, exporter = in_memory_tracer
 
@@ -332,7 +332,7 @@ def test_double_span_guard_emits_one_span(in_memory_tracer, obs_registry):
     """A fn carrying @trace_span AND @observe(boundary) must emit exactly ONE span."""
     _, exporter = in_memory_tracer
     from yadgar._shared.observability.observe import observe
-    from yadgar._shared.tracing import trace_span
+    from yadgar._shared.observability.tracing import trace_span
 
     @observe(tier="boundary", metric="dup")
     @trace_span()

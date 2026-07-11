@@ -108,17 +108,19 @@ def collect_produced_types(repo_root: Path) -> set[str]:
     """Collect all produced/registered edge types.
 
     Union of:
-      (a) Literal "type" strings in edge-shaped dicts in graph_api.py
-      (b) EDGE_TYPES registry keys from viz_meta.py (static parse)
+      (a) Literal "type" strings in edge-shaped dicts in graph_api.py (backend)
+      (b) EDGE_TYPES registry keys from _shared/contracts/viz.py (static parse)
     """
-    graph_api = repo_root / "yadgar" / "core" / "graph_api.py"
-    viz_meta = repo_root / "yadgar" / "core" / "viz_meta.py"
+    # T2 Car E3: graph_api moved to the backend; the EDGE_TYPES registry is a
+    # _shared contract (yadgar/_shared/contracts/viz.py).
+    graph_api = repo_root / "yadgar" / "backend" / "graph" / "graph_api.py"
+    viz_contract = repo_root / "yadgar" / "_shared" / "contracts" / "viz.py"
 
     literal_types = _ast_edge_types_from_file(graph_api)
-    if viz_meta.exists():
-        literal_types |= _ast_edge_types_from_file(viz_meta)
+    if viz_contract.exists():
+        literal_types |= _ast_edge_types_from_file(viz_contract)
 
-    registry_types = _parse_edge_types_registry(viz_meta)
+    registry_types = _parse_edge_types_registry(viz_contract)
 
     return literal_types | registry_types
 

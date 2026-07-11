@@ -7,7 +7,7 @@ import pytest
 
 class TestAgentPromptModel:
     def test_construction_with_required_fields(self):
-        from yadgar._shared.models import AgentPrompt
+        from yadgar._shared.contracts.models import AgentPrompt
 
         ap = AgentPrompt(
             pattern="dispatch-fix-bug", purpose="Fix bugs quickly.", content="Review the error."
@@ -19,13 +19,13 @@ class TestAgentPromptModel:
     def test_missing_required_field_raises(self):
         from pydantic import ValidationError
 
-        from yadgar._shared.models import AgentPrompt
+        from yadgar._shared.contracts.models import AgentPrompt
 
         with pytest.raises(ValidationError):
             AgentPrompt(pattern="x", content="y")  # missing purpose
 
     def test_page_type_registered_in_wiki_meta(self):
-        from yadgar._shared.wiki_meta import PAGE_TYPES
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPES
 
         assert "agent_prompt" in PAGE_TYPES
         assert "Purpose" in PAGE_TYPES["agent_prompt"]

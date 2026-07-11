@@ -448,7 +448,7 @@ def test_wiki_caches_emit_cold_tier_metrics(monkeypatch):
     """Car 2 caches are obs_tier='cold' → get() calls record_cache_hit/miss inline.
     (The generic emission path itself is covered by the Car 1 Cache-class tests; this
     asserts the wiki_read instance is wired to it.)"""
-    import yadgar.core.cache as cache_mod
+    import yadgar.core.cache.cache as cache_mod
 
     hits, misses = [], []
     monkeypatch.setattr(cache_mod, "record_cache_hit", lambda name: hits.append(name))

@@ -43,7 +43,7 @@ def _reset_loop_lag_max():
     tests; without this reset the spike test's ~1.0s value leaks into the idle
     test (xdist load-balancing can run spike-before-idle on one worker → flake).
     """
-    from yadgar._shared.metrics import yadgar_event_loop_lag_max_seconds
+    from yadgar._shared.observability.metrics import yadgar_event_loop_lag_max_seconds
 
     yadgar_event_loop_lag_max_seconds.set(0)
     yield
@@ -51,7 +51,7 @@ def _reset_loop_lag_max():
 
 def test_loop_lag_monitor_idle_is_near_zero():
     """At idle, the loop-lag monitor records lag close to 0 (max-gauge low)."""
-    from yadgar._shared.metrics import (
+    from yadgar._shared.observability.metrics import (
         start_loop_lag_monitor,
         stop_loop_lag_monitor,
         yadgar_event_loop_lag_max_seconds,
@@ -80,7 +80,7 @@ def test_loop_lag_monitor_spikes_when_loop_blocked():
     The histogram observation and the max-gauge both reflect the spike; the
     histogram is the diagnosable-after-recovery signal.
     """
-    from yadgar._shared.metrics import (
+    from yadgar._shared.observability.metrics import (
         start_loop_lag_monitor,
         stop_loop_lag_monitor,
         yadgar_event_loop_lag_max_seconds,
@@ -130,7 +130,7 @@ def test_loop_lag_monitor_spikes_when_loop_blocked():
 
 def test_loop_lag_monitor_cancels_cleanly():
     """stop_loop_lag_monitor cancels the probe task without raising."""
-    from yadgar._shared.metrics import start_loop_lag_monitor, stop_loop_lag_monitor
+    from yadgar._shared.observability.metrics import start_loop_lag_monitor, stop_loop_lag_monitor
 
     async def _run() -> bool:
         loop = asyncio.get_running_loop()
@@ -150,7 +150,7 @@ def test_loop_lag_monitor_cancels_cleanly():
 def test_pool_gauges_reflect_offload_state(monkeypatch):
     """_collect_pool_stats() sets inflight/max/saturated gauges from pool_stats()."""
     import yadgar._shared.runtime.offload as offload
-    from yadgar._shared.metrics import (
+    from yadgar._shared.observability.metrics import (
         _collect_pool_stats,
         yadgar_tool_pool_inflight,
         yadgar_tool_pool_max,
@@ -173,7 +173,7 @@ def test_pool_gauges_reflect_offload_state(monkeypatch):
 def test_pool_gauge_saturated_flag(monkeypatch):
     """When pool_saturated() is True, the gauge reads 1."""
     import yadgar._shared.runtime.offload as offload
-    from yadgar._shared.metrics import _collect_pool_stats, yadgar_tool_pool_saturated
+    from yadgar._shared.observability.metrics import _collect_pool_stats, yadgar_tool_pool_saturated
 
     monkeypatch.setenv("YADGAR_OFFLOAD_TOOLS", "1")
     monkeypatch.setattr(offload, "pool_saturated", lambda: True, raising=True)
@@ -193,7 +193,7 @@ def test_new_gauges_render_in_metrics(monkeypatch):
     monkeypatch.setenv("YADGAR_METRICS_ENABLED", "1")
     monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "0")
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
 
     app = Starlette(routes=[Route("/metrics", metrics_handler, methods=["GET"])])
     client = TestClient(app, raise_server_exceptions=True)

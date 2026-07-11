@@ -109,8 +109,8 @@ class TestScopeFilterFromScope:
     """Test ScopeFilter.from_scope() factory."""
 
     def test_from_scope_with_directory_and_branch(self):
-        from yadgar._shared.retrieval.providers.base import Scope
         from yadgar._shared.storage.scope import ScopeFilter
+        from yadgar.backend.retrieval.providers.base import Scope
 
         scope = Scope(directory="/home/max/git/yadgar", branch="master", default_branch="master")
         sf = ScopeFilter.from_scope(scope)
@@ -118,8 +118,8 @@ class TestScopeFilterFromScope:
         assert sf.branch is not None
 
     def test_from_scope_no_branch(self):
-        from yadgar._shared.retrieval.providers.base import Scope
         from yadgar._shared.storage.scope import ScopeFilter
+        from yadgar.backend.retrieval.providers.base import Scope
 
         scope = Scope(directory="/home/max/git/yadgar", branch=None, default_branch=None)
         sf = ScopeFilter.from_scope(scope)
@@ -128,8 +128,8 @@ class TestScopeFilterFromScope:
         assert sf.directory is not None
 
     def test_from_scope_builds_valid_clause(self):
-        from yadgar._shared.retrieval.providers.base import Scope
         from yadgar._shared.storage.scope import ScopeFilter
+        from yadgar.backend.retrieval.providers.base import Scope
 
         scope = Scope(directory="/test/dir", branch="feat", default_branch="master")
         sf = ScopeFilter.from_scope(scope)

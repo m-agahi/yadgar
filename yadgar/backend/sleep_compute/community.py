@@ -8,7 +8,7 @@ from collections import Counter
 import numpy as np
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 
 # Entity-like patterns for identifying key sentences during compression
 _ENTITY_PATTERN_RE = re.compile(

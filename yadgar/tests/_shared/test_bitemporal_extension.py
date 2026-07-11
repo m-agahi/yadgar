@@ -524,7 +524,7 @@ class TestBackwardCompat:
 
     def test_get_full_graph_default_unchanged(self, storage):
         """get_full_graph() with no args returns the same shape as before."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         api = GraphAPI(storage)
         graph = api.get_full_graph()
@@ -574,7 +574,7 @@ class TestBackwardCompat:
 
     def test_get_full_graph_as_of_default_unchanged(self, storage):
         """get_full_graph(as_of=None) behaves identically to old no-arg call."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         api = GraphAPI(storage)
         graph_old = api.get_full_graph()

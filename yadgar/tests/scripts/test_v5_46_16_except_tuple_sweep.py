@@ -54,28 +54,32 @@ _BARE_FORM = re.compile(
 # and tests/test_loop_heartbeats.py; scope expanded to cover all).
 
 SITES = [
+    # T2 Car D packaged these files under their family dirs (ADR-0084 no-lone-files).
+    # Re-pointed to the CANONICAL packaged path — the old flat paths are now either
+    # absent (daemon/embed_service/conflict_resolver) or PEP-562 shims with no
+    # except lines (config_registry/log_config), so the audit must read the target.
     (
-        "yadgar/core/daemon.py",
+        "yadgar/core/daemon/daemon.py",
         "FileNotFoundError, subprocess.TimeoutExpired",
         "daemon.py container-runtime detection",
     ),
     (
-        "yadgar/_shared/config_registry.py",
+        "yadgar/_shared/config/config_registry.py",
         "ValueError, TypeError",
         "config_registry.py prometheus metrics setter",
     ),
     (
-        "yadgar/backend/embed_service.py",
+        "yadgar/backend/embed_service/embed_service.py",
         "asyncio.CancelledError, Exception",
         "embed_service.py shutdown handler (critical — Exception was escaping)",
     ),
     (
-        "yadgar/backend/conflict_resolver.py",
+        "yadgar/backend/conflict_resolver/conflict_resolver.py",
         "ValueError, TypeError",
         "conflict_resolver.py similar-result id parse",
     ),
     (
-        "yadgar/_shared/log_config.py",
+        "yadgar/_shared/observability/log_config.py",
         "PermissionError, OSError",
         "log_config.py fallback log-dir creation",
     ),
@@ -206,7 +210,8 @@ def test_embed_service_exception_is_caught_in_shutdown_handler() -> None:
     Verified statically: the parenthesised form must appear in embed_service.py
     and must include both ``asyncio.CancelledError`` and ``Exception``.
     """
-    path = YADGAR_ROOT / "backend" / "embed_service.py"
+    # T2 Car D: embed_service packaged under backend/embed_service/ (ADR-0084).
+    path = YADGAR_ROOT / "backend" / "embed_service" / "embed_service.py"
     content = path.read_text(encoding="utf-8")
 
     # Find all parenthesised except clauses

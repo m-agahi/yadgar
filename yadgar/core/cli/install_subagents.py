@@ -30,7 +30,7 @@ def _handle_check_result(result: dict) -> None:
 
 
 def cmd_install_subagents(args) -> None:
-    from yadgar.core.install_subagents_lib import install_subagents_impl
+    from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
     result = install_subagents_impl(
         home_dir=Path.home(),

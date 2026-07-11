@@ -253,7 +253,7 @@ def test_metric_increments_on_contradiction(curator, storage, monkeypatch):
     """yadgar_write_time_contradiction_total{reason} increments per detected contradiction."""
     monkeypatch.delenv("YADGAR_WRITE_TIME_CONTRADICTION", raising=False)
 
-    from yadgar._shared.metrics import yadgar_write_time_contradiction_total
+    from yadgar._shared.observability.metrics import yadgar_write_time_contradiction_total
 
     def _val(reason: str) -> float:
         return yadgar_write_time_contradiction_total.labels(reason=reason)._value.get()
@@ -311,7 +311,7 @@ def test_llm_resolver_short_circuit_bypasses_lightweight(monkeypatch):
         patch.object(_state_mod, "_curator", curator_mock),
         patch("yadgar._shared.runtime.lifecycle._get_embeddings", return_value=mock_emb),
         patch(
-            "yadgar.backend.conflict_resolver.resolve_conflict",
+            "yadgar.backend.conflict_resolver.conflict_resolver.resolve_conflict",
             return_value={"op": "NOOP", "target_id": None, "reason": "duplicate"},
         ),
     ):

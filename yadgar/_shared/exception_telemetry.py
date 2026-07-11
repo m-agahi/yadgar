@@ -1,52 +1,27 @@
-"""Exception telemetry helper for PR-H: record_exception().
+"""Back-compat shim — exception_telemetry moved into ``yadgar._shared.observability`` (T2 Car D1, no-lone-files law ADR-0084).
 
-Increments yadgar_exception_total{location, error_type} and enriches the active
-OTel span (if any) with ERROR status and recorded exception detail.
-
-The helper MUST NEVER raise — telemetry failures must never compound a caller failure.
+PEP-562 shim (Car 0 #167 precedent): symbol imports from the old path keep
+working. Lazy importlib forward — the target only loads on first attribute
+access. New code must import from ``yadgar._shared.observability.exception_telemetry`` instead.
 """
 
-from __future__ import annotations
+from typing import Final
 
-from yadgar._shared.observability.observe import observe
-
-
-@observe(
-    exempt="enriches the CALLER's active span — a child span would enrich the wrong span and double the span count"
+_TARGET: Final = "yadgar._shared.observability.exception_telemetry"
+_EXPORTS: Final = (
+    "annotations",
+    "observe",
+    "record_exception",
 )
-def record_exception(location: str, exc: BaseException) -> None:
-    """Increment exception counter + best-effort span enrichment.
 
-    Args:
-        location: Stable dotted-path identifier for the handler site.
-                  Examples: ``ml_client.score_nli``, ``consolidation.phase_link_similar``.
-                  Must be a pre-approved label value (cardinality target: ≤20 distinct values).
-        exc:      The caught exception instance.
 
-    Side effects:
-        - Increments ``yadgar_exception_total{location=..., error_type=<classname>}`` by 1.
-        - If an OTel span is currently recording, sets its status to ERROR and records
-          the exception into it.
+def __getattr__(name: str):
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib  # noqa: PLC0415 — lazy by design (PEP-562 shim)
 
-    Never raises. Telemetry errors are silently swallowed.
-    """
-    try:
-        from yadgar._shared.metrics import yadgar_exception_total  # noqa: PLC0415
+    return getattr(importlib.import_module(_TARGET), name)
 
-        yadgar_exception_total.labels(
-            location=location,
-            error_type=exc.__class__.__name__,
-        ).inc()
-    except Exception:  # noqa: BLE001 — never let telemetry crash the caller
-        pass
 
-    # Best-effort span enrichment — if no active span, silently no-op.
-    try:
-        from opentelemetry import trace as _trace  # noqa: PLC0415
-
-        span = _trace.get_current_span()
-        if span is not None and span.is_recording():
-            span.set_status(_trace.Status(_trace.StatusCode.ERROR))
-            span.record_exception(exc)
-    except Exception:  # noqa: BLE001 — never let telemetry crash the caller
-        pass
+def __dir__() -> list[str]:
+    return list(globals()) + list(_EXPORTS)

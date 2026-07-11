@@ -671,8 +671,9 @@ def _restore_logging_state():
 
     Restores:
     - logging.root.manager.disable — set by logging.disable(CRITICAL) in
-      cli/_shared.py::init_replay_lightweight(); persists for the worker process
-      lifetime, silencing all subsequent logging (Root-B/C xdist pollution).
+      cli/_shared.py::silence_logging() (T2 Car B; formerly
+      init_replay_lightweight); persists for the worker process lifetime,
+      silencing all subsequent logging (Root-B/C xdist pollution).
     - logging.root.level — set by test_tracing.py and others; a raised root level
       blocks records from reaching handlers even when disable is not set.
       (Root-C: test_uvicorn_access_emits_json sees empty output when root level
@@ -1298,7 +1299,8 @@ def recall_backend_bypass(monkeypatch):
     """
     import sys
 
-    from yadgar._shared.runtime.recall_pipeline import _fanout_recall
+    from yadgar.backend.retrieval.compose import ensure_retrieval_engine
+    from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
     _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
@@ -1332,6 +1334,9 @@ def recall_backend_bypass(monkeypatch):
 
         _ci_branch = _os.environ.get("YADGAR_CI_BRANCH")
         _effective_branch = current_branch or _ci_branch or None
+        # T2 Car E2: compose the backend retriever lazily against the test's
+        # live engines (idempotent; the shared root no longer builds it).
+        ensure_retrieval_engine()
         return _fanout_recall(
             query=query,
             max_results=max_results,
@@ -1474,6 +1479,8 @@ def _unit_backend_harness(request, monkeypatch, _isolate_file_queue):
         patch_admin_bypass,
         patch_consolidate_bypass,
         patch_recall_bypass,
+        patch_restore_bypass,
+        patch_viz_bypass,
         teardown_consolidate_bypass,
         wire_drainer,
     )
@@ -1483,10 +1490,12 @@ def _unit_backend_harness(request, monkeypatch, _isolate_file_queue):
     # behaviour already remove this via monkeypatch.delenv("YADGAR_CI_BRANCH").
     monkeypatch.setenv("YADGAR_CI_BRANCH", "feat/test-branch")
 
-    # Install the three forward bypasses (monkeypatch unwinds at test teardown).
+    # Install the five forward bypasses (monkeypatch unwinds at test teardown).
     patch_admin_bypass(monkeypatch)
     patch_recall_bypass(monkeypatch)
     patch_consolidate_bypass(monkeypatch)
+    patch_restore_bypass(monkeypatch)
+    patch_viz_bypass(monkeypatch)
 
     # Wire the drainer + consolidation scheduler in-process.
     with wire_drainer(_server._get_file_queue) as drainer:

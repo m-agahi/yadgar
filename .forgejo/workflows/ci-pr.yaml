@@ -139,7 +139,8 @@ jobs:
     # ConnectError, surreal child died mid-leg). Chain backend behind test-fast
     # (the shortest leg) so peak wave-1 concurrency drops to 2 heavy legs
     # (shared + backend-after-fast).
-    needs: [test-fast]
+    needs: [test-fast]  # scheduling throttle only (RAM waves, ADR-0073/0079)
+    if: ${{ always() }}  # run regardless of earlier-leg verdicts — full visibility per round (user 2026-07-11)
     container:
       image: docker.io/openfantasy/yadgar-ci:5.121.1
     env:
@@ -203,7 +204,8 @@ jobs:
     # ALL test legs + wave staggering + ≤2 legs per wave. Group packing is
     # duration-based (--splitting-algorithm least_duration) and memory-blind —
     # the cap, the waves, and the per-wave leg count are the only levers.
-    needs: [test-fast, test-shared, test-backend]
+    needs: [test-fast, test-shared, test-backend]  # scheduling throttle only
+    if: ${{ always() }}
     container:
       image: docker.io/openfantasy/yadgar-ci:5.121.1
     env:
@@ -270,7 +272,8 @@ jobs:
     # job looked hung for 20+ minutes.  Now the legs tee their own -rs output
     # to artifacts and this job just parses the text — runtime is seconds.
     # No pip install: check_skip_inventory.py is stdlib-only.
-    needs: [test-fast, test-shared, test-backend, test-core]
+    needs: [test-fast, test-shared, test-backend, test-core]  # scheduling throttle only
+    if: ${{ always() }}
     container:
       image: docker.io/openfantasy/yadgar-ci:5.121.1
     steps:

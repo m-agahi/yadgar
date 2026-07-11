@@ -39,7 +39,7 @@ def _emit_n(logger: logging.Logger, n: int, msg: str = "test") -> None:
 class TestRotatingJSONLFileHandler:
     def test_writes_valid_jsonl(self, tmp_path):
         """Each emitted record is valid JSON on its own line."""
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "test.log"
         handler = RotatingJSONLFileHandler(str(log_file), maxBytes=1_000_000, backupCount=3)
@@ -63,7 +63,7 @@ class TestRotatingJSONLFileHandler:
 
     def test_rotation_triggers_at_configured_size(self, tmp_path):
         """After emitting > maxBytes, the .1 backup exists; active file < maxBytes."""
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "rot.log"
         # Small maxBytes to force rotation quickly
@@ -86,7 +86,7 @@ class TestRotatingJSONLFileHandler:
 
     def test_backup_count_respected(self, tmp_path):
         """After N+2 rotations, only backupCount backup files remain."""
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "bc.log"
         backup_count = 3
@@ -110,7 +110,7 @@ class TestRotatingJSONLFileHandler:
 
     def test_json_schema_preserved_in_file(self, tmp_path):
         """Records in file include required I14 fields: ts, level, component, action, outcome."""
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "schema.log"
         handler = RotatingJSONLFileHandler(str(log_file), maxBytes=1_000_000, backupCount=3)
@@ -141,7 +141,7 @@ class TestRotatingJSONLFileHandler:
 class TestDualSinkCoexistence:
     def test_dual_sink_single_emit(self, tmp_path):
         """One logger.info() → record appears in both stdout handler and file."""
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "dual.log"
         file_handler = RotatingJSONLFileHandler(str(log_file), maxBytes=1_000_000, backupCount=3)
@@ -174,7 +174,10 @@ class TestDualSinkCoexistence:
 class TestGracefulFallback:
     def test_unwritable_path_no_raise(self):
         """configure_logging() with unwritable path does not raise; stdout handler active."""
-        from yadgar._shared.log_config import RotatingJSONLFileHandler, configure_logging
+        from yadgar._shared.observability.log_config import (
+            RotatingJSONLFileHandler,
+            configure_logging,
+        )
 
         with patch.dict(os.environ, {"YADGAR_LOG_FILE_PATH": "/nonexistent/path/yadgar.log"}):
             # Must not raise
@@ -192,7 +195,10 @@ class TestGracefulFallback:
 
     def test_opt_out_empty_path_no_file_handler(self, tmp_path):
         """YADGAR_LOG_FILE_PATH='' → file handler not installed at all (I3 opt-out)."""
-        from yadgar._shared.log_config import RotatingJSONLFileHandler, configure_logging
+        from yadgar._shared.observability.log_config import (
+            RotatingJSONLFileHandler,
+            configure_logging,
+        )
 
         with patch.dict(os.environ, {"YADGAR_LOG_FILE_PATH": ""}):
             configure_logging(log_format="json", level="WARNING", process="core")
@@ -220,7 +226,7 @@ class TestBackendEnvOverride:
                 "YADGAR_BACKEND_LOG_FILE_PATH": backend_path,
             },
         ):
-            from yadgar._shared.log_config import _resolve_log_file_path
+            from yadgar._shared.observability.log_config import _resolve_log_file_path
 
             resolved = _resolve_log_file_path(process="backend")
 
@@ -240,7 +246,7 @@ class TestBackendEnvOverride:
                 "YADGAR_BACKEND_LOG_FILE_PATH": backend_path,
             },
         ):
-            from yadgar._shared.log_config import _resolve_log_file_path
+            from yadgar._shared.observability.log_config import _resolve_log_file_path
 
             resolved = _resolve_log_file_path(process="core")
 
@@ -255,7 +261,7 @@ class TestBackendEnvOverride:
         with patch.dict(os.environ, env, clear=False):
             # Remove backend-specific var if it leaked in from other tests
             os.environ.pop("YADGAR_BACKEND_LOG_FILE_PATH", None)
-            from yadgar._shared.log_config import _resolve_log_file_path
+            from yadgar._shared.observability.log_config import _resolve_log_file_path
 
             resolved = _resolve_log_file_path(process="backend")
 
@@ -272,7 +278,10 @@ class TestBackendEnvOverride:
 class TestIdempotentHandlerInstall:
     def test_double_configure_no_duplicate_file_handlers(self, tmp_path):
         """Calling configure_logging() twice does not stack duplicate file handlers."""
-        from yadgar._shared.log_config import RotatingJSONLFileHandler, configure_logging
+        from yadgar._shared.observability.log_config import (
+            RotatingJSONLFileHandler,
+            configure_logging,
+        )
 
         log_file = str(tmp_path / "idem.log")
         with patch.dict(os.environ, {"YADGAR_LOG_FILE_PATH": log_file}):
@@ -294,8 +303,8 @@ class TestIdempotentHandlerInstall:
 class TestRotationCounterMetric:
     def test_rotation_counter_incremented(self, tmp_path):
         """yadgar_log_file_rotations_total increments on doRollover."""
-        import yadgar._shared.metrics as m
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        import yadgar._shared.observability.metrics as m
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "metric.log"
         handler = RotatingJSONLFileHandler(
@@ -338,7 +347,7 @@ def _get_rotation_counter(metrics_module, logger_name: str) -> float:
 class TestRateLimitFilter:
     def test_burst_drops_excess(self):
         """With burst=50, rate=10/s: emitting 51 records immediately drops >=1 (Q4 defaults)."""
-        from yadgar._shared.log_config import RateLimitFilter
+        from yadgar._shared.observability.log_config import RateLimitFilter
 
         filt = RateLimitFilter(
             rate=10.0,
@@ -372,8 +381,8 @@ class TestRateLimitFilter:
 
     def test_rate_limiter_drop_counter_increments(self):
         """yadgar_log_dropped_total counter increments when rate limiter drops a record."""
-        import yadgar._shared.metrics as m
-        from yadgar._shared.log_config import RateLimitFilter
+        import yadgar._shared.observability.metrics as m
+        from yadgar._shared.observability.log_config import RateLimitFilter
 
         counter = getattr(m, "yadgar_log_dropped_total", None)
         if counter is None:
@@ -401,7 +410,7 @@ class TestRateLimitFilter:
 
     def test_rate_limiter_summary_line_on_drop(self, caplog):
         """When drops occur, a 'rate limited' summary line is logged (at most once/min)."""
-        from yadgar._shared.log_config import RateLimitFilter
+        from yadgar._shared.observability.log_config import RateLimitFilter
 
         filt = RateLimitFilter(rate=1.0, burst=1, name="test_summary")
 
@@ -457,7 +466,7 @@ class TestConcurrentRotation:
         Uses enough backupCount + maxBytes that all 1000 records fit across retained files.
         Verifies thread-safety of RotatingFileHandler (stdlib doRollover uses acquire()).
         """
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "concurrent.log"
         n_threads = 4
@@ -515,7 +524,7 @@ class TestConcurrentRotation:
 class TestRateLimiterEndToEnd:
     def test_configure_logging_installs_rate_limiter_and_drops(self, tmp_path):
         """configure_logging() installs RateLimitFilter; emitting 51 records drops >= 1."""
-        from yadgar._shared.log_config import RateLimitFilter, configure_logging
+        from yadgar._shared.observability.log_config import RateLimitFilter, configure_logging
 
         env = {
             "YADGAR_LOG_FILE_PATH": "",
@@ -564,9 +573,9 @@ class TestBackendMetricDI:
 
     def test_size_metric_updates_for_backend_process(self, tmp_path):
         """File-size gauge on backend registry updates; core registry stays zero."""
-        import yadgar._shared.metrics as m
-        import yadgar.backend.embed_service_metrics as esm
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        import yadgar._shared.observability.metrics as m
+        import yadgar.backend.embed_service.embed_service_metrics as esm
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "backend_size.log"
         handler = RotatingJSONLFileHandler(
@@ -598,9 +607,9 @@ class TestBackendMetricDI:
 
     def test_rotation_metric_updates_for_backend_process(self, tmp_path):
         """Rotation counter on backend registry increments; core registry stays zero."""
-        import yadgar._shared.metrics as m
-        import yadgar.backend.embed_service_metrics as esm
-        from yadgar._shared.log_config import RotatingJSONLFileHandler
+        import yadgar._shared.observability.metrics as m
+        import yadgar.backend.embed_service.embed_service_metrics as esm
+        from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
         log_file = tmp_path / "backend_rot.log"
         handler = RotatingJSONLFileHandler(
@@ -631,9 +640,9 @@ class TestBackendMetricDI:
 
     def test_dropped_metric_updates_for_backend_process(self):
         """Drop counter on backend registry increments; core registry stays zero."""
-        import yadgar._shared.metrics as m
-        import yadgar.backend.embed_service_metrics as esm
-        from yadgar._shared.log_config import RateLimitFilter
+        import yadgar._shared.observability.metrics as m
+        import yadgar.backend.embed_service.embed_service_metrics as esm
+        from yadgar._shared.observability.log_config import RateLimitFilter
 
         filt = RateLimitFilter(rate=1.0, burst=1, metrics_module=esm)
 

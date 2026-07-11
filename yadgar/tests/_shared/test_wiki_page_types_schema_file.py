@@ -26,7 +26,7 @@ class TestSchemaFileLoads:
         assert "page_types" in text
 
     def test_schema_data_loaded(self):
-        from yadgar._shared.wiki_meta import PAGE_TYPE_SCHEMAS
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_SCHEMAS
 
         assert isinstance(PAGE_TYPE_SCHEMAS, dict)
         assert set(PAGE_TYPE_SCHEMAS) == {
@@ -43,14 +43,14 @@ class TestSchemaFileLoads:
 class TestPageTypesDerived:
     def test_page_types_backcompat_shape(self):
         """PAGE_TYPES keeps its dict[str, list[str]] required-sections shape."""
-        from yadgar._shared.wiki_meta import PAGE_TYPE_SCHEMAS, PAGE_TYPES
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_SCHEMAS, PAGE_TYPES
 
         for page_type, sections in PAGE_TYPES.items():
             assert isinstance(sections, list)
             assert sections == list(PAGE_TYPE_SCHEMAS[page_type]["required"])
 
     def test_known_required_sections(self):
-        from yadgar._shared.wiki_meta import PAGE_TYPES
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPES
 
         assert PAGE_TYPES["agent_prompt"] == ["Purpose", "Prompt"]
         assert PAGE_TYPES["decision"] == ["Context", "Decision", "Consequences"]
@@ -58,14 +58,14 @@ class TestPageTypesDerived:
 
 class TestAgentPromptRicherSchema:
     def test_optional_sections(self):
-        from yadgar._shared.wiki_meta import PAGE_TYPE_SCHEMAS
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_SCHEMAS
 
         optional = PAGE_TYPE_SCHEMAS["agent_prompt"].get("optional", [])
         for section in ("Preconditions", "Failure modes", "Verification", "Composes"):
             assert section in optional, f"agent_prompt optional missing {section!r}"
 
     def test_metadata_keys(self):
-        from yadgar._shared.wiki_meta import PAGE_TYPE_SCHEMAS
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_SCHEMAS
 
         metadata = PAGE_TYPE_SCHEMAS["agent_prompt"].get("metadata", {})
         assert "composes_with" in metadata
@@ -77,7 +77,7 @@ class TestZeroSchemaLiteralsInCode:
         """The code body keeps zero schema literals — the yaml is the single source."""
         import inspect
 
-        import yadgar._shared.wiki_meta as wiki_meta
+        import yadgar._shared.wiki.wiki_meta as wiki_meta
 
         source = inspect.getsource(wiki_meta)
         # Spot-check section names that only ever existed as schema literals.
@@ -90,7 +90,7 @@ class TestZeroSchemaLiteralsInCode:
 
 class TestLintStaysAdvisory:
     def test_optional_sections_produce_no_issues(self):
-        from yadgar._shared.wiki_meta import check_page_type_format
+        from yadgar._shared.wiki.wiki_meta import check_page_type_format
 
         content = (
             "## Purpose\n\nx\n\n## Prompt\n\ny\n\n"
@@ -101,7 +101,7 @@ class TestLintStaysAdvisory:
         assert issues == [], f"optional sections must not produce issues: {issues}"
 
     def test_missing_required_is_warning_only(self):
-        from yadgar._shared.wiki_meta import check_page_type_format
+        from yadgar._shared.wiki.wiki_meta import check_page_type_format
 
         issues = check_page_type_format("some-slug", "agent_prompt", "## Purpose\n\nonly\n")
         assert len(issues) == 1
@@ -109,6 +109,6 @@ class TestLintStaysAdvisory:
         assert issues[0]["type"] == "missing_section"
 
     def test_unknown_page_type_no_issues(self):
-        from yadgar._shared.wiki_meta import check_page_type_format
+        from yadgar._shared.wiki.wiki_meta import check_page_type_format
 
         assert check_page_type_format("s", "no-such-type", "anything") == []

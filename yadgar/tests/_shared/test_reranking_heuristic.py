@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar._shared.retrieval._reranking_heuristic import _HeuristicMixin
+from yadgar.backend.retrieval._reranking_heuristic import _HeuristicMixin
 
 # ---------------------------------------------------------------------------
 # Stub class

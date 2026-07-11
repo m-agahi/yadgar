@@ -1,0 +1,602 @@
+"""Tests for Successor Representation cognitive maps.
+
+T2 Car B: mirrors yadgar/backend/restoration/cognitive_map.py (moved from
+_shared; the session-side transition recording base lives in
+yadgar._shared.runtime.sr_session).
+"""
+
+import numpy as np
+import pytest
+
+from yadgar._shared.config import Settings
+from yadgar._shared.embeddings import EmbeddingEngine
+from yadgar._shared.knowledge_graph import KnowledgeGraph
+from yadgar._shared.runtime.sr_session import _MIN_TRANSITIONS
+from yadgar.backend.restoration.cognitive_map import CognitiveMap
+from yadgar.backend.retrieval import Retriever
+
+
+@pytest.fixture(scope="module")
+def storage(module_storage):
+    """Module-scoped shared StorageEngine (v5.104 P1B): schema inits ONCE per
+    file (was a fresh per-test engine); per-test isolation via the registered
+    data-wipe in conftest._wipe_surrealdb_data."""
+    return module_storage
+
+
+@pytest.fixture
+def settings(tmp_path):
+    return Settings(DB_PATH=str(tmp_path / "test.db"), SR_DISCOUNT=0.9, SR_UPDATE_RATE=0.1)
+
+
+@pytest.fixture
+def embeddings():
+    return EmbeddingEngine("all-MiniLM-L6-v2")
+
+
+@pytest.fixture
+def cmap(storage, settings):
+    return CognitiveMap(storage, settings)
+
+
+@pytest.fixture
+def graph(storage, settings):
+    return KnowledgeGraph(storage, settings)
+
+
+@pytest.fixture
+def retriever(storage, embeddings, graph, settings):
+    ret = Retriever(storage, embeddings, graph, settings)
+    return ret
+
+
+def _make_memory(storage, embeddings, content, directory="/proj", tags=None, heat=1.0):
+    """Insert a memory with embedding and return its ID."""
+    embedding = embeddings.encode(content)
+    mid = storage.insert_memory(
+        {
+            "content": content,
+            "embedding": embedding,
+            "tags": tags or [],
+            "directory_context": directory,
+            "heat": heat,
+            "is_stale": False,
+            "file_hash": None,
+            "embedding_model": embeddings.get_model_name(),
+        }
+    )
+    return mid
+
+
+class TestRecordTransition:
+    def test_record_transition(self, storage, cmap):
+        """Transition is stored correctly."""
+        m1 = storage.insert_memory(
+            {
+                "content": "mem1",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "mem2",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        cmap.record_transition(m1, m2, "sess1")
+
+        t = storage.get_transition(m1, m2)
+        assert t is not None
+        assert t["from_memory_id"] == m1
+        assert t["to_memory_id"] == m2
+        assert t["count"] == 1
+
+    def test_record_transition_increments(self, storage, cmap):
+        """Recording the same transition increments the count."""
+        m1 = storage.insert_memory(
+            {
+                "content": "mem1",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "mem2",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        cmap.record_transition(m1, m2, "sess1")
+        cmap.record_transition(m1, m2, "sess1")
+        cmap.record_transition(m1, m2, "sess1")
+
+        t = storage.get_transition(m1, m2)
+        assert t["count"] == 3
+
+
+class TestTransitionMatrix:
+    def test_transition_matrix_normalized(self, storage, cmap):
+        """Rows of the transition matrix sum to 1.0."""
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m3 = storage.insert_memory(
+            {
+                "content": "c",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        cmap.record_transition(m1, m2)
+        cmap.record_transition(m1, m3)
+        cmap.record_transition(m2, m3)
+        cmap.record_transition(m3, m1)
+
+        T = cmap.build_transition_matrix()
+
+        # All rows with outgoing transitions should sum to 1.0
+        row_sums = T.sum(axis=1)
+        for s in row_sums:
+            assert s == pytest.approx(1.0, abs=1e-10)
+
+    def test_transition_matrix_empty(self, cmap):
+        """Empty transition matrix for no data."""
+        T = cmap.build_transition_matrix()
+        assert T.shape == (0, 0)
+
+    def test_transition_matrix_none_ids_skipped(self, cmap, monkeypatch):
+        """Regression: None from/to_memory_id in DB row must not crash sorted().
+
+        Pre-fix: sorted({None, 5}) → TypeError: '<' not supported between
+        instances of 'NoneType' and 'int'.  Post-fix: None row silently skipped.
+        """
+        bad_rows = [
+            {"from_memory_id": None, "to_memory_id": 5, "count": 1},
+            {"from_memory_id": 3, "to_memory_id": None, "count": 2},
+            {"from_memory_id": 3, "to_memory_id": 5, "count": 3},
+        ]
+        monkeypatch.setattr(cmap._storage, "get_all_transitions", lambda: bad_rows)
+        # Pre-fix this raises TypeError; post-fix it returns a 2×2 matrix (ids 3,5)
+        T = cmap.build_transition_matrix()
+        assert T.shape == (2, 2)
+        # ids {3,5} — sorted to [3, 5]
+        assert set(cmap._memory_index.keys()) == {3, 5}
+
+    def test_transition_matrix_values(self, storage, cmap):
+        """Transition probabilities reflect counts."""
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        # m1→m2 three times, m1→m1 once (4 total from m1)
+        for _ in range(3):
+            cmap.record_transition(m1, m2)
+        cmap.record_transition(m1, m1)
+
+        T = cmap.build_transition_matrix()
+        i1 = cmap._memory_index[m1]
+        i2 = cmap._memory_index[m2]
+
+        assert T[i1, i2] == pytest.approx(0.75, abs=1e-10)
+        assert T[i1, i1] == pytest.approx(0.25, abs=1e-10)
+
+
+class TestSRMatrix:
+    def test_sr_matrix_shape(self, storage, cmap):
+        """SR matrix is square N×N."""
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m3 = storage.insert_memory(
+            {
+                "content": "c",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        cmap.record_transition(m1, m2)
+        cmap.record_transition(m2, m3)
+        cmap.record_transition(m3, m1)
+
+        M = cmap.compute_sr_matrix()
+        assert M.shape == (3, 3)
+
+    def test_sr_diagonal_dominant(self, storage, cmap):
+        """M[i,i] >= M[i,j] for all j — you visit yourself most often."""
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m3 = storage.insert_memory(
+            {
+                "content": "c",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        cmap.record_transition(m1, m2)
+        cmap.record_transition(m2, m3)
+        cmap.record_transition(m3, m1)
+
+        M = cmap.compute_sr_matrix()
+
+        for i in range(M.shape[0]):
+            for j in range(M.shape[1]):
+                assert M[i, i] >= M[i, j] - 1e-10, f"M[{i},{i}]={M[i, i]} < M[{i},{j}]={M[i, j]}"
+
+    def test_sr_matrix_empty(self, cmap):
+        """SR matrix for no data is empty."""
+        M = cmap.compute_sr_matrix()
+        assert M.shape == (0, 0)
+
+
+class TestCoordinates:
+    def test_extract_coordinates_2d(self, storage, cmap):
+        """Returns 2D coordinates for each memory in the transition graph."""
+        mids = []
+        for i in range(4):
+            mid = storage.insert_memory(
+                {
+                    "content": f"mem{i}",
+                    "tags": [],
+                    "directory_context": "/p",
+                    "heat": 1.0,
+                    "is_stale": False,
+                }
+            )
+            mids.append(mid)
+
+        # Create a cycle: 0→1→2→3→0
+        for i in range(4):
+            cmap.record_transition(mids[i], mids[(i + 1) % 4])
+
+        coords = cmap.extract_coordinates(n_dims=2)
+
+        assert len(coords) == 4
+        for mid in mids:
+            assert mid in coords
+            assert len(coords[mid]) == 2
+            assert all(isinstance(v, float) for v in coords[mid])
+
+    def test_extract_coordinates_recomputes_when_dirty(self, storage, cmap):
+        """Extracting coords recomputes SR if dirty."""
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        cmap.record_transition(m1, m2)
+        coords = cmap.extract_coordinates()
+        assert len(coords) == 2
+
+
+class TestNavigateTo:
+    def test_navigate_to_basic(self, storage, embeddings, cmap):
+        """Finds memories near query position in SR space."""
+        m1 = _make_memory(storage, embeddings, "Python web development with Flask")
+        m2 = _make_memory(storage, embeddings, "Database optimization techniques")
+        m3 = _make_memory(storage, embeddings, "React frontend components")
+
+        # Create transitions so SR has something to work with
+        cmap.record_transition(m1, m2)
+        cmap.record_transition(m2, m3)
+        cmap.record_transition(m3, m1)
+        cmap.compute_sr_matrix()
+
+        query_emb = embeddings.encode("web development")
+        results = cmap.navigate_to(query_emb, embeddings, top_k=3)
+
+        assert len(results) > 0
+        assert all(isinstance(mid, int) for mid, _ in results)
+        assert all(0 < score <= 1.0 for _, score in results)
+        # Results should be sorted by proximity descending
+        proximities = [s for _, s in results]
+        assert proximities == sorted(proximities, reverse=True)
+
+    def test_navigate_to_empty(self, cmap, embeddings):
+        """Navigate returns empty when no transitions exist."""
+        query_emb = embeddings.encode("test query")
+        results = cmap.navigate_to(query_emb, embeddings)
+        assert results == []
+
+
+class TestIncrementalUpdate:
+    def test_incremental_update(self, storage, cmap):
+        """TD update modifies the correct row of SR matrix."""
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m3 = storage.insert_memory(
+            {
+                "content": "c",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        cmap.record_transition(m1, m2)
+        cmap.record_transition(m2, m3)
+        cmap.record_transition(m3, m1)
+        M_before = cmap.compute_sr_matrix().copy()
+
+        # Do a TD update from m1 → m2
+        cmap.incremental_update(m1, m2)
+
+        M_after = cmap._sr_matrix
+
+        # m1's row should have changed
+        i1 = cmap._memory_index[m1]
+        assert not np.allclose(M_before[i1], M_after[i1])
+
+        # Other rows should be unchanged
+        for idx in range(M_before.shape[0]):
+            if idx != i1:
+                np.testing.assert_array_almost_equal(M_before[idx], M_after[idx])
+
+    def test_incremental_update_unknown_ids(self, cmap):
+        """TD update is a no-op for unknown IDs."""
+        cmap._sr_matrix = np.eye(2)
+        cmap._memory_index = {1: 0, 2: 1}
+        before = cmap._sr_matrix.copy()
+
+        cmap.incremental_update(999, 888)
+
+        np.testing.assert_array_equal(before, cmap._sr_matrix)
+
+    def test_incremental_update_no_matrix(self, cmap):
+        """TD update is a no-op when no SR matrix exists."""
+        cmap.incremental_update(1, 2)  # Should not raise
+
+
+class TestFrequentlyCoaccessed:
+    def test_frequently_coaccessed_cluster(self, storage, cmap):
+        """Memories accessed together cluster in SR space."""
+        # Group A: frequently co-accessed
+        a1 = storage.insert_memory(
+            {
+                "content": "group A mem 1",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        a2 = storage.insert_memory(
+            {
+                "content": "group A mem 2",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        a3 = storage.insert_memory(
+            {
+                "content": "group A mem 3",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        # Group B: frequently co-accessed among themselves
+        b1 = storage.insert_memory(
+            {
+                "content": "group B mem 1",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        b2 = storage.insert_memory(
+            {
+                "content": "group B mem 2",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        # Heavy transitions within group A
+        for _ in range(10):
+            cmap.record_transition(a1, a2)
+            cmap.record_transition(a2, a3)
+            cmap.record_transition(a3, a1)
+
+        # Heavy transitions within group B
+        for _ in range(10):
+            cmap.record_transition(b1, b2)
+            cmap.record_transition(b2, b1)
+
+        # Weak cross-group link
+        cmap.record_transition(a3, b1)
+
+        coords = cmap.extract_coordinates(n_dims=2)
+
+        # Within-group distances should be less than cross-group distances
+        def dist(id1, id2):
+            c1, c2 = np.array(coords[id1]), np.array(coords[id2])
+            return float(np.linalg.norm(c1 - c2))
+
+        # Average intra-group A distance
+        intra_a = (dist(a1, a2) + dist(a2, a3) + dist(a1, a3)) / 3.0
+        # Average cross-group distance
+        cross = (dist(a1, b1) + dist(a1, b2) + dist(a2, b1) + dist(a2, b2)) / 4.0
+
+        assert intra_a < cross, (
+            f"Intra-group distance ({intra_a:.4f}) should be less than "
+            f"cross-group distance ({cross:.4f})"
+        )
+
+
+class TestHasSufficientData:
+    def test_insufficient_data(self, cmap):
+        """Returns False when too few transitions."""
+        assert not cmap.has_sufficient_data()
+
+    def test_sufficient_data(self, storage, cmap):
+        """Returns True when enough transitions exist."""
+        m1 = storage.insert_memory(
+            {
+                "content": "a",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+        m2 = storage.insert_memory(
+            {
+                "content": "b",
+                "tags": [],
+                "directory_context": "/p",
+                "heat": 1.0,
+                "is_stale": False,
+            }
+        )
+
+        # Record many transitions to exceed _MIN_TRANSITIONS
+        for _ in range(_MIN_TRANSITIONS):
+            cmap.record_transition(m1, m2)
+
+        assert cmap.has_sufficient_data()
+
+
+class TestIntegration:
+    def test_integration_navigate_tool(self, storage, embeddings, settings):
+        """SR matrix navigate end-to-end: build transitions, compute matrix, verify."""
+        cmap = CognitiveMap(storage, settings)
+
+        # Create memories with real embeddings
+        m1 = _make_memory(storage, embeddings, "Python web frameworks Flask Django")
+        m2 = _make_memory(storage, embeddings, "JavaScript React Vue frontend")
+        m3 = _make_memory(storage, embeddings, "SQL database optimization PostgreSQL")
+
+        # Build transition history
+        cmap.record_transition(m1, m2)
+        cmap.record_transition(m2, m3)
+        cmap.record_transition(m3, m1)
+        cmap.compute_sr_matrix()
+
+        # Navigate
+        query_emb = embeddings.encode("web application development")
+        results = cmap.navigate_to(query_emb, embeddings, top_k=3)
+
+        assert len(results) == 3
+        memory_ids = {mid for mid, _ in results}
+        assert memory_ids == {m1, m2, m3}

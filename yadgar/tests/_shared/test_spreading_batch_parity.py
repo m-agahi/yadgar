@@ -31,8 +31,8 @@ import pytest
 
 from yadgar._shared.config import Settings
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.retrieval.core import Retriever
 from yadgar._shared.storage import StorageEngine
+from yadgar.backend.retrieval.core import Retriever
 
 
 @pytest.fixture

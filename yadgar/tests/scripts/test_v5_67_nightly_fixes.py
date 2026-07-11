@@ -216,7 +216,7 @@ class TestGcCallbackShutdownSafe:
 
         _gc_callback(phase='start', info={'generation': 0}) must not raise.
         """
-        import yadgar.core.graph_api as ga
+        import yadgar.core.daemon.system_metrics as ga
 
         importlib.reload(ga)
 
@@ -238,7 +238,7 @@ class TestGcCallbackShutdownSafe:
 
         _gc_callback(phase='stop', info={'generation': 0}) must not raise.
         """
-        import yadgar.core.graph_api as ga
+        import yadgar.core.daemon.system_metrics as ga
 
         importlib.reload(ga)
 
@@ -257,7 +257,7 @@ class TestGcCallbackShutdownSafe:
 
     def test_gc_callback_start_still_records_when_healthy(self):
         """In normal operation, 'start' phase still records timestamp."""
-        import yadgar.core.graph_api as ga
+        import yadgar.core.daemon.system_metrics as ga
 
         importlib.reload(ga)
 
@@ -272,7 +272,7 @@ class TestGcCallbackShutdownSafe:
 
     def test_gc_callback_stop_does_not_raise_when_no_start(self):
         """'stop' with no matching 'start' must be a no-op (not raise KeyError)."""
-        import yadgar.core.graph_api as ga
+        import yadgar.core.daemon.system_metrics as ga
 
         importlib.reload(ga)
 

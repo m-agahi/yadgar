@@ -25,7 +25,7 @@ import time
 import pytest
 
 # R2a Car D2: _signal_handler + shutdown moved to yadgar.core.lifecycle.
-from yadgar.core import lifecycle
+from yadgar.core.lifecycle import lifecycle
 
 
 @pytest.fixture()

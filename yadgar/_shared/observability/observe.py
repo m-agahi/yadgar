@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 
 logger = logging.getLogger("yadgar.observe")
 
@@ -57,7 +57,7 @@ try:
     from prometheus_client import Counter as _Counter
     from prometheus_client import Histogram as _Histogram
 
-    from yadgar._shared.metrics import _registry as _yadgar_registry
+    from yadgar._shared.observability.metrics import _registry as _yadgar_registry
 
     _PROM_AVAILABLE = True
 except Exception:  # pragma: no cover

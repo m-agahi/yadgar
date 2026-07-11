@@ -25,7 +25,7 @@ from prometheus_client.parser import text_string_to_metric_families
 
 
 def test_record_cache_hit_emits_generic_family():
-    from yadgar._shared import metrics
+    from yadgar._shared.observability import metrics
 
     before = metrics.yadgar_cache_hit_total.labels(cache="unittest_hit")._value.get()
     metrics.record_cache_hit("unittest_hit")
@@ -34,7 +34,7 @@ def test_record_cache_hit_emits_generic_family():
 
 
 def test_record_cache_miss_emits_generic_family():
-    from yadgar._shared import metrics
+    from yadgar._shared.observability import metrics
 
     before = metrics.yadgar_cache_miss_total.labels(cache="unittest_miss")._value.get()
     metrics.record_cache_miss("unittest_miss")
@@ -43,7 +43,7 @@ def test_record_cache_miss_emits_generic_family():
 
 
 def test_record_cache_evict_emits_new_evictions_family():
-    from yadgar._shared import metrics
+    from yadgar._shared.observability import metrics
 
     before = metrics.yadgar_cache_evictions_total.labels(cache="unittest_evict")._value.get()
     metrics.record_cache_evict("unittest_evict", 3)
@@ -52,7 +52,7 @@ def test_record_cache_evict_emits_new_evictions_family():
 
 
 def test_cache_size_entries_gauge_exists():
-    from yadgar._shared import metrics
+    from yadgar._shared.observability import metrics
 
     metrics.yadgar_cache_size_entries.labels(cache="unittest_size").set(7)
     assert metrics.yadgar_cache_size_entries.labels(cache="unittest_size")._value.get() == 7
@@ -63,8 +63,8 @@ def test_cache_size_entries_gauge_exists():
 
 def test_remote_embedding_cache_emits_generic_family():
     """remote_embeddings.encode was fully silent; must now emit {cache="remote_embedding"}."""
-    from yadgar._shared import metrics
-    from yadgar._shared.remote_embeddings import RemoteEmbeddingEngine
+    from yadgar._shared.embeddings.remote_embeddings import RemoteEmbeddingEngine
+    from yadgar._shared.observability import metrics
 
     eng = RemoteEmbeddingEngine.__new__(RemoteEmbeddingEngine)
     # Minimal manual init to exercise the cache hit path without a live backend.
@@ -84,7 +84,7 @@ def test_remote_embedding_cache_emits_generic_family():
 
 def test_rate_limit_cache_emits_hit_miss():
     """TokenBucketRateLimiter.allow: new key = miss, existing key = hit."""
-    from yadgar._shared import metrics
+    from yadgar._shared.observability import metrics
     from yadgar._shared.rate_limit import TokenBucketRateLimiter
 
     rl = TokenBucketRateLimiter(max_per_minute=600)
@@ -98,7 +98,7 @@ def test_rate_limit_cache_emits_hit_miss():
 
 def test_rules_cache_emits_hit_miss_and_evict():
     """RulesEngine.get_applicable_rules hit/miss + clear-on-mutate evict."""
-    from yadgar._shared import metrics
+    from yadgar._shared.observability import metrics
     from yadgar._shared.rules_engine import RulesEngine
 
     class _FakeStorage:
@@ -122,7 +122,7 @@ def test_rules_cache_emits_hit_miss_and_evict():
     assert metrics.yadgar_cache_hit_total.labels(cache="rules")._value.get() == hit0 + 1
 
     # Simulate a mutation-flush (the add_rule/delete_rule clear path).
-    from yadgar._shared.metrics import record_cache_evict
+    from yadgar._shared.observability.metrics import record_cache_evict
 
     record_cache_evict("rules", len(eng._applicable_rules_cache))
     eng._applicable_rules_cache.clear()

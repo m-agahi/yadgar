@@ -65,7 +65,7 @@ def _reset_tracer_provider():
         try:
             import logging
 
-            import yadgar._shared.tracing as _tr
+            import yadgar._shared.observability.tracing as _tr
 
             _tr._SETUP_DONE.clear()
             # C2 P2: stop the QueueListener (removes QueueHandler, restores propagate
@@ -123,7 +123,7 @@ def in_memory_tracer():
 class TestSetupTracingIdempotent:
     def test_setup_tracing_can_be_called_twice(self):
         """setup_tracing called twice does not raise and does not stack processors."""
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         setup_tracing("test-service")
         setup_tracing("test-service")  # should not raise
@@ -133,7 +133,7 @@ class TestSetupTracingIdempotent:
         from opentelemetry import trace
         from opentelemetry.trace import NoOpTracerProvider
 
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         setup_tracing("test-service")
         provider = trace.get_tracer_provider()
@@ -148,7 +148,7 @@ class TestSetupTracingIdempotent:
 class TestTraceSpanSync:
     def test_sync_returns_value(self, in_memory_tracer):
         """Decorated sync function returns its normal return value."""
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         def my_fn():
@@ -159,7 +159,7 @@ class TestTraceSpanSync:
     def test_sync_creates_span(self, in_memory_tracer):
         """Decorated sync function creates exactly one span."""
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         def my_fn():
@@ -181,8 +181,8 @@ class TestTraceSpanSync:
         log-path filter → trace_span → get_tracer(stub) → AttributeError, which
         aborted shutdown_tracing. get_tracer failures must degrade to no-span.
         """
-        from yadgar._shared import tracing
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability import tracing
+        from yadgar._shared.observability.tracing import trace_span
 
         def _boom(_module):
             raise AttributeError("'_HangingProvider' object has no attribute 'get_tracer'")
@@ -198,7 +198,7 @@ class TestTraceSpanSync:
 
     def test_sync_body_exception_still_propagates_when_traced(self, in_memory_tracer):
         """The get_tracer guard must NOT swallow the wrapped fn's own exceptions."""
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         def my_fn():
@@ -210,7 +210,7 @@ class TestTraceSpanSync:
     def test_sync_default_name(self, in_memory_tracer):
         """Name defaults to module.qualname when not provided."""
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         def explicit_fn():
@@ -223,7 +223,7 @@ class TestTraceSpanSync:
     def test_sync_attributes_set(self, in_memory_tracer):
         """Static attributes passed to decorator appear on span."""
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span(attributes={"custom.key": "val"})
         def my_fn():
@@ -244,7 +244,7 @@ class TestTraceSpanSync:
 class TestTraceSpanAsync:
     def test_async_returns_value(self, in_memory_tracer):
         """Decorated async function returns its normal return value."""
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         async def my_fn():
@@ -256,7 +256,7 @@ class TestTraceSpanAsync:
     def test_async_creates_span(self, in_memory_tracer):
         """Decorated async function creates exactly one span."""
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         async def my_fn():
@@ -278,7 +278,7 @@ class TestSpanTree:
     def test_nested_sync_spans_have_parent(self, in_memory_tracer):
         """Inner decorated function has parent_span_id == outer span id."""
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         def inner():
@@ -301,7 +301,7 @@ class TestSpanTree:
     def test_nested_async_spans_have_parent(self, in_memory_tracer):
         """Inner async decorated function has correct parent."""
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         async def inner():
@@ -329,7 +329,7 @@ class TestSpanTree:
 class TestTraceSpanException:
     def test_exception_reraises(self, in_memory_tracer):
         """Exception propagates out of decorated function."""
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         def my_fn():
@@ -343,7 +343,7 @@ class TestTraceSpanException:
         from opentelemetry.trace import StatusCode
 
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         def my_fn():
@@ -364,7 +364,7 @@ class TestTraceSpanException:
         from opentelemetry.trace import StatusCode
 
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span()
         async def my_fn():
@@ -392,10 +392,10 @@ class TestLogSpanProcessor:
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
 
-        from yadgar._shared import tracing as tr
+        from yadgar._shared.observability import tracing as tr
 
         # Capture log output using JSONLogFormatter so we get parseable JSON
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         log_capture = StringIO()
         handler = _logging.StreamHandler(log_capture)
@@ -449,7 +449,7 @@ class TestLogSpanProcessor:
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
 
-        from yadgar._shared import tracing as tr
+        from yadgar._shared.observability import tracing as tr
 
         records: list[_logging.LogRecord] = []
 
@@ -501,7 +501,7 @@ class TestLogSpanProcessor:
         import logging as _logging
         from unittest.mock import MagicMock
 
-        from yadgar._shared import tracing as tr
+        from yadgar._shared.observability import tracing as tr
 
         proc_logger = _logging.getLogger("yadgar.tracing")
         depth = {"cur": 0, "max": 0}
@@ -572,7 +572,7 @@ class TestSpanLogOffThread:
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
 
-        from yadgar._shared import tracing as tr
+        from yadgar._shared.observability import tracing as tr
 
         seen: list[_logging.LogRecord] = []
 
@@ -666,7 +666,7 @@ class _FlakyExporter:
 
 class TestOtlpCircuitBreaker:
     def _cb(self, inner, **kw):
-        from yadgar._shared.tracing import _CircuitBreakerSpanExporter
+        from yadgar._shared.observability.tracing import _CircuitBreakerSpanExporter
 
         return _CircuitBreakerSpanExporter(inner, **kw)
 
@@ -708,7 +708,8 @@ class TestOtlpCircuitBreaker:
         )
 
         with _patch.object(
-            __import__("yadgar._shared.tracing", fromlist=["logger"]).logger, "warning"
+            __import__("yadgar._shared.observability.tracing", fromlist=["logger"]).logger,
+            "warning",
         ) as warn:
             # Drive 2 failures to open + many more exports within the same window.
             for _ in range(10):
@@ -769,7 +770,7 @@ class TestCurrentIds:
     def test_no_span_returns_none(self):
         """Outside any span context, helpers return None."""
         _reset_tracer_provider()
-        from yadgar._shared.tracing import get_current_span_id, get_current_trace_id
+        from yadgar._shared.observability.tracing import get_current_span_id, get_current_trace_id
 
         assert get_current_trace_id() is None
         assert get_current_span_id() is None
@@ -777,7 +778,7 @@ class TestCurrentIds:
     def test_inside_span_returns_ids(self, in_memory_tracer):
         """Inside a span, helpers return non-None hex strings."""
         tracer, _exporter = in_memory_tracer
-        from yadgar._shared.tracing import get_current_span_id, get_current_trace_id
+        from yadgar._shared.observability.tracing import get_current_span_id, get_current_trace_id
 
         with tracer.start_as_current_span("test.ids"):
             tid = get_current_trace_id()
@@ -799,7 +800,7 @@ class TestJSONLogFormatterTraceInjection:
     def test_injects_when_span_active(self, in_memory_tracer):
         """JSONLogFormatter adds trace_id + span_id when OTel span is active."""
         tracer, _exporter = in_memory_tracer
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         formatter = JSONLogFormatter()
         logger = logging.getLogger("test.formatter")
@@ -826,7 +827,7 @@ class TestJSONLogFormatterTraceInjection:
     def test_omits_when_no_span(self):
         """JSONLogFormatter omits trace_id/span_id when no active span."""
         _reset_tracer_provider()
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         formatter = JSONLogFormatter()
         record = logging.LogRecord(
@@ -853,7 +854,7 @@ class TestAsyncioToThreadContextPropagation:
     def test_to_thread_sees_parent_span(self, in_memory_tracer):
         """asyncio.to_thread preserves OTel span context from the calling coroutine."""
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import get_current_trace_id
+        from yadgar._shared.observability.tracing import get_current_trace_id
 
         captured: list[str | None] = []
 
@@ -881,7 +882,7 @@ class TestConcurrentTaskContextIsolation:
     def test_tasks_have_independent_spans(self, in_memory_tracer):
         """Two concurrent asyncio tasks each see their own span, not each other's."""
         tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import get_current_trace_id
+        from yadgar._shared.observability.tracing import get_current_trace_id
 
         task_ids: dict[str, str | None] = {}
 
@@ -928,10 +929,10 @@ class TestFallbackMode:
             with patch("builtins.__import__", side_effect=mock_import):
                 # This import will use fallback mode
                 # We test the fallback functions directly
-                from yadgar._shared.tracing import _OTEL_AVAILABLE
+                from yadgar._shared.observability.tracing import _OTEL_AVAILABLE
 
                 if not _OTEL_AVAILABLE:
-                    from yadgar._shared.tracing import trace_span
+                    from yadgar._shared.observability.tracing import trace_span
 
                     @trace_span()
                     def my_fn():
@@ -964,7 +965,7 @@ class TestFallbackMode:
         """setup_tracing does not raise even when called in fallback mode."""
         # The real implementation has a try/except guard
         # Just verify setup_tracing is safe to call
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         # Should not raise regardless of environment
         try:
@@ -1152,11 +1153,14 @@ class TestFileHandlerDualSink:
         import logging
         from io import StringIO
 
-        import yadgar._shared.tracing as _tr_mod
-        from yadgar._shared.log_config import JSONLogFormatter, RotatingJSONLFileHandler
+        import yadgar._shared.observability.tracing as _tr_mod
+        from yadgar._shared.observability.log_config import (
+            JSONLogFormatter,
+            RotatingJSONLFileHandler,
+        )
 
         # Re-evaluate the module spec to get a clean class definition
-        spec = importlib.util.find_spec("yadgar._shared.tracing")
+        spec = importlib.util.find_spec("yadgar._shared.observability.tracing")
         if spec is not None:
             fresh_mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(fresh_mod)
@@ -1248,7 +1252,10 @@ class TestRequestLoggingMiddlewareTraceId:
         from fastapi.testclient import TestClient
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        from yadgar._shared.log_config import JSONLogFormatter, RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import (
+            JSONLogFormatter,
+            RequestLoggingMiddleware,
+        )
 
         _tracer, exporter = in_memory_tracer
 
@@ -1306,7 +1313,10 @@ class TestRequestLoggingMiddlewareTraceId:
         from fastapi.testclient import TestClient
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        from yadgar._shared.log_config import JSONLogFormatter, RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import (
+            JSONLogFormatter,
+            RequestLoggingMiddleware,
+        )
 
         _tracer, exporter = in_memory_tracer
 
@@ -1363,7 +1373,7 @@ class TestStorageMethodSpan:
         """A decorated storage method emits a span with the correct name."""
 
         _tracer, exporter = in_memory_tracer
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         # Create a minimal mock storage method decorated with @trace_span
         @trace_span()

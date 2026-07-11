@@ -189,7 +189,7 @@ class TestRecallPipelineMetrics:
 
     def test_no_profile_does_not_increment_profile_counter(self):
         """Profile=None does not bump profile invocations counter (no plugin pipeline)."""
-        from yadgar._shared.metrics import yadgar_recall_profile_invocations_total
+        from yadgar._shared.observability.metrics import yadgar_recall_profile_invocations_total
 
         before_total = sum(
             s.value
@@ -208,7 +208,7 @@ class TestRecallPipelineMetrics:
 
     def test_profile_set_does_not_increment_plugin_pipeline_counter(self):
         """Phase 2a: profile= is forwarded to backend; plugin pipeline counter NOT fired."""
-        from yadgar._shared.metrics import yadgar_recall_profile_invocations_total
+        from yadgar._shared.observability.metrics import yadgar_recall_profile_invocations_total
 
         before = sum(
             s.value

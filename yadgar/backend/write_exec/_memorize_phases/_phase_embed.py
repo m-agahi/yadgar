@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import yadgar._shared.runtime.lifecycle as _lifecycle
 import yadgar._shared.runtime.state as _st
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.write_exec import MemorizeContext
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,9 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
         ctx.gate_result = {"surprisal": round(surprisal, 4), "gate_reason": reason}
         if not should_store:
             try:
-                from yadgar._shared.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+                from yadgar._shared.observability.metrics import (
+                    yadgar_writegate_outcome,  # noqa: PLC0415
+                )
 
                 yadgar_writegate_outcome.labels(outcome="skipped_low_surprise").inc()
             except Exception:

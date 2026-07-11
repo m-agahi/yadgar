@@ -14,7 +14,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import (
     _get_storage,
 )
-from yadgar._shared.secrets import gate_or_reject
+from yadgar._shared.security.secrets import gate_or_reject
 from yadgar.core.server._app import _tool
 from yadgar.core.server._helpers import _q_with_timeout
 from yadgar.core.server.tools._forward import _forward_admin
@@ -65,13 +65,15 @@ def validate_memory(memory_id: int) -> dict:
     if not memory.get("file_hash"):
         return {"memory_id": memory_id, "is_valid": True, "reason": "no file hash to validate"}
 
+    # T2 Car E1 (ADR-0078): the host-FS hash comparison stays core; the
+    # staleness-flag WRITE forwards to the backend /admin op.
     current_hash = _file_hash(memory["directory_context"])
     if current_hash is None:
-        storage.update_memory_staleness(memory_id, True)
+        _forward_admin("update_memory_staleness", {"memory_id": memory_id, "is_stale": True})
         return {"memory_id": memory_id, "is_valid": False, "reason": "file no longer exists"}
 
     if current_hash != memory["file_hash"]:
-        storage.update_memory_staleness(memory_id, True)
+        _forward_admin("update_memory_staleness", {"memory_id": memory_id, "is_stale": True})
         return {"memory_id": memory_id, "is_valid": False, "reason": "file has changed"}
 
     return {"memory_id": memory_id, "is_valid": True, "reason": "file hash matches"}
@@ -295,7 +297,7 @@ def _ms_histogram_p95(hist) -> float:
 def _ms_queue_depth() -> int:
     """Return current queue depth from Prometheus gauge (memory_stats helper)."""
     try:
-        from yadgar._shared.metrics import yadgar_queue_depth  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import yadgar_queue_depth  # noqa: PLC0415
 
         gauge_samples = list(yadgar_queue_depth.collect()[0].samples)
         for s in gauge_samples:
@@ -376,7 +378,7 @@ def memory_stats() -> dict:
 
     # P11 — metrics summary block (I8: backpressure must be observable via memory_stats)
     try:
-        from yadgar._shared.metrics import (  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import (  # noqa: PLC0415
             yadgar_drainer_lag_ms,
             yadgar_recall_duration_ms,
         )

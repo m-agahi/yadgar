@@ -25,7 +25,7 @@ import yadgar._shared.paths as _paths
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
-from yadgar._shared.secrets import gate_or_reject
+from yadgar._shared.security.secrets import gate_or_reject
 from yadgar.core.server._app import _tool
 from yadgar.core.server.tools._forward import _forward_admin
 
@@ -47,6 +47,7 @@ from yadgar._shared.server_helpers import (  # noqa: E402
     _count_markdown_headers,
     _git_safe_env,
     _resolve_project_root,
+    normalize_write_context,
 )
 
 
@@ -109,7 +110,7 @@ def _detect_branch(directory: str) -> str | None:
         _before = _detect_branch_cached.cache_info().hits
         result = _detect_branch_cached(directory, int((time.time() + (hash(directory) % 30)) // 30))
         try:
-            from yadgar._shared.metrics import record_cache_hit, record_cache_miss
+            from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
 
             if _detect_branch_cached.cache_info().hits > _before:
                 record_cache_hit("branch_detect")
@@ -164,7 +165,7 @@ def _get_default_branch(directory: str) -> str:
     _before = _get_default_branch_cached.cache_info().hits
     result = _get_default_branch_cached(directory, int(time.time() // 300))
     try:
-        from yadgar._shared.metrics import record_cache_hit, record_cache_miss
+        from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
 
         if _get_default_branch_cached.cache_info().hits > _before:
             record_cache_hit("default_branch")
@@ -1792,7 +1793,7 @@ def _project_brief_signals(
     _payload_tokens = len(__import__("json").dumps(result)) // 4
     if _payload_tokens > cfg.SIGNALS_TOKEN_BUDGET_SOFT:
         try:
-            from yadgar._shared.metrics import yadgar_signals_payload_oversized_total
+            from yadgar._shared.observability.metrics import yadgar_signals_payload_oversized_total
 
             yadgar_signals_payload_oversized_total.inc()
         except Exception:
@@ -2158,39 +2159,10 @@ def bootstrap_project(directory: str, content: str) -> dict:
     if len(content) > cap:
         raise ValueError(f"project_init content exceeds {cap} char cap (got {len(content)} chars)")
     resolved = _resolve_project_root(directory)
-    storage = _get_storage()
-    result = storage.upsert_project_init(resolved, content)
-
-    # v5.33.0: Seed default memory blocks (idempotent — skip if already exist)
-    _seed_default_blocks(storage, resolved)
-
-    return result
-
-
-@observe(tier="stage", metric="tools.project._seed_default_blocks")
-def _seed_default_blocks(storage, directory: str) -> None:
-    """Seed default memory blocks for a project directory (v5.33.0).
-
-    Creates current_task and gotchas blocks if they don't already exist.
-    Idempotent — existing blocks are not modified.
-    """
-    _DEFAULT_BLOCKS = [
-        ("current_task", ""),
-        ("gotchas", ""),
-    ]
-    for name, content in _DEFAULT_BLOCKS:
-        try:
-            existing = storage.get_block(name, scope="project", directory=directory)
-            if existing is None:
-                storage.create_block(
-                    name=name,
-                    content=content,
-                    scope="project",
-                    directory=directory,
-                    char_limit=2000,
-                )
-        except Exception:
-            logger.debug("_seed_default_blocks: failed to seed block %r for %r", name, directory)
+    # T2 Car F (ADR-0078): the store phase (init upsert + default-block seed)
+    # forwards to the backend bootstrap_project_store /admin op — validation +
+    # secret gate + host path resolution stay core-side.
+    return _forward_admin("bootstrap_project_store", {"resolved": resolved, "content": content})
 
 
 @observe(tier="stage", metric="tools.project._get_active_work_tracked_dir")
@@ -2273,6 +2245,11 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
             "field": "branch_hint",
             "op_type": "update_active_work",
         }
+
+    # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
+    # canonical repo root before resolution — _resolve_project_root alone returns
+    # the WORKTREE toplevel for linked worktrees, which orphans the row.
+    directory, _ = normalize_write_context(directory, None)
 
     # R3 Car 3d: secret-gate + branch resolution stay core (above); the atomic
     # _active_work delete-then-insert (+ project_brief epoch bump) forwards to the
@@ -2395,7 +2372,7 @@ def _compute_stale_wiki_count(resolved: str) -> int:
     once per STALE_COUNT_CACHE_TTL_S seconds per project directory.
     Returns 0 on any error (graceful degradation).
     """
-    from yadgar._shared.metrics import record_cache_hit, record_cache_miss
+    from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
 
     try:
         cfg = get_settings()

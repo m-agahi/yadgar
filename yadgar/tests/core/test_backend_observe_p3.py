@@ -59,7 +59,7 @@ def _reload_es(monkeypatch, *, allow_root: bool = True):
     monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1" if allow_root else "0")
     monkeypatch.delenv("YADGAR_DB_PATH", raising=False)
     cfg.get_settings.cache_clear()
-    import yadgar.backend.embed_service as es
+    import yadgar.backend.embed_service.embed_service as es
 
     importlib.reload(es)
     return es

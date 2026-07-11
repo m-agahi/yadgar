@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar._shared.retrieval.scoring import FTSParams, _normalize_fts_hits, _ScoringMixin
+from yadgar.backend.retrieval.scoring import FTSParams, _normalize_fts_hits, _ScoringMixin
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from yadgar._shared.cognitive_map import CognitiveMap
 from yadgar._shared.metacognition import MetaCognition
+from yadgar._shared.runtime.sr_session import SRTransitionRecorder
 from yadgar.core import server
 from yadgar.tests.conftest import memorize_sync
 
@@ -262,8 +262,10 @@ class TestCognitiveMapUpdates:
     """test_cognitive_map_updates: transitions recorded during recall."""
 
     def test_cognitive_map_transitions(self):
+        # T2 Car B: the shared root builds the session-side recorder; the numpy
+        # CognitiveMap subclass is composed backend-side (ensure_restoration_engines).
         assert server._cognitive_map is not None
-        assert isinstance(server._cognitive_map, CognitiveMap)
+        assert isinstance(server._cognitive_map, SRTransitionRecorder)
 
         # Store two memories
         _store_novel_memory(

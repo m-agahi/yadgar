@@ -1,6 +1,6 @@
 [
  {
-  "path": "yadgar/_shared/log_config.py",
+  "path": "yadgar/_shared/observability/log_config.py",
   "function": "<file>",
   "lineno": 1,
   "metrics": {
@@ -22,7 +22,7 @@
   "added_by": "safestop-car2"
  },
  {
-  "path": "yadgar/backend/embed_service.py",
+  "path": "yadgar/backend/embed_service/embed_service.py",
   "function": "<file>",
   "lineno": 1,
   "metrics": {
@@ -228,7 +228,7 @@
   "added_by": "complexity-governance-agent"
  },
  {
-  "path": "yadgar/_shared/config_yaml.py",
+  "path": "yadgar/_shared/config/config_yaml.py",
   "function": "<file>",
   "lineno": 1,
   "metrics": {
@@ -283,13 +283,13 @@
   "added_by": "complexity-governance-agent"
  },
  {
-  "path": "yadgar/_shared/wiki.py",
+  "path": "yadgar/_shared/wiki/store.py",
   "function": "<file>",
   "lineno": 1,
   "metrics": {
    "file_loc": 2251
   },
-  "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended).",
+  "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended). T2 Car C: file relocated wiki.py -> wiki/store.py (contract split; internal I13 split remains task #18).",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -393,7 +393,7 @@
   "added_by": "feat/v5.89-settings-redesign"
  },
  {
-  "path": "yadgar/_shared/metrics.py",
+  "path": "yadgar/_shared/observability/metrics.py",
   "function": "<file>",
   "lineno": 1,
   "metrics": {
@@ -404,7 +404,7 @@
   "added_by": "fix/daemon-obs-gauges"
  },
  {
-  "path": "yadgar/_shared/config.py",
+  "path": "yadgar/_shared/config/config.py",
   "function": "<file>",
   "lineno": 1,
   "metrics": {
@@ -415,11 +415,11 @@
   "added_by": "feat/obs-p1-recall-readpath"
  },
  {
-  "path": "yadgar/_shared/runtime/recall_pipeline.py",
+  "path": "yadgar/backend/retrieval/recall_pipeline.py",
   "function": "_fanout_recall",
-  "lineno": 202,
+  "lineno": 333,
   "metrics": {
-   "params": 9
+   "params": 10
   },
   "rationale": "Phase 1 backend contract widen (#45): added profile: str | None = None as the 9th param to thread rerank_level through the fanout. The 8-param SOFT cap is exceeded by 1; the function signature matches the backend RecallRequest contract (query/max_results/min_heat/directory/current_branch/default_branch/type_filter/tags/profile). Introducing a config-object wrapper would require changing all callers (core + backend) simultaneously, which couples Phase 1 to Phase 2 — Phase 2 is the planned refactor pass. Allowlisted until Phase 2 can wrap params cleanly.",
   "added": "2026-07-05",
@@ -437,7 +437,7 @@
   "added_by": "phase2a-cutover-agent"
  },
  {
-  "path": "yadgar/backend/cache.py",
+  "path": "yadgar/backend/cache/cache.py",
   "function": "__init__",
   "lineno": 340,
   "metrics": {

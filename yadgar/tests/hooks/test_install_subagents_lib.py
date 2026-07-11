@@ -4,7 +4,7 @@ Module: yadgar.install_subagents_lib
 Target: ≥80% line coverage
 
 Strategy:
-- Always patch yadgar.platform_paths.is_nix_managed to control nix_managed path.
+- Always patch yadgar.core.install.platform_paths.is_nix_managed to control nix_managed path.
 - Use tmp_path for home_dir parameter; create fake bundled agents dir by patching
   _get_bundled_agents_dir() to point to a tmp dir with .md files.
 - Test all status branches: nix_managed, error (no bundled dir), error (no .md files),
@@ -42,7 +42,7 @@ def _make_bundled_dir(tmp_path: Path, files: list[str] | None = None) -> Path:
 class TestGetBundledAgentsDir:
     def test_returns_path_inside_package(self):
         """_get_bundled_agents_dir returns a Path inside the yadgar package."""
-        from yadgar.core.install_subagents_lib import _get_bundled_agents_dir
+        from yadgar.core.install.install_subagents_lib import _get_bundled_agents_dir
 
         result = _get_bundled_agents_dir()
         assert isinstance(result, Path)
@@ -58,8 +58,8 @@ class TestGetBundledAgentsDir:
 class TestInstallSubagentsNixManaged:
     def test_nix_managed_returns_nix_managed_status(self, tmp_path):
         """When is_nix_managed() is True, returns nix_managed status."""
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=True):
-            from yadgar.core.install_subagents_lib import install_subagents_impl
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=True):
+            from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
             result = install_subagents_impl(home_dir=tmp_path)
 
@@ -67,8 +67,8 @@ class TestInstallSubagentsNixManaged:
 
     def test_nix_managed_contains_message(self, tmp_path):
         """nix_managed result contains a message key."""
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=True):
-            from yadgar.core.install_subagents_lib import install_subagents_impl
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=True):
+            from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
             result = install_subagents_impl(home_dir=tmp_path)
 
@@ -86,12 +86,12 @@ class TestInstallSubagentsErrors:
         """Returns error status when bundled agents dir doesn't exist."""
         nonexistent = tmp_path / "does_not_exist"
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=nonexistent,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path)
 
@@ -105,12 +105,12 @@ class TestInstallSubagentsErrors:
         bundled_non_md = bundled / "readme.txt"
         bundled_non_md.write_text("not an agent\n")
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path)
 
@@ -128,12 +128,12 @@ class TestInstallSubagentsCheck:
         """check=True returns status='check'."""
         bundled = _make_bundled_dir(tmp_path)
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path, check=True)
 
@@ -143,12 +143,12 @@ class TestInstallSubagentsCheck:
         """check=True returns would_install list with new files."""
         bundled = _make_bundled_dir(tmp_path, files=["agent1.md", "agent2.md"])
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path, check=True)
 
@@ -158,12 +158,12 @@ class TestInstallSubagentsCheck:
         """check=True result includes agents_dir path."""
         bundled = _make_bundled_dir(tmp_path)
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path, check=True)
 
@@ -175,12 +175,12 @@ class TestInstallSubagentsCheck:
         bundled = _make_bundled_dir(tmp_path)
         agents_dir = tmp_path / ".claude" / "agents"
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 install_subagents_impl(home_dir=tmp_path, check=True)
 
@@ -193,12 +193,12 @@ class TestInstallSubagentsCheck:
         agents_dir.mkdir(parents=True)
         (agents_dir / "agent1.md").write_text("existing content\n")
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path, check=True)
 
@@ -215,12 +215,12 @@ class TestInstallSubagentsDryRun:
         """dry_run=True returns status='dry_run'."""
         bundled = _make_bundled_dir(tmp_path)
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path, dry_run=True)
 
@@ -230,12 +230,12 @@ class TestInstallSubagentsDryRun:
         """dry_run=True prints file names to stdout."""
         bundled = _make_bundled_dir(tmp_path, files=["agent1.md"])
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 install_subagents_impl(home_dir=tmp_path, dry_run=True)
 
@@ -247,12 +247,12 @@ class TestInstallSubagentsDryRun:
         bundled = _make_bundled_dir(tmp_path)
         agents_dir = tmp_path / ".claude" / "agents"
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 install_subagents_impl(home_dir=tmp_path, dry_run=True)
 
@@ -265,12 +265,12 @@ class TestInstallSubagentsDryRun:
         agents_dir.mkdir(parents=True)
         (agents_dir / "agent1.md").write_text("existing\n")
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path, dry_run=True)
 
@@ -292,12 +292,12 @@ class TestInstallSubagentsNoChanges:
         for name in ["agent1.md", "agent2.md"]:
             (agents_dir / name).write_text("existing\n")
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path)
 
@@ -315,12 +315,12 @@ class TestInstallSubagentsInstalled:
         """Fresh install: all files copied, status='installed'."""
         bundled = _make_bundled_dir(tmp_path, files=["agent1.md", "agent2.md"])
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path)
 
@@ -332,12 +332,12 @@ class TestInstallSubagentsInstalled:
         bundled = _make_bundled_dir(tmp_path, files=["agent1.md"])
         agents_dir = tmp_path / ".claude" / "agents"
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 install_subagents_impl(home_dir=tmp_path)
 
@@ -348,12 +348,12 @@ class TestInstallSubagentsInstalled:
         bundled = _make_bundled_dir(tmp_path, files=["agent1.md"])
         src_content = (bundled / "agent1.md").read_text()
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 install_subagents_impl(home_dir=tmp_path)
 
@@ -364,12 +364,12 @@ class TestInstallSubagentsInstalled:
         """Result includes agents_dir path."""
         bundled = _make_bundled_dir(tmp_path, files=["agent1.md"])
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path)
 
@@ -382,12 +382,12 @@ class TestInstallSubagentsInstalled:
         agents_dir.mkdir(parents=True)
         (agents_dir / "agent1.md").write_text("old content\n")
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path, force=True)
 
@@ -404,12 +404,12 @@ class TestInstallSubagentsInstalled:
         agents_dir.mkdir(parents=True)
         (agents_dir / "agent1.md").write_text("existing\n")
 
-        with patch("yadgar._shared.platform_paths.is_nix_managed", return_value=False):
+        with patch("yadgar.core.install.platform_paths.is_nix_managed", return_value=False):
             with patch(
-                "yadgar.core.install_subagents_lib._get_bundled_agents_dir",
+                "yadgar.core.install.install_subagents_lib._get_bundled_agents_dir",
                 return_value=bundled,
             ):
-                from yadgar.core.install_subagents_lib import install_subagents_impl
+                from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
                 result = install_subagents_impl(home_dir=tmp_path)
 

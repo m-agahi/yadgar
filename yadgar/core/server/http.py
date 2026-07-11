@@ -25,15 +25,22 @@ from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
 import yadgar._shared.paths as _paths
 import yadgar._shared.runtime.state as _st
-import yadgar.core.viz_daemon_health as _vdh  # noqa: F401 — V1c: SSE daemon_health push
+import yadgar.core.viz.viz_daemon_health as _vdh  # noqa: F401 — V1c: SSE daemon_health push
 from yadgar import __version__
 from yadgar._shared.config import resolve_knob
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import trace_span
-from yadgar.core.graph_api import GraphAPI
+from yadgar._shared.observability.tracing import trace_span
 from yadgar.core.sanitize import sanitize_log_field
 from yadgar.core.server._app import mcp_server
-from yadgar.core.server._helpers import _bounded_set, _build_dlq_alert_text  # noqa: F401
+
+# T2 Car E3 (census verdict #11): the graph data assembly moved to
+# yadgar.backend.graph — the /api/graph* handlers below keep their route
+# shells and forward via _forward_viz.
+from yadgar.core.server._helpers import (  # noqa: F401
+    _bounded_set,
+    _build_dlq_alert_text,
+    _extract_record_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +146,9 @@ async def _recall_with_timeout(
             },
         )
         try:
-            from yadgar._shared.metrics import yadgar_hook_recall_timeout_total  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (
+                yadgar_hook_recall_timeout_total,  # noqa: PLC0415
+            )
 
             yadgar_hook_recall_timeout_total.labels(handler=handler_name).inc()
         except Exception:  # noqa: BLE001
@@ -358,55 +367,25 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
 def _vacuum_stale_sentinels(retention_days: int | None = None) -> int:
     """Delete _session_end_sentinel memory rows older than retention_days.
 
-    Returns count of deleted rows.
-    Never raises.
+    T2 Car E1 (ADR-0078): the read+delete compute is stateless-over-DB and
+    runs backend-side (``vacuum_stale_sentinels`` /admin op); this shell only
+    forwards. Returns count of deleted rows. Never raises.
     """
-    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+    from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
 
-    from yadgar._shared.runtime.lifecycle import _get_storage as _gs  # noqa: PLC0415
-
-    if retention_days is None:
-        from yadgar._shared.config import get_settings  # noqa: PLC0415
-
-        retention_days = get_settings().SESSION_END_RETENTION_DAYS
-
-    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
-    deleted = 0
     try:
-        storage = _gs()
-        rows = storage._q(
-            "SELECT id FROM memory "
-            "WHERE '_session_end_sentinel' INSIDE tags "
-            "AND created_at < $cutoff",
-            {"cutoff": cutoff},
-        )
-        deleted = _vacuum_delete_rows(storage, rows)
-    except Exception as e:
+        result = _forward_admin("vacuum_stale_sentinels", {"retention_days": retention_days})
+        return int(result.get("deleted", 0))
+    except Exception as e:  # noqa: BLE001 — ops path: log, never raise
         logger.warning("sentinel vacuum error: %s", e)
-    return deleted
-
-
-@observe(tier="stage")
-def _vacuum_delete_rows(storage, rows: list) -> int:
-    """Delete memory rows by id. Returns count deleted."""
-    deleted = 0
-    for row in rows:
-        mid = storage._extract_id(row.get("id"))
-        if mid is None:
-            continue
-        try:
-            storage.delete_memory(mid)
-            deleted += 1
-        except Exception as e:
-            logger.warning("sentinel vacuum: delete_memory(%s) failed: %s", mid, e)
-    return deleted
+        return 0
 
 
 @observe(tier="stage")
 def _hook_observe(hook: str, t0: float, exc: BaseException | None = None) -> None:
     """Record hook execution duration + failure metrics. Never raises."""
     try:
-        from yadgar._shared.metrics import (  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import (  # noqa: PLC0415
             hook_record_failure,
             yadgar_hook_execution_duration_ms,
         )
@@ -424,7 +403,7 @@ def _hook_observe_response(hook: str, status_code: int) -> None:
     """Increment failure counter if status_code >= 500. Never raises."""
     if status_code >= 500:
         try:
-            from yadgar._shared.metrics import hook_record_failure  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import hook_record_failure  # noqa: PLC0415
 
             hook_record_failure(hook, status_code=status_code)
         except Exception:  # noqa: BLE001
@@ -664,7 +643,7 @@ async def metrics_endpoint(request: Request):
     Exempt from bearer-token auth (loopback Prometheus scrapers don't carry tokens).
     Returns 404 when YADGAR_METRICS_ENABLED=False / 0.
     """
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
 
     return await metrics_handler(request)
 
@@ -679,13 +658,20 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
         body = {}
 
     directory = body.get("cwd", os.getcwd())
-    replay = _st._replay
-    if replay is None:
-        return JSONResponse(
-            {"status": "error", "message": "Replay engine not initialized"}, status_code=503
-        )
 
-    result = replay.pre_compact_drain(directory)
+    # T2 Car B: CheckpointRestore lives backend-side now — the drain writes
+    # (epoch increment + auto-checkpoint upsert) run via the /admin forward.
+    # Lazy import mirrors the tools.recall import at :181 (avoids the
+    # http ⇄ tools package import cycle at module load).
+    from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
+
+    try:
+        result = await asyncio.to_thread(
+            _forward_admin, "pre_compact_drain", {"directory": directory}
+        )
+    except Exception as e:
+        logger.exception("hook_pre_compact forward error: %s", e)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=503)
 
     # Also trigger consolidation
     if _st._consolidation is not None:
@@ -702,14 +688,14 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
 async def hook_post_compact(request: Request) -> JSONResponse:
     """Called by SessionStart hook after compaction. Returns restoration context."""
     directory = request.query_params.get("directory", os.getcwd())
-    replay = _st._replay
-    if replay is None:
-        return JSONResponse(
-            {"status": "error", "message": "Replay engine not initialized"}, status_code=503
-        )
+
+    # T2 Car B: restore compute runs backend-side behind POST /restore.
+    # Lazy import mirrors the tools.recall import at :181 (avoids the
+    # http ⇄ tools package import cycle at module load).
+    from yadgar.core.server.tools._forward import _forward_restore  # noqa: PLC0415
 
     try:
-        result = await asyncio.to_thread(replay.restore, directory)
+        result = await asyncio.to_thread(_forward_restore, directory)
         return JSONResponse(result)
     except Exception as e:
         logger.exception("hook_post_compact error: %s", e)
@@ -821,13 +807,21 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
         ts = datetime.now(UTC).isoformat()
 
+        # T2 Car E1 (ADR-0078): the flushed batch rides the file-queue seam —
+        # the backend drainer replays it via run_action_log_replay. Enqueue is
+        # disk IO, so it stays off the event loop via asyncio.to_thread.
+        from yadgar.core.lifecycle import _get_file_queue  # noqa: PLC0415
+
         await asyncio.to_thread(
-            storage.insert_action_log,
-            tool_name=f"batch[{combined_tools}]",
-            tool_input_summary=combined_summary[:500],
-            directory=directory,
-            session_id=session_id,
-            timestamp=ts,
+            _get_file_queue().enqueue,
+            "action_log",
+            {
+                "tool_name": f"batch[{combined_tools}]",
+                "summary": combined_summary[:500],
+                "directory": directory,
+                "session_id": session_id,
+                "timestamp": ts,
+            },
         )
 
         if _st._consolidation is not None:
@@ -1440,7 +1434,9 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
             try:
                 msg = json.loads(raw_line)
             except json.JSONDecodeError as _jde:
-                from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+                from yadgar._shared.observability.exception_telemetry import (
+                    record_exception,  # noqa: PLC0415
+                )
 
                 record_exception("server.http.team_inbox", _jde)
                 logger.warning("team_inbox malformed JSONL in %s — skipping line", file_path)
@@ -1454,15 +1450,22 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
             )
 
             try:
+                # T2 Car E1 (ADR-0078): team-inbox rows ride the file-queue seam
+                # (backend drainer replays via run_action_log_replay).
+                from yadgar.core.lifecycle import _get_file_queue  # noqa: PLC0415
+
                 await _asyncio.to_thread(
-                    storage.insert_action_log,
-                    tool_name="team_message",
-                    tool_input_summary=sanitize_log_field(summary, max_len=500),
-                    directory=sanitize_log_field(file_path, max_len=500),
-                    session_id=sanitize_log_field(
-                        f"team:{project_id}/{team_name}/{agent_name}", max_len=100
-                    ),
-                    timestamp=ts,
+                    _get_file_queue().enqueue,
+                    "action_log",
+                    {
+                        "tool_name": "team_message",
+                        "summary": sanitize_log_field(summary, max_len=500),
+                        "directory": sanitize_log_field(file_path, max_len=500),
+                        "session_id": sanitize_log_field(
+                            f"team:{project_id}/{team_name}/{agent_name}", max_len=100
+                        ),
+                        "timestamp": ts,
+                    },
                 )
                 stored += 1
             except Exception as _e:
@@ -1699,7 +1702,9 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
 
         # P11: count the dispatch now that we know the agent_type is valid.
         try:
-            from yadgar._shared.metrics import yadgar_subagent_dispatch_count  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (
+                yadgar_subagent_dispatch_count,  # noqa: PLC0415
+            )
 
             yadgar_subagent_dispatch_count.labels(agent_type=agent_type).inc()
         except Exception:
@@ -1794,32 +1799,28 @@ async def api_graph(request: Request) -> JSONResponse:
         except (ValueError, TypeError) as _e:
             max_entities = _cfg.VIZ_MAX_ENTITIES
         _t0 = time.time()
+        # T2 Car E3: the assembly (+ cached-layout attach) runs backend-side.
+        from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+
         data = await asyncio.to_thread(
-            GraphAPI(_st._storage).get_full_graph,
-            max_mem,
-            top_k,
-            False,
-            None,
-            max_wiki,
-            max_entities,
+            _forward_viz,
+            "graph",
+            {
+                "max_memories": max_mem,
+                "top_k": top_k,
+                "max_wiki": max_wiki,
+                "max_entities": max_entities,
+            },
         )
         _elapsed_ms = (time.time() - _t0) * 1000.0
         try:
-            from yadgar._shared.metrics import yadgar_viz_api_graph_duration_ms  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (
+                yadgar_viz_api_graph_duration_ms,  # noqa: PLC0415
+            )
 
             yadgar_viz_api_graph_duration_ms.observe(_elapsed_ms)
         except Exception:
             pass
-        # v5.88: attach precomputed positions (by node-id) when the flag is on
-        # and a layout cache exists. Default OFF → no x/y/z (current behavior).
-        if getattr(_cfg, "VIZ_PRECOMPUTED_LAYOUT_ENABLED", False):
-            try:
-                from yadgar.core.graph_layout import attach_cached_positions  # noqa: PLC0415
-
-                _cache = await asyncio.to_thread(_st._storage.get_graph_layout_cache)
-                attach_cached_positions(data, _cache, enabled=True)
-            except Exception:
-                logger.debug("attach_cached_positions failed (non-fatal)", exc_info=True)
         return JSONResponse(data, headers=_CORS)
     except Exception as _exc:
         _caught_exc = _exc
@@ -1879,7 +1880,10 @@ async def api_graph_stats(request: Request) -> JSONResponse:
     """Return graph statistics: counts + top entities by heat."""
     if _st._storage is None:
         return JSONResponse({}, status_code=503)
-    data = await asyncio.to_thread(GraphAPI(_st._storage).get_graph_stats)
+    # T2 Car E3: assembly runs backend-side.
+    from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+
+    data = await asyncio.to_thread(_forward_viz, "graph_stats", {})
     return JSONResponse(data, headers=_CORS)
 
 
@@ -1913,8 +1917,13 @@ async def api_graph_edges_lazy(request: Request) -> JSONResponse:
         top_k = int(request.query_params.get("top_k", 8))
     except (ValueError, TypeError):  # fmt: skip
         top_k = 8
+    # T2 Car E3: assembly runs backend-side.
+    from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+
     data = await asyncio.to_thread(
-        GraphAPI(_st._storage).get_edges_by_type, edge_type, max_mem, top_k
+        _forward_viz,
+        "graph_edges",
+        {"edge_type": edge_type, "max_memories": max_mem, "top_k": top_k},
     )
     return JSONResponse(data, headers=_CORS)
 
@@ -1930,7 +1939,12 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
         hops = int(request.query_params.get("hops", 2))
     except (ValueError, TypeError) as _e:
         hops = 2
-    data = await asyncio.to_thread(GraphAPI(_st._storage).get_neighborhood, node_id, hops)
+    # T2 Car E3: assembly runs backend-side.
+    from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+
+    data = await asyncio.to_thread(
+        _forward_viz, "graph_neighborhood", {"node_id": node_id, "hops": hops}
+    )
     return JSONResponse(data, headers=_CORS)
 
 
@@ -2054,7 +2068,9 @@ async def _make_event_stream(request: Request):
 
     # P11: SSE client gauge — inc on entry, dec on any exit path.
     try:
-        from yadgar._shared.metrics import yadgar_viz_sse_clients as _sse_g  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import (
+            yadgar_viz_sse_clients as _sse_g,  # noqa: PLC0415
+        )
 
         _sse_g.inc()
     except Exception:
@@ -2065,7 +2081,9 @@ async def _make_event_stream(request: Request):
             # Per-client heartbeat would explode label cardinality; single label tracks that
             # at least one SSE client iteration is alive.
             try:
-                from yadgar._shared.metrics import loop_heartbeat as _lhb  # noqa: PLC0415
+                from yadgar._shared.observability.metrics import (
+                    loop_heartbeat as _lhb,  # noqa: PLC0415
+                )
 
                 _lhb("sse_event_stream")
             except Exception:  # noqa: BLE001
@@ -2197,7 +2215,7 @@ async def _viz_exact_title_node_ids(q: str) -> list[str]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        raw_id = GraphAPI._extract_id(row.get("id"))
+        raw_id = _extract_record_id(row.get("id"))
         if raw_id is not None:
             node_ids.append(f"mem:{raw_id}")
     return node_ids
@@ -2244,25 +2262,26 @@ async def api_viz_search(request: Request) -> JSONResponse:
         #
         # Do NOT add a directory= filter here without revisiting BC-VZ2 first.
 
-        # Memory recall
-        retriever = _st._retriever
-        if retriever is not None:
-            try:
-                # v5.25.3: use lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP).
-                # Full rerank pipeline causes 2.5-10s CPU bursts; fast profile is sufficient
-                # for viz graph node lookup. Pattern matches siblings prompt_recall + subagent_start.
-                mem_results = await asyncio.to_thread(
-                    retriever.recall, q, max_results=5, min_heat=0.0, profile="fast"
-                )
-                for r in mem_results or []:
-                    raw_id = r.get("id")
-                    if raw_id is not None:
-                        try:
-                            node_ids.append(f"mem:{int(raw_id)}")
-                        except (TypeError, ValueError):  # fmt: skip
-                            pass
-            except Exception as _exc:
-                logger.debug("viz_search recall error: %s", _exc)
+        # Memory recall — T2 Car E2: forwarded to the backend /recall like the
+        # hook siblings (retrieval sank to the backend; _st._retriever is None
+        # in the core process). _HookRecallForwarder("") = whole-DB eligibility
+        # (empty scope directory) — exactly the BC-VZ2 god's-eye semantics.
+        # v5.25.3: lightweight "fast" profile (BM25+HNSW only, no CE/NLI/MP) —
+        # full rerank causes 2.5-10s CPU bursts; fast is sufficient for lookup.
+        try:
+            mem_results = await asyncio.to_thread(
+                _HookRecallForwarder("").recall, q, max_results=5, min_heat=0.0, profile="fast"
+            )
+        except Exception as _exc:
+            logger.debug("viz_search recall error: %s", _exc)
+            mem_results = []
+        for r in mem_results or []:
+            raw_id = r.get("id")
+            if raw_id is not None:
+                try:
+                    node_ids.append(f"mem:{int(raw_id)}")
+                except (TypeError, ValueError):  # fmt: skip
+                    pass
 
         # Wiki query — also whole-DB, same intentional bypass as recall above (BC-VZ2).
         wiki = _st._wiki
@@ -2273,10 +2292,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
                     raw_id = wp.get("id")
                     if raw_id is not None:
                         # id may be a RecordID — extract numeric part
-                        # (GraphAPI imported at module scope; a function-local
-                        #  re-import here would make GraphAPI local to the whole
-                        #  function and break the earlier exact-title use.)
-                        nid = GraphAPI._extract_id(raw_id)
+                        nid = _extract_record_id(raw_id)
                         if nid is not None:
                             node_ids.append(f"wiki:{nid}")
             except Exception as _exc:
@@ -2313,7 +2329,7 @@ async def api_viz_config(request: Request) -> JSONResponse:
     v5.50.13: added legend block; category_colors built by iterating CATEGORIES.
     """
     from yadgar._shared.config import get_settings  # noqa: PLC0415
-    from yadgar.core.viz_meta import (  # noqa: PLC0415
+    from yadgar.core.viz.viz_meta import (  # noqa: PLC0415
         build_category_colors,
         build_edge_colors,
         build_legend,

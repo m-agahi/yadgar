@@ -15,8 +15,8 @@ from datetime import UTC, datetime
 import yadgar._shared.runtime.lifecycle as _lifecycle
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.server_helpers import _DECISION_STRONG_RE, _push_event
-from yadgar._shared.tracing import trace_span
 from yadgar._shared.write_exec import MemorizeContext
 
 logger = logging.getLogger(__name__)

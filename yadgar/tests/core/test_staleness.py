@@ -12,6 +12,16 @@ def storage(module_storage):
     return module_storage
 
 
+@pytest.fixture(autouse=True)
+def _wire_backend_storage(storage, monkeypatch):
+    """T2 Car E1: the detector forwards flag WRITES to backend admin ops, which
+    resolve storage via _st._storage — point it at the module engine so the op
+    writes land where the assertions read."""
+    import yadgar._shared.runtime.state as _st
+
+    monkeypatch.setattr(_st, "_storage", storage)
+
+
 @pytest.fixture
 def settings(tmp_path):
     return Settings(DB_PATH=str(tmp_path / "test.db"))

@@ -7,7 +7,7 @@ TDD: tests written before implementation — they will fail until fixes land.
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar._shared.engram import EngramAllocator
+from yadgar._shared.contracts.engram import EngramAllocator
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.admin_exec.invariants import _run_check_invariants
 from yadgar.core import server

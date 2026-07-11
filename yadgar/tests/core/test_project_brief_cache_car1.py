@@ -45,8 +45,14 @@ def test_subdir_memorize_busts_parent_project_brief_epoch(monkeypatch):
     Written at the epoch layer with the resolver patched so subdir + parent both
     map to one git-root (a bare tmpdir would fall back to raw input on a non-git
     path and pass for the wrong reason)."""
-    from yadgar._shared import server_helpers
+    # T2 Car D (ADR-0084) packaged server_helpers into a subpackage: the top-level
+    # ``yadgar._shared.server_helpers`` is now the PEP-562 shim, but
+    # ``_bump_epoch_for_context`` looks up its ``_resolve_project_root`` sibling in
+    # the ``server_helpers.server_helpers`` submodule namespace. Patch (and call
+    # through) the submodule seam — patching the shim attr never reaches the call
+    # site. Matches the convention in test_worktree_context_normalization.py.
     from yadgar._shared.runtime import cache_epoch as _recall_shadow
+    from yadgar._shared.server_helpers import server_helpers as sh
 
     ROOT = "/repo"
 
@@ -54,17 +60,15 @@ def test_subdir_memorize_busts_parent_project_brief_epoch(monkeypatch):
         # Both the repo root and any subdir resolve to the same git-root.
         return ROOT
 
-    # _bump_epoch_for_context resolves via server_helpers._resolve_project_root
-    # (Car 1: both moved to _shared.server_helpers) — patch it there.
-    monkeypatch.setattr(server_helpers, "_resolve_project_root", fake_resolve)
+    monkeypatch.setattr(sh, "_resolve_project_root", fake_resolve)
 
     # project_brief reads the epoch on the RESOLVED root.
-    parent_resolved = server_helpers._resolve_project_root("/repo")
+    parent_resolved = sh._resolve_project_root("/repo")
     epoch_before = _recall_shadow._current_epoch(parent_resolved)
 
     # A memorize into a subdir bumps via the SAME normalization the read uses.
     subdir_ctx = "/repo/subpkg/deep"
-    server_helpers._bump_epoch_for_context(subdir_ctx)
+    sh._bump_epoch_for_context(subdir_ctx)
 
     epoch_after = _recall_shadow._current_epoch(parent_resolved)
     assert epoch_after == epoch_before + 1, (
@@ -76,15 +80,19 @@ def test_subdir_memorize_busts_parent_project_brief_epoch(monkeypatch):
 def test_bump_helper_normalizes_before_bump(monkeypatch):
     """The shared bump helper resolves its dir arg to git-root before bumping,
     so a raw subdir and the git-root land on the SAME epoch key."""
-    from yadgar._shared import server_helpers
+    # T2 Car D (ADR-0084): patch/call via the ``server_helpers.server_helpers``
+    # submodule seam, not the PEP-562 package shim — the internal
+    # ``_bump_epoch_for_context`` -> ``_resolve_project_root`` lookup resolves in
+    # the submodule namespace (see test_worktree_context_normalization.py).
     from yadgar._shared.runtime import cache_epoch as _recall_shadow
+    from yadgar._shared.server_helpers import server_helpers as sh
 
     ROOT = "/x/root"
-    monkeypatch.setattr(server_helpers, "_resolve_project_root", lambda d: ROOT)
+    monkeypatch.setattr(sh, "_resolve_project_root", lambda d: ROOT)
 
     e0 = _recall_shadow._current_epoch(ROOT)
-    server_helpers._bump_epoch_for_context("/x/root/a/b")
-    server_helpers._bump_epoch_for_context("/x/root")  # raw root, same normalization
+    sh._bump_epoch_for_context("/x/root/a/b")
+    sh._bump_epoch_for_context("/x/root")  # raw root, same normalization
     assert _recall_shadow._current_epoch(ROOT) == e0 + 2
 
 

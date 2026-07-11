@@ -239,7 +239,10 @@ def test_phase_contradiction_flags_known_pairs(monkeypatch):
     monkeypatch.setenv("YADGAR_CONFLICT_RESOLVER", "on")
 
     mock_result = {"op": "NOOP", "reason": "duplicate detected"}
-    with patch("yadgar.backend.conflict_resolver.resolve_conflict", return_value=mock_result):
+    with patch(
+        "yadgar.backend.conflict_resolver.conflict_resolver.resolve_conflict",
+        return_value=mock_result,
+    ):
         ctx = _make_ctx()
         ctx.resolved_branch = "feat/test"
         result = phase_contradiction(ctx)

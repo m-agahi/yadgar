@@ -319,6 +319,34 @@ def _e2e_recall_bypass(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _e2e_restore_bypass(monkeypatch):
+    """Route ``_forward_restore`` → in-process ``backend.restoration.run_restore``.
+
+    T2 Car B: restore is forward-only (POST /restore). Delegates to
+    ``_backend_harness.patch_restore_bypass``. CALL-TIME guarded on
+    YADGAR_EMBED_URL: real-backend restore e2e tests exercise the real HTTP path.
+    """
+    from yadgar.tests._backend_harness import patch_restore_bypass
+
+    patch_restore_bypass(monkeypatch)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _e2e_viz_bypass(monkeypatch):
+    """Route ``_forward_viz`` → in-process ``backend.viz_exec.run_viz_op``.
+
+    T2 Car E3: the /api/graph* handlers are forward-only (POST /viz). Delegates
+    to ``_backend_harness.patch_viz_bypass``. CALL-TIME guarded on
+    YADGAR_EMBED_URL: real-backend viz e2e tests exercise the real HTTP path.
+    """
+    from yadgar.tests._backend_harness import patch_viz_bypass
+
+    patch_viz_bypass(monkeypatch)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _e2e_consolidate_bypass(monkeypatch):
     """Route the consolidation orchestrator's ``_forward_to_backend`` in-process.
 

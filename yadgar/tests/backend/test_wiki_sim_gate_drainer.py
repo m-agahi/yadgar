@@ -91,7 +91,7 @@ def _drainer_env(tmp_path):
     real_fq = FileQueue(tmp_path)
 
     import yadgar._shared.runtime.state as _state_mod
-    import yadgar.core.lifecycle as _cl
+    import yadgar.core.lifecycle.lifecycle as _cl
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -339,7 +339,7 @@ class TestDrainerRejectionMetric:
         # Get before count
         def _get_count() -> float:
             try:
-                from yadgar._shared.metrics import yadgar_wiki_add_rejected_total
+                from yadgar._shared.observability.metrics import yadgar_wiki_add_rejected_total
 
                 return yadgar_wiki_add_rejected_total.labels(
                     reason="duplicate_detected"

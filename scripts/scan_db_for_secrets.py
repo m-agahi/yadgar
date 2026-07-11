@@ -56,7 +56,7 @@ _REPO_ROOT = _HERE.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from yadgar._shared.secrets import check_secrets  # noqa: E402
+from yadgar._shared.security.secrets import check_secrets  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Mock data for --storage-mock mode (safe dummy rows, no real secrets)

@@ -477,7 +477,7 @@ class TestShadowGateConfig:
         assert s.WRITE_GATE_SHADOW_THRESHOLD == 0.15
 
     def test_shadow_threshold_in_registry(self):
-        from yadgar._shared.config_registry import _REGISTRY
+        from yadgar._shared.config.config_registry import _REGISTRY
 
         names = {e.name for e in _REGISTRY}
         assert "YADGAR_WRITE_GATE_SHADOW_THRESHOLD" in names, (
@@ -485,7 +485,7 @@ class TestShadowGateConfig:
         )
 
     def test_shadow_threshold_in_field_meta(self):
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "write_gate_shadow_threshold" in FIELD_META, (
             "write_gate_shadow_threshold must be in FIELD_META"

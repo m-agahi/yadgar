@@ -24,15 +24,15 @@ import pytest
 
 from yadgar._shared.config import Settings
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.retrieval import (
+from yadgar._shared.storage import StorageEngine
+from yadgar.backend.retrieval import (
     RetrievalPipeline,
     RetrievalState,
     Retriever,
     get_profile,
     recall_compare,
 )
-from yadgar._shared.retrieval.stages.base import RetrievalStage
-from yadgar._shared.storage import StorageEngine
+from yadgar.backend.retrieval.stages.base import RetrievalStage
 
 # ---------------------------------------------------------------------------
 # Deterministic stub embeddings (copied from characterization test)
@@ -421,23 +421,23 @@ class TestPerCallOverrides:
 class TestMetrics:
     def test_profile_invocation_counter_metric_exists(self):
         """yadgar_recall_profile_invocations_total metric is registered."""
-        from yadgar._shared.metrics import yadgar_recall_profile_invocations_total
+        from yadgar._shared.observability.metrics import yadgar_recall_profile_invocations_total
 
         assert yadgar_recall_profile_invocations_total is not None
 
     def test_stage_duration_metric_exists(self):
         """yadgar_recall_stage_duration_seconds metric is registered."""
-        from yadgar._shared.metrics import yadgar_recall_stage_duration_seconds
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_duration_seconds
 
         assert yadgar_recall_stage_duration_seconds is not None
 
     def test_stage_candidates_in_metric_exists(self):
-        from yadgar._shared.metrics import yadgar_recall_stage_candidates_in
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_candidates_in
 
         assert yadgar_recall_stage_candidates_in is not None
 
     def test_stage_candidates_out_metric_exists(self):
-        from yadgar._shared.metrics import yadgar_recall_stage_candidates_out
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_candidates_out
 
         assert yadgar_recall_stage_candidates_out is not None
 

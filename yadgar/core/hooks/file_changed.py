@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import shutdown_tracing
+from yadgar._shared.observability.tracing import shutdown_tracing
 
 _PORT = os.environ.get("YADGAR_PORT", "8765")
 _AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")

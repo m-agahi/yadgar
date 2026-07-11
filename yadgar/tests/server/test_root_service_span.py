@@ -104,13 +104,13 @@ def test_config_resolve_knob_sentinel():
 
 
 def test_config_yaml_cmd_config_init_sentinel():
-    from yadgar._shared.config_yaml import cmd_config_init
+    from yadgar._shared.config.config_yaml import cmd_config_init
 
     assert _has_span(cmd_config_init)
 
 
 def test_config_yaml_set_config_value_sentinel():
-    from yadgar._shared.config_yaml import set_config_value
+    from yadgar._shared.config.config_yaml import set_config_value
 
     assert _has_span(set_config_value)
 
@@ -121,18 +121,18 @@ def test_config_yaml_set_config_value_sentinel():
 
 
 def test_config_registry_emit_startup_log_sentinel():
-    from yadgar._shared.config_registry import emit_startup_config_log
+    from yadgar._shared.config.config_registry import emit_startup_config_log
 
     assert _has_span(emit_startup_config_log)
 
 
 # ---------------------------------------------------------------------------
-# config_sync.py
+# core/config_sync/sync.py (moved from _shared in T2 Car A)
 # ---------------------------------------------------------------------------
 
 
 def test_config_sync_cmd_sentinel():
-    from yadgar._shared.config_sync import cmd_config_sync
+    from yadgar.core.config_sync.sync import cmd_config_sync
 
     assert _has_span(cmd_config_sync)
 
@@ -149,7 +149,7 @@ def test_config_sync_cmd_sentinel():
 
 
 def test_log_config_configure_logging_not_observed():
-    from yadgar._shared.log_config import configure_logging
+    from yadgar._shared.observability.log_config import configure_logging
 
     assert not _has_span(configure_logging), (
         "configure_logging must not be @observe'd — log-emission path span→log→span flood (v5.106)"
@@ -157,7 +157,7 @@ def test_log_config_configure_logging_not_observed():
 
 
 def test_log_config_is_sensitive_not_observed():
-    from yadgar._shared.log_config import _is_sensitive
+    from yadgar._shared.observability.log_config import _is_sensitive
 
     assert not _has_span(_is_sensitive), (
         "_is_sensitive must not be @observe'd — log-emission path span→log→span flood (v5.106)"
@@ -280,7 +280,7 @@ def test_sensitive_lock_acquire_sentinel():
 
 
 def test_secrets_gate_or_reject_sentinel():
-    from yadgar._shared.secrets import gate_or_reject
+    from yadgar._shared.security.secrets import gate_or_reject
 
     assert _has_span(gate_or_reject)
 
@@ -313,7 +313,7 @@ def test_backup_create_snapshot_sentinel():
 
 
 def test_drain_drain_in_flight_requests_sentinel():
-    from yadgar.core.drain import drain_in_flight_requests
+    from yadgar.core.daemon.drain import drain_in_flight_requests
 
     assert _has_span(drain_in_flight_requests)
 
@@ -330,12 +330,12 @@ def test_paths_data_dir_sentinel():
 
 
 # ---------------------------------------------------------------------------
-# platform_paths.py
+# core/install/platform_paths.py (moved from _shared in T2 Car A)
 # ---------------------------------------------------------------------------
 
 
 def test_platform_paths_get_claude_config_dir_sentinel():
-    from yadgar._shared.platform_paths import get_claude_config_dir
+    from yadgar.core.install.platform_paths import get_claude_config_dir
 
     assert _has_span(get_claude_config_dir)
 
@@ -346,7 +346,7 @@ def test_platform_paths_get_claude_config_dir_sentinel():
 
 
 def test_install_hooks_impl_sentinel():
-    from yadgar.core.install_hooks_lib import install_hooks_impl
+    from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
     assert _has_span(install_hooks_impl)
 
@@ -357,7 +357,7 @@ def test_install_hooks_impl_sentinel():
 
 
 def test_install_subagents_impl_sentinel():
-    from yadgar.core.install_subagents_lib import install_subagents_impl
+    from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
     assert _has_span(install_subagents_impl)
 
@@ -376,7 +376,7 @@ def test_exception_telemetry_record_exception_sentinel():
     which asserts exactly ONE span). So it is a categorized no-op exempt — the
     coverage lint counts a non-empty @observe(exempt=...) reason as satisfied.
     """
-    from yadgar._shared.exception_telemetry import record_exception
+    from yadgar._shared.observability.exception_telemetry import record_exception
 
     assert not _has_span(record_exception), "record_exception must not open its own span"
     reason = getattr(record_exception, "_yadgar_observe_exempt", None)
@@ -402,7 +402,7 @@ def test_sanitize_log_field_sentinel():
 
 
 def test_sd_notify_sentinel():
-    from yadgar.core.sd_notify import notify
+    from yadgar.core.daemon.sd_notify import notify
 
     assert _has_span(notify)
 
@@ -413,7 +413,7 @@ def test_sd_notify_sentinel():
 
 
 def test_models_indent_continuation_sentinel():
-    from yadgar._shared.models import _indent_continuation
+    from yadgar._shared.contracts.models import _indent_continuation
 
     assert _has_span(_indent_continuation)
 

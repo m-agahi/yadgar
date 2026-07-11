@@ -168,7 +168,7 @@ class TestRerankEndpointCE:
 
         from yadgar.backend.embed_service import app
 
-        with patch("yadgar.backend.embed_service._get_reranker") as mock_get_reranker:
+        with patch("yadgar.backend.embed_service.embed_service._get_reranker") as mock_get_reranker:
             mock_ml = MagicMock()
             mock_ml.score_cross_encoder.return_value = [0.8, 0.2]
             mock_get_reranker.return_value = mock_ml
@@ -199,7 +199,7 @@ class TestRerankEndpointNLI:
 
         from yadgar.backend.embed_service import app
 
-        with patch("yadgar.backend.embed_service._get_reranker") as mock_get_reranker:
+        with patch("yadgar.backend.embed_service.embed_service._get_reranker") as mock_get_reranker:
             mock_ml = MagicMock()
             mock_ml.score_nli.return_value = [0.9, 0.1]
             mock_get_reranker.return_value = mock_ml
@@ -228,7 +228,7 @@ class TestRerankEndpointPair:
 
         from yadgar.backend.embed_service import app
 
-        with patch("yadgar.backend.embed_service._get_reranker") as mock_get_reranker:
+        with patch("yadgar.backend.embed_service.embed_service._get_reranker") as mock_get_reranker:
             mock_ml = MagicMock()
             mock_ml.score_pair.return_value = 0.77
             mock_get_reranker.return_value = mock_ml

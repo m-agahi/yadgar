@@ -99,7 +99,7 @@ class TestCmdDaemonNone:
         args = _args(daemon_command=None)
         mock_d = MagicMock()
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "Usage:" in out or "daemon" in out.lower()
@@ -116,7 +116,7 @@ class TestPull:
         mock_d = MagicMock()
         mock_d.pull.return_value = {"ok": True, "image": "yadgar:latest"}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "yadgar:latest" in out
@@ -127,7 +127,7 @@ class TestPull:
         mock_cls = _mock_daemon_class(
             mock_d, check_docker_result={"ok": False, "reason": "no docker"}
         )
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_daemon(args)
         assert exc_info.value.code == 1
@@ -137,7 +137,7 @@ class TestPull:
         mock_d = MagicMock()
         mock_d.pull.return_value = {"ok": False, "reason": "network error"}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_daemon(args)
         assert exc_info.value.code == 1
@@ -159,7 +159,7 @@ class TestStart:
             "memory_mb": 512,
         }
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "started" in out.lower() or "yadgar-1" in out
@@ -173,7 +173,7 @@ class TestStart:
             "port": 8765,
         }
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "already" in out.lower() or "running" in out.lower()
@@ -183,7 +183,7 @@ class TestStart:
         mock_d = MagicMock()
         mock_d.start.return_value = {"status": "failed", "reason": "port in use"}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_daemon(args)
         assert exc_info.value.code == 1
@@ -194,7 +194,7 @@ class TestStart:
         mock_cls = _mock_daemon_class(
             mock_d, check_docker_result={"ok": False, "reason": "no docker"}
         )
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_daemon(args)
         assert exc_info.value.code == 1
@@ -211,7 +211,7 @@ class TestStop:
         mock_d = MagicMock()
         mock_d.stop.return_value = {"status": "stopped", "container": "yadgar-1"}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "stopped" in out.lower() or "yadgar-1" in out
@@ -221,7 +221,7 @@ class TestStop:
         mock_d = MagicMock()
         mock_d.stop.return_value = {"status": "not_running"}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "not running" in out.lower()
@@ -244,7 +244,7 @@ class TestStatus:
             "uptime_seconds": 3600,
         }
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "running" in out.lower()
@@ -254,7 +254,7 @@ class TestStatus:
         mock_d = MagicMock()
         mock_d.status.return_value = {"running": False}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "not running" in out.lower()
@@ -273,7 +273,7 @@ class TestRestart:
             "started": {"status": "started", "container": "yadgar-1", "port": 8765}
         }
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "restarted" in out.lower() or "yadgar-1" in out
@@ -283,7 +283,7 @@ class TestRestart:
         mock_d = MagicMock()
         mock_d.restart.return_value = {"started": {"status": "unknown"}}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         err = capsys.readouterr().err
         assert err.strip() != "" or True  # at minimum, no crash
@@ -300,7 +300,7 @@ class TestConfigureMcp:
         mock_d = MagicMock()
         mock_d.configure_mcp.return_value = {"updated": True}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "MCP" in out or "http" in out
@@ -323,7 +323,7 @@ class TestInstallService:
             "status": "systemctl --user status yadgar.service",
         }
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "systemctl" in out or "service" in out.lower()
@@ -340,7 +340,7 @@ class TestBuild:
         mock_d = MagicMock()
         mock_d.build.return_value = {"ok": True, "image": "yadgar:dev", "target": "dev"}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "yadgar:dev" in out
@@ -350,7 +350,7 @@ class TestBuild:
         mock_d = MagicMock()
         mock_d.build.return_value = {"ok": False, "reason": "Dockerfile missing"}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_daemon(args)
         assert exc_info.value.code == 1
@@ -361,7 +361,7 @@ class TestBuild:
         mock_cls = _mock_daemon_class(
             mock_d, check_docker_result={"ok": False, "reason": "no docker"}
         )
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_daemon(args)
         assert exc_info.value.code == 1
@@ -378,7 +378,7 @@ class TestPush:
         mock_d = MagicMock()
         mock_d.push.return_value = {"ok": True, "pushed": ["yadgar:1.0.0", "yadgar:latest"]}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             cmd_daemon(args)
         out = capsys.readouterr().out
         assert "1.0.0" in out or "latest" in out
@@ -388,7 +388,7 @@ class TestPush:
         mock_d = MagicMock()
         mock_d.push.return_value = {"ok": False, "reason": "auth failed"}
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_daemon(args)
         assert exc_info.value.code == 1
@@ -406,8 +406,8 @@ class TestGracefulStop:
         mock_cls = _mock_daemon_class(mock_d)
         mock_sp_running = MagicMock(returncode=0, stdout="false\n")
         with (
-            patch("yadgar.core.daemon.YadgarDaemon", mock_cls),
-            patch("yadgar.core.daemon._prod_profile") as mock_prod,
+            patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls),
+            patch("yadgar.core.daemon.daemon._prod_profile") as mock_prod,
             patch("subprocess.run", return_value=mock_sp_running),
         ):
             mock_prod.return_value = MagicMock(container_name="yadgar-prod")
@@ -426,8 +426,8 @@ class TestGracefulStop:
             return MagicMock(returncode=0, stdout="")
 
         with (
-            patch("yadgar.core.daemon.YadgarDaemon", mock_cls),
-            patch("yadgar.core.daemon._prod_profile") as mock_prod,
+            patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls),
+            patch("yadgar.core.daemon.daemon._prod_profile") as mock_prod,
             patch("subprocess.run", side_effect=sp_side_effect),
         ):
             mock_prod.return_value = MagicMock(container_name="yadgar-prod")
@@ -442,8 +442,8 @@ class TestGracefulStop:
             mock_d, check_docker_result={"ok": False, "reason": "no docker"}
         )
         with (
-            patch("yadgar.core.daemon.YadgarDaemon", mock_cls),
-            patch("yadgar.core.daemon._prod_profile") as mock_prod,
+            patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls),
+            patch("yadgar.core.daemon.daemon._prod_profile") as mock_prod,
         ):
             mock_prod.return_value = MagicMock(container_name="yadgar-prod")
             with pytest.raises(SystemExit) as exc_info:
@@ -462,7 +462,7 @@ class TestContainerSubcommands:
         mock_d = MagicMock()
         mock_d.exec_in_container.return_value = 0
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_daemon(args)
         assert exc_info.value.code == 0
@@ -474,7 +474,7 @@ class TestContainerSubcommands:
         mock_d = MagicMock()
         mock_d.exec_in_container.return_value = 0
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit):
                 cmd_daemon(args)
         call_args = mock_d.exec_in_container.call_args
@@ -485,7 +485,7 @@ class TestContainerSubcommands:
         mock_d = MagicMock()
         mock_d.exec_in_container.return_value = 0
         mock_cls = _mock_daemon_class(mock_d)
-        with patch("yadgar.core.daemon.YadgarDaemon", mock_cls):
+        with patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls):
             with pytest.raises(SystemExit):
                 cmd_daemon(args)
         call_args = mock_d.exec_in_container.call_args

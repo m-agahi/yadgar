@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 
 from yadgar._shared.config import get_settings, resolve_knob
-from yadgar._shared.config_registry import clear_config_caches
+from yadgar._shared.config.config_registry import clear_config_caches
 
 
 def _reset_env(name: str, old: str | None) -> None:

@@ -108,7 +108,7 @@ def test_trace_span_satisfies(tmp_path):
         tmp_path,
         "mod.py",
         """
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span("thing")
         def thing(items):
@@ -445,7 +445,7 @@ def test_glob_exempt_report_zero_globs_is_quiet_but_zero_exit(tmp_path, capsys):
         root,
         "mod.py",
         """
-        from yadgar._shared.tracing import trace_span
+        from yadgar._shared.observability.tracing import trace_span
 
         @trace_span("t")
         def thing(items):

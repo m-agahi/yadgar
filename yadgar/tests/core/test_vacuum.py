@@ -421,7 +421,7 @@ class TestServiceModeDetection:
         monkeypatch.delenv("INVOCATION_ID", raising=False)
         fake_dockerenv = tmp_path / ".dockerenv"
         fake_dockerenv.touch()
-        with patch("yadgar.core.ops.Path") as MockPath:
+        with patch("yadgar.core.ops.ops.Path") as MockPath:
             # Make Path("/.dockerenv").exists() return True
             mock_p = MagicMock()
             mock_p.exists.return_value = True
@@ -433,7 +433,7 @@ class TestServiceModeDetection:
         from yadgar.core.ops import detect_service_mode
 
         monkeypatch.delenv("INVOCATION_ID", raising=False)
-        with patch("yadgar.core.ops.Path") as MockPath:
+        with patch("yadgar.core.ops.ops.Path") as MockPath:
             mock_p = MagicMock()
             mock_p.exists.return_value = False
             MockPath.return_value = mock_p
@@ -872,9 +872,12 @@ class TestFailureInjection:
         # bootstrap (its real client would POST to a dead port and raise BEFORE
         # the /import branch, masking the abort under test).
         fake_proc = MagicMock()
-        monkeypatch.setattr("yadgar.core._surreal_runner.spawn_surreal", lambda *a, **kw: fake_proc)
         monkeypatch.setattr(
-            "yadgar.core._surreal_runner.teardown_surreal_proc", lambda *a, **kw: None
+            "yadgar.core._surreal_runner._surreal_runner.spawn_surreal", lambda *a, **kw: fake_proc
+        )
+        monkeypatch.setattr(
+            "yadgar.core._surreal_runner._surreal_runner.teardown_surreal_proc",
+            lambda *a, **kw: None,
         )
         monkeypatch.setattr("yadgar.core.vacuum._bootstrap_namespace", lambda *a, **kw: None)
 
@@ -1670,7 +1673,7 @@ class TestSpawnSurrealCredKwargs:
         mock_proc = self._mock_proc()
 
         with patch(
-            "yadgar.core._surreal_runner.subprocess.Popen", return_value=mock_proc
+            "yadgar.core._surreal_runner._surreal_runner.subprocess.Popen", return_value=mock_proc
         ) as mock_popen:
             from yadgar.core._surreal_runner import spawn_surreal
 
@@ -1693,7 +1696,7 @@ class TestSpawnSurrealCredKwargs:
         mock_proc = self._mock_proc()
 
         with patch(
-            "yadgar.core._surreal_runner.subprocess.Popen", return_value=mock_proc
+            "yadgar.core._surreal_runner._surreal_runner.subprocess.Popen", return_value=mock_proc
         ) as mock_popen:
             from yadgar.core._surreal_runner import spawn_surreal
 
@@ -1718,7 +1721,7 @@ class TestSpawnSurrealCredKwargs:
         mock_proc = self._mock_proc()
 
         with patch(
-            "yadgar.core._surreal_runner.subprocess.Popen", return_value=mock_proc
+            "yadgar.core._surreal_runner._surreal_runner.subprocess.Popen", return_value=mock_proc
         ) as mock_popen:
             from yadgar.core._surreal_runner import spawn_surreal
 
@@ -1842,9 +1845,11 @@ class TestBuildAndVerifySideDbCreds:
             filtered = Path(td) / "export.surql"
             filtered.write_bytes(b"INSERT INTO memory {};")
 
-            with patch("yadgar.core._surreal_runner.spawn_surreal", side_effect=_fake_spawn):
+            with patch(
+                "yadgar.core._surreal_runner._surreal_runner.spawn_surreal", side_effect=_fake_spawn
+            ):
                 with patch("yadgar.core.vacuum._wait_for_health", return_value=False):
-                    with patch("yadgar.core._surreal_runner.teardown_surreal_proc"):
+                    with patch("yadgar.core._surreal_runner._surreal_runner.teardown_surreal_proc"):
                         from yadgar.core.vacuum import _build_and_verify_side_db
 
                         _build_and_verify_side_db(
@@ -2217,7 +2222,7 @@ class TestOldAgeBackstop:
 
     def test_vacuum_old_max_age_knob_in_registry(self):
         """VACUUM_OLD_MAX_AGE_DAYS is registered in config_registry."""
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = [e.name for e in list_config()]
         assert "VACUUM_OLD_MAX_AGE_DAYS" in names

@@ -30,7 +30,7 @@ def test_query_cache_concurrent_rmw_no_corruption(monkeypatch):
     (8× init without its lock, 1× with). The cache lock is audit-mandated
     defensive correctness against torn iteration under heavier real loads.
     """
-    from yadgar._shared.remote_embeddings import RemoteEmbeddingEngine
+    from yadgar._shared.embeddings.remote_embeddings import RemoteEmbeddingEngine
 
     eng = RemoteEmbeddingEngine.__new__(RemoteEmbeddingEngine)
     # minimal init without httpx
@@ -64,7 +64,7 @@ def test_query_cache_concurrent_rmw_no_corruption(monkeypatch):
 
     assert not errors, f"concurrent cache RMW raised: {errors[:3]}"
     # Cache respects its bound (no runaway growth / lost popitem).
-    from yadgar._shared.remote_embeddings import _CACHE_MAX
+    from yadgar._shared.embeddings.remote_embeddings import _CACHE_MAX
 
     assert len(eng._query_cache) <= _CACHE_MAX
 

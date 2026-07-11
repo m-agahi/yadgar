@@ -3,7 +3,7 @@
 
 def cmd_viz(args):
     """Start the knowledge graph visualization server."""
-    from yadgar.core.viz_server import run_viz_server
+    from yadgar.core.viz.viz_server import run_viz_server
 
     run_viz_server(
         port=args.port,

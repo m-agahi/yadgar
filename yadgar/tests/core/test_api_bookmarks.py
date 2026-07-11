@@ -21,7 +21,7 @@ import httpx
 import pytest
 
 from yadgar.core import server
-from yadgar.core.viz_server import _Handler
+from yadgar.core.viz.viz_server import _Handler
 
 # R3 Car 3a: the bookmark_* write tools forward to the backend /admin endpoint.
 # The E2E class calls them directly — route _forward_admin → run_admin_op (no
@@ -97,7 +97,7 @@ class TestVizProxyForwardsBookmarks:
     def test_proxy_routes_api_bookmarks_get(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """GET /api/bookmarks is treated as an /api/* path and proxied."""
         monkeypatch.setenv("YADGAR_VIZ_PROXY", "1")
-        from yadgar.core.viz_server import _proxy_enabled
+        from yadgar.core.viz.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is True
 
@@ -126,7 +126,7 @@ class TestVizProxyForwardsBookmarks:
             captured_url.append(upstream_url)
             return httpx.Response(200, content=b"[]", headers={"content-type": "application/json"})
 
-        import yadgar.core.viz_server as _vs
+        import yadgar.core.viz.viz_server as _vs
 
         monkeypatch.setattr(_vs, "_proxy_request", _fake_proxy_request)
         from unittest.mock import patch
@@ -143,7 +143,7 @@ class TestVizProxyForwardsBookmarks:
         # viz_server may not have do_DELETE. Test that the viz_server handles it at all.
         # At minimum, proxy path matching should work for /api/bookmarks/foo
         monkeypatch.setenv("YADGAR_VIZ_PROXY", "1")
-        from yadgar.core.viz_server import _proxy_enabled
+        from yadgar.core.viz.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is True
 

@@ -128,6 +128,12 @@ class TestBCA2_WriteGateSurprise:
         from yadgar._shared.config import Settings
         from yadgar.backend.predictive_coding import WriteGate
 
+        # T2 Car E2: the shared root no longer builds the retriever — compose
+        # the backend singleton against the live e2e engines first.
+        from yadgar.backend.retrieval.compose import ensure_retrieval_engine
+
+        ensure_retrieval_engine()
+
         storage = e2e_engines["storage"]
         embeddings = e2e_engines["embeddings"]
         retriever = _st._retriever
@@ -276,6 +282,10 @@ class TestBCH1_AutoCaptureStampsCwd:
             f"BC-H1: auto-capture handler must return 200 on flush, got {final_resp.status_code}"
         )
 
+        # T2 Car E1: the flush ENQUEUES an action_log job (queue seam, ADR-0078);
+        # drain so the backend replay lands the row before the storage read.
+        _drain(e2e_engines)
+
         actions = storage.get_unprocessed_actions(limit=50)
         matching = [
             a
@@ -308,7 +318,7 @@ class TestBCHK1_InstallHooksIdempotent:
         SHALL produce identical content (no duplicate hook entries)."""
         import json
 
-        from yadgar.core.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
         home = tmp_path / "home"
         project = tmp_path / "project"
@@ -1289,7 +1299,7 @@ class TestBCRR7_MMRDiversification:
 
     def _make_reranker(self, e2e_engines):
         from yadgar._shared.config import Settings
-        from yadgar._shared.retrieval.reranking import Reranker
+        from yadgar.backend.retrieval.reranking import Reranker
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         # Disable ML model — mmr_rerank only uses local embeddings from storage
@@ -1392,7 +1402,7 @@ class TestBCRR10_ConvexFusion:
         with equal weights.  This proves the function actually combines signals
         rather than passing through either one.
         """
-        from yadgar._shared.retrieval.fusion import _convex_fuse
+        from yadgar.backend.retrieval.fusion import _convex_fuse
 
         # Memory IDs (arbitrary ints for this pure-function test)
         M1, M2, M3 = 1001, 1002, 1003
@@ -1448,7 +1458,7 @@ class TestBCRR5_ConfidenceGate:
 
     def _make_reranker(self, e2e_engines):
         from yadgar._shared.config import Settings
-        from yadgar._shared.retrieval.reranking import Reranker
+        from yadgar.backend.retrieval.reranking import Reranker
 
         settings = Settings(DB_PATH=e2e_engines["db_path"])
         return Reranker(settings, e2e_engines["storage"], ml_client=None)

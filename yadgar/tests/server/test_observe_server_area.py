@@ -87,9 +87,9 @@ def test_lifecycle_init_engines_instrumented():
 def test_lifecycle_metrics_loop_exempt():
     """_metrics_loop opens a manual span in-body → governed @observe(exempt=...).
 
-    R2a Car D1: _metrics_loop moved to yadgar.core.daemons.
+    R2a Car D1: _metrics_loop moved to yadgar.core.daemon.daemons.
     """
-    from yadgar.core import daemons
+    from yadgar.core.daemon import daemons
 
     assert _is_exempt(daemons._metrics_loop)
 

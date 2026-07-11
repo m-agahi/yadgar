@@ -8,7 +8,7 @@ import pytest
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.retrieval import (
+from yadgar.backend.retrieval import (
     Retriever,
     _derive_implied_fact_passages,
     _extract_query_entities,

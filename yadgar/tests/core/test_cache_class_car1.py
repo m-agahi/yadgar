@@ -214,7 +214,7 @@ def test_no_deep_copy_returns_reference():
 
 
 def test_cold_tier_emits_hit_miss_metric():
-    from yadgar._shared import metrics
+    from yadgar._shared.observability import metrics
 
     c = Cache(name="t_obs_cold", max_bytes=1_000_000, obs_tier="cold")
     h0 = metrics.yadgar_cache_hit_total.labels(cache="t_obs_cold")._value.get()
@@ -229,7 +229,7 @@ def test_cold_tier_emits_hit_miss_metric():
 
 
 def test_eviction_emits_metric():
-    from yadgar._shared import metrics
+    from yadgar._shared.observability import metrics
 
     payload = "x" * 1000
     from yadgar.core.cache import _estimate_bytes

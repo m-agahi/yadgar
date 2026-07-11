@@ -481,7 +481,7 @@ class TestEnvKnobs:
         assert s.ANCHOR_AUDIT_HISTORY_RETENTION_DAYS == 30
 
     def test_registry_has_all_three_knobs(self):
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_AUDIT_CONSOLIDATION_ENABLED" in names
@@ -489,7 +489,7 @@ class TestEnvKnobs:
         assert "YADGAR_ANCHOR_AUDIT_HISTORY_RETENTION_DAYS" in names
 
     def test_config_yaml_has_all_three_knobs(self):
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "anchor_audit_consolidation_enabled" in FIELD_META
         assert "anchor_audit_max_actions_per_run" in FIELD_META

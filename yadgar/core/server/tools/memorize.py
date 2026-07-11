@@ -7,7 +7,10 @@ import os
 
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.secrets import gate_or_reject  # noqa: F401 — required by I26 secret-gate check
+from yadgar._shared.security.secrets import (
+    gate_or_reject,  # noqa: F401 — required by I26 secret-gate check
+)
+from yadgar._shared.server_helpers import normalize_write_context
 from yadgar._shared.write_exec import (
     MemorizeContext,
     phase_validate,
@@ -97,6 +100,11 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     if branch_err is not None:
         return branch_err
     ctx.resolved_branch = branch
+
+    # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
+    # canonical repo root so rows stay visible to canonical-repo recall. Covers
+    # the SubagentStop footer path too (it calls this same tool).
+    ctx.context, ctx.resolved_branch = normalize_write_context(ctx.context, ctx.resolved_branch)
 
     return _enqueue(ctx)
 

@@ -42,7 +42,7 @@ def _wiki():
 def _get_counter(reason: str) -> float:
     """Return current value of yadgar_wiki_embedding_compute_failed_total{reason}."""
     try:
-        from yadgar._shared.metrics import yadgar_wiki_embedding_compute_failed_total
+        from yadgar._shared.observability.metrics import yadgar_wiki_embedding_compute_failed_total
 
         return yadgar_wiki_embedding_compute_failed_total.labels(reason=reason)._value.get()
     except Exception:
@@ -244,13 +244,13 @@ class TestEmbedFailureBlocksWrite:
 class TestEmbedFailureMetric:
     def test_counter_is_importable(self):
         """yadgar_wiki_embedding_compute_failed_total is importable from yadgar.metrics."""
-        from yadgar._shared.metrics import yadgar_wiki_embedding_compute_failed_total
+        from yadgar._shared.observability.metrics import yadgar_wiki_embedding_compute_failed_total
 
         assert yadgar_wiki_embedding_compute_failed_total is not None
 
     def test_counter_has_reason_label(self):
         """Counter accepts reason label without error."""
-        from yadgar._shared.metrics import yadgar_wiki_embedding_compute_failed_total
+        from yadgar._shared.observability.metrics import yadgar_wiki_embedding_compute_failed_total
 
         # Both valid reason values should work.
         yadgar_wiki_embedding_compute_failed_total.labels(reason="exception")

@@ -28,7 +28,10 @@ import pytest
 
 def test_loop_heartbeat_sets_gauge():
     """loop_heartbeat() sets yadgar_loop_last_run_unix_timestamp to ~now."""
-    from yadgar._shared.metrics import loop_heartbeat, yadgar_loop_last_run_unix_timestamp
+    from yadgar._shared.observability.metrics import (
+        loop_heartbeat,
+        yadgar_loop_last_run_unix_timestamp,
+    )
 
     before = time.time()
     loop_heartbeat("test_loop")
@@ -45,7 +48,7 @@ def test_loop_heartbeat_sets_gauge():
 
 def test_loop_record_exception_increments_both_counters():
     """loop_record_exception() increments loop counter AND PR-H global counter."""
-    from yadgar._shared.metrics import (
+    from yadgar._shared.observability.metrics import (
         loop_record_exception,
         yadgar_exception_total,
         yadgar_loop_errors_total,
@@ -81,7 +84,7 @@ def test_loop_record_exception_increments_both_counters():
 def test_drainer_run_updates_heartbeat(tmp_path):
     """QueueDrainer.run() calls loop_heartbeat('queue_drainer') each iteration."""
     from yadgar._shared.file_queue.queue import FileQueue
-    from yadgar._shared.metrics import yadgar_loop_last_run_unix_timestamp
+    from yadgar._shared.observability.metrics import yadgar_loop_last_run_unix_timestamp
     from yadgar.backend.queue_drainer import QueueDrainer
 
     queue = FileQueue(base_dir=tmp_path)
@@ -120,7 +123,10 @@ def test_drainer_run_updates_heartbeat(tmp_path):
 def test_drainer_exception_increments_counters(tmp_path):
     """When QueueDrainer._drain_once raises, loop and global error counters both increment."""
     from yadgar._shared.file_queue.queue import FileQueue
-    from yadgar._shared.metrics import yadgar_exception_total, yadgar_loop_errors_total
+    from yadgar._shared.observability.metrics import (
+        yadgar_exception_total,
+        yadgar_loop_errors_total,
+    )
     from yadgar.backend.queue_drainer import QueueDrainer
 
     queue = FileQueue(base_dir=tmp_path)
@@ -177,8 +183,8 @@ def test_metrics_sampler_updates_heartbeat():
     """
     import os
 
-    import yadgar.core.graph_api as ga
-    from yadgar._shared.metrics import yadgar_loop_last_run_unix_timestamp
+    import yadgar.core.daemon.system_metrics as ga
+    from yadgar._shared.observability.metrics import yadgar_loop_last_run_unix_timestamp
 
     before = time.time()
     # Call with our own PID so /proc reads work; db_path is non-existent but
@@ -203,7 +209,7 @@ def test_metrics_sampler_updates_heartbeat():
 @pytest.mark.asyncio
 async def test_sse_stream_updates_heartbeat():
     """SSE event stream yield updates yadgar_loop_last_run_unix_timestamp{loop=sse_event_stream}."""
-    from yadgar._shared.metrics import yadgar_loop_last_run_unix_timestamp
+    from yadgar._shared.observability.metrics import yadgar_loop_last_run_unix_timestamp
 
     # Build a minimal mock request
     mock_request = MagicMock()
@@ -241,16 +247,18 @@ async def test_sse_stream_updates_heartbeat():
 
 def test_helpers_never_raise_on_broken_prometheus():
     """loop_heartbeat and loop_record_exception must not propagate exceptions."""
-    from yadgar._shared.metrics import loop_heartbeat, loop_record_exception
+    from yadgar._shared.observability.metrics import loop_heartbeat, loop_record_exception
 
     # Patch the gauge .labels(...) to raise
-    with patch("yadgar._shared.metrics.yadgar_loop_last_run_unix_timestamp") as mock_gauge:
+    with patch(
+        "yadgar._shared.observability.metrics.yadgar_loop_last_run_unix_timestamp"
+    ) as mock_gauge:
         mock_gauge.labels.side_effect = RuntimeError("broken prometheus")
         # Must not raise
         loop_heartbeat("broken_test")
 
     # Patch the counter .labels(...) to raise
-    with patch("yadgar._shared.metrics.yadgar_loop_errors_total") as mock_counter:
+    with patch("yadgar._shared.observability.metrics.yadgar_loop_errors_total") as mock_counter:
         mock_counter.labels.side_effect = RuntimeError("broken counter")
         # Must not raise — even with broken gauge + counter
         loop_record_exception("broken_test", ValueError("x"))

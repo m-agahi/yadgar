@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar._shared.config_registry import ConfigEntry, clear_config_caches
+from yadgar._shared.config.config_registry import ConfigEntry, clear_config_caches
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +36,7 @@ def _isolate_config(monkeypatch, tmp_path):
 
 
 def _write_yaml(monkeypatch, tmp_path, body: str) -> None:
-    from yadgar._shared.config_yaml import get_config_path
+    from yadgar._shared.config.config_yaml import get_config_path
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +120,7 @@ def test_clear_config_caches_refreshes_yaml_present(monkeypatch, tmp_path):
     entry = ConfigEntry("YADGAR_VIZ_NODE_SIZE_3D", "8.0", "float")
     assert entry.source() == "default"  # populates cache
 
-    from yadgar._shared.config_yaml import get_config_path
+    from yadgar._shared.config.config_yaml import get_config_path
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)

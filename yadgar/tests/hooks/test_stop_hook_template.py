@@ -234,7 +234,7 @@ def test_installed_copy_renders_prompt_end_to_end(tmp_path):
     """install_hooks copies a SINGLE standalone script; the template is NOT
     copied alongside — it resolves from the installed yadgar package, which the
     copy already imports (yadgar._shared). Prove the copied script renders."""
-    from yadgar.core.install_hooks_lib import install_hooks_impl
+    from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
     home = tmp_path / "home"
     home.mkdir()

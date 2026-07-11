@@ -155,7 +155,8 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
     Args:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
-    from yadgar._shared.runtime.recall_pipeline import _fanout_recall
+    from yadgar.backend.retrieval.compose import ensure_retrieval_engine
+    from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
     _recall_module = sys.modules["yadgar.core.server.tools.recall"]
     _orig_forward = _recall_module._forward_to_backend
@@ -202,6 +203,9 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         # — which includes unit-test memories without disabling branch isolation.
         _ci_branch = os.environ.get("YADGAR_CI_BRANCH")
         _effective_branch = current_branch or _ci_branch or None
+        # T2 Car E2: compose the backend retriever lazily against the test's
+        # live engines (idempotent; the shared root no longer builds it).
+        ensure_retrieval_engine()
         return _fanout_recall(
             query=query,
             max_results=max_results,
@@ -215,6 +219,81 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         )
 
     monkeypatch.setattr(_recall_module, "_forward_to_backend", _bypass_forward)
+
+
+# ---------------------------------------------------------------------------
+# 3b. Restore bypass (_forward_restore → backend run_restore in-process)
+# ---------------------------------------------------------------------------
+
+
+def patch_restore_bypass(monkeypatch: Any) -> None:
+    """Patch ``_forward_restore`` → ``backend.restoration.run_restore`` (in-process).
+
+    T2 Car B: the restore MCP tool, the /hooks/post-compact handler, and the
+    CLI restore subcommand are thin forwarders to the backend POST /restore.
+    Unit tests have no backend HTTP server — run the backend restore body
+    directly against the same ``_st`` engine stack the test fixture wired
+    (``run_restore`` composes CognitiveMap + CheckpointRestore lazily via
+    ``ensure_restoration_engines``, so the compute is real, #52).
+
+    CALL-TIME guarded: when YADGAR_EMBED_URL is set the original HTTP forwarder
+    is used unchanged (real-backend e2e tests exercise the real contract).
+
+    Patches the source module AND consumers that bound the helper by name
+    (tools.misc). http.py + the CLI import it lazily inside the handler body,
+    so patching the source module covers them at call time.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture (function-scoped).
+    """
+    import yadgar.core.server.tools._forward as _forward_module
+    from yadgar.backend.restoration import run_restore
+
+    _orig_forward_restore = _forward_module._forward_restore
+
+    def _bypass_restore(directory="", timeout_s=120.0):
+        if os.environ.get("YADGAR_EMBED_URL"):
+            return _orig_forward_restore(directory, timeout_s=timeout_s)
+        return run_restore(directory)
+
+    monkeypatch.setattr(_forward_module, "_forward_restore", _bypass_restore)
+    for _consumer in ("yadgar.core.server.tools.misc",):
+        _mod = sys.modules.get(_consumer)
+        if _mod is not None and hasattr(_mod, "_forward_restore"):
+            monkeypatch.setattr(_mod, "_forward_restore", _bypass_restore)
+
+
+# ---------------------------------------------------------------------------
+# 3b. Viz bypass (_forward_viz → run_viz_op, in-process)
+# ---------------------------------------------------------------------------
+
+
+def patch_viz_bypass(monkeypatch: Any) -> None:
+    """Patch ``_forward_viz`` → ``run_viz_op`` (in-process, no HTTP).
+
+    T2 Car E3: the core /api/graph* handlers are thin forwarders to the backend
+    POST /viz route. Unit tests have no backend HTTP server — run the backend
+    graph-assembly body directly against the same ``_st`` engine stack the test
+    fixture wired.
+
+    CALL-TIME guarded: when YADGAR_EMBED_URL is set the original HTTP forwarder
+    is used unchanged. http.py imports the helper lazily inside each handler
+    body, so patching the source module covers all consumers at call time.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture (function-scoped).
+    """
+    import yadgar.core.server.tools._forward as _forward_module
+    from yadgar.backend.viz_exec import run_viz_op
+
+    _orig_forward_viz = _forward_module._forward_viz
+
+    def _bypass_viz(op, payload, timeout_s=60.0):
+        if os.environ.get("YADGAR_EMBED_URL"):
+            return _orig_forward_viz(op, payload, timeout_s=timeout_s)
+        return run_viz_op(op, payload)
+
+    monkeypatch.setattr(_forward_module, "_forward_viz", _bypass_viz)
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +321,8 @@ def patch_consolidate_bypass(monkeypatch: Any) -> None:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
     import yadgar._shared.runtime.state as _st
-    from yadgar.backend import embed_service as _embed_service
     from yadgar.backend.consolidation import service as _consol_service
+    from yadgar.backend.embed_service import embed_service as _embed_service
     from yadgar.core.consolidation import orchestrator as _orch
 
     _orig_forward = _orch._forward_to_backend
@@ -284,5 +363,14 @@ def teardown_consolidate_bypass() -> None:
         from yadgar.backend.consolidation import service as _consol_service
 
         _consol_service._scheduler = None
+        # The scheduler builder also exposes its inner engines as _st globals
+        # (_consolidation/_sleep/_cls). Clear them with the singleton, or the
+        # NEXT module's engine-presence assertions (e.g. the slim-engine gate)
+        # see stale core-only engines from this module's scheduler.
+        import yadgar._shared.runtime.state as _st
+
+        _st._consolidation = None
+        _st._sleep = None
+        _st._cls = None
     except Exception:  # noqa: BLE001
         pass

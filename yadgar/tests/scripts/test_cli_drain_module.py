@@ -1,17 +1,20 @@
-"""Tests for yadgar/cli/drain.py — pre-compaction context drain subcommand.
+"""Tests for yadgar/core/cli/drain.py — pre-compaction context drain subcommand.
 
-Wave 5 coverage: yadgar/cli/drain.py (14 stmts, 43% pre-wave).
-Strategy: patch init_replay_lightweight at yadgar.cli._shared (lazy import inside
-cmd_drain body). The replay mock returns a dict; verify JSON output, storage close,
-and register() wiring.
+T2 Car B: cmd_drain is a thin forwarder — the drain writes run backend-side via
+the POST /admin op ``pre_compact_drain`` (yadgar.core.cli._shared.
+forward_pre_compact_drain). Strategy: patch the forward helper at its source
+module (cmd_drain lazy-imports it by name) and pin the JSON-stdout contract plus
+the register() wiring. silence_logging is patched too — the real one calls
+logging.disable(CRITICAL) process-wide, which would leak into sibling tests.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -26,13 +29,19 @@ def _make_args(directory="/tmp/proj", db_path=None):
     return SimpleNamespace(directory=directory, db_path=db_path)
 
 
-def _make_storage_replay(drain_result=None):
-    storage = MagicMock()
-    replay = MagicMock()
-    if drain_result is None:
-        drain_result = {"status": "ok", "count": 3}
-    replay.pre_compact_drain.return_value = drain_result
-    return storage, replay
+@contextmanager
+def _patched(forward_return=None, forward_side_effect=None):
+    if forward_return is None and forward_side_effect is None:
+        forward_return = {"status": "drained", "epoch": 1, "auto_checkpoint_created": True}
+    with (
+        patch("yadgar.core.cli._shared.silence_logging"),
+        patch(
+            "yadgar.core.cli._shared.forward_pre_compact_drain",
+            return_value=forward_return,
+            side_effect=forward_side_effect,
+        ) as fwd,
+    ):
+        yield fwd
 
 
 # ---------------------------------------------------------------------------
@@ -49,109 +58,42 @@ class TestRegister:
         assert args.directory == "/some/dir"
         assert hasattr(args, "func")
 
-    def test_db_path_default_none(self):
+    def test_db_path_still_accepted_for_compat(self):
+        """--db-path is kept for CLI compatibility (ignored since T2 Car B)."""
         root = argparse.ArgumentParser()
         subs = root.add_subparsers()
         register(subs)
-        args = root.parse_args(["drain", "/some/dir"])
-        assert args.db_path is None
-
-    def test_db_path_can_be_set(self):
-        root = argparse.ArgumentParser()
-        subs = root.add_subparsers()
-        register(subs)
-        args = root.parse_args(["drain", "/dir", "--db-path", "/custom.db"])
-        assert args.db_path == "/custom.db"
+        args = root.parse_args(["drain", "/some/dir", "--db-path", "/x/y.db"])
+        assert args.db_path == "/x/y.db"
 
     def test_func_is_cmd_drain(self):
         root = argparse.ArgumentParser()
         subs = root.add_subparsers()
         register(subs)
-        args = root.parse_args(["drain", "/dir"])
+        args = root.parse_args(["drain", "/some/dir"])
         assert args.func is cmd_drain
 
 
 # ---------------------------------------------------------------------------
-# cmd_drain — happy path
+# cmd_drain — forward + JSON stdout contract
 # ---------------------------------------------------------------------------
 
 
-class TestCmdDrainHappyPath:
-    def test_prints_json_to_stdout(self, capsys):
-        storage, replay = _make_storage_replay({"status": "ok", "saved": 5})
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
+class TestCmdDrainForward:
+    def test_prints_result_as_json(self, capsys):
+        result = {"status": "drained", "epoch": 2, "auto_checkpoint_created": False}
+        with _patched(forward_return=result):
             cmd_drain(_make_args())
         out = capsys.readouterr().out
-        parsed = json.loads(out)
-        assert parsed["status"] == "ok"
-        assert parsed["saved"] == 5
+        assert json.loads(out) == result
 
-    def test_output_is_valid_json(self, capsys):
-        storage, replay = _make_storage_replay({"x": 1})
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
-            cmd_drain(_make_args())
-        out = capsys.readouterr().out
-        json.loads(out)  # must not raise
+    def test_forwards_directory(self):
+        with _patched() as fwd:
+            cmd_drain(_make_args(directory="/my/proj"))
+        fwd.assert_called_once_with("/my/proj")
 
-    def test_calls_pre_compact_drain_with_directory(self):
-        storage, replay = _make_storage_replay()
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
-            cmd_drain(_make_args(directory="/my/project"))
-        replay.pre_compact_drain.assert_called_once_with("/my/project")
-
-    def test_storage_closed_after_success(self):
-        storage, replay = _make_storage_replay()
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
-            cmd_drain(_make_args())
-        storage.close.assert_called_once()
-
-    def test_init_called_with_db_path(self):
-        storage, replay = _make_storage_replay()
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ) as mock_init:
-            cmd_drain(_make_args(db_path="/some.db"))
-        mock_init.assert_called_once_with("/some.db")
-
-    def test_init_called_with_none_by_default(self):
-        storage, replay = _make_storage_replay()
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ) as mock_init:
-            cmd_drain(_make_args(db_path=None))
-        mock_init.assert_called_once_with(None)
-
-    def test_empty_dict_result_prints_empty_object(self, capsys):
-        storage, replay = _make_storage_replay({})
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
-            cmd_drain(_make_args())
-        out = capsys.readouterr().out
-        assert json.loads(out) == {}
-
-
-# ---------------------------------------------------------------------------
-# cmd_drain — exception safety (finally closes storage)
-# ---------------------------------------------------------------------------
-
-
-class TestCmdDrainFinally:
-    def test_storage_closed_when_drain_raises(self):
-        storage = MagicMock()
-        replay = MagicMock()
-        replay.pre_compact_drain.side_effect = RuntimeError("drain failed")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
-            with pytest.raises(RuntimeError):
+    def test_forward_error_propagates(self):
+        """Forward-only: backend-unreachable errors surface, no local fallback."""
+        with _patched(forward_side_effect=RuntimeError("YADGAR_EMBED_URL is not set")):
+            with pytest.raises(RuntimeError, match="YADGAR_EMBED_URL"):
                 cmd_drain(_make_args())
-        storage.close.assert_called_once()

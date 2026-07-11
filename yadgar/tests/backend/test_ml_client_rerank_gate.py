@@ -25,7 +25,7 @@ import httpx
 import pytest
 
 import yadgar._shared.config as cfg
-import yadgar.backend.ml_client as ml
+import yadgar.backend.ml_client.ml_client as ml
 from yadgar._shared.runtime import offload as _offload
 
 

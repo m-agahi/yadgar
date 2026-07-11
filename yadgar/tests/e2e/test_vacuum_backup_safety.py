@@ -254,7 +254,7 @@ def _drive_backend(backend: _Backend, *, fail_stop_backend: bool = False):
     _ControllingSvc.calls = []
     try:
         with (
-            patch("yadgar.core.ops.ServiceController", _ControllingSvc),
+            patch("yadgar.core.ops.ops.ServiceController", _ControllingSvc),
             patch("yadgar.core.vacuum.ServiceController", _ControllingSvc),
         ):
             yield _ControllingSvc
@@ -700,7 +700,7 @@ class TestBCE3_SensitiveJobLock:
         import json
 
         # R2a Car D2: _signal_handler + shutdown moved to yadgar.core.lifecycle.
-        from yadgar.core import lifecycle
+        from yadgar.core.lifecycle import lifecycle
 
         data_dir = tmp_path / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -1105,7 +1105,7 @@ class TestBCD1_NightlyCompletesExitZero:
             with (
                 patch.object(nc, "_stop_service", _NightlyBackendDriver.stop_service),
                 patch.object(nc, "_start_service", _NightlyBackendDriver.start_service),
-                patch("yadgar.core.ops.ServiceController", _NightlySvc),
+                patch("yadgar.core.ops.ops.ServiceController", _NightlySvc),
                 patch("yadgar.core.vacuum.ServiceController", _NightlySvc),
                 patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
                 # P0 #37: no yadgar core in e2e — stub CI verification.
@@ -1161,17 +1161,17 @@ class TestBCD1_NightlyCompletesExitZero:
 # patched by #48).  BC-D3 stays ❌ not because the SEGV still occurs but
 # because no e2e asserts clean exit.  This class closes that gap.
 #
-# Strategy: run ``python -m yadgar restore <dir>`` as a REAL subprocess in
-# server mode (YADGAR_DB_URL set → HTTP path, no embedded surrealkv open).
-# Server mode avoids the 2.x SDK / 3.x server surrealkv skew documented in
-# the BC-D1 skip docstring, yet still exercises the full interpreter finalize
-# path (surrealdb SDK imports asyncio even in server mode, so the _asyncio
-# finalizer fires on exit).
+# Strategy: run ``python -m yadgar restore <dir>`` as a REAL subprocess.
+# T2 Car B: the restore CLI is a thin HTTP forwarder to the backend
+# ``POST /restore`` (the compute moved backend-side), so the subprocess env
+# points YADGAR_EMBED_URL at a minimal in-test stub endpoint — the REAL
+# forward path (httpx POST + envelope unwrap + print) and the full
+# interpreter finalize path are exercised end to end.
 #
-# The subprocess's env inherits `os.environ` and overrides only the four
-# keys that point the restore entrypoint at the dedicated backend.  A clean
-# Python exit surfaces as returncode 0; SIGSEGV is -11 in subprocess
-# (POSIX), 139 when the shell encodes it.
+# The subprocess's env inherits `os.environ` and overrides only the keys
+# that point the restore entrypoint at the stub.  A clean Python exit
+# surfaces as returncode 0; SIGSEGV is -11 in subprocess (POSIX), 139 when
+# the shell encodes it.
 # ---------------------------------------------------------------------------
 
 
@@ -1179,25 +1179,53 @@ class TestBCD3_CleanShutdown:
     """BC-D3: ``yadgar restore`` SHALL exit 0 with no SIGSEGV.
 
     Runs the real ``python -m yadgar restore <directory>`` entrypoint as a
-    subprocess against a seeded dedicated backend (server mode, HTTP).  Asserts
-    that the interpreter shuts down cleanly: exit 0, no SIGSEGV (-11 / 139),
-    no "Segmentation fault" / "core dumped" on stderr.  This is the direct
-    test that flips BC-D3 from ❌ to ✅.
+    subprocess against a stub backend ``POST /restore`` endpoint (T2 Car B:
+    the CLI is a thin forwarder — the restore compute runs backend-side).
+    Asserts that the interpreter shuts down cleanly: exit 0, no SIGSEGV
+    (-11 / 139), no "Segmentation fault" / "core dumped" on stderr.  This is
+    the direct test that flips BC-D3 from ❌ to ✅.
 
     Skipped when ``surreal`` is not on PATH (identical guard to the rest of
     this file's ``dedicated_backend``-based tests).
     """
 
     def test_restore_exits_zero_no_segv(self, dedicated_backend, tmp_path):
+        import http.server
+        import json as _json
+        import threading
+
         backend = dedicated_backend
         _seed_memories(backend.url, 4)
         assert _table_count(backend.url, "memory") == 4, "BC-D3 setup: 4 seeded rows expected"
 
-        # Subprocess env: server mode via HTTP so there is no embedded
-        # surrealkv open (avoids the 2.x/3.x on-disk format skew and the
-        # yadgar.lock contention with the live backend process).
+        # T2 Car B: ``yadgar restore`` forwards to the backend POST /restore.
+        # Serve a minimal stub endpoint so the subprocess exercises the REAL
+        # forward path (httpx POST + {"result": ...} unwrap + stdout print)
+        # and still reaches a clean interpreter exit.
+        class _RestoreStub(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802 — BaseHTTPRequestHandler API
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                body = _json.dumps({"result": {"formatted": "", "epoch": 0}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):  # silence per-request stderr noise
+                return
+
+        stub = http.server.HTTPServer(("127.0.0.1", 0), _RestoreStub)
+        stub_thread = threading.Thread(target=stub.serve_forever, daemon=True)
+        stub_thread.start()
+
+        # Subprocess env: forward-only restore — YADGAR_EMBED_URL points at
+        # the stub; the DB keys stay so any incidental storage import in the
+        # entrypoint resolves in server mode (no embedded surrealkv open).
         env = os.environ.copy()
         env["YADGAR_DB_URL"] = backend.url
+        env["YADGAR_EMBED_URL"] = f"http://127.0.0.1:{stub.server_port}"
         env["YADGAR_ALLOW_ROOT"] = "1"
         env["YADGAR_DB_USER"] = "root"
         env["YADGAR_DB_PASS"] = "root"
@@ -1207,13 +1235,17 @@ class TestBCD3_CleanShutdown:
         # ``yadgar restore`` takes a project directory argument; tmp_path is
         # safe and exercises the full code path (restore returns empty context
         # for an unknown dir — that is not an error).
-        proc = subprocess.run(
-            [sys.executable, "-m", "yadgar", "restore", str(tmp_path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=env,
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "yadgar", "restore", str(tmp_path)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
+        finally:
+            stub.shutdown()
+            stub.server_close()
 
         # -- 1. SEGV check (most specific — distinguishes crash from logic error) --
         assert proc.returncode not in (-11, 139), (

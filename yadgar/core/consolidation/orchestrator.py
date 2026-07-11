@@ -4,8 +4,11 @@ Thin. Forwards the consolidation COMPUTE to the backend ``/consolidate``
 endpoint (the compute uses the backend curator + phase engines), then runs the
 CORE-ONLY tasks around it:
 
-  * ``_maybe_precompute_graph_layout`` — viz (core owns graph_api/graph_layout)
   * ``_run_core_post_cycle_tasks``     — invariant checks + auto-vacuum trigger
+
+T2 Car E3: the graph-layout precompute moved to the backend consolidation
+cycle (``backend.consolidation.service._maybe_precompute_graph_layout``) —
+graph assembly + spring-layout is compute over DB rows (census verdict #11).
 
 These were the surviving backend→core edges when everything lived under
 ``backend/consolidation``; splitting them out (compute→backend, orchestration→
@@ -20,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from datetime import UTC, datetime
 
 from yadgar._shared.config import get_settings
@@ -82,49 +84,6 @@ def _forward_to_backend(mode: str, timeout_s: float = 1800.0) -> dict:
 # ---------------------------------------------------------------------------
 # Core-only orchestration around the forwarded compute
 # ---------------------------------------------------------------------------
-
-
-@observe(tier="stage", metric="consolidation.maybe_precompute_graph_layout")
-def _maybe_precompute_graph_layout(storage, settings) -> None:
-    """v5.88: precompute + cache the 3D graph layout (nightly / full paths only).
-
-    Gated three ways so it never blocks: (1) VIZ_PRECOMPUTED_LAYOUT_ENABLED flag
-    (default OFF), (2) a graph-signature no-op — when the live graph shape matches
-    the cached signature nothing is recomputed, (3) only called from the
-    nightly/full orchestration paths, never the light budget. Non-fatal.
-
-    Core-owned: uses core.graph_api / core.graph_layout (viz).
-    """
-    if not getattr(settings, "VIZ_PRECOMPUTED_LAYOUT_ENABLED", False):
-        return
-    try:
-        from yadgar.core.graph_api import GraphAPI  # noqa: PLC0415
-        from yadgar.core.graph_layout import (  # noqa: PLC0415
-            compute_graph_layout,
-            graph_signature,
-        )
-
-        # Lay out the FULL uncapped graph (caps=0) so positions stay stable when
-        # the per-request /api/graph node caps change.
-        data = GraphAPI(storage).get_full_graph(0, 8, False, None, 0, 0)
-        nodes, edges = data.get("nodes", []), data.get("edges", [])
-        sig = graph_signature(nodes, edges)
-        cached = storage.get_graph_layout_cache()
-        if cached and cached.get("signature") == sig:
-            return  # graph shape unchanged — keep the cached layout
-
-        _t = time.monotonic()
-        iterations = getattr(settings, "VIZ_LAYOUT_ITERATIONS", 50)
-        logger.info("phase_start: precompute_graph_layout nodes=%d", len(nodes))
-        positions = compute_graph_layout(nodes, edges, dim=3, iterations=iterations)
-        storage.set_graph_layout_cache(sig, positions, datetime.now(UTC).isoformat())
-        _dur_ms = int((time.monotonic() - _t) * 1000)
-        logger.info("phase_end: precompute_graph_layout duration_ms=%d", _dur_ms)
-    except Exception as _exc:
-        from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
-
-        record_exception("consolidation.phase_precompute_graph_layout", _exc)
-        logger.exception("Precompute graph layout failed")
 
 
 def _in_window(now: datetime, window_start: str, window_end: str) -> bool:
@@ -243,9 +202,8 @@ def run_consolidate_now(mode: str = "light") -> dict:
     stats = _forward_to_backend(mode)
 
     settings = get_settings()
-    if mode == "full":
-        _maybe_precompute_graph_layout(_st._storage, settings)
-
+    # T2 Car E3: the graph-layout precompute (mode=full) now runs inside the
+    # backend cycle — nothing viz-related remains on this side.
     _run_core_post_cycle_tasks(_st._storage, settings)
     return stats
 
@@ -269,6 +227,6 @@ def run_nightly_consolidation(storage=None, settings=None) -> dict:
         storage = _st._storage
 
     stats = _forward_to_backend("nightly")
-    _maybe_precompute_graph_layout(storage, settings)
+    # T2 Car E3: layout precompute runs inside the backend nightly cycle.
     _run_core_post_cycle_tasks(storage, settings)
     return stats

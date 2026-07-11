@@ -4,7 +4,7 @@ Verifies that the CORE composition root emits READY=1 on full-path init and that
 the CORE shutdown wrapper emits STOPPING=1.
 
 R2a Car D2: the READY=1 emit (``_emit_sd_ready``) and STOPPING=1 emit moved OUT of
-``yadgar._shared.runtime.lifecycle`` (they imported ``yadgar.core.sd_notify`` — a
+``yadgar._shared.runtime.lifecycle`` (they imported ``yadgar.core.daemon.sd_notify`` — a
 ``_shared → core`` edge) into ``yadgar.core.lifecycle``. READY=1 is now driven by
 ``yadgar.core.bootstrap.core_init_engines`` on the FULL path (the backend /recall
 slim path never signals READY). STOPPING=1 is fired by ``core.lifecycle.shutdown``
@@ -25,12 +25,14 @@ _SHARED_LIFECYCLE_PATCHES = {
     "ActionLogger": MagicMock(),
     "MemoryThermodynamics": MagicMock(),
     "KnowledgeGraph": MagicMock(),
-    "CognitiveMap": MagicMock(),
-    "Retriever": MagicMock(),
+    # T2 Car B: CognitiveMap + CheckpointRestore moved to yadgar.backend.restoration
+    # (composed backend-side); the shared root builds SRTransitionRecorder instead.
+    # T2 Car E2: Retriever moved to yadgar.backend.retrieval (composed backend-side)
+    # — the shared root no longer constructs it, so there is nothing to patch.
+    "SRTransitionRecorder": MagicMock(),
     "EngramAllocator": MagicMock(),
     "RulesEngine": MagicMock(),
     "MetaCognition": MagicMock(),
-    "CheckpointRestore": MagicMock(),
     "WikiStore": MagicMock(),
     "_load_default_rules": MagicMock(),
     "_run_wiki_embedding_backfill": MagicMock(),
@@ -75,7 +77,7 @@ class TestLifecycleStartupEmitsReady:
             patch.multiple("yadgar._shared.runtime.lifecycle", **_SHARED_LIFECYCLE_PATCHES),
             patch.multiple("yadgar.core.bootstrap", **_BOOTSTRAP_PATCHES),
             patch.multiple("yadgar.core.lifecycle", **_CORE_LIFECYCLE_PATCHES),
-            patch("yadgar.core.sd_notify.ready", ready_mock),
+            patch("yadgar.core.daemon.sd_notify.ready", ready_mock),
         ):
             from yadgar.core.bootstrap import core_init_engines
 
@@ -95,8 +97,8 @@ class TestLifecycleShutdownEmitsStopping:
 
         _reset_state()
 
-        with patch("yadgar.core.sd_notify.stopping", stopping_mock):
-            from yadgar.core import lifecycle as core_lifecycle
+        with patch("yadgar.core.daemon.sd_notify.stopping", stopping_mock):
+            from yadgar.core.lifecycle import lifecycle as core_lifecycle
 
             core_lifecycle.shutdown()
 
@@ -117,8 +119,8 @@ class TestLifecycleNoSocketSilentNoop:
             patch.multiple("yadgar.core.bootstrap", **_BOOTSTRAP_PATCHES),
             patch.multiple("yadgar.core.lifecycle", **_CORE_LIFECYCLE_PATCHES),
         ):
-            from yadgar.core import lifecycle as core_lifecycle
             from yadgar.core.bootstrap import core_init_engines
+            from yadgar.core.lifecycle import lifecycle as core_lifecycle
 
             _reset_state()
             # Must not raise even without NOTIFY_SOCKET

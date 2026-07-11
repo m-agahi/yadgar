@@ -26,7 +26,11 @@ def test_real_registry_is_fully_catalogued() -> None:
 
 def test_enumerators_find_the_surfaces() -> None:
     """Sanity floors: the AST enumerators must find the known surfaces."""
-    assert len(ccc.enumerate_settings(_REPO_ROOT / "yadgar" / "_shared" / "config.py")) >= 280
+    # T2 Car D packaged config: config.py lives inside the _shared/config/ package.
+    assert (
+        len(ccc.enumerate_settings(_REPO_ROOT / "yadgar" / "_shared" / "config" / "config.py"))
+        >= 280
+    )
     assert len(ccc.enumerate_tools(_REPO_ROOT / "yadgar" / "core" / "server" / "tools")) >= 70
     assert (
         len(

@@ -38,8 +38,8 @@ import pytest
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.retrieval.core import Retriever
 from yadgar._shared.storage import StorageEngine
+from yadgar.backend.retrieval.core import Retriever
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "retrieval_core_expected.json"
 REGEN = os.environ.get("YADGAR_REGEN_FIXTURES", "").lower() in {"1", "true", "yes"}

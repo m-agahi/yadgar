@@ -26,12 +26,28 @@ def _make_wiki_result(raw_id: int, slug: str = "test-page") -> dict:
 
 @pytest.fixture()
 def _patch_state():
-    """Yield a namespace that patches _st._retriever and _st._wiki."""
+    """Yield (mock_st, mock_retriever, mock_wiki).
+
+    T2 Car E2 seam migration: api_viz_search no longer reads _st._retriever —
+    memory recall now forwards to the backend /recall via
+    ``_HookRecallForwarder("").recall`` → ``_forward_hook_recall`` (the same
+    seam the hook siblings use, ADR-0078). We patch ``_forward_hook_recall`` and
+    route it through the ``mock_retriever.recall`` surface so every test body's
+    ``retriever.recall.return_value`` / ``.side_effect`` wiring migrates verbatim
+    (mechanism moved, guarded property — id→node-id mapping — preserved). Wiki
+    still resolves in-core via ``_st._wiki``.
+    """
     mock_retriever = MagicMock()
     mock_wiki = MagicMock()
 
+    def _fwd(query, *, max_results=5, min_heat=0.0, directory="", profile="fast", **_):
+        return mock_retriever.recall(
+            query, max_results=max_results, min_heat=min_heat, profile=profile
+        )
+
     with (
         patch("yadgar.core.server.http._st") as mock_st,
+        patch("yadgar.core.server.http._forward_hook_recall", side_effect=_fwd),
     ):
         mock_st._retriever = mock_retriever
         mock_st._wiki = mock_wiki

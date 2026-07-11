@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.write_exec import MemorizeContext
 
 logger = logging.getLogger(__name__)

@@ -228,8 +228,8 @@ def test_prune_retention_zero_or_negative_keeps_all(
 def test_snapshot_retention_config_three_way() -> None:
     """UPDATE_SNAPSHOT_RETENTION registered in Settings + registry + FIELD_META."""
     from yadgar._shared.config import Settings
-    from yadgar._shared.config_registry import list_config
-    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar._shared.config.config_registry import list_config
+    from yadgar._shared.config.config_yaml import FIELD_META
 
     # Settings has the field
     assert "UPDATE_SNAPSHOT_RETENTION" in Settings.model_fields

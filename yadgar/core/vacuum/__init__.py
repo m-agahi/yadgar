@@ -1141,7 +1141,7 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
     # yadgar_home (always present, even when the canonical is absent mid-crash), so
     # there is no chicken-and-egg with recovery.  If a LIVE job already holds it,
     # skip (log + return 0 — skip is not a failure).
-    from yadgar.core import sensitive_lock  # noqa: PLC0415
+    from yadgar.core.sensitive_lock import sensitive_lock  # noqa: PLC0415
 
     if not sensitive_lock.acquire("vacuum"):
         held = sensitive_lock.read() or {}

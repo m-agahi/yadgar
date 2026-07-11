@@ -218,8 +218,8 @@ class TestRerankerSkipWhenDisabled:
     @pytest.fixture
     def reranker(self, tmp_path):
         from yadgar._shared.config import Settings
-        from yadgar._shared.retrieval.reranking import Reranker
         from yadgar._shared.storage import StorageEngine
+        from yadgar.backend.retrieval.reranking import Reranker
 
         settings = Settings(NLI_RERANKING_ENABLED=False)
         storage = StorageEngine(str(tmp_path / "test.db"))

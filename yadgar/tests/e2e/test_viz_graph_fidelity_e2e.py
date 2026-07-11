@@ -104,7 +104,7 @@ class TestBCVZ1_GraphRESTEntityNeighborhoodScores:
 
     def test_seeded_entity_nodes_appear_in_payload(self, e2e_engines):
         """Entity nodes seeded in SurrealDB MUST appear as entity:{id} nodes in the payload."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -126,7 +126,7 @@ class TestBCVZ1_GraphRESTEntityNeighborhoodScores:
 
     def test_entity_node_heat_reflects_db_value(self, e2e_engines):
         """Entity node heat in the payload MUST equal the seeded DB heat (scores present)."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -149,7 +149,7 @@ class TestBCVZ1_GraphRESTEntityNeighborhoodScores:
 
     def test_co_occurrence_edge_endpoints_match_seeded_entity_ids(self, e2e_engines):
         """A seeded co_occurrence relation MUST appear as an edge with endpoints matching seeded ids."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -186,7 +186,7 @@ class TestBCVZ1_GraphRESTEntityNeighborhoodScores:
 
     def test_edge_weight_reflects_db_value(self, e2e_engines):
         """Edge weight in the payload MUST equal the seeded DB weight (score fidelity)."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -228,7 +228,7 @@ class TestBCVZ1_GraphRESTEntityNeighborhoodScores:
         BC-VZ1 fidelity invariant: orphan filter is active — no edge must point
         to an absent node. Seeding both endpoints guarantees the edge survives.
         """
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -255,7 +255,7 @@ class TestBCVZ1_GraphRESTEntityNeighborhoodScores:
 
     def test_memory_node_heat_reflects_db_value(self, e2e_engines):
         """Memory node heat in the payload MUST equal the seeded DB heat (scores present)."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -282,7 +282,7 @@ class TestBCVZ1_GraphRESTEntityNeighborhoodScores:
 
     def test_payload_always_carries_weak_edges_hidden_key(self, e2e_engines):
         """get_full_graph payload MUST always carry 'weak_edges_hidden' key (F4 affordance)."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 
@@ -298,7 +298,7 @@ class TestBCVZ1_GraphRESTEntityNeighborhoodScores:
 
     def test_payload_nodes_and_edges_keys_always_present(self, e2e_engines):
         """get_full_graph payload MUST always carry 'nodes' and 'edges' lists."""
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         storage = e2e_engines["storage"]
 

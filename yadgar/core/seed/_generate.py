@@ -246,41 +246,6 @@ def generate_memories(scan_data: dict) -> list[dict]:
     return memories
 
 
-def _delete_existing_seed_memories(
-    storage, directory: str, exclude_ids: list[int] | None = None
-) -> int:
-    """Delete existing _seed tagged memories for this directory before re-seeding.
-
-    §6 Q17: exclude_ids lets callers preserve newly-inserted memories so the
-    delete step only removes OLD seed memories, not the fresh ones.
-
-    Returns count of deleted memories.
-    """
-    rows = storage._q(
-        "SELECT id FROM memory WHERE directory_context = $dir AND '_seed' IN tags",
-        {"dir": directory},
-    )
-    if not rows:
-        return 0
-
-    exclude_set: set[int] = set(exclude_ids or [])
-    ids = [
-        storage._extract_id(r.get("id"))
-        for r in rows
-        if storage._extract_id(r.get("id")) not in exclude_set
-    ]
-    for mid in ids:
-        # Delete SR transitions referencing this memory
-        storage._q(
-            "DELETE memory_transition WHERE from_memory_id = $id OR to_memory_id = $id",
-            {"id": mid},
-        )
-        # Delete the memory itself (embedding fields are on the record — no separate table)
-        storage._q("DELETE type::record('memory', $id)", {"id": mid})
-
-    return len(ids)
-
-
 def _draft_project_init(scan_data: dict) -> str:
     """Compose a starter _project_init markdown skeleton from scan data.
 
@@ -338,30 +303,26 @@ def _draft_project_init(scan_data: dict) -> str:
 
 def seed_project(
     directory: str,
-    db_path: str | None = None,
     dry_run: bool = False,
-    storage=None,
-    embeddings=None,
-    thermo=None,
-    curator=None,
 ) -> dict:
     """Scan a project and store foundational memories.
 
+    T2 Car E1 (census verdict #9, ADR-0078): only the host-FS half runs here —
+    ``scan_project`` + ``generate_memories`` + the ``_project_init`` draft. The
+    store phase (embedding, thermo scoring, insert/update, old-seed deletion,
+    init upsert) forwards to the backend ``seed_store`` /admin op, which owns
+    the ML engines and the DB.
+
     Args:
         directory: Project root directory to scan.
-        db_path: Optional SQLite database path override.
         dry_run: If True, scan and generate but don't store.
-        storage: Optional pre-initialized StorageEngine (to reuse server's).
-        embeddings: Optional pre-initialized EmbeddingEngine.
-        thermo: Optional pre-initialized MemoryThermodynamics.
-        curator: Optional pre-initialized MemoryCurator.
 
     Returns:
-        Dict with scan stats and memories created/skipped.
+        Dict with scan stats and memories created/replaced.
     """
     from ._scan import scan_project
 
-    # Scan
+    # Scan (host FS — stays core)
     scan_data = scan_project(directory)
     memories = generate_memories(scan_data)
 
@@ -375,100 +336,35 @@ def seed_project(
             "stored": False,
         }
 
-    # Use provided engines or initialize our own
-    own_storage = storage is None
-    if own_storage:
-        from yadgar._shared.config import Settings
-        from yadgar._shared.embeddings import EmbeddingEngine
-        from yadgar._shared.knowledge_graph import KnowledgeGraph
-        from yadgar._shared.storage import StorageEngine
-        from yadgar._shared.thermodynamics import MemoryThermodynamics
+    # §23: Draft a starter _project_init memory from README + top-level docs
+    # (reads scan_data — host side), then forward the WHOLE store phase.
+    init_content = _draft_project_init(scan_data)
 
-        settings = Settings()
-        storage = StorageEngine(db_path or settings.DB_PATH)
-        embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
-        KnowledgeGraph(storage, settings)
-        thermo = MemoryThermodynamics(storage, embeddings, settings)
+    payload = {
+        "root": scan_data["root"],
+        "memories": [
+            {
+                "content": m["content"],
+                "context": m["context"],
+                "tags": m["tags"],
+                "base_heat": _HEAT_BY_TYPE.get(m.get("heat_type", "component"), 0.6),
+            }
+            for m in memories
+        ],
+        "init_content": init_content,
+    }
 
-    created = 0
-    replaced = 0
+    from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
 
-    try:
-        # §6 Q17: Build new memories FIRST; delete old ones only after successful insert.
-        # Old code deleted first → a crash mid-insert left the DB with no seed memories.
-        new_memory_ids: list[int] = []
-
-        for mem in memories:
-            content = mem["content"]
-            context = mem["context"]
-            tags = mem["tags"]
-            heat_type = mem.get("heat_type", "component")
-
-            # Generate embedding
-            embedding = embeddings.encode(content)
-
-            # Base heat from memory type
-            base_heat = _HEAT_BY_TYPE.get(heat_type, 0.6)
-
-            # Compute thermodynamic scores
-            surprise = thermo.compute_surprise(content, context)
-            importance = thermo.compute_importance(content, tags)
-            valence = thermo.compute_valence(content)
-            # Use modest surprise boost so seeded memories don't all max out
-            initial_heat = min(base_heat + surprise * 0.1, 1.0)
-
-            # Insert directly (no curator dedup since we will clear old seeds after)
-            memory_id = storage.insert_memory(
-                {
-                    "content": content,
-                    "embedding": embedding,
-                    "tags": tags,
-                    "directory_context": context,
-                    "heat": initial_heat,
-                    "is_stale": False,
-                    "file_hash": None,
-                    "embedding_model": embeddings.get_model_name(),
-                }
-            )
-            new_memory_ids.append(memory_id)
-
-            # Set thermodynamic scores
-            storage.update_memory_scores(
-                memory_id,
-                surprise_score=surprise,
-                importance=importance,
-                emotional_valence=valence,
-            )
-
-            created += 1
-            logger.info("Seed memory [created]: %s", content[:80])
-
-        # All new memories inserted successfully — now safe to delete old seed memories.
-        deleted = _delete_existing_seed_memories(
-            storage, scan_data["root"], exclude_ids=new_memory_ids
-        )
-        if deleted:
-            logger.info("Cleared %d old seed memories for %s", deleted, scan_data["root"])
-            replaced = deleted
-
-        # §23: Draft a starter _project_init memory from README + top-level docs.
-        init_content = _draft_project_init(scan_data)
-        try:
-            storage.upsert_project_init(scan_data["root"], init_content)
-            logger.info("Drafted _project_init for %s", scan_data["root"])
-        except Exception:
-            logger.warning("Failed to draft _project_init for %s", scan_data["root"], exc_info=True)
-
-    finally:
-        if own_storage:
-            storage.close()
+    # Generous timeout: the backend embeds + scores every generated memory.
+    result = _forward_admin("seed_store", payload, timeout_s=300.0)
 
     return {
         "project": scan_data["project_name"],
         "directory": scan_data["root"],
         "stats": scan_data["stats"],
         "memories_generated": len(memories),
-        "created": created,
-        "replaced": replaced,
+        "created": int(result.get("created", 0)),
+        "replaced": int(result.get("replaced", 0)),
         "stored": True,
     }

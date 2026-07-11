@@ -7,8 +7,8 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from yadgar._shared.enforcement import _enforcement_on, _inc_relaxed
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.security.enforcement import _enforcement_on, _inc_relaxed
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +335,9 @@ class _DLQMixin:
                 [c["slug"] for c in candidates],
             )
             try:
-                from yadgar._shared.metrics import yadgar_wiki_add_rejected_total  # noqa: PLC0415
+                from yadgar._shared.observability.metrics import (
+                    yadgar_wiki_add_rejected_total,  # noqa: PLC0415
+                )
 
                 yadgar_wiki_add_rejected_total.labels(reason="duplicate_detected").inc()
             except Exception:

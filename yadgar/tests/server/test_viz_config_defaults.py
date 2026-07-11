@@ -113,7 +113,7 @@ class TestConfigRegistryEntries:
     """config_registry.py _REGISTRY must have updated/new entries for v5.50.0."""
 
     def _registry(self):
-        from yadgar._shared.config_registry import _REGISTRY  # noqa: PLC0415
+        from yadgar._shared.config.config_registry import _REGISTRY  # noqa: PLC0415
 
         return {e.name: e for e in _REGISTRY}
 
@@ -170,7 +170,7 @@ class TestConfigYamlFieldMeta:
     """config_yaml.py FIELD_META dict must have entries for new/updated viz knobs."""
 
     def _field_meta(self):
-        from yadgar._shared.config_yaml import FIELD_META  # noqa: PLC0415
+        from yadgar._shared.config.config_yaml import FIELD_META  # noqa: PLC0415
 
         return FIELD_META
 

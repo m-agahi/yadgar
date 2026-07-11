@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar.core.graph_layout import attach_cached_positions, graph_signature
+from yadgar.backend.graph.graph_layout import attach_cached_positions, graph_signature
 
 
 def _payload(ids):
@@ -137,7 +137,7 @@ def test_flag_on_fresh_cache_attaches_positions(monkeypatch):
     _seed()
 
     import yadgar._shared.runtime.state as _st
-    from yadgar.core.graph_api import GraphAPI
+    from yadgar.backend.graph.graph_api import GraphAPI
 
     g = GraphAPI(_st._storage).get_full_graph(0, 8, False, None, 0, 0)
     sig = graph_signature(g["nodes"], g["edges"])
@@ -159,7 +159,7 @@ def test_flag_on_capped_subset_still_attaches_by_id(monkeypatch):
     _seed(6)
 
     import yadgar._shared.runtime.state as _st
-    from yadgar.core.graph_api import GraphAPI
+    from yadgar.backend.graph.graph_api import GraphAPI
 
     # Cache positions for the FULL uncapped graph.
     g = GraphAPI(_st._storage).get_full_graph(0, 8, False, None, 0, 0)

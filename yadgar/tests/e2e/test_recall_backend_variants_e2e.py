@@ -127,7 +127,7 @@ def _call_backend(app, payload: dict) -> dict:
 @pytest.fixture()
 def variant_corpus(e2e_engines, monkeypatch):
     """Seed corpus for all variant tests and pre-mark backend engines ready."""
-    import yadgar.backend.embed_service as _svc
+    import yadgar.backend.embed_service.embed_service as _svc
 
     storage = e2e_engines["storage"]
     embeddings = e2e_engines["embeddings"]
@@ -143,7 +143,13 @@ def variant_corpus(e2e_engines, monkeypatch):
     monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
     monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
-    # Mark engines ready (fixture engines already initialized)
+    # Mark engines ready (fixture engines already initialized).
+    # T2 Car E2: pre-marking skips _ensure_recall_engines, which is what
+    # composes the backend retriever now — compose it explicitly (idempotent).
+    from yadgar.backend.retrieval.compose import ensure_retrieval_engine
+
+    ensure_retrieval_engine()
+
     original_ready = _svc._recall_engines_ready
     _svc._recall_engines_ready = True
     yield e2e_engines

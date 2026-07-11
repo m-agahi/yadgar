@@ -20,8 +20,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar.core.graph_api import GraphAPI
-from yadgar.core.viz_meta import EDGE_TYPES, LAZY_EDGE_TYPES
+from yadgar.backend.graph.graph_api import GraphAPI
+from yadgar.core.viz.viz_meta import EDGE_TYPES, LAZY_EDGE_TYPES
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -411,7 +411,7 @@ class TestBuildLegendEmitsRoleFields:
 
     def test_legend_edges_have_role(self, settings):
         """build_legend edges each have a non-empty 'role' field."""
-        from yadgar.core.viz_meta import build_legend
+        from yadgar.core.viz.viz_meta import build_legend
 
         legend = build_legend(settings)
         for edge in legend["edges"]:
@@ -422,7 +422,7 @@ class TestBuildLegendEmitsRoleFields:
 
     def test_legend_edges_have_default_on(self, settings):
         """build_legend edges each have a 'default_on' field."""
-        from yadgar.core.viz_meta import build_legend
+        from yadgar.core.viz.viz_meta import build_legend
 
         legend = build_legend(settings)
         for edge in legend["edges"]:
@@ -430,7 +430,7 @@ class TestBuildLegendEmitsRoleFields:
 
     def test_legend_edges_have_lazy(self, settings):
         """build_legend edges each have a 'lazy' field."""
-        from yadgar.core.viz_meta import build_legend
+        from yadgar.core.viz.viz_meta import build_legend
 
         legend = build_legend(settings)
         for edge in legend["edges"]:
@@ -438,7 +438,7 @@ class TestBuildLegendEmitsRoleFields:
 
     def test_legend_semantic_absent(self, settings):
         """build_legend: semantic edge is gone (v5.87 C3 — no dead legend toggle)."""
-        from yadgar.core.viz_meta import build_legend
+        from yadgar.core.viz.viz_meta import build_legend
 
         legend = build_legend(settings)
         sem = next((e for e in legend["edges"] if e["key"] == "semantic"), None)
@@ -446,7 +446,7 @@ class TestBuildLegendEmitsRoleFields:
 
     def test_legend_co_occurrence_lazy_false(self, settings):
         """build_legend: co_occurrence edge has lazy=False."""
-        from yadgar.core.viz_meta import build_legend
+        from yadgar.core.viz.viz_meta import build_legend
 
         legend = build_legend(settings)
         co = next((e for e in legend["edges"] if e["key"] == "co_occurrence"), None)
@@ -459,7 +459,7 @@ class TestBuildLegendEmitsRoleFields:
         v5.86 VIZ Batch-2 (P0.4): imports/calls dropped — the legend no longer
         advertises code-only edges that are always empty on a prose corpus.
         """
-        from yadgar.core.viz_meta import build_legend
+        from yadgar.core.viz.viz_meta import build_legend
 
         legend = build_legend(settings)
         keys = {e["key"] for e in legend["edges"]}

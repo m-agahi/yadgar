@@ -37,7 +37,7 @@ def _reload_embed_service(monkeypatch, tmp_path):
 
     cfg.get_settings.cache_clear()
 
-    import yadgar.backend.embed_service as es
+    import yadgar.backend.embed_service.embed_service as es
 
     importlib.reload(es)
     return es
@@ -104,7 +104,7 @@ class TestDrainerStartup:
                 assert _st._queue_drainer is drainer
 
                 # Observability: gauge 1 + /health payload field
-                import yadgar.backend.embed_service_metrics as esm
+                import yadgar.backend.embed_service.embed_service_metrics as esm
 
                 assert esm.embed_drainer_running._value.get() == 1.0
                 assert client.get("/health").json()["drainer"] is True
@@ -126,7 +126,7 @@ class TestDrainerStartup:
         assert drainer._stop_event.is_set()
         assert es._queue_drainer is None
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         assert esm.embed_drainer_running._value.get() == 0.0
 
@@ -152,7 +152,7 @@ class TestDrainerGate:
                 engines.assert_not_called()
                 assert client.get("/health").json()["drainer"] is False
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         assert esm.embed_drainer_running._value.get() == 0.0
 
@@ -180,6 +180,6 @@ class TestDrainerGate:
             for r in caplog.records
         ), f"expected fail-loud ERROR log, got: {[r.getMessage() for r in caplog.records]}"
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         assert esm.embed_drainer_running._value.get() == 0.0

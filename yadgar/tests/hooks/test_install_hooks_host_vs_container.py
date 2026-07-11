@@ -109,7 +109,7 @@ def test_mcp_tool_works_on_host(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
 
     # Patch container detection so /.dockerenv presence on CI doesn't trip this test
-    import yadgar.core.install_hooks_lib as lib
+    import yadgar.core.install.install_hooks_lib as lib
 
     monkeypatch.setattr(lib, "is_running_in_container", lambda: False)
 

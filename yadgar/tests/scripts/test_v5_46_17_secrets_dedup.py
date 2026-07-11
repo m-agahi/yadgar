@@ -36,7 +36,8 @@ import re
 from yadgar.tests._paths import REPO_ROOT
 
 BOOTSTRAP = REPO_ROOT / "scripts" / "install" / "bootstrap_secrets.sh"
-DAEMON_PY = REPO_ROOT / "yadgar" / "core" / "daemon.py"
+# T2 Car D: daemon.py packaged under core/daemon/ (ADR-0084 no-lone-files).
+DAEMON_PY = REPO_ROOT / "yadgar" / "core" / "daemon" / "daemon.py"
 VACUUM_INIT = REPO_ROOT / "yadgar" / "core" / "vacuum" / "__init__.py"
 VACUUM_PHASES = REPO_ROOT / "yadgar" / "core" / "vacuum" / "phases.py"
 

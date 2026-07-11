@@ -246,7 +246,7 @@ class TestInstallHooksSubagentStop:
     """install_hooks registers SubagentStop with append-if-absent semantics."""
 
     def test_fresh_install_adds_subagent_stop(self, tmp_path):
-        from yadgar.core.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
         result = install_hooks_impl(
             home_dir=tmp_path,
@@ -261,7 +261,7 @@ class TestInstallHooksSubagentStop:
         assert isinstance(subagent_entries, list) and len(subagent_entries) > 0
 
     def test_idempotent_does_not_duplicate(self, tmp_path):
-        from yadgar.core.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
         # First install (real write)
         install_hooks_impl(
@@ -281,7 +281,7 @@ class TestInstallHooksSubagentStop:
 
     def test_existing_user_hook_preserved(self, tmp_path):
         """User-defined SubagentStop hooks must not be removed."""
-        from yadgar.core.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
         # Pre-populate settings with a user hook
         claude_dir = tmp_path / ".claude"

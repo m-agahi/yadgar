@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar._shared.config_registry import clear_config_caches
+from yadgar._shared.config.config_registry import clear_config_caches
 
 # ---------------------------------------------------------------------------
 # Shared fixture (mirrors test_config_yaml_aware_source.py)
@@ -37,7 +37,7 @@ def _isolate_config(monkeypatch, tmp_path):
 
 
 def _write_yaml(monkeypatch, tmp_path, body: str) -> None:
-    from yadgar._shared.config_yaml import get_config_path
+    from yadgar._shared.config.config_yaml import get_config_path
 
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,14 +78,14 @@ def test_log_format_yaml_respected(monkeypatch, tmp_path):
 
 def test_metrics_enabled_env_override_false(monkeypatch):
     monkeypatch.setenv("YADGAR_METRICS_ENABLED", "0")
-    from yadgar._shared.metrics import _is_metrics_enabled
+    from yadgar._shared.observability.metrics import _is_metrics_enabled
 
     assert _is_metrics_enabled() is False
 
 
 def test_metrics_enabled_env_override_true(monkeypatch):
     monkeypatch.setenv("YADGAR_METRICS_ENABLED", "true")
-    from yadgar._shared.metrics import _is_metrics_enabled
+    from yadgar._shared.observability.metrics import _is_metrics_enabled
 
     assert _is_metrics_enabled() is True
 
@@ -94,7 +94,7 @@ def test_metrics_enabled_yaml_respected(monkeypatch, tmp_path):
     """config.yaml metrics_enabled: false respected when env unset."""
     monkeypatch.delenv("YADGAR_METRICS_ENABLED", raising=False)
     _write_yaml(monkeypatch, tmp_path, "metrics_enabled: false\n")
-    from yadgar._shared.metrics import _is_metrics_enabled
+    from yadgar._shared.observability.metrics import _is_metrics_enabled
 
     assert _is_metrics_enabled() is False
 

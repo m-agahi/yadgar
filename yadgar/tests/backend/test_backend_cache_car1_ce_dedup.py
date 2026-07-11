@@ -25,9 +25,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar._shared.retrieval._reranking_cross_encoder import _CrossEncoderMixin
-from yadgar._shared.retrieval._reranking_multi_passage import _MultiPassageMixin
 from yadgar.backend.cache import Cache, ModelCkpt, NullCache
+from yadgar.backend.retrieval._reranking_cross_encoder import _CrossEncoderMixin
+from yadgar.backend.retrieval._reranking_multi_passage import _MultiPassageMixin
 
 # ── stubs ────────────────────────────────────────────────────────────────────
 
@@ -194,14 +194,14 @@ class TestDependencyInjection:
         recall path byte-identical (live CE dedup). See
         test_lifecycle_injects_real_ce_cache below (or the recall-parity e2e).
         """
-        from yadgar._shared.protocols import NullCache as SharedNullCache
-        from yadgar._shared.retrieval.reranking import Reranker
+        from yadgar._shared.contracts.protocols import NullCache as SharedNullCache
+        from yadgar.backend.retrieval.reranking import Reranker
 
         r = Reranker(MagicMock(), MagicMock(), ml_client=_CountingML())
         assert isinstance(r._ce_cache, SharedNullCache)
 
     def test_reranker_accepts_injected_cache(self):
-        from yadgar._shared.retrieval.reranking import Reranker
+        from yadgar.backend.retrieval.reranking import Reranker
 
         null = NullCache()
         r = Reranker(MagicMock(), MagicMock(), ml_client=_CountingML(), ce_cache=null)
@@ -210,7 +210,7 @@ class TestDependencyInjection:
     def test_retriever_threads_ce_cache_to_reranker(self):
         """Car 2: Retriever forwards its injected ce_cache to the Reranker it builds,
         so the composition root's real `ce` singleton reaches the CE path."""
-        from yadgar._shared.retrieval.core import Retriever
+        from yadgar.backend.retrieval.core import Retriever
 
         sentinel = NullCache()
         ret = Retriever(
@@ -252,7 +252,7 @@ class TestDependencyInjection:
 class TestGetCeCacheAccessor:
     def test_returns_registered_ce_instance(self):
         """get_ce_cache returns the process-global `ce` namespace registered by embed_service."""
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)  # re-registers `ce` in _REGISTRY
         from yadgar.backend.cache import get_ce_cache

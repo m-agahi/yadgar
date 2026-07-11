@@ -38,7 +38,7 @@ def _call_recall_with_results(result_dicts: list[dict]) -> list[dict]:
     _fanout_recall on the backend). The guard under test is m.get("id") /
     m.get("heat", 0.0) against KeyError on incomplete result dicts."""
     import yadgar._shared.runtime.state as _st
-    from yadgar._shared.runtime.recall_pipeline import _apply_recall_db_side_effects
+    from yadgar.backend.retrieval.recall_pipeline import _apply_recall_db_side_effects
 
     mock_storage = MagicMock()
     mock_storage._now_iso.return_value = "2026-01-01T00:00:00"

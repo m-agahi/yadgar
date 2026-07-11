@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yadgar._shared.paths as _paths
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import shutdown_tracing
+from yadgar._shared.observability.tracing import shutdown_tracing
 
 
 @observe(tier="hot")

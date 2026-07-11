@@ -107,7 +107,7 @@ def in_memory_tracer():
 class TestSurrealdbQueryDurationMs:
     def test_increments_on_q_calls(self, storage):
         """After M _q calls the labelled histogram count increases by M total."""
-        from yadgar._shared.metrics import yadgar_surrealdb_query_duration_ms
+        from yadgar._shared.observability.metrics import yadgar_surrealdb_query_duration_ms
 
         # Sum count across all op labels (or read the specific op for SELECT)
         before = _get_hist_count_labeled(yadgar_surrealdb_query_duration_ms, op="SELECT")
@@ -130,14 +130,14 @@ class TestSurrealdbQueryDurationMs:
 class TestPoolActive:
     def test_pool_active_after_connect(self, storage):
         """pool_active must be >= 1 after StorageEngine initialises."""
-        from yadgar._shared.metrics import yadgar_surrealdb_pool_active
+        from yadgar._shared.observability.metrics import yadgar_surrealdb_pool_active
 
         val = _get_gauge_value(yadgar_surrealdb_pool_active)
         assert val >= 1, f"Expected pool_active >= 1 after connect, got {val}"
 
     def test_pool_active_zero_after_close(self, tmp_path):
         """pool_active must be 0 after explicit close()."""
-        from yadgar._shared.metrics import yadgar_surrealdb_pool_active
+        from yadgar._shared.observability.metrics import yadgar_surrealdb_pool_active
         from yadgar._shared.storage import StorageEngine
 
         engine = StorageEngine(str(tmp_path / "close_test.db"))
@@ -154,7 +154,7 @@ class TestPoolActive:
 class TestPoolWaitMs:
     def test_has_observation_after_init(self, storage):
         """pool_wait_ms histogram must have at least one observation (value 0.0 for singleton)."""
-        from yadgar._shared.metrics import yadgar_surrealdb_connection_pool_wait_ms
+        from yadgar._shared.observability.metrics import yadgar_surrealdb_connection_pool_wait_ms
 
         count = _get_hist_count_nolabel(yadgar_surrealdb_connection_pool_wait_ms)
         assert count >= 1, f"Expected >= 1 observation in pool_wait_ms, got {count}"

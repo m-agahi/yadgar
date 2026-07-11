@@ -34,7 +34,7 @@ def _reset_tracing():
         if hasattr(trace, "_TRACER_PROVIDER"):
             trace._TRACER_PROVIDER = None
 
-        import yadgar._shared.tracing as _tr
+        import yadgar._shared.observability.tracing as _tr
 
         _tr._SETUP_DONE.clear()
         # C2 P2/P3: setup_tracing installs a span-log QueueListener and flips
@@ -103,7 +103,7 @@ class TestNoEndpoint:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         setup_tracing("test-no-otlp")
 
@@ -125,7 +125,7 @@ class TestNoEndpoint:
         """LogSpanProcessor is always registered regardless of OTLP endpoint."""
         monkeypatch.delenv("YADGAR_OTLP_ENDPOINT", raising=False)
 
-        from yadgar._shared.tracing import LogSpanProcessor, setup_tracing
+        from yadgar._shared.observability.tracing import LogSpanProcessor, setup_tracing
 
         setup_tracing("test-log-always")
 
@@ -153,7 +153,7 @@ class TestWithEndpoint:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         setup_tracing("test-with-otlp")
 
@@ -175,7 +175,7 @@ class TestWithEndpoint:
         """LogSpanProcessor is present even when OTLP endpoint is configured."""
         monkeypatch.setenv("YADGAR_OTLP_ENDPOINT", "http://127.0.0.1:4318/v1/traces")
 
-        from yadgar._shared.tracing import LogSpanProcessor, setup_tracing
+        from yadgar._shared.observability.tracing import LogSpanProcessor, setup_tracing
 
         setup_tracing("test-both-procs")
 
@@ -195,7 +195,7 @@ class TestWithEndpoint:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        from yadgar._shared.tracing import LogSpanProcessor, setup_tracing
+        from yadgar._shared.observability.tracing import LogSpanProcessor, setup_tracing
 
         setup_tracing("test-dual")
 
@@ -222,42 +222,42 @@ class TestWithEndpoint:
 class TestHeaderParsing:
     def test_parse_headers_two_pairs(self):
         """Comma-separated k=v pairs parse into a dict with 2 entries."""
-        from yadgar._shared.tracing import _parse_otlp_headers
+        from yadgar._shared.observability.tracing import _parse_otlp_headers
 
         result = _parse_otlp_headers("x-tenant=foo,authorization=Bearer x")
         assert result == {"x-tenant": "foo", "authorization": "Bearer x"}
 
     def test_parse_headers_single_pair(self):
         """Single k=v pair returns 1-entry dict."""
-        from yadgar._shared.tracing import _parse_otlp_headers
+        from yadgar._shared.observability.tracing import _parse_otlp_headers
 
         result = _parse_otlp_headers("x-scope=metrics")
         assert result == {"x-scope": "metrics"}
 
     def test_parse_headers_empty_string(self):
         """Empty string returns empty dict."""
-        from yadgar._shared.tracing import _parse_otlp_headers
+        from yadgar._shared.observability.tracing import _parse_otlp_headers
 
         result = _parse_otlp_headers("")
         assert result == {}
 
     def test_parse_headers_value_with_equals(self):
         """Value containing '=' is preserved (only split on first '=')."""
-        from yadgar._shared.tracing import _parse_otlp_headers
+        from yadgar._shared.observability.tracing import _parse_otlp_headers
 
         result = _parse_otlp_headers("authorization=Bearer tok=en")
         assert result == {"authorization": "Bearer tok=en"}
 
     def test_parse_headers_whitespace_trimmed(self):
         """Leading/trailing whitespace around key and value is stripped."""
-        from yadgar._shared.tracing import _parse_otlp_headers
+        from yadgar._shared.observability.tracing import _parse_otlp_headers
 
         result = _parse_otlp_headers(" x-key = value , x-other = thing ")
         assert result == {"x-key": "value", "x-other": "thing"}
 
     def test_parse_headers_malformed_pair_skipped(self):
         """Pair without '=' is silently skipped."""
-        from yadgar._shared.tracing import _parse_otlp_headers
+        from yadgar._shared.observability.tracing import _parse_otlp_headers
 
         result = _parse_otlp_headers("good=val,badinput,other=ok")
         assert result == {"good": "val", "other": "ok"}
@@ -273,7 +273,7 @@ class TestInvalidEndpoint:
         """Malformed endpoint URL logs WARN and setup_tracing does not raise."""
         monkeypatch.setenv("YADGAR_OTLP_ENDPOINT", "not-a-url")
 
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         with caplog.at_level(logging.WARNING, logger="yadgar.tracing"):
             setup_tracing("test-invalid-url")
@@ -281,7 +281,7 @@ class TestInvalidEndpoint:
         # Should still have LogSpanProcessor — logs-only fallback
         from opentelemetry import trace
 
-        from yadgar._shared.tracing import LogSpanProcessor
+        from yadgar._shared.observability.tracing import LogSpanProcessor
 
         provider = trace.get_tracer_provider()
         processors = _get_processors(provider)
@@ -308,7 +308,7 @@ class TestOtlpTimeout:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         setup_tracing("test-timeout")
 
@@ -336,7 +336,7 @@ class TestOtlpTimeout:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         setup_tracing("test-custom-timeout")
 
@@ -382,7 +382,7 @@ class TestYamlOverride:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         setup_tracing("test-yaml-endpoint")
 
@@ -416,7 +416,7 @@ class TestYamlOverride:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        from yadgar._shared.tracing import setup_tracing
+        from yadgar._shared.observability.tracing import setup_tracing
 
         setup_tracing("test-yaml-timeout")
 
@@ -452,7 +452,7 @@ class TestYamlOverride:
 
         cfg.get_settings.cache_clear()
 
-        from yadgar._shared.tracing import _build_otlp_exporter
+        from yadgar._shared.observability.tracing import _build_otlp_exporter
 
         exporter = _build_otlp_exporter()
         assert exporter is not None, "Expected exporter from yaml override"

@@ -214,7 +214,7 @@ class TestBug4TraceIdRegression:
         """
         from unittest.mock import patch
 
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         buf = io.StringIO()
         handler = logging.StreamHandler(buf)
@@ -227,9 +227,12 @@ class TestBug4TraceIdRegression:
 
         fake_trace_id = "aabbccdd0011223344556677aabbccdd"
 
-        with patch("yadgar._shared.tracing.get_current_trace_id", return_value=fake_trace_id):
+        with patch(
+            "yadgar._shared.observability.tracing.get_current_trace_id", return_value=fake_trace_id
+        ):
             with patch(
-                "yadgar._shared.tracing.get_current_span_id", return_value="0011223344556677"
+                "yadgar._shared.observability.tracing.get_current_span_id",
+                return_value="0011223344556677",
             ):
                 test_logger.info(
                     "request",
@@ -255,7 +258,7 @@ class TestBug4TraceIdRegression:
         """Without an active span, trace_id must not appear as empty string."""
         from unittest.mock import patch
 
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         buf = io.StringIO()
         handler = logging.StreamHandler(buf)
@@ -266,8 +269,10 @@ class TestBug4TraceIdRegression:
         test_logger.setLevel(logging.INFO)
         test_logger.propagate = False
 
-        with patch("yadgar._shared.tracing.get_current_trace_id", return_value=None):
-            with patch("yadgar._shared.tracing.get_current_span_id", return_value=None):
+        with patch("yadgar._shared.observability.tracing.get_current_trace_id", return_value=None):
+            with patch(
+                "yadgar._shared.observability.tracing.get_current_span_id", return_value=None
+            ):
                 test_logger.info(
                     "request",
                     extra={

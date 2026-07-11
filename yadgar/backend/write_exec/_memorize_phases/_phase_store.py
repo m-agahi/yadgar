@@ -7,8 +7,8 @@ import logging
 import yadgar._shared.runtime.lifecycle as _lifecycle
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.server_helpers import _file_hash
-from yadgar._shared.tracing import trace_span
 from yadgar._shared.write_exec import MemorizeContext
 from yadgar.backend.curation import CurateParams
 

@@ -33,7 +33,7 @@ import logging
 import re
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 
 _log = logging.getLogger(__name__)
 

@@ -15,9 +15,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar._shared.retrieval.providers.base import Candidate, Scope, SourceProvider
-from yadgar._shared.retrieval.providers.memory import MemoryProvider
-from yadgar._shared.retrieval.providers.wiki import WikiProvider
+from yadgar.backend.retrieval.providers.base import Candidate, Scope, SourceProvider
+from yadgar.backend.retrieval.providers.memory import MemoryProvider
+from yadgar.backend.retrieval.providers.wiki import WikiProvider
 
 # ---------------------------------------------------------------------------
 # Fixtures

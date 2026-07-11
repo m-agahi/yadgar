@@ -33,6 +33,36 @@ from yadgar._shared.runtime.recall_utils import (  # noqa: E402,F401
 from yadgar._shared.server_helpers import _q_with_timeout  # noqa: E402,F401
 
 
+@observe(tier="hot", span=False)
+def _extract_record_id(raw) -> int | None:
+    """Extract numeric ID from a SurrealDB record ID (e.g. 'entity:42' → 42).
+
+    Defensive variant (never raises) kept core-side for the viz-search + wiki
+    read routes after GraphAPI moved to the backend (T2 Car E3). Handles both
+    integer and string record_id variants produced by the surrealdb client:
+      - RecordID with int .id   → str() = "memory:42"    → 42
+      - RecordID with str .id   → str() = "memory:'42'"  → .id attr → 42
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, int):
+        return raw
+    # RecordID object: use .id attribute directly (handles both int and str IDs)
+    if hasattr(raw, "id") and hasattr(raw, "table_name"):
+        try:
+            return int(raw.id)
+        except (ValueError, TypeError):  # fmt: skip
+            return None
+    s = str(raw)
+    if ":" in s:
+        s = s.rsplit(":", 1)[-1]
+    s = s.strip("'\"")
+    try:
+        return int(s)
+    except (ValueError, TypeError):  # fmt: skip
+        return None
+
+
 @observe(tier="stage")
 def _build_dlq_alert_text() -> str:
     """Return a markdown warning string if any items are in the DLQ, else ''."""

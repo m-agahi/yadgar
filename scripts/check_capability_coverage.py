@@ -59,7 +59,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _REGISTRY = _REPO_ROOT / "docs" / "CAPABILITY_REGISTRY.md"
 _CONTRACT = _REPO_ROOT / "docs" / "BEHAVIOR_CONTRACT.md"
-_CONFIG = _REPO_ROOT / "yadgar" / "_shared" / "config.py"
+_CONFIG = _REPO_ROOT / "yadgar" / "_shared" / "config" / "config.py"
 _MIGRATIONS = _REPO_ROOT / "yadgar" / "_shared" / "storage" / "migrations.py"
 _TOOLS_DIR = _REPO_ROOT / "yadgar" / "core" / "server" / "tools"
 
@@ -324,7 +324,7 @@ def check(repo_root: Path | None = None) -> list[str]:
         cov["bc"] |= e["bc"]
 
     # the four authoritative surfaces
-    settings = enumerate_settings(repo_root / "yadgar" / "_shared" / "config.py")
+    settings = enumerate_settings(repo_root / "yadgar" / "_shared" / "config" / "config.py")
     tools = enumerate_tools(repo_root / "yadgar" / "core" / "server" / "tools")
     migrations = _normalise_migrations(
         enumerate_migrations(repo_root / "yadgar" / "_shared" / "storage" / "migrations.py")
@@ -344,7 +344,9 @@ def check(repo_root: Path | None = None) -> list[str]:
 # ---------------------------------------------------------------------------
 def _collect_sets(repo_root: Path) -> dict:
     return {
-        "settings": sorted(enumerate_settings(repo_root / "yadgar" / "_shared" / "config.py")),
+        "settings": sorted(
+            enumerate_settings(repo_root / "yadgar" / "_shared" / "config" / "config.py")
+        ),
         "tools": sorted(enumerate_tools(repo_root / "yadgar" / "core" / "server" / "tools")),
         "migrations": sorted(
             _normalise_migrations(

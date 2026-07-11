@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from yadgar._shared.retrieval._reranking_cross_encoder import _CrossEncoderMixin
-from yadgar._shared.retrieval._reranking_multi_passage import _MultiPassageMixin
+from yadgar.backend.retrieval._reranking_cross_encoder import _CrossEncoderMixin
+from yadgar.backend.retrieval._reranking_multi_passage import _MultiPassageMixin
 
 
 class _Host(_CrossEncoderMixin, _MultiPassageMixin):

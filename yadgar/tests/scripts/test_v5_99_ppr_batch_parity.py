@@ -20,8 +20,8 @@ import pytest
 
 from yadgar._shared.config import Settings
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.retrieval.graph_helpers import _GraphHelpersMixin
 from yadgar._shared.storage import StorageEngine
+from yadgar.backend.retrieval.graph_helpers import _GraphHelpersMixin
 
 
 class _Harness(_GraphHelpersMixin):

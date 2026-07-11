@@ -13,7 +13,7 @@ import time
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.secrets import SecretLeakBlocked
+from yadgar._shared.security.secrets import SecretLeakBlocked
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.cls_store.clustering import _ClusteringMixin
 from yadgar.backend.cls_store.patterns import (

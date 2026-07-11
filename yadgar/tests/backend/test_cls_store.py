@@ -417,7 +417,7 @@ class TestConsolidationCycle:
 
         import numpy as np
 
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
         from yadgar._shared.storage import StorageEngine
 
         vec = np.ones(384, dtype=np.float32).tobytes()

@@ -9,9 +9,9 @@ from typing import Any
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
-from yadgar._shared.tracing import trace_span
 from yadgar.backend.curation.contradiction import _ACTION_RE, _NEGATION_RE, detect_contradictions
 from yadgar.backend.curation.ingestion import (
     _LINK_HIGH,
@@ -154,7 +154,7 @@ class MemoryCurator:
         finally:
             _elapsed_ms = (time.perf_counter() - _t0) * 1000
             try:
-                from yadgar._shared.metrics import (  # noqa: PLC0415
+                from yadgar._shared.observability.metrics import (  # noqa: PLC0415
                     yadgar_curator_duration_ms,
                     yadgar_curator_merge_outcome,
                 )
@@ -187,7 +187,7 @@ class MemoryCurator:
                     content[:80],
                 )
                 try:
-                    from yadgar._shared.metrics import (  # noqa: PLC0415
+                    from yadgar._shared.observability.metrics import (  # noqa: PLC0415
                         yadgar_write_time_contradiction_total,
                     )
 

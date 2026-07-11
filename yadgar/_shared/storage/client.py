@@ -25,7 +25,7 @@ import struct
 import time
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 
 _log = logging.getLogger(__name__)
 
@@ -301,7 +301,7 @@ def _observe_query_metrics(surql: str, elapsed_s: float) -> None:
     - yadgar_surrealdb_query_duration_ms: labelled op=<first keyword>, milliseconds.
     """
     try:
-        from yadgar._shared.metrics import (
+        from yadgar._shared.observability.metrics import (
             yadgar_surrealdb_query_duration_ms,
         )
 

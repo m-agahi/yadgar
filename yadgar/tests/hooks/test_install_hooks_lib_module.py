@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-from yadgar.core.install_hooks_lib import (
+from yadgar.core.install.install_hooks_lib import (
     _append_if_absent,
     _build_core_hooks,
     _load_settings,
@@ -235,7 +235,7 @@ def test_build_core_hooks_runner_in_commands(tmp_path):
 
 
 def test_copy_hook_dry_run_does_nothing(tmp_path):
-    from yadgar.core.install_hooks_lib import _copy_hook
+    from yadgar.core.install.install_hooks_lib import _copy_hook
 
     src = tmp_path / "src.py"
     src.write_text("#!/usr/bin/env python3\nprint('hello')\n")
@@ -245,7 +245,7 @@ def test_copy_hook_dry_run_does_nothing(tmp_path):
 
 
 def test_copy_hook_copies_file(tmp_path):
-    from yadgar.core.install_hooks_lib import _copy_hook
+    from yadgar.core.install.install_hooks_lib import _copy_hook
 
     src = tmp_path / "src.py"
     src.write_text("#!/usr/bin/env python3\nprint('hello')\n")
@@ -256,7 +256,7 @@ def test_copy_hook_copies_file(tmp_path):
 
 
 def test_copy_hook_rewrites_shebang(tmp_path):
-    from yadgar.core.install_hooks_lib import _copy_hook
+    from yadgar.core.install.install_hooks_lib import _copy_hook
 
     src = tmp_path / "src.py"
     src.write_text("#!/usr/bin/env python3\nprint('hello')\n")
@@ -267,7 +267,7 @@ def test_copy_hook_rewrites_shebang(tmp_path):
 
 
 def test_copy_hook_nonpython_shebang_preserved(tmp_path):
-    from yadgar.core.install_hooks_lib import _copy_hook
+    from yadgar.core.install.install_hooks_lib import _copy_hook
 
     src = tmp_path / "hook.sh"
     src.write_text("#!/bin/bash\necho hello\n")
@@ -278,7 +278,7 @@ def test_copy_hook_nonpython_shebang_preserved(tmp_path):
 
 
 def test_copy_hook_missing_src_no_error(tmp_path):
-    from yadgar.core.install_hooks_lib import _copy_hook
+    from yadgar.core.install.install_hooks_lib import _copy_hook
 
     src = tmp_path / "nonexistent.py"
     dst = tmp_path / "dst.py"
@@ -290,7 +290,7 @@ def test_copy_hook_missing_src_no_error(tmp_path):
 
 
 def test_atomic_write_creates_file(tmp_path):
-    from yadgar.core.install_hooks_lib import _atomic_write
+    from yadgar.core.install.install_hooks_lib import _atomic_write
 
     target = tmp_path / "settings.json"
     _atomic_write(tmp_path, target, {"key": "value"})
@@ -300,7 +300,7 @@ def test_atomic_write_creates_file(tmp_path):
 
 
 def test_atomic_write_creates_parent_dir(tmp_path):
-    from yadgar.core.install_hooks_lib import _atomic_write
+    from yadgar.core.install.install_hooks_lib import _atomic_write
 
     subdir = tmp_path / "new" / "nested"
     target = subdir / "settings.json"
@@ -312,7 +312,7 @@ def test_atomic_write_creates_parent_dir(tmp_path):
 
 
 def test_write_global_stop_hooks_creates_settings(tmp_path):
-    from yadgar.core.install_hooks_lib import _write_global_stop_hooks
+    from yadgar.core.install.install_hooks_lib import _write_global_stop_hooks
 
     global_claude_dir = tmp_path / ".claude"
     global_claude_dir.mkdir()
@@ -329,7 +329,7 @@ def test_write_global_stop_hooks_creates_settings(tmp_path):
 
 
 def test_write_global_stop_hooks_merges_existing_settings(tmp_path):
-    from yadgar.core.install_hooks_lib import _write_global_stop_hooks
+    from yadgar.core.install.install_hooks_lib import _write_global_stop_hooks
 
     global_claude_dir = tmp_path / ".claude"
     global_claude_dir.mkdir()
@@ -351,7 +351,7 @@ def test_write_global_stop_hooks_merges_existing_settings(tmp_path):
 
 
 def test_write_global_stop_hooks_missing_settings_file(tmp_path):
-    from yadgar.core.install_hooks_lib import _write_global_stop_hooks
+    from yadgar.core.install.install_hooks_lib import _write_global_stop_hooks
 
     global_claude_dir = tmp_path / ".claude"
     global_claude_dir.mkdir()
@@ -365,7 +365,7 @@ def test_write_global_stop_hooks_missing_settings_file(tmp_path):
 
 
 def test_copy_scope_scripts_dry_run_no_files(tmp_path):
-    from yadgar.core.install_hooks_lib import _copy_scope_scripts
+    from yadgar.core.install.install_hooks_lib import _copy_scope_scripts
 
     hooks_dir = tmp_path / "hooks"
     hooks_dir.mkdir()

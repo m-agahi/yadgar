@@ -79,7 +79,7 @@ def test_recall_boosts_heat():
     # inside _fanout_recall on the backend). recall_backend_bypass deliberately
     # SKIPS db side effects, so it cannot exercise the boost. Test the live
     # heat-boost function directly instead — same code path the backend runs.
-    from yadgar._shared.runtime.recall_pipeline import _apply_recall_db_side_effects
+    from yadgar.backend.retrieval.recall_pipeline import _apply_recall_db_side_effects
 
     result = memorize_sync("heat boost test", "/tmp", ["test"])
     mid = result["id"]

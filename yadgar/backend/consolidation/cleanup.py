@@ -14,7 +14,7 @@ logger = logging.getLogger("yadgar.consolidation")
 def _observe_action_batch(n: int) -> None:
     """Record action batch size metric. Silently no-ops if metrics unavailable."""
     try:
-        from yadgar._shared.metrics import yadgar_action_batch_size  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import yadgar_action_batch_size  # noqa: PLC0415
 
         yadgar_action_batch_size.observe(n)
     except Exception:
@@ -24,7 +24,7 @@ def _observe_action_batch(n: int) -> None:
 def _observe_archive_purge(result: dict) -> None:
     """Emit Prometheus counters for a completed archive purge. Non-fatal."""
     try:
-        from yadgar._shared.metrics import (  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import (  # noqa: PLC0415
             yadgar_archive_purged_total,
             yadgar_archive_retention_skipped_total,
         )
@@ -180,7 +180,7 @@ class _CleanupMixin:
 
         v5.25.2: extracted from _process_action_log to reduce nesting/cyclo.
         """
-        from yadgar._shared.secrets import SecretLeakBlocked  # noqa: PLC0415
+        from yadgar._shared.security.secrets import SecretLeakBlocked  # noqa: PLC0415
 
         embedding = self._embeddings.encode(content)
         try:
