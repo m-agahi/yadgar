@@ -1548,6 +1548,27 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "circuit_breaker",
     },
+    # T3 Car 3 — CPU-aware, parallel-ready recall pipeline.
+    "recall_parallelism": {
+        "desc": (
+            "Master parallelism knob for the recall provider gather (default 'auto'). 'auto' = "
+            "derive the gather + torch-thread budgets from available_cpus() — sequential at "
+            "ncpu ≤ 2 (byte-identical to pre-Car-3 behavior), fanning out above without a code "
+            "change. '1' forces sequential regardless of core count (the no-thrash / ops escape "
+            "hatch). Read live in _shared/runtime/cpu.py. Restart to apply."
+        ),
+        "section": "circuit_breaker",
+    },
+    "available_cpus": {
+        "desc": (
+            "Override the detected CPU budget every recall concurrency budget derives from "
+            "(default 0 = auto-detect via cgroup-v2 cpu.max quota → cgroup-v1 → os.cpu_count()). "
+            "os.cpu_count() lies in a cgroup-limited container, so the quota is read first; set a "
+            "non-zero value to pin the effective core count when the cgroup read is unavailable or "
+            "wrong. Floored to ≥ 1 downstream. Restart to apply."
+        ),
+        "section": "circuit_breaker",
+    },
     # v5.95 config-integrity Phase 4 — hot-path literals promoted to knobs.
     "reranker_idle_unload_sec": {
         "desc": (

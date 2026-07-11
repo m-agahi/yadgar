@@ -493,14 +493,17 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_OFFLOAD_TOOLS", "false", "bool"),
     ConfigEntry("YADGAR_TOOL_POOL_WORKERS", "2", "int"),  # v5.95: 8→2
     ConfigEntry(
-        "YADGAR_RECALL_HEAVY_CONCURRENCY", "1", "int"
-    ),  # v5.95: 3→1 (must be < TOOL_POOL_WORKERS=2)
+        "YADGAR_RECALL_HEAVY_CONCURRENCY", "0", "int"
+    ),  # T3 Car 3: 0 = auto (CPU-derived; 1 at ncpu≤2)
     ConfigEntry("YADGAR_RERANK_GATE_ACQUIRE_TIMEOUT_SEC", "2.0", "float"),
     ConfigEntry("YADGAR_TOOL_TIMEOUT_SEC", "95.0", "float"),
     ConfigEntry("YADGAR_TOOL_SATURATION_GRACE_SEC", "120.0", "float"),
     # ── T3 Car 2: recall side-effect fork (both halves off the response path) ────
     ConfigEntry("YADGAR_RECALL_SIDEEFFECT_FORK", "true", "bool"),
     ConfigEntry("YADGAR_RECALL_SIDEEFFECT_SESSION_MAX_PENDING", "64", "int"),
+    # ── T3 Car 3: CPU-aware, parallel-ready recall pipeline ──────────────────────
+    ConfigEntry("YADGAR_RECALL_PARALLELISM", "auto", "string"),
+    ConfigEntry("YADGAR_AVAILABLE_CPUS", "0", "int"),
     ConfigEntry("YADGAR_RECALL_SIDEEFFECT_DB_MAX_INFLIGHT", "64", "int"),
     ConfigEntry("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "3", "int"),
     # v5.95 config-integrity Phase 4 — hot-path literals promoted to knobs

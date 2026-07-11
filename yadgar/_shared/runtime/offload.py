@@ -80,6 +80,7 @@ def _tool_timeout_sec() -> float:
     return resolve_knob("YADGAR_TOOL_TIMEOUT_SEC", "TOOL_TIMEOUT_SEC", float, 95.0)
 
 
+@observe(tier="stage", span=False)
 def _heavy_concurrency() -> int:
     """Max concurrent backend /rerank calls the core will issue (#74 fix #2).
 
@@ -90,11 +91,26 @@ def _heavy_concurrency() -> int:
 
     Default is CONSERVATIVE and strictly below the pool size — the binding
     constraint is backend serving capacity, NOT TOOL_POOL_WORKERS. A default ==
-    pool would make the gate a no-op. Resolves env > config.yaml > default(1),
-    then clamps to [1, pool_workers] (the clamp is consumer logic, applied OUTSIDE
-    resolve_knob).
+    pool would make the gate a no-op. Resolves env > config.yaml > default(0).
+
+    T3 Car 3: the default is now the sentinel ``0`` = AUTO — derive from
+    ``available_cpus()`` via ``recall_heavy_concurrency_default()`` (1 at ncpu ≤ 2,
+    the pre-Car-3 behavior; scales above). Any explicit positive value still wins
+    (ops override). Either way, clamp to [1, pool_workers] (consumer logic, applied
+    OUTSIDE resolve_knob).
+
+    CAVEAT (core-vs-backend cores): this runs in the CORE process (--cpus 1), so
+    the auto-derivation reads the CORE's core count, while the gate is sized to the
+    BACKEND's serving capacity. At the current config f(1)=1, which is the correct
+    conservative value, so there is no bug today — but if the CORE is ever given
+    more CPUs than the backend, pin RECALL_HEAVY_CONCURRENCY to an explicit value
+    (do not rely on auto) so the gate stays sized to backend capacity.
     """
-    raw = resolve_knob("YADGAR_RECALL_HEAVY_CONCURRENCY", "RECALL_HEAVY_CONCURRENCY", int, 1)
+    raw = resolve_knob("YADGAR_RECALL_HEAVY_CONCURRENCY", "RECALL_HEAVY_CONCURRENCY", int, 0)
+    if int(raw) <= 0:  # sentinel 0 = auto → CPU-derived default
+        from yadgar._shared.runtime.cpu import recall_heavy_concurrency_default  # noqa: PLC0415
+
+        raw = recall_heavy_concurrency_default()
     return max(1, min(int(raw), _pool_workers()))
 
 

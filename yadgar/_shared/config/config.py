@@ -756,9 +756,12 @@ class Settings(BaseSettings):
     # BACKEND's serving capacity (fewer cores than TOOL_POOL_WORKERS), NOT the
     # pool size. MUST be strictly < TOOL_POOL_WORKERS (else the gate is a no-op
     # and N workers saturate the backend → slow /health → core 503 → P0 kill) and
-    # ≤ RERANK_MAX_CONCURRENCY. v5.95: dropped 3 → 1 (pool dropped 8→2; keeping
-    # heavy < pool preserves the gate; with pool=2 heavy=1 is the only valid non-no-op).
-    RECALL_HEAVY_CONCURRENCY: int = 1
+    # ≤ RERANK_MAX_CONCURRENCY.
+    # T3 Car 3: default is now the sentinel 0 = AUTO — derive from available_cpus()
+    # (recall_heavy_concurrency_default() = 1 at ncpu ≤ 2, the pre-Car-3 value;
+    # scales above without a code change). Any explicit positive value overrides.
+    # Resolved + clamped in offload._heavy_concurrency().
+    RECALL_HEAVY_CONCURRENCY: int = 0
     # Seconds a worker waits for a heavy-rerank slot before degrading (skip rerank
     # → pre-rerank order). Bounded so a gated worker never holds its pool slot past
     # the tool timeout (which would leak it). Mirrors the breaker probe timeout.
@@ -783,6 +786,19 @@ class Settings(BaseSettings):
     RECALL_SIDEEFFECT_SESSION_MAX_PENDING: int = 64
     # Max in-flight backend DB-write tasks before schedule refuses (inline write).
     RECALL_SIDEEFFECT_DB_MAX_INFLIGHT: int = 64
+
+    # T3 Car 3 — CPU-aware, parallel-ready recall pipeline.
+    # RECALL_PARALLELISM: master parallelism knob for the recall provider gather.
+    #   "auto" (default) = derive the gather + torch-thread budgets from
+    #   available_cpus() (sequential at ncpu ≤ 2 = today's behavior; fans out
+    #   above). "1" forces sequential regardless of core count (the no-thrash /
+    #   ops escape hatch). Read live in _shared/runtime/cpu.py.
+    RECALL_PARALLELISM: str = "auto"
+    # AVAILABLE_CPUS: override the detected CPU budget (0 = auto-detect via cgroup
+    #   quota → os.cpu_count()). Non-zero pins the effective core count every recall
+    #   concurrency budget derives from — the container-CPU escape hatch when the
+    #   cgroup read is unavailable or wrong. Never < 1 downstream.
+    AVAILABLE_CPUS: int = 0
 
     # v5.95 config-integrity Phase 4 — hot-path literals promoted to knobs so ops
     # can tune them without a rebuild. Each is read via get_settings() at the
