@@ -6,9 +6,9 @@ import pytest
 
 from yadgar._shared.config import Settings
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.retrieval import Retriever
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.predictive_coding import WriteGate
+from yadgar.backend.retrieval import Retriever
 
 # ---------------------------------------------------------------------------
 # v5.54.5 B2: integration tests in this module call memorize() with /tmp/...
@@ -651,7 +651,7 @@ def structural_novelty_at_scale(tmp_path, settings, embeddings):
     At 3ms/pair that is ~3.7s with the old per-pair HTTP pattern.
     """
     from yadgar._shared.knowledge_graph import KnowledgeGraph
-    from yadgar._shared.retrieval import Retriever
+    from yadgar.backend.retrieval import Retriever
 
     engine = StorageEngine(str(tmp_path / "sn_scale.db"))
     kg = KnowledgeGraph(engine, settings)
@@ -688,7 +688,7 @@ def test_structural_novelty_under_5s_at_50_entities(structural_novelty_at_scale)
 def test_structural_novelty_correctness_returns_float(tmp_path, settings, embeddings):
     """Bulk-SQL path returns a valid float in [0, 1]."""
     from yadgar._shared.knowledge_graph import KnowledgeGraph
-    from yadgar._shared.retrieval import Retriever
+    from yadgar.backend.retrieval import Retriever
 
     engine = StorageEngine(str(tmp_path / "sn_correct.db"))
     kg = KnowledgeGraph(engine, settings)

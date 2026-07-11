@@ -1,11 +1,11 @@
 """P11 Observability v1 — test suite.
 
-Five tests per spec:
+Tests (T2 Car D removed the timing-decorator tests with the prod-dead
+observability/timing.py module):
 1. test_decorator_emits_histogram
-2. test_decorator_noop_without_prometheus_client
-3. test_metrics_endpoint_returns_prometheus_format
-4. test_circuit_breaker_state_metric_emitted
-5. test_memory_stats_includes_metrics_summary
+2. test_metrics_endpoint_returns_prometheus_format
+3. test_circuit_breaker_state_metric_emitted
+4. test_memory_stats_includes_metrics_summary
 
 Registry isolation: each test that creates metrics uses a fresh CollectorRegistry
 to avoid "Duplicated timeseries" errors across test runs.
@@ -13,7 +13,6 @@ to avoid "Duplicated timeseries" errors across test runs.
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
 # ── 1. Decorator emits histogram ──────────────────────────────────────────────
@@ -50,84 +49,6 @@ def test_decorator_emits_histogram():
     assert '_count{stage="encode"} 1.0' in output or "_count" in output
 
 
-def test_stage_timer_decorator_observe_called():
-    """stage_timer from observability.timing wraps function and observes histogram."""
-    from prometheus_client import CollectorRegistry, generate_latest
-
-    from yadgar._shared.observability.timing import _make_stage_timer
-
-    reg = CollectorRegistry()
-    calls = []
-
-    @_make_stage_timer("encode", registry=reg)
-    def my_fn(x):
-        calls.append(x)
-        return x * 2
-
-    result = my_fn(7)
-    assert result == 14
-    assert calls == [7]
-
-    output = generate_latest(reg).decode()
-    assert "yadgar_drain_stage_ms" in output
-    # count must be 1
-    assert "_count" in output
-
-
-# ── 2. Decorator no-op without prometheus_client ─────────────────────────────
-
-
-def test_decorator_noop_without_prometheus_client():
-    """When prometheus_client is unavailable, decorators are identity (no-op)."""
-    # Remove prometheus_client from sys.modules so timing.py sees ImportError
-    saved = {}
-    for key in list(sys.modules.keys()):
-        if "prometheus_client" in key or "observability.timing" in key:
-            saved[key] = sys.modules.pop(key)
-
-    try:
-        # Inject a fake that raises ImportError on import
-        import builtins
-
-        real_import = builtins.__import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "prometheus_client":
-                raise ImportError("prometheus_client not available (test stub)")
-            return real_import(name, *args, **kwargs)
-
-        builtins.__import__ = fake_import
-        try:
-            from yadgar._shared.observability.timing import stage_timer  # noqa: PLC0415
-
-            calls = []
-
-            @stage_timer("encode")
-            def add(a, b):
-                calls.append((a, b))
-                return a + b
-
-            result = add(3, 4)
-            assert result == 7
-            assert calls == [(3, 4)]
-        finally:
-            builtins.__import__ = real_import
-    finally:
-        # Remove any modules planted under the fake import hook that were NOT
-        # present before this test ran. Without this, if the timing module was
-        # absent from sys.modules at test start (common in xdist workers before
-        # any timing test runs), the broken copy (_PROMETHEUS_AVAILABLE=False)
-        # stays in sys.modules after sys.modules.update(saved) and poisons every
-        # subsequent test on the same worker that imports _make_stage_timer
-        # (flaky empty-scrape). Match by substring ("observability.timing") so
-        # this survives module moves — the timing module now lives at
-        # yadgar._shared.observability.timing (was yadgar.observability.timing).
-        for key in list(sys.modules):
-            if ("prometheus_client" in key or "observability.timing" in key) and key not in saved:
-                del sys.modules[key]
-        sys.modules.update(saved)
-
-
 # ── 3. /metrics endpoint returns prometheus format ─────────────────────────
 
 
@@ -140,7 +61,7 @@ def test_metrics_endpoint_returns_prometheus_format(monkeypatch):
     from starlette.routing import Route
     from starlette.testclient import TestClient
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
 
     app = Starlette(routes=[Route("/metrics", metrics_handler, methods=["GET"])])
     client = TestClient(app, raise_server_exceptions=True)

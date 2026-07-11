@@ -95,7 +95,7 @@ class TestLegendCategories:
 class TestLegendEdges:
     def test_legend_edges_keys_match_EDGE_TYPES(self, tmp_path, monkeypatch):
         """legend.edges keys exactly equal EDGE_TYPES keys."""
-        from yadgar.core.viz_meta import EDGE_TYPES
+        from yadgar.core.viz.viz_meta import EDGE_TYPES
 
         data = _get_legend(tmp_path, monkeypatch)
         edges = data["legend"]["edges"]
@@ -171,8 +171,8 @@ class TestEdgeTypeDriftGuard:
         import ast
         import inspect
 
-        from yadgar.core import graph_api
-        from yadgar.core.viz_meta import EDGE_TYPES
+        from yadgar.backend.graph import graph_api
+        from yadgar.core.viz.viz_meta import EDGE_TYPES
 
         tree = ast.parse(inspect.getsource(graph_api))
         emitted_types: set[str] = set()
@@ -242,7 +242,7 @@ class TestCategoryColorsIteration:
 class TestEdgeColorIteration:
     def test_edge_color_covers_all_EDGE_TYPES(self, tmp_path, monkeypatch):
         """edge.color has a key for every entry in EDGE_TYPES."""
-        from yadgar.core.viz_meta import EDGE_TYPES
+        from yadgar.core.viz.viz_meta import EDGE_TYPES
 
         data = _get_legend(tmp_path, monkeypatch)
         edge_color = data["edge"]["color"]

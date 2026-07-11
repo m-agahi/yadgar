@@ -188,7 +188,7 @@ class TestFastProfileCofirePriorBoost:
 
     def test_high_cofire_prior_ranks_higher(self):
         """Memory with cofire_prior=0.8 ranks above identical memory with prior=0."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         settings = self._make_settings_with_weight(0.15)
         storage = MagicMock()
@@ -228,7 +228,7 @@ class TestFastProfileCofirePriorBoost:
 
     def test_no_transition_table_calls_in_fuse_scores(self):
         """Runtime check: _fuse_scores must NOT call any transition-table method."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         settings = self._make_settings_with_weight(0.15)
         storage = MagicMock()
@@ -277,7 +277,7 @@ class TestFastProfileCofirePriorBoost:
     def test_fusion_source_uses_get_memory_cofire_priors(self):
         """fusion.py source must call get_memory_cofire_priors, not traverse transitions."""
         fusion_src = (
-            pathlib.Path(__file__).parent.parent.parent / "_shared" / "retrieval" / "fusion.py"
+            pathlib.Path(__file__).parent.parent.parent / "backend" / "retrieval" / "fusion.py"
         )
         source = fusion_src.read_text()
 
@@ -304,7 +304,7 @@ class TestCofirePriorWeightZeroDisables:
 
     def test_weight_zero_storage_not_called(self):
         """With weight=0.0, get_memory_cofire_priors must NOT be called."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_COFIRE_PRIOR_WEIGHT = 0.0
@@ -358,7 +358,7 @@ class TestNullCofirePriorSafe:
 
     def test_null_prior_no_crash(self):
         """Empty storage result → no crash, ranking based on raw signals."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_COFIRE_PRIOR_WEIGHT = 0.15
@@ -422,7 +422,7 @@ class TestBothBoostsCoexist:
     def test_both_boosts_applied_to_different_memories(self):
         """With both weights >0: memory with graph_prior ranks above the one with cofire_prior
         only if graph_prior boost is bigger; they coexist without overwriting."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_GRAPH_PRIOR_WEIGHT = 0.2
@@ -478,7 +478,7 @@ class TestBothBoostsCoexist:
     def test_graph_prior_source_still_present(self):
         """fusion.py must still contain WRRF_GRAPH_PRIOR_WEIGHT (5.54.1 intact)."""
         fusion_src = (
-            pathlib.Path(__file__).parent.parent.parent / "_shared" / "retrieval" / "fusion.py"
+            pathlib.Path(__file__).parent.parent.parent / "backend" / "retrieval" / "fusion.py"
         )
         source = fusion_src.read_text()
 
@@ -495,7 +495,7 @@ class TestBothBoostsCoexist:
     def test_cofire_boost_after_graph_prior_in_source(self):
         """fusion.py: cofire boost section must appear after graph_prior boost."""
         fusion_src = (
-            pathlib.Path(__file__).parent.parent.parent / "_shared" / "retrieval" / "fusion.py"
+            pathlib.Path(__file__).parent.parent.parent / "backend" / "retrieval" / "fusion.py"
         )
         source = fusion_src.read_text()
 
@@ -614,7 +614,7 @@ class TestCofirePriorConfigRegistered:
 
     def test_registry_has_wrrf_cofire_prior_weight(self):
         """config_registry must include YADGAR_WRRF_COFIRE_PRIOR_WEIGHT."""
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_WRRF_COFIRE_PRIOR_WEIGHT" in names, (
@@ -624,7 +624,7 @@ class TestCofirePriorConfigRegistered:
 
     def test_yaml_meta_has_wrrf_cofire_prior_weight(self):
         """config_yaml.py FIELD_META must include wrrf_cofire_prior_weight."""
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "wrrf_cofire_prior_weight" in FIELD_META, (
             "FIELD_META must include 'wrrf_cofire_prior_weight' for I25 three-way sync"

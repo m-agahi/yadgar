@@ -701,35 +701,35 @@ class TestEnvKnobs:
         assert "ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON" in fields
 
     def test_conditional_ttl_in_registry(self):
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_CONDITIONAL_TTL_DAYS" in names
 
     def test_ephemeral_ttl_in_registry(self):
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_EPHEMERAL_TTL_DAYS" in names
 
     def test_semantic_immortal_requires_reason_in_registry(self):
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON" in names
 
     def test_conditional_ttl_in_field_meta(self):
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "anchor_conditional_ttl_days" in FIELD_META
 
     def test_ephemeral_ttl_in_field_meta(self):
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "anchor_ephemeral_ttl_days" in FIELD_META
 
     def test_semantic_immortal_requires_reason_in_field_meta(self):
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "anchor_semantic_immortal_requires_reason" in FIELD_META
 
@@ -754,8 +754,8 @@ class TestEnvKnobs:
     def test_i25_three_way_sync_passes(self, tmp_path):
         """Full I25 invariant: all three knobs visible to test_config_three_way_sync."""
         from yadgar._shared.config import Settings
-        from yadgar._shared.config_registry import list_config
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_registry import list_config
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         registry_names = {e.name for e in list_config()}
         field_meta_keys = {k.upper() for k in FIELD_META.keys()}

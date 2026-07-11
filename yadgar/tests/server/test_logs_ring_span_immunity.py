@@ -49,7 +49,7 @@ def _reset_tracer_provider() -> None:
         if hasattr(trace, "_TRACER_PROVIDER"):
             trace._TRACER_PROVIDER = None
         trace.set_tracer_provider(TracerProvider())
-        import yadgar._shared.tracing as _tr
+        import yadgar._shared.observability.tracing as _tr
 
         _tr._SETUP_DONE.clear()
         _tr._stop_span_log_queue()
@@ -99,7 +99,7 @@ def _recording_provider():
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-    from yadgar._shared import tracing as tr
+    from yadgar._shared.observability import tracing as tr
 
     once = getattr(trace, "_TRACER_PROVIDER_SET_ONCE", None)
     prev_once_done = getattr(once, "_done", None) if once is not None else None
@@ -200,7 +200,7 @@ def test_span_end_still_reaches_file_sink_after_ring_filter(
     span_end JSON line lands in the file even while the ring stays immune.
     """
     import yadgar.core.server.routes.logs as _m
-    from yadgar._shared.log_config import RotatingJSONLFileHandler
+    from yadgar._shared.observability.log_config import RotatingJSONLFileHandler
 
     tracer, _exporter = _recording_provider
     _m.install_ring_handler()

@@ -485,6 +485,85 @@ def _check_memory_entity_orphans(
             logger.warning("check_invariants: memory entity orphan check failed: %s", exc)
 
 
+# Marker identifying throwaway agent-worktree checkout paths (T2 fold-in).
+_WORKTREE_ORPHAN_MARKER = "/.claude/worktrees/"
+
+
+@observe(tier="stage", metric="tools.admin_invariants._check_worktree_orphan_contexts")
+def _check_worktree_orphan_contexts(
+    storage,
+    query_timeout: int,
+    counts: dict,
+    fixed: list[str],
+    timed_out: list[str],
+) -> None:
+    """Re-point memory rows stamped with throwaway worktree paths — FIXABLE.
+
+    Backfill half of the Q1 orphaned-memories fix (T2 fold-in): rows written
+    before write-path normalization carry directory_context like
+    ``/repo/.claude/worktrees/agent-N`` + an ephemeral car branch — invisible
+    to canonical-repo recall (exact-match directory filter) and never GC'd.
+    Repair: directory_context → the prefix before the marker (the canonical
+    repo root, derivable from the string alone); branch → NONE (canonical
+    slot — the car branch is dead by the time this runs). Idempotent:
+    repaired rows no longer match. ``/tmp/*`` orphans are NOT repaired —
+    canonical root is not derivable from the path string.
+    """
+    try:
+        rows = _q_t(
+            storage,
+            query_timeout,
+            "SELECT meta::id(id) AS rid, directory_context FROM memory "
+            "WHERE string::contains(directory_context, $marker)",
+            {"marker": _WORKTREE_ORPHAN_MARKER},
+        )
+        repaired = 0
+        for row in rows:
+            dc = row.get("directory_context") or ""
+            idx = dc.find(_WORKTREE_ORPHAN_MARKER)
+            rid = row.get("rid")
+            if idx <= 0 or rid is None:
+                continue
+            root = dc[:idx]
+            try:
+                storage._q(
+                    "UPDATE type::record('memory', $rid) "
+                    "SET directory_context = $root, branch = NONE",
+                    {"rid": rid, "root": root},
+                )
+                logger.info(
+                    "check_invariants: re-pointed worktree-orphan memory %s: %r -> %r "
+                    "(branch cleared to canonical slot)",
+                    rid,
+                    dc,
+                    root,
+                )
+                repaired += 1
+            except Exception as upd_exc:
+                logger.warning(
+                    "check_invariants: failed to re-point worktree-orphan memory %s: %s",
+                    rid,
+                    upd_exc,
+                )
+        counts["worktree_orphan_contexts"] = repaired
+        if repaired:
+            fixed.append(
+                f"Re-pointed {repaired} memory rows from throwaway worktree paths "
+                f"to their canonical repo root (branch cleared to canonical slot)"
+            )
+            logger.info("check_invariants: auto-fixed %d worktree-orphan memory rows", repaired)
+    except Exception as exc:
+        if _is_timeout(exc):
+            logger.warning(
+                "check_invariants: worktree-orphan context check timed out after %ds; "
+                "skipping this cycle",
+                query_timeout,
+            )
+            timed_out.append("worktree_orphan_contexts")
+        else:
+            logger.warning("check_invariants: worktree-orphan context check failed: %s", exc)
+
+
 @observe(tier="stage", metric="tools.admin_invariants._check_row_count_ceilings")
 def _check_row_count_ceilings(
     storage,
@@ -751,6 +830,9 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
 
     # ── 2. memory:N orphan entities — FIXABLE (safe DELETE, purely derived data) ─
     _check_memory_entity_orphans(storage, query_timeout, mem_count, counts, fixed, timed_out)
+
+    # ── 2b. worktree-orphaned directory_context — FIXABLE (re-point, T2 fold-in) ─
+    _check_worktree_orphan_contexts(storage, query_timeout, counts, fixed, timed_out)
 
     # ── 3. Row-count ceilings (non-fixable — structural) ────────────────────
     _check_row_count_ceilings(storage, query_timeout, counts, violations, timed_out)

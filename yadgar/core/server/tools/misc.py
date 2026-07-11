@@ -2,8 +2,8 @@
 sync_instructions, seed_project, and MCP resource endpoints.
 
 # Module size justified: cross-cutting lifecycle tools that share a single dependency
-# pattern — all depend on _get_replay(), _get_file_queue(), and _get_storage() singletons
-# from server.lifecycle. The tools are heterogeneous by purpose but cohesive by their
+# pattern — all depend on the _get_file_queue() and _get_storage() singletons
+# from server.lifecycle (restore forwards to the backend since T2 Car B). The tools are heterogeneous by purpose but cohesive by their
 # shared lifecycle coupling. Splitting (e.g. hooks vs. replay vs. resources) would
 # produce tiny files that each re-import the same lifecycle singletons, with no
 # architectural benefit. The module has a clear, bounded scope: everything that isn't
@@ -23,15 +23,15 @@ from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import (
     _get_consolidation,
-    _get_replay,
     _get_storage,
 )
-from yadgar._shared.secrets import gate_or_reject
-from yadgar._shared.server_helpers import _has_unpaired_surrogate
+from yadgar._shared.security.secrets import gate_or_reject
+from yadgar._shared.server_helpers import _has_unpaired_surrogate, normalize_write_context
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool, mcp_server
+from yadgar.core.server.tools._forward import _forward_restore
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +188,10 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     if _branch_err is not None:
         return _branch_err
 
+    # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
+    # canonical repo root so checkpoints stay restorable from the canonical repo.
+    directory, _branch = normalize_write_context(directory, _branch)
+
     # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
     _get_file_queue().enqueue(
         "checkpoint",
@@ -219,9 +223,11 @@ def restore(directory: str = "") -> dict:
 
     Call this after context compaction, or it will be called
     automatically via the post-compact hook.
+
+    T2 Car B: thin forwarder — the restore compute (CheckpointRestore +
+    CognitiveMap SR navigation) runs backend-side behind POST /restore.
     """
-    replay = _get_replay()
-    return replay.restore(directory=directory)
+    return _forward_restore(directory)
 
 
 _VALID_ANCHOR_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
@@ -383,6 +389,10 @@ def anchor(
     if _branch_err is not None:
         return _branch_err
 
+    # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
+    # canonical repo root so anchors stay visible to canonical-repo recall.
+    context, _branch = normalize_write_context(context, _branch)
+
     # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
     _enqueue_payload: dict = {
         "content": content,
@@ -422,7 +432,7 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
            and PreToolUse hooks to ~/.claude/settings.json and scripts to ~/.claude/hooks/.
            Stop hook is always global regardless of scope.
     """
-    from yadgar.core.install_hooks_lib import install_hooks_impl, is_running_in_container
+    from yadgar.core.install.install_hooks_lib import install_hooks_impl, is_running_in_container
 
     # Refuse when running inside a container: the container's filesystem is
     # throwaway and $HOME resolves to /root, not the host user's home dir.
@@ -630,14 +640,9 @@ def seed_project(directory: str, dry_run: bool = False) -> dict:
     from yadgar.core.seed import seed_project as _seed
 
     resolved = str(Path(directory).resolve())
-    result = _seed(
-        directory=resolved,
-        dry_run=dry_run,
-        storage=_st._storage,
-        embeddings=_st._embeddings,
-        thermo=_st._thermo,
-        curator=_st._curator,
-    )
+    # T2 Car E1: the store phase forwards to the backend seed_store /admin op —
+    # no core engine handles needed (scan + generate run host-side inside _seed).
+    result = _seed(directory=resolved, dry_run=dry_run)
     # §4: Register this directory as a known project root for file-hash whitelist.
     if not dry_run:
         _st._project_roots.add(resolved)

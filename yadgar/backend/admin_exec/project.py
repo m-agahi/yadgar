@@ -23,6 +23,41 @@ from yadgar._shared.runtime.lifecycle import _get_storage
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="boundary", metric="backend.admin.bootstrap_project_store")
+def bootstrap_project_store(payload: dict) -> dict:
+    """Store phase of bootstrap_project (T2 Car F sweep — 6th raw-write path).
+
+    payload: {"resolved": str, "content": str}
+    ``resolved`` is the git-root-resolved directory (host-side); ``content``
+    is already secret-gated + cap-validated core-side. Upserts the
+    _project_init memory and seeds the default memory blocks (current_task +
+    gotchas) idempotently. Returns the new _project_init memory dict.
+    """
+    import yadgar._shared.runtime.state as _st  # noqa: PLC0415
+
+    resolved = payload["resolved"]
+    content = payload["content"]
+    storage = _st._storage
+    result = storage.upsert_project_init(resolved, content)
+
+    # v5.33.0: seed default memory blocks (idempotent — skip existing).
+    for name, block_content in (("current_task", ""), ("gotchas", "")):
+        try:
+            existing = storage.get_block(name, scope="project", directory=resolved)
+            if existing is None:
+                storage.create_block(
+                    name=name,
+                    content=block_content,
+                    scope="project",
+                    directory=resolved,
+                    char_limit=2000,
+                )
+        except Exception:  # noqa: BLE001 — block seeding must never break the upsert
+            logger.debug("bootstrap_project_store: block seed failed %r for %r", name, resolved)
+
+    return result
+
+
 @observe(tier="boundary", metric="backend.admin.update_active_work")
 def update_active_work(payload: dict) -> dict:
     """Replace a directory's _active_work memory (atomic). Storage-write half.

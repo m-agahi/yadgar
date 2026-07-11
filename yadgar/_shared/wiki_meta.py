@@ -1,95 +1,35 @@
-"""Wiki page-type registry and templates (v5.53.2 — Phase B-schema).
+"""Back-compat shim — wiki_meta moved into ``yadgar._shared.wiki`` (T2 Car D1).
 
-Stage 3 externalization (2026-07-10): the schema itself lives in the packaged
-resource yadgar/_shared/schemas/wiki_page_types.yaml — loaded here at import
-via importlib.resources. This module keeps ZERO schema literals; edit the yaml,
-not this file.
+Packaged per the no-lone-files law (ADR-0084): wiki page-type metadata now
+lives in the ``yadgar/_shared/wiki/`` package next to the contract + store.
+New code must import from ``yadgar._shared.wiki.wiki_meta`` instead.
 
-PAGE_TYPE_SCHEMAS maps page_type string → full schema dict (required /
-optional / metadata). PAGE_TYPES keeps the historical dict[str, list[str]]
-required-sections shape for existing consumers (wiki lint, tests).
-
-Design:
-- page_type is OPTIONAL on all pages. Pages without page_type are never
-  format-checked by wiki_lint.
-- Required sections must appear as ## headings (case-insensitive) in the page
-  content for wiki_lint format checks to pass. Lint is ADVISORY — wiki_add
-  never rejects a write on page_type/template mismatch.
-- Optional sections are documented shape only — never linted against.
-
-WIKI_SCHEMA_VERSION is stamped on new pages at write time. Existing pages
-that predate this field are treated as schema_version=0 / untyped.
+PEP-562 shim (Car 0 #167 precedent): ``from yadgar._shared.wiki_meta import
+PAGE_TYPES`` keeps working. Lazy importlib forward — the target only loads on
+first attribute access.
 """
 
-from yadgar._shared.observability.observe import observe
+from typing import Final
+
+_TARGET: Final = "yadgar._shared.wiki.wiki_meta"
+_EXPORTS: Final = (
+    "PAGE_TYPES",
+    "PAGE_TYPE_SCHEMAS",
+    "WIKI_SCHEMA_VERSION",
+    "_SCHEMA_DATA",
+    "_load_page_type_schemas",
+    "check_page_type_format",
+    "observe",
+)
 
 
-@observe(tier="stage")
-def _load_page_type_schemas() -> dict:
-    """Load + parse schemas/wiki_page_types.yaml (packaged resource).
+def __getattr__(name: str):
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib  # noqa: PLC0415 — lazy by design (PEP-562 shim)
 
-    Read via importlib.resources so it works both from source and from an
-    installed wheel. ruamel.yaml is the hard dependency (see pyproject);
-    PyYAML is optional — prefer PyYAML when present, fall back to ruamel.
-    """
-    from importlib.resources import files  # noqa: PLC0415
-
-    text = files("yadgar._shared").joinpath("schemas").joinpath("wiki_page_types.yaml").read_text()
-    try:
-        import yaml  # noqa: PLC0415
-
-        return yaml.safe_load(text)
-    except ImportError:
-        from ruamel.yaml import YAML  # noqa: PLC0415
-
-        return YAML(typ="safe").load(text)
+    return getattr(importlib.import_module(_TARGET), name)
 
 
-_SCHEMA_DATA: dict = _load_page_type_schemas()
-
-WIKI_SCHEMA_VERSION: int = int(_SCHEMA_DATA["schema_version"])
-
-#: Full per-type schema dicts: {page_type: {required: [...], optional: [...], metadata: {...}}}.
-PAGE_TYPE_SCHEMAS: dict[str, dict] = _SCHEMA_DATA["page_types"]
-
-#: Registry of page types → required markdown section headings (historical shape).
-#: Keys are canonical page_type values (lowercase, hyphen-separated).
-#: Values are lists of heading texts (case-insensitive match at lint time).
-PAGE_TYPES: dict[str, list[str]] = {
-    page_type: list(schema.get("required", [])) for page_type, schema in PAGE_TYPE_SCHEMAS.items()
-}
-
-
-@observe(tier="stage")
-def check_page_type_format(slug: str, page_type: str, content: str) -> list[dict]:
-    """Return missing-section issues for a typed wiki page (v5.53.2).
-
-    Called by wiki_lint. Returns list of issue dicts (empty = no violations).
-    Pages with unknown page_type return []. Case-insensitive heading match.
-    Optional sections (PAGE_TYPE_SCHEMAS[type]["optional"]) are never checked —
-    lint stays ADVISORY on the richer agent_prompt schema (Stage 3).
-    Heading extraction is delegated to the caller via the content string —
-    the caller (wiki.py lint()) uses _find_section_headings which skips fenced blocks.
-    """
-    if page_type not in PAGE_TYPES:
-        return []
-    required = PAGE_TYPES[page_type]
-    # Simple regex-based heading extraction (headings only, no fenced-block skip needed
-    # for lint — complex code blocks are unusual in wiki summaries; the caller's
-    # _find_section_headings handles fenced blocks when content warrants it).
-    import re as _re  # noqa: PLC0415
-
-    heading_re = _re.compile(r"^#{2,3} (.+)", _re.MULTILINE)
-    present_lower = {m.group(1).strip().lower() for m in heading_re.finditer(content)}
-    issues = []
-    for req in required:
-        if req.lower() not in present_lower:
-            issues.append(
-                {
-                    "page": slug,
-                    "severity": "warning",
-                    "type": "missing_section",
-                    "message": f"page_type='{page_type}' requires section '## {req}' — not found",
-                }
-            )
-    return issues
+def __dir__() -> list[str]:
+    return list(globals()) + list(_EXPORTS)

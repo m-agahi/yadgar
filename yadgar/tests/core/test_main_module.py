@@ -347,7 +347,9 @@ class TestCliLogging:
 
         with patch("yadgar.core.server.main", mock_server_main):
             with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
-                with patch("yadgar._shared.log_config.configure_logging", mock_configure):
+                with patch(
+                    "yadgar._shared.observability.log_config.configure_logging", mock_configure
+                ):
                     import importlib
 
                     import yadgar.__main__ as main_mod
@@ -369,7 +371,9 @@ class TestCliLogging:
 
         with patch("yadgar.core.server.main", mock_server_main):
             with patch("yadgar._shared.config.get_settings", return_value=mock_settings):
-                with patch("yadgar._shared.log_config.configure_logging", mock_configure):
+                with patch(
+                    "yadgar._shared.observability.log_config.configure_logging", mock_configure
+                ):
                     import importlib
 
                     import yadgar.__main__ as main_mod

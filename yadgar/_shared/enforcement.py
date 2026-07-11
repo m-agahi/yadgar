@@ -1,33 +1,30 @@
-"""Enforcement helpers (_shared-clean).
+"""Back-compat shim — enforcement moved into ``yadgar._shared.security`` (T2 Car D1, no-lone-files law ADR-0084).
 
-Moved here in R3 Car 1 so core (wiki tool) and backend (queue drainer DLQ)
-both import from _shared, not across the core<->backend boundary.
+PEP-562 shim (Car 0 #167 precedent): symbol imports from the old path keep
+working. Lazy importlib forward — the target only loads on first attribute
+access. New code must import from ``yadgar._shared.security.enforcement`` instead.
 """
 
-from __future__ import annotations
+from typing import Final
 
-import os
-
-from yadgar._shared.observability.observe import observe
-
-_FALSY = frozenset({"false", "0", "no", "off"})
-
-
-@observe(tier="hot", metric="drainer.dlq.enforcement_on")
-def _enforcement_on(env_var: str) -> bool:
-    """Return True (enforcement ON) unless env var is explicitly falsy.
-
-    Fail-safe: unknown/garbage values default to True (ON).
-    """
-    val = os.environ.get(env_var, "").strip().lower()
-    return val not in _FALSY
+_TARGET: Final = "yadgar._shared.security.enforcement"
+_EXPORTS: Final = (
+    "_FALSY",
+    "_enforcement_on",
+    "_inc_relaxed",
+    "annotations",
+    "observe",
+    "os",
+)
 
 
-def _inc_relaxed(enforcement: str) -> None:
-    """Increment yadgar_writes_with_enforcement_relaxed counter. Never raises."""
-    try:
-        from yadgar._shared.metrics import yadgar_writes_with_enforcement_relaxed  # noqa: PLC0415
+def __getattr__(name: str):
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib  # noqa: PLC0415 — lazy by design (PEP-562 shim)
 
-        yadgar_writes_with_enforcement_relaxed.labels(enforcement=enforcement).inc()
-    except Exception:
-        pass
+    return getattr(importlib.import_module(_TARGET), name)
+
+
+def __dir__() -> list[str]:
+    return list(globals()) + list(_EXPORTS)

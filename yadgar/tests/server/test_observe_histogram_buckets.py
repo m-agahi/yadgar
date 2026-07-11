@@ -23,7 +23,7 @@ _NEW_MS_TAIL = [15000.0, 20000.0, 30000.0, 60000.0, 120000.0, 300000.0]
 
 
 def test_recall_duration_ms_has_extended_buckets():
-    from yadgar._shared.metrics import yadgar_recall_duration_ms
+    from yadgar._shared.observability.metrics import yadgar_recall_duration_ms
 
     bounds = _bucket_upper_bounds(yadgar_recall_duration_ms)
     for edge in _NEW_MS_TAIL:
@@ -32,7 +32,7 @@ def test_recall_duration_ms_has_extended_buckets():
 
 
 def test_recall_stage_ms_has_extended_buckets():
-    from yadgar._shared.metrics import yadgar_recall_stage_ms
+    from yadgar._shared.observability.metrics import yadgar_recall_stage_ms
 
     bounds = _bucket_upper_bounds(yadgar_recall_stage_ms)
     for edge in _NEW_MS_TAIL:
@@ -40,7 +40,7 @@ def test_recall_stage_ms_has_extended_buckets():
 
 
 def test_mcp_request_duration_ms_has_extended_buckets():
-    from yadgar._shared.metrics import yadgar_mcp_request_duration_ms
+    from yadgar._shared.observability.metrics import yadgar_mcp_request_duration_ms
 
     bounds = _bucket_upper_bounds(yadgar_mcp_request_duration_ms)
     for edge in _NEW_MS_TAIL:
@@ -50,7 +50,7 @@ def test_mcp_request_duration_ms_has_extended_buckets():
 
 
 def test_recall_stage_duration_seconds_has_extended_buckets():
-    from yadgar._shared.metrics import yadgar_recall_stage_duration_seconds
+    from yadgar._shared.observability.metrics import yadgar_recall_stage_duration_seconds
 
     bounds = _bucket_upper_bounds(yadgar_recall_stage_duration_seconds)
     for edge in (15.0, 30.0, 60.0, 120.0, 300.0):

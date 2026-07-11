@@ -48,7 +48,7 @@ def _make_record(
 
 class TestJSONLogFormatter:
     def test_emits_valid_json(self):
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         fmt = JSONLogFormatter()
         record = _make_record(extra={"component": "test", "action": "run", "outcome": "ok"})
@@ -58,7 +58,7 @@ class TestJSONLogFormatter:
         assert isinstance(parsed, dict)
 
     def test_required_fields_present(self):
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         fmt = JSONLogFormatter()
         record = _make_record(extra={"component": "memorize", "action": "enqueue", "outcome": "ok"})
@@ -69,7 +69,7 @@ class TestJSONLogFormatter:
     def test_timestamp_is_iso8601(self):
         from datetime import datetime
 
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         fmt = JSONLogFormatter()
         record = _make_record(extra={"component": "test", "action": "run", "outcome": "ok"})
@@ -80,7 +80,7 @@ class TestJSONLogFormatter:
         assert dt.tzinfo is not None, "timestamp must include timezone"
 
     def test_level_field_is_levelname(self):
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         fmt = JSONLogFormatter()
         record = _make_record(
@@ -91,7 +91,7 @@ class TestJSONLogFormatter:
         assert parsed["level"] == "WARNING"
 
     def test_optional_latency_ms_included_when_present(self):
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         fmt = JSONLogFormatter()
         record = _make_record(
@@ -101,7 +101,7 @@ class TestJSONLogFormatter:
         assert parsed["latency_ms"] == 42.5
 
     def test_event_field_contains_message(self):
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         fmt = JSONLogFormatter()
         record = _make_record(
@@ -112,7 +112,7 @@ class TestJSONLogFormatter:
         assert parsed.get("event") == "drain_cycle_complete"
 
     def test_traceback_truncated(self):
-        from yadgar._shared.log_config import TRACEBACK_MAX_CHARS, JSONLogFormatter
+        from yadgar._shared.observability.log_config import TRACEBACK_MAX_CHARS, JSONLogFormatter
 
         fmt = JSONLogFormatter()
         try:
@@ -133,7 +133,7 @@ class TestJSONLogFormatter:
 
     def test_no_content_field_in_output(self):
         """Memory content must never appear in JSON output."""
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         fmt = JSONLogFormatter()
         record = _make_record(
@@ -155,7 +155,7 @@ class TestJSONLogFormatter:
 
 class TestContentRedactor:
     def test_strips_content_key(self):
-        from yadgar._shared.log_config import ContentRedactor
+        from yadgar._shared.observability.log_config import ContentRedactor
 
         redactor = ContentRedactor()
         record = _make_record(
@@ -165,7 +165,7 @@ class TestContentRedactor:
         assert not hasattr(record, "content") or getattr(record, "content", None) is None
 
     def test_strips_password_key(self):
-        from yadgar._shared.log_config import ContentRedactor
+        from yadgar._shared.observability.log_config import ContentRedactor
 
         redactor = ContentRedactor()
         record = _make_record(
@@ -175,7 +175,7 @@ class TestContentRedactor:
         assert not hasattr(record, "password") or getattr(record, "password", None) is None
 
     def test_strips_token_key(self):
-        from yadgar._shared.log_config import ContentRedactor
+        from yadgar._shared.observability.log_config import ContentRedactor
 
         redactor = ContentRedactor()
         record = _make_record(
@@ -186,7 +186,7 @@ class TestContentRedactor:
 
     def test_strips_substring_match(self):
         """api_key contains 'key' but should match 'api_key' denylist entry."""
-        from yadgar._shared.log_config import ContentRedactor
+        from yadgar._shared.observability.log_config import ContentRedactor
 
         redactor = ContentRedactor()
         record = _make_record(
@@ -196,7 +196,7 @@ class TestContentRedactor:
         assert not hasattr(record, "api_key") or getattr(record, "api_key", None) is None
 
     def test_preserves_non_sensitive_keys(self):
-        from yadgar._shared.log_config import ContentRedactor
+        from yadgar._shared.observability.log_config import ContentRedactor
 
         redactor = ContentRedactor()
         record = _make_record(
@@ -209,7 +209,7 @@ class TestContentRedactor:
 
     def test_memory_dict_content_key_removed(self):
         """Memory dict passed as extra value: content key inside must be dropped."""
-        from yadgar._shared.log_config import ContentRedactor, JSONLogFormatter
+        from yadgar._shared.observability.log_config import ContentRedactor, JSONLogFormatter
 
         redactor = ContentRedactor()
         fmt = JSONLogFormatter()
@@ -241,7 +241,10 @@ class TestConfigureLogging:
         # Reset root and yadgar loggers before each test (v5.4.3: handler lives on root)
         import logging as _logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import (
+            JSONLogFormatter,
+            RotatingJSONLFileHandler,
+        )
 
         root = _logging.getLogger()
         # Remove both JSON stream handlers and file handlers to ensure clean state.
@@ -263,7 +266,10 @@ class TestConfigureLogging:
     def teardown_method(self):
         import logging as _logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import (
+            JSONLogFormatter,
+            RotatingJSONLFileHandler,
+        )
 
         root = _logging.getLogger()
         root.handlers = [
@@ -284,7 +290,7 @@ class TestConfigureLogging:
 
     def test_json_mode_installs_json_formatter(self):
         """v5.4.3: JSONLogFormatter lives on root logger, not yadgar logger."""
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(level="DEBUG", log_format="json")
         # Check root logger (v5.4.3 root-logger approach)
@@ -293,7 +299,7 @@ class TestConfigureLogging:
         assert any(isinstance(f, JSONLogFormatter) for f in formatters)
 
     def test_text_mode_uses_standard_formatter(self):
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(level="DEBUG", log_format="text")
         root = logging.getLogger()
@@ -305,7 +311,7 @@ class TestConfigureLogging:
 
     def test_idempotent_no_duplicate_handlers(self):
         """v5.4.3: idempotency guard is on root logger."""
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(level="INFO", log_format="json")
         configure_logging(level="INFO", log_format="json")
@@ -315,7 +321,11 @@ class TestConfigureLogging:
 
     def test_redactor_installed_in_json_mode(self):
         """v5.4.3: ContentRedactor is on root handler, not yadgar logger."""
-        from yadgar._shared.log_config import ContentRedactor, JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import (
+            ContentRedactor,
+            JSONLogFormatter,
+            configure_logging,
+        )
 
         configure_logging(level="DEBUG", log_format="json")
         root = logging.getLogger()
@@ -338,7 +348,10 @@ class TestFrameworkLoggerCoverage:
         """Reset root and yadgar loggers; remove handlers added by previous tests."""
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import (
+            JSONLogFormatter,
+            RotatingJSONLFileHandler,
+        )
 
         root = logging.getLogger()
         # Remove both JSON stream and file handlers to ensure clean state.
@@ -362,7 +375,10 @@ class TestFrameworkLoggerCoverage:
         """Remove root handlers added by configure_logging to avoid polluting other tests."""
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, RotatingJSONLFileHandler
+        from yadgar._shared.observability.log_config import (
+            JSONLogFormatter,
+            RotatingJSONLFileHandler,
+        )
 
         root = logging.getLogger()
         root.handlers = [
@@ -384,7 +400,7 @@ class TestFrameworkLoggerCoverage:
         """configure_logging(json) must attach JSONLogFormatter handler to root logger."""
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(log_format="json", level="DEBUG")
         root = logging.getLogger()
@@ -398,7 +414,7 @@ class TestFrameworkLoggerCoverage:
         import io
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(log_format="json", level="DEBUG")
 
@@ -428,7 +444,7 @@ class TestFrameworkLoggerCoverage:
         import io
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(log_format="json", level="DEBUG")
 
@@ -455,7 +471,7 @@ class TestFrameworkLoggerCoverage:
         """After configure_logging(json), yadgar logger must propagate=True to root."""
         import logging
 
-        from yadgar._shared.log_config import configure_logging
+        from yadgar._shared.observability.log_config import configure_logging
 
         configure_logging(log_format="json", level="DEBUG")
         yadgar_log = logging.getLogger("yadgar")
@@ -467,7 +483,7 @@ class TestFrameworkLoggerCoverage:
         """YADGAR_LOG_FORMAT=human must not install JSONLogFormatter on root."""
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(log_format="human", level="DEBUG")
         root = logging.getLogger()
@@ -480,7 +496,7 @@ class TestFrameworkLoggerCoverage:
         """YADGAR_LOG_FORMAT=text must not install JSONLogFormatter on root."""
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(log_format="text", level="DEBUG")
         root = logging.getLogger()
@@ -493,7 +509,7 @@ class TestFrameworkLoggerCoverage:
         """Calling configure_logging twice must not add duplicate root handlers."""
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
         configure_logging(log_format="json", level="INFO")
         configure_logging(log_format="json", level="INFO")
@@ -505,7 +521,11 @@ class TestFrameworkLoggerCoverage:
         """Root handler must have ContentRedactor filter attached."""
         import logging
 
-        from yadgar._shared.log_config import ContentRedactor, JSONLogFormatter, configure_logging
+        from yadgar._shared.observability.log_config import (
+            ContentRedactor,
+            JSONLogFormatter,
+            configure_logging,
+        )
 
         configure_logging(log_format="json", level="DEBUG")
         root = logging.getLogger()
@@ -533,7 +553,7 @@ class TestContentRedactorDenylistV547:
     """
 
     def _redact(self, extra: dict) -> logging.LogRecord:
-        from yadgar._shared.log_config import ContentRedactor
+        from yadgar._shared.observability.log_config import ContentRedactor
 
         redactor = ContentRedactor()
         record = _make_record(extra=extra)
@@ -656,7 +676,7 @@ class TestContentRedactorDenylistV547:
 
         content_type must pass through the formatter (not filtered out by guard).
         """
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         fmt = JSONLogFormatter()
         record = _make_record(
@@ -684,65 +704,65 @@ class TestOutcomeFromStatus:
     """Unit tests for _outcome_from_status helper."""
 
     def test_200_ok(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("200") == "ok"
 
     def test_201_ok(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("201") == "ok"
 
     def test_301_ok(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("301") == "ok"
 
     def test_399_ok(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("399") == "ok"
 
     def test_400_error(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("400") == "error"
 
     def test_404_error(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("404") == "error"
 
     def test_422_error(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("422") == "error"
 
     def test_500_error(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("500") == "error"
 
     def test_503_error(self):
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("503") == "error"
 
     def test_zero_error(self):
         """Status '0' = no status — connection died before headers."""
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("0") == "error"
 
     def test_cancelled_degraded(self):
         """Status 'cancelled' = ASGI scope cancelled mid-flight → degraded."""
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("cancelled") == "degraded"
 
     def test_unknown_fallback_error(self):
         """Unknown status strings → error (safe default)."""
-        from yadgar._shared.log_config import _outcome_from_status
+        from yadgar._shared.observability.log_config import _outcome_from_status
 
         assert _outcome_from_status("999") == "error"
 
@@ -753,7 +773,7 @@ class TestRequestLoggingMiddlewareI14:
     def setup_method(self):
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         root = logging.getLogger()
         root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
@@ -761,7 +781,7 @@ class TestRequestLoggingMiddlewareI14:
     def teardown_method(self):
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         root = logging.getLogger()
         root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
@@ -772,7 +792,7 @@ class TestRequestLoggingMiddlewareI14:
         import io
         import logging
 
-        from yadgar._shared.log_config import (
+        from yadgar._shared.observability.log_config import (
             ContentRedactor,
             JSONLogFormatter,
             RequestLoggingMiddleware,
@@ -873,7 +893,7 @@ class TestRequestLogVisibilityAtWarningLevel:
     def setup_method(self):
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         root = logging.getLogger()
         root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
@@ -885,7 +905,7 @@ class TestRequestLogVisibilityAtWarningLevel:
     def teardown_method(self):
         import logging
 
-        from yadgar._shared.log_config import JSONLogFormatter
+        from yadgar._shared.observability.log_config import JSONLogFormatter
 
         root = logging.getLogger()
         root.handlers = [h for h in root.handlers if not isinstance(h.formatter, JSONLogFormatter)]
@@ -903,7 +923,7 @@ class TestRequestLogVisibilityAtWarningLevel:
         import io
         import logging
 
-        from yadgar._shared.log_config import configure_logging
+        from yadgar._shared.observability.log_config import configure_logging
 
         configure_logging(log_format="json", level="WARNING")
 
@@ -948,7 +968,7 @@ class TestRequestLogVisibilityAtWarningLevel:
         """_suppress_noisy_framework_loggers must not raise threshold on yadgar.requests."""
         import logging
 
-        from yadgar._shared.log_config import _suppress_noisy_framework_loggers
+        from yadgar._shared.observability.log_config import _suppress_noisy_framework_loggers
 
         req_logger = logging.getLogger("yadgar.requests")
         req_logger.setLevel(logging.INFO)
@@ -962,7 +982,7 @@ class TestRequestLogVisibilityAtWarningLevel:
         """Calling configure_logging twice must not stack handlers on yadgar.requests."""
         import logging
 
-        from yadgar._shared.log_config import configure_logging
+        from yadgar._shared.observability.log_config import configure_logging
 
         configure_logging(log_format="json", level="WARNING")
         configure_logging(log_format="json", level="WARNING")

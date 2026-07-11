@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-import yadgar._shared.runtime.recall_pipeline as _pipeline_module
-from yadgar._shared.runtime.recall_pipeline import _apply_fanout_boosts
+import yadgar.backend.retrieval.recall_pipeline as _pipeline_module
+from yadgar.backend.retrieval.recall_pipeline import _apply_fanout_boosts
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -279,7 +279,7 @@ class TestFanoutBoostScopeConfig:
 
     def test_module_level_settings_has_attribute(self):
         """Module-level settings singleton must expose FANOUT_BOOST_SCOPE."""
-        import yadgar._shared.runtime.recall_pipeline as pipe
+        import yadgar.backend.retrieval.recall_pipeline as pipe
 
         assert hasattr(pipe.settings, "FANOUT_BOOST_SCOPE"), (
             "settings singleton must have FANOUT_BOOST_SCOPE attribute"

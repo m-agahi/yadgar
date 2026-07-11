@@ -171,7 +171,7 @@ def test_ml_client_nli_failure_increments_counter():
     client = LocalMLClient(settings)
 
     with patch.object(client, "_nli_model", None):
-        with patch("yadgar.backend.ml_client.LocalMLClient.score_nli"):
+        with patch("yadgar.backend.ml_client.ml_client.LocalMLClient.score_nli"):
             # Bypass the mock — we want real code, so use real method with patched internals
             pass
 

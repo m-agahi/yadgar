@@ -151,7 +151,7 @@ class TestApplyQualityFloor:
     """Unit tests for recall._apply_quality_floor (synthetic dicts, no DB)."""
 
     def setup_method(self):
-        from yadgar.core.server.tools.recall import _apply_quality_floor
+        from yadgar.backend.retrieval.recall_pipeline import _apply_quality_floor
 
         self.floor = _apply_quality_floor
 
@@ -211,7 +211,7 @@ class TestDedupByContent:
     """Unit tests for recall._dedup_by_content (synthetic dicts, no DB)."""
 
     def setup_method(self):
-        from yadgar.core.server.tools.recall import _dedup_by_content
+        from yadgar.backend.retrieval.recall_pipeline import _dedup_by_content
 
         self.dedup = _dedup_by_content
 

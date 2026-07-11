@@ -5,7 +5,7 @@ import json
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar._shared.models import (
+from yadgar._shared.contracts.models import (
     CausalDAGEdge,
     Memory,
     MemoryArchive,

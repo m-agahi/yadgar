@@ -63,6 +63,9 @@ class _ApplyMixin:
 
     @observe(tier="stage", metric="drainer.apply_inner")
     def _apply_inner(self, record: dict) -> None:
+        # Early-return dispatch (not an elif chain): the I13 nesting metric
+        # counts each elif as a nested If, so a growing op set would trip the
+        # HARD cap even though every branch is flat.
         op = record["op"]
         p = record["payload"]
 
@@ -81,7 +84,8 @@ class _ApplyMixin:
                 reason=p.get("reason", ""),  # R3: semantic_immortal tier requires reason
                 # ttl_days not needed: valid_until already computed before enqueue
             )
-        elif op == "anchor":
+            return
+        if op == "anchor":
             from yadgar.backend.write_exec import run_anchor_replay
 
             # Branch in anchor payload (p.get("branch")) is captured at enqueue
@@ -95,7 +99,8 @@ class _ApplyMixin:
                 branch=p.get("branch"),
                 # ttl_days not needed: valid_until already computed before enqueue
             )
-        elif op == "checkpoint":
+            return
+        if op == "checkpoint":
             from yadgar.backend.write_exec import run_checkpoint_replay
 
             run_checkpoint_replay(
@@ -108,7 +113,15 @@ class _ApplyMixin:
                 active_errors=p.get("active_errors"),
                 custom_context=p.get("custom_context", ""),
             )
-        elif op == "wiki_add":
+            return
+        if op == "action_log":
+            from yadgar.backend.write_exec import run_action_log_replay
+
+            # T2 Car E1: action-log rides the queue seam — core (auto-capture
+            # flush, team-inbox ingest, capture CLI) enqueues; the write runs here.
+            run_action_log_replay(p)
+            return
+        if op == "wiki_add":
             from yadgar.backend.write_exec import run_wiki_add_replay
 
             # §26 Option Z — fill fields the skill cannot know before calling wiki_add
@@ -117,5 +130,5 @@ class _ApplyMixin:
             p["directory_context"] = p.get("directory_context") or p.get("directory")
 
             run_wiki_add_replay(p)
-        else:
-            logger.debug("Unknown queue op %r — skipping", op)
+            return
+        logger.debug("Unknown queue op %r — skipping", op)

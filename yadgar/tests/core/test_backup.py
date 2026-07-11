@@ -121,7 +121,7 @@ class TestCreateSnapshot:
         fixed_ts = "2026-05-26-143025"
         first_target = tmp_path / f"surreal_db.nightly-{fixed_ts}"
 
-        with patch("yadgar.core.backup.datetime") as mock_dt:
+        with patch("yadgar.core.backup.backup.datetime") as mock_dt:
             mock_dt.now.return_value.strftime.return_value = fixed_ts
             result1 = create_snapshot(db, snapshot_dir=tmp_path, label="nightly")
 
@@ -130,7 +130,7 @@ class TestCreateSnapshot:
         # Second call with same ts — must get a different path
         _make_dummy_db(tmp_path / "surreal_db2")
 
-        with patch("yadgar.core.backup.datetime") as mock_dt:
+        with patch("yadgar.core.backup.backup.datetime") as mock_dt:
             mock_dt.now.return_value.strftime.return_value = fixed_ts
             result2 = create_snapshot(db, snapshot_dir=tmp_path, label="nightly")
 
@@ -407,7 +407,7 @@ class TestEnvKnob:
         # Need fresh read — function reads os.getenv live
         import importlib
 
-        import yadgar.core.backup as bkp
+        import yadgar.core.backup.backup as bkp
 
         importlib.reload(bkp)
 

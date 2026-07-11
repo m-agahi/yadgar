@@ -176,7 +176,7 @@ class TestFastProfileGraphPriorBoost:
 
     def _make_minimal_retriever(self, settings, storage):
         """Build a Retriever with mocked dependencies."""
-        from yadgar._shared.retrieval.core import Retriever
+        from yadgar.backend.retrieval.core import Retriever
 
         embeddings = MagicMock()
         knowledge_graph = MagicMock()
@@ -211,7 +211,7 @@ class TestFastProfileGraphPriorBoost:
 
     def test_high_prior_memory_ranks_higher_than_zero_prior(self):
         """Memory with graph_prior=0.8 ranks above identical memory with graph_prior=0.0."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         settings = self._make_settings_with_weight(0.2)
         storage = MagicMock()
@@ -253,7 +253,7 @@ class TestFastProfileGraphPriorBoost:
 
     def test_fast_profile_does_not_call_ppr_or_spreading(self):
         """fast path must NOT call PPR, spreading activation, or entity extraction."""
-        from yadgar._shared.retrieval.fusion import PROFILES
+        from yadgar.backend.retrieval.fusion import PROFILES
 
         fast_profile = PROFILES["fast"]
 
@@ -268,7 +268,7 @@ class TestFastProfileGraphPriorBoost:
         # Verify graph_prior boost path calls NO graph traversal by inspecting
         # fusion.py source: the boost must read from storage, not call _graph methods
         fusion_src = (
-            pathlib.Path(__file__).parent.parent.parent / "_shared" / "retrieval" / "fusion.py"
+            pathlib.Path(__file__).parent.parent.parent / "backend" / "retrieval" / "fusion.py"
         )
         source = fusion_src.read_text()
 
@@ -284,7 +284,7 @@ class TestFastProfileGraphPriorBoost:
 
     def test_fast_profile_graph_prior_no_traversal_at_runtime(self):
         """Runtime check: fast-profile recall does not invoke graph traversal methods."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         settings = self._make_settings_with_weight(0.2)
         storage = MagicMock()
@@ -340,7 +340,7 @@ class TestGraphPriorWeightZeroDisables:
 
     def test_weight_zero_ranking_unchanged(self):
         """With weight=0.0, fused scores must be identical to pre-boost values."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_GRAPH_PRIOR_WEIGHT = 0.0
@@ -395,7 +395,7 @@ class TestBalancedFullProfilesUnchanged:
 
     def test_balanced_profile_signals_unchanged(self):
         """balanced profile still includes ppr and spreading signals."""
-        from yadgar._shared.retrieval.fusion import PROFILES
+        from yadgar.backend.retrieval.fusion import PROFILES
 
         balanced = PROFILES["balanced"]
         assert "ppr" in balanced["signals"], "balanced must include ppr signal"
@@ -404,7 +404,7 @@ class TestBalancedFullProfilesUnchanged:
 
     def test_full_profile_signals_unchanged(self):
         """full profile still includes ppr, spreading, and nli."""
-        from yadgar._shared.retrieval.fusion import PROFILES
+        from yadgar.backend.retrieval.fusion import PROFILES
 
         full = PROFILES["full"]
         assert "ppr" in full["signals"], "full must include ppr signal"
@@ -414,7 +414,7 @@ class TestBalancedFullProfilesUnchanged:
     def test_graph_prior_is_additive_to_ppr(self):
         """graph_prior boost stacks on top of ppr+spreading; does not replace them."""
         fusion_src = (
-            pathlib.Path(__file__).parent.parent.parent / "_shared" / "retrieval" / "fusion.py"
+            pathlib.Path(__file__).parent.parent.parent / "backend" / "retrieval" / "fusion.py"
         )
         source = fusion_src.read_text()
 
@@ -444,7 +444,7 @@ class TestNullGraphPriorSafe:
 
     def test_null_prior_treated_as_zero_in_fusion(self):
         """Memory with no graph_prior in storage result is skipped (0.0 additive)."""
-        from yadgar._shared.retrieval.fusion import _FusionMixin
+        from yadgar.backend.retrieval.fusion import _FusionMixin
 
         s = MagicMock()
         s.WRRF_GRAPH_PRIOR_WEIGHT = 0.2
@@ -614,7 +614,7 @@ class TestGraphPriorConfigRegistered:
 
     def test_registry_has_wrrf_graph_prior_weight(self):
         """config_registry must include YADGAR_WRRF_GRAPH_PRIOR_WEIGHT."""
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_WRRF_GRAPH_PRIOR_WEIGHT" in names, (
@@ -624,7 +624,7 @@ class TestGraphPriorConfigRegistered:
 
     def test_yaml_meta_has_wrrf_graph_prior_weight(self):
         """config_yaml.py FIELD_META must include wrrf_graph_prior_weight."""
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "wrrf_graph_prior_weight" in FIELD_META, (
             "FIELD_META must include 'wrrf_graph_prior_weight' for I25 three-way sync"

@@ -173,7 +173,7 @@ class TestByteBoundedEviction:
 
 class TestRamPctBudget:
     def test_budget_from_cgroup_limit(self, monkeypatch) -> None:
-        from yadgar.backend import cache as cmod
+        from yadgar.backend.cache import cache as cmod
 
         # 1 GiB container, 10% → ~107 MB total backend cache budget.
         monkeypatch.setattr(cmod, "_read_container_memory_bytes", lambda: 1024**3)
@@ -181,14 +181,14 @@ class TestRamPctBudget:
         assert budget == pytest.approx(0.10 * 1024**3, rel=1e-6)
 
     def test_budget_fallback_outside_container(self, monkeypatch) -> None:
-        from yadgar.backend import cache as cmod
+        from yadgar.backend.cache import cache as cmod
 
         monkeypatch.setattr(cmod, "_read_container_memory_bytes", lambda: None)
         budget = cmod._backend_cache_total_budget_bytes(pct=10.0)
         assert budget > 0  # sane non-zero fallback
 
     def test_namespace_split_sums_within_total(self, monkeypatch) -> None:
-        from yadgar.backend import cache as cmod
+        from yadgar.backend.cache import cache as cmod
 
         monkeypatch.setattr(cmod, "_read_container_memory_bytes", lambda: 1000)
         total = cmod._backend_cache_total_budget_bytes(pct=100.0)
@@ -236,14 +236,14 @@ class TestNamespaceIsolation:
 
 class TestCeEmbedFoldIn:
     def test_ce_embed_are_unified_cache_instances(self) -> None:
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
         from yadgar.backend.cache import Cache
 
         assert isinstance(es._ce_cache, Cache)
         assert isinstance(es._embed_cache, Cache)
 
     def test_ce_namespace_name(self) -> None:
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         assert es._ce_cache.name == "ce"
         assert es._embed_cache.name == "embed"
@@ -264,7 +264,7 @@ class TestCeEmbedFoldIn:
 
     def test_ce_cache_still_exposes_consumer_surface(self) -> None:
         # embed_service consumers + CacheStatsCollector read these attrs.
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         for attr in ("hits", "misses", "evictions", "size_entries"):
             assert hasattr(es._ce_cache, attr), f"_ce_cache missing {attr}"
@@ -297,7 +297,7 @@ class TestCeEmbedFoldIn:
         # importlib.reload re-creates ce/embed namespaces — must not raise on the
         # duplicate registry name.
         monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
         assert isinstance(es._ce_cache.name, str)
@@ -322,7 +322,7 @@ class TestObsByConstruction:
         assert s["evictions"] >= 1
 
     def test_cold_tier_emits_generic_family(self) -> None:
-        from yadgar._shared import metrics
+        from yadgar._shared.observability import metrics
 
         c = _fresh_cache(name="obs_cold_probe", max_bytes=10_000, obs_tier="cold")
         before = metrics.yadgar_cache_hit_total.labels(cache="obs_cold_probe")._value.get()

@@ -30,7 +30,7 @@ def _reset_tracer_provider():
         new_provider = TracerProvider()
         trace.set_tracer_provider(new_provider)
         try:
-            import yadgar._shared.tracing as _tr
+            import yadgar._shared.observability.tracing as _tr
 
             _tr._SETUP_DONE.clear()
         except Exception:
@@ -76,7 +76,7 @@ def in_memory_tracer():
 def _log_capture_for(logger_name: str):
     """Return (StringIO, handler, logger) — call handler.close() and
     logger.removeHandler(handler) in finally."""
-    from yadgar._shared.log_config import JSONLogFormatter
+    from yadgar._shared.observability.log_config import JSONLogFormatter
 
     buf = StringIO()
     hdl = logging.StreamHandler(buf)
@@ -97,7 +97,7 @@ def _build_stacked_app():
     from starlette.routing import Route
     from starlette.testclient import TestClient
 
-    from yadgar._shared.log_config import RequestLoggingMiddleware
+    from yadgar._shared.observability.log_config import RequestLoggingMiddleware
     from yadgar.core.server._app import MCPTraceSpanMiddleware
 
     async def mcp_handler(request: Request):

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yadgar._shared.paths as _paths
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import shutdown_tracing
+from yadgar._shared.observability.tracing import shutdown_tracing
 
 # Tool name prefixes that are self-referential — never capture
 _SKIP_PREFIXES = (

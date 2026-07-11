@@ -1,278 +1,50 @@
-"""Tests for yadgar/cli/_shared.py — shared engine-init helper.
+"""Tests for yadgar/core/cli/_shared.py — shared CLI forward helpers.
 
-Wave 5 coverage: yadgar/cli/_shared.py (20 stmts, 0% pre-wave).
-Strategy: all heavy imports (CognitiveMap, EmbeddingEngine, KnowledgeGraph,
-MetaCognition, CheckpointRestore, StorageEngine, Settings) are lazy inside
-init_replay_lightweight — patch at the yadgar.* module level.
-Phase 2b: Retriever removed from _shared.py (CLI recall island killed).
-CheckpointRestore receives retriever=None; retriever patches kept as no-ops
-to avoid import errors, but Retriever is no longer constructed by the function.
-_shared.py also calls logging.disable so patch logging too.
+T2 Car B: ``init_replay_lightweight`` (local engine construction) is GONE —
+the CLI drain/restore subcommands are thin HTTP forwarders to the backend
+(POST /restore + the /admin op ``pre_compact_drain``). These tests pin:
+  * forward_restore delegates to the core _forward_restore helper
+  * forward_pre_compact_drain delegates to _forward_admin with the right op
+  * silence_logging disables library logging (hooks must only print data)
+  * the local-construction era is really over (no init_replay_lightweight)
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import logging
+from unittest.mock import patch
 
-from yadgar.core.cli._shared import init_replay_lightweight
-
-# ---------------------------------------------------------------------------
-# Shared mock setup
-# ---------------------------------------------------------------------------
-
-_PATCH_TARGETS = {
-    "yadgar.config.Settings": None,
-    "yadgar.storage.StorageEngine": None,
-    "yadgar.embeddings.EmbeddingEngine": None,
-    "yadgar.knowledge_graph.KnowledgeGraph": None,
-    "yadgar.cognitive_map.CognitiveMap": None,
-    # Phase 2b: Retriever no longer imported/constructed in init_replay_lightweight.
-    # Patch kept as a no-op guard so tests don't fail if a future import re-adds it.
-    "yadgar.retrieval.Retriever": None,
-    "yadgar.metacognition.MetaCognition": None,
-    "yadgar.restoration.CheckpointRestore": None,
-}
+from yadgar.core.cli import _shared
 
 
-def _build_mocks():
-    """Return a dict of mock instances for each patched class."""
-    settings = MagicMock()
-    settings.DB_PATH = "/tmp/test.db"
-    settings.EMBEDDING_MODEL = "test-model"
-
-    storage = MagicMock()
-    embeddings = MagicMock()
-    kg = MagicMock()
-    cmap = MagicMock()
-    retriever = MagicMock()
-    metacog = MagicMock()
-    replay = MagicMock()
-
-    return settings, storage, embeddings, kg, cmap, retriever, metacog, replay
+class TestForwardRestore:
+    def test_delegates_to_forward_restore(self):
+        payload = {"formatted": "# R", "epoch": 2}
+        with patch(
+            "yadgar.core.server.tools._forward._forward_restore", return_value=payload
+        ) as fwd:
+            result = _shared.forward_restore("/my/proj")
+        fwd.assert_called_once_with("/my/proj")
+        assert result is payload
 
 
-def _patch_all(settings, storage, embeddings, kg, cmap, retriever, metacog, replay):
-    """Return a list of patch context managers."""
-    return [
-        patch("yadgar._shared.config.Settings", return_value=settings),
-        patch("yadgar._shared.storage.StorageEngine", return_value=storage),
-        patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
-        patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
-        patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
-        patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
-        patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
-        patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
-    ]
+class TestForwardPreCompactDrain:
+    def test_delegates_to_forward_admin_with_op(self):
+        payload = {"status": "drained", "epoch": 1, "auto_checkpoint_created": True}
+        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+            result = _shared.forward_pre_compact_drain("/my/proj")
+        fwd.assert_called_once_with("pre_compact_drain", {"directory": "/my/proj"})
+        assert result is payload
 
 
-# ---------------------------------------------------------------------------
-# init_replay_lightweight — return value
-# ---------------------------------------------------------------------------
-
-
-class TestInitReplayLightweightReturnValue:
-    def test_returns_tuple_of_two(self):
-        mocks = _build_mocks()
-        with (
-            patch("yadgar._shared.config.Settings", return_value=mocks[0]),
-            patch("yadgar._shared.storage.StorageEngine", return_value=mocks[1]),
-            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=mocks[2]),
-            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=mocks[3]),
-            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=mocks[4]),
-            patch("yadgar._shared.retrieval.Retriever", return_value=mocks[5]),
-            patch("yadgar._shared.metacognition.MetaCognition", return_value=mocks[6]),
-            patch("yadgar._shared.restoration.CheckpointRestore", return_value=mocks[7]),
-        ):
-            result = init_replay_lightweight()
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-
-    def test_first_element_is_storage(self):
-        mocks = _build_mocks()
-        settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
-        with (
-            patch("yadgar._shared.config.Settings", return_value=settings),
-            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
-            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
-            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
-        ):
-            got_storage, _ = init_replay_lightweight()
-        assert got_storage is storage
-
-    def test_second_element_is_replay(self):
-        mocks = _build_mocks()
-        settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
-        with (
-            patch("yadgar._shared.config.Settings", return_value=settings),
-            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
-            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
-            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
-        ):
-            _, got_replay = init_replay_lightweight()
-        assert got_replay is replay
-
-
-# ---------------------------------------------------------------------------
-# init_replay_lightweight — db_path handling
-# ---------------------------------------------------------------------------
-
-
-class TestInitReplayLightweightDbPath:
-    def test_uses_settings_db_path_when_none(self):
-        mocks = _build_mocks()
-        settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
-        settings.DB_PATH = "/default/path.db"
-
-        with (
-            patch("yadgar._shared.config.Settings", return_value=settings),
-            patch("yadgar._shared.storage.StorageEngine", return_value=storage) as mock_storage_cls,
-            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
-            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
-        ):
-            init_replay_lightweight()
-        mock_storage_cls.assert_called_once_with("/default/path.db")
-
-    def test_uses_explicit_db_path_when_given(self):
-        mocks = _build_mocks()
-        settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
-
-        with (
-            patch("yadgar._shared.config.Settings", return_value=settings),
-            patch("yadgar._shared.storage.StorageEngine", return_value=storage) as mock_storage_cls,
-            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
-            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
-        ):
-            init_replay_lightweight(db_path="/custom/path.db")
-        mock_storage_cls.assert_called_once_with("/custom/path.db")
-
-
-# ---------------------------------------------------------------------------
-# init_replay_lightweight — construction chain
-# ---------------------------------------------------------------------------
-
-
-class TestInitReplayLightweightConstructionChain:
-    def _run(self):
-        mocks = _build_mocks()
-        settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
-        mock_settings_cls = MagicMock(return_value=settings)
-        mock_storage_cls = MagicMock(return_value=storage)
-        mock_embed_cls = MagicMock(return_value=embeddings)
-        mock_kg_cls = MagicMock(return_value=kg)
-        mock_cmap_cls = MagicMock(return_value=cmap)
-        mock_retriever_cls = MagicMock(return_value=retriever)
-        mock_metacog_cls = MagicMock(return_value=metacog)
-        mock_replay_cls = MagicMock(return_value=replay)
-
-        with (
-            patch("yadgar._shared.config.Settings", mock_settings_cls),
-            patch("yadgar._shared.storage.StorageEngine", mock_storage_cls),
-            patch("yadgar._shared.embeddings.EmbeddingEngine", mock_embed_cls),
-            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", mock_kg_cls),
-            patch("yadgar._shared.cognitive_map.CognitiveMap", mock_cmap_cls),
-            patch("yadgar._shared.retrieval.Retriever", mock_retriever_cls),
-            patch("yadgar._shared.metacognition.MetaCognition", mock_metacog_cls),
-            patch("yadgar._shared.restoration.CheckpointRestore", mock_replay_cls),
-        ):
-            init_replay_lightweight()
-
-        return (
-            mock_settings_cls,
-            mock_storage_cls,
-            mock_embed_cls,
-            mock_kg_cls,
-            mock_cmap_cls,
-            mock_retriever_cls,
-            mock_metacog_cls,
-            mock_replay_cls,
-            settings,
-            storage,
-            embeddings,
-            kg,
-            cmap,
-            retriever,
-            metacog,
-        )
-
-    def test_settings_instantiated(self):
-        clses = self._run()
-        clses[0].assert_called_once()
-
-    def test_embedding_engine_called_with_model(self):
-        clses = self._run()
-        mock_embed_cls = clses[2]
-        settings = clses[8]
-        mock_embed_cls.assert_called_once_with(settings.EMBEDDING_MODEL)
-
-    def test_knowledge_graph_called_with_storage_settings(self):
-        clses = self._run()
-        mock_kg_cls = clses[3]
-        storage = clses[9]
-        settings = clses[8]
-        mock_kg_cls.assert_called_once_with(storage, settings)
-
-    def test_checkpoint_restore_receives_storage(self):
-        clses = self._run()
-        mock_replay_cls = clses[7]
-        storage = clses[9]
-        call_kwargs = mock_replay_cls.call_args.kwargs
-        assert call_kwargs.get("storage") is storage
-
-    def test_checkpoint_restore_receives_embeddings(self):
-        clses = self._run()
-        mock_replay_cls = clses[7]
-        embeddings = clses[10]
-        call_kwargs = mock_replay_cls.call_args.kwargs
-        assert call_kwargs.get("embeddings") is embeddings
-
-    def test_checkpoint_restore_receives_retriever_none(self):
-        """Phase 2b: CLI recall island killed — retriever=None passed to CheckpointRestore."""
-        clses = self._run()
-        mock_replay_cls = clses[7]
-        call_kwargs = mock_replay_cls.call_args.kwargs
-        assert call_kwargs.get("retriever") is None, (
-            "Phase 2b: init_replay_lightweight must pass retriever=None to CheckpointRestore "
-            "(Retriever construction removed from CLI per §5.4 decision 4)"
-        )
-
-    def test_retriever_not_constructed(self):
-        """Phase 2b: Retriever class must NOT be instantiated by init_replay_lightweight."""
-        clses = self._run()
-        mock_retriever_cls = clses[5]
-        mock_retriever_cls.assert_not_called()
-
-    def test_logging_disabled(self):
-        """logging.disable(CRITICAL) must be called."""
-        import logging
-
-        mocks = _build_mocks()
-        settings, storage, embeddings, kg, cmap, retriever, metacog, replay = mocks
-        with (
-            patch("yadgar._shared.config.Settings", return_value=settings),
-            patch("yadgar._shared.storage.StorageEngine", return_value=storage),
-            patch("yadgar._shared.embeddings.EmbeddingEngine", return_value=embeddings),
-            patch("yadgar._shared.knowledge_graph.KnowledgeGraph", return_value=kg),
-            patch("yadgar._shared.cognitive_map.CognitiveMap", return_value=cmap),
-            patch("yadgar._shared.retrieval.Retriever", return_value=retriever),
-            patch("yadgar._shared.metacognition.MetaCognition", return_value=metacog),
-            patch("yadgar._shared.restoration.CheckpointRestore", return_value=replay),
-            patch("logging.disable") as mock_disable,
-        ):
-            init_replay_lightweight()
+class TestSilenceLogging:
+    def test_disables_critical(self):
+        with patch("logging.disable") as mock_disable:
+            _shared.silence_logging()
         mock_disable.assert_called_once_with(logging.CRITICAL)
+
+
+class TestLocalConstructionGone:
+    def test_init_replay_lightweight_removed(self):
+        """T2 Car B: the CLI must not construct a local replay stack anymore."""
+        assert not hasattr(_shared, "init_replay_lightweight")

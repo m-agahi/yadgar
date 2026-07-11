@@ -29,7 +29,7 @@ from starlette.responses import JSONResponse
 from yadgar import __version__
 from yadgar._shared.config import resolve_knob
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 from yadgar.core.server._app import mcp_server
 
 logger = logging.getLogger(__name__)

@@ -268,7 +268,7 @@ class StorageEngine(
             # httpx.Client is a singleton.  pool_active=1 for the lifetime of this engine.
             # pool_wait_ms gets one observation of 0.0 (no real acquire latency).
             try:
-                from yadgar._shared.metrics import (
+                from yadgar._shared.observability.metrics import (
                     yadgar_surrealdb_connection_pool_wait_ms,
                     yadgar_surrealdb_pool_active,
                 )
@@ -327,7 +327,7 @@ class StorageEngine(
         # connection (no pool).  pool_active=1 for the lifetime of this engine.
         # pool_wait_ms gets one observation of 0.0 (no real acquire latency).
         try:
-            from yadgar._shared.metrics import (
+            from yadgar._shared.observability.metrics import (
                 yadgar_surrealdb_connection_pool_wait_ms,
                 yadgar_surrealdb_pool_active,
             )
@@ -351,7 +351,7 @@ class StorageEngine(
             pass
         # Signal connection gone regardless of mode.
         try:
-            from yadgar._shared.metrics import yadgar_surrealdb_pool_active
+            from yadgar._shared.observability.metrics import yadgar_surrealdb_pool_active
 
             yadgar_surrealdb_pool_active.set(0)
         except Exception:

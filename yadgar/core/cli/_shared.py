@@ -1,39 +1,30 @@
-"""Shared helpers used by multiple CLI subcommands."""
+"""Shared helpers used by multiple CLI subcommands.
+
+T2 Car B: ``init_replay_lightweight`` (local engine construction) is GONE —
+CheckpointRestore moved to ``yadgar.backend.restoration`` behind the backend
+``POST /restore`` forward, so the CLI no longer builds a local replay stack.
+The drain/restore subcommands call the backend over HTTP via the same
+``_forward_restore`` / ``_forward_admin`` helpers the MCP server uses
+(``YADGAR_EMBED_URL`` convention; fail-loud RuntimeError when unset).
+"""
 
 
-def init_replay_lightweight(db_path=None):
-    """Initialize only the engines needed for drain/restore (no daemons, no server).
-
-    Phase 2b: Retriever construction removed (CLI recall island killed per §5.4 decision 4).
-    CheckpointRestore.retriever is set to None — it never calls .recall() so this is safe.
-    CLI replay that genuinely needs recall must route through the backend HTTP endpoint.
-    """
+def silence_logging() -> None:
+    """Suppress all library logging — hooks must only output data to stdout."""
     import logging
 
-    # Suppress all library logging — hooks must only output data to stdout
     logging.disable(logging.CRITICAL)
 
-    from yadgar._shared.cognitive_map import CognitiveMap
-    from yadgar._shared.config import Settings
-    from yadgar._shared.embeddings import EmbeddingEngine
-    from yadgar._shared.knowledge_graph import KnowledgeGraph
-    from yadgar._shared.metacognition import MetaCognition
-    from yadgar._shared.restoration import CheckpointRestore
-    from yadgar._shared.storage import StorageEngine
 
-    settings = Settings()
-    storage = StorageEngine(db_path or settings.DB_PATH)
-    embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
-    kg = KnowledgeGraph(storage, settings)
-    cognitive_map = CognitiveMap(storage, settings)
-    metacognition = MetaCognition(storage, embeddings, kg, settings)
+def forward_restore(directory: str) -> dict:
+    """POST /restore on the backend and return the restore payload dict."""
+    from yadgar.core.server.tools._forward import _forward_restore
 
-    replay = CheckpointRestore(
-        storage=storage,
-        embeddings=embeddings,
-        retriever=None,  # CLI recall island killed — no local Retriever constructed
-        cognitive_map=cognitive_map,
-        metacognition=metacognition,
-        settings=settings,
-    )
-    return storage, replay
+    return _forward_restore(directory)
+
+
+def forward_pre_compact_drain(directory: str) -> dict:
+    """Run the pre-compact drain writes via the backend /admin forward."""
+    from yadgar.core.server.tools._forward import _forward_admin
+
+    return _forward_admin("pre_compact_drain", {"directory": directory})

@@ -19,7 +19,7 @@ import yadgar.core.server.tools.recall as _recall_symbol  # noqa: F401 — impor
 
 _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
-from yadgar.core.server.tools.recall import _fanout_recall  # noqa: E402
+from yadgar.backend.retrieval.recall_pipeline import _fanout_recall  # noqa: E402
 
 recall_fn = _recall_module.recall
 

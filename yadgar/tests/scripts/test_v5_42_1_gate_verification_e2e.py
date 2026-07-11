@@ -104,7 +104,7 @@ def _drainer_env(tmp_path, monkeypatch):
     real_fq = FileQueue(tmp_path)
 
     import yadgar._shared.runtime.state as _state_mod
-    import yadgar.core.lifecycle as _cl
+    import yadgar.core.lifecycle.lifecycle as _cl
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -199,7 +199,7 @@ def test_v5_42_1_gate_fires_post_backfill_e2e(_drainer_env, admin_backend_bypass
 
     # ── Step 5: dlq_inspect(filter="rejections") — expect 1 entry ────────────
     with (
-        patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
+        patch("yadgar.core.lifecycle.lifecycle._get_file_queue", return_value=fq),
         patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
     ):
         rejections = server.dlq_inspect(filter="rejections")
@@ -220,7 +220,7 @@ def test_v5_42_1_gate_fires_post_backfill_e2e(_drainer_env, admin_backend_bypass
 
     # ── Step 6: dlq_dismiss the entry ────────────────────────────────────────
     with (
-        patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
+        patch("yadgar.core.lifecycle.lifecycle._get_file_queue", return_value=fq),
         patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
     ):
         dismiss_result = server.dlq_dismiss(filename=rejection["file"])

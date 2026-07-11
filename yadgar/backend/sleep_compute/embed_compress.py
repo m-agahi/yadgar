@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 
 # Sentence boundary splitter
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")

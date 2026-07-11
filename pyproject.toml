@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.123.0"
+version = "5.124.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -125,19 +125,19 @@ ignore = [
 "yadgar/backend/curation/__init__.py" = ["PLR0913"]
 "yadgar/backend/curation/ingestion.py" = ["PLR0913"]
 "yadgar/backend/curation/prune_passes.py" = ["C901"]
-"yadgar/core/graph_api.py" = ["C901"]
-"yadgar/core/install_hooks_lib.py" = ["C901"]
+"yadgar/core/graph/graph_api.py" = ["C901"]
+"yadgar/core/install/install_hooks_lib.py" = ["C901"]
 "yadgar/_shared/metacognition/cognitive_load.py" = ["C901"]
 "yadgar/_shared/metacognition/coverage.py" = ["C901"]
 "yadgar/_shared/metacognition/gap_detection.py" = ["C901"]
-"yadgar/backend/predictive_coding.py" = ["C901"]
-"yadgar/_shared/restoration.py" = ["C901", "PLR0913"]
+"yadgar/backend/predictive_coding/predictive_coding.py" = ["C901"]
+"yadgar/backend/restoration/checkpoint_restore.py" = ["C901", "PLR0913"]
 "yadgar/_shared/retrieval/_reranking_heuristic.py" = ["C901"]
 "yadgar/_shared/retrieval/fusion.py" = ["C901"]
 "yadgar/_shared/retrieval/query_analysis.py" = ["C901"]
 "yadgar/_shared/retrieval/reranking.py" = ["C901", "PLR0913"]
 "yadgar/_shared/retrieval/scoring.py" = ["C901"]
-"yadgar/_shared/rules_engine.py" = ["C901"]
+"yadgar/_shared/rules_engine/rules_engine.py" = ["C901"]
 "yadgar/core/seed/_generate.py" = ["C901"]
 "yadgar/core/seed/_scan.py" = ["C901"]
 "yadgar/core/server/tools/admin_invariants.py" = ["C901"]
@@ -246,17 +246,16 @@ dev = [
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     # import-linter: core/backend/_shared boundary enforcement (folder-split #17).
-    # Car 0 lands the dep + .importlinter contracts in REPORT-ONLY mode (no
-    # blocking pre-commit/CI hook yet); the final car flips it to hard-fail.
+    # ENFORCING: the contracts below run as the blocking `lint-imports`
+    # pre-commit hook (.pre-commit-config.yaml) on every commit.
     "import-linter>=2.0",
 ]
 
 # ── import-linter (folder-split #17) ─────────────────────────────────────────
-# REPORT-ONLY at Car 0: config present so the final car flips a switch rather
-# than authoring contracts. NOT wired into pre-commit or CI yet — run manually
-# with `uv run lint-imports`. NOTE: the `yadgar.core` subpackage does not exist
-# until the final car, so several contracts below cannot pass until then; this
-# is expected and is why no blocking hook references them yet.
+# ENFORCING (T2 Car F fixed this stale Car-0 comment): the contracts below are
+# wired into pre-commit as the blocking `lint-imports` hook
+# (.pre-commit-config.yaml, "Enforce layer boundaries") — every commit must
+# keep 4/4 contracts. Run manually with `uv run lint-imports`.
 [tool.importlinter]
 root_package = "yadgar"
 

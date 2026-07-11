@@ -152,7 +152,7 @@ def test_admin_config_explicit_redact_flag(monkeypatch):
     """An entry with redact=True in the registry returns '<redacted>'."""
     # This tests the registry's explicit redact mechanism (separate from regex).
     # Import the registry and verify at least one redact=True entry exists.
-    from yadgar._shared.config_registry import list_config
+    from yadgar._shared.config.config_registry import list_config
 
     redacted = [c for c in list_config() if c.redact]
     assert redacted, "Expected at least one entry with redact=True in config_registry"
@@ -172,7 +172,7 @@ def test_startup_config_log_emits_event(monkeypatch, caplog):
     import logging
 
     monkeypatch.delenv("YADGAR_PORT", raising=False)
-    from yadgar._shared.config_registry import emit_startup_config_log
+    from yadgar._shared.config.config_registry import emit_startup_config_log
 
     with caplog.at_level(logging.INFO, logger="yadgar"):
         emit_startup_config_log()
@@ -204,8 +204,8 @@ def test_config_gauge_set_for_int_knob(monkeypatch):
     """_set_config_gauges() sets yadgar_config_value{name='YADGAR_PORT'} = 8765.0 (default)."""
     monkeypatch.delenv("YADGAR_PORT", raising=False)
 
-    from yadgar._shared.config_registry import _set_config_gauges
-    from yadgar._shared.metrics import yadgar_config_value
+    from yadgar._shared.config.config_registry import _set_config_gauges
+    from yadgar._shared.observability.metrics import yadgar_config_value
 
     _set_config_gauges()
 
@@ -217,8 +217,8 @@ def test_config_gauge_reflects_env_override(monkeypatch):
     """With YADGAR_PORT=9001 in env, gauge shows 9001.0."""
     monkeypatch.setenv("YADGAR_PORT", "9001")
 
-    from yadgar._shared.config_registry import _set_config_gauges
-    from yadgar._shared.metrics import yadgar_config_value
+    from yadgar._shared.config.config_registry import _set_config_gauges
+    from yadgar._shared.observability.metrics import yadgar_config_value
 
     _set_config_gauges()
 
@@ -235,8 +235,8 @@ def test_config_gauge_skips_string_entries(monkeypatch):
     """_set_config_gauges() does NOT create a gauge label for YADGAR_DB_URL (string kind)."""
     monkeypatch.setenv("YADGAR_DB_URL", "http://yadgar-backend:8000")
 
-    from yadgar._shared.config_registry import _set_config_gauges, list_config
-    from yadgar._shared.metrics import yadgar_config_value
+    from yadgar._shared.config.config_registry import _set_config_gauges, list_config
+    from yadgar._shared.observability.metrics import yadgar_config_value
 
     _set_config_gauges()
 
@@ -257,7 +257,7 @@ def test_config_gauge_skips_string_entries(monkeypatch):
 
 def test_config_gauge_only_numeric_kinds(monkeypatch):
     """_set_config_gauges() only sets gauges for int/float/bool entries, never string."""
-    from yadgar._shared.config_registry import _set_config_gauges, list_config
+    from yadgar._shared.config.config_registry import _set_config_gauges, list_config
 
     numeric_names = {c.name for c in list_config() if c.kind in ("int", "float", "bool")}
     string_names = {c.name for c in list_config() if c.kind == "string"}

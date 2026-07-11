@@ -11,7 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 from yadgar._shared.config import get_settings, resolve_knob
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import setup_tracing
+from yadgar._shared.observability.tracing import setup_tracing
 
 settings = get_settings()
 
@@ -23,7 +23,9 @@ settings = get_settings()
 # Solution: call configure_logging here at _app import time (same time as setup_tracing).
 # Idempotent — safe to call again from __main__.py (level/format update only).
 try:
-    from yadgar._shared.log_config import configure_logging as _configure_logging  # noqa: PLC0415
+    from yadgar._shared.observability.log_config import (
+        configure_logging as _configure_logging,  # noqa: PLC0415
+    )
 
     _log_format = resolve_knob("YADGAR_LOG_FORMAT", "LOG_FORMAT", str, "json")
     _log_level = os.environ.get(
@@ -111,7 +113,7 @@ class InFlightRequestMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send) -> None:
-        from yadgar.core.drain import _request_counter  # noqa: PLC0415
+        from yadgar.core.daemon.drain import _request_counter  # noqa: PLC0415
 
         if scope["type"] == "http":
             _request_counter.increment()
@@ -186,7 +188,7 @@ class MCPTraceSpanMiddleware:
 def _cors_wrapped_http_app(self):
     from starlette.middleware.cors import CORSMiddleware
 
-    from yadgar._shared.log_config import RequestLoggingMiddleware
+    from yadgar._shared.observability.log_config import RequestLoggingMiddleware
     from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     # Stack: InFlightRequest (outermost) → BearerAuth → MCPTrace → RequestLogging → CORS → MCP
@@ -216,7 +218,7 @@ def _auth_wrapped_sse_app(self, mount_path=None):
     SSE is the default transport; without this wrapper REQUIRE_AUTH=1 has
     no effect on the SSE path.
     """
-    from yadgar._shared.log_config import RequestLoggingMiddleware
+    from yadgar._shared.observability.log_config import RequestLoggingMiddleware
     from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     inner = _orig_sse_app(self, mount_path)
@@ -251,7 +253,7 @@ def _start_loop_lag_monitor_on_live_loop():
     try:
         import asyncio as _asyncio  # noqa: PLC0415
 
-        from yadgar._shared.metrics import start_loop_lag_monitor  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import start_loop_lag_monitor  # noqa: PLC0415
 
         return start_loop_lag_monitor(_asyncio.get_running_loop())
     except Exception:  # noqa: BLE001
@@ -262,7 +264,7 @@ def _start_loop_lag_monitor_on_live_loop():
 async def _stop_loop_lag_monitor_safe(task) -> None:
     """Cancel the lag monitor task on shutdown. Never raises."""
     try:
-        from yadgar._shared.metrics import stop_loop_lag_monitor  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import stop_loop_lag_monitor  # noqa: PLC0415
 
         await stop_loop_lag_monitor(task)
     except Exception:  # noqa: BLE001
@@ -375,7 +377,7 @@ def _tool(power: bool = False, always_load: bool = False):
 
         # v5.6.3: wrap with trace_span so every tool call is traceable.
         # trace_span is applied at decoration time (before mcp_server.tool() wraps it).
-        from yadgar._shared.tracing import trace_span as _trace_span  # noqa: PLC0415
+        from yadgar._shared.observability.tracing import trace_span as _trace_span  # noqa: PLC0415
 
         _traced_func = _trace_span(f"tool.{func.__name__}")(func)
 
@@ -416,7 +418,7 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
 
     def _emit_metrics(_t0: float, _status: str, result) -> None:
         try:
-            from yadgar._shared.metrics import (  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (  # noqa: PLC0415
                 yadgar_mcp_request_count,
                 yadgar_mcp_request_duration_ms,
             )
@@ -427,7 +429,9 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
         except Exception:
             pass
         try:
-            from yadgar._shared.metrics import yadgar_tool_token_estimate_total  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (
+                yadgar_tool_token_estimate_total,  # noqa: PLC0415
+            )
 
             yadgar_tool_token_estimate_total.labels(tool=func.__name__).inc(estimate_tokens(result))
         except Exception:

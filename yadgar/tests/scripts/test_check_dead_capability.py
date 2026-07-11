@@ -95,8 +95,12 @@ def _make_fixture(
 
     Returns tmp_path (the fake repo root).
     """
-    yadgar_dir = tmp_path / "yadgar" / "core"
-    yadgar_dir.mkdir(parents=True, exist_ok=True)
+    # T2 Car E3 paths: graph_api lives in yadgar/backend/graph/; the EDGE_TYPES
+    # registry is the _shared contract yadgar/_shared/contracts/viz.py.
+    graph_dir = tmp_path / "yadgar" / "backend" / "graph"
+    graph_dir.mkdir(parents=True, exist_ok=True)
+    contracts_dir = tmp_path / "yadgar" / "_shared" / "contracts"
+    contracts_dir.mkdir(parents=True, exist_ok=True)
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -111,13 +115,13 @@ def _make_fixture(
         graph_api_lines.append("    ]\n\ndef dyn(rel_type):\n    return []\n")
     else:
         graph_api_lines.append("    ]\n")
-    (yadgar_dir / "graph_api.py").write_text("".join(graph_api_lines))
+    (graph_dir / "graph_api.py").write_text("".join(graph_api_lines))
 
-    # viz_meta.py — EDGE_TYPES registry
+    # contracts/viz.py — EDGE_TYPES registry
     entries = ""
     for rt in registry_edge_types:
         entries += f'    "{rt}": {{"label": "{rt}", "role": "display", "default_on": True}},\n'
-    (yadgar_dir / "viz_meta.py").write_text(f"EDGE_TYPES: dict[str, dict] = {{\n{entries}}}\n")
+    (contracts_dir / "viz.py").write_text(f"EDGE_TYPES: dict[str, dict] = {{\n{entries}}}\n")
 
     # docs/EDGE_CONTRACT.md
     contract_text = _CONTRACT_HEADER
@@ -258,19 +262,23 @@ def test_list_all_exits_zero_on_violations(tmp_path):
 
 def test_multi_type_contract_row(tmp_path):
     """A contract row listing multiple backtick types covers all of them."""
-    yadgar_dir = tmp_path / "yadgar" / "core"
-    yadgar_dir.mkdir(parents=True, exist_ok=True)
+    # T2 Car E3 paths: graph_api lives in yadgar/backend/graph/; the EDGE_TYPES
+    # registry is the _shared contract yadgar/_shared/contracts/viz.py.
+    graph_dir = tmp_path / "yadgar" / "backend" / "graph"
+    graph_dir.mkdir(parents=True, exist_ok=True)
+    contracts_dir = tmp_path / "yadgar" / "_shared" / "contracts"
+    contracts_dir.mkdir(parents=True, exist_ok=True)
     docs_dir = tmp_path / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
 
     # graph_api.py with literal types for co_a and co_b
-    (yadgar_dir / "graph_api.py").write_text(
+    (graph_dir / "graph_api.py").write_text(
         "def f():\n"
         '    return [{"source":"a","target":"b","type":"co_a"},\n'
         '            {"source":"a","target":"b","type":"co_b"}]\n'
     )
     # registry has both
-    (yadgar_dir / "viz_meta.py").write_text(
+    (contracts_dir / "viz.py").write_text(
         "EDGE_TYPES: dict[str, dict] = {\n"
         '    "co_a": {"label": "Co A", "role": "retrieval", "default_on": True},\n'
         '    "co_b": {"label": "Co B", "role": "retrieval", "default_on": True},\n'

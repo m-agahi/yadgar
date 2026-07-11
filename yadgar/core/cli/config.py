@@ -3,14 +3,14 @@
 
 def _config_dispatch_table() -> dict:
     """Lazy import: build sub-command → handler mapping on first call."""
-    from yadgar._shared.config_sync import cmd_config_sync
-    from yadgar._shared.config_yaml import (
+    from yadgar._shared.config.config_yaml import (
         cmd_config_edit,
         cmd_config_get,
         cmd_config_init,
         cmd_config_list,
         cmd_config_set,
     )
+    from yadgar.core.config_sync import cmd_config_sync
 
     return {
         "init": cmd_config_init,

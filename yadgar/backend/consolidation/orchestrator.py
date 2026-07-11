@@ -69,7 +69,9 @@ class _OrchestratorMixin:
             logger.info("Sleep cycle complete: %s", stats)
             return stats
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.sleep_cycle", _exc)
             logger.exception("Sleep cycle failed")
@@ -150,7 +152,9 @@ class _OrchestratorMixin:
             logger.info("phase_end: full_reconcile_links duration_ms=%d", _dur_ms)
             _warn_slow_phase("full_reconcile_links", _dur_ms)
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.phase_full_reconcile_links", _exc)
             logger.exception("Full similarity-link reconcile failed")
@@ -199,7 +203,9 @@ class _OrchestratorMixin:
             logger.info("phase_end: link_similar duration_ms=%d", _dur_ms)
             _warn_slow_phase("link_similar", _dur_ms)
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.phase_link_similar", _exc)
             logger.exception("Similarity linking failed")
@@ -212,7 +218,9 @@ class _OrchestratorMixin:
             logger.info("phase_end: detect_causality duration_ms=%d", _dur_ms)
             _warn_slow_phase("detect_causality", _dur_ms)
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.phase_detect_causality", _exc)
             logger.exception("Causal detection failed")
@@ -228,7 +236,9 @@ class _OrchestratorMixin:
             logger.info("phase_end: compute_graph_priors duration_ms=%d", _dur_ms)
             _warn_slow_phase("compute_graph_priors", _dur_ms)
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.phase_compute_graph_priors", _exc)
             logger.exception("Graph prior computation failed (non-fatal)")
@@ -244,7 +254,9 @@ class _OrchestratorMixin:
             logger.info("phase_end: compute_cofire_priors duration_ms=%d", _dur_ms)
             _warn_slow_phase("compute_cofire_priors", _dur_ms)
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.phase_compute_cofire_priors", _exc)
             logger.exception("Co-fire prior computation failed (non-fatal)")
@@ -265,7 +277,9 @@ class _OrchestratorMixin:
             logger.info("phase_end: memify duration_ms=%d", _dur_ms)
             _warn_slow_phase("memify", _dur_ms)
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.phase_memify", _exc)
             logger.exception("Memify cycle failed")
@@ -282,7 +296,9 @@ class _OrchestratorMixin:
             logger.info("phase_end: cls_consolidation duration_ms=%d", _dur_ms)
             _warn_slow_phase("cls_consolidation", _dur_ms)
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.phase_cls_consolidation", _exc)
             logger.exception("CLS consolidation cycle failed")
@@ -300,7 +316,9 @@ class _OrchestratorMixin:
             logger.info("phase_end: action_log duration_ms=%d", _dur_ms)
             _warn_slow_phase("action_log", _dur_ms)
         except Exception as _exc:
-            from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+            from yadgar._shared.observability.exception_telemetry import (
+                record_exception,  # noqa: PLC0415
+            )
 
             record_exception("consolidation.phase_action_log", _exc)
             logger.exception("Action log processing failed")
@@ -335,7 +353,9 @@ class _OrchestratorMixin:
                     logger.info("phase_end: domain_consolidation duration_ms=%d", _dur_ms)
                     _warn_slow_phase("domain_consolidation", _dur_ms)
                 except Exception as _exc:
-                    from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+                    from yadgar._shared.observability.exception_telemetry import (
+                        record_exception,  # noqa: PLC0415
+                    )
 
                     record_exception("consolidation.phase_domain_consolidation", _exc)
                     logger.exception("Domain consolidation failed")
@@ -352,7 +372,7 @@ class _OrchestratorMixin:
         finally:
             # PR-E: observe full cycle wall-clock even if a non-guarded phase raises
             try:
-                from yadgar._shared.metrics import (
+                from yadgar._shared.observability.metrics import (
                     yadgar_consolidation_duration_seconds,  # noqa: PLC0415
                 )
 

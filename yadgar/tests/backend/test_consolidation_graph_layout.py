@@ -10,7 +10,9 @@ import pytest
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar.backend.consolidation import ConsolidationScheduler
-from yadgar.core.consolidation.orchestrator import _maybe_precompute_graph_layout
+
+# T2 Car E3: the layout precompute moved into the backend consolidation cycle.
+from yadgar.backend.consolidation.service import _maybe_precompute_graph_layout
 
 
 @pytest.fixture(scope="module")

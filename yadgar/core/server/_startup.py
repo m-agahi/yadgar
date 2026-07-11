@@ -30,7 +30,7 @@ from yadgar._shared.runtime.lifecycle import _emit_startup_diagnostics
 # composition root (shared engines + 9 core-only), not the shared-only lifecycle
 # entry.
 from yadgar.core.bootstrap import core_init_engines as init_engines
-from yadgar.core.daemons import _maybe_auto_check_for_update  # R2a Car D1
+from yadgar.core.daemon.daemons import _maybe_auto_check_for_update  # R2a Car D1
 
 # R2a Car D2: the signal handler + graceful-shutdown wrapper moved to
 # yadgar.core.lifecycle (they import yadgar.core.sensitive_lock / sd_notify / drain

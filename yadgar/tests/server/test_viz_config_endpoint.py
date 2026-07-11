@@ -165,8 +165,8 @@ def test_viz_config_registry_complete():
     This is the I25 ratchet for viz knobs.
     """
     from yadgar._shared.config import Settings
-    from yadgar._shared.config_registry import _REGISTRY
-    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar._shared.config.config_registry import _REGISTRY
+    from yadgar._shared.config.config_yaml import FIELD_META
 
     registry_names = {e.name for e in _REGISTRY}
 

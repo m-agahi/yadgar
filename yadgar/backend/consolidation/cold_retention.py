@@ -126,7 +126,9 @@ def _cold_memory_retention_report(
 def _emit_cold_purge_candidates_metric(count: int) -> None:
     """Set yadgar_cold_purge_candidates gauge. Non-fatal."""
     try:
-        from yadgar._shared.metrics import yadgar_cold_purge_candidates  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import (
+            yadgar_cold_purge_candidates,  # noqa: PLC0415
+        )
 
         yadgar_cold_purge_candidates.set(count)
     except Exception:

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from yadgar.core.graph_api import GraphAPI
+from yadgar.backend.graph.graph_api import GraphAPI
 
 # ---------------------------------------------------------------------------
 # Helpers

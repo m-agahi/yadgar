@@ -6,9 +6,9 @@ import logging
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.secrets import gate_or_reject
+from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.server_helpers import _has_unpaired_surrogate
-from yadgar._shared.tracing import trace_span
 
 from .context import MemorizeContext
 
@@ -136,7 +136,9 @@ def _validate_gate_and_policy(ctx: MemorizeContext) -> dict | None:
     gate = gate_or_reject(ctx.content, tags=list(ctx.tags) if ctx.tags else [])
     if gate is not None:
         try:
-            from yadgar._shared.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (
+                yadgar_writegate_outcome,  # noqa: PLC0415
+            )
 
             yadgar_writegate_outcome.labels(outcome="rejected_secret").inc()
         except Exception:

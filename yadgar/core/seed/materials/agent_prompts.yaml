@@ -25,6 +25,7 @@ contract:
        its plan lifecycle (ADR-0081/0082) and discipline rules bind this dispatch.
 
     REQUIRED: your final message MUST end with this section (even if empty):
+    This footer IS memorized verbatim — one memory per bullet. Write each bullet as a standalone, context-complete memory (durable fact, not status); note candidates as you go and finalize at the end.
 
     ## Yadgar findings
     - <fact/anchor/insight> or "none"

@@ -41,7 +41,7 @@ def _fresh_client(monkeypatch, idle_eviction_env: str | None):
         monkeypatch.delenv("YADGAR_MODEL_IDLE_EVICTION_SECONDS", raising=False)
 
     # Re-import ml_client so module-level env read is re-evaluated
-    import yadgar.backend.ml_client as ml_mod
+    import yadgar.backend.ml_client.ml_client as ml_mod
 
     importlib.reload(ml_mod)
 
@@ -54,21 +54,21 @@ def _fresh_client(monkeypatch, idle_eviction_env: str | None):
 
 def _get_gauge_value(model: str) -> float:
     """Read yadgar_embed_model_loaded{model} from embed_service_metrics registry."""
-    import yadgar.backend.embed_service_metrics as esm
+    import yadgar.backend.embed_service.embed_service_metrics as esm
 
     return esm.model_loaded.labels(model=model)._value.get()
 
 
 def _get_counter_value(model: str) -> float:
     """Read yadgar_embed_model_unload_total{model} from embed_service_metrics registry."""
-    import yadgar.backend.embed_service_metrics as esm
+    import yadgar.backend.embed_service.embed_service_metrics as esm
 
     return esm.model_unload_total.labels(model=model)._value.get()
 
 
 def _get_histogram_sum(model: str) -> float:
     """Read yadgar_embed_model_load_duration_seconds{model} _sum (proxy for 'observed at all')."""
-    import yadgar.backend.embed_service_metrics as esm
+    import yadgar.backend.embed_service.embed_service_metrics as esm
 
     return esm.model_load_duration_seconds.labels(model=model)._sum.get()
 
@@ -85,7 +85,7 @@ def reset_metrics():
     We re-import so each test starts from a clean registry.
     Note: CollectorRegistry allows re-registration after module reload.
     """
-    import yadgar.backend.embed_service_metrics as esm
+    import yadgar.backend.embed_service.embed_service_metrics as esm
 
     # Set gauge to 1 for "ce" to simulate a loaded model
     esm.model_loaded.labels(model="ce").set(1)
@@ -102,7 +102,7 @@ class TestEnvDefaultNoEviction:
         """With YADGAR_MODEL_IDLE_EVICTION_SECONDS unset, gauge stays 1 after 1h idle."""
         client, ml_mod = _fresh_client(monkeypatch, idle_eviction_env=None)
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         esm.model_loaded.labels(model="ce").set(1)
         gauge_before = _get_gauge_value("ce")
@@ -124,7 +124,7 @@ class TestEnvDefaultNoEviction:
         """With YADGAR_MODEL_IDLE_EVICTION_SECONDS=0, gauge stays 1 after 1h idle."""
         client, ml_mod = _fresh_client(monkeypatch, idle_eviction_env="0")
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         esm.model_loaded.labels(model="ce").set(1)
 
@@ -146,7 +146,7 @@ class TestEnvPositiveEvictsAndIncrements:
         """With env=60, after 90s idle the CE gauge drops to 0 and counter increments by 1."""
         client, ml_mod = _fresh_client(monkeypatch, idle_eviction_env="60")
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         esm.model_loaded.labels(model="ce").set(1)
         counter_before = _get_counter_value("ce")
@@ -169,7 +169,7 @@ class TestEnvPositiveEvictsAndIncrements:
         """With env=60, after only 30s idle the gauge stays 1."""
         client, ml_mod = _fresh_client(monkeypatch, idle_eviction_env="60")
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         esm.model_loaded.labels(model="ce").set(1)
 
@@ -191,7 +191,7 @@ class TestExplicitArgOverridesEnv:
         """unload_if_idle(idle_seconds=30) evicts after 45s even when env=0."""
         client, ml_mod = _fresh_client(monkeypatch, idle_eviction_env="0")
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         esm.model_loaded.labels(model="ce").set(1)
         counter_before = _get_counter_value("ce")
@@ -217,8 +217,8 @@ class TestLoadDurationHistogram:
         """After a CE model is loaded via score_cross_encoder, histogram _count increments."""
         monkeypatch.delenv("YADGAR_MODEL_IDLE_EVICTION_SECONDS", raising=False)
 
-        import yadgar.backend.embed_service_metrics as esm
-        import yadgar.backend.ml_client as ml_mod
+        import yadgar.backend.embed_service.embed_service_metrics as esm
+        import yadgar.backend.ml_client.ml_client as ml_mod
 
         importlib.reload(ml_mod)
 
@@ -303,7 +303,7 @@ class TestSpanEmission:
         _tracer, exporter = in_memory_tracer
         client, ml_mod = _fresh_client(monkeypatch, idle_eviction_env="60")
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         esm.model_loaded.labels(model="ce").set(1)
 
@@ -319,7 +319,7 @@ class TestSpanEmission:
         _tracer, exporter = in_memory_tracer
         monkeypatch.delenv("YADGAR_MODEL_IDLE_EVICTION_SECONDS", raising=False)
 
-        import yadgar.backend.ml_client as ml_mod
+        import yadgar.backend.ml_client.ml_client as ml_mod
 
         importlib.reload(ml_mod)
 

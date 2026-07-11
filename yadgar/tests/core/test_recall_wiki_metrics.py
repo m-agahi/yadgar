@@ -234,7 +234,7 @@ def _make_settings_mock():
 
 def _make_retriever_with_mocks(settings_override=None):
     """Build a Retriever with fully mocked sub-dependencies."""
-    from yadgar._shared.retrieval.core import Retriever
+    from yadgar.backend.retrieval.core import Retriever
 
     s = settings_override or _make_settings_mock()
 

@@ -39,7 +39,7 @@ import re
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_replay, _get_storage
-from yadgar._shared.wiki import WikiAddOptions
+from yadgar._shared.wiki.contract import WikiAddOptions
 
 logger = logging.getLogger(__name__)
 

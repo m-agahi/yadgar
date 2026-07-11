@@ -290,7 +290,7 @@ class TestCECacheIntegration:
         monkeypatch.setenv("YADGAR_CE_CACHE_MAX_ENTRIES", str(max_entries))
         cfg.get_settings.cache_clear()
 
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
         return es
@@ -385,7 +385,7 @@ class TestCacheMetrics:
 
     def test_embed_service_metrics_cache_counters_exist(self) -> None:
         """embed_service_metrics module exposes cache counter names."""
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         # After v5.4.0: these attributes must exist
         assert hasattr(esm, "ce_cache_hits_total")
@@ -438,7 +438,7 @@ class TestLifespanSnapshotRestore:
         """embed_service module exposes _ce_cache and _embed_cache after import."""
         import importlib
 
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
         assert hasattr(es, "_ce_cache")
@@ -448,7 +448,7 @@ class TestLifespanSnapshotRestore:
         """embed_service exposes _run_cache_snapshot_task coroutine."""
         import importlib
 
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
         assert hasattr(es, "_run_cache_snapshot_task")

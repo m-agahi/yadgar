@@ -63,7 +63,7 @@ def _drainer_env(tmp_path):
     real_fq = FileQueue(tmp_path)
 
     import yadgar._shared.runtime.state as _state_mod
-    import yadgar.core.lifecycle as _cl
+    import yadgar.core.lifecycle.lifecycle as _cl
 
     drainer = QueueDrainer(
         queue=real_fq,
@@ -181,7 +181,7 @@ class TestTaxonomyFieldsInSidecar:
 
         # dlq_inspect should still list it, treating absent failure_reason as permanent_error
         with (
-            patch("yadgar.core.lifecycle._get_file_queue", return_value=fq),
+            patch("yadgar.core.lifecycle.lifecycle._get_file_queue", return_value=fq),
             patch("yadgar.core.server.tools.admin_dlq._get_file_queue", return_value=fq),
         ):
             entries = server.dlq_inspect()
@@ -258,7 +258,7 @@ class TestDrainerReroutesRejectionToDLQ:
         metric_fired = []
 
         try:
-            from yadgar._shared.metrics import yadgar_wiki_add_rejected_total as _m
+            from yadgar._shared.observability.metrics import yadgar_wiki_add_rejected_total as _m
 
             labels_obj = _m.labels(reason="duplicate_detected")
 

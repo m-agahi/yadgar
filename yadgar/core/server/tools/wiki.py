@@ -6,10 +6,10 @@ import logging
 import os
 
 import yadgar._shared.runtime.state as _st
-from yadgar._shared.enforcement import _enforcement_on, _inc_relaxed
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
-from yadgar._shared.secrets import gate_or_reject
+from yadgar._shared.security.enforcement import _enforcement_on, _inc_relaxed
+from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.server_helpers import _has_unpaired_surrogate, _push_event
 from yadgar._shared.storage.directory import is_directory_eligible
 
@@ -497,7 +497,9 @@ def wiki_query(
     finally:
         # P11: observe wiki_query total duration in finally so it fires on all paths.
         try:
-            from yadgar._shared.metrics import yadgar_wiki_query_duration_ms  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (
+                yadgar_wiki_query_duration_ms,  # noqa: PLC0415
+            )
 
             yadgar_wiki_query_duration_ms.observe((_time.monotonic() - _wiki_query_t0) * 1000)
         except Exception:

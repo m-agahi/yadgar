@@ -60,7 +60,7 @@ def cmd_setup(args):
     _paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     # Write default config.yaml if not present
-    from yadgar._shared.config_yaml import cmd_config_init, get_config_path
+    from yadgar._shared.config.config_yaml import cmd_config_init, get_config_path
 
     config_path = get_config_path()
     if not config_path.exists():

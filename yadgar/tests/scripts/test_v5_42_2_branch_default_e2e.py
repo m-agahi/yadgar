@@ -100,7 +100,7 @@ def _drainer_env(tmp_path, monkeypatch):
     real_fq = FileQueue(tmp_path)
 
     import yadgar._shared.runtime.state as _state_mod
-    import yadgar.core.lifecycle as _cl
+    import yadgar.core.lifecycle.lifecycle as _cl
 
     drainer = QueueDrainer(
         queue=real_fq,

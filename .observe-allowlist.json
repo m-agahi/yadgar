@@ -1,5 +1,5 @@
 {
-  "_comment": "I33 observe-coverage allowlist. Governance mirrors .complexity-allowlist.json (I30): every entry needs a valid category and a rationale >= 40 chars; a stale entry (fn no longer in scope) hard-fails even in warn-mode. Categories: hot-loop, generated, trivial, property, dunder, framework-instrumented, test, pre-existing. P1 (retrieval read path, ADR-0034) populated the retrieval-area exemptions below. The low-value presentation/CLI/generated/bootstrap tail is exempted en-masse via _exempt_globs (path-glob, one entry per directory or file). ADR-0040 option B (I33 glob blind-spot): _exempt_globs now hold ONLY CATEGORICALLY-non-observable dirs/files (a future fn there is also boilerplate: CLI glue, seed/export/migration codegen, package/logging/observe/timing framework, pure-render presentation files with no I/O). MIXED-logic files (viz_server.py, graph_api.py that COMPUTE the graph — real observable work) were removed from the glob and their real fns tier-instrumented @observe or given a governed per-fn exemption, so a NEW/modified fn there is no longer auto-invisible. Do NOT bulk-add all ~1,600 in-scope functions here.",
+  "_comment": "I33 observe-coverage allowlist. Governance mirrors .complexity-allowlist.json (I30): every entry needs a valid category and a rationale >= 40 chars; a stale entry (fn no longer in scope) hard-fails even in warn-mode. Categories: hot-loop, generated, trivial, property, dunder, framework-instrumented, test, pre-existing. P1 (retrieval read path, ADR-0034) populated the retrieval-area exemptions below. The low-value presentation/CLI/generated/bootstrap tail is exempted en-masse via _exempt_globs (path-glob, one entry per directory or file). ADR-0040 option B (I33 glob blind-spot): _exempt_globs now hold ONLY CATEGORICALLY-non-observable dirs/files (a future fn there is also boilerplate: CLI glue, seed/export/migration codegen, package/logging/observe/timing framework, pure-render presentation files with no I/O). MIXED-logic files (viz_server.py, graph_api.py that COMPUTE the graph \u2014 real observable work) were removed from the glob and their real fns tier-instrumented @observe or given a governed per-fn exemption, so a NEW/modified fn there is no longer auto-invisible. Do NOT bulk-add all ~1,600 in-scope functions here.",
   "cache:Cache._is_expired": {
     "category": "trivial",
     "rationale": "Pure two-line TTL predicate (clock() - write_ts > ttl); no I/O, no ops decision. Called under the lock from the already-@observe'd Cache.get; a span/metric per get would double-instrument the hot path with zero dashboard value."
@@ -73,74 +73,70 @@
       "category": "generated",
       "rationale": "on-demand DuckDB export tooling (row coercion, schema build, table fetch/write): pure data-marshalling invoked from an operator export command, not a hot or unattended path; exempt per obs-standard 'seed/migration/codegen' exempt-heavy tail."
     },
-    "yadgar/core/viz_daemon_health.py": {
-      "category": "generated",
-      "rationale": "viz daemon health-panel rendering helpers: format health data into presentation structures for the local dashboard; no service logic worth a span, presentation-layer exemption per obs-standard."
-    },
-    "yadgar/core/viz_meta.py": {
-      "category": "generated",
-      "rationale": "viz metadata presentation helper: shapes metadata for the local viz dashboard render path; pure presentation glue with no ops signal, exempt per obs-standard presentation tail."
-    },
-    "yadgar/core/graph_layout.py": {
-      "category": "generated",
-      "rationale": "graph layout geometry computation for the viz dashboard: pure coordinate math for presentation; no external I/O or ops decision to surface, presentation-layer exemption per obs-standard."
-    },
     "yadgar/__main__.py": {
       "category": "generated",
       "rationale": "package entrypoint argparse/dispatch shim: parses argv and hands off to the CLI, which itself dispatches to instrumented tools; a span here duplicates the CLI boundary with no added signal, entrypoint-glue exemption."
-    },
-    "yadgar/_shared/log_config.py": {
-      "category": "framework-instrumented",
-      "rationale": "the ENTIRE logging subsystem is the sink @observe's own span+metric+log writes flow into: an @observe here opens a span per log record → LogSpanProcessor emits a 'span_end' log line → that record re-enters the observed log path (filter/format/emit) → more spans → per-log amplification flood that crash-looped core+backend under real OTLP (v5.105 → v5.106). Log-emission functions are un-instrumentable by construction; the thread-local re-entry guard stops infinite recursion but NOT the per-log fan-out. Path-glob so no future @observe on this file can re-open the flood."
     },
     "yadgar/_shared/observability/observe.py": {
       "category": "framework-instrumented",
       "rationale": "the @observe decorator implementation itself: decorating the instrumentation framework with @observe is circular (a span emitter cannot span-source its own emit path); this IS the tri-signal machinery, exempt by construction."
     },
-    "yadgar/_shared/observability/timing.py": {
-      "category": "framework-instrumented",
-      "rationale": "the timing decorator factories (stage_timer/request_timer/labeled_timer) that the observe framework composes: framework plumbing that emits signals for other functions; instrumenting it is circular, exempt by construction."
-    },
     "yadgar/_shared/storage/migrations.py": {
       "category": "generated",
       "rationale": "schema migration boilerplate run once per version bump at startup; generated-style DDL steps with no recurring ops signal to surface on a dashboard, matching the 'generated/migration boilerplate' exemption category."
+    },
+    "yadgar/_shared/observability/log_config.py": {
+      "category": "framework-instrumented",
+      "rationale": "the ENTIRE logging subsystem is the sink @observe's own span+metric+log writes flow into: an @observe here opens a span per log record \u2192 LogSpanProcessor emits a 'span_end' log line \u2192 that record re-enters the observed log path (filter/format/emit) \u2192 more spans \u2192 per-log amplification flood that crash-looped core+backend under real OTLP (v5.105 \u2192 v5.106). Log-emission functions are un-instrumentable by construction; the thread-local re-entry guard stops infinite recursion but NOT the per-log fan-out. Path-glob so no future @observe on this file can re-open the flood."
+    },
+    "yadgar/core/viz/viz_daemon_health.py": {
+      "category": "generated",
+      "rationale": "viz daemon health-panel rendering helpers: format health data into presentation structures for the local dashboard; no service logic worth a span, presentation-layer exemption per obs-standard."
+    },
+    "yadgar/core/viz/viz_meta.py": {
+      "category": "generated",
+      "rationale": "viz metadata presentation helper: shapes metadata for the local viz dashboard render path; pure presentation glue with no ops signal, exempt per obs-standard presentation tail."
+    },
+    "yadgar/backend/graph/graph_layout.py": {
+      "category": "generated",
+      "rationale": "graph layout geometry computation for the viz dashboard: pure coordinate math for presentation; no external I/O or ops decision to surface, presentation-layer exemption per obs-standard."
     }
   },
   "blocks_render:render_blocks_section": {
     "category": "generated",
-    "rationale": "pure memory-block markdown renderer: formats block dicts into display lines for hook injection / viz-CLI surface; no I/O, no DB, no ops decision — presentation formatting only. A span/metric per render is noise. (Sole fn in blocks_render.py; glob removed under ADR-0040 option B so a NEW fn there becomes MISSING and visible, but this formatter is categorically non-observable.)"
+    "rationale": "pure memory-block markdown renderer: formats block dicts into display lines for hook injection / viz-CLI surface; no I/O, no DB, no ops decision \u2014 presentation formatting only. A span/metric per render is noise. (Sole fn in blocks_render.py; glob removed under ADR-0040 option B so a NEW fn there becomes MISSING and visible, but this formatter is categorically non-observable.)"
   },
-  "graph_api:_gc_callback": {
+  "system_metrics:_gc_callback": {
     "category": "framework-instrumented",
-    "rationale": "gc.callbacks handler that runs DURING garbage collection: (1) it IS a metric-emitter — its body calls yadgar_python_gc_duration_ms.observe(), so @observe (which emits signals) is circular; (2) it fires mid-GC and at interpreter teardown where module globals (time, _gc_start_times) are set to None, so opening a span here is the atexit/shutdown hazard the decorator-contract forbids (span-open on a torn-down path). Not a request/stage op."
+    "rationale": "gc.callbacks handler that runs DURING garbage collection: (1) it IS a metric-emitter \u2014 its body calls yadgar_python_gc_duration_ms.observe(), so @observe (which emits signals) is circular; (2) it fires mid-GC and at interpreter teardown where module globals (time, _gc_start_times) are set to None, so opening a span here is the atexit/shutdown hazard the decorator-contract forbids (span-open on a torn-down path). Not a request/stage op."
   },
   "graph_api:_limit_clause": {
     "category": "trivial",
-    "rationale": "pure branch returning a (sql_suffix, params) tuple for a node cap; no I/O, no ops decision. A span/metric on this two-line pure helper is noise — the enclosing get_full_graph @trace_span already covers the query stage it feeds."
+    "rationale": "pure branch returning a (sql_suffix, params) tuple for a node cap; no I/O, no ops decision. A span/metric on this two-line pure helper is noise \u2014 the enclosing get_full_graph @trace_span already covers the query stage it feeds."
   },
   "graph_api:GraphAPI._extract_id": {
     "category": "hot-loop",
-    "rationale": "staticmethod that parses one SurrealDB RecordID -> int; called once PER node and PER edge endpoint inside get_full_graph (2000+ entities + memories + wiki + every edge source/target). A span/metric per call is the per-item cardinality bomb — 2000+ spans per graph build. The enclosing get_full_graph @trace_span carries the boundary."
+    "rationale": "staticmethod that parses one SurrealDB RecordID -> int; called once PER node and PER edge endpoint inside get_full_graph (2000+ entities + memories + wiki + every edge source/target). A span/metric per call is the per-item cardinality bomb \u2014 2000+ spans per graph build. The enclosing get_full_graph @trace_span carries the boundary."
   },
-  "graph_api:_observe_dbsize_ms": {
+  "system_metrics:_observe_dbsize_ms": {
     "category": "framework-instrumented",
     "rationale": "metric-emitting primitive: sole body observes yadgar_viz_dbsize_sample_duration_ms.observe(elapsed_ms); wrapping a single histogram .observe() in @observe (which emits signals) is recursive span noise for one metric touch with no diagnostic value. Called once per sample_system_metrics cycle."
   },
-  "graph_api:run_metrics_sampler": {
+  "system_metrics:run_metrics_sampler": {
     "category": "framework-instrumented",
-    "rationale": "infinite `while True` background sampler thread entry: a boundary/stage @observe would open ONE span for the entire never-returning thread lifetime rather than per-cycle. Per-cycle instrumentation lives on sample_system_metrics (@observe stage), which this loop calls each iteration — same pattern as embed_service._run_cache_snapshot_task."
+    "rationale": "infinite `while True` background sampler thread entry: a boundary/stage @observe would open ONE span for the entire never-returning thread lifetime rather than per-cycle. Per-cycle instrumentation lives on sample_system_metrics (@observe stage), which this loop calls each iteration \u2014 same pattern as embed_service._run_cache_snapshot_task."
   },
   "viz_server:_mime_type": {
     "category": "trivial",
-    "rationale": "pure dict .get() mapping a file suffix to a MIME string; no I/O, no branching, no ops decision. The checker's 'get' I/O-sink hint blocks auto-trivial, but this genuinely IS trivial — a span/metric per static-file serve is presentation noise with no dashboard value."
+    "rationale": "pure dict .get() mapping a file suffix to a MIME string; no I/O, no branching, no ops decision. The checker's 'get' I/O-sink hint blocks auto-trivial, but this genuinely IS trivial \u2014 a span/metric per static-file serve is presentation noise with no dashboard value."
   },
   "viz_server:_proxy_enabled": {
     "category": "trivial",
-    "rationale": "pure env-var read returning whether YADGAR_VIZ_PROXY != '0'; no I/O sink, no ops decision. The checker's 'get' I/O-sink hint blocks auto-trivial, but a span/metric per proxy-flag check is pure noise — the enclosing do_* boundary span already covers the request."
+    "rationale": "pure env-var read returning whether YADGAR_VIZ_PROXY != '0'; no I/O sink, no ops decision. The checker's 'get' I/O-sink hint blocks auto-trivial, but a span/metric per proxy-flag check is pure noise \u2014 the enclosing do_* boundary span already covers the request."
   },
   "viz_server:_Handler.log_message": {
     "category": "trivial",
-    "rationale": "overridden BaseHTTPRequestHandler.log_message whose entire body is `pass` — silences the stdlib per-request access log. Nothing to observe; a span on a deliberate no-op is meaningless."
+    "rationale": "overridden BaseHTTPRequestHandler.log_message whose entire body is `pass` \u2014 silences the stdlib per-request access log. Nothing to observe; a span on a deliberate no-op is meaningless."
   },
   "viz_server:run_viz_server": {
     "category": "framework-instrumented",
@@ -208,7 +204,7 @@
   },
   "logs:logs_stream_handler.event_generator": {
     "category": "hot-loop",
-    "rationale": "Async generator SSE event loop nested inside logs_stream_handler; @observe sync-wraps and would fire the signal at generator creation not exhaustion, and it streams per-event forever so any per-yield signal is unbounded cardinality — the boundary handler carries the span."
+    "rationale": "Async generator SSE event loop nested inside logs_stream_handler; @observe sync-wraps and would fire the signal at generator creation not exhaustion, and it streams per-event forever so any per-yield signal is unbounded cardinality \u2014 the boundary handler carries the span."
   },
   "orchestrator:_rollback_daemon._rlog": {
     "category": "hot-loop",
@@ -221,10 +217,6 @@
   "__init__:_side_build_swap_and_start._abort_restart": {
     "category": "hot-loop",
     "rationale": "Nested abort/restart closure inside _side_build_swap_and_start invoked only on the vacuum-swap error path; the enclosing instrumented _side_build_swap_and_start carries the span, a separate signal on this rarely-taken inner handler adds no dashboard value."
-  },
-  "wiki:_wiki_observe_stage": {
-    "category": "hot-loop",
-    "rationale": "Per-stage metric-emission helper called once per wiki-query stage (fts/embed_query/hnsw) inside the query hot path; it IS a metric writer (yadgar_wiki_query_stage_ms), so wrapping it with @observe would be circular and double-emit per stage."
   },
   "_reranking_heuristic:_score_memory": {
     "category": "hot-loop",
@@ -564,7 +556,7 @@
   },
   "cache:Cache.snapshot_age_seconds": {
     "category": "hot-loop",
-    "rationale": "Unified backend Cache twin of LRUCache.snapshot_age_seconds — a single os.stat mtime read returning seconds since last snapshot per namespace, feeding the snapshot-age gauge. Wrapping this one-stat helper in a span is noise; the parent snapshot stage span already covers timing."
+    "rationale": "Unified backend Cache twin of LRUCache.snapshot_age_seconds \u2014 a single os.stat mtime read returning seconds since last snapshot per namespace, feeding the snapshot-age gauge. Wrapping this one-stat helper in a span is noise; the parent snapshot stage span already covers timing."
   },
   "cache:Cache._drop_locked": {
     "category": "hot-loop",
@@ -660,11 +652,11 @@
   },
   "client:_inline_int_record_ids._sub": {
     "category": "hot-loop",
-    "rationale": "re.sub callback invoked once per type::record(…) token match inside _inline_int_record_ids; not independently reachable and covered by the parent function's hot span. Decorating a per-match regex callback adds per-token cardinality with zero dashboard value."
+    "rationale": "re.sub callback invoked once per type::record(\u2026) token match inside _inline_int_record_ids; not independently reachable and covered by the parent function's hot span. Decorating a per-match regex callback adds per-token cardinality with zero dashboard value."
   },
   "tracing:_install_span_log_queue": {
     "category": "framework-instrumented",
-    "rationale": "Observability framework primitive: sets up the background span-log queue thread. observe.py imports yadgar.tracing; adding @observe to tracing.py would create a circular import. These functions are the span infrastructure itself — wrapping them in @observe is recursive self-instrumentation noise."
+    "rationale": "Observability framework primitive: sets up the background span-log queue thread. observe.py imports yadgar.tracing; adding @observe to tracing.py would create a circular import. These functions are the span infrastructure itself \u2014 wrapping them in @observe is recursive self-instrumentation noise."
   },
   "tracing:_stop_span_log_queue": {
     "category": "framework-instrumented",
@@ -680,7 +672,7 @@
   },
   "tracing:_CircuitBreakerSpanExporter.export": {
     "category": "framework-instrumented",
-    "rationale": "Observability framework primitive: circuit-breaker wrapper around OTLP span export. Circular import with observe.py. Instrumenting the span exporter itself is recursive noise — it emits spans."
+    "rationale": "Observability framework primitive: circuit-breaker wrapper around OTLP span export. Circular import with observe.py. Instrumenting the span exporter itself is recursive noise \u2014 it emits spans."
   },
   "tracing:LogSpanProcessor._emit_span_log": {
     "category": "framework-instrumented",
@@ -720,15 +712,15 @@
   },
   "tracing:trace_span.decorator": {
     "category": "framework-instrumented",
-    "rationale": "Inner closure of trace_span: the returned decorator. Circular import with observe.py. Framework-internal closure of the span-decorator — recursive noise."
+    "rationale": "Inner closure of trace_span: the returned decorator. Circular import with observe.py. Framework-internal closure of the span-decorator \u2014 recursive noise."
   },
   "tracing:trace_span.decorator.async_wrapper": {
     "category": "framework-instrumented",
-    "rationale": "Async wrapper closure inside trace_span.decorator. Circular import with observe.py. Framework-internal span-emission wrapper — instrumenting it is recursive self-instrumentation."
+    "rationale": "Async wrapper closure inside trace_span.decorator. Circular import with observe.py. Framework-internal span-emission wrapper \u2014 instrumenting it is recursive self-instrumentation."
   },
   "tracing:trace_span.decorator.sync_wrapper": {
     "category": "framework-instrumented",
-    "rationale": "Sync wrapper closure inside trace_span.decorator. Circular import with observe.py. Framework-internal span-emission wrapper — instrumenting it is recursive self-instrumentation."
+    "rationale": "Sync wrapper closure inside trace_span.decorator. Circular import with observe.py. Framework-internal span-emission wrapper \u2014 instrumenting it is recursive self-instrumentation."
   },
   "tracing:span": {
     "category": "framework-instrumented",
@@ -736,7 +728,7 @@
   },
   "metrics:_collect_process_metrics": {
     "category": "framework-instrumented",
-    "rationale": "Observability framework primitive: collects and sets process-level Prometheus gauges (CPU, RSS, FDs). observe.py imports yadgar.metrics; adding @observe here creates a circular import. These functions write metrics — wrapping them in @observe is recursive self-instrumentation noise."
+    "rationale": "Observability framework primitive: collects and sets process-level Prometheus gauges (CPU, RSS, FDs). observe.py imports yadgar.metrics; adding @observe here creates a circular import. These functions write metrics \u2014 wrapping them in @observe is recursive self-instrumentation noise."
   },
   "metrics:loop_heartbeat": {
     "category": "framework-instrumented",
@@ -772,19 +764,19 @@
   },
   "metrics:_dq_count": {
     "category": "framework-instrumented",
-    "rationale": "Observability framework primitive: queries a data-quality metric count from the DB. Circular import with observe.py. Low-level DB read helper for a metrics collector — recursive noise if wrapped."
+    "rationale": "Observability framework primitive: queries a data-quality metric count from the DB. Circular import with observe.py. Low-level DB read helper for a metrics collector \u2014 recursive noise if wrapped."
   },
   "metrics:_parse_surprise_scores": {
     "category": "framework-instrumented",
-    "rationale": "Observability framework primitive: parses surprise-score rows from a DB result. Circular import with observe.py. Data-quality metrics helper — wrapping it in @observe adds noise with no dashboard value."
+    "rationale": "Observability framework primitive: parses surprise-score rows from a DB result. Circular import with observe.py. Data-quality metrics helper \u2014 wrapping it in @observe adds noise with no dashboard value."
   },
   "metrics:_dq_set_surprise_gauges": {
     "category": "framework-instrumented",
-    "rationale": "Observability framework primitive: sets surprise-score Prometheus gauges. Circular import with observe.py. Gauge-writer — wrapping in @observe is recursive self-instrumentation."
+    "rationale": "Observability framework primitive: sets surprise-score Prometheus gauges. Circular import with observe.py. Gauge-writer \u2014 wrapping in @observe is recursive self-instrumentation."
   },
   "metrics:_collect_data_quality": {
     "category": "framework-instrumented",
-    "rationale": "Observability framework primitive: drives the full data-quality metrics collection cycle. Circular import with observe.py. Metrics-collection orchestrator — wrapping it in @observe is recursive noise."
+    "rationale": "Observability framework primitive: drives the full data-quality metrics collection cycle. Circular import with observe.py. Metrics-collection orchestrator \u2014 wrapping it in @observe is recursive noise."
   },
   "metrics:metrics_handler": {
     "category": "framework-instrumented",
@@ -792,11 +784,11 @@
   },
   "logs:LogRingHandler.emit": {
     "category": "framework-instrumented",
-    "rationale": "log-emission sink (pushes every LogRecord into the in-memory ring for the SSE /logs stream): an @observe here opens a span per record whose span_end log (via LogSpanProcessor) re-enters emit() → per-log span amplification flood (v5.106). Un-instrumentable by construction like log_config.py; the surrounding logs.py HTTP route handlers stay observed, so this is a per-fn key, not a file glob."
+    "rationale": "log-emission sink (pushes every LogRecord into the in-memory ring for the SSE /logs stream): an @observe here opens a span per record whose span_end log (via LogSpanProcessor) re-enters emit() \u2192 per-log span amplification flood (v5.106). Un-instrumentable by construction like log_config.py; the surrounding logs.py HTTP route handlers stay observed, so this is a per-fn key, not a file glob."
   },
   "logs:_SpanEndFilter.filter": {
     "category": "framework-instrumented",
-    "rationale": "logging.Filter on LogRingHandler that drops OTel span_end telemetry from the app-log ring (v5.106 gap #3, ADR-0041). Runs on the log-emission path for EVERY record the ring handler processes: an @observe here opens a span per record whose span_end log (via LogSpanProcessor) re-enters the filter → per-log span amplification, the exact flood this filter exists to stop. Un-instrumentable by construction like LogRingHandler.emit / ContentRedactor.filter; per-fn key since surrounding logs.py route handlers stay observed."
+    "rationale": "logging.Filter on LogRingHandler that drops OTel span_end telemetry from the app-log ring (v5.106 gap #3, ADR-0041). Runs on the log-emission path for EVERY record the ring handler processes: an @observe here opens a span per record whose span_end log (via LogSpanProcessor) re-enters the filter \u2192 per-log span amplification, the exact flood this filter exists to stop. Un-instrumentable by construction like LogRingHandler.emit / ContentRedactor.filter; per-fn key since surrounding logs.py route handlers stay observed."
   },
   "log_config:RequestLoggingMiddleware.__call__.send_with_capture": {
     "category": "framework-instrumented",
@@ -808,14 +800,18 @@
   },
   "embed_service:recall_route._run_pipeline": {
     "category": "framework-instrumented",
-    "rationale": "Inner thread-pool closure dispatched via asyncio.to_thread() inside the @observe-decorated recall_route() handler. The outer handler already carries the tri-signal span; adding a second span for the closure body produces a double-span with no boundary value — the trace already attributes the thread duration under the parent recall_route span."
+    "rationale": "Inner thread-pool closure dispatched via asyncio.to_thread() inside the @observe-decorated recall_route() handler. The outer handler already carries the tri-signal span; adding a second span for the closure body produces a double-span with no boundary value \u2014 the trace already attributes the thread duration under the parent recall_route span."
   },
   "_scan:_on_walk_error": {
     "category": "trivial",
-    "rationale": "One-line os.walk onerror callback: logs a permission-denied warning and returns. No ops decision, no I/O beyond the warning log, not a runtime or observable path — a span/metric yields zero dashboard value (folder-split #17: exposed when seed moved to core/seed)."
+    "rationale": "One-line os.walk onerror callback: logs a permission-denied warning and returns. No ops decision, no I/O beyond the warning log, not a runtime or observable path \u2014 a span/metric yields zero dashboard value (folder-split #17: exposed when seed moved to core/seed)."
   },
   "_surreal_runner:_kill_all_spawned_surreal_atexit": {
     "category": "trivial",
-    "rationale": "Atexit-registered exception guard: wraps kill_all_spawned_surreal() in try/except so a shutdown-time logging error cannot force a non-zero process exit. No ops logic of its own, test-teardown infra only — a span/metric yields zero dashboard value (folder-split #17)."
+    "rationale": "Atexit-registered exception guard: wraps kill_all_spawned_surreal() in try/except so a shutdown-time logging error cannot force a non-zero process exit. No ops logic of its own, test-teardown infra only \u2014 a span/metric yields zero dashboard value (folder-split #17)."
+  },
+  "store:_wiki_observe_stage": {
+    "category": "hot-loop",
+    "rationale": "Per-stage metric-emission helper called once per wiki-query stage (fts/embed_query/hnsw) inside the query hot path; it IS a metric writer (yadgar_wiki_query_stage_ms), so wrapping it with @observe would be circular and double-emit per stage."
   }
 }

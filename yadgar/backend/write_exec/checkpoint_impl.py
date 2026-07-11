@@ -13,7 +13,7 @@ import logging
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.restoration import CheckpointContext
+from yadgar._shared.restoration.contract import CheckpointContext
 from yadgar._shared.runtime.lifecycle import _get_replay
 
 logger = logging.getLogger(__name__)

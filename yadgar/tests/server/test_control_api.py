@@ -972,7 +972,7 @@ def test_section_category_map_covers_all_field_meta_sections(monkeypatch):
     causes unknown categories to silently fall back to 'config'. This test
     catches that regression.
     """
-    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar._shared.config.config_yaml import FIELD_META
     from yadgar.core.server.routes.control import SECTION_TO_CATEGORY
 
     sections_in_meta = {meta["section"] for meta in FIELD_META.values()}
@@ -995,7 +995,7 @@ def test_no_knobs_resolve_to_catchall_config_category():
     yadgar/config_yaml.py FIELD_META to an existing, explicitly mapped section.
     Do NOT create new sections.
     """
-    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar._shared.config.config_yaml import FIELD_META
     from yadgar.core.server.routes.control import _get_category
 
     catchall = [name for name, m in FIELD_META.items() if _get_category(m["section"]) == "config"]

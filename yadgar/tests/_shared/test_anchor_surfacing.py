@@ -20,7 +20,7 @@ import pytest
 
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
-from yadgar._shared.restoration import CheckpointRestore
+from yadgar._shared.restoration.checkpoint_restore import CheckpointRestore
 from yadgar._shared.storage import StorageEngine
 
 # ── fixtures ────────────────────────────────────────────────────────────────

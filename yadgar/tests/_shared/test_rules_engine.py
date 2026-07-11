@@ -5,12 +5,12 @@ import pytest
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.retrieval import Retriever
 from yadgar._shared.rules_engine import (
     RulesEngine,
     _parse_action,
     _parse_condition,
 )
+from yadgar.backend.retrieval import Retriever
 
 
 @pytest.fixture

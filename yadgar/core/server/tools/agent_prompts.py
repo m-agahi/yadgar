@@ -24,7 +24,7 @@ import logging
 import re
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.secrets import gate_or_reject
+from yadgar._shared.security.secrets import gate_or_reject
 from yadgar.core.server._app import _tool
 from yadgar.core.server.tools._forward import _forward_admin
 

@@ -117,6 +117,8 @@ Runs nightly while the daemon stays up in maintenance mode (no MCP reconnect). P
 
 Deeper detail: [docs/architecture.md](docs/architecture.md) · [docs/retrieval.md](docs/retrieval.md) · [docs/memory-lifecycle.md](docs/memory-lifecycle.md).
 
+**Layer docs (in-tree):** each layer root carries a `README.md` (subsystem map) and an `AGENTS.md` (placement laws for coding agents) — [`yadgar/_shared/`](yadgar/_shared/README.md) · [`yadgar/backend/`](yadgar/backend/README.md) · [`yadgar/core/`](yadgar/core/README.md). Major subsystem packages (storage, retrieval, config, observability, security, wiki, embed_service, consolidation, server, viz, daemon, cli, install, seed, hooks) carry their own `README.md`; existence is lint-enforced (`scripts/check_subsystem_readmes.py`).
+
 ---
 
 ## Install

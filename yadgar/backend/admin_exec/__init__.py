@@ -23,6 +23,9 @@ from yadgar.backend.admin_exec import (
     invariants,
     memory,
     project,
+    restoration,
+    seed,
+    staleness,
     wiki,
 )
 
@@ -46,6 +49,15 @@ _ADMIN_OPS: dict[str, Callable[[dict], dict]] = {
     "reembed_all": memory.reembed_all,
     "add_rule": memory.add_rule,
     "archive_purge": memory.archive_purge,
+    # staleness-flag + sentinel-vacuum writes (T2 Car E1)
+    "update_memory_staleness": memory.update_memory_staleness,
+    "vacuum_stale_sentinels": memory.vacuum_stale_sentinels,
+    # staleness heat-decay compute (T2 Car E1 — census verdict #8)
+    "staleness_file_changed": staleness.staleness_file_changed,
+    "staleness_scan": staleness.staleness_scan,
+    "staleness_flag_memory": staleness.staleness_flag_memory,
+    # seed store phase (T2 Car E1 — census verdict #9)
+    "seed_store": seed.seed_store,
     # wiki-edit + agent_prompt writes (R3 Car 3c / R5 group 3)
     "wiki_delete": wiki.wiki_delete,
     "wiki_discard": wiki.wiki_discard,
@@ -70,8 +82,11 @@ _ADMIN_OPS: dict[str, Callable[[dict], dict]] = {
     "write_audit_sentinel": audit.write_audit_sentinel,
     "check_invariants": invariants.check_invariants,
     "update_active_work": project.update_active_work,
+    "bootstrap_project_store": project.bootstrap_project_store,
     "wiki_cleanup_merged_branches": project.wiki_cleanup_merged_branches,
     "record_prelude_marker": project.record_prelude_marker,
+    # restoration writes (T2 Car B — pre-compact drain is write-only, no compute)
+    "pre_compact_drain": restoration.pre_compact_drain,
 }
 
 
@@ -97,4 +112,11 @@ def run_admin_op(op: str, payload: dict) -> dict:
     impl = _ADMIN_OPS.get(op)
     if impl is None:
         raise KeyError(f"unknown admin op: {op!r}")
+    # T2 Car B: ops that anchor (agent_prompt_save) or drain read _st._replay,
+    # which the shared root no longer builds. Compose the backend restoration
+    # engines here (idempotent no-op once built; also covers the test bypass
+    # path that skips the /admin route's _ensure_recall_engines).
+    from yadgar.backend.restoration import ensure_restoration_engines  # noqa: PLC0415
+
+    ensure_restoration_engines()
     return impl(payload)

@@ -133,11 +133,15 @@ def cli():
         _log_level = _cfg.CORE_LOG_LEVEL
         _log_format = _cfg.LOG_FORMAT
         if _log_level and _log_level.upper() != "WARN" and _log_level.upper() != "WARNING":
-            from yadgar._shared.log_config import configure_logging as _configure_logging
+            from yadgar._shared.observability.log_config import (
+                configure_logging as _configure_logging,
+            )
 
             _configure_logging(log_format=_log_format, level=_log_level, process="core")
         elif _log_format and _log_format.lower() == "json":
-            from yadgar._shared.log_config import configure_logging as _configure_logging
+            from yadgar._shared.observability.log_config import (
+                configure_logging as _configure_logging,
+            )
 
             _configure_logging(log_format="json", level="WARNING", process="core")
 

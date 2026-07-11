@@ -340,8 +340,8 @@ def test_retention_disabled(storage, monkeypatch):
 def test_three_config_knobs_registered_three_way():
     """All 3 MEMORY_ARCHIVE_RETENTION_* knobs appear in Settings, registry, and FIELD_META."""
     from yadgar._shared.config import Settings
-    from yadgar._shared.config_registry import list_config
-    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar._shared.config.config_registry import list_config
+    from yadgar._shared.config.config_yaml import FIELD_META
 
     # Settings (Phase 1 added these)
     fields = Settings.model_fields
@@ -416,7 +416,7 @@ def test_nightly_cycle_invokes_purge(storage, monkeypatch):
     - yadgar_archive_purged_total incremented by >=3.
     """
     import yadgar._shared.config as _cfg
-    from yadgar._shared.metrics import yadgar_archive_purged_total
+    from yadgar._shared.observability.metrics import yadgar_archive_purged_total
 
     # Seed eligible archives
     _insert_archive(storage, archived_at=_ago(180))
@@ -479,7 +479,7 @@ def test_metrics_emitted(storage, monkeypatch):
     Asserts counter deltas match result dict.
     """
     import yadgar._shared.config as _cfg
-    from yadgar._shared.metrics import (
+    from yadgar._shared.observability.metrics import (
         yadgar_archive_purged_total,
         yadgar_archive_retention_skipped_total,
     )

@@ -405,7 +405,7 @@ class TestMemoryBlockConfigKnobs:
 
     def test_i25_knobs_in_registry(self) -> None:
         """All four MEMORY_BLOCK_* env names appear in config_registry._REGISTRY."""
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_MEMORY_BLOCK_MAX_PER_SCOPE" in names
@@ -415,7 +415,7 @@ class TestMemoryBlockConfigKnobs:
 
     def test_i25_knobs_in_field_meta(self) -> None:
         """All four MEMORY_BLOCK_* lower-case keys appear in config_yaml.FIELD_META."""
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "memory_block_max_per_scope" in FIELD_META
         assert "memory_block_default_char_limit" in FIELD_META

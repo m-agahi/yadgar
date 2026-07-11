@@ -94,6 +94,24 @@ def _daemon(tmp_path_factory):
 
     _server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
 
+    # T2 Car E3: the /api/graph* handlers are thin forwarders to the backend
+    # POST /viz route (via _forward_viz). This single-process smoke harness runs
+    # ONLY the core daemon — there is no backend HTTP server, so every browser
+    # /api/graph fetch would raise inside _forward_viz (RuntimeError: EMBED_URL
+    # unset). Those repeated forward failures leak unclosed httpx responses that
+    # the zero-unraisable-warnings gate escalates into ExceptionGroup ERRORS.
+    #
+    # Wire patch_viz_bypass (the same seam unit + e2e legs use): _forward_viz →
+    # in-process run_viz_op against the _st engine stack init_engines just wired.
+    # Module-scoped MonkeyPatch installed BEFORE the uvicorn thread starts so the
+    # daemon thread (same process) sees the patched module global; .undo() on
+    # teardown. CALL-TIME guarded on YADGAR_EMBED_URL — unset here, so the bypass
+    # is active (a real-backend run would fall through to the HTTP forward).
+    from yadgar.tests._backend_harness import patch_viz_bypass
+
+    _viz_mp = pytest.MonkeyPatch()
+    patch_viz_bypass(_viz_mp)
+
     # Seed memories — brief wait for SurrealDB to finish startup
     time.sleep(2.0)
     import yadgar._shared.runtime.state as _st
@@ -126,19 +144,28 @@ def _daemon(tmp_path_factory):
     thread.start()
 
     daemon_url = f"http://127.0.0.1:{daemon_port}"
-    # Wait for daemon health
+    # Wait for daemon health. Same LEAK GUARD as the viz_server health check below:
+    # context-manage the success response and close HTTPError on 4xx/5xx so an
+    # unclosed file-like HTTPError cannot become a GC ResourceWarning under the
+    # zero-warning gate.
+    import urllib.error
+    import urllib.request
+
     deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:
         try:
-            import urllib.request
-
-            urllib.request.urlopen(f"{daemon_url}/health", timeout=1)
+            with urllib.request.urlopen(f"{daemon_url}/health", timeout=1):
+                pass
             break
+        except urllib.error.HTTPError as _http_err:
+            _http_err.close()  # file-like; unclosed → ResourceWarning at GC (zero-warning gate)
+            time.sleep(0.25)
         except Exception:
             time.sleep(0.25)
     else:
         uv_server.should_exit = True
         thread.join(timeout=3)
+        _viz_mp.undo()
         _server.shutdown()
         pytest.skip("daemon did not become healthy within 20s")
 
@@ -146,6 +173,7 @@ def _daemon(tmp_path_factory):
 
     uv_server.should_exit = True
     thread.join(timeout=5)
+    _viz_mp.undo()
     _server.shutdown()
 
 
@@ -159,7 +187,7 @@ def viz_server(_daemon):
     Yields the viz server base URL for Playwright to connect to.
     """
 
-    from yadgar.core.viz_server import _Handler, _ThreadingHTTPServer
+    from yadgar.core.viz.viz_server import _Handler, _ThreadingHTTPServer
 
     viz_port = _free_port()
 
@@ -175,15 +203,28 @@ def viz_server(_daemon):
     thread.start()
 
     base_url = f"http://127.0.0.1:{viz_port}"
-    # Quick health check — viz server doesn't have /health but / returns index.html (200)
+    # Quick health check — viz server doesn't have /health but / returns index.html (200).
+    #
+    # LEAK GUARD: urllib.request.urlopen RAISES urllib.error.HTTPError on any 4xx/5xx,
+    # and HTTPError is file-like (wraps a tempfile). If the viz server ever serves a
+    # non-2xx here (e.g. the t2-car-d3 STATIC_DIR break made every request a 404), each
+    # loop iteration leaks one unclosed HTTPError → ResourceWarning at GC → the zero-warning
+    # gate escalates the batch into an ExceptionGroup of unraisable-exception ERRORS on
+    # EVERY test that requested this module-scoped fixture (the 6×98 CI failure). Close the
+    # response on BOTH paths (success via context manager, error via HTTPError.close()) so a
+    # future non-2xx can never leak, independent of the production fix.
+    import urllib.error
+    import urllib.request
+
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
         try:
-            import urllib.request
-
-            resp = urllib.request.urlopen(base_url, timeout=1)
-            if resp.status == 200:
-                break
+            with urllib.request.urlopen(base_url, timeout=1) as resp:
+                if resp.status == 200:
+                    break
+        except urllib.error.HTTPError as _http_err:
+            _http_err.close()  # file-like; unclosed → ResourceWarning at GC (zero-warning gate)
+            time.sleep(0.1)
         except Exception:
             time.sleep(0.1)
     else:

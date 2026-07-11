@@ -63,7 +63,7 @@ def _insert_wiki(title: str, content: str) -> str:
 
 def _run_off_path(query: str, max_results: int = 20) -> list[tuple]:
     """Run the in-core _fanout_recall and return (id, score) tuples."""
-    from yadgar._shared.runtime.recall_pipeline import _fanout_recall
+    from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
     results = _fanout_recall(
         query=query,
@@ -85,7 +85,7 @@ def _run_on_path(query: str, max_results: int = 20) -> list[tuple]:
     import httpx
 
     # Reset the backend engines-ready flag so bootstrap runs (re-uses fixture engines)
-    import yadgar.backend.embed_service as _svc
+    import yadgar.backend.embed_service.embed_service as _svc
     from yadgar.backend.embed_service import app
 
     _svc._recall_engines_ready = True  # engines already inited by e2e_engines fixture
@@ -260,7 +260,7 @@ class TestRecallBackendBootstrap:
         _insert_mem(storage, embeddings, f"{_BOOT_QUERY} alpha result", heat=0.9)
         _insert_mem(storage, embeddings, f"{_BOOT_QUERY} beta result", heat=0.5)
 
-        import yadgar.backend.embed_service as _svc
+        import yadgar.backend.embed_service.embed_service as _svc
         from yadgar.backend.embed_service import app
 
         # Reset the engines-ready flag so _ensure_recall_engines runs.
@@ -378,7 +378,7 @@ class TestRecallCoreForwarderE2E:
         _insert_mem(storage, embeddings, f"{_FWD_QUERY} mid result", heat=0.5)
         _insert_wiki("Forwarder e2e wiki", f"{_FWD_QUERY} wiki content")
 
-        import yadgar.backend.embed_service as _svc
+        import yadgar.backend.embed_service.embed_service as _svc
         from yadgar.backend.embed_service import app as _backend_app
 
         # Ensure backend engines are ready (uses fixture's _st).
@@ -472,7 +472,7 @@ class TestRecallCoreForwarderE2E:
         _insert_mem(storage, embeddings, f"{_PAR2_QUERY} medium relevance item", heat=0.5)
         _insert_wiki("Forwarder parity wiki", f"{_PAR2_QUERY} wiki reference")
 
-        import yadgar.backend.embed_service as _svc
+        import yadgar.backend.embed_service.embed_service as _svc
         from yadgar.backend.embed_service import app as _backend_app
 
         _svc._recall_engines_ready = True
@@ -581,7 +581,7 @@ class TestRecallBackendProdEnvBootstrap:
         _insert_mem(storage, embeddings, f"{_PROD_QUERY} secondary hit", heat=0.5)
 
         import yadgar._shared.runtime.lifecycle as _lifecycle
-        import yadgar.backend.embed_service as _svc
+        import yadgar.backend.embed_service.embed_service as _svc
         from yadgar._shared.runtime import state as _st
         from yadgar.backend.embed_service import app
 

@@ -295,9 +295,10 @@ def cmd_seed(args):
     directory = str(Path(args.directory).resolve())
     print(f"Seeding project: {directory}", file=sys.stderr)
 
+    # T2 Car E1: the store phase forwards to the backend seed_store /admin op;
+    # db_path no longer applies (the backend owns the DB).
     result = seed_project(
         directory=directory,
-        db_path=args.db_path,
         dry_run=args.dry_run,
     )
 

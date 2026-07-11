@@ -100,7 +100,7 @@ def test_side_effects_span_nested_under_recall(span_exporter):
     from opentelemetry import trace
 
     import yadgar._shared.runtime.state as _st
-    from yadgar.core.server.tools.recall import _apply_recall_side_effects
+    from yadgar.backend.retrieval.recall_pipeline import _apply_recall_side_effects
 
     # Neutralise optional side-effect subsystems so the body runs to completion
     # without a live storage / cognitive map.
@@ -133,7 +133,7 @@ def test_side_effects_batches_heat_writes(span_exporter):
     Post-fix: a single boost_memories_access(ids, ts) call.
     """
     import yadgar._shared.runtime.state as _st
-    from yadgar.core.server.tools.recall import _apply_recall_side_effects
+    from yadgar.backend.retrieval.recall_pipeline import _apply_recall_side_effects
 
     _st._thermo = None
     _st._cognitive_map = None
@@ -163,7 +163,7 @@ def test_side_effects_batches_heat_writes(span_exporter):
 def test_side_effects_preserves_heat_values(span_exporter):
     """Batched boost must produce identical in-dict heat: min(heat+0.1, 1.0)."""
     import yadgar._shared.runtime.state as _st
-    from yadgar.core.server.tools.recall import _apply_recall_side_effects
+    from yadgar.backend.retrieval.recall_pipeline import _apply_recall_side_effects
 
     _st._thermo = None
     _st._cognitive_map = None
@@ -226,7 +226,7 @@ def test_fanout_fuse_span_emits_on_multi_provider(span_exporter):
     from opentelemetry import trace
 
     import yadgar._shared.runtime.state as _st
-    from yadgar.core.server.tools.recall import _fanout_recall
+    from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
     mem = {
         "id": 1,
@@ -277,7 +277,7 @@ def test_fanout_fuse_span_absent_on_single_provider(span_exporter):
     from opentelemetry import trace
 
     import yadgar._shared.runtime.state as _st
-    from yadgar.core.server.tools.recall import _fanout_recall
+    from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
     mem = {
         "id": 1,

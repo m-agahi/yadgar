@@ -88,7 +88,7 @@ class TestRecallWithTimeoutHelper:
 
     def test_timeout_increments_prometheus_counter(self):
         """On timeout, yadgar_hook_recall_timeout_total{handler} is incremented."""
-        import yadgar._shared.metrics as _metrics
+        import yadgar._shared.observability.metrics as _metrics
         import yadgar.core.server.http as _http
 
         handler_name = "instructions-loaded"
@@ -277,7 +277,7 @@ class TestTimeoutCounterAllHandlers:
 
     def test_counter_increments_for_prompt_recall(self):
         """yadgar_hook_recall_timeout_total{handler='prompt-recall'} increments on timeout."""
-        import yadgar._shared.metrics as _metrics
+        import yadgar._shared.observability.metrics as _metrics
         import yadgar.core.server.http as _http
 
         before = _metrics.yadgar_hook_recall_timeout_total.labels(
@@ -299,7 +299,7 @@ class TestTimeoutCounterAllHandlers:
 
     def test_counter_increments_for_subagent_start(self):
         """yadgar_hook_recall_timeout_total{handler='subagent-start'} increments on timeout."""
-        import yadgar._shared.metrics as _metrics
+        import yadgar._shared.observability.metrics as _metrics
         import yadgar.core.server.http as _http
 
         before = _metrics.yadgar_hook_recall_timeout_total.labels(

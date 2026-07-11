@@ -69,6 +69,57 @@ def _get_scheduler():
     return _scheduler
 
 
+@observe(tier="stage", metric="backend.consolidation.maybe_precompute_graph_layout")
+def _maybe_precompute_graph_layout(storage, settings) -> None:
+    """v5.88: precompute + cache the 3D graph layout (nightly / full paths only).
+
+    T2 Car E3 (census verdict #11): moved from the core orchestrator — the
+    graph assembly + spring-layout compute run next to the DB on the backend's
+    CPUs, inside the same full/nightly cycle that owns the rest of the heavy
+    compute.
+
+    Gated three ways so it never blocks: (1) VIZ_PRECOMPUTED_LAYOUT_ENABLED flag
+    (default OFF), (2) a graph-signature no-op — when the live graph shape matches
+    the cached signature nothing is recomputed, (3) only called from the
+    nightly/full paths, never the light budget. Non-fatal.
+    """
+    if not getattr(settings, "VIZ_PRECOMPUTED_LAYOUT_ENABLED", False):
+        return
+    try:
+        import time as _time  # noqa: PLC0415
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        from yadgar.backend.graph.graph_api import GraphAPI  # noqa: PLC0415
+        from yadgar.backend.graph.graph_layout import (  # noqa: PLC0415
+            compute_graph_layout,
+            graph_signature,
+        )
+
+        # Lay out the FULL uncapped graph (caps=0) so positions stay stable when
+        # the per-request /api/graph node caps change.
+        data = GraphAPI(storage).get_full_graph(0, 8, False, None, 0, 0)
+        nodes, edges = data.get("nodes", []), data.get("edges", [])
+        sig = graph_signature(nodes, edges)
+        cached = storage.get_graph_layout_cache()
+        if cached and cached.get("signature") == sig:
+            return  # graph shape unchanged — keep the cached layout
+
+        _t = _time.monotonic()
+        iterations = getattr(settings, "VIZ_LAYOUT_ITERATIONS", 50)
+        logger.info("phase_start: precompute_graph_layout nodes=%d", len(nodes))
+        positions = compute_graph_layout(nodes, edges, dim=3, iterations=iterations)
+        storage.set_graph_layout_cache(sig, positions, datetime.now(UTC).isoformat())
+        _dur_ms = int((_time.monotonic() - _t) * 1000)
+        logger.info("phase_end: precompute_graph_layout duration_ms=%d", _dur_ms)
+    except Exception as _exc:
+        from yadgar._shared.observability.exception_telemetry import (
+            record_exception,  # noqa: PLC0415
+        )
+
+        record_exception("consolidation.phase_precompute_graph_layout", _exc)
+        logger.exception("Precompute graph layout failed")
+
+
 @observe(tier="boundary", metric="backend.consolidation.run_cycle")
 def run_consolidation_cycle(mode: str = "light") -> dict:
     """Run one consolidation compute cycle for the given mode. Returns cycle stats.
@@ -77,16 +128,25 @@ def run_consolidation_cycle(mode: str = "light") -> dict:
     mode="full":    cycle + a FORCED sleep cycle (manual full trigger).
     mode="nightly": cycle + a GATED (6h) sleep cycle + full similarity reconcile.
 
-    The graph-layout precompute, anchor-audit, invariant-check and auto-vacuum
-    tail are CORE-side (the core orchestrator runs them around this forwarded
-    compute — R3 Car 1 D3). This function returns ONLY the compute stats.
+    The anchor-audit, invariant-check and auto-vacuum tail are CORE-side (the
+    core orchestrator runs them around this forwarded compute — R3 Car 1 D3).
+    The graph-layout precompute runs HERE on the full/nightly paths (T2 Car E3
+    — it is graph assembly + spring-layout compute over DB rows).
     """
     if mode not in _VALID_MODES:
         raise ValueError(f"consolidation mode {mode!r} invalid; use one of {_VALID_MODES}")
 
     scheduler = _get_scheduler()
     if mode == "nightly":
-        return scheduler.run_nightly_consolidation()
-    if mode == "full":
-        return scheduler.run_full_consolidation()
-    return scheduler.force_consolidate()
+        stats = scheduler.run_nightly_consolidation()
+    elif mode == "full":
+        stats = scheduler.run_full_consolidation()
+    else:
+        return scheduler.force_consolidate()
+
+    # T2 Car E3: full/nightly tail — layout precompute next to the DB.
+    import yadgar._shared.runtime.state as _st  # noqa: PLC0415
+    from yadgar._shared.config import get_settings  # noqa: PLC0415
+
+    _maybe_precompute_graph_layout(_st._storage, get_settings())
+    return stats

@@ -18,20 +18,18 @@ from typing import TYPE_CHECKING, Any, Literal
 import yadgar._shared.paths as _paths
 import yadgar._shared.runtime.state as _st  # sibling; avoid server/__init__ re-entry (Car 1)
 from yadgar._shared.astrocyte_pool import AstrocytePool
-from yadgar._shared.cognitive_map import CognitiveMap
 from yadgar._shared.config import get_settings
+from yadgar._shared.contracts.engram import EngramAllocator
 from yadgar._shared.embeddings import EmbeddingEngine
-from yadgar._shared.engram import EngramAllocator
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.metacognition import MetaCognition
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.restoration import CheckpointRestore
-from yadgar._shared.retrieval import Retriever
 from yadgar._shared.rules_engine import RulesEngine
+from yadgar._shared.runtime.sr_session import SRTransitionRecorder
 from yadgar._shared.sensory_buffer import ActionLogger
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
-from yadgar._shared.wiki import WikiStore
+from yadgar._shared.wiki.store import WikiStore
 
 if TYPE_CHECKING:
     pass
@@ -81,7 +79,7 @@ def _get_thermo() -> MemoryThermodynamics:
     return _st._thermo
 
 
-def _get_retriever() -> Retriever:
+def _get_retriever() -> Any:  # backend: Retriever (composed by backend.retrieval.compose)
     assert _st._retriever is not None, "Retriever not initialized"
     return _st._retriever
 
@@ -96,7 +94,12 @@ def _get_engram() -> EngramAllocator:
     return _st._engram
 
 
-def _get_replay() -> CheckpointRestore:
+# T2 Car B: return type is Any (was CheckpointRestore, now a yadgar.backend type).
+# CheckpointRestore moved to yadgar.backend.restoration behind POST /restore and
+# is constructed backend-side (ensure_restoration_engines); annotating the
+# concrete type here would reintroduce a _shared -> backend edge outside the
+# ADR-0056 waivers. The slot stays None in the core process — core forwards.
+def _get_replay() -> Any:  # backend: CheckpointRestore
     assert _st._replay is not None, "CheckpointRestore not initialized"
     return _st._replay
 
@@ -172,7 +175,7 @@ def _run_wiki_embedding_backfill(wiki) -> None:
 
 
 # R2a Car D2: _emit_sd_ready moved to yadgar.core.lifecycle — it imported
-# yadgar.core.sd_notify (a _shared → core edge). READY=1 is a CORE concern; the
+# yadgar.core.daemon.sd_notify (a _shared → core edge). READY=1 is a CORE concern; the
 # core composition root (core.bootstrap.core_init_engines) emits it after the full
 # engine set is built. The backend /recall slim path never emits READY (backend
 # has no sd_notify — NOTIFY_SOCKET is unset there, so the old emit was a no-op).
@@ -196,7 +199,9 @@ def _init_embedding_client(embedding_model: str | None, _settings, local_engines
         every core path (guard unchanged for core).
     """
     if os.environ.get("YADGAR_EMBED_URL"):
-        from yadgar._shared.remote_embeddings import RemoteEmbeddingEngine  # noqa: PLC0415
+        from yadgar._shared.embeddings.remote_embeddings import (
+            RemoteEmbeddingEngine,  # noqa: PLC0415
+        )
         from yadgar.backend.ml_client import RemoteMLClient  # noqa: PLC0415
 
         embeddings = RemoteEmbeddingEngine(embedding_model or _settings.EMBEDDING_MODEL)
@@ -242,7 +247,12 @@ def _init_secondary_engines(_settings) -> None:
     _st._buffer.start_session()
     _st._thermo = MemoryThermodynamics(_st._storage, _st._embeddings, _settings)
     _st._kg = KnowledgeGraph(_st._storage, _settings)
-    _st._cognitive_map = CognitiveMap(_st._storage, _settings)
+    # T2 Car B: the shared root builds only the SESSION-SIDE transition recorder
+    # (census verdict #5 — the core recall seam records SR transitions). The
+    # numpy compute subclass (backend CognitiveMap) is composed backend-side by
+    # yadgar.backend.restoration.ensure_restoration_engines, which UPGRADES this
+    # slot in the backend process.
+    _st._cognitive_map = SRTransitionRecorder(_st._storage)
 
 
 @observe(tier="stage")
@@ -303,19 +313,14 @@ def _init_retriever_and_post_engines(
     # _shared, legal) and then constructs them. `engine_set` is retained for API
     # parity; slim and full build the identical shared set here — the full-only
     # engines live in bootstrap, past the shared boundary.
-    # Car 2 (folder-split #17): inject the REAL process-global `ce` cache singleton
-    # at the composition root — the same registry instance the deleted lazy
-    # Reranker fallback fetched, so recall output is byte-identical (live CE dedup).
-    from yadgar.backend.cache import get_ce_cache  # noqa: PLC0415
-
-    _st._retriever = Retriever(
-        _st._storage,
-        _st._embeddings,
-        _st._kg,
-        _settings,
-        ml_client=ml_client,
-        ce_cache=get_ce_cache(),
-    )
+    # T2 Car E2: Retriever construction moved OUT of the shared root — the
+    # retrieval impl is a backend engine now (yadgar.backend.retrieval), composed
+    # lazily by ensure_retrieval_engine (Car B ensure_restoration_engines
+    # precedent). Store the selected ML client so the backend composer injects
+    # the same concrete this root picked; reset the slot so a stale instance
+    # from a previous engine build never leaks past init_engines.
+    _st._ml_client = ml_client
+    _st._retriever = None
     # R2a Car A: build the AstrocytePool STANDALONE here (both slim + full) so the
     # backend SLIM path can populate _st._pool without importing consolidation.
     # core/bootstrap injects THIS exact object into ConsolidationScheduler(pool=...)
@@ -326,18 +331,17 @@ def _init_retriever_and_post_engines(
     _st._rules_engine = RulesEngine(_st._storage, _settings)
     _load_default_rules(_st._rules_engine)
     _st._metacognition = MetaCognition(_st._storage, _st._embeddings, _st._kg, _settings)
-    _st._replay = CheckpointRestore(
-        storage=_st._storage,
-        embeddings=_st._embeddings,
-        retriever=_st._retriever,
-        cognitive_map=_st._cognitive_map,
-        metacognition=_st._metacognition,
-        settings=_settings,
-    )
+    # T2 Car B: CheckpointRestore construction moved OUT of the shared root —
+    # the impl is a backend engine now (yadgar.backend.restoration, behind
+    # POST /restore). _st._replay stays None in the core process (core forwards
+    # restore/pre_compact_drain over HTTP); the backend composes it via
+    # ensure_restoration_engines. Reset the slot so a stale instance from a
+    # previous engine build (test re-init) never leaks past init_engines —
+    # pre-Car-B this line assigned a fresh CheckpointRestore on every init.
+    _st._replay = None
     _st._wiki = WikiStore(_st._storage, _st._embeddings)
-    _st._retriever.set_engram(_st._engram)
-    _st._retriever.set_rules_engine(_st._rules_engine)
-    _st._retriever.set_metacognition(_st._metacognition)
+    # (engram/rules/metacognition wiring onto the retriever happens in the
+    # backend composer — ensure_retrieval_engine — which builds the retriever.)
 
 
 # R2a Car D2: _init_file_queue moved to yadgar.core.lifecycle with _get_file_queue.
@@ -438,7 +442,7 @@ def shutdown(on_stopping=None, snapshot_caches=None):
     """Gracefully shut down all engines. Idempotent — safe to call twice (Q16).
 
     R2a Car D2 — shutdown SPLIT: this shared teardown no longer imports
-    ``yadgar.core.sd_notify`` / ``yadgar.core.drain`` (the last two ``_shared → core``
+    ``yadgar.core.daemon.sd_notify`` / ``yadgar.core.daemon.drain`` (the last two ``_shared → core``
     edges in ``shutdown``). Instead it accepts two OPTIONAL callbacks that the core
     wrapper (``yadgar.core.lifecycle.shutdown``) injects:
 
@@ -479,7 +483,9 @@ def shutdown(on_stopping=None, snapshot_caches=None):
     # collector must never hang shutdown (it used to retry the final span flush
     # past the systemd stop-timeout → SIGKILL/exit-137 on every restart).
     try:
-        from yadgar._shared.tracing import shutdown_tracing as _shutdown_tracing  # noqa: PLC0415
+        from yadgar._shared.observability.tracing import (
+            shutdown_tracing as _shutdown_tracing,  # noqa: PLC0415
+        )
 
         _shutdown_tracing(timeout_sec=3.0)
     except Exception:  # noqa: BLE001
@@ -510,6 +516,7 @@ def shutdown(on_stopping=None, snapshot_caches=None):
     _st._staleness = None
     _st._thermo = None
     _st._retriever = None
+    _st._ml_client = None
     _st._curator = None
     _st._prospective = None
     _st._narrative = None
@@ -558,7 +565,7 @@ def _emit_startup_diagnostics(settings) -> None:
     failure cannot skip the warning either.
     """
     try:
-        from yadgar._shared.config_registry import (  # noqa: PLC0415
+        from yadgar._shared.config.config_registry import (  # noqa: PLC0415
             _set_config_gauges,
             emit_startup_config_log,
             warn_comet_dormant,

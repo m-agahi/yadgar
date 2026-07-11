@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 from yadgar.backend.sleep_compute.community import _CommunityMixin
 from yadgar.backend.sleep_compute.dream import _DreamMixin
 from yadgar.backend.sleep_compute.embed_compress import _EmbedCompressMixin

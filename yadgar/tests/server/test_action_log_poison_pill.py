@@ -59,7 +59,7 @@ class TestSecretLeakBlockedDoesNotCrashCycle:
 
     def test_single_poisoned_group_does_not_raise(self, tmp_path):
         """_process_action_log must not propagate SecretLeakBlocked."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         engine = _make_consolidation_engine(tmp_path)
         rows = _make_rows(5)
@@ -77,7 +77,7 @@ class TestSecretLeakBlockedDoesNotCrashCycle:
 
     def test_poisoned_group_ids_are_marked_processed(self, tmp_path):
         """IDs from a poisoned group must still be passed to mark_actions_processed."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         engine = _make_consolidation_engine(tmp_path)
         rows = _make_rows(5, base_id=100)
@@ -104,7 +104,7 @@ class TestSecretLeakBlockedDoesNotCrashCycle:
 
     def test_subsequent_groups_still_process_after_poisoned_group(self, tmp_path):
         """Groups after the poisoned group must still produce memories."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         engine = _make_consolidation_engine(tmp_path)
 
@@ -149,7 +149,7 @@ class TestSecretLeakBlockedDoesNotCrashCycle:
     )
     def test_quarantine_file_written(self, tmp_path):
         """Quarantined group IDs must be persisted to quarantine JSONL file."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         engine = _make_consolidation_engine(tmp_path)
         rows = _make_rows(5, base_id=200)
@@ -183,7 +183,7 @@ class TestSecretLeakBlockedDoesNotCrashCycle:
 
     def test_stats_include_quarantined_count(self, tmp_path):
         """Stats dict must include actions_quarantined count when poison-pill detected."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         engine = _make_consolidation_engine(tmp_path)
         rows = _make_rows(5, base_id=300)
@@ -206,7 +206,7 @@ class TestSecretLeakBlockedDoesNotCrashCycle:
 
     def test_memories_created_not_incremented_on_quarantine(self, tmp_path):
         """memories_created must NOT increment when insert_memory raises SecretLeakBlocked."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         engine = _make_consolidation_engine(tmp_path)
         rows = _make_rows(5, base_id=400)
@@ -226,7 +226,7 @@ class TestSecretLeakBlockedDoesNotCrashCycle:
 
     def test_quarantine_disk_error_does_not_crash_cycle(self, tmp_path):
         """If quarantine file write fails, the cycle must still complete (best-effort)."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         engine = _make_consolidation_engine(tmp_path)
         rows = _make_rows(5, base_id=500)

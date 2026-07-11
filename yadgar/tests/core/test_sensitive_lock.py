@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from yadgar.core import sensitive_lock
+from yadgar.core.sensitive_lock import sensitive_lock
 
 
 @pytest.fixture()

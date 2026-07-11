@@ -1,16 +1,19 @@
-"""Tests for yadgar/cli/restore.py — post-compaction context restore subcommand.
+"""Tests for yadgar/core/cli/restore.py — post-compaction restore subcommand.
 
-Wave 5 coverage: yadgar/cli/restore.py (15 stmts, 40% pre-wave).
-Strategy: patch init_replay_lightweight at yadgar.cli._shared (lazy import inside
-cmd_restore body). The replay mock returns a formatted string or empty dict
-to exercise both print and no-print branches. Also test register() wiring.
+T2 Car B: cmd_restore is a thin forwarder to the backend POST /restore
+(via yadgar.core.cli._shared.forward_restore). Strategy: patch the forward
+helper at its source module (cmd_restore lazy-imports it by name from
+yadgar.core.cli._shared) and pin the print / no-print branches plus the
+register() wiring. silence_logging is patched too — the real one calls
+logging.disable(CRITICAL) process-wide, which would leak into sibling tests.
 """
 
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -25,11 +28,17 @@ def _make_args(directory="/tmp/proj", db_path=None):
     return SimpleNamespace(directory=directory, db_path=db_path)
 
 
-def _make_storage_replay(formatted=""):
-    storage = MagicMock()
-    replay = MagicMock()
-    replay.restore.return_value = {"formatted": formatted}
-    return storage, replay
+@contextmanager
+def _patched(forward_return=None, forward_side_effect=None):
+    with (
+        patch("yadgar.core.cli._shared.silence_logging"),
+        patch(
+            "yadgar.core.cli._shared.forward_restore",
+            return_value=forward_return,
+            side_effect=forward_side_effect,
+        ) as fwd,
+    ):
+        yield fwd
 
 
 # ---------------------------------------------------------------------------
@@ -46,14 +55,8 @@ class TestRegister:
         assert args.directory == "/some/dir"
         assert hasattr(args, "func")
 
-    def test_db_path_optional_default_none(self):
-        root = argparse.ArgumentParser()
-        subs = root.add_subparsers()
-        register(subs)
-        args = root.parse_args(["restore", "/some/dir"])
-        assert args.db_path is None
-
-    def test_db_path_can_be_set(self):
+    def test_db_path_still_accepted_for_compat(self):
+        """--db-path is kept for CLI compatibility (ignored since T2 Car B)."""
         root = argparse.ArgumentParser()
         subs = root.add_subparsers()
         register(subs)
@@ -69,102 +72,35 @@ class TestRegister:
 
 
 # ---------------------------------------------------------------------------
-# cmd_restore — happy path: formatted output
+# cmd_restore — forward + print behavior
 # ---------------------------------------------------------------------------
 
 
-class TestCmdRestoreWithFormattedOutput:
+class TestCmdRestoreForward:
     def test_prints_formatted_to_stdout(self, capsys):
-        storage, replay = _make_storage_replay("# Context\nsome markdown")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
+        with _patched(forward_return={"formatted": "# Context\nsome markdown"}):
             cmd_restore(_make_args())
         out = capsys.readouterr().out
         assert "# Context" in out
         assert "some markdown" in out
 
-    def test_calls_replay_restore_with_directory(self):
-        storage, replay = _make_storage_replay("something")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
+    def test_forwards_directory(self):
+        with _patched(forward_return={"formatted": "x"}) as fwd:
             cmd_restore(_make_args(directory="/my/proj"))
-        replay.restore.assert_called_once_with("/my/proj")
+        fwd.assert_called_once_with("/my/proj")
 
-    def test_storage_closed_after_success(self):
-        storage, replay = _make_storage_replay("text")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
-            cmd_restore(_make_args())
-        storage.close.assert_called_once()
-
-    def test_init_called_with_db_path(self):
-        storage, replay = _make_storage_replay("text")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ) as mock_init:
-            cmd_restore(_make_args(db_path="/custom.db"))
-        mock_init.assert_called_once_with("/custom.db")
-
-
-# ---------------------------------------------------------------------------
-# cmd_restore — empty formatted: no print
-# ---------------------------------------------------------------------------
-
-
-class TestCmdRestoreEmptyFormatted:
     def test_no_output_when_formatted_empty(self, capsys):
-        storage, replay = _make_storage_replay("")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
+        with _patched(forward_return={"formatted": ""}):
             cmd_restore(_make_args())
-        out = capsys.readouterr().out
-        assert out == ""
-
-    def test_storage_closed_even_when_empty(self):
-        storage, replay = _make_storage_replay("")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
-            cmd_restore(_make_args())
-        storage.close.assert_called_once()
+        assert capsys.readouterr().out == ""
 
     def test_no_output_when_formatted_key_missing(self, capsys):
-        storage = MagicMock()
-        replay = MagicMock()
-        replay.restore.return_value = {}
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
+        with _patched(forward_return={}):
             cmd_restore(_make_args())
-        out = capsys.readouterr().out
-        assert out == ""
+        assert capsys.readouterr().out == ""
 
-
-# ---------------------------------------------------------------------------
-# cmd_restore — storage closed in finally (exception safety)
-# ---------------------------------------------------------------------------
-
-
-class TestCmdRestoreFinally:
-    def test_storage_closed_when_replay_raises(self):
-        storage = MagicMock()
-        replay = MagicMock()
-        replay.restore.side_effect = RuntimeError("boom")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ):
-            with pytest.raises(RuntimeError):
+    def test_forward_error_propagates(self):
+        """Forward-only: backend-unreachable errors surface, no local fallback."""
+        with _patched(forward_side_effect=RuntimeError("YADGAR_EMBED_URL is not set")):
+            with pytest.raises(RuntimeError, match="YADGAR_EMBED_URL"):
                 cmd_restore(_make_args())
-        storage.close.assert_called_once()
-
-    def test_init_called_with_none_db_path_by_default(self):
-        storage, replay = _make_storage_replay("ok")
-        with patch(
-            "yadgar.core.cli._shared.init_replay_lightweight", return_value=(storage, replay)
-        ) as mock_init:
-            cmd_restore(_make_args(db_path=None))
-        mock_init.assert_called_once_with(None)

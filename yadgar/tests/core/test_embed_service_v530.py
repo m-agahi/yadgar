@@ -55,7 +55,7 @@ def _reload_es(
         monkeypatch.delenv("YADGAR_DB_PATH", raising=False)
     cfg.get_settings.cache_clear()
 
-    import yadgar.backend.embed_service as es
+    import yadgar.backend.embed_service.embed_service as es
 
     importlib.reload(es)
     return es
@@ -115,7 +115,7 @@ class TestDbsizeCache:
 
         with (
             patch.object(es.os, "walk", side_effect=_patched_walk),
-            patch("yadgar.backend.embed_service.time.time", side_effect=_fake_time),
+            patch("yadgar.backend.embed_service.embed_service.time.time", side_effect=_fake_time),
         ):
             client = _make_client(es)
             r1 = client.get("/admin/dbsize")
@@ -140,7 +140,7 @@ class TestDbsizeCache:
 
         with (
             patch.object(es.os, "walk", return_value=iter([])),
-            patch("yadgar.backend.embed_service.time.time", side_effect=_fake_time),
+            patch("yadgar.backend.embed_service.embed_service.time.time", side_effect=_fake_time),
         ):
             client = _make_client(es)
             r1 = client.get("/admin/dbsize")
@@ -197,7 +197,7 @@ class TestDbsizeCache:
 
         cfg.get_settings.cache_clear()
 
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
 
@@ -213,7 +213,7 @@ class TestDbsizeCache:
 
         with (
             patch.object(es.os, "walk", side_effect=_patched_walk),
-            patch("yadgar.backend.embed_service.time.time", side_effect=_fake_time),
+            patch("yadgar.backend.embed_service.embed_service.time.time", side_effect=_fake_time),
         ):
             client = _make_client(es)
             r1 = client.get("/admin/dbsize")
@@ -259,12 +259,12 @@ class TestRestartAttribution:
 
         cfg.get_settings.cache_clear()
 
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
 
         # Capture the counter INSTANCE from the reloaded embed_service_metrics
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         counter = esm.embed_restart_reason_total
         before = counter.labels(reason="clean")._value.get()
@@ -293,11 +293,11 @@ class TestRestartAttribution:
 
         cfg.get_settings.cache_clear()
 
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         counter = esm.embed_restart_reason_total
         before = counter.labels(reason="crash")._value.get()
@@ -321,11 +321,11 @@ class TestRestartAttribution:
 
         cfg.get_settings.cache_clear()
 
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
 
-        import yadgar.backend.embed_service_metrics as esm
+        import yadgar.backend.embed_service.embed_service_metrics as esm
 
         counter = esm.embed_restart_reason_total
         before = counter.labels(reason="first_boot")._value.get()
@@ -351,7 +351,7 @@ class TestRestartAttribution:
 
         cfg.get_settings.cache_clear()
 
-        import yadgar.backend.embed_service as es
+        import yadgar.backend.embed_service.embed_service as es
 
         importlib.reload(es)
 

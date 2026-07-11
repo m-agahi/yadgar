@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 import re
 
-from yadgar._shared.models import ADR
+from yadgar._shared.contracts.models import ADR
 from yadgar._shared.observability.observe import observe
 from yadgar.core.server._app import _tool
 from yadgar.core.server.tools.project import _get_default_branch, _resolve_project_root

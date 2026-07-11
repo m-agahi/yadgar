@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from yadgar._shared.config_registry import _set_config_gauges, build_config_table
+from yadgar._shared.config.config_registry import _set_config_gauges, build_config_table
 from yadgar._shared.observability.observe import observe
 from yadgar.core.server._app import mcp_server
 

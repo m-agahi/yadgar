@@ -38,9 +38,9 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from yadgar._shared.config_registry import clear_config_caches, list_config
+from yadgar._shared.config.config_registry import clear_config_caches, list_config
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 from yadgar.core.server._app import mcp_server
 from yadgar.core.server.tools.admin_other import consolidate_now, reembed_all
 from yadgar.core.server.tools.admin_vacuum import vacuum_now
@@ -143,7 +143,9 @@ def _enrich_knob(knob: dict, field_meta_key: str) -> dict:
     field_meta_key: lowercase-no-prefix name (e.g. 'viz_node_size_3d').
     Mutates and returns the dict.
     """
-    from yadgar._shared.config_yaml import FIELD_META  # noqa: PLC0415 — keep import at call site
+    from yadgar._shared.config.config_yaml import (
+        FIELD_META,  # noqa: PLC0415 — keep import at call site
+    )
 
     meta = FIELD_META.get(field_meta_key, {})
     section = meta.get("section", "misc")
@@ -398,7 +400,7 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
 
     # Coerce via the SHARED writer's annotation-driven coercion (identical path to
     # the CLI). Coercion failure → 422 (well-formed request, value not coercible).
-    from yadgar._shared.config_yaml import coerce_value  # noqa: PLC0415 — call-site import
+    from yadgar._shared.config.config_yaml import coerce_value  # noqa: PLC0415 — call-site import
 
     yaml_key = entry.name.removeprefix("YADGAR_").lower()
     try:
@@ -414,7 +416,7 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     # Persist via the SINGLE sanctioned writer (set_config_value) — same path as
     # `yadgar config set`. Never hand-write yaml here.
     try:
-        from yadgar._shared.config_yaml import set_config_value  # noqa: PLC0415
+        from yadgar._shared.config.config_yaml import set_config_value  # noqa: PLC0415
 
         coerced = set_config_value(yaml_key, raw_value)
     except Exception as exc:  # noqa: BLE001 — surface yaml/io failures as 500

@@ -107,28 +107,28 @@ repos:
         language: system
         entry: uv run python -m pytest yadgar/tests/server/test_config_three_way_sync.py -q --tb=short
         pass_filenames: false
-        files: ^yadgar/(_shared/(config\.py|config_yaml\.py|config_registry\.py)|tests/config_env_only_allowlist\.txt)$
+        files: ^yadgar/(_shared/config/(config\.py|config_yaml\.py|config_registry\.py)|tests/config_env_only_allowlist\.txt)$
 
       - id: check-allowlist-audit
         name: Check I28 allowlist-audit invariant (every allowlist hit has audit entry)
         language: system
         entry: python scripts/check_allowlist_audit.py
         pass_filenames: false
-        files: ^yadgar/core/(security/allowlist\.py|secrets\.py)$
+        files: ^yadgar/_shared/security/(allowlist\.py|secrets\.py)$
 
       - id: check-dead-capability
         name: Check I29 edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
         language: system
         entry: python scripts/check_dead_capability.py
         pass_filenames: false
-        files: ^(yadgar/core/graph_api\.py|yadgar/core/viz_meta\.py|docs/EDGE_CONTRACT\.md)$
+        files: ^(yadgar/backend/graph/graph_api\.py|yadgar/_shared/contracts/viz\.py|yadgar/core/viz/viz_meta\.py|docs/EDGE_CONTRACT\.md)$
 
       - id: check-capability-coverage
         name: Check I32 capability-registry coverage (every setting/tool/migration/BC catalogued)
         language: system
         entry: python scripts/check_capability_coverage.py
         pass_filenames: false
-        files: ^(yadgar/_shared/config\.py|yadgar/_shared/storage/migrations\.py|yadgar/core/server/tools/.*\.py|docs/BEHAVIOR_CONTRACT\.md|docs/CAPABILITY_REGISTRY\.md)$
+        files: ^(yadgar/_shared/config/config\.py|yadgar/_shared/storage/migrations\.py|yadgar/core/server/tools/.*\.py|docs/BEHAVIOR_CONTRACT\.md|docs/CAPABILITY_REGISTRY\.md)$
 
       - id: check-complexity-allowlist
         name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
@@ -160,6 +160,12 @@ repos:
         # an inventory entry — the stale-entry hard-fail catches it at commit.
         files: ^yadgar/tests/(skip_inventory\.json|.*\.py)$
 
+      - id: check-subsystem-readmes
+        name: Every major subsystem package has a README.md (T2 Car D existence lint)
+        language: system
+        entry: python scripts/check_subsystem_readmes.py
+        pass_filenames: false
+        files: ^(yadgar/(_shared|backend|core)/[^/]+/?.*|scripts/check_subsystem_readmes\.py)$
       - id: check-skip-markers
         name: Block new unsanctioned skip markers in staged test files (ADR-0087)
         language: system

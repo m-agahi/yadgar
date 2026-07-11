@@ -22,7 +22,7 @@ class TestC2BranchFilterInSurrealQL:
         from yadgar._shared.config import Settings
         from yadgar._shared.embeddings import EmbeddingEngine
         from yadgar._shared.knowledge_graph import KnowledgeGraph
-        from yadgar._shared.retrieval.core import Retriever
+        from yadgar.backend.retrieval.core import Retriever
 
         settings = Settings(
             DB_PATH="/tmp/test.db",
@@ -338,7 +338,7 @@ class TestC4BoostBoundedUnitInterval:
         """
         import inspect
 
-        from yadgar._shared.runtime.recall_pipeline import _apply_fanout_boosts
+        from yadgar.backend.retrieval.recall_pipeline import _apply_fanout_boosts
 
         src = inspect.getsource(_apply_fanout_boosts)
         # Should NOT contain the old 1.5x multiplier
@@ -378,7 +378,7 @@ class TestC4BoostBoundedUnitInterval:
         import inspect
         import re as _re
 
-        from yadgar._shared.runtime.recall_pipeline import _apply_fanout_boosts
+        from yadgar.backend.retrieval.recall_pipeline import _apply_fanout_boosts
 
         src = inspect.getsource(_apply_fanout_boosts)
         # The boost block assigns `base = m.get(...)`.  It must be:
@@ -405,7 +405,7 @@ class TestC5TemporalBranchFilter:
         from yadgar._shared.config import Settings
         from yadgar._shared.embeddings import EmbeddingEngine
         from yadgar._shared.knowledge_graph import KnowledgeGraph
-        from yadgar._shared.retrieval.core import Retriever
+        from yadgar.backend.retrieval.core import Retriever
 
         settings = Settings(
             DB_PATH="/tmp/test.db",

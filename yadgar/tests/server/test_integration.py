@@ -9,7 +9,6 @@ from yadgar._shared.astrocyte_pool import AstrocytePool
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
-from yadgar._shared.retrieval import Retriever
 from yadgar._shared.sensory_buffer import ActionLogger
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
@@ -17,6 +16,7 @@ from yadgar.backend.consolidation import ConsolidationScheduler
 from yadgar.backend.curation import CurateParams, MemoryCurator
 from yadgar.backend.narrative import NarrativeEngine
 from yadgar.backend.prospective import ProspectiveMemoryEngine
+from yadgar.backend.retrieval import Retriever
 from yadgar.backend.sleep_compute import SleepComputeEngine
 from yadgar.core import server
 from yadgar.core.staleness import StalenessDetector
@@ -215,6 +215,15 @@ class TestRememberCreatesEpisode:
 
 
 class TestStalenessIntegration:
+    @pytest.fixture(autouse=True)
+    def _staleness_backend(self, storage, monkeypatch, admin_backend_bypass):
+        """T2 Car E1: the detector forwards flag WRITES to backend admin ops
+        (in-process via admin_backend_bypass); point _st._storage at this
+        file's per-test engine so the op writes land where assertions read."""
+        import yadgar._shared.runtime.state as _st
+
+        monkeypatch.setattr(_st, "_storage", storage)
+
     def test_file_change_marks_memory_stale(self, storage, detector, tmp_path):
         """Store a memory referencing a file, modify the file, verify staleness."""
         test_file = tmp_path / "config.py"
@@ -460,6 +469,14 @@ class TestBufferEpisodeIntegration:
 
 
 class TestStalenessWatcherIntegration:
+    @pytest.fixture(autouse=True)
+    def _staleness_backend(self, storage, monkeypatch, admin_backend_bypass):
+        """T2 Car E1: scan_directory forwards its batched flag compute to the
+        backend staleness_scan op — wire the in-process bypass + storage."""
+        import yadgar._shared.runtime.state as _st
+
+        monkeypatch.setattr(_st, "_storage", storage)
+
     def test_watcher_start_stop(self, storage, settings, tmp_path):
         """Staleness detector should start and stop cleanly."""
         detector = StalenessDetector(storage, settings)
@@ -1013,9 +1030,20 @@ class TestServerStartupShutdown:
         assert server._buffer is not None
         assert server._staleness is not None
         assert server._thermo is not None
-        assert server._retriever is not None
         assert server._pool is not None
         assert server._kg is not None
+
+        # T2 Car E2: Retriever composition moved backend-lazy — init_engines no
+        # longer wires _st._retriever; the backend builds it on first use via
+        # ensure_retrieval_engine(). The core slot stays None at clean startup by
+        # design (seam migration, not a regression). The invariant this test
+        # protects: the slot is None post-init AND the backend composer path is
+        # importable + composes a live Retriever against the freshly-inited engines.
+        assert server._retriever is None
+        from yadgar.backend.retrieval.compose import ensure_retrieval_engine
+
+        ensure_retrieval_engine()
+        assert server._retriever is not None
 
         # Verify a memory can be stored (R3: wire the in-process backend
         # drainer so memorize_sync can flush the queue and return an id)

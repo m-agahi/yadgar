@@ -66,7 +66,7 @@ fields. The I32 lint parses these fields, so the format is load-bearing:
 - **tools:** `recall`, `memorize`           (MCP tools that expose it; `—` if none)
 - **migrations:** `022`, `008`              (`—` if none)
 - **bc:** `BC-EN3a`, `BC-W1`                 (behaviour-contract rows it implements; `—` if none)
-- **refs:** `yadgar/_shared/retrieval/fusion.py::convex_fuse`, `yadgar/core/server/tools/recall.py`
+- **refs:** `yadgar/backend/retrieval/fusion.py::convex_fuse`, `yadgar/core/server/tools/recall.py`
 - **wiring:** how it is reached at runtime (caller chain) OR, if not reached, exactly why (dead/dormant reason).
 - **explanation:** what it does + the algorithm/behaviour, in 2–5 sentences. Enough that a reader needn't open the code to understand it.
 ```
@@ -91,7 +91,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR10`, `BC-RR11`
-- **refs:** `yadgar/_shared/retrieval/fusion.py::_FusionMixin._wrrf_fuse`, `yadgar/_shared/retrieval/fusion.py::_convex_fuse`, `yadgar/_shared/retrieval/fusion.py::_FusionMixin._fuse_scores`
+- **refs:** `yadgar/backend/retrieval/fusion.py::_FusionMixin._wrrf_fuse`, `yadgar/backend/retrieval/fusion.py::_convex_fuse`, `yadgar/backend/retrieval/fusion.py::_FusionMixin._fuse_scores`
 - **wiring:** `recall` tool → `Retriever.recall()` → `_FusionMixin._fuse_scores()`. When `FUSION_METHOD="convex"` (default), calls module-level `_convex_fuse()` (min-max normalised weighted sum). When `FUSION_METHOD="wrrf"`, calls `_FusionMixin._wrrf_fuse()` (per-signal z-score or minmax normalisation then weighted sum). After fusion, `WRRF_GRAPH_PRIOR_WEIGHT` and `WRRF_COFIRE_PRIOR_WEIGHT` additive boosts are applied via `_apply_prior_boost()` (O(1) reads from precomputed columns). `COMBMNZ_ENABLED=False` by default — flipping to True multiplies the fused score by the number of signals that fired.
 - **explanation:** Merges four retrieval signals (vector KNN, FTS BM25, PPR, spreading activation) into a single ranked list. The default `convex` fusion method normalises each signal's scores with min-max and computes a weighted sum; the alternate `wrrf` method uses z-score normalisation before weighting. After fusion two additive priors are applied: a graph-centrality prior (`graph_prior` column, weight 0.2) and a co-recall frequency prior (`cofire_prior` column, weight 0.15), both precomputed at consolidation time to avoid per-query graph traversal. `COMBMNZ_ENABLED` (default False) scales the fused score by the count of non-zero signals to reward multi-signal agreement.
 
@@ -105,7 +105,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/retrieval/core.py::Retriever._resolve_query_and_candidate_k`, `yadgar/_shared/retrieval/stages/knn.py`, `yadgar/_shared/retrieval/stages/fts.py`
+- **refs:** `yadgar/backend/retrieval/core.py::Retriever._resolve_query_and_candidate_k`, `yadgar/backend/retrieval/stages/knn.py`, `yadgar/backend/retrieval/stages/fts.py`
 - **wiring:** Called from `Retriever.recall()` and the pipeline stage modules. `CANDIDATE_POOL_MULTIPLIER` (default 20) sizes the per-signal candidate fetch as `max_results × multiplier`. The fast profile overrides this with `FAST_PROFILE_CANDIDATE_MULTIPLIER` (default 3) to bound hook-handler latency.
 - **explanation:** Controls how many raw candidates each retrieval signal fetches before fusion and reranking. A larger pool improves recall at the cost of CPU; the fast profile uses a much smaller multiplier to keep hook handlers low-latency. The final result list is always trimmed to `max_results` after reranking.
 
@@ -119,7 +119,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/config.py`
+- **refs:** `yadgar/_shared/config/config.py`
 - **wiring:** `WRRF_K` deleted from `config.py` in v6 T3 dead-config cleanup. `WRRF_CANDIDATE_MULTIPLIER` retained as CONFIG-ONLY — no production consumer; `CANDIDATE_POOL_MULTIPLIER` is the live setting.
 - **explanation:** `WRRF_K` was the RRF constant `k` used in rank-based Reciprocal Rank Fusion — no production caller. Deleted. `WRRF_CANDIDATE_MULTIPLIER` superseded by `CANDIDATE_POOL_MULTIPLIER` but retained pending explicit removal.
 
@@ -133,7 +133,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/retrieval/fusion.py::PROFILES`, `yadgar/_shared/retrieval/core.py::Retriever.recall`
+- **refs:** `yadgar/backend/retrieval/fusion.py::PROFILES`, `yadgar/backend/retrieval/core.py::Retriever.recall`
 - **wiring:** `recall` → `Retriever.recall()` reads `RETRIEVAL_PROFILE` (default `"balanced"`) to select a profile dict from `PROFILES`. Hook handlers pass `profile="fast"` explicitly. The profile controls which signals are active (`signals`), whether CE/NLI/multi-passage reranking runs, and whether query analysis is skipped.
 - **explanation:** Three named retrieval profiles trade quality for latency. `fast` enables only vector + FTS signals, skips all heavy reranking and query analysis — used by every hook handler. `balanced` (default) uses all four signals plus cross-encoder. `full` adds NLI entailment on top of `balanced`. The active profile is propagated through the entire pipeline as the `profile` dict, gating each reranking stage.
 
@@ -147,7 +147,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR8`
-- **refs:** `yadgar/_shared/retrieval/query_analysis.py::analyze_query`, `yadgar/_shared/retrieval/query_analysis.py::_classify_query_type`
+- **refs:** `yadgar/backend/retrieval/query_analysis.py::analyze_query`, `yadgar/backend/retrieval/query_analysis.py::_classify_query_type`
 - **wiring:** `Retriever.recall()` → `_resolve_query_and_candidate_k()` → `analyze_query()` (when `skip_query_analysis` is False, i.e. non-fast profiles). When `QUERY_ROUTING_ENABLED=True` (default), the enabled_signals from query analysis are intersected with the profile's signal set to narrow which retrieval signals actually run.
 - **explanation:** `analyze_query` classifies each query into one of: `temporal`, `open_domain`, `factoid`, `code`, `relational`, `keyword`, `simple`, or `complex`. The classification drives `enabled_signals` — e.g. temporal queries run only vector + FTS, factoid queries add PPR, relational and complex queries activate all four signals. `TEMPORAL_KEYWORDS` is a comma-separated list used to detect temporal queries. `QUERY_ROUTING_ENABLED=False` bypasses the intersection, giving every query the full profile signal set.
 
@@ -161,7 +161,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR9`
-- **refs:** `yadgar/_shared/retrieval/query_analysis.py::_pseudo_hyde_expand`, `yadgar/_shared/retrieval/scoring.py::_ScoringMixin._build_vector_search_list`
+- **refs:** `yadgar/backend/retrieval/query_analysis.py::_pseudo_hyde_expand`, `yadgar/backend/retrieval/scoring.py::_ScoringMixin._build_vector_search_list`
 - **wiring:** `_collect_vector_scores()` → `_build_vector_search_list()` checks `QUERY_EXPANSION_ENABLED` (default True). When enabled, calls `_pseudo_hyde_expand(query)` and appends the result as a second vector search at strength 0.95.
 - **explanation:** Converts question-form queries into declarative pseudo-documents before vector embedding to bridge the query–document semantic gap (a lightweight HyDE approximation). A regex table maps "What is X?" → "X is", "When did X?" → "X", etc. The generated statement is embedded and used as a second HNSW search alongside the original query; both hits are merged into the score dict. When `QUERY_EXPANSION_ENABLED=False`, only the original query string is embedded.
 
@@ -175,7 +175,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR9`
-- **refs:** `yadgar/_shared/retrieval/query_analysis.py::_build_open_domain_subqueries`, `yadgar/_shared/retrieval/query_analysis.py::_collect_semantic_expansions`, `yadgar/_shared/retrieval/query_analysis.py::_build_boosted_fts_query`
+- **refs:** `yadgar/backend/retrieval/query_analysis.py::_build_open_domain_subqueries`, `yadgar/backend/retrieval/query_analysis.py::_collect_semantic_expansions`, `yadgar/backend/retrieval/query_analysis.py::_build_boosted_fts_query`
 - **wiring:** `Retriever.recall()` calls `_build_open_domain_subqueries()` when `open_domain_mode=True` (detected by `analyze_query`). Generated subqueries are passed to both `_collect_fts_scores()` and `_collect_vector_scores()` at reduced strength (0.8 FTS, 0.85 vector). `_build_boosted_fts_query` duplicates high-information terms to sharpen BM25 intent on every FTS call.
 - **explanation:** For inference-style questions (comparison, modal, topic-expansion queries), generates up to four auxiliary subqueries from named entities, content terms, comparison options, and semantic topic expansions. Each subquery is searched in parallel with the main query at a reduced weight. `_build_boosted_fts_query` additionally doubles capitalized tokens in the FTS query string to amplify their BM25 score.
 
@@ -189,7 +189,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-KG4`
-- **refs:** `yadgar/_shared/retrieval/core.py::Retriever.ppr_retrieve`, `yadgar/_shared/retrieval/scoring.py::_ScoringMixin._collect_ppr_scores`, `yadgar/_shared/retrieval/graph_helpers.py::_GraphHelpersMixin._build_networkx_graph`
+- **refs:** `yadgar/backend/retrieval/core.py::Retriever.ppr_retrieve`, `yadgar/backend/retrieval/scoring.py::_ScoringMixin._collect_ppr_scores`, `yadgar/backend/retrieval/graph_helpers.py::_GraphHelpersMixin._build_networkx_graph`
 - **wiring:** `_collect_ppr_scores()` is called from `Retriever.recall()` when the `ppr` signal is in `enabled_signals` (active for `balanced`/`full` profiles on `factoid`, `relational`, `complex` query types). It calls `ppr_retrieve()` → `_build_networkx_graph()` → `nx.pagerank()`. Results are merged into the `scores` dict and fused by `_fuse_scores()`.
 - **explanation:** Runs Personalized PageRank over the entity co-occurrence graph seeded by entities extracted from the query. Entities shorter than `GRAPH_ENTITY_MIN_LENGTH` characters are filtered. The graph is built up to `GRAPH_MAX_HOPS` hops, discarding edges below `GRAPH_MIN_EDGE_WEIGHT`. High-PPR entities are mapped back to memories via FTS on entity name, producing a graph-coherent ranking signal that surfaces memories connected through shared entities even when direct term overlap is weak.
 
@@ -203,7 +203,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-KG5`
-- **refs:** `yadgar/_shared/retrieval/core.py::Retriever.spreading_activation`, `yadgar/_shared/retrieval/scoring.py::_ScoringMixin._collect_spreading_scores`
+- **refs:** `yadgar/backend/retrieval/core.py::Retriever.spreading_activation`, `yadgar/backend/retrieval/scoring.py::_ScoringMixin._collect_spreading_scores`
 - **wiring:** `_collect_spreading_scores()` is called from `Retriever.recall()` when `spreading` signal is in `enabled_signals` (active for `balanced`/`full` on `relational`/`complex`). Seeds from the top-5 vector hits, then BFS through the entity graph up to `GRAPH_SPREADING_MAX_DEPTH` hops with activation decaying by `GRAPH_SPREADING_DECAY` per hop.
 - **explanation:** Starting from the most vector-similar memories, spreads activation through the entity co-occurrence graph. Each hop reduces activation by a geometric factor (`GRAPH_SPREADING_DECAY`, default 0.5). Activated memories that are not in the seed set accumulate scores and are merged into the fusion pool. This surfaces associatively related memories that share entity neighborhoods with the top seed results.
 
@@ -217,7 +217,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-KG1`, `BC-KG2`, `BC-KG3`
-- **refs:** `yadgar/_shared/retrieval/graph_helpers.py::_GraphHelpersMixin._find_memories_for_entity`, `yadgar/_shared/retrieval/graph_helpers.py::_GraphHelpersMixin._find_entities_in_content`, `yadgar/_shared/retrieval/scoring.py::_ScoringMixin._run_entity_fts`
+- **refs:** `yadgar/backend/retrieval/graph_helpers.py::_GraphHelpersMixin._find_memories_for_entity`, `yadgar/backend/retrieval/graph_helpers.py::_GraphHelpersMixin._find_entities_in_content`, `yadgar/backend/retrieval/scoring.py::_ScoringMixin._run_entity_fts`
 - **wiring:** Entity-based FTS is called from `_collect_fts_scores()` via `_run_entity_fts()`. Entity membership in memory content is resolved via `_find_entities_in_content()` (called from `spreading_activation`) and `_find_memories_for_entity()` (called from `ppr_retrieve`). These helpers are on the `_GraphHelpersMixin` which is part of `Retriever`'s MRO.
 - **explanation:** Queries are scanned for capitalized tokens that serve as named entities (people, places, projects). Entity-focused FTS re-searches the corpus with these tokens at boosted weight (0.5–0.7 depending on open-domain mode). For PPR and spreading, entity names are looked up in the knowledge-graph store to find graph node IDs; adjacency is walked to discover related memories. `GRAPH_ENTITY_MIN_LENGTH` filters out short tokens unlikely to be meaningful entities.
 
@@ -231,7 +231,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR12`
-- **refs:** `yadgar/_shared/retrieval/temporal.py::parse_temporal_expression`, `yadgar/_shared/retrieval/scoring.py::_ScoringMixin._collect_temporal_scores`
+- **refs:** `yadgar/backend/retrieval/temporal.py::parse_temporal_expression`, `yadgar/backend/retrieval/scoring.py::_ScoringMixin._collect_temporal_scores`
 - **wiring:** `Retriever.recall()` calls `_collect_temporal_scores()` after FTS/vector/PPR/spreading. When `TEMPORAL_RETRIEVAL_ENABLED=True` (default) and the query contains a temporal expression, the temporal signal contributes to fusion at weight `w_temporal` (0.8 for content-date matches, 0.6 for month matches).
 - **explanation:** Parses natural-language temporal expressions (ISO dates, "last week", "in May 2023", session references) from the query and searches memories by content-embedded date hints and by `created_at` month proximity. Matching memories receive a temporal score inversely proportional to their rank in the temporal hit list. The temporal signal weight is set dynamically (0.0 if no temporal expression found) and injected into fusion alongside the other signals.
 
@@ -259,7 +259,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/retrieval/_reranking_heuristic.py::_HeuristicMixin.heuristic_rerank`, `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_heuristic`
+- **refs:** `yadgar/backend/retrieval/_reranking_heuristic.py::_HeuristicMixin.heuristic_rerank`, `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_heuristic`
 - **wiring:** `_apply_rerank_pipeline()` calls `_rerank_heuristic()` first (when `RERANKER_ENABLED=True`, default True, and profile is not `fast`). `heuristic_rerank` reads `RERANKER_TOP_K` (default 50) when CE is active; otherwise uses `max_results`.
 - **explanation:** A lightweight lexical reranker that scores each candidate memory against the query using four signals: entity coverage (capitalized query tokens in content), content term coverage (non-stop words), bigram overlap (phrase matching), and exact substring match. Weights are fixed at 0.35/0.30/0.20/0.15. The resulting `_rerank_score` is blended with the fusion score (85% fusion + 15% heuristic). Runs on CPU, no ML model required.
 
@@ -273,7 +273,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR1`
-- **refs:** `yadgar/_shared/retrieval/_reranking_cross_encoder.py::_CrossEncoderMixin.cross_encoder_rerank`, `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_cross_encoder`
+- **refs:** `yadgar/backend/retrieval/_reranking_cross_encoder.py::_CrossEncoderMixin.cross_encoder_rerank`, `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_cross_encoder`
 - **wiring:** `_apply_rerank_pipeline()` → `_rerank_cross_encoder()` when `use_cross_encoder=True` (profile allows CE AND `CROSS_ENCODER_ENABLED=True`, default True). CE is blocked entirely by `HEAVY_RERANK_ENABLED=False`. The ML client (`LocalMLClient` or `RemoteMLClient`) does the model inference; this mixin handles normalization and blending.
 - **explanation:** Scores each candidate memory against the query using a cross-encoder model (default FlashRank ONNX, fast on CPU). In open-domain mode, each memory may contribute a second "implied facts" variant (derived from content inference) alongside its base text; the max score across variants is kept. Scores are min-max normalised and blended with the existing retrieval score at `CROSS_ENCODER_WEIGHT` (default 0.6). `HEAVY_RERANK_ENABLED=False` is a kill switch that bypasses CE, NLI, and multi-passage entirely to eliminate CPU burst on constrained hosts.
 
@@ -287,7 +287,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/ml_client.py`, `yadgar/_shared/config.py`
+- **refs:** `yadgar/backend/ml_client/ml_client.py`, `yadgar/_shared/config/config.py`
 - **wiring:** `GTE_RERANKER_ENABLED=True` in config, but the ML client (`LocalMLClient`) uses it only when the GTE model is actually loaded (conditional in `ml_client.py` line 356: `getattr(settings, "GTE_RERANKER_ENABLED", False)`). Loading requires the `Alibaba-NLP/gte-reranker-modernbert-base` model to be present. If unavailable, `GTE_RERANKER_FALLBACK_TO_FLASHRANK=True` falls back to FlashRank. In practice, GTE is not auto-downloaded — it is dormant unless the operator has staged the model weights.
 - **explanation:** A higher-quality cross-encoder backend based on GTE-ModernBERT-base that replaces or supplements FlashRank for more accurate relevance scoring. `GTE_RERANKER_MAX_LENGTH` caps the input token length. When `GTE_RERANKER_FALLBACK_TO_FLASHRANK=True` (default), the system degrades gracefully to FlashRank if GTE cannot be loaded. The setting is technically enabled by default but effectively dormant because the model weights are not included.
 
@@ -301,7 +301,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR2`
-- **refs:** `yadgar/_shared/retrieval/_reranking_nli.py::_NLIMixin.nli_rerank`, `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_nli`
+- **refs:** `yadgar/backend/retrieval/_reranking_nli.py::_NLIMixin.nli_rerank`, `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_nli`
 - **wiring:** `_rerank_nli()` checks `profile["nli"] AND NLI_RERANKING_ENABLED`. `NLI_RERANKING_ENABLED` defaults to `False` (changed from True in v5.6.6 due to ~55s per call on CPU). Additionally gated by `NLI_ONLY_FOR_OPEN_DOMAIN=True` (default), meaning even if enabled it only fires for open-domain queries.
 - **explanation:** Converts the query into a declarative hypothesis and scores each candidate memory as premise via an NLI model (default `cross-encoder/nli-deberta-v3-base`). High entailment probability indicates the memory is a likely answer. The NLI score is blended with the cross-encoder score at `NLI_WEIGHT` (default 0.3). Disabled by default because the DeBERTa model averages 55 seconds per call on CPU — set `NLI_RERANKING_ENABLED=true` to enable.
 
@@ -315,7 +315,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR6`
-- **refs:** `yadgar/_shared/retrieval/_reranking_multi_passage.py::_MultiPassageMixin.multi_passage_rerank`, `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_multi_passage`
+- **refs:** `yadgar/backend/retrieval/_reranking_multi_passage.py::_MultiPassageMixin.multi_passage_rerank`, `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_multi_passage`
 - **wiring:** `_rerank_multi_passage()` fires after CE reranking when `MULTI_PASSAGE_RERANKING_ENABLED=True` (default True) and the profile allows it (balanced/full). Calls `cluster_memories()` (Jaccard on token sets) then `score_single_pair()` (CE) for each cluster's concatenated text.
 - **explanation:** Groups the top-20 candidate memories into clusters of related passages using Jaccard token overlap. For each cluster with ≥2 members, concatenates up to 3 passages and re-scores the combined text with the cross-encoder. If the combined-passage CE score exceeds any individual member's score, a boost equal to half the gap is applied to all cluster members. This captures cases where no single passage answers the query but two or three together do.
 
@@ -329,7 +329,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR3`, `BC-RR7`
-- **refs:** `yadgar/_shared/retrieval/_reranking_confidence.py::_ConfidenceMixin.detect_adversarial`, `yadgar/_shared/retrieval/_reranking_mmr.py::_MMRMixin.mmr_rerank`, `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_adversarial_detect`, `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_mmr`
+- **refs:** `yadgar/backend/retrieval/_reranking_confidence.py::_ConfidenceMixin.detect_adversarial`, `yadgar/backend/retrieval/_reranking_mmr.py::_MMRMixin.mmr_rerank`, `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_adversarial_detect`, `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_mmr`
 - **wiring:** `_apply_rerank_pipeline()` calls `_rerank_mmr()` (when `ADVERSARIAL_DIVERSITY_ENFORCEMENT=True`, default True) before trimming to `max_results`, then `_rerank_adversarial_detect()` (when `ADVERSARIAL_DETECTION_ENABLED=True`, default True) after trimming. MMR uses stored embeddings fetched from storage.
 - **explanation:** Two complementary defences. MMR (Maximal Marginal Relevance) reranking diversifies results by iteratively selecting candidates that are both relevant and dissimilar to already-selected ones (balancing at `lambda=0.7`), preventing the top-k from being dominated by near-duplicate passages. Adversarial detection runs z-score gap analysis on the final scores to produce a `_retrieval_confidence` field (0–1) that callers can use to detect low-confidence retrievals; below `ADVERSARIAL_MIN_CONFIDENCE` a `is_uncertain` flag is set.
 
@@ -344,7 +344,7 @@ config knobs.
 - **migrations:** —
 - **bc:** `BC-RR5` (now satisfied by CAP-RETR-027)
 - **refs:** —
-- **wiring:** `_apply_confidence_gating()` and its call site in `_fuse_scores()` removed from `yadgar/_shared/retrieval/fusion.py` in v6 T3. `CONFIDENCE_GATING_ENABLED` and related settings removed from `config.py`.
+- **wiring:** `_apply_confidence_gating()` and its call site in `_fuse_scores()` removed from `yadgar/backend/retrieval/fusion.py` in v6 T3. `CONFIDENCE_GATING_ENABLED` and related settings removed from `config.py`.
 - **explanation:** Confidence gating zeroed signal weights below per-signal thresholds before fusion. Removed in v6 T3 dead-config/code cleanup (#41) — default was `True` (behavior change). `compute_signal_confidence` in `_reranking_confidence.py` remains for use by adversarial detection (BC-RR5 coverage continues via CAP-RETR-027).
 
 ---
@@ -371,7 +371,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR13`
-- **refs:** `yadgar/_shared/retrieval/fusion.py::_FusionMixin._comparison_dual_search`, `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_comparison_merge`
+- **refs:** `yadgar/backend/retrieval/fusion.py::_FusionMixin._comparison_dual_search`, `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_comparison_merge`
 - **wiring:** `_rerank_comparison_merge()` fires when `COMPARISON_DUAL_SEARCH_ENABLED=True` (default True) AND `query_analysis["comparison_options"]` is non-empty (requires an "or" in the query and option extraction to succeed). The dual search queries for each option separately with vector + FTS and merges results. `COMPARISON_DUAL_SEARCH_ENABLED` is True by default, so activation depends entirely on whether `_extract_comparison_options` finds options.
 - **explanation:** Detects "A or B?" query structure and performs separate vector+FTS searches for each option at `COMPARISON_TOP_K_PER_OPTION` candidates. Results for each option are tagged with `_comparison_option` and merged into the main result list, allowing both sides of a comparison to be represented. The option extraction is conservative — it looks for 1–3 word spans around "or" that are not stop words — so the feature triggers only on clear comparison queries.
 
@@ -386,7 +386,7 @@ config knobs.
 - **migrations:** —
 - **bc:** —
 - **refs:** —
-- **wiring:** `_dual_vector_search()` and `DUAL_VECTORS_ENABLED` deleted from `yadgar/_shared/retrieval/core.py` and `config.py` in v6 T3. `IMPLICIT_EMBEDDING_MODEL` retained in config.py as CONFIG-ONLY — no production consumer after method removal, but kept as placeholder for future DualCSE implementation.
+- **wiring:** `_dual_vector_search()` and `DUAL_VECTORS_ENABLED` deleted from `yadgar/backend/retrieval/core.py` and `config.py` in v6 T3. `IMPLICIT_EMBEDDING_MODEL` retained in config.py as CONFIG-ONLY — no production consumer after method removal, but kept as placeholder for future DualCSE implementation.
 - **explanation:** Prep scaffold for dual-embedding architecture removed in v6 T3 (#41). `DUAL_VECTORS_ENABLED` setting and `_dual_vector_search()` method deleted. `IMPLICIT_EMBEDDING_MODEL` remains for future DualCSE work.
 
 ---
@@ -399,7 +399,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-H1`, `BC-H2`, `BC-H3`
-- **refs:** `yadgar/_shared/engram.py`
+- **refs:** `yadgar/_shared/contracts/engram.py`
 - **wiring:** `HOPFIELD_MAX_PATTERNS` is used by `EngramAllocator.__init__` to size the engram slot table (`self._num_slots`). `HOPFIELD_BETA` is defined in config and checked by `check_invariants` (I invariant verifies engram_slot row count equals `HOPFIELD_MAX_PATTERNS`). The `_engram` object is attached to `Retriever.set_engram()` and its temporal links are injected into results by `_rerank_engram_links()`.
 - **explanation:** Controls the Hopfield-inspired engram memory allocator. `HOPFIELD_MAX_PATTERNS` (default 5000) sets the maximum number of engram slots; `HOPFIELD_BETA` (default 8.0) is the sharpness parameter for pattern completion. The engram allocator assigns slot IDs to memories and records temporal co-activation links. During retrieval, `_rerank_engram_links()` enriches result memories with their temporal neighbors. Hook handlers (prompt-recall, subagent-start, session-end) trigger engram-based context injection, satisfying BC-H1/H2/H3.
 
@@ -413,8 +413,8 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/cognitive_map.py::CognitiveMap`, `yadgar/core/server/tools/recall.py`
-- **wiring:** `recall` tool records a transition from `_last_recalled_ids[session_key]` to the new top result via `_st._cognitive_map.record_transition()` and `incremental_update()` on every call. `CognitiveMap.__init__` reads `SR_DISCOUNT` (γ, default 0.9) and `SR_UPDATE_RATE` (η, default 0.1). The SR matrix is built during consolidation and can be used for context-predictive retrieval.
+- **refs:** `yadgar/backend/restoration/cognitive_map.py::CognitiveMap`, `yadgar/_shared/runtime/sr_session.py::SRTransitionRecorder`, `yadgar/core/server/tools/recall.py`
+- **wiring:** `recall` tool records a transition from `_last_recalled_ids[session_key]` to the new top result via `_st._cognitive_map.record_transition()` and `incremental_update()` on every call — since T2 Car B the CORE process holds the session-side `SRTransitionRecorder` (record only; `incremental_update` is a documented no-op there), while the numpy SR compute lives in the backend `CognitiveMap` subclass behind `POST /restore`. `CognitiveMap.__init__` reads `SR_DISCOUNT` (γ, default 0.9) and `SR_UPDATE_RATE` (η, default 0.1). The SR matrix is rebuilt per backend restore (cross-process `_dirty` cannot be trusted).
 - **explanation:** Maintains a Successor Representation matrix over memory transitions — a TD-learning model that predicts which memories are likely to be retrieved after the current one. Every `recall` call logs the (previous_top_id → current_top_id) transition. The discount factor γ controls how far into the future the representation looks; the learning rate η controls update speed. The SR matrix is primarily used by the restoration and project-brief systems to predict likely next-retrieval candidates.
 
 ---
@@ -427,7 +427,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-AC3a`, `BC-AC3b`
-- **refs:** `yadgar/_shared/astrocyte_pool.py::AstrocytePool.consensus_retrieve`, `yadgar/core/server/tools/recall.py::_landscape_recall`
+- **refs:** `yadgar/_shared/astrocyte_pool/astrocyte_pool.py::AstrocytePool.consensus_retrieve`, `yadgar/core/server/tools/recall.py::_landscape_recall`
 - **wiring:** Exposed via `recall(mode="landscape", directory=...)`. The `recall()` MCP tool dispatches to `_landscape_recall()` when `mode="landscape"` — this calls `_st._pool.consensus_retrieve(query, top_k=max_results)` and post-filters results with `is_directory_eligible()` (v5.65 directory contract). Results carry `consensus_score` (float) and `voting_domains` (list[str]) metadata. Landscape dispatch is exclusive: it short-circuits before branch detection, fan-out, and profile routing. Pool is `_st._pool` (set from `_st._consolidation.pool` in `lifecycle.py`). `BC-AC3a` flipped ✅ in v5.81 (build #67). `BC-AC3b` remains ⏳.
 - **explanation:** Merges retrieval results across all astrocyte domain-specialist processes (code-patterns, decisions, errors, dependencies) into a single ranked consensus list. Each domain scores the query's memories independently (heat + semantic similarity × domain weight). Memories voted by multiple domains receive a multi-domain boost (+15% per additional vote). Exposed as an opt-in recall mode; the default (mode=None) is unchanged. Previously DEAD (defined but never called from any MCP path); now LIVE via the landscape dispatch in the recall tool.
 
@@ -441,7 +441,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/runtime/recall_pipeline.py`
+- **refs:** `yadgar/backend/retrieval/recall_pipeline.py`
 - **wiring:** Applied in the fanout recall pipeline via `_apply_fanout_boosts`. Branch boost fires when `_current_branch` is not None and a result's branch matches; postmortem boost fires when the query contains a keyword from `POSTMORTEM_BOOST_KEYWORDS` and a result has `_postmortem` or `_incident` tags. Both use the convex combination formula `base + (1 - base) × weight` to keep scores in [0, 1]. `FANOUT_BOOST_SCOPE` gates which callers receive boosts: `scoped` (default) applies only when `profile` is not None (hook=fast path), `global` always applies, `off` disables both boosts.
 - **explanation:** Two score-adjustment passes applied in the fanout pipeline after retriever output. Branch boost (`BRANCH_BOOST_WEIGHT=0.2`) elevates results from the caller's current git branch. Postmortem boost (`POSTMORTEM_BOOST_FACTOR=0.3`) elevates memories tagged `_postmortem` or `_incident` when the query sounds like incident investigation. `FANOUT_BOOST_SCOPE=scoped` (default) preserves pre-forward-only prod parity where the hook (profile=fast) path boosted and the default (profile=None) path did not, avoiding the −0.02 recall@5 regression observed on the default path in A/B testing.
 
@@ -469,7 +469,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/config.py`, `yadgar/backend/consolidation/heat_decay.py`
+- **refs:** `yadgar/_shared/config/config.py`, `yadgar/backend/consolidation/heat_decay.py`
 - **wiring:** `SESSION_COHERENCE_BONUS` is read by the heat-decay consolidation when computing memory scores for retrieval. Memories accessed within `SESSION_COHERENCE_WINDOW_HOURS` (default 4.0 hours) receive the bonus (default 0.2) applied during heat decay calculation. This effectively gives recently-accessed memories a higher base heat at retrieval time.
 - **explanation:** Provides a temporal relevance signal at the heat-decay level: memories that were accessed in the current session window have their heat amplified so they are more likely to resurface in the same session context. Unlike the fusion-layer temporal signal (which parses date expressions), this is a continuous background nudge applied during consolidation.
 
@@ -483,7 +483,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/retrieval/fusion.py::_FusionMixin._search_profiles_and_beliefs`, `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_profile_belief_merge`
+- **refs:** `yadgar/backend/retrieval/fusion.py::_FusionMixin._search_profiles_and_beliefs`, `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_profile_belief_merge`
 - **wiring:** `_rerank_profile_belief_merge()` is called from `_apply_rerank_pipeline()` after CE reranking. It calls `_search_profiles_and_beliefs()` which searches structured profile rows via `storage.search_profiles_fts()` (gated on `PROFILE_EXTRACTION_ENABLED`) and derived beliefs via `storage.search_beliefs_fts()` (gated on `DERIVED_BELIEFS_ENABLED`). Profile results use `PROFILE_SEARCH_WEIGHT` as their retrieval score; belief results get `confidence × BELIEF_HIGH_CONFIDENCE_BOOST` if `confidence > 0.7`.
 - **explanation:** After CE reranking, structured knowledge from the profile and belief stores is blended into results. Profile entries (entity–attribute–value triples) are synthetic memory-like dicts with negative IDs to distinguish them. High-confidence beliefs (> 0.7) are boosted by `BELIEF_HIGH_CONFIDENCE_BOOST` (default 1.2). This ensures that fact-like knowledge extracted during enrichment surfaces alongside episodic memories.
 
@@ -511,7 +511,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/embeddings.py::EmbeddingEngine`, `yadgar/_shared/remote_embeddings.py`
+- **refs:** `yadgar/_shared/embeddings/embeddings.py::EmbeddingEngine`, `yadgar/_shared/embeddings/remote_embeddings.py`
 - **wiring:** `EMBEDDING_MODEL` (default `"all-MiniLM-L6-v2"`) is read by `EmbeddingEngine.__init__` to load the sentence-transformer model. The engine is created at server startup and passed to `Retriever`. All `encode_query()` calls flow through it.
 - **explanation:** Selects the sentence-transformer embedding model used for vector encoding of both stored memories (at write time) and queries (at retrieve time). Changing this requires re-embedding all stored memories (`reembed_all` admin operation). Model-specific query prefixes (e.g. "query: " for E5 models) are defined in the `MODEL_QUERY_PREFIX` constant dict in `embeddings.py`, not via `QUERY_PREFIX` setting.
 
@@ -539,7 +539,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/embed_service.py`, `yadgar/backend/ml_client.py`
+- **refs:** `yadgar/backend/embed_service/embed_service.py`, `yadgar/backend/ml_client/ml_client.py`
 - **wiring:** `RERANK_MAX_CONCURRENCY` (default 8 — raised from 1 in Fix A O7 in lockstep with `TOOL_POOL_WORKERS`; read by the BACKEND container, needs a backend rebump/env to take effect) and `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` (default 2.0) are read at `embed_service` module initialisation to configure the asyncio semaphore that gates concurrent CE/NLI scoring requests. `RERANK_BACKEND_TIMEOUT_SEC` (default 90) is used as the timeout for remote ML backend calls in `LocalMLClient`. `MODEL_IDLE_EVICTION_SECONDS` (default 0 = never evict; v5.95 config-integrity — promoted from env-only to config.yaml-authoritative via `resolve_knob`) is read by `ml_client.py` to evict a loaded model after that many idle seconds.
 - **explanation:** Guards the cross-encoder and NLI inference path against concurrent overload. A semaphore with `RERANK_MAX_CONCURRENCY` slots serialises concurrent scoring requests; if the semaphore cannot be acquired within `RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC` the request is dropped with a counter increment. `RERANK_BACKEND_TIMEOUT_SEC` gives the backend inference itself a hard ceiling before aborting.
 
@@ -567,7 +567,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** `BC-RR4`, `BC-RU1`, `BC-RU2`, `BC-RU3`
-- **refs:** `yadgar/_shared/retrieval/reranking.py::_RerankingMixin._rerank_rules`
+- **refs:** `yadgar/backend/retrieval/reranking.py::_RerankingMixin._rerank_rules`
 - **wiring:** `_apply_rerank_pipeline()` calls `_rerank_rules()` after MMR and trim. Requires `self._rules_engine` to be non-None (set via `Retriever.set_rules_engine()`). Delegates to `rules_engine.apply_rules(result_memories, directory)`.
 - **explanation:** Applies neuro-symbolic rules stored via `add_rule` to boost or penalise candidates based on content patterns, tags, or directory context. Rules are directory-scoped (added for a specific project) and applied at the end of the rerank pipeline, after all ML scoring. The rules engine is set externally on the retriever during server startup; if not set (rules engine not configured), this stage is a no-op.
 
@@ -609,7 +609,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-AC1`, `BC-AC2`
-- **refs:** `yadgar/_shared/astrocyte_pool.py`
+- **refs:** `yadgar/_shared/astrocyte_pool/astrocyte_pool.py`
 - **wiring:** Called during consolidation cycles. `assign_memory()` routes memories to domain-specialist astrocyte processes. `consolidate_domain()` runs domain-level summarization. Both are exercised in e2e tests (BC-AC1, BC-AC2 marked ✅).
 - **explanation:** Domain-aware consolidation: memories are assigned to semantic domains (e.g. "code", "decisions") by the astrocyte pool. Each domain runs its own consolidation pass, producing domain summaries. This supplements the global consolidation by maintaining domain-coherent clusters. The pool can be disabled via `ASTROCYTE_POOL_ENABLED=False`; when disabled a startup warning is emitted (BC-C5b pending #40).
 
@@ -621,7 +621,7 @@ config knobs.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/runtime/recall_pipeline.py::_fanout_recall`, `yadgar/_shared/runtime/recall_pipeline.py::_apply_recall_db_side_effects`, `yadgar/_shared/runtime/recall_pipeline.py::_apply_recall_session_side_effects`, `yadgar/backend/embed_service.py::recall_route`, `yadgar/core/server/tools/recall.py::_forward_to_backend`
+- **refs:** `yadgar/backend/retrieval/recall_pipeline.py::_fanout_recall`, `yadgar/backend/retrieval/recall_pipeline.py::_apply_recall_db_side_effects`, `yadgar/backend/retrieval/recall_pipeline.py::_apply_recall_session_side_effects`, `yadgar/backend/embed_service/embed_service.py::recall_route`, `yadgar/core/server/tools/recall.py::_forward_to_backend`
 - **wiring:** Phase 2a (always-on): core recall() unconditionally POSTs to the backend /recall endpoint via _forward_to_backend(); backend runs _fanout_recall (all modes/profiles) + _apply_recall_db_side_effects; core runs _apply_recall_session_side_effects on results. RECALL_BACKEND_ENABLED and UNIFIED_RECALL_ENABLED flags removed — no fallback path.
 - **explanation:** Train 1 of the recall pipeline backend migration. Extracts the _fanout_recall orchestrator and related helpers into _recall_pipeline.py (app-free module) so both core and backend share the pipeline code without import-side-effects. Splits _apply_recall_side_effects into DB half (backend) and session half (core). Backend /recall route wired with same Bearer auth as /rerank. Default False — safe no-op merge.
 
@@ -635,9 +635,9 @@ config knobs.
 - **tools:** `recall`, `wiki_query`
 - **migrations:** `023`
 - **bc:** `BC-G11`, `BC-U1`, `BC-U2`, `BC-U3`, `BC-U4`, `BC-U5`, `BC-U6`, `BC-U7`, `BC-U8`
-- **refs:** `yadgar/_shared/retrieval/providers/base.py::SourceProvider`, `yadgar/_shared/retrieval/providers/base.py::Candidate`, `yadgar/_shared/retrieval/providers/memory.py::MemoryProvider`, `yadgar/_shared/retrieval/providers/wiki.py::WikiProvider`, `yadgar/_shared/retrieval/providers/fusion.py::fuse_candidates`, `yadgar/_shared/storage/scope.py::ScopeFilter`, `yadgar/core/server/tools/recall.py::_fanout_recall`
+- **refs:** `yadgar/backend/retrieval/providers/base.py::SourceProvider`, `yadgar/backend/retrieval/providers/base.py::Candidate`, `yadgar/backend/retrieval/providers/memory.py::MemoryProvider`, `yadgar/backend/retrieval/providers/wiki.py::WikiProvider`, `yadgar/backend/retrieval/providers/fusion.py::fuse_candidates`, `yadgar/_shared/storage/scope.py::ScopeFilter`, `yadgar/core/server/tools/recall.py::_fanout_recall`
 - **wiring:** `recall()` routes through `_fanout_recall()` by default (v5.80: `UNIFIED_RECALL_ENABLED=True`). Steps 0–5 (v6 T6): (0) eval harness; (3a) ScopeFilter dataclass; (3b) directory scoping in MemoryProvider + WikiProvider; (4) cross-type CE fusion via `fuse_candidates` (per-type quotas → CE rerank → additive prior boost → provenance dedup → trim); (5) `recall(type=)` param for source-type filtering + `wiki_query` deprecation log. `RECALL_MEMORY_QUOTA`/`RECALL_WIKI_QUOTA` bound each source's candidate pool before CE rerank. `RECALL_MEMORY_PRIOR_WEIGHT`/`RECALL_WIKI_PRIOR_WEIGHT` are additive priors folded into CE scores. Phase 2a: fanout path is always-on; UNIFIED_RECALL_ENABLED flag removed.
-- **explanation:** Unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. Both providers apply Python-side `is_directory_eligible()` post-filter matching the legacy path. `fuse_candidates` in `yadgar/_shared/retrieval/providers/fusion.py` runs CE rerank, additive prior boost, and cross-type provenance dedup (memory id ∈ wiki.source_memory_ids → keep higher-CE). `recall(type="memory"|"wiki"|"all")` routes to the appropriate provider subset. `wiki_query` emits INFO deprecation log when flag is ON. LIVE as of v5.80 (always-on). Phase 2a: flag removed; fanout path unconditional. Fusion fixes shipped in v5.80 (single-provider bypass + memory-order-stable fuse_candidates) ensure no memory-ranking regression. The single-provider bypass triggers whenever EITHER pool is empty — covering explicit `type="memory"`/`"wiki"` AND `type="all"` where one pool returned no candidates (e.g. no relevant wiki); `fuse_candidates` runs only when both pools are non-empty, so a memory-only pool is never CE-reranked a second time (BC-U6/U7/U8).
+- **explanation:** Unified recall architecture (v6 T6 — `[[unified-scoped-recall]]`). `SourceProvider` ABC with `type: str` + `candidates(query, scope, limit) -> list[Candidate]`. Both providers apply Python-side `is_directory_eligible()` post-filter matching the legacy path. `fuse_candidates` in `yadgar/backend/retrieval/providers/fusion.py` runs CE rerank, additive prior boost, and cross-type provenance dedup (memory id ∈ wiki.source_memory_ids → keep higher-CE). `recall(type="memory"|"wiki"|"all")` routes to the appropriate provider subset. `wiki_query` emits INFO deprecation log when flag is ON. LIVE as of v5.80 (always-on). Phase 2a: flag removed; fanout path unconditional. Fusion fixes shipped in v5.80 (single-provider bypass + memory-order-stable fuse_candidates) ensure no memory-ranking regression. The single-provider bypass triggers whenever EITHER pool is empty — covering explicit `type="memory"`/`"wiki"` AND `type="all"` where one pool returned no candidates (e.g. no relevant wiki); `fuse_candidates` runs only when both pools are non-empty, so a memory-only pool is never CE-reranked a second time (BC-U6/U7/U8).
 
 ---
 
@@ -1125,7 +1125,7 @@ config knobs.
 - **tools:** `memorize`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/write_exec/validate.py::phase_validate`, `yadgar/_shared/secrets.py::gate_or_reject`, `yadgar/_shared/rules_engine.py`
+- **refs:** `yadgar/_shared/write_exec/validate.py::phase_validate`, `yadgar/_shared/security/secrets.py::gate_or_reject`, `yadgar/_shared/rules_engine/rules_engine.py`
 - **wiring:** Called as first phase from `memorize()` → validates tier enum, valid_until/ttl_days conflict, unicode surrogates, content size ≤ 32 768 bytes, provenance_agent format → then calls `gate_or_reject(content, tags=...)` from `yadgar.secrets` → if non-None, returns rejection dict. Then runs `_rules_engine.check_write_policy()` if the rules engine is loaded.
 - **explanation:** Phase 1 of the memorize pipeline enforces hard pre-write guards: tier validation, anchor tag injection, content-size limit, provenance agent name validation, the built-in secret-pattern scanner (`gate_or_reject`), the user-defined write-path policy rules, and a Unicode surrogate check. Secret-gate fires before any state mutation and cannot be disabled — it is the Layer 2 (API-boundary) defence that precedes the Layer 1 (storage-level) `SecretLeakBlocked` exception.
 
@@ -1138,7 +1138,7 @@ config knobs.
 - **tools:** `memorize`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/secrets.py::gate_or_reject`, `yadgar/_shared/secrets.py::check_secrets`, `yadgar/_shared/security/allowlist.py`
+- **refs:** `yadgar/_shared/security/secrets.py::gate_or_reject`, `yadgar/_shared/security/secrets.py::check_secrets`, `yadgar/_shared/security/allowlist.py`
 - **wiring:** `phase_validate` → `gate_or_reject(content, tags=tags)` → `check_secrets(content)` scans all `_SECRET_PATTERNS` regexes → if a match is found and no allowlist bypass applies, returns rejection dict `{"stored": False, "reason": "secret_detected: <name>"}`. Allowlist (v5.13.0) is loaded from `YADGAR_SECRET_GATE_ALLOWLIST_PATH`; every bypass is audited to a date-rotated JSONL file.
 - **explanation:** Built-in, non-disableable regex scanner covering AWS access keys, private keys, JWTs, GitHub/GitLab/Stripe/Slack/Anthropic/OpenAI tokens, database connection strings, GCP service-account JSON, and a generic credential-pattern catch-all. Fires before any write at the API boundary (`gate_or_reject`) and again at the storage boundary (`SecretLeakBlocked` exception). The v5.13.0 allowlist allows per-tag bypass of specific glob patterns, with every bypass recorded to an append-only audit log.
 
@@ -1151,7 +1151,7 @@ config knobs.
 - **tools:** `memorize`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/write_exec/_memorize_phases/_phase_embed.py::phase_embed`, `yadgar/_shared/retrieval/core.py::generate_contextual_prefix`
+- **refs:** `yadgar/backend/write_exec/_memorize_phases/_phase_embed.py::phase_embed`, `yadgar/backend/retrieval/core.py::generate_contextual_prefix`
 - **wiring:** `phase_embed` checks `settings.CONTEXTUAL_PREFIX_ENABLED` (default `True`) and `_st._retriever is not None` → calls `retriever.generate_contextual_prefix(content, context, tags, now)` → prefix is prepended to content before embedding: `embed_text = f"{prefix}{content}"`. The prefix is also stored on the memory row via `update_memory_fields`.
 - **explanation:** Before generating the embedding for a new memory, the write path prepends a structured metadata prefix: `[Project: <basename>] [Directory: <path>] [Tags: <comma-list>] [Recorded: <timestamp>] [Related entities: <top-5>]`. This enriches the embedding space with contextual signals, improving retrieval specificity for project-scoped queries. Enabled by default; set `CONTEXTUAL_PREFIX_ENABLED=False` to skip. Disabled only if the retriever is unavailable.
 
@@ -1164,7 +1164,7 @@ config knobs.
 - **tools:** `memorize`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/sensory_buffer.py::ActionLogger`, `yadgar/backend/write_exec/_memorize_phases/_phase_store.py::phase_store`
+- **refs:** `yadgar/_shared/sensory_buffer/sensory_buffer.py::ActionLogger`, `yadgar/backend/write_exec/_memorize_phases/_phase_store.py::phase_store`
 - **wiring:** `phase_store` calls `buffer.capture(ctx.content, ctx.context)` after the memory is written → `ActionLogger.capture` appends content to the current episode's `raw_content`. When `raw_content` exceeds `MAX_EPISODE_TOKENS * 4` chars, the episode is rotated with a trailing overlap of `OVERLAP_TOKENS * 4` chars to preserve continuity across episode boundaries.
 - **explanation:** The sensory buffer accumulates raw content from each `memorize` call into rolling episodes. `OVERLAP_TOKENS` (default 2 000, converted to characters by `× 4`) controls how many characters are carried over from the end of one episode into the start of the next, preventing context loss at episode boundaries. The buffer also logs every tool invocation to an action stream (maxlen 200) for pattern extraction.
 
@@ -1190,7 +1190,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/retrieval/fusion.py::_search_profiles_and_beliefs`, `yadgar/_shared/config.py`
+- **refs:** `yadgar/backend/retrieval/fusion.py::_search_profiles_and_beliefs`, `yadgar/_shared/config/config.py`
 - **wiring:** During recall/fusion, `_search_profiles_and_beliefs` checks `getattr(settings, "PROFILE_EXTRACTION_ENABLED", False)` (default `True`) → calls `storage.search_profiles_fts(query, limit=max_results)` → injects results as synthetic recall hits with `_source="profile"` and `_retrieval_score=PROFILE_SEARCH_WEIGHT`. `PROFILE_CONFIDENCE_DIRECT` (0.7) and `PROFILE_CONFIDENCE_INFERRED` (0.4) are threshold constants used when extracting/scoring profile attributes; `PROFILE_SUMMARY_ENABLED` controls summary generation. Enabled on default config.
 - **explanation:** Structured user/entity profiles stored in a `profile` table are searchable via full-text search during recall. When a query matches profile entries (entity name, attribute type, attribute value), they are injected into the result set as synthetic memories with a configurable score weight. This allows recall to surface factual profile data (e.g. "user speaks German", "project uses Python") that would not appear in the embedding vector index. `PROFILE_CONFIDENCE_DIRECT` and `PROFILE_CONFIDENCE_INFERRED` tune confidence scoring for directly-stated vs. inferred attributes.
 
@@ -1203,7 +1203,7 @@ config knobs.
 - **tools:** `memorize`
 - **migrations:** —
 - **bc:** `BC-PCd2`
-- **refs:** `yadgar/backend/predictive_coding.py::WriteGate.should_store`, `yadgar/backend/predictive_coding.py::WriteGate.would_reject_at`, `yadgar/backend/write_exec/_memorize_phases/_phase_embed.py::phase_embed`, `yadgar/backend/write_exec/_memorize_phases/_phase_store.py::phase_store`, `yadgar/_shared/write_exec/context.py`
+- **refs:** `yadgar/backend/predictive_coding/predictive_coding.py::WriteGate.should_store`, `yadgar/backend/predictive_coding/predictive_coding.py::WriteGate.would_reject_at`, `yadgar/backend/write_exec/_memorize_phases/_phase_embed.py::phase_embed`, `yadgar/backend/write_exec/_memorize_phases/_phase_store.py::phase_store`, `yadgar/_shared/write_exec/context.py`
 - **wiring:** `phase_embed` calls `_st._write_gate.should_store(content, context, tags)` → when `WRITE_GATE_THRESHOLD <= 0.0` (default `0.0`), `should_store` immediately returns `(True, 0.0, "gate_disabled")` — nothing is ever dropped. The gate then calls `would_reject_at(content, context, tags, settings.WRITE_GATE_SHADOW_THRESHOLD, surprisal=surprisal)` (default shadow threshold `0.15`) → sets `ctx.gate_surprisal` and `ctx.would_reject`. In `phase_store`, these shadow fields are written to the memory row via `storage.update_memory_fields(ctx.memory_id, surprise_score=ctx.gate_surprisal, would_reject=ctx.would_reject)`. The gate NEVER drops a memory at the current default config.
 - **explanation:** The predictive coding write gate models Friston-style free-energy minimization: it computes surprisal for each candidate memory as a weighted sum of four novelty signals (embedding novelty 0.4, entity novelty 0.25, temporal novelty 0.2, structural novelty 0.15). With `WRITE_GATE_THRESHOLD=0.0` (default), the gate is in **shadow mode**: it computes surprisal and the adaptive `would_reject` shadow decision at `WRITE_GATE_SHADOW_THRESHOLD=0.15`, stamps both on the memory row, but never actually drops a write. To activate the gate as a real filter, set `WRITE_GATE_THRESHOLD` to a positive value (e.g. 0.15). Bypass conditions (error/exception/decision keywords, `important`/`critical` tags) always pass regardless of threshold. Task continuity (directory match + temporal proximity + semantic similarity to recent stores) reduces the effective threshold by up to `WRITE_GATE_CONTINUITY_DISCOUNT` (default 0.15).
 
@@ -1216,7 +1216,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/predictive_coding.py::WriteGate._get_cached_entities`, `yadgar/backend/predictive_coding.py::WriteGate.invalidate_entity_cache`
+- **refs:** `yadgar/backend/predictive_coding/predictive_coding.py::WriteGate._get_cached_entities`, `yadgar/backend/predictive_coding/predictive_coding.py::WriteGate.invalidate_entity_cache`
 - **wiring:** `WriteGate._compute_entity_novelty` and `_compute_structural_novelty` call `_get_cached_entities()`, which uses a monotonic-clock TTL check against `PREDICTIVE_CODING_ENTITY_TTL_SECONDS` (default 300 s = 5 min). On expiry or cache miss, it fetches all entities from storage; `invalidate_entity_cache()` is called after entity inserts/deletes to force refresh.
 - **explanation:** The write gate's surprisal computation queries the knowledge-graph entity set on every call. To avoid O(N·M) DB fetches during batch write sessions, the entity list is cached in memory with a configurable TTL. When TTL is 0, caching is disabled (always fetches). The cache is also proactively invalidated after any entity mutation via `invalidate_entity_cache()`. This setting only matters when the write gate is active (i.e. `WRITE_GATE_THRESHOLD > 0`), but the cache operates regardless since the entity set is fetched even in shadow mode.
 
@@ -1307,7 +1307,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-PC1`, `BC-PC2`, `BC-PC3`, `BC-PC4`, `BC-PCd1`, `BC-PCd2`
-- **refs:** `yadgar/backend/predictive_coding.py::WriteGate`, `yadgar/backend/write_exec/_memorize_phases/_phase_embed.py`
+- **refs:** `yadgar/backend/predictive_coding/predictive_coding.py::WriteGate`, `yadgar/backend/write_exec/_memorize_phases/_phase_embed.py`
 - **wiring:** The write-gate `should_store` computes surprisal then applies a thermo heat boost via `thermo.apply_surprise_boost(1.0, ctx.surprise)` — surprising memories start hotter (`BC-PCd1`). The gate's `should_store` in shadow mode never drops (`BC-PCd2` — full enforcement requires `WRITE_GATE_THRESHOLD > 0`). `BC-PC1`–`BC-PC4` govern project_brief scoping and seed_project, covered by the project-context subsystem not the write gate.
 - **explanation:** This entry groups the behaviour-contract rows assigned to the predictive-coding and project-context subsystems that are exercised via the write path or write-gate logic. `BC-PCd1` (novel memory triggers surprise heat boost) is wired: `initial_heat = thermo.apply_surprise_boost(1.0, ctx.surprise)` in `phase_embed`, so high-surprisal writes receive a heat multiplier. `BC-PCd2` (should_store gates redundant writes) is shadow-only at default config — the gate computes but does not enforce. `BC-PC1`–`BC-PC4` cover project_brief and seed_project and are tracked against those tools' entries.
 
@@ -1357,7 +1357,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-HT1`, `BC-HT2`, `BC-HT3`, `BC-C2`, `BC-CSW1`
-- **refs:** `yadgar/backend/consolidation/heat_decay.py::_HeatDecayMixin._apply_decay`, `yadgar/backend/consolidation/heat_decay.py::_HeatDecayMixin._decay_memories`, `yadgar/backend/consolidation/heat_decay.py::_HeatDecayMixin._decay_entities`, `yadgar/_shared/storage/heat_writer.py::HeatWriter`, `yadgar/_shared/thermodynamics.py`
+- **refs:** `yadgar/backend/consolidation/heat_decay.py::_HeatDecayMixin._apply_decay`, `yadgar/backend/consolidation/heat_decay.py::_HeatDecayMixin._decay_memories`, `yadgar/backend/consolidation/heat_decay.py::_HeatDecayMixin._decay_entities`, `yadgar/_shared/storage/heat_writer.py::HeatWriter`, `yadgar/_shared/thermodynamics/thermodynamics.py`
 - **wiring:** `ConsolidationScheduler._consolidation_cycle()` → `_run_episodic_phases()` → `_apply_decay()`. Runs every consolidation cycle (force_consolidate MCP or nightly cron). `_decay_memories` iterates all non-protected memories: computes elapsed hours from `max(last_accessed, last_decay_at)` (watermark fix prevents quadratic over-decay), applies domain multiplier from AstrocytePool if enabled, then calls `MemoryThermodynamics.compute_decay()` which uses IMPORTANCE_DECAY_FACTOR and EMOTIONAL_DECAY_RESISTANCE. Heat below COLD_THRESHOLD is zeroed. HOT_THRESHOLD defaults to 0.0 (all memories accessible). Entity decay uses DECAY_FACTOR directly. T4 (BC-CSW1): intents from both tables are merged by `_reconcile_heat_intents` and applied via a single `HeatWriter.apply_heat_intents()` call — one `batch_writes` per cycle.
 - **explanation:** Implements exponential heat decay on every memory and entity after each consolidation cycle. Heat represents recency × importance; it decays as `DECAY_FACTOR^hours`, modulated by emotional valence (high |valence| slows decay via EMOTIONAL_DECAY_RESISTANCE) and importance. Memories crossing COLD_THRESHOLD are archived (heat→0) and excluded from normal recall. The watermark (`last_decay_at`) prevents compounding decay across cycles — only the elapsed time since the last decay pass is charged, not since last access.
 
@@ -1368,7 +1368,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/thermodynamics.py`, `yadgar/backend/consolidation/cls.py::_CLSMixin._process_new_episodes`
+- **refs:** `yadgar/_shared/thermodynamics/thermodynamics.py`, `yadgar/backend/consolidation/cls.py::_CLSMixin._process_new_episodes`
 - **wiring:** SURPRISE_BOOST is applied in `MemoryThermodynamics.compute_heat_with_surprise()` at write time when a memory has a non-zero surprise_score. SYNAPTIC_BOOST fires in `_process_new_episodes()`: if a source episode's linked memory has importance > 0.7, `self._thermo.synaptic_boost()` is called which finds all memories created within `SYNAPTIC_WINDOW_MINUTES` of the event and boosts their heat by `SYNAPTIC_BOOST * event_heat`.
 - **explanation:** Two related heat-amplification mechanisms. Surprise boost elevates the initial heat of high-surprise memories (discovery events, unexpected outcomes) by adding `surprise_score * SURPRISE_BOOST` to base heat at write time. Synaptic boost (Hebbian-inspired) amplifies temporally adjacent memories when a high-importance event is processed during episode consolidation: memories written within SYNAPTIC_WINDOW_MINUTES of the trigger event receive a heat increment proportional to SYNAPTIC_BOOST, implementing a basic coincidence-based strengthening rule.
 
@@ -1390,7 +1390,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C5a`, `BC-C5b`, `BC-AS1`, `BC-AS2`
-- **refs:** `yadgar/_shared/astrocyte_pool.py::AstrocytePool`, `yadgar/backend/consolidation/__init__.py::ConsolidationScheduler._run_domain_consolidation`, `yadgar/backend/consolidation/heat_decay.py::_HeatDecayMixin._build_domain_multiplier_map`
+- **refs:** `yadgar/_shared/astrocyte_pool/astrocyte_pool.py::AstrocytePool`, `yadgar/backend/consolidation/__init__.py::ConsolidationScheduler._run_domain_consolidation`, `yadgar/backend/consolidation/heat_decay.py::_HeatDecayMixin._build_domain_multiplier_map`
 - **wiring:** Initialized in `ConsolidationScheduler.__init__()` if `ASTROCYTE_POOL_ENABLED=True` (default). During `_consolidation_cycle()`, after all memory-producing phases, the orchestrator checks `_pool is not None and ASTROCYTE_POOL_ENABLED`, then calls `_run_domain_consolidation()` which iterates `pool.get_process_stats()` → `pool.consolidate_domain(name)` for each of the four domain processes (code-patterns, decisions, errors, dependencies). The domain-multiplier map used by heat decay (`_build_domain_multiplier_map()`) also reads the pool to apply per-domain decay rates. Prior audit #40 noted domain consolidation "never fires" — this was the old daemon path; the code is now confirmed wired at line 232-244 in `orchestrator.py`. Status: LIVE.
 - **explanation:** Modeled on astrocyte glial cells which support domain-specific neuronal populations. Four specialized processes each track a domain (code-patterns, decisions, errors, dependencies) with distinct `decay_multiplier` values (e.g. decisions decay 1.5× slower, errors 0.7× faster). Each domain consolidation pass re-scans assigned memories, extracts domain-typed entities (file/function, decision, error/solution, dependency), and reinforces or creates entity graph nodes. The pool also supports consensus retrieval (multi-domain voting with 15% multi-domain boost) used during recall. Process records are pruned after `ASTROCYTE_PROCESS_RETENTION_DAYS` days.
 
@@ -1412,7 +1412,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-CA1`
-- **refs:** `yadgar/backend/consolidation/cls.py::_CLSMixin._process_new_episodes`, `yadgar/backend/consolidation/cleanup.py::_CleanupMixin._prune_old_episodes_safe`, `yadgar/_shared/sensory_buffer.py`
+- **refs:** `yadgar/backend/consolidation/cls.py::_CLSMixin._process_new_episodes`, `yadgar/backend/consolidation/cleanup.py::_CleanupMixin._prune_old_episodes_safe`, `yadgar/_shared/sensory_buffer/sensory_buffer.py`
 - **wiring:** `_run_episodic_phases()` → `_process_new_episodes()`. Fetches all episodes with ID > `_last_consolidated_episode_id`. For each episode: typed entity extraction (`_graph.extract_entities_typed()`) + legacy regex extraction → `_upsert_entities()` → bulk co-occurrence relationship writes. Episodes older than `EPISODE_RETENTION_DAYS` are pruned by `_prune_old_episodes_safe()` after each pass. `MAX_EPISODE_TOKENS` controls episode chunking in `SensoryBuffer` at capture time (1 token ≈ 4 chars).
 - **explanation:** The episodic processing phase ingests raw episodes captured by the PostToolCall hook and promotes them into the entity knowledge graph. Each episode is scanned for file paths, Python/JS definitions, error types, imports, and decision keywords to extract typed entities. Co-occurrence relationships are batch-written for all entity pairs found in the same episode. This builds the substrate for both the causal discovery (PC algorithm) and the graph-prior computation. Episodes are pruned after `EPISODE_RETENTION_DAYS` to keep the table bounded.
 
@@ -1456,7 +1456,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-C4`
-- **refs:** `yadgar/backend/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`, `yadgar/backend/narrative.py::NarrativeEngine.auto_narrate`
+- **refs:** `yadgar/backend/sleep_compute/__init__.py::SleepComputeEngine.run_sleep_cycle`, `yadgar/backend/narrative/narrative.py::NarrativeEngine.auto_narrate`
 - **wiring:** `run_sleep_cycle()` → `self._narrative.auto_narrate()`. `NarrativeEngine` is instantiated in `SleepComputeEngine.__init__()`. `auto_narrate()` checks if a narrative entry exists in the last `NARRATIVE_INTERVAL_HOURS` hours; if not, it generates one. Narrative entries older than `NARRATIVE_ENTRY_RETENTION_DAYS` are pruned by `_run_retention_tasks()` in the main consolidation cycle.
 - **explanation:** Generates periodic narrative summaries of recent memory activity to provide a human-readable chronicle of what the system has learned. Runs at most once per `NARRATIVE_INTERVAL_HOURS` (default 24h) as phase 6 of the nightly sleep cycle. The narrative is stored as a `narrative_entry` record and pruned after `NARRATIVE_ENTRY_RETENTION_DAYS` days (default 90). This is distinct from wiki content — it's an autobiographical memory of system activity rather than curated knowledge.
 
@@ -1489,8 +1489,8 @@ config knobs.
 - **tools:** `vacuum_now`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/server/tools/admin_vacuum.py::vacuum_now`, `yadgar/core/ops.py`
-- **wiring:** `vacuum_now` MCP tool → `_fire_vacuum_service()` in `yadgar/core/ops.py`. Writes a trigger file to `~/.local/state/yadgar/triggers/` watched by launchd/systemd, which fires `yadgar-vacuum.service`. Auto-vacuum also fires from `_maybe_auto_vacuum()` called in `_run_post_cycle_tasks()` after each consolidation cycle when DB size exceeds threshold and we're in the configured time window.
+- **refs:** `yadgar/core/server/tools/admin_vacuum.py::vacuum_now`, `yadgar/core/ops/ops.py`
+- **wiring:** `vacuum_now` MCP tool → `_fire_vacuum_service()` in `yadgar/core/ops/ops.py`. Writes a trigger file to `~/.local/state/yadgar/triggers/` watched by launchd/systemd, which fires `yadgar-vacuum.service`. Auto-vacuum also fires from `_maybe_auto_vacuum()` called in `_run_post_cycle_tasks()` after each consolidation cycle when DB size exceeds threshold and we're in the configured time window.
 - **explanation:** Triggers SurrealDB compaction (VACUUM) to reclaim disk space from deleted/updated records. Intentionally runs out-of-process via a trigger file to avoid blocking the consolidation cycle. The MCP tool `vacuum_now` accepts a `force` flag that bypasses the in-window check. Auto-vacuum (from consolidation post-cycle tasks) respects a 6-hour in-memory cooldown and the VACUUM_AUTO_WINDOW_START/END config window to avoid running during peak usage hours.
 
 ### CAP-CONS-014 — Engram Allocator (Josselyn-Frankland slot model)
@@ -1500,7 +1500,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/engram.py::EngramAllocator`, `yadgar/_shared/engram.py::EngramAllocator.allocate`, `yadgar/_shared/engram.py::EngramAllocator.boost_excitability`
+- **refs:** `yadgar/_shared/contracts/engram.py::EngramAllocator`, `yadgar/_shared/contracts/engram.py::EngramAllocator.allocate`, `yadgar/_shared/contracts/engram.py::EngramAllocator.boost_excitability`
 - **wiring:** `EngramAllocator` is instantiated at server startup. Called when memories are written: `allocate(memory_id)` selects a slot, boosts its excitability by `EXCITABILITY_BOOST`, applies lateral inhibition to ±2 neighboring slots (at 50% of boost), and updates the memory's `excitability` field. Slot excitability decays exponentially with `EXCITABILITY_HALF_LIFE_HOURS` (default 6h). Warm slots (excitability ≥ 0.05) attract nearby writes, creating automatic temporal clusters.
 - **explanation:** Implements the Josselyn & Frankland (2007) / Rashid et al. (2016) engram cell model — NOT Hopfield networks. Neurons (memory slots) compete via CREB-like excitability: the most excited slot wins the allocation competition, and memories written during the same excited window share a slot, creating temporal associations with zero explicit logic. After ~3 half-lives (~18 hours with default settings), a slot's excitability drops below the warm threshold and the next write starts a new temporal cluster. Lateral inhibition (reducing neighbors' excitability) sharpens cluster boundaries.
 
@@ -1511,7 +1511,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/models.py` (DB schema fields retained)
+- **refs:** `yadgar/_shared/contracts/models.py` (DB schema fields retained)
 - **wiring:** Settings deleted from `config.py` in v6 T3. The memory schema still has `plasticity`, `stability`, and `reconsolidation_count` fields (written at insert time with hardcoded values: plasticity=1.0, stability=0.0). No production code ever read these settings.
 - **explanation:** Reconsolidation theory (Nader et al. 2000) schema support remains in DB fields but the behavioral logic was never implemented. Config settings deleted in v6 T3 (#41). DB schema fields retained for future implementation.
 
@@ -1522,8 +1522,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-MC3`
-- **refs:** `yadgar/_shared/retrieval/fusion.py`, `yadgar/backend/curation/__init__.py::MemoryCurator._memify_derive`, `yadgar/backend/curation/strengthen.py::_memify_derive`
-- **wiring:** `DERIVED_BELIEFS_ENABLED` is checked in `yadgar/_shared/retrieval/fusion.py:422` (getattr default False — note mismatch with config default True). `_memify_derive()` is called from `MemoryCurator.memify_cycle()` → called from `_run_curation_phases()` during each consolidation cycle. `DERIVED_BELIEF_RETENTION_DAYS` controls pruning of `derived_belief` table rows in `_run_retention_tasks()`.
+- **refs:** `yadgar/backend/retrieval/fusion.py`, `yadgar/backend/curation/__init__.py::MemoryCurator._memify_derive`, `yadgar/backend/curation/strengthen.py::_memify_derive`
+- **wiring:** `DERIVED_BELIEFS_ENABLED` is checked in `yadgar/backend/retrieval/fusion.py:422` (getattr default False — note mismatch with config default True). `_memify_derive()` is called from `MemoryCurator.memify_cycle()` → called from `_run_curation_phases()` during each consolidation cycle. `DERIVED_BELIEF_RETENTION_DAYS` controls pruning of `derived_belief` table rows in `_run_retention_tasks()`.
 - **explanation:** Derives new beliefs by finding co-occurring entity clusters in the memory store and creating summary "derived" memories tagged `["derived", "auto-generated"]`. The derive pass scans entities that frequently appear together, generates a co-occurrence summary, and inserts it as a new episodic memory with importance=0.6. Derived beliefs are pruned from the `derived_belief` table after `DERIVED_BELIEF_RETENTION_DAYS` days. The retrieval path checks `DERIVED_BELIEFS_ENABLED` to decide whether to include derived belief results in fusion — note a potential config default mismatch between config.py (True) and fusion.py (getattr default False).
 
 ### CAP-CONS-017 — Cognitive Load Limiting
@@ -1544,8 +1544,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-CM1`
-- **refs:** `yadgar/_shared/cognitive_map.py::CognitiveMap`, `yadgar/_shared/restoration.py`, `yadgar/_shared/runtime/lifecycle.py`
-- **wiring:** `CognitiveMap` is instantiated in `server/lifecycle.py::_init_secondary_engines()` and passed to `CheckpointRestore`. Every `recall` call records a transition via `_st._cognitive_map.record_transition()` + `incremental_update()` (recall.py:329-338). During `restore` MCP tool, `CheckpointRestore._predict_memories()` calls `has_sufficient_data()` (needs ≥20 transitions) and then `navigate_to()` — results are iterated into the `predicted` list and included in the restore output. Spatial layout methods (extract_coordinates/update_memory_sr_coords/get_neighborhood/get_sr_scores) were retired in v5.71.0 (#47). BC-CM1 e2e-proven in v5.75 (train T5): `tests/e2e/test_phase3_closure.py::TestBCCM1_SRTransitionMatrixBuilt`.
+- **refs:** `yadgar/backend/restoration/cognitive_map.py::CognitiveMap`, `yadgar/backend/restoration/checkpoint_restore.py`, `yadgar/backend/restoration/__init__.py::ensure_restoration_engines`, `yadgar/_shared/runtime/sr_session.py::SRTransitionRecorder`
+- **wiring:** T2 Car B: the shared root (`_init_secondary_engines`) builds only the session-side `SRTransitionRecorder`; the backend composition point `ensure_restoration_engines()` upgrades the slot to the full `CognitiveMap` and passes it to `CheckpointRestore`. Every `recall` call records a transition via `_st._cognitive_map.record_transition()` + `incremental_update()` (recall.py:329-338). During `restore` MCP tool, `CheckpointRestore._predict_memories()` calls `has_sufficient_data()` (needs ≥20 transitions) and then `navigate_to()` — results are iterated into the `predicted` list and included in the restore output. Spatial layout methods (extract_coordinates/update_memory_sr_coords/get_neighborhood/get_sr_scores) were retired in v5.71.0 (#47). BC-CM1 e2e-proven in v5.75 (train T5): `tests/e2e/test_phase3_closure.py::TestBCCM1_SRTransitionMatrixBuilt`.
 - **explanation:** The Successor Representation (Dayan 1993) predicts future states from current position in a learned transition graph. `build_transition_matrix()` counts memory-to-memory transitions from the `memory_transition` table, applies discount factor γ, and computes the SR matrix as `(I - γT)^{-1}`. `navigate_to()` uses the SR to rank memories by expected future relevance given a query memory as starting state. The SR result feeds `CheckpointRestore._predict_memories()` and surfaces in the `restore` tool output as predicted next-retrieval candidates. BC-CM1 (SR transition matrix built) is LIVE and e2e-proven.
 
 ### CAP-CONS-019 — Action Log Processing
@@ -1588,7 +1588,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-MC1`, `BC-MC2`
-- **refs:** `yadgar/_shared/metacognition/gap_detection.py::_GapDetectionMixin.detect_gaps`, `yadgar/_shared/restoration.py::RestorationEngine._detect_gaps_safe`
+- **refs:** `yadgar/_shared/metacognition/gap_detection.py::_GapDetectionMixin.detect_gaps`, `yadgar/backend/restoration/checkpoint_restore.py::CheckpointRestore._detect_gaps_safe`
 - **wiring:** `RestorationEngine._detect_gaps_safe()` calls `self._metacognition.detect_gaps(directory)` during context restore (up to 3 gaps included in restore output). `detect_gaps()` runs five detection passes: isolated entities (≤1 connection), stale memory regions (heat < 0.3), low-confidence memories (< 0.5), missing co-occurrence links (entities co-occurring in ≥ 2 memories but without a graph edge), and one-sided knowledge (errors with no resolved_by edge). Wired into the restore path, so it runs on every `restore` invocation.
 - **explanation:** Implements MetaRAG Signal 2 — awareness of what the system does NOT know. BC-MC1 (coverage scored by entity/topic distribution) is partially implemented via the entity-graph analysis in the five gap passes. BC-MC2 (gap detection flags missing topics) is implemented: `detect_gaps()` returns structured gap records with type, description, severity, affected entities, and remediation suggestions. These surface knowledge holes: isolated entities, stale knowledge regions, low-confidence beliefs, missing co-occurrence relationships, and unresolved errors.
 
@@ -1599,7 +1599,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-CM2`, `BC-CM3`
-- **refs:** `yadgar/_shared/cognitive_map.py`
+- **refs:** `yadgar/backend/restoration/cognitive_map.py`
 - **wiring:** BC-CM2 (topological/spatial layout via `extract_coordinates`/`update_memory_coordinates`) and BC-CM3 (`get_neighborhood`/`get_sr_scores`/`is_dirty`) were RETIRED in v5.71.0 (#47). The methods were deleted from the codebase. These BCs are marked 🗑 RETIRED in BEHAVIOR_CONTRACT.md — not failing specs, but permanently removed capability. The SR matrix and `sr_x`/`sr_y` coordinate fields remain on the memory schema (used by the active `CognitiveMap.compute_sr_matrix()` path), but the spatial layout and neighborhood-query methods are gone.
 - **explanation:** The spatial/topological visualization capabilities — `extract_coordinates()` for 2D layout and `get_neighborhood()`/`get_sr_scores()`/`is_dirty()` for proximity queries — were removed as dead code in v5.71.0 during the #41 dead-config audit. They were never wired to any MCP tool or recall path. The `CognitiveMap` class remains but is scoped to: `build_transition_matrix()`, `compute_sr_matrix()`, `navigate_to()`, and `has_sufficient_data()` — the SR-based recall navigation path (active via RestorationEngine).
 
@@ -1610,8 +1610,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/restoration.py`
-- **wiring:** All three settings are read by `RestorationEngine` in `yadgar/_shared/restoration.py`. `REPLAY_CHECKPOINT_AUTO_INTERVAL` (default 50) triggers auto-checkpoint every N tool calls. `REPLAY_ANCHOR_HEAT` (default 1.0) sets the heat of anchored memories when they are loaded in a restore pass. `REPLAY_MAX_RESTORE_MEMORIES` (default 8) caps the number of memories included in a restoration context packet.
+- **refs:** `yadgar/backend/restoration/checkpoint_restore.py`
+- **wiring:** All three settings are read by `CheckpointRestore` in `yadgar/backend/restoration/checkpoint_restore.py` (moved backend-side in T2 Car B, behind `POST /restore`). `REPLAY_CHECKPOINT_AUTO_INTERVAL` (default 50) triggers auto-checkpoint every N tool calls. `REPLAY_ANCHOR_HEAT` (default 1.0) sets the heat of anchored memories when they are loaded in a restore pass. `REPLAY_MAX_RESTORE_MEMORIES` (default 8) caps the number of memories included in a restoration context packet.
 - **explanation:** Controls the behavior of the checkpoint/restore system used to resume context after `/clear` or session restart. Auto-checkpointing fires every `REPLAY_CHECKPOINT_AUTO_INTERVAL` tool calls to keep a recent state snapshot. On restore, up to `REPLAY_MAX_RESTORE_MEMORIES` memories are included in the context reconstruction, and anchored memories are assigned `REPLAY_ANCHOR_HEAT` to ensure they remain hot and at the top of ranked results.
 
 ### CAP-CONS-026 — Consolidation compute backend (POST /consolidate)
@@ -1621,7 +1621,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/consolidation/service.py::run_consolidation_cycle`, `yadgar/backend/embed_service.py::consolidate_route`, `yadgar/core/consolidation/orchestrator.py::_forward_to_backend`, `yadgar/core/consolidation/orchestrator.py::run_consolidate_now`, `yadgar/core/consolidation/orchestrator.py::run_nightly_consolidation`
+- **refs:** `yadgar/backend/consolidation/service.py::run_consolidation_cycle`, `yadgar/backend/embed_service/embed_service.py::consolidate_route`, `yadgar/core/consolidation/orchestrator.py::_forward_to_backend`, `yadgar/core/consolidation/orchestrator.py::run_consolidate_now`, `yadgar/core/consolidation/orchestrator.py::run_nightly_consolidation`
 - **wiring:** R3 Car 1 (forward-only): the core consolidation orchestrator (`run_consolidate_now` / `run_nightly_consolidation`) POSTs the requested mode to the backend `/consolidate` endpoint via `_forward_to_backend`, mirroring the `/recall` forward path (same Bearer admin auth). Backend `consolidate_route` lazily builds the compute engine set and runs one cycle in a worker thread (`asyncio.to_thread`) so the event loop is not blocked; `run_consolidation_cycle` holds the `ConsolidationScheduler` as a process singleton so the 6-hour sleep-cycle gate survives across calls (nightly + `consolidate_now(full)` share one gate — double-fire avoidance is automatic). Core keeps the orchestration tail (vacuum / graph-layout / invariants) and `StalenessDetector`; the 8 compute engines (heat-decay, CLS, cleanup, cold-retention, causal, curation, sleep-compute, narrative/predictive) run backend-side.
 - **explanation:** R3 Car 1 moves the async-DB-write drainer and the consolidation COMPUTE cycle into the backend, correcting the R2a transitive mis-park where curation/cls_store/predictive/narrative/sleep/causal were parked "core-only" merely because their consumers had not yet moved. The compute is exposed as `POST /consolidate` (mode: light / full / nightly); core shells forward-only. No compat shims; import-linter 4/0.
 
@@ -1632,7 +1632,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/server/tools/_forward.py::_forward_admin`, `yadgar/backend/embed_service.py::admin_route`, `yadgar/backend/admin_exec/__init__.py::run_admin_op`, `yadgar/backend/admin_exec/bookmarks.py`, `yadgar/backend/admin_exec/blocks.py`
+- **refs:** `yadgar/core/server/tools/_forward.py::_forward_admin`, `yadgar/backend/embed_service/embed_service.py::admin_route`, `yadgar/backend/admin_exec/__init__.py::run_admin_op`, `yadgar/backend/admin_exec/bookmarks.py`, `yadgar/backend/admin_exec/blocks.py`
 - **wiring:** R3 Car 3a (R5 forward pattern): the pure-CRUD write MCP tools (`bookmark_add`/`bookmark_remove`/`bookmark_reorder`, `block_create`/`block_update`/`block_delete`/`block_replace`/`block_append`) keep their `@_tool` shell + validation + secret gate (I26) in core and forward the storage write to the backend `POST /admin` endpoint via `_forward_admin` (HTTP only, no core→backend import; same Bearer admin auth as `/recall` + `/consolidate`). The `admin_route` lazily builds the slim engine set (`_ensure_recall_engines`, for storage) and dispatches via `run_admin_op(op, payload)` in a worker thread (`asyncio.to_thread`); `run_admin_op` maps the op name (= tool name, single source of truth in `_ADMIN_OPS`) to its undecorated backend impl in `admin_exec.bookmarks` / `admin_exec.blocks`. Unknown op → 400. Forward-only: `YADGAR_EMBED_URL` unset → RuntimeError (no in-core storage fallback).
 - **explanation:** R3 Car 3a is the first R5 group: it establishes the generic `/admin` write-forward dispatch (parallel to the `/recall` + `/consolidate` compute forwards from Cars 1/D) and moves the storage-WRITE half of the bookmark + block CRUD tools to the backend, so core is a thin router that touches zero DB directly. Read tools (`bookmark_list`, `block_get`, `block_list`) stay core. Later R5 groups (forget/memory_update, wiki delete/restore, audit_anchors, project/dispatch/invariant writes) extend `_ADMIN_OPS` with more ops. No compat shims; import-linter 4/0.
 
@@ -1657,6 +1657,17 @@ config knobs.
 - **refs:** `yadgar/core/server/tools/wiki.py`, `yadgar/core/server/tools/admin_other.py::wiki_update`, `yadgar/core/server/tools/agent_prompts.py::agent_prompt_save`, `yadgar/backend/admin_exec/wiki.py`
 - **wiring:** R3 Car 3c (third R5 group) extends `_ADMIN_OPS` (CAP-STOR-041/042) with the wiki-EDIT family + `agent_prompt_save`. Core keeps the `@_tool` shell + input validation + the I26 secret gate (on `content`/`new_text`/`new_content`) and forwards the storage write to `POST /admin` via `_forward_admin`; the undecorated impls live in `admin_exec.wiki`. **Slug→page_id resolution stays CORE.** `_resolve_page_id_by_slug` calls `os.getcwd()` + `_detect_branch(cwd)`; the backend container has no git and a different cwd, so backend-side resolution would land the wrong `(directory, branch)` row. Core resolves the slug to a `page_id` (reads are allowed core-side — "zero DB" is a write-side goal — and core+backend share the same DB), then forwards the write keyed by `page_id` (`wiki_restore`/`wiki_append_section`/`wiki_replace_text`/`wiki_delete_text`/`wiki_insert_after`/`wiki_insert_before`/`wiki_replace_at`/`wiki_delete_at`/`wiki_insert_at`/`wiki_replace_markdown_block`). `wiki_delete` + `wiki_set_metadata` + `wiki_discard` + `wiki_approve` + `wiki_autolink` are slug/args-keyed (no page_id resolution). Two tools keep core-side SIDE-EFFECTS after the forward returns: `wiki_delete` (SSE `_push_event` on core's bus + file-queue mirror cleanup) and `wiki_approve` (file-queue `write_wiki` mirror driven by the draft content the impl surfaces back). `wiki_update` (in `admin_other`) is page_id-keyed already: allowed-key validation + secret gate stay core, the `update_wiki_page` write forwards. `agent_prompt_save`: directory-validation + I26 secret gate + content-wrap stay core; the three DB writes (`wiki.add` + TOC upsert + library discovery anchor) forward as one op (`_st._wiki` + `_st._replay` are both in the slim engine set). **Cache epoch:** every `_st._wiki.*` write funnels through `storage.wiki.insert/update/delete/set_metadata` → `_bump_wiki_epoch → bump_epoch(None)`, a GLOBAL bump that is file-backed on the shared queue volume (Car 2), so a backend-side bump busts the core process's cached `wiki_read` / `wiki_query` / `agent_dispatch_prelude` namespaces cross-process.
 - **explanation:** Third R5 group. Read tools stay core with direct storage access: `wiki_read`, `wiki_query`, `wiki_list`, `wiki_get`, `wiki_history`, `wiki_diff`, `wiki_read_version`, `wiki_check_duplicate`, `wiki_drafts`, `wiki_lint`, `wiki_coverage`, `bookmark_list`. `wiki_add` was already enqueue-only (Car 1) — not touched. `adr_add` stays core as a pure ORCHESTRATOR: it does zero direct `_st._wiki` writes, composing the core tools `wiki_read` (core read) + `wiki_append_section` (now forwards) + `wiki_add` (enqueue-only), so its writes forward transitively through its callees. `wiki_refresh_stale` + `wiki_cleanup_merged_branches` live in `project.py` and need host-FS/git access (`.local-review/wiki/*.md` scan; `git branch -a` subprocess) — deferred to R5 group 4 (project.py writes). No compat shims; import-linter 4/0.
+
+### CAP-STOR-044 — restore compute forward (POST /restore) + pre_compact_drain op (T2 Car B)
+- **status:** LIVE
+- **category:** storage
+- **settings:** —
+- **tools:** `restore`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/_forward.py::_forward_restore`, `yadgar/backend/embed_service/embed_service.py::restore_route`, `yadgar/backend/restoration/__init__.py`, `yadgar/backend/admin_exec/restoration.py::pre_compact_drain`, `yadgar/core/cli/_shared.py`
+- **wiring:** T2 layer-boundary Car B (census verdict #7): `CheckpointRestore` + `CognitiveMap` moved `_shared` → `yadgar.backend.restoration` (PEP-562 shims at the old paths for tests). The backend `POST /restore` route (same Bearer admin auth as `/recall`) lazily builds the slim engine set, then `run_restore(directory)` invalidates the SR matrix (transitions are recorded core-side, so the backend in-process `_dirty` flag cannot see them) and runs the restore compute in a worker thread, returning the exact pre-Car-B payload as `{"result": ...}`. Core callers of the forward: the `restore` MCP tool, `/hooks/post-compact`, and the `yadgar restore` CLI subcommand. The write-only `pre_compact_drain` (epoch increment + auto-checkpoint upsert, no compute) rides `POST /admin` instead — callers: `/hooks/pre-compact` + the `yadgar drain` CLI subcommand. Backend composition point: `ensure_restoration_engines()` (called from `_ensure_recall_engines`, the drainer's `ensure_write_engines`, and `run_admin_op`) builds `_st._replay` and upgrades `_st._cognitive_map` from the session-side `SRTransitionRecorder` to the full `CognitiveMap`; the shared root no longer constructs either (the ADR-0056 composition-root waivers stay ml_client/cache-only).
+- **explanation:** Live-proven motivation (task #16 successor): `restore()` on core's 1 CPU exceeded the 95s tool-offload ceiling — the SR transition-matrix build + inversion is exactly the "compute over DB rows" the semantic placement law sends to the backend's 7 CPUs next to the DB. Core keeps only the session seam (SR transition RECORDING via `SRTransitionRecorder`, census verdict #5) and thin HTTP forwarders. Forward-only: `YADGAR_EMBED_URL` unset → RuntimeError (no in-core fallback; the impl no longer exists in the core process). Import-linter stays 4 kept / 0 broken with no new waivers.
 
 ### CAP-WIKI-001 — Wiki similarity gate (duplicate prevention)
 - **status:** LIVE
@@ -1709,7 +1720,7 @@ config knobs.
 - **tools:** `wiki_append_section`, `wiki_replace_text`, `wiki_delete_text`, `wiki_insert_after`, `wiki_insert_before`, `wiki_replace_at`, `wiki_delete_at`, `wiki_insert_at`, `wiki_replace_markdown_block`, `wiki_set_metadata`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/server/tools/wiki.py::wiki_append_section`, `yadgar/core/server/tools/wiki.py::wiki_replace_text`, `yadgar/core/server/tools/wiki.py::wiki_delete_text`, `yadgar/core/server/tools/wiki.py::wiki_insert_after`, `yadgar/core/server/tools/wiki.py::wiki_insert_before`, `yadgar/core/server/tools/wiki.py::wiki_replace_at`, `yadgar/core/server/tools/wiki.py::wiki_delete_at`, `yadgar/core/server/tools/wiki.py::wiki_insert_at`, `yadgar/core/server/tools/wiki.py::wiki_replace_markdown_block`, `yadgar/core/server/tools/wiki.py::wiki_set_metadata`, `yadgar/_shared/wiki.py::WikiStore.set_metadata_by_slug`, `yadgar/_shared/storage/wiki.py::_WikiMixin.get_wiki_page_ids_by_slug`
+- **refs:** `yadgar/core/server/tools/wiki.py::wiki_append_section`, `yadgar/core/server/tools/wiki.py::wiki_replace_text`, `yadgar/core/server/tools/wiki.py::wiki_delete_text`, `yadgar/core/server/tools/wiki.py::wiki_insert_after`, `yadgar/core/server/tools/wiki.py::wiki_insert_before`, `yadgar/core/server/tools/wiki.py::wiki_replace_at`, `yadgar/core/server/tools/wiki.py::wiki_delete_at`, `yadgar/core/server/tools/wiki.py::wiki_insert_at`, `yadgar/core/server/tools/wiki.py::wiki_replace_markdown_block`, `yadgar/core/server/tools/wiki.py::wiki_set_metadata`, `yadgar/_shared/wiki/store.py::WikiStore.set_metadata_by_slug`, `yadgar/_shared/storage/wiki.py::_WikiMixin.get_wiki_page_ids_by_slug`
 - **wiring:** All tools call `_resolve_page_id_by_slug(slug, directory, branch_hint)` then delegate to corresponding `_st._wiki` methods. All bypass the v5.39 similarity gate. Write-bearing tools (`wiki_replace_text`, `wiki_insert_after`, `wiki_insert_before`, `wiki_replace_at`, `wiki_insert_at`, `wiki_replace_markdown_block`, `wiki_append_section`) run `gate_or_reject()` (I26 secret gate). Deletion tools (`wiki_delete_text`, `wiki_delete_at`) do not run secret gate (nothing new written). `wiki_set_metadata` (BC-G10 fix): calls `WikiStore.set_metadata_by_slug(slug, field, value)` which uses `storage.get_wiki_page_ids_by_slug(slug)` (NO LIMIT — returns ALL page_ids for the slug across all branches and global stragglers) then applies `set_metadata(page_id, ...)` per row.
 - **explanation:** Layer 1–4 surgical edit primitives introduced in v5.61.0 to prevent whole-page replacement errors. Layer 1 (anchor-text): `wiki_replace_text`, `wiki_delete_text`, `wiki_insert_after`, `wiki_insert_before` locate content by unique text strings. Layer 2 (positional): `wiki_replace_at`, `wiki_delete_at`, `wiki_insert_at` operate by line/col coordinates with a mandatory `anchor_hint` (≥20 chars) to guard against off-by-one errors. Layer 3 (structural): `wiki_replace_markdown_block` addresses the Nth block of a markdown block type (paragraph, heading, code_fence, etc.). Section-atomic: `wiki_append_section` patches a named section (by heading) without touching the rest of the document — this was introduced specifically to prevent the 2026-05-31 corruption pattern. `wiki_set_metadata` is the Layer 4 metadata primitive for repositioning pages across branches/directories; fixed in BC-G10 to reach ALL rows for a slug instead of only the single row returned by §25 LIMIT 1 resolution.
 
@@ -1910,8 +1921,8 @@ config knobs.
 - **tools:** `vacuum_now`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/server/tools/admin_vacuum.py`, `yadgar/core/vacuum/phases.py`, `yadgar/core/vacuum/__init__.py`, `yadgar/core/ops.py`
-- **wiring:** `vacuum_now()` MCP tool → `_fire_vacuum_service()` in `yadgar/core/ops.py` writes a trigger file at `YADGAR_VACUUM_TRIGGER_PATH`; a host-side systemd path-watch unit (`yadgar-vacuum.path`) picks it up and starts `yadgar-vacuum.service`. The threshold backstop path lives in `ConsolidationScheduler._maybe_auto_vacuum()`: when DB size exceeds `VACUUM_AUTO_THRESHOLD_BYTES` AND local time falls inside `[VACUUM_AUTO_WINDOW_START, VACUUM_AUTO_WINDOW_END)`, it fires the same trigger. The nightly cron (`yadgar-vacuum.timer`) is the primary trigger; this backstop fires only when growth outpaces the nightly schedule.
+- **refs:** `yadgar/core/server/tools/admin_vacuum.py`, `yadgar/core/vacuum/phases.py`, `yadgar/core/vacuum/__init__.py`, `yadgar/core/ops/ops.py`
+- **wiring:** `vacuum_now()` MCP tool → `_fire_vacuum_service()` in `yadgar/core/ops/ops.py` writes a trigger file at `YADGAR_VACUUM_TRIGGER_PATH`; a host-side systemd path-watch unit (`yadgar-vacuum.path`) picks it up and starts `yadgar-vacuum.service`. The threshold backstop path lives in `ConsolidationScheduler._maybe_auto_vacuum()`: when DB size exceeds `VACUUM_AUTO_THRESHOLD_BYTES` AND local time falls inside `[VACUUM_AUTO_WINDOW_START, VACUUM_AUTO_WINDOW_END)`, it fires the same trigger. The nightly cron (`yadgar-vacuum.timer`) is the primary trigger; this backstop fires only when growth outpaces the nightly schedule.
 - **explanation:** Vacuum reclaims SurrealKV disk space by exporting, compacting, and atomically swapping in a new DB file. The MCP `vacuum_now()` tool writes a trigger file to decouple the vacuum from the daemon process (avoiding mid-swap crashes). The auto-backstop (`VACUUM_AUTO_ENABLED`) triggers only within the configured daily time window when the DB exceeds the size threshold, preventing unbounded growth between scheduled vacuum runs. `VACUUM_SNAPSHOT_RETENTION` controls how many pre-vacuum snapshots to keep.
 
 ### CAP-OPS-004 — Vacuum: atomic side-build and crash-mid-swap recovery
@@ -1965,8 +1976,8 @@ config knobs.
 - **tools:** `checkpoint`, `restore`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/server/tools/misc.py::checkpoint`, `yadgar/core/server/tools/misc.py::restore`, `yadgar/_shared/restoration.py`
-- **wiring:** `checkpoint()` → `_get_file_queue().enqueue("checkpoint", payload)` (async path, normal sessions); sync path via `_get_replay().create_checkpoint()` during drain replay. `restore()` → `_get_replay().restore(directory)`. Micro-checkpoints fire automatically inside the consolidation cycle (when `MICRO_CHECKPOINT_ENABLED=True`) after every `MICRO_CHECKPOINT_COOLDOWN` tool calls.
+- **refs:** `yadgar/core/server/tools/misc.py::checkpoint`, `yadgar/core/server/tools/misc.py::restore`, `yadgar/core/server/tools/_forward.py::_forward_restore`, `yadgar/backend/restoration/checkpoint_restore.py`, `yadgar/backend/restoration/__init__.py::run_restore`
+- **wiring:** `checkpoint()` → `_get_file_queue().enqueue("checkpoint", payload)` (async path, normal sessions); sync path via `_get_replay().create_checkpoint()` during drain replay (backend drainer). T2 Car B: `restore()` is a thin forwarder — `_forward_restore(directory)` → backend `POST /restore` → `run_restore()` → `CheckpointRestore.restore()` next to the DB (the compute exceeded the 95s offload ceiling on core's 1 CPU). The `/hooks/post-compact` handler and the `yadgar restore` CLI subcommand use the same forward; `/hooks/pre-compact` + `yadgar drain` forward the write-only `pre_compact_drain` via `POST /admin`. Micro-checkpoints fire automatically inside the drainer write pipeline (when `MICRO_CHECKPOINT_ENABLED=True`) after every `MICRO_CHECKPOINT_COOLDOWN` tool calls.
 - **explanation:** `checkpoint()` captures a structured snapshot of working state (current task, files being edited, key decisions, open questions, next steps, active errors, custom context) and enqueues it for persistent storage. Branch context is required (resolved from git or `branch_hint`). `restore()` reconstructs working context from the latest checkpoint plus anchored memories, thermodynamically hot project memories, and SR-map predicted context, returning a structured restoration report. `CHECKPOINT_STALE_HOURS` / `CHECKPOINT_WARN_HOURS` drive the signals-mode staleness watchdog that suggests periodic `checkpoint` calls.
 
 ### CAP-OPS-009 — update_active_work: atomic project active-work memory
@@ -1987,7 +1998,7 @@ config knobs.
 - **tools:** `install_hooks`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/server/tools/misc.py::install_hooks`, `yadgar/core/install_hooks_lib.py::install_hooks_impl`
+- **refs:** `yadgar/core/server/tools/misc.py::install_hooks`, `yadgar/core/install/install_hooks_lib.py::install_hooks_impl`
 - **wiring:** MCP client → `install_hooks(project_directory, scope)` (power-gated) → `install_hooks_impl(home_dir, scope, project_directory, dry_run=False)`. Refused when running inside a container (hostname-based detection). Reads/writes `~/.claude/settings.json` (global scope) or `.claude/settings.json` (project scope).
 - **explanation:** Installs five Claude Code hook types: `PreCompact` (drain context before compaction), `SessionStart/compact` (restore context after compaction), `SessionStart/all` (inject project context on every new session), `PostToolUse` (capture tool actions into action_log), and `UserPromptSubmit` (auto-recall on every user turn). The `scope` parameter controls whether hooks write to the project-local or global settings. Container environments are rejected because the container filesystem is ephemeral and `$HOME` resolves to `/root` rather than the host user home.
 
@@ -2031,9 +2042,9 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/metrics.py`, `yadgar/_shared/observability/timing.py`
-- **wiring:** `METRICS_ENABLED=True` (default) → `metrics.py` registers collectors in an isolated `CollectorRegistry`; the Starlette app mounts `/metrics` returning `generate_latest()`. `/metrics` is exempt from auth (always unauthenticated on loopback per §2 design). `yadgar/_shared/observability/timing.py` provides `@stage_timer`, `@request_timer`, `@labeled_timer` decorators that observe drain-stage and request-duration histograms. `PHASE_DURATION_WARN_MS` controls a CRITICAL log emitted when any consolidation phase exceeds the threshold.
-- **explanation:** Exposes a Prometheus `/metrics` endpoint with collectors covering queue depth by queue type, request counts by route, consolidation phase duration histograms, embedding/CE cache hit/miss counters, action-batch size, per-tool token estimates, loop health gauges (last-run timestamp, error counters), archive retention counters, hook recall timeout counters, and cold-purge candidate gauge. The `observability/timing.py` decorators wrap drain stages and MCP handlers to populate the histograms without coupling source modules to prometheus_client (graceful no-op when not installed).
+- **refs:** `yadgar/_shared/observability/metrics.py`
+- **wiring:** `METRICS_ENABLED=True` (default) → `metrics.py` registers collectors in an isolated `CollectorRegistry`; the Starlette app mounts `/metrics` returning `generate_latest()`. `/metrics` is exempt from auth (always unauthenticated on loopback per §2 design). `PHASE_DURATION_WARN_MS` controls a CRITICAL log emitted when any consolidation phase exceeds the threshold.
+- **explanation:** Exposes a Prometheus `/metrics` endpoint with collectors covering queue depth by queue type, request counts by route, consolidation phase duration histograms, embedding/CE cache hit/miss counters, action-batch size, per-tool token estimates, loop health gauges (last-run timestamp, error counters), archive retention counters, hook recall timeout counters, and cold-purge candidate gauge.
 
 ### CAP-OPS-015 — OTLP distributed tracing
 - **status:** DORMANT
@@ -2042,8 +2053,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/tracing.py`
-- **wiring:** `yadgar/_shared/tracing.py::setup_tracing()` called at daemon startup. When `OTLP_ENDPOINT` is non-empty, builds an `OTLPSpanExporter` (HTTP/proto) with the configured headers and timeout, **wraps it in `_CircuitBreakerSpanExporter`** (v5.83 obs-train), and wires a `BatchSpanProcessor` into a `TracerProvider`. DORMANT because `OTLP_ENDPOINT` defaults to `""` (empty string = disabled); the code path exists and is reachable but is a no-op unless the operator sets the endpoint. Activation target: the nix otel-collector now listens at `:4318` (added in the obs-train nix car, commit `4fc96b8`).
+- **refs:** `yadgar/_shared/observability/tracing.py`
+- **wiring:** `yadgar/_shared/observability/tracing.py::setup_tracing()` called at daemon startup. When `OTLP_ENDPOINT` is non-empty, builds an `OTLPSpanExporter` (HTTP/proto) with the configured headers and timeout, **wraps it in `_CircuitBreakerSpanExporter`** (v5.83 obs-train), and wires a `BatchSpanProcessor` into a `TracerProvider`. DORMANT because `OTLP_ENDPOINT` defaults to `""` (empty string = disabled); the code path exists and is reachable but is a no-op unless the operator sets the endpoint. Activation target: the nix otel-collector now listens at `:4318` (added in the obs-train nix car, commit `4fc96b8`).
 - **explanation:** Optional OpenTelemetry distributed tracing exporter. When `OTLP_ENDPOINT` is set (e.g. `http://tempo:4318/v1/traces`), the daemon exports W3C TraceContext-propagated spans to the configured collector. `OTLP_HEADERS` passes comma-separated `k=v` authentication or tenant headers. `OTLP_TIMEOUT_SEC` (default 3 s) keeps a dead collector from blocking the export path. **`OTLP_INSECURE` is reserved / no-op for the HTTP exporter** (v5.83 obs-train): transport security for the `opentelemetry-exporter-otlp-proto-http` exporter is decided by the `OTLP_ENDPOINT` URL scheme (`http://` vs `https://`), not by this flag. The knob is kept (not removed) to avoid churning the I25 three-way config sync. **OTLP resilience (v5.83 obs-train):** `_CircuitBreakerSpanExporter` (CB-1 pattern, see `ARCHITECTURE_INVARIANTS.md`) OPENS after 5 consecutive export failures, short-circuits for a 60 s window, then half-open-probes — stopping the retry/log flood when the collector is down while keeping OTLP enabled. Span logs are emitted off the event-loop thread via a `QueueHandler`/`QueueListener` so an export flood cannot stall request handlers.
 
 ### CAP-OPS-016 — Bearer-token authentication middleware
@@ -2053,7 +2064,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/auth_middleware.py::BearerAuthMiddleware`
+- **refs:** `yadgar/core/auth_middleware/auth_middleware.py::BearerAuthMiddleware`
 - **wiring:** `BearerAuthMiddleware` wraps the Starlette ASGI app at server startup (unconditionally installed). On each HTTP/WebSocket request it checks: (1) exempt paths (`/health`, `/metrics`) pass through; (2) debug-API paths (`/api/control/config`, `/api/control/action/*`, `/api/control/restart/*`, `/api/logs/*`) require `DEBUG_APIS_ENABLED=True` or return 403; (3) protected prefixes (`/admin/`, `/api/`, `/hooks/`, `/mcp`) require `REQUIRE_AUTH=True` + valid `Authorization: Bearer <MCP_AUTH_TOKEN>` or return 401. Auth env vars are read per-request to enable live token rotation without restart.
 - **explanation:** All API and hook routes are bearer-token protected when `REQUIRE_AUTH=True` (default). The token is compared with `hmac.compare_digest` to resist timing attacks. When `REQUIRE_AUTH=True` but `MCP_AUTH_TOKEN` is empty the server returns 503 (fail-secure rather than open). CORS `ALLOWED_ORIGINS` constrains which browser origins the HTTP transport accepts; defaults to loopback only. A separate `DEBUG_APIS_ENABLED` gate restricts powerful control-API paths even from authenticated callers.
 
@@ -2065,7 +2076,7 @@ config knobs.
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/_shared/security/allowlist.py::is_allowlisted`, `yadgar/_shared/security/allowlist.py::_write_audit`
-- **wiring:** `gate_or_reject()` in `yadgar/_shared/secrets.py` is called by every MCP write tool before any state mutation. It first calls `is_allowlisted(content, tags, source)` from this module; if matched, the write is permitted and an audit entry is appended to a JSONL file under `YADGAR_SECRET_GATE_AUDIT_DIR` (daily rotation). Non-matching content proceeds to pattern scanning.
+- **wiring:** `gate_or_reject()` in `yadgar/_shared/security/secrets.py` is called by every MCP write tool before any state mutation. It first calls `is_allowlisted(content, tags, source)` from this module; if matched, the write is permitted and an audit entry is appended to a JSONL file under `YADGAR_SECRET_GATE_AUDIT_DIR` (daily rotation). Non-matching content proceeds to pattern scanning.
 - **explanation:** The allowlist enables structured bypass of the secret-gate pattern scanner for known-safe content (e.g. test fixtures containing token-shaped strings). Entries in `~/.config/yadgar/secret-gate-allowlist.yaml` specify required tags, glob-prefix patterns, and a human-readable reason. When a write call's content matches an entry's patterns and the call-site tags are a superset of the entry's required tags, the write is allowed through — but every bypass is logged to an immutable JSONL audit trail (date-based rotation) for later review. The allowlist is loaded lazily and thread-safely from disk on first use.
 
 ### CAP-OPS-018 — Update version-check mechanism
@@ -2097,8 +2108,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/ml_client.py`
-- **wiring:** `RemoteMLClient` in `yadgar/backend/ml_client.py` holds per-endpoint circuit breaker instances (`_cb_ce`, `_cb_nli`, `_cb_pair`). After `CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive failures the breaker opens. OPEN state blocks all requests to that endpoint for `CIRCUIT_BREAKER_OPEN_DURATION_SEC` seconds, then transitions to HALF_OPEN for a single probe. Failed probes extend the cooldown with exponential back-off (factor `CIRCUIT_BREAKER_BACKOFF_FACTOR`) up to `CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC`. States are surfaced in `memory_stats()`.
+- **refs:** `yadgar/backend/ml_client/ml_client.py`
+- **wiring:** `RemoteMLClient` in `yadgar/backend/ml_client/ml_client.py` holds per-endpoint circuit breaker instances (`_cb_ce`, `_cb_nli`, `_cb_pair`). After `CIRCUIT_BREAKER_FAILURE_THRESHOLD` consecutive failures the breaker opens. OPEN state blocks all requests to that endpoint for `CIRCUIT_BREAKER_OPEN_DURATION_SEC` seconds, then transitions to HALF_OPEN for a single probe. Failed probes extend the cooldown with exponential back-off (factor `CIRCUIT_BREAKER_BACKOFF_FACTOR`) up to `CIRCUIT_BREAKER_MAX_OPEN_DURATION_SEC`. States are surfaced in `memory_stats()`.
 - **explanation:** Protects the daemon from cascading failure when the ML reranking backend (`/rerank/ce`, `/rerank/nli`, `/rerank/pair`) becomes unavailable or slow. The three-state machine (CLOSED → OPEN → HALF_OPEN) stops saturating a degraded backend and allows the retrieval pipeline to fall back to non-reranked results while the breaker is open. Exponential backoff with a cap prevents premature probe storms after repeated backend outages.
 
 ### CAP-OPS-021 — Model preload warm-up
@@ -2119,8 +2130,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/ml_client.py`, `yadgar/backend/cache.py`
-- **wiring:** `RemoteMLClient` maintains two LRU caches: CE score cache (keyed on query+passage pairs, `CE_CACHE_ENABLED`) and embedding vector cache (`EMBED_CACHE_ENABLED`). Backend caching train Car 0 (#49) folds both into the unified backend `Cache` class (`yadgar/backend/cache.py`, one class / N named namespaces / policy bound at construction) with **byte-bounded LRU eviction**: the byte budget is `BACKEND_CACHE_RAM_PCT` % of the backend container memory limit (cgroup `memory.max` / `memory.limit_in_bytes`), split weighted across the `ce`/`embed` namespaces. A background snapshotting thread persists both caches to `CACHE_SNAPSHOT_DIR/ce.snap` and `CACHE_SNAPSHOT_DIR/embed.snap` every `CACHE_SNAPSHOT_INTERVAL_SEC` seconds. Caches are loaded from snapshot on startup.
+- **refs:** `yadgar/backend/ml_client/ml_client.py`, `yadgar/backend/cache/cache.py`
+- **wiring:** `RemoteMLClient` maintains two LRU caches: CE score cache (keyed on query+passage pairs, `CE_CACHE_ENABLED`) and embedding vector cache (`EMBED_CACHE_ENABLED`). Backend caching train Car 0 (#49) folds both into the unified backend `Cache` class (`yadgar/backend/cache/cache.py`, one class / N named namespaces / policy bound at construction) with **byte-bounded LRU eviction**: the byte budget is `BACKEND_CACHE_RAM_PCT` % of the backend container memory limit (cgroup `memory.max` / `memory.limit_in_bytes`), split weighted across the `ce`/`embed` namespaces. A background snapshotting thread persists both caches to `CACHE_SNAPSHOT_DIR/ce.snap` and `CACHE_SNAPSHOT_DIR/embed.snap` every `CACHE_SNAPSHOT_INTERVAL_SEC` seconds. Caches are loaded from snapshot on startup.
 - **explanation:** LRU caches absorb repeated CE reranking and embedding requests for the same content, avoiding redundant GPU/CPU inference. The snapshot mechanism persists warm cache state across restarts, so the cache hit rate remains high even after a daemon restart. `BACKEND_CACHE_RAM_PCT` (Car 0) bounds total backend cache memory as a fraction of container RAM — byte-bounded eviction, superseding the legacy count-cap `CE_CACHE_MAX_ENTRIES` / `EMBED_CACHE_MAX_ENTRIES` (kept as inert config for back-compat). Cache hit/miss/evict counts are surfaced as Prometheus counters (`yadgar_embedding_cache_hits_total`, `yadgar_embedding_cache_misses_total`, and the generic `yadgar_cache_*{cache=<namespace>}` family).
 
 ### CAP-OPS-041 — Core read-tool cache with RAM-% byte budget
@@ -2130,8 +2141,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/cache.py`, `yadgar/core/server/tools/project.py`, `yadgar/core/server/tools/wiki.py`, `yadgar/core/server/tools/dispatch_helper.py`
-- **wiring:** The unified core `Cache` class (`yadgar/core/cache.py`, #164 — one class / N named instances / policy bound at construction) backs the core read-tool caches: `project_brief` (`project.py`), `wiki_read` + `wiki_query` (`wiki.py`), and `agent_prompt_prelude` (`dispatch_helper.py`). Core caching (#49, v5.112.0) retrofits its LRU bound from a fixed `max_entries` count-cap to **byte-bounded eviction**: the byte budget is `CORE_CACHE_RAM_PCT` % of the CORE container memory limit (cgroup `memory.max` / `memory.limit_in_bytes`, 1 GiB fallback matching the `--memory 1g` core container — NOT the backend's 4 GiB), split weighted across the four core namespaces which share ONE process budget. Byte size is estimated via `msgpack.packb` length; the LRU evicts until `current_bytes ≤ max_bytes`. Mirrors backend Car 0 (`CAP-OPS-022`) but for the core process's own container + namespaces, with its own knob and cgroup reader kept separate from the backend's.
+- **refs:** `yadgar/core/cache/cache.py`, `yadgar/core/server/tools/project.py`, `yadgar/core/server/tools/wiki.py`, `yadgar/core/server/tools/dispatch_helper.py`
+- **wiring:** The unified core `Cache` class (`yadgar/core/cache/cache.py`, #164 — one class / N named instances / policy bound at construction) backs the core read-tool caches: `project_brief` (`project.py`), `wiki_read` + `wiki_query` (`wiki.py`), and `agent_prompt_prelude` (`dispatch_helper.py`). Core caching (#49, v5.112.0) retrofits its LRU bound from a fixed `max_entries` count-cap to **byte-bounded eviction**: the byte budget is `CORE_CACHE_RAM_PCT` % of the CORE container memory limit (cgroup `memory.max` / `memory.limit_in_bytes`, 1 GiB fallback matching the `--memory 1g` core container — NOT the backend's 4 GiB), split weighted across the four core namespaces which share ONE process budget. Byte size is estimated via `msgpack.packb` length; the LRU evicts until `current_bytes ≤ max_bytes`. Mirrors backend Car 0 (`CAP-OPS-022`) but for the core process's own container + namespaces, with its own knob and cgroup reader kept separate from the backend's.
 - **explanation:** The core read-tool caches absorb repeated `project_brief` / `wiki_read` / `wiki_query` / agent-prompt-prelude calls within a session (freshness via TTL + structural-epoch-in-key invalidation). `CORE_CACHE_RAM_PCT` bounds their total memory as a fraction of the core container RAM — byte-bounded eviction superseding the earlier per-cache count-caps. The change is behaviour-neutral: at 10 % × 1 GiB ≈ 107 MB / 4 ≈ 25.6 MiB per namespace the byte ceiling dwarfs the small read-tool dicts and never triggers in practice, so TTL + epoch-in-key still do all real eviction with identical keys/values/hit-miss. Hit/miss/evict counts are surfaced as the generic `yadgar_cache_*{cache=<namespace>}` Prometheus family.
 
 ### CAP-OPS-023 — ASGI graceful shutdown and daemon lifecycle
@@ -2141,7 +2152,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-F2`
-- **refs:** `yadgar/core/server/_app.py`, `yadgar/core/daemon.py`, `yadgar/_shared/log_config.py`
+- **refs:** `yadgar/core/server/_app.py`, `yadgar/core/daemon/daemon.py`, `yadgar/_shared/observability/log_config.py`
 - **wiring:** uvicorn serves the Starlette app at `HOST:PORT`. On SIGTERM, `ASGI_SHUTDOWN_TIMEOUT_SEC` caps the wait for in-flight requests to drain before abandoning them. `DAEMON_CHECK_INTERVAL` is the polling cadence for the daemon watchdog loop (health checks, consolidation trigger). `HOST`/`PORT` configure where the MCP HTTP server listens. `LOG_FORMAT` (`json`|`text`|`human`) and `CORE_LOG_LEVEL`/`BACKEND_LOG_LEVEL` configure structured logging.
 - **explanation:** The daemon lifecycle: the Starlette ASGI app is started by uvicorn with configurable bind address and graceful-shutdown timeout. The daemon watchdog polls at `DAEMON_CHECK_INTERVAL` seconds to trigger consolidation when idle and to check backend health. Structured JSON logging (default `LOG_FORMAT=json`) feeds log aggregators; `text`/`human` modes are for local development. `BACKEND_HTTP_TIMEOUT_SEC` caps operational DB requests; `BACKEND_IMPORT_TIMEOUT_SEC` allows longer bulk-import operations.
 
@@ -2207,7 +2218,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-F3`
-- **refs:** `yadgar/core/vacuum/__init__.py`, `yadgar/core/ops.py`
+- **refs:** `yadgar/core/vacuum/__init__.py`, `yadgar/core/ops/ops.py`
 - **wiring:** The vacuum service acquires a sensitive-job lock file under `YADGAR_DATA_DIR` before beginning the stop-then-copy-then-swap sequence. The daemon's SIGTERM signal handler checks for the lock and refuses shutdown (returns without shutting down) if the lock is held and the holder PID is alive, waiting up to `SENSITIVE_DRAIN_TIMEOUT_SEC` for the job to finish. A lock older than `SENSITIVE_LOCK_TTL_SEC` (2 h) is treated as stale (crashed job) and reaped.
 - **explanation:** Prevents a SIGTERM from arriving mid-swap and leaving the database in a partially swapped state (the BC-F3 hazard). The lock is a lightweight file-based mutex: the vacuum job writes its PID and start timestamp; the shutdown handler reads the lock and either waits for the job to release it or skips shutdown if the drain timeout is exceeded. The TTL prevents a crashed vacuum from permanently blocking all future shutdowns.
 
@@ -2240,7 +2251,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/retrieval/query_analysis.py`
+- **refs:** `yadgar/backend/retrieval/query_analysis.py`
 - **wiring:** `CODE_KEYWORDS` and `RELATIONAL_KEYWORDS` are comma-separated keyword lists loaded via `Settings` and used by the query router (`query_analysis.py`) to classify an incoming `recall()` query into one of: code, relational, temporal, open-domain, or comparison profile. Classification drives retrieval profile selection and signal weighting.
 - **explanation:** The query router tokenises the query and checks for membership in the configured keyword lists to determine query type. Code queries (containing function/class/API terms) and relational queries (containing relationship/causal terms) route to specialised retrieval sub-pipelines optimised for their patterns. The lists are configurable so operators can tune routing precision for domain-specific vocabularies without changing code.
 
@@ -2306,8 +2317,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/server/http.py::health_check`, `yadgar/core/server/http.py::_build_health_payload`, `yadgar/core/daemon.py`, `docker-compose.yml`
-- **wiring:** `GET /health` (auth-exempt) builds a payload that probes the `YADGAR_DB_URL` and `YADGAR_EMBED_URL` dependencies CONCURRENTLY (`asyncio.gather`, ~2 s vs the old ~4 s serial) and is bounded by an outer `asyncio.wait_for(_HEALTH_TIMEOUT_SEC=3.0)`. If any probe fails (or the outer bound trips) `status="degraded"`. **The handler returns HTTP 200 only when `status=="ok"`, and HTTP 503 on any non-ok status** (v5.83 obs-train, C1). The handler is STATELESS — anti-flap is delegated to the container healthcheck retries (`docker-compose.yml` core service: `interval 10s`, `timeout 5s`, `retries 6`, so ~60 s of sustained degradation before the container is marked unhealthy), NOT an in-handler failure counter. Consumer side (`yadgar/core/daemon.py`): `status()` reads the `HTTPError` body on a 503 and shows the degraded detail (not "unreachable"); `_health_ok()` treats a responding-but-503 server as ALIVE — liveness (server responding) is distinct from full-health/readiness (db+embed ok), which the container `curl -f` healthcheck enforces.
+- **refs:** `yadgar/core/server/http.py::health_check`, `yadgar/core/server/http.py::_build_health_payload`, `yadgar/core/daemon/daemon.py`, `docker-compose.yml`
+- **wiring:** `GET /health` (auth-exempt) builds a payload that probes the `YADGAR_DB_URL` and `YADGAR_EMBED_URL` dependencies CONCURRENTLY (`asyncio.gather`, ~2 s vs the old ~4 s serial) and is bounded by an outer `asyncio.wait_for(_HEALTH_TIMEOUT_SEC=3.0)`. If any probe fails (or the outer bound trips) `status="degraded"`. **The handler returns HTTP 200 only when `status=="ok"`, and HTTP 503 on any non-ok status** (v5.83 obs-train, C1). The handler is STATELESS — anti-flap is delegated to the container healthcheck retries (`docker-compose.yml` core service: `interval 10s`, `timeout 5s`, `retries 6`, so ~60 s of sustained degradation before the container is marked unhealthy), NOT an in-handler failure counter. Consumer side (`yadgar/core/daemon/daemon.py`): `status()` reads the `HTTPError` body on a 503 and shows the degraded detail (not "unreachable"); `_health_ok()` treats a responding-but-503 server as ALIVE — liveness (server responding) is distinct from full-health/readiness (db+embed ok), which the container `curl -f` healthcheck enforces.
 - **explanation:** Before v5.83 the endpoint always returned 200 even when degraded, so the container `curl -f` healthcheck read a db/embed outage as healthy (the outage-masking false-negative). 503-on-degraded makes the healthcheck actually detect outages. The 3 s handler cap sits inside the compose `timeout: 5s` with margin; the compose `urlopen(..., timeout=2)` inner probe and `retries: 6` already meet/exceed the nix healthcheck intent (interval 15 s / timeout 8 s / retries 3), so no compose change was needed — a 503 raises `HTTPError` → non-zero exit → correctly unhealthy. Tested by `yadgar/tests/test_transport.py` (`test_health_returns_503_when_db_probe_degraded`, `test_health_returns_200_when_probes_ok`, `test_health_outer_timeout_trips_503_on_hang`, concurrent-probe timing) and the daemon-side 503-tolerance in `yadgar/tests/test_daemon_module.py`.
 
 ### CAP-OPS-039 — Tool-body offload off the asyncio loop (Fix A)
@@ -2328,7 +2339,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/runtime/offload.py::acquire_rerank_slot`, `yadgar/backend/ml_client.py::RemoteMLClient._rerank_rpc`, `yadgar/core/server/http.py::liveness_check`, `yadgar/core/server/http.py::_build_health_payload`, `yadgar/core/auth_middleware.py::_EXEMPT_PATHS`
+- **refs:** `yadgar/_shared/runtime/offload.py::acquire_rerank_slot`, `yadgar/backend/ml_client/ml_client.py::RemoteMLClient._rerank_rpc`, `yadgar/core/server/http.py::liveness_check`, `yadgar/core/server/http.py::_build_health_payload`, `yadgar/core/auth_middleware/auth_middleware.py::_EXEMPT_PATHS`
 - **wiring:** A process-singleton `threading.Semaphore(RECALL_HEAVY_CONCURRENCY)` in `_offload` gates every backend `/rerank` POST issued by `RemoteMLClient._rerank_rpc` (HALF_OPEN breaker probes bypass it; a gate-acquire timeout of `RERANK_GATE_ACQUIRE_TIMEOUT_SEC` degrades to `None` → pre-rerank order, reusing the breaker-open path — never blocking a worker on the gate past the tool timeout). `RECALL_HEAVY_CONCURRENCY` defaults to 1 (v5.95: 3→1, in lockstep with `TOOL_POOL_WORKERS` 8→2), strictly below `TOOL_POOL_WORKERS` (2), so N offload workers cannot drive N concurrent backend reranks. The new `GET /health/live` (`liveness_check`, auth-exempt) answers from the loop alone — 200 normally, 503 ONLY when `pool_saturated()` (in-memory counters, no backend probe) — and is what the container P0 `--health-on-failure=kill` healthcheck watches. `GET /health` (readiness) keeps the db+embed probe but anti-flaps: it degrades to 503 only after `HEALTH_READINESS_FAIL_THRESHOLD` CONSECUTIVE probe misses (a single success resets), so a transiently-busy backend can't 503-storm.
 - **explanation:** #74 — with `OFFLOAD_TOOLS` on, the freed loop let up to `TOOL_POOL_WORKERS` (was 8, now 2 after v5.95) concurrent recalls drive concurrent backend `/rerank` calls. The backend (fewer cores than 8) saturated → its `/health` slowed → the core's readiness `/health` probed it with a 2s timeout → timed out → core returned 503 → the container `curl -f` healthcheck failed → P0 `--health-on-failure=kill` SIGKILLed the core → restart loop. Two coupled defects: liveness was coupled to a busy dependency, and the rerank fan-out was unbounded. The fix decouples liveness from the backend (P0 watches `/health/live`, which never probes the backend, so backend busyness can never SIGKILL the core) while preserving the O2 P0-kill (a genuinely wedged pool still trips `pool_saturated()` → liveness 503), anti-flaps readiness (monitoring signal, no longer the P0 trigger), bounds the fan-out to the backend's real serving capacity, and reconciles the timeout cascade (`TOOL_SATURATION_GRACE_SEC` > `TOOL_TIMEOUT_SEC` ≥ `RERANK_BACKEND_TIMEOUT_SEC`) so a `wait_for` cancellation can't leak an uncancellable worker mid-rerank.
 
@@ -2340,7 +2351,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/viz_meta.py::build_category_colors`, `yadgar/core/server/http.py::api_viz_config`
+- **refs:** `yadgar/core/viz/viz_meta.py::build_category_colors`, `yadgar/core/server/http.py::api_viz_config`
 - **wiring:** `GET /api/viz/config` → `api_viz_config` → `build_category_colors(settings)` iterates `WikiStore.CATEGORIES`, calls `getattr(settings, f"VIZ_CAT_COLOR_{cat.upper()}", fallback)` for each. Result returned under `node.category_colors` in the JSON response. Frontend fetches on init and assigns to `YADGAR_VIZ_CONFIG.node.category_colors`; wiki nodes are colored by category at render time.
 - **explanation:** Eight settings, one per wiki category (analysis, architecture, convention, debugging, decision, fact, pattern, reference), define the hex color used to fill wiki nodes in the force graph. `build_category_colors` builds the map dynamically by iterating the canonical `WikiStore.CATEGORIES` set rather than a hardcoded list, so new categories get an automatic grey fallback (`#8b949e`) without code changes. Colors flow to the frontend via `GET /api/viz/config` and are applied at render time in the 2D canvas and 3D ForceGraph renderers.
 
@@ -2352,7 +2363,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/viz_meta.py::build_edge_colors`, `yadgar/core/viz_meta.py::EDGE_TYPES`, `yadgar/core/server/http.py::api_viz_config`
+- **refs:** `yadgar/core/viz/viz_meta.py::build_edge_colors`, `yadgar/core/viz/viz_meta.py::EDGE_TYPES`, `yadgar/core/server/http.py::api_viz_config`
 - **wiring:** `GET /api/viz/config` → `api_viz_config` → `build_edge_colors(settings)` iterates `EDGE_TYPES`; for entries with a `settings_color_key` it reads the matching `Settings` attribute, otherwise uses the fallback color. Result returned under `edge.color` in the config JSON. Frontend stores in `YADGAR_VIZ_CONFIG.edge.color` and applies per edge type at render time.
 - **explanation:** Five settings control the display color (hex) for the five named edge types whose color is configurable: `memory_wiki` (memory→wiki provenance), `semantic` (cosine-similarity), `temporal` (engram slot co-membership), `transition` (co-recall pattern), and `wiki_crossref` (explicit wiki page links). Edge types without a `settings_color_key` (causal, co_occurrence, imports, calls, resolved_by, caused_by) use hardcoded fallback colors defined in `EDGE_TYPES`. All five configurable colors are served via `GET /api/viz/config` and consumed by the ForceGraph2D/3D link-color accessor in `index.html`.
 
@@ -2436,7 +2447,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/viz_daemon_health.py::run_health_scraper`, `yadgar/_shared/config.py`
+- **refs:** `yadgar/core/viz/viz_daemon_health.py::run_health_scraper`, `yadgar/_shared/config/config.py`
 - **wiring:** Server lifespan starts `run_health_scraper()` as a background asyncio task. Each iteration: scrape → sleep `get_settings().VIZ_HEALTH_REFRESH_SEC`. Setting is re-read each iteration so live env changes take effect without restart. `GET /api/daemon-health` returns the cached scrape result.
 - **explanation:** `VIZ_HEALTH_REFRESH_SEC` (default 5.0 s) controls how often the server-side daemon health scraper polls the backend's `/metrics` endpoint and updates the in-process `_health_cache`. The cache is served via `GET /api/daemon-health`, which the viz debug tab reads for real-time process metrics (RSS, CPU, queue depth, circuit-breaker state). The scraper re-reads this setting on every cycle so the cadence can be changed via env var without restarting the server.
 
@@ -2448,7 +2459,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/config.py`, `yadgar/core/server/http.py::api_viz_config`, `yadgar/core/static/index.html`, `yadgar/core/static/graph-node-factory.js`
+- **refs:** `yadgar/_shared/config/config.py`, `yadgar/core/server/http.py::api_viz_config`, `yadgar/core/static/index.html`, `yadgar/core/static/graph-node-factory.js`
 - **wiring:** `GET /api/viz/config` → `api_viz_config` → returns `s.VIZ_WIKI_SHAPE` under `node.wiki_shape`. Frontend receives it into `YADGAR_VIZ_CONFIG.node.wiki_shape`. The 3D node renderer in `index.html` reads it at line ~1563 and `graph-node-factory.js` line 27–28: `if (node.type !== 'wiki' || shape !== 'octahedron') return null`. When the setting is `'octahedron'` (default) the octahedron mesh IS created; when set to anything else the mesh factory returns null, falling back to a sphere. The mesh factory is wired; the capability is not disabled by a flag flip, but the config comment (`renderer not wired pending v5.10.7.3 resolution`) indicates this is under active review. The default value `'octahedron'` does exercise the octahedron path, so technically `LIVE`, but the inline comment marks it as configuration-only pending a design decision. Status is `DORMANT` — the setting is served and partially consumed, but the v5.10.7.3 plan may revert the renderer; treat as transitional.
 - **explanation:** `VIZ_WIKI_SHAPE` (default `'octahedron'`) configures the desired 3D mesh shape for wiki nodes. When set to `'octahedron'`, the `graph-node-factory.js` module creates a Three.js octahedron geometry for wiki nodes in 3D view. When set to any other value the factory returns null and ForceGraph3D renders the default sphere. The setting is served via `GET /api/viz/config` and applied at graph init; the v5.10.7.3 plan tracks a potential revert of the custom mesh renderer to defaults.
 
@@ -2460,7 +2471,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-VZ1`, `BC-VZ-R1`, `BC-VZ-R2`, `BC-VZ-R3`, `BC-VZ-R4`
-- **refs:** `yadgar/core/graph_api.py::GraphAPI`, `yadgar/core/server/http.py::api_graph`, `yadgar/core/server/http.py::api_graph_neighborhood`, `yadgar/core/server/http.py::api_graph_edges_lazy`, `yadgar/_shared/storage/cluster.py::_ClusterMixin.get_memory_clusters`, `yadgar/_shared/storage/cluster.py::_ClusterMixin.get_cluster_members`
+- **refs:** `yadgar/backend/graph/graph_api.py::GraphAPI`, `yadgar/core/server/http.py::api_graph`, `yadgar/core/server/http.py::api_graph_neighborhood`, `yadgar/core/server/http.py::api_graph_edges_lazy`, `yadgar/_shared/storage/cluster.py::_ClusterMixin.get_memory_clusters`, `yadgar/_shared/storage/cluster.py::_ClusterMixin.get_cluster_members`
 - **wiring:** Three HTTP routes on the daemon: `GET /api/graph` → `api_graph` → `GraphAPI.get_full_graph()` assembles memory + wiki + entity nodes with all typed edges (temporal, transition, wiki_crossref, memory_wiki, causal, entity-typed-relations, memory_similarity_link) plus clusters[] from real memory_cluster rows (v5.80); `GET /api/graph/neighborhood/{node_id}` → `api_graph_neighborhood` → `GraphAPI.get_neighborhood()` returns the 1–2 hop subgraph around a node (partial implementation — currently returns nodes only, edges=[]) satisfying BC-VZ1; `GET /api/graph/edges?type=semantic` → `api_graph_edges_lazy` → `GraphAPI.get_edges_by_type()` computes O(n²) KNN semantic edges on demand. All routes are reachable with default config.
 - **explanation:** `GraphAPI` is the server-side assembly layer that builds the knowledge graph JSON for the visualization frontend. `get_full_graph` fetches memory nodes (heat-ranked, up to 500), wiki nodes, entity nodes, and assembles all edge types from the storage engine; orphan edges (where an endpoint node is absent) are filtered and counted. v5.80 (#80 viz-fidelity-v2): role vocabulary renamed display→informational; clusters[] added from real memory_cluster rows via get_memory_clusters()+get_cluster_members() — memory_cluster viz-consumption is now LIVE (was DORMANT); memory_similarity_link edges added from CLS-phase near-duplicate links with role=informational; semantic edges remain lazy (off by default, on-demand via /api/graph/edges?type=semantic). `get_neighborhood` provides a node-centric subgraph view for BC-VZ1. `get_edges_by_type` handles the lazy semantic edge path.
 
@@ -2472,7 +2483,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/server/http.py::api_graph`, `yadgar/core/graph_api.py::GraphAPI.get_full_graph`, `yadgar/core/graph_api.py::_limit_clause`
+- **refs:** `yadgar/core/server/http.py::api_graph`, `yadgar/backend/graph/graph_api.py::GraphAPI.get_full_graph`, `yadgar/backend/graph/graph_api.py::_limit_clause`
 - **wiring:** `GET /api/graph` → `api_graph` reads `get_settings().VIZ_MAX_MEMORIES`/`VIZ_MAX_WIKI`/`VIZ_MAX_ENTITIES` (query params `max_memories`/`max_wiki`/`max_entities` override per request) → passes them to `GraphAPI.get_full_graph(max_memories, top_k, include_invalidated, as_of, max_wiki, max_entities)`. Memory + wiki caps become SQL `LIMIT` clauses via the shared `_limit_clause(cap)` helper; the entity cap is a post-fetch slice in `_assemble_entity_nodes` (because `get_all_entities` is shared by 9 callers and already returns `ORDER BY heat DESC`).
 - **explanation:** Three settings bound how many nodes of each type the `/api/graph` payload contains, replacing the prior inconsistent caps (memory hard-defaulted to 500, wiki a hardcoded `LIMIT 200`, entities uncapped). Defaults: `VIZ_MAX_MEMORIES`=500, `VIZ_MAX_WIKI`=200, `VIZ_MAX_ENTITIES`=2000 (entities were unbounded; the live graph holds ~1783). For each knob, a value of `0` or `-1` means unlimited — memory/wiki omit the `LIMIT` clause and entities skip the slice. The knobs live in FIELD_META section `viz_config` (category `viz`) so they are editable from the System→Config editor without a new UI.
 
@@ -2484,7 +2495,7 @@ config knobs.
 - **tools:** `consolidate_now`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/core/graph_layout.py::compute_graph_layout`, `yadgar/core/graph_layout.py::graph_signature`, `yadgar/_shared/storage/ops.py::get_graph_layout_cache`, `yadgar/_shared/storage/ops.py::set_graph_layout_cache`, `yadgar/backend/consolidation/orchestrator.py::_maybe_precompute_graph_layout`, `yadgar/core/server/http.py::api_graph`
+- **refs:** `yadgar/backend/graph/graph_layout.py::compute_graph_layout`, `yadgar/backend/graph/graph_layout.py::graph_signature`, `yadgar/_shared/storage/ops.py::get_graph_layout_cache`, `yadgar/_shared/storage/ops.py::set_graph_layout_cache`, `yadgar/backend/consolidation/service.py::_maybe_precompute_graph_layout`, `yadgar/core/server/http.py::api_graph`
 - **wiring:** OFF by default. When `VIZ_PRECOMPUTED_LAYOUT_ENABLED` is true, the consolidation cycle's `_run_post_cycle_tasks` calls `_maybe_precompute_graph_layout` — gated by a graph-signature check so it is a fast no-op when the graph shape is unchanged, and gated to the nightly/full path so it never blocks the ≤30s light `consolidate_now` budget. When the signature changed it runs `compute_graph_layout` (seeded `networkx.spring_layout(dim=3, iterations=VIZ_LAYOUT_ITERATIONS)`) and persists `{signature, positions, computed_at}` via `set_graph_layout_cache`. `GET /api/graph` → `api_graph`, when the flag is on and the cached signature matches the live graph, attaches `x`/`y`/`z` to each node from `get_graph_layout_cache`; new/uncached nodes get no position (the client places them).
 - **explanation:** The viz historically ran a d3-force COLD layout client-side on every load (~15s for thousands of nodes). This capability moves the layout server-side: computed once during consolidation, cached keyed by an order-independent graph signature (node ids + edge endpoints), and served via `/api/graph` so the viz seeds positions and runs a tiny cooldown for a near-instant first paint. Compute uses capped-iteration seeded `spring_layout` (networkx is already a dep; deterministic via fixed seed + sorted node ids). It is gated three ways — flag, signature-unchanged no-op, and nightly-only — so it never blocks the daemon. Composes with the v5.87 localStorage warm-start (server positions take priority), v5.87.1 camera-fit, and v5.86 idle-pause. Default OFF preserves current behavior exactly (no positions in the payload).
 
@@ -2538,8 +2549,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-I8`
-- **refs:** `docs/ARCHITECTURE_INVARIANTS.md`, `docs/BEHAVIOR_CONTRACT.md`, `yadgar/_shared/metrics.py`
-- **wiring:** Queue depth and backpressure state are exposed as Prometheus metrics in `yadgar/_shared/metrics.py`. The drainer writes to these metrics on each cycle. Observable via the `/metrics` endpoint at runtime.
+- **refs:** `docs/ARCHITECTURE_INVARIANTS.md`, `docs/BEHAVIOR_CONTRACT.md`, `yadgar/_shared/observability/metrics.py`
+- **wiring:** Queue depth and backpressure state are exposed as Prometheus metrics in `yadgar/_shared/observability/metrics.py`. The drainer writes to these metrics on each cycle. Observable via the `/metrics` endpoint at runtime.
 - **explanation:** I8 requires that queue backpressure is externally visible so operators can detect write-queue buildup before it causes latency spikes or data loss. The queue depth gauge and any backpressure flag are registered Prometheus metrics written by the drainer. This is both a runtime invariant and a metric-writer requirement (linked with I23).
 
 ---
@@ -2622,7 +2633,7 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-I15`, `BC-I25`
-- **refs:** `scripts/check_complexity.py`, `yadgar/_shared/config.py`, `yadgar/_shared/config_yaml.py`, `yadgar/_shared/config_registry.py`, `docs/ARCHITECTURE_INVARIANTS.md`
+- **refs:** `scripts/check_complexity.py`, `yadgar/_shared/config/config.py`, `yadgar/_shared/config/config_yaml.py`, `yadgar/_shared/config/config_registry.py`, `docs/ARCHITECTURE_INVARIANTS.md`
 - **wiring:** I15 (fuzz tests) — unit-level, scoped: boundary-property fuzz tests must exist for in-scope interfaces; no dedicated CI hook, validated by unit test presence. I25 (yaml-backing) — enforced by the `check-config-three-way-sync` pre-commit hook, which runs `pytest yadgar/tests/test_config_three_way_sync.py`. Fires on changes to `config.py`, `config_yaml.py`, `config_registry.py`, or the env-only allowlist.
 - **explanation:** I15 requires property-based (fuzz) tests at module boundaries so that edge-case inputs are explored programmatically. I25 requires every config knob in `Settings` to have a corresponding yaml-backed default so that container deployments with yaml config files get the same defaults as env-var deployments. The three-way sync check verifies `config.py`, `config_yaml.py`, and `config_registry.py` all agree. Both invariants have unit-level coverage; I25 also has a wired CI hook.
 
@@ -2664,8 +2675,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-I23`
-- **refs:** `scripts/check_metric_writers.py`, `yadgar/_shared/metrics.py`, `yadgar/backend/embed_service_metrics.py`, `docs/ARCHITECTURE_INVARIANTS.md`
-- **wiring:** Enforced by the `check-metric-writers` pre-commit hook on any change to `yadgar/**/*.py`. The script scans `yadgar/_shared/metrics.py` and `yadgar/backend/embed_service_metrics.py` for Prometheus metric declarations (Gauge, Counter, Histogram, Summary), then verifies each has ≥1 writer or reference site elsewhere in `yadgar/`. A declared metric with no writer is a dead metric.
+- **refs:** `scripts/check_metric_writers.py`, `yadgar/_shared/observability/metrics.py`, `yadgar/backend/embed_service/embed_service_metrics.py`, `docs/ARCHITECTURE_INVARIANTS.md`
+- **wiring:** Enforced by the `check-metric-writers` pre-commit hook on any change to `yadgar/**/*.py`. The script scans `yadgar/_shared/observability/metrics.py` and `yadgar/backend/embed_service/embed_service_metrics.py` for Prometheus metric declarations (Gauge, Counter, Histogram, Summary), then verifies each has ≥1 writer or reference site elsewhere in `yadgar/`. A declared metric with no writer is a dead metric.
 - **explanation:** I23 prevents the proliferation of Prometheus metrics that are declared but never written — which wastes cardinality budget and misleads operators with always-zero gauges. The lint performs a two-pass scan: first it collects all declared metric objects by variable name, then it searches the codebase for call sites that increment, set, or observe each metric. Any metric with zero call sites fails the lint. This is tightly coupled with I8 (backpressure observability) and the overall metrics contract.
 
 ---
@@ -2678,9 +2689,9 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-I26`
-- **refs:** `scripts/check_secret_gate.py`, `yadgar/_shared/secrets.py`, `yadgar/_shared/security/allowlist.py`, `docs/ARCHITECTURE_INVARIANTS.md`
+- **refs:** `scripts/check_secret_gate.py`, `yadgar/_shared/security/secrets.py`, `yadgar/_shared/security/allowlist.py`, `docs/ARCHITECTURE_INVARIANTS.md`
 - **wiring:** Enforced by the `check-secret-gate` pre-commit hook on changes to `yadgar/core/server/tools/**/*.py`. Every `@_tool`-decorated function with write parameters (`content`, `current_task`, etc.) must call `gate_or_reject()` or carry a `# secret-gate: skip` annotation. Known delegating tools (`seed_project`, `wiki_approve`) are explicitly exempted (`remember` deleted in v6 T3). This invariant ties directly to BC-S1 (secret patterns blocked at API).
-- **explanation:** I26 mandates that secret scanning is a single-entry-point gate: the `gate_or_reject()` function in `yadgar/_shared/secrets.py`. No write tool is permitted to bypass this gate without an explicit annotation. The gate checks incoming content against known secret patterns (API keys, tokens, passwords) and either rejects the write or routes it through the allowlist bypass path (which triggers an audit — I28). Keeping the gate at a single chokepoint ensures that new write tools cannot accidentally skip secret scanning.
+- **explanation:** I26 mandates that secret scanning is a single-entry-point gate: the `gate_or_reject()` function in `yadgar/_shared/security/secrets.py`. No write tool is permitted to bypass this gate without an explicit annotation. The gate checks incoming content against known secret patterns (API keys, tokens, passwords) and either rejects the write or routes it through the allowlist bypass path (which triggers an audit — I28). Keeping the gate at a single chokepoint ensures that new write tools cannot accidentally skip secret scanning.
 
 ---
 
@@ -2692,8 +2703,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-I28`
-- **refs:** `scripts/check_allowlist_audit.py`, `yadgar/_shared/security/allowlist.py`, `yadgar/_shared/secrets.py`, `docs/ARCHITECTURE_INVARIANTS.md`
-- **wiring:** Enforced by the `check-allowlist-audit` pre-commit hook on changes to `yadgar/_shared/security/allowlist.py` or `yadgar/_shared/secrets.py`. The script structurally verifies: `is_allowlisted()` and `_write_audit()` co-exist in `allowlist.py`; `gate_or_reject()` in `secrets.py` calls both; `YADGAR_SECRET_GATE_AUDIT_DIR` env knob is documented. This ties to BC-S3.
+- **refs:** `scripts/check_allowlist_audit.py`, `yadgar/_shared/security/allowlist.py`, `yadgar/_shared/security/secrets.py`, `docs/ARCHITECTURE_INVARIANTS.md`
+- **wiring:** Enforced by the `check-allowlist-audit` pre-commit hook on changes to `yadgar/_shared/security/allowlist.py` or `yadgar/_shared/security/secrets.py`. The script structurally verifies: `is_allowlisted()` and `_write_audit()` co-exist in `allowlist.py`; `gate_or_reject()` in `secrets.py` calls both; `YADGAR_SECRET_GATE_AUDIT_DIR` env knob is documented. This ties to BC-S3.
 - **explanation:** I28 ensures that every time an allowlist bypass is used (content that would normally be blocked passes the secret gate), an audit record is written. Without this, a compromised allowlist entry could silently permit secret leakage. The structural check verifies that the `is_allowlisted()` function and the `_write_audit()` function are always called together in the gate implementation, making it impossible for a refactor to separate them.
 
 ---
@@ -2706,8 +2717,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-I29`
-- **refs:** `scripts/check_dead_capability.py`, `yadgar/core/graph_api.py`, `yadgar/core/viz_meta.py`, `docs/EDGE_CONTRACT.md`, `docs/ARCHITECTURE_INVARIANTS.md`
-- **wiring:** Enforced by the `check-dead-capability` pre-commit hook on changes to `yadgar/core/graph_api.py`, `yadgar/core/viz_meta.py`, or `docs/EDGE_CONTRACT.md`. The script AST-scans `graph_api.py` and `viz_meta.py` for edge-type literals and `EDGE_TYPES` registry keys, cross-references against `docs/EDGE_CONTRACT.md`, and fails on orphan edge types (produced but not contracted), drop-still-produced (removed from contract but still produced), or stale contract rows (contracted but never produced).
+- **refs:** `scripts/check_dead_capability.py`, `yadgar/backend/graph/graph_api.py`, `yadgar/core/viz/viz_meta.py`, `docs/EDGE_CONTRACT.md`, `docs/ARCHITECTURE_INVARIANTS.md`
+- **wiring:** Enforced by the `check-dead-capability` pre-commit hook on changes to `yadgar/backend/graph/graph_api.py`, `yadgar/core/viz/viz_meta.py`, or `docs/EDGE_CONTRACT.md`. The script AST-scans `graph_api.py` and `viz_meta.py` for edge-type literals and `EDGE_TYPES` registry keys, cross-references against `docs/EDGE_CONTRACT.md`, and fails on orphan edge types (produced but not contracted), drop-still-produced (removed from contract but still produced), or stale contract rows (contracted but never produced).
 - **explanation:** I29 applies the "no dead capability" principle specifically to the knowledge graph edge-type layer: every edge type that the code produces must appear in `EDGE_CONTRACT.md`, and every contracted edge type must actually be produced. This three-way consistency check (stored ≡ used ≡ shown) prevents documentation drift where the contract describes edge types that no longer exist, or code produces edges that are undocumented and therefore invisible to operators and maintainers.
 
 ---
@@ -2968,8 +2979,8 @@ config knobs.
 - **tools:** —
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/_shared/metrics.py`, `yadgar/core/cli/stats.py`, `yadgar/tests/scripts/test_v6_data_quality_stats.py`, `docs/plans/PLAN_V6_QUALITY_FOUNDATION.md`
-- **wiring:** Seven Prometheus Gauges declared in `yadgar/_shared/metrics.py` (v6 Phase 0.2 block): `yadgar_data_quality_embedding_valid_ratio`, `yadgar_data_quality_null_embedding_count`, `yadgar_data_quality_duplicate_rate`, `yadgar_data_quality_zombie_rate`, `yadgar_data_quality_domain_coverage`, `yadgar_data_quality_surprise_p50`, `yadgar_data_quality_surprise_p95`. Writers: `_collect_data_quality()` in `yadgar/_shared/metrics.py` (called on every `/metrics` scrape, alongside `_collect_queue_depths()`). Stats CLI: `_query_data_quality()` in `yadgar/core/cli/stats.py` populates `StatsData.dq_*` fields, printed in the `DATA QUALITY (v6 Phase 0.2)` section of `yadgar stats` output and included in the JSON output from `yadgar stats --format json`. I23 compliance: `check_metric_writers.py` verifies `_collect_data_quality()` as the writer for all seven gauges.
+- **refs:** `yadgar/_shared/observability/metrics.py`, `yadgar/core/cli/stats.py`, `yadgar/tests/scripts/test_v6_data_quality_stats.py`, `docs/plans/PLAN_V6_QUALITY_FOUNDATION.md`
+- **wiring:** Seven Prometheus Gauges declared in `yadgar/_shared/observability/metrics.py` (v6 Phase 0.2 block): `yadgar_data_quality_embedding_valid_ratio`, `yadgar_data_quality_null_embedding_count`, `yadgar_data_quality_duplicate_rate`, `yadgar_data_quality_zombie_rate`, `yadgar_data_quality_domain_coverage`, `yadgar_data_quality_surprise_p50`, `yadgar_data_quality_surprise_p95`. Writers: `_collect_data_quality()` in `yadgar/_shared/observability/metrics.py` (called on every `/metrics` scrape, alongside `_collect_queue_depths()`). Stats CLI: `_query_data_quality()` in `yadgar/core/cli/stats.py` populates `StatsData.dq_*` fields, printed in the `DATA QUALITY (v6 Phase 0.2)` section of `yadgar stats` output and included in the JSON output from `yadgar stats --format json`. I23 compliance: `check_metric_writers.py` verifies `_collect_data_quality()` as the writer for all seven gauges.
 - **explanation:** The Phase-0.2 dashboard metrics that make corpus health visible without running the full eval harness. Null-embedding count is the hardest signal: `embedding_valid_ratio < 1.0` indicates the corruption class that the v5.66 zombie purge and today's reembed_all fix targeted. Duplicate-rate (sim-links / active memories) measures write-gate efficiency. Zombie-rate (stale / total) measures consolidation health. Domain-coverage measures astrocyte effectiveness. Surprise distribution (p50/p95) provides a histogram summary for Phase-1 write-gate tuning. All seven are best-effort (swallowed DB errors) so a degraded DB doesn't break the /metrics endpoint.
 
 

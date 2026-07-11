@@ -178,7 +178,7 @@ class TestGetFullGraphFiltering:
 
     def test_invalidated_causal_edge_excluded_by_default(self, storage):
         from yadgar._shared.storage.bitemporal import invalidate_edge
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         e1 = _insert_bare_entity(storage, "G1")
         e2 = _insert_bare_entity(storage, "G2")
@@ -202,7 +202,7 @@ class TestGetFullGraphIncludeInvalidated:
 
     def test_include_invalidated_returns_all(self, storage):
         from yadgar._shared.storage.bitemporal import invalidate_edge
-        from yadgar.core.graph_api import GraphAPI
+        from yadgar.backend.graph.graph_api import GraphAPI
 
         e1 = _insert_bare_entity(storage, "H1")
         e2 = _insert_bare_entity(storage, "H2")

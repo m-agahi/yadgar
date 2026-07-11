@@ -14,20 +14,18 @@ from collections import OrderedDict, deque
 from typing import Any
 
 from yadgar._shared.astrocyte_pool import AstrocytePool
-from yadgar._shared.cognitive_map import CognitiveMap
 from yadgar._shared.config import resolve_knob
+from yadgar._shared.contracts.engram import EngramAllocator
 from yadgar._shared.embeddings import EmbeddingEngine
-from yadgar._shared.engram import EngramAllocator
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.metacognition import MetaCognition
 from yadgar._shared.rate_limit import TokenBucketRateLimiter
-from yadgar._shared.restoration import CheckpointRestore
-from yadgar._shared.retrieval import Retriever
 from yadgar._shared.rules_engine import RulesEngine
+from yadgar._shared.runtime.sr_session import SRTransitionRecorder
 from yadgar._shared.sensory_buffer import ActionLogger
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
-from yadgar._shared.wiki import WikiStore
+from yadgar._shared.wiki.store import WikiStore
 
 # R2a Car B/C + R3 Car 1 H: the non-shared engine slots are annotated `Any` so
 # this shared leaf module carries NO `yadgar.core` / `yadgar.backend` import.
@@ -48,7 +46,14 @@ _buffer: ActionLogger | None = None
 _consolidation: Any = None  # backend: ConsolidationScheduler (None core-side)
 _staleness: Any = None  # core: StalenessDetector
 _thermo: MemoryThermodynamics | None = None
-_retriever: Retriever | None = None
+# T2 Car E2: Retriever is a BACKEND engine now (yadgar.backend.retrieval) —
+# composed lazily by backend.retrieval.compose.ensure_retrieval_engine. The slot
+# is Any (like the other core-invisible engines) so _shared never imports it.
+_retriever: Any = None
+# T2 Car E2: the selected ML client (Local in backend / Remote in core) — stored
+# so the backend retriever composer can inject the same concrete the composition
+# root selected (it is no longer constructed inside lifecycle).
+_ml_client: Any = None
 _curator: Any = None  # backend: MemoryCurator (None core-side)
 _prospective: Any = None  # backend: ProspectiveMemoryEngine (None core-side)
 _narrative: Any = None  # backend: NarrativeEngine (None core-side)
@@ -59,10 +64,13 @@ _write_gate: Any = None  # backend: WriteGate (None core-side)
 _engram: EngramAllocator | None = None
 _rules_engine: RulesEngine | None = None
 _cls: Any = None  # backend: DualStoreCLS (None core-side)
-_cognitive_map: CognitiveMap | None = None
+# T2 Car B: core holds the session-side SRTransitionRecorder; the backend
+# upgrades this slot to the full CognitiveMap (its subclass, built by
+# yadgar.backend.restoration.ensure_restoration_engines).
+_cognitive_map: SRTransitionRecorder | None = None
 _causal: Any = None  # backend: CausalDiscovery (None core-side)
 _metacognition: MetaCognition | None = None
-_replay: CheckpointRestore | None = None
+_replay: Any = None  # backend: CheckpointRestore (None core-side — T2 Car B)
 _wiki: WikiStore | None = None
 _file_queue: Any = None  # core: FileQueue
 _queue_drainer: Any = None  # core: QueueDrainer

@@ -73,7 +73,7 @@ def test_safe_urlopen_rejects_javascript_scheme():
 
 
 def test_get_runtime_uses_env_override(monkeypatch):
-    from yadgar.core import daemon
+    from yadgar.core.daemon import daemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "podman")
     result = daemon._get_runtime()
@@ -81,7 +81,7 @@ def test_get_runtime_uses_env_override(monkeypatch):
 
 
 def test_get_runtime_uses_env_override_docker(monkeypatch):
-    from yadgar.core import daemon
+    from yadgar.core.daemon import daemon
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
     result = daemon._get_runtime()
@@ -89,7 +89,7 @@ def test_get_runtime_uses_env_override_docker(monkeypatch):
 
 
 def test_get_runtime_uses_cached_runtime(monkeypatch):
-    from yadgar.core import daemon
+    from yadgar.core.daemon import daemon
 
     monkeypatch.delenv("YADGAR_CONTAINER_RUNTIME", raising=False)
     monkeypatch.setattr(daemon, "_RUNTIME", "podman")
@@ -98,7 +98,7 @@ def test_get_runtime_uses_cached_runtime(monkeypatch):
 
 
 def test_get_runtime_falls_back_to_docker_when_none_found(monkeypatch):
-    from yadgar.core import daemon
+    from yadgar.core.daemon import daemon
 
     monkeypatch.delenv("YADGAR_CONTAINER_RUNTIME", raising=False)
     monkeypatch.setattr(daemon, "_RUNTIME", None)
@@ -137,7 +137,7 @@ def test_container_memory_mb_min_clamped():
     from yadgar.core.daemon import _container_memory_mb
 
     # Very small host RAM → clamped to 512
-    with patch("yadgar.core.daemon._host_memory_bytes", return_value=256 * 1024 * 1024):
+    with patch("yadgar.core.daemon.daemon._host_memory_bytes", return_value=256 * 1024 * 1024):
         result = _container_memory_mb()
     assert result == 512
 
@@ -146,7 +146,9 @@ def test_container_memory_mb_max_clamped():
     from yadgar.core.daemon import _container_memory_mb
 
     # 1 TB host RAM → clamped to 8192
-    with patch("yadgar.core.daemon._host_memory_bytes", return_value=1024 * 1024 * 1024 * 1024):
+    with patch(
+        "yadgar.core.daemon.daemon._host_memory_bytes", return_value=1024 * 1024 * 1024 * 1024
+    ):
         result = _container_memory_mb()
     assert result == 8192
 
@@ -155,7 +157,9 @@ def test_container_memory_mb_quarter_in_range():
     from yadgar.core.daemon import _container_memory_mb
 
     # 32 GB host RAM → 32768 / 8 = 4096 MB → in [512, 8192]
-    with patch("yadgar.core.daemon._host_memory_bytes", return_value=32 * 1024 * 1024 * 1024):
+    with patch(
+        "yadgar.core.daemon.daemon._host_memory_bytes", return_value=32 * 1024 * 1024 * 1024
+    ):
         result = _container_memory_mb()
     assert result == 4096
 
@@ -173,7 +177,7 @@ def test_host_memory_bytes_returns_int():
 
 def test_host_memory_bytes_linux_fallback_on_no_meminfo(monkeypatch, tmp_path):
     """When /proc/meminfo is missing, falls back to sysconf."""
-    from yadgar.core import daemon
+    from yadgar.core.daemon import daemon
 
     monkeypatch.setattr(platform, "system", lambda: "Linux")
 

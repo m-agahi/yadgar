@@ -149,7 +149,7 @@ class TestInstallHooksSubagentStart:
     """install_hooks registers SubagentStart with append-if-absent semantics."""
 
     def test_fresh_install_adds_subagent_start(self, tmp_path):
-        from yadgar.core.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
         result = install_hooks_impl(
             home_dir=tmp_path,
@@ -164,7 +164,7 @@ class TestInstallHooksSubagentStart:
         assert isinstance(entries, list) and len(entries) > 0
 
     def test_idempotent_does_not_duplicate(self, tmp_path):
-        from yadgar.core.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
         install_hooks_impl(
             home_dir=tmp_path, scope="global", project_directory=str(tmp_path), dry_run=False

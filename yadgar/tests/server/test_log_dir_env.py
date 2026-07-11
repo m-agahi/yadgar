@@ -16,7 +16,10 @@ from unittest.mock import patch
 
 def _import_helpers():
     """Lazy import so individual tests can show the specific error."""
-    from yadgar._shared.log_config import _resolve_log_dir, _resolve_log_file_path  # noqa: PLC0415
+    from yadgar._shared.observability.log_config import (  # noqa: PLC0415
+        _resolve_log_dir,
+        _resolve_log_file_path,
+    )
 
     return _resolve_log_dir, _resolve_log_file_path
 
@@ -128,7 +131,7 @@ def test_file_handler_not_installed_when_env_unset(monkeypatch):
     """Without any YADGAR_LOG_DIR / YADGAR_LOG_FILE_PATH, _install_file_handler returns None."""
     import logging
 
-    from yadgar._shared.log_config import (  # noqa: PLC0415
+    from yadgar._shared.observability.log_config import (  # noqa: PLC0415
         RotatingJSONLFileHandler,
         _install_file_handler,
     )

@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from yadgar.core import sd_notify
+from yadgar.core.daemon import sd_notify
 
 
 @pytest.fixture

@@ -91,7 +91,7 @@ class TestBackendRouteThreadsDeadline:
 
         import httpx
 
-        import yadgar.backend.embed_service as _svc
+        import yadgar.backend.embed_service.embed_service as _svc
         from yadgar.backend.embed_service import app
 
         original_ready = _svc._recall_engines_ready
@@ -103,9 +103,9 @@ class TestBackendRouteThreadsDeadline:
             captured.update(kw)
             return []
 
-        monkeypatch.setattr("yadgar._shared.runtime.recall_pipeline._fanout_recall", _fake_fanout)
+        monkeypatch.setattr("yadgar.backend.retrieval.recall_pipeline._fanout_recall", _fake_fanout)
         monkeypatch.setattr(
-            "yadgar._shared.runtime.recall_pipeline._apply_recall_db_side_effects",
+            "yadgar.backend.retrieval.recall_pipeline._apply_recall_db_side_effects",
             lambda *a, **kw: None,
         )
         monkeypatch.setattr(
@@ -144,7 +144,7 @@ class TestBackendRouteThreadsDeadline:
 
         import httpx
 
-        import yadgar.backend.embed_service as _svc
+        import yadgar.backend.embed_service.embed_service as _svc
         from yadgar.backend.embed_service import app
 
         original_ready = _svc._recall_engines_ready
@@ -156,9 +156,9 @@ class TestBackendRouteThreadsDeadline:
             captured.update(kw)
             return []
 
-        monkeypatch.setattr("yadgar._shared.runtime.recall_pipeline._fanout_recall", _fake_fanout)
+        monkeypatch.setattr("yadgar.backend.retrieval.recall_pipeline._fanout_recall", _fake_fanout)
         monkeypatch.setattr(
-            "yadgar._shared.runtime.recall_pipeline._apply_recall_db_side_effects",
+            "yadgar.backend.retrieval.recall_pipeline._apply_recall_db_side_effects",
             lambda *a, **kw: None,
         )
         monkeypatch.setattr(
@@ -191,8 +191,8 @@ class TestBackendRouteThreadsDeadline:
 
 
 def _fanout_with_deadline(deadline):
-    import yadgar._shared.runtime.recall_pipeline as _pl
     import yadgar._shared.runtime.state as _st
+    import yadgar.backend.retrieval.recall_pipeline as _pl
 
     wiki_cls = MagicMock(name="WikiProvider")
     wiki_cls.return_value.candidates.return_value = []
@@ -245,7 +245,7 @@ class TestRetrieverRecallDeadline:
     def _run_recall(self, deadline):
         """Drive Retriever.recall unbound on a MagicMock self — collect stages
         are mock methods we can assert (not) called."""
-        from yadgar._shared.retrieval.core import Retriever
+        from yadgar.backend.retrieval.core import Retriever
 
         mock = MagicMock()
         mock._settings = MagicMock()
@@ -286,7 +286,7 @@ class TestRetrieverRecallDeadline:
     def test_graph_temporal_deadline_hit_skips_rerank(self):
         """When the extracted stage-3-5 helper reports deadline_hit=True, the
         rerank pipeline is skipped and the partial fusion result returned."""
-        from yadgar._shared.retrieval.core import Retriever
+        from yadgar.backend.retrieval.core import Retriever
 
         mock = MagicMock()
         mock._settings = MagicMock()
@@ -305,8 +305,8 @@ class TestCollectGraphTemporalScoresHelper:
     """Unit tests for the extracted stage-3-5 helper itself."""
 
     def _run(self, deadline):
-        from yadgar._shared.retrieval.core import Retriever
-        from yadgar._shared.retrieval.scoring import FTSParams
+        from yadgar.backend.retrieval.core import Retriever
+        from yadgar.backend.retrieval.scoring import FTSParams
 
         mock = MagicMock()
         mock._collect_temporal_scores.return_value = 0.7

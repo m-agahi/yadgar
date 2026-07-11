@@ -101,7 +101,9 @@ class TestHandleCheckResult:
 class TestCmdInstallSubagents:
     def test_success_prints_json(self, capsys):
         result = {"status": "installed", "files": ["agent.md"]}
-        with patch("yadgar.core.install_subagents_lib.install_subagents_impl", return_value=result):
+        with patch(
+            "yadgar.core.install.install_subagents_lib.install_subagents_impl", return_value=result
+        ):
             cmd_install_subagents(_make_args())
         out = capsys.readouterr().out
         payload = json.loads(out)
@@ -109,7 +111,9 @@ class TestCmdInstallSubagents:
 
     def test_error_exits_one(self, capsys):
         result = {"status": "error", "reason": "agents dir missing"}
-        with patch("yadgar.core.install_subagents_lib.install_subagents_impl", return_value=result):
+        with patch(
+            "yadgar.core.install.install_subagents_lib.install_subagents_impl", return_value=result
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_install_subagents(_make_args())
         assert exc_info.value.code == 1
@@ -118,28 +122,36 @@ class TestCmdInstallSubagents:
 
     def test_nix_managed_prints_message(self, capsys):
         result = {"status": "nix_managed", "message": "NixOS detected — skipping."}
-        with patch("yadgar.core.install_subagents_lib.install_subagents_impl", return_value=result):
+        with patch(
+            "yadgar.core.install.install_subagents_lib.install_subagents_impl", return_value=result
+        ):
             cmd_install_subagents(_make_args())
         out = capsys.readouterr().out
         assert "NixOS" in out
 
     def test_dry_run_status_no_extra_output(self, capsys):
         result = {"status": "dry_run"}
-        with patch("yadgar.core.install_subagents_lib.install_subagents_impl", return_value=result):
+        with patch(
+            "yadgar.core.install.install_subagents_lib.install_subagents_impl", return_value=result
+        ):
             cmd_install_subagents(_make_args(dry_run=True))
         out = capsys.readouterr().out
         assert out.strip() == ""
 
     def test_check_status_exits_zero_when_no_changes(self, capsys):
         result = {"status": "check", "would_install": [], "agents_dir": "/fake"}
-        with patch("yadgar.core.install_subagents_lib.install_subagents_impl", return_value=result):
+        with patch(
+            "yadgar.core.install.install_subagents_lib.install_subagents_impl", return_value=result
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_install_subagents(_make_args(check=True))
         assert exc_info.value.code == 0
 
     def test_check_status_exits_one_with_changes(self, capsys):
         result = {"status": "check", "would_install": ["x.md"], "agents_dir": "/fake"}
-        with patch("yadgar.core.install_subagents_lib.install_subagents_impl", return_value=result):
+        with patch(
+            "yadgar.core.install.install_subagents_lib.install_subagents_impl", return_value=result
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_install_subagents(_make_args(check=True))
         assert exc_info.value.code == 1
@@ -147,7 +159,7 @@ class TestCmdInstallSubagents:
     def test_passes_flags_to_impl(self):
         result = {"status": "ok"}
         with patch(
-            "yadgar.core.install_subagents_lib.install_subagents_impl", return_value=result
+            "yadgar.core.install.install_subagents_lib.install_subagents_impl", return_value=result
         ) as mock_impl:
             with patch("builtins.print"):
                 cmd_install_subagents(_make_args(dry_run=True, force=True, check=False))

@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -28,7 +29,7 @@ def _make_handler(
     environ: dict[str, str] | None = None,
 ) -> Any:
     """Build a _ProxyHandler instance wired to a fake socket/rfile/wfile."""
-    from yadgar.core.viz_server import _Handler
+    from yadgar.core.viz.viz_server import _Handler
 
     handler = _Handler.__new__(_Handler)
     handler.command = method
@@ -63,7 +64,7 @@ class TestProxyInjectsBearer:
                 200, content=b'{"nodes":[]}', headers={"content-type": "application/json"}
             )
 
-        from yadgar.core.viz_server import _proxy_request
+        from yadgar.core.viz.viz_server import _proxy_request
 
         result = _proxy_request(
             method="GET",
@@ -85,7 +86,7 @@ class TestProxyInjectsBearer:
             captured_headers.update(kwargs.get("headers", {}))
             return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
 
-        from yadgar.core.viz_server import _proxy_request
+        from yadgar.core.viz.viz_server import _proxy_request
 
         _proxy_request(
             method="GET",
@@ -106,7 +107,7 @@ class TestProxyPreservesStatusAndContentType:
         def _fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(404, content=b"not found", headers={"content-type": "text/plain"})
 
-        from yadgar.core.viz_server import _proxy_request
+        from yadgar.core.viz.viz_server import _proxy_request
 
         result = _proxy_request(
             method="GET",
@@ -129,7 +130,7 @@ class TestProxyPreservesStatusAndContentType:
                 headers={"content-type": "application/json; charset=utf-8"},
             )
 
-        from yadgar.core.viz_server import _proxy_request
+        from yadgar.core.viz.viz_server import _proxy_request
 
         result = _proxy_request(
             method="GET",
@@ -152,7 +153,7 @@ class TestProxyPreservesQueryString:
             captured_url.append(url)
             return httpx.Response(200, content=b"[]", headers={"content-type": "application/json"})
 
-        from yadgar.core.viz_server import _proxy_request
+        from yadgar.core.viz.viz_server import _proxy_request
 
         _proxy_request(
             method="GET",
@@ -171,7 +172,7 @@ class TestVizProxyEnvFlag:
         """Proxy should be active when YADGAR_VIZ_PROXY is unset (default on)."""
         monkeypatch.delenv("YADGAR_VIZ_PROXY", raising=False)
 
-        from yadgar.core.viz_server import _proxy_enabled
+        from yadgar.core.viz.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is True
 
@@ -179,7 +180,7 @@ class TestVizProxyEnvFlag:
         """YADGAR_VIZ_PROXY=0 must disable proxy."""
         monkeypatch.setenv("YADGAR_VIZ_PROXY", "0")
 
-        from yadgar.core.viz_server import _proxy_enabled
+        from yadgar.core.viz.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is False
 
@@ -187,7 +188,7 @@ class TestVizProxyEnvFlag:
         """YADGAR_VIZ_PROXY=1 must enable proxy."""
         monkeypatch.setenv("YADGAR_VIZ_PROXY", "1")
 
-        from yadgar.core.viz_server import _proxy_enabled
+        from yadgar.core.viz.viz_server import _proxy_enabled
 
         assert _proxy_enabled() is True
 
@@ -214,7 +215,7 @@ class TestHandleProxyLazyImport:
 
         fake_settings = SimpleNamespace(MCP_AUTH_TOKEN="lazy-import-test-token")
 
-        from yadgar.core.viz_server import _Handler
+        from yadgar.core.viz.viz_server import _Handler
 
         handler = _Handler.__new__(_Handler)
         handler.command = "GET"
@@ -239,7 +240,7 @@ class TestHandleProxyLazyImport:
 
         with (
             patch("yadgar._shared.config.get_settings", return_value=fake_settings),
-            patch("yadgar.core.viz_server._proxy_request", side_effect=_fake_proxy_request),
+            patch("yadgar.core.viz.viz_server._proxy_request", side_effect=_fake_proxy_request),
         ):
             # Must NOT raise ImportError — that's the regression we're guarding
             handler._handle_proxy()
@@ -256,7 +257,7 @@ class TestProxyTimeout:
         """When no client_factory is provided, proxy uses 60s read timeout."""
         import inspect
 
-        from yadgar.core import viz_server
+        from yadgar.core.viz import viz_server
 
         # Re-read the source to verify the lambda sets Timeout(60.0, …)
         src = inspect.getsource(viz_server._proxy_request)
@@ -270,7 +271,7 @@ class TestProxyTimeout:
             called.append(True)
             return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
 
-        from yadgar.core.viz_server import _proxy_request
+        from yadgar.core.viz.viz_server import _proxy_request
 
         result = _proxy_request(
             method="GET",
@@ -284,12 +285,55 @@ class TestProxyTimeout:
         assert called
 
 
+class TestVizStaticDirResolves:
+    """Regression guard for the t2-car-d3 static-path break.
+
+    Commit 7dd2a016 moved viz_server.py into yadgar/core/viz/ but left
+    ``STATIC_DIR = Path(__file__).parent / "static"`` — which then resolved to
+    the NONEXISTENT yadgar/core/viz/static/ instead of the real
+    yadgar/core/static/. Result: the viz server returned 404 "Visualization UI
+    not found" for every page load in production, and the integration health
+    check leaked 98 unclosed HTTPError(404) objects (ExceptionGroup unraisable
+    ERRORS in CI). These assertions fail on the broken path and pass on the fix.
+    """
+
+    def test_index_html_exists(self) -> None:
+        """viz_server.INDEX_HTML must resolve to an existing file."""
+        from yadgar.core.viz.viz_server import INDEX_HTML
+
+        assert INDEX_HTML.is_file(), (
+            f"viz INDEX_HTML does not exist: {INDEX_HTML} — STATIC_DIR is "
+            "mis-resolved (t2-car-d3 package move broke the parent depth)."
+        )
+
+    def test_static_dir_matches_canonical_core_static(self) -> None:
+        """viz_server.STATIC_DIR must be the same dir the daemon /graph route serves.
+
+        The daemon resolves ``Path(http.py).parent.parent / 'static'`` =
+        yadgar/core/static. viz_server must point at the SAME directory so both
+        serve the identical bundled UI.
+        """
+        from yadgar.core.viz.viz_server import STATIC_DIR
+
+        canonical = Path(__file__).resolve().parents[3] / "yadgar" / "core" / "static"
+        assert STATIC_DIR.resolve() == canonical.resolve(), (
+            f"viz STATIC_DIR {STATIC_DIR.resolve()} != canonical {canonical.resolve()}"
+        )
+
+    def test_bundled_static_assets_present(self) -> None:
+        """Key bundled assets (index.html + graph.html) must live under STATIC_DIR."""
+        from yadgar.core.viz.viz_server import STATIC_DIR
+
+        assert (STATIC_DIR / "index.html").is_file()
+        assert (STATIC_DIR / "graph.html").is_file()
+
+
 class TestRunVizServerSignature:
     def test_host_kwarg_present(self) -> None:
         """run_viz_server must still accept host= kwarg (regression guard)."""
         import inspect
 
-        from yadgar.core.viz_server import run_viz_server
+        from yadgar.core.viz.viz_server import run_viz_server
 
         sig = inspect.signature(run_viz_server)
         assert "host" in sig.parameters
@@ -298,7 +342,7 @@ class TestRunVizServerSignature:
         """run_viz_server must accept daemon_url= kwarg."""
         import inspect
 
-        from yadgar.core.viz_server import run_viz_server
+        from yadgar.core.viz.viz_server import run_viz_server
 
         sig = inspect.signature(run_viz_server)
         assert "daemon_url" in sig.parameters

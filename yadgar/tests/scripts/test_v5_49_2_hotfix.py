@@ -63,7 +63,7 @@ def test_dockerhub_backend_image_uses_backend_version():
     """
     import json
 
-    from yadgar.core import daemon as daemon_mod
+    from yadgar.core.daemon import daemon as daemon_mod
 
     server_json = Path(__file__).resolve().parent.parent.parent.parent / "server.json"
     data = json.loads(server_json.read_text())
@@ -91,7 +91,7 @@ def test_dockerhub_image_still_uses_core_version():
     """Bug 12 sanity: DOCKERHUB_IMAGE (core) must still use the core pip version."""
     import json
 
-    from yadgar.core import daemon as daemon_mod
+    from yadgar.core.daemon import daemon as daemon_mod
 
     server_json = Path(__file__).resolve().parent.parent.parent.parent / "server.json"
     data = json.loads(server_json.read_text())

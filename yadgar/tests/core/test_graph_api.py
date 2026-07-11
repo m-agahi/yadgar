@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from yadgar.core.graph_api import GraphAPI
+from yadgar.backend.graph.graph_api import GraphAPI
 
 
 @pytest.fixture(scope="module")
@@ -236,7 +236,7 @@ class TestOrphanEdgeFilter:
 
     def test_graph_api_orphan_drop_metric(self):
         """Orphan drops must increment yadgar_graph_api_orphan_edges_dropped_total."""
-        from yadgar._shared.metrics import yadgar_graph_api_orphan_edges_dropped_total
+        from yadgar._shared.observability.metrics import yadgar_graph_api_orphan_edges_dropped_total
 
         before = yadgar_graph_api_orphan_edges_dropped_total._value.get()
         mem_rows = [_mem_row(1, "x"), _mem_row(2, "y")]
@@ -248,7 +248,7 @@ class TestOrphanEdgeFilter:
 
     def test_graph_api_no_drops_in_healthy_payload(self):
         """When no causal edges present, metric must not increment."""
-        from yadgar._shared.metrics import yadgar_graph_api_orphan_edges_dropped_total
+        from yadgar._shared.observability.metrics import yadgar_graph_api_orphan_edges_dropped_total
 
         before = yadgar_graph_api_orphan_edges_dropped_total._value.get()
         mem_rows = [_mem_row(1, "a", slot=0), _mem_row(2, "b", slot=0)]

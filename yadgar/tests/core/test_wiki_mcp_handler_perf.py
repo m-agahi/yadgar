@@ -123,7 +123,7 @@ def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
 
     try:
         import yadgar._shared.runtime.state as _state_mod
-        import yadgar.core.lifecycle as _cl
+        import yadgar.core.lifecycle.lifecycle as _cl
 
         # Patch lifecycle so _get_file_queue() returns our real queue
         # without spawning a real drainer thread.

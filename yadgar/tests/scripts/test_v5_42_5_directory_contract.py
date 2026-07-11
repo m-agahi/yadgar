@@ -61,7 +61,7 @@ def bare_drainer(tmp_path):
 def patched_drainer(tmp_path):
     """FileQueue + QueueDrainer with server lifecycle patches (integration)."""
     import yadgar._shared.runtime.state as _state_mod
-    import yadgar.core.lifecycle as _cl
+    import yadgar.core.lifecycle.lifecycle as _cl
 
     real_fq = FileQueue(tmp_path)
     drainer = QueueDrainer(

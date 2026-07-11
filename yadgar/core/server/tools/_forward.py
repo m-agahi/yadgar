@@ -73,3 +73,85 @@ def _forward_admin(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
     resp.raise_for_status()
     data = resp.json()
     return data.get("result", {})
+
+
+@observe(tier="boundary", metric="tools._forward._forward_viz")
+def _forward_viz(op: str, payload: dict, timeout_s: float = 60.0) -> dict:
+    """Forward a single viz (graph data-assembly) op to the backend /viz endpoint.
+
+    T2 Car E3 (census verdict #11): the core /api/graph* handlers keep their
+    route shells (param parsing, CORS, hook metrics) and forward the DB-heavy
+    assembly here. Mirrors ``_forward_admin`` exactly; 60s default matches the
+    old viz proxy budget (large graphs with 2k+ nodes).
+
+    Raises:
+        RuntimeError: if ``YADGAR_EMBED_URL`` is not configured.
+        httpx.HTTPError: if the backend request fails (incl. 400 unknown op).
+    """
+    import httpx  # noqa: PLC0415
+
+    backend_base = os.environ.get("YADGAR_EMBED_URL", "").rstrip("/")
+    if not backend_base:
+        raise RuntimeError(
+            "YADGAR_EMBED_URL is not set; cannot forward viz op to backend. "
+            "T2 Car E3: graph data assembly is forward-only — core assembles zero graph data."
+        )
+
+    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    resp = httpx.post(
+        f"{backend_base}/viz",
+        json={"op": op, "payload": payload},
+        headers=headers,
+        timeout=timeout_s,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("result", {})
+
+
+@observe(tier="boundary", metric="tools._forward._forward_restore")
+def _forward_restore(directory: str = "", timeout_s: float = 120.0) -> dict:
+    """Forward restore to the backend POST /restore endpoint (T2 Car B).
+
+    The restore compute (CheckpointRestore + CognitiveMap SR navigation, census
+    verdict #7) runs backend-side next to the DB; core is a thin forwarder.
+    Callers: the restore MCP tool, the /hooks/post-compact HTTP hook, and the
+    ``yadgar restore`` CLI subcommand.
+
+    Args:
+        directory: Project directory to restore context for ("" = all).
+        timeout_s: httpx request timeout. Restore builds + inverts the SR
+            matrix — allow the same generous budget as the MCP recall forward.
+
+    Returns:
+        The restore payload dict (the /restore route wraps it as
+        ``{"result": ...}``; this helper unwraps and returns the inner dict).
+
+    Raises:
+        RuntimeError: if ``YADGAR_EMBED_URL`` is not configured (forward-only —
+            no in-core fallback; the impl no longer exists in the core process).
+        httpx.HTTPError: if the backend request fails.
+    """
+    import httpx  # noqa: PLC0415
+
+    backend_base = os.environ.get("YADGAR_EMBED_URL", "").rstrip("/")
+    if not backend_base:
+        raise RuntimeError(
+            "YADGAR_EMBED_URL is not set; cannot forward restore to backend. "
+            "T2 Car B: restore is forward-only — the compute runs backend-side."
+        )
+
+    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    resp = httpx.post(
+        f"{backend_base}/restore",
+        json={"directory": directory},
+        headers=headers,
+        timeout=timeout_s,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("result", {})

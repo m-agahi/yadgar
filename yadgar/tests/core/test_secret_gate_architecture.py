@@ -32,7 +32,7 @@ class TestPatternStrictness:
 
     def test_ghp_33_chars_blocked(self):
         """Memory id 519107 case: 33-char token that slipped through {36,}."""
-        from yadgar._shared.secrets import check_secrets
+        from yadgar._shared.security.secrets import check_secrets
 
         # "ghp_" prefix + 29 chars = 33 total after prefix (was under old {36,})
         token = "ghp_SECRETTOKEN1234567890abcdefghijk"  # gitleaks:allow
@@ -43,7 +43,7 @@ class TestPatternStrictness:
 
     def test_ghp_20_chars_blocked(self):
         """Minimum new threshold: exactly 20 chars after prefix."""
-        from yadgar._shared.secrets import check_secrets
+        from yadgar._shared.security.secrets import check_secrets
 
         token = "ghp_" + "A" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
@@ -51,14 +51,14 @@ class TestPatternStrictness:
         assert "GitHub" in reason
 
     def test_gho_20_chars_blocked(self):
-        from yadgar._shared.secrets import check_secrets
+        from yadgar._shared.security.secrets import check_secrets
 
         token = "gho_" + "B" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
         assert blocked is True
 
     def test_ghs_20_chars_blocked(self):
-        from yadgar._shared.secrets import check_secrets
+        from yadgar._shared.security.secrets import check_secrets
 
         token = "ghs_" + "C" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
@@ -66,7 +66,7 @@ class TestPatternStrictness:
 
     def test_ghp_19_chars_not_blocked(self):
         """19 chars after prefix is too short — not a real token, should pass."""
-        from yadgar._shared.secrets import check_secrets
+        from yadgar._shared.security.secrets import check_secrets
 
         token = "ghp_" + "x" * 19
         blocked, _, _ = check_secrets(f"ref={token}")
@@ -79,7 +79,7 @@ class TestPatternStrictness:
 
     def test_sk_ant_20_chars_blocked(self):
         """Anthropic key: {32,} → {20,}."""
-        from yadgar._shared.secrets import check_secrets
+        from yadgar._shared.security.secrets import check_secrets
 
         token = "sk-ant-" + "x" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
@@ -88,7 +88,7 @@ class TestPatternStrictness:
 
     def test_sk_openai_20_chars_blocked(self):
         """OpenAI key: {30,} → {20,}."""
-        from yadgar._shared.secrets import check_secrets
+        from yadgar._shared.security.secrets import check_secrets
 
         token = "sk-" + "y" * 20  # gitleaks:allow
         blocked, reason, _ = check_secrets(token)
@@ -104,13 +104,13 @@ class TestGateOrReject:
     """gate_or_reject(*fields) returns rejection dict or None."""
 
     def test_returns_none_for_clean_content(self):
-        from yadgar._shared.secrets import gate_or_reject
+        from yadgar._shared.security.secrets import gate_or_reject
 
         result = gate_or_reject("safe content", "another safe field")
         assert result is None
 
     def test_returns_rejection_dict_for_secret(self):
-        from yadgar._shared.secrets import gate_or_reject
+        from yadgar._shared.security.secrets import gate_or_reject
 
         result = gate_or_reject("nothing bad", "AKIAIOSFODNN7EXAMPLE here")
         assert result is not None
@@ -119,13 +119,13 @@ class TestGateOrReject:
         assert "AWS" in result["reason"]
 
     def test_empty_fields_skipped(self):
-        from yadgar._shared.secrets import gate_or_reject
+        from yadgar._shared.security.secrets import gate_or_reject
 
         result = gate_or_reject("", None, "  ", "safe text")
         assert result is None
 
     def test_first_match_wins(self):
-        from yadgar._shared.secrets import gate_or_reject
+        from yadgar._shared.security.secrets import gate_or_reject
 
         result = gate_or_reject("AKIAIOSFODNN7EXAMPLE", f"ghp_{'A' * 20}")  # gitleaks:allow
         assert result is not None
@@ -133,7 +133,7 @@ class TestGateOrReject:
         assert "AWS" in result["reason"] or "secret_detected" in result["reason"]
 
     def test_pattern_preview_present(self):
-        from yadgar._shared.secrets import gate_or_reject
+        from yadgar._shared.security.secrets import gate_or_reject
 
         result = gate_or_reject("AKIAIOSFODNN7EXAMPLE here")
         assert result is not None
@@ -147,12 +147,12 @@ class TestGateOrReject:
 
 class TestSecretLeakBlockedException:
     def test_exception_importable(self):
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         assert issubclass(SecretLeakBlocked, Exception)
 
     def test_exception_carries_reason_and_preview(self):
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
 
         exc = SecretLeakBlocked("AWS access key", "AKIAIOSFODNN7EX...")
         assert "AWS" in str(exc) or exc.args
@@ -289,7 +289,14 @@ class TestBootstrapProjectAPIGate:
         assert result.get("stored") is False
         assert "secret_detected" in result.get("reason", "")
 
-    def test_clean_content_passes(self, isolated_server, monkeypatch):
+    def test_clean_content_passes(self, isolated_server, monkeypatch, admin_backend_bypass):
+        # Car E1: bootstrap_project now ends in _forward_admin("bootstrap_project_store",
+        # ...) (the 6th-write forward). The secret gate this test guards fires
+        # core-side, PRE-forward; the unit env has no YADGAR_EMBED_URL, so the clean
+        # path would RuntimeError at the forward. admin_backend_bypass routes the
+        # forward to run_admin_op against the test's real _st storage — clean content
+        # REACHES the forward and lands, so the assertion below stays meaningful (#52).
+        # The sibling reject-path test needs no bypass (gate rejects before forward).
         import yadgar.backend.queue_drainer as _fq
 
         monkeypatch.setattr(_fq, "is_draining", lambda: True)
@@ -417,7 +424,7 @@ class TestStorageLevelGate:
 
     def test_insert_memory_raises_on_secret(self):
         """Storage layer is the final chokepoint — raises rather than stores."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
         from yadgar._shared.storage.memory import _MemoryMixin
 
         class _MockEngine(_MemoryMixin):
@@ -446,7 +453,7 @@ class TestStorageLevelGate:
 
     def test_insert_memory_clean_does_not_raise(self, monkeypatch):
         """insert_memory with clean content must not raise SecretLeakBlocked."""
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
         from yadgar._shared.storage.memory import _MemoryMixin
 
         class _MockEngine(_MemoryMixin):
@@ -480,7 +487,7 @@ class TestStorageLevelGate:
         """YADGAR_SECRET_GATE_DISABLED=1 bypasses gate but logs warning."""
 
         monkeypatch.setenv("YADGAR_SECRET_GATE_DISABLED", "1")
-        from yadgar._shared.secrets import SecretLeakBlocked
+        from yadgar._shared.security.secrets import SecretLeakBlocked
         from yadgar._shared.storage.memory import _MemoryMixin
 
         class _MockEngine(_MemoryMixin):

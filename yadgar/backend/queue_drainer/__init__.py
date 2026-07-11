@@ -51,7 +51,7 @@ _CLEANUP_EVERY = 120  # drain passes between archive cleanups (~1 hour at 30s in
 
 def _drainer_heartbeat() -> None:
     try:
-        from yadgar._shared.metrics import loop_heartbeat  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import loop_heartbeat  # noqa: PLC0415
 
         loop_heartbeat("queue_drainer")
     except Exception:  # noqa: BLE001
@@ -60,7 +60,7 @@ def _drainer_heartbeat() -> None:
 
 def _drainer_record_exc(exc: BaseException) -> None:
     try:
-        from yadgar._shared.metrics import loop_record_exception  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import loop_record_exception  # noqa: PLC0415
 
         loop_record_exception("queue_drainer", exc)
     except Exception:  # noqa: BLE001
@@ -169,7 +169,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                 with _drainer_span():
                     self._drain_once()
             except Exception as exc:
-                from yadgar._shared.exception_telemetry import record_exception  # noqa: PLC0415
+                from yadgar._shared.observability.exception_telemetry import (
+                    record_exception,  # noqa: PLC0415
+                )
 
                 record_exception("file_queue.drainer", exc)
                 _drainer_record_exc(exc)  # PR-I: loop error counter
@@ -254,7 +256,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
 
         # P11: observe drain cycle duration
         try:
-            from yadgar._shared.metrics import yadgar_drain_cycle_duration_ms  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (
+                yadgar_drain_cycle_duration_ms,  # noqa: PLC0415
+            )
 
             yadgar_drain_cycle_duration_ms.observe(_cycle_ms)
         except Exception:
@@ -377,7 +381,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
     def _observe_drainer_lag(self, data: dict, now: float) -> None:
         """Observe P11 drainer lag metric (enqueue_ts -> drain start). Swallows all errors."""
         try:
-            from yadgar._shared.metrics import yadgar_drainer_lag_ms  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import yadgar_drainer_lag_ms  # noqa: PLC0415
 
             yadgar_drainer_lag_ms.observe((now - data.get("ts", now)) * 1000)
         except Exception:
@@ -388,7 +392,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         if "SecretLeakBlocked" not in err_str:
             return
         try:
-            from yadgar._shared.metrics import yadgar_writegate_outcome  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (
+                yadgar_writegate_outcome,  # noqa: PLC0415
+            )
 
             yadgar_writegate_outcome.labels(outcome="rejected_secret_at_storage").inc()
         except Exception:
@@ -450,7 +456,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             self._queue.archive(path)
         finally:
             try:
-                from yadgar._shared.metrics import yadgar_drain_stage_ms  # noqa: PLC0415
+                from yadgar._shared.observability.metrics import (
+                    yadgar_drain_stage_ms,  # noqa: PLC0415
+                )
 
                 yadgar_drain_stage_ms.labels(stage="archive").observe(
                     (time.perf_counter() - _t0) * 1000
@@ -495,7 +503,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         Extracted from _drain_once to keep cyclomatic complexity bounded (I13).
         """
         try:
-            from yadgar._shared.metrics import (  # noqa: PLC0415
+            from yadgar._shared.observability.metrics import (  # noqa: PLC0415
                 yadgar_dlq_rejection_count,
                 yadgar_dlq_size,
                 yadgar_queue_depth,
@@ -583,7 +591,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             self._apply(data)
         finally:
             try:
-                from yadgar._shared.metrics import yadgar_drain_stage_ms  # noqa: PLC0415
+                from yadgar._shared.observability.metrics import (
+                    yadgar_drain_stage_ms,  # noqa: PLC0415
+                )
 
                 yadgar_drain_stage_ms.labels(stage="insert").observe(
                     (time.perf_counter() - _insert_t0) * 1000

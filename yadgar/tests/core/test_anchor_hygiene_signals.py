@@ -814,7 +814,7 @@ class TestEnvKnobs:
         assert cfg.ANCHOR_AUDIT_THRESHOLD == 15
 
     def test_all_knobs_in_registry(self):
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = {e.name for e in list_config()}
         assert "YADGAR_ANCHOR_REDUNDANCY_COSINE" in names
@@ -823,7 +823,7 @@ class TestEnvKnobs:
         assert "YADGAR_ANCHOR_AUDIT_THRESHOLD" in names
 
     def test_all_knobs_in_field_meta(self):
-        from yadgar._shared.config_yaml import FIELD_META
+        from yadgar._shared.config.config_yaml import FIELD_META
 
         assert "anchor_redundancy_cosine" in FIELD_META
         assert "anchor_promote_words" in FIELD_META

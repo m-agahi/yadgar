@@ -1,0 +1,395 @@
+"""Local embedding engine wrapping sentence-transformers for semantic operations."""
+
+import logging
+import os
+import time
+from collections import OrderedDict
+from pathlib import Path
+
+import numpy as np
+
+from yadgar._shared.observability.observe import observe
+from yadgar._shared.observability.tracing import trace_span
+
+_CACHE_MAX = 512
+
+logger = logging.getLogger(__name__)
+
+# P11: yadgar_encode_queue_depth — no asyncio.Queue in this engine (encoding is
+# synchronous via _model.encode()).  Set to 0 once at import so dashboard panels
+# have a sample and don't render "no data".
+try:
+    from yadgar._shared.observability.metrics import (
+        yadgar_encode_queue_depth as _encode_queue_depth,  # noqa: PLC0415
+    )
+
+    _encode_queue_depth.set(0)
+except Exception:
+    pass
+
+
+MODEL_DIMENSIONS = {
+    "all-MiniLM-L6-v2": 384,
+    "all-MiniLM-L12-v2": 384,
+    "all-mpnet-base-v2": 768,
+    "paraphrase-MiniLM-L6-v2": 384,
+    "BAAI/bge-small-en-v1.5": 384,
+    "BAAI/bge-base-en-v1.5": 768,
+    "nomic-ai/nomic-embed-text-v1.5": 768,
+}
+
+# Models that require asymmetric query/document prefixes
+MODEL_QUERY_PREFIX = {
+    "nomic-ai/nomic-embed-text-v1.5": "search_query: ",
+    "BAAI/bge-small-en-v1.5": "Represent this sentence for searching relevant passages: ",
+    "BAAI/bge-base-en-v1.5": "Represent this sentence for searching relevant passages: ",
+}
+MODEL_DOC_PREFIX = {
+    "nomic-ai/nomic-embed-text-v1.5": "search_document: ",
+}
+
+# Backward-compatible alias
+_MODEL_DIMENSIONS = MODEL_DIMENSIONS
+
+
+class EmbeddingEngine:
+    """Lazy-loading wrapper around SentenceTransformer for local embeddings."""
+
+    # Process-level cache: model_name -> SentenceTransformer instance.
+    # Shared across all EmbeddingEngine instances in a process so the ~80MB
+    # model is loaded at most once per worker (crucial for test-suite speed).
+    _model_cache: dict[str, object] = {}
+
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+        self.model_name = model_name
+        self._model = None
+        self._unavailable = False
+        self._query_cache: OrderedDict[str, bytes] = OrderedDict()
+
+    @observe(tier="stage")
+    def _is_model_cached(self) -> bool:
+        """Check if the model is already downloaded in the HuggingFace cache."""
+        # Check all supported HF cache locations
+        cache_candidates = [
+            os.environ.get("HF_HUB_CACHE"),
+            os.environ.get("HUGGINGFACE_HUB_CACHE"),
+        ]
+        hf_home = os.environ.get("HF_HOME")
+        if hf_home:
+            cache_candidates.append(str(Path(hf_home) / "hub"))
+        xdg = os.environ.get("XDG_CACHE_HOME")
+        if xdg:
+            cache_candidates.append(str(Path(xdg) / "huggingface" / "hub"))
+        cache_candidates.append(str(Path.home() / ".cache" / "huggingface" / "hub"))
+
+        # Try both bare name and sentence-transformers/ prefixed name
+        dir_names = [
+            f"models--{self.model_name.replace('/', '--')}",
+            f"models--sentence-transformers--{self.model_name.replace('/', '--')}",
+        ]
+        for cache_dir in cache_candidates:
+            if not cache_dir:
+                continue
+            for dir_name in dir_names:
+                model_path = Path(cache_dir) / dir_name
+                if not model_path.is_dir():
+                    continue
+                snapshots = model_path / "snapshots"
+                if not snapshots.is_dir():
+                    continue
+                # Check snapshots contain actual model files (not just empty dirs)
+                for snapshot in snapshots.iterdir():
+                    if snapshot.is_dir() and any(
+                        f.suffix in (".bin", ".safetensors", ".json")
+                        for f in snapshot.iterdir()
+                        if f.is_file()
+                    ):
+                        return True
+        return False
+
+    @observe(tier="stage")
+    def _load_sentence_transformer(self, local_only: bool, old_offline: str | None) -> object:
+        """Load SentenceTransformer with retry/fallback logic.
+
+        Attempt order:
+          1. local_files_only=local_only (primary)
+          2. local_files_only=True (retry after network failure)
+          3. unrestricted online fetch (only when user did not set HF_HUB_OFFLINE)
+        """
+        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+
+        try:
+            return SentenceTransformer(
+                self.model_name,
+                trust_remote_code=True,
+                local_files_only=local_only,
+            )
+        except Exception:
+            pass
+
+        # Retry with forced local — handles corrupt cache / transient net error.
+        try:
+            return SentenceTransformer(
+                self.model_name, trust_remote_code=True, local_files_only=True
+            )
+        except Exception:
+            # Cache absent or corrupt. Fall through to online only if user
+            # did not explicitly set HF_HUB_OFFLINE.
+            if old_offline is not None:
+                raise  # User wants offline — respect that
+            return SentenceTransformer(self.model_name, trust_remote_code=True)
+
+    @observe(tier="hot")
+    @staticmethod
+    def _cap_torch_threads() -> None:
+        """Cap PyTorch intra/inter-op threads to half of available CPUs.
+
+        The OS-level CPUQuota acts as the outer ceiling; this is the inner
+        soft cap so inference never saturates the machine.
+        """
+        try:
+            import torch  # noqa: PLC0415
+
+            _n = max(1, (os.cpu_count() or 2) // 2)
+            torch.set_num_threads(_n)
+            try:
+                torch.set_num_interop_threads(_n)
+            except RuntimeError:
+                pass  # inter-op pool already initialized — intra-op cap is enough
+        except Exception:
+            pass
+
+    @observe(tier="stage")
+    def _ensure_model(self) -> None:
+        """Load the SentenceTransformer model if not already loaded."""
+        if self._model is not None or self._unavailable:
+            return
+        # Check process-level cache first — avoids reloading across test fixtures
+        if self.model_name in EmbeddingEngine._model_cache:
+            self._model = EmbeddingEngine._model_cache[self.model_name]
+            return
+        try:
+            # If model is cached, use local_files_only to avoid network requests
+            # that can fail on corporate networks and corrupt the MCP stdio pipe
+            local_only = self._is_model_cached()
+
+            # Temporarily set HF_HUB_OFFLINE only during this load, then restore
+            old_offline = os.environ.get("HF_HUB_OFFLINE")
+            if local_only:
+                os.environ["HF_HUB_OFFLINE"] = "1"
+            try:
+                self._model = self._load_sentence_transformer(local_only, old_offline)
+            finally:
+                # Restore original HF_HUB_OFFLINE state
+                if old_offline is None:
+                    os.environ.pop("HF_HUB_OFFLINE", None)
+                else:
+                    os.environ["HF_HUB_OFFLINE"] = old_offline
+
+            # Store in process-level cache so subsequent EmbeddingEngine
+            # instances in this process skip the expensive load.
+            EmbeddingEngine._model_cache[self.model_name] = self._model
+
+            self._cap_torch_threads()
+
+        except ImportError:
+            logger.warning(
+                "sentence-transformers is not installed; embedding operations will return None"
+            )
+            self._unavailable = True
+
+    def get_model_name(self) -> str:
+        """Return the current model name."""
+        return self.model_name
+
+    @observe(tier="hot")
+    def get_dimensions(self) -> int:
+        """Return the embedding dimensionality for the current model."""
+        if self.model_name in MODEL_DIMENSIONS:
+            return MODEL_DIMENSIONS[self.model_name]
+        # Fallback: load model and check
+        self._ensure_model()
+        if self._model is not None:
+            dim = self._model.get_sentence_embedding_dimension()
+            return dim
+        return 384  # safe default
+
+    @observe(tier="hot")
+    def needs_reembedding(self, stored_model: str) -> bool:
+        """Check if a memory's stored model differs from the current model."""
+        if stored_model is None:
+            return True
+        return stored_model != self.model_name
+
+    @trace_span()
+    def encode_adaptive(self, text: str, dimensions: int = None) -> bytes | None:
+        """Encode text with Matryoshka adaptive dimensionality.
+
+        If dimensions < the model's native dimensions, truncate and re-normalize
+        the embedding vector. This produces compact embeddings for less important
+        memories while preserving directional quality.
+        """
+        self._ensure_model()
+        if self._unavailable:
+            return None
+        if self._model is None:
+            raise RuntimeError("EmbeddingEngine: model not initialized — call _ensure_model first")
+        vec = self._model.encode(text)
+        arr = np.asarray(vec, dtype=np.float32)
+        native_dim = len(arr)
+        if dimensions is not None and dimensions < native_dim:
+            arr = arr[:dimensions]
+        arr = self._normalize(arr)
+        return arr.tobytes()
+
+    def batch_reembed(self, texts: list[str]) -> list[bytes | None]:
+        """Efficiently re-embed a batch of texts with the current model."""
+        return self.encode_batch(texts)
+
+    @observe(tier="hot")
+    @staticmethod
+    def quantize(embedding: bytes, bits: int = 8) -> bytes:
+        """Quantize float32 embedding to int8 for storage efficiency."""
+        arr = np.frombuffer(embedding, dtype=np.float32)
+        if bits == 8:
+            max_val = np.max(np.abs(arr))
+            if max_val == 0:
+                return np.zeros(len(arr), dtype=np.int8).tobytes()
+            scaled = np.clip(arr / max_val * 127, -127, 127)
+            return scaled.astype(np.int8).tobytes()
+        raise ValueError(f"Unsupported quantization bits: {bits}")
+
+    @observe(tier="hot")
+    @staticmethod
+    def dequantize(quantized: bytes, bits: int = 8) -> bytes:
+        """Dequantize int8 back to float32 (approximate)."""
+        if bits == 8:
+            arr = np.frombuffer(quantized, dtype=np.int8).astype(np.float32)
+            arr = arr / 127.0
+            return arr.astype(np.float32).tobytes()
+        raise ValueError(f"Unsupported dequantization bits: {bits}")
+
+    @observe(tier="stage")
+    def encode_query(self, text: str) -> bytes | None:
+        """Encode a query with model-specific query prefix for asymmetric retrieval."""
+        prefix = MODEL_QUERY_PREFIX.get(self.model_name, "")
+        return self.encode(prefix + text if prefix else text)
+
+    @observe(tier="stage")
+    def encode_document(self, text: str) -> bytes | None:
+        """Encode a document with model-specific document prefix for asymmetric retrieval."""
+        prefix = MODEL_DOC_PREFIX.get(self.model_name, "")
+        return self.encode(prefix + text if prefix else text)
+
+    def encode_document_enriched(self, content: str, enriched_content: str | None = None) -> bytes:
+        """Encode document, using enriched content if available for better implicit representation."""
+        text = enriched_content if enriched_content else content
+        return self.encode_document(text)
+
+    @observe(tier="hot")
+    def _normalize(self, arr: np.ndarray) -> np.ndarray:
+        """L2-normalize an embedding vector. Required for L2-distance based search."""
+        norm = np.linalg.norm(arr)
+        if norm > 0:
+            arr = arr / norm
+        return arr
+
+    @trace_span()
+    def encode(self, text: str) -> bytes | None:
+        """Encode text to a float32 byte blob."""
+        _t0 = time.monotonic()
+        try:
+            if text in self._query_cache:
+                self._query_cache.move_to_end(text)
+                try:
+                    from yadgar._shared.observability.metrics import (
+                        record_cache_hit,
+                        yadgar_embedding_cache_hits_total,
+                    )
+
+                    # Legacy unlabelled counter kept for the dual-emit window
+                    # (removed on the scheduled-rename tick with a dashboard PR).
+                    yadgar_embedding_cache_hits_total.inc()
+                    record_cache_hit("embedding")
+                except Exception:
+                    pass
+                return self._query_cache[text]
+            self._ensure_model()
+            if self._unavailable:
+                return None
+            if self._model is None:
+                raise RuntimeError(
+                    "EmbeddingEngine: model not initialized — call _ensure_model first"
+                )
+            vec = self._model.encode(text)
+            arr = self._normalize(np.asarray(vec, dtype=np.float32))
+            result = arr.tobytes()
+            self._query_cache[text] = result
+            self._query_cache.move_to_end(text)
+            _evicted = False
+            if len(self._query_cache) > _CACHE_MAX:
+                self._query_cache.popitem(last=False)
+                _evicted = True
+            try:
+                from yadgar._shared.observability.metrics import (
+                    record_cache_evict,
+                    record_cache_miss,
+                    yadgar_embedding_cache_misses_total,
+                )
+
+                # Legacy unlabelled counter kept for the dual-emit window
+                # (removed on the scheduled-rename tick with a dashboard PR).
+                yadgar_embedding_cache_misses_total.inc()
+                record_cache_miss("embedding")
+                if _evicted:
+                    record_cache_evict("embedding")
+            except Exception:
+                pass
+            return result
+        finally:
+            _elapsed_ms = (time.monotonic() - _t0) * 1000.0
+            try:
+                from yadgar._shared.observability.metrics import (
+                    yadgar_encode_duration_ms,  # noqa: PLC0415
+                )
+
+                yadgar_encode_duration_ms.labels(model=self.model_name).observe(_elapsed_ms)
+            except Exception:
+                pass
+
+    @trace_span()
+    def encode_batch(self, texts: list[str]) -> list[bytes | None]:
+        """Batch encode texts for efficiency during consolidation."""
+        self._ensure_model()
+        if self._unavailable:
+            return [None] * len(texts)
+        if self._model is None:
+            raise RuntimeError("EmbeddingEngine: model not initialized — call _ensure_model first")
+        vecs = self._model.encode(texts)
+        results = []
+        for v in vecs:
+            arr = self._normalize(np.asarray(v, dtype=np.float32))
+            results.append(arr.tobytes())
+        return results
+
+    @observe(tier="hot")
+    def similarity(self, embedding_a: bytes, embedding_b: bytes) -> float:
+        """Compute cosine similarity between two embedding blobs."""
+        a = np.frombuffer(embedding_a, dtype=np.float32)
+        b = np.frombuffer(embedding_b, dtype=np.float32)
+        dot = np.dot(a, b)
+        norm = np.linalg.norm(a) * np.linalg.norm(b)
+        if norm == 0:
+            return 0.0
+        return float(dot / norm)
+
+    def search(
+        self,
+        query_embedding: bytes,
+        candidate_embeddings: list[tuple[int, bytes]],
+        top_k: int = 5,
+    ) -> list[tuple[int, float]]:
+        """Rank candidates by similarity to query, return top_k (id, score) pairs."""
+        scored = [(mid, self.similarity(query_embedding, emb)) for mid, emb in candidate_embeddings]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k]

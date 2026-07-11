@@ -21,7 +21,7 @@ def _make_metrics_app(metrics_enabled: bool = True, require_auth: bool = True):
     os.environ["YADGAR_MCP_AUTH_TOKEN"] = "test-token"
     os.environ["YADGAR_METRICS_ENABLED"] = "1" if metrics_enabled else "0"
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
     from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     app = Starlette(routes=[Route("/metrics", metrics_handler, methods=["GET"])])
@@ -37,7 +37,7 @@ def test_metrics_returns_200(monkeypatch):
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
     from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     app = BearerAuthMiddleware(
@@ -57,7 +57,7 @@ def test_metrics_not_auth_required(monkeypatch):
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
     from yadgar.core.auth_middleware import BearerAuthMiddleware
 
     app = BearerAuthMiddleware(
@@ -77,7 +77,7 @@ def test_metrics_disabled_returns_404(monkeypatch):
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
 
     app = Starlette(routes=[Route("/metrics", metrics_handler, methods=["GET"])])
     client = TestClient(app, raise_server_exceptions=True)
@@ -93,7 +93,7 @@ def test_metrics_content_type(monkeypatch):
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
 
     app = Starlette(routes=[Route("/metrics", metrics_handler, methods=["GET"])])
     client = TestClient(app, raise_server_exceptions=True)
@@ -110,7 +110,7 @@ def test_metrics_prometheus_format(monkeypatch):
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
 
     app = Starlette(routes=[Route("/metrics", metrics_handler, methods=["GET"])])
     client = TestClient(app, raise_server_exceptions=True)
@@ -135,7 +135,7 @@ def test_metrics_contains_expected_collectors(monkeypatch):
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    from yadgar._shared.metrics import metrics_handler
+    from yadgar._shared.observability.metrics import metrics_handler
 
     app = Starlette(routes=[Route("/metrics", metrics_handler, methods=["GET"])])
     client = TestClient(app, raise_server_exceptions=True)

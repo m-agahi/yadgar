@@ -211,7 +211,7 @@ def test_insert_memory_similarity_link_with_source_memory_id(storage):
 def test_graph_api_edges_include_source_memory_id(storage):
     """T4: graph_api returns source_memory_id in causal edge output."""
     _migration_006_source_memory_id(storage)
-    from yadgar.core.graph_api import GraphAPI
+    from yadgar.backend.graph.graph_api import GraphAPI
 
     eid_a = _insert_bare_entity(storage, "node_A")
     eid_b = _insert_bare_entity(storage, "node_B")

@@ -46,7 +46,7 @@ class TestFastProfileDeclaration:
         """There are TWO PROFILES dicts (fusion.py is the one the monolithic
         Retriever.recall actually consumes — core.py imports it). Both must
         declare the fast-profile skips, or the rerank gate silently no-ops."""
-        from yadgar._shared.retrieval.fusion import PROFILES as FUSION_PROFILES
+        from yadgar.backend.retrieval.fusion import PROFILES as FUSION_PROFILES
 
         assert FUSION_PROFILES["fast"].get("wiki", True) is False
         assert FUSION_PROFILES["fast"].get("engram_links", True) is False
@@ -62,8 +62,8 @@ class TestFastProfileDeclaration:
 
 def _fanout(profile, type_filter="all", monkey_wiki=None, monkey_memory=None):
     """Run _fanout_recall with both providers mocked; return the two mocks."""
-    import yadgar._shared.runtime.recall_pipeline as _pl
     import yadgar._shared.runtime.state as _st
+    import yadgar.backend.retrieval.recall_pipeline as _pl
 
     wiki_provider_cls = MagicMock(name="WikiProvider")
     wiki_provider_cls.return_value.candidates.return_value = monkey_wiki or []
@@ -132,8 +132,8 @@ def _run_rerank_pipeline(profile_name: str):
 
     ctx.profile is built from fusion.PROFILES — the dict core.py's monolithic
     recall() actually threads into RerankContext in production."""
-    from yadgar._shared.retrieval.fusion import PROFILES as FUSION_PROFILES
-    from yadgar._shared.retrieval.reranking import RerankContext, _RerankingMixin
+    from yadgar.backend.retrieval.fusion import PROFILES as FUSION_PROFILES
+    from yadgar.backend.retrieval.reranking import RerankContext, _RerankingMixin
 
     class _Harness(_RerankingMixin):
         def __init__(self):

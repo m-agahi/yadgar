@@ -34,8 +34,8 @@ class TestProcessGaugeBridge:
 
     def test_rss_bytes_gauge_matches_cache(self, tmp_path) -> None:
         """yadgar_process_rss_bytes must equal rss_bytes written to _metrics_cache."""
-        from yadgar._shared.metrics import yadgar_process_rss_bytes
-        from yadgar.core import graph_api
+        from yadgar._shared.observability.metrics import yadgar_process_rss_bytes
+        from yadgar.core.daemon import system_metrics as graph_api
 
         # Reset cache and prev-CPU state so test is deterministic.
         graph_api._metrics_cache = {}
@@ -58,8 +58,8 @@ class TestProcessGaugeBridge:
         import time
         from unittest.mock import patch
 
-        from yadgar._shared.metrics import yadgar_process_cpu_percent
-        from yadgar.core import graph_api
+        from yadgar._shared.observability.metrics import yadgar_process_cpu_percent
+        from yadgar.core.daemon import system_metrics as graph_api
 
         graph_api._metrics_cache = {}
         # Prime prev state so delta calculation runs on next call.
@@ -90,8 +90,8 @@ class TestProcessGaugeBridge:
 
     def test_open_fds_gauge_matches_cache(self, tmp_path) -> None:
         """yadgar_process_open_fds must equal open_fds written to _metrics_cache."""
-        from yadgar._shared.metrics import yadgar_process_open_fds
-        from yadgar.core import graph_api
+        from yadgar._shared.observability.metrics import yadgar_process_open_fds
+        from yadgar.core.daemon import system_metrics as graph_api
 
         graph_api._metrics_cache = {}
 
@@ -109,8 +109,8 @@ class TestGcCallbackBridge:
     def test_gc_collect_increments_histogram(self) -> None:
         """After gc.collect(0), the histogram count for generation=0 must be >= 1."""
         # Ensure graph_api is imported (registers callback at module level).
-        import yadgar.core.graph_api  # noqa: F401
-        from yadgar._shared.metrics import yadgar_python_gc_duration_ms
+        import yadgar.core.daemon.system_metrics  # noqa: F401
+        from yadgar._shared.observability.metrics import yadgar_python_gc_duration_ms
 
         before = _histogram_count(yadgar_python_gc_duration_ms, generation="0")
         gc.collect(0)
@@ -122,7 +122,7 @@ class TestGcCallbackBridge:
 
     def test_gc_callback_idempotent(self) -> None:
         """Importing graph_api multiple times must not register _gc_callback twice."""
-        import yadgar.core.graph_api as ga
+        import yadgar.core.daemon.system_metrics as ga
 
         # Force a reimport via importlib.reload.
         importlib.reload(ga)

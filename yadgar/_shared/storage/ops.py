@@ -106,7 +106,7 @@ class _OpsMixin:
         ``positions`` is a ``{node_id: [x, y, z]}`` map. Returns None when no
         layout has been computed yet.
         """
-        from yadgar._shared.metrics import record_cache_hit, record_cache_miss
+        from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
 
         rows = self._q("SELECT signature, positions, computed_at FROM graph_layout_cache:current")
         if not rows or not rows[0].get("signature"):
@@ -508,7 +508,7 @@ class _OpsMixin:
         # fallback is deleted (it was a _shared→backend edge). The composition root
         # (lifecycle.init_engines) injects the REAL registered instance; the bare
         # default is a _shared NullCache (all-miss ≡ today's full-slot-scan).
-        from yadgar._shared.protocols import NullCache  # noqa: PLC0415
+        from yadgar._shared.contracts.protocols import NullCache  # noqa: PLC0415
 
         cache = NullCache()
         self._engram_slot_cache = cache
@@ -530,7 +530,7 @@ class _OpsMixin:
         # injects the REAL process-global ScopeVersions; the bare default is a
         # _shared NullScopeVersions (frozen version 0 — harmless, since the paired
         # engram_slot/graph cache defaults to NullCache all-miss).
-        from yadgar._shared.protocols import NullScopeVersions  # noqa: PLC0415
+        from yadgar._shared.contracts.protocols import NullScopeVersions  # noqa: PLC0415
 
         sv = NullScopeVersions()
         self._scope_versions = sv
@@ -565,7 +565,7 @@ class _OpsMixin:
         # fallback is deleted (it was a _shared→backend edge). The composition root
         # injects the REAL registered instance; the bare default is a _shared
         # NullCache (all-miss ≡ today's uncached adjacency read).
-        from yadgar._shared.protocols import NullCache  # noqa: PLC0415
+        from yadgar._shared.contracts.protocols import NullCache  # noqa: PLC0415
 
         cache = NullCache()
         self._graph_cache = cache

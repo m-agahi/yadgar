@@ -818,7 +818,7 @@ def test_vacuum_prunes_old_sentinel_rows(monkeypatch, flush_queue):
 
 def test_session_end_config_knobs_registered():
     """All 4 SESSION_END_* knobs registered in config_registry (with YADGAR_ prefix)."""
-    from yadgar._shared.config_registry import list_config
+    from yadgar._shared.config.config_registry import list_config
 
     names = {e.name for e in list_config()}
     expected = {
@@ -849,7 +849,7 @@ def test_session_end_config_knob_defaults():
 
 def test_install_hooks_registers_session_end(tmp_path):
     """install_hooks_impl with scope=global adds SessionEnd to settings.json."""
-    from yadgar.core.install_hooks_lib import install_hooks_impl
+    from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
     result = install_hooks_impl(
         home_dir=tmp_path,

@@ -277,7 +277,7 @@ def _get_counter_value(metric_name: str, labels: dict) -> float:
 
     metric_name should include the _total suffix (e.g. 'foo_total').
     """
-    from yadgar._shared.metrics import _registry  # noqa: PLC0415
+    from yadgar._shared.observability.metrics import _registry  # noqa: PLC0415
 
     for metric in _registry.collect():
         for sample in metric.samples:

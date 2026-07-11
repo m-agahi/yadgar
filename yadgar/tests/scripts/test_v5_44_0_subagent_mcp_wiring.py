@@ -373,7 +373,14 @@ class TestSubagentStopWriteback:
 
 
 class TestPlatformPaths:
-    """platform_paths.py returns correct paths per OS without hardcoded home."""
+    """platform_paths returns correct paths per OS without hardcoded home.
+
+    Imports here deliberately use the OLD flat path
+    ``yadgar._shared.platform_paths`` — T2 Car A moved the module to
+    ``yadgar.core.install.platform_paths`` and this class doubles as PEP-562
+    shim regression coverage (Car C convention). Patch targets that must hit
+    the real module use the canonical core path.
+    """
 
     def test_linux_returns_dot_claude(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Linux")
@@ -433,7 +440,7 @@ class TestPlatformPaths:
 
         monkeypatch.setattr(shutil, "which", lambda x: None)
         monkeypatch.setattr(
-            "yadgar._shared.platform_paths.Path", lambda p: tmp_path / p.lstrip("/")
+            "yadgar.core.install.platform_paths.Path", lambda p: tmp_path / p.lstrip("/")
         )
 
         # Can't easily mock Path("/etc/NIXOS").exists() directly but we can check the logic
@@ -447,7 +454,7 @@ class TestPlatformPaths:
     def test_no_hardcoded_home_max(self):
         """platform_paths.py must contain no hardcoded /home/max or specific username."""
         here = Path(__file__).parent.parent.parent  # yadgar/
-        source = (here / "_shared" / "platform_paths.py").read_text()
+        source = (here / "core" / "install" / "platform_paths.py").read_text()
         assert "/home/max" not in source, "Hardcoded /home/max path found in platform_paths.py"
 
 
@@ -458,9 +465,9 @@ class TestInstallSubagents:
     """yadgar install-subagents copies agent templates to ~/.claude/agents/."""
 
     def test_install_copies_agent_files(self, tmp_path, monkeypatch):
-        from yadgar.core.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar.core.install.platform_paths.is_nix_managed", lambda: False)
         result = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         assert result["status"] == "installed"
         agents_dir = tmp_path / ".claude" / "agents"
@@ -475,9 +482,9 @@ class TestInstallSubagents:
 
     def test_idempotent_no_op_second_run(self, tmp_path, monkeypatch):
         """Running install twice produces same result, no duplication."""
-        from yadgar.core.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar.core.install.platform_paths.is_nix_managed", lambda: False)
         r1 = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         r2 = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         assert r1["status"] == "installed"
@@ -489,18 +496,18 @@ class TestInstallSubagents:
         assert file_count == 5
 
     def test_dry_run_does_not_write_files(self, tmp_path, monkeypatch):
-        from yadgar.core.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar.core.install.platform_paths.is_nix_managed", lambda: False)
         result = install_subagents_impl(home_dir=tmp_path, dry_run=True, force=False)
         assert result["status"] == "dry_run"
         agents_dir = tmp_path / ".claude" / "agents"
         assert not agents_dir.exists(), "dry_run must not create directories"
 
     def test_check_lists_changes_without_writing(self, tmp_path, monkeypatch):
-        from yadgar.core.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar.core.install.platform_paths.is_nix_managed", lambda: False)
         result = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False, check=True)
         # --check: returns list of files that would be installed
         assert "would_install" in result or "status" in result
@@ -509,9 +516,9 @@ class TestInstallSubagents:
 
     def test_nix_skip_on_nixos(self, tmp_path, monkeypatch):
         """On NixOS, install-subagents skips with status=nix_managed."""
-        from yadgar.core.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: True)
+        monkeypatch.setattr("yadgar.core.install.platform_paths.is_nix_managed", lambda: True)
         result = install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         assert result["status"] == "nix_managed"
         agents_dir = tmp_path / ".claude" / "agents"
@@ -519,9 +526,9 @@ class TestInstallSubagents:
 
     def test_force_overwrites_existing(self, tmp_path, monkeypatch):
         """--force overwrites existing agent files."""
-        from yadgar.core.install_subagents_lib import install_subagents_impl
+        from yadgar.core.install.install_subagents_lib import install_subagents_impl
 
-        monkeypatch.setattr("yadgar._shared.platform_paths.is_nix_managed", lambda: False)
+        monkeypatch.setattr("yadgar.core.install.platform_paths.is_nix_managed", lambda: False)
         # First install
         install_subagents_impl(home_dir=tmp_path, dry_run=False, force=False)
         # Corrupt one file
@@ -538,7 +545,13 @@ class TestInstallSubagents:
 
 
 class TestConfigSync:
-    """config_sync adds missing yaml keys with defaults, preserves user values."""
+    """config_sync adds missing yaml keys with defaults, preserves user values.
+
+    Imports here deliberately use the OLD flat path
+    ``yadgar._shared.config_sync`` — T2 Car A moved the module to
+    ``yadgar.core.config_sync`` and this class doubles as PEP-562 shim
+    regression coverage (Car C convention).
+    """
 
     def _write_minimal_config(self, path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -559,7 +572,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
 
         content = config_path.read_text()
@@ -580,7 +593,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
 
         content = config_path.read_text()
@@ -599,7 +612,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
             content_after_first = config_path.read_text()
             cmd_config_sync(_Args())
@@ -622,7 +635,7 @@ class TestConfigSync:
             dry_run = True
             remove_unknown = False
 
-        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
 
         assert config_path.read_text() == original, "dry_run must not modify file"
@@ -640,7 +653,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config.config_yaml.get_config_path", return_value=config_path):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_config_sync(_Args())
             assert exc_info.value.code != 0
@@ -659,7 +672,7 @@ class TestConfigSync:
             remove_unknown = False
 
         # First sync fully
-        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config.config_yaml.get_config_path", return_value=config_path):
             cmd_config_sync(_Args())
 
         # Now check — should be zero (nothing missing)
@@ -669,7 +682,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config.config_yaml.get_config_path", return_value=config_path):
             # Should NOT raise SystemExit (exits 0 = no changes needed)
             try:
                 cmd_config_sync(_CheckArgs())
@@ -688,7 +701,7 @@ class TestConfigSync:
             dry_run = False
             remove_unknown = False
 
-        with patch("yadgar._shared.config_yaml.get_config_path", return_value=config_path):
+        with patch("yadgar._shared.config.config_yaml.get_config_path", return_value=config_path):
             # Should print error and exit 1, not raise unhandled exception
             with pytest.raises(SystemExit) as exc_info:
                 cmd_config_sync(_Args())

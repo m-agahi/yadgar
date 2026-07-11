@@ -117,8 +117,8 @@ def _load_allowlist() -> set[str]:
 def _compute_gaps() -> tuple[list[str], list[str]]:
     """Return (missing_yaml, missing_registry) for all non-allowlisted Settings fields."""
     from yadgar._shared.config import Settings
-    from yadgar._shared.config_registry import list_config
-    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar._shared.config.config_registry import list_config
+    from yadgar._shared.config.config_yaml import FIELD_META
 
     allowlist = _load_allowlist()
     registry_names = {e.name for e in list_config()}

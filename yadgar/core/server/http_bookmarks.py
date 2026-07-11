@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
 import yadgar._shared.runtime.state as _st
-from yadgar._shared.tracing import trace_span
+from yadgar._shared.observability.tracing import trace_span
 from yadgar.core.server._app import mcp_server
 
 logger = logging.getLogger(__name__)

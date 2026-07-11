@@ -25,9 +25,9 @@ def test_backend_tracing_provider_not_clobbered():
         "os.environ.pop('OTEL_SDK_DISABLED', None); "
         "os.environ['YADGAR_OTLP_ENDPOINT'] = ''; "
         "os.environ.setdefault('YADGAR_DB_PATH', '/tmp/probe-test.db'); "
-        "from yadgar._shared.tracing import setup_tracing; "
+        "from yadgar._shared.observability.tracing import setup_tracing; "
         "setup_tracing('yadgar-backend'); "
-        "import yadgar._shared.runtime.recall_pipeline; "
+        "import yadgar.backend.retrieval.recall_pipeline; "
         "from opentelemetry import trace; "
         "provider = trace.get_tracer_provider(); "
         "svc = getattr(getattr(provider, 'resource', None), 'attributes', {}).get('service.name', 'MISSING'); "
@@ -63,18 +63,21 @@ def test_backend_tracing_provider_not_clobbered():
 
 def test_side_effect_split_both_halves_fire():
     """_apply_recall_side_effects fires both DB half and session half."""
-    from yadgar._shared.runtime.recall_pipeline import _apply_recall_side_effects
+    from yadgar.backend.retrieval.recall_pipeline import _apply_recall_side_effects
 
     mem = {"id": 42, "heat": 0.5, "_source": "memory", "content": "test"}
     merged = [mem]
     storage = MagicMock()
     storage._now_iso.return_value = "2026-01-01T00:00:00+00:00"
 
+    # T2 Car E2: the session half lives in _shared.runtime.recall_session —
+    # patch its module state; the pipeline combiner delegates to it.
     with (
-        patch("yadgar._shared.runtime.recall_pipeline._st") as mock_st,
-        patch("yadgar._shared.runtime.recall_pipeline._record_recall_sr_transition") as mock_sr,
+        patch("yadgar.backend.retrieval.recall_pipeline._st") as mock_db_st,
+        patch("yadgar._shared.runtime.recall_session._st") as mock_st,
+        patch("yadgar._shared.runtime.recall_session._record_recall_sr_transition") as mock_sr,
     ):
-        mock_st._thermo = None
+        mock_db_st._thermo = None
         mock_st._buffer = MagicMock()
         mock_st._replay = MagicMock()
 
@@ -89,14 +92,14 @@ def test_side_effect_split_both_halves_fire():
 
 def test_db_side_effects_only_boost():
     """_apply_recall_db_side_effects writes heat/thermo but NOT session state."""
-    from yadgar._shared.runtime.recall_pipeline import _apply_recall_db_side_effects
+    from yadgar.backend.retrieval.recall_pipeline import _apply_recall_db_side_effects
 
     mem = {"id": 7, "heat": 0.3, "_source": "memory", "content": "db test"}
     merged = [mem]
     storage = MagicMock()
     storage._now_iso.return_value = "2026-01-01T00:00:00+00:00"
 
-    with patch("yadgar._shared.runtime.recall_pipeline._st") as mock_st:
+    with patch("yadgar.backend.retrieval.recall_pipeline._st") as mock_st:
         mock_st._thermo = MagicMock()
         mock_st._buffer = MagicMock()
         mock_st._replay = MagicMock()
@@ -115,14 +118,14 @@ def test_db_side_effects_only_boost():
 
 def test_session_side_effects_only_session():
     """_apply_recall_session_side_effects fires SR/buffer/replay but NOT boost."""
-    from yadgar._shared.runtime.recall_pipeline import _apply_recall_session_side_effects
+    from yadgar._shared.runtime.recall_session import _apply_recall_session_side_effects
 
     mem = {"id": 3, "heat": 0.6, "_source": "memory", "content": "session test"}
     merged = [mem]
 
     with (
-        patch("yadgar._shared.runtime.recall_pipeline._st") as mock_st,
-        patch("yadgar._shared.runtime.recall_pipeline._record_recall_sr_transition") as mock_sr,
+        patch("yadgar._shared.runtime.recall_session._st") as mock_st,
+        patch("yadgar._shared.runtime.recall_session._record_recall_sr_transition") as mock_sr,
     ):
         mock_st._buffer = MagicMock()
         mock_st._replay = MagicMock()
@@ -139,14 +142,14 @@ def test_session_side_effects_only_session():
 
 def test_db_side_effects_skips_wiki_rows():
     """_apply_recall_db_side_effects skips wiki rows."""
-    from yadgar._shared.runtime.recall_pipeline import _apply_recall_db_side_effects
+    from yadgar.backend.retrieval.recall_pipeline import _apply_recall_db_side_effects
 
     wiki_row = {"_source": "wiki", "id": "wiki:slug", "content": "wiki content"}
     merged = [wiki_row]
     storage = MagicMock()
     storage._now_iso.return_value = "2026-01-01T00:00:00+00:00"
 
-    with patch("yadgar._shared.runtime.recall_pipeline._st") as mock_st:
+    with patch("yadgar.backend.retrieval.recall_pipeline._st") as mock_st:
         mock_st._thermo = MagicMock()
         _apply_recall_db_side_effects(merged, "query", storage)
         storage.boost_memories_access.assert_not_called()
@@ -326,11 +329,16 @@ def test_recall_forward_only_loud_failure():
     _recall_module = sys.modules["yadgar.core.server.tools.recall"]
     _recall_fn = _recall_module.recall
 
+    # T2 Car E2: core no longer binds the pipeline executor AT ALL — the old
+    # _fanout_recall re-export is gone (stronger than "not called": not importable).
+    assert not hasattr(_recall_module, "_fanout_recall"), (
+        "core recall module must not bind the retrieval executor (_fanout_recall)"
+    )
+
     with (
         patch.object(
             _recall_module, "_forward_to_backend", side_effect=RuntimeError("backend down")
         ),
-        patch.object(_recall_module, "_fanout_recall") as mock_fanout,
         patch.object(_recall_module, "_st") as mock_st,
     ):
         mock_st._consolidation = None
@@ -345,6 +353,3 @@ def test_recall_forward_only_loud_failure():
                 raise AssertionError("Expected recall() to raise on backend error")
             except RuntimeError as exc:
                 assert "backend down" in str(exc), f"Wrong error: {exc}"
-
-        # No silent in-core fallback
-        mock_fanout.assert_not_called()

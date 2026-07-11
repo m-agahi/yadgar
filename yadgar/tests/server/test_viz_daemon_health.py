@@ -117,33 +117,33 @@ class TestParseCorMetrics:
     """parse_core_metrics() extracts all expected fields."""
 
     def test_rss_bytes(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         assert result["process"]["rss_bytes"] == 52428800
 
     def test_open_fds(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         assert result["process"]["open_fds"] == 42
 
     def test_uptime_none_for_core(self) -> None:
         """Core registry has no process_start_time_seconds; uptime_s is None."""
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         assert result["process"]["uptime_s"] is None
 
     def test_cpu_from_gauge(self) -> None:
         """Core uses yadgar_process_cpu_percent gauge — available on first tick."""
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         assert result["process"]["cpu_pct"] == 2.0
 
     def test_circuit_breakers(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         cb = result["circuit_breakers"]
@@ -152,14 +152,14 @@ class TestParseCorMetrics:
         assert cb["/rerank/pair"] == 2
 
     def test_queue(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         assert result["queue"]["depth"] == 7
         assert result["queue"]["dlq_size"] == 2
 
     def test_log_fields(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(_CORE_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         log = result["log"]
@@ -167,7 +167,7 @@ class TestParseCorMetrics:
         assert log["rotations_total"] == 1
 
     def test_empty_metrics_text(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics("", prev_cpu_s=None, prev_cpu_t=None)
         assert result["process"]["rss_bytes"] is None
@@ -178,13 +178,13 @@ class TestParseBackendMetrics:
     """parse_backend_metrics() extracts all expected fields."""
 
     def test_rss_bytes(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_backend_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_backend_metrics
 
         result = parse_backend_metrics(_BACKEND_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         assert result["process"]["rss_bytes"] == 209715200
 
     def test_model_loaded(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_backend_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_backend_metrics
 
         result = parse_backend_metrics(_BACKEND_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         models = result["models"]
@@ -193,7 +193,7 @@ class TestParseBackendMetrics:
         assert models["pair"] == 0
 
     def test_semaphore_held(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_backend_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_backend_metrics
 
         result = parse_backend_metrics(_BACKEND_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         sem = result["rerank"]["semaphore_held"]
@@ -201,13 +201,13 @@ class TestParseBackendMetrics:
         assert sem["nli"] == 0
 
     def test_log_size(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_backend_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_backend_metrics
 
         result = parse_backend_metrics(_BACKEND_METRICS, prev_cpu_s=None, prev_cpu_t=None)
         assert result["log"]["file_size_bytes"] == 204800
 
     def test_empty_metrics_text(self) -> None:
-        from yadgar.core.viz_daemon_health import parse_backend_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_backend_metrics
 
         result = parse_backend_metrics("", prev_cpu_s=None, prev_cpu_t=None)
         assert result["process"]["rss_bytes"] is None
@@ -221,7 +221,7 @@ class TestParseBackendMetrics:
 
 def _build_health_app():
     """Build a minimal Starlette app with just the daemon health route."""
-    from yadgar.core.viz_daemon_health import api_daemon_health
+    from yadgar.core.viz.viz_daemon_health import api_daemon_health
 
     return Starlette(routes=[Route("/api/daemon-health", api_daemon_health, methods=["GET"])])
 
@@ -231,7 +231,7 @@ class TestDaemonHealthEndpoint:
 
     def test_returns_200(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """/api/daemon-health returns HTTP 200."""
-        from yadgar.core import viz_daemon_health as vdh
+        from yadgar.core.viz import viz_daemon_health as vdh
 
         monkeypatch.setattr(
             vdh,
@@ -248,7 +248,7 @@ class TestDaemonHealthEndpoint:
 
     def test_json_shape_core_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Response contains core + backend + scraped_at keys."""
-        from yadgar.core import viz_daemon_health as vdh
+        from yadgar.core.viz import viz_daemon_health as vdh
 
         monkeypatch.setattr(
             vdh,
@@ -268,7 +268,7 @@ class TestDaemonHealthEndpoint:
 
     def test_core_sections(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Core section has process, log, circuit_breakers, queue sub-keys."""
-        from yadgar.core import viz_daemon_health as vdh
+        from yadgar.core.viz import viz_daemon_health as vdh
 
         monkeypatch.setattr(
             vdh,
@@ -287,7 +287,7 @@ class TestDaemonHealthEndpoint:
 
     def test_backend_sections(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Backend section has process, log, rerank, models sub-keys."""
-        from yadgar.core import viz_daemon_health as vdh
+        from yadgar.core.viz import viz_daemon_health as vdh
 
         monkeypatch.setattr(
             vdh,
@@ -306,7 +306,7 @@ class TestDaemonHealthEndpoint:
 
     def test_empty_cache_returns_placeholder(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty cache → 200 with minimal placeholder payload."""
-        from yadgar.core import viz_daemon_health as vdh
+        from yadgar.core.viz import viz_daemon_health as vdh
 
         monkeypatch.setattr(vdh, "_health_cache", None)
         client = TestClient(_build_health_app())
@@ -318,7 +318,7 @@ class TestDaemonHealthEndpoint:
 
     def test_backend_unavailable_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When backend is unreachable, backend section has unavailable=True."""
-        from yadgar.core import viz_daemon_health as vdh
+        from yadgar.core.viz import viz_daemon_health as vdh
 
         monkeypatch.setattr(
             vdh,
@@ -343,7 +343,7 @@ class TestBackendUnavailable:
 
         import httpx
 
-        from yadgar.core.viz_daemon_health import scrape_backend_metrics_text
+        from yadgar.core.viz.viz_daemon_health import scrape_backend_metrics_text
 
         async def _run():
             with patch("httpx.AsyncClient") as MockClient:
@@ -366,7 +366,7 @@ class TestBackendUnavailable:
 
         import httpx  # noqa: F401
 
-        from yadgar.core.viz_daemon_health import scrape_backend_metrics_text
+        from yadgar.core.viz.viz_daemon_health import scrape_backend_metrics_text
 
         async def _run():
             with patch("httpx.AsyncClient") as MockClient:
@@ -398,7 +398,7 @@ class TestBackendUrlResolution:
     def test_backend_url_from_yadgar_embed_url_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """YADGAR_EMBED_URL=http://test-backend:9999 → scraper calls .../metrics."""
 
-        from yadgar.core.viz_daemon_health import _get_backend_metrics_url
+        from yadgar.core.viz.viz_daemon_health import _get_backend_metrics_url
 
         monkeypatch.setenv("YADGAR_EMBED_URL", "http://test-backend:9999")
         monkeypatch.delenv("YADGAR_BACKEND_METRICS_URL", raising=False)
@@ -406,7 +406,7 @@ class TestBackendUrlResolution:
 
     def test_backend_url_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No env vars → default http://yadgar-backend:8001/metrics."""
-        from yadgar.core.viz_daemon_health import _get_backend_metrics_url
+        from yadgar.core.viz.viz_daemon_health import _get_backend_metrics_url
 
         monkeypatch.delenv("YADGAR_EMBED_URL", raising=False)
         monkeypatch.delenv("YADGAR_BACKEND_METRICS_URL", raising=False)
@@ -416,7 +416,7 @@ class TestBackendUrlResolution:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """YADGAR_BACKEND_METRICS_URL overrides YADGAR_EMBED_URL."""
-        from yadgar.core.viz_daemon_health import _get_backend_metrics_url
+        from yadgar.core.viz.viz_daemon_health import _get_backend_metrics_url
 
         monkeypatch.setenv("YADGAR_EMBED_URL", "http://ignored:9999")
         monkeypatch.setenv("YADGAR_BACKEND_METRICS_URL", "http://override:1234/metrics")
@@ -439,7 +439,7 @@ yadgar_process_cpu_percent 12.5
 
     def test_core_process_metrics_exposed(self) -> None:
         """core /metrics has yadgar_process_* names; parser extracts to rss_bytes."""
-        from yadgar.core.viz_daemon_health import parse_core_metrics
+        from yadgar.core.viz.viz_daemon_health import parse_core_metrics
 
         result = parse_core_metrics(
             self._CORE_WITH_YADGAR_PROCESS, prev_cpu_s=None, prev_cpu_t=None
@@ -474,13 +474,13 @@ class TestVizHealthRefreshEnvKnob:
             raise asyncio.CancelledError  # stop after first iteration
 
         with (
-            patch("yadgar.core.viz_daemon_health._scrape_once", side_effect=_fake_scrape_once),
-            patch("yadgar.core.viz_daemon_health._scraper_heartbeat"),
-            patch("yadgar.core.viz_daemon_health._scraper_record_exc"),
+            patch("yadgar.core.viz.viz_daemon_health._scrape_once", side_effect=_fake_scrape_once),
+            patch("yadgar.core.viz.viz_daemon_health._scraper_heartbeat"),
+            patch("yadgar.core.viz.viz_daemon_health._scraper_record_exc"),
             patch("asyncio.sleep", side_effect=_fake_sleep),
         ):
             with pytest.raises(asyncio.CancelledError):
-                from yadgar.core.viz_daemon_health import run_health_scraper
+                from yadgar.core.viz.viz_daemon_health import run_health_scraper
 
                 await run_health_scraper()
 
@@ -512,14 +512,14 @@ class TestVizHealthRefreshEnvKnob:
             VIZ_HEALTH_REFRESH_SEC: float = 10.0
 
         with (
-            patch("yadgar.core.viz_daemon_health.get_settings", return_value=_FakeSettings()),
-            patch("yadgar.core.viz_daemon_health._scrape_once", side_effect=_fake_scrape_once),
-            patch("yadgar.core.viz_daemon_health._scraper_heartbeat"),
-            patch("yadgar.core.viz_daemon_health._scraper_record_exc"),
+            patch("yadgar.core.viz.viz_daemon_health.get_settings", return_value=_FakeSettings()),
+            patch("yadgar.core.viz.viz_daemon_health._scrape_once", side_effect=_fake_scrape_once),
+            patch("yadgar.core.viz.viz_daemon_health._scraper_heartbeat"),
+            patch("yadgar.core.viz.viz_daemon_health._scraper_record_exc"),
             patch("asyncio.sleep", side_effect=_fake_sleep),
         ):
             with pytest.raises(asyncio.CancelledError):
-                from yadgar.core.viz_daemon_health import run_health_scraper
+                from yadgar.core.viz.viz_daemon_health import run_health_scraper
 
                 await run_health_scraper()
 
@@ -542,7 +542,7 @@ class TestCollectQueueDepthsExcludesErrorSidecars:
         return _FakeSettings()
 
     def _call(self, tmp_path, monkeypatch):
-        from yadgar._shared import metrics as m
+        from yadgar._shared.observability import metrics as m
 
         monkeypatch.setattr(
             "yadgar._shared.config.get_settings",

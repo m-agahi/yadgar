@@ -13,7 +13,7 @@ import sys
 
 try:
     from yadgar._shared.observability.observe import observe
-    from yadgar._shared.tracing import shutdown_tracing
+    from yadgar._shared.observability.tracing import shutdown_tracing
 except ImportError:
 
     def observe(*_a, **_k):

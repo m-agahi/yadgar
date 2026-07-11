@@ -240,7 +240,7 @@ class TestInstallHooksFileChanged:
 
     def test_file_changed_registered(self, tmp_path):
         """install_hooks writes FileChanged hook to settings.json."""
-        from yadgar.core.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
         result = install_hooks_impl(tmp_path, "global", str(tmp_path / "proj"), dry_run=True)
         preview = result["preview"]
@@ -253,7 +253,7 @@ class TestInstallHooksFileChanged:
 
     def test_file_changed_not_duplicated_on_rerun(self, tmp_path):
         """Second install_hooks call does not add duplicate FileChanged entry."""
-        from yadgar.core.install_hooks_lib import install_hooks_impl
+        from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
         r1 = install_hooks_impl(tmp_path, "global", str(tmp_path / "proj"), dry_run=True)
         preview1 = r1["preview"]

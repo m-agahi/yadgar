@@ -2,7 +2,7 @@
 
 import time
 
-from yadgar._shared import tracing
+from yadgar._shared.observability import tracing
 
 
 def test_shutdown_tracing_bounded_when_provider_hangs(monkeypatch):

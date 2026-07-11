@@ -96,6 +96,13 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "Set YADGAR_REGEN_FIXTURES=1 to regenerate",
       "note": "Regen-on-demand skip by design. Fixture committed at yadgar/tests/core/fixtures/retrieval_core_expected.json."
+    },
+    {
+      "id": "install-hooks-stable-python-git-01",
+      "file": "yadgar/tests/hooks/test_install_hooks_stable_python.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "git not on PATH",
+      "note": "Linked-worktree detection tests build a real git repo + worktree fixture; skipped only where git is absent (never in CI — checkout requires git)"
     }
   ]
 }
