@@ -1,9 +1,6 @@
 # T3 — Recall restructure: build-ready plan (adversarial re-audit)
 
-**Status:** Car 2 EXECUTING (`feat/t3-car2-sideeffect-fork`, core 5.126.0 / backend
-5.38.0) — async side-effects fork, both halves. Cars 0/1 not in this branch; the
-train's FINAL car does the archive-first move (ADR-0081/0082, partial-scope rule).
-BUILD-READY — supersedes the "Train 2 — Restructure" section of
+**Status:** EXECUTING — Car 2 MERGED (#183, core 5.126.0/backend 5.38.0); Car 1 (multi_passage default-flip, A/B GO) rebasing onto it — core 5.127.0, backend stays 5.38.0 (unbuilt, flip rides the same image). Car 0 re-measure after deploy. NOTE: per-car PRs was an audit override of the user's one-PR rule — reverted to user rule for future trains (ADR-0088 stands).
 `docs/plans/recall-3-train-overhaul-2026-07-04.md` for build purposes. That
 program doc stays the north-star narrative; THIS file is the build spec after a
 full re-audit against the current tree.
@@ -134,6 +131,52 @@ flip to an async-critical-path change behind a single quality gate. Isolate them
 | **Car 2 — async side-effects fork** | Fork BOTH inline halves off the response critical path: backend DB write (`embed_service.py:1276`) and core session half (`recall_session.py:51`). Preserve ordering + async correctness on the 1-CPU core; no lost writes on cancellation. | **opus** (async correctness on the core critical path — behavior-sensitive) | (1) `recall.side_effects` span cost justifies the build at all — **if single-digit ms, do NOT build, defer**; (2) recall@k parity (fork must not drop/reorder side-effects that feed SR ranking). | Touches `embed_service.py` + `recall_session.py` + `recall_pipeline.py`. No overlap with Car 1's `config.py`. Isolate — highest risk. |
 | **DEFERRED (not a car)** | Concurrent-CE / bounded-parallel gather. Document the missing substrate (replication vs batching server) + the **> 2-CPU revisit trigger**. | — | revisit only at > 2 backend CPUs | — |
 | **ALREADY-DONE (not cars)** | Late union (T6, `providers/fusion.py`), separate-batched CE passes (T6), toggle mechanism (exists). Record as delivered. | — | — | — |
+
+### Car 1 — A/B results (2026-07-11, `feat/t3-car1-multipassage-default`)
+
+**Setup.** LongMemEval variant-s, retrieval-only, Q=30 (head-slice → all 30
+questions are `single-session-user` — `--stratify-per-type` without `--types`
+is a no-op, matching the Makefile shape). Non-unified path with a REAL
+`LocalMLClient` injected (see harness-fix note below). Arms driven by
+`--settings-override MULTI_PASSAGE_RERANKING_ENABLED=True|False`; both
+recorded in each report's `settings_overrides`. Quiesced box, one arm at a
+time. Reports: `benchmarks/reports/lme_t3car1_arm_{a_mp_on,b_mp_off}.json`.
+
+| Metric (memory domain, n=30) | Arm A (mp=True, baseline) | Arm B (mp=False, flipped) | Δ (B−A) |
+|---|---|---|---|
+| MRR | 0.9333 | 0.9333 | 0.0000 |
+| recall@5 | 0.9667 | **1.0000** | +0.0333 |
+| recall@10 | 0.9667 | **1.0000** | +0.0333 |
+| recall@50 | 0.9667 | **1.0000** | +0.0333 |
+| nDCG@10 | 0.9421 | **0.9508** | +0.0087 |
+| Wall time (30 q, incl. ingest) | 2299 s (38.3 min) | **1447 s (24.1 min)** | **−852 s (−37%)** |
+
+**Reading:** the flipped arm is equal-or-better on every quality metric AND
+37% faster wall-to-wall. On this sample the multi_passage pass costs a CE
+call per question and buys nothing — consistent with the plan's premise
+(drop a CE pass on a CE-bound path). Caveats: single question type
+(single-session-user), n=30, single run per arm. Per-query-class evidence
+for Open-Q #4 (remove-entirely vs keep-as-toggle) needs a typed run
+(`--types ... Q=larger`) — this run supports the DEFAULT-FLIP, not removal.
+
+**Env-override confirmation (Open-Q #2):** `YADGAR_MULTI_PASSAGE_RERANKING_ENABLED=0/1`
+verified to flip `Settings()` both ways. But NOTE: the harness's
+`make_benchmark_settings` hardcodes `MULTI_PASSAGE_RERANKING_ENABLED: True`
+via `os.environ.update` — env vars set by the caller are OVERWRITTEN; the
+ONLY working A/B lever for the harness is `--settings-override`.
+
+**Two harness-drift bugs found + fixed en route (commit on this branch):**
+1. Non-unified path: `Retriever(...)` built with no `ml_client` → folder-split
+   Car 2 deleted the lazy `LocalMLClient` fallback → `NullMLClient` → every CE
+   score `None` (≡ circuit-open) → the ENTIRE rerank chain (CE + NLI +
+   multi_passage) silently dead in every benchmark run since that split. Any
+   LongMemEval numbers taken in that window measured fusion-only retrieval.
+2. Unified path: `_unified_recall` assigned the removed Settings field
+   `UNIFIED_RECALL_ENABLED` → pydantic raises → every retrieval failed.
+   Additionally `--unified` now requires a live backend (Phase 2a forward-only
+   recall, `YADGAR_EMBED_URL`) — the documented standalone `make longmemeval`
+   only works via the non-unified path; the Makefile target still passes
+   `--unified` and is therefore broken standalone. Left for a follow-up.
 
 **Suggested order:** Car 0 → Car 1 → Car 2. Car 0 first because its number decides
 whether Car 2 is even worth building and re-confirms the CE-wall % post-T2. Car 1

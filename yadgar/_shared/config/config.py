@@ -292,7 +292,10 @@ class Settings(BaseSettings):
     NLI_ONLY_FOR_OPEN_DOMAIN: bool = True
 
     # v24 Multi-Passage Evidence Aggregation
-    MULTI_PASSAGE_RERANKING_ENABLED: bool = True
+    # T3 Car 1 (core 5.125.0): default True→False — drops a batched CE call on the CE-bound
+    # path. Gated on LongMemEval recall@k parity (memory domain). Toggle preserved:
+    # YADGAR_MULTI_PASSAGE_RERANKING_ENABLED=1 restores old behaviour.
+    MULTI_PASSAGE_RERANKING_ENABLED: bool = False
     MULTI_PASSAGE_CLUSTER_OVERLAP_THRESHOLD: float = 0.3
     MULTI_PASSAGE_MAX_CLUSTER_SIZE: int = 3
 

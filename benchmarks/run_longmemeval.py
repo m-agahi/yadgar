@@ -592,7 +592,11 @@ def _unified_recall(
     if rm is None:
         import yadgar.core.server.tools.recall as rm  # type: ignore[no-redef]
 
-    rm.settings.UNIFIED_RECALL_ENABLED = True
+    # UNIFIED_RECALL_ENABLED was removed from Settings when unified recall became
+    # always-on; assigning a non-existent field raises on pydantic models and killed
+    # every retrieval ("Settings" object has no field ...). Guard for both eras.
+    if hasattr(rm.settings, "UNIFIED_RECALL_ENABLED"):
+        rm.settings.UNIFIED_RECALL_ENABLED = True
     recall_fn = rm.recall
     kwargs: dict = {
         "max_results": max_results,
@@ -933,6 +937,14 @@ def run_benchmark(
     print("Loading embedding model...")
     embeddings = EmbeddingEngine(settings.EMBEDDING_MODEL)
 
+    # Real ML client, shared across questions (holds loaded CE/GTE models).
+    # Since folder-split Car 2 removed Reranker's lazy LocalMLClient fallback,
+    # Retriever(...) without ml_client gets a NullMLClient — every CE score
+    # returns None (≡ circuit-open) and the whole rerank chain silently no-ops.
+    from yadgar.backend.ml_client import LocalMLClient  # noqa: PLC0415
+
+    ml_client = LocalMLClient(settings)
+
     results = {
         "benchmark": "LongMemEval",
         "variant": dataset_path.stem,
@@ -1035,7 +1047,7 @@ def run_benchmark(
 
                 kg = KnowledgeGraph(storage, settings)
                 thermo = MemoryThermodynamics(storage, embeddings, settings)
-                retriever = Retriever(storage, embeddings, kg, settings)
+                retriever = Retriever(storage, embeddings, kg, settings, ml_client=ml_client)
                 curator = MemoryCurator(storage, embeddings, thermo, settings)
 
                 # Phase 1a: Ingest haystack
