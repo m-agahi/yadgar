@@ -50,11 +50,19 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 
 import yadgar._shared.runtime.state as _st  # sibling; avoid server/__init__ re-entry (Car 1)
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.retrieval.profiles import PROFILES
+
+# Car 3 (folder-split #17): _bounded_set / _is_episodic_query moved from
+# yadgar.server._helpers to yadgar._shared.runtime.recall_utils. They now live in
+# _shared, so a module-level import is safe (no yadgar.server.__init__ re-entry /
+# backend-recall circular import) and this pipeline no longer imports
+# yadgar.server (a _shared→server edge).
+from yadgar._shared.runtime.cpu import recall_gather_budget
 
 # T2 Car E2: the SESSION-side bookkeeping half lives in _shared (dual: the core
 # recall forwarder calls it after every forwarded recall; this module's
@@ -63,12 +71,6 @@ from yadgar._shared.runtime.recall_session import (  # noqa: F401 (combiner + re
     _apply_recall_session_side_effects,
     _record_recall_sr_transition,
 )
-
-# Car 3 (folder-split #17): _bounded_set / _is_episodic_query moved from
-# yadgar.server._helpers to yadgar._shared.runtime.recall_utils. They now live in
-# _shared, so a module-level import is safe (no yadgar.server.__init__ re-entry /
-# backend-recall circular import) and this pipeline no longer imports
-# yadgar.server (a _shared→server edge).
 from yadgar._shared.runtime.recall_utils import _is_episodic_query
 from yadgar.backend.retrieval.providers.base import Scope
 from yadgar.backend.retrieval.providers.fusion import fuse_candidates
@@ -329,6 +331,130 @@ def _should_skip_wiki(
     return False
 
 
+@observe(tier="stage", metric="tools.recall._gather_provider_candidates", span=False)
+def _gather_provider_candidates(
+    tasks: list[tuple[str, Callable[[], list]]], budget: int | None = None
+) -> dict[str, list]:
+    """Run each provider's candidate fetch and return a {slot: result} dict.
+
+    T3 Car 3 — CPU-aware bounded-parallel gather. Each task is ``(slot, fn)``
+    where ``fn`` is a zero-arg callable returning that provider's candidate list.
+    Results are keyed by the task's slot NAME, so the caller reads
+    ``result["memory"]`` / ``result["wiki"]`` regardless of completion order —
+    the byte-identity contract: the same input tasks yield the same result dict
+    at ANY budget.
+
+    Budget (max concurrent arms) defaults to ``recall_gather_budget()``:
+      - 1 at ncpu ≤ 2 (or ``YADGAR_RECALL_PARALLELISM=1``) → run the tasks
+        SEQUENTIALLY in listed order — byte-identical to the pre-Car-3 code path.
+      - ≥ 2 → submit to a BOUNDED ThreadPoolExecutor (max_workers = min(budget,
+        len(tasks))). The pool is bounded (never an unbounded fan-out — the
+        ADR-0011-class onnx-thrash lesson) and torn down on return.
+
+    A single task always runs inline (no thread spawn). Provider exceptions
+    PROPAGATE (a swallowed error would silently drop a candidate pool and skew
+    the fused result) — ``future.result()`` re-raises in the caller.
+
+    Thread-safety of the parallel arms: MemoryProvider and WikiProvider share the
+    one ``_st._storage`` StorageEngine, but in the deployed (server-mode) backend
+    that engine reads via a thread-safe ``httpx.Client`` singleton doing stateless
+    per-request HTTP POSTs (no locks, no shared cursor). The offload path ALREADY
+    runs concurrent memory+wiki reads on that shared engine in production when
+    ``YADGAR_OFFLOAD_TOOLS`` + ``TOOL_POOL_WORKERS`` > 1, so this is the same,
+    already-exercised concurrency — not a new hazard. (Embedded surrealkv, used
+    only in tests, is single-threaded; the parallel branch never fires there
+    because the test/dev floor keeps budget=1 unless ncpu > 2.)
+    """
+    if budget is None:
+        budget = recall_gather_budget()
+
+    # Sequential floor: budget 1, or ≤ 1 real task. This is the exact pre-Car-3
+    # behavior — tasks run in listed order, no executor involved.
+    if budget <= 1 or len(tasks) <= 1:
+        return {slot: fn() for slot, fn in tasks}
+
+    # Bounded-parallel: fan out at most `budget` arms (capped at the task count).
+    import contextvars  # noqa: PLC0415
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    workers = min(budget, len(tasks))
+    results: dict[str, list] = {}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="yadgar-recall-gather") as pool:
+        # Submit in listed order; collect by slot name so completion order is
+        # irrelevant to the returned mapping (byte-identity). Capture the current
+        # contextvars Context HERE (submitting thread — has the recall trace's
+        # parent span) and run each arm inside it, so the provider's @observe span
+        # nests under the recall trace across the executor boundary. A raw submit
+        # would orphan it — the offload/side-effect-fork precedent.
+        futures = {}
+        for slot, fn in tasks:
+            ctx = contextvars.copy_context()
+            futures[slot] = pool.submit(ctx.run, fn)
+        for slot, fut in futures.items():
+            results[slot] = fut.result()  # re-raises any provider exception
+    return results
+
+
+@observe(tier="stage", metric="tools.recall._build_provider_tasks", span=False)
+def _build_provider_tasks(  # noqa: PLR0913 — mirrors _fanout_recall's threaded params
+    query: str,
+    scope: Scope,
+    pool_limit: int,
+    type_filter: str,
+    profile: str | None,
+    deadline: float | None,
+    tags: list[str] | None,
+) -> list[tuple[str, Callable[[], list]]]:
+    """Build the ``(slot, fetch)`` task list for the CPU-aware provider gather.
+
+    Extracted from ``_fanout_recall`` (T3 Car 3) so the fan-out body stays under
+    the I30 fn-loc cap and the gather-task construction is independently testable.
+    Provider CONSTRUCTION runs inline here (cheap; keeps monkeypatch targets bound
+    and the listed memory→wiki order); only each ``.candidates()`` storage-I/O
+    call is deferred into a zero-arg task that the gather runs (sequentially at
+    ncpu ≤ 2, bounded-parallel above).
+    """
+    tasks: list[tuple[str, Callable[[], list]]] = []
+
+    # S6 kill-gate: when AGENT_PROMPT_LIBRARY_ENABLED is False the library is INERT.
+    # Strip the agent-prompt include tag so the include path never fires; the exclude
+    # below then naturally turns back on (tags becomes None) → tagged recall returns
+    # nothing. Read the flag via get_settings() fresh at call time (NOT the
+    # module-level captured `settings`): the flag is runtime-flippable.
+    if not get_settings().AGENT_PROMPT_LIBRARY_ENABLED and tags:
+        tags = [t for t in tags if t != "agent-prompt"] or None
+
+    # S3 precedence: tags=["agent-prompt"] suppresses the default exclude. Without
+    # tags, general recall excludes agent-prompt pages + the global toc page so
+    # tool-prompt fragments don't pollute general wiki results (the every-project
+    # leak S3 exists to kill). Targeted recall(tags=["agent-prompt"]) still won't
+    # pull the TOC (SQL pre-filter), so excluding it here is safe both ways.
+    wiki_exclude = None if tags else ["agent-prompt", "agent-prompt-toc"]
+
+    # Memory provider — active when type_filter is "all" or "memory".
+    if type_filter in ("all", "memory") and _st._retriever is not None:
+        memory_provider = MemoryProvider(_st._retriever, profile=profile, deadline=deadline)
+        tasks.append(
+            ("memory", lambda mp=memory_provider: mp.candidates(query, scope, limit=pool_limit))
+        )
+
+    # Wiki provider — active when type_filter is "all" or "wiki". Suppression
+    # rules (episodic query / fast profile / deadline exceeded) live in
+    # _should_skip_wiki and apply ONLY under type="all" — an explicit type="wiki"
+    # honors the caller's stated intent.
+    if (
+        type_filter in ("all", "wiki")
+        and _st._wiki is not None
+        and not _should_skip_wiki(query, type_filter, profile, deadline)
+    ):
+        wiki_provider = WikiProvider(_st._wiki, tags=tags, exclude_tags=wiki_exclude)
+        tasks.append(
+            ("wiki", lambda wp=wiki_provider: wp.candidates(query, scope, limit=pool_limit))
+        )
+
+    return tasks
+
+
 @observe(tier="stage", metric="tools.recall._fanout_recall", span=False)
 def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wraps params
     query: str,
@@ -401,44 +527,16 @@ def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wr
     # has material to work with.  3× matches the legacy retriever multiplier.
     pool_limit = max_results * 3
 
-    memory_candidates = []
-    wiki_candidates = []
-
-    # S6 kill-gate: when AGENT_PROMPT_LIBRARY_ENABLED is False the library is INERT.
-    # Strip the agent-prompt include tag so the include path never fires; the exclude
-    # below then naturally turns back on (tags becomes None) → tagged recall returns
-    # nothing. Read the flag at call time off the cached settings singleton.
-    # Read the flag via get_settings() fresh at call time (NOT the module-level
-    # captured `settings`): the flag is runtime-flippable and the cached singleton
-    # may be re-resolved, so the live lookup is the correct source of truth.
-    if not get_settings().AGENT_PROMPT_LIBRARY_ENABLED and tags:
-        tags = [t for t in tags if t != "agent-prompt"] or None
-
-    # S3 precedence: tags=["agent-prompt"] suppresses the default exclude.
-    # Without tags, general recall excludes agent-prompt pages to avoid polluting
-    # general wiki results with tool-prompt fragments. S6: also exclude the global
-    # agent-prompt-toc page (tag "agent-prompt-toc" ≠ "agent-prompt") — otherwise the
-    # TOC would reintroduce the every-project leak S3 exists to kill. Targeted
-    # recall(tags=["agent-prompt"]) still won't pull the TOC (SQL pre-filter on
-    # "agent-prompt"), so excluding it here is safe for both directions.
-    _wiki_exclude = None if tags else ["agent-prompt", "agent-prompt-toc"]
-
-    # Memory provider — active when type_filter is "all" or "memory"
-    if type_filter in ("all", "memory") and _st._retriever is not None:
-        memory_provider = MemoryProvider(_st._retriever, profile=profile, deadline=deadline)
-        memory_candidates = memory_provider.candidates(query, scope, limit=pool_limit)
-
-    # Wiki provider — active when type_filter is "all" or "wiki". Suppression
-    # rules (episodic query / fast profile / deadline exceeded) live in
-    # _should_skip_wiki and apply ONLY under type="all" — an explicit
-    # type="wiki" honors the caller's stated intent.
-    if (
-        type_filter in ("all", "wiki")
-        and _st._wiki is not None
-        and not _should_skip_wiki(query, type_filter, profile, deadline)
-    ):
-        wiki_provider = WikiProvider(_st._wiki, tags=tags, exclude_tags=_wiki_exclude)
-        wiki_candidates = wiki_provider.candidates(query, scope, limit=pool_limit)
+    # T3 Car 3: build the provider tasks (construction inline), then gather them
+    # CPU-aware — sequential at ncpu ≤ 2 (byte-identical to the pre-Car-3 inline
+    # calls, listed order), bounded-parallel above. Slot names map results back
+    # deterministically regardless of completion order (the byte-identity contract).
+    _gather_tasks = _build_provider_tasks(
+        query, scope, pool_limit, type_filter, profile, deadline, tags
+    )
+    _gathered = _gather_provider_candidates(_gather_tasks)
+    memory_candidates = _gathered.get("memory", [])
+    wiki_candidates = _gathered.get("wiki", [])
 
     # Step 4: fuse candidates — but ONLY when multiple providers are active.
     #

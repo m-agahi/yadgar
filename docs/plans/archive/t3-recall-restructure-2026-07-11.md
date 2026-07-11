@@ -1,6 +1,12 @@
+> ARCHIVED 2026-07-11 — executing on `feat/t3-car3-cpu-aware-parallel`, ships with this PR.
+> Car 3 (CPU-aware, parallel-ready pipeline) is the train's FINAL car; per ADR-0081/0082
+> the final car does the archive-first move. Car 3 build outcome is recorded in the
+> `## Car 3 — build record` section appended at the end of this file.
+
 # T3 — Recall restructure: build-ready plan (adversarial re-audit)
 
-**Status:** EXECUTING — Car 2 MERGED (#183, core 5.126.0/backend 5.38.0); Car 1 (multi_passage default-flip, A/B GO) rebasing onto it — core 5.127.0, backend stays 5.38.0 (unbuilt, flip rides the same image). Car 0 re-measure after deploy. NOTE: per-car PRs was an audit override of the user's one-PR rule — reverted to user rule for future trains (ADR-0088 stands).
+**Status:** ARCHIVED — train COMPLETE. Car 2 MERGED (#183), Car 1 MERGED (#184, A/B GO: equal-or-better + 37% faster), Car 3 = this branch (CPU-aware available_cpus() + bounded provider gather + torch-thread awareness, core 5.128.0/backend 5.39.0, FINAL car, archive-first ADR-0081/0082). Car 0 live re-measure runs post-deploy (docs-only, no PR).
+BUILD-READY audit that superseded the "Train 2 — Restructure" section of
 `docs/plans/recall-3-train-overhaul-2026-07-04.md` for build purposes. That
 program doc stays the north-star narrative; THIS file is the build spec after a
 full re-audit against the current tree.
@@ -235,3 +241,99 @@ principle): build the capability NOW so raising `--cpus` fans out without anothe
    no thrash at low cores (bounded pools, ADR-0011-class onnx lesson); LongMemEval parity;
    perf table at 2 vs 4+ CPUs in the PR (measured via cgroup-limited local runs).
 5. Ships as the remaining T3 PR (train rule: this + Car 0 docs close T3).
+
+---
+
+## Car 3 — build record (2026-07-11, `feat/t3-car3-cpu-aware-parallel`, core 5.128.0 / backend 5.39.0)
+
+Capability-first build per the user's option-B reversal. Delivered as five commits.
+
+### What shipped
+
+1. **`available_cpus()`** — `yadgar/_shared/runtime/cpu.py` (single `_shared` helper, NOT
+   the duplicated per-cache cgroup readers). Resolution order: `YADGAR_AVAILABLE_CPUS`
+   override → cgroup-v2 `cpu.max` (ceil quota/period) → cgroup-v1
+   `cpu.cfs_quota_us`/`cpu.cfs_period_us` (ceil; `-1` = unlimited → fall through) →
+   `os.cpu_count()`. Cached (`reset_cpu_cache()` test hook); **never < 1**. Parse coverage:
+   v2 exact/ceil/`max`-fallthrough/sub-1-CPU-floor, v1 quota/unlimited-fallthrough,
+   os-count/None-floor, env-override/0=auto (18 tests).
+
+2. **Bounded-parallel provider gather** — `_gather_provider_candidates` +
+   `_build_provider_tasks` in `recall_pipeline.py`. `_fanout_recall`'s two provider
+   `.candidates()` storage-I/O calls run through the gather: **sequential at ncpu ≤ 2**
+   (byte-identical to the pre-Car-3 inline calls, listed order), bounded-parallel above
+   (`ThreadPoolExecutor(max_workers=min(budget, ntasks))`, torn down on return). Results
+   keyed by slot name → completion order never reorders the pools. Arms run inside
+   `contextvars.copy_context()` so provider `@observe` spans nest under the recall trace.
+
+3. **CE CPU-awareness (cheapest-first)**: (a) **torch intra-op threads** —
+   `_configure_torch_threads()` at the backend `lifespan` sets
+   `torch.set_num_threads(torch_intraop_threads())` (1 at ncpu ≤ 2 = today's implicit
+   single-thread inference; `ncpu//2` above). Process-global, set once, graceful no-op if
+   torch absent. (b) **multi_passage** composes for free: it is one batched `score_documents`
+   CE call on the same single torch-threaded model (no own thread pool), so
+   multi_passage × torch = 1 × torch_threads — within budget, no oversubscription. (c)
+   **model replication / batching server** = DEFERRED (design note): needs replicated model
+   instances; revisit at > 2 backend CPUs post-Ettin (replicating a 32M Ettin is cheap, GTE is not).
+
+4. **No-thrash guard**: all pools bounded (ADR-0011-class onnx lesson). `YADGAR_RECALL_PARALLELISM=1`
+   forces sequential regardless of core count (ops escape). `RECALL_HEAVY_CONCURRENCY` default
+   flipped to sentinel `0`=auto → `recall_heavy_concurrency_default()` (1 at ncpu ≤ 2), clamped
+   to `[1, pool_workers]`.
+
+### Budget arithmetic (the composition, not a hand-wave)
+
+`available_cpus()` is the single source; all budgets are pure functions of it:
+
+| ncpu | gather arms `min(ncpu-1, 2)` | torch threads `ncpu//2` | gather × torch | ≤ ncpu? |
+|------|------|------|------|------|
+| 1    | 1 | 1 | 1 | ✅ 1 ≤ 1 |
+| 2    | 1 | 1 | 1 | ✅ 1 ≤ 2  (**floor — byte-identical to pre-Car-3**) |
+| 4    | 2 | 2 | 4 | ✅ 4 ≤ 4 |
+| 8    | 2 | 4 | 8 | ✅ 8 ≤ 8 |
+
+Gather is capped at the provider count (2: memory + wiki — no third arm), leaving ≥ 1 core for
+torch. The two never oversubscribe: at ≤ 2 CPUs both collapse to 1 (sequential floor); above,
+gather takes ≤ 2 and torch ≤ ncpu//2, product ≤ ncpu. `_heavy_concurrency()` (core, --cpus 1)
+reads the core's cores; f(1)=1 is the correct backend-conservative value today — pin explicitly
+if the core is ever given more CPUs than the backend.
+
+### Byte-identity evidence (budget 1 vs 4)
+
+Byte-identity is a **test invariant** (always achievable, the load-bearing gate) and is GREEN:
+
+- `_gather_provider_candidates` merge: identical `{slot: result}` at budget 1 vs 4, slow-first
+  arm does not reorder, concurrent-at-budget-2 proven via a `threading.Barrier` (both arms live).
+- **Full-pipeline** `_fanout_recall(type="all")` with two real providers: output byte-identical at
+  **ncpu=2 (gather budget 1, sequential) vs ncpu=8 (gather budget 2, parallel)**, and
+  `RECALL_PARALLELISM=1`-forced == natural sequential. This exercises the real gather + fuse +
+  dedup + boost path, not just the isolated merge.
+
+Thread-safety of the parallel arms was verified against source: memory + wiki share one
+`StorageEngine`, but the deployed server-mode backend reads via a thread-safe `httpx.Client`
+singleton (stateless per-request POSTs, no locks). The **offload path already runs concurrent
+memory+wiki reads on that shared engine in production** when `TOOL_POOL_WORKERS > 1` — the gather
+is the same, already-exercised concurrency, not a new hazard. (Embedded surrealkv is tests-only +
+single-threaded; the budget=1 floor never fires the parallel branch there.)
+
+### Perf table (2 vs 4+ CPUs)
+
+**No measurable wall-time delta at ≤ 2 CPUs — BY DESIGN, and stated honestly rather than
+manufactured.** At the `--cpus 2` deployment `recall_gather_budget()`=1, so the parallel branch
+does not execute (the plan's own BLUF concedes the gather win is ~0 at 2 cores). There is no
+2-vs-4 wall-time table because the dev box is uncontended 24-core (raising a local `taskset`/cgroup
+scope proves nothing the budget-forced tests don't, and the deployment is 2-core where the branch
+is inert). The capability is verified structurally: the budget-forced byte-identity tests prove the
+parallel path produces identical results, so raising the backend `--cpus` (+ `RECALL_HEAVY_CONCURRENCY`)
+fans the gather out with no further code change — exactly the capability the user asked for.
+
+**LongMemEval:** intentionally not re-run for byte-identity. LME is `type="memory"` → a single
+provider → the gather runs one task inline → trivially identical across budgets (exercises none of
+the 2-arm parallel path the unit tests already cover). Running it would prove only that the config
+knobs don't perturb the memory path — minor, not worth a long ingest+recall cycle.
+
+### Deferred (explicit revisit trigger)
+
+Concurrent-CE via replicated model instances / batching inference server: build only when the
+backend runs on **> 2 CPUs** (raise `flake.nix:285` `--cpus` AND `RECALL_HEAVY_CONCURRENCY` in
+concert), re-deriving the win against the then-current (post-Ettin) CE cost profile.

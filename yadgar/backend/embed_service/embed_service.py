@@ -612,6 +612,35 @@ class RerankResponse(BaseModel):
     mode: str
 
 
+@observe(tier="stage", span=False)
+def _configure_torch_threads() -> int | None:
+    """Set torch intra-op threads to the CPU-aware budget (T3 Car 3).
+
+    Process-global, set once at backend startup. N = ``torch_intraop_threads()``
+    (1 at ncpu ≤ 2 = today's implicit single-thread inference, so byte-identical
+    on the `--cpus 2` deployment; ncpu//2 above, reserving the other half for the
+    provider gather arms — the two budgets compose within ncpu). Zero RAM cost,
+    model-agnostic — the cheapest CE CPU-awareness lever.
+
+    torch is a heavy, lazy import (never at module scope in the backend); this
+    imports it locally and NO-OPS gracefully (returns None) when torch is
+    unavailable, so a torch-less environment still boots. Returns the applied
+    thread count, or None when torch could not be configured.
+    """
+    from yadgar._shared.runtime.cpu import torch_intraop_threads  # noqa: PLC0415
+
+    n = torch_intraop_threads()
+    try:
+        import torch  # noqa: PLC0415
+
+        torch.set_num_threads(n)
+    except Exception as exc:  # noqa: BLE001 — torch missing/unset must not block boot
+        logger.info("torch intra-op thread config skipped (%s)", exc)
+        return None
+    logger.info("torch intra-op threads set to %d (CPU-aware, T3 Car 3)", n)
+    return n
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # I14: configure structured logging at backend boot.
@@ -658,6 +687,11 @@ async def lifespan(app: FastAPI):
         "backend_started",
         extra={"event": "backend_started", "reason": _restart_reason},
     )
+
+    # T3 Car 3: set torch intra-op threads to the CPU-aware budget BEFORE the
+    # first model load, so the batched CE / embedding inference honors the core
+    # budget (1 at --cpus 2 = today's behavior; scales above). Process-global.
+    _configure_torch_threads()
 
     # Load model eagerly so /health reflects true readiness
     try:

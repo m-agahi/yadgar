@@ -41,12 +41,19 @@ def _reset_gate(monkeypatch):
     _offload.reset_rerank_gate()
 
 
-def test_heavy_default_is_below_pool_workers():
+def test_heavy_default_is_below_pool_workers(monkeypatch):
     """The gate default MUST be < the pool size, or it is a no-op and #74 is unfixed.
 
     The binding constraint is backend cores (fewer than TOOL_POOL_WORKERS==2 after v5.95),
     so a flat pool would let all workers drive concurrent reranks saturating the backend.
+    T3 Car 3: the default is now the sentinel 0=auto, which derives from available_cpus().
+    Pin the production core budget (backend --cpus 2) so auto → 1 < pool(2) — the invariant
+    holds on the deployment box; a many-core dev host would auto→(ncpu//2) and clamp to pool.
     """
+    monkeypatch.setenv("YADGAR_AVAILABLE_CPUS", "2")
+    from yadgar._shared.runtime import cpu as _cpu  # noqa: PLC0415
+
+    _cpu.reset_cpu_cache()
     heavy = _offload._heavy_concurrency()
     pool = _offload._pool_workers()
     assert heavy < pool, (
