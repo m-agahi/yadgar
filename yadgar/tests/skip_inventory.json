@@ -2,7 +2,7 @@
   "_meta": {
     "version": "1",
     "description": "Sanctioned skips for yadgar test suite. Every skip must appear here or CI gate fails.",
-    "updated": "2026-07-10",
+    "updated": "2026-07-12",
     "adr": "Car 1 of test-suite hardening train (fix/test-hardening-car1-skips)"
   },
   "entries": [
@@ -103,6 +103,13 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "git not on PATH",
       "note": "Linked-worktree detection tests build a real git repo + worktree fixture; skipped only where git is absent (never in CI — checkout requires git)"
+    },
+    {
+      "id": "deps-train-model-load-smoke-01",
+      "file": "yadgar/tests/backend/test_model_load_smoke.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "real-model load smoke — opt-in via YADGAR_MODEL_LOAD_SMOKE=1",
+      "note": "Deps-train gates b/c/d: downloads real model weights (Ettin/GTE/MiniLM/doc2query) and runs real inference — opt-in local pre-merge gate, never runs in CE-mocked CI legs. Covers the module-level skipif plus the flashrank importorskip (flashrank is not a locked dep; prod treats its absence as silent fall-through)."
     }
   ]
 }

@@ -105,6 +105,15 @@ class TestCeCkptTracksReranker:
         assert hash_v != hash_bumped
         assert hash_bumped == _expected_hash(GTE_DEFAULT, "test-bump")
 
+    def test_shipped_salt_is_2(self):
+        """5.131.0 deps train: transformers 5.x tokenization (TokenizersBackend)
+        shifts GTE CE scores with the model id unchanged — the shipped salt must
+        be "2" so persistent snapshots scored on the 4.x stack are discarded on
+        load instead of served stale."""
+        from yadgar.backend.embed_service import embed_service
+
+        assert embed_service.CE_SCORING_VERSION == "2"
+
     def test_make_ce_cache_wires_reranker_hash(self, monkeypatch):
         """The process-global `ce` cache built by `_make_ce_cache` must carry the
         reranker-derived checkpoint hash."""

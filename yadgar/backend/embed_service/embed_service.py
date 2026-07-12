@@ -203,7 +203,7 @@ def _cache_snapshot_interval_sec() -> int:
 # mismatch at snapshot load then discards the whole persistent snapshot via the
 # existing discard-on-mismatch path. Model-id changes bust the cache on their
 # own; the salt covers legitimately-keyed but semantically-stale scores.
-CE_SCORING_VERSION = "1"
+CE_SCORING_VERSION = "2"
 
 
 @observe(tier="hot")

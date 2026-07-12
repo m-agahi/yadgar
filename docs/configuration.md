@@ -146,8 +146,6 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | `gte_reranker_model` | `YADGAR_GTE_RERANKER_MODEL` | str | `Alibaba-NLP/gte-reranker-modernbert-base` | GTE reranker model name. |
 | `gte_reranker_max_length` | `YADGAR_GTE_RERANKER_MAX_LENGTH` | int | `512` | Max token length for GTE reranker. |
 | `gte_reranker_fallback_to_flashrank` | `YADGAR_GTE_RERANKER_FALLBACK_TO_FLASHRANK` | bool | `true` | Fall back to FlashRank if GTE reranker fails. |
-| `gte_reranker_backend` | `YADGAR_GTE_RERANKER_BACKEND` | str | `torch` | GTE reranker inference backend: `torch` (fp32) or `onnx-int8` (dynamic-quantized ONNX, ~1.8× faster on CPU, recall@5-preserving). |
-| `gte_reranker_onnx_file` | `YADGAR_GTE_RERANKER_ONNX_FILE` | str | `onnx/model_int8.onnx` | ONNX artifact loaded when `gte_reranker_backend=onnx-int8` (repo-shipped quantized file). |
 | `nli_reranking_enabled` | `YADGAR_NLI_RERANKING_ENABLED` | bool | `false` | Enable NLI entailment scoring stage. v5.6.6 default flipped `true`→`false` — NLI averages ~55 s/call on CPU for marginal gain over CE alone. |
 | `nli_model` | `YADGAR_NLI_MODEL` | str | `cross-encoder/nli-deberta-v3-base` | NLI model name. |
 | `nli_weight` | `YADGAR_NLI_WEIGHT` | float | `0.3` | NLI signal weight in final blend. |

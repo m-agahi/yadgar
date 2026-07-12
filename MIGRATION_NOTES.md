@@ -1,5 +1,47 @@
 # Migration Notes
 
+## Deps-modernization train — CI images rebuild required BEFORE merging (core 5.131.0 / backend 5.42.0)
+
+`uv.lock` changed (blanket `uv lock --upgrade`: transformers 4.57.6→5.13.1,
+huggingface-hub 0.36.2→1.23.0, hf-xet 1.3.2→1.5.1, starlette 1.0.0→1.3.1,
+torch 2.11→2.13, and the rest of the float — see the PR body). `Dockerfile.ci`
+bakes deps via `uv export --frozen`, so the yadgar-ci image MUST be rebuilt and
+pushed at the new tag or CI silently tests the old stack (the 57-fail lock-parity
+class). All workflow refs + `Dockerfile.ci-viz` now point at `5.131.0` — that tag
+does not exist until you build it.
+
+Build ORDER matters — `yadgar-ci-viz` does `FROM yadgar-ci:5.131.0`, so build
+and push yadgar-ci FIRST (PD-42 carve-out: yadgar-ci is the one image that
+pushes to dockerhub):
+
+```bash
+podman build -f Dockerfile.ci -t docker.io/openfantasy/yadgar-ci:5.131.0 .
+podman push docker.io/openfantasy/yadgar-ci:5.131.0
+podman build -f Dockerfile.ci-viz -t docker.io/openfantasy/yadgar-ci-viz:5.131.0 .
+podman push docker.io/openfantasy/yadgar-ci-viz:5.131.0
+```
+
+Expected on merge (not a defect): `ci-release.yaml` `build-images` auto-builds
+and pushes the **core** + **backend** DockerHub images (pyproject version ≠
+latest `v*` tag). yadgar-ci itself has NO auto-build pipeline — the manual
+build above is the only path.
+
+Local NixOS dev-env note: numpy 2.5.1 (blanket float, was 2.4.4) dlopens the
+system `libz.so.1`, which a Nix-built python does not see by default —
+`import numpy` fails with `libz.so.1: cannot open shared object file` unless
+zlib is on `LD_LIBRARY_PATH`. Local test/benchmark runs in this train used
+`LD_LIBRARY_PATH=/run/current-system/sw/share/nix-ld/lib`. Consider extending
+the existing numpy LD_LIBRARY_PATH wrapper in `flake.nix` (~line 426, currently
+`stdenv.cc.cc.lib` only) with `pkgs.zlib`'s lib dir in the nix repo. CI/Docker
+(Debian) unaffected.
+
+Also note: the `[onnx]` extra was DROPPED from `sentence-transformers` in
+`pyproject.toml` — `optimum-onnx` (0.1.0, latest) caps `transformers<4.58.0`
+and hard-blocks the 5.x resolve. The dormant `GTE_RERANKER_BACKEND=onnx-int8`
+code path + knobs were removed with it (no half-drop, per plan Q8). If you ever
+re-add ONNX reranking, it needs an optimum-onnx release that supports
+transformers 5.x first.
+
 ## Hardening Car 3 — CI image rebuild required BEFORE merging train PR #179
 
 `Dockerfile.ci` gained `graphviz` (so `test_diagram_generator` render tests RUN

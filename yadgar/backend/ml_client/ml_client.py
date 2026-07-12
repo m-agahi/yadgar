@@ -39,13 +39,6 @@ def _rpc_span(name: str, attributes: dict | None = None):
 logger = logging.getLogger(__name__)
 
 
-class OnnxRerankerUnavailableError(RuntimeError):
-    """Raised when GTE_RERANKER_BACKEND=onnx-int8 is selected but the ONNX reranker
-    fails to load. v5.98 Lever 3 is DORMANT: this is a loud, deliberate failure so an
-    operator flipping the flag is NOT silently degraded to FlashRank/zeros. Distinct
-    from a generic transient GTE failure, which DOES fall back."""
-
-
 # ---------------------------------------------------------------------------
 # v5.6.7 PR-G — YADGAR_MODEL_IDLE_EVICTION_SECONDS
 #
@@ -345,56 +338,22 @@ class LocalMLClient:
 
     @observe(tier="stage")
     def _load_gte_reranker(self, settings):
-        """Construct the GTE-Reranker CrossEncoder for the configured backend.
+        """Construct the GTE-Reranker CrossEncoder (torch fp32).
 
-        v5.98 Lever 3: GTE_RERANKER_BACKEND selects the inference backend —
-        "torch" (fp32, default) or "onnx-int8" (quantized ONNX). The onnx-int8
-        path is DORMANT: code-present but NOT yet verified in a built backend
-        image (onnxruntime import / onnx CrossEncoder load unproven there — see
-        the plan-doc follow-up). If it is explicitly selected and fails to load,
-        raise a loud, distinct OnnxRerankerUnavailableError so the flip is caught
-        rather than silently degraded to FlashRank/zeros (a quiet quality
-        landmine). Any other value loads plain torch fp32.
+        The v5.98 Lever 3 onnx-int8 backend (GTE_RERANKER_BACKEND knob) was
+        REMOVED in the 5.131.0 deps-modernization train: optimum-onnx (0.1.0,
+        latest) caps transformers<4.58.0, which hard-conflicts with the
+        transformers>=5.0 floor Ettin requires. The path was dormant (ADR-0043
+        NO-GO, never verified in a built image). Re-adding ONNX reranking needs
+        an optimum-onnx release that supports transformers 5.x.
         """
         from sentence_transformers import CrossEncoder as STCrossEncoder  # noqa: PLC0415
 
-        gte_backend = getattr(settings, "GTE_RERANKER_BACKEND", "torch")
-        if gte_backend != "onnx-int8":
-            model = STCrossEncoder(
-                settings.GTE_RERANKER_MODEL,
-                max_length=settings.GTE_RERANKER_MAX_LENGTH,
-            )
-            logger.info("LocalMLClient: loaded GTE-Reranker: %s", settings.GTE_RERANKER_MODEL)
-            return model
-
-        onnx_file = getattr(settings, "GTE_RERANKER_ONNX_FILE", "onnx/model_int8.onnx")
-        try:
-            model = STCrossEncoder(
-                settings.GTE_RERANKER_MODEL,
-                max_length=settings.GTE_RERANKER_MAX_LENGTH,
-                backend="onnx",
-                model_kwargs={"file_name": onnx_file},
-            )
-        except Exception as onnx_err:
-            logger.error(
-                "LocalMLClient: GTE_RERANKER_BACKEND=onnx-int8 was selected but the ONNX "
-                "reranker (%s) FAILED to load — NOT silently falling back. This backend is "
-                "DORMANT/unverified in the deployed image; keep the default 'torch' until the "
-                "onnx-int8 artifact-build/runtime step lands. Cause: %s",
-                onnx_file,
-                onnx_err,
-            )
-            raise OnnxRerankerUnavailableError(
-                "GTE_RERANKER_BACKEND=onnx-int8 selected but the ONNX reranker "
-                f"({onnx_file}) failed to load; refusing to silently fall back. "
-                "Set GTE_RERANKER_BACKEND=torch (the shipped default) — Lever 3 is "
-                "code-present but not yet functional in the backend image."
-            ) from onnx_err
-        logger.info(
-            "LocalMLClient: loaded GTE-Reranker (onnx-int8: %s): %s",
-            onnx_file,
+        model = STCrossEncoder(
             settings.GTE_RERANKER_MODEL,
+            max_length=settings.GTE_RERANKER_MAX_LENGTH,
         )
+        logger.info("LocalMLClient: loaded GTE-Reranker: %s", settings.GTE_RERANKER_MODEL)
         return model
 
     @observe(tier="hot")
@@ -420,10 +379,6 @@ class LocalMLClient:
                 pairs = [(query, t[:512]) for t in texts]
                 scores = self._gte_reranker.predict(pairs)
                 return [float(s) for s in scores]
-        except OnnxRerankerUnavailableError:
-            # v5.98 Lever 3 guardrail: onnx-int8 was explicitly selected and failed.
-            # Do NOT silently fall back — propagate the loud, distinct error.
-            raise
         except Exception as e:
             from yadgar._shared.observability.exception_telemetry import (
                 record_exception,  # noqa: PLC0415

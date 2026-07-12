@@ -251,7 +251,7 @@ jobs:
     if: needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     steps:
       # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
 
@@ -282,7 +282,7 @@ jobs:
     continue-on-error: true
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     steps:
       # make, git, nodejs are pre-installed in yadgar-ci image.
 
@@ -335,7 +335,7 @@ jobs:
     if: needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -365,7 +365,7 @@ jobs:
     if: needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     steps:
       - name: Install jq
         # curl, nodejs pre-installed in yadgar-ci; jq is not.
