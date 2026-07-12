@@ -35,6 +35,12 @@ snap() {
 - **Per-recall latency (ms)** = `Δ(yadgar_recall_duration_ms_sum) / Δ(yadgar_recall_duration_ms_count)`.
   (For a single recall between two snaps, Δcount=1 → the delta *is* that recall's ms.)
 - **Cache hit/miss** — use Car 1/Car 2 `yadgar_cache_{hit,miss}_total{cache=<name>}` counters for project_brief / wiki / prelude caches. The recall-output shadow counters were removed (ADR-0071).
+- **Graph-cache hit/miss** — before and after each timed run, also snapshot the graph-namespace and embedding cache series from the **backend** (port 8001 — graph/ce/embed caches emit via `CacheStatsCollector` on the backend metrics endpoint, not core 8765):
+  ```sh
+  curl -s http://localhost:8001/metrics | grep -E \
+    'yadgar_cache_(hit|miss)_total|yadgar_embed_(ce|embed)_cache'
+  ```
+  Record the per-namespace `{cache=<name>}` deltas in the run log alongside latency. A regression in `yadgar_cache_hit_total{cache="graph"}` after a batch-adjacency change means the graph cache miss-path is exercised more than expected — file a perf note.
 - **Saturation** = `yadgar_tool_pool` `inflight` / `saturated` during concurrent runs.
 - **Per-stage (coarse)**: Tempo traces — spans `retrieval.recall` (total) +
   `retrieval.rerank`. Finer stages (embed / surreal search / priors / spreading /
@@ -300,3 +306,38 @@ essentially flat (+12%).
 | CE/NLI models loaded | **PASS** (both =1.0; NLI cold-load 27.4s at backend start) |
 
 **T4 Ettin baseline locked:** warm-common-case **~13,625ms**, cold **~10,847ms**, hot **~4,555ms**.
+
+## ⚠️ Correction — 2026-07-12 (fix/pre-t4-anomalies): the T3 Car 0 warm attribution was WRONG
+
+The Car 0 run-log above (2026-07-12, 5.128.0/5.39.0) reports warm-common-case as
+`backend=530–933ms; core=~12.7s (dominant)`. **That core/backend split is a
+measurement error and must not be trusted.** RCA from the full Tempo span tree of
+the actual 13.6s traces (`eae97683…`, `9291db6e…`) shows:
+
+- The warm-common-case **`POST /recall` BACKEND span is ~13,616ms** — it covers
+  ~99% of the 13,635ms wall. Core-side is **~200ms** (thin `_forward_to_backend`
+  HTTP wait + ~107ms of session side-effects at the tail).
+- The "530–933ms backend" figure came from **grepping `podman logs yadgar-backend`
+  for `POST /recall` lines and reading FAST/HOT recall calls** (594ms, 498ms, …),
+  then attributing them to the SLOW 13.6s wall — a **trace_id mis-correlation**.
+  `total − (wrong backend number) = phantom 12.7s "core"`. There is NO core-side
+  retrieval cost: `_st._retriever` is `None` in the core process (retrieval fully
+  sunk to backend, ADR-0078), so no KNN/FTS/PPR/spreading runs in core at all.
+- The real 13.6s warm breakdown (all BACKEND, `--cpus 2`, CPU-bound):
+  CE (GTE-ModernBERT) **~9.3s across two passes** — `_rerank_cross_encoder` (~6.1s)
+  scoring the top-K memories + `recall.fanout.fuse → _score_candidates_ce` (~2.8s)
+  cross-scoring the ~5 wiki candidates (INTENTIONAL wiki placement scoring, cache is
+  working: memory texts hit from pass-1) — plus `spreading_activation` (~2.1s) and
+  `_find_entities_in_content` (~1.5s). CE cache MISSES on a fresh distinct query.
+
+**Method rule (do NOT repeat the Car 0 mistake):** never compute
+`core = total − grep-of-logs`. Pull the FULL trace by traceID and read the
+`POST /recall` backend span duration directly; core-side cost = `wall − that span`.
+Attribute every ≥100ms stage to its `service.name` from the span's resource
+attributes, matched by `trace_id`. A `podman logs … | grep POST /recall` line is
+NOT guaranteed to belong to the trace you are attributing.
+
+**Warm > cold explained:** warm-common-case (13.6s) > cold (10.8s) because the warm
+distinct queries carry the wiki cross-scoring CE pass + a fuller candidate pool,
+whereas Car 0's cold (entity-rich) queries were effectively single-CE-pass. Same CE
+model, extra pass — not a different bottleneck.

@@ -69,14 +69,23 @@ def _build_mixin(
     storage.get_relationship_by_source_and_type.return_value = relationship_by_source_type
 
     graph = MagicMock()
-    if adjacent_counts is None:
-        graph._get_adjacent.return_value = []
-    else:
-        # adjacent_counts: {entity_id: list_of_neighbors}
-        def _adj(eid, _):
-            return adjacent_counts.get(eid, [])
+    counts = adjacent_counts or {}
 
-        graph._get_adjacent.side_effect = _adj
+    # adjacent_counts: {entity_id: list_of_neighbors}
+    def _adj(eid, _):
+        return counts.get(eid, [])
+
+    graph._get_adjacent.side_effect = _adj
+
+    # _get_adjacent_batch(entity_ids, rel_types) -> {eid: [neighbors]}.
+    # Restore N+1 fix: _detect_isolated_entities issues ONE batched, name-free
+    # adjacency query for the whole entity set instead of N per-entity
+    # name-enriching queries. Mirror _get_adjacent's neighbor lists so the
+    # isolated-entity verdict is byte-identical.
+    def _adj_batch(entity_ids, _):
+        return {eid: counts.get(eid, []) for eid in entity_ids}
+
+    graph._get_adjacent_batch.side_effect = _adj_batch
 
     mixin._storage = storage
     mixin._graph = graph
@@ -126,6 +135,38 @@ def test_no_entities_no_isolated_gaps():
     gaps = mixin.detect_gaps()
     isolated = [g for g in gaps if g["type"] == "isolated_entity"]
     assert len(isolated) == 0
+
+
+def test_isolated_entities_uses_batched_name_free_adjacency():
+    """Restore N+1 regression guard (fix/pre-t4-anomalies).
+
+    Live restore() took ~264s because _detect_isolated_entities called
+    _get_adjacent(eid, None) per entity with the default with_names=True —
+    each call fired ~1 + 2*K name-enrichment queries (~5,345 DB round-trips
+    over ~480 entities). The fix is ONE name-free batched adjacency query for
+    the whole entity set. This test pins the batched contract so the N+1
+    cannot regress:
+
+      * _get_adjacent_batch is called exactly ONCE with all entity ids.
+      * the per-entity name-enriching _get_adjacent is NOT called.
+    """
+    entities = [_make_entity(i, f"E{i}") for i in range(1, 6)]
+    mixin = _build_mixin(
+        all_entities=entities,
+        adjacent_counts={1: [], 2: [7], 3: [8, 9], 4: [], 5: [10, 11, 12]},
+    )
+
+    gaps = mixin.detect_gaps()
+
+    # Verdict must be unchanged: entities 1,2,4 are isolated (<=1 neighbor).
+    isolated = {g["entities"][0] for g in gaps if g["type"] == "isolated_entity"}
+    assert isolated == {"E1", "E2", "E4"}
+
+    # N+1 eliminated: exactly one batched query, no per-entity name enrichment.
+    assert mixin._graph._get_adjacent_batch.call_count == 1
+    called_ids = list(mixin._graph._get_adjacent_batch.call_args.args[0])
+    assert sorted(called_ids) == [1, 2, 3, 4, 5]
+    mixin._graph._get_adjacent.assert_not_called()
 
 
 # ── Stale regions ─────────────────────────────────────────────────────────────
