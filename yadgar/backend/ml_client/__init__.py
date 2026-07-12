@@ -15,7 +15,6 @@ _EXPORTS: Final = {
     "Callable": "yadgar.backend.ml_client.ml_client",
     "LocalMLClient": "yadgar.backend.ml_client.ml_client",
     "MLClient": "yadgar.backend.ml_client.ml_client",
-    "OnnxRerankerUnavailableError": "yadgar.backend.ml_client.ml_client",
     "RemoteMLClient": "yadgar.backend.ml_client.ml_client",
     "_CircuitBreaker": "yadgar.backend.ml_client.ml_client",
     "_STATE_CLOSED": "yadgar.backend.ml_client.ml_client",

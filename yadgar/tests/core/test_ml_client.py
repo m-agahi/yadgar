@@ -262,21 +262,20 @@ class TestRerankEndpointInvalidMode:
 
 
 class TestLocalMLClientNoModuleLevelImport:
-    def _gte_settings(self, backend, onnx_file="onnx/model_int8.onnx"):
+    def _gte_settings(self):
         s = MagicMock()
         s.GTE_RERANKER_ENABLED = True
         s.GTE_RERANKER_MODEL = "Alibaba-NLP/gte-reranker-modernbert-base"
         s.GTE_RERANKER_MAX_LENGTH = 512
-        s.GTE_RERANKER_BACKEND = backend
-        s.GTE_RERANKER_ONNX_FILE = onnx_file
         s.GTE_RERANKER_FALLBACK_TO_FLASHRANK = True
         return s
 
     def test_gte_torch_backend_loads_plain_crossencoder(self):
-        """v5.98 Lever 3: default torch backend loads ST CrossEncoder with no onnx kwargs."""
+        """GTE loader constructs a plain ST CrossEncoder (torch fp32 — the only
+        backend since the 5.131.0 deps train removed the dormant onnx-int8 path)."""
         from yadgar.backend.ml_client import LocalMLClient
 
-        client = LocalMLClient(self._gte_settings("torch"))
+        client = LocalMLClient(self._gte_settings())
         fake_model = MagicMock()
         fake_model.predict.return_value = [0.5, 0.6]
         with patch("sentence_transformers.CrossEncoder", return_value=fake_model) as ctor:
@@ -286,43 +285,12 @@ class TestLocalMLClientNoModuleLevelImport:
         assert "backend" not in kwargs
         assert "model_kwargs" not in kwargs
 
-    def test_gte_onnx_int8_backend_passes_onnx_kwargs(self):
-        """v5.98 Lever 3: onnx-int8 backend loads via backend='onnx' + the quantized file."""
-        from yadgar.backend.ml_client import LocalMLClient
-
-        client = LocalMLClient(self._gte_settings("onnx-int8", onnx_file="onnx/model_int8.onnx"))
-        fake_model = MagicMock()
-        fake_model.predict.return_value = [0.7, 0.8]
-        with patch("sentence_transformers.CrossEncoder", return_value=fake_model) as ctor:
-            scores = client._try_gte_reranker("q", ["a", "b"])
-        assert scores == [0.7, 0.8]
-        _, kwargs = ctor.call_args
-        assert kwargs.get("backend") == "onnx"
-        assert kwargs.get("model_kwargs") == {"file_name": "onnx/model_int8.onnx"}
-
-    def test_gte_onnx_int8_load_failure_raises_loud_not_silent(self):
-        """v5.98 Lever 3 guardrail (DORMANT): when onnx-int8 is explicitly selected and the
-        ONNX reranker fails to load, _try_gte_reranker must raise OnnxRerankerUnavailableError
-        — NOT silently fall back to FlashRank/zeros (the quiet quality landmine)."""
-        import pytest
-
-        from yadgar.backend.ml_client import LocalMLClient, OnnxRerankerUnavailableError
-
-        client = LocalMLClient(self._gte_settings("onnx-int8"))
-
-        def _boom(*a, **k):
-            raise RuntimeError("libgomp.so.1: cannot open shared object file")
-
-        with patch("sentence_transformers.CrossEncoder", side_effect=_boom):
-            with pytest.raises(OnnxRerankerUnavailableError):
-                client._try_gte_reranker("q", ["a", "b"])
-
     def test_gte_torch_load_failure_still_falls_back_silently(self):
-        """Contrast: a torch-backend load failure is a transient/generic failure and DOES
-        fall back (returns None -> caller tries FlashRank), unlike the onnx-int8 guardrail."""
+        """A GTE load failure is transient/generic and DOES fall back
+        (returns None -> caller tries FlashRank)."""
         from yadgar.backend.ml_client import LocalMLClient
 
-        client = LocalMLClient(self._gte_settings("torch"))
+        client = LocalMLClient(self._gte_settings())
 
         def _boom(*a, **k):
             raise RuntimeError("transient model download hiccup")

@@ -195,8 +195,6 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_OLLAMA_URL", "http://localhost:11434", "string"),
     ConfigEntry("YADGAR_OLLAMA_MODEL", "qwen3:8b", "string"),
     ConfigEntry("YADGAR_CONFLICT_K", "5", "int"),
-    ConfigEntry("YADGAR_GTE_RERANKER_BACKEND", "torch", "string"),
-    ConfigEntry("YADGAR_GTE_RERANKER_ONNX_FILE", "onnx/model_int8.onnx", "string"),
     # ── Logging ─────────────────────────────────────────────────────────────
     ConfigEntry("YADGAR_BACKEND_LOG_LEVEL", "warn", "string"),
     ConfigEntry("YADGAR_CORE_LOG_LEVEL", "WARNING", "string"),

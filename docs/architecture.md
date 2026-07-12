@@ -91,7 +91,7 @@ consolidation/orchestrator.py (ConsolidationScheduler)
    - Spreading activation from seed entities
 4. **WRRF fusion** — Weighted Reciprocal Rank Fusion blends signal lists
 5. **Confidence gate** — low-confidence result sets trigger fallback strategy
-6. **Reranking** — cross-encoder (FlashRank or GTE-ModernBERT) scores top-K pairs. Opt-in int8-onnx backend available via `YADGAR_CROSS_ENCODER_BACKEND=onnx-int8` (BACKEND_VERSION 5.8.0); default remains fp32 (`"st"`). Gated at load time in `ml_client._try_st_cross_encoder`. (`yadgar/config.py`, `yadgar/backend/ml_client.py`)
+6. **Reranking** — cross-encoder (FlashRank or GTE-ModernBERT) scores top-K pairs, torch fp32. (ONNX backends removed: `CROSS_ENCODER_BACKEND` in R3 after the ADR-0043 NO-GO; the dormant `GTE_RERANKER_BACKEND=onnx-int8` path in the 5.131.0 deps train — optimum-onnx caps transformers<4.58, incompatible with the transformers>=5.0 floor.) (`yadgar/_shared/config/config.py`, `yadgar/backend/ml_client/ml_client.py`)
 7. **NLI entailment** — optional DeBERTa entailment signal blended in
 8. **Multi-passage aggregation** — evidence clusters formed for open-domain queries
 9. **Adversarial filter** — score-gap and diversity checks before return

@@ -1,6 +1,6 @@
 # T4 — Ettin CE-model swap: train plan (AUDITED)
 
-**Status:** AUDITED — decisions resolved, Car 0 in build. Opus + advisor adversarial audit
+**Status:** AUDITED — decisions resolved, Car 0 in build. **Cars 1-4 (the Ettin swap) BLOCKED on the deps-modernization train (transformers 5.x — Ettin needs `TokenizersBackend`, absent from the current pin); resumes after** (`docs/plans/deps-modernization-train-2026-07-12.md`). Opus + advisor adversarial audit
 complete 2026-07-12 (working-tree draft; no code changed, no branch). Every
 load-bearing claim re-verified against master (core 5.129.0 / backend 5.40.0) via
 four parallel investigators; per-claim verification table embedded below. Line-number

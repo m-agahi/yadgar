@@ -41,7 +41,7 @@ jobs:
     # TODO: candidate for dropping ml extra after import-graph proof — scripts/,
     # server/, hooks/ tests may not need heavy ML deps.
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     env:
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
@@ -91,7 +91,7 @@ jobs:
   test-shared:
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     env:
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
@@ -142,7 +142,7 @@ jobs:
     needs: [test-fast]  # scheduling throttle only (RAM waves, ADR-0073/0079)
     if: ${{ always() }}  # run regardless of earlier-leg verdicts — full visibility per round (user 2026-07-11)
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     env:
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
@@ -207,7 +207,7 @@ jobs:
     needs: [test-fast, test-shared, test-backend]  # scheduling throttle only
     if: ${{ always() }}
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     env:
       HF_HUB_OFFLINE: '1'
       HF_HUB_DISABLE_XET: '1'
@@ -275,7 +275,7 @@ jobs:
     needs: [test-fast, test-shared, test-backend, test-core]  # scheduling throttle only
     if: ${{ always() }}
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -325,7 +325,7 @@ jobs:
   invariant-checks:
     runs-on: ubuntu-latest
     container:
-      image: docker.io/openfantasy/yadgar-ci:5.121.1
+      image: docker.io/openfantasy/yadgar-ci:5.131.0
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -399,7 +399,7 @@ jobs:
     # Use yadgar-ci-viz which extends yadgar-ci with Playwright + Chromium pre-baked.
     # Saves ~75s vs inline apt-get install on every run (v5.46.9 CI speedup).
     container:
-      image: docker.io/openfantasy/yadgar-ci-viz:5.121.1
+      image: docker.io/openfantasy/yadgar-ci-viz:5.131.0
     steps:
       # Playwright + Chromium + SurrealDB + HF model pre-baked in yadgar-ci-viz.
       # No apt-get install or binary download steps needed.
