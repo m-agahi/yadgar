@@ -341,3 +341,190 @@ NOT guaranteed to belong to the trace you are attributing.
 distinct queries carry the wiki cross-scoring CE pass + a fuller candidate pool,
 whereas Car 0's cold (entity-rich) queries were effectively single-CE-pass. Same CE
 model, extra pass — not a different bottleneck.
+
+## Run log — CPU-scaling series 2026-07-12 (backend --cpus 2 → 3 → 4, core 5.129.0 / backend 5.40.0)
+
+**Context:** Three back-to-back runs with identical core version (5.129.0) and backend version
+(5.40.0), varying only `--cpus` on the backend container: 2 → 3 → 4. Establishes the CPU-scaling
+curve for the warm CE-miss recall regime and confirms which T3 Car 3 knobs engage at each step.
+The 2-CPU run also serves as the #186 post-ship verification (restore() fix from 5.128.0→5.129.0).
+
+### Consolidated 2v3v4 table
+
+| Regime | 2-CPU | 3-CPU | 4-CPU | 2→3 Δ | 3→4 Δ | 2→4 Δ | Notes |
+|---|---|---|---|---|---|---|---|
+| **WARM CE-miss** (6 distinct, valid) | **10,955ms** | **7,916ms** | **6,807ms** | **−28%** | **−14%** | **−38%** | Primary metric; CE-miss validity gate PASS all three runs |
+| **HOT** (exact-repeat, CE-cache hit) | **1,126ms** | **875ms** | **3,452ms INVALID** | −22% | — | — | 4-CPU HOT not comparable: cold graph state (see note) |
+| **restore()** | **4,348ms** | **4,264ms** | **4,142ms** | −2% | −3% | −5% | Flat; DB-IO bound, not CE-bound |
+
+**HOT 4-CPU validity note:** 4-CPU backend had only 1 startup hook recall before measurement
+(miss=14). Graph cache was cold at HOT-block time — PPR/graph traversal dominated, making
+3,452ms unrepresentative of steady-state HOT. Not comparable to 2-CPU or 3-CPU HOT values.
+
+### Knob attribution: what each CPU buys
+
+| Step | Knob change | Formula | Mechanism | Observable evidence |
+|---|---|---|---|---|
+| 2→3 CPU | **gather_budget: 1→2** (dominant) | `min(ncpu-1, 2)` | Two CE candidate batches scored concurrently; serial at 2-CPU, parallel at 3-CPU | Concurrent `score_ce_cached` span pairs (Q2: 2,441ms + 344ms overlap; Q4: 3,778ms + 683ms overlap) |
+| 3→4 CPU | **torch intra-op: 1→2** (secondary) | `ncpu//2` | More ML matrix threads; each individual CE span shorter | Per-span CE −8–69% shorter at 4-CPU (large batch: 2,441–3,778ms → 2,248–2,423ms; small: 683ms → 212ms) |
+| 4→5 CPU | No new knob | gather_budget saturates at 2; torch intra-op capped at 2 via `min(ncpu//2, 2)` | 5th CPU ≈ no warm-CE gain under current config | — |
+
+CE is ~70–90% of pipeline cost (`_apply_rerank_pipeline` outer span); gather_budget=2 parallelises the
+dominant stage → biggest lever. torch intra-op=2 accelerates each CE call individually → secondary.
+
+### Recommendation
+
+- **4 CPUs = sweet spot (owner verdict, 2026-07-12).** The additional ~1.1s warm improvement
+  at 3→4 (7,916→6,807ms) is judged worth the extra CPU. gather_budget=2 unlocks parallel CE
+  scoring (−28% warm, dominant at 2→3); torch intra-op=2 adds −14% on top (3→4, secondary).
+- **Note:** backend is currently running `--cpus 2` as a deliberate temporary posture during
+  T4 Ettin planning/benchmarking — this is not the recommendation.
+- **5th CPU adds nothing** under current config (both gather_budget and torch intra-op saturate at ≤4 CPUs).
+
+### #186 post-ship verification (2-CPU run, 5.129.0)
+
+| Claim | Observed | Verdict |
+|---|---|---|
+| restore() 264s → ~5s | **4,348ms (4.35s)** | **CONFIRMED — 60× speedup** |
+| HOT −75% vs Car 0 (graph cache) | 1,126ms vs 4,555ms = −75% | **CONFIRMED** — attributable to new `graph` cache counter in 5.40.0 |
+| embed cache 0 hits / 0 misses across all runs | 0/0 every run (all 3 CPU configs) | **OBSERVED — open question flagged** (embed.snap corpus growth vs cache layer mismatch?) |
+
+### Per-round run logs
+
+#### Round 1: 2-CPU baseline
+
+- **Deployment:** core 5.129.0, backend 5.40.0, `--cpus 2`, NanoCpus=2000000000
+- **T3 Car 3 config:** torch intra-op=1 (`ncpu//2=1`), gather_budget=1 (`min(1,2)=1`)
+- **Backend uptime at first recall:** ~110s; models warm via startup hook recall
+- **CE state before block:** hit=5, miss=16 (fresh; no hook-recall pre-warming of test queries)
+- **CE-miss validity:** Δmiss=+94, +14/query — PASS
+- **Knobs:** pool=3, RECALL_HEAVY_CONCURRENCY=2, RERANK_MAX_CONCURRENCY=3, HOOK_RECALL_POOL_WORKERS=2, YADGAR_AVAILABLE_CPUS=0
+
+Queries (same as Car 0 T3 baseline set):
+1. offload freeze fix daemon, 2. consolidation cycle engram storage sleep, 3. vacuum bloat compaction SurrealDB,
+4. knowledge graph priors PPR spreading activation rerank, 5. N+1 query fix graph helpers cls restore timeout,
+6. heat decay thermodynamics memory importance valence score
+
+| Regime | ms |
+|---|---|
+| WARM Q1 | 8,278 |
+| WARM Q2–Q6 avg | ~11,490 |
+| **WARM mean (6)** | **10,955** |
+| HOT (Q1 repeat) | **1,126** |
+| restore() | **4,348** |
+
+Cache deltas (backend :8001/metrics):
+
+| cache | Δhit | Δmiss | hit_rate |
+|---|---|---|---|
+| ce | +43 | +94 | 31% |
+| embed | 0 | 0 | — |
+| memory_doc | +3,043 | +1,404 | 68% |
+| graph | +157 | +1,525 | 9% |
+
+#### Round 2: 3-CPU
+
+- **Deployment:** core 5.129.0, backend 5.40.0, `--cpus 3`, NanoCpus=3000000000
+- **T3 Car 3 config:** torch intra-op=1 (still `ncpu//2=1` at 3), gather_budget=2 (`min(2,2)=2`)
+- **Caveat:** first warm block INVALID — 9 startup hook recalls pre-warmed CE to 100% hit rate (0 CE misses
+  during measurement). CE cache persists across daemon restart; reused query topics hit cache immediately.
+- **Corrective block:** 6 novel queries (topics absent from baseline set) run after verifying CE state; CE-miss
+  validity gate: Δmiss=+90, +15/query — PASS
+
+Novel queries (corrective block):
+1. consolidation scheduler timer interval nightly systemd dispatch,
+2. wiki page versioning draft approval workflow branch,
+3. DLQ dead letter queue taxonomy error classification requeue dismiss,
+4. hook installation post-tool-use session start auto-capture action log,
+5. vacuum quiescence storage bloat cleanup retention purge archive,
+6. span naming module qualname tracing dynamic component label
+
+| Regime | ms |
+|---|---|
+| **WARM CE-miss mean (6, corrective)** | **7,916** |
+| HOT (Q1 exact-repeat) | **875** |
+| restore() | **4,264** |
+
+Cache deltas (corrective block only):
+
+| cache | Δhit | Δmiss | hit_rate |
+|---|---|---|---|
+| ce | +21 | +90 | varies |
+| embed | 0 | 0 | — |
+| memory_doc | +3,912 | +535 | 88% |
+| graph | +135 | +70 | 66% |
+
+gather_budget=2 confirmed via concurrent `score_ce_cached` spans:
+- Q2: two spans at 2,441ms + 344ms ending simultaneously → parallel gather
+- Q4: two spans at 3,778ms + 683ms ending simultaneously → parallel gather
+
+#### Round 3: 4-CPU
+
+- **Deployment:** core 5.129.0, backend 5.40.0, `--cpus 4`, NanoCpus=4000000000
+- **T3 Car 3 config:** torch intra-op=2 (`ncpu//2=2`, NEW at 4-CPU), gather_budget=2 (same as 3-CPU, saturated)
+- **Backend uptime at first recall:** ~142s; CE state before block: hit=5, miss=14 (~1 startup hook recall only)
+- **CE-miss validity:** Δmiss=+97, +16.2/query — PASS
+
+Novel queries (topics absent from baseline AND 3-CPU corrective sets):
+1. checkpoint restore protocol post-compaction context reconstruction,
+2. memory heat decay thermodynamic importance valence score aging,
+3. agent prompt seeding bootstrap library pattern dispatch prelude,
+4. CI wave topology fan-out parallel test runner xdist worker,
+5. torn manifest recovery detection version pre-claim reservation release,
+6. reembed all embedding model migration batch reindex corpus vectors
+
+| Regime | ms |
+|---|---|
+| WARM Q1 | 7,096 |
+| WARM Q2 | 4,336 |
+| WARM Q3 | 8,520 |
+| WARM Q4 | 4,779 |
+| WARM Q5 | 8,264 |
+| WARM Q6 | 7,848 |
+| **WARM mean (6)** | **6,807** |
+| HOT (Q1 repeat) | 3,452 (INVALID — cold graph) |
+| restore() | **4,142** |
+
+Cache deltas:
+
+| cache | Δhit | Δmiss | hit_rate |
+|---|---|---|---|
+| ce | +18 | +97 | 16% |
+| embed | 0 | 0 | — |
+| memory_doc | +5,397 | +399 | 93% |
+| graph | +231 | +87 | 73% |
+
+torch intra-op=2 evidence — per-span CE vs 3-CPU:
+
+| Span | 3-CPU | 4-CPU | Δ |
+|---|---|---|---|
+| Large CE batch | 2,441–3,778ms | 2,248–2,423ms | −8–40% shorter |
+| Small CE batch | 344–683ms | 200–212ms | −38–69% shorter |
+
+### Protocol lessons (permanent procedure updates)
+
+The following are standing procedure requirements, not just observations from this series.
+Add these checks to every future warm CE-miss measurement block.
+
+**(a) CE cache persists across daemon restarts — reused query sets never re-miss.**
+Every warm CE-miss block requires FRESH DISTINCT queries. If the same topics were queried
+in a prior session (including startup hook recalls), CE will be cached and the block measures
+HOT-regime, not warm CE-miss. There is no guaranteed-clean CE state without a fresh backend restart
+AND novel queries.
+
+**(b) CE-miss validity gate — block is invalid if ≥5 CE misses/query are not observed.**
+Before block: record `yadgar_cache_miss_total{cache="ce"}` as M0.
+After block: verify Δ = (M1 − M0) ≥ 5 × n_queries (expected ~14/query for a 6-query block).
+If Δ ≈ 0 or < 5/query → CE was cached → block is invalid → discard and rerun with novel queries.
+Also check `yadgar_embed_ce_cache_misses_total` (ML inference layer) as secondary gate.
+
+**(c) Startup hook recalls pre-fill the CE cache — "warm" ≠ "post-restart".**
+At 3-CPU with pool=3 and HOOK_RECALL_POOL_WORKERS=2, 9 startup hook recalls completed before
+measurement — fully caching CE for common query topics. Verify CE miss state from metrics,
+not from assumptions about backend uptime. A 60s-old backend can have a hot CE cache.
+
+**(d) Per-run cache series scrape at :8001/metrics before and after every timed block.**
+Record `yadgar_cache_{hit,miss}_total{cache="ce"}` before and after every measurement block.
+This is the validity gate data and enables CE-miss rate verification. Also record graph,
+memory_doc, embed, and engram_slot for completeness. (Protocol extended in PR #186; align
+to that standard, do not duplicate counter scrape steps.)
