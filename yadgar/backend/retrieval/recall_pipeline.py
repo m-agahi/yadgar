@@ -470,9 +470,10 @@ def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wr
 ) -> list[dict]:
     """Fan out recall to MemoryProvider + WikiProvider, fuse + dedup results.
 
-    Called ONLY when UNIFIED_RECALL_ENABLED=True.  Flag-False takes the
-    legacy body below — this function is never entered in production until
-    the flag is explicitly enabled.
+    This IS the production recall path: ``embed_service`` calls it
+    unconditionally. (Docstring corrected T4 Car 0 — it previously claimed
+    ``UNIFIED_RECALL_ENABLED``-gated entry with a "legacy body below"; the flag
+    has been default-on since v5.80 and no legacy body exists.)
 
     Step 3 additions (directory scoping):
       - MemoryProvider applies Python-side is_directory_eligible filter.

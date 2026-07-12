@@ -354,12 +354,21 @@ The 2-CPU run also serves as the #186 post-ship verification (restore() fix from
 | Regime | 2-CPU | 3-CPU | 4-CPU | 2→3 Δ | 3→4 Δ | 2→4 Δ | Notes |
 |---|---|---|---|---|---|---|---|
 | **WARM CE-miss** (6 distinct, valid) | **10,955ms** | **7,916ms** | **6,807ms** | **−28%** | **−14%** | **−38%** | Primary metric; CE-miss validity gate PASS all three runs |
-| **HOT** (exact-repeat, CE-cache hit) | **1,126ms** | **875ms** | **3,452ms INVALID** | −22% | — | — | 4-CPU HOT not comparable: cold graph state (see note) |
+| **HOT** (exact-repeat, CE-cache hit) | **1,126ms** | **875ms OUTLIER** | **3,452ms INVALID** | — | — | — | HOT not comparable cross-run (standing caveat below); 875ms = subgraph-residency outlier, NOT a per-CPU speedup; 4-CPU cold graph state (see note) |
 | **restore()** | **4,348ms** | **4,264ms** | **4,142ms** | −2% | −3% | −5% | Flat; DB-IO bound, not CE-bound |
 
 **HOT 4-CPU validity note:** 4-CPU backend had only 1 startup hook recall before measurement
 (miss=14). Graph cache was cold at HOT-block time — PPR/graph traversal dominated, making
 3,452ms unrepresentative of steady-state HOT. Not comparable to 2-CPU or 3-CPU HOT values.
+
+**STANDING CAVEAT — HOT regime is unreliable cross-run (RCA Anomaly 2, 2026-07-12; T4 Car 0):**
+do NOT compare single-query HOT numbers across runs. Recall has **no output cache (#88)** — a
+HOT repeat re-runs the full KNN+FTS+PPR+fusion compute even with every CE score cached; the true
+HOT floor is **≈4.3s @4cpu**, compute-bound and warm-state-dependent. The 3-CPU **875ms** above
+was a **graph-subgraph-residency outlier** (a hook-recall pre-warmed that exact query's
+neighbourhood), NOT a per-CPU speedup — discard it as an artifact. HOT is only meaningful as a
+within-session, same-graph-state delta. Future measurers: book WARM CE-miss as the primary
+regime; treat any sub-second HOT reading as residency luck until #88 lands.
 
 ### Knob attribution: what each CPU buys
 

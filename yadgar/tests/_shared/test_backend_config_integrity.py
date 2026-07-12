@@ -181,32 +181,35 @@ def test_get_embed_checkpoint_hash_yaml(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 7b. _get_ce_checkpoint_hash inner fallback (EMBEDDING_MODEL, default "default")
+# 7b. _get_ce_checkpoint_hash — reranker-model resolution (T4 Car 0 fix).
+# Pre-fix these tests asserted the EMBEDDING-model fallback (the split-brain
+# bug: a reranker swap never changed _ckpt). Now the hash derives from
+# GTE_RERANKER_MODEL + CE_SCORING_VERSION salt.
 # ---------------------------------------------------------------------------
 
 
-def test_get_ce_checkpoint_hash_inner_fallback_env(monkeypatch):
-    """CE_MODEL unset → inner resolve_knob for EMBEDDING_MODEL used."""
+def test_get_ce_checkpoint_hash_reranker_env(monkeypatch):
+    """Env override of GTE_RERANKER_MODEL feeds the CE checkpoint hash."""
     import hashlib
 
-    monkeypatch.delenv("YADGAR_CE_MODEL", raising=False)
-    monkeypatch.setenv("YADGAR_EMBEDDING_MODEL", "inner-model")
+    monkeypatch.setenv("YADGAR_GTE_RERANKER_MODEL", "env-reranker")
     from yadgar.backend.embed_service import _get_ce_checkpoint_hash
+    from yadgar.backend.embed_service.embed_service import CE_SCORING_VERSION
 
-    expected = hashlib.sha256(b"inner-model").hexdigest()[:16]
+    expected = hashlib.sha256(f"env-reranker:{CE_SCORING_VERSION}".encode()).hexdigest()[:16]
     assert _get_ce_checkpoint_hash() == expected
 
 
-def test_get_ce_checkpoint_hash_inner_fallback_yaml(monkeypatch, tmp_path):
-    """CE_MODEL unset, EMBEDDING_MODEL unset → yaml value for EMBEDDING_MODEL used."""
+def test_get_ce_checkpoint_hash_reranker_yaml(monkeypatch, tmp_path):
+    """Env unset → yaml value for GTE_RERANKER_MODEL used."""
     import hashlib
 
-    monkeypatch.delenv("YADGAR_CE_MODEL", raising=False)
-    monkeypatch.delenv("YADGAR_EMBEDDING_MODEL", raising=False)
-    _write_yaml(tmp_path, "embedding_model: yaml-ce-inner\n")
+    monkeypatch.delenv("YADGAR_GTE_RERANKER_MODEL", raising=False)
+    _write_yaml(tmp_path, "gte_reranker_model: yaml-reranker\n")
     from yadgar.backend.embed_service import _get_ce_checkpoint_hash
+    from yadgar.backend.embed_service.embed_service import CE_SCORING_VERSION
 
-    expected = hashlib.sha256(b"yaml-ce-inner").hexdigest()[:16]
+    expected = hashlib.sha256(f"yaml-reranker:{CE_SCORING_VERSION}".encode()).hexdigest()[:16]
     assert _get_ce_checkpoint_hash() == expected
 
 
