@@ -12,7 +12,14 @@ FROM python:3.14-slim
 
 LABEL org.opencontainers.image.source="https://codeberg.org/maxagahi/yadgar"
 LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model"
-LABEL org.opencontainers.image.version="5.121.1"
+# Version LABEL is build-arg-wired (T4 Car 0 drift fix — was hardcoded 5.121.1
+# while pyproject sat at 5.129.0; yadgar-ci has NO auto-sync pipeline, it is
+# manually rebuilt/pushed). Pass the current pyproject version at build time:
+#   docker build -f Dockerfile.ci --build-arg YADGAR_VERSION=$(python3 scripts/bump_version.py --current-version) .
+# The default below documents the version current at the last LABEL touch; the
+# authoritative tag is whatever the manual rebuild pushes (ci-pr.yaml pins it).
+ARG YADGAR_VERSION=5.130.0
+LABEL org.opencontainers.image.version="${YADGAR_VERSION}"
 
 # System deps needed in CI:
 #   make             — Makefile integration tests (B6 fix)

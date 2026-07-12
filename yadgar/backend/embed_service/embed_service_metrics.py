@@ -316,6 +316,12 @@ def _default_backend_cache_instances() -> dict:
     series appear with 0 values even before the first recall registers them —
     deterministic, always-present metrics instead of appear-on-first-hit.
 
+    T4 Car 0: additionally surfaces the retriever's ``EmbeddingEngine``
+    query-embed cache as ``query_embedding`` — its ``record_cache_*`` calls land
+    in the SHARED registry (invisible here), so the engine's instance counters
+    (hits/misses/evictions/size_entries, duck-typed to the Cache surface) are
+    its only backend emitter.
+
     Read at SCRAPE time only. A degraded import must never break ``/metrics``.
     """
     from yadgar.backend.cache import _REGISTRY  # noqa: PLC0415
@@ -342,7 +348,19 @@ def _default_backend_cache_instances() -> dict:
         except Exception:  # noqa: BLE001 — a degraded cache must not break /metrics
             pass
 
-    return dict(_REGISTRY)
+    instances = dict(_REGISTRY)
+
+    # Retriever query-embed cache (T4 Car 0): duck-typed via the engine's
+    # instance counters. Absent engine (core-side / early startup) → no entry.
+    try:
+        import yadgar._shared.runtime.state as _st  # noqa: PLC0415
+
+        if _st._embeddings is not None:
+            instances["query_embedding"] = _st._embeddings
+    except Exception:  # noqa: BLE001 — a degraded engine must not break /metrics
+        pass
+
+    return instances
 
 
 class CacheStatsCollector:

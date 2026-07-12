@@ -65,6 +65,18 @@ class EmbeddingEngine:
         self._model = None
         self._unavailable = False
         self._query_cache: OrderedDict[str, bytes] = OrderedDict()
+        # T4 Car 0: instance counters — the backend CacheStatsCollector reads
+        # these (duck-typed: hits/misses/evictions/size_entries) to surface the
+        # query-embed cache at :8001/metrics. The record_cache_* calls below
+        # land in the SHARED registry, invisible at the backend scrape.
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
+
+    @property
+    def size_entries(self) -> int:
+        """Entry count — CacheStatsCollector surface (backend Cache parity)."""
+        return len(self._query_cache)
 
     @observe(tier="stage")
     def _is_model_cached(self) -> bool:
@@ -301,6 +313,7 @@ class EmbeddingEngine:
         try:
             if text in self._query_cache:
                 self._query_cache.move_to_end(text)
+                self.hits += 1
                 try:
                     from yadgar._shared.observability.metrics import (
                         record_cache_hit,
@@ -326,10 +339,12 @@ class EmbeddingEngine:
             result = arr.tobytes()
             self._query_cache[text] = result
             self._query_cache.move_to_end(text)
+            self.misses += 1
             _evicted = False
             if len(self._query_cache) > _CACHE_MAX:
                 self._query_cache.popitem(last=False)
                 _evicted = True
+                self.evictions += 1
             try:
                 from yadgar._shared.observability.metrics import (
                     record_cache_evict,

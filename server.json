@@ -7,13 +7,13 @@
     "url": "https://codeberg.org/maxagahi/yadgar",
     "source": "codeberg"
   },
-  "version": "5.129.0",
-  "backend_version": "5.40.0",
+  "version": "5.130.0",
+  "backend_version": "5.41.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "yadgar",
-      "version": "5.129.0",
+      "version": "5.130.0",
       "transport": {
         "type": "stdio"
       }

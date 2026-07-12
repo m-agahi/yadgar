@@ -198,16 +198,33 @@ def _cache_snapshot_interval_sec() -> int:
     )
 
 
+# Scoring-version salt for the CE checkpoint hash. Bump whenever CE *scoring
+# semantics* change (preprocessing, truncation, score transform) — the ckpt
+# mismatch at snapshot load then discards the whole persistent snapshot via the
+# existing discard-on-mismatch path. Model-id changes bust the cache on their
+# own; the salt covers legitimately-keyed but semantically-stale scores.
+CE_SCORING_VERSION = "1"
+
+
 @observe(tier="hot")
 def _get_ce_checkpoint_hash() -> str:
-    """Return a short hash identifying the current CE model checkpoint."""
+    """Return a short hash identifying the current CE RERANKER checkpoint.
+
+    T4 Car 0 fix: hashes ``GTE_RERANKER_MODEL`` — the model
+    ``ml_client._load_gte_reranker`` actually loads — NOT the embedding model
+    (the pre-fix split-brain: a reranker swap left ``_ckpt`` unchanged, so the
+    disk-persistent ``ce`` snapshot served stale scores across the swap, while
+    an embedding-model change wrongly busted CE scores).
+    """
     import hashlib  # noqa: PLC0415
 
-    model = os.environ.get(
-        "YADGAR_CE_MODEL",
-        resolve_knob("YADGAR_EMBEDDING_MODEL", "EMBEDDING_MODEL", str, "default"),
+    model = resolve_knob(
+        "YADGAR_GTE_RERANKER_MODEL",
+        "GTE_RERANKER_MODEL",
+        str,
+        "Alibaba-NLP/gte-reranker-modernbert-base",
     )
-    return hashlib.sha256(model.encode()).hexdigest()[:16]
+    return hashlib.sha256(f"{model}:{CE_SCORING_VERSION}".encode()).hexdigest()[:16]
 
 
 @observe(tier="hot")
