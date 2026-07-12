@@ -34,10 +34,21 @@ class _GapDetectionMixin:
 
     @observe(tier="stage")
     def _detect_isolated_entities(self, all_entities: list[dict]) -> list[dict]:
-        """(a) Entities with 0 or 1 relationships — poorly integrated."""
+        """(a) Entities with 0 or 1 relationships — poorly integrated.
+
+        Uses ONE name-free batched adjacency query for the whole entity set
+        (``_get_adjacent_batch``) rather than a per-entity ``_get_adjacent``
+        call. The per-entity path defaults to ``with_names=True`` — each call
+        fires 1 + 2*K name-enrichment queries per relationship, which turned
+        restore() into a ~5,000-round-trip / ~264s N+1 over the ~480-entity
+        graph. This check only reads ``len(neighbors)``, never a neighbour
+        name, so the name-free batch (byte-identical neighbour counts per its
+        contract) is a drop-in that collapses the storm to one frontier query.
+        """
         gaps: list[dict] = []
+        adjacency = self._graph._get_adjacent_batch([entity["id"] for entity in all_entities], None)
         for entity in all_entities:
-            neighbors = self._graph._get_adjacent(entity["id"], None)
+            neighbors = adjacency.get(entity["id"], [])
             if len(neighbors) <= 1:
                 gaps.append(
                     {

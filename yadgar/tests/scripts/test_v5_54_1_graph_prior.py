@@ -58,11 +58,12 @@ class TestComputeGraphPriors:
         storage.get_all_entities.return_value = [
             {"id": 101, "name": "FooModule", "heat": 1.0},
         ]
-        # FooModule has 3 neighbors with total weight 5.0
-        graph._get_adjacent.return_value = [
-            {"entity_id": 102, "weight": 2.0},
-            {"entity_id": 103, "weight": 3.0},
-        ]
+        # FooModule (eid=101) has 2 neighbors with total weight 5.0.
+        # _compute_graph_priors now issues ONE _get_adjacent_batch call for the
+        # whole entity set instead of per-entity _get_adjacent calls.
+        graph._get_adjacent_batch.return_value = {
+            101: [{"entity_id": 102, "weight": 2.0}, {"entity_id": 103, "weight": 3.0}],
+        }
         storage.batch_writes = MagicMock()
 
         sched = self._make_consolidation_scheduler(storage, graph, settings)
@@ -97,14 +98,18 @@ class TestComputeGraphPriors:
             {"id": 202, "name": "LowDegreeEntity", "heat": 0.5},
         ]
 
-        def mock_adjacent(eid, _):
-            if eid == 201:  # high-degree: 10 connections total weight
-                return [{"entity_id": i, "weight": 2.0} for i in range(300, 305)]
-            if eid == 202:  # low-degree: 1 connection
-                return [{"entity_id": 400, "weight": 1.0}]
-            return []
+        def mock_adjacent_batch(entity_ids, _):
+            result = {}
+            for eid in entity_ids:
+                if eid == 201:  # high-degree: 5 connections, total weight 10.0
+                    result[eid] = [{"entity_id": i, "weight": 2.0} for i in range(300, 305)]
+                elif eid == 202:  # low-degree: 1 connection
+                    result[eid] = [{"entity_id": 400, "weight": 1.0}]
+                else:
+                    result[eid] = []
+            return result
 
-        graph._get_adjacent.side_effect = mock_adjacent
+        graph._get_adjacent_batch.side_effect = mock_adjacent_batch
         storage.batch_writes = MagicMock()
 
         sched = self._make_consolidation_scheduler(storage, graph, settings)
@@ -164,6 +169,109 @@ class TestComputeGraphPriors:
         stats = {}
         sched._compute_graph_priors(stats)
         assert stats["graph_prior_updated"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 1b. N+1 fix — _compute_graph_priors must use _get_adjacent_batch (not loop)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGraphPriorsBatchContract:
+    """Pins the batch-adjacency contract for _compute_graph_priors (N+1 fix).
+
+    _compute_graph_priors previously issued one _get_adjacent(eid, None) call
+    per entity — N round-trips for N entities. The fix replaces the loop with
+    ONE _get_adjacent_batch call. These tests pin that contract:
+    - _get_adjacent_batch is called exactly once (not once per entity).
+    - _get_adjacent is never called (the per-entity path is fully replaced).
+    - Output (batch_writes) is semantically identical to the old per-entity path.
+    """
+
+    def _make_consolidation_scheduler(self, storage, graph, settings):
+        from yadgar.backend.consolidation import ConsolidationScheduler
+
+        sched = object.__new__(ConsolidationScheduler)
+        sched._storage = storage
+        sched._graph = graph
+        sched._settings = settings
+        return sched
+
+    def _make_settings(self):
+        s = MagicMock()
+        s.GRAPH_ENTITY_MIN_LENGTH = 3
+        s.SIMILARITY_MATRIX_MAX_CANDIDATES = 4000
+        return s
+
+    def test_batch_called_once_not_per_entity(self):
+        """_get_adjacent_batch is called ONCE for all entities; _get_adjacent never called."""
+        storage = MagicMock()
+        graph = MagicMock()
+        settings = self._make_settings()
+
+        entities = [
+            {"id": 10, "name": "Alpha", "heat": 1.0},
+            {"id": 20, "name": "Beta", "heat": 1.0},
+            {"id": 30, "name": "Gamma", "heat": 1.0},
+        ]
+        storage.get_all_entities.return_value = entities
+        storage.get_memories_with_embeddings.return_value = [
+            {"id": 1, "content": "Alpha is here"},
+            {"id": 2, "content": "Beta is here"},
+            {"id": 3, "content": "nothing known"},
+        ]
+        # Batch returns all entities' neighbors in one call.
+        graph._get_adjacent_batch.return_value = {
+            10: [{"entity_id": 11, "weight": 3.0}],
+            20: [{"entity_id": 21, "weight": 1.0}],
+            30: [],
+        }
+        storage.batch_writes = MagicMock()
+
+        sched = self._make_consolidation_scheduler(storage, graph, settings)
+        stats = {}
+        sched._compute_graph_priors(stats)
+
+        # Core contract: batch called once, per-entity path never touched.
+        graph._get_adjacent_batch.assert_called_once()
+        graph._get_adjacent.assert_not_called()
+        assert stats["graph_prior_updated"] == 3
+
+    def test_batch_output_matches_per_entity_semantics(self):
+        """Prior scores from batch path equal what the old per-entity loop would compute."""
+        storage = MagicMock()
+        graph = MagicMock()
+        settings = self._make_settings()
+
+        entities = [
+            {"id": 100, "name": "HighConn", "heat": 1.0},
+            {"id": 200, "name": "LowConn", "heat": 1.0},
+        ]
+        storage.get_all_entities.return_value = entities
+        storage.get_memories_with_embeddings.return_value = [
+            {"id": 1, "content": "HighConn in memory"},
+            {"id": 2, "content": "LowConn in memory"},
+        ]
+        # HighConn: weight sum 6.0; LowConn: weight sum 1.0.
+        graph._get_adjacent_batch.return_value = {
+            100: [{"entity_id": 101, "weight": 2.0}, {"entity_id": 102, "weight": 4.0}],
+            200: [{"entity_id": 201, "weight": 1.0}],
+        }
+        storage.batch_writes = MagicMock()
+
+        sched = self._make_consolidation_scheduler(storage, graph, settings)
+        stats = {}
+        sched._compute_graph_priors(stats)
+
+        batch = storage.batch_writes.call_args[0][0]
+        prior_map: dict[int, float] = {}
+        for _sql, params in batch:
+            if params and "gp" in params:
+                prior_map[params["id"]] = params["gp"]
+
+        # HighConn memory: prior = 6.0/6.0 = 1.0 (max-normalised).
+        assert prior_map[1] == 1.0
+        # LowConn memory: prior = 1.0/6.0 ≈ 0.167.
+        assert 0.16 < prior_map[2] < 0.18
 
 
 # ---------------------------------------------------------------------------

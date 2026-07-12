@@ -813,5 +813,9 @@
   "store:_wiki_observe_stage": {
     "category": "hot-loop",
     "rationale": "Per-stage metric-emission helper called once per wiki-query stage (fts/embed_query/hnsw) inside the query hot path; it IS a metric writer (yadgar_wiki_query_stage_ms), so wrapping it with @observe would be circular and double-emit per stage."
+  },
+  "cls:_batch_entity_degree": {
+    "category": "trivial",
+    "rationale": "Module-level pure-compute helper: one list comprehension + one dict comprehension over already-fetched data. Called only from the @observe-d _compute_graph_priors; wrapping this 3-line helper adds redundant span nesting with zero dashboard signal (no I/O, no branching, no async)."
   }
 }

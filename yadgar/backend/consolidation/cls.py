@@ -9,6 +9,18 @@ from yadgar._shared.observability.observe import observe
 logger = logging.getLogger("yadgar.consolidation")
 
 
+def _batch_entity_degree(graph: object, all_entities: list[dict]) -> dict:
+    """Return {entity_id: total_weight_sum} via ONE batched adjacency query (N+1 fix).
+
+    Replaces the per-entity ``_get_adjacent`` loop in ``_compute_graph_priors``.
+    The degree computation only reads ``n["weight"]``, never a neighbour name, so
+    the name-free batch (``with_names`` defaults False) is a drop-in.
+    """
+    entity_ids = [ent["id"] for ent in all_entities]
+    adjacency = graph._get_adjacent_batch(entity_ids, None)
+    return {eid: sum(n["weight"] for n in adjacency.get(eid, [])) for eid in entity_ids}
+
+
 def _bump_cache_epoch_global(updated: int) -> None:
     """Bump the global cache-invalidation epoch after a consolidation prior recompute.
 
@@ -307,12 +319,12 @@ class _CLSMixin:
             return
 
         # Build entity-name → total degree (sum of relationship weights) map
-        # by querying adjacency for each entity once.
-        entity_degree: dict[int, float] = {}
-        for ent in all_entities:
-            eid = ent["id"]
-            neighbors = self._graph._get_adjacent(eid, None)
-            entity_degree[eid] = sum(n["weight"] for n in neighbors)
+        # via ONE name-free batched adjacency query for the whole entity set.
+        # The per-entity path defaults to with_names=True — each call fires
+        # 1 + 2*K name-enrichment queries per relationship. Degree computation
+        # only reads n["weight"], never a neighbour name, so the name-free batch
+        # is a drop-in that collapses the N per-entity round-trips to one query.
+        entity_degree: dict[int, float] = _batch_entity_degree(self._graph, all_entities)
 
         # Build entity name list once for substring matching
         entity_name_list: list[tuple[int, str]] = [

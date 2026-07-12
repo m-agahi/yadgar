@@ -454,7 +454,35 @@ this is a known issue or a regression. T4 keep-warm design should reduce restore
 preventing model idle-eviction (but idle-eviction default is 0=never per C10 finding, so model
 stays loaded — restore timeout may be a different bottleneck: the restore tool's own recall cascade).
 
+### ⚠️ Car 0 CORRECTION (2026-07-12, fix/pre-t4-anomalies) — read before trusting the split above
+
+The Car 0 warm attribution above (`backend ~800ms; core-side ~12.7s`, "warm bottleneck
+is the CORE-SIDE retrieval") is **WRONG — a trace_id mis-correlation.** RCA from the full
+Tempo span tree of the actual 13.6s warm traces:
+
+- The warm-common-case **`POST /recall` BACKEND span is ~13,616ms** = ~99% of the
+  13,635ms wall. Core-side is **~200ms** (thin forward + session side-effects).
+- The "~800ms backend" numbers were fast/hot `POST /recall` log lines
+  (`podman logs | grep`) attributed to the slow wall; `core = total − wrong-backend`
+  produced a **phantom 12.7s "core"**. No retrieval runs in core — `_st._retriever`
+  is `None` in the core process (retrieval fully sunk to backend, ADR-0078).
+- Real 13.6s warm breakdown (all BACKEND, `--cpus 2`, CPU-bound): CE ~9.3s across two
+  GTE passes (`_rerank_cross_encoder` ~6.1s + `recall.fanout.fuse` wiki cross-scoring
+  ~2.8s) + `spreading_activation` ~2.1s. CE cache MISS on fresh distinct query.
+
+**Corrected T4 conclusion:** the warm-common-case (13.6s) is **backend-CE-bound**, NOT
+core-bound. The lever is CE cost / candidate trim / more backend CPU / an output cache —
+NOT core-side KNN/PPR. See `docs/testing/recall-perf-checklist.md` correction block
+(2026-07-12) for the method rule (never `core = total − grep-of-logs`).
+
+The restore() bonus-check `FAIL — timeout` above was root-caused on the same branch: an
+N+1 entity-enrichment storm in `_detect_isolated_entities` (gap detection, run by the
+restore route), NOT the SR matrix. Fixed via `_get_adjacent_batch` (name-free single
+frontier query).
+
 ### T3 train closure
 
 All three cars shipped + Car 0 measured. T3 is complete. T4 (Ettin) A/B baseline:
 warm-common-case **~13,625ms**, cold **~10,847ms**, hot **~4,555ms** at core 5.128.0 / backend 5.39.0.
+Note: the warm figure is a BACKEND-CE-bound number (see Car 0 correction above), not a
+core-side one.

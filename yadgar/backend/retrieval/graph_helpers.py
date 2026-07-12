@@ -128,14 +128,32 @@ class _GraphHelpersMixin:
         if not content_entities:
             return []
 
-        # Count co-occurrence partners
+        # Count co-occurrence partners via ONE batched adjacency query (no name
+        # enrichment) + ONE batched entity-name lookup for all unique neighbor ids.
+        # The old per-entity _get_adjacent + per-neighbor get_entity_by_id pattern
+        # fires 1 + 2*K name-enrichment queries per entity and one storage round-trip
+        # per unique neighbour name — O(N²) on a dense graph. The batch path collapses
+        # both loops to two total queries regardless of graph size.
+        content_entity_ids = list(content_entities)
+        adjacency_batch = self._graph._get_adjacent_batch(content_entity_ids, None)
+
+        # Collect all neighbor ids that are not in the content-entity set so we can
+        # resolve their names in a single bulk fetch.
+        partner_weight: dict[int, float] = defaultdict(float)
+        for eid in content_entity_ids:
+            for n in adjacency_batch.get(eid, []):
+                nid = n["entity_id"]
+                if nid not in content_entities:
+                    partner_weight[nid] += n["weight"]
+
+        # Bulk-fetch entity rows for all partner ids; filter missing entries.
         partner_counts: dict[str, float] = defaultdict(float)
-        for eid in content_entities:
-            neighbors = self._graph._get_adjacent(eid, None)
-            for n in neighbors:
-                entity_row = self._storage.get_entity_by_id(n["entity_id"])
-                if entity_row and n["entity_id"] not in content_entities:
-                    partner_counts[entity_row["name"]] += n["weight"]
+        if partner_weight:
+            entity_map = self._storage.get_entities_by_ids(list(partner_weight))
+            for nid, weight in partner_weight.items():
+                entity_row = entity_map.get(nid)
+                if entity_row:
+                    partner_counts[entity_row["name"]] += weight
 
         # Sort by weight and return top
         sorted_partners = sorted(partner_counts.items(), key=lambda x: x[1], reverse=True)
