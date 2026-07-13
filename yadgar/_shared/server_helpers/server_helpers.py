@@ -449,7 +449,7 @@ def _count_markdown_headers(content: str) -> int:
     return len(_MD_HEADER_RE.findall(stripped))
 
 
-@observe(tier="hot", metric="tools.project._cosine_similarity")
+@observe(tier="hot", metric="tools.project._cosine_similarity", span=False)
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two float vectors."""
     dot = sum(x * y for x, y in zip(a, b, strict=False))

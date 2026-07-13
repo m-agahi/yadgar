@@ -170,6 +170,61 @@ def ce_metric_status(
         return None, None, "unavailable — YADGAR_BACKEND_METRICS_URL not configured"
 
 
+# ── P-SB (#50): CE source selection — observe-stage primary, legacy fallback ──
+
+#: Status strings for the re-pointed CE source (P-SB §3.5).
+CE_OBSERVE_STAGE_STATUS = "observe-stage source (current)"
+CE_LEGACY_STATUS = "embed-rerank source (legacy)"
+CE_SOURCE_UNAVAILABLE_STATUS = "unavailable — no CE source fed (observe-stage + legacy both count==0)"
+
+
+def _mean_ms_from_scrapes(
+    scrapes: tuple[tuple[float, float] | None, tuple[float, float] | None] | None,
+) -> tuple[float | None, int | None]:
+    """Return (mean_ms, count) from a (before, after) pair of (sum_seconds, count)
+    scrapes, or (None, None) when unusable (either scrape None, or d_count<=0)."""
+    if scrapes is None:
+        return None, None
+    before, after = scrapes
+    if before is None or after is None:
+        return None, None
+    d_sum = after[0] - before[0]
+    d_count = after[1] - before[1]
+    if d_count <= 0:
+        return None, None
+    return round((d_sum / d_count) * 1000.0, 2), int(d_count)
+
+
+def ce_source_status(
+    observe_stage: tuple[tuple[float, float] | None, tuple[float, float] | None] | None,
+    legacy: tuple[tuple[float, float] | None, tuple[float, float] | None] | None,
+) -> tuple[float | None, int | None, str]:
+    """Pick the CE latency source and return (ce_mean_ms, ce_calls, status).
+
+    Priority (P-SB §3.5 / #50):
+      1. observe-stage histogram
+         (yadgar_observe_stage_duration_seconds{stage="retrieval.ce.score_ce_cached"})
+         — the current in-process CE source, bridged onto :8001. PRIMARY.
+      2. legacy embed-rerank histogram
+         (yadgar_embed_rerank_duration_seconds{mode="ce"}) — only fed by old
+         RemoteMLClient /rerank daemons (ADR-0105 portability note). FALLBACK.
+      3. neither fed → unavailable.
+
+    Each arg is a ``(before, after)`` pair of ``(sum_seconds, count)`` scrapes (or
+    None if that endpoint/family was absent). observe-stage WINS whenever its
+    d_count>0, even if legacy is also fed.
+    """
+    obs_mean, obs_calls = _mean_ms_from_scrapes(observe_stage)
+    if obs_mean is not None:
+        return obs_mean, obs_calls, CE_OBSERVE_STAGE_STATUS
+
+    legacy_mean, legacy_calls = _mean_ms_from_scrapes(legacy)
+    if legacy_mean is not None:
+        return legacy_mean, legacy_calls, CE_LEGACY_STATUS
+
+    return None, None, CE_SOURCE_UNAVAILABLE_STATUS
+
+
 # ── Prometheus text-format parsing (for CE-span capture from /metrics) ────────
 
 _LABEL_RE = re.compile(r'(\w+)="([^"]*)"')

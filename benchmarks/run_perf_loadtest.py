@@ -16,31 +16,37 @@ CANONICAL RECALL-WALL METRIC (cross-version):
   ≈ 0 per RCA 2026-07-13) — prefer it for single-version characterisation where
   scraping is convenient.
 
-CE METRIC STATUS (as of architecture with ADR-0078 / T2 in-process move):
-  ``yadgar_embed_rerank_duration_seconds{mode="ce"}`` on the backend :8001
-  is emitted ONLY by the embed-service ``POST /rerank`` HTTP endpoint.  Recall
-  now runs CE **in-process** (``LocalMLClient.score_cross_encoder``) which
-  NEVER POSTs to ``/rerank`` and NEVER feeds that histogram → ``d_count`` is
-  always 0 → ``ce_mean_ms`` is **unavailable** on this architecture.
-  The harness detects this (``d_count == 0``) and emits ``ce_mean_ms: null``
-  plus an explicit ``ce_metric_status`` field explaining why.  A per-recall CE
-  signal requires exposing the ``@observe`` stage histogram on /metrics
-  (issue #50); until then, use Tempo span trees for CE attribution.
+CE METRIC STATUS (P-SB re-point, #50):
+  The PRIMARY CE source is now the ``@observe`` stage histogram
+  ``yadgar_observe_stage_duration_seconds{stage="retrieval.ce.score_ce_cached"}``
+  on the backend :8001 — this family IS fed by the in-process CE path
+  (``LocalMLClient.score_cross_encoder`` → ``score_ce_cached``) once P-SB promoted
+  that fn to ``tier="stage"`` and bridged the shared ``@observe`` registry onto
+  :8001. ``ce_mean_ms`` = d_sum/d_count × 1000 (per CE pass);
+  ``ce_wall_ms_per_recall`` = d_sum/N × 1000 (per-recall CE wall — the number the
+  pre-P-SB harness pretended to give).
+
+  The legacy ``yadgar_embed_rerank_duration_seconds{mode="ce"}`` histogram (fed
+  ONLY by the embed-service ``POST /rerank`` HTTP endpoint, i.e. old
+  ``RemoteMLClient`` daemons) is kept as a labelled FALLBACK for cross-version
+  portability (ADR-0105). The pure ``perf_contract.ce_source_status`` picks
+  observe-stage whenever fed, else legacy, else unavailable; ``ce_metric_status``
+  records which source was used.
 
   The prior "CE = 70-90% / 7-8.5s of recall wall" claim came from the
-  split-container era (``RemoteMLClient`` → ``/rerank`` HTTP), when the embed
-  histogram WAS fed.  It is stale on the current in-process architecture.  Per
-  the RCA (2026-07-13), CE ≈ 25% of one cold recall wall (6.2s); signal-gather
-  (~45%) and DB hydration (~23%) are the larger cold terms.
+  split-container era (``RemoteMLClient`` → ``/rerank`` HTTP). Per the RCA
+  (2026-07-13), CE ≈ 25% of one cold recall wall (6.2s); signal-gather (~45%)
+  and DB hydration (~23%) are the larger cold terms.
 
 WHAT IT MEASURES:
   * Fires N representative ``recall`` calls at a running daemon over the same
     stateless JSON-RPC ``/mcp`` envelope the MCP tool uses (reused verbatim from
     ``yadgar/tests/e2e/test_offload_e2e.py``), timing each with
     ``time.perf_counter()`` → recall p50/p95 (ms).
-  * Attempts CE-stage capture via ``yadgar_embed_rerank_duration_seconds``
-    delta — but emits ``ce_mean_ms: null`` with an explicit status field when
-    the histogram is unfed (in-process CE path, ADR-0078).
+  * Captures per-recall CE latency via the ``@observe`` CE stage histogram delta
+    (P-SB #50), falling back to the legacy embed-rerank histogram for old daemons;
+    emits ``ce_mean_ms: null`` with an explicit status field only when NEITHER
+    source is fed.
   * Emits a JSON report mirroring the run_longmemeval schema, and runs the pure
     ``perf_contract`` checker against the committed baseline (RECORD-ONLY: it
     prints the diff + any flags but ALWAYS exits 0; Phase-2 gating is a later PR).
@@ -80,8 +86,7 @@ from pathlib import Path
 # perf_contract is a sibling pure module (stdlib only).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from benchmarks.perf_contract import (  # noqa: E402
-    CE_DEAD_STATUS,
-    ce_metric_status,
+    ce_source_status,
     compare_to_baseline,
     parse_prom_metric,
 )
@@ -91,8 +96,13 @@ _BASELINE_PATH = _REPO_ROOT / "benchmarks" / "reports" / "perf_baseline.json"
 _REPORTS_DIR = _REPO_ROOT / "benchmarks" / "reports"
 _QUERIES_PATH = _REPO_ROOT / "benchmarks" / "golden" / "perf_queries.jsonl"
 
-_CE_METRIC = "yadgar_embed_rerank_duration_seconds"
-_CE_LABELS = {"mode": "ce"}
+# P-SB (#50): primary CE source is the @observe stage histogram (in-process CE,
+# bridged onto :8001). Legacy embed-rerank probe kept as a fallback for old
+# RemoteMLClient daemons (ADR-0105 portability note).
+_CE_STAGE_METRIC = "yadgar_observe_stage_duration_seconds"
+_CE_STAGE_LABELS = {"stage": "retrieval.ce.score_ce_cached"}
+_CE_LEGACY_METRIC = "yadgar_embed_rerank_duration_seconds"
+_CE_LEGACY_LABELS = {"mode": "ce"}
 
 # Fallback query mix if the committed .jsonl is absent (kept tiny + realistic).
 _DEFAULT_QUERIES = [
@@ -171,17 +181,36 @@ def _call_recall(daemon_url: str, query: str, *, req_id: int, timeout: float) ->
     return False
 
 
-def _scrape_ce_totals(metrics_url: str) -> tuple[float, float] | None:
-    """Return (ce_sum_seconds, ce_count) from the backend /metrics, or None."""
+def _scrape_metrics_text(metrics_url: str) -> str | None:
+    """Fetch the backend /metrics exposition text, or None on failure."""
     try:
-        text = urllib.request.urlopen(metrics_url, timeout=5.0).read().decode()
+        return urllib.request.urlopen(metrics_url, timeout=5.0).read().decode()
     except Exception:
         return None
-    ce_sum = parse_prom_metric(text, _CE_METRIC + "_sum", _CE_LABELS)
-    ce_count = parse_prom_metric(text, _CE_METRIC + "_count", _CE_LABELS)
-    if ce_sum is None or ce_count is None:
+
+
+def _totals_from_text(text: str, metric: str, labels: dict[str, str]) -> tuple[float, float] | None:
+    """Return (sum_seconds, count) for a histogram family+labels, or None if absent."""
+    m_sum = parse_prom_metric(text, metric + "_sum", labels)
+    m_count = parse_prom_metric(text, metric + "_count", labels)
+    if m_sum is None or m_count is None:
         return None
-    return ce_sum, ce_count
+    return m_sum, m_count
+
+
+def _scrape_ce_sources(metrics_url: str) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
+    """Scrape both CE sources from one /metrics text.
+
+    Returns ``(observe_stage_totals, legacy_totals)`` — each ``(sum, count)`` or
+    None. One scrape covers both families (the observe-stage is bridged onto the
+    same backend endpoint by P-SB).
+    """
+    text = _scrape_metrics_text(metrics_url)
+    if text is None:
+        return None, None
+    observe_stage = _totals_from_text(text, _CE_STAGE_METRIC, _CE_STAGE_LABELS)
+    legacy = _totals_from_text(text, _CE_LEGACY_METRIC, _CE_LEGACY_LABELS)
+    return observe_stage, legacy
 
 
 def _percentiles(latencies_ms: list[float]) -> dict[str, float]:
@@ -224,7 +253,8 @@ def run(
     for i in range(n_warmup):
         _call_recall(daemon_url, queries[i % len(queries)], req_id=i, timeout=timeout)
 
-    ce_before = _scrape_ce_totals(metrics_url) if metrics_url else None
+    # P-SB (#50): scrape BOTH CE sources (observe-stage primary, legacy fallback).
+    ce_before = _scrape_ce_sources(metrics_url) if metrics_url else (None, None)
 
     latencies_ms: list[float] = []
     errors = 0
@@ -236,34 +266,45 @@ def run(
         if not ok:
             errors += 1
 
-    ce_after = _scrape_ce_totals(metrics_url) if metrics_url else None
+    ce_after = _scrape_ce_sources(metrics_url) if metrics_url else (None, None)
 
     agg = _percentiles(latencies_ms)
     agg["n_recalls"] = n_recalls
     agg["error_rate"] = round(errors / n_recalls, 4) if n_recalls else 0.0
 
-    # CE-span budget: derived via pure helper in perf_contract.
+    # CE-span budget: derived via the pure ce_source_status helper in perf_contract.
     #
-    # KNOWN DEAD METRIC (ADR-0078 / T2 in-process move): the embed-service
-    # /rerank histogram is only fed by the HTTP RemoteMLClient path; the current
-    # architecture runs CE in-process (LocalMLClient.score_cross_encoder) and
-    # never calls /rerank → d_count is always 0 → ce_mean_ms is unavailable.
-    # The helper detects this explicitly and returns CE_DEAD_STATUS; we then print
-    # a WARNING rather than silently returning None-as-if-valid.
-    ce_mean, ce_calls, ce_status = ce_metric_status(
-        ce_before, ce_after, metrics_url_configured=bool(metrics_url)
+    # P-SB (#50) re-point: the PRIMARY source is now the @observe stage histogram
+    # yadgar_observe_stage_duration_seconds{stage="retrieval.ce.score_ce_cached"}
+    # (bridged onto :8001), which the in-process CE path DOES feed. The legacy
+    # yadgar_embed_rerank_duration_seconds{mode="ce"} probe is kept as a fallback
+    # for old RemoteMLClient daemons (ADR-0105 portability). ce_source_status picks
+    # observe-stage whenever fed, else legacy, else unavailable.
+    obs_before, legacy_before = ce_before
+    obs_after, legacy_after = ce_after
+    ce_mean, ce_calls, ce_status = ce_source_status(
+        (obs_before, obs_after) if metrics_url else None,
+        (legacy_before, legacy_after) if metrics_url else None,
     )
+    if not metrics_url:
+        ce_status = "unavailable — YADGAR_BACKEND_METRICS_URL not configured"
     agg["ce_mean_ms"] = ce_mean
     agg["ce_calls"] = ce_calls
     agg["ce_metric_status"] = ce_status
-    if ce_status == CE_DEAD_STATUS:
+    # ce_wall_ms_per_recall: total CE wall attributed per recall (the number the old
+    # harness pretended to give). d_sum / N × 1000 from whichever source was used.
+    if ce_mean is not None and n_recalls:
+        _src = (obs_after, obs_before) if "observe-stage" in ce_status else (legacy_after, legacy_before)
+        _after, _before = _src
+        if _after is not None and _before is not None:
+            agg["ce_wall_ms_per_recall"] = round((_after[0] - _before[0]) / n_recalls * 1000.0, 2)
+    if ce_mean is None and metrics_url:
         print(
-            "WARNING: ce_mean_ms is null — yadgar_embed_rerank_duration_seconds"
-            "{mode='ce'} d_count=0. Recall CE runs in-process (LocalMLClient,"
-            " ADR-0078) and does not feed the embed-service /rerank histogram."
-            " Use yadgar_recall_duration_ms (p50/p95, :8765) as the canonical"
-            " recall-wall metric. CE attribution requires Tempo span trees or"
-            " issue #50 (expose @observe stage histogram on /metrics).",
+            "WARNING: ce_mean_ms is null — neither the @observe CE stage histogram"
+            " (yadgar_observe_stage_duration_seconds{stage='retrieval.ce.score_ce_cached'})"
+            " nor the legacy embed-rerank histogram was fed (both d_count==0). Confirm"
+            " the P-SB bridge is deployed (backend 5.44.0+) and at least one recall ran."
+            " Falling back to yadgar_recall_duration_ms (:8765) for the recall wall.",
             file=sys.stderr,
         )
 

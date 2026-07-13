@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
-    CollectorRegistry,
     Counter,
     Gauge,
     Histogram,
@@ -40,11 +39,17 @@ from starlette.responses import Response
 
 from yadgar._shared.config import resolve_knob
 
+# P-SB P0: import the shared registry from the leaf module and RE-EXPORT it.
+# This is a BINDING to the SAME object, not a fresh construction — the leaf
+# `registry.py` owns the one `CollectorRegistry()`. Six-ish sites do
+# `from yadgar._shared.observability.metrics import _registry`; module identity is
+# process-global, so re-exporting the leaf object preserves identity for all of
+# them. `observe.py` binds to the same leaf object directly, breaking the old
+# observe→metrics→config→observe cycle that silently zeroed the metric arm.
+from yadgar._shared.observability.registry import _registry
+
 if TYPE_CHECKING:
     pass
-
-# Module-level registry — isolated so tests can run without cross-contamination
-_registry = CollectorRegistry()
 
 # ── Collectors ─────────────────────────────────────────────────────────
 

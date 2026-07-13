@@ -169,7 +169,7 @@ class _ScoringMixin:
             searches.append((subquery, 0.85))
         return searches
 
-    @observe(tier="hot", metric="retrieval.vector.encode_query")
+    @observe(tier="stage", metric="retrieval.vector.encode_query")
     def _encode_vector_query(
         self,
         vector_query: str,

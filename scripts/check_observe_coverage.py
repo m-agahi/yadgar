@@ -51,6 +51,23 @@ _ALLOWED_CATEGORIES = {
 
 _MIN_RATIONALE_CHARS = 40
 
+# ── I33 v2 (ADR-0085 / P-SB) — span-budget + ADR-0041 logging-handler rule ────
+
+# Decorators that OPEN a per-call span. `@observe` opens one unless span=False was
+# passed explicitly (observe.py: add_span = span and not already_sourced — tier
+# does NOT gate it: even tier="hot" opens a span). `@trace_span` / `@_tool` always
+# open one.
+_SPAN_OPENING_DECORATORS = {"trace_span", "observe", "_tool"}
+
+# ADR-0041: span-opening decorators are forbidden in the logging-handler surface —
+# a span emitted while a span-end log is being handled re-enters the tracer. The
+# set is (a) any function in a `log_config` module, and (b) any method of the
+# `LogSpanProcessor` class (wherever it lives — tracing.py). Deliberately NARROW:
+# it does NOT blanket-forbid spans in tracing.py (which DEFINES trace_span and
+# legitimately carries span infrastructure).
+_ADR0041_LOGGING_HANDLER_MODULES = frozenset({"log_config"})
+_ADR0041_LOGGING_HANDLER_CLASSES = frozenset({"LogSpanProcessor"})
+
 # Conservative I/O-sink names — presence disqualifies a fn from "trivial".
 _IO_SINK_HINTS = {
     "post",
@@ -136,6 +153,37 @@ def _has_span_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
             continue
         if name == "observe" and _observe_exempt_reason(node) is not None:
             continue  # exempt no-op, not a span
+        return True
+    return False
+
+
+def _observe_span_false(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True iff the fn carries `@observe(..., span=False)` (a literal False kwarg)."""
+    for d in node.decorator_list:
+        if not isinstance(d, ast.Call) or _decorator_name(d) != "observe":
+            continue
+        for kw in d.keywords:
+            if kw.arg == "span" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                return True
+    return False
+
+
+def _opens_per_call_span(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True iff the fn carries a decorator that OPENS a per-call span.
+
+    `@trace_span` / `@_tool` always open one. `@observe` opens one UNLESS
+    `span=False` was passed (observe.py: add_span = span and not already_sourced —
+    the tier does not gate it). `@observe(exempt=...)` is a no-op and opens no span.
+    """
+    for d in node.decorator_list:
+        name = _decorator_name(d)
+        if name not in _SPAN_OPENING_DECORATORS:
+            continue
+        if name == "observe":
+            if _observe_exempt_reason(node) is not None:
+                continue  # exempt no-op — opens no span
+            if _observe_span_false(node):
+                continue  # explicitly span-suppressed
         return True
     return False
 
@@ -261,6 +309,123 @@ def scan_file(
     return findings
 
 
+# ── I33 v2 scans: span-budget, ADR-0041, advisory loop-heuristic ──────────────
+
+
+def scan_file_span_v2(
+    path: Path,
+    span_budget: dict,
+    repo_root: Path | None = None,
+) -> tuple[list[str], set[str], list[str]]:
+    """Scan one file for the I33 v2 hard rules + advisory report.
+
+    Returns ``(integrity_errors, seen_span_budget_fqs, advisory_lines)``:
+      * integrity_errors — HARD failures: a ``_span_budget``-listed fn that opens a
+        per-call span, or an ADR-0041 span-opener in the logging-handler set.
+      * seen_span_budget_fqs — every ``module:qualname`` seen (for the caller's
+        stale-entry check on ``span_budget``).
+      * advisory_lines — non-failing loop-heuristic report lines (stdout only).
+    """
+    repo_root = repo_root or _REPO_ROOT
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (SyntaxError, OSError) as _exc:  # pragma: no cover  # noqa: F841
+        return [], set(), []
+
+    module = path.stem
+    integrity: list[str] = []
+    seen: set[str] = set()
+    # Collect span-decorated fn names in this module + all loop-body call names.
+    span_decorated_names: set[str] = set()
+    loop_called_names: set[str] = set()
+
+    def visit(node: ast.AST, class_stack: list[str], name_stack: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                qn = _qualname(name_stack, child.name)
+                fq = f"{module}:{qn}"
+                seen.add(fq)
+                opens_span = _opens_per_call_span(child)
+
+                # (1) _span_budget: a listed fn MUST NOT open a per-call span.
+                if fq in span_budget and opens_span:
+                    integrity.append(
+                        f"{fq}: _span_budget fn opens a per-call span — add span=False "
+                        f"(@observe) or remove the span-opening decorator"
+                    )
+
+                # (3) ADR-0041: no span-opener in the logging-handler surface.
+                in_log_module = module in _ADR0041_LOGGING_HANDLER_MODULES
+                in_log_class = any(c in _ADR0041_LOGGING_HANDLER_CLASSES for c in class_stack)
+                if opens_span and (in_log_module or in_log_class):
+                    where = "log-handler module" if in_log_module else "LogSpanProcessor"
+                    integrity.append(
+                        f"{fq}: ADR-0041 — span-opening decorator forbidden in the "
+                        f"logging-handler set ({where}); a span during span-end log "
+                        f"handling re-enters the tracer"
+                    )
+
+                if opens_span:
+                    span_decorated_names.add(child.name)
+
+                visit(child, class_stack, [*name_stack, child.name])
+            elif isinstance(child, ast.ClassDef):
+                visit(child, [*class_stack, child.name], [*name_stack, child.name])
+            else:
+                # (2) advisory loop-heuristic: names called inside a for/while body.
+                if isinstance(child, (ast.For, ast.While)):
+                    for sub in ast.walk(child):
+                        if isinstance(sub, ast.Call):
+                            called = (
+                                _decorator_name(sub.func)
+                                if isinstance(sub.func, (ast.Name, ast.Attribute))
+                                else None
+                            )
+                            if called:
+                                loop_called_names.add(called)
+                visit(child, class_stack, name_stack)
+
+    visit(tree, [], [])
+
+    advisory: list[str] = []
+    for nm in sorted(span_decorated_names & loop_called_names):
+        advisory.append(
+            f"  {module}: span-decorated '{nm}' is called inside a loop in the same module"
+        )
+    return integrity, seen, advisory
+
+
+def print_loop_heuristic_report(advisory_lines: list[str]) -> None:
+    """Print the advisory loop-heuristic report to STDOUT. NEVER affects exit code.
+
+    A span-decorated fn called inside a for/while in the same module is a
+    likely per-item span-storm offender (ADR-0074). This is a heuristic (same-name
+    match) — false positives are harmless because it can only print, never fail.
+    Mirrors print_glob_exempt_report (ADR-0040 option-C channel).
+    """
+    print(
+        f"I33 span-loop advisory — {len(advisory_lines)} span-decorated fn(s) "
+        f"called inside a same-module loop (heuristic; NOT a failure):"
+    )
+    for line in advisory_lines:
+        print(line)
+
+
+def validate_span_budget_entry(fq: str, entry: dict) -> list[str]:
+    """Governance for a _span_budget entry: rationale-only, >=40 chars.
+
+    No category enum (unlike the per-fn allowlist) — a span-budget entry means
+    "this fn must not open a per-call span" and only carries a rationale.
+    """
+    errs: list[str] = []
+    if not isinstance(entry, dict):
+        return [f"span_budget {fq}: entry must be an object"]
+    rationale = entry.get("rationale", "")
+    if not isinstance(rationale, str) or len(rationale.strip()) < _MIN_RATIONALE_CHARS:
+        errs.append(f"span_budget {fq}: rationale must be >= {_MIN_RATIONALE_CHARS} chars")
+    return errs
+
+
 def _classify(node, fq: str, allowlist: dict, file_glob: str | None) -> tuple[str, list[str]]:
     """Return (status, integrity_errors). Errors are threaded to the always-hard channel."""
     if _is_dunder(node.name):
@@ -337,20 +502,29 @@ def run(
     area: str | None,
     exempt_globs: dict | None = None,
     repo_root: Path | None = None,
-) -> tuple[list[Finding], set[str], list[str]]:
-    """Return (all_findings, seen_fqs, integrity_errors).
+    span_budget: dict | None = None,
+) -> tuple[list[Finding], set[str], list[str], list[str]]:
+    """Return (all_findings, seen_fqs, integrity_errors, advisory_lines).
 
     Side-channel: each EXEMPT_GLOB finding is tagged (`Finding.module` / `.glob`)
     with the file module stem and the repo-relative glob that exempted it, so the
     ADR-0040 option-C audit report can enumerate every glob-hidden function (a
     drift-visibility safeguard: a whole-dir glob otherwise makes a new/modified fn
     beneath it silently invisible).
+
+    I33 v2 (ADR-0085 / P-SB): also runs the `_span_budget` hard rule, the ADR-0041
+    logging-handler hard rule, and collects the advisory loop-heuristic report.
+    `span_budget` maps `module:qualname -> {rationale}`.
     """
     exempt_globs = exempt_globs or {}
+    span_budget = span_budget or {}
     repo_root = repo_root or _REPO_ROOT
     all_findings: list[Finding] = []
     seen_fqs: set[str] = set()
+    seen_span_v2_fqs: set[str] = set()
     glob_hits: set[str] = set()  # globs that matched >=1 in-scope function file
+    span_v2_integrity: list[str] = []
+    advisory_lines: list[str] = []
     for path in _iter_py_files(root, area):
         module = path.stem
         rel = _rel_posix(path, repo_root)
@@ -364,6 +538,11 @@ def run(
                 f.glob = file_glob
             all_findings.append(f)
             seen_fqs.add(f"{module}:{f.qualname}")
+        # I33 v2 pass (span-budget hard rule + ADR-0041 + advisory loop heuristic).
+        v2_errs, v2_seen, v2_advisory = scan_file_span_v2(path, span_budget, repo_root)
+        span_v2_integrity.extend(v2_errs)
+        seen_span_v2_fqs.update(v2_seen)
+        advisory_lines.extend(v2_advisory)
 
     integrity: list[str] = []
     # classification-time errors (e.g. short @observe(exempt=...) reason) are hard.
@@ -379,7 +558,15 @@ def run(
         integrity.extend(validate_glob_entry(glob, entry))
         if glob not in glob_hits:
             integrity.append(f"glob {glob}: STALE — matches no in-scope function file")
-    return all_findings, seen_fqs, integrity
+
+    # I33 v2 span-budget governance: rationale >=40 chars + stale-entry hard-fail.
+    integrity.extend(span_v2_integrity)
+    for fq, entry in span_budget.items():
+        integrity.extend(validate_span_budget_entry(fq, entry))
+        if fq not in seen_span_v2_fqs:
+            integrity.append(f"span_budget {fq}: STALE — no such function in scope")
+
+    return all_findings, seen_fqs, integrity, advisory_lines
 
 
 # ── glob-exempt audit report (ADR-0040 option C — non-failing) ───────────────
@@ -442,12 +629,22 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: _exempt_globs must be an object mapping glob -> entry", file=sys.stderr)
         return 1
 
+    span_budget = allowlist.get("_span_budget", {})
+    if not isinstance(span_budget, dict):
+        print(
+            "ERROR: _span_budget must be an object mapping module:qualname -> entry",
+            file=sys.stderr,
+        )
+        return 1
+
     # Globs are keyed repo-relative (e.g. 'yadgar/seed/**'); derive the repo root
     # from the scan root so both live-repo runs and tmp-dir test runs resolve the
     # same POSIX form. Scan root is '.../yadgar' → repo root is its parent.
     repo_root = root.resolve().parent if root.name == "yadgar" else _REPO_ROOT
 
-    findings, _seen, integrity = run(root, allowlist, args.area, exempt_globs, repo_root)
+    findings, _seen, integrity, advisory_lines = run(
+        root, allowlist, args.area, exempt_globs, repo_root, span_budget
+    )
 
     if args.list_all:
         for f in findings:
@@ -456,6 +653,10 @@ def main(argv: list[str] | None = None) -> int:
     # ADR-0040 option C: always surface the glob-exempted set to stdout for CI
     # drift-auditing. Informational only — never touches the exit code below.
     print_glob_exempt_report(findings)
+
+    # I33 v2 (ADR-0085): advisory loop-heuristic report — span-decorated fns called
+    # inside same-module loops. Stdout only; NEVER affects the exit code.
+    print_loop_heuristic_report(advisory_lines)
 
     missing = [f for f in findings if f.status == "MISSING"]
 

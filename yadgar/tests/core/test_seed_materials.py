@@ -11,10 +11,10 @@ from loader logic. This test pins:
   4. _load_anchors_yaml still loads the relocated anchors.yaml.
   5. v5.123.0 seed backflow: 10 battle-tested live patterns added to the genesis
      corpus (entries 5..14), each pinned by pattern + load-bearing content markers.
+  6. Wave 2 model-tier: all 15 starters carry a DISPATCH: first line (task #48).
 
-Behaviour-preservation guard: the 3 unchanged starters (code-review,
-debug-investigate, explore-codebase) match master's content exactly; only the
-SOURCE moved + implement-tdd content updated.
+Behaviour-preservation guard: first 4 starters pinned byte-for-byte including
+DISPATCH lines (Wave 2 addition). implement-tdd carries the YAGNI ladder.
 """
 
 from __future__ import annotations
@@ -29,6 +29,9 @@ _EXPECTED: list[tuple[str, str, str]] = [
         "code-review",
         "Review a diff or PR for correctness and risk.",
         (
+            "DISPATCH: model=opus (fallback=sonnet for small mechanical diffs)"
+            " — canonical: model-tier-dispatch\n"
+            "\n"
             "Review the given diff or PR. One finding per line, severity-tagged"
             " (critical/high/medium/low).\n"
             "Cite file:line for every finding.\n"
@@ -41,6 +44,9 @@ _EXPECTED: list[tuple[str, str, str]] = [
         "debug-investigate",
         "Root-cause a bug and ship a minimal fix with a regression test.",
         (
+            "DISPATCH: model=opus (fallback=sonnet for shallow bugs)"
+            " — canonical: model-tier-dispatch\n"
+            "\n"
             "Reproduce the bug first — confirm failure before touching code.\n"
             "Isolate via bisection, logging, or binary-search; identify the true"
             " root cause, not the symptom.\n"
@@ -53,6 +59,9 @@ _EXPECTED: list[tuple[str, str, str]] = [
         "explore-codebase",
         "Map where code lives / how a subsystem works (READ-ONLY).",
         (
+            "DISPATCH: model=sonnet (haiku for pure listing)"
+            " — canonical: model-tier-dispatch\n"
+            "\n"
             "READ-ONLY investigation — make zero edits.\n"
             "Locate where X lives or how Y works; start broad (grep/glob) then narrow.\n"
             "Return a file:line table with one row per relevant symbol or entry-point.\n"
@@ -67,6 +76,9 @@ _EXPECTED: list[tuple[str, str, str]] = [
             " code that satisfies it — a YAGNI least-code ladder applied before coding."
         ),
         (
+            "DISPATCH: model=sonnet (fallback=opus for multi-seam scope)"
+            " — canonical: model-tier-dispatch\n"
+            "\n"
             "Write a failing test that pins the desired behavior (red) before any"
             " implementation code.\n"
             "\n"
@@ -128,12 +140,18 @@ def test_starter_prompts_is_list_of_3_tuples():
 def test_plan_executing_build_starter_pinned():
     """5th starter (v5.122.0): plan-executing-build — verbatim copy of the live
     wiki page so the packaged prelude contract's rule-4 pointer resolves on
-    fresh installs. Pinned by pattern + load-bearing content markers."""
+    fresh installs. Pinned by pattern + load-bearing content markers.
+    Wave 2 (task #48): DISPATCH line is now the first line of content."""
     from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
     pattern, purpose, content = STARTER_PROMPTS[4]
     assert pattern == "plan-executing-build"
     assert "ADR-0081/0082" in purpose
+    # Wave 2: DISPATCH line is first
+    assert content.startswith("DISPATCH:"), (
+        "plan-executing-build must open with a DISPATCH: line (Wave 2, task #48)"
+    )
+    assert "canonical: model-tier-dispatch" in content
     # Stage 2 (genesis synced to live page v3): the cross-cutting rule text was
     # EXTRACTED to composed discipline pages — the pattern genesis now carries
     # ## Composes references instead of the inline rules.
@@ -247,6 +265,21 @@ def test_backflow_bodies_survive_unwrap():
     for pattern, _purpose, content in STARTER_PROMPTS:
         assert _unwrap_purpose_prompt(content) == content, (
             f"starter {pattern!r} body would be mangled by _unwrap_purpose_prompt"
+        )
+
+
+def test_all_starters_have_dispatch_line():
+    """Wave 2 (task #48): every starter's content opens with a DISPATCH: line
+    that carries a canonical: model-tier-dispatch pointer."""
+    from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
+
+    for pattern, _purpose, content in STARTER_PROMPTS:
+        assert content.startswith("DISPATCH:"), (
+            f"starter {pattern!r} content must open with 'DISPATCH:' (Wave 2, task #48);\n"
+            f"got: {content[:80]!r}"
+        )
+        assert "canonical: model-tier-dispatch" in content, (
+            f"starter {pattern!r} DISPATCH line must end with '— canonical: model-tier-dispatch'"
         )
 
 

@@ -418,6 +418,38 @@ _registry.register(CacheStatsCollector())
 
 
 # ---------------------------------------------------------------------------
+# P-SB (#6/#50) — bridge the shared @observe registry onto backend /metrics
+# ---------------------------------------------------------------------------
+# Recall runs in the backend process; its @observe stage samples land in the
+# SHARED registry (yadgar._shared.observability.registry._registry), which the
+# backend :8001 /metrics NEVER scrapes (it serves only this isolated embed
+# registry). This scrape-time bridge yields ONLY yadgar_observe_* families from
+# the shared registry so per-stage recall latency appears on :8001 alongside the
+# embed families.
+#
+# ⚠ Strict prefix filter (collision-safe): 7 families exist in BOTH registries
+# (yadgar_cache_*, yadgar_log_*). None start with "yadgar_observe_", so the bridge
+# can never re-yield them — duplicate `# TYPE` lines would otherwise make
+# Prometheus reject the whole scrape. Read-only at scrape time; ~1µs hot-path
+# cost is unaffected (the histogram .observe() already fires regardless of
+# exposure). Core :8765 needs nothing — it already serves the shared registry.
+
+
+class _SharedObserveBridge:
+    """Yield yadgar_observe_* families from the shared registry at scrape time."""
+
+    def collect(self):  # noqa: D401 — prometheus_client Collector protocol
+        from yadgar._shared.observability.registry import _registry as shared  # noqa: PLC0415
+
+        for metric in shared.collect():
+            if metric.name.startswith("yadgar_observe_"):
+                yield metric
+
+
+_registry.register(_SharedObserveBridge())
+
+
+# ---------------------------------------------------------------------------
 # P0 #37 item 5c — store swap/stop state (split-brain + torn-stop observability)
 #
 # The 07-09 split-brain persisted silently for 16 h; the torn-stop warning
