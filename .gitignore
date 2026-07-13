@@ -196,3 +196,6 @@ benchmarks/data/
 node_modules/
 # JS SDK — sdk-js/
 sdk-js/dist/
+
+# Perf load-test harness output (transient — regenerated per run, not committed)
+benchmarks/reports/perf_loadtest_*.json

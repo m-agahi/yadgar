@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-13 — CONCLUDED — Ettin-32m selected and shipped in recall Train 4.
+
 # CE Rerank Alternatives — Research Synthesis (2026-07-04)
 
 **Status (updated 2026-07-09):** CONCLUDED — research input to recall Train 3 (Ettin model swap). Ettin-32M/68M winner; benchmark against LongMemEval recall@k required before swap. ADR-0044 forthcoming on swap decision.

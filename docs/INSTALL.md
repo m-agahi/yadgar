@@ -30,7 +30,7 @@ yadgar-setup
 
 Or pin to a specific version:
 ```bash
-nix profile install codeberg:maxagahi/yadgar/v5.46.0
+nix profile install codeberg:maxagahi/yadgar/v5.132.0
 yadgar-setup
 ```
 

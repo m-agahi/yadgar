@@ -275,14 +275,14 @@
                   "-p 127.0.0.1:${toString cfg.backendEmbedPort}:8001"
                   "-v ${dataDir}:/data"
                   "-v ${configDir}/config.yaml:/data/config.yaml:ro"
-                  "-v ${homeDir}/.cache/huggingface:/root/.cache/huggingface"
+                  "-v ${homeDir}/.cache/huggingface:/home/yadgar/.cache/huggingface"
                   "-e SURREAL_USER -e SURREAL_PASS"
                   "-e YADGAR_RW_USER -e YADGAR_RW_PASS"
                   "-e YADGAR_RO_USER -e YADGAR_RO_PASS"
                   "-e YADGAR_MCP_AUTH_TOKEN"
                   "-e SURREAL_RUNTIME_STACK_SIZE"
                   "-e YADGAR_CONFIG_FILE=/data/config.yaml"
-                  "--memory 6g --cpus 4 --stop-timeout 30"
+                  "--memory 6g --cpus 3 --stop-timeout 30"
                   backendImage
                 ];
                 ExecStop = "${cfg.runtime} stop yadgar-backend";

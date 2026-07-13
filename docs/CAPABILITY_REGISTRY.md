@@ -279,17 +279,17 @@ config knobs.
 
 ---
 
-### CAP-RETR-015 — GTE Reranker (Advanced CE Backend)
+### CAP-RETR-015 — Advanced CE Reranker (Ettin-32m primary / GTE-ModernBERT rollback)
 
-- **status:** DORMANT
+- **status:** LIVE
 - **category:** retrieval
-- **settings:** `GTE_RERANKER_ENABLED`, `GTE_RERANKER_MODEL`, `GTE_RERANKER_MAX_LENGTH`, `GTE_RERANKER_FALLBACK_TO_FLASHRANK` (onnx-int8 backend knobs removed in the 5.131.0 deps train)
+- **settings:** `GTE_RERANKER_ENABLED`, `GTE_RERANKER_MODEL`, `GTE_RERANKER_MAX_LENGTH`, `GTE_RERANKER_FALLBACK_TO_FLASHRANK` (onnx-int8 backend knobs removed in the 5.131.0 deps train). The env/field prefix is kept as GTE for back-compat; T4 flipped the default model to Ettin-32m.
 - **tools:** `recall`
 - **migrations:** —
 - **bc:** —
-- **refs:** `yadgar/backend/ml_client/ml_client.py`, `yadgar/_shared/config/config.py`
-- **wiring:** `GTE_RERANKER_ENABLED=True` in config, but the ML client (`LocalMLClient`) uses it only when the GTE model is actually loaded (conditional in `ml_client.py` line 356: `getattr(settings, "GTE_RERANKER_ENABLED", False)`). Loading requires the `Alibaba-NLP/gte-reranker-modernbert-base` model to be present. If unavailable, `GTE_RERANKER_FALLBACK_TO_FLASHRANK=True` falls back to FlashRank. In practice, GTE is not auto-downloaded — it is dormant unless the operator has staged the model weights.
-- **explanation:** A higher-quality cross-encoder backend based on GTE-ModernBERT-base that replaces or supplements FlashRank for more accurate relevance scoring. `GTE_RERANKER_MAX_LENGTH` caps the input token length. When `GTE_RERANKER_FALLBACK_TO_FLASHRANK=True` (default), the system degrades gracefully to FlashRank if GTE cannot be loaded. The setting is technically enabled by default but effectively dormant because the model weights are not included.
+- **refs:** `yadgar/backend/ml_client/ml_client.py`, `yadgar/_shared/config/config.py`, `Dockerfile.backend`
+- **wiring:** `GTE_RERANKER_ENABLED=True` and `GTE_RERANKER_MODEL="cross-encoder/ettin-reranker-32m-v1"` in config (`config.py:288–289`). Ettin-32m weights are **baked into `Dockerfile.backend`** as the CE primary, so the reranker is live by default — no operator staging required. GTE-ModernBERT is also baked one cycle purely as the config-revert rollback. `GTE_RERANKER_FALLBACK_TO_FLASHRANK` is inert: FlashRank is not a dependency (`_try_flashrank` is a lazy no-op).
+- **explanation:** The advanced cross-encoder reranker. Train 4 flipped the primary model from GTE-ModernBERT to **Ettin-32m** (`cross-encoder/ettin-reranker-32m-v1`, 32.8M, ModernBERT-lineage, Apache-2.0) after a LongMemEval memory-domain A/B: recall@5/@10 parity-or-better on every type, +0.108 recall@5 on multi-session, ~4.7× per-pass CE speedup. `GTE_RERANKER_MAX_LENGTH` caps input token length. Rollback to GTE-ModernBERT is a `config.yaml` model swap (weights already in the image).
 
 ---
 

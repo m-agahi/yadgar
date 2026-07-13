@@ -23,7 +23,7 @@ query
   │
   ├─► Confidence gate       reject low-confidence result sets
   │
-  ├─► Cross-encoder rerank  FlashRank ONNX or GTE-ModernBERT
+  ├─► Cross-encoder rerank  Ettin-32m (primary) / GTE-ModernBERT (rollback)
   │
   ├─► NLI entailment        DeBERTa entailment signal (open-domain only)
   │
@@ -124,12 +124,14 @@ Set `CONFIDENCE_GATING_ENABLED=false` to disable.
 
 The top `RERANKER_TOP_K` (default 50) candidates are re-scored by a cross-encoder that takes the (query, memory) pair as input — capturing richer interaction than independent embeddings.
 
-Two backends:
+The reranker backend (config field name kept `GTE_*` for env/back-compat):
 
 | Backend | Model | Notes |
 |---|---|---|
-| GTE-Reranker | `Alibaba-NLP/gte-reranker-modernbert-base` | Default, higher quality |
-| FlashRank | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Fallback, ONNX-accelerated, fast CPU |
+| Ettin-32m | `cross-encoder/ettin-reranker-32m-v1` | **Primary** (Train 4). ModernBERT-lineage, Apache-2.0, ~4.7× faster per-pass than GTE. |
+| GTE-ModernBERT | `Alibaba-NLP/gte-reranker-modernbert-base` | Rollback only — config-revert lever, baked into `Dockerfile.backend` one cycle. |
+
+FlashRank is **not** a dependency (`flashrank` absent from `pyproject`/`uv.lock`; `_try_flashrank` is a lazy no-op). ONNX/onnx-int8 backends were removed in the 5.131.0 deps train.
 
 Final score: `CE_WEIGHT * cross_encoder_score + (1 - CE_WEIGHT) * fusion_score`
 
