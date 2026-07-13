@@ -1,9 +1,10 @@
 """Fast, model-free unit tests for the #79 perf-loadtest CONTRACT checker.
 
 Covers the pure comparison logic in ``benchmarks.perf_contract`` — delta_pct
-math, over/under-tolerance flagging, and the incomparability guard (mismatched
+math, over/under-tolerance flagging, the incomparability guard (mismatched
 ``snapshot_id`` / ``embedding_model`` must NOT flag deltas as regressions,
-per perf-loadtest-contract-2026-06-30.md §2.5).
+per perf-loadtest-contract-2026-06-30.md §2.5), and the CE dead-metric
+detection helper (``ce_metric_status``).
 
 No daemon, no ML, no model load — imports a stdlib-only module. Runs in the
 default fast suite.
@@ -14,7 +15,9 @@ from __future__ import annotations
 import math
 
 from benchmarks.perf_contract import (
+    CE_DEAD_STATUS,
     METRIC_KEYS,
+    ce_metric_status,
     compare_to_baseline,
     parse_prom_metric,
     pct_delta,
@@ -175,3 +178,38 @@ def test_parse_prom_metric_label_selectivity() -> None:
 
 def test_parse_prom_metric_absent_returns_none() -> None:
     assert parse_prom_metric(_PROM_SAMPLE, "nonexistent_metric_total", {}) is None
+
+
+# ── ce_metric_status (dead-metric guard) ─────────────────────────────────────
+
+
+def test_ce_metric_status_available_when_d_count_positive() -> None:
+    """d_count > 0 → mean computed, status='available'."""
+    mean_ms, calls, status = ce_metric_status((10.0, 5.0), (15.0, 8.0))
+    assert status == "available"
+    assert calls == 3
+    # (15-10) / (8-5) * 1000 = 5/3 * 1000 ≈ 1666.67
+    assert mean_ms is not None and abs(mean_ms - 1666.67) < 1.0
+
+
+def test_ce_metric_status_dead_when_d_count_zero() -> None:
+    """d_count == 0 → null mean, CE_DEAD_STATUS — the in-process recall path."""
+    mean_ms, calls, status = ce_metric_status((10.0, 5.0), (10.0, 5.0))
+    assert status == CE_DEAD_STATUS
+    assert mean_ms is None
+    assert calls == 0
+
+
+def test_ce_metric_status_scrape_failed_with_url() -> None:
+    """Both scrapes failed but URL was configured."""
+    mean_ms, calls, status = ce_metric_status(None, None, metrics_url_configured=True)
+    assert "scrape failed" in status
+    assert mean_ms is None
+    assert calls is None
+
+
+def test_ce_metric_status_no_url() -> None:
+    """No metrics URL configured."""
+    mean_ms, calls, status = ce_metric_status(None, None, metrics_url_configured=False)
+    assert "not configured" in status
+    assert mean_ms is None

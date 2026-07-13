@@ -97,6 +97,9 @@ def compare_to_baseline(
         if key not in base_agg or key not in cur_agg:
             # No baseline (or no current value) for this metric — skip cleanly.
             continue
+        if base_agg[key] is None or cur_agg[key] is None:
+            # Metric not recorded this run (e.g. CE cache fully hit, delta=0) — skip.
+            continue
         b = float(base_agg[key])
         c = float(cur_agg[key])
         delta = pct_delta(b, c)
@@ -119,6 +122,52 @@ def compare_to_baseline(
         "diff": diff,
         "any_flagged": any_flagged,
     }
+
+
+# ── CE dead-metric detection ──────────────────────────────────────────────────
+
+#: Explanation emitted when d_count==0 (embed-service histogram not fed by
+#: recall's in-process CE path, ADR-0078 / T2 in-process move).
+CE_DEAD_STATUS = (
+    "unavailable — recall CE runs in-process, embed rerank histogram"
+    " not fed (see issue #50 / ADR-0078)"
+)
+
+
+def ce_metric_status(
+    before: tuple[float, float] | None,
+    after: tuple[float, float] | None,
+    metrics_url_configured: bool = True,
+) -> tuple[float | None, int | None, str]:
+    """Derive (ce_mean_ms, ce_calls, ce_metric_status) from before/after scrapes.
+
+    Args:
+        before: ``(sum_seconds, count)`` scraped before the run, or ``None``.
+        after:  ``(sum_seconds, count)`` scraped after the run, or ``None``.
+        metrics_url_configured: whether a backend metrics URL was provided.
+
+    Returns a 3-tuple ``(ce_mean_ms, ce_calls, status_string)`` where
+    ``ce_mean_ms`` is ``None`` when CE is unavailable or d_count==0.
+
+    The three distinct status values:
+
+    * ``"available"`` — d_count > 0, mean computed (embed-service /rerank path).
+    * ``CE_DEAD_STATUS`` — both scraped but d_count==0 (in-process CE, ADR-0078).
+    * ``"unavailable — backend /metrics scrape failed"`` — URL set but scrape failed.
+    * ``"unavailable — YADGAR_BACKEND_METRICS_URL not configured"`` — no URL given.
+    """
+    if before is not None and after is not None:
+        d_sum = after[0] - before[0]
+        d_count = after[1] - before[1]
+        if d_count > 0:
+            mean_ms = round((d_sum / d_count) * 1000.0, 2)
+            return mean_ms, int(d_count), "available"
+        else:
+            return None, 0, CE_DEAD_STATUS
+    elif metrics_url_configured:
+        return None, None, "unavailable — backend /metrics scrape failed"
+    else:
+        return None, None, "unavailable — YADGAR_BACKEND_METRICS_URL not configured"
 
 
 # ── Prometheus text-format parsing (for CE-span capture from /metrics) ────────
