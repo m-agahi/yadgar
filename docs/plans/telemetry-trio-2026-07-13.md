@@ -352,3 +352,107 @@ Inherited from the design-of-record (still open) + this audit's additions:
 - `yadgar/core/seed/materials/agent_prompts.yaml` — genesis corpus (ADR-0091; F3 tier-3).
 - `docs/PRIVACY.md` — shipped v5.48 update-check privacy policy (F1 baseline).
 - `docs/DECISIONS.md` PD-37 — distribution/update train (v5.45–v5.47).
+
+---
+
+## AUDIT (2026-07-13)
+
+Independent verification pass over this DRAFT and the 2026-07-10 design-of-record.
+Every file:line below re-confirmed by direct `grep`/`sed` over the working tree on
+2026-07-13 (branch `master`, tests excluded). Observed source wins over plan text.
+
+### Per-claim verdict table
+
+| # | Claim (source) | Verdict | Evidence (file:line) |
+|---|---|---|---|
+| 1 | `yadgar update` CLI dispatcher `cmd_update` at `update.py:101` | **VERIFIED** | `yadgar/core/cli/update.py:101` |
+| 2 | Subcommand `register` at `:38`; `--check/--install/--finalize/--rollback` | **VERIFIED** | `update.py:38,51,57,66,75` |
+| 3 | PyPI probe `probe_latest_version` at `check.py:37`; `GET pypi.org/pypi/yadgar/json`; extracts `.info.version` | **VERIFIED** | `yadgar/core/update/check.py:24,37,63` |
+| 4 | Auto-check `_maybe_auto_check_for_update` at `daemons.py:215`, invoked `_startup.py:118` | **VERIFIED** | `daemons.py:215`; `_startup.py:118` |
+| 5 | Knob Settings default `UPDATE_CHECK_ON_START: bool = False` at `config.py:924` | **VERIFIED** | `yadgar/_shared/config/config.py:924` |
+| 6 | FIELD_META at `config_yaml.py:1027` (audit's CORRECTION of DoR's `:1035`) | **VERIFIED** | `yadgar/_shared/config/config_yaml.py:1027` |
+| 7 | Env registry entry at `config_registry.py:376` | **VERIFIED** | `yadgar/_shared/config/config_registry.py:376` |
+| 8 | DoR cross-ref `config_yaml.py:1035` for the knob (2026-07-10 §0 + §refs) | **WRONG (in DoR)** — off by 8 and wrong file for the default; this audit's correction is right | FIELD_META is `:1027`; canonical default is `config.py:924` |
+| 9 | F2 telemetry/opt-in/stats-share infra **absent** (greenfield) | **VERIFIED** | No `stats_share`/`STATS_SHARE` knob; no `/v1/ping`/`/v1/stats`; only operational observability (`exception_telemetry`, db-size, ml-unload) — none is user telemetry |
+| 10 | `get_memory_stats()` (F2 local source) at `ops.py:139` | **VERIFIED** | `yadgar/_shared/storage/ops.py:139` |
+| 11 | `agent_prompt_save` at `agent_prompts.py:82`; `seed_agent_prompts` at `:355` | **VERIFIED** | `yadgar/core/server/tools/agent_prompts.py:82,355` |
+| 12 | Genesis corpus file `agent_prompts.yaml` ships offline; disciplines seeded | **VERIFIED (qualitative)** | file present (31 KB); ships the full seeded discipline set offline. Exact pattern count not cleanly established — F3-adds-little holds regardless |
+| 13 | agent_prompt backend write + `agent-prompt-toc` upsert at `wiki.py:454` | **VERIFIED** | `yadgar/backend/admin_exec/wiki.py:454`, TOC slug `:52` |
+| 14 | **P8 / F3 safety: "draft/approve gate already exists — the single strongest control" (this DRAFT §F3 L146–149, L173; DoR §5.1 mitigation-1 L286–291)** | **WRONG (as stated)** — the gate is **dormant machinery, not a live gate** | `insert_wiki_draft` exists (`_shared/storage/wiki.py:847`) but has **zero production callers** (only its own docstring). `wiki_add` never routes to draft. `seed.py:133` "Drafted" is a log word (calls `upsert_project_init`, a memory write). Confirms repo convention: `wiki_approve` is a no-op because no production path creates drafts. |
+
+### Discussion of the load-bearing correction (claim #14)
+
+Both plans lean F3's entire safety case on P8 ("downloaded prompts land as
+`wiki_draft` requiring explicit `wiki_approve`") and both call it *already
+implemented — the strongest control*. **Observed state contradicts this.** The
+draft table, `insert_wiki_draft`, `wiki_approve`, `wiki_discard`, `wiki_drafts`
+and migration 015/016 columns all exist, but **nothing in production writes a
+draft row** — the tools are wired to the storage layer, not to any live write
+path. `wiki_add` commits directly.
+
+Consequences for the F3 verdict (they *strengthen*, not weaken, the DRAFT's
+recommendation):
+
+- "F3 Half-A rides existing draft/approve machinery, adds little surface" is
+  **overstated**. Half-A would have to first make the gate *live* (route pulled
+  prompts into `insert_wiki_draft`, ensure the prelude/composition path reads only
+  approved pages, wire the approve UX for real). That is net-new load-bearing
+  security code, not a free ride.
+- The RCE surface is therefore **less mitigated than either plan implies**: the
+  "single strongest control" is currently inert. This makes **cut-Half-B and
+  skip-Half-A-until-demand more defensible, not less** — the mitigation the design
+  rests on is not standing infrastructure today.
+- Recommendation: before any F3 line item, the plans must add a P8-precondition:
+  *"the draft/approve gate is currently dormant (no production draft-creation path);
+  F3 Half-A's first task is to make it live and add a test asserting no upstream
+  pull reaches prelude composition pre-approve."* Do NOT carry P8 as "done."
+
+### Adjudication of the DRAFT's own recommendations
+
+- **F1 check vs count (precision).** F1 *check-for-update* is **fully shipped and
+  correct** (claims #1–#7). But the actual subject of task #40's F1 is the
+  *count*, which is **not built** — the DRAFT is right to treat it as F1-free
+  (pypistats + Docker Hub reader) plus an optional gated `/v1/ping`. Keep the two
+  labels distinct in any downstream doc: *check = shipped; count = open.*
+- **SPLIT-3-tracks (sound).** Correct. F1-free, F2, F3-HalfA share almost nothing
+  but a hosting decision; one-train would gate the free, immediately-valuable
+  F1-free behind F3's unresolved product/liability questions. F1-free (public-API
+  reader, sends nothing) is genuinely the fastest path to "how many installs" and
+  should ship first. **ACCEPT.**
+- **Cut-F3-HalfB (sound, now reinforced).** Half-B is a paid executable-instruction
+  marketplace, not a telemetry feature; moderation/abuse/KYC/injection liability is
+  unbounded for a solo dev. With P8 shown dormant (claim #14), the "strongest
+  control" argument for even Half-A weakens — the cut is well-justified. **ACCEPT.**
+- **Plan-rot / fold-vs-separate (sound; act on it).** Two plan files for the same
+  task #40 *will* drift — this audit already found the DoR's stale `:1035` knob ref
+  the DRAFT had to correct: proof the drift is real, not hypothetical. **Recommend
+  fold (OQ-AUDIT-1 = fold):** merge these verdicts into the 2026-07-10
+  design-of-record as a dated "Audit / verdicts" section, fix its `:1035` → `config.py:924`
+  + `config_yaml.py:1027` refs, then delete this trio file. One design-of-record.
+  Deferring the fold re-creates the exact two-doc drift this audit flags. Do NOT
+  keep both indefinitely.
+
+### Audit Status verdict
+
+**APPROVE-WITH-CHANGES.** The DRAFT's shipped-state table, split recommendation,
+F3-HalfB cut, and privacy design are sound and (F1/F2) verified accurate. **One
+blocking correction before either plan is treated as authoritative:** the P8
+draft/approve gate is claimed "already implemented" in *both* plans and is in fact
+**dormant** (no production draft-creation path). Reclassify P8 from "existing
+control" to "must-build precondition" for F3, and fold this audit into the
+design-of-record (fixing the stale knob ref) to kill the two-doc drift.
+
+### User-decision items (surfaced for explicit choice)
+
+Clearly surfaced by the DRAFT (§Open Questions) and endorsed here:
+
+1. **Telemetry destination / build `/v1/ping` at all** (OQ-F1-1, OQ-INFRA-1) —
+   audit rec: F1-free only; if any endpoint, Cloudflare Worker/DO (edge-drops IP).
+2. **Consent posture** (OQ-F1-2) — audit rec: hold opt-in / default-OFF; never opt-out.
+3. **Build F3 at all** (OQ-F3-1) + **money** (OQ-F3-2) — audit rec: skip until
+   demonstrated demand; cut Half-B; donations only if ever resurrected. **Now also
+   gated on:** making the dormant P8 gate live is a prerequisite, not a freebie.
+4. **Fold-vs-separate** (OQ-AUDIT-1) — audit rec: fold into the 2026-07-10
+   design-of-record and delete this file; plan-rot already demonstrated.
+5. **Bucket boundaries / dashboard** (OQ-F2-1, OQ-F2-2), **signing bar** (OQ-F3-3)
+   — unchanged from the DRAFT; user to decide.
