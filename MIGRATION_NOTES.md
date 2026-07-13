@@ -134,22 +134,6 @@ code path + knobs were removed with it (no half-drop, per plan Q8). If you ever
 re-add ONNX reranking, it needs an optimum-onnx release that supports
 transformers 5.x first.
 
-## Hardening Car 3 — CI image rebuild required BEFORE merging train PR #179
-
-`Dockerfile.ci` gained `graphviz` (so `test_diagram_generator` render tests RUN
-in CI instead of skipping) and its version label moved to `5.121.0`. All
-workflow files now reference `docker.io/openfantasy/yadgar-ci:5.121.0` — that
-tag does not exist yet. CI on the train PR will fail at image pull until you
-build + push it (PD-42 carve-out: yadgar-ci is the one image that pushes to
-dockerhub):
-
-```bash
-podman build -f Dockerfile.ci -t docker.io/openfantasy/yadgar-ci:5.121.0 .
-podman push docker.io/openfantasy/yadgar-ci:5.121.0
-```
-
----
-
 ## R3 — CROSS_ENCODER_BACKEND knob removed (ADR-0043 NO-GO → full removal)
 
 `YADGAR_CROSS_ENCODER_BACKEND` has been removed. The onnx-int8 CE backend was
@@ -169,33 +153,6 @@ unaffected and still present.
 ---
 
 ## v5.53.0 — Bootstrap catalog + read-first contract (2026-06-12)
-
-### D-personal TODO for Max (nix-managed Claude config — NOT general)
-
-**Do NOT apply this yourself; Claude does not edit nix files. Apply manually.**
-
-The canonical read-first rule is now in `docs/RECOMMENDED_CLAUDE_RULES.md`.
-Max's `~/.claude/CLAUDE.md` is nix-managed; the source is:
-
-```
-~/git/nix/dotfiles/common/claude.md
-```
-
-The yadgar block is currently lines ~6-33 ("Read-first triggers" + "Tool selection").
-
-**Action required:**
-
-1. Edit `~/git/nix/dotfiles/common/claude.md` — rewrite the yadgar block with the
-   read-first rule from `docs/RECOMMENDED_CLAUDE_RULES.md`:
-   - Replace "Read-first triggers" with: wiki = map (concepts/conventions/decisions/
-     location), grep = territory (exact lines); read the session-start catalog first
-     then grep there; `wiki_list`→slug→`wiki_read` for named pages, `wiki_query` only
-     for fuzzy topic search (~0.34, not coordinates). Keep the existing
-     `restore(directory=...)` resume guidance.
-   - See `docs/RECOMMENDED_CLAUDE_RULES.md` for the verbatim rule text.
-2. Run: `home-manager switch`
-3. Verify: `~/.claude/CLAUDE.md` reflects the new rule. The global file is the only
-   allowed CLAUDE.md — no per-project copies.
 
 ### No config knob changes in this release
 
@@ -805,41 +762,6 @@ The core container (`yadgar.service`) currently does not receive `-e YADGAR_RW_U
 
 ---
 
-## v5.46.16 — except-tuple py2 syntax sweep (2026-06-06)
-
-### Context
-
-Python 3 parses `except X, Y:` as `except X as Y:` — this is valid syntax but catches only `X`; `Y` becomes a local name binding that shadows the builtin or any variable named `Y`. Exception type `Y` escapes uncaught.
-
-This was a silent bug across 12 sites in 10 files. The worst case: `embed_service.py:434` had `except asyncio.CancelledError, Exception:` — bare `Exception` was bound to the local name `Exception`, shadowing the builtin, and any non-CancelledError raised during ML inference shutdown escaped uncaught.
-
-### Fix
-
-All 12 sites converted to `except (X, Y):` (parenthesised tuple form). Each line carries `# fmt: skip` because ruff 0.15.12 strips parens from `except` clauses and would revert the fix on the next commit.
-
-### No operator action required
-
-This is a pure source fix — no config changes, no DB migrations, no env variable changes.
-
-### Files changed
-
-| File | Exception types |
-|------|----------------|
-| `yadgar/daemon.py:63` | `FileNotFoundError, subprocess.TimeoutExpired` |
-| `yadgar/config_registry.py:305` | `ValueError, TypeError` |
-| `yadgar/embed_service.py:434` | `asyncio.CancelledError, Exception` (critical) |
-| `yadgar/conflict_resolver.py:113` | `ValueError, TypeError` |
-| `yadgar/log_config.py:514` | `PermissionError, OSError` |
-| `yadgar/ml_client.py:118` | `ValueError, TypeError` |
-| `yadgar/server/http.py:1573` | `TypeError, ValueError` |
-| `yadgar/server/http_bookmarks.py:127` | `TypeError, ValueError` |
-| `yadgar/server/http_bookmarks.py:160` | `ValueError, TypeError` |
-| `yadgar/scripts/hook_runner.py:210` | `json.JSONDecodeError, ValueError` |
-| `yadgar/hooks/db-lockdown-check.py:42` | `json.JSONDecodeError, ValueError` |
-| `yadgar/tests/test_loop_heartbeats.py:228` | `StopAsyncIteration, TimeoutError` |
-
----
-
 ## v5.46.15 — seed anchors via daemon REST endpoint (2026-06-06)
 
 ### Context
@@ -1219,115 +1141,6 @@ Nix flake users: use `make setup` from repo checkout (unaffected path).
 
 ---
 
-## v5.46.9 — CI bake speedup + F1/F6 test regression fixes (2026-06-06)
-
-### No user action required for upgrade
-
-Users on v5.46.8 → v5.46.9: no runtime changes. This is a CI infrastructure + test-isolation hotfix.
-
-### What changed
-
-**Test fixes (F1):** 5 tests in `test_branch_auto_capture.py` and `test_v5_42_3_drainer_branch_enforcement.py` that assert `missing_branch` hard-reject behavior now call `monkeypatch.delenv('YADGAR_CI_BRANCH', raising=False)` before patching `_detect_branch`. The workflow-level `YADGAR_CI_BRANCH: master` env var was leaking into these tests, causing the daemon env fallback to return `'master'` instead of `None`, masking the hard-reject.
-
-**Test fix (F6):** `_fake_memorize` in `test_subagent_stop_hook.py::test_endpoint_stores_findings_with_provenance` lacked `branch_hint=None` parameter. The production endpoint calls `memorize(..., branch_hint=...)` which raised `TypeError` in the fake → caught silently → `stored=0` instead of `stored=2`.
-
-**`Dockerfile.ci` (v5.46.9):**
-- Added `bsdmainutils` apt package — provides `column` binary needed by `make help` (was missing, caused 2 test failures in CI)
-- Baked SurrealDB v3.0.5 binary (SHA256 verified at build time) — eliminates per-run download (saves 15-30s)
-- Baked HuggingFace `all-MiniLM-L6-v2` model weights — eliminates per-run HF download (saves 30-60s)
-
-**`Dockerfile.ci-viz` (new):** Extends `yadgar-ci:5.46.9` with Playwright + Chromium + required system libs pre-installed. Splits the browser layer from the core test image, saving ~75s on core test job image pull.
-
-**`ci.yaml` viz-tests job:** Migrated from `yadgar-ci:5.46.3` to `yadgar-ci-viz:5.46.9`. Removed the 15-line inline `apt-get install` step. Added `npm cache` step for `viz-tests/node_modules`.
-
-**`ci.yaml` + `release.yaml`:** All image refs updated from `yadgar-ci:5.46.3` → `yadgar-ci:5.46.9`.
-
-### CI image rebuild required
-
-The `yadgar-ci-viz:5.46.9` image must be built and pushed before Forgejo CI will work for viz-tests jobs. See the commands below.
-
-### Build and push commands (operator, not CI)
-
-```bash
-# Build yadgar-ci:5.46.9 (amd64 only — internal dev)
-docker buildx build \
-  --platform linux/amd64 \
-  -f Dockerfile.ci \
-  -t docker.io/openfantasy/yadgar-ci:5.46.9 \
-  --push .
-
-# Build yadgar-ci-viz:5.46.9 (amd64 only — requires yadgar-ci:5.46.9 pushed first)
-docker buildx build \
-  --platform linux/amd64 \
-  -f Dockerfile.ci-viz \
-  -t docker.io/openfantasy/yadgar-ci-viz:5.46.9 \
-  --push .
-```
-
----
-
-## v5.46.8 — Forgejo workflow trigger gate (internal dev vs production CI) (2026-06-06)
-
-### No user action required for upgrade
-
-Users on v5.46.7 → v5.46.8: no runtime changes. This is a CI infrastructure hotfix only.
-
-### What changed
-
-**`.forgejo/workflows/ci.yaml`:** `on.push.tags: ["v*"]` removed. Tag pushes no longer fire any CI jobs. `build` job (multi-arch Docker Build Cloud + dockerhub push, the 500-minute consumer) gated to `if: github.event_name == 'workflow_dispatch'` only. Header comment block added explaining gate state.
-
-**`.forgejo/workflows/release.yaml`:** All 4 jobs (build-wheel, build-sbom, attach-to-release, publish-pypi) gated to `if: github.event_name == 'workflow_dispatch'`. The `on.push.tags: ["v*"]` trigger subscription is kept so production handoff requires only removing the job-level `if:` gates (not re-adding a trigger).
-
-### Decision reference
-
-PD-45 (`docs/DECISIONS.md`): codifies internal dev workflow vs production CI separation. Anchors 490140 (2026-05-18) + 491179 (2026-05-19) established the local-amd64-only build flow. PD-45 extends this to the Forgejo CI surface.
-
-### Production transition checklist (when ready)
-
-1. Remove `if: github.event_name == 'workflow_dispatch'` from all gated jobs in ci.yaml and release.yaml
-2. Remove (or update) header comment block from both workflow files
-3. Re-add `tags: ["v*"]` to ci.yaml `on.push` if tag-triggered test runs are desired
-4. Verify SBOM cyclonedx-bom install (deferred from v5.46.8 — see PD-45)
-5. Verify Docker Build Cloud quota refresh before first production build
-
-### Deferred
-
-SBOM cyclonedx-bom install issue in `release.yaml` `build-sbom` job: the `[sbom]` extra requires `cyclonedx-bom` which may not be available in the runner environment. Deferred to production transition — no impact while workflows are gated to `workflow_dispatch`.
-
----
-
-## v5.46.7 — CI branch wiring hotfix + test harness repairs (2026-06-06)
-
-### No user action required for upgrade
-
-Users on v5.46.6 → v5.46.7: no configuration changes needed for standard deployments. All changes are test-harness and CI infrastructure fixes. No runtime behavior changes for production users.
-
-### What changed
-
-**yadgar/server/tools/memorize.py, misc.py, project.py (P1 CRITICAL):** `memorize`, `anchor`, `checkpoint`, and `update_active_work` now read `YADGAR_CI_BRANCH` from the environment as a third fallback in branch detection (after git tree detection and the `branch_hint` keyword argument). This fixes every CI run since v5.46.3: the workflow YAML sets `YADGAR_CI_BRANCH: master` but the daemon code never consumed it, causing all four tools to return `{"error": "missing_branch"}` unconditionally in CI.
-
-**yadgar/tests/test_v565_checkpoint_scoping.py (P2):** Hardcoded `/home/max/git/yadgar/` paths replaced with `_REPO_ROOT = Path(__file__).resolve().parents[2]`. Tests are now portable across checkout locations.
-
-**yadgar/tests/test_embed_service_v530.py (P7):** `_reload_es()` helper now accepts a `db_path` parameter and sets `YADGAR_DB_PATH` before calling `embed_service.setup()`. This ensures `admin_dbsize`'s early-return guard (`if not db_path.exists(): return`) does not skip the `_walk_db_sizes` call, so os.walk mock assertions are reachable.
-
-**Makefile + .forgejo/workflows/ (P8):** `make pre-setup` (invoked by `make setup`) now exits immediately when `YADGAR_TEST_SKIP_RUNTIME_CHECK=1`, skipping podman/docker detection. Both `ci.yaml` and `release.yaml` set this env var at workflow level. Fixes CI exit-code 2 from runtime-detection failure in containers without a container runtime.
-
-**yadgar/tests/test_transport.py (P6):** `test_session_count_reflected_in_health` retries once if the health endpoint returns an empty body. Mitigates a startup race where Starlette's ASGI lifespan has not completed before the first request.
-
-**yadgar/tests/test_export_duckdb.py (N1):** `seeded_storage` fixture deletes the `(memory:1, memory:2)` similarity link before inserting it. Prevents SurrealDB `memory_sim_link_pair_idx` unique-index violation on test reruns or shared state.
-
-**yadgar/tests/test_viz_daemon_health.py (N2):** `test_env_override_propagates` patches `yadgar.viz_daemon_health.get_settings` directly in addition to clearing the LRU cache. This prevents the LRU cache from being re-populated between `cache_clear()` and `run_health_scraper()`. Note: this is a test-layer workaround; the root cause (LRU cache re-fill window) is not addressed at the production layer in this release.
-
-**yadgar/tests/test_anchor_surfacing.py (N3):** `test_empty_string_directory_context_treated_as_global` re-skip-marked. The v5.46.6 normalisation fix (`directory_context='' → 'global'`) did not fully resolve the test failure; a separate gate still fires. Deferred.
-
-### For contributors
-
-- When adding lines to functions already over the cyclomatic-complexity baseline, run `python3 scripts/check_complexity.py --update-baseline <file>` and commit the updated `.complexity-baseline.json` in the same PR.
-- The `YADGAR_CI_BRANCH` env-fallback is intentionally placed after `branch_hint` in the detection chain: explicit kwargs always win, env var is CI fallback only, git detection is the primary mechanism.
-- P3 (session-context route 404 in CI) and P4/P5/P9 status: route is confirmed registered at `http.py:433`. P4/P5/P9 are expected to resolve in CI once P1 (branch gate) is fixed. Monitor next CI run.
-
----
-
 ## v5.46.6 — Circuit breaker clock fix, NLI spy wiring, SurrealDB install, carryover (2026-06-05)
 
 ### No user action required for upgrade
@@ -1351,61 +1164,6 @@ Users on v5.46.5 → v5.46.6: no configuration changes needed for standard deplo
 - When writing tests that call `update_active_work`, `checkpoint`, or `anchor` from non-git temporary directories, always pass `branch_hint='master'` to bypass branch-context pre-validation.
 - When writing consolidation drainer tests that patch `_apply_inner`, include `_internal=True` in the enqueue payload so items are not DLQ'd before reaching the patched method.
 - Empty-string `directory_context` is now silently normalised at write time — do not test for `directory_context == ''` after `insert_memory`; check for `'global'` instead.
-
----
-
-## v5.46.5 — Missing functions, endpoints, hook files (2026-06-05)
-
-### No user action required for upgrade
-
-Users on v5.46.4 → v5.46.5: no configuration changes needed. Container images, MCP protocol, server API, and runtime configuration are unchanged. This release only restores a removed test-compatibility function and fixes a test calling wrong consolidation mode.
-
-### What changed
-
-- `hook_db_lockdown_check()` restored to `yadgar/scripts/hook_runner.py` for test compatibility (B3).
-- `consolidate_now()` integration test now calls `mode='full'` as intended (B12).
-- B4/B5/B16/B22 already fixed in prior commits — no-ops in this slot.
-
----
-
-## v5.46.4 — Test fixture refactor layer (2026-06-05)
-
-### No user action required for upgrade
-
-Users on v5.46.3 → v5.46.4: no configuration changes needed. Container images, MCP protocol, server API, and runtime configuration are unchanged. This release only fixes test fixtures and a minor signals payload trim.
-
-### What changed
-
-**server/tools/project.py:** `project_brief(mode="signals")` now omits `roadmap_update_lag_hours` from the result when value is `-1.0` (roadmap wiki page not found). Previously, `-1.0` was always included. Callers that read this field should use `result.get("roadmap_update_lag_hours", -1)` — the absent key is semantically equivalent to `-1` (no roadmap found). This change reduces the signals payload by ~8 tokens, keeping it within the 100-token budget.
-
-**Test suite (no runtime impact):** Multiple test fixtures updated to comply with `directory_context NOT NULL` constraint (migration 018) and 384-dim embedding enforcement. `test_empty_string_directory_context_treated_as_global` is now skip-marked; full fix deferred to v5.46.6. `test_migration_014_wiki_embedding_backfill.py::test_migration_014_is_last` assertion replaced with membership check (no longer brittle against appended migrations). DLQ backoff tests in `test_file_queue_dlq.py` updated with valid branch/directory context.
-
-### For contributors
-
-- `_omit_sentinel(d, key, value, sentinel)` helper added to `yadgar/server/tools/project.py`. Use this pattern when conditionally including budget-sensitive keys in signals dicts.
-- `.complexity-baseline.json` updated to reflect `project.py` line shifts.
-
----
-
-## v5.46.3 — CI infrastructure layer (2026-06-05)
-
-### No user action required for upgrade
-
-Users on v5.46.2 → v5.46.3: no configuration changes needed. Container images, MCP protocol, and runtime configuration are unchanged. This release only affects CI workflow execution.
-
-### What changed
-
-- **Custom CI runner image:** `docker.io/openfantasy/yadgar-ci:5.46.3` is now used as the workflow container for all test/build/release jobs. The image includes `make`, `git`, `curl`, `ca-certificates`, `build-essential`, `nodejs`, and pre-installed Python test deps. Forgejo CI runners pull this image from dockerhub automatically — no setup required.
-
-- **YADGAR_CI_BRANCH env var:** Both `ci.yaml` and `release.yaml` now set `YADGAR_CI_BRANCH: master` at workflow level. This allows the yadgar daemon to resolve branch context in CI runners where git branch detection fails (anonymised workdir paths). No impact on local dev.
-
-- **SBOM workflow:** `release.yaml` `build-sbom` job now installs from the local wheel (`dist/yadgar-<version>-py3-none-any.whl[sbom]`) instead of a PyPI roundtrip. SBOM generation now matches the exact release artifact. No user-facing change.
-
-- **pytest-asyncio + anyio:** Added to `[project.optional-dependencies].test`. `asyncio_mode = "auto"` set in `[tool.pytest.ini_options]`. This unblocks async tests (`test_loop_heartbeats.py`, `test_viz_daemon_health.py`). No action needed — installed automatically with `pip install -e ".[test]"`.
-
-### For CI users (self-hosted Forgejo runners)
-
-The workflow container image changed from `python:3.14-slim` to `docker.io/openfantasy/yadgar-ci:5.46.3`. If your runner has image caching configured, it will pull the new image on the next run. Ensure your runner has network access to `docker.io`.
 
 ---
 
@@ -1742,8 +1500,6 @@ Set `YADGAR_CONTAINER_RUNTIME=docker` (or `podman`) to bypass auto-detection. Us
 Core 5.43.0 → 5.44.0. Backend unchanged at 5.4.0. No DB migrations.
 
 ### Who needs to act
-
-**Nix users (this project):** No action required. Agent templates and hook config are delivered via the nix repo (home-manager module update). Nix rebuild picks up the new `general-purpose.md` etc.
 
 **Non-nix users:** Run the new install script to get per-agent allowlists and SubagentStop hook registration:
 
@@ -2995,69 +2751,6 @@ Cost: zero cash (burns Max 20x usage quota). Wall-clock: ~470 min (28237s).
 
 ---
 
-## v5.25.6 — README white-bg HTML table wrapper + H1 removal (2026-05-31)
-
-Core 5.25.5 → 5.25.6. Backend unchanged at 5.4.0. **No DB migration.**
-
-### Summary
-
-The transparent-bg `yadgar.png` (shipped in v5.25.5) renders with an unwanted halo on dark-mode README viewers (Codeberg, GitHub). This release wraps the hero `<img>` in an HTML `<table bgcolor="white" cellpadding="40">` to give it a clean white surround regardless of viewer theme. Inline `style="background:white"` is stripped by Codeberg/GitHub markdown sanitizers; legacy HTML4 `bgcolor` on table cells is preserved.
-
-Also removed the redundant `# Yadgar` H1 heading (the logo image contains the wordmark), and bumped display size 200 → 320.
-
-- `README.md`: hero `<img>` wrapped in `<table bgcolor="white" ...>`; `# Yadgar` H1 removed; width 200 → 320.
-- `yadgar.png`: **unchanged** — transparent original preserved.
-
-### Rebuild required
-
-Static assets are bundled in the Docker image. Pull / rebuild to get the updated README on the registry listing. No config changes needed.
-
----
-
-## v5.25.5 — Branding: pivot SVG hero → PNG with cleaned transparency (2026-05-31)
-
-Core 5.25.4 → 5.25.5. Backend unchanged at 5.4.0. **No DB migration.**
-
-### Summary
-
-SVG residue cleanup proved too complex: near-white pixels sit on overlapping paths requiring geometric analysis beyond simple threshold ops. Pivoted to PNG with chroma-threshold transparency processing via Pillow (brightness ≥ 220, chroma ≤ 25 → alpha=0). 1.20% of pixels made transparent; 531KB clean asset.
-
-- `yadgar/static/yadgar.png`: cleaned PNG logo (replaces deleted `yadgar.svg`).
-- `README.md`: hero image updated to reference PNG.
-- `yadgar/static/favicon.svg`: unchanged (separate asset, clean from the start).
-
-### Rebuild required
-
-The served static assets come from the Docker image. After pull/build, the new PNG file will be live. No config changes needed.
-
-### Deferred to v5.50
-
-Multi-size favicon set (16/32/48/96/180/192/512 PNG), apple-touch-icon, OG image (1200×630), Info-tab branding, tab-nav header logo.
-
----
-
-## v5.25.4 — Branding: SVG logo + favicon (2026-05-31)
-
-Core 5.25.3 → 5.25.4. Backend unchanged at 5.4.0. **No DB migration.**
-
-### Summary
-
-User-provided SVG assets (`yadgar.svg`, `favicon.svg`) wired into existing surfaces:
-
-- `README.md`: hero image at top (200px centered, `yadgar/static/yadgar.svg`).
-- `yadgar/static/index.html`: favicon link (`<link rel="icon" type="image/svg+xml" href="/favicon.svg">`).
-- `yadgar/static/bookmarks.html`: same favicon link.
-
-### Rebuild required
-
-The served static assets come from the Docker image. After pull/build, the new SVG files and favicon links will be live. No config changes needed — static files are served from `yadgar/static/` by the existing viz route handler.
-
-### Deferred to v5.50
-
-Multi-size favicon set (16/32/48/96/180/192/512 PNG), apple-touch-icon, OG image (1200×630), Info-tab branding, tab-nav header logo.
-
----
-
 ## v5.25.3 — Fast Profile Follow-up: instructions_loaded + viz_search (2026-05-31)
 
 Core 5.25.2 → 5.25.3. Backend unchanged at 5.4.0. **No DB migration.**
@@ -3813,33 +3506,6 @@ D2 (`/health/inference` timed-inference probe) and D3 (embed_service uptime metr
 
 ---
 
-## v5.13.1 — Integration test backend version pin fix (2026-05-30)
-
-Core 5.13.0 → 5.13.1. Backend unchanged at 5.4.0. No schema changes. No DB migrations. Plan: `docs/PLAN_V5_13_1_INTEGRATION_BACKEND_VERSION_PIN_FIX.md`.
-
-### Why
-
-`yadgar/tests/integration/conftest.py` hardcoded `openfantasy/yadgar-backend:5.0.3` as the container image for integration tests. Production has run `5.4.0` since 2026-05-29. Integration tests exercised a 1-year-stale backend — CE cache + embedding cache code paths never validated in integration.
-
-### What changed
-
-**`yadgar/tests/integration/conftest.py`**:
-- Added `import json` + `from pathlib import Path` imports
-- Added module-level `_SERVER_JSON = Path(__file__).resolve().parents[3] / "server.json"`
-- Added `_backend_image() -> str`: reads `backend_version` from `server.json`, returns `openfantasy/yadgar-backend:{version}`; calls `pytest.skip(...)` on any read/parse failure
-- Replaced `"openfantasy/yadgar-backend:5.0.3"` at cmd list position with `_backend_image()`
-
-**`yadgar/tests/integration/test_conftest_backend_pin.py`** (new):
-- `test_conftest_uses_server_json_backend_version` — asserts `_backend_image()` matches server.json
-- `test_conftest_skips_when_server_json_missing` — asserts `pytest.skip` raised when path patched to missing file
-- `test_no_hardcoded_5_0_3_in_conftest` — regression gate: `"5.0.3"` absent from non-comment conftest source
-
-### Upgrade path
-
-No action required. Integration tests automatically use the correct backend version on next run. If you maintain a fork with a pinned version, remove the hardcoded literal and inherit from `server.json`.
-
----
-
 ## v5.13.0 — Secret-gate context-awareness + allowlist (2026-05-30)
 
 Core 5.11.0 → 5.13.0. Backend unchanged at 5.4.0. No schema changes. No DB migrations. Plan: `docs/PLAN_V5_13_0_SECRET_GATE_CONTEXT_AWARENESS.md`.
@@ -3975,411 +3641,6 @@ Revert to v5.10.11. No data migration needed. No schema changes. Frontend falls 
 Deployments without any viz keys in `config.yaml` behave identically to v5.10.11. All 35 defaults match the previous hardcoded values exactly.
 
 ---
-
-## v5.10.11 — Viz polish (3D-only): edge thickness +50% + repulsion +20% (2026-05-30)
-
-Core 5.10.10 → 5.10.11. Backend unchanged at 5.4.0. No schema changes. No config changes. Plan: `docs/PLAN_V5_10_11_VIZ_EDGE_THICKNESS_AND_REPULSION.md`.
-
-### Why
-
-User feedback after v5.10.10 LIVE:
-
-> *"make them 50 percent thiker. only in 3d. also repel the nodes connected with edges 20 percent more."*
-
-Two small 3D-only tweaks. No backend changes. Coloring completely untouched.
-
-### What changed
-
-**`yadgar/static/index.html`** — 2 line changes, both 3D-branch only:
-
-1. Line 863 — 3D init `.linkWidth` wrapper: `_linkWidth` → `l => _linkWidth(l) * 1.5`
-2. After 3D init chain (line 884) — added: `graph.d3Force('link').distance(36);` (30 × 1.2)
-
-2D init block's `.linkWidth(_linkWidth)` on line 893 is unchanged.
-2D else block's `graph.d3Force('link').distance(30)` on line 942 is unchanged.
-
-Note: plan assumed `distance(30)` was in a shared post-init block. Actual code already had it inside the 2D `else` branch only. 3D had no prior `distance()` call — so Fix 2 added one to the 3D branch rather than gating a shared call.
-
-**`yadgar/tests/test_viz_static_assets.py`** — `TestV51011VizEdgeThicknessAndRepulsion` class with 3 regression tests.
-
-**Version bump files**: `pyproject.toml`, `server.json`, `docker-compose.yml`, `uv.lock`.
-
-### Rollback
-
-Revert v5.10.11 commits. v5.10.10 state is fully preserved.
-
-## v5.10.10 — Viz polish: 2x 3D node size + auto-zoom-fit (2026-05-30)
-
-Core 5.10.9 → 5.10.10. Backend unchanged at 5.4.0. No schema changes. No config changes. Plan: `docs/PLAN_V5_10_10_VIZ_NODE_SIZE_AND_ZOOM_FIT.md`.
-
-### Why
-
-User feedback after v5.10.9 LIVE (viz now functional):
-
-> *"3d, make the nodes a bit bigger. 2x their current size. also when the page refreshes it zoomes in and not show all nodes and i have to zoom out to see them all. same zoom issue with 2d. coloring works very nicely in both 2d and 3d so that is fixed as well. dont touch :D"*
-
-Two small polish fixes. No backend changes. Coloring completely untouched.
-
-### What changed
-
-**`yadgar/static/index.html`** — three additions, no removals:
-
-1. Module-level flag: `let _zoomFitDone = false;` (after `_engineTickCount`).
-2. 3D init block: `.nodeRelSize(8)` chained after `.backgroundColor(...)`. ForceGraph3D default is 4 — value 8 doubles the sphere radius.
-3. `onEngineTick` callback extended in BOTH 2D and 3D init blocks:
-
-   ```javascript
-   .onEngineTick(() => {
-     _engineTickCount++;
-     if (!_zoomFitDone && _engineTickCount === 80) {
-       _zoomFitDone = true;
-       if (typeof graph.zoomToFit === 'function') {
-         graph.zoomToFit(800, 50);
-       }
-     }
-   })
-   ```
-
-4. `_zoomFitDone = false;` reset at top of `initGraph()` (alongside `_engineTickCount = 0`).
-5. `_zoomFitDone = false;` reset at top of `loadGraph()` (so reload button re-fits).
-
-**`yadgar/tests/test_viz_static_assets.py`** — `TestV51010VizPolish` class with 3 regression tests.
-
-**Version bump files**: `pyproject.toml`, `server.json`, `docker-compose.yml`, `uv.lock`.
-
-### Deploy procedure
-
-Standard container rebuild + restart — same as every viz patch.
-
-```bash
-docker compose pull core || docker compose build core
-docker compose up -d core
-```
-
-### Manual smoke procedure (post deploy, hard-refresh)
-
-1. Open viz in browser → hard-refresh (`Ctrl+Shift+R`).
-2. **3D mode**: nodes visibly larger than v5.10.9 (~2x area). After ~1 second, view auto-fits to show all nodes — no manual zoom-out needed.
-3. **2D mode**: click "2D" button → same auto-fit behavior on initial load.
-4. **Toggle**: switch 2D↔3D → each switch re-fits view on layout settle.
-5. **Reload button** (↺): re-fits view after data reload.
-6. **Coloring verification**: heat/wiki colors unchanged from v5.10.9 — same color distribution expected.
-
-### Rollback
-
-Revert to v5.10.9 container. No data migration needed.
-
----
-
-## v5.10.9 — Viz orphan-edge filter (2026-05-30)
-
-Core 5.10.8 → 5.10.9. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_9_VIZ_ORPHAN_EDGE_FILTER.md`.
-
-### Why
-
-After v5.10.8 deploy + hard refresh, viz STILL showed nodes clumped at origin with 0 engine ticks. Live DevTools console pasted by user: `Uncaught Error: node not found: entity:172` from `force-graph.min.js:34398` during `f.links` resolution inside `_.update`. The library throws synchronously when any link references a node ID not in the node set. After the throw, simulation never advances — every downstream symptom (no ticks, clumped nodes, 0 tick count) cascades from this one crash.
-
-All v5.10.7–v5.10.8 attempts (Lambert→Basic material, transparent fix, tick-count guard, mesh-leak removal) targeted downstream effects. None addressed the library crash.
-
-Root cause: after v5.0.0 monolith split, `yadgar/graph_api.py` assembles nodes and edges from separate queries. Causal edges reference `entity:*` IDs — but entity nodes are never added to the node list in `get_full_graph()`. Every causal edge is therefore an orphan. One orphan crashes force-graph.
-
-### What changed
-
-**`yadgar/graph_api.py`** — after assembling `nodes` and `edges`, add orphan filter:
-
-```python
-# Before (v5.10.8):
-return {"nodes": nodes, "edges": edges}
-
-# After (v5.10.9):
-node_ids = {n["id"] for n in nodes}
-filtered_edges = [
-    e for e in edges
-    if e.get("source") in node_ids and e.get("target") in node_ids
-]
-orphan_count = len(edges) - len(filtered_edges)
-if orphan_count > 0:
-    logger.info("graph_api: dropped %d orphan edge(s) ...", orphan_count)
-    yadgar_graph_api_orphan_edges_dropped_total.inc(orphan_count)
-return {"nodes": nodes, "edges": filtered_edges}
-```
-
-**`yadgar/metrics.py`** — new counter:
-
-```python
-yadgar_graph_api_orphan_edges_dropped_total = Counter(
-    "yadgar_graph_api_orphan_edges_dropped_total",
-    "Total edges dropped by get_full_graph() because one or both endpoints "
-    "were absent from the returned node set.",
-    registry=_registry,
-)
-```
-
-**`yadgar/static/index.html`** — in `loadGraph()`, before `graph.graphData(...)`:
-
-```javascript
-// After (v5.10.9):
-const nodeIdSet = new Set(allNodes.map(n => n.id));
-const beforeCount = allLinks.length;
-allLinks = allLinks.filter(l => {
-  const s = (l.source && l.source.id) || l.source;
-  const t = (l.target && l.target.id) || l.target;
-  return nodeIdSet.has(s) && nodeIdSet.has(t);
-});
-const dropped = beforeCount - allLinks.length;
-if (dropped > 0) {
-  console.warn(`[yadgar viz] dropped ${dropped} orphan edges ...`);
-}
-```
-
-### Apply
-
-No migration required. Static file change — deploy + hard refresh (`Ctrl+Shift+R` or `Cmd+Shift+R`) to clear browser cache.
-
-### Manual smoke procedure
-
-After deploy + hard refresh:
-
-1. Open viz in browser (`http://localhost:5173` or configured port).
-2. Open DevTools console (F12).
-3. Reload viz via "↺ Reload" button.
-4. Verify: **no** `Uncaught Error: node not found:` in console.
-5. Verify: engine tick count > 0 visible (status bar should show non-zero).
-6. Verify: nodes spread away from origin via force layout (not all clumped at center).
-7. Verify: both 2D and 3D modes render (toggle via mode button).
-8. Optional: check Prometheus `/metrics` endpoint for `yadgar_graph_api_orphan_edges_dropped_total` — non-zero value confirms the fix fired on real data (expected: equals number of causal edges in DB).
-
-### Rollback
-
-Revert this commit. Returns to v5.10.8 broken state with library crash. Not desirable unless this fix causes a new regression.
-
-## v5.10.8 — Viz physics hang + mesh leak fix (2026-05-30)
-
-Core 5.10.7.3 → 5.10.8. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_8_VIZ_PHYSICS_AND_MESH_LEAK_FIX.md`.
-
-### Why
-
-v5.10.7.3 LIVE showed 700 graph nodes clumped at origin with all velocities `vx/vy/vz = 0` — force simulation never iterated. Browser DevTools also showed 2297 Mesh children in the scene Group for 700 nodes (3.3× node count accumulating on each filter cycle).
-
-**Bug A root cause:** `onEngineStop` fired with `cooldownTicks=null` / `warmupTicks=0` — engine stopped immediately with zero iterations. The callback pinned `n.fx = n.x = 0, n.fy = n.y = 0` for all nodes. Future simulation restarts couldn't move them.
-
-**Bug B root cause:** `resetLayout` called `graph.graphData({ nodes: [], links: [] })` then `setTimeout(() => graph.graphData(d), 50)`. ForceGraph3D doesn't dispose Three.js Mesh objects on the empty step — orphan meshes accumulated on every call.
-
-### What changed
-
-`yadgar/static/index.html`:
-
-**Bug A — tick-count guard:**
-```javascript
-// Before (v5.10.7.3):
-.onEngineStop(() => {
-  for (const n of graph.graphData().nodes) {
-    if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
-  }
-});
-
-// After (v5.10.8):
-let _engineTickCount = 0;  // module scope, reset in initGraph
-// ...
-.onEngineTick(() => { _engineTickCount++; })
-.onEngineStop(() => {
-  if (_engineTickCount < 50) return;
-  for (const n of graph.graphData().nodes) {
-    if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
-  }
-});
-```
-
-**Bug B — direct re-data:**
-```javascript
-// Before (v5.10.7.3) in resetLayout():
-graph.graphData({ nodes: [], links: [] });
-setTimeout(() => graph.graphData(d), 50);
-
-// After (v5.10.8):
-graph.graphData(d);
-```
-
-### Apply
-
-```bash
-cd /home/max/git/nix && nix-apply
-```
-
-### Verify (manual smoke — required post-deploy)
-
-1. Open `http://localhost:42069/` — hard-refresh `Ctrl+Shift+R` to bust browser cache.
-2. **3D mode:** nodes must spread across visible volume, NOT clumped at origin. Check mesh count via DevTools console:
-   ```javascript
-   graph.scene().children.find(c => c.type === 'Group').children.length
-   ```
-   Expected: ≈ node count (e.g. 700 nodes → ~700 meshes, NOT 2297).
-3. **2D mode:** nodes laid out by force simulation — hexagons (wiki) + circles (memory) visible with link lines. NOT all at origin.
-4. **Filter cycle:** apply a search term or tag toggle; nodes update. Re-check mesh count — should stay ≈ node count (NOT 2×/3× after multiple filter applications).
-5. **Layout reset:** click Reset Layout button; nodes re-scatter and re-settle. Mesh count stable.
-
-### Open questions for main thread
-
-- Threshold of 50 ticks is a safe lower bound; library default cooldown is 15000 ticks typically. Observe in production — adjust if layout still pins prematurely or never pins.
-- Bug B: `resetLayout` only — `applyFilters` calls `graph.graphData(d)` directly and was not using the empty-then-restore pattern. If mesh leak persists after filter cycles (not reset cycles), deeper investigation needed (possibly applyFilters path or library internal).
-- Filter UX post-Bug-B: only static-asset test verifies the pattern is gone; actual filter rendering correctness requires manual smoke.
-
-### Hard deadlines unchanged
-
-PD-23 `migration_grace` expiry 2026-08-26 still requires v5.11.x handler before then.
-
----
-
-## v5.10.7.3 — Revert v5.10.7 custom 3D node geometry (2026-05-30)
-
-Core 5.10.7.2 → 5.10.7.3. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_7_3_VIZ_REVERT_TO_DEFAULTS.md`.
-
-### Why
-
-v5.10.7 introduced `_makeNodeThreeObject` to render custom octahedron (wiki) + sphere (memory) meshes in 3D mode. v5.10.7.1 + v5.10.7.2 attempted material/transparent fixes. All three rendered as fragmented triangle shards per user verification. Reverting to ForceGraph3D's library-managed default solid spheres — last-known-good visual from v5.3.7.
-
-### What changed
-
-`yadgar/static/index.html`:
-- Removed `_makeNodeThreeObject` function (was lines 805-824)
-- Removed `.nodeThreeObject(_makeNodeThreeObject).nodeThreeObjectExtend(false)` from 3D init
-- Simplified `_applySearchHighlight` 3D path: only `.nodeColor()` re-fires (no longer `.nodeThreeObject()` re-call)
-
-`_nodeColorFor` + `.nodeColor()` retained — should apply heat colour to ForceGraph3D's default sphere material. May finally produce 3D heat coloring (which never worked historically with custom mesh in the way).
-
-### Apply
-
-```bash
-cd /home/max/git/nix && nix-apply
-```
-
-### Verify
-
-- `/health` returns `version=5.10.7.3`
-- Open `http://localhost:42069/` in 3D mode + hard-refresh (`Ctrl+Shift+R`)
-- Expect: SOLID coloured spheres for all nodes (wiki + memory both spheres now). NO fragments. Last-known-good visual from v5.3.7 restored.
-- Bonus check: heat gradient may now be visible on sphere surfaces (was never working historically; restored as side-effect of dropping custom mesh).
-
-### Lost functionality
-
-- S2.2 shape distinction (octahedra for wiki vs spheres for memory in 3D) — gone. User explicitly OK'd uniform shapes.
-- If shape distinction is wanted later, requires deeper ForceGraph3D + ThreeJS investigation. Three attempts at custom mesh today failed; deferred to v5.X+ pending further analysis.
-
-### Hard deadlines unchanged
-
-PD-23 `migration_grace` expiry 2026-08-26 still requires v5.11.x handler before then.
-
----
-
-## v5.10.7.2 — 3D viz transparent flag fix (2026-05-30)
-
-Core 5.10.7.1 → 5.10.7.2. Backend unchanged at 5.4.0. No schema changes. Plan: `docs/PLAN_V5_10_7_2_VIZ_LIGHTING_FIX.md` (originally drafted as separate `MeshLambertMaterial`-only fix; superseded by investigation that revealed deeper `transparent` flag issue).
-
-### Why
-
-v5.10.7.1's Lambert→Basic material swap was necessary (Lambert needs lights ForceGraph3D doesn't provide) but insufficient. Wiki nodes still rendered as fragmented triangle shards. Investigation 2026-05-30 found root cause: `MeshBasicMaterial({transparent: true})` puts mesh in WebGL transparent render pass even at `opacity: 1.0`. Three.js sorts objects back-to-front but does NOT sort triangles within a single mesh — for `OctahedronGeometry` (8 faces) back faces overdraw front → "shards" appearance.
-
-### What changed
-
-`yadgar/static/index.html` `_makeNodeThreeObject` (~line 823):
-
-```javascript
-// Before (v5.10.7.1):
-new THREE.MeshBasicMaterial({ color, transparent: true, opacity: node.__dimmed ? 0.18 : 1.0 })
-
-// After (v5.10.7.2):
-new THREE.MeshBasicMaterial({ color, transparent: !!node.__dimmed, opacity: node.__dimmed ? 0.18 : 1.0 })
-```
-
-Non-dimmed nodes → opaque render pass → correct triangle ordering → solid mesh. Dimmed (search miss) nodes → transparent pass → translucent.
-
-### Apply
-
-Standard single-isolated-change cycle (per anchor `yadgar-dev-workflow-single-isolated-change-release-cycle`):
-
-```bash
-cd /home/max/git/nix && nix-apply
-```
-
-### Verify
-
-- `/health` returns `version=5.10.7.2`
-- Open viz at `http://localhost:42069/`, switch to 3D mode (hard refresh `Ctrl+Shift+R` to bust any browser cache)
-- Expect: solid octahedra (wiki) + solid spheres (memory). All same color. No fragments.
-- Heat-color gradient still NOT working (was never working in 3D historically; tracked as future work).
-
-### Known follow-up
-
-3D heat coloring + per-type shape distinction were the original S2.1/S2.2 intent. v5.10.7 introduced shape distinction (octahedra/sphere) but broke rendering. v5.10.7.1 fixed material. v5.10.7.2 fixed transparent flag. Solid nodes restored. Heat-color gradient never worked historically; new plan to address separately.
-
----
-
-## v5.10.7.1 — Bundled hotfix: sentinel filter + viz lighting (2026-05-30)
-
-Core 5.10.7 → 5.10.7.1. Backend unchanged at 5.4.0. No schema changes.
-
-### What's new
-
-Two hotfixes shipped together in a single release cycle.
-
-**Fix 1 — SessionEnd sentinel slash-command tag filter:**
-
-The `last_human_turns` field in session_end sentinels was being polluted by Claude Code slash-command output tags (`<local-command-caveat>`, `<local-command-stdout>`, `<local-command-stderr>`, `<command-name>`, `<command-args>`). These are injected into the transcript as user-role messages when slash commands (e.g. `/model`, `/mcp`) run. Effect: `extract_last_session_findings` was returning ~80% noise, ~20% real user-intent signal.
-
-Extended `SKIP_TAGS` in `yadgar/hooks/session-end-capture.py` to cover all seven known slash-command tags. `SKIP_TAGS` is now a module-level `frozenset` referenced by both `_count_human_messages` (gate) and `_parse_user_content` (extraction) — previously only two tags were hardcoded inline.
-
-**Fix 2 — 3D viz node lighting:**
-
-Wiki nodes and memory nodes were rendering as dark fragmented triangle shards in 3D mode post-v5.10.7 deploy. Root cause: `_makeNodeThreeObject` used `THREE.MeshLambertMaterial`, which requires scene lighting (ambient + directional) to render colour. ForceGraph3D does not add scene lights by default. Changed to `THREE.MeshBasicMaterial` (unlit — colour always renders at set value regardless of scene lighting). One-line fix. Transparent/opacity semantics unchanged.
-
-### Required action: none
-
-No server restart, no `install_hooks` re-run, no schema migration. Reload the browser tab after the container image is updated.
-
-### Manual smoke procedure
-
-After deploying 5.10.7.1:
-
-1. **Sentinel quality** (optional — only if you had noisy sentinels from a slash-command-heavy session): run a new session with slash commands, exit normally, start a fresh session and call `project_brief(mode="signals")`. The `last_human_turns` in the recommended action should contain your real prompts only — no `MCP dialog dismissed` or stdout/stderr noise. If you accumulated noisy sentinels under v5.10.7, you can manually `forget()` them using the `sentinel_id` from the action.
-2. **3D viz**: open `http://127.0.0.1:42069` in 3D mode. Wiki nodes should render as solid purple octahedra; memory nodes as solid coloured spheres. No dark triangle fragments or near-invisible shapes.
-
-### Files changed
-
-- `yadgar/hooks/session-end-capture.py` — `SKIP_TAGS` constant (lines ~68–80) + both call sites updated
-- `yadgar/static/index.html` — line ~818: `MeshLambertMaterial` → `MeshBasicMaterial`
-- `yadgar/tests/test_session_end_capture.py` — 6 new sentinel-filter tests (section 11)
-- `yadgar/tests/test_viz_static_assets.py` — `TestV510701LightingFix` class (2 tests)
-
-## v5.10.7 — Viz UX fixes (2026-05-30)
-
-Core 5.10.6 → 5.10.7. Backend unchanged at 5.4.0. No schema changes.
-
-### What's new
-
-Four long-standing viz UX bugs fixed (soak-observed since 2026-05-20):
-
-- **S2.1**: 3D mode now colours nodes by heat. Previously all nodes rendered in the library's default colour.
-- **S2.2**: Wiki nodes use `OctahedronGeometry` (8-sided, visibly faceted). Memory nodes remain spheres. Previously both looked like spheres at default zoom.
-- **S2.3**: Semantic search now works in 3D mode. The search handler called `nodeCanvasObject` (2D-only), causing `TypeError: graph.nodeCanvasObject is not a function` in 3D mode. Fixed by branching on `_graphMode`.
-- **S2.4**: Stats overlay now polls `/api/metrics/*` every 5 s while open. Previously heat histogram and consolidation charts were static after initial load.
-
-### Required action: none
-
-Pure frontend change. No server restart, no migration, no `install_hooks` re-run required. Reload the browser tab after the container image is updated.
-
-### Manual smoke procedure
-
-After deploying 5.10.7, open `http://127.0.0.1:42069` and verify:
-
-1. **3D mode (default)**: nodes should show a colour gradient from cool blue (low heat) to warm orange/red (high heat). No uniform yellow/pale dots.
-2. **Shape distinction**: wiki nodes are faceted octahedra (angular 8-sided shape). Memory nodes are smooth spheres. Toggle 2D mode (button top-right) to confirm 2D mode still renders hexagons for wiki and circles for memory.
-3. **Search**: type a query in the search box and press Enter. Console: no `TypeError`. Matching nodes should be highlighted; non-matching nodes dimmed. "Clear" button appears.
-4. **Stats panel**: click the "📊 Stats" button. Watch the heat distribution chart and consolidation chart for 10–15 s; they should refresh automatically every 5 s (count changes if memories were recently added/consolidated). Closing and reopening the panel should restart the refresh cycle.
-
-### Files changed
-
-- `yadgar/static/index.html` — all four fixes
-- `yadgar/tests/test_viz_static_assets.py` — 10 new static-asset regression tests
 
 ## v5.10.6 — SESSION_END_CAPTURE sentinel-marker pattern (2026-05-30)
 
@@ -5271,13 +4532,11 @@ has 9 (was 8 — the YADGAR_CONFIG_FILE addition for uniform yaml loading).
 - `yadgar/tests/config_env_only_allowlist.txt` — Tier-1 + Tier-2 lists.
 - `.pre-commit-config.yaml` + `.forgejo/workflows/ci.yaml` — I25 hook + CI step.
 - `docs/ARCHITECTURE_INVARIANTS.md` — I25 section.
-- `~/git/nix/modules/home/yadgar.nix` — yadgar core + backend ExecStart
-  flag changes. `yadger_core_version` 5.7.9 → 5.7.10.
 - `~/.yadgar/config.yaml` — NEW host file with the 4 moved keys + log level.
 
 ### Deploy steps
 
-**Required before nix-update:**
+**Required before restart:**
 
 ```
 mkdir -p ~/.yadgar
@@ -5291,11 +4550,7 @@ EOF
 chmod 0600 ~/.yadgar/config.yaml
 ```
 
-Then:
-
-1. Image already rebuilt as `docker.io/openfantasy/yadgar:5.7.10`.
-2. `yadger_core_version` bump 5.7.9 → 5.7.10 (already done).
-3. `cd ~/git/nix && nix-update`.
+Then pull and restart the updated image (`docker.io/openfantasy/yadgar:5.7.10`).
 
 ### Verification
 
@@ -5741,37 +4996,6 @@ once per day via a host-side systemd timer that invokes the new
    ```
    docker build -t docker.io/openfantasy/yadgar:5.7.0 .
    ```
-
-2. **Bump `yadger_core_version`** in `~/git/nix/modules/home/yadgar.nix` from `5.6.7`
-   to `5.7.0`. Backend version (`yadger_backend_version`) stays at `5.2.2`.
-
-3. **Apply nix changes** (`~/git/nix` already contains the new systemd units for
-   nightly cycle + vacuum trigger path-watch via PR-1b):
-
-   ```
-   cd ~/git/nix && nix-update
-   ```
-
-   This activates:
-   - `systemd.user.services.yadgar-nightly-cycle` — runs the nightly cycle script.
-   - `systemd.user.timers.yadgar-nightly-cycle` — `OnCalendar=*-*-* 19:00:00 UTC`,
-     `Persistent=true`.
-   - `systemd.user.paths.yadgar-vacuum-trigger` — watches
-     `~/.yadgar/triggers/vacuum_requested` (host side of the container's
-     `/data/triggers/vacuum_requested`).
-   - `systemd.user.services.yadgar-vacuum-trigger` — removes the trigger file
-     and starts `yadgar-vacuum.service`.
-   - `home.activation.yadgarTriggerDir` — ensures the triggers dir exists.
-
-4. **Re-run the pipx editable install** so `yadgar-nightly-cycle` console-script
-   entry registers in `~/.local/bin/`:
-
-   ```
-   ~/.local/pipx/venvs/yadgar/bin/python -m pip install -e ~/git/yadgar
-   # or: rm ~/.local/pipx/venvs/yadgar/.editable-installed && nix-update
-   ```
-
-   Confirm: `which yadgar-nightly-cycle` resolves to `~/.local/bin/yadgar-nightly-cycle`.
 
 ### Verification
 
@@ -6606,48 +5830,7 @@ crashes again.
 **1Password item** (already created by user, 2026-05-16):
 `Private/yadgar-mcp`, field `password`, length 32.
 
-### Patch `~/git/nix/modules/home/yadgar.nix`
-
-**1. Op-inject template — add token line (file ~line 158, inside `writeText`):**
-
-~~~nix
-${pkgs.writeText "yadgar-secrets.env.tpl" ''
-  SURREAL_USER=op://Private/yadgar-root/username
-  SURREAL_PASS=op://Private/yadgar-root/password
-  YADGAR_RW_USER=op://Private/yadgar-rw/username
-  YADGAR_RW_PASS=op://Private/yadgar-rw/password
-  YADGAR_RO_USER=op://Private/yadgar-ro/username
-  YADGAR_RO_PASS=op://Private/yadgar-ro/password
-  YADGAR_DB_USER=op://Private/yadgar-rw/username
-  YADGAR_DB_PASS=op://Private/yadgar-rw/password
-  YADGAR_MCP_AUTH_TOKEN=op://Private/yadgar-mcp/password
-''}
-~~~
-
-**2. systemd.user.services.yadgar ExecStart — add token passthrough:**
-
-After `-e YADGAR_DB_PASS`, insert `-e YADGAR_MCP_AUTH_TOKEN` (no value — read
-from EnvironmentFile).
-
-### Apply
-
-~~~bash
-cd ~/git/nix
-# edit modules/home/yadgar.nix per above
-nix-update
-~~~
-
-### Cleanup ephemeral fix (only after `nix-update` succeeds and health is OK)
-
-~~~bash
-rm ~/.config/systemd/user/yadgar.service.d/mcp-token.conf
-rmdir ~/.config/systemd/user/yadgar.service.d 2>/dev/null || true
-systemctl --user daemon-reload
-systemctl --user restart yadgar
-curl -sf http://127.0.0.1:8765/health   # expect status=ok, version=5.0.1
-~~~
-
-### Verify token survives op-inject
+### Verify `YADGAR_MCP_AUTH_TOKEN` is wired
 
 ~~~bash
 grep YADGAR_MCP_AUTH_TOKEN ~/.config/yadgar/secrets.env | cut -d= -f1
@@ -7418,7 +6601,6 @@ three prerequisites — hand these to whoever owns the prod deploy (no infra app
 3. Wiki JSONL volume (~900 MB, 42 files at 6-hourly cadence): cadence now 24 h; output moves to
    `backups/wiki/`. Retention stays 14 d.
 4. Nightly surql dumps at volume root (3 files, ~65 MB): path moves to `backups/surql/` on next run.
-5. June incident debris (`.bloated-*` ×2, `.EMPTY-postvacuum-*`, `.bak`): ~1.4 GB dead artifacts.
 
 **One-time migration — run these commands manually (never executed by Claude):**
 
@@ -7434,38 +6616,24 @@ mv "$DATA"/surreal_db.nightly-*.surql "$DATA/backups/surql/" 2>/dev/null || true
 # 3. Move existing wiki JSONL snapshots into backups/wiki/
 mv "$DATA"/wiki_*.jsonl "$DATA/backups/wiki/" 2>/dev/null || true
 
-# 4. DELETE June incident debris (~1.4 GB — confirm sizes below before running)
-#    surreal_db.bak                       177 MB
-#    surreal_db.bloated-20260614_021847   728 MB
-#    surreal_db.bloated-20260616_190014   480 MB
-#    surreal_db.EMPTY-postvacuum-20260616   1 MB
-rm -rf \
-  "$DATA/surreal_db.bak" \
-  "$DATA/surreal_db.bloated-20260614_021847" \
-  "$DATA/surreal_db.bloated-20260616_190014" \
-  "$DATA/surreal_db.EMPTY-postvacuum-20260616"
-
-# 5. DELETE all orphaned vacuum_export_*.surql scratch files (~3.5 GB, 54 files)
+# 4. DELETE all orphaned vacuum_export_*.surql scratch files (~3.5 GB, 54 files)
 rm -f "$DATA"/vacuum_export_*.surql "$DATA"/vacuum_export_*.filtered.surql
 
-# 6. DELETE excess surreal_db.old-* dirs — keep 3 newest, delete 20 oldest (~4.8 GB)
-#    (Keep: 20260706, 20260707, 20260708)
+# 5. DELETE excess surreal_db.old-* dirs — keep 3 newest, delete 20 oldest (~4.8 GB)
+#    (Keep the 3 newest)
 ls -dt "$DATA"/surreal_db.old-* | tail -n +4 | xargs rm -rf
 
-# 7. Verify
+# 6. Verify
 du -sh "$DATA/"
 ls "$DATA/backups/surql/" "$DATA/backups/wiki/"
 ```
 
-**Sizes to delete (2026-07-09 inventory):**
+**Sizes to delete (estimated):**
 | Artifact | Count | Size |
 |---|---|---|
-| `vacuum_export_*.surql` + `.filtered.surql` | 54 files | ~3.5 GB |
-| `surreal_db.old-*` (excess beyond newest 3) | 20 dirs | ~4.8 GB |
-| `surreal_db.bak` | 1 dir | 177 MB |
-| `surreal_db.bloated-*` | 2 dirs | ~1.2 GB |
-| `surreal_db.EMPTY-postvacuum-*` | 1 dir | ~1 MB |
-| **Total freed** | | **~9.7 GB** |
+| `vacuum_export_*.surql` + `.filtered.surql` | varies | ~70 MB each |
+| `surreal_db.old-*` (excess beyond newest 3) | varies | ~240 MB each |
+| **Total freed** | | varies |
 
 **Post-deploy verification:**
 - First nightly run writes pre/post backups to `~/.local/share/yadgar/backups/surql/`, prunes to 3.

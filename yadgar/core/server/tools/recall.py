@@ -131,7 +131,6 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
     max_results: int = 5,
     min_heat: float = 0.0,
     profile: str | None = None,
-    stage_overrides: dict[str, dict] | None = None,
     directory: str | None = None,
     branch_hint: str | None = None,
     type: str = "all",  # noqa: A002 — shadows built-in but matches MCP schema convention
@@ -159,7 +158,6 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         profile: Optional retrieval profile — "fast", "balanced", "full", "debug".
             Controls rerank stages on the backend (fast = no CE/NLI/MP; balanced =
             CE+MP; full = +NLI). Raises ValueError on unrecognised value.
-        stage_overrides: Per-call stage disable map, e.g. {"nli": {"enabled": False}}.
         branch_hint: Caller-supplied branch name. Fallback when daemon cannot detect
             the branch (container scenario). Resolution order:
             _detect_branch(directory) → branch_hint → None.

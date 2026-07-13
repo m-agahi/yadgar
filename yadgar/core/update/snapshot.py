@@ -112,10 +112,6 @@ class Snapshot:
         """Write the target (to) version string to disk atomically."""
         _atomic_write(self.path / "target_version", version)
 
-    def read_target_version(self) -> str | None:
-        """Return the stored target version, or None if not present."""
-        return self._read_plain("target_version")
-
     def append_forward_log(self, state: str, detail: dict | None = None) -> None:
         """Append an entry to forward_log.json atomically."""
         self._append_log("forward_log.json", state, detail)

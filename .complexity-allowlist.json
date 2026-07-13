@@ -468,5 +468,16 @@
   "rationale": "P0 #37 item 3: the finalize gained db_path (the rollback target — cannot be derived when --db-path names a non-standard canonical) on top of the pre-existing 8-param signature (url, home, old, snapshot, svc, keep_n, raw/filtered scratch). Bundling params into a context object means rewriting ~10 positional call sites across the legacy vacuum test suites — churn deferred to the T2 layer-boundary restructure (#5); a P0 incident branch keeps the seam stable.",
   "added": "2026-07-10",
   "added_by": "safestop-car2"
+ },
+ {
+  "path": "yadgar/core/server/tools/adr.py",
+  "function": "adr_add",
+  "lineno": 178,
+  "metrics": {
+   "fn_loc": 155
+  },
+  "rationale": "car #26 (adr-add-id-race): the per-project threading.Lock with its block-comment rationale and the `with _adr_log_lock(resolved):` indentation added ~5 LOC over the previous 150-line body. The function cannot be split further without creating awkward private helpers for two-line branches. The extra 5 lines are all comment/lock boilerplate, not logic; cyclomatic complexity is unchanged. Accepted as a SOFT overage with documentation value.",
+  "added": "2026-07-13",
+  "added_by": "car/fix-adr-race"
  }
 ]

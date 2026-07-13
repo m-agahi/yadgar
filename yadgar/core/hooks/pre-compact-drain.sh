@@ -13,14 +13,29 @@ if [ -z "$CWD" ]; then
 fi
 
 # HOOKS Car 2: extract transcript_path (in-flight orchestration capture). Empty
-# when absent — the CLI degrades to pre-Car-2 behaviour.
+# when absent — the CLI degrades to pre-Car-2 behaviour. The `yadgar drain` CLI
+# parses in_flight HOST-SIDE (Car fix-drain-inflight) — this wrapper runs on the
+# host where the transcript + git worktree tree are visible.
 TRANSCRIPT=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('transcript_path',''))" 2>/dev/null || echo "")
+
+# Car fix-drain-inflight: surface the drain outcome instead of swallowing it
+# blind. Capture stderr + status to a hook-error log; ALWAYS exit 0 so a drain
+# failure never blocks compaction. (The prior `> /dev/null 2>&1; exit 0` hid
+# every failure — the drain was inert for weeks with no signal.)
+ERRLOG="${HOME}/.claude/yadgar-hook-errors.log"
+STAMP=$(date +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo "?")
 
 # Drain context directly via CLI (works in both stdio and SSE mode)
 if [ -n "$TRANSCRIPT" ]; then
-    yadgar drain "$CWD" --transcript-path "$TRANSCRIPT" > /dev/null 2>&1
+    DRAIN_ERR=$(yadgar drain "$CWD" --transcript-path "$TRANSCRIPT" 2>&1 >/dev/null)
+    DRAIN_RC=$?
 else
-    yadgar drain "$CWD" > /dev/null 2>&1
+    DRAIN_ERR=$(yadgar drain "$CWD" 2>&1 >/dev/null)
+    DRAIN_RC=$?
+fi
+
+if [ "$DRAIN_RC" -ne 0 ]; then
+    printf '%s pre-compact-drain rc=%s %s\n' "$STAMP" "$DRAIN_RC" "$DRAIN_ERR" >> "$ERRLOG" 2>/dev/null || true
 fi
 
 exit 0

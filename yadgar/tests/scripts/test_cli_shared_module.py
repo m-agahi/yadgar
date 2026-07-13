@@ -33,21 +33,57 @@ class TestForwardPreCompactDrain:
         payload = {"status": "drained", "epoch": 1, "auto_checkpoint_created": True}
         with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
             result = _shared.forward_pre_compact_drain("/my/proj")
-        # HOOKS Car 2: payload now carries transcript_path (None when omitted).
+        # HOOKS Car 2 + fix-drain-inflight: transcript_path (None when omitted) +
+        # a host-parsed in_flight (None when no transcript_path).
         fwd.assert_called_once_with(
-            "pre_compact_drain", {"directory": "/my/proj", "transcript_path": None}
+            "pre_compact_drain",
+            {"directory": "/my/proj", "transcript_path": None, "in_flight": None},
         )
         assert result is payload
 
     def test_forwards_transcript_path_when_given(self):
         """HOOKS Car 2: an explicit transcript_path is forwarded to the backend."""
         payload = {"status": "drained"}
-        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
-            _shared.forward_pre_compact_drain("/my/proj", "/tmp/session.jsonl")
-        fwd.assert_called_once_with(
-            "pre_compact_drain",
-            {"directory": "/my/proj", "transcript_path": "/tmp/session.jsonl"},
+        fixture = str(
+            __import__("pathlib").Path(__file__).parent.parent
+            / "fixtures"
+            / "transcript_in_flight.jsonl"
         )
+        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+            _shared.forward_pre_compact_drain("/my/proj", fixture)
+        args, _ = fwd.call_args
+        assert args[0] == "pre_compact_drain"
+        sent = args[1]
+        assert sent["directory"] == "/my/proj"
+        assert sent["transcript_path"] == fixture
+
+    def test_host_side_parse_populates_in_flight(self):
+        """Car fix-drain-inflight: the drain forwarder parses the transcript on the
+        HOST (where .claude + git are visible) and carries a NON-empty in_flight in
+        the /admin payload — the backend just persists it. This is the core fix:
+        previously the payload carried only the path and the (blind) container
+        produced an empty in_flight."""
+        payload = {"status": "drained"}
+        fixture = str(
+            __import__("pathlib").Path(__file__).parent.parent
+            / "fixtures"
+            / "transcript_in_flight.jsonl"
+        )
+        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+            _shared.forward_pre_compact_drain("/my/proj", fixture)
+        sent = fwd.call_args[0][1]
+        in_flight = sent["in_flight"]
+        assert in_flight is not None
+        assert set(in_flight["agents"]) == {"bbbbbbbbbbbbbbbb2", "eeeeeeeeeeeeeeee5"}
+        assert "bg_shell_001" in in_flight["bg_shells"]
+
+    def test_no_transcript_no_in_flight(self):
+        """No transcript_path → in_flight stays None (nothing to parse host-side)."""
+        payload = {"status": "drained"}
+        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+            _shared.forward_pre_compact_drain("/my/proj")
+        sent = fwd.call_args[0][1]
+        assert sent["in_flight"] is None
 
 
 class TestSilenceLogging:

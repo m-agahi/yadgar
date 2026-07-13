@@ -683,16 +683,6 @@ class _WikiMixin:
     # ------------------------------------------------------------------ Wiki Search
 
     @trace_span()
-    def search_wiki_fts(self, query: str, limit: int = 10) -> list[dict]:
-        """BM25 full-text search on wiki page content."""
-        fts_query = self._preprocess_fts_query(query)
-        rows = self._q(
-            "SELECT * FROM wiki_page WHERE content @@ $q ORDER BY search::score(1) DESC LIMIT $lim",
-            {"q": fts_query, "lim": limit},
-        )
-        return self._rows_to_dicts(rows)
-
-    @trace_span()
     def search_wiki_fts_scored(self, query: str, limit: int = 10) -> list[tuple[int, float]]:
         """BM25 search returning (page_id, score) tuples."""
         fts_query = self._preprocess_fts_query(query)

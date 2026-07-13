@@ -14,6 +14,7 @@ RED before implementation; GREEN after.
 
 from __future__ import annotations
 
+import threading
 import time
 from datetime import UTC
 from unittest.mock import MagicMock, patch
@@ -881,4 +882,172 @@ class TestDispatchPreludeSignal:
         suggested = actions[0].get("suggested_call", "")
         assert "agent_dispatch_prelude" in suggested, (
             f"suggested_call should contain 'agent_dispatch_prelude', got: {suggested!r}"
+        )
+
+
+# ── 1f. Concurrent ID-assignment race (car #26) ───────────────────────────────
+
+
+@pytest.mark.usefixtures("admin_backend_bypass")
+class TestAdrAddConcurrentIdAssignment:
+    """Two simultaneous adr_add calls must not produce duplicate ADR IDs.
+
+    RED before fix: both threads derive the same _next_adr_id from the same
+    pre-read content (lost-update on the create path, or genuine interleave on
+    the append path).
+    GREEN after: process-level threading.Lock serializes the critical section.
+
+    Two-part assertion (per audit §Repro-test correctness):
+      (a) distinct IDs returned — catches the ID-dup failure mode
+      (b) final log contains both headers — catches the clobber failure mode
+    """
+
+    def test_concurrent_calls_produce_distinct_ids(self, tmp_path):
+        """Two simultaneous adr_add calls on a fresh project produce ADR-0001 and ADR-0002.
+
+        Race injection: patch _next_adr_id to sleep after computing the ID.
+        Both threads synchronize at an entry barrier so they enter adr_add
+        together.  A second barrier inside _next_adr_id forces both to reach
+        the ID-derivation step at the same instant — maximising interleave.
+
+        WITHOUT the lock: both threads read the empty log, both derive ADR-0001
+        from identical (empty) content, both write — duplicate ID / lost-update.
+        WITH the lock: thread B blocks until thread A's full critical section
+        completes; thread B then reads the page that now contains ADR-0001 and
+        correctly derives ADR-0002.
+
+        Two-part assertion (per audit §Repro-test correctness):
+          (a) distinct IDs returned — catches the ID-dup failure mode
+          (b) final log contains both headers — catches the clobber failure mode
+        """
+        import os
+        import re
+
+        import yadgar.core.server.tools.adr as _adr_mod
+        from yadgar.core.server.tools.adr import adr_add
+        from yadgar.core.server.tools.wiki import wiki_read
+
+        # Use a name with no underscore: wiki_add normalizes slugs via
+        # [^a-z0-9]+ → "-", so "concurrent_proj" becomes "concurrent-proj-adr-log"
+        # but adr_log_slug keeps the underscore → slug mismatch on wiki_read.
+        # "racetest" is unambiguous: both sides produce "racetest-adr-log".
+        project_dir = str(tmp_path / "racetest")
+        os.makedirs(project_dir, exist_ok=True)
+
+        results: list[dict] = []
+        errors: list[Exception] = []
+        # Forces both threads to enter adr_add at the same instant.
+        entry_barrier = threading.Barrier(2)
+        # Forces both threads to reach _next_adr_id simultaneously — the exact
+        # race window the lock closes.  After acquiring the lock only one thread
+        # will ever reach this point at a time, so barrier.wait() will time-out
+        # for the second thread (it's held outside waiting for the lock).
+        # We use BrokenBarrierError-safe wait so the locked path doesn't hang.
+        id_barrier = threading.Barrier(2)
+
+        _real_next_adr_id = _adr_mod._next_adr_id
+
+        def _slow_next_adr_id(content: str) -> str:
+            result_id = _real_next_adr_id(content)
+            # Meet here if both threads are inside the critical section
+            # simultaneously (un-locked case).  With the lock the second thread
+            # is still waiting for the lock — barrier times out immediately and
+            # we continue correctly.
+            try:
+                id_barrier.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            time.sleep(0.05)  # widen the window further
+            return result_id
+
+        params = dict(_VALID_ADR_PARAMS, directory=project_dir)
+
+        def _call(title: str) -> None:
+            try:
+                try:
+                    entry_barrier.wait(timeout=10)
+                except threading.BrokenBarrierError:
+                    pass
+                r = adr_add(**dict(params, title=title))
+                results.append(r)
+            except Exception as exc:
+                errors.append(exc)
+
+        with (
+            patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir),
+            patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
+            patch("yadgar.core.server.tools.adr._next_adr_id", side_effect=_slow_next_adr_id),
+        ):
+            threads = [
+                threading.Thread(target=_call, args=(f"Concurrent ADR title {i}",))
+                for i in range(2)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+
+        assert not errors, f"Thread(s) raised exceptions: {errors}"
+        assert len(results) == 2, f"Expected 2 results, got: {results}"
+
+        returned_ids = [r.get("adr_id") for r in results]
+
+        # (a) Both returned IDs must be distinct.
+        assert len(set(returned_ids)) == 2, (
+            f"Duplicate ADR IDs returned (ID-race not fixed): {returned_ids}"
+        )
+
+        # (b) The final log must contain both ADR headers (catches clobber).
+        slug = "racetest-adr-log"
+        page = wiki_read(slug, directory=project_dir, branch_hint="master")
+        assert "error" not in page, f"wiki_read returned error reading final log: {page}"
+        content = page.get("content", "")
+        real_headers = re.findall(r"^## ADR-(\d{4})", content, re.MULTILINE)
+        assert len(real_headers) == 2, (
+            f"Final log must contain exactly 2 ADR headers; found {real_headers!r}. "
+            f"Content:\n{content[:800]}"
+        )
+        assert set(real_headers) == {"0001", "0002"}, (
+            f"Expected headers ADR-0001 and ADR-0002, got: {real_headers!r}"
+        )
+
+    def test_different_project_roots_do_not_block_each_other(self, tmp_path):
+        """adr_add for distinct project roots must not serialize (lock is per-root)."""
+        import os
+
+        from yadgar.core.server.tools.adr import adr_add
+
+        proj_a = str(tmp_path / "proj_a")
+        proj_b = str(tmp_path / "proj_b")
+        os.makedirs(proj_a, exist_ok=True)
+        os.makedirs(proj_b, exist_ok=True)
+
+        timings: dict[str, float] = {}
+        barrier = threading.Barrier(2)
+
+        def _call(project_dir: str, key: str) -> None:
+            with (
+                patch(
+                    "yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir
+                ),
+                patch("yadgar.core.server.tools.adr._get_default_branch", return_value="master"),
+            ):
+                barrier.wait()
+                t0 = time.monotonic()
+                adr_add(**dict(_VALID_ADR_PARAMS, directory=project_dir))
+                timings[key] = time.monotonic() - t0
+
+        threads = [
+            threading.Thread(target=_call, args=(proj_a, "a")),
+            threading.Thread(target=_call, args=(proj_b, "b")),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        # Both should complete — no deadlock. Timing parallelism is a soft check
+        # (hard to assert on CI); just assert both finished and returned a result.
+        assert "a" in timings and "b" in timings, (
+            f"One or both threads did not complete: timings={timings}"
         )

@@ -20,12 +20,18 @@ Decisions:
   sequential ID assignment (avoids race when caller immediately adds ADR-0002).
 - ID scan anchored to ``^## ADR-(\\d{4})`` (re.MULTILINE) — body text refs ignored.
 - branch_hint=default_branch on both read and write — ADR log is canonical/global.
+- Per-project threading.Lock (_adr_log_lock) wraps the full read-modify-write
+  triple (wiki_read → _next_adr_id → wiki_append_section/wiki_add) to prevent
+  duplicate ID assignment under concurrent adr_add calls (car #26 — fix for the
+  ID-assignment race when YADGAR_OFFLOAD_TOOLS=1). Lock is process-local; see
+  docs/plans/adr-add-id-race-2026-07-13.md for the full rationale.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import threading
 
 from yadgar._shared.contracts.models import ADR
 from yadgar._shared.observability.observe import observe
@@ -35,6 +41,37 @@ from yadgar.core.server.tools.project import _get_default_branch, _resolve_proje
 # Imported lazily at call-time to match the pattern in other tool modules,
 # but we list them here for clarity and to enable patching in tests.
 from yadgar.core.server.tools.wiki import wiki_add, wiki_append_section, wiki_read
+
+# ── Per-project ADR-log write lock ─────────────────────────────────────────────
+# The core daemon is a single persistent process (streamable-http). When
+# YADGAR_OFFLOAD_TOOLS=1 the ThreadPoolExecutor can run two adr_add calls
+# concurrently: both would read the same log content, derive the same
+# _next_adr_id, and both write — producing duplicate IDs (lost-update).
+#
+# A threading.Lock keyed by resolved project root serializes the full
+# wiki_read → _next_adr_id → wiki_append_section/wiki_add triple inside
+# adr_add. The lock is process-local; single-process single-backend topology
+# is an explicit assumption (see docs/plans/adr-add-id-race-2026-07-13.md).
+#
+# Lock dict grows at one entry per distinct resolved path — typically one
+# project per daemon; no eviction needed.
+_ADR_LOG_LOCKS: dict[str, threading.Lock] = {}
+_ADR_LOG_LOCKS_GUARD = threading.Lock()
+
+
+@observe(exempt="trivial dict-lookup; no I/O, no external call, no error branch worth spanning")
+def _adr_log_lock(resolved: str) -> threading.Lock:
+    """Return the per-project threading.Lock for the ADR log write sequence.
+
+    Creates a new Lock on first call for a given resolved path.  The guard
+    lock serializes the dict insert only; after lookup callers hold a
+    project-specific lock that does not contend with other projects.
+    """
+    with _ADR_LOG_LOCKS_GUARD:
+        if resolved not in _ADR_LOG_LOCKS:
+            _ADR_LOG_LOCKS[resolved] = threading.Lock()
+        return _ADR_LOG_LOCKS[resolved]
+
 
 # Valid ADR status values.
 _VALID_STATUSES: frozenset[str] = frozenset(
@@ -213,74 +250,85 @@ def adr_add(
     slug = adr_log_slug(resolved)
     default_branch = _get_default_branch(resolved)
 
-    # ── Read existing log (branch-pinned to default branch) ─────────────────────
-    log_page = wiki_read(slug, directory=resolved, branch_hint=default_branch)
-    log_exists = "error" not in log_page
-    existing_content = log_page.get("content", "") if log_exists else ""
+    # ── Serialize the read-modify-write triple under a per-project lock ─────────
+    # Without this lock, two concurrent adr_add calls (possible when
+    # YADGAR_OFFLOAD_TOOLS=1 and a ThreadPoolExecutor runs two tool bodies
+    # simultaneously) both reach wiki_read before either writes, derive the
+    # same _next_adr_id from stale content, and produce duplicate IDs.
+    # threading.Lock is correct here: adr_add is a sync def, and the
+    # blocking httpx.post forward runs on whichever thread holds the GIL —
+    # an asyncio.Lock cannot be awaited inside a sync body.
+    # Single-process guarantee: this lock protects against in-process
+    # concurrency only; multi-replica deployments are explicitly out of scope.
+    with _adr_log_lock(resolved):
+        # ── Read existing log (branch-pinned to default branch) ─────────────────
+        log_page = wiki_read(slug, directory=resolved, branch_hint=default_branch)
+        log_exists = "error" not in log_page
+        existing_content = log_page.get("content", "") if log_exists else ""
 
-    # ── Assign next ID ──────────────────────────────────────────────────────────
-    adr_id = _next_adr_id(existing_content)
+        # ── Assign next ID ────────────────────────────────────────────────────────
+        adr_id = _next_adr_id(existing_content)
 
-    # ── Build section content ───────────────────────────────────────────────────
-    section_heading, section_body = _build_adr_body(
-        adr_id=adr_id,
-        title=title,
-        status=status,
-        date=date,
-        context=context,
-        decision=decision,
-        rationale=rationale,
-        alternatives=alternatives,
-        consequences=consequences,
-        revisit_trigger=revisit_trigger,
-        supersedes=supersedes,
-    )
+        # ── Build section content ─────────────────────────────────────────────────
+        section_heading, section_body = _build_adr_body(
+            adr_id=adr_id,
+            title=title,
+            status=status,
+            date=date,
+            context=context,
+            decision=decision,
+            rationale=rationale,
+            alternatives=alternatives,
+            consequences=consequences,
+            revisit_trigger=revisit_trigger,
+            supersedes=supersedes,
+        )
 
-    # ── Append or create ────────────────────────────────────────────────────────
-    if log_exists:
-        # Append new section to existing log.
-        append_result = wiki_append_section(
-            slug,
-            section_heading=section_heading,
-            content=section_body,
-            position="new_section_bottom",
-            directory=resolved,
-            branch_hint=default_branch,
-        )
-        if "error" in append_result:
-            return {
-                "ok": False,
-                "error": f"wiki_append_section failed: {append_result['error']}",
-                "adr_id": adr_id,
-            }
-        new_version = append_result.get("new_version")
-        result: dict = {"adr_id": adr_id}
-        if new_version is not None:
-            result["version"] = new_version
-        return result
-    else:
-        # Create the log page with the first ADR entry.
-        log_title = f"{project_name} ADR Log"
-        full_content = (
-            f"# {log_title}\n\n"
-            f"Architecture Decision Records for `{project_name}`.\n\n"
-            f"---\n\n"
-            f"## {section_heading}\n\n"
-            f"{section_body}"
-        )
-        create_result = wiki_add(
-            title=log_title,
-            content=full_content,
-            category="reference",
-            tags=["adr", "decisions"],
-            directory=resolved,
-            branch_hint=default_branch,
-            wait=True,  # synchronous — ensures read-your-writes for sequential IDs
-        )
-        if create_result.get("stored") is False:
-            return {
-                "ok": False,
-                "error": f"wiki_add failed: {create_result.get('reason', 'unknown')}",
-                "adr_id": adr_id,
-            }
-        return {"adr_id": adr_id}
+        # ── Append or create ──────────────────────────────────────────────────────
+        if log_exists:
+            # Append new section to existing log.
+            append_result = wiki_append_section(
+                slug,
+                section_heading=section_heading,
+                content=section_body,
+                position="new_section_bottom",
+                directory=resolved,
+                branch_hint=default_branch,
+            )
+            if "error" in append_result:
+                return {
+                    "ok": False,
+                    "error": f"wiki_append_section failed: {append_result['error']}",
+                    "adr_id": adr_id,
+                }
+            new_version = append_result.get("new_version")
+            result: dict = {"adr_id": adr_id}
+            if new_version is not None:
+                result["version"] = new_version
+            return result
+        else:
+            # Create the log page with the first ADR entry.
+            log_title = f"{project_name} ADR Log"
+            full_content = (
+                f"# {log_title}\n\n"
+                f"Architecture Decision Records for `{project_name}`.\n\n"
+                f"---\n\n"
+                f"## {section_heading}\n\n"
+                f"{section_body}"
+            )
+            create_result = wiki_add(
+                title=log_title,
+                content=full_content,
+                category="reference",
+                tags=["adr", "decisions"],
+                directory=resolved,
+                branch_hint=default_branch,
+                wait=True,  # synchronous — ensures read-your-writes for sequential IDs
+            )
+            if create_result.get("stored") is False:
+                return {
+                    "ok": False,
+                    "error": f"wiki_add failed: {create_result.get('reason', 'unknown')}",
+                    "adr_id": adr_id,
+                }
+            return {"adr_id": adr_id}

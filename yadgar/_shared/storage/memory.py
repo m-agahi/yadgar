@@ -69,22 +69,6 @@ def _validate_provenance_agent(value: str) -> str:
     return value
 
 
-# Imported here so memory methods can reference these constants directly.
-# The same constants are defined in client.py and re-exported from __init__.py;
-# we import lazily to avoid a circular reference at module load time.
-# (Methods reference them via self.__class__ module globals at runtime.)
-
-
-def _get_consts():
-    from yadgar._shared.storage.client import (
-        _EMBEDDING_FIELDS,
-        _MEMORY_UPDATABLE_FIELDS,
-        _RELATIONSHIP_UPDATABLE_FIELDS,
-    )
-
-    return _EMBEDDING_FIELDS, _MEMORY_UPDATABLE_FIELDS, _RELATIONSHIP_UPDATABLE_FIELDS
-
-
 class _MemoryMixin:
     """Memory CRUD and primary-table operations — mixed into StorageEngine."""
 
@@ -1046,22 +1030,10 @@ class _MemoryMixin:
             {"ts": timestamp},
         )
 
-    @observe(tier="stage")
-    def get_total_reconsolidation_count(self) -> int:
-        rows = self._q("SELECT math::sum(reconsolidation_count) AS total FROM memory GROUP ALL")
-        return int(rows[0]["total"]) if rows and rows[0].get("total") is not None else 0
-
     def count_memories_by_store_type(self, store_type: str) -> int:
         rows = self._q(
             "SELECT count() AS c FROM memory WHERE store_type = $st AND heat > 0 GROUP ALL",
             {"st": store_type},
-        )
-        return int(rows[0]["c"]) if rows else 0
-
-    def count_memories_by_compression_level(self, level: int) -> int:
-        rows = self._q(
-            "SELECT count() AS c FROM memory WHERE compression_level = $lvl AND heat > 0 GROUP ALL",
-            {"lvl": level},
         )
         return int(rows[0]["c"]) if rows else 0
 

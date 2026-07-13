@@ -107,6 +107,6 @@ git commit --amend --no-edit
 git push origin feat/vX.Y
 ```
 
-## When using the long-lived feature-branch workflow
+## When using the standard train workflow
 
-See `claude-workflow.md`. The final integration PR (`feat/vX.Y → master`) ships the version bump in the same PR. The `no-release` label exists only for direct-to-master PRs that touch `yadgar/**` but legitimately do not ship a release (doc-only, test-only fixes that don't warrant a version bump).
+See `claude-workflow.md` (canonical). A train = one `feat/<train>` branch, parallel cars integrated stacked-rebase ff-only, ONE PR (`feat/<train> → master`) that ships the version bump in the same PR (ADR-0088/0107). The `no-release` label exists only for direct-to-master PRs that touch `yadgar/**` but legitimately do not ship a release (doc-only, test-only fixes that don't warrant a version bump).

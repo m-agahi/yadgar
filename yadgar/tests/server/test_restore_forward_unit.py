@@ -111,7 +111,8 @@ def test_pre_compact_drain_op_delegates_to_replay():
         result = resto_mod.pre_compact_drain({"directory": "/proj"})
 
     # HOOKS Car 2: op body forwards transcript_path (None when absent).
-    replay.pre_compact_drain.assert_called_once_with("/proj", transcript_path=None)
+    # v5.135 drain car: also forwards host-parsed in_flight (None when absent).
+    replay.pre_compact_drain.assert_called_once_with("/proj", transcript_path=None, in_flight=None)
     assert result == {"status": "drained", "epoch": 4, "auto_checkpoint_created": True}
 
 
@@ -127,4 +128,6 @@ def test_pre_compact_drain_op_forwards_transcript_path():
     ):
         resto_mod.pre_compact_drain({"directory": "/proj", "transcript_path": "/tmp/s.jsonl"})
 
-    replay.pre_compact_drain.assert_called_once_with("/proj", transcript_path="/tmp/s.jsonl")
+    replay.pre_compact_drain.assert_called_once_with(
+        "/proj", transcript_path="/tmp/s.jsonl", in_flight=None
+    )

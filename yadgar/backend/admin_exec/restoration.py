@@ -18,9 +18,13 @@ from yadgar.backend.restoration import ensure_restoration_engines
 def pre_compact_drain(payload: dict) -> dict:
     """Emergency context capture before compaction. Storage-write half.
 
-    payload: {directory, transcript_path?}
+    payload: {directory, transcript_path?, in_flight?}
     HOOKS Car 2: optional transcript_path is parsed for in-flight orchestration
     state and stored on the checkpoint. Absent/None degrades to pre-Car-2.
+    Car fix-drain-inflight (v5.135): the host-side drain callers parse in_flight
+    where the host filesystem is visible and pass it here; the backend persists
+    it verbatim (the container cannot see .claude transcripts / the git tree).
+    When in_flight is absent the backend falls back to the in-container parse.
     Returns the CheckpointRestore.pre_compact_drain result dict:
     {status, epoch, auto_checkpoint_created}.
     """
@@ -29,4 +33,5 @@ def pre_compact_drain(payload: dict) -> dict:
     return replay.pre_compact_drain(
         payload.get("directory", ""),
         transcript_path=payload.get("transcript_path"),
+        in_flight=payload.get("in_flight"),
     )
