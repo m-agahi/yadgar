@@ -393,3 +393,100 @@ bullets → POST `/hooks/subagent-stop` → **`_ingest_finding()`** (new shared 
   still minor (internal endpoint). Backend bump only if the drainer path changes.
 - Docs bump (CLAUDE.md is nix-managed, out of this repo — hand the diff to the user
   via the migration note; `agent-prompt-contract` wiki update is in-repo via `wiki_add`).
+
+---
+
+## AUDIT (2026-07-13)
+
+**Auditor:** adversarial review agent (opus). Read-only; no code changed. Verified
+every load-bearing file:line claim against source at core 5.132.0 / this working tree.
+
+### Verdict Status: **PROCEED WITH ONE CORRECTION — reframe "already LIVE".**
+
+The plan's code-path claims are almost all **VERIFIED** — the SubagentStop →
+`/hooks/subagent-stop` → `memorize()` chain is genuinely wired end-to-end, per-bullet,
+with provenance + tags. Option A (harden, keep no-direct-memorize) is the right call and
+the recommendation **stands**. BUT the plan's framing — "auto-ingest is ALREADY LIVE …
+it is the shipped status quo" — is **overstated on the empirical axis**: I found **zero
+`from-subagent`-tagged memories in the live DB** (see row [E1]). The path is *live in
+code*, *inert in effect*. That does not flip the design choice, but it **reorders the
+work**: the #1 task is not "harden a working loop," it is "prove the loop captures
+anything at all" — which is exactly what the plan's own dead-telemetry finding predicts,
+now confirmed by direct evidence. Elevate open-question #3 to the critical path.
+
+### Per-claim verification table
+
+| # | Claim (plan) | Verdict | Evidence (file:line) |
+|---|---|---|---|
+| C1 | Hook script imports `yadgar.core.hooks.subagent_stop:main`, inline fallback if unimportable | **VERIFIED** | `.claude/hooks/yadgar-subagent-stop.py:29-32` (import), `:155-168` (inline dup). Plan cited `.claude/hooks/subagent-stop.py:29-32`; actual filename is `yadgar-subagent-stop.py` — **minor path typo in plan**. |
+| C2 | `main()` reads stdin → agent_type/cwd/transcript_path; detects branch via `_detect_branch_from_cwd` | **VERIFIED** | `subagent_stop.py:276` main, `:285-291` fields, `:295` branch detect, `:252` `_detect_branch_from_cwd`. |
+| C3 | `_get_report_text` opens `transcript_path`, keeps **last** assistant-role message; comment asserts payload lacks report text | **VERIFIED** | `subagent_stop.py:182-208`; comment `:186-187`; last-wins loop `:201-204`. Reads `transcript_path` ONLY — does **not** read `last_assistant_message` (see C11). |
+| C4 | `_extract_findings` lenient — any H1-H6 heading containing "yadgar"+"find"; collects `- ` bullets; skips `<!-- -->` and `none` | **VERIFIED** | `subagent_stop.py:116-149`; heading test `:130`; skip `:145`. |
+| C5 | `_post_findings` POSTs `{agent_type,cwd,findings,_subagent_writeback,branch_hint}`, 3s timeout, `except: pass` | **VERIFIED** | `subagent_stop.py:211-248`; payload `:230-238`; timeout+swallow `:246-248`. NOTE: inline-fallback `_post_findings` (`yadgar-subagent-stop.py:137-140`) does **NOT** forward `branch_hint` or `_subagent_writeback` — silent divergence between the two copies. |
+| C6 | Endpoint `hook_subagent_stop` validates agent_type `^[A-Za-z0-9_-]{1,64}$` else `general-purpose`; tags `from-subagent`+`agent-type:<t>`; memorize per bullet with provenance + branch_hint on worker thread; queued=stored | **VERIFIED** | `http.py:1088` def, `:1129-1131` regex, `:1144` tags, `:1157-1174` per-bullet `asyncio.to_thread(_memorize, …, provenance_agent=agent_type, branch_hint=_branch_hint)`, `:1173` queued-counts-as-stored. Plan cited `1086-1187` / `1164-1172` — accurate. |
+| C7 | `memorize()` = standard pipeline; no subagent-specific quality gate | **VERIFIED** | endpoint calls the frozen `memorize` (`http.py:1140-1142` import, `:1164`). No gate branch in the loop. |
+| C8 | Provenance already on hook path: `provenance_agent=<type>` + tags → audit/bulk-forget handle | **VERIFIED** | `http.py:1144`, `:1170`. |
+| C9 | `yadgar_subagent_capture_rate` gauge `.set(0)` at import, **never updated**; only `dispatch_count` incremented | **VERIFIED** | `metrics.py:572-579` (def + lone `.set(0)` at `:579`, comment "no in-process capture tracking yet"); grep confirms no other `.set(`/`.inc(` on it. `dispatch_count.inc()` at `http.py:1709` (subagent-**start** endpoint, `:1703-1711`). |
+| C10 | `_parse_directive` (typed `memorize:`/`wiki_add:`/`anchor:`) exists but endpoint never calls it → every bullet memorized raw | **VERIFIED** | parser `subagent_stop.py:39-88`; `main()` POSTs raw bullets (`:325`) — never invokes `_parse_directive`; `http.py:1157-1174` loops raw strings. Genuinely dead code on both sides. |
+| C11 | (Scope IN / OQ#1) Prefer `last_assistant_message` over transcript parsing — currently transcript-only | **VERIFIED as future work** | Confirmed code reads only `transcript_path` (C3). The claim that the *payload now carries* `last_assistant_message`, and all SubagentStop platform behaviour in OQ#1, **rests on the plan's cited `claude-code-guide` result — NOT re-verified by this audit** (no-fabricate constraint; I did not independently probe CC hook schema). Treat OQ#1 platform facts as plan-asserted, not audit-confirmed. |
+| C12 | Double-write: CLAUDE.md **and** `agent-instructions.md` say "main thread writes back" → each finding memorized twice | **PARTIALLY VERIFIED — quote inaccurate + one source unsupported** | The contract substantively exists: the session-governing (nix-managed/injected) CLAUDE.md says *"main thread writes from agent report before closing task"* — that is the operative text; **"main thread writes back" is the plan's paraphrase, not verbatim.** The disk copy `/home/max/.claude/CLAUDE.md` is a DIFFERENT auto-generated section (header "Yadgar v5.133.0", generic "call memorize after significant task") — likely rewritten by `sync_instructions`; the plan's cited `CLAUDE.md:34` does not contain that phrase. **`agent-instructions.md` attribution is UNSUPPORTED**: it carries agent-side write-back *triggers* (`:117`, `:130` "end with `## Yadgar findings`"), NOT a main-thread re-memorize instruction. So double-write is a *real latent risk from one source*, not the two-source certainty the plan implies. Corrects the row; does **not** flip Status. |
+| C13 | Local `.claude/settings.json` has duplicate SubagentStop entries → findings POSTed multiple× | **VERIFIED (count off)** | `.claude/settings.json` has **3** command entries (`:103` `python3`, `:112` `.venv/bin/python3`, `:124` `.venv/bin/python`), not "two differ by python3 vs python" — it's 3×. File is gitignored (`git check-ignore` matches) → local cruft, correctly flagged as not-a-design-bug. |
+| C14 | `_append_if_absent` installer dedupes (`install_hooks_lib.py:315`) | **NOT INDEPENDENTLY VERIFIED** | Did not open `install_hooks_lib.py`; out of the hot path. Plausible, unconfirmed. |
+| C15 | Referenced test files exist (`test_subagent_stop_hook.py`, `test_v5_46_9_subagent_stop_findings.py`) | **VERIFIED** | `yadgar/tests/hooks/test_subagent_stop_hook.py`, `yadgar/tests/scripts/test_v5_46_9_subagent_stop_findings.py`. |
+| E1 | **(Audit-added empirical check)** Is the live path actually *producing* captures? | **CONTRADICTS "already LIVE" framing** | `recall(tags=["from-subagent"], type="memory", max_results=15)` on `/home/max/git/yadgar` → **0 memories with `from-subagent` / `agent-type:*` tags**; every hit is `provenance_agent="default"` cochange/auto-abstracted noise. 40 recent memories (14d) incl. Agent-dispatch sessions → still **0** footer captures. The loop is **wired but empirically inert in this DB.** Consistent with C9 (loss unmeasured) + the silent-drop modes (C5, `except:pass`) + likely footer-not-in-last-turn (OQ#1). |
+
+### What this changes for the design
+
+1. **Reframe the BLUF.** "Auto-ingest is the shipped status quo" is true only in the
+   *code-path* sense. Empirically (E1) it captures nothing here. The honest framing:
+   *"the loop is fully coded and registered but has never been shown to capture a single
+   finding in production; telemetry to prove capture is itself missing (C9)."* This
+   **strengthens** the plan's own argument (dead telemetry → unfalsifiable) but weakens
+   the rhetorical "not a design option to weigh — it's already live."
+2. **Reorder the migration.** The plan's step 2 (add capture counter, soak-measure)
+   should be step 1 and is now the **acceptance gate for everything else**. Do not flip
+   defaults (ephemeral tier), wire directives, or kill the double-write contract until the
+   counter proves capture > 0 on a real 5-dispatch smoke. If capture is genuinely 0, the
+   bug to fix first is *why the footer never lands* (transcript target? last-turn
+   assumption? daemon-down swallow?), and Option A's hardening list is correct but must be
+   validated against a **now-passing** smoke, not the stale v5.3.8 green.
+3. **Option A vs B vs C:** design reasoning is **sound**. B correctly rejected (choke-point
+   argument holds). C (shared `_ingest_finding()` seam) correctly deferred. The decay-TTL
+   (`ephemeral`, 14d) + per-event cap guardrails are cheap and sound **given the choke
+   point exists** — but they only matter once capture works; today they gate an empty
+   stream. Ephemeral default also has a subtle risk: if capture is bursty-then-silent, 14d
+   TTL may expire genuinely-useful findings before any human reviews them — pair with the
+   promotion path (OQ#5) before shipping the TTL flip.
+4. **Directive grammar (C10):** wire-or-delete framing is right. Given E1, **delete-first**
+   is the lower-risk move — do not build typed routing atop an unproven ingress. Wire it
+   only after capture > 0 is demonstrated and there is real demand for a durable subagent
+   path.
+
+### User-decision items (audit-surfaced, additive to plan's OQ)
+
+- **[D1 — CRITICAL, new]** Empirical capture is **0** today (E1). Before ANY hardening,
+  confirm: land the capture counter (C9 fix) + run a 5-dispatch smoke. If smoke shows 0,
+  the task pivots from "harden" to "diagnose why the footer never lands." Approve this as
+  the first, gating step?
+- **[D2]** Accept the C12 correction: double-write is a single-source latent risk
+  (session/nix CLAUDE.md only), not a two-source certainty, and the quoted phrase is a
+  paraphrase. Still worth resolving, but lower urgency than the plan implies. OK to
+  down-rank it below D1?
+- **[D3]** OQ#1 platform facts (`last_assistant_message` presence, SubagentStop firing for
+  all agent types, transcript target) are **plan-asserted via claude-code-guide, not
+  audit-verified**. Confirm you want to depend on that verification, or re-run a fresh
+  `claude-code-guide` pass before coding the `last_assistant_message` preference.
+- **[D4]** Inline-fallback divergence (C5): the standalone copy drops `branch_hint` +
+  `_subagent_writeback`. Fold both copies into one importable path, or accept the drift?
+  (Relevant only for machines where the yadgar package is unimportable.)
+- **[D5]** Fix the 3× duplicate local `SubagentStop` entries (C13) before any capture
+  measurement — otherwise the counter triple-counts on this dev's box and corrupts the
+  first soak reading.
+
+### Bottom line
+
+Design is fundamentally right; **ship Option A**. But correct the BLUF from "already
+live" to "coded but unproven," make capture-telemetry + a passing smoke the **gating first
+step** (not step 2), delete the dead directive grammar rather than wire it (for now), and
+downgrade the double-write claim to a single-source latent risk with a paraphrased quote.
+Status: **PROCEED with corrections above.**

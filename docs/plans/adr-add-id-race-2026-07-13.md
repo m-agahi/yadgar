@@ -372,3 +372,125 @@ All existing tests in `TestAdrAddRoundTrip`, `TestAdrAddIdAssignment`,
 - No DB migration.
 - Suggested version: `core 5.X+1.0` (next available minor on the master branch).
 - PR: single commit, `fix(adr): serialize adr_add read-modify-write with per-project lock`.
+
+---
+
+## AUDIT (2026-07-13)
+
+**Status verdict: ACCEPT WITH MINOR FIXES.** The race is real, the mechanism
+narrative is accurate to source, and — the crux — the plan picked the *correct*
+lock primitive. Every substantive claim VERIFIED first-hand (core-side facts by
+the auditor directly; backend-side line numbers by a verification pass). Only
+cosmetic line-drift and one repro-test subtlety need attention before build.
+
+### Crux verdict — is `threading.Lock` the right primitive? YES.
+
+This is the plan's central question and the answer is unambiguous. The four
+load-bearing facts:
+
+1. `adr_add` is a **sync `def`**, not `async def` (`adr.py:143`).
+2. `run_offloaded` runs the body **inline on the loop** when offload is OFF
+   (`offload.py:318-319`: `return fn(*args, **kwargs)`) and on a **real
+   `ThreadPoolExecutor`** when ON (`offload.py:327`:
+   `loop.run_in_executor(pool, _ctx_wrap(call))`).
+3. The core→backend forward is a **blocking** `httpx.post` (`_forward.py:67`),
+   sync `def _forward_admin` (`_forward.py:31`) — no `await`, no `AsyncClient`.
+4. Both modes therefore reduce to threads (1 loop-thread OFF; ≥2 pool-threads
+   ON). A `threading.Lock` serializes both: OFF it is a no-contention
+   pass-through (harmless — the blocking post already serializes the single
+   loop); ON it is the only thing that serializes the pool threads.
+
+`asyncio.Lock` is disqualified twice over: (a) you cannot `await` it inside a
+sync body, and (b) under offload the body runs on a pool thread with no running
+loop to bind the lock to. The plan rejected the async lock implicitly by
+choosing `threading.Lock`; that choice is CORRECT. **Do not change it.**
+
+### Fix-scope completeness — is `adr_add`-only sufficient? YES.
+
+The only other reader of the ADR-log helper is `project.py::_build_adr_log`
+(`project.py:1836-1863`). Verified **read-only**: it is a restore-mode metadata
+builder that calls `wiki_read` + `parse_adr_ids` and returns
+`{"slug", "latest_ids"}` — it assigns no ID and writes nothing. A direct
+`/admin` `wiki_append_section` client also does no ID derivation. So there is no
+competing writer path; a lock scoped to `adr_add` covers the entire ID-race
+surface. The plan's "core is the right layer" argument holds: `_next_adr_id`
+runs in core (`adr.py:222`) *before* the HTTP hop, so a backend-side lock would
+serialize the DB write after both callers already baked in the same stale ID —
+verified ordering, plan is right to reject the backend lock.
+
+### Per-claim verification table
+
+| # | Claim | Location | Status |
+|---|-------|----------|--------|
+| 1 | `adr_add` reads via `wiki_read` then `_next_adr_id(existing_content)` | `adr.py:217` (read) + `:222` (id) | VERIFIED — but plan writes "lines 217–222" as one 3-line snippet; those lines are non-contiguous in source (read at 217, id at 222). Cosmetic STALE. |
+| 2 | Appends via `wiki_append_section` (create path uses `wiki_add`) | `adr.py:242`; create `:271` | VERIFIED |
+| 3 | `_next_adr_id` scans `^## ADR-(\d{4})`, returns max+1 | `adr.py:93-104`; regex `:45` | VERIFIED — plan cites "94–104"; `def` is 94, `@observe` decorator 93. Cosmetic. |
+| 4 | No existing lock in `adr.py` | grep — zero hits | VERIFIED |
+| 5 | Backend forward is **sync blocking** `httpx.post` to `/admin` | `_forward.py:67`, `def` `:31` | VERIFIED (crux) |
+| 6 | `adr_add`/`wiki_read`/`wiki_append_section` all sync `def` | `adr.py:143`, `wiki.py:510`, `:1022` | VERIFIED (crux) |
+| 7 | `/admin` route: `await asyncio.to_thread(run_admin_op,…)` | `embed_service.py:1528` | VERIFIED |
+| 8 | Admin dispatch → `_st._wiki.append_section(...)` | `admin_exec/wiki.py:206-222` | VERIFIED — plan cites "207–222"; `@observe` on 206, `def` on 207. Cosmetic. |
+| 9 | `append_section` re-reads (`get_wiki_page` ~1595), rejects existing heading (~1604), then `update_wiki_page` (~1623) | `store.py:1595 / 1603-1606 / 1623` | VERIFIED |
+| 10 | Storage comment: "Pre-txn reads … single-writer mode this is safe"; `update_wiki_page` in BEGIN/COMMIT | `storage/wiki.py:233-236`, txn `:292-301` | VERIFIED — and the comment itself already states "In server mode a race window exists between read and txn open" (`:235`). Strengthens the plan. |
+| 11 | `YADGAR_OFFLOAD_TOOLS` default **False** | `offload.py:63`, `config_registry.py:491` (`"false"`), `config.py:753` | VERIFIED |
+| 12 | Offload OFF ⇒ inline; ON ⇒ `run_in_executor` ThreadPool | `offload.py:318-319 / 327` | VERIFIED (crux) |
+| 13 | Core is a persistent shared daemon, `streamable-http`, stateless | `_startup.py:49,123,129` | VERIFIED — `stateless_http=True`; each POST independent, so a `threading.Lock` (process-global module state) correctly serializes across sessions. |
+| 14 | `wiki_append_section` writes synchronously (no file queue) | `wiki.py:1059-1060` | VERIFIED |
+| 15 | `_build_adr_log` shares helper but is a competing writer? | `project.py:1836-1863` | VERIFIED READ-ONLY — plan did not raise this; auditor confirms lock scope is complete. |
+| 16 | Test `test_adr_add_create_then_append_sequential_ids` + `_VALID_ADR_PARAMS` exist; classes `TestAdrAddRoundTrip` etc. | `tests/core/test_adr.py:366,67,357…` | VERIFIED |
+| 17 | Patch targets `adr._resolve_project_root` / `._get_default_branch` exist | `adr.py:33` import | VERIFIED |
+| 18 | Test path | plan §Test-plan says `tests/core/test_adr.py`; §Scope says `yadgar/tests/core/test_adr.py` | STALE (internal inconsistency) — actual path is `yadgar/tests/core/test_adr.py`. |
+
+**STALE/WRONG count: 0 WRONG, 4 STALE — all cosmetic** (three line-number
+groupings off by ≤1 for a decorator; one internal test-path inconsistency). No
+STALE affects the fix design or the verdict.
+
+### Repro-test correctness — one real subtlety (not fatal)
+
+The plan's repro spawns two threads calling `adr_add` on a **fresh** project.
+Both hit `log_exists=False` → both take the **create** branch, which calls
+`wiki_add` with a *full-page overwrite* (`adr.py:271`), NOT append. So:
+
+- **Without the lock:** both derive `ADR-0001`, both create-overwrite → the
+  second `wiki_add` clobbers the first's page → final log has a single
+  `ADR-0001` (or a duplicate, depending on store dedup). The assertion
+  `set(results) == {"ADR-0001","ADR-0002"}` FAILS → RED. Good — it reproduces.
+- **With the lock:** thread A creates page (ADR-0001); thread B now reads
+  `log_exists=True` → appends ADR-0002. GREEN.
+
+So the test *does* discriminate. BUT the assertion phrasing conflates two
+different failure modes (duplicate ID vs. clobbered page). Recommend the repro
+assert **both**: (a) `len(set(results)) == 2` AND (b) the final rendered log
+contains both `## ADR-0001` and `## ADR-0002` headers — the clobber only shows
+in (b), the ID-dup only in (a). The plan's Risk-4 hand-wave about RED
+reliability is legitimate: on the create-clobber path the race is a lost-update,
+not a timing-sensitive interleave, so the `time.sleep` injection the plan
+suggests is the right mitigation to force the window. Keep it.
+
+Note the fixture question: the real-store test patches only the two helpers, yet
+`_forward.py` raises without `YADGAR_EMBED_URL`. The existing
+`TestAdrAddRoundTrip` already runs against "the real embedded wiki store" the
+same way, so the conftest must either stand up a backend or patch the forward —
+the new test should reuse that exact fixture path (it does, by mirroring
+`TestAdrAddRoundTrip`). Since the repro calls `adr_add` on raw threads (never
+through `run_offloaded`), the lock is exercised correctly regardless.
+
+### User decisions required
+
+1. **Confirm lock primitive = `threading.Lock`** (audit says correct — this is
+   just a sign-off, not a re-open). Async lock is wrong; do not entertain it.
+2. **Repro assertion:** adopt the two-part assertion (distinct IDs AND both
+   headers present) + retain the `time.sleep` interleave injection. Approve?
+3. **Lock-dict eviction (Risk 1):** accept unbounded `_ADR_LOG_LOCKS` growth
+   (one entry per project path, tiny) as documented, or add a cap? Auditor:
+   accept — the eviction machinery would cost more than it saves.
+4. **Version string:** plan says `core 5.X+1.0` — pick the concrete next minor
+   off master before the PR (current master core is 5.116.0 per git log;
+   suggest `core 5.117.0`).
+5. **Ship-gate:** the race is "theoretical today" (offload OFF by default,
+   `config_registry.py:491`). Confirm fixing now anyway — auditor agrees: cost
+   is one lock, multi-agent fan-out with offload ON is an intended mode, and the
+   fix hardens against inadvertent offload-ON deploys.
+
+**Bottom line:** sound plan, correct lock, complete scope. Apply the four
+cosmetic line-number corrections, tighten the repro assertion, then build.

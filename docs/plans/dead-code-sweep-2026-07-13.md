@@ -409,3 +409,117 @@ is what makes prevention sustainable.
   is arguably the highest-value output of task #19, above the near-empty cleanup itself.
 - Post-reorg husk dirs `yadgar/_shared/retrieval/{providers,stages}/` are gitignored pycache-only
   leftovers (mem 532111 pattern) — disk hygiene, not source dead-code.
+
+---
+
+## AUDIT (2026-07-13)
+
+**Verdict Status: PROCEED WITH ONE CORRECTION.** Independent adversarial re-grep confirms the
+8-symbol firm dead set is genuinely dead — **8/8 survived re-verification (0 live, 0 STOP-flags).**
+The `stage_overrides` bug is real. The vulture methodology caveat is empirically proven. **One
+material inaccuracy found:** the plan mischaracterizes ADR-0046 as having "flagged
+`recall_via_pipeline` for retirement" — the ADR does no such thing (see §Car R correction). Car R's
+gate rationale must be re-worded. Car B and Car 0 are sound as written.
+
+Audit method (per advisor): single forensic investigator + main-thread direct reads. Every "dead"
+claim re-grepped against **current HEAD `bb515e4b`** (plan was written against `3c70ed88`; re-verify
+found no caller landed in the interim — the "re-grep before merge" gate is currently satisfied).
+For each symbol: `grep -rn '\bNAME\b' --include='*.py'` (word-bounded, catches `.name(` dispatch +
+`"name"` string literals), plus a non-`.py` sweep (migrations/config/stubs), plus a
+`getattr`/f-string reflective-dispatch scan (the residual blind spot).
+
+### Per-symbol verification table (the 8 REMOVE claims)
+
+| # | symbol | file:line | .py refs | non-.py refs | getattr/dispatch | verdict |
+|---|---|---|---|---|---|---|
+| 1 | `_get_consts` | `_shared/storage/memory.py:78` | **1** (def) | `.complexity-baseline.json` (metric baseline, not caller) | none | **VERIFIED-dead** |
+| 2 | `get_total_reconsolidation_count` | `_shared/storage/memory.py:1049` | **1** (def) | baseline json only | none | **VERIFIED-dead** |
+| 3 | `count_memories_by_compression_level` | `_shared/storage/memory.py:1061` | **1** (def) | baseline json only | none | **VERIFIED-dead** (natural caller `cli/stats.py:210` reimplements via inline raw SQL, does NOT call the method — confirms deadness) |
+| 4 | `update_memory_sr_coords` | `_shared/storage/rules.py:210` | **1** (def) | `CAPABILITY_REGISTRY.md` | none | **VERIFIED-dead** (registry explicitly: "Spatial layout methods (…update_memory_sr_coords…) were **retired in v5.71.0 (#47)**" — corroborates: leftover after a documented retirement) |
+| 5 | `get_memories_with_sr_coords` | `_shared/storage/rules.py:216` | **1** (def) | baseline json only | none | **VERIFIED-dead** (same v5.71.0 SR-coord retirement family as #4) |
+| 6 | `get_all_episodes` | `_shared/storage/episode.py:57` | **1** (def) | baseline json only | none | **VERIFIED-dead** |
+| 7 | `search_wiki_fts` (plain) | `_shared/storage/wiki.py:686` | **1** (def) | trace SVG/json refs are all `search_wiki_fts_scored`, NOT the plain form | none | **VERIFIED-dead** (word-bound count=2 collapses to 1 once `_scored` excluded; live path `_shared/wiki/store.py:794` calls `search_wiki_fts_scored`; only stray plain ref is a docstring comment at `wiki.py:6`) |
+| 8 | `Snapshot.read_target_version` | `core/update/snapshot.py:115` | **1** (def) | none | **none in `core/update/`** — the sole repo-wide `getattr(...,"target_version")` (`cli/update.py:213`) reads an **argparse attr**, not this method | **VERIFIED-dead** (highest advisor-flagged risk; scrutinized hardest. Plain `@dataclass` method mirroring `write_target_version`; sibling readers call `_read_plain` by explicit method call, zero reflective dispatch. Writer exists, nothing reads the value back.) |
+
+**Result: 8 / 8 VERIFIED-dead. Zero live. Zero STOP-flags.** Car B may proceed as written (re-grep
+each immediately before merge remains mandatory — HEAD moved once already since the plan was drafted).
+
+### Flagship & ancillary verification
+
+- **`recall_via_pipeline` (`backend/retrieval/core.py:383`) — CONFIRMED dead-in-production.** Prod
+  (non-test) refs = **1** (the def at :383 + its `@observe` decorator at :382). Test call-sites = **9
+  lines across 3 files** (`tests/_shared/test_retrieval_pipeline.py`, `tests/server/test_fanout_step2.py`,
+  `tests/server/test_mcp_recall_pipeline_kwargs.py`). Not in any `__all__` / retrieval `__init__.py`.
+  Plan's "test-only, zero prod callers, ~9 test sites" is **accurate**. Car R's user-gate is
+  appropriate. Safe to leave OR remove per ADR-0046 — with the correction below.
+
+- **CORRECTION — ADR-0046 citation is inaccurate (does NOT change the dead verdict, DOES change Car R's
+  gate wording).** Read the actual ADR-0046 (`wiki:yadgar-adr-log`, NOT a repo file — the plan implies
+  it is one). Findings:
+  - ADR-0046 status is **OPEN** (date 2026-07-05), **not** a completed cutover. Its
+    `revisit_trigger` is unmet (awaits the core-recall-paths audit `a317d4` + a user pick on stdio
+    reconciliation).
+  - ADR-0046 **never mentions `recall_via_pipeline`** — grep of the ADR block = 0 hits. The plan's
+    claim "ADR-0046 forward-only flagged it for retirement" (lines 22–25, 96, 133–134) is an
+    **overstatement**. What ADR-0046 actually flags is the *in-core recall fallback path*, and it
+    concludes that path is **"NOT dead code"** (it is how recall runs under the default stdio
+    transport, backend-less by design) — pure forward-only would "BREAK stdio or REGRESS it to
+    legacy memory-only."
+  - Consequence for Car R: the precondition "user/arch confirms ADR-0046 forward-only cutover is
+    **complete**" (plan line 180) can **never be met as phrased** — ADR-0046 is open and blocked on
+    stdio, independent of this method. **Re-word the gate** to: "confirm `recall_via_pipeline`
+    *specifically* has no revival plan (it is not the stdio in-core path ADR-0046 protects; it is a
+    separate `Retriever` method with zero prod callers)." The method's deadness stands on the grep
+    alone; do not lean Car R's justification on an ADR that doesn't cover it and isn't closed.
+
+- **`stage_overrides` bug (#58) — CONFIRMED real, not a false read.** Direct read of
+  `core/server/tools/recall.py`: param present in signature (line 134), documented in docstring
+  (line 162), and the `_forward_to_backend(...)` call at lines 254–265 passes
+  `query, max_results, min_heat, directory, current_branch, default_branch, type_filter, tags, mode,
+  profile` — **`stage_overrides` is absent from the forwarded kwargs.** Silent no-op for external MCP
+  callers. Correctly routed OUT of the sweep to a bug-fix PR. Genuine functional bug.
+
+- **Vulture methodology caveat — EMPIRICALLY PROVEN.**
+  `uvx vulture yadgar --min-confidence 80 --exclude '*/tests/*,*/benchmarks/*'` → **0** unused
+  function/method/class hits. Same at `--min-confidence 60` → **341**. The 80-threshold is genuinely
+  blind to unused functions (vulture rates them ~60%). The plan's tool guidance (run at 60, not 80)
+  and the CI-prevention `--min-confidence 60` requirement are **sound**. (Note: 341 raw vs the plan's
+  "198 after filtering" — the delta is the plan's PEP-562/pydantic pair removal + class-exclusion, not
+  a discrepancy in direction; both agree 80→~0, 60→hundreds.)
+
+### Scope-discipline challenge (per audit mission item 5)
+
+- **Cars small + capped + revertable? YES.** Car 0 = dirs-only (zero `.py`, zero import risk). Car R =
+  1 method + its dedicated tests, single PR, user-gated. Car B = exactly 8 symbols, single small PR,
+  optional `core/update` split. Each is one commit / independently revertable. Caps are explicit and
+  honored. This directly answers the 531809 blast-radius lesson.
+- **CI-prevention allowlist gate — sound, will NOT churn IF the allowlist is baselined.** The design
+  (min-conf-60 + checked-in `.vulture_allowlist` of the ~190 legitimate dynamic/entrypoint symbols) is
+  the only combination that both sees functions and stays quiet on the repo's dynamic surface. A bare
+  gate would fail on the 67 PEP-562 shims + all routes/hooks/ABI methods and get disabled — the plan
+  correctly makes the allowlist mandatory. One caveat for the implementer: the allowlist must be
+  regenerated from a **pinned vulture version** (341 hits are version-sensitive), else CI churns on
+  vulture upgrades — recommend pinning vulture in the CI job.
+- **Deferring the ~21 low-confidence storage methods — CORRECT.** Item #4/#5 above prove the pattern:
+  `update_memory_sr_coords` is a documented-retired leftover, but the registry evidence was only found
+  by reading `CAPABILITY_REGISTRY.md` — a bulk sweep would miss such per-symbol nuance. The deferred
+  set (bitemporal beliefs, cluster similarity-links, implicit vectors) plausibly includes
+  dormant-but-intended API; separate investigation before removal is the right call. Bulk-removing
+  them is exactly the 531809 move.
+
+### User decisions requested
+
+1. **Car R gate re-word (REQUIRED before Car R ships):** accept that ADR-0046 is OPEN and does not
+   cover `recall_via_pipeline`; re-base Car R's precondition on the method's own zero-prod-caller
+   status + an explicit "no revival plan for this method" confirmation, NOT on ADR-0046 completion.
+2. **Car B:** approve removing the 8 verified-dead symbols now (single PR, re-grep each at merge time).
+   `update_memory_sr_coords` / `get_memories_with_sr_coords` are safe to remove now that the v5.71.0
+   retirement is corroborated.
+3. **`stage_overrides` (#58):** confirm routing to a behaviour-fix PR (wire it through to the backend,
+   or document as reserved) — do NOT delete the public param.
+4. **CI-prevention gate:** approve the min-conf-60 + baselined-allowlist vulture gate, with a **pinned
+   vulture version** added to the recommendation.
+5. **Deferred ~21 storage methods + PEP-562 shims:** approve deferral (no car) — separate targeted
+   investigation later.
+
+**Preserved above unchanged; this AUDIT block is append-only.**

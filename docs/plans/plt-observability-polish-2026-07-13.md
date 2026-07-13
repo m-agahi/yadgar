@@ -2,7 +2,7 @@
 
 **Task:** #23 — "PLT observability polish: Grafana dashboards + queue visibility/alerting"
 **Date:** 2026-07-13
-**Status:** DRAFT — awaiting audit
+**Status:** AUDITED (2026-07-13) — REVISE, build-conditional. See `## AUDIT (2026-07-13)` at end. Blocking user-decision A (P-SB dependency file absent).
 **Author:** dispatched planning agent (source-verified against metrics.py / observe.py / pipeline.py)
 
 ---
@@ -262,3 +262,57 @@ Notes:
 **Config/infra only** — the deliverables are `.json` (Grafana dashboard) + `.yaml` (Prometheus alert rules) + `MIGRATION_NOTES.md`. No `.py` change.
 
 Per the Test-Driven hard rule's scope clause ("application/library code only — not config, infra (.nix, .tf, .yaml), or one-line edits"), the dashboard JSON and alert YAML are **exempt from the failing-test-first requirement**. The recommended JSON/YAML validity + metric-name-existence test is a *safety net for the config*, not a red-green-refactor gate — it may be written after the config, or reuse an existing lint harness. No yadgar version bump is required (no shipped code changes); this rides as a docs/observability edit. If a lint test is added under `tests/`, that test file IS code and follows normal conventions, but it tests config, so its own "failing first" is trivially the parse/assert.
+
+---
+
+## AUDIT (2026-07-13)
+
+Method: source-grep + fresh Python import of `observe.py` + **live curl of both `/metrics` endpoints** (read-only triage, sanctioned by CLAUDE.md). Live scrape is the load-bearing evidence — it converts the plan's abstract registry-split topology into fact.
+
+### Per-claim verdict table
+
+| # | Claim (plan) | Verdict | Evidence (file:line / scrape) |
+|---|---|---|---|
+| 1 | `docs/observability/dashboard.json` = "Yadgar Observability v1", uid `yadgar-v1`, 20 panels, 6 rows, schema 36 | **VERIFIED** | file parses: title/uid/schemaVersion/20 panels/6 rows all match exactly |
+| 2 | `docs/observability/alerts.yaml` = 5 rules (drainer lag, DLQ>10, recall slow, backend unreachable, CB stuck) | **VERIFIED** | alerts.yaml: `YadgarDrainerLagHigh`, `YadgarDlqGrowing`(>10), `YadgarRecallSlow`, `YadgarBackendUnreachable`, `YadgarCircuitBreakerStuck` |
+| 3 | This is v1→v2 EXTENSION, not greenfield | **VERIFIED** | both files exist and are the source of truth; plan edits in place |
+| 4 | Row 3 "Recall stage durations p95" queries `yadgar_recall_stage_ms{stage}` | **VERIFIED** | dashboard.json Row 3 target: `histogram_quantile(0.95, sum by (stage, le) (rate(yadgar_recall_stage_ms_bucket[5m])))` |
+| 5 | `yadgar_recall_stage_ms` is "effectively-dead legacy" | **VERIFIED (with correction)** | Registered on core `_registry` (metrics.py:294) AND actively `.observe()`'d (scoring.py:19, reranking.py:35) — so "dead" is FALSE at the code/registration layer. But **dead-on-scrape is TRUE and that is what matters**: :8765 serves only HELP/TYPE headers, **zero `_count`/buckets**, despite 76 recalls having run (`yadgar_recall_duration_ms_count 76.0`). :8001 serves **zero** `recall_stage_ms` lines. Root cause = registry-split: emitted from `backend/retrieval/*` (backend process) but registered on core `_registry` object → lands in a registry served by neither port. Repoint is justified; the *reason* is registry-split, not "legacy/unused". Fix the plan's wording (§0.1 BLUF, §a) to say "dead-on-scrape via registry-split" not "legacy". |
+| 6 | `yadgar_observe_stage_duration_seconds` is dead today (circular import) | **VERIFIED** | Empirical import: `_PROM_AVAILABLE=False`, `_STAGE_DURATION is None`, family ABSENT from `_registry`. Live scrape: zero `observe_stage_duration` lines on :8765 AND :8001. Swallowing `except Exception` at observe.py:56-64 confirmed. |
+| 7 | P-SB (`docs/plans/psb-observability-2026-07-13.md`) is the unblocker; status AUDITED/build-GO | **WRONG (file absent)** | `docs/plans/psb-observability-2026-07-13.md` **does not exist**. No file under `docs/plans/` matches the circular-import-fix / bridge-collector work by any name (`obs-velocity-completion`, `full-observability-standard`, `hook-recall-cache-track-a` checked — none is the P-SB fix). The dependency is currently **unbuildable / untracked**. See User-decision A. |
+| 8 | Queue/DLQ/drainer families live on :8765 | **VERIFIED** | scrape :8765: `yadgar_queue_depth{queue=...}`, `yadgar_dlq_size 0.0`, `yadgar_dlq_rejection_count 0.0`, `yadgar_drain_cycle_duration_ms_*` all present. |
+| 9 | `yadgar_dlq_rejection_count` registered (metrics.py:227) | **VERIFIED** | metrics.py:227 Gauge on `_registry`; live on :8765. |
+| 10 | Cache families (`cache_hit_total`/`miss`/`evictions`/`size_entries`) + legacy embedding-cache | **VERIFIED** | metrics.py:108/115/127/134/77/83; cache/consolidation/loop family lines present on :8765 (35 matches). |
+| 11 | Consolidation families (`consolidation_duration_seconds`, `action_batch_size`, `loop_last_run_unix_timestamp`, `loop_errors_total`) | **VERIFIED** | metrics.py:68/90/777/785; present on :8765. |
+| 12 | `yadgar_recall_duration_ms` live today (Row 3 keep) | **VERIFIED** | metrics.py:259; :8765 `_count 76.0`, `_sum 522750.7` — real samples. |
+| 13 | Backend rerank `yadgar_embed_rerank_duration_seconds{mode}` on :8001 | **VERIFIED** | scrape :8001: present with `mode="ce"`/`mode="nli"` series. |
+| 14 | `drain_cycle_duration_ms` (throughput panel + DrainerStalled alert) live on :8765 | **VERIFIED** | scrape :8765 present (count=0 idle, series exists). Drainer emits **core-side** → split is selective & coherent: drainer core, retrieval backend. Plan's "live today" label correct. |
+| 15 | Unclean-DB-stop proxy = `yadgar_data_quality_null_embedding_count` (real gauge, should be 0) | **VERIFIED (honest proxy)** | metrics.py:885 (plan cites 891 — minor drift), Gauge on `_registry`; :8765 `0.0`. It IS a real gauge and IS a hard-invariant visibility metric. Plan honestly caveats it catches corruption, not shutdown-cleanliness. Accept as proxy; flagged as such. |
+| 16 | Line citation `null_embedding_count` at metrics.py:891 | **STALE** | actual def at metrics.py:885 (6-line drift, harmless). |
+| 17 | Line citation `dlq_rejection_count` at metrics.py:227 | **VERIFIED** | exact. |
+| 18 | Metric files at `_shared/observability/metrics.py`, `.../observe.py`, `backend/embed_service/embed_service_metrics.py` | **VERIFIED** | real files (1202/…/503 lines). Note: `_shared/metrics.py` + `backend/embed_service_metrics.py` are now **PEP-562 shims** (T2 Car D1/D2, ADR-0084) — plan targets the real post-reorg paths correctly. |
+| 19 | ADR-0101 (self-sufficiency) supports in-repo dashboards-as-code | **VERIFIED (exists)** | ADR-0101 present in ADR log (ADRs run to 0106). Citation is directionally sound; delivery-as-code matches the existing `docs/observability/` convention. |
+| 20 | Registry-split: :8765 core `_registry` vs :8001 isolated `CollectorRegistry()`, disjoint | **VERIFIED** | metrics.py:47 `_registry = CollectorRegistry()`; embed_service_metrics.py:48 separate `_registry`. Confirmed empirically by claim #5. |
+| 21 | Delivery: as-code in-repo, host-deploy via MIGRATION_NOTES, no push/apply | **VERIFIED / conformant** | No terraform, no code, no live stand-up. ADR-0101-conformant. Meets No-Apply / No-Terraform hard rules. |
+| 22 | TDD exemption for `.json`/`.yaml` | **VERIFIED** | matches Test-Driven scope clause ("not config, infra"). Lint test as safety-net (not red-green gate) is the correct framing. |
+| 23 | Recall-stage PromQL carries NO `job` filter (neutralizes Risk #2) | **VERIFIED sound** | disjoint registries → a `retrieval.*` stage label gets samples in ≤1 process, so cross-job aggregation never double-counts. Correct mitigation. |
+| 24 | Merge-dormant (option A) makes recall row "temporarily" dead until P-SB | **WRONG (conditional)** | Only "temporary" IF P-SB gets built. With P-SB **absent** (claim #7), option A ships a **permanently** dead recall row — a silent regression from today's already-dead-but-labelled Row 3. Materially changes the recommendation. See User-decision A. |
+
+### Verdict Status
+
+**REVISE — build-conditional (do NOT flip to REJECT).** The plan is 90% sound: queue/DLQ/drainer, cache, and consolidation rows + 3 of 4 alerts consume metrics that are live-on-scrape TODAY (verified by curl) and can ship immediately with real value. The delivery mechanism, hard-rule conformance, registry-split reasoning, and no-`job`-filter mitigation are all correct.
+
+Two defects block a clean GO:
+
+1. **P-SB is a dangling reference (claim #7, WRONG).** The plan's entire recall-latency arm depends on a plan file that does not exist and whose *work* (break circular import + backend bridge collector) is not tracked anywhere in `docs/plans/`. Merge-dormant option A therefore ships a permanently-dead recall row, not a temporarily-dead one. **Resolve before build.**
+2. **Headline wording overstates "legacy" (claim #5).** `recall_stage_ms` is not legacy/unused — it is actively emitted but dead-on-scrape due to registry-split. The repoint is still correct, but the *rationale* must be fixed so the reader (and the metric-name-existence lint) understands the real failure mode. A lint that only checks "name is registered somewhere" would PASS `recall_stage_ms` and MISS that it's served with no data — the lint must assert **served-on-a-scrape-job**, or at minimum flag register-core/emit-backend families.
+
+Everything else: VERIFIED. STALE count: 1 (line-891 drift). WRONG count: 2 (claim #7 P-SB file absent; claim #24 dormancy is permanent-not-temporary given #7). No panel/alert points at a non-existent metric — every consumed family is registered; the only served-with-no-data family is `recall_stage_ms` (the one being repointed AWAY from) and `observe_stage_duration_seconds` (the P-SB target, knowingly dormant).
+
+### User-decisions required
+
+- **A (BLOCKING) — P-SB provenance.** `psb-observability-2026-07-13.md` is absent. Choose: **(A1)** author/locate the P-SB fix plan first and gate this car behind it (option B); **(A2)** proceed merge-dormant (option A) but explicitly accept the recall row renders "No data" **indefinitely** until the circular-import fix + backend bridge land under *some* tracked plan; or **(A3)** drop the recall-latency arm from this car entirely and ship only the 3 independent live rows + 3 independent alerts now (recall repoint becomes a follow-up bundled with the P-SB fix). Recommendation: **A3** — decouples the 90% that works today from the unbuilt dependency; cleanest blast radius.
+- **B — headline wording.** Fix BLUF §0.1 and §a to state `recall_stage_ms` is *dead-on-scrape via registry-split* (emitted backend-side, registered core-side, served by neither port), not "legacy". Load-bearing for the lint design.
+- **C — metric-name-existence lint scope.** The lint is worth adding, but "name exists in `metrics.py`" is insufficient — it would green-light `recall_stage_ms`. Scope it to assert the family is served on the scrape job the panel targets (or flag register-core/emit-backend split families). Otherwise the lint gives false assurance for exactly the bug class this plan exists to fix.
+- **D — line-drift fix.** Update `null_embedding_count` citation 891 → 885 (trivial).
+- **E — carried-over open questions (plan §Open questions 1,2,4,6) remain valid** and are genuine user-calls: uid keep-vs-new, DLQ alert overlap (`YadgarDlqGrowing>10` vs new `YadgarDlqNonEmpty>0`), backend-native drainer signal (`yadgar_embed_queue_drainer_running==0` on :8001) vs core cycle-count proxy. No blocker; author's recommendations are reasonable.

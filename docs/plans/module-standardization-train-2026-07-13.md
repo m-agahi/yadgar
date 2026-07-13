@@ -1,6 +1,6 @@
 # Module standardization train — ADR-0066 remainder (I13 internal splits + shim removal)
 
-**Status: DRAFT — awaiting audit.** No code changed; this doc is the only artifact.
+**Status: AUDITED — needs rework** (2026-07-13; see `## AUDIT (2026-07-13)` at end — 3 WRONG, 2 STALE; rework = Version-math + `.complexity-allowlist.json` C1 scope, not a redesign). No code changed; this doc is the only artifact.
 **Date:** 2026-07-13. **Task:** #18 (ADR-0066 "PR B + C1–C6", `wiki:yadgar-adr-log`).
 **Baseline:** master at core **5.132.0** / backend **5.43.0** (`yadgar/__init__.py:21` BACKEND_VERSION; `server.json:10-11`), tip `471eba13` (T4 Ettin #191).
 **Standard enforced:** `docs/ARCHITECTURE_INVARIANTS.md` §I34 (modular layer coherence + forward-only, ADR-0062) lines 546–622; I13 file caps line 80 (≤1000 hard / ≤500 soft LOC), function caps line 78.
@@ -286,3 +286,102 @@ law) + ADR-0062 (I34); `docs/ARCHITECTURE_INVARIANTS.md:78,80,546-622`; `docs/pl
 (T2 car table, task-#18 pointer line 51/107); `docs/plans/archive/core-backend-folder-split-2026-07-06.md`
 (shim precedent); `docs/claude-workflow.md:34-119,163-202` (train workflow); `pyproject.toml:115-156`
 (per-file-ignores); live `wc -l` census 2026-07-13; memory 531809 (blast-radius discipline).*
+
+---
+
+## AUDIT (2026-07-13)
+
+**Status: AUDITED — needs rework.** The core approach (internal split inside the existing
+package dirs, forward-only, shim-removal-last, worktree-parallel cars) is **sound and matches
+I34**. Rework is edits to **two sections** (Version math + the `.complexity-allowlist.json`
+omission that widens C1 scope/acceptance), **not a redesign**. 3 WRONG claims, 2 STALE, rest
+VERIFIED. Audited by a read-only pass over the live tree (all `wc -l` / grep re-run 2026-07-13).
+
+### Verification table
+
+| # | Load-bearing claim | Plan says | Live evidence | Verdict |
+|---|---|---|---|---|
+| 1 | Baseline tip | `471eba13` (T4 #191) | `git rev-parse HEAD` → `bb515e4b`; `471eba13` is **7 commits back** | **STALE** (versions 5.132.0/5.43.0 still correct — `server.json:10-11`, `yadgar/__init__.py:21`) |
+| 2 | embed_service.py LOC | 1580 | `wc -l` = **1580** | VERIFIED |
+| 3 | embed_service_metrics.py | 503 | `wc -l` = **503** | VERIFIED |
+| 4 | cache.py LOC | 980 | `wc -l` = **980** | VERIFIED |
+| 5 | ml_client.py LOC | 770 | `wc -l` = **770** | VERIFIED |
+| 6 | core/daemon/daemon.py LOC | 948 | `wc -l` = **948** | VERIFIED |
+| 7 | backend/graph/graph_api.py LOC | 641 | `wc -l` = **641** | VERIFIED |
+| 8 | install_hooks_lib.py LOC | 662 | `wc -l` = **662** | VERIFIED |
+| 9 | predictive_coding.py LOC | 641 | `wc -l` = **641** | VERIFIED |
+| 10 | auth_middleware / backup LOC | 238 / 304 | `wc -l` = **238 / 304**; both in own dirs `core/auth_middleware/`, `core/backup/` | VERIFIED |
+| 11 | daemon pkg siblings absorbed by T2 | daemons 239 / drain 114 / sd_notify 66 / system_metrics 266 | `wc -l` = **239 / 114 / 66 / 266** | VERIFIED (exact) |
+| 12 | 27 PEP-562 "Back-compat shim" files | 27 | `grep -rl "Back-compat shim" yadgar/` = **27** | VERIFIED |
+| 13 | I34 (ADR-0062) forbids re-export shims | line 578 | `ARCHITECTURE_INVARIANTS.md:577-579` "Do **not** keep … re-export shims"; §I34 header line 546; ADR-0062 mapping confirmed line 546/994 | VERIFIED |
+| 14 | `pyproject.toml:128` stale grandfather (`core/graph/graph_api.py`, path gone) | delete in Car 4 | `pyproject.toml:128` = `"yadgar/core/graph/graph_api.py" = ["C901"]`; `ls yadgar/core/graph` → **No such directory**. Entry is dead. | VERIFIED |
+| 15 | `pyproject.toml:129` = live C5 install grandfather | C5 removes it | `pyproject.toml:129` = `"yadgar/core/install/install_hooks_lib.py" = ["C901"]` (live) | VERIFIED |
+| 16 | `pyproject.toml:133` = live C6 predictive grandfather | C6 removes it | `pyproject.toml:133` = `"yadgar/backend/predictive_coding/predictive_coding.py" = ["C901"]` (live) | VERIFIED |
+| 17 | `pyproject.toml:121` = DIFFERENT `cli/daemon.py` (277 LOC), don't conflate C3 | footnote 2 | `pyproject.toml:121` = `"yadgar/core/cli/daemon.py" = ["C901"]`; distinct from `core/daemon/daemon.py`. C3 has **no** per-file-ignore to remove — correct. | VERIFIED |
+| 18 | Only C5/C6 are per-file-ignores; C1/C2a/C2b/C3 are NOT ruff C901, tracked in `.complexity-baseline.json` (footnote 1) | debt "lives in the complexity baseline instead" | embed_service/cache/ml_client/core-daemon are **NOT** in `[per-file-ignores]` — correct. BUT: **embed_service's HARD >1000 file-LOC waiver lives in `.complexity-allowlist.json:25`, a file the plan NEVER names** — not `.complexity-baseline.json`. `.complexity-baseline.json` tracks SOFT violations only (`::__file__` LOC + per-function keys). | **WRONG** (see Correction A) |
+| 19 | embed_service SHIM importer count | "~110 importers" (ADR-era historical; "measure with grep before committing") | Live: **11** non-test module importers, **47** total refs, **0** old-`yadgar.embed_service`-string sites. Only embed_service shim is `embed_service_metrics.py`; **no** top-level `embed_service.py` shim exists. | VERIFIED-with-context (plan already flagged it as historical + measure-first; SHIM blast radius far below 110 → strengthens Q3=train-targets-only) |
+| 20 | ADR-0084 lone-files law codified by T2 #182 | promotion done | ADR-0062/0084/0066 all resolve in docs + wiki; auth/backup/daemon-pkg confirm promotion | VERIFIED |
+| 21 | Version math: core 5.132→5.133, backend 5.43→5.44 | lines 273-280 | `origin/feat/obs-quickwins-train` (#195) ships **5.133.0/5.44.0**, is **NOT merged** into master, and is ahead. Two trains cannot both claim 5.133/5.44. | **WRONG** (see Correction B) |
+| 22 | cache.py debt cleared by the split | C2 "split … both ≤500" | `.complexity-allowlist.json:440` = **PLR0913 9-param `__init__` waiver** on cache.py — orthogonal to LOC. Splitting <500 does **not** clear it; Scope OUT ("no forced param surgery") means it intentionally **survives**. | **WRONG (implied)** (see Correction C) |
+| 23 | Seams disjoint → worktree-parallel; only shared files = `pyproject.toml` + version files | lines 98-100, 224 | Layers are disjoint (backend vs core). BUT `.complexity-allowlist.json` is a **THIRD shared file**: C1 edits line 25, C2 edits line 440 → collision the plan's mitigation (line 224 names only pyproject+baseline) does not cover. | STALE/incomplete (see Correction D) |
+| 24 | Invariant line cites 78 (fn caps) / 80 (file caps) | header line 6 | `ARCHITECTURE_INVARIANTS.md:78` = function caps; `:80` = file caps (≤1000 hard/≤500 soft). | VERIFIED |
+
+### Corrections (fold into the plan before build)
+
+**A — Footnote 1 & Acceptance line 188 (C1 scope gap).** The embed_service HARD file-LOC (>1000)
+waiver is `.complexity-allowlist.json:25` (stale rationale: ends at "1194 → next structural
+addition should split"; baseline `::__file__` says 1423; live 1580 — drifted twice). Removing
+it is a **C1 deliverable** — the same dead-waiver debt-class as the stale `pyproject.toml:128`
+you already delete in C4. Acceptance criterion line 188 ("every removed per-file-ignore / baseline
+entry") **omits the allowlist** → C1 could pass acceptance while leaving a dead HARD waiver. Fix:
+add `.complexity-allowlist.json:25` removal to Car C1's deliverables **and** to line 188.
+
+**B — Version math (BLOCKER, lines 273-280).** Base on **post-#195** master. #195
+(`feat/obs-quickwins-train`) already occupies 5.133.0/5.44.0 and is unmerged-but-ahead. After it
+lands, this train's base = 5.133.0/5.44.0 → **targets CORE 5.133.0 → 5.134.0, BACKEND 5.44.0 →
+5.45.0**. The audit mission flagged this; the plan body contradicts the flag by hardcoding the
+same 5.133/5.44. Also update `test_v5_46_12_backend_version_canonical.py` expected value +
+`sync_version.py` propagation (server.json + flake.nix + docker-compose.yml — 3 sites, all verified
+present). Add an explicit sequencing precondition: **"do not start version bump until #195 has
+merged; re-read master `server.json` at integration."**
+
+**C — cache param waiver clarity (Scope + C2).** State in C2 that `cache.py`'s
+`.complexity-allowlist.json:440` PLR0913 9-param `__init__` waiver is **out of scope and survives
+the split** (it's a param-count waiver, not LOC; Scope OUT already forbids forced param surgery).
+Without this note the plan implies C2 retires cache's debt — it retires only the LOC-soft part.
+
+**D — Seam risk (line 224).** Add `.complexity-allowlist.json` to the list of shared files that
+collide across parallel cars (currently only `pyproject.toml` + baseline named). C1 (line 25) and
+C2 (line 440) both edit it. Same mitigation applies (each agent touches only its own line;
+integration resolves) but it must be **named**, and "agents touch ONLY their own pyproject line"
+(line 100) should read "own pyproject **and** allowlist line."
+
+### Assessed but OK (no change needed)
+
+- **Cars disjoint (mission 5):** backend (C1/C2/C4/C6) vs core (C3/C5) layers are import-disjoint;
+  `backend/__init__.py` (6 LOC) + `core/__init__.py` (9 LOC) are thin, no per-pkg re-export churn
+  there. Worktree-parallel viable modulo the 3 shared metadata files (pyproject/baseline/allowlist)
+  the integration merge resolves. SHIM-car-runs-last is correct.
+- **Acceptance criteria (mission 6):** testable — LOC via `check_complexity.py --all-files`,
+  `lint-imports` 4-kept/0-broken (I34 enforcement confirmed `pyproject [tool.importlinter]`),
+  import-surface parity test, version-consistency test all exist. **Only gap = the allowlist
+  omission in Correction A.**
+- **Scope IN/OUT:** clean, except cache-param clarity (Correction C). The ~18 OUT files match the
+  live >500 census. PR-B correctly identified as done-modulo-Q1.
+- **Blast-radius mitigation (mission 5, memory 531809):** SHIM-last + full-local-suite-green gate
+  is the right discipline; the actual embed_service churn (11 sites, not 110) makes it **lower**
+  risk than the plan fears — the mitigation is if anything over-provisioned, which is fine.
+
+### New user-decision item (add to Open Questions)
+
+- **Q6 — allowlist strip:** does C1 also strip `.complexity-allowlist.json:25` (embed_service HARD
+  file-LOC waiver)? **Recommend: YES** — it's dead debt once the file drops <1000, same as the
+  stale `:128` delete. cache's `:440` param waiver is a **no-op** for this train (survives; out of
+  scope per Correction C).
+
+### Sequencing verdict
+
+**This train is blocked on #195.** Do not finalize version numbers or start the integration bump
+until `feat/obs-quickwins-train` merges to master. Splitting work (C1–C6) can proceed in parallel
+worktrees off current master, but the version-math section and `test_v5_46_12` expected value must
+be recomputed against post-#195 master (5.133.0/5.44.0 → 5.134.0/5.45.0).
