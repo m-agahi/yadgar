@@ -813,3 +813,77 @@ smaller model — recorded as rollback-safety, not a gate. Ettin-32m is ~1/5 the
 params of GTE-150M, so cold-load and per-pass CE cost should both drop; book the
 *measured* number (Amdahl + shared I/O mean the 6.3×-per-pass blog figure does not
 translate cleanly to end-to-end recall latency).
+
+---
+
+## Cross-version read-time sweep 2026-07-13 — Ettin latency hypothesis VERIFIED
+
+**Status: CONFIRMED.** The T4 Ettin latency hypothesis — that the speedup is
+reranker-model-attributable and not a version artifact — is empirically verified
+by this cross-version sweep.
+
+### Method
+
+**Portable (version-invariant):** `yadgar_recall_duration_ms` Prometheus histogram
+delta on `:8765/metrics` (server-side, available v5.96+), driven via MCP-tool
+recalls. 12 fresh distinct queries per version point, 2 warmup discards before
+scrape, CE-miss validity gate (`yadgar_cache_miss_total{cache="ce"}` delta +
+`_cross_encoder_score` present on every result), `--cpus 2` backend throughout.
+
+> ⚠️ **`run_perf_loadtest.py` `perf_counter` is NOT version-portable.** On older
+> daemons (pre-T2) the harness returned bogus ~7ms readings — the `/recall`
+> endpoint layout changed across the T2 in-process move and the harness
+> `_call_recall` path silently returned `False`/`None`. Use the Prometheus
+> histogram delta method for any cross-version comparison. Similarly, the harness
+> `ce_mean` field is dead per issue #50 / ADR-0078 (`ce_metric_status:
+> "unavailable"`); discard it.
+
+### Results table
+
+| Version (core/backend) | Reranker | CPUs | Mean recall wall |
+|---|---|---|---|
+| 5.128.0 / 5.39.0 | GTE-ModernBERT | 2 | 12,975 ms |
+| 5.129.0 / 5.40.0 | GTE-ModernBERT | 2 | 12,465 ms |
+| 5.131.0 / 5.42.0 | GTE-ModernBERT | 2 | 12,700 ms |
+| 5.132.0 / 5.43.0 | GTE-ModernBERT (control, config-pinned) | 2 | 12,947 ms |
+| **5.132.0 / 5.43.0** | **Ettin-32m (fresh same-session)** | **2** | **5,306 ms** |
+
+GTE floor across 4 versions (5.128–5.132): **~12.8s mean** (spread 12,465–12,975ms,
+~4%). Highly stable — no version trend.
+
+**Ettin vs GTE on identical image (5.132/5.43.0):**
+- GTE control: 12,947ms → Ettin live: 5,306ms
+- **Speedup: 2.44× faster (−7,641ms, −59%)**
+
+Cross-check with T4 bench (same image, earlier same day): T4 bench measured 5,644ms;
+this sweep measured 5,306ms — within 6%. Consistent.
+
+At `--cpus 3` (ADR-0097 production config, `nix 3c9b646`):
+- Ettin measured **4,317ms** (from Ettin CPU-scaling series above)
+- End-to-end improvement: GTE @2cpu 12.8s → Ettin @3cpu 4.3s ≈ **3× faster recall**
+
+### Honest measurement arc
+
+The earlier claim "Ettin ≈ GTE / no latency win" was a **dirty-measurement error**.
+Interactive-tool hand-timing included hook overhead, MCP transport round-trips, and
+harness scaffolding — inflating Ettin wall to ~13s. The clean same-method histogram
+sweep shows Ettin 5.3s vs GTE 12.8s.
+
+The CE attribution clarification from 2026-07-13 (above in this doc) also revised the
+stage fractions: CE was ~55% of GTE's warm wall (~7s CE of 12.8s total), not the
+stale 70–90% from the split-container era and not the Ettin-measured ~25% of the dirty
+timing. Ettin cut CE from ~7s (GTE) to ~1.5s — a 4.7× per-pass reduction —
+accounting for the bulk of the end-to-end 2.44× speedup (remaining headroom is the
+non-CE stages: PPR/spreading/fusion/DB, which are model-invariant).
+
+### Standing config
+
+Version 5.132.0 / backend 5.43.0, Ettin-32m (`cross-encoder/ettin-reranker-32m-v1`),
+backend `--cpus 3` (nix `3c9b646`). GTE rollback lever remains available via
+`config.yaml` (`gte_reranker_model` + `gte_reranker_enabled: true`).
+
+### Raw sweep log location
+
+Full per-version scrape data, PRE/POST histogram snapshots, CE validity gates, and
+bucket distributions: `/tmp/claude-1000/-home-max-git-yadgar/*/scratchpad/cross-version-sweep.md`
+(session scratchpad, 2026-07-13).
