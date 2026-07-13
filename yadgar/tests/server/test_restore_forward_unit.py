@@ -110,5 +110,21 @@ def test_pre_compact_drain_op_delegates_to_replay():
     ):
         result = resto_mod.pre_compact_drain({"directory": "/proj"})
 
-    replay.pre_compact_drain.assert_called_once_with("/proj")
+    # HOOKS Car 2: op body forwards transcript_path (None when absent).
+    replay.pre_compact_drain.assert_called_once_with("/proj", transcript_path=None)
     assert result == {"status": "drained", "epoch": 4, "auto_checkpoint_created": True}
+
+
+def test_pre_compact_drain_op_forwards_transcript_path():
+    """HOOKS Car 2: an explicit transcript_path in the payload reaches replay."""
+    import yadgar.backend.admin_exec.restoration as resto_mod
+
+    replay = MagicMock()
+    replay.pre_compact_drain.return_value = {"status": "drained"}
+    with (
+        patch.object(resto_mod, "ensure_restoration_engines"),
+        patch.object(resto_mod, "_get_replay", return_value=replay),
+    ):
+        resto_mod.pre_compact_drain({"directory": "/proj", "transcript_path": "/tmp/s.jsonl"})
+
+    replay.pre_compact_drain.assert_called_once_with("/proj", transcript_path="/tmp/s.jsonl")

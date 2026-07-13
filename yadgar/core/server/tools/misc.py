@@ -442,13 +442,9 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
             "reason": "running_in_container",
             "detail": (
                 "install_hooks must run on the host (the container's filesystem is throwaway). "
-                "Run `yadgar install-hooks --scope=global` on the host machine, or POST "
-                "/hooks/install-bootstrap for the settings.json snippet to write manually."
+                "Run `yadgar install-hooks --scope=global` on the host machine."
             ),
             "host_command": "yadgar install-hooks --scope=global",
-            "host_command_fallback": (
-                "# manual: read host_command_fallback_response from POST /hooks/install-bootstrap"
-            ),
         }
 
     return install_hooks_impl(

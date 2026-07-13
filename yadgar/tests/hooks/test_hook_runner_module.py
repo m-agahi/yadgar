@@ -235,6 +235,29 @@ def test_post_compact_rehydrate_uses_context_fallback(capsys):
     assert "ctx" in capsys.readouterr().out
 
 
+def test_post_compact_rehydrate_reads_formatted(capsys):
+    """BUG 1 regression: backend /hooks/post-compact returns restore markdown
+    under the `formatted` key (checkpoint_restore.py:399). hook_runner used to
+    read only text/context → empty inject on the HTTP path. Must prefer
+    `formatted`."""
+    data = {"cwd": "/proj"}
+    with patch.object(hr, "_http_get", return_value={"formatted": "RESTORE MD"}):
+        _run_hook_with_stdin(hr.hook_post_compact_rehydrate, data)
+    assert "RESTORE MD" in capsys.readouterr().out
+
+
+def test_post_compact_rehydrate_formatted_wins_over_text(capsys):
+    """`formatted` takes precedence when multiple keys are present."""
+    data = {"cwd": "/proj"}
+    with patch.object(
+        hr, "_http_get", return_value={"formatted": "FMT", "text": "TXT", "context": "CTX"}
+    ):
+        _run_hook_with_stdin(hr.hook_post_compact_rehydrate, data)
+    out = capsys.readouterr().out
+    assert "FMT" in out
+    assert "TXT" not in out
+
+
 # ── hook_pre_compact_drain ────────────────────────────────────────────────────
 
 

@@ -33,8 +33,21 @@ class TestForwardPreCompactDrain:
         payload = {"status": "drained", "epoch": 1, "auto_checkpoint_created": True}
         with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
             result = _shared.forward_pre_compact_drain("/my/proj")
-        fwd.assert_called_once_with("pre_compact_drain", {"directory": "/my/proj"})
+        # HOOKS Car 2: payload now carries transcript_path (None when omitted).
+        fwd.assert_called_once_with(
+            "pre_compact_drain", {"directory": "/my/proj", "transcript_path": None}
+        )
         assert result is payload
+
+    def test_forwards_transcript_path_when_given(self):
+        """HOOKS Car 2: an explicit transcript_path is forwarded to the backend."""
+        payload = {"status": "drained"}
+        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+            _shared.forward_pre_compact_drain("/my/proj", "/tmp/session.jsonl")
+        fwd.assert_called_once_with(
+            "pre_compact_drain",
+            {"directory": "/my/proj", "transcript_path": "/tmp/session.jsonl"},
+        )
 
 
 class TestSilenceLogging:

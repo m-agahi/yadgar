@@ -78,6 +78,10 @@
       "category": "generated",
       "rationale": "standalone maintenance/entry scripts (nightly_cycle, hook_runner, wiki_snapshot, yadgar_setup): short-lived batch procs whose spans would not flush and whose outer flow is already logged; instrumenting them is cosmetic per obs-standard hooks/short-proc caveat."
     },
+    "yadgar/core/hooks/**": {
+      "category": "generated",
+      "rationale": "standalone Claude Code hook scripts (pretooluse-router, stop/session-end/subagent capture): short-lived per-tool-call procs invoked by Claude Code, installed as dependency-optional global scripts whose observability import is best-effort (try/except ImportError); their spans cannot flush before the proc exits, so per-function tri-signal instrumentation is cosmetic per the obs-standard hooks/short-proc caveat (same class as hook_runner under core/scripts)."
+    },
     "yadgar/core/export/**": {
       "category": "generated",
       "rationale": "on-demand DuckDB export tooling (row coercion, schema build, table fetch/write): pure data-marshalling invoked from an operator export command, not a hot or unattended path; exempt per obs-standard 'seed/migration/codegen' exempt-heavy tail."

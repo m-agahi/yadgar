@@ -88,36 +88,61 @@ def test_make_hook_entry_empty_env_block_omitted():
 
 def test_append_if_absent_adds_new_entry():
     cfg: dict = {}
-    _append_if_absent(cfg, "PostToolUse", "myscript.py", {})
+    _append_if_absent(cfg, "PostToolUse", "myscript.py", {}, managed_basename="myscript.py")
     assert len(cfg["PostToolUse"]) == 1
     assert cfg["PostToolUse"][0]["hooks"][0]["command"] == "myscript.py"
 
 
 def test_append_if_absent_deduplicates():
     cfg: dict = {}
-    _append_if_absent(cfg, "PostToolUse", "myscript.py", {})
-    _append_if_absent(cfg, "PostToolUse", "myscript.py", {})
+    _append_if_absent(cfg, "PostToolUse", "myscript.py", {}, managed_basename="myscript.py")
+    _append_if_absent(cfg, "PostToolUse", "myscript.py", {}, managed_basename="myscript.py")
     assert len(cfg["PostToolUse"]) == 1
+
+
+def test_append_if_absent_deduplicates_on_basename_across_interpreter_drift():
+    """BUG A: dedup must key on the managed basename, not the full command.
+
+    A prior install may have registered a *different* interpreter prefix
+    (bare ``python3`` vs an absolute venv path). Re-registering the same
+    managed script must collapse to one entry, not accumulate a dupe.
+    """
+    cfg: dict = {}
+    _append_if_absent(
+        cfg,
+        "SubagentStop",
+        "python3 /home/u/.claude/hooks/yadgar-subagent-stop.py",
+        {},
+        managed_basename="yadgar-subagent-stop.py",
+    )
+    _append_if_absent(
+        cfg,
+        "SubagentStop",
+        "/opt/venv/bin/python3 /home/u/.claude/hooks/yadgar-subagent-stop.py",
+        {},
+        managed_basename="yadgar-subagent-stop.py",
+    )
+    assert len(cfg["SubagentStop"]) == 1
 
 
 def test_append_if_absent_allows_different_commands():
     cfg: dict = {}
-    _append_if_absent(cfg, "PostToolUse", "script_a.py", {})
-    _append_if_absent(cfg, "PostToolUse", "script_b.py", {})
+    _append_if_absent(cfg, "PostToolUse", "script_a.py", {}, managed_basename="script_a.py")
+    _append_if_absent(cfg, "PostToolUse", "script_b.py", {}, managed_basename="script_b.py")
     assert len(cfg["PostToolUse"]) == 2
 
 
 def test_append_if_absent_preserves_existing_entries():
     existing = [{"matcher": "", "hooks": [{"type": "command", "command": "existing.py"}]}]
     cfg = {"PostToolUse": existing}
-    _append_if_absent(cfg, "PostToolUse", "new.py", {})
+    _append_if_absent(cfg, "PostToolUse", "new.py", {}, managed_basename="new.py")
     assert len(cfg["PostToolUse"]) == 2
 
 
 def test_append_if_absent_with_env_block():
     cfg: dict = {}
     env = {"TOKEN": "abc"}
-    _append_if_absent(cfg, "SessionStart", "start.py", env)
+    _append_if_absent(cfg, "SessionStart", "start.py", env, managed_basename="start.py")
     assert cfg["SessionStart"][0]["hooks"][0]["env"] == env
 
 

@@ -184,6 +184,73 @@ class TestRestore:
         assert "API key" in result["formatted"]
 
 
+class TestInFlightEnrichment:
+    """HOOKS Car 2: transcript_path → in_flight capture in the drain checkpoint,
+    round-tripped through StorageEngine and surfaced in restore()."""
+
+    _FIXTURE = str(
+        __import__("pathlib").Path(__file__).parent.parent
+        / "fixtures"
+        / "transcript_in_flight.jsonl"
+    )
+
+    def test_drain_writes_in_flight(self, engines):
+        storage, embeddings, replay = engines
+        replay.pre_compact_drain("/test", transcript_path=self._FIXTURE)
+        active = storage.get_active_checkpoint("/test")
+        assert active is not None
+        in_flight = active.get("in_flight")
+        assert in_flight is not None, "in_flight must be written to the checkpoint row"
+        # StorageEngine may hand a dict back as a JSON string — the getter must
+        # normalize. Agents set must match the fixture's true in-flight set.
+        agents = in_flight["agents"] if isinstance(in_flight, dict) else in_flight
+        # tolerate JSON-string round-trip
+        if isinstance(in_flight, str):
+            import json as _json
+
+            agents = _json.loads(in_flight)["agents"]
+        assert set(agents) == {"bbbbbbbbbbbbbbbb2", "eeeeeeeeeeeeeeee5"}
+
+    def test_drain_none_transcript_no_in_flight(self, engines):
+        """Back-compat: transcript_path=None writes no in_flight (or None)."""
+        storage, embeddings, replay = engines
+        replay.pre_compact_drain("/test", transcript_path=None)
+        active = storage.get_active_checkpoint("/test")
+        assert active is not None
+        assert not active.get("in_flight")
+
+    def test_restore_surfaces_in_flight(self, engines):
+        storage, embeddings, replay = engines
+        replay.pre_compact_drain("/test", transcript_path=self._FIXTURE)
+        result = replay.restore("/test")
+        md = result["formatted"]
+        assert "In-Flight At Compaction" in md
+        assert "bbbbbbbbbbbbbbbb2" in md
+
+    def test_restore_no_in_flight_no_header(self, engines):
+        """Absent in_flight → no In-Flight header in restore markdown."""
+        storage, embeddings, replay = engines
+        replay.create_checkpoint("/test", CheckpointContext(current_task="plain"))
+        result = replay.restore("/test")
+        assert "In-Flight At Compaction" not in result["formatted"]
+
+    def test_restore_worktrees_only_no_header(self, engines):
+        """in_flight with worktrees but NO agents/shells → no block (a repo always
+        has ≥1 worktree; gating on it would surface an empty block every compact)."""
+        storage, embeddings, replay = engines
+        storage.insert_checkpoint(
+            {
+                "session_id": "auto-drain",
+                "directory_context": "/test",
+                "current_task": "wt-only",
+                "epoch": 1,
+                "in_flight": {"agents": [], "bg_shells": [], "worktrees": ["/w (main)"]},
+            }
+        )
+        result = replay.restore("/test")
+        assert "In-Flight At Compaction" not in result["formatted"]
+
+
 class TestCLISubcommandsForwardOnly:
     """T2 Car B: drain/restore CLI are thin HTTP forwarders to the backend.
 
