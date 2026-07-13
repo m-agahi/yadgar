@@ -663,6 +663,11 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
     # (which carries transcript_path); this handler previously extracted only
     # `cwd` and dropped it. Forward it (optional — None degrades to pre-Car-2).
     transcript_path = body.get("transcript_path")
+    # Car fix-drain-inflight: the PreCompact hook runner parses in_flight
+    # HOST-SIDE and includes it in the POST body (the core container cannot see
+    # the host .claude transcript / git tree). Forward it verbatim; the backend
+    # persists it as-is and only falls back to an in-container parse when absent.
+    in_flight = body.get("in_flight")
 
     # T2 Car B: CheckpointRestore lives backend-side now — the drain writes
     # (epoch increment + auto-checkpoint upsert) run via the /admin forward.
@@ -674,7 +679,11 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
         result = await asyncio.to_thread(
             _forward_admin,
             "pre_compact_drain",
-            {"directory": directory, "transcript_path": transcript_path},
+            {
+                "directory": directory,
+                "transcript_path": transcript_path,
+                "in_flight": in_flight,
+            },
         )
     except Exception as e:
         logger.exception("hook_pre_compact forward error: %s", e)

@@ -251,6 +251,93 @@ class TestInFlightEnrichment:
         assert "In-Flight At Compaction" not in result["formatted"]
 
 
+class TestPayloadProvidedInFlight:
+    """Car fix-drain-inflight (v5.135): host-side capture.
+
+    In the containerized deploy the backend cannot see the host `.claude`
+    transcripts nor the git worktree tree, so parsing there yields an empty
+    in_flight. The host-side drain callers now parse in_flight and pass it in the
+    /admin payload; the backend persists it VERBATIM (no re-parse, no re-list of
+    worktrees that would clobber the host result with []). When the payload
+    carries no in_flight, the backend falls back to the in-container parse
+    (embedded / dev mode where the paths ARE visible).
+    """
+
+    def test_payload_in_flight_persisted_verbatim(self, engines):
+        storage, embeddings, replay = engines
+        provided = {
+            "agents": ["host_agent_1"],
+            "bg_shells": ["host_shell_1"],
+            "worktrees": ["/host/wt (feat)"],
+            "note": "host-captured",
+        }
+        replay.pre_compact_drain("/test", transcript_path=None, in_flight=provided)
+        active = storage.get_active_checkpoint("/test")
+        assert active is not None
+        stored = active.get("in_flight")
+        assert stored is not None
+        if isinstance(stored, str):
+            import json as _json
+
+            stored = _json.loads(stored)
+        assert set(stored["agents"]) == {"host_agent_1"}
+        assert set(stored["bg_shells"]) == {"host_shell_1"}
+        # The host-provided worktrees must survive — NOT clobbered by an
+        # in-container `git worktree list` that would return [].
+        assert stored["worktrees"] == ["/host/wt (feat)"]
+
+    def test_payload_in_flight_not_reparsed(self, engines):
+        """Payload in_flight branch must NOT touch the transcript parser even
+        when a transcript_path is ALSO present — the host result is canonical."""
+        storage, embeddings, replay = engines
+        from unittest.mock import patch
+
+        provided = {"agents": ["only_host"], "bg_shells": [], "worktrees": [], "note": "x"}
+        with patch("yadgar.backend.restoration.checkpoint_restore._list_worktrees") as mock_wt:
+            replay.pre_compact_drain(
+                "/test", transcript_path="/some/path.jsonl", in_flight=provided
+            )
+        mock_wt.assert_not_called()
+        active = storage.get_active_checkpoint("/test")
+        stored = active.get("in_flight")
+        if isinstance(stored, str):
+            import json as _json
+
+            stored = _json.loads(stored)
+        assert set(stored["agents"]) == {"only_host"}
+
+    def test_empty_host_in_flight_is_authoritative(self, engines):
+        """A host parse that found nothing returns a truthy empty-lists dict; it
+        is authoritative (branch keyed on presence, not truthiness) and must NOT
+        trigger the in-container fallback re-parse."""
+        storage, embeddings, replay = engines
+        from unittest.mock import patch
+
+        empty = {"agents": [], "bg_shells": [], "worktrees": [], "note": "n"}
+        with patch("yadgar.backend.restoration.checkpoint_restore._list_worktrees") as mock_wt:
+            replay.pre_compact_drain("/test", transcript_path="/some/path.jsonl", in_flight=empty)
+        mock_wt.assert_not_called()
+
+    def test_absent_in_flight_falls_back_to_local_parse(self, engines):
+        """No payload in_flight + a transcript_path → in-container parse fallback
+        (embedded/dev mode). Preserves the pre-fix behaviour."""
+        storage, embeddings, replay = engines
+        fixture = str(
+            __import__("pathlib").Path(__file__).parent.parent
+            / "fixtures"
+            / "transcript_in_flight.jsonl"
+        )
+        replay.pre_compact_drain("/test", transcript_path=fixture)
+        active = storage.get_active_checkpoint("/test")
+        stored = active.get("in_flight")
+        assert stored is not None
+        if isinstance(stored, str):
+            import json as _json
+
+            stored = _json.loads(stored)
+        assert set(stored["agents"]) == {"bbbbbbbbbbbbbbbb2", "eeeeeeeeeeeeeeee5"}
+
+
 class TestCLISubcommandsForwardOnly:
     """T2 Car B: drain/restore CLI are thin HTTP forwarders to the backend.
 

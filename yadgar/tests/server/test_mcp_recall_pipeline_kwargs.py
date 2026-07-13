@@ -5,9 +5,7 @@ Covers (rewritten from v5.31.1 plugin-pipeline routing tests):
   2. profile="balanced" → _forward_to_backend called with profile="balanced" in payload.
   3. profile="fast"/"full"/"debug" → forwarded verbatim.
   4. Invalid profile raises ValueError BEFORE any retrieval work.
-  5. stage_overrides is NOT forwarded (it's a call-level override not in RecallRequest).
-     Actually: stage_overrides is in RecallRequest — if we forward it later that's OK.
-     For now: assert _forward_to_backend is called (not that stage_overrides causes crash).
+  5. stage_overrides REMOVED from MCP tool (#58): param gone from signature + docstring.
   6. profile=None (default) — counter not incremented (plugin pipeline removed).
 """
 
@@ -34,7 +32,7 @@ def _make_fake_memory(mid: int = 1) -> dict:
     }
 
 
-def _call_recall(query: str = "test query", profile=None, stage_overrides=None, **kwargs):
+def _call_recall(query: str = "test query", profile=None, **kwargs):
     """Call the MCP recall tool directly with _forward_to_backend mocked out.
 
     Returns (result, captured_call_kwargs) where captured_call_kwargs is the
@@ -62,8 +60,6 @@ def _call_recall(query: str = "test query", profile=None, stage_overrides=None, 
         call_kwargs: dict = {"query": query, "directory": "/tmp/test"}
         if profile is not None:
             call_kwargs["profile"] = profile
-        if stage_overrides is not None:
-            call_kwargs["stage_overrides"] = stage_overrides
         call_kwargs.update(kwargs)
         result = recall_fn(**call_kwargs)
 
@@ -227,4 +223,71 @@ class TestRecallPipelineMetrics:
         assert after == before, (
             "Plugin pipeline counter must not increment in forward-only mode; "
             "profile is forwarded to backend"
+        )
+
+
+# ---------------------------------------------------------------------------
+# #58 AC tests — stage_overrides removed from MCP tool (AUDITED-ready plan)
+# ---------------------------------------------------------------------------
+
+
+class TestStageOverridesRemoved:
+    """AC-1/AC-2/AC-4: stage_overrides gone from recall() MCP tool signature + docstring.
+
+    Plan: docs/plans/recall-stage-overrides-2026-07-13.md
+    Decision D1 = REMOVE-PARAM (user-chosen): the param was never wired
+    and targets a dead test-only consumption path (recall_via_pipeline).
+    """
+
+    def test_stage_overrides_not_in_recall_signature(self):
+        """AC-1: stage_overrides is NOT a parameter of the recall() MCP tool."""
+        import inspect
+
+        from yadgar.core.server.tools.recall import recall as recall_fn
+
+        sig = inspect.signature(recall_fn)
+        assert "stage_overrides" not in sig.parameters, (
+            "stage_overrides must be removed from recall() MCP tool signature (#58)"
+        )
+
+    def test_stage_overrides_not_in_recall_docstring(self):
+        """AC-2: stage_overrides is NOT mentioned in the recall() docstring."""
+        from yadgar.core.server.tools.recall import recall as recall_fn
+
+        doc = recall_fn.__doc__ or ""
+        assert "stage_overrides" not in doc, (
+            "stage_overrides must be removed from recall() docstring (#58)"
+        )
+
+    def test_recall_rejects_stage_overrides_kwarg(self):
+        """AC-1 enforcement: passing stage_overrides to recall() raises TypeError."""
+        from unittest.mock import patch
+
+        from yadgar.core.server.tools.recall import recall as recall_fn
+
+        with (
+            patch.object(_recall_module, "_forward_to_backend", return_value=[]),
+            patch.object(_recall_module, "_apply_recall_session_side_effects"),
+            patch.object(_recall_module, "_st") as mock_st,
+            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
+            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
+        ):
+            mock_st._consolidation = None
+            mock_st._pool = None
+
+            with pytest.raises(TypeError):
+                recall_fn(
+                    query="test",
+                    directory="/tmp/test",
+                    stage_overrides={"nli": {"enabled": False}},
+                )
+
+    def test_call_recall_helper_no_stage_overrides_param(self):
+        """AC-3 / helper hygiene: _call_recall helper no longer accepts stage_overrides."""
+        import inspect
+
+        # After cleanup, the _call_recall helper should not have stage_overrides param.
+        sig = inspect.signature(_call_recall)
+        assert "stage_overrides" not in sig.parameters, (
+            "_call_recall helper must have stage_overrides param removed (#58 hygiene)"
         )

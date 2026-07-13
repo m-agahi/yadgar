@@ -28,10 +28,27 @@ def forward_pre_compact_drain(directory: str, transcript_path: str | None = None
 
     HOOKS Car 2: optional transcript_path threads in-flight orchestration capture
     through the CLI (Path B) to match the HTTP hook path. None → pre-Car-2.
+
+    Car fix-drain-inflight (v5.135): the in-flight capture is done HERE, on the
+    HOST, because this CLI process runs on the host where the ``.claude``
+    transcript + the git worktree tree are visible. In the containerized deploy
+    the backend cannot see either, so parsing there produced an empty in_flight
+    (the bug). We parse host-side and carry the result in the /admin payload; the
+    backend persists it verbatim. ``capture_in_flight`` never raises.
     """
     from yadgar.core.server.tools._forward import _forward_admin
 
+    in_flight = None
+    if transcript_path:
+        from yadgar._shared.restoration.transcript_parse import capture_in_flight
+
+        in_flight = capture_in_flight(transcript_path, directory)
+
     return _forward_admin(
         "pre_compact_drain",
-        {"directory": directory, "transcript_path": transcript_path},
+        {
+            "directory": directory,
+            "transcript_path": transcript_path,
+            "in_flight": in_flight,
+        },
     )

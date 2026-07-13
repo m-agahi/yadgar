@@ -162,13 +162,63 @@ def hook_post_compact_rehydrate() -> None:
             print(text)
 
 
+def _log_hook_error(msg: str) -> None:
+    """Append a one-line hook status to ~/.claude/yadgar-hook-errors.log.
+
+    Best-effort — a logging failure must never propagate into the hook (the hook
+    must exit 0 so it never blocks compaction). Car fix-drain-inflight surfaced
+    that the wired PreCompact swallow (`> /dev/null 2>&1` in the .sh, and this
+    runner's silent HTTP failure) hid drain outcomes entirely.
+    """
+    try:
+        import time  # noqa: PLC0415
+
+        log_path = os.path.join(os.path.expanduser("~"), ".claude", "yadgar-hook-errors.log")
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(f"{stamp} pre-compact-drain {msg}\n")
+    except Exception:
+        pass  # never block the hook on a logging failure
+
+
+def _capture_in_flight_host(transcript_path: str, directory: str) -> dict | None:
+    """Parse in-flight orchestration state on the HOST (Car fix-drain-inflight).
+
+    The runner is invoked by Claude Code ON THE HOST, so the transcript + git
+    worktree tree are visible here (unlike the backend container). Parse them and
+    return the in_flight dict for the POST body. Guarded lazy import: the pinned
+    interpreter may be a bare PATH python3 without yadgar importable — on any
+    failure return None and degrade to a POST without in_flight (never crash the
+    hook, never block compaction).
+    """
+    from yadgar._shared.restoration.transcript_parse import capture_in_flight  # noqa: PLC0415
+
+    return capture_in_flight(transcript_path, directory)
+
+
 def hook_pre_compact_drain() -> None:
     """PreCompact — drain context before compaction."""
     try:
         data = json.load(sys.stdin)
     except Exception:
         data = {}
-    _http_post("/hooks/pre-compact", data)
+
+    # Car fix-drain-inflight: parse in_flight HOST-SIDE (post-reinstall the
+    # installer wires this runner instead of the .sh). The backend container
+    # cannot see the host .claude transcript / git tree, so it must arrive parsed.
+    transcript_path = data.get("transcript_path")
+    if transcript_path:
+        try:
+            directory = data.get("cwd") or os.getcwd()
+            in_flight = _capture_in_flight_host(transcript_path, directory)
+            if in_flight is not None:
+                data["in_flight"] = in_flight
+        except Exception as e:  # import/parse failure → degrade, never crash
+            _log_hook_error(f"in_flight capture failed: {e!r}")
+
+    result = _http_post("/hooks/pre-compact", data)
+    if result is None:
+        _log_hook_error("drain POST /hooks/pre-compact failed (backend unreachable?)")
 
 
 def hook_prompt_recall() -> None:

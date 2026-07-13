@@ -1,8 +1,9 @@
-# Yadgar v5 Integration Model
+# Standard Train Workflow (ADR-0088/0107)
 
-Runbook for the long-lived feature-branch workflow used to ship v5.0.
-Captured 2026-05-15 after v4.9 surfaced compounding pain from N parallel
-PRs (rebase cascades + long-running CI on each intermediate push).
+Runbook for the standard train workflow used to ship cohesive multi-item
+releases in parallel. Codified in ADR-0088 (one feat branch / one PR / one
+version) and extended by ADR-0107 (stacked-rebase ff-only integration;
+unconditional per-car audited plans; retiring independent-merge).
 
 ---
 
@@ -14,7 +15,18 @@ Whenever a release bundles N items that:
 - Can be parallelised by agents (independent enough to develop concurrently)
 
 For small isolated changes (one CVE bump, one docstring fix): direct PR
-to master is still correct. This model is for cohesive releases like v5.
+to master is still correct. This model is for cohesive releases.
+
+---
+
+## Vocabulary
+
+| Term | Meaning |
+|------|---------|
+| **train** | A cohesive release; one `feat/<train>` branch; one PR; one version. |
+| **car** | A self-contained unit of work within the train; own worktree; own branch. |
+| **stacked-rebase ff-only** | Integration method: each car rebases onto the latest feat tip, then is merged with `--ff-only`. |
+| **AUDITED-ready** | A car plan that has passed an independent adversarial audit (BUILD / BUILD-WITH-CHANGES / DO-NOT-BUILD verdict). |
 
 ---
 
@@ -23,103 +35,124 @@ to master is still correct. This model is for cohesive releases like v5.
 ```
 master
    │
-   └── feat/vX.Y  (long-lived integration branch)
+   └── feat/<train>   (integration branch; one PR at the end)
             │
-            ├── feat/vX.Y/01-<topic>   (agent A, no PR)
-            ├── feat/vX.Y/02-<topic>   (agent B, no PR)
-            ├── feat/vX.Y/03-<topic>   (agent C, no PR)
+            ├── car/<topic-A>   (agent A — isolated worktree)
+            ├── car/<topic-B>   (agent B — isolated worktree)
+            ├── car/<topic-C>   (agent C — isolated worktree)
             └── ...
 ```
 
-- `feat/vX.Y` is created once at start of release work.
-- Sub-branches are numbered in dependency / integration order.
-- Sub-branches push to origin (for backup / cross-machine visibility) but
+- `feat/<train>` is created once at start of release work, off latest `origin/master`.
+- Cars build in isolated worktrees on distinct branches; seams must be disjoint.
+- Car branches push to origin (for backup / cross-machine visibility) but
   do NOT open PRs against master.
-- Final PR is one PR: `feat/vX.Y → master`.
+- Final PR is one PR: `feat/<train> → master`. ONE version claimed here.
 
 ---
 
 ## Workflow
 
-### 0. One-time setup (per release)
+### 0. One-time setup (per train)
 
 ```bash
 git checkout master
 git pull --ff-only
-git checkout -b feat/vX.Y
-git push origin feat/vX.Y
+git checkout -b feat/<train>
+git push origin feat/<train>
 ```
 
 Optional: extend `.forgejo/workflows/*.yaml` `on:` clause to skip CI on
 the feature branch except when commit message contains `[ci]` — keeps
 intermediate pushes cheap.
 
-### 1. Dispatching an agent
+### 1. Dispatching a car agent
 
-Every agent prompt MUST include the base-branch instruction:
+**PRECONDITION (ADR-0107): every car MUST have its own plan doc that passes
+an independent adversarial audit (verdict: BUILD / BUILD-WITH-CHANGES /
+DO-NOT-BUILD) BEFORE its build dispatch — unconditional, regardless of blast
+radius. Build starts only on an AUDITED-ready plan.**
 
-> **Branch from `origin/feat/vX.Y` not `origin/master`.** Push to
-> `feat/vX.Y/NN-<topic>` (use the next available NN). Do NOT open a PR
-> against master — main thread handles integration.
+See the `car-plan-audit-gate` agent-prompt pattern and
+`agent-prompt-dispatch-plan-audit` / `agent-prompt-plan-audit` for the audit
+HOW. Plan lifecycle follows ADR-0081/0082 (final car archives via first-commit
+`git mv`).
 
-Use isolated worktrees per agent (`isolation: "worktree"` in Agent tool)
-when running multiple agents concurrently.
+Once a plan is AUDITED-ready, dispatch the car agent with:
 
-### 2. Integration cycle (main thread, after each agent completes)
+> **Branch from `origin/feat/<train>`, not `origin/master`.** Push to
+> `car/<topic>`. Do NOT open a PR against master — main thread handles
+> integration via stacked-rebase ff-only.
+
+Use `isolation: "worktree"` in the Agent tool when running multiple cars
+concurrently.
+
+### 2. Integration cycle — stacked-rebase ff-only (main thread, after each car)
+
+**This is the canonical integration method (ADR-0107). Each car rebases onto
+the latest feat tip, then is merged with `--ff-only`. This is NOT
+`merge --no-ff`.**
 
 ```bash
-git checkout feat/vX.Y
+git checkout feat/<train>
 git pull --ff-only
-git fetch origin feat/vX.Y/NN-<topic>
 
-# Optionally light audit on sub-branch diff first
-git diff feat/vX.Y..origin/feat/vX.Y/NN-<topic>
+# Fetch the finished car branch
+git fetch origin car/<topic>
 
-# Merge (preserves sub-branch history) or rebase (linear)
-git merge --no-ff origin/feat/vX.Y/NN-<topic> \
-  -m "merge: NN-<topic> into feat/vX.Y"
+# Car rebases onto latest feat tip (front-loads conflict resolution)
+git checkout car/<topic>
+git rebase origin/feat/<train>
 
-# Conflicts? Resolve inline OR dispatch fix agent on feat/vX.Y directly.
+# Back on feat branch — ff-only merge (linear history, no merge commit)
+git checkout feat/<train>
+git merge --ff-only car/<topic>
 
 # Local sanity check
 YADGAR_TEST=1 .venv/bin/python -m pytest yadgar/tests/ -x --timeout=60 -q
 
-git push origin feat/vX.Y
+git push origin feat/<train>
 ```
 
-Once merged, the sub-branch can be deleted from origin or retained for
-historical reference.
+Conflicts surface during `rebase`, not during `merge`. Resolve inline OR
+dispatch a fix agent that targets `car/<topic>` before the merge step.
+
+Once merged, delete the car branch from origin:
+
+```bash
+git push origin --delete car/<topic>
+```
 
 ### 3. Periodic master sync
 
 Every ~3 days OR when master moves significantly (>10 commits):
 
 ```bash
-git checkout feat/vX.Y
+git checkout feat/<train>
 git pull --ff-only
 git fetch origin master
 git rebase origin/master
-git push --force-with-lease origin feat/vX.Y
+git push --force-with-lease origin feat/<train>
 ```
 
 Prevents end-of-release big-bang divergence.
 
 ### 4. Final master PR
 
-When all sub-branches are integrated:
+When all cars are integrated:
 
 ```bash
 # Final rebase onto latest master
 git fetch origin master
 git rebase origin/master
-git push --force-with-lease origin feat/vX.Y
+git push --force-with-lease origin feat/<train>
 
-# Open PR feat/vX.Y → master
-gh pr create --base master --head feat/vX.Y --title "feat: vX.Y" --body "..."
+# Open PR feat/<train> → master
+gh pr create --base master --head feat/<train> --title "feat: <train>" --body "..."
 ```
 
 This is the ONE point where full CI fires. After merge:
-- Tag `vX.Y.0`
+- Tag version
 - Bump `nix/modules/home/yadgar.nix`
 - `home-manager switch`
 
@@ -127,13 +160,13 @@ This is the ONE point where full CI fires. After merge:
 
 ## CI on the feature branch
 
-Three options. Recommendation: **B** for most releases.
+Three options. Recommendation: **B** for most trains.
 
 | Mode | Description | When |
 |------|-------------|------|
-| A — Off | No CI on feature branch; only final PR runs CI | Small releases where regressions are unlikely |
-| **B — Manual / opt-in** | CI runs only when commit message contains `[ci]` or operator clicks "Re-run" | **Default for v5-class releases** |
-| C — Scheduled | Nightly cron run on `feat/vX.Y` | Long releases (>2 weeks) where regression-bisect cost matters |
+| A — Off | No CI on feature branch; only final PR runs CI | Small trains where regressions are unlikely |
+| **B — Manual / opt-in** | CI runs only when commit message contains `[ci]` or operator clicks "Re-run" | **Default for standard trains** |
+| C — Scheduled | Nightly cron run on `feat/<train>` | Long trains (>2 weeks) where regression-bisect cost matters |
 
 Configure mode B in Forgejo workflow:
 
@@ -157,28 +190,32 @@ jobs:
 
 ## Safeguards
 
-1. **Local test gate before each integration.** Run `pytest` on the
-   merged feature branch before pushing. Catches integration breaks
-   immediately.
-2. **Light audit at integration point.** Spawn ONE `cavecrew-reviewer`
-   pass on the sub-branch diff. Skip full 3-pass — save that for final PR.
-3. **Full 3-pass audit before master PR.** Security + quality + cavecrew
-   on `master..feat/vX.Y` diff.
-4. **Periodic master rebase.** ~3 days OR significant master movement.
-5. **Numbered sub-branches.** `01-`, `02-`, etc. — resolve conflicts in
-   numeric order, predictable conflict surface.
-6. **No --force-push to sub-branches once merged.** History matters.
-7. **Push sub-branches to origin.** Even without PR — backup + visibility.
+1. **Per-car audited plan BEFORE build.** Every car must have an AUDITED-ready
+   plan doc before its build is dispatched — unconditional, every car (ADR-0107).
+   The audit tier may drop to a lighter check for purely-mechanical cars but is
+   NEVER skipped.
+2. **Stacked-rebase conflict front-loading.** Each car rebases onto the latest
+   feat tip before the ff-only merge. Conflicts surface early, at merge-of-one,
+   not as a big-bang at the end.
+3. **ff-only merge gate.** `git merge --ff-only` on the feat branch will refuse
+   if the car hasn't rebased cleanly — an automatic correctness check.
+4. **Local test gate before each integration.** Run `pytest` on the feat branch
+   after each car is merged. Catches integration breaks immediately.
+5. **Full 3-pass audit before master PR.** Security + quality + cavecrew on
+   `master..feat/<train>` diff.
+6. **Periodic master rebase.** ~3 days OR significant master movement.
+7. **Push car branches to origin.** Even without PR — backup + cross-machine visibility.
 
 ---
 
 ## Anti-patterns (what NOT to do)
 
-- ❌ Branching sub-work directly from master while a feature branch exists
-- ❌ Opening intermediate PRs against master for items destined for the
-  feature branch
-- ❌ Force-pushing the feature branch on every minor change (history matters)
-- ❌ Letting the feature branch diverge >30 commits from master without rebasing
+- ❌ Dispatching a car build before its plan is AUDITED-ready
+- ❌ Independent-merge (`merge --no-ff`) of parallel car branches — retired by ADR-0107
+- ❌ Branching car work directly from master while a feat branch exists
+- ❌ Opening intermediate PRs against master for cars destined for the feat branch
+- ❌ Force-pushing the feat branch on every minor change (history matters)
+- ❌ Letting the feat branch diverge >30 commits from master without rebasing
 - ❌ Skipping the final 3-pass audit because "intermediate audits looked fine"
 
 ---
@@ -197,10 +234,14 @@ Each pain point above maps to a fix in this model:
 
 | v4.9 pain | This model |
 |-----------|-----------|
-| Rebase cascade after merges | All sub-branches branched off stable feature branch |
+| Rebase cascade after merges | All cars branch off stable feat branch |
 | CI burn on every intermediate push | CI only on `[ci]` commits + final PR |
-| Stale-diff audits | All diffs computed vs feature-branch tip |
-| Hard-to-track integration state | Single integration branch, one history |
+| Stale-diff audits | All diffs computed vs feat-branch tip |
+| Hard-to-track integration state | Single feat branch, one history |
+
+Note: the model has since evolved further — ADR-0107 (2026-07-13) replaces
+the original `merge --no-ff` integration with stacked-rebase ff-only and
+adds the unconditional per-car audit gate.
 
 ## Doc-update gate (before opening final PR)
 
@@ -215,17 +256,15 @@ Run before `gh pr create` / API equivalent:
    "shipped" status if it carries a plan doc.
 4. Reviewers fail PRs that ship features without doc updates.
 
-## Branch cleanup (after PR is open)
+## Branch cleanup (after cars merged, PR open)
 
-AFTER the PR exists on origin (review window provided), delete each
-sub-branch that fed it:
+AFTER the feat PR exists on origin (review window provided), delete each
+car branch that fed it (if not already deleted post-integration):
 
-    git push origin --delete feat/vX.Y-NN-<topic>
+    git push origin --delete car/<topic>
 
-Skip the PR's own head branch until merged + deployed + verified —
-that branch is your rollback path. Pre-existing
-`feat/v5.0-NN-<topic>` branches from v5 integration may be cleaned
-in batch after v5.0.1 ships.
+Skip the feat branch itself until merged + deployed + verified —
+that branch is your rollback path.
 
 ## Benchmarks (LoCoMo / LongMemEval)
 

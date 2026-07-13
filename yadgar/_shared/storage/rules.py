@@ -206,21 +206,3 @@ class _RulesMixin:
         rows = self._q("SELECT from_memory_id, to_memory_id, count FROM memory_transition")
         # No id to extract; pass through as-is (no embedding fields)
         return [dict(r) for r in rows]
-
-    def update_memory_sr_coords(self, memory_id: int, sr_x: float, sr_y: float):
-        self._q(
-            "UPDATE type::record('memory', $id) SET sr_x = $x, sr_y = $y",
-            {"id": memory_id, "x": sr_x, "y": sr_y},
-        )
-
-    @observe(tier="stage")
-    def get_memories_with_sr_coords(self) -> list[dict]:
-        rows = self._q("SELECT id, sr_x, sr_y FROM memory WHERE sr_x != 0.0 OR sr_y != 0.0")
-        return [
-            {
-                "id": self._extract_id(r.get("id")),
-                "sr_x": r.get("sr_x", 0.0),
-                "sr_y": r.get("sr_y", 0.0),
-            }
-            for r in rows
-        ]

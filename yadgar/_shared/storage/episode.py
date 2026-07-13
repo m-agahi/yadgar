@@ -54,11 +54,6 @@ class _EpisodeMixin:
             return int(row[0].get("val", 0))
         return 0
 
-    def get_all_episodes(self) -> list[dict]:
-        """Return all episodes ordered by timestamp ascending."""
-        rows = self._q("SELECT * FROM episode ORDER BY timestamp ASC")
-        return self._rows_to_dicts(rows)
-
     def get_recent_episodes(self, limit: int) -> list[dict]:
         """Return the most recent ``limit`` episodes, ordered ascending by timestamp.
 

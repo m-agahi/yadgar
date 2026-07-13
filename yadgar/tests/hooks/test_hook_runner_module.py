@@ -278,6 +278,54 @@ def test_pre_compact_drain_handles_bad_stdin():
     assert len(posted) == 1  # Posts empty dict on error
 
 
+def test_pre_compact_drain_host_parses_in_flight(tmp_path):
+    """Car fix-drain-inflight: the runner path ALSO parses in_flight host-side
+    (post-reinstall the installer wires this runner instead of the .sh). The
+    parsed in_flight rides the POST body so the container just persists it."""
+    fixture = str(
+        __import__("pathlib").Path(__file__).parent.parent
+        / "fixtures"
+        / "transcript_in_flight.jsonl"
+    )
+    data = {"session_id": "s1", "cwd": str(tmp_path), "transcript_path": fixture}
+    posted = []
+    with patch.object(hr, "_http_post", side_effect=lambda *a, **kw: posted.append(a)):
+        _run_hook_with_stdin(hr.hook_pre_compact_drain, data)
+    assert len(posted) == 1
+    body = posted[0][1]
+    assert body["transcript_path"] == fixture
+    in_flight = body.get("in_flight")
+    assert in_flight is not None
+    assert set(in_flight["agents"]) == {"bbbbbbbbbbbbbbbb2", "eeeeeeeeeeeeeeee5"}
+
+
+def test_pre_compact_drain_no_transcript_no_in_flight():
+    """No transcript_path in the payload → no in_flight added (degrade)."""
+    data = {"session_id": "s1", "cwd": "/proj"}
+    posted = []
+    with patch.object(hr, "_http_post", side_effect=lambda *a, **kw: posted.append(a)):
+        _run_hook_with_stdin(hr.hook_pre_compact_drain, data)
+    assert len(posted) == 1
+    body = posted[0][1]
+    assert body.get("in_flight") is None
+
+
+def test_pre_compact_drain_parse_failure_degrades(tmp_path, monkeypatch):
+    """A host-parse import/exception must NOT crash the hook — degrade to a POST
+    without in_flight (never block compaction)."""
+    data = {"session_id": "s1", "cwd": "/proj", "transcript_path": "/x.jsonl"}
+    posted = []
+
+    def _boom(*a, **kw):
+        raise RuntimeError("parse blew up")
+
+    monkeypatch.setattr(hr, "_capture_in_flight_host", _boom, raising=False)
+    with patch.object(hr, "_http_post", side_effect=lambda *a, **kw: posted.append(a)):
+        _run_hook_with_stdin(hr.hook_pre_compact_drain, data)
+    assert len(posted) == 1  # still posted despite parse failure
+    assert posted[0][1].get("in_flight") is None
+
+
 # ── hook_prompt_recall ────────────────────────────────────────────────────────
 
 

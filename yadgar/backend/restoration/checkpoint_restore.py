@@ -21,6 +21,12 @@ from yadgar._shared.metacognition import MetaCognition
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.restoration.contract import CheckpointContext
+
+# _list_worktrees moved to _shared (Car fix-drain-inflight) so the host-side
+# drain callers can list worktrees where the git tree is visible. Re-exported
+# here to preserve the module-attribute name for the in-container FALLBACK path
+# (embedded/dev) and for callers/tests that patch checkpoint_restore._list_worktrees.
+from yadgar._shared.restoration.transcript_parse import _list_worktrees
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.restoration.cognitive_map import CognitiveMap
 from yadgar.backend.retrieval.core import Retriever
@@ -32,46 +38,6 @@ _MICRO_ERROR_RE = re.compile(r"\b(error|exception|traceback|failed|crash|bug)\b"
 _MICRO_DECISION_RE = re.compile(
     r"\b(decided|chose|switched|migrated|will use|going with|opted)\b", re.IGNORECASE
 )
-
-
-@observe(tier="stage")
-def _list_worktrees(directory: str) -> list[str]:
-    """Return ``git worktree list`` entries as "path (branch)" strings.
-
-    Best-effort — a non-git directory, missing git, or timeout yields []. Never
-    raises (the drain path must not be blocked by a git failure).
-    """
-    import subprocess  # noqa: PLC0415
-
-    if not directory:
-        return []
-    try:
-        out = subprocess.run(
-            ["git", "-C", directory, "worktree", "list", "--porcelain"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except Exception:  # best-effort worktree capture; never blocks the drain
-        return []
-    if out.returncode != 0:
-        return []
-    entries: list[str] = []
-    path = ""
-    for line in out.stdout.splitlines():
-        if line.startswith("worktree "):
-            path = line[len("worktree ") :].strip()
-        elif line.startswith("branch "):
-            branch = line[len("branch ") :].strip().replace("refs/heads/", "")
-            entries.append(f"{path} ({branch})")
-            path = ""
-        elif line == "" and path:
-            entries.append(path)
-            path = ""
-    if path:
-        entries.append(path)
-    return entries
 
 
 class CheckpointRestore:
@@ -247,7 +213,12 @@ class CheckpointRestore:
         return self.create_checkpoint(directory, ctx, session_id="micro-auto")
 
     @trace_span()
-    def pre_compact_drain(self, directory: str, transcript_path: str | None = None) -> dict:
+    def pre_compact_drain(
+        self,
+        directory: str,
+        transcript_path: str | None = None,
+        in_flight: dict | None = None,
+    ) -> dict:
         """Emergency context capture before compaction.
 
         Called by PreCompact hook. Triggers:
@@ -255,16 +226,25 @@ class CheckpointRestore:
         2. Epoch increment (marks compaction boundary)
         3. Emergency consolidation
 
-        When ``transcript_path`` is supplied (HOOKS Car 2), the session JSONL is
-        parsed for in-flight orchestration state (dispatched background agents +
-        bg-bash shells with no terminal notification) and ``git worktree list``
-        is captured; the result is stored under the checkpoint's ``in_flight``
-        field so ``restore()`` can surface it after compaction. ``None`` degrades
-        to the pre-Car-2 behaviour (no in_flight written).
+        In-flight capture (Car fix-drain-inflight, v5.135):
+
+        * ``in_flight`` provided → persist it VERBATIM. This is the
+          host-captured dict — the host-side drain callers parsed the transcript
+          and listed worktrees where ``.claude`` + the git tree are visible (the
+          backend container cannot see either). Used as-is; the transcript is NOT
+          re-parsed and worktrees are NOT re-listed (an in-container relist would
+          clobber the host worktrees with []). Branch keyed on *presence*, not
+          truthiness — a host parse that found nothing returns a truthy
+          empty-lists dict and it is authoritative.
+        * ``in_flight`` absent + ``transcript_path`` given → FALL BACK to the
+          in-container parse (embedded/dev deploy where the paths ARE visible).
+          Preserves the HOOKS Car 2 behaviour.
+        * Both absent → no in_flight written (pre-Car-2 degrade).
         """
         new_epoch = self._storage.increment_epoch()
 
-        in_flight = self._capture_in_flight(transcript_path, directory)
+        if in_flight is None:
+            in_flight = self._capture_in_flight(transcript_path, directory)
 
         # Create an auto-checkpoint if no recent one exists (per-directory)
         active = self._storage.get_active_checkpoint(directory)
