@@ -1,6 +1,7 @@
 # Obs + Velocity Completion Plan — close #8 (observability standard) + #29 (CI/velocity train)
 
 **Date:** 2026-07-04
+**2026-07-13 note (NOT archived):** closure spine for #8 (obs standard) + #29. #8's sole open phase — P-SB (`full-observability-standard-2026-07-03.md` §5b, ADR-0074) — was gated behind recall T3, which has now shipped (T4 Ettin, core 5.132.0). P-SB is thus unblocked, so this plan stays live.
 **Status:** executable spine. References — does NOT restate — the three prior design docs:
 - `docs/plans/full-observability-standard-2026-07-03.md` (the STANDARD: `@observe`, tiers, exemption categories, I33 lint, P0–P5 rollout, cardinality/no-slowness math). **Authoritative for PART A design.**
 - `docs/plans/ci-velocity-train-2026-07-03.md` (P1–P4; #83 is its P2, #79 its P4).

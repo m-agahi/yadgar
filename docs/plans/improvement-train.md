@@ -31,7 +31,7 @@ low-risk fixes that should not wait on A/B review.
 | Car | Task | Plan | Scope (one line) | Status |
 |-----|------|------|------------------|--------|
 | A1 | #30–33 | [cpu-burst…embedding-scan-fix](cpu-burst-rootcause-and-embedding-scan-fix.md) **Part 2** | column projection + server-side heat decay + dream sample-then-fetch + incremental-by-time linking (kills `SELECT *` full scans) | AUDITED current (31/33 cites exact; 2 line + 1 path drift noted in-doc) |
-| A2 | #4 | [ce-perf-options](ce-perf-options.md) §"Option B — concrete ship plan" | opt-in int8/ONNX cross-encoder in `ml_client._try_st_cross_encoder`, gated, fp32 default | AUDITED + made concrete (B chosen); **toolchain sub-choice = user/impl decision** |
+| A2 | #4 | [ce-perf-options](archive/ce-perf-options.md) §"Option B — concrete ship plan" | opt-in int8/ONNX cross-encoder in `ml_client._try_st_cross_encoder`, gated, fp32 default | **SHIPPED via Ettin-32m swap (Train 4)**; onnx-int8 rejected (ADR-0043/0067); plan archived |
 | A3 | #34 | [process-exporter-scrape-interval](process-exporter-scrape-interval.md) | high-res Prometheus scrape 2s→5s (observer-effect) | NEW; **nix-only, hand to user** (no in-repo change) |
 
 **Sequencing inside A:** A1 and A2 are independent (storage vs backend) — parallelizable.

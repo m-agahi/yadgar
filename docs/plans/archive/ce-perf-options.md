@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-13 — onnx-int8 REJECTED (ADR-0043/0067); the CE win shipped via the Ettin-32m model swap (Train 4). CE-cost premise corrected by ADR-0105.
+
 # PLAN — v5.11+: Cross-Encoder Inference Performance Options (menu, version-assigned)
 
 **Status (corrected 2026-07-09):** option B (int8-onnx) REJECTED — controlled A/B proved 2× slower than torch (ADR-0043); onnx backend removed (ADR-0067). ROADMAP notes "onnx-int8 REJECTED — needs new approach." Next lever: recall Train 3 Ettin model swap (see ce-rerank-alternatives-research-2026-07-04.md). Options E/G/A/C remain as candidates if Ettin underperforms.

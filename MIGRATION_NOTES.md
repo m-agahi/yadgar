@@ -5,7 +5,8 @@
 The train swaps the cross-encoder reranker from `Alibaba-NLP/gte-reranker-modernbert-base`
 to the gate-winning Ettin variant (`GTE_RERANKER_MODEL` default flip), bakes all
 default-ON model weights into `Dockerfile.backend` for offline self-sufficiency,
-and restores `flake.nix` backend sizing to `--cpus 4` per ADR-0097. Config-only
+and sets `flake.nix` backend sizing to `--cpus 3` per ADR-0106 (supersedes
+ADR-0097's 4-CPU verdict — 3→4 is flat under the corrected measurement). Config-only
 swap + a backend-image change — no core recall code path changed.
 
 ### 1. Rebuild + push the backend image (bakes the models — build LOCALLY)
@@ -25,14 +26,17 @@ podman push docker.io/openfantasy/yadgar-backend:5.43.0
 Offline self-sufficiency was verified locally with a `--network none` + no-HF-mount
 smoke (`/embed` returns a real vector, `/rerank` returns Ettin scores).
 
-### 2. Restore `--cpus 4` (ADR-0097) — restart the backend
+### 2. Set `--cpus 3` (ADR-0106) — restart the backend
 
-`flake.nix` is edited to `--memory 6g --cpus 4` (was `--memory 4g --cpus 2`, the
-temporary T4-planning posture). The file edit does NOT restart the running
-container. After deploying 5.43.0, restart the backend so it picks up 4 CPUs, then
-run the Ettin perf re-measure (empty slots in `docs/testing/recall-perf-checklist.md`,
-"T4 Ettin swap — post-deploy measurement prep"). Do NOT re-tune torch/gather knobs
-for Ettin — keep the ADR-0097 GTE-derived settings so a model-only revert stays clean.
+`flake.nix` is edited to `--memory 6g --cpus 3` (was `--memory 4g --cpus 2`, the
+temporary T4-planning posture). ADR-0106 supersedes ADR-0097's 4-CPU verdict: under
+the corrected `yadgar_recall_duration_ms` measurement (ADR-0105) 3→4 is flat, so 3
+CPUs captures the full 2→3 gather-budget win at lower cost. The file edit does NOT
+restart the running container. After deploying 5.43.0, restart the backend so it
+picks up 3 CPUs, then run the Ettin perf re-measure (empty slots in
+`docs/testing/recall-perf-checklist.md`, "T4 Ettin swap — post-deploy measurement
+prep"). Do NOT re-tune torch/gather knobs for Ettin — keep the GTE-derived settings
+so a model-only revert stays clean.
 
 ### 3. Rollback lever (config-key, no revert needed)
 
@@ -6789,6 +6793,8 @@ If CPU fan spin-up resumes after the F5-A semaphore deploy, consider bumping bac
 ```
 
 F5-A (semaphore N=1) should be sufficient because it ensures probes fast-fail instead of piling on. F5-C is the escape hatch if the model's normal inference load (non-probe) still saturates 2 CPUs.
+
+> Superseded by ADR-0106 (2026-07-13): the standing backend config is now `--cpus 3` (not the 4 shown in the F5-C example above). See the T4 train ops at the top of this file.
 
 ### 4. New env vars (optional overrides)
 

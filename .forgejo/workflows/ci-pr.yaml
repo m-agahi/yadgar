@@ -13,6 +13,10 @@ on:
       - '.forgejo/**'
       - 'README.md'
       - 'AGENTS.md'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'MIGRATION_NOTES.md'
+      - '.gitignore'
 
 # Cancel superseded test runs on a fresh push to the same PR branch.
 concurrency:

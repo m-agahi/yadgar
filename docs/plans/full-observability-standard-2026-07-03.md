@@ -1,6 +1,7 @@
 # Full-Observability Standard — span + metric + log on every function, tiered + enforced
 
 **Status:** STANDARD COMPLETE — full tri-signal `@observe` rollout shipped across waves P0–P6 (v5.101 P0 scaffolding → v5.105 P1–P6, ADR-0034, closes #8). I33 coverage lint went **1564 MISSING → 0** and is now **GLOBAL HARD-FAIL** (`check_observe_coverage.py` runs with NO `--warn`/`--area` in both `.pre-commit-config.yaml` and `.forgejo/workflows/ci-pr.yaml`). The per-area-flip rollout table (old §5) is therefore OBSOLETE — every area is already at hard-fail. **Sole remaining work: Phase P-SB** (§5b) — I33 v2 span-budget refinement + hot-loop sweep (ADR-0074 ACCEPTED 2026-07-09), sequenced AFTER recall-3-train T3 (Ettin swap). Backend fine-spans already shipped in wave P3 (backend instrumented, `BACKEND_VERSION` 5.10.0→5.11.0 at v5.105; now 5.33.0) — NOT remaining work. **Refreshed:** 2026-07-09 (post folder-split reorg R2a/R2b + I33 hard-flip). **Original date:** 2026-07-03.
+**2026-07-13 note (NOT archived):** the recall program is complete (T4 Ettin shipped, core 5.132.0 / backend 5.43.0). Phase P-SB (§5b) — its sole gate — is therefore now **unblocked and actionable**, so this plan stays live rather than being archived with the shipped post-T4 plans.
 **Author:** agent (bot). **Branch:** `docs/full-observability-plan` (original); refresh on `master`.
 **Directive (verbatim):** *"every function emits a trace span + a metric + a
 structured log — unless there is a documented, categorized reason not to."*
@@ -336,7 +337,7 @@ stays legal for co-located clarity but is a mirror, not a second registry.
   2026-07-09 baseline: cold ~24.6s, CE 3-pass ~19s, **hot ~4.1s** per op — the
   backend CE cost, not observe). Use these current numbers, not the historical ~1.6s.
   ADR-0033 no longer blocks the observe question specifically; it remains open for the
-  general recall-latency baseline (recall-3-train overhaul, `docs/plans/recall-3-train-overhaul-2026-07-04.md`).
+  general recall-latency baseline (recall-3-train overhaul, `docs/plans/archive/recall-3-train-overhaul-2026-07-04.md`).
 - **How the tiering protects it:** the recall hot path is `stage` + `hot` tiers.
   Stage spans are already-extracted methods (zero added nesting; v5.100 rules). Hot
   tier adds ZERO spans/metrics/logs per item — only a small integer attribute on the
@@ -554,4 +555,4 @@ position is after-Ettin unless user pulls it forward.
   `check_complexity_allowlist.py` (I30), `check_capability_coverage.py` (I32),
   `scripts/check_dynamic_span_names.py` (R2b — dynamic span names)
 - Overhead method: recall-perf warm-floor checklist; `benchmarks/` record-only
-  loadtest (#79); recall-3-train overhaul (`docs/plans/recall-3-train-overhaul-2026-07-04.md`)
+  loadtest (#79); recall-3-train overhaul (`docs/plans/archive/recall-3-train-overhaul-2026-07-04.md`)

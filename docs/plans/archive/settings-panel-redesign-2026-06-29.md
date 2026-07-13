@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-13 — SHIPPED as v5.89.0 (#66) — chrome-style settings panel + config-source fix.
+
 # Settings Panel Redesign + Config Bug Fixes
 
 > **STATUS: IN REVIEW** — plan + mock under review by the user. No code written yet.

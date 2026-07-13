@@ -108,10 +108,12 @@ See `ettin-cpu-series.md` scratchpad for raw PRE/POST snapshots and bucket data.
 
 ### Verdict
 
-3-CPU sweet spot for latency/cost.  4-CPU is marginally better on p50 but
-mean flat within noise.  ADR-0097 owner verdict for the full deployment is 4 CPUs
-(gather_budget=2 + torch=2 together; the 3→4 improvement on GTE was larger than
-on Ettin-32m due to model size).
+3-CPU sweet spot for latency/cost.  4-CPU is flat vs 3 under the corrected
+`yadgar_recall_duration_ms` measurement (3cpu 4,317ms vs 4cpu 4,568ms).
+**ADR-0106 standing verdict: `--cpus 3`** (gather_budget saturates at 2 for
+ncpu≥3; the torch intra-op bump at 4 buys nothing on the small Ettin model).
+This supersedes ADR-0097's earlier 4-CPU verdict, which rested on the pre-correction
+(dirty) method that made 3→4 look ~1s faster.
 
 ---
 
@@ -484,16 +486,23 @@ regime; treat any sub-second HOT reading as residency luck until #88 lands.
 | 3→4 CPU | **torch intra-op: 1→2** (secondary) | `ncpu//2` | More ML matrix threads; each individual CE span shorter | Per-span CE −8–69% shorter at 4-CPU (large batch: 2,441–3,778ms → 2,248–2,423ms; small: 683ms → 212ms) |
 | 4→5 CPU | No new knob | gather_budget saturates at 2; torch intra-op capped at 2 via `min(ncpu//2, 2)` | 5th CPU ≈ no warm-CE gain under current config | — |
 
-CE is ~70–90% of pipeline cost (`_apply_rerank_pipeline` outer span); gather_budget=2 parallelises the
-dominant stage → biggest lever. torch intra-op=2 accelerates each CE call individually → secondary.
+gather_budget=2 parallelises the CE-scoring stage → biggest lever. torch intra-op=2 accelerates each
+CE call individually → secondary. _(The "CE is ~70–90% of pipeline cost" figure once quoted here was a
+dead-metric artifact — corrected to ~25% of the cold wall by ADR-0105/#192; see §"CE attribution" and the
+correction note at the top of this doc.)_
 
 ### Recommendation
 
-- **4 CPUs = sweet spot (owner verdict, 2026-07-12).** The additional ~1.1s warm improvement
-  at 3→4 (7,916→6,807ms) is judged worth the extra CPU. gather_budget=2 unlocks parallel CE
+> **SUPERSEDED by ADR-0106 (2026-07-13): standing config is `--cpus 3`.** The corrected
+> `yadgar_recall_duration_ms` CPU-scaling series shows 3→4 is FLAT (3cpu 4,317ms vs 4cpu 4,568ms) —
+> the ~1.1s "3→4 win" below was a dirty-method artifact. The 2→3 gather-budget gain is the real lever.
+> The dated numbers below are the pre-correction record and are retained as history.
+
+- **~~4 CPUs = sweet spot (owner verdict, 2026-07-12)~~.** The additional ~1.1s warm improvement
+  at 3→4 (7,916→6,807ms) was judged worth the extra CPU. gather_budget=2 unlocks parallel CE
   scoring (−28% warm, dominant at 2→3); torch intra-op=2 adds −14% on top (3→4, secondary).
-- **Note:** backend is currently running `--cpus 2` as a deliberate temporary posture during
-  T4 Ettin planning/benchmarking — this is not the recommendation.
+- **Note:** backend was running `--cpus 2` as a deliberate temporary posture during
+  T4 Ettin planning/benchmarking — this was not the recommendation.
 - **5th CPU adds nothing** under current config (both gather_budget and torch intra-op saturate at ≤4 CPUs).
 
 ### #186 post-ship verification (2-CPU run, 5.129.0)
@@ -763,21 +772,22 @@ This replaces the prior 2-CPU baseline (transformers 4.57.6 = 10,955ms) as the *
 (`GTE_RERANKER_MODEL` → `cross-encoder/ettin-reranker-32m-v1`) as a config default
 flip plus a self-sufficient backend image. The live perf re-measure is **deferred
 to post-deploy** (the train does NOT restart the shared prod backend — see the
-`--cpus 4` restore reminder below). Fill the Ettin slots after the operator
-restores `--cpus 4` and restarts the backend on the 5.43.0 image.
+`--cpus 3` reminder below). Fill the Ettin slots after the operator
+sets `--cpus 3` (ADR-0106) and restarts the backend on the 5.43.0 image.
 
-### Reminder — restore `--cpus 4` post-deploy (ADR-0097)
+### Reminder — set `--cpus 3` post-deploy (ADR-0106, supersedes ADR-0097)
 
 The backend ran `--cpus 2` as a *deliberate temporary posture during T4 planning*
 so the Ettin A/B measured the model swap without a CPU-parallelism confound.
-ADR-0097 owner verdict: **4 CPUs = sweet spot** (gather_budget 1→2 unlocks parallel
-CE, −28% at 2→3; torch intra-op 1→2 adds −14% at 3→4; both knobs saturate at ≤4).
-`flake.nix` is already edited to `--memory 6g --cpus 4` in this train. After the
-train deploys, the operator must **restart the backend to pick up `--cpus 4`**
-(the file edit does not restart the running container — see MIGRATION_NOTES), then
-run the measurement below. Do NOT re-tune torch/gather knobs for Ettin in T4 — keep
-the ADR-0097 GTE-derived settings so a model-only revert to GTE stays clean
-(config-key only, tuning untouched).
+**ADR-0106 standing verdict: `--cpus 3`** — the 2→3 gather-budget gain (−24%) is the
+real lever; 3→4 is flat under the corrected `yadgar_recall_duration_ms` method
+(ADR-0105). This supersedes ADR-0097's 4-CPU verdict, which rested on the dirty
+pre-correction method. `flake.nix` is edited to `--memory 6g --cpus 3` in this train.
+After the train deploys, the operator must **restart the backend to pick up
+`--cpus 3`** (the file edit does not restart the running container — see
+MIGRATION_NOTES), then run the measurement below. Do NOT re-tune torch/gather knobs
+for Ettin in T4 — keep the GTE-derived settings so a model-only revert to GTE stays
+clean (config-key only, tuning untouched).
 
 ### A/B reference — GTE baseline on the transformers-5.x new-stack
 
@@ -794,7 +804,7 @@ the pre-deps-train figure; the 5.x new-stack 4-CPU GTE number is not yet measure
 Both are recorded so the Ettin post-deploy run can be read against whichever
 stack/CPU regime the measurement is taken under.
 
-### Ettin baseline slots (to fill post-deploy, --cpus 4, 5.x stack)
+### Ettin baseline slots (to fill post-deploy, --cpus 3 per ADR-0106, 5.x stack)
 
 Run the ADR-0098 protocol (fresh distinct queries, CE-miss validity gate
 Δmiss ≥ 5/query via `:8001/metrics`, histogram deltas on
@@ -802,7 +812,7 @@ Run the ADR-0098 protocol (fresh distinct queries, CE-miss validity gate
 `core = total − grep-of-logs`). HOT per the #88 standing caveat (do not compare
 single-query HOT cross-run; hot floor ≈ 4.3s compute-bound).
 
-| Regime | Ettin-32m --cpus 4 (5.x) | Δ vs GTE ref |
+| Regime | Ettin-32m --cpus 3 (5.x) | Δ vs GTE ref |
 |---|---|---|
 | WARM CE-miss (6 fresh, valid, mean) | _TBD post-deploy_ | _TBD_ |
 | restore() | _TBD_ (expect ~unchanged, CE-swap-invariant) | _TBD_ |
@@ -858,7 +868,7 @@ GTE floor across 4 versions (5.128–5.132): **~12.8s mean** (spread 12,465–12
 Cross-check with T4 bench (same image, earlier same day): T4 bench measured 5,644ms;
 this sweep measured 5,306ms — within 6%. Consistent.
 
-At `--cpus 3` (ADR-0097 production config, `nix 3c9b646`):
+At `--cpus 3` (ADR-0106 standing config, `nix 3c9b646`):
 - Ettin measured **4,317ms** (from Ettin CPU-scaling series above)
 - End-to-end improvement: GTE @2cpu 12.8s → Ettin @3cpu 4.3s ≈ **3× faster recall**
 

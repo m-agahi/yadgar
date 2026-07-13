@@ -138,14 +138,14 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 |---|---|---|---|---|
 | `reranker_enabled` | `YADGAR_RERANKER_ENABLED` | bool | `true` | Enable cross-encoder reranking stage. |
 | `reranker_top_k` | `YADGAR_RERANKER_TOP_K` | int | `50` | Number of candidates passed to reranker. |
-| `cross_encoder_enabled` | `YADGAR_CROSS_ENCODER_ENABLED` | bool | `true` | Enable FlashRank ONNX cross-encoder reranking. |
-| `cross_encoder_model` | `YADGAR_CROSS_ENCODER_MODEL` | str | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model name. |
+| `cross_encoder_enabled` | `YADGAR_CROSS_ENCODER_ENABLED` | bool | `true` | Enable cross-encoder reranking stage. |
+| `cross_encoder_model` | `YADGAR_CROSS_ENCODER_MODEL` | str | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Baseline cross-encoder model (legacy path). The live reranker is the `gte_reranker_*` slot — see below. |
 | `cross_encoder_top_k` | `YADGAR_CROSS_ENCODER_TOP_K` | int | `10` | Top-k passed to cross-encoder. |
 | `cross_encoder_weight` | `YADGAR_CROSS_ENCODER_WEIGHT` | float | `0.6` | Cross-encoder score weight in blend (retrieval gets 1-this). |
-| `gte_reranker_enabled` | `YADGAR_GTE_RERANKER_ENABLED` | bool | `true` | Enable GTE-Reranker (ModernBERT-based). |
-| `gte_reranker_model` | `YADGAR_GTE_RERANKER_MODEL` | str | `Alibaba-NLP/gte-reranker-modernbert-base` | GTE reranker model name. |
+| `gte_reranker_enabled` | `YADGAR_GTE_RERANKER_ENABLED` | bool | `true` | Enable the advanced cross-encoder reranker (field name kept `GTE_*` for env/back-compat; T4 flipped the default model to Ettin-32m). |
+| `gte_reranker_model` | `YADGAR_GTE_RERANKER_MODEL` | str | `cross-encoder/ettin-reranker-32m-v1` | Primary reranker model (Ettin-32m, Train 4). GTE rollback: set to `Alibaba-NLP/gte-reranker-modernbert-base` (baked into `Dockerfile.backend` one cycle). |
 | `gte_reranker_max_length` | `YADGAR_GTE_RERANKER_MAX_LENGTH` | int | `512` | Max token length for GTE reranker. |
-| `gte_reranker_fallback_to_flashrank` | `YADGAR_GTE_RERANKER_FALLBACK_TO_FLASHRANK` | bool | `true` | Fall back to FlashRank if GTE reranker fails. |
+| `gte_reranker_fallback_to_flashrank` | `YADGAR_GTE_RERANKER_FALLBACK_TO_FLASHRANK` | bool | `true` | Legacy fallback flag. FlashRank is not a dependency (`_try_flashrank` is a lazy no-op), so this is effectively inert — the reranker is Ettin-only. |
 | `nli_reranking_enabled` | `YADGAR_NLI_RERANKING_ENABLED` | bool | `false` | Enable NLI entailment scoring stage. v5.6.6 default flipped `true`→`false` — NLI averages ~55 s/call on CPU for marginal gain over CE alone. |
 | `nli_model` | `YADGAR_NLI_MODEL` | str | `cross-encoder/nli-deberta-v3-base` | NLI model name. |
 | `nli_weight` | `YADGAR_NLI_WEIGHT` | float | `0.3` | NLI signal weight in final blend. |

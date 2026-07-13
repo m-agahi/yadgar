@@ -190,7 +190,7 @@ docker run -d --name yadgar-backend --network yadgar-net \
   -v yadgar-db-data:/data \
   -e SURREAL_USER=$SURREAL_USER \
   -e SURREAL_PASS=$SURREAL_PASS \
-  openfantasy/yadgar-backend:5.8.0
+  openfantasy/yadgar-backend:5.43.0
 
 docker run -d --name yadgar --network yadgar-net \
   -v yadgar-data:/data \
@@ -199,7 +199,7 @@ docker run -d --name yadgar --network yadgar-net \
   -e YADGAR_DB_URL=http://yadgar-backend:8000 \
   -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
   -e YADGAR_MCP_AUTH_TOKEN=$YADGAR_MCP_AUTH_TOKEN \
-  openfantasy/yadgar:5.88.2
+  openfantasy/yadgar:5.132.0
 ```
 
 Containers bundle Python 3.14 — no host Python required. Source `~/.config/yadgar/secrets.env` (or generate the required vars yourself) before launching.
@@ -373,7 +373,8 @@ Full methodology and per-type breakdown: [`docs/BENCHMARK_RESULTS.md`](docs/BENC
 - **Agent-prompt library rework** (v5.85, ADR-0007) — wiki-backed, tagged-recall lookup.
 - **Wiki autolink + repo-wiki store-bridge** (v5.85).
 - **Viz overhaul + precomputed server-side layout + System → Config editor** (v5.86–v5.88).
-- **Recall perf + accounting** (v5.97–v5.104) — fusion/MMR N+1 batches, GTE-ModernBERT reranker (Lever-1, v5.98), spreading-activation N+1 batched (v5.104); latency now FULLY accounted via MCP-tool traces (CE ~90%, fusion pass quality-load-bearing — ADR-0035).
+- **Recall perf + accounting** (v5.97–v5.104) — fusion/MMR N+1 batches, GTE-ModernBERT reranker (Lever-1, v5.98), spreading-activation N+1 batched (v5.104); latency FULLY accounted via MCP-tool traces (fusion pass quality-load-bearing — ADR-0035). _CE metric corrected post-T4: CE is **~25%** of the cold recall wall, not the "~90%" once quoted here (dead-metric artifact — ADR-0105, #192)._
+- **Ettin-32m CE reranker** (Train 4) — CE primary swapped GTE-ModernBERT → `cross-encoder/ettin-reranker-32m-v1` (~4.7× faster per-pass, 2.44× end-to-end recall; GTE-ModernBERT kept as config-revert rollback). ADR-0106: backend standing config `--cpus 3`.
 - **Tri-signal observability standard** (v5.100–v5.101, ADR-0034) — span+metric+log per function via the `@observe` decorator, I33 coverage lint, core→backend traceparent, OTLP → Tempo.
 - **Test-speed train** (v5.104, ADR-0036) — module-scoped `storage` fixture + batched SurrealDB wipe → CI shards ~2× faster.
 - **Observability train** (v5.83) — `/health` 503-on-degraded, OTLP circuit breaker, off-loop span logs.
@@ -421,7 +422,7 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 - **SurrealDB** (default storage backend) — [Business Source License 1.1](https://github.com/surrealdb/surrealdb/blob/main/LICENSE) (BSL). The Additional Use Grant permits embedded use; yadgar bundles + operates SurrealDB as a single-tenant per-deployment store, which falls under that grant. **Non-compliant trigger:** offering a hosted multi-tenant managed yadgar service exposing the SurrealDB API directly to third-party customers — get a commercial SurrealDB license or migrate to Postgres + pgvector if that becomes a goal.
 - **`surrealdb` Python SDK** — Apache 2.0 (separately licensed from the server).
-- **embed / rerank models** — `sentence-transformers/all-MiniLM-L6-v2`, `cross-encoder/ms-marco-MiniLM-L-6-v2`, `cross-encoder/nli-deberta-v3-small`: Apache 2.0 weights via Hugging Face.
+- **embed / rerank models** — `sentence-transformers/all-MiniLM-L6-v2`, `cross-encoder/ettin-reranker-32m-v1` (CE primary), `cross-encoder/ettin-reranker-68m-v1` (fallback), `Alibaba-NLP/gte-reranker-modernbert-base` (rollback), `cross-encoder/ms-marco-MiniLM-L-6-v2`, `cross-encoder/nli-deberta-v3-small`: Apache 2.0 weights via Hugging Face.
 - **Benchmarks** (`benchmarks/`): scripts Apache 2.0, but datasets carry their own licenses — **LoCoMo is CC BY-NC 4.0 (non-commercial only)**; LongMemEval MIT. See `benchmarks/README.md`.
 
 Full per-dependency audit: `docs/LICENSE_COMPLIANCE_AUDIT_2026-05-30.md`.

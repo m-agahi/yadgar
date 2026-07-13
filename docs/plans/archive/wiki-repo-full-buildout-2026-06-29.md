@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-13 — SHIPPED — repo-wiki store-bridge + buildout (#125 v5.85, #34/#110).
+
 # PLAN — Wiki-repo BUILT-IN: full buildout (inert → live → discoverable → fn-parity)
 
 > **STATUS: IN REVIEW — DO NOT BUILD.** Awaiting user decisions on §4 (open decisions). This plan supersedes the open portion of `wiki-repo-builtin.md`. Last review pass: 2026-06-29.

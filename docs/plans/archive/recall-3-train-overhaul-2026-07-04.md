@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-13 — Trains 1-4 all SHIPPED (T1 #163, T2 #182, T3 restructure, T4 Ettin at core 5.132.0/backend 5.43.0). Perf premises superseded by ADR-0105 (CE ~25% cold) + ADR-0106 (--cpus 3).
+
 # Plan: Recall pipeline overhaul — the 3-train program
 
 **Status:** AGREED master plan (from a long user + advisor design session). Encodes *what* and *in what order*; each train's BUILD is separately gated on measurement.

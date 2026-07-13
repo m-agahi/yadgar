@@ -953,7 +953,7 @@ Post-v5.3.9 `BindsTo → Wants` decouple, core + backend run as independent daem
 **Tests:** `yadgar/tests/test_embed_service_semaphore.py` (4 tests).
 **Backend bump:** `server.json` `backend_version` 5.0.2 → 5.0.3.
 
-**If saturation persists post-F5-A:** consider F5-B (lazy-load/idle-eviction, ~80 LOC) and/or F5-C (cgroup bump `--cpus 2 → 4`, nix repo change, document in `MIGRATION_NOTES.md`).
+**If saturation persists post-F5-A:** consider F5-B (lazy-load/idle-eviction, ~80 LOC) and/or F5-C (cgroup bump, nix repo change, document in `MIGRATION_NOTES.md`). The standing backend size is now `--cpus 3` (ADR-0106, supersedes the earlier `--cpus 2 → 4` bump — 3→4 is flat under the corrected measurement; T3 Car 3 also added CPU-driven auto-scaling of gather/torch knobs).
 
 ---
 

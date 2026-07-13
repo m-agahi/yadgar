@@ -19,6 +19,10 @@ on:
       - '.forgejo/**'
       - 'README.md'
       - 'AGENTS.md'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'MIGRATION_NOTES.md'
+      - '.gitignore'
   workflow_dispatch:
 
 # Don't cancel in-progress releases when a new push arrives — let the current
