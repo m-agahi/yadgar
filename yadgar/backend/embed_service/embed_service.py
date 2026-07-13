@@ -222,7 +222,10 @@ def _get_ce_checkpoint_hash() -> str:
         "YADGAR_GTE_RERANKER_MODEL",
         "GTE_RERANKER_MODEL",
         str,
-        "Alibaba-NLP/gte-reranker-modernbert-base",
+        # Fallback kept in sync with the config default (T4 flip → Ettin-32m).
+        # Reached only if Settings resolution fails; the reranker id must match
+        # what ml_client._load_gte_reranker loads or the ckpt would key the wrong model.
+        "cross-encoder/ettin-reranker-32m-v1",
     )
     return hashlib.sha256(f"{model}:{CE_SCORING_VERSION}".encode()).hexdigest()[:16]
 

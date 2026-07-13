@@ -31,6 +31,36 @@ ENV PYTHONUNBUFFERED=1 \
 RUN useradd -r -m -u 1001 -s /sbin/nologin yadgar
 USER yadgar
 
+# ── Bake default-ON model weights for offline self-sufficiency (T4 Car 4) ──
+# A fresh container must serve /embed + /rerank with NO network and NO HF mount.
+# Baked AS the `yadgar` runtime user so weights land yadgar-owned at the natural
+# runtime path (~/.cache/huggingface = /home/yadgar/.cache/huggingface). The host
+# ~/.cache/huggingface bind-mount (docker-compose / flake) stays as an
+# override/cache layer — no longer *required*. HF_HUB_OFFLINE is intentionally
+# NOT set here (the image must still work online / with a mount); it is set only
+# in the offline smoke test.
+#
+# Baked set = exactly what prod loads: embed all-MiniLM-L6-v2; CE primary = the
+# swapped Ettin reranker; enrichment = doc2query t5-small. GTE-ModernBERT is baked
+# for ONE release cycle so an offline config-revert to GTE works from the image
+# alone (drop in T5 once Ettin is proven). NLI / COMET are default-OFF — not baked.
+# FlashRank (the nominal CE fallback) is NOT baked because it is NOT a project
+# dependency — `flashrank` is absent from pyproject/uv.lock and unimportable in
+# prod, so `_try_flashrank` (ml_client.py) is a lazy no-op; /rerank is Ettin-only.
+# Baking it would require adding the package and would ship a NEW live fallback —
+# out of scope for a CE-swap train. (Matches the plan's flashrank hedge.)
+RUN python -c "\
+from sentence_transformers import SentenceTransformer, CrossEncoder; \
+SentenceTransformer('all-MiniLM-L6-v2'); \
+CrossEncoder('cross-encoder/ettin-reranker-32m-v1', max_length=512); \
+CrossEncoder('Alibaba-NLP/gte-reranker-modernbert-base', max_length=512); \
+print('HF weights baked: all-MiniLM-L6-v2 + Ettin-32m CE + GTE CE (rollback)')"
+RUN python -c "\
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; \
+AutoTokenizer.from_pretrained('doc2query/msmarco-t5-small-v1'); \
+AutoModelForSeq2SeqLM.from_pretrained('doc2query/msmarco-t5-small-v1'); \
+print('HF weights baked: doc2query/msmarco-t5-small-v1')"
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
     CMD curl -f http://localhost:8001/health || exit 1
 CMD ["/entrypoint-backend.sh"]

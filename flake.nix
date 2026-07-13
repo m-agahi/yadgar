@@ -43,7 +43,7 @@
 
         yadgar-pkg = python.pkgs.buildPythonApplication {
           pname = "yadgar";
-          version = "5.131.0";
+          version = "5.132.0";
           format = "pyproject";
 
           src = ./.;
@@ -175,13 +175,13 @@
 
             coreVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.131.0";
+              default = "5.132.0";
               description = "Container image tag for the yadgar core service.";
             };
 
             backendVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.42.0";
+              default = "5.43.0";
               description = "Container image tag for the yadgar-backend service.";
             };
 
@@ -282,7 +282,7 @@
                   "-e YADGAR_MCP_AUTH_TOKEN"
                   "-e SURREAL_RUNTIME_STACK_SIZE"
                   "-e YADGAR_CONFIG_FILE=/data/config.yaml"
-                  "--memory 4g --cpus 2 --stop-timeout 30"
+                  "--memory 6g --cpus 4 --stop-timeout 30"
                   backendImage
                 ];
                 ExecStop = "${cfg.runtime} stop yadgar-backend";

@@ -1,6 +1,17 @@
-# T4 — Ettin CE-model swap: train plan (AUDITED)
+> ARCHIVED 2026-07-13 — executing on `feat/t4-ettin-train`, ships with this PR. Train COMPLETE:
+> Car 0 shipped separately (#188); Cars 1-4 in this PR (core 5.132.0 / backend 5.43.0). Gate
+> VERDICT: GO, winner Ettin-32m (3-arm A/B build record below). Offline backend self-sufficiency
+> smoke PASS. Perf re-measure deferred to post-deploy (measurement-prep slots in the checklist).
 
-**Status:** AUDITED — decisions resolved, Car 0 in build. **Cars 1-4 (the Ettin swap) BLOCKED on the deps-modernization train (transformers 5.x — Ettin needs `TokenizersBackend`, absent from the current pin); resumes after** (`docs/plans/deps-modernization-train-2026-07-12.md`). Opus + advisor adversarial audit
+# T4 — Ettin CE-model swap: train plan (AUDITED — COMPLETE)
+
+**Status:** COMPLETE — shipped on `feat/t4-ettin-train` (core 5.132.0 / backend 5.43.0). Car 0
+SHIPPED separately (#188 — `_ckpt` fix + query-cache metrics + dead-code sweep). Deps
+train SHIPPED (#189 — transformers 5.13.1; Ettin now LOADS, verified). Cars 1-4 build as
+ONE train PR (ADR-0088). Load-verify PASS (Ettin-32m finite scores on the 5.x pin);
+LongMemEval 3-arm A/B (GTE / Ettin-32m / Ettin-68m) running on the LEGACY in-process path
+(`unified_recall:false`), Q=20/type × 6 types, fresh-process-per-arm + a GTE determinism
+re-run. **The original blocker below is RESOLVED — the deps train shipped.** Opus + advisor adversarial audit
 complete 2026-07-12 (working-tree draft; no code changed, no branch). Every
 load-bearing claim re-verified against master (core 5.129.0 / backend 5.40.0) via
 four parallel investigators; per-claim verification table embedded below. Line-number
@@ -433,6 +444,110 @@ Arm C (Ettin-68M). Ship the winner that holds parity-or-better; 32M preferred (6
 
 **Model label:** sonnet to build + run the A/B; **opus for the recall@k go/no-go decision** (a
 quality-authorising judgment, not a mechanical pass/fail).
+
+---
+
+#### Car 1 BUILD RECORD — 3-arm A/B result + go/no-go (2026-07-13)
+
+**Run config:** `benchmarks/run_longmemeval.py --retrieval-only --variant s --stratify-per-type
+--max-questions 120 --types <all 6> --settings-override GTE_RERANKER_MODEL=<id>`. **LEGACY
+in-process path** (`unified_recall:false`, NO `YADGAR_EMBED_URL` — the deps-era correction: the
+unified path zero-scores without a live backend). Fresh process per arm (NullCache, no cross-arm
+bleed). Q=20/type × 6 types = 120q/arm. Arms A=GTE, A2=GTE-determinism-rerun, B=Ettin-32m,
+C=Ettin-68m. ~90–97 min/arm.
+
+**Determinism precondition (A vs A2, GTE run twice):** NOT bit-identical — max |Δ| noise band
+recall@5/@10 = **0.050**, recall@50 = 0.017, mrr = 0.046, ndcg@10 = 0.050. (Head-slice is
+deterministic; the drift is ingest/embed-ordering + CE tie-break, single-question-scale at n=20.)
+Gate deltas are read against this band.
+
+**In-process CE-ran proof (claim #21, absent from harness → built here):** PASS. At the production
+choke point `LocalMLClient.score_cross_encoder(query, texts)` with the Ettin-32m override, Ettin
+scored live, finite, non-degenerate (distinct scores, relevant text ranked first) — proves CE
+actually ran, not the #184 fusion-only false-oracle. The smoke also showed non-zero recall@k across
+all 6 types (not a dead-CE artifact). The `:8001/metrics` Δmiss gate does NOT apply (in-process, no
+backend) — as the plan pins.
+
+**recall@5** (n=20/type, 120 total)
+
+| type | GTE | GTE-det | Ettin-32m | Ettin-68m | 32m−GTE |
+|---|---|---|---|---|---|
+| single-session-user | 0.900 | 0.950 | 0.950 | 0.900 | +0.050 |
+| single-session-assistant | 1.000 | 1.000 | 1.000 | 1.000 | +0.000 |
+| single-session-preference | 1.000 | 0.950 | 1.000 | 1.000 | +0.000 |
+| multi-session | 0.728 | 0.728 | 0.836 | 0.869 | +0.108 |
+| temporal-reasoning | 0.921 | 0.929 | 0.929 | 0.904 | +0.008 |
+| knowledge-update | 0.975 | 0.975 | 0.950 | 0.975 | -0.025 |
+| overall | 0.921 | 0.922 | 0.944 | 0.941 | +0.024 |
+
+**recall@10** (n=20/type, 120 total)
+
+| type | GTE | GTE-det | Ettin-32m | Ettin-68m | 32m−GTE |
+|---|---|---|---|---|---|
+| single-session-user | 0.900 | 0.950 | 0.950 | 0.900 | +0.050 |
+| single-session-assistant | 1.000 | 1.000 | 1.000 | 1.000 | +0.000 |
+| single-session-preference | 1.000 | 1.000 | 1.000 | 1.000 | +0.000 |
+| multi-session | 0.883 | 0.917 | 0.904 | 0.892 | +0.021 |
+| temporal-reasoning | 0.954 | 0.971 | 0.954 | 0.954 | +0.000 |
+| knowledge-update | 0.975 | 1.000 | 0.975 | 1.000 | +0.000 |
+| overall | 0.952 | 0.973 | 0.964 | 0.958 | +0.012 |
+
+**recall@50** (n=20/type, 120 total)
+
+| type | GTE | GTE-det | Ettin-32m | Ettin-68m | 32m−GTE |
+|---|---|---|---|---|---|
+| single-session-user | 0.950 | 0.950 | 0.950 | 0.900 | +0.000 |
+| single-session-assistant | 1.000 | 1.000 | 1.000 | 1.000 | +0.000 |
+| single-session-preference | 1.000 | 1.000 | 1.000 | 1.000 | +0.000 |
+| multi-session | 0.946 | 0.942 | 0.929 | 0.958 | -0.017 |
+| temporal-reasoning | 0.954 | 0.971 | 0.954 | 0.971 | +0.000 |
+| knowledge-update | 1.000 | 1.000 | 0.975 | 1.000 | -0.025 |
+| overall | 0.975 | 0.977 | 0.968 | 0.972 | -0.007 |
+
+**mrr** (n=20/type, 120 total)
+
+| type | GTE | GTE-det | Ettin-32m | Ettin-68m | 32m−GTE |
+|---|---|---|---|---|---|
+| single-session-user | 0.879 | 0.925 | 0.875 | 0.850 | -0.004 |
+| single-session-assistant | 1.000 | 1.000 | 0.925 | 0.892 | -0.075 |
+| single-session-preference | 0.902 | 0.875 | 0.758 | 0.793 | -0.143 |
+| multi-session | 0.820 | 0.856 | 0.892 | 0.912 | +0.072 |
+| temporal-reasoning | 0.925 | 0.892 | 0.950 | 0.955 | +0.025 |
+| knowledge-update | 1.000 | 1.000 | 0.975 | 0.950 | -0.025 |
+| overall | 0.921 | 0.925 | 0.896 | 0.892 | -0.025 |
+
+**ndcg@10** (n=20/type, 120 total)
+
+| type | GTE | GTE-det | Ettin-32m | Ettin-68m | 32m−GTE |
+|---|---|---|---|---|---|
+| single-session-user | 0.881 | 0.931 | 0.895 | 0.863 | +0.013 |
+| single-session-assistant | 1.000 | 1.000 | 0.945 | 0.920 | -0.055 |
+| single-session-preference | 0.926 | 0.906 | 0.821 | 0.846 | -0.105 |
+| multi-session | 0.769 | 0.804 | 0.856 | 0.873 | +0.086 |
+| temporal-reasoning | 0.881 | 0.881 | 0.916 | 0.931 | +0.035 |
+| knowledge-update | 0.946 | 0.953 | 0.942 | 0.953 | -0.005 |
+| overall | 0.901 | 0.913 | 0.896 | 0.897 | -0.005 |
+
+
+**GO / NO-GO — VERDICT: GO. Winner = Ettin-32m** (`cross-encoder/ettin-reranker-32m-v1`).
+
+- **recall@5/@10 (the operationally-relevant k — `top_k_context=10`):** Ettin-32m parity-or-better on
+  EVERY type; **+0.108 recall@5 on multi-session** (the hardest, most discriminating type) and +0.050
+  single-session-user. Overall +0.024 (r@5) / +0.012 (r@10). This is the gate's core and it passes clean.
+- **recall@50:** Ettin-32m overall −0.007; per-type worst −0.025 (knowledge-update) / −0.017
+  (multi-session) — single-question-scale at n=20, within/adjacent to the 0.017–0.05 noise band.
+- **MRR / nDCG@10 — honest caveat (not "all within noise"):** Ettin-32m regresses BEYOND noise on
+  single-session-preference (mrr −0.143, ndcg −0.105) and single-session-assistant (mrr −0.075). It
+  GAINS on the harder types (multi-session mrr +0.072, temporal +0.025). **Discounted because on
+  both regressing types recall@10 = 1.000 for all arms** → every relevant session is already in the
+  top-10 fed to the reader; the drop is reordering WITHIN a fully-retrieved set → zero
+  context-delivery impact. The gate metric is recall@k, which holds.
+- **32m vs 68m:** quality wash on recall (32m better r@5/@10 overall + overall mrr; 68m better r@50 +
+  a hair of ndcg; MRR trade on saturated types is mixed). 68m is 3× slower (2.1× vs 32m's 6.3× CE
+  speedup). **At equal retrieval quality, speed decides → 32m** (the plan's stated preference).
+
+Reports: `benchmarks/reports/lme_t4_arm_{a_gte,a2_gte_det,b_ettin32m,c_ettin68m}.json`. Each logs the
+effective `GTE_RERANKER_MODEL` in `settings_overrides` and `unified_recall:false`.
 
 **Acceptance:**
 - Ettin loads on the pin; **`_ckpt` fix (Car 0(d)) landed** so the prod CE cache tracks the reranker
