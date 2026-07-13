@@ -9,6 +9,112 @@ caching, knob retune, SurrealDB upgrade).
 > hit-rate counter). See ADR-0030 (recall is IO-bound) + ADR-0031 (perf
 > sequencing) + `docs/plans/cache-refactor-2026-07-01.md`.
 
+---
+
+## CORRECTION (2026-07-13) — CE attribution and canonical measurement method
+
+**Prior claim retracted:** this document (and `run_perf_loadtest.py`) previously
+stated "CE is the recall wall (~7-8.5s on --cpus 2)" and used
+`yadgar_embed_rerank_duration_seconds{mode="ce"}` as the CE-stage signal.
+**Both are wrong on the current architecture.** See
+`docs/testing/recall-span-attribution-2026-07-13.md` (the RCA) for the full
+span-tree analysis.
+
+### What changed
+
+1. **The embed-service `/rerank` histogram is dead for recall (ADR-0078 / T2
+   in-process move).** Since the T2 refactor, recall runs CE in-process via
+   `LocalMLClient.score_cross_encoder` and never calls the embed-service
+   `/rerank` HTTP endpoint.  The histogram `d_count` is always 0; the harness
+   `ce_mean_ms` silently returned `None`.  The harness now detects this and emits
+   `ce_mean_ms: null` with `ce_metric_status: "unavailable — recall CE runs
+   in-process, embed rerank histogram not fed (see issue #50 / ADR-0078)"`.
+
+2. **CE ≈ 25% of one cold recall wall, NOT 70-90%.** The span tree for the one
+   cold recall with a complete trace (trace `06d8111b`, 6219ms) attributes:
+   - Signal-gather head (query embed + vector + FTS + PPR + spreading + fusion):
+     **~2806ms (~45%)** — the dominant cold term; internal split needs Tempo.
+   - DB hydration (`get_memories_by_ids`): **~1439ms (~23%)**.
+   - CE (all 2-3 passes, incl. ~613ms one-time model load): **~1527ms (~25%)**.
+   - Engram links + multi-passage + other: **~447ms (~7%)**.
+   The "CE dominant" reading came from the split-container era where CE ran over
+   HTTP and the histogram WAS fed.  It is not the current architecture.
+
+3. **Warm recall attribution is not yet cleanly captured.** The BatchSpanProcessor
+   log-flush truncation means no complete warm trace was captured this session.
+   The Prometheus histogram `yadgar_recall_duration_ms` (count=59, mean≈5.0s)
+   is the working signal; a per-stage warm split requires Tempo.
+
+### Locked cross-version measurement method (for GTE-vs-Ettin and future sweeps)
+
+Use **both** of the following (they agree to within MCP framing cost, ≈2ms):
+
+- **Primary (version-portable):** `time.perf_counter()` wall over the `/mcp`
+  JSON-RPC envelope — this is what `run_perf_loadtest.py` recall_p50/p95
+  measures.  Requires no backend Prometheus metric to exist.  Valid across all
+  versions including those predating `yadgar_recall_duration_ms`.
+
+- **Equivalent server-side signal (v5.96+):** `yadgar_recall_duration_ms`
+  Prometheus histogram on core `:8765/metrics`.  Use for single-version
+  characterisation where scraping is convenient.  MCP transport overhead ≈ 0
+  per RCA 2026-07-13.
+
+**Method constraints (always apply):**
+- Fresh distinct queries per block (CE cache persists across daemon restarts).
+- CE-miss validity gate: `yadgar_cache_miss_total{cache="ce"}` delta ≥ 5/query.
+- n ≥ 12 recalls; balanced profile (CE runs, PPR included).
+- Warmup: ≥ 2 discarded calls first.
+- `YADGAR_RECALL_DIRECTORY` must be set; `YADGAR_MCP_AUTH_TOKEN` if auth enabled.
+
+**CE per-recall signal:** unavailable from Prometheus until issue #50
+(expose `@observe` stage histogram on `:8001/metrics`).  For CE attribution,
+use Tempo span trees (spans: `_rerank_cross_encoder`, `score_ce_cached`,
+`_score_candidates_ce`).  Steady-state CE wall ≈ **0.9s** across 2-3 passes
+per the one measured cold trace (warm CE is faster via LRU cache hits).
+
+### No clean GTE-vs-Ettin baseline yet
+
+No cross-version comparison with the same method exists yet.  The GTE run-logs
+below (v5.106, v5.129, v5.131) used different metrics (trace-span, direct
+histogram) or had measurement errors (Car 0 core/backend split error).  The
+upcoming cross-version sweep will use the locked method above on both GTE and
+Ettin images to produce a clean comparison.
+
+---
+
+## Ettin CPU-scaling series — 2026-07-13 (corrected method, v5.132.0 / backend 5.43.0)
+
+**Method:** `yadgar_recall_duration_ms` histogram deltas (`:8765/metrics`),
+12 fresh distinct queries per arm, CE-miss validity gate verified (cross-encoder
+score present on every result; CE cache miss delta ≥ 5/query), balanced profile.
+See `ettin-cpu-series.md` scratchpad for raw PRE/POST snapshots and bucket data.
+
+| CPUs | torch intra-op | gather budget | mean wall | p50 (est) | p95 (est) | notes |
+|------|----------------|---------------|-----------|-----------|-----------|-------|
+| **2** | 1 | 1 (ncpu≤2 → floor) | **5644 ms** | ~6944 ms | ~9694 ms | 11 obs; gather sequential |
+| 3 | 1 | 2 (min(3-1,2)=2) | **4317 ms** | ~4000 ms | ~9250 ms | 12 obs; parallel gather |
+| 4 | **2** | 2 (unchanged) | **4568 ms** | ~3750 ms | ~7500 ms | 13 obs; torch intra-op adds threads |
+
+### Knob attribution
+
+- **2→3 CPU: −24% mean wall.** Gather budget 1→2 (`min(ncpu-1,2)` formula)
+  enables parallel CE candidate scoring.  This is the dominant lever.
+- **3→4 CPU: +6% mean (within noise).** Torch intra-op 1→2 (`ncpu//2` formula)
+  adds matrix threads per CE call, but gather budget stays 2 (saturated).  The
+  p50 improves marginally (~4000→~3750ms) but the mean does not — torch
+  2-thread overhead cancels CE benefit on the 32m model.
+- **Curve flattens at 3 CPUs** for this workload.  5th CPU adds nothing
+  (both knobs saturate at ≤4 CPUs under current config).
+
+### Verdict
+
+3-CPU sweet spot for latency/cost.  4-CPU is marginally better on p50 but
+mean flat within noise.  ADR-0097 owner verdict for the full deployment is 4 CPUs
+(gather_budget=2 + torch=2 together; the 3→4 improvement on GTE was larger than
+on Ettin-32m due to model size).
+
+---
+
 ## Prerequisites — record these each run
 
 - Daemon healthy: `curl -sf localhost:8765/health/live` → OK; note `version`.

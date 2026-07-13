@@ -4,17 +4,43 @@
 Design authority: ``docs/plans/perf-loadtest-contract-2026-06-30.md`` +
 ``docs/plans/obs-velocity-completion-2026-07-04.md`` PART B §3.2.
 
-WHAT IT MEASURES (the user-POV recall path):
+CANONICAL RECALL-WALL METRIC (cross-version):
+  ``time.perf_counter()`` wall over the ``/mcp`` JSON-RPC envelope → recall
+  p50/p95 (ms).  This is the ONLY version-portable recall-wall metric: it
+  requires no backend Prometheus metric to exist and measures the same path
+  regardless of architecture version.  Use it for ALL cross-version comparisons,
+  including the upcoming GTE-vs-Ettin sweep.
+
+  The Prometheus histogram ``yadgar_recall_duration_ms`` on :8765 is an
+  equivalent server-side signal (present since v5.96+, MCP transport overhead
+  ≈ 0 per RCA 2026-07-13) — prefer it for single-version characterisation where
+  scraping is convenient.
+
+CE METRIC STATUS (as of architecture with ADR-0078 / T2 in-process move):
+  ``yadgar_embed_rerank_duration_seconds{mode="ce"}`` on the backend :8001
+  is emitted ONLY by the embed-service ``POST /rerank`` HTTP endpoint.  Recall
+  now runs CE **in-process** (``LocalMLClient.score_cross_encoder``) which
+  NEVER POSTs to ``/rerank`` and NEVER feeds that histogram → ``d_count`` is
+  always 0 → ``ce_mean_ms`` is **unavailable** on this architecture.
+  The harness detects this (``d_count == 0``) and emits ``ce_mean_ms: null``
+  plus an explicit ``ce_metric_status`` field explaining why.  A per-recall CE
+  signal requires exposing the ``@observe`` stage histogram on /metrics
+  (issue #50); until then, use Tempo span trees for CE attribution.
+
+  The prior "CE = 70-90% / 7-8.5s of recall wall" claim came from the
+  split-container era (``RemoteMLClient`` → ``/rerank`` HTTP), when the embed
+  histogram WAS fed.  It is stale on the current in-process architecture.  Per
+  the RCA (2026-07-13), CE ≈ 25% of one cold recall wall (6.2s); signal-gather
+  (~45%) and DB hydration (~23%) are the larger cold terms.
+
+WHAT IT MEASURES:
   * Fires N representative ``recall`` calls at a running daemon over the same
     stateless JSON-RPC ``/mcp`` envelope the MCP tool uses (reused verbatim from
     ``yadgar/tests/e2e/test_offload_e2e.py``), timing each with
     ``time.perf_counter()`` → recall p50/p95 (ms).
-  * Captures the CE-STAGE duration by scraping the backend Prometheus
-    ``/metrics`` histogram ``yadgar_embed_rerank_duration_seconds{mode="ce"}``
-    BEFORE and AFTER the run and taking the ``_sum`` / ``_count`` delta → mean CE
-    latency (ms) across the run. This is the distinct **CE-span budget** the
-    contract gates on — CE is the recall wall (~7-8.5s on --cpus 2) and can
-    regress independently of total recall latency.
+  * Attempts CE-stage capture via ``yadgar_embed_rerank_duration_seconds``
+    delta — but emits ``ce_mean_ms: null`` with an explicit status field when
+    the histogram is unfed (in-process CE path, ADR-0078).
   * Emits a JSON report mirroring the run_longmemeval schema, and runs the pure
     ``perf_contract`` checker against the committed baseline (RECORD-ONLY: it
     prints the diff + any flags but ALWAYS exits 0; Phase-2 gating is a later PR).
@@ -54,6 +80,8 @@ from pathlib import Path
 # perf_contract is a sibling pure module (stdlib only).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from benchmarks.perf_contract import (  # noqa: E402
+    CE_DEAD_STATUS,
+    ce_metric_status,
     compare_to_baseline,
     parse_prom_metric,
 )
@@ -100,6 +128,10 @@ def _call_recall(daemon_url: str, query: str, *, req_id: int, timeout: float) ->
 
     Envelope reused from yadgar/tests/e2e/test_offload_e2e.py::_call_tool.
     """
+    args: dict = {"query": query, "max_results": 5}
+    recall_dir = os.environ.get("YADGAR_RECALL_DIRECTORY")
+    if recall_dir:
+        args["directory"] = recall_dir
     body = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -107,19 +139,23 @@ def _call_recall(daemon_url: str, query: str, *, req_id: int, timeout: float) ->
             "method": "tools/call",
             "params": {
                 "name": "recall",
-                "arguments": {"query": query, "max_results": 5},
+                "arguments": args,
             },
         }
     ).encode()
+    hdrs: dict[str, str] = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    auth_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN")
+    if auth_token:
+        hdrs["Authorization"] = f"Bearer {auth_token}"
     req = urllib.request.Request(
         daemon_url.rstrip("/") + "/mcp"
         if not daemon_url.rstrip("/").endswith("/mcp")
         else daemon_url,
         data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
+        headers=hdrs,
     )
     try:
         raw = urllib.request.urlopen(req, timeout=timeout).read().decode()
@@ -206,20 +242,30 @@ def run(
     agg["n_recalls"] = n_recalls
     agg["error_rate"] = round(errors / n_recalls, 4) if n_recalls else 0.0
 
-    # CE-span budget: mean CE latency over the run window (aggregate — the
-    # backend histogram has no per-call breakdown; delta the sum/count).
-    if ce_before and ce_after:
-        d_sum = ce_after[0] - ce_before[0]
-        d_count = ce_after[1] - ce_before[1]
-        if d_count > 0:
-            agg["ce_mean_ms"] = round((d_sum / d_count) * 1000.0, 2)
-            agg["ce_calls"] = d_count
-        else:
-            agg["ce_mean_ms"] = None
-            agg["ce_calls"] = 0
-    else:
-        agg["ce_mean_ms"] = None
-        agg["ce_calls"] = None
+    # CE-span budget: derived via pure helper in perf_contract.
+    #
+    # KNOWN DEAD METRIC (ADR-0078 / T2 in-process move): the embed-service
+    # /rerank histogram is only fed by the HTTP RemoteMLClient path; the current
+    # architecture runs CE in-process (LocalMLClient.score_cross_encoder) and
+    # never calls /rerank → d_count is always 0 → ce_mean_ms is unavailable.
+    # The helper detects this explicitly and returns CE_DEAD_STATUS; we then print
+    # a WARNING rather than silently returning None-as-if-valid.
+    ce_mean, ce_calls, ce_status = ce_metric_status(
+        ce_before, ce_after, metrics_url_configured=bool(metrics_url)
+    )
+    agg["ce_mean_ms"] = ce_mean
+    agg["ce_calls"] = ce_calls
+    agg["ce_metric_status"] = ce_status
+    if ce_status == CE_DEAD_STATUS:
+        print(
+            "WARNING: ce_mean_ms is null — yadgar_embed_rerank_duration_seconds"
+            "{mode='ce'} d_count=0. Recall CE runs in-process (LocalMLClient,"
+            " ADR-0078) and does not feed the embed-service /rerank histogram."
+            " Use yadgar_recall_duration_ms (p50/p95, :8765) as the canonical"
+            " recall-wall metric. CE attribution requires Tempo span trees or"
+            " issue #50 (expose @observe stage histogram on /metrics).",
+            file=sys.stderr,
+        )
 
     report = {
         "benchmark": "perf-loadtest",
@@ -292,7 +338,12 @@ def main() -> int:
     print(f"\n=== perf-loadtest (record-only) → {out_path.name} ===")
     print(f"  recall p50 = {agg['recall_p50_ms']} ms")
     print(f"  recall p95 = {agg['recall_p95_ms']} ms")
-    print(f"  CE mean    = {agg.get('ce_mean_ms')} ms (over {agg.get('ce_calls')} CE calls)")
+    ce_status = agg.get("ce_metric_status", "unknown")
+    ce_val = agg.get("ce_mean_ms")
+    if ce_val is not None:
+        print(f"  CE mean    = {ce_val} ms (over {agg.get('ce_calls')} CE calls)")
+    else:
+        print(f"  CE mean    = null [{ce_status}]")
     print(f"  error rate = {agg['error_rate']}")
     diff = report["baseline_diff"]
     if diff.get("comparable"):
