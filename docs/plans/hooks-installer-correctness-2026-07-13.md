@@ -1,10 +1,20 @@
 # HOOKS Train — Car 3: `install_hooks` correctness for normal (non-nix) users
 
-**Status:** DRAFT — awaiting audit
+**Status:** AUDITED-ready (audit APPROVE-with-required-fixes folded into body 2026-07-13)
 **Date:** 2026-07-13
 **Author:** design agent (HOOKS train, Car 3)
-**Core version at authoring:** 5.133.0 (`pyproject.toml`)
+**Core version at authoring:** 5.133.0 (`pyproject.toml`); **target bump 5.134.0** (core-only, post-#195)
 **Scope:** `yadgar/core/install/install_hooks_lib.py` + entry points; no code changed by this doc.
+
+> **Audit folded in (2026-07-13).** The `## AUDIT (2026-07-13)` section below is preserved
+> verbatim as the review record. This body has been revised to fold in all required fixes:
+> sweep delete-predicate tightened to the four managed basenames only (Findings 1+2);
+> acceptance test #3 reframed to a `yadgar-`-substring-but-non-managed seed (Finding 1);
+> Fix B defaults to **omit-env-block** pending a live interpolation check (Finding 3);
+> orphan-hook cleanup **dropped** — a dedicated investigation resolved both variants as LIVE
+> (hyphen entrypoint imports underscore logic-module; rewritten in T2 #182; ~40 tests depend);
+> `host_command_fallback` key **dropped** (Finding 5); manifest line cites corrected (`_files`
+> dict at ~:472). The five audit user-decisions are resolved inline with the recommended defaults.
 
 ---
 
@@ -20,8 +30,11 @@ against current source:
   append-hooks accumulate **duplicate** entries. This is a **drift** bug, not a vanilla-rerun
   bug — a plain double-install with a stable interpreter already dedups correctly today.
 - **BUG B (MED)** — `YADGAR_MCP_AUTH_TOKEN` is baked as a **literal** value into `settings.json`
-  (`env` block). Secret-at-rest + silent auth-fail after token rotation. Fix: `${VAR}`
-  indirection (Claude Code interpolates — precedent already in `setup.py:103`).
+  (`env` block). Secret-at-rest + silent auth-fail after token rotation. Fix (default): **omit the
+  `env` block entirely** and rely on the ambient token — provably correct today, no secret at rest.
+  `${VAR}` indirection is retained as the documented alternative, gated on a live Claude Code test
+  confirming `${VAR}` interpolates inside a hook `env` value. The `setup.py:103` precedent is MCP
+  `headers`, **not** hook `env`, so it does **not** verify hook-`env` interpolation.
 - **BUG C (LOW)** — installer bakes whatever `YADGAR_MCP_AUTH_TOKEN` holds verbatim; a known
   **test fixture** token (`a-valid-32-char-token-here!!`, `tests/server/test_security_headers.py:243`)
   reaches `settings.json` if that env is exported in the install session. Fix: guard/warn on
@@ -30,10 +43,12 @@ against current source:
   **endpoint that does not exist** in `http.py`. Fix: correct the message (the working
   `host_command` is already returned).
 
-The fix set: (1) re-key dedup on the hook **script path / yadgar signature** + add an idempotent
-**migration-sweep** that strips pre-existing yadgar-managed entries per event and rebuilds
-(self-heals accumulated dupes + stale interpreters on every install); (2) `${VAR}` token
-indirection; (3) test-token guard; (4) message correction.
+The fix set: (1) re-key dedup on the **destination script basename** + add an idempotent
+**migration-sweep** whose delete predicate is the **four managed script basenames ONLY** (never a
+loose `yadgar-` substring — see Fix A2), self-healing accumulated dupes + stale interpreters on
+every install; (2) **omit the token `env` block** (ambient token), with `${VAR}` as a documented
+alternative pending interpolation verification; (3) test-token guard; (4) message correction +
+drop the dead `host_command_fallback` key.
 
 **Delivery coupling:** Car 3 is the vehicle that ships HOOKS Car 1 (router.py + exceptions
 config) and Car 2 (compact/restore scripts) to normal users — the installer's file manifest
@@ -80,8 +95,8 @@ must not weaken it. Resolved **once** in `install_hooks_impl` (:544) and threade
 
 ### Script manifest (the Car 1/Car 2 coupling surface)
 
-- `_copy_scope_scripts._files` (:465) — 9 dispatcher scripts (incl. `pre-compact-drain.sh`,
-  `post-compact-rehydrate.sh` = Car 2's compact/restore vehicles).
+- `_copy_scope_scripts._files` (dict at ~:472; fn def :459) — 9 dispatcher scripts (incl.
+  `pre-compact-drain.sh`, `post-compact-rehydrate.sh` = Car 2's compact/restore vehicles).
 - `_install_global_scripts` (:335) — `stop-memory-checkpoint.py`, `session-end-capture.py`,
   `db-lockdown-check.py`.
 - `_install_append_hooks._append_specs` (:406) — 4 append scripts (hyphen-named).
@@ -158,7 +173,9 @@ pre-compact, post-compact, block-reflect, auto-capture, session-context, prompt-
 subagent-stop, seed-anchor, seed-agent-prompts, file-changed, instructions-loaded,
 subagent-start — **no `install-bootstrap`**. The refusal already returns a working
 `host_command` (`yadgar install-hooks --scope=global`). `host_command_fallback` has **no
-consumer** outside misc.py itself (grep confirmed) — safe to edit the message.
+consumer** outside misc.py itself (grep confirmed) **and its own value (`:450`) is a second
+dangling `install-bootstrap` pointer** — so the whole key is dead. **Drop the key**, don't reword
+it.
 
 ---
 
@@ -166,12 +183,15 @@ consumer** outside misc.py itself (grep confirmed) — safe to edit the message.
 
 ### Fix A1 — dedup key = script path / yadgar signature
 
-Re-key `_append_if_absent` (and any duplicate check) on the **hook script path**, not the full
-command. Reuse the existing yadgar-managed signature already defined in `_entry_interpreter`
-(:224): a command is yadgar-managed iff `"hook_runner.py" in cmd or "yadgar-" in cmd`. For the
-append-hooks, the stable identity is the **destination script basename** (e.g.
-`yadgar-subagent-stop.py`). Dedup: "an entry whose command contains this script basename already
-exists" → skip. Interpreter drift no longer defeats it.
+Re-key `_append_if_absent` (and any duplicate check) on the **destination script basename**, not
+the full command. For each append-hook the stable identity is its `dst` basename (e.g.
+`yadgar-subagent-stop.py`). Dedup: "an entry whose command contains **this exact managed
+basename** already exists" → skip. Interpreter drift no longer defeats it.
+
+> Do **not** dedup on the loose `_entry_interpreter` signature (`"hook_runner.py"`/`"yadgar-"`
+> substring). That signature is safe for read-only interpreter *detection* (:224) but too broad
+> for identity — it would collapse distinct managed scripts and could match a foreign
+> `yadgar-`-containing path. Basename-scoping is the tight key.
 
 - Preserves `test_append_if_absent_allows_different_commands` intent: different **scripts** still
   coexist.
@@ -183,50 +203,84 @@ exists" → skip. Interpreter drift no longer defeats it.
 **Division of labor is deliberate:** Fix A1 *prevents new* dupes; the sweep *heals existing*
 dupes and refreshes a stale interpreter that A1 alone would leave in place. Both are required.
 
-On every install, for each of the four append-events: **strip all pre-existing yadgar-managed
-entries** (predicate: command matches the yadgar signature — `hook_runner.py` or `yadgar-`
-substring, tightened to the four managed script basenames), **then rebuild** the single correct
+On every install, for each of the four append-events: **strip pre-existing entries whose command
+contains one of the four managed destination basenames**, **then rebuild** the single correct
 entry with the freshly resolved durable interpreter. Idempotent: a clean settings file →
 identical output; a poisoned/duplicated file → collapsed to one entry with the current
 interpreter.
 
-**Over-deletion mitigation (the task's stated risk).** The strip predicate must be the
-**tightest available** — match only the four yadgar-managed script basenames (or the
-`yadgar-`/`hook_runner.py` signature), never a foreign entry a user added to a shared event
-(e.g. a user's own `SubagentStop` hook). Reusing the in-file `_entry_interpreter` predicate keeps
-this consistent and conservative.
+**Delete predicate (RESOLVED — must-fix from audit Findings 1+2).** The strip key is **exactly the
+four managed destination basenames** and nothing looser:
 
-**Marker approach — OPEN QUESTION, not baseline.** The task suggests injecting a
-`version/marker` key into the entry dict. Deferred: Claude Code's hook schema may reject or strip
-unknown keys in a hook entry. **Baseline = command-signature detection** (already proven by
-`_entry_interpreter`). Injected-marker listed under Open Questions pending schema confirmation.
+```
+{"yadgar-subagent-stop.py", "yadgar-instructions-loaded.py",
+ "yadgar-subagent-start.py", "yadgar-file-changed.py"}
+```
 
-### Fix B — token via `${VAR}` indirection
+An entry is stripped from event E iff its command string contains the managed basename registered
+for E. Do **NOT** use the loose `yadgar-`/`hook_runner.py` substring as the *delete* predicate —
+it over-deletes: a foreign hook whose path merely contains `yadgar-` (e.g. a user's own
+`python3 /opt/yadgar-extras/custom.py` on `SubagentStop`) would match and be destroyed.
+`_entry_interpreter:224` uses that loose form for *interpreter detection* (read-only, safe) — do
+**not** reuse it as a deletion filter. Reusing `_entry_interpreter` for interpreter *refresh* (read
+the durable python off an existing managed entry) is still fine; only the delete filter must be
+basename-scoped. Foreign entries (including a `yadgar-`-substring foreign path) are **never**
+touched.
 
-Replace the literal env block with indirection so Claude Code interpolates at hook-fire time:
+**Marker approach — NOT adopted (resolved).** Injecting a `version/marker` key into the entry dict
+is rejected: Claude Code's hook schema may strip or reject unknown keys in a hook entry, and it
+needs no schema change to work. **Baseline = basename-signature detection** (command contains the
+managed basename; interpreter refresh via the existing `_entry_interpreter` read path). See
+Resolved decisions.
+
+### Fix B — token: omit the env block (default), `${VAR}` only if interpolation confirmed
+
+**Default (baseline, provably correct today): omit the `env` block entirely** and rely on the
+ambient `YADGAR_MCP_AUTH_TOKEN` — the same env the daemon already authenticates from at hook-fire
+time. Nothing is written to `settings.json`, so there is no secret at rest and no stale-token
+silent-failure:
+
+```python
+_env_block: dict = {}  # do not bake the token; hook inherits ambient env at fire time
+```
+
+**Alternative (documented, gated on verification): `${VAR}` indirection.**
 
 ```python
 _env_block = {"YADGAR_MCP_AUTH_TOKEN": "${YADGAR_MCP_AUTH_TOKEN}"} if _auth_token else {}
 ```
 
-(Or omit the env block entirely and rely on ambient env — decide during impl; `${VAR}` mirrors
-`setup.py:103` and is the safer default because it makes the dependency explicit.) Removes
-secret-at-rest and the stale-token silent-failure. The presence check still keys on whether a
-token exists in the install environment, but the **written value** is the indirection literal.
+This is **not** the default because it is **unverified for a hook `env` block**. The
+`setup.py:103` precedent is the MCP `headers` block (`"Authorization": "Bearer ${…}"`), a
+*different* config surface — it does **not** prove Claude Code interpolates `${VAR}` inside a hook
+`env` value. Choosing `${VAR}` requires a live confirmation (below).
+
+**Pre-build check (blocks adopting `${VAR}`).** Before writing any `${VAR}`-in-`env` impl, run a
+live Claude Code test: register a hook with `env: {"X": "${SOME_VAR}"}`, export `SOME_VAR`, fire the
+hook, and confirm the process sees the interpolated value (not the literal `${SOME_VAR}`). If it
+interpolates → `${VAR}` is safe to adopt. If it does not (or is inconclusive) → **stay on
+omit-env**. Absent this confirmation, ship omit-env.
+
+Either variant removes secret-at-rest and the stale-token silent-failure. The presence check may
+still key on whether a token exists in the install environment (to decide whether the daemon is
+auth-enabled), but under the default no token value — literal or indirection — is written.
 
 ### Fix C — test-fixture guard
 
-Before writing the env block, compare the token against a small deny-set of known test fixtures
-(currently `a-valid-32-char-token-here!!`). On match: **do not bake it**, log a warning
-("refusing to register a known test-fixture auth token — check YADGAR_MCP_AUTH_TOKEN"). Combined
-with Fix B, this is belt-and-suspenders; keep it because Fix B still keys presence off the env
-var.
+When the installer reads `YADGAR_MCP_AUTH_TOKEN` (still needed to decide whether the daemon is
+auth-enabled, even under the omit-env default), compare it against a small deny-set of known test
+fixtures (currently `a-valid-32-char-token-here!!`). On match: treat as **no usable token**, log a
+warning ("refusing to use a known test-fixture auth token — check YADGAR_MCP_AUTH_TOKEN"). Under
+the omit-env default nothing is baked regardless; the guard still matters for the presence check
+and for the gated `${VAR}` variant (where a value *would* be written). Belt-and-suspenders — keep
+it.
 
 ### Fix D — correct the container-refusal message
 
 Drop the `POST /hooks/install-bootstrap` clauses (misc.py:446, :450). Keep the working
-`host_command` (`yadgar install-hooks --scope=global`). Set `host_command_fallback` to the plain
-instruction to run the CLI on the host, or remove the key (no external consumer). **Do NOT**
+`host_command` (`yadgar install-hooks --scope=global`). **Drop the `host_command_fallback` key
+entirely** (RESOLVED, audit Finding 5): it has no external consumer and its own value is a *second*
+dangling `install-bootstrap` pointer — dropping is cleaner than rewording a dead key. **Do NOT**
 implement a new `/hooks/install-bootstrap` endpoint — higher cost, unneeded; listed as the
 rejected alternative.
 
@@ -241,13 +295,13 @@ rejected alternative.
   `yadgar/core/hooks/` or `hook_runner.py`). Car 3 cannot copy/register a file that Car 1 has not
   produced. → Car 3's manifest addition for router.py is gated on Car 1 landing.
 - **Car 2 (compact/restore scripts)** — `pre-compact-drain.sh` + `post-compact-rehydrate.sh`
-  already present in `yadgar/core/hooks/` and already in `_copy_scope_scripts._files` (:465). If
-  Car 2 rewrites/renames them, the manifest string must follow.
+  already present in `yadgar/core/hooks/` and already in `_copy_scope_scripts._files` (dict at
+  ~:472). If Car 2 rewrites/renames them, the manifest string must follow.
 
 **Concrete coupling = the file manifest**, three hardcoded lists: `_copy_scope_scripts._files`
-(:465), `_install_global_scripts` (:335), `_install_append_hooks._append_specs` (:406). Car 3's
-delivery work is: extend these lists to include Car 1's router + config and confirm Car 2's final
-script names, then register the new hook events.
+(dict at ~:472), `_install_global_scripts` (:335), `_install_append_hooks._append_specs` (:406).
+Car 3's delivery work is: extend these lists to include Car 1's router + config and confirm Car 2's
+final script names, then register the new hook events.
 
 **Sequencing recommendation.** Split Car 3 into two mergeable slices:
 
@@ -303,10 +357,18 @@ Post-fix invariants:
    own — it passes pre-fix.)
 2. **Sweep heals dupes:** seed settings with **two** duplicate yadgar `SubagentStop` entries; run
    install; assert exactly one remains.
-3. **Foreign hook preserved:** seed a non-yadgar `SubagentStop` entry; run install; assert it
-   survives alongside exactly one yadgar entry.
-4. **Token as `${VAR}`:** with `YADGAR_MCP_AUTH_TOKEN` set to a real-looking value, assert every
-   written `env` block value is the literal `"${YADGAR_MCP_AUTH_TOKEN}"`, never the raw token.
+3. **Over-delete guard (discriminating — audit Finding 1):** seed a foreign `SubagentStop` entry
+   whose command **contains the `yadgar-` substring but is NOT one of the four managed basenames**
+   — e.g. `python3 /opt/yadgar-extras/custom.py`. Run install; assert that entry **survives**
+   alongside exactly one managed yadgar entry. This seed is deleted by a loose `yadgar-` predicate
+   and preserved by basename-scoping → it is the only seed that discriminates the two predicates. A
+   plain foreign hook (`python3 /home/user/myhook.py`) survives under *both* predicates and pins
+   nothing, so it does not substitute for this seed.
+4. **Token not baked (default = omit-env):** with `YADGAR_MCP_AUTH_TOKEN` set to a real-looking
+   value, assert **no** written `env` block contains the raw token value. Under the omit-env
+   default, assert the token key is absent from every hook `env` block. (If and only if the
+   pre-build interpolation check adopts the `${VAR}` variant, assert instead that every written
+   `env` value is the literal `"${YADGAR_MCP_AUTH_TOKEN}"` — never the raw token.)
 5. **Test-token guard fires:** with `YADGAR_MCP_AUTH_TOKEN=a-valid-32-char-token-here!!`, assert
    no env block carries that literal and a warning is logged.
 6. **BUG D message:** assert the container-refusal detail string contains no
@@ -318,7 +380,20 @@ Post-fix invariants:
 
 8. Manifest-completeness check: every `*.py`/`*.sh` hook script shipped under
    `yadgar/core/hooks/` intended for install is referenced by exactly one manifest list (guards
-   Car 1/Car 2 rename drift).
+   Car 1/Car 2 rename drift). **Must TOLERATE the pre-existing append-script double-copy** (audit
+   Finding 4): `_copy_scope_scripts` copies the hyphen names (`subagent-stop.py` …) into
+   `hooks_dir`, and `_install_append_hooks` copies the same sources under `yadgar-`-prefixed names
+   — each append script lands twice under two filenames. The unreferenced hyphen copies are
+   pre-existing cruft, **not** in scope to fix here; test #8 must not flag them as
+   "shipped-but-unmanifested". (Both filename forms trace to a manifest source; only the `yadgar-`
+   copies are referenced by a registered hook command.)
+
+**[pre-build check]**
+
+9. **`${VAR}`-in-hook-`env` interpolation probe** — before adopting the `${VAR}` Fix B variant,
+   run a live Claude Code test (register a hook with `env: {"X": "${SOME_VAR}"}`, export `SOME_VAR`,
+   fire, confirm the interpolated value reaches the process). Pass → `${VAR}` may be adopted; fail
+   or inconclusive → ship omit-env. This is a gating check on the Fix B variant, not a unit test.
 
 ---
 
@@ -328,8 +403,9 @@ Existing suites to extend (do not duplicate):
 
 - `yadgar/tests/hooks/test_install_hooks_lib_module.py` — the `_append_if_absent` tests
   (`:89–:120`) get re-pointed to script-path dedup; add drift + sweep + foreign-preserve cases.
-- `yadgar/tests/hooks/test_install_hooks_injection.py` — add token `${VAR}` + test-token-guard
-  assertions.
+- `yadgar/tests/hooks/test_install_hooks_injection.py` — add token-not-baked (omit-env default) +
+  test-token-guard assertions. (If `${VAR}` is later adopted per the acceptance #9 probe, add the
+  `${VAR}`-literal assertion then.)
 - `yadgar/tests/hooks/test_install_hooks_host_vs_container.py` — add BUG D message assertion.
 - `yadgar/tests/hooks/test_install_hooks_stable_python.py` / `..._shebang.py` — regression guard
   (unchanged expectations).
@@ -344,12 +420,11 @@ minimal impl change (green). Run the hooks + scripts test subset to clean, then 
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| **Sweep over-deletes** foreign user hooks in shared events | Med | Tightest predicate — match only the four yadgar-managed script basenames / `yadgar-`+`hook_runner.py` signature (reuse `_entry_interpreter`). Acceptance test #3 pins it. |
+| **Sweep over-deletes** foreign user hooks in shared events | Low (post-fix) | Delete predicate = the four managed basenames ONLY (NOT the loose `yadgar-`/`hook_runner.py` substring — that is detection-only, unsafe for deletion). Acceptance test #3 (reframed to a `yadgar-`-substring-but-non-managed seed) discriminates and pins it. |
 | **Breaking existing installs** — settings shape change | Low | Sweep+rebuild produces the same shape; only collapses dupes + refreshes interpreter. Idempotency tests pin no-op on clean input. |
 | **Injected marker rejected by Claude Code schema** | Med (if pursued) | Not baseline — command-signature detection used instead; marker deferred to open question. |
 | **Car 1/Car 2 rename desync** (manifest drift) | Med | Manifest-completeness test (#8); delivery slice integrates last, after their names finalize. |
-| **`${VAR}` not interpolated in `env` block context** | Low | Precedent is the MCP `headers` block (`setup.py:103`); verify Claude Code interpolates `${VAR}` inside hook `env` specifically during impl (open question). Fallback: omit env block, rely on ambient env. |
-| **Orphan underscore hook files** (`subagent_stop.py` etc.) copied by a future manifest edit | Low | See open question — classify/remove; currently unreferenced by installer or imports. |
+| **`${VAR}` not interpolated in `env` block context** | N/A (default sidesteps) | Default is **omit-env** (provably correct today). `${VAR}` is the gated alternative — adopt only if the pre-build interpolation probe (acceptance #9) passes. The `setup.py:103` precedent is MCP `headers`, not hook `env`, so it does not verify this. |
 
 ---
 
@@ -357,7 +432,9 @@ minimal impl change (green). Run the hooks + scripts test subset to clean, then 
 
 **IN**
 
-- Fix BUG A (dedup key + migration-sweep), BUG B (`${VAR}`), BUG C (guard), BUG D (message).
+- Fix BUG A (basename dedup key + migration-sweep with basename-only delete predicate), BUG B
+  (omit-env default; `${VAR}` gated on acceptance #9 probe), BUG C (test-token guard), BUG D
+  (message correction + drop dead `host_command_fallback` key).
 - Re-point/extend the affected install_hooks tests.
 - Manifest-completeness guard test.
 - Delivery-integration hooks for Car 1 (router + exceptions) and Car 2 (compact/restore) — the
@@ -377,33 +454,53 @@ minimal impl change (green). Run the hooks + scripts test subset to clean, then 
 
 ## Version impact
 
-Core package (`pyproject.toml` currently **5.133.0**). Correctness slice (A–D) = a minor bump
-(bug fixes, one behavior change in append-hook dedup semantics). Delivery slice sequences **after**
-Cars 1+2 (and after the referenced #195 gate). Backend untouched. No migration to the DB —
-`settings.json` is regenerated in place by the sweep.
+Core package (`pyproject.toml` currently **5.133.0** → **target 5.134.0**, core-only, post-#195).
+**Correctness slice (A/B/C/D) lands early** as the 5.134.0 minor bump (bug fixes + one behavior
+change in append-hook dedup semantics); it has **zero** dependency on Cars 1+2. **Delivery slice
+(wire Car 1's `router.py` + exceptions config and Car 2's finalized scripts into the manifest)
+integrates LAST**, after Cars 1+2 finalize their script contents/names (and after the #195 gate).
+Backend untouched. No DB migration — `settings.json` is regenerated in place by the sweep.
 
 ---
 
-## Open questions
+## Resolved decisions (audit user-decisions folded in)
 
-1. **Marker key in hook entries** — does Claude Code's hook schema tolerate an extra
-   `_yadgar_managed`/version key in an entry dict, or strip/reject it? If tolerated, it is a more
-   robust sweep predicate than substring matching. Verify before adopting; baseline stays
-   signature-based.
-2. **`${VAR}` inside a hook `env` block** — confirmed for MCP `headers` (`setup.py:103`); confirm
-   Claude Code performs the same interpolation for hook-command `env` values. If not, fall back to
-   omitting the env block (ambient env).
-3. **Orphan underscore hook files** — `yadgar/core/hooks/` contains both hyphen and underscore
-   variants (`subagent-stop.py`/`subagent_stop.py`, `file-changed.py`/`file_changed.py`,
-   `instructions-loaded.py`/`instructions_loaded.py`, `subagent-start.py`/`subagent_start.py`;
-   underscore versions newer + larger, look like an in-flight T2 rename). The installer manifest
-   references **hyphen** names only; underscore files are unreferenced by the installer and not
-   imported as modules (grep confirmed). Are they dead artifacts to remove, or the intended
-   post-rename targets Car 1/2 will switch to? Resolve before the delivery slice, else the
-   installer may copy stale files.
-4. **Token env-block omission vs `${VAR}`** — final call between the two Fix B variants (explicit
-   indirection vs rely-on-ambient). Lean `${VAR}` for explicitness.
-5. **`host_command_fallback` key** — correct its text or drop it entirely (no external consumer)?
+The audit surfaced five user-decisions; all resolved here with the recommended defaults.
+
+1. **Sweep delete predicate → RESOLVED: four managed basenames ONLY.** Not the loose
+   `yadgar-`/`hook_runner.py` substring (detection-only, unsafe for deletion). See Fix A2.
+2. **Acceptance test #3 seed → RESOLVED: `yadgar-`-substring-but-non-managed path** (e.g.
+   `/opt/yadgar-extras/custom.py`) so it discriminates the loose-vs-tight predicate. See
+   acceptance #3.
+3. **Fix B variant → RESOLVED: omit-env-block default.** `${VAR}` is retained as a documented
+   alternative, gated on the acceptance #9 live interpolation probe. omit-env is provably correct
+   today; `${VAR}`-in-hook-`env` is unverified. See Fix B.
+4. **`host_command_fallback` key → RESOLVED: drop it.** No consumer; its own value is a second
+   dangling `install-bootstrap` pointer. See Fix D.
+5. **Marker key in hook entries → RESOLVED: not adopted (baseline = basename-signature
+   detection).** Injecting a `_yadgar_managed`/version key into an entry dict risks Claude Code's
+   hook schema stripping/rejecting unknown keys. Basename detection needs no schema change and is
+   sufficient; the marker is not pursued.
+
+### Orphan underscore hook files — DROPPED from scope (RESOLVED by investigation)
+
+The prior draft carried an open question and a cleanup-candidate note about the hyphen/underscore
+hook-file pairs (`subagent-stop.py`/`subagent_stop.py`, `file-changed.py`/`file_changed.py`,
+`instructions-loaded.py`/`instructions_loaded.py`, `subagent-start.py`/`subagent_start.py`). A
+dedicated investigation **RESOLVED** it: **both variants are LIVE, zero dead files.** The hyphen
+file is the entrypoint/dispatcher; it **imports** the underscore file as the logic module. The
+underscore modules were rewritten in T2 (#182) and ~40 tests depend on them. Removing either side
+breaks imports and tests. **No removal/cleanup scope in this plan** — any "orphan hook cleanup" is
+struck. (The unreferenced *hyphen copies* produced by the `_copy_scope_scripts` double-copy are a
+separate, pre-existing manifest artifact — see acceptance #8's tolerate clause; also not in scope
+to fix here.)
+
+### Still needing a user call
+
+None that block the correctness slice. The only remaining forward-dependency is the Fix B `${VAR}`
+adoption, and that is self-resolving: the acceptance #9 probe decides it, with omit-env as the
+safe default if the probe is skipped. Delivery-slice sequencing depends on Cars 1+2 landing
+(external to this car).
 
 ---
 
