@@ -1,5 +1,55 @@
 # Migration Notes
 
+## T4 Ettin CE-swap train — post-merge ops (core 5.132.0 / backend 5.43.0)
+
+The train swaps the cross-encoder reranker from `Alibaba-NLP/gte-reranker-modernbert-base`
+to the gate-winning Ettin variant (`GTE_RERANKER_MODEL` default flip), bakes all
+default-ON model weights into `Dockerfile.backend` for offline self-sufficiency,
+and restores `flake.nix` backend sizing to `--cpus 4` per ADR-0097. Config-only
+swap + a backend-image change — no core recall code path changed.
+
+### 1. Rebuild + push the backend image (bakes the models — build LOCALLY)
+
+`Dockerfile.backend` now bakes MiniLM (embed), the Ettin CE, GTE CE (one-cycle
+rollback), FlashRank ms-marco-MiniLM-L-12-v2, and doc2query-t5-small into the
+image so a fresh container serves `/embed` + `/rerank` with no network and no HF
+mount. Image grows ≈ +0.45–1.0 GB. `ci-release.yaml` `build-images` auto-builds
+and pushes the backend image on merge (pyproject/backend changed), but if you
+build/push manually:
+
+```bash
+podman build -f Dockerfile.backend -t docker.io/openfantasy/yadgar-backend:5.43.0 .
+podman push docker.io/openfantasy/yadgar-backend:5.43.0
+```
+
+Offline self-sufficiency was verified locally with a `--network none` + no-HF-mount
+smoke (`/embed` returns a real vector, `/rerank` returns Ettin scores).
+
+### 2. Restore `--cpus 4` (ADR-0097) — restart the backend
+
+`flake.nix` is edited to `--memory 6g --cpus 4` (was `--memory 4g --cpus 2`, the
+temporary T4-planning posture). The file edit does NOT restart the running
+container. After deploying 5.43.0, restart the backend so it picks up 4 CPUs, then
+run the Ettin perf re-measure (empty slots in `docs/testing/recall-perf-checklist.md`,
+"T4 Ettin swap — post-deploy measurement prep"). Do NOT re-tune torch/gather knobs
+for Ettin — keep the ADR-0097 GTE-derived settings so a model-only revert stays clean.
+
+### 3. Rollback lever (config-key, no revert needed)
+
+To roll back to GTE without reverting the train:
+
+```bash
+# env override (busts the CE cache correctly — Car 0(d) `_ckpt` fix tracks the reranker)
+YADGAR_GTE_RERANKER_MODEL=Alibaba-NLP/gte-reranker-modernbert-base
+```
+
+or edit the `GTE_RERANKER_MODEL` default in `yadgar/_shared/config/config.py`.
+GTE is baked into the 5.43.0 backend image for one cycle, so an offline
+config-revert to GTE works from the image alone. To roll back to the other Ettin
+variant instead, set `YADGAR_GTE_RERANKER_MODEL=cross-encoder/ettin-reranker-68m-v1`
+(or `-32m-v1`). Full-train revert = revert the single train PR; Car 0's fixes
+(shipped separately as #188) survive the revert.
+
 ## Deps-modernization train — CI images rebuild required BEFORE merging (core 5.131.0 / backend 5.42.0)
 
 `uv.lock` changed (blanket `uv lock --upgrade`: transformers 4.57.6→5.13.1,

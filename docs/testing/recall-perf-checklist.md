@@ -648,3 +648,62 @@ No empty results, no garbage ranking. transformers 5.x semantic scoring is funct
 - restore(): ~4,395ms (DB-bound, flat as expected)
 
 This replaces the prior 2-CPU baseline (transformers 4.57.6 = 10,955ms) as the **new reference point for T4 Ettin A/B experiments on the 5.x stack**.
+
+---
+
+## T4 Ettin swap — post-deploy measurement prep (core 5.132.0 / backend 5.43.0)
+
+**Status: PREP (empty slots).** The T4 train ships the Ettin-32m CE swap
+(`GTE_RERANKER_MODEL` → `cross-encoder/ettin-reranker-32m-v1`) as a config default
+flip plus a self-sufficient backend image. The live perf re-measure is **deferred
+to post-deploy** (the train does NOT restart the shared prod backend — see the
+`--cpus 4` restore reminder below). Fill the Ettin slots after the operator
+restores `--cpus 4` and restarts the backend on the 5.43.0 image.
+
+### Reminder — restore `--cpus 4` post-deploy (ADR-0097)
+
+The backend ran `--cpus 2` as a *deliberate temporary posture during T4 planning*
+so the Ettin A/B measured the model swap without a CPU-parallelism confound.
+ADR-0097 owner verdict: **4 CPUs = sweet spot** (gather_budget 1→2 unlocks parallel
+CE, −28% at 2→3; torch intra-op 1→2 adds −14% at 3→4; both knobs saturate at ≤4).
+`flake.nix` is already edited to `--memory 6g --cpus 4` in this train. After the
+train deploys, the operator must **restart the backend to pick up `--cpus 4`**
+(the file edit does not restart the running container — see MIGRATION_NOTES), then
+run the measurement below. Do NOT re-tune torch/gather knobs for Ettin in T4 — keep
+the ADR-0097 GTE-derived settings so a model-only revert to GTE stays clean
+(config-key only, tuning untouched).
+
+### A/B reference — GTE baseline on the transformers-5.x new-stack
+
+The reference the Ettin numbers are compared against (established by the
+5.131.0/5.42.0 new-stack recall bench, `docs/recall-bench-5.131.0`):
+
+| Regime | GTE (transformers-5.x, --cpus 2) |
+|---|---|
+| **WARM CE-miss** (6 fresh, valid, mean) | **~13,416ms** |
+| restore() | **~4,395ms** (DB-IO bound, CPU-invariant) |
+
+GTE 4-CPU (transformers-4.57.6 CPU-scaling series) was **6,807ms** warm CE-miss —
+the pre-deps-train figure; the 5.x new-stack 4-CPU GTE number is not yet measured.
+Both are recorded so the Ettin post-deploy run can be read against whichever
+stack/CPU regime the measurement is taken under.
+
+### Ettin baseline slots (to fill post-deploy, --cpus 4, 5.x stack)
+
+Run the ADR-0098 protocol (fresh distinct queries, CE-miss validity gate
+Δmiss ≥ 5/query via `:8001/metrics`, histogram deltas on
+`yadgar_recall_duration_ms`, per-span backend `POST /recall` attribution — never
+`core = total − grep-of-logs`). HOT per the #88 standing caveat (do not compare
+single-query HOT cross-run; hot floor ≈ 4.3s compute-bound).
+
+| Regime | Ettin-32m --cpus 4 (5.x) | Δ vs GTE ref |
+|---|---|---|
+| WARM CE-miss (6 fresh, valid, mean) | _TBD post-deploy_ | _TBD_ |
+| restore() | _TBD_ (expect ~unchanged, CE-swap-invariant) | _TBD_ |
+
+Optionally re-run the 2/3/4-CPU scaling curve on Ettin to confirm the ADR-0097
+knob attribution (gather_budget dominant, torch intra-op secondary) holds on the
+smaller model — recorded as rollback-safety, not a gate. Ettin-32m is ~1/5 the
+params of GTE-150M, so cold-load and per-pass CE cost should both drop; book the
+*measured* number (Amdahl + shared I/O mean the 6.3×-per-pass blog figure does not
+translate cleanly to end-to-end recall latency).

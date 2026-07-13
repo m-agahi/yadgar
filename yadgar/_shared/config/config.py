@@ -277,9 +277,16 @@ class Settings(BaseSettings):
     # v21 Fusion Method
     FUSION_METHOD: str = "convex"
 
-    # v22 Advanced Reranking — GTE-Reranker
+    # v22 Advanced Reranking — cross-encoder reranker (field name kept `GTE_*` for
+    # env/back-compat; T4 flipped the default from GTE-ModernBERT to Ettin-32m).
+    # T4 winner: `cross-encoder/ettin-reranker-32m-v1` (32.8M, ModernBERT-lineage,
+    # Apache-2.0). LongMemEval memory-domain A/B (Q=20/type × 6 types, legacy
+    # in-process path) gated the flip: recall@5/@10 parity-or-better on every type,
+    # +0.108 recall@5 on multi-session (the hardest type), ~6.3× CE speedup. GTE
+    # rollback: set YADGAR_GTE_RERANKER_MODEL=Alibaba-NLP/gte-reranker-modernbert-base
+    # (baked into Dockerfile.backend one cycle). 68m fallback = ettin-reranker-68m-v1.
     GTE_RERANKER_ENABLED: bool = True
-    GTE_RERANKER_MODEL: str = "Alibaba-NLP/gte-reranker-modernbert-base"
+    GTE_RERANKER_MODEL: str = "cross-encoder/ettin-reranker-32m-v1"
     GTE_RERANKER_MAX_LENGTH: int = 512
     GTE_RERANKER_FALLBACK_TO_FLASHRANK: bool = True
 
