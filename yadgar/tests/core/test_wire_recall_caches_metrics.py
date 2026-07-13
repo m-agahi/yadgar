@@ -275,9 +275,31 @@ def test_collector_emits_all_registered_data_caches():
 
 
 def test_collector_still_emits_ce_and_embed():
-    """The fix must NOT drop the pre-existing ce/embed generic series."""
-    # Importing embed_service registers ce/embed at module import.
-    import yadgar.backend.embed_service  # noqa: F401
+    """The fix must NOT drop the pre-existing ce/embed generic series.
+
+    Registration is forced via the idempotent factories rather than a bare
+    ``import yadgar.backend.embed_service``. Two reasons that import is not a
+    reliable trigger:
+      * ``yadgar.backend.embed_service`` is a PEP-562 package (T2 Car D2): its
+        ``__init__`` forwards attributes lazily and does NOT execute the submodule
+        at package-import, so ``_ce_cache = _make_ce_cache()`` (module-level in the
+        SUBMODULE) never runs from a bare package import — and if the submodule is
+        already in ``sys.modules`` the re-import is a no-op regardless.
+      * sibling tests (e.g. ``test_cache_class_car1``) call ``_REGISTRY.clear()``;
+        when they land earlier on the same xdist worker they wipe ce/embed, and the
+        no-op import cannot re-register them. This made the guard shard-order-fragile
+        (RED in a single-file / unlucky-shard run, GREEN in the full ``-n auto`` run).
+    ``get_ce_cache()`` re-materialises ce via its overwrite-on-dup factory; the embed
+    namespace has no getter, so its self-registering ``_make_embed_cache()`` factory
+    is called directly. Both are idempotent — this STRENGTHENS the guard (deterministic
+    registration) rather than weakening it, keeping the "registry refactor must not
+    drop ce/embed" intent intact.
+    """
+    from yadgar.backend.cache import get_ce_cache
+    from yadgar.backend.embed_service import _make_embed_cache
+
+    get_ce_cache()
+    _make_embed_cache()
 
     series = _collector_series()
     hit = series.get("yadgar_cache_hit_total", {})

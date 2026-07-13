@@ -1,5 +1,10 @@
 {
   "_comment": "I33 observe-coverage allowlist. Governance mirrors .complexity-allowlist.json (I30): every entry needs a valid category and a rationale >= 40 chars; a stale entry (fn no longer in scope) hard-fails even in warn-mode. Categories: hot-loop, generated, trivial, property, dunder, framework-instrumented, test, pre-existing. P1 (retrieval read path, ADR-0034) populated the retrieval-area exemptions below. The low-value presentation/CLI/generated/bootstrap tail is exempted en-masse via _exempt_globs (path-glob, one entry per directory or file). ADR-0040 option B (I33 glob blind-spot): _exempt_globs now hold ONLY CATEGORICALLY-non-observable dirs/files (a future fn there is also boilerplate: CLI glue, seed/export/migration codegen, package/logging/observe/timing framework, pure-render presentation files with no I/O). MIXED-logic files (viz_server.py, graph_api.py that COMPUTE the graph \u2014 real observable work) were removed from the glob and their real fns tier-instrumented @observe or given a governed per-fn exemption, so a NEW/modified fn there is no longer auto-invisible. Do NOT bulk-add all ~1,600 in-scope functions here.",
+  "_span_budget": {
+    "server_helpers:_cosine_similarity": {
+      "rationale": "Per-item hot-loop scorer called once per candidate during ranking; a per-call span is per-item cardinality bloat that floods Tempo (ADR-0074 span storm). Carries @observe(span=False) so the metric/attributes stay on the enclosing recall span but no per-call span is opened."
+    }
+  },
   "cache:Cache._is_expired": {
     "category": "trivial",
     "rationale": "Pure two-line TTL predicate (clock() - write_ts > ttl); no I/O, no ops decision. Called under the lock from the already-@observe'd Cache.get; a span/metric per get would double-instrument the hot path with zero dashboard value."
@@ -43,6 +48,10 @@
   "embed_service_metrics:CacheStatsCollector.collect": {
     "category": "framework-instrumented",
     "rationale": "Prometheus Collector protocol method (a generator that yields MetricFamily objects at scrape time). It IS the observability surface for the backend CE/embed cache dual-emit; @observe cannot wrap a generator without breaking yield semantics, and instrumenting the scrape emitter is recursive."
+  },
+  "embed_service_metrics:_SharedObserveBridge.collect": {
+    "category": "framework-instrumented",
+    "rationale": "Prometheus Collector protocol generator (P-SB #6/#50) that yields the shared registry's yadgar_observe_* families onto backend /metrics at scrape time. Same class as CacheStatsCollector.collect: @observe cannot wrap a generator without breaking yield semantics, and instrumenting the scrape emitter that exposes the observe families is recursive self-instrumentation."
   },
   "embed_service_metrics:_default_backend_cache_instances": {
     "category": "framework-instrumented",

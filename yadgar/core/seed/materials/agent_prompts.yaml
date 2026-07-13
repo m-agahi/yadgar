@@ -23,6 +23,7 @@ contract:
        Exception: long_running agents may call memorize with provenance_agent set.
     4. Executing work from a docs/plans/ plan? `wiki_read agent-prompt-plan-executing-build` —
        its plan lifecycle (ADR-0081/0082) and discipline rules bind this dispatch.
+    5. Dispatching a sub-agent yourself? Honor its pattern's DISPATCH: model tier; set model explicitly.
 
     REQUIRED: your final message MUST end with this section (even if empty):
     This footer IS memorized verbatim — one memory per bullet. Write each bullet as a standalone, context-complete memory (durable fact, not status); note candidates as you go and finalize at the end.
@@ -34,6 +35,8 @@ prompts:
 - pattern: code-review
   purpose: Review a diff or PR for correctness and risk.
   content: |-
+    DISPATCH: model=opus (fallback=sonnet for small mechanical diffs) — canonical: model-tier-dispatch
+
     Review the given diff or PR. One finding per line, severity-tagged (critical/high/medium/low).
     Cite file:line for every finding.
     Flag only what changes correctness, security, or observable behavior.
@@ -42,6 +45,8 @@ prompts:
 - pattern: debug-investigate
   purpose: Root-cause a bug and ship a minimal fix with a regression test.
   content: |-
+    DISPATCH: model=opus (fallback=sonnet for shallow bugs) — canonical: model-tier-dispatch
+
     Reproduce the bug first — confirm failure before touching code.
     Isolate via bisection, logging, or binary-search; identify the true root cause, not the symptom.
     Apply the minimal fix — surgical edit, no opportunistic cleanups.
@@ -50,6 +55,8 @@ prompts:
 - pattern: explore-codebase
   purpose: Map where code lives / how a subsystem works (READ-ONLY).
   content: |-
+    DISPATCH: model=sonnet (haiku for pure listing) — canonical: model-tier-dispatch
+
     READ-ONLY investigation — make zero edits.
     Locate where X lives or how Y works; start broad (grep/glob) then narrow.
     Return a file:line table with one row per relevant symbol or entry-point.
@@ -58,6 +65,8 @@ prompts:
 - pattern: implement-tdd
   purpose: Implement a feature test-first (red→green→refactor), writing the least code that satisfies it — a YAGNI least-code ladder applied before coding.
   content: |-
+    DISPATCH: model=sonnet (fallback=opus for multi-seam scope) — canonical: model-tier-dispatch
+
     Write a failing test that pins the desired behavior (red) before any implementation code.
 
     Before writing implementation, climb the least-code ladder — STOP at the first rung that works:
@@ -80,6 +89,8 @@ prompts:
   # cross-cutting rules extracted to the composed discipline pages). Seeder is
   # create-if-absent — existing deployments keep their live page untouched.
   content: |-
+    DISPATCH: model=opus for multi-seam cars, sonnet for mechanical cars — plan states which — canonical: model-tier-dispatch
+
     ## Purpose
     Standing preamble block for ANY dispatch that executes a docs/plans/ plan (feature build, fix train car, closeout). Encodes ADR-0081/0082 plan-lifecycle + the battle-tested discipline set.
 
@@ -112,6 +123,8 @@ prompts:
 - pattern: stacked-car-parallel-build
   purpose: 'Parallel car N+1 on a stacked branch off the train branch — disjoint seams, no train pushes, main thread rebases in (ADR-0088)'
   content: |-
+    DISPATCH: model=sonnet — seams pre-cut by the plan — canonical: model-tier-dispatch
+
     ## Purpose
     Dispatch shape for building train car N+1 IN PARALLEL with car N when their file seams are disjoint (ADR-0088 one-PR trains). Car N owns the train branch; car N+1 builds on a STACKED branch and is rebased in by the main thread.
 
@@ -137,6 +150,8 @@ prompts:
 - pattern: feature-kill-closeout
   purpose: 'Complete removal of a decision-killed feature: code+knobs+registries+tests+plans (archived in-PR per ADR-0081), zero residue'
   content: |-
+    DISPATCH: model=sonnet — canonical: model-tier-dispatch
+
     ## Purpose
     Remove a decision-killed feature completely — code, knobs, registries, tests, plans — leaving zero residue. Used for: onnx CE backend (ADR-0067), recall-output cache (ADR-0071).
 
@@ -159,6 +174,8 @@ prompts:
 - pattern: dispatch-fix-test-migration
   purpose: 'Migrate tests broken by architecture changes without bending — v2 composes with plan-executing-build discipline'
   content: |-
+    DISPATCH: model=sonnet — canonical: model-tier-dispatch
+
     # Pattern: dispatch-fix-test-migration (v2)
 
     Use when an architecture change (cutover/refactor) broke unit tests that assert OLD behavior, and the fix is proper MIGRATION not bending. Main thread MUST first diagnose per-test (delegate a read-only classifier) BEFORE dispatching edits — a blind "make tests pass" agent will hollow-pass or bend.
@@ -175,6 +192,8 @@ prompts:
 - pattern: mechanical-refactor-chunk-commit-early
   purpose: 'Big file-move/codemod refactor — ONE chunk per agent, commit before returning, so a stream-timeout can''t wipe work. Fill PLACEHOLDERS.'
   content: |-
+    DISPATCH: model=sonnet — chunked mechanical codemod — canonical: model-tier-dispatch
+
     Caveman prose; code normal. TIGHT SCOPE — do ONLY <THIS CHUNK> then COMMIT. Do NOT do later chunks (<LIST>). A prior mega-agent doing everything at once timed out at ~75 tool calls with ZERO commits → all work lost + half-broken worktree. You do ONE chunk and COMMIT before returning. Entry per [[agent-discipline-recall-first]]: ONE `recall("<TOPIC>", directory="<REPO>")`.
 
     ⚠️ BEHAVIOR-NEUTRAL (git mv + import-path rewrites only). ⚠️ SHIM = sys.modules ALIAS (`sys.modules[__name__]=_m`) for leaf modules (write-through, patch-compatible) — NOT `__getattr__` (read-only, breaks test patch()); PACKAGES = `__init__` getattr shim (preserve `__path__`) + per-submodule `sys.modules` alias (aliasing the pkg object → `__path__` double-load → two instances → desync). ⚠️ REPOINT path-keyed guards proactively (they silently vacuously-pass against shim files: complexity baseline/allowlist, observe-allowlist, ruff per-file-ignores, capability-coverage, metric-writers, three-way-sync globs). ⚠️ import-linter catches FUNCTION-LOCAL imports (AST) — func-local does NOT hide the edge. ⚠️ SAFETY: import-smoke + targeted only (final CI is the gate) — per [[agent-discipline-process-hygiene]]. Commit rules per [[agent-discipline-commit-hygiene]]. WORK IN worktree `<PATH>` — branch `<BRANCH>` @ <SHA>. Confirm branch+HEAD. STACK a commit. Do NOT push. guards WITHOUT cd out of the worktree.
@@ -198,6 +217,8 @@ prompts:
 - pattern: plan-corpus-status-sweep
   purpose: 'Classify plan-corpus files shipped vs remaining for task-list rebuild / archive sweep'
   content: |-
+    DISPATCH: model=haiku — canonical: model-tier-dispatch
+
     Read-only Explore agent. Input: plans directory path, current shipped versions (core/backend), any in-flight branches whose plans count as PARTIAL-pending-merge.
 
     For each top-level plan file (exclude living docs like ROADMAP.md, exclude archive/ subdirs):
@@ -213,6 +234,8 @@ prompts:
 - pattern: plan-audit
   purpose: 'Adversarially audit an implementation plan BEFORE building — verify its load-bearing claims against the actual code, try to break it, return build / build-with-changes / don''t-build.'
   content: |-
+    DISPATCH: model=fable (fallback=opus) — adversarial audit is peak $/insight leverage — canonical: model-tier-dispatch
+
     You are an INDEPENDENT skeptic. The plan may be wrong; its prose is not evidence. Your job: verify every LOAD-BEARING claim against the actual code (cite file:line), try to BREAK the design, and gate the build.
 
     Read the plan fully + its risk list. For each foundation claim the design rests on, VERIFY against source — trace the real code path, do NOT trust the plan's framing (it has been wrong before: an "all-remote" claim turned out runtime-conditional on an env var; a feared "1-connection singleton" was actually default-100). Mark each claim VERIFIED / CRACKED / UNCERTAIN with file:line.
@@ -231,6 +254,8 @@ prompts:
 - pattern: crash-rca
   purpose: 'Root-cause a production crash/hang/restart-loop OFF PROD — reproduce it in a controlled repro, exclude candidate mechanisms against code, find the load-bearing flaw.'
   content: |-
+    DISPATCH: model=opus — evidence/tool-loop heavy; escalate fable only on 2× reasoning stall — canonical: model-tier-dispatch
+
     Root-cause a production crash / hang / restart-loop OFF PROD — do NOT keep crashing the live system to study it.
 
     Reproduce from the symptom first: the exact failure mode (crash-loop? hang? self-restart?) and WHAT changed when it started (which config/version flipped). The mechanism is usually the INTERACTION of a recent change with a PRE-EXISTING fragility, not the change alone.
@@ -251,6 +276,8 @@ prompts:
 - pattern: drift-audit
   purpose: 'Detect drift/garbage/gaps between a source-of-truth and the artifacts that should mirror it (docs, config metadata, registries, generated content, wiki) — find divergence on purpose, not by accident.'
   content: |-
+    DISPATCH: model=sonnet (fallback=opus if drift classification is judgment-heavy) — canonical: model-tier-dispatch
+
     Name the SOURCE OF TRUTH (the authoritative definition — e.g. the code: the Settings fields, the tool/function registry, the DB schema, the AST) and the DERIVED artifact(s) that must mirror it (a doc, FIELD_META, a capability registry, wiki pages, generated files).
 
     Enumerate BOTH sides COMPLETELY (do not sample) and diff by identity (name/key). Bucket every discrepancy:
@@ -270,6 +297,8 @@ prompts:
 - pattern: feasibility-design
   purpose: 'Verify a mechanism is buildable on the target platform (docs + existing precedent) BEFORE designing it — then design only what the platform actually supports.'
   content: |-
+    DISPATCH: model=fable (fallback=opus) — pre-build feasibility shapes everything downstream — canonical: model-tier-dispatch
+
     Verify a mechanism is BUILDABLE on the target platform BEFORE designing it — then design only what the platform actually supports, not what you assume.
 
     FEASIBILITY first (cite the platform docs + existing-code precedent; do NOT assume):
@@ -291,6 +320,8 @@ prompts:
 - pattern: perf-anomaly-metrics
   purpose: 'Root-cause a recurring CPU / memory / IO resource anomaly (spike, burst, leak) from observability metrics + live profiling — when logs alone can''t attribute it.'
   content: |-
+    DISPATCH: model=opus — attribution reasoning over noisy metrics — canonical: model-tier-dispatch
+
     Observe before theorizing — confirm the anomaly's signature in metrics FIRST.
 
     1. Find the spike TIME(s) via Prometheus `query_range` on the host signal (CPU non-idle `1 - avg(rate(node_cpu_seconds_total{mode="idle"}[1m]))`, RSS, disk IO). Note magnitude + whether PERIODIC (what interval?) or one-off. Discount one-off deploy/restart spikes if hunting a recurring issue.

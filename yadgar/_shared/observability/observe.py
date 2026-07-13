@@ -11,7 +11,11 @@ and emits BY TIER:
                (yadgar_observe_stage_duration_seconds{stage} +
                yadgar_observe_stage_errors_total{stage}); ERROR log on raise only.
     hot      : span only (attribute/count on the enclosing span). NO per-call
-               metric, NO per-call log.
+               metric, NO per-call log. NOTE: a hot-tier fn STILL opens a per-call
+               span by default — for a per-item hot-LOOP helper that must not open
+               a span at all (ADR-0074 span-storm budget), pass span=False (see the
+               `observe(...)` docstring). "hot" is about the metric/log budget;
+               span=False is the separate span budget.
     exempt   : no-op passthrough (the categorized "documented reason not to").
 
 Anti-cardinality (plan §3.3): boundaries SHARE the RED family keyed by a bounded
@@ -56,12 +60,21 @@ Tier = Literal["boundary", "stage", "hot"]
 try:
     from prometheus_client import Counter as _Counter
     from prometheus_client import Histogram as _Histogram
-
-    from yadgar._shared.observability.metrics import _registry as _yadgar_registry
+except ImportError:  # pragma: no cover
+    # prometheus_client is a HARD dep (pyproject.toml [project.dependencies], not
+    # optional-extras); this branch is defensive-only and should never fire in a
+    # valid install.
+    _PROM_AVAILABLE = False
+else:
+    # NOT guarded — a failure here is a STRUCTURAL bug (the old observe→metrics→
+    # config→observe cycle). Import the SHARED registry from the leaf module
+    # (registry.py, zero yadgar imports) directly, NOT via metrics.py — so observe
+    # no longer imports metrics at module load and the cycle is gone. Let any error
+    # raise loud rather than silently zero the metric arm for the process lifetime
+    # (that silent degradation WAS the P-SB P0 bug).
+    from yadgar._shared.observability.registry import _registry as _yadgar_registry
 
     _PROM_AVAILABLE = True
-except Exception:  # pragma: no cover
-    _PROM_AVAILABLE = False
 
 
 def _get_or_create():
@@ -238,11 +251,20 @@ def observe(
     """Tri-signal observability decorator. See module docstring for tier semantics.
 
     span=False: emit metric + log (and set the lint sentinel) but do NOT open an
-    @observe span. Use ONLY for a fn that already carries an EXPLICIT inner
-    ``with span(NAME)`` grouping span (e.g. recall._apply_recall_side_effects,
-    recall._fanout_recall) — the @observe span would otherwise nest BETWEEN the
-    enclosing op and that inner grouping span, pushing the intended grouping span
-    down a level and breaking its "direct child of the enclosing op" contract.
+    @observe span. Two legitimate reasons (ADR-0074 / ADR-0085 I33 v2):
+
+      1. Inner-grouping-span fns: the fn already carries an EXPLICIT inner
+         ``with span(NAME)`` grouping span (e.g. recall._apply_recall_side_effects,
+         recall._fanout_recall) — the @observe span would otherwise nest BETWEEN the
+         enclosing op and that inner grouping span, pushing the intended grouping
+         span down a level and breaking its "direct child of the enclosing op"
+         contract.
+      2. Hot-loop budget: a per-item helper called inside a hot loop
+         (e.g. tools.project._cosine_similarity) — a per-call span is per-item
+         cardinality bloat that floods Tempo (ADR-0074 span-storm). span=False keeps
+         the metric/attributes on the ENCLOSING span but opens NO per-call span. The
+         I33 v2 ``_span_budget`` lint section enforces span=False on such listed fns.
+
     The lint counts a non-exempt @observe as satisfied regardless of span=.
     """
 

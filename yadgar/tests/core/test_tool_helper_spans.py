@@ -82,13 +82,29 @@ def test_omit_sentinel_emits_span(span_exporter):
     assert any(n.endswith(".project._omit_sentinel") for n in names), names
 
 
-def test_cosine_similarity_emits_span(span_exporter):
-    """server_helpers._cosine_similarity opens a hot span (pure math)."""
+def test_cosine_similarity_emits_no_span_span_budget_exception(span_exporter):
+    """server_helpers._cosine_similarity is a span-budget exception: NO per-call span.
+
+    CONTRACT CHANGE (P-SB §3.4 Commit B, ADR-0074 span-storm budget / ADR-0085):
+    ``_cosine_similarity`` is a per-item hot-LOOP helper called once per candidate
+    pair inside the wiki-similarity gate; opening a span per call is a span storm.
+    Commit b4e1926d flipped its decorator to ``@observe(tier="hot", span=False)``
+    and seeded it as the sole entry in ``.observe-allowlist.json`` ``_span_budget``
+    (see ``test_span_budget_sweep_psb.py`` for the source-level contract assertion).
+
+    ``span=False`` suppresses ONLY the per-call span — the ``tier="hot"`` metric and
+    attributes still ride the enclosing span, so observability is intact, not
+    dropped. This test therefore asserts the INVERSE of the pre-sweep contract: no
+    span whose qualname tail is ``._cosine_similarity`` is emitted. The return value
+    is asserted too so the guard stays non-vacuous (the helper still runs + computes).
+    """
     from yadgar.core.server.tools.project import _cosine_similarity
 
-    _cosine_similarity([1.0, 0.0, 1.0], [1.0, 1.0, 0.0])
-    # R2b: span names are dynamic (module.qualname). R3: the helper moved to
-    # yadgar._shared.server_helpers (project.py re-imports it), so the span
-    # carries the defining module's qualname.
+    result = _cosine_similarity([1.0, 0.0, 1.0], [1.0, 1.0, 0.0])
+    # Non-vacuity: dot=1, |a|=|b|=sqrt(2) → 1/2 = 0.5. The helper must still compute.
+    assert result == pytest.approx(0.5)
     names = _span_names(span_exporter)
-    assert any(n.endswith(".server_helpers._cosine_similarity") for n in names), names
+    assert not any(n.endswith("._cosine_similarity") for n in names), (
+        f"_cosine_similarity is a _span_budget exception (span=False); it must emit "
+        f"NO per-call span, but found: {names}"
+    )

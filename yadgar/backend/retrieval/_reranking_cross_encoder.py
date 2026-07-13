@@ -190,7 +190,7 @@ class _CrossEncoderMixin:
             for i in range(len(documents))
         ]
 
-    @observe(tier="hot", metric="retrieval.ce.score_ce_cached")
+    @observe(tier="stage", metric="retrieval.ce.score_ce_cached")
     def score_ce_cached(self, query: str, texts: list[str]) -> list[float] | None:
         """Get-or-compute CE scores through the injected ``ce`` cache (Car 1, #41).
 
