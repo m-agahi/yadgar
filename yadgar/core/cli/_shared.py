@@ -23,8 +23,15 @@ def forward_restore(directory: str) -> dict:
     return _forward_restore(directory)
 
 
-def forward_pre_compact_drain(directory: str) -> dict:
-    """Run the pre-compact drain writes via the backend /admin forward."""
+def forward_pre_compact_drain(directory: str, transcript_path: str | None = None) -> dict:
+    """Run the pre-compact drain writes via the backend /admin forward.
+
+    HOOKS Car 2: optional transcript_path threads in-flight orchestration capture
+    through the CLI (Path B) to match the HTTP hook path. None → pre-Car-2.
+    """
     from yadgar.core.server.tools._forward import _forward_admin
 
-    return _forward_admin("pre_compact_drain", {"directory": directory})
+    return _forward_admin(
+        "pre_compact_drain",
+        {"directory": directory, "transcript_path": transcript_path},
+    )

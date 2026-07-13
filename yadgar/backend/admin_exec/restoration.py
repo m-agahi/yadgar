@@ -18,10 +18,15 @@ from yadgar.backend.restoration import ensure_restoration_engines
 def pre_compact_drain(payload: dict) -> dict:
     """Emergency context capture before compaction. Storage-write half.
 
-    payload: {directory}
+    payload: {directory, transcript_path?}
+    HOOKS Car 2: optional transcript_path is parsed for in-flight orchestration
+    state and stored on the checkpoint. Absent/None degrades to pre-Car-2.
     Returns the CheckpointRestore.pre_compact_drain result dict:
     {status, epoch, auto_checkpoint_created}.
     """
     ensure_restoration_engines()
     replay = _get_replay()
-    return replay.pre_compact_drain(payload.get("directory", ""))
+    return replay.pre_compact_drain(
+        payload.get("directory", ""),
+        transcript_path=payload.get("transcript_path"),
+    )

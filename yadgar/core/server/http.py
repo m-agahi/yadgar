@@ -658,6 +658,11 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
         body = {}
 
     directory = body.get("cwd", os.getcwd())
+    # HOOKS Car 2: thread transcript_path through so the backend drain can parse
+    # in-flight orchestration state. hook_runner POSTs the full stdin payload
+    # (which carries transcript_path); this handler previously extracted only
+    # `cwd` and dropped it. Forward it (optional — None degrades to pre-Car-2).
+    transcript_path = body.get("transcript_path")
 
     # T2 Car B: CheckpointRestore lives backend-side now — the drain writes
     # (epoch increment + auto-checkpoint upsert) run via the /admin forward.
@@ -667,7 +672,9 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
 
     try:
         result = await asyncio.to_thread(
-            _forward_admin, "pre_compact_drain", {"directory": directory}
+            _forward_admin,
+            "pre_compact_drain",
+            {"directory": directory, "transcript_path": transcript_path},
         )
     except Exception as e:
         logger.exception("hook_pre_compact forward error: %s", e)
@@ -876,6 +883,25 @@ async def hook_session_context(request: Request) -> JSONResponse:
     except Exception as _se:
         logger.debug("sentinel import error in session-context: %s", _se)
 
+    # v5.7.9: source-aware prefix — context line before the brief.
+    _SOURCE_PREFIX = {
+        "compact": "[yadgar] Session compacted — context restored by compact handler.\n",
+        "clear": "[yadgar] Session cleared — previous context wiped.\n",
+        "startup": "[yadgar] Session starting.\n",
+        "resume": "[yadgar] Resuming session.\n",
+    }
+
+    # Dedup: on source=compact the /hooks/post-compact handler already owns the
+    # whole restore inject (restore() prepends blocks + emits the checkpoint +
+    # the project_brief catalog). The _render catalog assembled below is NOT
+    # otherwise guarded, so on compact it double-injects (~500-tok duplicate
+    # alongside restore()'s markdown). Early-return here with ONLY the v5.7.9
+    # compaction note (a one-line marker restore() does not emit) and skip the
+    # catalog. Placed AFTER the recall-throttle write (:869) and sentinel import
+    # (:875) so those side effects still fire on every compact.
+    if source == "compact":
+        return JSONResponse({"text": _SOURCE_PREFIX["compact"]})
+
     try:
         # Look up via yadgar.server so patch.object(srv, "project_brief", ...) takes effect
         import sys as _sys  # noqa: PLC0415
@@ -887,13 +913,6 @@ async def hook_session_context(request: Request) -> JSONResponse:
         brief = await asyncio.to_thread(_pb, directory, mode=mode, branch_hint=branch_hint)
         render = brief.get("_render", "")
 
-        # v5.7.9: source-aware prefix — context line before the brief.
-        _SOURCE_PREFIX = {
-            "compact": "[yadgar] Session compacted — context restored by compact handler.\n",
-            "clear": "[yadgar] Session cleared — previous context wiped.\n",
-            "startup": "[yadgar] Session starting.\n",
-            "resume": "[yadgar] Resuming session.\n",
-        }
         render = _SOURCE_PREFIX.get(source, "") + render
 
         # v5.35.1: prepend memory blocks (always-injected named containers).

@@ -97,6 +97,26 @@ def test_mcp_tool_refuses_in_container(tmp_path, monkeypatch):
     )
 
 
+def test_container_refusal_has_no_dead_install_bootstrap_ref(tmp_path, monkeypatch):
+    """BUG D: the refusal must not cite the non-existent /hooks/install-bootstrap
+    endpoint, and the dead host_command_fallback key must be gone. A runnable
+    host_command must still be exposed."""
+    monkeypatch.setenv("YADGAR_IN_CONTAINER", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    install_hooks = _get_mcp_install_hooks()
+    result = install_hooks(project_directory=str(tmp_path / "proj"), scope="global")
+
+    assert "install-bootstrap" not in result.get("detail", ""), (
+        "container-refusal detail still cites the dead /hooks/install-bootstrap endpoint"
+    )
+    assert "host_command_fallback" not in result, "dead host_command_fallback key must be dropped"
+    assert result.get("host_command", "").strip(), "a runnable host_command must remain"
+    assert "install-bootstrap" not in json.dumps(result), (
+        "no install-bootstrap substring may remain anywhere in the refusal payload"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. MCP tool works on host (non-container)
 # ─────────────────────────────────────────────────────────────────────────────

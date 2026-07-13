@@ -14,7 +14,7 @@ def cmd_drain(args):
     from yadgar.core.cli._shared import forward_pre_compact_drain, silence_logging
 
     silence_logging()
-    result = forward_pre_compact_drain(args.directory)
+    result = forward_pre_compact_drain(args.directory, getattr(args, "transcript_path", None))
     # Output JSON to stdout so hook can parse it if needed
     print(json.dumps(result))
 
@@ -22,6 +22,13 @@ def cmd_drain(args):
 def register(subparsers):
     p = subparsers.add_parser("drain", help="Pre-compaction context drain")
     p.add_argument("directory", help="Project directory")
+    # HOOKS Car 2: optional transcript path for in-flight orchestration capture.
+    p.add_argument(
+        "--transcript-path",
+        type=str,
+        default=None,
+        help="Session transcript JSONL (captures in-flight agents/shells/worktrees)",
+    )
     # --db-path kept for CLI compatibility; ignored since T2 Car B (the drain
     # writes run backend-side against the backend's own DB connection).
     p.add_argument("--db-path", type=str, default=None, help="Ignored (T2 Car B: forward-only)")

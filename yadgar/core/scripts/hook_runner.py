@@ -154,7 +154,10 @@ def hook_post_compact_rehydrate() -> None:
 
     result = _http_get("/hooks/post-compact", {"directory": directory})
     if result:
-        text = result.get("text", result.get("context", ""))
+        # BUG 1 fix: backend /hooks/post-compact returns the restore markdown
+        # under `formatted` (checkpoint_restore.py:399). Prefer it; keep the old
+        # text/context keys as a defensive fallback for any other response shape.
+        text = result.get("formatted", result.get("text", result.get("context", "")))
         if text:
             print(text)
 

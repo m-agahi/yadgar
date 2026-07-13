@@ -524,9 +524,11 @@ def test_install_hooks_pretooluse_direct_command_not_dispatcher(tmp_path, monkey
     assert "hook_runner.py" not in cmd, (
         f"PreToolUse should use standalone script, not hook_runner.py dispatcher. Got: {cmd}"
     )
-    # Must reference the yadgar-db-lockdown-check.py standalone script
-    assert "yadgar-db-lockdown-check.py" in cmd, (
-        f"PreToolUse must reference yadgar-db-lockdown-check.py. Got: {cmd}"
+    # Must reference the yadgar-pretooluse-router.py standalone script.
+    # HOOKS train Car1 subsumed db-lockdown's docker-exec guard into the router
+    # (guard G4); PreToolUse now points at the router, still a standalone script.
+    assert "yadgar-pretooluse-router.py" in cmd, (
+        f"PreToolUse must reference yadgar-pretooluse-router.py. Got: {cmd}"
     )
 
 

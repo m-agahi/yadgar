@@ -34,6 +34,46 @@ _MICRO_DECISION_RE = re.compile(
 )
 
 
+@observe(tier="stage")
+def _list_worktrees(directory: str) -> list[str]:
+    """Return ``git worktree list`` entries as "path (branch)" strings.
+
+    Best-effort — a non-git directory, missing git, or timeout yields []. Never
+    raises (the drain path must not be blocked by a git failure).
+    """
+    import subprocess  # noqa: PLC0415
+
+    if not directory:
+        return []
+    try:
+        out = subprocess.run(
+            ["git", "-C", directory, "worktree", "list", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:  # best-effort worktree capture; never blocks the drain
+        return []
+    if out.returncode != 0:
+        return []
+    entries: list[str] = []
+    path = ""
+    for line in out.stdout.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree ") :].strip()
+        elif line.startswith("branch "):
+            branch = line[len("branch ") :].strip().replace("refs/heads/", "")
+            entries.append(f"{path} ({branch})")
+            path = ""
+        elif line == "" and path:
+            entries.append(path)
+            path = ""
+    if path:
+        entries.append(path)
+    return entries
+
+
 class CheckpointRestore:
     """Reconstructs context after Claude Code compaction events.
 
@@ -207,38 +247,72 @@ class CheckpointRestore:
         return self.create_checkpoint(directory, ctx, session_id="micro-auto")
 
     @trace_span()
-    def pre_compact_drain(self, directory: str) -> dict:
+    def pre_compact_drain(self, directory: str, transcript_path: str | None = None) -> dict:
         """Emergency context capture before compaction.
 
         Called by PreCompact hook. Triggers:
         1. Auto-checkpoint from sensory buffer
         2. Epoch increment (marks compaction boundary)
         3. Emergency consolidation
+
+        When ``transcript_path`` is supplied (HOOKS Car 2), the session JSONL is
+        parsed for in-flight orchestration state (dispatched background agents +
+        bg-bash shells with no terminal notification) and ``git worktree list``
+        is captured; the result is stored under the checkpoint's ``in_flight``
+        field so ``restore()`` can surface it after compaction. ``None`` degrades
+        to the pre-Car-2 behaviour (no in_flight written).
         """
         new_epoch = self._storage.increment_epoch()
+
+        in_flight = self._capture_in_flight(transcript_path, directory)
 
         # Create an auto-checkpoint if no recent one exists (per-directory)
         active = self._storage.get_active_checkpoint(directory)
         auto_created = False
         if active is None or active.get("epoch", 0) < new_epoch - 1:
-            self._storage.insert_checkpoint(
-                {
-                    "session_id": "auto-drain",
-                    "directory_context": directory,
-                    "current_task": "[auto-captured before compaction]",
-                    "epoch": new_epoch,
-                }
-            )
+            checkpoint_data = {
+                "session_id": "auto-drain",
+                "directory_context": directory,
+                "current_task": "[auto-captured before compaction]",
+                "epoch": new_epoch,
+            }
+            if in_flight is not None:
+                checkpoint_data["in_flight"] = in_flight
+            self._storage.insert_checkpoint(checkpoint_data)
             auto_created = True
         else:
-            # Update existing checkpoint with new epoch
+            # Update existing checkpoint with new epoch (+ in_flight if captured)
             self._storage.update_checkpoint_epoch(active["id"], new_epoch)
+            if in_flight is not None:
+                self._storage.update_checkpoint_in_flight(active["id"], in_flight)
 
         return {
             "status": "drained",
             "epoch": new_epoch,
             "auto_checkpoint_created": auto_created,
         }
+
+    @observe(tier="stage")
+    def _capture_in_flight(self, transcript_path: str | None, directory: str) -> dict | None:
+        """Parse the transcript for in-flight agents/shells + capture worktrees.
+
+        Returns None when no transcript_path is given (back-compat) or when the
+        parse+worktree capture yields nothing actionable. Never raises — the
+        drain must not be blocked by a parse failure.
+        """
+        if not transcript_path:
+            return None
+        try:
+            from yadgar.backend.restoration.transcript_parse import (  # noqa: PLC0415
+                parse_in_flight,
+            )
+
+            in_flight = parse_in_flight(transcript_path)
+            in_flight["worktrees"] = _list_worktrees(directory)
+            return in_flight
+        except Exception:
+            logger.debug("pre_compact_drain in-flight capture failed", exc_info=True)
+            return None
 
     @observe(tier="stage")
     def _fetch_recent_memories_safe(self, max_memories: int) -> list[dict]:
@@ -437,6 +511,42 @@ class CheckpointRestore:
         lines.append("")
         return lines
 
+    @observe(tier="hot")
+    def _format_in_flight_section(self, checkpoint: dict) -> list[str]:
+        """Return markdown lines for the in-flight orchestration state, if any.
+
+        HOOKS Car 2. Emits nothing unless ``checkpoint['in_flight']`` carries at
+        least one in-flight AGENT or bg-SHELL — worktrees alone do NOT trigger the
+        block (a repo always has ≥1 worktree, so gating on it would surface an
+        empty "none / none" block on every compact). Worktrees appear as a
+        sub-line only when there IS in-flight orchestration to contextualize. The
+        wording carries the liveness caveat verbatim — dispatched, not confirmed
+        still running. Tolerates a JSON-string round-trip from storage.
+        """
+        raw = checkpoint.get("in_flight")
+        if not raw:
+            return []
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:  # JSONDecodeError is a ValueError subclass
+                return []
+        if not isinstance(raw, dict):
+            return []
+        agents = raw.get("agents") or []
+        shells = raw.get("bg_shells") or []
+        worktrees = raw.get("worktrees") or []
+        if not (agents or shells):
+            return []
+        lines = ["## In-Flight At Compaction (verify — not confirmed still running)"]
+        lines.append(f"- Agents dispatched, no completion seen: {', '.join(agents) or 'none'}")
+        lines.append(f"- Background shells: {', '.join(shells) or 'none'}")
+        if worktrees:
+            lines.append("- Worktrees:")
+            lines.extend(f"  - {w}" for w in worktrees)
+        lines.append("")
+        return lines
+
     def _prepend_blocks(self, blocks: list[dict], directory: str, markdown: str) -> str:
         """Prepend memory blocks section to markdown if blocks exist (v5.33.0)."""
         section = self._render_blocks_section(blocks, directory)
@@ -475,6 +585,7 @@ class CheckpointRestore:
 
         if checkpoint:
             lines.extend(self._format_checkpoint_section(checkpoint))
+            lines.extend(self._format_in_flight_section(checkpoint))
 
         if anchored:
             lines.append("## Critical Facts (Anchored)")

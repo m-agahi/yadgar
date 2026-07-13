@@ -633,7 +633,7 @@ class _OpsMixin:
             "key_decisions = $decisions, open_questions = $questions, "
             "next_steps = $steps, active_errors = $errors, "
             "custom_context = $custom, epoch = $epoch, "
-            "resume_hint = $hint, "
+            "resume_hint = $hint, in_flight = $in_flight, "
             "created_at = $now, is_active = true;\n"
             "COMMIT TRANSACTION",
             {
@@ -649,6 +649,11 @@ class _OpsMixin:
                 "custom": data.get("custom_context", ""),
                 "epoch": data.get("epoch", 0),
                 "hint": resume_hint,
+                # HOOKS Car 2: schemaless in-flight orchestration state (dispatched
+                # background agents / bg-bash shells / worktrees at compaction). None
+                # when the drain had no transcript. Schemaless like resume_hint — no
+                # migration, not in the Pydantic Checkpoint model.
+                "in_flight": data.get("in_flight"),
                 "now": now,
             },
         )
@@ -687,6 +692,18 @@ class _OpsMixin:
         self._q(
             "UPDATE type::record('checkpoint', $id) SET epoch = $epoch",
             {"id": checkpoint_id, "epoch": epoch},
+        )
+
+    def update_checkpoint_in_flight(self, checkpoint_id: int, in_flight: dict):
+        """Set the in_flight orchestration-state field on an existing checkpoint.
+
+        HOOKS Car 2: used by the drain path when it updates (rather than creates)
+        an existing checkpoint and has captured in-flight state from a transcript.
+        Schemaless — no migration, not in the Pydantic Checkpoint model.
+        """
+        self._q(
+            "UPDATE type::record('checkpoint', $id) SET in_flight = $in_flight",
+            {"id": checkpoint_id, "in_flight": in_flight},
         )
 
 

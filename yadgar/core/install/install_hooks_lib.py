@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 _WORKTREE_MARKER = f"{os.sep}.claude{os.sep}worktrees{os.sep}"
 
+# BUG C — known test-fixture auth tokens that must never reach settings.json.
+# (`a-valid-32-char-token-here!!` lives in tests/server/test_security_headers.py.)
+_TEST_FIXTURE_TOKENS = frozenset({"a-valid-32-char-token-here!!"})
+
 
 @observe(tier="stage")
 def _is_git_worktree_path(path: str) -> bool:
@@ -312,22 +316,50 @@ def _make_hook_entry(cmd: str, matcher: str, env_block: dict) -> dict:
 
 
 @observe(tier="stage")
+def _entry_command(entry: object) -> str:
+    """Return the first hook command string of an entry, or ''."""
+    if not isinstance(entry, dict):
+        return ""
+    hooks = entry.get("hooks")
+    if not hooks or not isinstance(hooks[0], dict):
+        return ""
+    return hooks[0].get("command", "")
+
+
+@observe(tier="stage")
 def _append_if_absent(
     hooks_config: dict,
     event: str,
     cmd: str,
     env_block: dict,
     matcher: str = "",
+    managed_basename: str | None = None,
 ) -> None:
-    """Register a hook entry under *event* only if no entry with the same command exists."""
+    """Register a hook entry under *event*, keyed on the managed script basename.
+
+    BUG A fix — dedup + migration-sweep. When *managed_basename* is given, the
+    identity of a yadgar-managed entry is the presence of that basename in its
+    command string (NOT the full command). This survives interpreter drift: a
+    prior install that baked ``python3 …/hook.py`` and a new one that resolves
+    ``/venv/bin/python3 …/hook.py`` are the SAME managed hook.
+
+    Migration-sweep: every pre-existing entry whose command contains
+    *managed_basename* is stripped, then the single fresh entry is appended —
+    collapsing accumulated dupes and refreshing a stale interpreter. Foreign
+    hooks (including a ``yadgar-``-substring path that is NOT this basename) are
+    never touched: the strip predicate is the exact basename only.
+
+    When *managed_basename* is None the legacy full-command dedup is used
+    (direct callers with no managed identity).
+    """
     existing = hooks_config.get(event, [])
-    already = any(
-        entry.get("hooks", [{}])[0].get("command", "") == cmd
-        for entry in existing
-        if isinstance(entry, dict) and entry.get("hooks")
-    )
-    if not already:
+    if managed_basename is not None:
+        existing = [entry for entry in existing if managed_basename not in _entry_command(entry)]
         existing.append(_make_hook_entry(cmd, matcher, env_block))
+    else:
+        already = any(_entry_command(entry) == cmd for entry in existing)
+        if not already:
+            existing.append(_make_hook_entry(cmd, matcher, env_block))
     hooks_config[event] = existing
 
 
@@ -338,18 +370,45 @@ def _install_global_scripts(
     dry_run: bool,
     shebang_python: str | None = None,
 ) -> tuple[Path, Path, Path]:
-    """Copy always-global hook scripts; return (stop_dst, session_end_dst, db_lockdown_dst)."""
+    """Copy always-global hook scripts; return (stop_dst, session_end_dst, router_dst)."""
     stop_dst = global_hooks_dir / "yadgar-stop-memory-checkpoint.py"
     _copy_hook(package_hooks / "stop-memory-checkpoint.py", stop_dst, dry_run, shebang_python)
 
     session_end_dst = global_hooks_dir / "yadgar-session-end-capture.py"
     _copy_hook(package_hooks / "session-end-capture.py", session_end_dst, dry_run, shebang_python)
 
-    # v5.20.0: standalone DB lockdown — not routed through hook_runner dispatcher
-    db_lockdown_dst = global_hooks_dir / "yadgar-db-lockdown-check.py"
-    _copy_hook(package_hooks / "db-lockdown-check.py", db_lockdown_dst, dry_run, shebang_python)
+    # HOOKS train Car 1: standalone PreToolUse router-guard — subsumes the old
+    # db-lockdown-check.py and adds the git-commit-bypass / terraform-family /
+    # git-push-to-default guards. Not routed through hook_runner.py (keeps the
+    # deny path dependency-free + crash-isolated), same install-path class.
+    router_dst = global_hooks_dir / "yadgar-pretooluse-router.py"
+    _copy_hook(package_hooks / "pretooluse-router.py", router_dst, dry_run, shebang_python)
 
-    return stop_dst, session_end_dst, db_lockdown_dst
+    if not dry_run:
+        # Seed the exceptions config create-if-absent — NEVER clobber (a
+        # reinstall must preserve user-added push_default_allowlist entries).
+        exceptions_dst = global_hooks_dir.parent / "yadgar-hook-exceptions.json"
+        if not exceptions_dst.exists():
+            exceptions_dst.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "push_default_allowlist": ["nix", "ledger", "ostad"],
+                        "disabled_guards": [],
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+        # Best-effort unlink the orphaned db-lockdown script from prior installs
+        # (settings.json no longer references it; harmless but confusing).
+        orphan = global_hooks_dir / "yadgar-db-lockdown-check.py"
+        try:
+            orphan.unlink()
+        except OSError:
+            pass
+
+    return stop_dst, session_end_dst, router_dst
 
 
 @observe(tier="stage")
@@ -357,7 +416,7 @@ def _build_core_hooks(
     hooks_config: dict,
     runner: str,
     env_block: dict,
-    db_lockdown_dst: Path,
+    router_dst: Path,
     python: str | None = None,
 ) -> None:
     """Populate the four core (replace-always) hook event entries."""
@@ -388,9 +447,10 @@ def _build_core_hooks(
     ]
     hooks_config["UserPromptSubmit"] = [_runner_entry("prompt-recall")]
 
-    # v5.20.0: direct-command entry so hookEventName is always emitted
-    db_cmd = f"{_python} {shlex.quote(str(db_lockdown_dst))}"
-    hooks_config["PreToolUse"] = [_make_hook_entry(db_cmd, "Bash", env_block)]
+    # HOOKS train Car 1: direct-command entry (router-guard) so hookEventName is
+    # always emitted. Matcher stays "Bash" — all four guards are Bash-string guards.
+    router_cmd = f"{_python} {shlex.quote(str(router_dst))}"
+    hooks_config["PreToolUse"] = [_make_hook_entry(router_cmd, "Bash", env_block)]
 
 
 @observe(tier="stage")
@@ -415,7 +475,12 @@ def _install_append_hooks(
         dst = hooks_dir / dst_name
         _copy_hook(package_hooks / src_name, dst, dry_run, _resolved)
         _append_if_absent(
-            hooks_config, event, f"{_python} {shlex.quote(str(dst))}", env_block, matcher
+            hooks_config,
+            event,
+            f"{_python} {shlex.quote(str(dst))}",
+            env_block,
+            matcher,
+            managed_basename=dst_name,
         )
 
 
@@ -494,6 +559,30 @@ def _load_settings(settings_path: Path) -> dict:
         return {}
 
 
+@observe(tier="stage")
+def _resolve_env_block() -> dict:
+    """Return the hook-entry ``env`` block (BUG B/C fix).
+
+    BUG B (omit-env default): do NOT bake the token value into settings.json.
+    A literal token is a secret at rest and silently overrides the ambient env
+    after rotation. Hooks inherit the ambient ``YADGAR_MCP_AUTH_TOKEN`` at fire
+    time — the same env the daemon authenticates from — so an empty env block is
+    provably correct. (``${VAR}`` indirection is the documented alternative,
+    gated on a live Claude-Code hook-``env`` interpolation probe; unverified, so
+    not adopted here.)
+
+    BUG C (test-fixture guard): the token is still read to warn on a known test
+    fixture, but no value — literal or otherwise — is written.
+    """
+    auth_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    if auth_token in _TEST_FIXTURE_TOKENS:
+        logger.warning(
+            "install_hooks: refusing to use a known test-fixture auth token "
+            "(check YADGAR_MCP_AUTH_TOKEN); not baking any token value into settings.json"
+        )
+    return {}
+
+
 # ── Shared install logic ───────────────────────────────────────────────────
 
 
@@ -552,7 +641,7 @@ def install_hooks_impl(
     _copy_scope_scripts(package_hooks, hooks_dir, dry_run)
 
     # Always-global scripts
-    stop_dst, session_end_dst, db_lockdown_dst = _install_global_scripts(
+    stop_dst, session_end_dst, router_dst = _install_global_scripts(
         package_hooks, global_hooks_dir, dry_run, _python_path
     )
 
@@ -566,14 +655,13 @@ def install_hooks_impl(
     )
     _runner = str(hook_runner_dst)
 
-    # Auth env block
-    _auth_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
-    _env_block: dict = {"YADGAR_MCP_AUTH_TOKEN": _auth_token} if _auth_token else {}
+    # Auth env block (BUG B/C fix) — see _resolve_env_block.
+    _env_block: dict = _resolve_env_block()
 
     hooks_config = settings_data.get("hooks", {})
 
     # Core hooks (always replaced)
-    _build_core_hooks(hooks_config, _runner, _env_block, db_lockdown_dst, _python_path)
+    _build_core_hooks(hooks_config, _runner, _env_block, router_dst, _python_path)
 
     # Append-if-absent hooks
     _install_append_hooks(package_hooks, hooks_dir, hooks_config, _env_block, dry_run, _python_path)
@@ -632,7 +720,7 @@ def install_hooks_impl(
             "SessionStart (compact restore)",
             "PostToolUse (auto-capture)",
             "UserPromptSubmit (auto-recall)",
-            "PreToolUse (DB lockdown)",
+            "PreToolUse (router-guard)",
             "Stop (memory checkpoint — global)",
             "SessionEnd (sentinel capture — global)",
             "SubagentStop (findings capture — append-if-absent)",

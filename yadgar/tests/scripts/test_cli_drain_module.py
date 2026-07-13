@@ -25,8 +25,8 @@ from yadgar.core.cli.drain import cmd_drain, register
 # ---------------------------------------------------------------------------
 
 
-def _make_args(directory="/tmp/proj", db_path=None):
-    return SimpleNamespace(directory=directory, db_path=db_path)
+def _make_args(directory="/tmp/proj", db_path=None, transcript_path=None):
+    return SimpleNamespace(directory=directory, db_path=db_path, transcript_path=transcript_path)
 
 
 @contextmanager
@@ -73,6 +73,14 @@ class TestRegister:
         args = root.parse_args(["drain", "/some/dir"])
         assert args.func is cmd_drain
 
+    def test_transcript_path_flag_accepted(self):
+        """HOOKS Car 2: --transcript-path is a registered optional flag."""
+        root = argparse.ArgumentParser()
+        subs = root.add_subparsers()
+        register(subs)
+        args = root.parse_args(["drain", "/some/dir", "--transcript-path", "/t.jsonl"])
+        assert args.transcript_path == "/t.jsonl"
+
 
 # ---------------------------------------------------------------------------
 # cmd_drain — forward + JSON stdout contract
@@ -90,7 +98,14 @@ class TestCmdDrainForward:
     def test_forwards_directory(self):
         with _patched() as fwd:
             cmd_drain(_make_args(directory="/my/proj"))
-        fwd.assert_called_once_with("/my/proj")
+        # HOOKS Car 2: cmd_drain now forwards (directory, transcript_path).
+        fwd.assert_called_once_with("/my/proj", None)
+
+    def test_forwards_transcript_path(self):
+        """HOOKS Car 2: --transcript-path is threaded through to the forwarder."""
+        with _patched() as fwd:
+            cmd_drain(_make_args(directory="/my/proj", transcript_path="/tmp/s.jsonl"))
+        fwd.assert_called_once_with("/my/proj", "/tmp/s.jsonl")
 
     def test_forward_error_propagates(self):
         """Forward-only: backend-unreachable errors surface, no local fallback."""

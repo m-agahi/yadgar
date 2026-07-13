@@ -1,5 +1,43 @@
 # Migration Notes
 
+## HOOKS Car 2 — global nix rehydrate script (BUG2, OUT-OF-REPO handoff)
+
+The HOOKS compact/restore car fixed the in-repo post-compact restore key bug
+(BUG1: `hook_runner.py` now reads `formatted`) and enriched the drain with
+in-flight orchestration capture. **BUG2 — the wrong-directory restore in the
+GLOBAL nix `yadgar-post-compact-rehydrate.sh`** — could NOT be verified or fixed
+here: that script lives in the **nix dotfiles repo** (`dotfiles/common/yadgar-hooks/`,
+per memory 993 / `llm.nix`), NOT in `/home/max/git/yadgar`. Hand-off, not a fix.
+
+**Action for you (Max) — in the dotfiles/nix repo, not this one:**
+
+1. Locate the rehydrate script:
+   ```bash
+   grep -rn 'post-compact-rehydrate\|yadgar restore\|yadgar-post-compact' \
+     ~/path/to/dotfiles/common/yadgar-hooks/
+   ```
+2. Confirm whether it reads the project dir from stdin `cwd` first with `$(pwd)`
+   only as a fallback (CORRECT — matches the in-repo `pre-compact-drain.sh`
+   pattern), or uses `CWD=$(pwd)` unconditionally (the BUG2 wrong-dir defect).
+   The correct pattern is:
+   ```sh
+   CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null || echo "")
+   if [ -z "$CWD" ]; then CWD=$(pwd); fi
+   ```
+3. If it uses `$(pwd)`-only → patch it to the stdin-first pattern above so
+   post-compact restore targets the project dir, not the daemon-adjacent CWD.
+   If it already reads stdin `cwd` first → BUG2 is a non-issue; no change needed.
+
+**Optional (Car 2 enrichment, dotfiles side):** for the global nix
+`yadgar-post-compact-rehydrate.sh` / `pre-compact-drain.sh` to feed the new
+in-flight capture, the PreCompact `.sh` must pass the stdin `transcript_path`
+through to `yadgar drain --transcript-path "$TRANSCRIPT"` (the in-repo
+`yadgar/core/hooks/pre-compact-drain.sh` was updated to do this; mirror that edit
+in the dotfiles copy). Without it, the drain still works — it just captures no
+in-flight state (degrades to pre-Car-2).
+
+---
+
 ## T4 Ettin CE-swap train — post-merge ops (core 5.132.0 / backend 5.43.0)
 
 The train swaps the cross-encoder reranker from `Alibaba-NLP/gte-reranker-modernbert-base`

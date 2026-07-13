@@ -110,11 +110,6 @@ SITES = [
         "scripts/hook_runner.py hook_db_lockdown_check JSON parse",
     ),
     (
-        "yadgar/core/hooks/db-lockdown-check.py",
-        "json.JSONDecodeError, ValueError",
-        "hooks/db-lockdown-check.py main() JSON parse",
-    ),
-    (
         "yadgar/tests/core/test_loop_heartbeats.py",
         "StopAsyncIteration, TimeoutError",
         "tests/test_loop_heartbeats.py SSE generator advance",

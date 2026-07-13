@@ -187,3 +187,68 @@ def test_session_context_graceful_on_storage_error(tmp_path, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert isinstance(body["text"], str)
+
+
+# ---------------------------------------------------------------------------
+# Dedup — double catalog injection on source=compact
+# ---------------------------------------------------------------------------
+
+
+def _brief_stub(render_text: str):
+    return {
+        "_render": render_text,
+        "project": "yadgar",
+        "branch": "master",
+        "stale_wiki_count": 0,
+        "init_memory_present": False,
+        "active_work_present": False,
+        "top_anchors": [],
+        "recent_episode_count": 0,
+    }
+
+
+def test_session_context_compact_suppresses_catalog(tmp_path, monkeypatch):
+    """On source=compact the /hooks/post-compact handler already restores the
+    catalog via restore(). session-context must NOT re-inject the project_brief
+    _render catalog (~500-tok duplicate). Expect empty text."""
+    token = "tokdedup1"
+    from yadgar.core import server as _server
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=compact",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # Catalog (project_brief _render) must be gone — restore() already injected it.
+    assert "CATALOG BODY" not in body["text"], (
+        f"compact source must not re-inject the catalog; got: {body['text']!r}"
+    )
+    # But the v5.7.9 one-line compaction note is preserved (restore() does not
+    # emit it, so it is not a duplicate).
+    assert "compact" in body["text"].lower(), (
+        f"compact source must preserve the v5.7.9 compaction note; got: {body['text']!r}"
+    )
+
+
+def test_session_context_non_compact_still_renders_catalog(tmp_path, monkeypatch):
+    """Regression guard: non-compact sources (startup/clear/resume) MUST still
+    receive the project_brief catalog. The dedup guard is compact-only."""
+    token = "tokdedup2"
+    from yadgar.core import server as _server
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "CATALOG BODY" in body["text"], (
+        f"non-compact source must still render the catalog; got: {body['text']!r}"
+    )
