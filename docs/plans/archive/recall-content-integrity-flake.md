@@ -1,6 +1,19 @@
+> ARCHIVED 2026-07-14 — VERDICT: OBVIATED. Root cause (module-scoped `_engines`
+> fixture → cross-test SurrealDB pollution → set-iteration tie-break nondeterminism
+> pushing the target below top-5) was structurally fixed by commit `6aff1909`
+> (2026-05-28, function-scope `_engines` with per-test `tmp_path` isolation), shipped
+> before the test was un-skipped (#124 / `6e1629cb`). Test `test_specific_detail_preserved`
+> now stores exactly one memory → sole recall candidate (nrows=1) → rank-0 by definition,
+> no tie to break. Verified green (audit 2026-07-14 + 40/40 prior runs, memory 532287).
+> SEPARATE latent bug surfaced by the audit (NOT this flake): `fusion.py:106-111`
+> iterates `all_mids: set[int]` → nondeterministic input order to `sorted()` at :115/:199
+> (score-only keys) → equal-fused-score rows resolve non-deterministically in MULTI-candidate
+> production recall. Harmless for this single-candidate test. Needs its own car: tie-break
+> `(score, id)` desc at fusion.py:76/115/190/199/275-279 + providers/fusion.py:272.
+
 # PLAN — stabilize recall content-integrity flake (#12)
 
-Status: AUDITED-ready
+Status: ARCHIVED (OBVIATED)
 Created 2026-06-25 (improvement-train #29, group C). Refreshed 2026-07-13 to
 current reality + ADR-0108 (status: open, 2026-07-13); reworked 2026-07-13 after
 audit. Theme: recall / retrieval / test-flake.
