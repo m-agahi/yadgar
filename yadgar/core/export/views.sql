@@ -96,6 +96,8 @@ SELECT
     cl.memories_updated,
     cl.memories_archived,
     cl.memories_deleted,
+    cl.memify_pruned,
+    cl.cls_promoted,
     cl.duration_ms,
     (SELECT avg(heat) FROM memory WHERE last_accessed <= cl.timestamp) AS avg_heat_at_run
 FROM consolidation_log cl

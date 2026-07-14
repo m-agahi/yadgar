@@ -215,7 +215,6 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_METRICS_ENABLED", "1", "bool"),
     ConfigEntry("YADGAR_ALLOWED_ORIGINS", "", "string"),
     # ── Daemon / container lifecycle ─────────────────────────────────────────
-    ConfigEntry("YADGAR_DAEMON_CHECK_INTERVAL", "5", "int"),
     ConfigEntry("YADGAR_CONTAINER", "yadgar", "string"),
     ConfigEntry("YADGAR_IMAGE", "docker.io/openfantasy/yadgar:latest", "string"),
     ConfigEntry("YADGAR_VOLUME", "yadgar-data", "string"),

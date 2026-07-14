@@ -3,6 +3,12 @@
   "_span_budget": {
     "server_helpers:_cosine_similarity": {
       "rationale": "Per-item hot-loop scorer called once per candidate during ranking; a per-call span is per-item cardinality bloat that floods Tempo (ADR-0074 span storm). Carries @observe(span=False) so the metric/attributes stay on the enclosing recall span but no per-call span is opened."
+    },
+    "client:_ClientMixin._extract_id": {
+      "rationale": "Per-row RecordID->int coercion called once per record during every recall row-conversion (tens of thousands of calls per op); a per-call span is per-item cardinality bloat that saturated the OTLP queue and DROPPED boundary spans (ADR-0074 span storm). Carries @observe(span=False): the per-call work folds into the enclosing recall span with no independent span opened (hot tier emits no per-call metric/log by design, so nothing observable is lost)."
+    },
+    "client:_ClientMixin._row_to_dict": {
+      "rationale": "Per-row SurrealDB-record->dict normaliser called once per record during every recall row-conversion (tens of thousands of calls per op, and it calls _extract_id per row); a per-call span is per-item cardinality bloat that saturated the OTLP queue and DROPPED boundary spans (ADR-0074 span storm). Carries @observe(span=False): the per-call work folds into the enclosing recall span with no independent span opened (hot tier emits no per-call metric/log by design, so nothing observable is lost)."
     }
   },
   "cache:Cache._is_expired": {

@@ -36,3 +36,18 @@ page_types:
       applies_to: >-
         Task shapes this prompt applies to (free text; surfaced in the
         agent-prompt-toc purpose column).
+  task_list:
+    required: [Meta]
+    optional: [Tasks]
+    metadata:
+      shape: >-
+        One "## Meta" page-level section plus one "## task:<id>" section per
+        task (id zero-padded to 4 digits). Per-task fields are "- key: value"
+        bullets; multi-line values indent continuation lines 2 spaces so an
+        embedded ## / ``` cannot be mis-parsed as a section boundary. Lint is
+        ADVISORY and covers only the fixed "## Meta" section — dynamic
+        "## task:<id>" headings cannot be validated by a fixed required list.
+      status_enum: >-
+        Task status is one of {pending, in_progress, completed} — the harness
+        value stored verbatim. "blocked" is NOT a status; it is derived from a
+        non-empty blockedBy array.

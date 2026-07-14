@@ -31,7 +31,6 @@ def settings(tmp_path):
         DB_PATH=str(tmp_path / "test.db"),
         DECAY_FACTOR=0.95,
         COLD_THRESHOLD=0.05,
-        DAEMON_CHECK_INTERVAL=1,
         DREAM_REPLAY_PAIRS=5,
         CAUSAL_THRESHOLD=2,
         NARRATIVE_INTERVAL_HOURS=1,

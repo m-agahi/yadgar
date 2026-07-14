@@ -252,3 +252,224 @@ def test_session_context_non_compact_still_renders_catalog(tmp_path, monkeypatch
     assert "CATALOG BODY" in body["text"], (
         f"non-compact source must still render the catalog; got: {body['text']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task-list mirror restore-nudge (existence-checked, main-thread-only)
+# ---------------------------------------------------------------------------
+
+_NUDGE_MARKER = "Saved task list found"
+
+
+def _seed_task_list_page(directory: str, branch: str | None) -> None:
+    """Seed a <project>-task-list wiki page the way Edit 1 (the stop-hook step)
+    writes it: page_type='task_list', scoped to `directory`, branch=`branch`.
+    """
+    from pathlib import Path
+
+    from yadgar._shared.runtime.lifecycle import _get_storage
+
+    project = Path(directory).name
+    storage = _get_storage()
+    assert storage is not None, "storage engine not initialised"
+    storage.insert_wiki_page(
+        {
+            "slug": f"{project}-task-list",
+            "title": f"{project} task list",
+            "content": f"## Meta\n- project: {project}\n- open: 1 · completed: 0\n\n"
+            "## task:0001\n- subject: seed\n- status: pending\n",
+            "tags": ["task-list"],
+            "page_type": "task_list",
+            "wiki_schema_version": 1,
+            "directory_context": directory,
+        },
+        branch=branch,
+    )
+
+
+def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
+    """Startup session-context CONTAINS the restore-nudge when the page exists.
+
+    The stop-hook step writes the task-list page CANONICALLY (no branch_hint →
+    branch=None slot) so it is reachable from any caller branch via §25 step-2
+    (dir + branch IS NULL). Seed it that way and assert the nudge fires.
+    """
+    token = "tl-present"
+    from yadgar.core import server as _server
+
+    # Seed with branch=None (canonical) so §25 step-2 (dir + branch IS NULL)
+    # resolves for any caller branch — the robust read path.
+    _seed_task_list_page(str(tmp_path), branch=None)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert _NUDGE_MARKER in body["text"], (
+        f"nudge must be present when the task-list page exists; got: {body['text']!r}"
+    )
+    # The nudge must name the slug + the restore mechanism.
+    assert f"{tmp_path.name}-task-list" in body["text"]
+    assert "TaskCreate" in body["text"]
+
+
+def test_task_list_nudge_absent_for_default_branch_pinned_row(tmp_path, monkeypatch):
+    """REGRESSION TRAP (memory 531352 / ADR-log branch-pin bug class).
+
+    The task-list page MUST be written canonically (branch=None). If a future
+    edit reverts the template to write it with branch_hint="{default_branch}"
+    (branch='master' row), it becomes UNREACHABLE from any feature-branch
+    session: the endpoint resolves the page under the caller's CURRENT branch,
+    and §25 (dir+branch → dir+NULL → global) never matches a master-pinned row
+    when the caller is on a feature branch.
+
+    Here we seed the page the WRONG (default-branch-pinned) way and query with a
+    feature branch — the nudge MUST be ABSENT, proving the master-pin is a dead
+    write for the common feature-branch case. Anyone who re-adds branch_hint to
+    the template Step 4c write will turn this red.
+    """
+    token = "tl-masterpin"
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), branch="master")
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup&branch=feat/some-work",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert _NUDGE_MARKER not in body["text"], (
+        "a default-branch-pinned task-list row must be unreachable from a "
+        "feature-branch session — the template MUST write canonically "
+        f"(branch=None). Got: {body['text']!r}"
+    )
+
+
+def test_task_list_nudge_absent_when_page_missing(tmp_path, monkeypatch):
+    """No page seeded → nudge ABSENT (the key R2 existence-check assertion)."""
+    token = "tl-absent"
+    from yadgar.core import server as _server
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert _NUDGE_MARKER not in body["text"], (
+        f"nudge must be absent when no task-list page exists; got: {body['text']!r}"
+    )
+
+
+def test_task_list_nudge_absent_on_compact(tmp_path, monkeypatch):
+    """source=compact early-returns → nudge ABSENT even if the page exists."""
+    token = "tl-compact"
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), branch=None)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=compact",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert _NUDGE_MARKER not in body["text"], (
+        f"compact source must not inject the nudge; got: {body['text']!r}"
+    )
+
+
+def test_task_list_nudge_absent_from_subagent_start(tmp_path, monkeypatch):
+    """Isolation lock: the nudge NEVER appears in the subagent-start endpoint
+    output, even when the page exists. hook_subagent_start is a distinct handler
+    reached by SubagentStart only — it must not surface the main-thread nudge."""
+    token = "tl-subagent"
+
+    _seed_task_list_page(str(tmp_path), branch=None)
+
+    client = _make_client(token, monkeypatch)
+    resp = client.post(
+        f"/hooks/subagent-start?agent_type=general-purpose&cwd={tmp_path}",
+        json={"description": "restore the task list", "cwd": str(tmp_path)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert _NUDGE_MARKER not in body["text"], (
+        f"subagent-start must never surface the task-list nudge; got: {body['text']!r}"
+    )
+
+
+def test_task_list_nudge_absent_from_dispatch_prelude(tmp_path):
+    """Isolation lock: agent_dispatch_prelude output never carries the nudge.
+
+    The prelude assembles recall + wiki_query context (dispatch_helper); it does
+    NOT call hook_session_context / project_brief. Even with a seeded page, the
+    prelude must not surface the main-thread nudge string.
+    """
+    _seed_task_list_page(str(tmp_path), branch=None)
+
+    from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
+
+    out = agent_dispatch_prelude(
+        pattern="",
+        task_topic="restore the task list",
+        directory=str(tmp_path),
+        include_context=True,
+    )
+    text = out if isinstance(out, str) else str(out)
+    assert _NUDGE_MARKER not in text, (
+        f"agent_dispatch_prelude must not surface the task-list nudge; got: {text[:400]!r}"
+    )
+
+
+def test_task_list_nudge_fail_open_on_existence_check_error(tmp_path, monkeypatch):
+    """Fail-open: if the existence check raises, the endpoint still returns the
+    rest of the render (no 500, catalog preserved)."""
+    token = "tl-failopen"
+    from yadgar._shared.runtime import lifecycle as _lifecycle
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), branch=None)
+
+    real_storage = _lifecycle._get_storage()
+
+    class _Boom:
+        def __getattr__(self, name):
+            if name == "get_wiki_page_by_slug_directory_branch":
+
+                def _raise(*_a, **_k):
+                    raise RuntimeError("existence check down")
+
+                return _raise
+            return getattr(real_storage, name)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        with patch.object(_lifecycle, "_get_storage", return_value=_Boom()):
+            client = _make_client(token, monkeypatch)
+            resp = client.get(
+                f"/hooks/session-context?directory={tmp_path}&source=startup",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # Fail-open: nudge omitted but the catalog render survives.
+    assert _NUDGE_MARKER not in body["text"]
+    assert "CATALOG BODY" in body["text"]

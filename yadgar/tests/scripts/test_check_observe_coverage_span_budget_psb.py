@@ -344,3 +344,95 @@ def test_loop_heuristic_report_is_advisory_and_prints(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "loop" in out.lower(), out
     assert "per_item" in out, out
+
+
+# ── method (class-qualname) key form — the P-SB sweep dimension ────────────────
+# The sweep flipped CLASS METHODS (_ClientMixin._extract_id / _row_to_dict). Their
+# _span_budget key is `module:Class.method`, NOT `module:method`. A key without the
+# class prefix silently no-ops (stale-check fires, the opens-span lookup never
+# matches). These two tests pin the qualname key form so a future edit that drops
+# the class prefix is caught.
+
+
+def test_span_budget_method_key_opening_span_hard_fails(tmp_path):
+    """A _span_budget CLASS METHOD keyed `module:Class.method` that opens a per-call
+    span → hard-fail (proves the qualname key form matches the method, not stale)."""
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    _write(
+        root,
+        "clientmod.py",
+        """
+        from yadgar._shared.observability.observe import observe
+
+        class _Mixin:
+            @observe(tier="hot", metric="x.extract_id")
+            def _extract_id(self, rec):
+                out = 0
+                for c in str(rec):
+                    out += ord(c)
+                return out
+        """,
+    )
+    _write_allowlist(
+        tmp_path,
+        {
+            "_span_budget": {
+                "clientmod:_Mixin._extract_id": {
+                    "rationale": "per-row hot-loop coercion method; must carry span=False so no per-call span is opened",
+                }
+            }
+        },
+    )
+    rc = check_observe_coverage.main(
+        [
+            "--warn",
+            "--root",
+            str(root),
+            "--allowlist-file",
+            str(tmp_path / ".observe-allowlist.json"),
+        ]
+    )
+    assert rc == 1, "a _span_budget method (class-qualname key) opening a span must hard-fail"
+
+
+def test_span_budget_method_key_with_span_false_passes(tmp_path):
+    """The same class method carrying @observe(span=False) satisfies the budget —
+    and its class-qualname key is NOT reported stale (the key really matched)."""
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    _write(
+        root,
+        "clientmod.py",
+        """
+        from yadgar._shared.observability.observe import observe
+
+        class _Mixin:
+            @observe(tier="hot", metric="x.extract_id", span=False)
+            def _extract_id(self, rec):
+                out = 0
+                for c in str(rec):
+                    out += ord(c)
+                return out
+        """,
+    )
+    _write_allowlist(
+        tmp_path,
+        {
+            "_span_budget": {
+                "clientmod:_Mixin._extract_id": {
+                    "rationale": "per-row hot-loop coercion method; must carry span=False so no per-call span is opened",
+                }
+            }
+        },
+    )
+    rc = check_observe_coverage.main(
+        [
+            "--warn",
+            "--root",
+            str(root),
+            "--allowlist-file",
+            str(tmp_path / ".observe-allowlist.json"),
+        ]
+    )
+    assert rc == 0, "a _span_budget method with span=False must pass and not be stale"

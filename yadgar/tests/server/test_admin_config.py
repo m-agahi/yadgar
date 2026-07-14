@@ -113,16 +113,18 @@ def test_admin_config_env_set_shows_source_env(monkeypatch):
 
 
 def test_admin_config_unset_shows_source_default(monkeypatch):
-    """YADGAR_DAEMON_CHECK_INTERVAL not set → source='default'."""
-    monkeypatch.delenv("YADGAR_DAEMON_CHECK_INTERVAL", raising=False)
+    """YADGAR_CONFLICT_K not set → source='default'."""
+    monkeypatch.delenv("YADGAR_CONFLICT_K", raising=False)
     app = _make_admin_app(monkeypatch)
     client = TestClient(app, raise_server_exceptions=True)
     resp = client.get("/admin/config", headers={"Authorization": f"Bearer {_TOKEN}"})
     assert resp.status_code == 200
     entries = {e["name"]: e for e in resp.json()["config"]}
-    assert "YADGAR_DAEMON_CHECK_INTERVAL" in entries
-    entry = entries["YADGAR_DAEMON_CHECK_INTERVAL"]
+    assert "YADGAR_CONFLICT_K" in entries
+    entry = entries["YADGAR_CONFLICT_K"]
     assert entry["source"] == "default", f"Expected source='default', got {entry['source']!r}"
+    # v5.139.1: DAEMON_CHECK_INTERVAL removed (dead knob — astrocyte loop gone)
+    assert "YADGAR_DAEMON_CHECK_INTERVAL" not in entries
 
 
 # ---------------------------------------------------------------------------

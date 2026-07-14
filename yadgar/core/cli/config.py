@@ -47,7 +47,7 @@ def register(subparsers):
         "--section", type=str, default=None, help="Filter to a section (e.g. daemon)"
     )
     config_get_p = config_sub.add_parser("get", help="Get a single setting value")
-    config_get_p.add_argument("key", help="Setting name (e.g. daemon_check_interval)")
+    config_get_p.add_argument("key", help="Setting name (e.g. narrative_interval_hours)")
     config_set_p = config_sub.add_parser("set", help="Set a setting value in config.yaml")
     config_set_p.add_argument("key", help="Setting name")
     config_set_p.add_argument("value", help="New value")

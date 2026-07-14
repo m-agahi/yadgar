@@ -851,6 +851,59 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         _hook_observe("auto_capture", _t0, _caught_exc)
 
 
+@observe(tier="stage")
+async def _task_list_restore_nudge(directory: str, branch_hint: str | None) -> str:
+    """Return the task-list restore-nudge line, or "" when no page exists.
+
+    If a saved "<project>-task-list" wiki page exists for `directory`, return a
+    one-line pointer telling the instance to restore its open tasks via
+    TaskCreate. A server-side existence pre-check (a metadata row read, parity
+    cost with the checkpoint hint) means zero dead nudges on projects that never
+    saved a list.
+
+    MAIN-THREAD-ONLY by construction: the sole caller is hook_session_context,
+    reached by SessionStart only — never by a subagent (SubagentStart /
+    agent_dispatch_prelude do not call it), and NOT via project_brief
+    (subagent-callable → would leak).
+
+    The page is written CANONICALLY (branch=None) by the stop-hook step, so the
+    existence check resolves it under any caller branch via §25 step-2
+    (dir + branch IS NULL) — a default-branch-pinned row would be unreachable
+    from a feature-branch session (memory 531352 / ADR-log branch-pin bug class).
+
+    Fail-open: any error returns "" so session-start is never blocked.
+    """
+    try:
+        from pathlib import Path as _Path  # noqa: PLC0415
+
+        from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+
+        project = _Path(directory).name if directory else ""
+        if not project:
+            return ""
+        storage = _get_storage()
+        if storage is None:
+            return ""
+        slug = f"{project}-task-list"
+        page = await asyncio.to_thread(
+            storage.get_wiki_page_by_slug_directory_branch,
+            slug,
+            directory,
+            branch_hint,
+        )
+        if not page:
+            return ""
+        return (
+            f"\n[yadgar] Saved task list found ({slug}). To restore: "
+            f'wiki_read("{slug}", directory="{directory}"), then recreate '
+            "the open tasks (status pending / in_progress) with TaskCreate "
+            "before proceeding (skip completed).\n"
+        )
+    except Exception as _te:
+        logger.debug("session-context task-list nudge error: %s", _te)
+        return ""
+
+
 @mcp_server.custom_route("/hooks/session-context", methods=["GET"])
 @trace_span()
 async def hook_session_context(request: Request) -> JSONResponse:
@@ -975,6 +1028,13 @@ async def hook_session_context(request: Request) -> JSONResponse:
                     render = render + _hint
             except Exception as _ce:
                 logger.debug("session-context checkpoint hint error: %s", _ce)
+
+        # Task-list mirror restore-nudge (MAIN-THREAD-ONLY; existence-checked).
+        # Gated source != "compact" (inherits the enclosing block). Extracted to
+        # _task_list_restore_nudge to keep this handler under the I13 complexity
+        # cap; that helper is fail-open (returns "" on any error).
+        if source != "compact":
+            render = render + await _task_list_restore_nudge(directory, branch_hint)
 
         return JSONResponse({"text": render})
     except Exception as _e:
@@ -2045,7 +2105,8 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
         rows = (
             _st._storage._q(
                 "SELECT timestamp, memories_added, memories_updated, "
-                "memories_archived, memories_deleted, duration_ms "
+                "memories_archived, memories_deleted, memify_pruned, "
+                "cls_promoted, duration_ms "
                 "FROM consolidation_log ORDER BY timestamp ASC LIMIT $lim",
                 {"lim": limit},
             )
@@ -2058,6 +2119,8 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
                 "updated": int(r.get("memories_updated") or 0),
                 "archived": int(r.get("memories_archived") or 0),
                 "deleted": int(r.get("memories_deleted") or 0),
+                "pruned": int(r.get("memify_pruned") or 0),
+                "promoted": int(r.get("cls_promoted") or 0),
                 "duration_ms": int(r.get("duration_ms") or 0),
             }
             for r in rows

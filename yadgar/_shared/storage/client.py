@@ -390,7 +390,7 @@ class _ClientMixin:
     def _floats_to_bytes(self, floats: list[float]) -> bytes:
         return struct.pack(f"<{len(floats)}f", *floats)
 
-    @observe(tier="hot")
+    @observe(tier="hot", span=False)
     def _extract_id(self, record_id) -> int | None:
         if record_id is None:
             return None
@@ -417,7 +417,7 @@ class _ClientMixin:
         top = int(rows[0].get("val", n)) if rows else n
         return list(range(top - n + 1, top + 1))
 
-    @observe(tier="hot")
+    @observe(tier="hot", span=False)
     def _row_to_dict(self, record: dict | None) -> dict | None:
         if record is None:
             return None

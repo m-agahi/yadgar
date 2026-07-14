@@ -36,10 +36,6 @@ FIELD_META: dict[str, dict[str, object]] = {
     "max_episode_tokens": {"desc": "Maximum tokens per episode chunk", "section": "core"},
     "overlap_tokens": {"desc": "Token overlap between episode chunks", "section": "core"},
     # daemon
-    "daemon_check_interval": {
-        "desc": "Seconds between astrocyte background loop wakeups (lower = more responsive, higher = less CPU)",
-        "section": "daemon",
-    },
     "num_astrocyte_processes": {
         "desc": "Number of domain-aware background worker processes",
         "section": "daemon",

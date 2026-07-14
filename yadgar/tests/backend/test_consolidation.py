@@ -26,7 +26,6 @@ def settings(tmp_path):
         DB_PATH=str(tmp_path / "test.db"),
         DECAY_FACTOR=0.95,
         COLD_THRESHOLD=0.05,
-        DAEMON_CHECK_INTERVAL=1,
     )
 
 
@@ -145,7 +144,6 @@ class TestColdArchival:
             DECAY_FACTOR=0.95,
             COLD_THRESHOLD=0.02,
             ACTION_STREAM_COLD_THRESHOLD=0.1,
-            DAEMON_CHECK_INTERVAL=1,
         )
         engine = ConsolidationScheduler(storage, embeddings, settings)
 
@@ -183,7 +181,6 @@ class TestColdArchival:
             DECAY_FACTOR=0.95,
             COLD_THRESHOLD=0.02,
             ACTION_STREAM_COLD_THRESHOLD=0.1,
-            DAEMON_CHECK_INTERVAL=1,
         )
         engine = ConsolidationScheduler(storage, embeddings, settings)
 

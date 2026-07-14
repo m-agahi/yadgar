@@ -4,18 +4,46 @@ These patterns fire BEFORE user rules and cannot be disabled.
 Content matching any pattern is rejected with a reason and the
 (truncated) matched substring — the full secret is never logged.
 
-v5.10.2 changes:
-  - SecretLeakBlocked exception class (storage-level gate)
-  - gate_or_reject() helper for multi-field API-boundary checks
-  - GitHub token threshold lowered {36,} → {20,}
-  - Anthropic key threshold lowered {32,} → {20,}
-  - OpenAI key threshold lowered {30,} → {20,}
+This is a SYNCHRONOUS, IN-PROCESS regex scan invoked from ``gate_or_reject``
+(the I26 API-boundary chokepoint) and ``check_secrets`` (the storage-level
+gate). No runtime network, no Go binary, no ``detect-secrets`` dependency.
+It must stay within the ≤5ms p50 write-path budget (I9 / test_memorize_latency).
 
-v5.13.0 changes:
-  - gate_or_reject() gains tags= and source= kwargs for context-awareness
-  - Allowlist integration: YADGAR_SECRET_GATE_ALLOWLIST_PATH YAML bypass
-    with per-tag + per-pattern entries; every hit audited to JSONL
-  - Source call-site detection via inspect.stack() (only when allowlist loaded)
+Ruleset provenance
+------------------
+Rule shapes are ported from **gitleaks** default rules
+(https://github.com/gitleaks/gitleaks — ``config/gitleaks.toml``), which are
+MIT-licensed. This is a hand-curated HIGH-VALUE SUBSET (OpenAI, Anthropic,
+GitHub, GitLab, AWS, Google, Slack, Stripe, generic API-key) — not a
+mechanical dump of the full ruleset.
+
+Ported against gitleaks tag **v8.18.x** default rules.
+Regen note: to refresh, re-read the upstream ``config/gitleaks.toml`` `[[rules]]`
+blocks for each provider below and port the `regex` + `keywords` fields into
+``_RULES``. Keep the pre-filter keywords lowercase; keep tight shapes ahead of
+the broad catch-alls; keep Anthropic before OpenAI (more-specific prefix wins).
+
+Per-rule keyword pre-filter
+---------------------------
+Each rule carries a tuple of lowercase ``keywords``. Before a rule's regex is
+run, ``check_secrets`` short-circuits on a cheap ``str.lower()`` substring test:
+if the rule declares keywords and NONE of them appear in the (lowercased)
+content, the (expensive) regex never runs. Rules with an empty keyword tuple
+are self-anchored (their prefix is already discriminating, e.g. ``AKIA``,
+``ghp_``) and always run.
+
+The keyword gate is also LOAD-BEARING for false-positive suppression: the
+broad 40-char AWS-secret shape and the generic credential shape only run when
+an ``aws`` / ``secret`` / ``key`` / ``token`` etc. keyword is present, so a bare
+40-char hex SHA or a UUID never reaches those regexes.
+
+Historical false-positive fixed here (v5.136 → this bump)
+--------------------------------------------------------
+The pre-port OpenAI rule ``sk-(?:proj-)?[A-Za-z0-9_-]{20,}`` had no word
+boundary and allowed ``-``/``_`` in the body, so it fired mid-word — e.g. inside
+``tasklist-mirror-2026-abcdefghij…`` the ``sk-list-mirror-2026-…`` run matched.
+The ported OpenAI rule adds a leading ``\b`` and restricts the body to
+alphanumerics, so hyphenated words can never reach the 20-char alnum run.
 """
 
 from __future__ import annotations
@@ -27,68 +55,105 @@ from yadgar._shared.observability.observe import observe
 
 _log = logging.getLogger(__name__)
 
-# (compiled_pattern, human_readable_name)
-# Order matters: specific patterns must appear before the generic catch-all.
-_SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS access key"),
+# (keywords, compiled_pattern, human_readable_name)
+#
+# keywords: tuple of lowercase substrings. If non-empty, at least one must be
+#   present in content.lower() before the regex runs (cheap pre-filter). An
+#   empty tuple means the rule is self-anchored and always runs.
+#
+# Order matters: specific rules must appear before the generic catch-all, and
+# Anthropic (sk-ant-) must precede OpenAI (sk-) — more-specific prefix wins.
+_Rule = tuple[tuple[str, ...], "re.Pattern[str]", str]
+
+_RULES: list[_Rule] = [
+    # --- AWS access key (self-anchored: AKIA prefix is discriminating) ---
+    ((), re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AWS access key"),
+    # --- Private keys (self-anchored: PEM header is discriminating) ---
     (
-        re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+        (),
+        re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"),
         "Private key",
     ),
+    # --- JWT (self-anchored: eyJ...eyJ... triple-segment shape) ---
     (
-        re.compile(r"eyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+"),
+        (),
+        re.compile(r"\beyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+"),
         "JWT token",
     ),
-    # v5.10.2: lowered {36,} → {20,} — short test/fake tokens slipped through
+    # --- GitHub tokens (self-anchored: ghp_/gho_/... prefixes) ---
     (
-        re.compile(r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}"),
+        (),
+        re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"),
         "GitHub token",
     ),
+    # --- GitLab PAT (self-anchored: glpat- prefix) ---
     (
-        re.compile(r"glpat-[A-Za-z0-9_-]{20,}"),
+        (),
+        re.compile(r"\bglpat-[A-Za-z0-9_-]{20}\b"),
         "GitLab token",
     ),
+    # --- Google API key (self-anchored: AIza prefix, exact 35-char body) ---
     (
+        (),
+        re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
+        "Google API key",
+    ),
+    # --- Database connection string with inline credentials ---
+    (
+        ("://",),
         re.compile(
-            r"(?:mysql|postgres|mongodb|redis)://\w+:[^@\s]+@",
+            r"(?:mysql|postgres|postgresql|mongodb|redis)://\w+:[^@\s]+@",
             re.IGNORECASE,
         ),
         "Database connection string",
     ),
-    # §5 T-0019: GCP service-account JSON (contains "type": "service_account")
+    # --- GCP service-account JSON credential ---
     (
+        ("service_account",),
         re.compile(r'"type"\s*:\s*"service_account"'),
         "GCP service account credential",
     ),
-    # §5 T-0019: Stripe live secret key
+    # --- Stripe live secret key (self-anchored: sk_live_ prefix) ---
     (
-        re.compile(r"sk_live_[A-Za-z0-9]{24,}"),
+        (),
+        re.compile(r"\bsk_live_[A-Za-z0-9]{24,}\b"),
         "Stripe secret key",
     ),
-    # §5 T-0019: Slack tokens (xoxb-, xoxa-, xoxp-, xoxs-)
+    # --- Slack tokens (self-anchored: xox[bpas]- prefixes) ---
     (
-        re.compile(r"xox[bpas]-[0-9A-Za-z\-]{10,}"),
+        (),
+        re.compile(r"\bxox[bpasr]-[0-9A-Za-z\-]{10,}"),
         "Slack token",
     ),
-    # §5 T-0019: Anthropic API key — must appear before OpenAI (more specific prefix)
-    # v5.10.2: lowered {32,} → {20,}
+    # --- Anthropic API key — MUST precede OpenAI (more specific prefix) ---
+    # Self-anchored: sk-ant- prefix. Body kept alnum + -/_ to match both the
+    # real sk-ant-api03-... shape and synthetic sk-ant-<20> fixtures.
     (
-        re.compile(r"sk-ant-[A-Za-z0-9\-_]{20,}"),
+        (),
+        re.compile(r"\bsk-ant-[A-Za-z0-9\-_]{20,}"),
         "Anthropic API key",
     ),
-    # §5 T-0019: OpenAI API key — covers both legacy sk-... and sk-proj-... format
-    # v5.10.2: lowered {30,} → {20,}
+    # --- OpenAI API key — legacy sk-... and sk-proj-... ---
+    # FP FIX: leading \b + alnum-only body (no -/_). Prevents mid-word matches
+    # like the sk-list-mirror-2026-... run inside "tasklist-mirror-...".
     (
-        re.compile(r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}"),
+        (),
+        re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b"),
         "OpenAI API key",
     ),
-    # §5 T-0019: AWS secret access key (40 chars base64-like; broad, comes after specifics)
+    # --- AWS secret access key (broad: 40-char base64-ish) ---
+    # KEYWORD-GATED: only runs when an aws/secret/key/access token keyword is
+    # present. A bare 40-char hex SHA or UUID never reaches this regex.
     (
+        ("aws", "secret", "access", "key", "token", "credential"),
         re.compile(r"(?<![A-Za-z0-9/+])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+])"),
         "AWS secret key",
     ),
-    # Generic catch-all — must be last so specific patterns fire first.
+    # --- Generic credential catch-all — MUST be last ---
+    # KEYWORD-GATED by construction: the regex itself requires a
+    # key/token/secret/... anchor, so declaring keywords is a cheap short-circuit.
     (
+        ("api", "key", "token", "secret", "password", "passwd", "credential"),
         re.compile(
             r"(?:api[_-]?key|token|secret|password|passwd|credentials?)"
             r"\s*[=:]\s*[\"']?[A-Za-z0-9+/=_-]{20,}",
@@ -96,6 +161,13 @@ _SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
         ),
         "Credential pattern",
     ),
+]
+
+# Back-compat 2-tuple view: (compiled_pattern, name). Historical export used by
+# the yadgar._shared.secrets shim and any external iterator. Derived from _RULES
+# so the two never drift.
+_SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (pattern, name) for (_kw, pattern, name) in _RULES
 ]
 
 _MATCH_PREVIEW_LEN = 20
@@ -125,6 +197,11 @@ class SecretLeakBlocked(Exception):
 def check_secrets(content: str) -> tuple[bool, str, str]:
     """Scan content for known secret patterns.
 
+    Runs each rule's cheap lowercase-keyword pre-filter before its regex: a
+    rule with declared keywords is skipped entirely when none of its keywords
+    appear in the content. Rules with no keywords are self-anchored and always
+    run.
+
     Args:
         content: The text to scan.
 
@@ -134,7 +211,10 @@ def check_secrets(content: str) -> tuple[bool, str, str]:
         - reason: "secret_detected: <name>" if blocked, else ""
         - pattern_matched: first 20 chars of matched text + "..." if blocked, else ""
     """
-    for pattern, name in _SECRET_PATTERNS:
+    lowered = content.lower()
+    for keywords, pattern, name in _RULES:
+        if keywords and not any(kw in lowered for kw in keywords):
+            continue
         m = pattern.search(content)
         if m:
             matched = m.group(0)

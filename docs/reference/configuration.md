@@ -58,7 +58,6 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
-| `daemon_check_interval` | `YADGAR_DAEMON_CHECK_INTERVAL` | float | `30` | Seconds between astrocyte background loop wakeups (lower = more responsive, higher = less CPU). |
 | `num_astrocyte_processes` | `YADGAR_NUM_ASTROCYTE_PROCESSES` | int | `4` | Number of domain-aware background worker processes. |
 | `astrocyte_pool_enabled` | `YADGAR_ASTROCYTE_POOL_ENABLED` | bool | `true` | Enable domain-aware astrocyte pool consolidation (set false to disable). |
 | `narrative_interval_hours` | `YADGAR_NARRATIVE_INTERVAL_HOURS` | int | `24` | Hours between autobiographical narrative updates. |
