@@ -125,12 +125,16 @@ Two complementary surfaces + one convention. **Neither surface alone covers plan
 
 **Gap:** the per-turn auto-recall hook (`prompt-recall.py`) uses `profile="fast"`, which skips the wiki arm (`_should_skip_wiki`, `recall_pipeline.py:314-316`). So making ADRs recall-native does NOT make them auto-surface on every turn. The only automatic surface is `project_brief` at session start (temporal, not topic-relevant).
 
-**Fix — a planning-time recall convention (chosen; cheapest, on the read-path, no latency regression):**
-Add to the write-back/read-first protocol (B.3) an explicit READ-side line: *"Before planning a feature or debugging a subsystem, `recall(type='wiki', tags=['adr'])` or `recall('<subsystem> decision')` for prior ADRs on that topic; consult `adr_list(status='open')` for open decisions."* This is the discipline half of "get used at planning time," and it uses the DEFAULT-profile explicit `recall` (which DOES fan out to wiki), sidestepping the fast-profile gap entirely.
+**Fix — a mechanically-injected agent-prompt DISCIPLINE (chosen; reliable, on the read-path, no hot-path latency regression):**
+A standalone prose "convention" in the read-first protocol fires only if the model remembers to look — the exact write-only failure mode task #76 exists to kill. Instead, make the ADR-consult step a **composed agent-prompt discipline** that `agent_dispatch_prelude` injects into every planning/build/debug dispatch AUTOMATICALLY:
 
-**Rejected alternatives (documented so a builder doesn't re-litigate):**
-- *Flip the auto-recall hook to include wiki.* Rejected: the hook is on the hot per-turn path with a strict latency budget (`HOOK_RECALL_TIMEOUT_S`); ADR-0077 deliberately made it memory-only. Adding a wiki fanout to every turn is a latency regression for marginal benefit (the session-start `project_brief` block + the planning-time convention already cover the intent).
-- *A dedicated stop-hook/session-start ADR nudge.* Redundant with the existing `_apply_adr_signal` write-nudge + the new Recent-ADRs block; would add machinery not on the read path. Cut per "unused = cut it."
+- **New discipline page `agent-discipline-adr-consult`** — same shape + mechanism as the existing `agent-discipline-*` pages (`recall-first`, `branch-state`, etc.). Content: *"Before planning / building / debugging a subsystem: `recall(type='wiki', tags=['adr'])` + `adr_list(status='open')` for the touched area. Observed ADR decisions BIND (observed-state-wins). Uses the DEFAULT recall profile — fans out to wiki, unlike the fast-profile auto-recall hook."*
+- **Compose it into the relevant patterns** — add `[[agent-discipline-adr-consult]]` to the `## Composes` list (and a one-line reference in the body) of: `plan-executing-build`, `build-car`, `scope-and-plan` (planning-time), and the debug/RCA patterns `rca-diagnose` + `debug-investigate`. Then `agent_dispatch_prelude(pattern, ...)` surfaces the discipline in every dispatch built from those patterns — the reliable path, beats a prose convention.
+- **`project_brief`'s `## Recent ADRs` block stays** (§A.5.2) — session-start recency + the main thread's own inline work.
+- **Honest residual gap:** agent-prompt disciplines fire only for DISPATCHED agents. The MAIN THREAD's own inline planning is covered by (a) the HARD RULE that the main thread builds every dispatch from `agent_dispatch_prelude` — so it SEES the discipline while authoring dispatches — plus (b) the `project_brief` recency block. Not airtight for pure inline main-thread planning that never dispatches, but strictly better than a prose line, and the two together cover the realistic paths. The standalone convention line is DROPPED (redundant once the discipline exists).
+
+**Rejected alternative (documented so a builder doesn't re-litigate):**
+- *Flip the auto-recall hook to include wiki.* Rejected: the hook is on the hot per-turn path with a strict latency budget (`HOOK_RECALL_TIMEOUT_S`); ADR-0077 deliberately made it memory-only. Adding a wiki fanout to every turn is a latency regression for marginal benefit (the composed discipline + the session-start `project_brief` block already cover the intent).
 
 #### A.5.2 project_brief wiring
 
@@ -174,6 +178,19 @@ Rationale stated so a builder doesn't paper over it: status-based dropping is sa
 - Branch drift: if any ADR was accidentally written to a feature-branch slot (the recalled bug), a default-branch-only migration would miss it — scan for stray `<project>-adr-log` rows across branches per project before declaring that project done.
 - Cross-project scale: many projects, each with a monolith → the sweep must be resumable (idempotent skip on existing per-ADR slugs makes a re-run cheap) and must isolate failures (one project's bad parse must not abort the others; log + continue).
 
+### A.7 Agent-prompt library + seed work-item (keep wiki + repo seed in sync)
+
+The `agent-discipline-adr-consult` discipline (§A.5.1) must land in BOTH the LIVE wiki pages AND their repo SEED, or they drift — a wiki-only edit is lost on the next fresh install / re-seed.
+
+**Repo file (source of truth for re-seed):** `yadgar/core/seed/materials/agent_prompts.yaml`. This packaged genesis corpus is loaded by `yadgar/core/server/tools/agent_prompts.py` (`_load_genesis_yaml` → `_load_starter_prompts`/`_load_disciplines`/`_load_contract_genesis`; seeded by `seed_agent_prompts` `agent_prompts.py:355`, disciplines via `_seed_discipline_pages` `:324`). Its top-level keys are `contract:`, `prompts:`, `disciplines:`. Disciplines are `{name, purpose, content}` entries under `disciplines:`; a pattern composes a discipline by listing `[[agent-discipline-<name>]]` under a `## Composes` section in its `content` (see `plan-executing-build`, which composes `plan-lifecycle`/`branch-state`/`process-hygiene`/`commit-hygiene`).
+
+**Work-item (implementation, part of A3/B3):**
+1. **Review** the existing agent-prompt + discipline set in BOTH places — the live wiki `agent-prompt-*` / `agent-discipline-*` pages (`recall(type="wiki", tags=["agent-prompt"])`; disciplines are `agent-discipline-<name>`) AND the repo seed `agent_prompts.yaml`. Confirm they match before adding (flag any pre-existing drift).
+2. **Add** a new `- name: adr-consult` entry under `disciplines:` in `agent_prompts.yaml` with the §A.5.1 content.
+3. **Compose** it: add `[[agent-discipline-adr-consult]]` to the `## Composes` list (and a one-line body reference) of the seeded patterns `plan-executing-build`, `build-car`, `scope-and-plan`, `rca-diagnose`, `debug-investigate`.
+4. **Sync the live wiki** to match: `agent_prompt_save`/discipline-save the new discipline page + re-save the amended patterns (the seeder is create-if-absent, so existing live pages won't auto-update — the live edits are a separate explicit step). Keep the seed yaml and the live wiki identical.
+5. **Tests:** the seed suite (`yadgar/tests/` for `agent_prompts` — e.g. discipline-seed + starter-count assertions) must cover the new discipline and its composition, so a future edit that breaks the sync fails CI.
+
 ---
 
 ## Part B — Type-aware read-first-write discipline
@@ -202,12 +219,12 @@ The gap B closes: durable **memory** writes have no dedup path; `wiki_add` alrea
 
 ### B.3 Agent-discipline (protocol)
 
-Dedup is similarity-automatable (B.2). **Contradiction detection is a judgment on recall results, not a gate** — encode it as protocol, not code. TWO protocol lines (read-side + write-side):
+Dedup is similarity-automatable (B.2). **Contradiction detection is a judgment on recall results, not a gate** — encode it as protocol, not code.
 
-- **Read-side (the A.5.1 gap-fix):** *"Before planning a feature or debugging a subsystem, `recall(type='wiki', tags=['adr'])` / `recall('<subsystem> decision')` for prior ADRs, and `adr_list(status='open')` for open decisions. Consult them before committing to an approach."* (Uses the default profile — fans out to wiki, unlike the fast-profile auto-recall hook.)
-- **Write-side:** *"Before a DURABLE write (semantic fact, feedback rule, ADR), `recall` the topic. If a near-duplicate exists → UPDATE-in-place (`memory_update` / wiki `replace_slug`) instead of appending. If it CONTRADICTS observed state → mark the old stale (`memory_update is_stale=true`) or supersede (ADR). Episodic writes: skip this — just write."*
-- Where added: the stop-hook write-back prompt (`yadgar/tests/hooks/test_stop_hook_template.py` guards the template) + `~/.claude/agent-instructions.md` write-back triggers.
-- Where enforced: **both** — the `memorize` soft-gate (B.2) surfaces the near-dups mechanically; the protocol makes the agent act on them and READ before planning. Neither alone suffices: tooling can't judge contradiction; discipline alone is the write-only failure mode task #76 exists to kill.
+- **Read-side ADR-consult:** handled by the `agent-discipline-adr-consult` page composed into planning/build/debug patterns (§A.5.1 + §A.7) — NOT a standalone prose line here (that would be the remember-to-look failure mode). The discipline injects the `recall(type='wiki', tags=['adr'])` + `adr_list(status='open')` step into every dispatch mechanically.
+- **Write-side dedup:** *"Before a DURABLE write (semantic fact, feedback rule, ADR), `recall` the topic. If a near-duplicate exists → UPDATE-in-place (`memory_update` / wiki `replace_slug`) instead of appending. If it CONTRADICTS observed state → mark the old stale (`memory_update is_stale=true`) or supersede (ADR). Episodic writes: skip this — just write."*
+- Where added: the stop-hook write-back prompt (`yadgar/tests/hooks/test_stop_hook_template.py` guards the template) + `~/.claude/agent-instructions.md` write-back triggers (write-side line); the seed yaml + live wiki (read-side discipline, §A.7).
+- Where enforced: **both** — the `memorize` soft-gate (B.2) surfaces the near-dups mechanically; the composed discipline (§A.5.1) makes the agent READ ADRs before planning; the write-side protocol makes the agent act on dups. None alone suffices: tooling can't judge contradiction; discipline alone is the write-only failure mode task #76 exists to kill.
 - Do NOT promise automated contradiction detection — out of scope; the task frames it as judgment.
 
 ### B.4 Coupling to A
@@ -225,9 +242,10 @@ A makes ADRs recall-visible (default profile) → the read-first step in B.3 can
 | A3 | `project_brief` `## Recent ADRs` section + `_build_recent_adrs`; confirm session-start hook mode (§A.5.2) | A1 |
 | A4 | Project-agnostic migration script (enumerate all `*-adr-log`, audit-drop deprecated, migrate, verify, DELETE) + `MIGRATION_NOTES.md` (dry-run, idempotent) | A1 |
 | A5 | Recall-visibility wiring: confirm `adr` NOT in `wiki_exclude` (nothing to add to exclude — monolith deleted) | A4 |
+| A7 | `agent-discipline-adr-consult`: add to seed `agent_prompts.yaml` + compose into `plan-executing-build`/`build-car`/`scope-and-plan`/`rca-diagnose`/`debug-investigate`; sync live wiki; seed tests | A2 (needs `adr_list`) |
 | B1 | `memorize` soft-gate + config (3 knobs, threshold calibration) + `near_duplicates` response | A (recall-visible ADRs) |
 | B2 | `memory_update` re-embed-on-content-change (content-change guard) | — (can parallel A) |
-| B3 | Write-back + read-first protocol update (stop-hook prompt + agent-instructions): read-side ADR-recall line (A.5.1) + write-side dedup line | B1 |
+| B3 | Write-back protocol update (stop-hook prompt + agent-instructions): write-side dedup line (read-side ADR-consult is A7's composed discipline, not a prose line) | B1 |
 
 ---
 
@@ -244,5 +262,6 @@ Extend existing suites: `yadgar/tests/core/test_adr.py`, `test_project_brief_adr
 - **project_brief-render:** `## Recent ADRs` present in catalog/restore/full, absent in signals; length-capped.
 - **memorize-soft-gate:** durable write (tag `decision`/`feedback`/`_anchor` or `tier`/`is_protected`) with a near-dup returns `near_duplicates` and STILL stores (soft); plain episodic write bypasses (no `near_duplicates` key); threshold boundary; gate honors `YADGAR_MEMORIZE_SIM_GATE_ENABLED=false`.
 - **memory_update-reembed:** content patch (changed value) re-embeds; content patch (same value) does NOT; tags-only patch does NOT.
+- **adr-consult-discipline-seeded (§A.7):** `agent-discipline-adr-consult` is present in the seeded disciplines; `plan-executing-build`/`build-car`/`scope-and-plan`/`rca-diagnose`/`debug-investigate` list it under `## Composes`; `agent_dispatch_prelude` for those patterns includes the ADR-consult text; seed yaml and live wiki stay in sync (drift fails CI).
 
 Loop-until-clean: run `pytest` on touched suites + lint/types after each car.
