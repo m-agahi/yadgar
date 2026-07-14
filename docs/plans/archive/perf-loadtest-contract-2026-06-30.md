@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-14 — record-only harness (benchmarks/run_perf_loadtest.py) + contract checker (perf_contract.py) + manual perf.yaml CI + tests SHIPPED. The unshipped remainder (workload Phases B-E, real baseline, gating flip, per-PR reports) + the 2 open decisions (D1 snapshot-pin vs live-daemon, D2 gating vs record-only) are DEFERRED to docs/plans/perf-loadtest-remaining-deferred-2026-07-14.md.
+
 # Perf Load-Test Contract + Per-PR Regression Tracking — Plan
 
 **Status:** AUDITED 2026-07-14 — record-only harness SHIPPED
