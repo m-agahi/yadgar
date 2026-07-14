@@ -166,6 +166,8 @@ CONSOLIDATION_LOG_COLUMNS: list[Column] = [
     Column("memories_updated", "memories_updated", "INTEGER"),
     Column("memories_archived", "memories_archived", "INTEGER"),
     Column("memories_deleted", "memories_deleted", "INTEGER"),
+    Column("memify_pruned", "memify_pruned", "INTEGER"),
+    Column("cls_promoted", "cls_promoted", "INTEGER"),
     Column("duration_ms", "duration_ms", "INTEGER"),
 ]
 

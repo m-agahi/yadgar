@@ -1,5 +1,7 @@
 """Tests for built-in secret detection (yadgar/secrets.py)."""
 
+from unittest.mock import MagicMock
+
 from yadgar._shared.secrets import check_secrets
 
 
@@ -197,3 +199,161 @@ class TestCheckSecretsReturnValues:
         assert blocked is False
         assert reason == ""
         assert pattern == ""
+
+
+# ---------------------------------------------------------------------------
+# gitleaks-port: false-positive suppression + tight-shape TP coverage
+# ---------------------------------------------------------------------------
+
+
+class TestGitleaksPortFalsePositivesGone:
+    """Benign strings that the pre-port makeshift regexes mis-flagged.
+
+    Root case: the OpenAI rule sk-(?:proj-)?[A-Za-z0-9_-]{20,} had no word
+    boundary and allowed -/_ in the body, so it fired mid-word.
+    """
+
+    def test_tasklist_mirror_word_not_flagged(self):
+        # The reported production FP: "sk-list-mirror-2026-..." inside "tasklist-".
+        content = "task tasklist-mirror-2026-abcdefghij0123456789 done"
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is False, f"benign hyphenated word flagged: {reason}"
+
+    def test_benign_sk_word_not_flagged(self):
+        # A bare sk-<hyphenated-word> run must not reach 20 alnum chars.
+        content = "the sk-mirror-service handles replication"
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is False, f"benign sk- word flagged: {reason}"
+
+    def test_bare_40_char_hex_sha_not_flagged(self):
+        # 40-char git SHA (hex) — subset of the broad AWS-secret shape, but no
+        # aws/secret/key keyword nearby → keyword pre-filter short-circuits.
+        content = "commit a94a8fe5ccb19ba61c4c0873d391e987982fbbd3 landed"
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is False, f"40-char hex SHA flagged: {reason}"
+
+    def test_uuid_not_flagged(self):
+        content = "record id 550e8400-e29b-41d4-a716-446655440000 created"
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is False, f"UUID flagged: {reason}"
+
+    def test_bare_40_alnum_without_keyword_not_flagged(self):
+        # 40 alnum chars but NO aws/secret/key keyword → broad rule never runs.
+        content = "checksum " + ("b" * 40) + " verified"
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is False, f"keyword-less 40-char blob flagged: {reason}"
+
+
+class TestGitleaksPortTruePositivesCaught:
+    """Real key shapes must still be flagged after the port."""
+
+    def test_openai_marker_key_caught(self):
+        # sk-...T3BlbkFJ... infix marker + alnum body.
+        content = f"OPENAI_API_KEY=sk-abcdefT3BlbkFJ{'a' * 24}"  # gitleaks:allow
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is True
+        assert "OpenAI" in reason
+
+    def test_github_ghp_40_caught(self):
+        content = f"ghp_{'A' * 40}"  # gitleaks:allow
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is True
+        assert "GitHub" in reason
+
+    def test_gitlab_pat_caught(self):
+        content = f"glpat-{'a' * 20}"  # gitleaks:allow
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is True
+        assert "GitLab" in reason
+
+    def test_aws_akia_caught(self):
+        content = "AKIAIOSFODNN7EXAMPLE"
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is True
+        assert "AWS access key" in reason
+
+    def test_anthropic_key_caught(self):
+        content = f"sk-ant-api03-{'x' * 40}"  # gitleaks:allow
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is True
+        assert "Anthropic" in reason
+
+    def test_slack_bot_token_caught(self):
+        content = f"xoxb-12345-{'a' * 20}"  # gitleaks:allow
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is True
+        assert "Slack" in reason
+
+    def test_aws_secret_with_keyword_caught(self):
+        # Exactly-40-char base64-ish AWS secret WITH the aws/secret keyword
+        # present so the keyword-gated broad rule runs.
+        secret = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY12"  # 40 chars
+        assert len(secret) == 40
+        content = f"aws_secret_access_key: {secret}"
+        blocked, reason, _ = check_secrets(content)
+        assert blocked is True
+        assert "secret" in reason.lower() or "credential" in reason.lower()
+
+
+class TestGitleaksPortKeywordPrefilter:
+    """The lowercase-keyword pre-filter must short-circuit the regex."""
+
+    def test_keyword_gated_rule_skips_regex_when_no_keyword(self):
+        # Sentinel regex that would match anything; keyword absent → never run.
+        import yadgar._shared.security.secrets as _sec
+
+        sentinel = MagicMock()
+        sentinel.search.return_value = None
+        original = _sec._RULES
+        try:
+            _sec._RULES = [(("zzz-keyword-absent",), sentinel, "Sentinel")]
+            check_secrets("content with no matching keyword at all")
+            sentinel.search.assert_not_called()
+        finally:
+            _sec._RULES = original
+
+    def test_keyword_gated_rule_runs_regex_when_keyword_present(self):
+        import yadgar._shared.security.secrets as _sec
+
+        sentinel = MagicMock()
+        sentinel.search.return_value = None
+        original = _sec._RULES
+        try:
+            _sec._RULES = [(("needle",), sentinel, "Sentinel")]
+            check_secrets("this content has the needle keyword in it")
+            sentinel.search.assert_called_once()
+        finally:
+            _sec._RULES = original
+
+    def test_keywordless_rule_always_runs(self):
+        import yadgar._shared.security.secrets as _sec
+
+        sentinel = MagicMock()
+        sentinel.search.return_value = None
+        original = _sec._RULES
+        try:
+            _sec._RULES = [((), sentinel, "Sentinel")]
+            check_secrets("totally unrelated content")
+            sentinel.search.assert_called_once()
+        finally:
+            _sec._RULES = original
+
+
+class TestGitleaksPortBackCompatView:
+    """_SECRET_PATTERNS stays a 2-tuple view derived from _RULES (shim contract)."""
+
+    def test_secret_patterns_is_2tuple_view(self):
+        import yadgar._shared.security.secrets as _sec
+
+        assert len(_sec._SECRET_PATTERNS) == len(_sec._RULES)
+        for (pattern, name), (_kw, rule_pattern, rule_name) in zip(
+            _sec._SECRET_PATTERNS, _sec._RULES, strict=True
+        ):
+            assert pattern is rule_pattern
+            assert name == rule_name
+
+    def test_shim_reexports_secret_patterns(self):
+        from yadgar._shared.secrets import _SECRET_PATTERNS
+
+        assert isinstance(_SECRET_PATTERNS, list)
+        assert len(_SECRET_PATTERNS) > 0

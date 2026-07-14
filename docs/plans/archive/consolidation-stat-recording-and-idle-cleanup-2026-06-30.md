@@ -1,6 +1,16 @@
+> ARCHIVED 2026-07-14 — SHIPPED across two cars of `feat/stophook-tasklist-train`:
+> Car 5 (v5.139.0, merge `ca23f158`) did Fix B (record `memify_pruned`/`cls_promoted`
+> in `consolidation_log` + viz relabel "Pruned/Promoted/Archived") and Fix A doc part
+> (stale `architecture.md`); Car 6 (v5.139.1, merge `1097b116`) removed the dead
+> `daemon_check_interval` knob end-to-end (Settings/registry/FIELD_META/control.py/docs/tests).
+> The live `~/.config/yadgar/config.yaml` orphan lines (`idle_threshold_seconds`,
+> `daemon_check_interval`) were removed by the user 2026-07-14. Open follow-up (separate bug,
+> noted not fixed): `derived_belief` dead-writer path (`insert_derived_belief` has zero
+> non-test callers → `derived: N` logs each cycle but the table stays empty).
+
 # Consolidation stat-recording fix + idle dead-knob cleanup
 
-**Status (updated 2026-07-09):** OPEN — sequencing gate lifted (SurrealDB 3.1.5 shipped #136, b02f6397). Fix B (stat recording) still needed: `insert_consolidation_log` in `_shared/storage/ops.py:52` whitelists only 5 fields and drops `memify_pruned`, `cls_promoted`, `actions_processed`, etc. — orchestrator passes `{**stats}` but the impl discards them. Schema is SCHEMALESS so no migration needed; the fix is expanding the SET clause in `insert_consolidation_log`.
+**Status:** ARCHIVED — SHIPPED (Cars 5+6, v5.139.0/v5.139.1) (Car 5 of `feat/stophook-tasklist-train`). Sequencing gate lifted (SurrealDB 3.1.5 shipped #136, b02f6397). Fix B (stat recording) still needed: `insert_consolidation_log` in `_shared/storage/ops.py:52` whitelists only 5 fields and drops `memify_pruned`, `cls_promoted`, `actions_processed`, etc. — orchestrator passes `{**stats}` but the impl discards them. Schema is SCHEMALESS so no migration needed; the fix is expanding the SET clause in `insert_consolidation_log`.
 
 Source: 2026-06-30 drift diagnosis. Both findings are the same disease — *self-reporting the user can't trust*: a UI/registry asserts truth the runtime contradicts, and no automated check closes the loop ("discover by accident").
 

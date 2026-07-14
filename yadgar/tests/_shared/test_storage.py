@@ -466,6 +466,27 @@ class TestConsolidationLog:
         )
         assert log_id is not None
 
+    def test_insert_consolidation_log_persists_prune_promote(self, storage):
+        """v5.139.0: memify_pruned + cls_promoted must be persisted (were dropped)."""
+        log_id = storage.insert_consolidation_log(
+            {
+                "memories_added": 0,
+                "memify_pruned": 5,
+                "cls_promoted": 3,
+                "memories_archived": 2,
+                "duration_ms": 500,
+            }
+        )
+        assert log_id is not None
+        rows = storage._q(
+            f"SELECT memify_pruned, cls_promoted, memories_archived FROM consolidation_log:{log_id}"
+        )
+        assert rows, "consolidation_log row not found"
+        row = rows[0]
+        assert int(row.get("memify_pruned") or 0) == 5
+        assert int(row.get("cls_promoted") or 0) == 3
+        assert int(row.get("memories_archived") or 0) == 2
+
 
 class TestMemoryClusters:
     def test_insert_and_get_cluster(self, storage):

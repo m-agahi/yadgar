@@ -37,6 +37,7 @@ class TestSchemaFileLoads:
             "decision",
             "analysis",
             "agent_prompt",
+            "task_list",
         }
 
 

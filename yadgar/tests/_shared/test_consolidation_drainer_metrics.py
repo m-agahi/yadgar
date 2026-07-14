@@ -30,7 +30,6 @@ def tmp_settings(tmp_path):
         DB_PATH=str(tmp_path / "metrics_test.db"),
         DECAY_FACTOR=0.95,
         COLD_THRESHOLD=0.05,
-        DAEMON_CHECK_INTERVAL=1,
     )
 
 

@@ -108,7 +108,7 @@ For the full measurement methodology, CPU-scaling series, and span-level breakdo
 
 ### Consolidation path (background daemon)
 
-`consolidation/orchestrator.py::ConsolidationScheduler` (v5.1 subpackage decomposition) fires after `IDLE_THRESHOLD_SECONDS` of no activity:
+`consolidation/orchestrator.py::run_nightly_consolidation` is fired by a nightly systemd timer / cron (idle-triggered consolidation was removed in v5.7.0; the `IDLE_THRESHOLD_SECONDS` knob was deleted in v5.76.0). It forwards the consolidation compute to the backend `/consolidate` endpoint, then runs the core-side post-cycle tasks. The pipeline phases are:
 
 1. **Decay** (`apply_decay`) — heat reduced per-memory using `DECAY_FACTOR^hours_elapsed` with modifiers for importance, emotional valence, confidence
 2. **Episode processing** (`process_episodes`) — new episodes parsed for file paths, function names, imports, errors; co-occurring entities get `co_occurrence` edges

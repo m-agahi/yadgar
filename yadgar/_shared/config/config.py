@@ -69,7 +69,6 @@ class Settings(BaseSettings):
     # field so config.yaml is authoritative. Seconds a loaded model may sit idle in
     # the backend before eviction; 0 = never evict (backend RemoteMLClient reads it).
     MODEL_IDLE_EVICTION_SECONDS: int = 0
-    DAEMON_CHECK_INTERVAL: float = 30
     DB_PATH: str = str(_paths.DB_PATH)
 
     # v2 settings

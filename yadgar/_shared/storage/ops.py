@@ -55,7 +55,8 @@ class _OpsMixin:
             "CREATE type::record('consolidation_log', $id) SET "
             "timestamp = $timestamp, memories_added = $added, "
             "memories_updated = $updated, memories_archived = $archived, "
-            "memories_deleted = $deleted, duration_ms = $duration_ms",
+            "memories_deleted = $deleted, memify_pruned = $memify_pruned, "
+            "cls_promoted = $cls_promoted, duration_ms = $duration_ms",
             {
                 "id": cid,
                 "timestamp": log.get("timestamp", self._now_iso()),
@@ -63,6 +64,8 @@ class _OpsMixin:
                 "updated": log.get("memories_updated", 0),
                 "archived": log.get("memories_archived", 0),
                 "deleted": log.get("memories_deleted", 0),
+                "memify_pruned": log.get("memify_pruned", 0),
+                "cls_promoted": log.get("cls_promoted", 0),
                 "duration_ms": log.get("duration_ms", 0),
             },
         )

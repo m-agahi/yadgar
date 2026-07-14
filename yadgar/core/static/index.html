@@ -3622,8 +3622,8 @@ function _renderTabConsolChart(rows) {
   if (_tabChartConsol) {
     // Update in-place — no destroy/recreate, preserves scroll position
     _tabChartConsol.data.labels = labels;
-    _tabChartConsol.data.datasets[0].data = rows.map(r => r.added);
-    _tabChartConsol.data.datasets[1].data = rows.map(r => r.deleted);
+    _tabChartConsol.data.datasets[0].data = rows.map(r => r.pruned);
+    _tabChartConsol.data.datasets[1].data = rows.map(r => r.promoted);
     _tabChartConsol.data.datasets[2].data = rows.map(r => r.archived);
     _tabChartConsol.update('none');
     return;
@@ -3633,8 +3633,8 @@ function _renderTabConsolChart(rows) {
     data: {
       labels,
       datasets: [
-        { label: 'Added',    data: rows.map(r => r.added),    borderColor: '#3fb950', backgroundColor: '#3fb95022', tension: 0.3, pointRadius: 2 },
-        { label: 'Deleted',  data: rows.map(r => r.deleted),  borderColor: '#f85149', backgroundColor: '#f8514922', tension: 0.3, pointRadius: 2 },
+        { label: 'Pruned',   data: rows.map(r => r.pruned),   borderColor: '#3fb950', backgroundColor: '#3fb95022', tension: 0.3, pointRadius: 2 },
+        { label: 'Promoted', data: rows.map(r => r.promoted), borderColor: '#58a6ff', backgroundColor: '#58a6ff22', tension: 0.3, pointRadius: 2 },
         { label: 'Archived', data: rows.map(r => r.archived), borderColor: '#d29922', backgroundColor: '#d2992222', tension: 0.3, pointRadius: 2 },
       ],
     },

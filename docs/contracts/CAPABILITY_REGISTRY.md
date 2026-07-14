@@ -2148,13 +2148,13 @@ config knobs.
 ### CAP-OPS-023 — ASGI graceful shutdown and daemon lifecycle
 - **status:** LIVE
 - **category:** ops
-- **settings:** `ASGI_SHUTDOWN_TIMEOUT_SEC`, `DAEMON_CHECK_INTERVAL`, `HOST`, `PORT`, `BACKEND_HTTP_TIMEOUT_SEC`, `BACKEND_IMPORT_TIMEOUT_SEC`, `BACKEND_LOG_LEVEL`, `CORE_LOG_LEVEL`, `LOG_FORMAT`
+- **settings:** `ASGI_SHUTDOWN_TIMEOUT_SEC`, `HOST`, `PORT`, `BACKEND_HTTP_TIMEOUT_SEC`, `BACKEND_IMPORT_TIMEOUT_SEC`, `BACKEND_LOG_LEVEL`, `CORE_LOG_LEVEL`, `LOG_FORMAT`
 - **tools:** —
 - **migrations:** —
 - **bc:** `BC-F2`
 - **refs:** `yadgar/core/server/_app.py`, `yadgar/core/daemon/daemon.py`, `yadgar/_shared/observability/log_config.py`
-- **wiring:** uvicorn serves the Starlette app at `HOST:PORT`. On SIGTERM, `ASGI_SHUTDOWN_TIMEOUT_SEC` caps the wait for in-flight requests to drain before abandoning them. `DAEMON_CHECK_INTERVAL` is the polling cadence for the daemon watchdog loop (health checks, consolidation trigger). `HOST`/`PORT` configure where the MCP HTTP server listens. `LOG_FORMAT` (`json`|`text`|`human`) and `CORE_LOG_LEVEL`/`BACKEND_LOG_LEVEL` configure structured logging.
-- **explanation:** The daemon lifecycle: the Starlette ASGI app is started by uvicorn with configurable bind address and graceful-shutdown timeout. The daemon watchdog polls at `DAEMON_CHECK_INTERVAL` seconds to trigger consolidation when idle and to check backend health. Structured JSON logging (default `LOG_FORMAT=json`) feeds log aggregators; `text`/`human` modes are for local development. `BACKEND_HTTP_TIMEOUT_SEC` caps operational DB requests; `BACKEND_IMPORT_TIMEOUT_SEC` allows longer bulk-import operations.
+- **wiring:** uvicorn serves the Starlette app at `HOST:PORT`. On SIGTERM, `ASGI_SHUTDOWN_TIMEOUT_SEC` caps the wait for in-flight requests to drain before abandoning them. `HOST`/`PORT` configure where the MCP HTTP server listens. `LOG_FORMAT` (`json`|`text`|`human`) and `CORE_LOG_LEVEL`/`BACKEND_LOG_LEVEL` configure structured logging.
+- **explanation:** The daemon lifecycle: the Starlette ASGI app is started by uvicorn with configurable bind address and graceful-shutdown timeout. Structured JSON logging (default `LOG_FORMAT=json`) feeds log aggregators; `text`/`human` modes are for local development. `BACKEND_HTTP_TIMEOUT_SEC` caps operational DB requests; `BACKEND_IMPORT_TIMEOUT_SEC` allows longer bulk-import operations. Note: `DAEMON_CHECK_INTERVAL` was removed in v5.139.1 — the astrocyte loop it once drove is gone (consolidation runs via nightly systemd timer only).
 
 ### CAP-OPS-024 — Action stream and action log retention
 - **status:** LIVE

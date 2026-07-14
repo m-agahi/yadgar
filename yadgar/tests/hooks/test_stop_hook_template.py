@@ -47,18 +47,31 @@ _EXPECTED_TEMPLATE = """<!-- YADGAR CHECKPOINT PROTOCOL
                           fall back to "master" for non-git projects or on any git error.
 -->
 
-Yadgar checkpoint. CAPTURE FIRST (steps 1-3), then maintenance (steps 4-5).
-Decisions and findings scroll out of context and are lost forever; maintenance
-signals re-fire next checkpoint. Capture is the irreplaceable work — if you must
-triage anything away under length pressure, drop maintenance, NEVER capture.
+Yadgar checkpoint. CAPTURE FIRST (steps 1-4), THEN maintenance (steps 5-6).
+This is an ORDERING, not a licence to skip: run ALL six steps. Capture goes
+first only because decisions and findings scroll out of context and are lost
+forever, while maintenance signals re-fire next checkpoint. Ordering is NOT
+permission to drop maintenance — you may not skip steps 5-6 to save length,
+time, or effort. The ONLY legitimate skips are the closed allowed-skip list
+spelled out in step 6, each of which means maintenance is INAPPLICABLE this
+checkpoint (nothing to do), never that you chose to defer real work.
+
+WHEN A STEP SAYS "READ" — read for real. Every "read the ADR log / wiki page /
+task-list page / checkpoint" instruction below means: actually CALL the named
+tool THIS turn and act on the CONTENT IT RETURNS. Do NOT paraphrase, summarise,
+or reconstruct a page from memory of an earlier turn — the page may have changed,
+and a checkpoint built on a remembered pointer instead of the live bytes is the
+exact failure this protocol exists to prevent. On-disk paths → the Read tool;
+wiki slugs → wiki_read; the tagged agent-prompt library → recall.
 
 1. ADR CAPTURE (always run; the Yadgar wiki is the source of truth — no file,
    works for non-git projects too).
    Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
-   - Read existing ADRs FIRST: wiki_read("{project}-adr-log", directory="{directory}",
-     branch_hint="{default_branch}"). If the page is absent the log is empty — no
-     prior ADRs to dedup against. Do NOT create the log manually; adr_add handles
-     creation automatically.
+   - Read existing ADRs FIRST — actually CALL it now and dedup against the
+     RETURNED content, not your memory of it: wiki_read("{project}-adr-log",
+     directory="{directory}", branch_hint="{default_branch}"). If the page is
+     absent the log is empty — no prior ADRs to dedup against. Do NOT create the
+     log manually; adr_add handles creation automatically.
    - Scan THIS session for durable decisions since the last checkpoint.
      KEEP (precision over recall): a clear durable decision — architecture, a
      tool/config choice, an approach committed-to, a scope cut; a conclusion we
@@ -90,18 +103,22 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
 
 2. STRUCTURAL WRITE-BACK (always consider). Durable repo-structure / convention /
    module-purpose findings from THIS session → the EXISTING wiki page that owns
-   the topic (wiki_list → slug → wiki_read; update via wiki_add(replace_slug=<slug>,
-   ..., directory="{directory}", branch_hint="{default_branch}", wait=True); no
-   near-duplicate pages). If no page fits, create one with wiki_add(tags=[...],
-   directory="{directory}", branch_hint="{default_branch}", wait=True).
+   the topic (wiki_list → slug → wiki_read the slug NOW and edit the content it
+   RETURNS — do NOT rewrite a page from memory; update via
+   wiki_add(replace_slug=<slug>, ..., directory="{directory}",
+   branch_hint="{default_branch}", wait=True); no near-duplicate pages). If no
+   page fits, create one with wiki_add(tags=[...], directory="{directory}",
+   branch_hint="{default_branch}", wait=True).
    Verify wiki_history. Facts/structure only — decisions go in step 1.
 
 3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
    Scan THIS session for a reusable SUBAGENT DISPATCH PROMPT you crafted or
    refined — one worth reusing for a recurring task shape (review, debug, explore,
    implement, etc.). Skip one-offs and trivial prompts.
-   - Read existing patterns FIRST: recall(type="wiki", tags=["agent-prompt"]) (or
-     check the agent-prompt-toc page). See which task-shapes already have a pattern.
+   - Read existing patterns FIRST — actually CALL recall now and judge from the
+     RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"]) (or
+     wiki_read the agent-prompt-toc page). See which task-shapes already have a
+     pattern.
    - If an EXISTING pattern already covers this task-shape, IMPROVE/extend it:
      agent_prompt_save the SAME pattern slug — agent_prompt_save versions it.
    - Only create a NEW slug when no existing pattern fits. NEVER mint a
@@ -110,9 +127,104 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
      content=<the prompt>, purpose=<one line>) — same slug to extend a match,
      a new slug only when genuinely new.
 
-4. Call project_brief("{directory}", mode="signals").
+4. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to the
+   wiki so it survives session exit / /clear. Page: slug "{project}-task-list",
+   tag "task-list", scoped to this directory. Page format = the SCHEMA block at
+   the bottom of this step; each task is a UNIQUE "## task:<id>" section.
+   - Step 4a — RECONCILE YOUR OWN LIST FIRST. Call TaskList. TaskUpdate anything
+     completed or blocked this session; TaskCreate any follow-ups you discovered.
+     This is the every-checkpoint "update your task list" pass — do it before you
+     mirror, so the page reflects reality.
+   - Step 4b — READ THE PAGE FOR REAL: CALL wiki_read("{project}-task-list",
+     directory="{directory}") NOW and reconcile against the tasks + updated_at it
+     RETURNS — never against a remembered copy of the page. Absent = no saved list
+     yet.
+   - Step 4c — BRANCH on {have open tasks after reconcile?} × {page exists?}:
+     (CANONICAL WRITE: the task-list page is written WITHOUT branch_hint so it
+     lands on the project-canonical / branch-NULL slot. This is deliberate and
+     DIFFERENT from steps 1-2 above — the session-start restore-nudge is served
+     by a container endpoint that resolves the page under the caller's CURRENT
+     branch; a default-branch-pinned row would be unreachable from any
+     feature-branch session, so the page must be branch-agnostic. Do NOT add
+     branch_hint here.)
+     - have tasks · NO page → CREATE. wiki_add(title="{project} task list",
+       content=<full page: ## Meta + one ## task:<id> section each>,
+       replace_slug="{project}-task-list", tags=["task-list"],
+       page_type="task_list", directory="{directory}", wait=True).
+     - NO tasks · NO page → SKIP. Nothing to do.
+     - NO tasks · page EXISTS → CATCH-UP SYNC. The page has tasks you don't.
+       Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your harness
+       via TaskCreate — recovers a missed session-start restore or a concurrent
+       session's work. GUARD: never adopt a completed task; if ALL page tasks are
+       completed, OR the page's DB updated_at (from the wiki_read metadata) is
+       older than 14 days, do NOT adopt — note "stale/finished saved list" and
+       leave it. Adopt by judgment: open tasks relevant to the work you are about
+       to do; skip ones clearly from a finished or unrelated effort.
+     - have tasks · page EXISTS → MERGE + WRITE BACK. Reconcile the page's open
+       tasks with yours (union; your live status wins for tasks you own; keep
+       page-only open tasks). Default write = FULL REWRITE:
+       wiki_add(replace_slug="{project}-task-list", content=<merged full page>,
+       page_type="task_list", tags=["task-list"], directory="{directory}",
+       wait=True). OPTIONAL surgical path (only when your change is confined to
+       ONE task): wiki_append_section(slug="{project}-task-list",
+       section_heading="task:<id>", position="replace_section", heading_type="h2",
+       content=<that task's body>, directory="{directory}") — the "## task:<id>"
+       heading is UNIQUE so this is section-atomic and will not clobber a
+       concurrent edit to a DIFFERENT task's section.
+   - PER-TASK BODY: render fields as "- key: value" flat bullets UNDER the
+     "## task:<id>" heading — subject, status, active_form (optional),
+     description, context, blockedBy, blocks, modified. Multi-line values
+     (description, context) MUST indent continuation lines 2 spaces so an
+     embedded "##" line or ``` fence cannot be mis-parsed as a section boundary
+     (same discipline as the ADR to_markdown_body renderer). The "context" field
+     carries related-context pointers to where the task's work lives: file paths ·
+     [[wiki-slug]] · docs/plans/*.md · mem:<id>. The "modified" field is
+     ISO-8601 UTC, bumped ONLY on a real change to that task (per-task freshness).
+     Do NOT hand-write a page-level "updated:" stamp — the age gate reads the DB
+     updated_at column. Verify wiki_history after writing.
+   - SCHEMA (page body):
+     ```markdown
+     <!-- yadgar task-list page — schema v1. One "## task:<id>" section per task.
+          Fields are "- key: value" bullets; multi-line values indent 2 spaces.
+          status ∈ {pending, in_progress, completed}. Restore: recreate open
+          tasks via TaskCreate. -->
 
-5. MAINTENANCE — for each entry in recommended_actions:
+     # {project} task list
+
+     ## Meta
+     - project: {project}
+     - open: <N> · completed: <M>
+
+     ## task:0003
+     - subject: <one line>
+     - status: in_progress
+     - active_form: <present-tense label>
+     - description: <text; continuation lines indent 2 spaces>
+     - context: src/foo.py · [[some-wiki-slug]] · docs/plans/x.md · mem:4821
+     - blockedBy: 0005
+     - blocks:
+     - modified: 2026-07-14T18:20:32Z
+     ```
+     Zero-pad each <id> to 4 digits ("task:0001" ≠ "task:0012") so the section
+     matcher is exact. status is the harness value VERBATIM, enum
+     {pending, in_progress, completed} — there is NO "blocked" status (blocking
+     is the blockedBy array).
+
+5. Call project_brief("{directory}", mode="signals"). UNCONDITIONAL — this call
+   is how you LEARN whether maintenance applies; it is cheap and you may never
+   skip it. Its recommended_actions list drives step 6.
+
+6. MAINTENANCE — MANDATORY. You MUST work the recommended_actions list from
+   step 5 to completion. It is NOT optional and NOT droppable under length, time,
+   or effort pressure. Skip the maintenance pass ONLY IF one of the following
+   allowed-skip conditions holds — this is the complete, closed list:
+     (a) project_brief returned recommended_actions EMPTY (nothing to do);
+     (b) every recommended_action was already handled earlier THIS checkpoint;
+     (c) the session did no writes and made no state changes at all (a pure
+         read-only session), so no active_work / checkpoint refresh is warranted.
+   If NONE of (a)-(c) holds you MUST run the pass below. "I am running low on
+   length" / "this feels minor" are NOT on the list and do NOT authorize a skip.
+   For each entry in recommended_actions:
    - ANCHOR HYGIENE: if audit_anchors appears, run it once:
      audit_anchors("{directory}", dry_run=True) → review actions list →
      audit_anchors("{directory}", dry_run=False) to apply forget/merge. The tool
@@ -190,8 +302,11 @@ def test_template_has_protocol_content():
     assert "adr_add(" in content
     assert "wiki_add(" in content
     assert "project_brief(" in content
-    # Hand-rolled append must be gone
-    assert "wiki_append_section(" not in content
+    # wiki_append_section reappears in the TASK-LIST MIRROR step (step 4) as the
+    # OPTIONAL surgical single-task path (replace_section on a unique
+    # "## task:<id>" heading). Car B (#74) had removed a hand-rolled ADR append;
+    # this is a different, deliberate reintroduction — assert it is present.
+    assert "wiki_append_section(" in content
 
 
 def test_template_has_substitution_header():
@@ -219,6 +334,145 @@ def test_agent_prompt_step_is_read_first():
     assert "NEW slug when no existing pattern fits" in content
     # The save call itself must still be present.
     assert "agent_prompt_save(" in content
+
+
+def test_task_list_mirror_step_present():
+    """Step 4 (TASK-LIST MIRROR) persists the harness task list to the wiki.
+
+    Asserts the step names the harness tools (TaskList/TaskUpdate/TaskCreate),
+    the four state-machine cases, the catch-up guard, the schema shape, the
+    status enum, the related-context pointer, the 2-space continuation-indent
+    rule, and the optional surgical wiki_append_section(replace_section) path.
+    """
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    # Named step + slug + tag.
+    assert "TASK-LIST MIRROR" in content
+    assert "{project}-task-list" in content
+    assert 'tags=["task-list"]' in content
+    # Reconcile own list FIRST via the harness tools.
+    assert "TaskList" in content
+    assert "TaskUpdate" in content
+    assert "TaskCreate" in content
+    assert "RECONCILE YOUR OWN LIST FIRST" in content
+    # Read-before-write.
+    assert 'wiki_read("{project}-task-list"' in content
+    # The FOUR cases of the state machine.
+    assert "CREATE" in content
+    assert "SKIP" in content
+    assert "CATCH-UP SYNC" in content
+    assert "MERGE + WRITE BACK" in content
+    # Catch-up guard: skip completed, all-done→skip, 14-day age gate on DB updated_at.
+    assert "never adopt a completed task" in content
+    assert "ALL page tasks are\n     completed" in content or "ALL page tasks are completed" in (
+        " ".join(content.split())
+    )
+    assert "14 days" in content
+    assert "updated_at" in content
+    # Section-per-task schema + status enum + verbatim.
+    assert "## task:<id>" in content
+    assert 'page_type="task_list"' in content
+    assert "{pending, in_progress, completed}" in content
+    assert 'no "blocked" status' in " ".join(content.split()).replace("NO", "no")
+    # key: value fields under the heading.
+    for field in ("subject", "status", "description", "context", "blockedBy", "blocks", "modified"):
+        assert field in content, f"per-task field {field!r} missing from schema"
+    # Related-context pointers clause.
+    assert "related-context pointers" in content
+    assert "mem:<id>" in content
+    # 2-space continuation-indent rule (section-boundary poisoning defence).
+    assert "indent continuation lines 2 spaces" in content
+    assert "mis-parsed as a section boundary" in content
+    # Zero-pad discipline for exact section matching.
+    assert "Zero-pad each <id> to 4 digits" in content
+    assert '"task:0001" ≠ "task:0012"' in content
+    # Optional surgical single-task path.
+    assert "replace_section" in content
+    assert 'section_heading="task:<id>"' in content
+    # The full-rewrite default write.
+    assert 'replace_slug="{project}-task-list"' in content
+
+
+def test_maintenance_step_is_mandatory_with_closed_allowed_skip_list():
+    """Issue 2 (Car 3): the maintenance pass (steps 5-6) is MANDATORY. The
+    header no longer pre-authorizes dropping maintenance under length pressure,
+    step 5 is UNCONDITIONAL, and step 6 defines a closed allowed-skip list."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    normalized = " ".join(content.split())
+
+    # Header no longer licenses dropping maintenance under length pressure.
+    assert "drop maintenance, NEVER capture" not in content, (
+        "header must not pre-authorize dropping the maintenance pass"
+    )
+    assert "run ALL six steps" in normalized
+
+    # Step 5 (project_brief signals) is explicitly unconditional.
+    assert "UNCONDITIONAL" in content
+
+    # Step 6 is MANDATORY and states it is not droppable under length pressure.
+    assert "MAINTENANCE — MANDATORY" in content
+    assert "NOT optional and NOT droppable" in normalized
+
+    # Closed allowed-skip list: the imperative phrasing + all three conditions.
+    assert "Skip the maintenance pass ONLY IF" in normalized
+    assert "complete, closed list" in normalized
+    assert "recommended_actions EMPTY" in normalized
+    assert "already handled earlier THIS checkpoint" in normalized
+    assert "pure\n         read-only session" in content or "pure read-only session" in normalized
+    # Length/effort rationalizations are explicitly NOT on the list.
+    assert "you MUST run the pass" in normalized
+    assert "do NOT authorize a skip" in normalized
+
+    # The pre-existing per-action "SKIP and flag" escape (uncovered action type)
+    # is a DIFFERENT legitimate skip and must survive.
+    assert "SKIP and flag" in content
+
+
+def test_read_instructions_are_strict_live_reads():
+    """Issue 3 (Car 3): every read-a-file/slug/checkpoint instruction strictly
+    tells the model to CALL the tool and act on the RETURNED content, not
+    paraphrase from memory. Failure mode: model improvises off a short pointer."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    normalized = " ".join(content.split())
+
+    # Global strict-read preamble present, and it routes each retrieval to the
+    # correct tool (Read for on-disk paths, wiki_read for slugs, recall for the
+    # tagged agent-prompt library).
+    assert 'WHEN A STEP SAYS "READ"' in content
+    assert "act on the CONTENT IT RETURNS" in normalized
+    assert "not paraphrase" in normalized.lower() or "Do NOT paraphrase" in normalized
+    assert "On-disk paths → the Read tool" in normalized
+    assert "wiki slugs → wiki_read" in normalized
+    assert "agent-prompt library → recall" in normalized
+
+    # Per-step strict-read reinforcement.
+    # Step 1 ADR read.
+    assert "dedup against the\n     RETURNED content" in content or (
+        "dedup against the RETURNED content" in normalized
+    )
+    # Step 2 wiki read.
+    assert (
+        "edit the content it\n   RETURNS" in content or "edit the content it RETURNS" in normalized
+    )
+    # Step 3 agent-prompt recall.
+    assert "judge from the\n     RETURNED patterns" in content or (
+        "judge from the RETURNED patterns" in normalized
+    )
+    # Step 4b task-list read.
+    assert "READ THE PAGE FOR REAL" in content
+    assert "never against a remembered copy" in normalized
+
+
+def test_task_list_mirror_status_enum_has_no_blocked():
+    """The status enum is EXACTLY {pending, in_progress, completed} — no 'blocked'
+    status (blocking is expressed via the blockedBy array, per the verified live
+    harness output)."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert "{pending, in_progress, completed}" in content
+    # The schema must state blocking is the blockedBy array, not a status value.
+    normalized = " ".join(content.split())
+    assert "blockedBy array" in normalized
+    # There must be no "status: blocked" example anywhere in the schema.
+    assert "status: blocked" not in content
 
 
 # ---------------------------------------------------------------------------
