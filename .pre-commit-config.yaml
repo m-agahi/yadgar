@@ -121,14 +121,14 @@ repos:
         language: system
         entry: python scripts/check_dead_capability.py
         pass_filenames: false
-        files: ^(yadgar/backend/graph/graph_api\.py|yadgar/_shared/contracts/viz\.py|yadgar/core/viz/viz_meta\.py|docs/EDGE_CONTRACT\.md)$
+        files: ^(yadgar/backend/graph/graph_api\.py|yadgar/_shared/contracts/viz\.py|yadgar/core/viz/viz_meta\.py|docs/contracts/EDGE_CONTRACT\.md)$
 
       - id: check-capability-coverage
         name: Check I32 capability-registry coverage (every setting/tool/migration/BC catalogued)
         language: system
         entry: python scripts/check_capability_coverage.py
         pass_filenames: false
-        files: ^(yadgar/_shared/config/config\.py|yadgar/_shared/storage/migrations\.py|yadgar/core/server/tools/.*\.py|docs/BEHAVIOR_CONTRACT\.md|docs/CAPABILITY_REGISTRY\.md)$
+        files: ^(yadgar/_shared/config/config\.py|yadgar/_shared/storage/migrations\.py|yadgar/core/server/tools/.*\.py|docs/contracts/BEHAVIOR_CONTRACT\.md|docs/contracts/CAPABILITY_REGISTRY\.md)$
 
       - id: check-complexity-allowlist
         name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
@@ -142,7 +142,7 @@ repos:
         language: system
         entry: python scripts/check_test_weakening.py
         pass_filenames: false
-        files: ^(yadgar/tests/e2e/.*\.py|docs/BEHAVIOR_CONTRACT\.md)$
+        files: ^(yadgar/tests/e2e/.*\.py|docs/contracts/BEHAVIOR_CONTRACT\.md)$
 
       - id: check-e2e-assertions
         name: Assert every e2e test_* fn has ≥1 real assertion (#52)
@@ -237,4 +237,4 @@ repos:
         # non-code pushes (plans, *.md, *.json, configs) skip the slow e2e run —
         # they cannot change e2e outcomes. BEHAVIOR_CONTRACT.md is included
         # because the e2e suite asserts its SHALL statements.
-        files: '(\.py$|(^|/)Makefile$|(^|/)pyproject\.toml$|(^|/)conftest\.py$|^docs/BEHAVIOR_CONTRACT\.md$)'
+        files: '(\.py$|(^|/)Makefile$|(^|/)pyproject\.toml$|(^|/)conftest\.py$|^docs/contracts/BEHAVIOR_CONTRACT\.md$)'

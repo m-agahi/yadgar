@@ -284,7 +284,7 @@ versioning). One PR → **one bump per unit that the PR touched**, regardless of
 *Sources: `wiki:yadgar-adr-log` ADR-0066 (verbatim decision/consequences/revisit_trigger) + ADR-0084 (lone-files
 law) + ADR-0062 (I34); `docs/ARCHITECTURE_INVARIANTS.md:78,80,546-622`; `docs/plans/archive/layer-boundary-train-2026-07-09.md`
 (T2 car table, task-#18 pointer line 51/107); `docs/plans/archive/core-backend-folder-split-2026-07-06.md`
-(shim precedent); `docs/claude-workflow.md:34-119,163-202` (train workflow); `pyproject.toml:115-156`
+(shim precedent); `docs/reference/claude-workflow.md:34-119,163-202` (train workflow); `pyproject.toml:115-156`
 (per-file-ignores); live `wc -l` census 2026-07-13; memory 531809 (blast-radius discipline).*
 
 ---

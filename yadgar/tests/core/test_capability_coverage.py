@@ -1,7 +1,7 @@
 """I32 — capability-registry coverage lint, as a plain (non-e2e) pytest.
 
 Mirrors test_contract_coverage.py: loads scripts/check_capability_coverage.py by
-path and asserts the shipped docs/CAPABILITY_REGISTRY.md is fully catalogued, plus
+path and asserts the shipped docs/contracts/CAPABILITY_REGISTRY.md is fully catalogued, plus
 a few unit checks on the enumerators and the orphan/stale/malformed detection.
 """
 
@@ -40,7 +40,7 @@ def test_enumerators_find_the_surfaces() -> None:
         )
         >= 20
     )
-    assert len(ccc.enumerate_bc(_REPO_ROOT / "docs" / "BEHAVIOR_CONTRACT.md")) >= 200
+    assert len(ccc.enumerate_bc(_REPO_ROOT / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md")) >= 200
 
 
 def test_parse_registry_extracts_fields() -> None:
@@ -78,12 +78,14 @@ def _write_min_registry(root: Path, *, status: str = "LIVE", ref: str = "yadgar/
     """Create a tiny tree the lint can run against (config/migrations/contract empty)."""
     (root / "yadgar" / "server" / "tools").mkdir(parents=True, exist_ok=True)
     (root / "yadgar" / "storage").mkdir(parents=True, exist_ok=True)
-    (root / "docs").mkdir(parents=True, exist_ok=True)
+    (root / "docs" / "contracts").mkdir(parents=True, exist_ok=True)
     # An empty config so enumerate_settings() returns no fields → no orphans to chase.
     (root / "yadgar" / "config.py").write_text("class Settings:\n    pass\n", encoding="utf-8")
     (root / "yadgar" / "storage" / "migrations.py").write_text("x = 1\n", encoding="utf-8")
-    (root / "docs" / "BEHAVIOR_CONTRACT.md").write_text("no rows here\n", encoding="utf-8")
-    (root / "docs" / "CAPABILITY_REGISTRY.md").write_text(
+    (root / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md").write_text(
+        "no rows here\n", encoding="utf-8"
+    )
+    (root / "docs" / "contracts" / "CAPABILITY_REGISTRY.md").write_text(
         f"### CAP-CFG-001 — t\n- **status:** {status}\n- **refs:** `{ref}`\n",
         encoding="utf-8",
     )

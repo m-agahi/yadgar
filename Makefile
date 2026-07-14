@@ -325,7 +325,7 @@ perf:
 	@echo "==> #79 recall-latency load-test (record-only, non-gating) ..."
 	@OTEL_SDK_DISABLED=true python benchmarks/run_perf_loadtest.py
 
-## upgrade-test: Print the manual upgrade-test runbook (see docs/UPGRADE_TEST.md)
+## upgrade-test: Print the manual upgrade-test runbook (see docs/testing/upgrade-test.md)
 upgrade-test:
-	@echo "Manual recipe — see docs/UPGRADE_TEST.md for the runbook."
-	@cat docs/UPGRADE_TEST.md
+	@echo "Manual recipe — see docs/testing/upgrade-test.md for the runbook."
+	@cat docs/testing/upgrade-test.md

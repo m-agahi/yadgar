@@ -16,7 +16,7 @@ configuration.md`, via **I25** + a phantom-doc guard) — but the recent discove
 live on OTHER, un-ratcheted axes:
 
 - **Dead code / dead config** — `idle_threshold` knob deleted v5.76.0, yet an
-  orphan `config.yaml` line survived and `docs/architecture.md:107` still describes
+  orphan `config.yaml` line survived and `docs/reference/architecture.md:107` still describes
   it. The silent-breakage audit (2026-06-16) hand-found **10 dead functions** and
   **15 dead config fields** that no automated check catches.
 - **Producer↔consumer data flow** — the consolidation orchestrator computes
@@ -61,7 +61,7 @@ wrong or zero value), **MISLEAD-DOC** (prose lies to a reader).
 | # | Axis | Source of truth | Derived artifact(s) | How it diverges | Blast radius |
 |---|------|-----------------|---------------------|-----------------|--------------|
 | A1 | Config knob 3-way | `config.py` Settings | `config_yaml.py` FIELD_META + `config_registry.py` ConfigEntry | New Settings field not registered in yaml+registry | DEAD (invisible knob) |
-| A2 | Config knob ↔ prose | `config.py` Settings | `docs/configuration.md` | Knob renamed/removed, doc not updated | MISLEAD-DOC |
+| A2 | Config knob ↔ prose | `config.py` Settings | `docs/reference/configuration.md` | Knob renamed/removed, doc not updated | MISLEAD-DOC |
 | A3 | Config knob ↔ example yaml | `config.py` Settings | shipped/user `config.yaml` example keys | Knob deleted (`idle_threshold` v5.76.0), orphan yaml key survives | DEAD (confusing config) |
 | A4 | Dead **functions** | code call graph | the function defs themselves | Caller removed (e.g. `_maybe_sleep_cycle` never wired since v5.7.0) → def is orphaned | DEAD + SILENT-WRONG (the capability silently never runs) |
 | A5 | Dead **config fields** | call sites reading a Settings field | the Settings field | Field read-site removed, field lingers (15 found: `FRACTAL_LEVELS`, `HOPFIELD_BETA`, …) | DEAD |
@@ -72,7 +72,7 @@ wrong or zero value), **MISLEAD-DOC** (prose lies to a reader).
 | A10 | Capability registry **accuracy** | actual runtime reachability | `CAPABILITY_REGISTRY.md` `status:` field | A `status: active` row whose capability is actually dead — I32 is coverage-not-correctness | MISLEAD-DOC |
 | A11 | MCP tool list ↔ README | `server/tools/*` @_tool count (75 non-test; `_test_*` excluded) | `README.md:238` ("75 MCP tools") | Tools added, count not bumped — **currently IN SYNC (75 = 75), no drift today**; risk is future-only | MISLEAD-DOC (latent) |
 | A12 | Tool ↔ description/schema | tool impl signature | tool docstring / `server.json` description | Param added/removed, description stale | MISLEAD-DOC |
-| A13 | Prose docs ↔ runtime | runtime behavior | `docs/architecture.md`, `roadmap/*`, `README.md` | Behavior changed (idle→nightly v5.7.0), `architecture.md:107` still describes old | MISLEAD-DOC |
+| A13 | Prose docs ↔ runtime | runtime behavior | `docs/reference/architecture.md`, `roadmap/*`, `README.md` | Behavior changed (idle→nightly v5.7.0), `architecture.md:107` still describes old | MISLEAD-DOC |
 | A14 | Behavior-contract ↔ e2e | `BEHAVIOR_CONTRACT.md` BC-* rows + ✅ floor | `tests/e2e/*` test refs | Contract row with no test, or assertions weakened | SILENT-WRONG (untested contract) |
 | A15 | Edge type ↔ contract | `graph_api.py` + `viz_meta.py::EDGE_TYPES` | `docs/EDGE_CONTRACT.md` | Edge produced w/o contract row, or `drop`-role still produced (I29) | DEAD |
 | A16 | Wiki fn pages ↔ code | source file SHA256 | auto-generated wiki page hash (`server/tools/project.py`) | Code changes, wiki page hash stale (#47) | MISLEAD-DOC |
@@ -269,13 +269,13 @@ Recommend a **scheduled (weekly) drift-audit agent run**, NOT a stop-hook nudge:
   `static/index.html:3618-3648` (chart, 3 metrics).
 - Dead-capability lint scope (edge-types only): `scripts/check_dead_capability.py`.
 - Silent-breakage hand-audit (10 dead fns, 15 dead config, stale label):
-  `docs/audits/silent-breakage-2026-06-16.md`.
+  `docs/reports/audits/silent-breakage-2026-06-16.md`.
 - Invariant text: `docs/ARCHITECTURE_INVARIANTS.md` (I23 §223, I25 §260, I27 §318,
   I29 §362, I30 §384, I32-ref in `CAPABILITY_REGISTRY.md`).
 - CI aggregation: `.forgejo/workflows/ci-pr.yaml:86` (`invariant-checks` job),
   `.forgejo/workflows/validate.yaml:32` (`pre-commit run --all-files`).
 - The fix (not this doc): `docs/plans/consolidation-stat-recording-and-idle-cleanup-2026-06-30.md`.
-- `idle_threshold` stale prose: `docs/architecture.md:107`. README tool count
+- `idle_threshold` stale prose: `docs/reference/architecture.md:107`. README tool count
   `README.md:238` ("75 MCP tools") — **verified in-sync**: 75 non-`_test_` @_tool
   `def`s (the 2 `_test_*` tools excluded), matching the README. A11 is a latent
   guard against *future* drift, not a present bug.

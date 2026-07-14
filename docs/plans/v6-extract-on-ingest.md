@@ -98,7 +98,7 @@ Per-type gap (v5.26.0):
 
 ## 4. References
 
-- `docs/competitor-audit-2026-05-30.md` §1 — mem0 architecture
+- `docs/reports/audits/competitor-audit-2026-05-30.md` §1 — mem0 architecture
 - `benchmarks/results/longmemeval_v5.26.0_s_full.json` — per-type breakdown
 - v6 curator anchor (mem 484431) — nightly LLM tier already exists, may host
 - `docs/ARCHITECTURE_INVARIANTS.md` — I1/I2/I4/I6/I9 constraints

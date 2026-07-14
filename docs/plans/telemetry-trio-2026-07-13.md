@@ -56,7 +56,7 @@ plan, the disagreement is called out.
 | Install-method detection | `yadgar/core/update/install_methods.py:27` (`detect_install_method`) | returns `pipx / brew / nix-flake / container / source` — already computed locally |
 | Version source | `yadgar/__init__.py:1–21` | `importlib.metadata.version("yadgar")` → pyproject.toml fallback → `"unknown"`. `BACKEND_VERSION` separate at `:21` |
 | HTTP control endpoint | `POST /api/control/update` | auth + `UPDATE_DEBUG_APIS_ENABLED` gated |
-| Privacy policy | `docs/PRIVACY.md` (v5.48.0) | wire format matches source verbatim; corporate-firewall note present (respects `HTTPS_PROXY`; air-gapped → keep OFF) |
+| Privacy policy | `docs/reference/privacy.md` (v5.48.0) | wire format matches source verbatim; corporate-firewall note present (respects `HTTPS_PROXY`; air-gapped → keep OFF) |
 | MIGRATION_NOTES | `MIGRATION_NOTES.md:453` (v5.48.0 section; repo root, not `docs/`) | states anonymous GET, no telemetry, no IP collection |
 | Telemetry / stats / opt-in infra | **absent** | grep for `telemetry`/`analytics`/`opt_in`/`phone.home`/`usage_stats` finds only operational observability (exception/db-size/ml-unload). **F2 is greenfield.** |
 | `get_memory_stats()` (F2 local source) | `yadgar/_shared/storage/ops.py:139` | 2026-07-10 plan cites `ops.py:139` — CORRECT |
@@ -119,7 +119,7 @@ reusing the existing httpx patterns from `check.py`. No config knob needed for F
 
 **Verdict: ACCEPT as scoped.** This is the correct shape: opt-in default-off + preview +
 public dashboard is the Syncthing/popcon trust model, and the plan's P1–P8 rules are
-genuinely testable (diff payload struct vs `docs/PRIVACY.md` table — reuses the I25/I32
+genuinely testable (diff payload struct vs `docs/reference/privacy.md` table — reuses the I25/I32
 drift-audit pattern already in the repo). Two must-hold constraints:
 - **`preview` MUST land before any send path** (Phase 2 before Phase 4). Non-negotiable —
   it is the trust primitive.
@@ -207,7 +207,7 @@ correct sequencing is value-first: F1-free → F2 → (maybe) F3 Half-A, each it
 ### F2
 - [unit] `stats preview` output is byte-identical to what the send path would transmit,
   from a fixed local-stats fixture (the P4 invariant, mechanically enforced).
-- [unit] Every payload field maps to a `docs/PRIVACY.md` justification row (P1 drift-audit,
+- [unit] Every payload field maps to a `docs/reference/privacy.md` justification row (P1 drift-audit,
   reuse I25/I32 pattern) — a field with no row FAILS the test.
 - [unit] Bucketing: exact `memory_count=3271` → bucket `1k–5k`; no exact count leaks.
 - [unit] `stats_share_enabled` default is `false`; env-lock returns 409 when env-set.
@@ -226,7 +226,7 @@ correct sequencing is value-first: F1-free → F2 → (maybe) F3 Half-A, each it
 ## Test plan
 
 - **Payload-contract tests (F2, load-bearing):** golden-file the exact wire struct; a
-  CI lint diffs it against the `docs/PRIVACY.md` table (extends the existing
+  CI lint diffs it against the `docs/reference/privacy.md` table (extends the existing
   `check_capability_coverage` / three-way-sync discipline). Any new field without a doc row
   breaks CI. This makes P1/P5 *enforced*, not aspirational.
 - **Network-boundary assertion (F1-free + F2):** mock the httpx transport; assert the ONLY
@@ -284,7 +284,7 @@ correct sequencing is value-first: F1-free → F2 → (maybe) F3 Half-A, each it
   is DONE).
 - Building the F1 custom `/v1/ping` endpoint (recommend drop).
 - F3 Half-B (accounts / publish / payments / moderation) — recommend cut.
-- Editing the 2026-07-10 design-of-record or `docs/DECISIONS.md` / ADRs (constraint).
+- Editing the 2026-07-10 design-of-record or `docs/reference/decisions.md` / ADRs (constraint).
 - Choosing the hosting vendor / payment rail (user decisions — OQ-INFRA-1 / OQ-F3-2).
 
 ---
@@ -327,7 +327,7 @@ Inherited from the design-of-record (still open) + this audit's additions:
 - **F1-free:** one new feature minor (per versioning convention, one minor per feature).
   No migration. No breaking change.
 - **F2:** one new feature minor. New config knob (safe default OFF → "no action required for
-  existing installs" per PRIVACY.md convention). `docs/PRIVACY.md` extension (Phase 0).
+  existing installs" per PRIVACY.md convention). `docs/reference/privacy.md` extension (Phase 0).
   No DB migration (reads existing `get_memory_stats`).
 - **F3 Half-A (if built):** one feature minor; reuses wiki-versioning, no new migration.
 - **No major bump** — none of these are breaking-architectural (v6.0.0 territory is
@@ -350,8 +350,8 @@ Inherited from the design-of-record (still open) + this audit's additions:
 - `yadgar/_shared/storage/ops.py:139` — `get_memory_stats()` (F2 local source).
 - `yadgar/core/server/tools/agent_prompts.py:82,355` — agent_prompt save + seed (F3 base).
 - `yadgar/core/seed/materials/agent_prompts.yaml` — genesis corpus (ADR-0091; F3 tier-3).
-- `docs/PRIVACY.md` — shipped v5.48 update-check privacy policy (F1 baseline).
-- `docs/DECISIONS.md` PD-37 — distribution/update train (v5.45–v5.47).
+- `docs/reference/privacy.md` — shipped v5.48 update-check privacy policy (F1 baseline).
+- `docs/reference/decisions.md` PD-37 — distribution/update train (v5.45–v5.47).
 
 ---
 

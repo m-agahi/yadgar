@@ -9,7 +9,7 @@ Coverage:
 - Multiple categories are grouped separately with per-group counts.
 - signals mode is unchanged: no wiki_catalog, no _render, token budget still ≤100.
 - MCP instructions string contains read-first contract keywords.
-- docs/RECOMMENDED_CLAUDE_RULES.md exists with the read-first rule.
+- docs/reference/recommended-claude-rules.md exists with the read-first rule.
 """
 
 from __future__ import annotations
@@ -431,23 +431,23 @@ def test_mcp_instructions_mentions_wiki_query_caveat():
     assert "0.34" in instructions or "fuzzy" in instructions.lower()
 
 
-# ── docs/RECOMMENDED_CLAUDE_RULES.md ─────────────────────────────────────────
+# ── docs/reference/recommended-claude-rules.md ─────────────────────────────────────────
 
 
 def test_recommended_claude_rules_file_exists():
-    """docs/RECOMMENDED_CLAUDE_RULES.md must exist in the repo."""
+    """docs/reference/recommended-claude-rules.md must exist in the repo."""
     # Locate repo root by traversing from this file upward
     here = Path(__file__).parent
     # Go up from yadgar/tests/core/ → yadgar/tests/ → yadgar/ → repo root
     repo_root = here.parent.parent.parent
-    rules_file = repo_root / "docs" / "RECOMMENDED_CLAUDE_RULES.md"
+    rules_file = repo_root / "docs" / "reference" / "recommended-claude-rules.md"
     assert rules_file.exists(), f"Expected {rules_file} to exist"
 
 
 def test_recommended_claude_rules_contains_wiki_map_rule():
     here = Path(__file__).parent
     repo_root = here.parent.parent.parent
-    rules_file = repo_root / "docs" / "RECOMMENDED_CLAUDE_RULES.md"
+    rules_file = repo_root / "docs" / "reference" / "recommended-claude-rules.md"
     content = rules_file.read_text()
     assert "wiki" in content.lower()
     assert "map" in content.lower()
@@ -460,7 +460,7 @@ def test_recommended_claude_rules_contains_wiki_map_rule():
 def test_recommended_claude_rules_mentions_catalog():
     here = Path(__file__).parent
     repo_root = here.parent.parent.parent
-    rules_file = repo_root / "docs" / "RECOMMENDED_CLAUDE_RULES.md"
+    rules_file = repo_root / "docs" / "reference" / "recommended-claude-rules.md"
     content = rules_file.read_text()
     assert "catalog" in content.lower()
 

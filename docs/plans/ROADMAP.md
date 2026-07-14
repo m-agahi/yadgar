@@ -42,6 +42,7 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 | [improvement-train](improvement-train.md) | umbrella (#29) | **B+C mostly shipped; A1+A3+C4 remain** | Umbrella for issue #29. Group B ALL SHIPPED (#124): B1–B4 + B5 (#177). Group C: C1+C3 shipped; C4 test unskipped (#124), scoring investigation open. A2 REJECTED (ADR-0043/0067). Open: A1 (cpu-burst Part 2) + A3 (nix scrape) + C4 (recall ranking). |
 | [en2a-comet-fpa-v5.82](archive/en2a-comet-fpa-v5.82.md) + [comet-retire-dormant](archive/comet-retire-dormant.md) | enrichment / eval | **SHIPPED → archived — ADR-0004 RETIRE (in CHANGELOG `[Unreleased]`)** | Ablation concluded: un-FPA'd COMET net-negative recall (−4.2pt) at ~17h/10-core → retired to dormant (flag default True→False), BC-EN2b warning shipped. NOT improvement-train #29. Both plan docs archived 2026-06-25; verdict report `benchmarks/reports/en2a_comet_ablation_2026-06-24.md`. |
 | [db-audit-fix](db-audit-fix.md) | data-integrity | **skeleton — discuss first** | Audit + fix live-store issues (legacy `last_decay_at`, 6-week-dead aftermath, entity heat, wiki↔memory link, archive tier, orphans). User has thoughts to bring before scoping. |
+| [hook-install-hygiene-2026-07-13](hook-install-hygiene-2026-07-13.md) | install / hooks (#64) | **DRAFT — awaiting audit** | FIXES-train Car #64. Hook-install hygiene: `install_hooks_lib.py` HOME-guard + orphan-sweep (content-hash predicate, not sibling-exists). Core-only. |
 
 ### In-flight migrations / investigations
 | Plan | Theme | Status | Notes |
@@ -72,6 +73,8 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 | [v6-llm-curator](v6-llm-curator.md) | future | LLM curator cycle scaffold. |
 | [v6-extract-on-ingest](v6-extract-on-ingest.md) | future | LLM extract-on-ingest (Adopt-7). |
 | [v7-team-usability](v7-team-usability.md) | future | Team usability / multi-user architecture. |
+| [saas-feasibility-skeleton-2026-07-13](saas-feasibility-skeleton-2026-07-13.md) | exploratory / business | **SKELETON** | Open-core SaaS feasibility (repo stays OSS; SaaS sells advanced features) + decision-menu. Not an impl spec. |
+| [security-stack-skeleton-2026-07-13](security-stack-skeleton-2026-07-13.md) | exploratory / security | **SKELETON** | HTTPS + auth + encryption layered menu for future multi-user / cloud / SaaS. Decision-ready menu, nothing scheduled. |
 
 ## Unfiled (no plan doc yet — candidates)
 - **consolidate `light` latency** — `light` mode took ~5.7 min live (MCP client timed out though server finished). Likely first-run `last_decay_at` backfill + episode/CLS/causal phases at scale. Needs a perf plan if it persists.
@@ -95,3 +98,9 @@ Caching train (archived 2026-07-09 — shipped #164/#165, Car 3 killed ADR-0071)
 `backend-caching-train-2026-07-06.md`, `caching-train-build-2026-07-05.md`,
 `caching-opportunities-2026-07-05.md`, `unified-cache-2026-07-05.md`,
 `cache-refactor-2026-07-01.md`.
+
+Docs-reorg (archived 2026-07-14 — shipped, `feat/docs-reorg`, #65):
+`docs-cleanup-taxonomy-2026-07-13.md` — 5-car taxonomy reorg: contracts→`docs/contracts/`
+(+ 20 HARD pins), `reference/`+`reports/`+`testing/`+`benchmarks/` dirs, kebab/dated
+renames, roadmap dedup (wiki-mirror file deleted, `roadmap/v*.md`→`roadmap/archive/`),
+benchmarks fold, diagram `out/` untrack+gitignore (#68 regenerates), `docs/README.md` index.

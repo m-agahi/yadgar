@@ -2,7 +2,7 @@
 """I29 — Edge dead-capability lint (EDGE_CONTRACT domain).
 
 Enforces invariant I29 (leverage-completeness): every graph edge type produced
-or registered in code has a declared role in docs/EDGE_CONTRACT.md, and no
+or registered in code has a declared role in docs/contracts/EDGE_CONTRACT.md, and no
 edge type marked `drop` is still produced.
 
 Three failure modes:
@@ -27,7 +27,7 @@ How produced types are collected:
   The union of (1) and (2) = the full produced/registered set.
 
 How contract roles are collected:
-  Parse docs/EDGE_CONTRACT.md. The table MUST have one row per type with the
+  Parse docs/contracts/EDGE_CONTRACT.md. The table MUST have one row per type with the
   type as the first cell (backtick-quoted or plain, inside **..** or not) and
   the role ("retrieval", "display", or "drop") somewhere in the row.
   Each type maps to exactly one role.
@@ -250,7 +250,7 @@ def _extract_role_from_row(cells: list[str]) -> str | None:
 
 
 def parse_contract(contract_file: Path) -> dict[str, str]:
-    """Parse docs/EDGE_CONTRACT.md; return {edge_type: role}.
+    """Parse docs/contracts/EDGE_CONTRACT.md; return {edge_type: role}.
 
     Requirement: one row per type. The type is in the first cell; the role
     keyword appears somewhere in the row.
@@ -321,7 +321,7 @@ def check(
         repo_root = _REPO_ROOT
 
     produced = collect_produced_types(repo_root)
-    contract = parse_contract(repo_root / "docs" / "EDGE_CONTRACT.md")
+    contract = parse_contract(repo_root / "docs" / "contracts" / "EDGE_CONTRACT.md")
 
     contracted = set(contract.keys())
 
@@ -385,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = Path(args.repo_root) if args.repo_root else _REPO_ROOT
 
     produced = collect_produced_types(repo_root)
-    contract = parse_contract(repo_root / "docs" / "EDGE_CONTRACT.md")
+    contract = parse_contract(repo_root / "docs" / "contracts" / "EDGE_CONTRACT.md")
 
     if args.list_all:
         _print_list_all(produced, contract)
@@ -398,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
     for t in orphans:
         print(
             f"ORPHAN: edge type '{t}' is produced/registered in code "
-            f"but has no row in docs/EDGE_CONTRACT.md (no declared role). "
+            f"but has no row in docs/contracts/EDGE_CONTRACT.md (no declared role). "
             f"Add a row with role=retrieval|display|drop."
         )
         failed = True
@@ -406,14 +406,14 @@ def main(argv: list[str] | None = None) -> int:
     for t in drop_still:
         print(
             f"DROP-STILL-PRODUCED: edge type '{t}' is marked `drop` in "
-            f"docs/EDGE_CONTRACT.md but is still produced in code. "
+            f"docs/contracts/EDGE_CONTRACT.md but is still produced in code. "
             f"Remove the compute path (GC it) or change the role."
         )
         failed = True
 
     for t in stale:
         print(
-            f"STALE: edge type '{t}' has a row in docs/EDGE_CONTRACT.md "
+            f"STALE: edge type '{t}' has a row in docs/contracts/EDGE_CONTRACT.md "
             f"but is no longer produced in code or registered in EDGE_TYPES. "
             f"Remove the stale contract row."
         )

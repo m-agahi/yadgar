@@ -19,7 +19,7 @@
 #           and the yaml/registry surfaces as of v5.7.10.
 #           These are tracked here so I25 blocks NEW gaps (ratchet), not the
 #           existing ones.  Follow-up PRs (v5.7.11+) reduce this list.
-#           See docs/ARCHITECTURE_INVARIANTS.md §I25 for the backfill plan.
+#           See docs/contracts/ARCHITECTURE_INVARIANTS.md §I25 for the backfill plan.
 #
 # To remove an entry from the backlog: add the missing yaml/registry entry,
 # then delete the line here.  I25 will enforce the new coverage going forward.

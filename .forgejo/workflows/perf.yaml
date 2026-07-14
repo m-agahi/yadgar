@@ -14,7 +14,7 @@ name: Perf load-test (#79 — recall-latency contract, record-only)
 #
 # The daemon-driven latency + CE-span capture is a LOCAL run: point at a running
 # daemon (YADGAR_DAEMON_URL + YADGAR_BACKEND_METRICS_URL) over a snapshot pin and
-# commit the resulting docs/benchmarks report. RECORD-ONLY until a stable
+# commit the resulting docs/benchmark-results report. RECORD-ONLY until a stable
 # baseline + noise band exist (Phase 1); Phase 2 flips the checker to gating.
 #
 # How to run:

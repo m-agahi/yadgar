@@ -549,7 +549,7 @@ position is after-Ettin unless user pulls it forward.
   v5.105)**, **ADR-0040** (I33 glob blind-spot → `_exempt_globs` option B),
   **ADR-0041** (span-in-log-path flood, 4 occurrences), **ADR-0074 (ACCEPTED
   2026-07-09 — span-budget policy, the basis for §5b P-SB)**
-- `docs/DECISIONS.md` — P0-refuted-premise + deferrals recorded on merge
+- `docs/reference/decisions.md` — P0-refuted-premise + deferrals recorded on merge
 - Existing lints: `scripts/check_observe_coverage.py` (**I33**, global hard),
   `scripts/check_trace_spans.py` (I24), `check_metric_writers.py` (I23),
   `check_complexity_allowlist.py` (I30), `check_capability_coverage.py` (I32),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Coverage lint for docs/BEHAVIOR_CONTRACT.md (the behavior-contract self-check).
+"""Coverage lint for docs/contracts/BEHAVIOR_CONTRACT.md (the behavior-contract self-check).
 
 Three original rules, all derived from the contract's own header:
 
@@ -42,7 +42,7 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_CONTRACT = _REPO_ROOT / "docs" / "BEHAVIOR_CONTRACT.md"
+_CONTRACT = _REPO_ROOT / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md"
 
 _STATUSES = ("✅", "❌", "⏳")
 # A `path.py::Node[::Sub]` reference inside backticks or bare.

@@ -3,7 +3,7 @@
 
 Compares staged changes against HEAD and fails if the diff introduces a NET
 removal of ``assert`` statements in ``yadgar/tests/e2e/`` OR a decrease in the
-✅ count in ``docs/BEHAVIOR_CONTRACT.md``.
+✅ count in ``docs/contracts/BEHAVIOR_CONTRACT.md``.
 
 Override: set ``ALLOW_TEST_WEAKEN=1`` in the environment to bypass.  This is
 intentionally a one-time env override, not a permanent flag, so weakening a
@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_CONTRACT = _REPO_ROOT / "docs" / "BEHAVIOR_CONTRACT.md"
+_CONTRACT = _REPO_ROOT / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md"
 _STATUS_HDR_RE = re.compile(r"\*\*([0-9]+)\s*✅")
 
 _ALLOW_ENV = "ALLOW_TEST_WEAKEN"
@@ -88,7 +88,7 @@ def _green_count_from_text(text: str) -> int | None:
 
 def _green_count_head() -> int | None:
     """Return the ✅ count from HEAD's BEHAVIOR_CONTRACT.md."""
-    head_text = _run("git", "show", "HEAD:docs/BEHAVIOR_CONTRACT.md")
+    head_text = _run("git", "show", "HEAD:docs/contracts/BEHAVIOR_CONTRACT.md")
     if not head_text:
         return None
     return _green_count_from_text(head_text)
@@ -96,7 +96,7 @@ def _green_count_head() -> int | None:
 
 def _green_count_staged() -> int | None:
     """Return the ✅ count from the staged (index) BEHAVIOR_CONTRACT.md."""
-    staged_text = _run("git", "show", ":docs/BEHAVIOR_CONTRACT.md")
+    staged_text = _run("git", "show", ":docs/contracts/BEHAVIOR_CONTRACT.md")
     if not staged_text:
         # Not staged; read from working tree.
         if _CONTRACT.is_file():
@@ -121,7 +121,7 @@ def check_diff(diff_text: str, head_green: int | None, staged_green: int | None)
         if staged_green < head_green:
             errors.append(
                 f"layer 4 — ✅ count dropped {head_green} → {staged_green} in "
-                "docs/BEHAVIOR_CONTRACT.md. If this is intentional, set "
+                "docs/contracts/BEHAVIOR_CONTRACT.md. If this is intentional, set "
                 "ALLOW_TEST_WEAKEN=1 when committing."
             )
 

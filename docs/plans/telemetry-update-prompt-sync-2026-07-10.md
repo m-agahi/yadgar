@@ -16,7 +16,7 @@ prompt-sync). **The update-*check* already shipped** and must NOT be re-designed
 |---|---|---|
 | `yadgar update --check` / `--install` / `--rollback` / `--finalize` | `yadgar/core/cli/update.py` (v5.48 → v5.49) | opt-in CLI |
 | Version probe on daemon start | `update_check_on_start` config knob (`config_yaml.py:1035`), **default `false`** | opt-in, OFF |
-| Probe wire format | `GET https://pypi.org/pypi/yadgar/json`, UA `yadgar/<version>`, no body/cookies/params | documented in `docs/PRIVACY.md` (v5.48) |
+| Probe wire format | `GET https://pypi.org/pypi/yadgar/json`, UA `yadgar/<version>`, no body/cookies/params | documented in `docs/reference/privacy.md` (v5.48) |
 | Install-method detection | `detect_install_method()` → `pipx / brew / nix-flake / container / source` | already computed locally |
 
 So this plan's real subject is **the part the shipped probe deliberately does NOT
@@ -28,7 +28,7 @@ with zero new infrastructure** (pypistats + Docker Hub). That reframes F1 from
 "build a counting endpoint" to "decide whether the marginal increment a custom
 endpoint buys is worth its burden." Read §3 first.
 
-This plan composes with, and does not reverse, PD-37 / `docs/PRIVACY.md` /
+This plan composes with, and does not reverse, PD-37 / `docs/reference/privacy.md` /
 ADR-0091. Where it proposes anything the shipped posture forbids (e.g. opt-out),
 that is surfaced as an **open question for the user**, never silently flipped.
 
@@ -40,7 +40,7 @@ These are written as *rules a reviewer or a test can check a payload against*,
 not aspirations. They bind F1/F2/F3. Numbered so the user can accept/reject each.
 
 - **P1 — No payload field without a user-visible justification.** Every field in
-  any outbound request maps to a row in a public `docs/PRIVACY.md` table stating
+  any outbound request maps to a row in a public `docs/reference/privacy.md` table stating
   *what* and *why*. A field with no justification row is a bug. (Testable: diff
   the wire struct against the doc table — the existing drift-audit pattern,
   I25/I32.)
@@ -430,7 +430,7 @@ three:
 
 | Phase | Scope | Effort | Depends on |
 |---|---|---|---|
-| **0** | `docs/PRIVACY.md` extension for F1-count + F2 (before any code) | 0.5d | — |
+| **0** | `docs/reference/privacy.md` extension for F1-count + F2 (before any code) | 0.5d | — |
 | **1** | **F1-free:** `yadgar stats downloads` reads pypistats + Docker Hub API; optional maintainer cron → static `usage.json`. Zero user telemetry. | 1–2d | — |
 | **2** | **F2 preview:** `yadgar stats preview` prints exact bucketed JSON from local `get_memory_stats()`. No send path yet. | 1d | bucket schema |
 | **3** | **Shared endpoint** (Worker/DO): `/v1/ping` + `/v1/stats` + counters + `dashboard.json`. Static dashboard page. | 2–3d | Phase 0 |
@@ -481,7 +481,7 @@ opt-*in* to build at all. Phase 7 is fenced off as a product, not a feature.
   that increment worth hosting an endpoint + owning a retention policy? **(If no →
   Phase 5 is dropped; F1 is Phase 1 only, zero telemetry.)**
 - **OQ-F1-2 — Opt-in or opt-out for the count/stats?** Shipped posture is opt-in/
-  OFF and `docs/PRIVACY.md` documents it. Opt-out (Homebrew-style, loud
+  OFF and `docs/reference/privacy.md` documents it. Opt-out (Homebrew-style, loud
   disclosure) yields far better numbers but reverses the documented stance and
   sits against your stated ethos. Hold opt-in, or accept opt-out with loud
   first-run disclosure? **(Plan default: opt-in.)**
@@ -535,9 +535,9 @@ opt-*in* to build at all. Phase 7 is fenced off as a product, not a feature.
 
 ## Cross-references (in-repo)
 
-- `docs/PRIVACY.md` — shipped v5.48 update-check privacy policy (F1 baseline)
+- `docs/reference/privacy.md` — shipped v5.48 update-check privacy policy (F1 baseline)
 - `yadgar/core/cli/update.py` — shipped update CLI (do not re-design)
 - `yadgar/_shared/config_yaml.py:1035` — `update_check_on_start` knob + `FIELD_META`
 - `yadgar/_shared/storage/ops.py:139` — `get_memory_stats()` (F2 local source)
 - `yadgar/core/seed/materials/agent_prompts.yaml` — genesis corpus (ADR-0091, F3 tier-3 composes above this)
-- `docs/DECISIONS.md` PD-37 — distribution/update train (v5.45–v5.47)
+- `docs/reference/decisions.md` PD-37 — distribution/update train (v5.45–v5.47)

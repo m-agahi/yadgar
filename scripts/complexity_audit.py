@@ -557,7 +557,7 @@ def generate_markdown(results: dict, root: str) -> str:
     lines.append(
         "**Invariants:** I13 (bounded complexity caps) + I5 (no topology-breaking decomp)."
     )
-    lines.append("**Source of truth:** `docs/ARCHITECTURE_INVARIANTS.md`.")
+    lines.append("**Source of truth:** `docs/contracts/ARCHITECTURE_INVARIANTS.md`.")
     lines.append(
         "**Scope:** static analysis only. No runtime data. Catalog only — no decompositions performed."
     )

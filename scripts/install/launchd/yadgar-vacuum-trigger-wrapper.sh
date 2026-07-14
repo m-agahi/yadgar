@@ -5,7 +5,7 @@
 # Must filter spurious fires: only acts if vacuum_requested file exists.
 # Uses atomic mv to claim the trigger — prevents concurrent invocation double-fire.
 #
-# Design follows Q5 flowchart in MACOS_LAUNCHD_PORT_DESIGN.md.
+# Design follows Q5 flowchart in docs/reports/releases/macos-launchd-port-design-2026-06-07.md.
 # Installed to ~/.local/share/yadgar/scripts/ by generate_launchd.sh.
 
 set -euo pipefail

@@ -431,7 +431,7 @@ class TestLayer4DiffGuard:
 
 def test_real_contract_passes_all_layers() -> None:
     """The shipped BEHAVIOR_CONTRACT.md passes both layer-1 and layer-2 checks."""
-    text = (_REPO_ROOT / "docs" / "BEHAVIOR_CONTRACT.md").read_text(encoding="utf-8")
+    text = (_REPO_ROOT / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md").read_text(encoding="utf-8")
     errors = ccc.check(text)
     assert not errors, f"Real contract must pass all guards: {errors}"
 

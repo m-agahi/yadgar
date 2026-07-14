@@ -16,7 +16,7 @@ from __future__ import annotations
 # Colors come from Settings at response time (see http.py api_viz_config).
 # 'causal' uses fallback #484f58 — no VIZ_EDGE_COLOR_CAUSAL setting.
 #
-# role (v5.54.3, per docs/EDGE_CONTRACT.md; renamed v5.80 viz-fidelity-v2):
+# role (v5.54.3, per docs/contracts/EDGE_CONTRACT.md; renamed v5.80 viz-fidelity-v2):
 #   "retrieval"     — feeds recall ranking (PPR / spreading / precomputed prior).
 #                     These are the load-bearing edges; styled solid/brighter.
 #   "informational" — structural or derived; not wired to retrieval scoring.

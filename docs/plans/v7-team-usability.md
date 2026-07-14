@@ -6,7 +6,7 @@
 
 **Scope:** team collaboration on shared knowledge + memory while preserving the personal-memory contract that gives yadgar its identity. Multi-tenant + federated identity + auth/authz + sharing UX + conflict resolution + privacy/compliance.
 
-**Cross-cutting dependency:** `docs/DECISIONS.md` PD-43 — LLM inference is pluggable, default OFF for personal mode, 4 backend paths (local LLM / remote API / Claude pass-through interactive or headless via OAuth share / team backend). v6 (curator) + v7 (team) inherit this strategy. v7 team-backend path (slot v7.2.5) is the natural home for curator features — strengthens v7 value prop (team gets curator without per-user hardware cost).
+**Cross-cutting dependency:** `docs/reference/decisions.md` PD-43 — LLM inference is pluggable, default OFF for personal mode, 4 backend paths (local LLM / remote API / Claude pass-through interactive or headless via OAuth share / team backend). v6 (curator) + v7 (team) inherit this strategy. v7 team-backend path (slot v7.2.5) is the natural home for curator features — strengthens v7 value prop (team gets curator without per-user hardware cost).
 
 **Estimated effort:** 2-3 months engineering for v7.0 foundational layer alone. Multi-quarter cycle for full v7.0-v7.4 chain.
 
@@ -213,7 +213,7 @@ Why federated personal-first wins:
 
 ## Architecture Conformance (P1)
 
-Cites future `docs/architecture.md` updates needed:
+Cites future `docs/reference/architecture.md` updates needed:
 
 - **§ Multi-tenancy model** — NEW section documenting team server, personal-first federation, namespace mapping
 - **§ Identity + auth at MCP boundary** — NEW section, expands existing YADGAR_MCP_AUTH_TOKEN model to per-team scope
