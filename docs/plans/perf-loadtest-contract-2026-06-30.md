@@ -1,13 +1,127 @@
 # Perf Load-Test Contract + Per-PR Regression Tracking — Plan
 
-**Status:** PLAN ONLY (no implementation). **Date:** 2026-06-30. **Author:** agent (bot).
+**Status:** AUDITED 2026-07-14 — record-only harness SHIPPED
+(`benchmarks/run_perf_loadtest.py` + `benchmarks/perf_contract.py` + `make perf` +
+`.forgejo/workflows/perf.yaml`, all non-gating). REMAINING = the full workload
+contract (Phases B/C/D/E), the **snapshot-pin-vs-live-daemon fork** (§AUDIT.D1 —
+user call), real baseline promotion, Phase-2 gating flip, and the per-PR
+human-readable `.md` artifact. **Date:** 2026-06-30 (plan) / audited 2026-07-14.
+**Author:** agent (bot).
 **Scope:** A repeatable end-to-end LOAD test for the yadgar MCP daemon that measures
 performance against prod-like data on the user's local machine, saves the measurement
 as a per-PR doc, and flags degradation over time.
 
+> **Reader note:** the SHIPPED-vs-REMAINING audit section below is the current
+> implementation-ready surface. PART 1 (feasibility) and PART 2 (design) that follow
+> are the ORIGINAL 2026-06-30 plan — kept as design reference. Where the shipped
+> harness DIVERGED from PART 2 (notably §1.4/§2.4 snapshot pin), the audit section is
+> authoritative and flags the divergence.
+
 ---
 
-## TL;DR
+## AUDIT 2026-07-14 — SHIPPED vs REMAINING
+
+The `make perf` harness is real and has produced 4 record-only runs
+(`benchmarks/reports/perf_loadtest_20260713_*.json`). But it diverged from this
+plan's design in two directions: it **exceeds** the plan on CE-latency tracking (a
+scope addition from a *different* doc) and **falls short** on the workload contract +
+the snapshot-pin fixture. Concretely:
+
+### SHIPPED (evidence)
+
+| Piece | Where | Notes |
+|---|---|---|
+| Record-only harness (sequential recall p50/p95/mean + error rate) | `benchmarks/run_perf_loadtest.py:239-343` | Only Phase W0 (warm-up) + Phase A (sequential recall) of §2.1 — see REMAINING for B/C/D/E |
+| Pure contract checker (`delta_pct`, tolerance, incomparability guard) | `benchmarks/perf_contract.py:60-124` | Matches §2.3 record-only + §2.5 incomparability guard exactly |
+| `make perf` target (record-only, auto-skips w/o daemon) | `Makefile:317-326` | `OTEL_SDK_DISABLED=true python benchmarks/run_perf_loadtest.py` |
+| CI workflow (`workflow_dispatch`, non-gating) | `.forgejo/workflows/perf.yaml` | Runs the contract unit test + `make perf` (skips w/o daemon); uploads `benchmarks/reports/`. NOT in `ci-pr.yaml` gate — confirmed non-gating |
+| Contract-checker unit test (CI-runnable, no daemon) | `yadgar/tests/server/test_perf_contract.py` + `yadgar/tests/scripts/test_perf_contract_ce_source_psb.py` | The one meaningfully CI-runnable piece |
+| Committed baseline STUB | `benchmarks/reports/perf_baseline.json` | `snapshot_id="STUB-uncalibrated"`, all-zero aggregates — placeholder, NOT a measured baseline |
+| Committed query list | `benchmarks/golden/perf_queries.jsonl` | 5 realistic recall prompts (§2.1 fixed-mix, smaller than the ~30 the plan suggested) |
+| JSON report writer (mirrors `run_longmemeval` schema) | `benchmarks/run_perf_loadtest.py:311-331,373-376` | Writes `benchmarks/reports/perf_loadtest_<ts>.json` |
+| **CE-span capture (SCOPE ADDITION — not from this plan)** | `benchmarks/perf_contract.py:127-225`, `run_perf_loadtest.py:99-114,256-310` | `@observe` CE-stage histogram (primary) + legacy embed-rerank (fallback), P-SB #50 / ADR-0105. Design authority = `obs-velocity-completion-2026-07-04.md PART B §3.2`, NOT this doc. Attribute here, don't fold into this plan's scope |
+
+Net: shipped harness **exceeds** the plan on CE tracking, **matches** it on the
+checker + report + CI-plumbing, and **is a minimal skeleton** on the workload itself.
+
+### KEY DIVERGENCE — the harness drives a LIVE daemon, NOT a snapshot pin
+
+The plan's entire crux (§1.4 + §2.4) was: quiesced `cp -r` of a prod datadir → spawn a
+throwaway `surreal` on a free port → subprocess daemon over the copy. **The shipped
+harness does NONE of this.** `run_perf_loadtest.py:62-72` states verbatim it "drives an
+ALREADY-RUNNING daemon; does NOT spawn one — keeps the harness out of the
+surrealkv-lock / snapshot-copy business for v1." Consequences:
+
+- `snapshot_id` is a **hand-entered env stamp** (`YADGAR_PERF_SNAPSHOT_ID`, default
+  `unpinned-live`), not a real frozen pin. The 4 shipped runs used ad-hoc stamps
+  (`sweep-5.128.0-gte`), so they are **mutually incomparable** by the §2.5 guard.
+- The `cp -r`-pin machinery, the free-port spawn, the `_Daemon` subprocess reuse from
+  `test_offload_e2e.py` — **all unshipped**.
+
+This makes the remaining work a **FORK, not a continuation** — a load-bearing user
+decision (§AUDIT.D1 below).
+
+### REMAINING (concrete implementation steps)
+
+**R1 — Workload contract Phases B/C/D/E** (§2.1). Only W0 + A shipped. Add:
+- Phase B: `recall` × 50 at **8-concurrent** (the offload/backpressure regime). Driver
+  already supports it — `_call_recall` is thread-safe; spawn N threads per
+  `test_offload_e2e.py:208-234`. Report concurrent-p95 separately from sequential.
+- Phase C: `wiki_query` × 30 sequential (secondary read path).
+- Phase D: `memorize` × 20 → await drain; report drainer rps + time-to-drain.
+- Phase E: `/health/live` latency p50/p99 sampled DURING Phase B (starvation signal).
+- Files: extend `benchmarks/run_perf_loadtest.py` (`run()` + new per-phase helpers);
+  extend `METRIC_KEYS` in `perf_contract.py:31-35` with the new metrics
+  (`recall_concurrent_p95_ms`, `health_live_p99_ms`, `throughput_rps`, `drainer_rps`).
+  TDD: new checker keys get red-then-green unit tests in `test_perf_contract.py`.
+
+**R2 — Real baseline promotion** (§2.3). Blocked on D1 (below): "run ≥3 → promote"
+cannot proceed until "stable snapshot" is defined. Once resolved: run the contract ≥3×
+on the chosen stable data source, hand-verify the noise band, then replace
+`perf_baseline.json`'s stub aggregates + `snapshot_id` in a deliberate manual commit.
+
+**R3 — Phase-2 gating flip** (§2.3). Today `compare_to_baseline` computes `flagged`
+but the process always exits 0 (`run_perf_loadtest.py:400`, `main()`). Gating = consult
+`any_flagged` for the exit code. Small change; gated behind R2 (needs a real baseline).
+**Also a user decision — see D2.**
+
+**R4 — Per-PR human-readable `.md` artifact** (§2.5). UNSHIPPED — confirmed no
+`docs/benchmarks/perf_*.md` exists. Plan wanted `docs/benchmarks/perf_<ver>_<date>.md`
+(metric table + delta-vs-baseline + snapshot_id + caveats) committed per PR alongside
+the JSON. Add a small md-writer to the harness.
+
+### USER-DECISION FLAGS (resolve before implementing)
+
+**D1 — Snapshot pin vs live daemon (load-bearing).** The shipped harness abandoned the
+plan's §2.4 pin for live-daemon-driving. Two forks:
+- **(a) Retrofit the §2.4 pin** onto the current harness — spawn a throwaway surreal
+  over a `cp -r` of a quiesced nightly-backup datadir, giving a truly frozen,
+  cross-PR-comparable `snapshot_id`. Restores the plan's original comparability
+  guarantee; ~2–3 days (the bulk of the original estimate). REQUIRED for R2 to mean
+  anything cross-PR.
+- **(b) Formalize live-daemon-driving as the permanent model** — accept that
+  `snapshot_id` is a manual stamp of "whatever data the running daemon has," rewrite
+  §1.4/§2.4 to match, and define baseline-comparability as "same stamp = operator
+  asserts same data." Cheaper, but cross-PR comparability rests on operator discipline,
+  not a frozen artifact.
+  → **Pick before R2.** (a) preserves the plan's intent; (b) ratifies what shipped.
+
+**D2 — Gating vs permanent record-only.** Plan §2.3 phases toward gating (Phase 2).
+Confirm the user actually wants a gate eventually, or whether the harness stays a
+record-only diagnostic forever. If gating: it must stay OUT of `ci-pr.yaml` per-PR
+(runner noise, §2.7) — a gate on a deliberate `workflow_dispatch` run, not every PR.
+
+### Cross-references (do NOT edit these — audit scoped to this file)
+
+- `docs/plans/obs-velocity-completion-2026-07-04.md PART B §3.2` (#79) — co-authority
+  the harness cites; sources the CE-span-capture scope addition. Likely also stale re:
+  "build unchanged" — flag for a separate audit, not touched here.
+- `benchmarks/run_perf_loadtest.py:1-73` — docstring is the current honest source of
+  truth on shipped scope + the live-daemon-vs-pin divergence.
+
+---
+
+## TL;DR (ORIGINAL 2026-06-30 PLAN — design reference below)
 
 - **Feasibility: YES.** A pure-Python load harness is buildable on the *existing*
   benchmark + e2e infrastructure. No new heavyweight deps.
