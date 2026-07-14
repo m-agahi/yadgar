@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-14 — shipped: transformers 5.x + blanket lock upgrade + yadgar-ci:5.131 (core 5.131.0 on master). Deferred (out of scope, separate future effort): starlette 1.1+/httpx2 major migration = task #35.
+
 # Deps-modernization train: transformers 5.x prerequisite for T4 Ettin
 
 **Status: AUDITED — in build (branch `feat/deps-modernization-train`; Q1 decided BLANKET by user 2026-07-12).** Adversarial audit
