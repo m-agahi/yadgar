@@ -18,8 +18,17 @@ LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.
 #   docker build -f Dockerfile.ci --build-arg YADGAR_VERSION=$(python3 scripts/bump_version.py --current-version) .
 # The default below documents the version current at the last LABEL touch; the
 # authoritative tag is whatever the manual rebuild pushes (ci-pr.yaml pins it).
-ARG YADGAR_VERSION=5.131.0
+ARG YADGAR_VERSION=5.136.0
 LABEL org.opencontainers.image.version="${YADGAR_VERSION}"
+
+# Pin the HF cache to a HOME-independent absolute path. The test suite's
+# isolate_yadgar_paths fixture monkeypatches $HOME to a tmp dir; without this,
+# EmbeddingEngine._is_model_cached() (which resolves the cache from $HOME) and
+# huggingface_hub both look in the tmp HOME, miss the baked model, and under
+# HF_HUB_OFFLINE=1 (CI) hard-fail — cascading into every embedding-dependent
+# test. _is_model_cached() checks $HF_HOME/hub FIRST, so pinning it here makes
+# the baked weights discoverable regardless of the HOME redirect.
+ENV HF_HOME=/root/.cache/huggingface
 
 # System deps needed in CI:
 #   make             — Makefile integration tests (B6 fix)
@@ -82,6 +91,18 @@ RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
 SentenceTransformer('all-MiniLM-L6-v2'); \
 print('HF model all-MiniLM-L6-v2 baked successfully')"
+
+# Bake CrossEncoder rerankers into image (T4 — enables the offline reranker
+# smoke tests: yadgar/tests/backend/test_model_load_smoke.py loads all three
+# under HF_HUB_OFFLINE=1). ettin-reranker-32m-v1 = T4 winner / GTE_RERANKER_MODEL
+# default; 68m = fallback; gte-reranker-modernbert-base = rollback. All resolve
+# offline from /root/.cache/huggingface once baked here.
+RUN python -c "\
+from sentence_transformers import CrossEncoder; \
+CrossEncoder('cross-encoder/ettin-reranker-32m-v1', max_length=512); \
+CrossEncoder('cross-encoder/ettin-reranker-68m-v1', max_length=512); \
+CrossEncoder('Alibaba-NLP/gte-reranker-modernbert-base', max_length=512); \
+print('CE rerankers baked: ettin-32m + ettin-68m + gte-modernbert')"
 
 # Bake enrichment seq2seq models into image (v5.72.0 — enables real BC-EN2a/EN3a
 # e2e without a runtime HF download). COMET-BART (~1GB) for commonsense triples,

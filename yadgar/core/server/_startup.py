@@ -105,14 +105,22 @@ def main(
     except Exception:
         logger.debug("Auto-sync of CLAUDE.md failed (non-fatal)")
 
-    # Auto-install hooks for the current project if not already present
-    try:
-        from yadgar.core.server.tools.misc import install_hooks
+    # Auto-install hooks for the current project if not already present.
+    # Skipped under pytest: install_hooks(os.getcwd()) writes to the project's
+    # .claude/settings.json (project scope resolves from cwd, NOT HOME — the
+    # _guard_home fixture only redirects HOME), so a test whose cwd is a real repo
+    # would poison that repo's settings with a PreToolUse hook pointing at a
+    # torn-down pytest tmp dir, blocking every subsequent Bash call in the repo.
+    # Tests that exercise install_hooks call it directly with an isolated
+    # project_directory, so nothing here needs the startup auto-install.
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            from yadgar.core.server.tools.misc import install_hooks
 
-        install_hooks(os.getcwd())
-        logger.info("Hippocampal Replay hooks installed for %s", os.getcwd())
-    except Exception:
-        logger.debug("Auto-install of hooks failed (non-fatal)")
+            install_hooks(os.getcwd())
+            logger.info("Hippocampal Replay hooks installed for %s", os.getcwd())
+        except Exception:
+            logger.debug("Auto-install of hooks failed (non-fatal)")
 
     # v5.48.0: opt-in auto-check for updates on daemon start (default OFF)
     _maybe_auto_check_for_update()

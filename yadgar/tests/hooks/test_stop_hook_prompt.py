@@ -244,8 +244,14 @@ def test_no_prompt_between_25_and_50(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_payload_contains_signal_eval_prompt(tmp_path):
-    """Block reason must contain the signal-evaluation prompt text."""
+def test_payload_contains_short_pointer_reason(tmp_path):
+    """Car B (task #74): block reason must be the short file pointer, not the full protocol.
+
+    The full protocol lives in the packaged template file; the reason only points at it.
+    The template file (not the reason) contains project_brief / signals / adr_add etc.
+    """
+    from pathlib import Path as _Path
+
     transcript = _make_transcript(tmp_path, 25)
     state_dir = tmp_path / ".yadgar"
     state_dir.mkdir()
@@ -262,9 +268,23 @@ def test_payload_contains_signal_eval_prompt(tmp_path):
 
     assert result.get("decision") == "block"
     reason = result.get("reason", "")
-    # The signal-eval prompt must mention project_brief and signals
-    assert "project_brief" in reason or "signals" in reason or "stale_wiki" in reason, (
-        f"Expected signal-eval prompt, got: {reason[:200]}"
+    # Reason is the short pointer
+    assert reason.startswith("[yadgar] Checkpoint due. Read "), (
+        f"Expected short pointer, got: {reason[:200]}"
+    )
+    assert reason.endswith(" and follow all the instructions in it.")
+    # Must NOT inline protocol content
+    assert "CAPTURE FIRST" not in reason, "Reason must not inline full protocol"
+    assert "adr_add(" not in reason, "Reason must not inline protocol step content"
+    # The path in the reason must resolve to the protocol file
+    prefix = "[yadgar] Checkpoint due. Read "
+    suffix = " and follow all the instructions in it."
+    path_in_reason = reason[len(prefix) : -len(suffix)]
+    assert _Path(path_in_reason).is_file(), f"Path in reason does not resolve: {path_in_reason}"
+    # The protocol content (adr_add, project_brief) must live in that file
+    template_content = _Path(path_in_reason).read_text(encoding="utf-8")
+    assert "project_brief" in template_content or "signals" in template_content, (
+        "Protocol file must contain project_brief/signals"
     )
 
 

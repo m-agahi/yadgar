@@ -188,17 +188,18 @@ def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
         "explore-codebase",
         "implement-tdd",
         "plan-executing-build",
-        # v5.123.0 seed backflow (live-corpus growth):
-        "stacked-car-parallel-build",
+        # v5.124.0 consolidation: generic subset of the consolidated live library
+        # (mirrors seed/materials/agent_prompts.yaml prompts: block).
+        "rca-diagnose",
+        "plan-audit",
+        "scope-and-plan",
+        "build-car",
+        "drift-audit",
+        "feasibility-design",
         "feature-kill-closeout",
         "dispatch-fix-test-migration",
         "mechanical-refactor-chunk-commit-early",
-        "plan-corpus-status-sweep",
-        "plan-audit",
-        "crash-rca",
-        "drift-audit",
-        "feasibility-design",
-        "perf-anomaly-metrics",
+        "stacked-car-parallel-build",
     ]
     results = {"seeded": True, "created": 0, "skipped": 0, "dry_run": dry_run}
 

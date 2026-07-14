@@ -7,8 +7,50 @@ import tempfile
 import threading
 import time
 import urllib.parse
+from pathlib import Path
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Hook-install real-HOME sentinel (#64)
+#
+# Capture the developer's REAL ~/.claude/hooks/ contents at conftest IMPORT time
+# — BEFORE any fixture redirects HOME. This is the tripwire that catches a test
+# which bypasses the HOME-isolation guard (session/function fixtures above) and
+# mutates the real hooks dir in place (the actual 2026-07-13 incident: a partial
+# install unlinked ~/.claude/hooks/yadgar-db-lockdown-check.py, breaking Bash).
+#
+# A dir-mtime check on ~/.claude would MISS a child-file unlink/overwrite one
+# level down, so snapshot every entry directly under hooks/ as (name, size, mtime).
+# Guarded on exists() so CI (no ~/.claude) is a no-op. Read-only stat — the
+# sentinel NEVER writes to the real dir. Under xdist the snapshot is per-worker;
+# any worker that mutates real HOME trips its own snapshot.
+# ---------------------------------------------------------------------------
+_REAL_HOME_HOOKS_DIR: Path | None = None
+_REAL_HOOKS_SENTINEL: frozenset[tuple[str, int, int]] | None = None
+
+
+def _snapshot_hooks_dir(hooks_dir: Path) -> frozenset[tuple[str, int, int]]:
+    """(name, st_size, st_mtime_ns) for every direct child of *hooks_dir*."""
+    entries: set[tuple[str, int, int]] = set()
+    try:
+        for child in hooks_dir.iterdir():
+            try:
+                st = child.stat()
+            except OSError:
+                continue
+            entries.add((child.name, st.st_size, st.st_mtime_ns))
+    except OSError:
+        pass
+    return frozenset(entries)
+
+
+_real_home_env = os.environ.get("HOME", "")
+if _real_home_env:
+    _candidate = Path(_real_home_env) / ".claude" / "hooks"
+    if _candidate.exists():
+        _REAL_HOME_HOOKS_DIR = _candidate
+        _REAL_HOOKS_SENTINEL = _snapshot_hooks_dir(_candidate)
 
 # ---------------------------------------------------------------------------
 # Multi-agent session isolation (v5.10.0)
@@ -212,6 +254,16 @@ def _isolate_yadgar_paths_session(tmp_path_factory):
     state_dir = root / "state" / "yadgar"
     for d in (config_dir, data_dir, state_dir):
         d.mkdir(parents=True, exist_ok=True)
+    # Hook-install HOME isolation (#64): redirect HOME to a session tmp dir so any
+    # code resolving `Path.home()` / `expanduser("~")` at MODULE setup (before a
+    # function-scoped fixture applies) — notably the install_hooks MCP wrapper and
+    # CLI which hardcode `home_dir=Path.home()` — can NEVER write to or unlink
+    # inside the developer's real `~/.claude/hooks`. The function-scoped fixture
+    # re-applies a per-test HOME on top (function scope wins). Env-patch alone
+    # suffices: on POSIX both `Path.home()` and `expanduser("~")` read $HOME.
+    session_home = root / "home"
+    (session_home / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
+    mp.setenv("HOME", str(session_home))
     mp.setenv("XDG_CONFIG_HOME", str(root / "config"))
     mp.setenv("XDG_DATA_HOME", str(root / "data"))
     mp.setenv("XDG_STATE_HOME", str(root / "state"))
@@ -230,6 +282,32 @@ def _isolate_yadgar_paths_session(tmp_path_factory):
         mp.undo()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _hooks_dir_sentinel():
+    """Tripwire: fail the session loudly if the real ~/.claude/hooks/ was mutated.
+
+    Belt-and-suspenders behind the HOME-isolation guard (#64). The snapshot is
+    taken at conftest import (before any HOME redirect). At session teardown we
+    re-stat the real dir and assert the entry set is unchanged — a drift means a
+    test leaked past the HOME guard and wrote/unlinked inside the developer's
+    real hooks dir. No-op when the real dir doesn't exist (CI).
+    """
+    yield
+    if _REAL_HOME_HOOKS_DIR is None or _REAL_HOOKS_SENTINEL is None:
+        return
+    after = _snapshot_hooks_dir(_REAL_HOME_HOOKS_DIR)
+    if after != _REAL_HOOKS_SENTINEL:
+        removed = {e[0] for e in _REAL_HOOKS_SENTINEL} - {e[0] for e in after}
+        added = {e[0] for e in after} - {e[0] for e in _REAL_HOOKS_SENTINEL}
+        changed = {e[0] for e in (_REAL_HOOKS_SENTINEL ^ after)} - removed - added
+        raise AssertionError(
+            "HOOK-INSTALL LEAK (#64): the real ~/.claude/hooks/ was mutated during "
+            f"the test session (dir={_REAL_HOME_HOOKS_DIR}). "
+            f"removed={sorted(removed)} added={sorted(added)} changed={sorted(changed)}. "
+            "A test bypassed the HOME-isolation guard — patch HOME to a tmp dir."
+        )
+
+
 @pytest.fixture(autouse=True)
 def isolate_yadgar_paths(tmp_path, monkeypatch):
     """Redirect all yadgar path env vars to tmp_path subdirs.
@@ -246,6 +324,17 @@ def isolate_yadgar_paths(tmp_path, monkeypatch):
     config_dir.mkdir(parents=True)
     data_dir.mkdir(parents=True)
     state_dir.mkdir(parents=True)
+    # Hook-install HOME isolation (#64): per-test HOME on top of the session
+    # default (function scope wins). Any test that calls the install_hooks
+    # MCP/CLI wrapper (which hardcodes `home_dir=Path.home()`) or `sync_instructions`
+    # without its own HOME patch now writes under this tmp HOME — never real
+    # `~/.claude/hooks`. The session sentinel (below) is the tripwire if a test
+    # bypasses this redirect. A distinct dir name (`_guard_home`, NOT `home`) so
+    # tests that build their own explicit `tmp_path / "home"` as a home_dir param
+    # don't collide with this fixture's pre-created tree.
+    guard_home = tmp_path / "_guard_home"
+    (guard_home / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(guard_home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))

@@ -18,6 +18,7 @@ Container detection:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -400,13 +401,9 @@ def _install_global_scripts(
                 )
                 + "\n"
             )
-        # Best-effort unlink the orphaned db-lockdown script from prior installs
-        # (settings.json no longer references it; harmless but confusing).
-        orphan = global_hooks_dir / "yadgar-db-lockdown-check.py"
-        try:
-            orphan.unlink()
-        except OSError:
-            pass
+        # #64: the db-lockdown orphan unlink + the non-prefixed vestige sweep now
+        # live in the single `_sweep_stale_hook_scripts` helper, called from
+        # `install_hooks_impl` after the global scripts are copied.
 
     return stop_dst, session_end_dst, router_dst
 
@@ -520,32 +517,113 @@ def _resolve_scope_paths(
     return global_claude_dir, global_hooks_dir, claude_dir / "hooks", claude_dir
 
 
+# The 9 non-prefixed hook basenames that PRE-#64 installs copied verbatim into
+# hooks_dir via the old ``_copy_scope_scripts._files`` dict. Nothing dispatches
+# to these on disk — the 5 runner-dispatched ones (post-tool-capture,
+# session-start-context, prompt-recall, pre-compact-drain, post-compact-rehydrate)
+# are executed via ``hook_runner.py <type>``'s internal ``_HOOKS`` dict, and the
+# 4 append hooks (subagent-{start,stop}, instructions-loaded, file-changed) are
+# installed under ``yadgar-`` names by ``_install_append_hooks``. The non-prefixed
+# copies are pure vestige. #64 stops emitting them AND sweeps existing orphans.
+_MANAGED_NONPREFIXED: frozenset[str] = frozenset(
+    {
+        "pre-compact-drain.sh",
+        "post-compact-rehydrate.sh",
+        "post-tool-capture.py",
+        "session-start-context.py",
+        "prompt-recall.py",
+        "subagent-stop.py",
+        "instructions-loaded.py",
+        "subagent-start.py",
+        "file-changed.py",
+    }
+)
+
+
 @observe(tier="stage")
-def _copy_scope_scripts(
+def _is_nix_symlink(path: Path) -> bool:
+    """True when *path* is a symlink whose target lives in the nix store.
+
+    Per-file provenance signal (NOT the system-level ``is_nix_managed()``, which
+    returns True on any NixOS box and would make the sweep a no-op on the very
+    machine that has the orphans). Uses ``os.readlink`` string-compare so a
+    DANGLING nix symlink is detected without a real ``/nix/store`` present.
+    """
+    try:
+        if not path.is_symlink():
+            return False
+        return os.readlink(path).startswith("/nix/store")
+    except OSError:
+        return False
+
+
+@observe(tier="stage")
+def _sha256_file(path: Path) -> str | None:
+    """Return the hex sha256 of *path*'s bytes, or None on any read error."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+@observe(tier="stage")
+def _sweep_stale_hook_scripts(
     package_hooks: Path,
-    hooks_dir: Path,
+    global_hooks_dir: Path,
     dry_run: bool,
 ) -> None:
-    """Bulk-copy dispatcher-pattern hook scripts into hooks_dir."""
-    _files = {
-        "pre-compact-drain.sh": 0o755,
-        "post-compact-rehydrate.sh": 0o755,
-        "post-tool-capture.py": 0o755,
-        "session-start-context.py": 0o755,
-        "prompt-recall.py": 0o755,
-        "subagent-stop.py": 0o755,
-        "instructions-loaded.py": 0o755,
-        "subagent-start.py": 0o755,
-        "file-changed.py": 0o755,
-    }
+    """Remove yadgar-installed orphan hook scripts from *global_hooks_dir*.
+
+    Two classes of orphan:
+
+    1. Non-prefixed vestigial copies (``post-tool-capture.py`` et al.) that
+       pre-#64 global installs wrote and nothing dispatches to. Predicate is
+       **content-hash equality against the packaged source** — the only signal
+       that works for the 5 runner-dispatched names (which have NO ``yadgar-``
+       on-disk sibling) AND preserves a user's coincidentally-named file (its
+       bytes differ → survives). A nix-store SYMLINK is skipped (deleting it
+       would fight home-manager).
+
+    2. The ``yadgar-db-lockdown-check.py`` orphan, superseded by the PreToolUse
+       router — an unconditional unlink (a ``yadgar-`` name, always ours;
+       settings.json no longer references it).
+
+    Best-effort: any OSError per unlink is swallowed — a missing file or a perms
+    error must never fail an install. No-op on dry_run.
+    """
     if dry_run:
         return
-    for filename, mode in _files.items():
-        src = package_hooks / filename
-        dst = hooks_dir / filename
-        if src.exists():
-            shutil.copy2(src, dst)
-            dst.chmod(mode)
+    for name in _MANAGED_NONPREFIXED:
+        candidate = global_hooks_dir / name
+        if not candidate.exists() and not candidate.is_symlink():
+            continue
+        if _is_nix_symlink(candidate):
+            continue  # nix-deployed — never touch (would fight home-manager)
+        packaged = package_hooks / name
+        on_disk_hash = _sha256_file(candidate)
+        packaged_hash = _sha256_file(packaged)
+        if on_disk_hash is None or packaged_hash is None:
+            continue  # cannot prove provenance → conservative, leave it
+        if on_disk_hash != packaged_hash:
+            continue  # user's own file (different content) → survives
+        try:
+            candidate.unlink()
+        except OSError:
+            pass
+    # db-lockdown orphan — unconditional (yadgar- name, router subsumed it).
+    orphan = global_hooks_dir / "yadgar-db-lockdown-check.py"
+    try:
+        orphan.unlink()
+    except OSError:
+        pass
+
+
+# NOTE (#64): the old ``_copy_scope_scripts`` helper — which bulk-copied the 9
+# non-prefixed hook basenames into hooks_dir — was REMOVED. Nothing dispatched to
+# those copies (hook_runner uses its internal ``_HOOKS`` dict; the append hooks
+# are installed under ``yadgar-`` names), so they were pure vestige that a global
+# install duplicated alongside the managed set. Root cause of the orphan dupes.
+# Existing orphans are cleaned by ``_sweep_stale_hook_scripts``.
 
 
 @observe(tier="stage")
@@ -638,12 +716,17 @@ def install_hooks_impl(
             hooks_dir.mkdir(parents=True, exist_ok=True)
 
     package_hooks = Path(__file__).parents[1] / "hooks"
-    _copy_scope_scripts(package_hooks, hooks_dir, dry_run)
 
     # Always-global scripts
     stop_dst, session_end_dst, router_dst = _install_global_scripts(
         package_hooks, global_hooks_dir, dry_run, _python_path
     )
+
+    # #64: sweep yadgar-installed orphan hook scripts from the GLOBAL hooks dir —
+    # the non-prefixed vestige copies prior installs emitted (content-hash-gated,
+    # nix-symlink-skipped) + the superseded db-lockdown orphan. Global-dir only:
+    # the orphans only ever landed in ~/.claude/hooks (scope=global writes there).
+    _sweep_stale_hook_scripts(package_hooks, global_hooks_dir, dry_run)
 
     # hook_runner.py (dispatcher for core hooks)
     hook_runner_dst = hooks_dir / "hook_runner.py"

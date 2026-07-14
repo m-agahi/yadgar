@@ -273,13 +273,75 @@ def test_startup_ok_with_require_auth_and_token(monkeypatch):
         importlib.reload(_srv)
 
         monkeypatch.setattr(_srv, "init_engines", lambda **kw: None)
-        monkeypatch.setattr(_srv, "sync_instructions", lambda: None)
-        monkeypatch.setattr(_srv, "install_hooks", lambda *a: None)
+        # sync_instructions + install_hooks are re-imported INSIDE main() from the
+        # misc module (`from ...tools.misc import ...`), so patching them on _srv is
+        # a dead stub — the real functions run. Patch them at the import source.
+        monkeypatch.setattr("yadgar.core.server.tools.misc.sync_instructions", lambda *a, **k: None)
+        monkeypatch.setattr("yadgar.core.server.tools.misc.install_hooks", lambda *a, **k: None)
         monkeypatch.setattr(_srv, "shutdown", lambda: None)
         monkeypatch.setattr(_srv.mcp_server, "run", lambda **kw: None)
 
         # Should not raise
         _srv.main(transport="stdio")
+    finally:
+        _app.mcp_server = _saved_app_mcp
+        if _saved_srv_mcp is not None:
+            _srv.__dict__["mcp_server"] = _saved_srv_mcp
+
+
+def test_startup_skips_hook_install_under_pytest(monkeypatch):
+    """main() MUST NOT auto-install hooks when running under pytest (H-8).
+
+    Regression: the startup step ``install_hooks(os.getcwd())`` writes to the
+    project's ``.claude/settings.json`` (project scope resolves from cwd, NOT HOME
+    — the _guard_home fixture only redirects HOME), so a test whose cwd is a real
+    repo poisons that repo's settings with a PreToolUse hook pointing at a
+    torn-down pytest tmp dir, blocking every later Bash call in the repo. The
+    startup auto-install is guarded off under pytest (PYTEST_CURRENT_TEST); this
+    proves it stays off. Tests that exercise install_hooks call it directly with an
+    isolated project_directory.
+    """
+    monkeypatch.setenv("YADGAR_REQUIRE_AUTH", "0")
+    monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
+
+    import importlib
+
+    import yadgar._shared.config as _cfg
+    import yadgar.core.server as _srv
+    import yadgar.core.server._app as _app
+    import yadgar.core.server.tools.misc as _misc
+
+    _saved_app_mcp = _app.mcp_server
+    _saved_srv_mcp = _srv.__dict__.get("mcp_server")
+
+    _cfg.get_settings.cache_clear()
+    from yadgar._shared.runtime import lifecycle as _lifecycle
+
+    if callable(getattr(_lifecycle.get_settings, "cache_clear", None)):
+        _lifecycle.get_settings.cache_clear()
+
+    calls = {"install_hooks": 0}
+
+    def _spy_install_hooks(*a, **k):
+        calls["install_hooks"] += 1
+
+    try:
+        importlib.reload(_srv)
+
+        monkeypatch.setattr(_srv, "init_engines", lambda **kw: None)
+        # sync_instructions + install_hooks are re-imported INSIDE main() from the
+        # misc module, so patch them at the source, not on _srv.
+        monkeypatch.setattr("yadgar.core.server.tools.misc.sync_instructions", lambda *a, **k: None)
+        monkeypatch.setattr(_misc, "install_hooks", _spy_install_hooks)
+        monkeypatch.setattr(_srv, "shutdown", lambda: None)
+        monkeypatch.setattr(_srv.mcp_server, "run", lambda **kw: None)
+
+        _srv.main(transport="stdio")
+
+        assert calls["install_hooks"] == 0, (
+            "main() invoked install_hooks under pytest — would poison the real "
+            "repo's .claude/settings.json (PYTEST_CURRENT_TEST guard missing?)"
+        )
     finally:
         _app.mcp_server = _saved_app_mcp
         if _saved_srv_mcp is not None:

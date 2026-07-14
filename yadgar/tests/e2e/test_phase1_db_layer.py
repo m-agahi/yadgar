@@ -165,11 +165,15 @@ class TestDataSafetyIsolation:
 
     def test_guard_raises_on_real_data_dir(self):
         """_assert_not_real_data_dir MUST raise RuntimeError on the real data dir."""
-        from pathlib import Path
+        # Build the path from the guard's OWN _REAL_DATA_DIR, not from a live
+        # Path.home(): the autouse _guard_home fixture monkeypatches HOME to a tmp
+        # dir, so Path.home() here would yield a tmp path that is NOT under the
+        # guard's _REAL_DATA_DIR (frozen at module import = real home), and the
+        # guard would correctly stay silent — masking the very violation this test
+        # is meant to prove fires.
+        from yadgar.tests.e2e.conftest import _REAL_DATA_DIR, _assert_not_real_data_dir
 
-        from yadgar.tests.e2e.conftest import _assert_not_real_data_dir
-
-        real_data_dir = Path.home() / ".local" / "share" / "yadgar" / "sentinel"
+        real_data_dir = _REAL_DATA_DIR / "sentinel"
         with pytest.raises(RuntimeError, match="DATA-SAFETY VIOLATION"):
             _assert_not_real_data_dir(real_data_dir)
 

@@ -218,6 +218,12 @@ class TestMain:
         result = json.loads(out)
         assert result.get("decision") == "block"
         assert "reason" in result
+        # Reason is the short pointer (Car B, task #74) — not the full protocol
+        reason = result["reason"]
+        assert reason.startswith("[yadgar] Checkpoint due. Read "), (
+            f"Reason must be short pointer, got: {reason[:100]}"
+        )
+        assert reason.endswith(" and follow all the instructions in it.")
         # State updated
         with patch.object(mod._paths, "STOP_HOOK_STATE_PATH", state_path):
             saved = mod._load_state()
@@ -233,12 +239,12 @@ class TestMain:
         # Should not crash, prints {} (no transcript_path)
         assert out.strip() == "{}"
 
-    def test_block_prompt_injects_default_branch_into_wiki_calls(self, tmp_path, capsys):
-        """#19: the blocked prompt must carry branch_hint= on the wiki write calls.
+    def test_block_reason_is_short_pointer_not_full_protocol(self, tmp_path, capsys):
+        """Car B (task #74): reason must be the short pointer, never the full protocol.
 
-        The ADR-log wiki write contract REQUIRES branch_hint (else missing_branch),
-        and the ADR log is project-canonical so it must target the default branch.
-        main() computes the default branch and injects it as {default_branch}.
+        Guards against regressions where the full ~60-line protocol is inlined back
+        into the reason field.  The protocol now lives in the file pointed to by the
+        reason; main() emits only a one-line pointer.
         """
         state_path = tmp_path / "state.json"
         transcript = tmp_path / "t.jsonl"
@@ -252,109 +258,23 @@ class TestMain:
             "stop_hook_active": False,
             "cwd": str(tmp_path),
         }
-        # Force a deterministic default branch so the assertion is exact.
-        with patch.object(mod, "_default_branch", return_value="trunk"):
-            with patch("sys.stdin", io.StringIO(json.dumps(stdin_data))):
-                with patch.object(mod._paths, "STOP_HOOK_STATE_PATH", state_path):
-                    mod.main()
-        out = capsys.readouterr().out
-        reason = json.loads(out)["reason"]
-        # Every wiki write in the prompt must carry the resolved default branch.
-        assert 'branch_hint="trunk"' in reason
-        # ADR step: now calls adr_add (not hand-rolled wiki_append_section).
-        # Step 2 still uses wiki_add for structural write-back.
-        assert "wiki_add(" in reason and "adr_add(" in reason
-        # READ side: the ADR-log wiki_read must also pin branch_hint (§25 fix —
-        # branch_hint-less reads on a feature branch miss master-scoped pages,
-        # causing spurious "absent → create" and duplicate ADR logs).
-        assert "wiki_read(" in reason
-        assert reason.count('branch_hint="trunk"') >= 3, (
-            "Expected branch_hint on wiki_read (ADR dedup-read), and at least 2 "
-            "from step-2 wiki_add calls"
-        )
-        # The {default_branch} placeholder must be fully substituted (no leftovers).
-        assert "{default_branch}" not in reason
-
-    def test_adr_step_uses_adr_add_not_hand_rolled(self, tmp_path, capsys):
-        """#37 (v5.85 car 1): ADR capture step calls adr_add, keeps dedup-read-first.
-
-        Guards against regressions:
-        (a) adr_add( must be present — the step now delegates ID/format/append to the tool.
-        (b) read-existing-first + dedup-by-decision language must survive — adr_add does
-            NOT check decision-level duplicates; the prompt is responsible for that.
-        (c) wiki_append_section( must NOT appear in the prompt — the hand-rolled append
-            is replaced by adr_add.
-        """
-        state_path = tmp_path / "state.json"
-        transcript = tmp_path / "t.jsonl"
-        lines = [json.dumps({"role": "user", "content": f"msg {i}"}) for i in range(25)]
-        transcript.write_text("\n".join(lines))
-
-        mod = _load_module()
-        stdin_data = {
-            "session_id": "s1",
-            "transcript_path": str(transcript),
-            "stop_hook_active": False,
-            "cwd": str(tmp_path),
-        }
-        with patch.object(mod, "_default_branch", return_value="master"):
-            with patch("sys.stdin", io.StringIO(json.dumps(stdin_data))):
-                with patch.object(mod._paths, "STOP_HOOK_STATE_PATH", state_path):
-                    mod.main()
+        with patch("sys.stdin", io.StringIO(json.dumps(stdin_data))):
+            with patch.object(mod._paths, "STOP_HOOK_STATE_PATH", state_path):
+                mod.main()
         out = capsys.readouterr().out
         reason = json.loads(out)["reason"]
 
-        # (a) ADR capture must call adr_add.
-        assert "adr_add(" in reason, "ADR step must call adr_add( — not found in prompt"
+        # Short pointer — single line with known prefix/suffix
+        assert reason.startswith("[yadgar] Checkpoint due. Read ")
+        assert reason.endswith(" and follow all the instructions in it.")
+        # Must NOT inline the full protocol
+        assert "CAPTURE FIRST" not in reason
+        assert "adr_add(" not in reason
+        assert "project_brief(" not in reason
+        # Path in the reason must resolve to the real template file
+        prefix = "[yadgar] Checkpoint due. Read "
+        suffix = " and follow all the instructions in it."
+        path_in_reason = reason[len(prefix) : -len(suffix)]
+        from pathlib import Path as _Path
 
-        # (b) Dedup-read-first language must survive (adr_add does ID-dedup only,
-        #     NOT decision-level dedup — the prompt keeps that judgment).
-        dedup_signals = [
-            "read existing",
-            "dedup",
-            "already",
-            "only",
-        ]
-        reason_lower = reason.lower()
-        assert any(sig in reason_lower for sig in dedup_signals), (
-            "Dedup-by-decision / read-first language must survive in ADR step; "
-            f"none of {dedup_signals!r} found in prompt"
-        )
-        assert "wiki_read(" in reason, (
-            "ADR dedup-read (wiki_read call) must still be present so the model "
-            "reads existing ADRs before deciding what to add"
-        )
-
-        # (c) Hand-rolled append gone — adr_add handles it now.
-        assert "wiki_append_section(" not in reason, (
-            "wiki_append_section( must NOT appear — ADR step now uses adr_add, "
-            "which internally handles the append"
-        )
-
-    def test_default_branch_resolves_from_git_symbolic_ref(self, tmp_path):
-        """_default_branch parses `git symbolic-ref refs/remotes/origin/HEAD`."""
-        mod = _load_module()
-
-        class _R:
-            returncode = 0
-            stdout = "refs/remotes/origin/main\n"
-
-        with patch("subprocess.run", return_value=_R()):
-            assert mod._default_branch(str(tmp_path)) == "main"
-
-    def test_default_branch_falls_back_to_master_for_non_git(self, tmp_path):
-        """Non-git dir / no remote HEAD / any error → 'master' fallback (ADR
-        supports non-git projects)."""
-        mod = _load_module()
-
-        # Non-zero return code (no remote HEAD) → fallback.
-        class _R:
-            returncode = 128
-            stdout = ""
-
-        with patch("subprocess.run", return_value=_R()):
-            assert mod._default_branch(str(tmp_path)) == "master"
-
-        # Subprocess raising (git missing) → fallback, no crash.
-        with patch("subprocess.run", side_effect=FileNotFoundError("git")):
-            assert mod._default_branch(str(tmp_path)) == "master"
+        assert _Path(path_in_reason).is_file(), f"Path in reason does not resolve: {path_in_reason}"

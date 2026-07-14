@@ -31,6 +31,22 @@ contract:
     ## Yadgar findings
     - <fact/anchor/insight> or "none"
 
+# prompts: the generic (any-project) starter dispatch patterns.
+# v5.124.0 consolidation (34→18 live map; generic subset here). Selection criterion:
+# GENERIC by content (no yadgar arch/paths/harness/identity) AND satisfies the seed
+# schema (opens with a DISPATCH: line, survives _unwrap_purpose_prompt).
+# The 5 merged canonicals (rca-diagnose, plan-audit, scope-and-plan, build-car,
+# perf-measure-live) each carry a ## Modes section documenting absorbed variants as args;
+# only the 3 generic ones (rca-diagnose, plan-audit, scope-and-plan, build-car) are seeded —
+# perf-measure-live is yadgar-harness-specific (live-wiki only).
+# EXCLUDED as yadgar-session-specific (live-wiki only): perf-measure-live,
+# perf-anomaly-metrics, profile-latency-standalone, relocate-tool-group-to-backend-forward,
+# viz-frontend-fix, cleanup (yadgar release-audit), integrate-train-and-pr (yadgar/codeberg
+# release harness), deep-investigation-build-vs-buy, debug-flaky-ci-via-local-repro,
+# drift-axis-remediation-sweep.
+# RETIRED/merged (no longer seeded): crash-rca (→ rca-diagnose mode=prod-crash),
+# plan-corpus-status-sweep (→ drift-audit mode=plan-corpus), build-cache-car-tdd (deprecated),
+# and the plan/perf variants folded into scope-and-plan.
 prompts:
 - pattern: code-review
   purpose: Review a diff or PR for correctness and risk.
@@ -85,9 +101,10 @@ prompts:
   purpose: 'Standing preamble for plan-executing build dispatches: ADR-0081/0082 plan lifecycle + full incident-tested discipline set'
   # v5.122.0: seeded so the prelude contract's rule 4 pointer (wiki_read
   # agent-prompt-plan-executing-build) resolves on FRESH installs. Content is a
-  # verbatim copy of the live wiki page (v3, 2026-07-10 — Stage 2 rewrite:
-  # cross-cutting rules extracted to the composed discipline pages). Seeder is
-  # create-if-absent — existing deployments keep their live page untouched.
+  # verbatim copy of the live wiki page (Stage 2 rewrite: cross-cutting rules
+  # extracted to the composed discipline pages). Seeder is create-if-absent —
+  # existing deployments keep their live page untouched. This is a DISCIPLINE
+  # PREAMBLE, not a task pattern (contract rule 4 depends on the slug).
   content: |-
     DISPATCH: model=opus for multi-seam cars, sonnet for mechanical cars — plan states which — canonical: model-tier-dispatch
 
@@ -111,42 +128,190 @@ prompts:
     - [[agent-discipline-process-hygiene]]
     - [[agent-discipline-commit-hygiene]]
 
-# ── v5.123.0 seed backflow (2026-07-10, "improving the seeds") ────────────────
-# 10 battle-tested live wiki patterns synced into the genesis corpus verbatim
-# (body = live page content minus the outer ## Purpose / ## Prompt wrapper the
-# seeder re-adds). Selection criterion: reusable-on-fresh-install. Excluded as
-# yadgar-session-specific: build-cache-car-tdd, measure-recall-perf,
-# recall-perf-check, profile-latency-standalone, audited-plan-perf-lever,
-# measure-first-investigation, investigate-plan-advisor,
-# drift-axis-remediation-sweep, debug-flaky-ci-via-local-repro,
-# relocate-tool-group-to-backend-forward, viz-frontend-fix, cleanup.
-- pattern: stacked-car-parallel-build
-  purpose: 'Parallel car N+1 on a stacked branch off the train branch — disjoint seams, no train pushes, main thread rebases in (ADR-0088)'
+# ── v5.124.0 consolidation: merged canonicals + retained generic patterns ──────
+# The 3 generic merged canonicals (rca-diagnose, plan-audit, scope-and-plan, build-car)
+# carry a ## Modes section documenting absorbed variants as dispatch args. Bodies are
+# verbatim copies of the live wiki page (unwrapped form, starting at the DISPATCH line).
+- pattern: rca-diagnose
+  purpose: 'Root-cause a bug/regression/crash with evidence — diagnose ONLY, no fix. mode=regression (default) | prod-crash (off-prod controlled repro + mechanism-exclusion).'
   content: |-
-    DISPATCH: model=sonnet — seams pre-cut by the plan — canonical: model-tier-dispatch
+    DISPATCH: model=opus (fallback=sonnet) — RCA needs reasoning over divergent evidence; sonnet only for shallow single-seam bugs — canonical: model-tier-dispatch
 
-    ## Purpose
-    Dispatch shape for building train car N+1 IN PARALLEL with car N when their file seams are disjoint (ADR-0088 one-PR trains). Car N owns the train branch; car N+1 builds on a STACKED branch and is rebased in by the main thread.
+    ## Yadgar subagent contract
+    Before substantive work: recall("<bug topic>") — surface anchors/prior findings. Observed state ALWAYS wins over recalled. Do NOT memorize directly; emit findings in report. END your final message with `## Yadgar findings` (one standalone durable fact per bullet, or "none").
 
-    ## Prompt block (adapt bracketed parts)
-    You are in an isolated worktree. Base yourself on the TRAIN branch: `git fetch origin && git checkout -b [car-branch] origin/[train-branch]`. Car [N] is being built in parallel ON the train branch by another agent — you MUST NOT touch [car N's seam, e.g. root conftest] and MUST NOT push to the train branch. Push ONLY your own branch; the main thread rebases it onto the train branch after car [N] lands and re-validates any order-dependent final commit. NO PR (one train PR exists: #[PR]). NO version bump (train's claimed version stands).
+    ## Standing hard rules (context resets — honor anyway)
+    - NO terraform/tofu/tfp any mechanism. NO tf-local-plan container exec. Never directly query SurrealDB (MCP/HTTP only). Never run install_hooks against real HOME.
+    - DIAGNOSE ONLY for this task: do NOT edit code, do NOT commit. Report root cause + proposed fix; main thread decides.
+    - Default terse. Verify before claiming.
 
-    Plan lifecycle per [[agent-discipline-plan-lifecycle]]: your car COMPLETES the plan → archive-first commit; otherwise first commit updates the plan Status header.
+    ## Task — ROOT CAUSE ONLY (no fix)
+    <one-paragraph symptom + shipped-version context>
 
-    Order-dependent commits (e.g. a gate flip) go LAST and get re-validated after the rebase.
+    ### Hard evidence already gathered (verify if cheap, don't re-derive)
+    <bullet list of the observed facts + what's already ruled out (queue-lag / DLQ / etc.)>
 
-    Discipline: TDD where testable; process + commit rules per [[agent-discipline-process-hygiene]] and [[agent-discipline-commit-hygiene]].
+    ### Your job
+    1. Trace the exact code path (find entry point + the write/effect site + guards that could skip or throw before it). file:line the site where the expected effect WOULD happen.
+    2. Reproduce with stderr VISIBLE — re-run the real command WITHOUT swallowing output; capture stdout+stderr+exit code. Compare state before/after via the authoritative read path.
+    3. Isolate the branch: run the fallback/no-flag path too, to localize the regression to a specific branch vs the whole feature.
+    4. Determine ROOT CAUSE (exception pre-effect / guard skipping the write / input-shape mismatch caller-vs-callee / …) backed by exact file:line + the observed error or code branch.
 
-    Final report: per-item commit hashes, before/after metrics for your car's goal, push confirmation, and any cross-car collision you noticed.
+    ### Deliverable
+    - Root cause with file:line + captured stderr/exit code.
+    - Proposed minimal fix (what + where) AND any health-signal fix if the failure was masked (swallowed stderr / blanket exit 0).
+    - Standalone hotfix vs fold into current train — recommend.
+    - Do NOT implement. Report only. End with `## Yadgar findings`.
 
-    ## Main-thread follow-up (not the agent's job)
-    After car N lands: `git rebase origin/[train-branch]` in the stacked worktree → re-run the order-dependent validation → `git merge --ff-only` on the train branch → push. Expect version-file conflicts if master moved; the train's claimed version wins.
+    ## Modes
+    - `mode=regression` (DEFAULT): the steps above — trace, stderr-visible repro, branch-isolation, file:line root cause. For a bug/regression whose repro you can run directly.
+    - `mode=prod-crash`: root-cause a production crash / hang / restart-loop OFF PROD — do NOT keep crashing the live system to study it. Adds:
+      - Reproduce from the symptom first: the exact failure mode (crash-loop? hang? self-restart?) and WHAT changed when it started (which config/version flipped). The mechanism is usually the INTERACTION of a recent change with a PRE-EXISTING fragility, not the change alone.
+      - Capture real evidence: a restarting process gets its logs wiped — build a minimal LOCAL repro (script/test exercising the real code path) that triggers the failure deterministically; capture the actual traceback / exit code / signal. CRITICAL distinction: a Python crash (traceback / SIGSEGV) vs an EXTERNAL kill (a healthcheck returning a designed error → orchestrator SIGKILLs) — totally different fixes. A clean exit-0 with no traceback points at an external killer, not a code crash.
+      - Mechanism exclusion: enumerate candidate mechanisms; for EACH, PROVE or EXCLUDE it against the code (cite file:line) — do not stop at the first plausible one. A theory that matches the symptom but is excluded by the code is WRONG (e.g. "thread-safety race" excluded because all clients are sync; "timeout leak" excluded because the configured timeout exceeds the operation; "saturation" excluded because the grace never trips at prod knobs).
+      - State the single proximate trigger + the load-bearing ROOT flaw (often a latent fragility the change EXPOSED, not created). Flag any step modeled with a STUB vs proven against the real system — don't overclaim.
+      - Name WHY the original tests missed it (e.g. a synthetic stand-in that never exercised the real dependency/load pattern), and call `advisor` on the root-cause hypothesis before committing to it.
+- pattern: plan-audit
+  purpose: 'Adversarially audit an implementation plan BEFORE building — verify load-bearing claims against actual code, try to break it, verdict build/build-with-changes/don''t-build. writeback=false (default, report only) | true (append ## AUDIT + set AUDITED status in the plan file).'
+  content: |-
+    DISPATCH: model=fable (fallback=opus) — adversarial audit is peak $/insight leverage; opus if the audit must re-grep the tree to verify paths — canonical: model-tier-dispatch
 
-    ## Composes
+    You are an INDEPENDENT skeptic. The plan may be wrong; its prose is not evidence. Your job: verify every LOAD-BEARING claim against the actual code (cite file:line), try to BREAK the design, and gate the build.
 
-    - [[agent-discipline-process-hygiene]]
-    - [[agent-discipline-commit-hygiene]]
-    - [[agent-discipline-plan-lifecycle]]
+    Read the plan fully + its risk list. For each foundation claim the design rests on, VERIFY against source — trace the real code path, do NOT trust the plan's framing (it has been wrong before: an "all-remote" claim turned out runtime-conditional on an env var; a feared "1-connection singleton" was actually default-100). Mark each claim VERIFIED / CRACKED / UNCERTAIN with file:line. Verify cited LOC figures with wc -l / grep — do not trust the plan's numbers.
+
+    Hunt specifically for:
+    - A fix that introduces a NEW failure mode worse than the status quo — especially trading a LOUD, monitored failure for a SILENT one the existing safety net can't catch. That is a hard gate, not a footnote.
+    - Shared mutable state the plan missed (grep: module-level dicts, lru_caches, breakers, counters) and over-scoped (things that are actually single-thread-only).
+    - Concurrency hazards: loop-affine primitives touched off-loop, cancellation that leaks resources (a wedged uncancellable worker), a downstream bottleneck the change amplifies into a storm.
+    - Version math: if an in-flight train (open PR) bumps versions, this plan must sequence AFTER it — flag hardcoded version numbers that collide.
+    - Test adequacy: would the mandated test ACTUALLY fail before + pass after, and catch the SUBTLE failure mode (not just the obvious one)? Or is it mock theater that passes while prod breaks?
+
+    Verdict: a per-claim table (claim → VERIFIED / STALE / WRONG / CRACKED + evidence at file:line), a RANKED must-fix-before-build list, and a bottom line — BUILD AS-IS / BUILD WITH CHANGES (list) / DO-NOT-BUILD (foundation crack). Be brutal: a passed audit you don't believe is worse than none.
+
+    ## Recall hint
+    Recall the plan's domain + any prior RCA/audit on the same subsystem before starting.
+
+    ## Modes
+    - `writeback=false` (DEFAULT): report-only. Return the verdict table + must-fix list + bottom line in your final message. Do NOT edit the plan file.
+    - `writeback=true`: audit a DRAFT plan IN PLACE. Append a `## AUDIT (<date>)` section to the plan file: the verification table + corrections + a Status line (`AUDITED — ready` / `AUDITED — needs rework`) + explicit user-decision items. Preserve the original plan content (do NOT rewrite it). NO code changes. Contract: recall the plan topic first; observed state ALWAYS wins over plan text; do NOT memorize(). Report (≤6 bullets): Status verdict; STALE/WRONG count; biggest blocker; sequencing/dependency notes; user-decision items. Then `## Yadgar findings`.
+- pattern: scope-and-plan
+  purpose: 'Investigate current code/state then WRITE a design plan doc (no implementation). Modes: commit=false|true, advisor=N, measure_first=false|true, domain=generic|perf-lever.'
+  content: |-
+    DISPATCH: model=opus (needs code exploration THEN design synthesis; fable only if a curated single-fresh-read brief already exists — this shape usually does not) — canonical: model-tier-dispatch
+
+    ## Yadgar subagent contract
+    recall("<topic + subsystems>") first. Observed code/state ALWAYS wins over recalled/coordinator claims — verify against real code, cite file:line. Do NOT memorize directly; emit findings in report. END with `## Yadgar findings`.
+
+    ## Standing hard rules (context resets)
+    - NO terraform. Never query SurrealDB directly (MCP/HTTP only). Do NOT run install_hooks against real HOME.
+    - INVESTIGATE + PLAN ONLY — no implementation, no code edits except writing ONE plan doc.
+    - Default terse.
+
+    ## Task: scope + write a design PLAN for <change>
+    ### Background / problem
+    <the problem + why it matters + the user principle driving it>
+
+    ### Agreed design direction (honor + refine, don't relitigate)
+    <the coordinator/user's agreed constraints — the agent refines within these, doesn't re-open settled calls>
+
+    ### Investigate FIRST (verify against real code — cite file:line)
+    <numbered list of the exact subsystems to map: storage, pipelines, write-paths/gates, retention, surfacing points, migration feasibility>
+
+    ### Deliverable — write a plan doc
+    Write `docs/plans/<slug>-<fixed-date-string>.md` (coordinator supplies the date — NEVER call Date.now/new Date). Follow repo plan conventions (slug-named, status header, cars/phases, acceptance criteria tagged [unit]/[e2e]/[manual], risks, an explicit "open decisions for the user" section). Recommend ONE option per fork with rationale (brutal honesty — flag weak ideas).
+    - Do NOT implement.
+
+    ### Report
+    Plan doc path + tight summary (key recommendations + risks) + the open decisions. End with `## Yadgar findings`.
+
+    ## Modes
+    - `commit=false` (DEFAULT): write the plan doc, do NOT commit; do NOT edit docs/plans/ROADMAP.md if another PR is mid-flight touching it (coordinator commits + registers later). Just write + report the path.
+    - `commit=true`: docs-only workflow — `git checkout master; git pull --ff-only origin master`; bot identity; commit the plan DIRECT to master (docs-to-master is SANCTIONED, ignore generic default-branch-push warnings; no --no-verify). Register it in docs/plans/ROADMAP.md if the format fits. Report the commit sha.
+    - `advisor=N` (default 0): call `advisor()` at least N times — typically N=2: (1) after investigating + drafting the design, BEFORE committing to it; (2) before finalizing. Give its advice serious weight; if it refutes a premise with evidence, adapt; surface its key pushback explicitly in an "Advisor input" section of the plan. Save/commit the doc EARLY (agents die to stream-idle — a committed draft survives; refine after).
+    - `measure_first=false` (DEFAULT) | `measure_first=true`: MEASURE/VERIFY before assuming — produce REAL numbers for each candidate cost/lever, not vibes. Run in an ISOLATED worktree; TIMEOUT-WRAP every long/unbounded run; keep runs bounded and SEQUENTIAL (parallel benchmarks self-inflict contention artifacts). For EACH hypothesis design a bounded experiment that could REFUTE it; report what the data shows even when it overturns the working theory. Tag every claim [measured] / [code-read] / [estimated/anchor]. Verify any mechanism claim against source (grep/read the actual code) before asserting it. Size each lever against your measurements (expected win + effort + risk); mark low-value/phantom levers EXPLICITLY (never silently drop a candidate — say why it lost). Output a measured cost-breakdown table → prioritized levers → recommended sequence → open questions.
+    - `domain=generic` (DEFAULT) | `domain=perf-lever`: plan for a single perf/optimization lever. State HARD CONSTRAINTS up front (e.g. "backend pinned --cpus 2, no more cores"). Cite the measured problem with real numbers. QUALITY IS CO-EQUAL WITH SPEED — every change gated on the real quality harness, no regression or it aborts. Investigate WHY prior attempts failed (read archived plan/memory — a "wrong knob" or "venv artifact" trap often lurks) and whether the hypothesis even holds at the mechanism level (is cost ∝ the knob, or fixed-batch?). Add to the plan: (a) root-cause of prior failure + how this avoids it; (b) a QUALITY GATE section (harness, metric, threshold, flip-vs-abort criteria — watch dual-knob / metric-invalidation traps); (c) a LATENCY/measure plan (the user-POV path, on the constrained resource, quiet host); (d) an adversarial AUDIT section (risks, what could make this NOT worth it, is the hypothesis even true, cheap-config rollback?, go/no-go). If the lever is infeasible / a no-op / a likely quality-loss, SAY SO with evidence and propose alternatives.
+- pattern: build-car
+  purpose: 'Build one train car TDD in an isolated worktree — targeted-then-final test discipline. plan_spec=<docs/plans path> for spec-driven (implement the AUDITED plan exactly); else goal-driven.'
+  content: |-
+    DISPATCH: model=opus for multi-seam/parser/logic cars; sonnet for mechanical single-file cars — canonical: model-tier-dispatch
+
+    ## Yadgar contract
+    recall("<car topic + subsystems>") first. Observed code ALWAYS wins over plan/recall — verify every cited path/line before editing. Do NOT memorize directly; report findings. END with `## Yadgar findings`.
+
+    ## WORK LOCATION
+    `cd <worktree-path>` — branch <car/branch> off master <sha>. Verify `git branch --show-current` = the car branch and clean status. ALL edits + commits here (never the main worktree). Worktree isolation lets cars build in parallel without collision.
+
+    ## Standing hard rules (context resets — honor verbatim)
+    - NO terraform. Never query SurrealDB directly. NEVER run install_hooks against real HOME (patch HOME to tmp in tests).
+    - NEVER --no-verify/--no-gpg-sign/SKIP= any hook. NO Co-Authored-By. NO version bump (the integration step bumps the train version — flag if your car touches backend/** so integration bumps backend too). Commit early+often (a transient API death wipes uncommitted work). venv on PATH for commits: `PATH="<repo>/.venv/bin:$PATH" git commit` (import-linter is language:system; "lint-imports not found" = a PATH issue, NOT a violation).
+    - ruff-format py3.14 rewrites `except (A,B):` tuples → AST hooks reject; use a single base or a named `_ERR=(A,B)` constant.
+
+    ## TDD + TEST-RUN DISCIPLINE (critical for wall-clock)
+    - Red → green: write the failing test FIRST, confirm red, implement to green. Refactor with tests green.
+    - Between iterations, run ONLY the targeted tests for the change you just made (fast — seconds).
+    - Run the FULL relevant suite + `make e2e` ONCE at the very end, before reporting — NOT after every fix. Re-running the whole suite + e2e each iteration wastes wall-clock for zero added safety (the final full pass is the authoritative gate).
+    - The final broad pass MUST cover ALL call-sites of anything whose SIGNATURE or a shared PATH you changed — grep repo-wide and include every dir that references it (signature/path changes break assert-sites in untouched dirs — a repeated real failure).
+    - Full-round-trip / deploy-gated criteria that can't be unit-tested are documented as [manual], not faked.
+    - Loop until clean; surface pre-existing flakes, don't silence them. Same fix fails 2× → STOP + report.
+    - Do NOT push. Do NOT open a PR (the train integrates + bumps + PRs once). Do NOT touch plan archival (the main thread archives at integration).
+
+    ## TASK
+    <the specific car spec — what to build, the exact fix, acceptance criteria>
+
+    ## Report
+    Commit hashes, what changed (files/functions), test evidence (targeted red→green + the ONE final full-suite result), backend-bump-needed flag, anything integration must know. End with `## Yadgar findings`.
+
+    ## Modes
+    - goal-driven (DEFAULT): the TASK block above is the spec — build to the stated acceptance criteria.
+    - `plan_spec=<docs/plans/<car>.md>`: spec-driven. Read that plan file IN FULL — the reworked body above any `## AUDIT` section is the AUDITED-ready spec; implement exactly that (write the plan's failing acceptance tests FIRST). Observed state ALWAYS wins over plan text — if the tree contradicts the plan, follow the tree + note the drift. Plan lifecycle per [[agent-discipline-plan-lifecycle]] on partial vs completing scope (the main thread handles archival at integration).
+- pattern: drift-audit
+  purpose: 'Detect drift/garbage/gaps between a source-of-truth and the artifacts that should mirror it — find divergence on purpose. mode=plan-corpus classifies plan-corpus files shipped vs remaining.'
+  content: |-
+    DISPATCH: model=sonnet (fallback=opus if drift classification is judgment-heavy; haiku for mode=plan-corpus) — canonical: model-tier-dispatch
+
+    Name the SOURCE OF TRUTH (the authoritative definition — e.g. the code: the Settings fields, the tool/function registry, the DB schema, the AST) and the DERIVED artifact(s) that must mirror it (a doc, FIELD_META, a capability registry, wiki pages, generated files).
+
+    Enumerate BOTH sides COMPLETELY (do not sample) and diff by identity (name/key). Bucket every discrepancy:
+    - PHANTOM — in the derived artifact but NOT in the source (documented-but-nonexistent, dead registry rows, orphans). Silently misleads — highest priority.
+    - MISSING — in the source but absent from the derived artifact (undocumented knob, uncovered capability, un-described field).
+    - STALE — in both, but the derived value disagrees with the source (wrong default, outdated description, drifted type/enum).
+    - MALFORMED — structurally broken entries (corrupt / duplicated / double-wrapped / unparseable).
+
+    Rules: the source of truth ALWAYS wins. NEVER invent a value to fill a MISSING gap — flag it, do not fabricate. Quantify every bucket: total-in-source / total-in-derived / phantom / missing / stale / malformed (a clean audit = all non-source buckets zero).
+
+    Report a diff table: identity | bucket | source value (file:line) | derived value. Propose fixes but DO NOT apply unless asked. End by naming any OTHER derived artifact that mirrors the same source but was NOT checked — the next audit target.
+
+    Prefer an INVARIANT over a re-run: if a source/derived pair can be diffed mechanically, the durable fix is a test/ratchet that fails on drift — flag that as the real remediation. This audit is the manual complement for pairs an invariant cannot express.
+
+    ## Recall hint
+    Recall the I25/I29/I32 invariants + prior drift findings (phantom config knobs, corrupt prompts) before starting.
+
+    ## Modes
+    - default: the source↔derived drift audit above.
+    - `mode=plan-corpus`: classify plan-corpus files shipped vs remaining (task-list rebuild / pre-archive sweep). Read-only Explore agent. Input: plans directory path, current shipped versions, any in-flight branches whose plans count as PARTIAL-pending-merge. For each top-level plan file (exclude living docs like ROADMAP.md, exclude archive/ subdirs): (1) read header/first ~40 lines only, go deeper only when status unclear; (2) evidence priority: in-file status markers ("Status:", SHIPPED, checkboxes) → git log + CHANGELOG version markers → grep key feature names in codebase; (3) bucket SHIPPED (archive candidate) / PARTIAL (list remaining items, 1 line each) / OPEN / SUPERSEDED-RETIRED (name replacement). Output a compact table `file | BUCKET | evidence | remaining-if-partial`, then per-bucket counts + explicit SHIPPED list. Read-only, no moves/edits/git writes. End with `## Yadgar findings`.
+- pattern: feasibility-design
+  purpose: 'Verify a mechanism is buildable on the target platform (docs + existing precedent) BEFORE designing it — then design only what the platform actually supports.'
+  content: |-
+    DISPATCH: model=fable (fallback=opus) — pre-build feasibility shapes everything downstream — canonical: model-tier-dispatch
+
+    Verify a mechanism is BUILDABLE on the target platform BEFORE designing it — then design only what the platform actually supports, not what you assume.
+
+    FEASIBILITY first (cite the platform docs + existing-code precedent; do NOT assume):
+    - Can the platform do the thing at all? Identify the exact API / hook / extension point that would carry it.
+    - What's the EXACT capability + its LIMITS? Read the real docs + version notes (capabilities differ by version). Distinguish the IDEAL mechanism from the FALLBACK the platform actually allows.
+    - Is there existing precedent in THIS codebase/setup doing something similar? Reuse its pattern.
+
+    DESIGN second, gated on the feasibility:
+    - Pick the STRONGEST mechanism the platform allows; design the fallback for if the ideal isn't supported.
+    - Make it CHEAP at the point of action — no heavy/LLM call in a hot or blocking path (it gets disabled if it adds friction; cache, fast-path, fire only when warranted).
+    - Loop-safety / idempotence: the mechanism must not re-trigger on the action it itself induced.
+    - Scope + ship path: global vs local, and how it installs via the existing mechanism.
+
+    Call `advisor` on the design. Deliver: the feasibility verdict (can-it / how, with citations), the concrete design (mechanism + fallback + anti-friction + loop-safety + ship path), and a build/no-build recommendation. Do NOT claim a capability exists without proving it.
+
+    ## Recall hint
+    Recall prior findings on the platform's extension points + any existing hooks/mechanisms in the codebase before starting.
 - pattern: feature-kill-closeout
   purpose: 'Complete removal of a decision-killed feature: code+knobs+registries+tests+plans (archived in-PR per ADR-0081), zero residue'
   content: |-
@@ -214,123 +379,33 @@ prompts:
     - [[agent-discipline-recall-first]]
     - [[agent-discipline-process-hygiene]]
     - [[agent-discipline-commit-hygiene]]
-- pattern: plan-corpus-status-sweep
-  purpose: 'Classify plan-corpus files shipped vs remaining for task-list rebuild / archive sweep'
+- pattern: stacked-car-parallel-build
+  purpose: 'Parallel car N+1 on a stacked branch off the train branch — disjoint seams, no train pushes, main thread rebases in (ADR-0088)'
   content: |-
-    DISPATCH: model=haiku — canonical: model-tier-dispatch
+    DISPATCH: model=sonnet — seams pre-cut by the plan — canonical: model-tier-dispatch
 
-    Read-only Explore agent. Input: plans directory path, current shipped versions (core/backend), any in-flight branches whose plans count as PARTIAL-pending-merge.
+    ## Purpose
+    Dispatch shape for building train car N+1 IN PARALLEL with car N when their file seams are disjoint (ADR-0088 one-PR trains). Car N owns the train branch; car N+1 builds on a STACKED branch and is rebased in by the main thread.
 
-    For each top-level plan file (exclude living docs like ROADMAP.md, exclude archive/ subdirs):
-    1. Read header/first ~40 lines only; go deeper only when status unclear.
-    2. Evidence priority: in-file status markers ("Status:", SHIPPED, checkboxes) → git log + CHANGELOG version markers → grep key feature names in codebase.
-    3. Bucket: SHIPPED (archive candidate) / PARTIAL (list remaining items, 1 line each) / OPEN / SUPERSEDED-RETIRED (name replacement).
+    ## Prompt block (adapt bracketed parts)
+    You are in an isolated worktree. Base yourself on the TRAIN branch: `git fetch origin && git checkout -b [car-branch] origin/[train-branch]`. Car [N] is being built in parallel ON the train branch by another agent — you MUST NOT touch [car N's seam, e.g. root conftest] and MUST NOT push to the train branch. Push ONLY your own branch; the main thread rebases it onto the train branch after car [N] lands and re-validates any order-dependent final commit. NO PR (one train PR exists: #[PR]). NO version bump (train's claimed version stands).
 
-    Output: compact table `file | BUCKET | evidence | remaining-if-partial`, then per-bucket counts + explicit SHIPPED list.
-    Rules: read-only, no moves/edits/git writes. End with ## Yadgar findings.
+    Plan lifecycle per [[agent-discipline-plan-lifecycle]]: your car COMPLETES the plan → archive-first commit; otherwise first commit updates the plan Status header.
 
-    ## When to use
-    "which plans are actually remaining", task-list rebuild from plan corpus, pre-archive sweep.
-- pattern: plan-audit
-  purpose: 'Adversarially audit an implementation plan BEFORE building — verify its load-bearing claims against the actual code, try to break it, return build / build-with-changes / don''t-build.'
-  content: |-
-    DISPATCH: model=fable (fallback=opus) — adversarial audit is peak $/insight leverage — canonical: model-tier-dispatch
+    Order-dependent commits (e.g. a gate flip) go LAST and get re-validated after the rebase.
 
-    You are an INDEPENDENT skeptic. The plan may be wrong; its prose is not evidence. Your job: verify every LOAD-BEARING claim against the actual code (cite file:line), try to BREAK the design, and gate the build.
+    Discipline: TDD where testable; process + commit rules per [[agent-discipline-process-hygiene]] and [[agent-discipline-commit-hygiene]].
 
-    Read the plan fully + its risk list. For each foundation claim the design rests on, VERIFY against source — trace the real code path, do NOT trust the plan's framing (it has been wrong before: an "all-remote" claim turned out runtime-conditional on an env var; a feared "1-connection singleton" was actually default-100). Mark each claim VERIFIED / CRACKED / UNCERTAIN with file:line.
+    Final report: per-item commit hashes, before/after metrics for your car's goal, push confirmation, and any cross-car collision you noticed.
 
-    Hunt specifically for:
-    - A fix that introduces a NEW failure mode worse than the status quo — especially trading a LOUD, monitored failure for a SILENT one the existing safety net can't catch. That is a hard gate, not a footnote.
-    - Shared mutable state the plan missed (grep: module-level dicts, lru_caches, breakers, counters) and over-scoped (things that are actually single-thread-only).
-    - Concurrency hazards: loop-affine primitives touched off-loop, cancellation that leaks resources (a wedged uncancellable worker), a downstream bottleneck the change amplifies into a storm.
-    - Test adequacy: would the mandated test ACTUALLY fail before + pass after, and catch the SUBTLE failure mode (not just the obvious one)? Or is it mock theater that passes while prod breaks?
+    ## Main-thread follow-up (not the agent's job)
+    After car N lands: `git rebase origin/[train-branch]` in the stacked worktree → re-run the order-dependent validation → `git merge --ff-only` on the train branch → push. Expect version-file conflicts if master moved; the train's claimed version wins.
 
-    Verdict: a per-claim table, a RANKED must-fix-before-build list, and a bottom line — BUILD AS-IS / BUILD WITH CHANGES (list) / DO-NOT-BUILD (foundation crack). Be brutal: a passed audit you don't believe is worse than none.
+    ## Composes
 
-    ## Recall hint
-
-    Recall the plan's domain + any prior RCA/audit on the same subsystem before starting.
-- pattern: crash-rca
-  purpose: 'Root-cause a production crash/hang/restart-loop OFF PROD — reproduce it in a controlled repro, exclude candidate mechanisms against code, find the load-bearing flaw.'
-  content: |-
-    DISPATCH: model=opus — evidence/tool-loop heavy; escalate fable only on 2× reasoning stall — canonical: model-tier-dispatch
-
-    Root-cause a production crash / hang / restart-loop OFF PROD — do NOT keep crashing the live system to study it.
-
-    Reproduce from the symptom first: the exact failure mode (crash-loop? hang? self-restart?) and WHAT changed when it started (which config/version flipped). The mechanism is usually the INTERACTION of a recent change with a PRE-EXISTING fragility, not the change alone.
-
-    Capture the real evidence: if the process restarts, its logs get wiped — so build a minimal LOCAL repro (a script/test exercising the real code path) that triggers the failure deterministically, and capture the actual traceback / exit code / failing signal. CRITICAL distinction: a Python crash (traceback / SIGSEGV) vs an EXTERNAL kill (a healthcheck returning a designed error → the orchestrator SIGKILLs) — totally different fixes. A clean exit-0 with no traceback points at an external killer, not a code crash.
-
-    Enumerate candidate mechanisms; for EACH, PROVE or EXCLUDE it against the code (cite file:line) — do not stop at the first plausible one. A theory that matches the symptom but is excluded by the code is WRONG (e.g. "thread-safety race" excluded because all clients are sync; "timeout leak" excluded because the configured timeout exceeds the operation; "saturation" excluded because the grace never trips at prod knobs).
-
-    State the single proximate trigger + the load-bearing ROOT flaw (often a latent fragility the change EXPOSED, not created). Flag any step you modeled with a STUB vs proven against the real system — don't overclaim.
-
-    Fix plan: the minimal change addressing the load-bearing flaw + the regression test that reproduces the failure — and name WHY the original tests missed it (e.g. a synthetic stand-in that never exercised the real dependency/load pattern).
-
-    Call `advisor` on the root-cause hypothesis before committing to it.
-
-    ## Recall hint
-
-    Recall prior RCA/incident findings on the same subsystem + the relevant design docs before starting.
-- pattern: drift-audit
-  purpose: 'Detect drift/garbage/gaps between a source-of-truth and the artifacts that should mirror it (docs, config metadata, registries, generated content, wiki) — find divergence on purpose, not by accident.'
-  content: |-
-    DISPATCH: model=sonnet (fallback=opus if drift classification is judgment-heavy) — canonical: model-tier-dispatch
-
-    Name the SOURCE OF TRUTH (the authoritative definition — e.g. the code: the Settings fields, the tool/function registry, the DB schema, the AST) and the DERIVED artifact(s) that must mirror it (a doc, FIELD_META, a capability registry, wiki pages, generated files).
-
-    Enumerate BOTH sides COMPLETELY (do not sample) and diff by identity (name/key). Bucket every discrepancy:
-    - PHANTOM — in the derived artifact but NOT in the source (documented-but-nonexistent, dead registry rows, orphans). Silently misleads — highest priority.
-    - MISSING — in the source but absent from the derived artifact (undocumented knob, uncovered capability, un-described field).
-    - STALE — in both, but the derived value disagrees with the source (wrong default, outdated description, drifted type/enum).
-    - MALFORMED — structurally broken entries (corrupt / duplicated / double-wrapped / unparseable).
-
-    Rules: the source of truth ALWAYS wins. NEVER invent a value to fill a MISSING gap — flag it, do not fabricate. Quantify every bucket: total-in-source / total-in-derived / phantom / missing / stale / malformed (a clean audit = all non-source buckets zero).
-
-    Report a diff table: identity | bucket | source value (file:line) | derived value. Propose fixes but DO NOT apply unless asked. End by naming any OTHER derived artifact that mirrors the same source but was NOT checked — the next audit target.
-
-    Prefer an INVARIANT over a re-run: if a source/derived pair can be diffed mechanically, the durable fix is a test/ratchet that fails on drift — flag that as the real remediation. This audit is the manual complement for pairs an invariant cannot express.
-
-    ## Recall hint
-    Recall the I25/I29/I32 invariants + prior drift findings (phantom config knobs, corrupt prompts) before starting.
-- pattern: feasibility-design
-  purpose: 'Verify a mechanism is buildable on the target platform (docs + existing precedent) BEFORE designing it — then design only what the platform actually supports.'
-  content: |-
-    DISPATCH: model=fable (fallback=opus) — pre-build feasibility shapes everything downstream — canonical: model-tier-dispatch
-
-    Verify a mechanism is BUILDABLE on the target platform BEFORE designing it — then design only what the platform actually supports, not what you assume.
-
-    FEASIBILITY first (cite the platform docs + existing-code precedent; do NOT assume):
-    - Can the platform do the thing at all? Identify the exact API / hook / extension point that would carry it.
-    - What's the EXACT capability + its LIMITS? Read the real docs + version notes (capabilities differ by version). Distinguish the IDEAL mechanism from the FALLBACK the platform actually allows.
-    - Is there existing precedent in THIS codebase/setup doing something similar? Reuse its pattern.
-
-    DESIGN second, gated on the feasibility:
-    - Pick the STRONGEST mechanism the platform allows; design the fallback for if the ideal isn't supported.
-    - Make it CHEAP at the point of action — no heavy/LLM call in a hot or blocking path (it gets disabled if it adds friction; cache, fast-path, fire only when warranted).
-    - Loop-safety / idempotence: the mechanism must not re-trigger on the action it itself induced.
-    - Scope + ship path: global vs local, and how it installs via the existing mechanism.
-
-    Call `advisor` on the design. Deliver: the feasibility verdict (can-it / how, with citations), the concrete design (mechanism + fallback + anti-friction + loop-safety + ship path), and a build/no-build recommendation. Do NOT claim a capability exists without proving it.
-
-    ## Recall hint
-
-    Recall prior findings on the platform's extension points + any existing hooks/mechanisms in the codebase before starting.
-- pattern: perf-anomaly-metrics
-  purpose: 'Root-cause a recurring CPU / memory / IO resource anomaly (spike, burst, leak) from observability metrics + live profiling — when logs alone can''t attribute it.'
-  content: |-
-    DISPATCH: model=opus — attribution reasoning over noisy metrics — canonical: model-tier-dispatch
-
-    Observe before theorizing — confirm the anomaly's signature in metrics FIRST.
-
-    1. Find the spike TIME(s) via Prometheus `query_range` on the host signal (CPU non-idle `1 - avg(rate(node_cpu_seconds_total{mode="idle"}[1m]))`, RSS, disk IO). Note magnitude + whether PERIODIC (what interval?) or one-off. Discount one-off deploy/restart spikes if hunting a recurring issue.
-    2. Attribute the PROCESS: at those timestamps, `topk` on per-process rate (process-exporter `namedprocess_namegroup_cpu_seconds_total`, `_memory_bytes`, `_read_bytes_total`, `_write_bytes_total`, `_num_threads`). Cross-check threads / RSS / IO co-spiking to distinguish compute-bound vs IO-bound vs internal GC/compaction.
-    3. Correlate the TRIGGER: align spike times with app cycle logs, scheduled jobs/timers, or a fixed clock interval. Periodic → a scheduler; aligned to a scrape interval → observer-effect; aligned to an app cycle → that cycle.
-    4. Live catch if reproducible: watch `stats`/`top -H` for the next spike; `py-spy dump --pid <PID>` (or `perf`) on the offending process MID-spike for the stack.
-    5. Verdict: the single most-likely root cause with evidence (exact timestamps, process, stack/IO signature). Distinguish internal-engine vs observer-effect vs application-job. Propose a fix DIRECTION — do NOT implement (ops issue; cause may be config or engine-internal, not a code bug).
-
-    Constraints: READ-ONLY observation — no DB exec / direct DB queries; container logs/stats/inspect + `curl` Prometheus/exporters + host `py-spy`/`perf` only. Be quantitative: cite exact PromQL, timestamps, values. Correlation ≠ causation — rule out the observer.
+    - [[agent-discipline-process-hygiene]]
+    - [[agent-discipline-commit-hygiene]]
+    - [[agent-discipline-plan-lifecycle]]
 
 # disciplines: cross-cutting rule pages (Stage 2 extraction, 2026-07-10). Seeded as
 # wiki pages agent-discipline-<name> (create-if-absent, same genesis mechanism as the
