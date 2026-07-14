@@ -430,8 +430,17 @@ class TestStopHookStdout:
         # When interval is exceeded the hook blocks and emits reason
         if data.get("decision") == "block":
             reason = data.get("reason", "")
-            assert 'restore(directory="/my/test/project")' in reason, (
-                f"reason must contain restore(directory=...), got: {reason!r}"
+            # Car B (#74): reason is a short pointer to the protocol template; the
+            # restore instruction now lives in that file (generic, not the runtime
+            # cwd that the old inline reason substituted).
+            assert "stop_checkpoint_prompt.md" in reason, (
+                f"reason must point to the protocol template, got: {reason!r}"
+            )
+            protocol = (_HOOKS_DIR / "templates" / "stop_checkpoint_prompt.md").read_text(
+                encoding="utf-8"
+            )
+            assert "restore(directory=" in protocol, (
+                "protocol template must drive the restore(directory=...) call"
             )
         # If for some reason state file already had 30 saved (idempotent re-run)
         # the hook emits {} which is also valid — no assertion failure needed.

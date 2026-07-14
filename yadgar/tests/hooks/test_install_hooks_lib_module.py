@@ -386,15 +386,17 @@ def test_write_global_stop_hooks_missing_settings_file(tmp_path):
     assert (global_claude_dir / "settings.json").exists()
 
 
-# ── _copy_scope_scripts dry_run ───────────────────────────────────────────────
+# ── _sweep_stale_hook_scripts dry_run ─────────────────────────────────────────
 
 
-def test_copy_scope_scripts_dry_run_no_files(tmp_path):
-    from yadgar.core.install.install_hooks_lib import _copy_scope_scripts
+def test_sweep_stale_hook_scripts_dry_run_noop(tmp_path):
+    from yadgar.core.install.install_hooks_lib import _sweep_stale_hook_scripts
 
     hooks_dir = tmp_path / "hooks"
     hooks_dir.mkdir()
     package_hooks = tmp_path / "package_hooks"
-    # dry_run=True → no files written
-    _copy_scope_scripts(package_hooks, hooks_dir, dry_run=True)
-    assert len(list(hooks_dir.iterdir())) == 0
+    # Seed a db-lockdown orphan; dry_run=True must NOT unlink it.
+    orphan = hooks_dir / "yadgar-db-lockdown-check.py"
+    orphan.write_text("# stale\n")
+    _sweep_stale_hook_scripts(package_hooks, hooks_dir, dry_run=True)
+    assert orphan.exists()

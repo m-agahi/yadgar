@@ -9,8 +9,11 @@ from loader logic. This test pins:
   2. The implement-tdd starter carries the YAGNI least-code ladder (new content).
   3. The materials dir holds both seed data files (anchors.yaml + agent_prompts.yaml).
   4. _load_anchors_yaml still loads the relocated anchors.yaml.
-  5. v5.123.0 seed backflow: 10 battle-tested live patterns added to the genesis
-     corpus (entries 5..14), each pinned by pattern + load-bearing content markers.
+  5. v5.124.0 consolidation: entries 5..14 are the generic subset of the
+     consolidated live library (3 merged canonicals with ## Modes + retained
+     generics); each pinned by pattern + load-bearing content markers. Replaces
+     the v5.123.0 backflow set (crash-rca / plan-corpus-status-sweep /
+     perf-anomaly-metrics dropped as merged or reclassified).
   6. Wave 2 model-tier: all 15 starters carry a DISPATCH: first line (task #48).
 
 Behaviour-preservation guard: first 4 starters pinned byte-for-byte including
@@ -144,8 +147,9 @@ def test_plan_executing_build_starter_pinned():
     Wave 2 (task #48): DISPATCH line is now the first line of content."""
     from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
-    pattern, purpose, content = STARTER_PROMPTS[4]
-    assert pattern == "plan-executing-build"
+    by_pattern = {p: (purpose, content) for p, purpose, content in STARTER_PROMPTS}
+    assert "plan-executing-build" in by_pattern, "plan-executing-build starter missing"
+    purpose, content = by_pattern["plan-executing-build"]
     assert "ADR-0081/0082" in purpose
     # Wave 2: DISPATCH line is first
     assert content.startswith("DISPATCH:"), (
@@ -184,11 +188,45 @@ def test_implement_tdd_has_yagni_ladder():
 # corpus (user directive 2026-07-10 "improving the seeds"). Each pinned by
 # load-bearing content markers (verbatim substrings of the live page body).
 
+# v5.124.0 consolidation: the post-preamble starters (entries 5..14) are the
+# GENERIC subset of the consolidated live library — 3 merged canonicals carrying
+# a ## Modes section (rca-diagnose, plan-audit, scope-and-plan, build-car) plus
+# retained generics. crash-rca / plan-corpus-status-sweep / perf-anomaly-metrics
+# were dropped (merged into rca-diagnose mode=prod-crash, drift-audit
+# mode=plan-corpus, or reclassified yadgar-specific).
 _BACKFLOW_MARKERS: dict[str, list[str]] = {
-    "stacked-car-parallel-build": [
-        "ADR-0088",
-        "MUST NOT push to the train branch",
-        "[[agent-discipline-plan-lifecycle]]",
+    "rca-diagnose": [
+        "ROOT CAUSE ONLY",
+        "mode=prod-crash",
+        "PROVE or EXCLUDE",
+    ],
+    "plan-audit": [
+        "INDEPENDENT skeptic",
+        "VERIFIED / CRACKED / UNCERTAIN",
+        "DO-NOT-BUILD",
+        "writeback=true",
+    ],
+    "scope-and-plan": [
+        "PLAN for <change>",
+        "measure_first=true",
+        "domain=perf-lever",
+    ],
+    "build-car": [
+        "WORK LOCATION",
+        "plan_spec=",
+        "the final full pass is the authoritative gate",
+    ],
+    "drift-audit": [
+        "PHANTOM",
+        "MISSING",
+        "STALE",
+        "MALFORMED",
+        "mode=plan-corpus",
+    ],
+    "feasibility-design": [
+        "BUILDABLE",
+        "FEASIBILITY first",
+        "loop-safety",
     ],
     "feature-kill-closeout": [
         "zero residue",
@@ -205,43 +243,17 @@ _BACKFLOW_MARKERS: dict[str, list[str]] = {
         "COMMIT immediately",
         "sys.modules",
     ],
-    "plan-corpus-status-sweep": [
-        "SHIPPED",
-        "PARTIAL",
-        "read-only",
-    ],
-    "plan-audit": [
-        "INDEPENDENT skeptic",
-        "VERIFIED / CRACKED / UNCERTAIN",
-        "DO-NOT-BUILD",
-    ],
-    "crash-rca": [
-        "OFF PROD",
-        "PROVE or EXCLUDE",
-        "load-bearing ROOT flaw",
-    ],
-    "drift-audit": [
-        "PHANTOM",
-        "MISSING",
-        "STALE",
-        "MALFORMED",
-    ],
-    "feasibility-design": [
-        "BUILDABLE",
-        "FEASIBILITY first",
-        "loop-safety",
-    ],
-    "perf-anomaly-metrics": [
-        "query_range",
-        "topk",
-        "Correlation ≠ causation",
+    "stacked-car-parallel-build": [
+        "ADR-0088",
+        "MUST NOT push to the train branch",
+        "[[agent-discipline-plan-lifecycle]]",
     ],
 }
 
 
 def test_backflow_patterns_pinned():
-    """v5.123.0: the 10 backflow patterns are present (entries 5..14, file order
-    preserved) and each carries its load-bearing content markers."""
+    """v5.124.0: the post-preamble starters (entries 5..14, file order preserved)
+    are the generic consolidated subset, each carrying its load-bearing markers."""
     from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
     backflow = STARTER_PROMPTS[5:]

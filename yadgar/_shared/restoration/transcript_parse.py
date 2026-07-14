@@ -17,22 +17,46 @@ same module as a fallback for the embedded/dev deploy where the paths are local.
 ``_shared`` is importable by both core and backend; ``backend`` is not reachable
 from core — hence the move.
 
-Algorithm (verified against real transcripts, 2026-07-13)::
+Algorithm (verified against real transcripts, 2026-07-13; ORDER-AWARE since Car
+bug-inflight / #72, 2026-07-14)::
 
-    in_flight = launched - terminal
+    A flat ``in_flight = launched - terminal`` set difference is ORDER-BLIND and
+    WRONG once an agent can be re-dispatched. An agent that async_launched, then
+    COMPLETED on an earlier round, then was resumed via SendMessage lands in BOTH
+    ``launched`` and ``terminal`` → the set difference subtracts it permanently,
+    even though it is live again. Fix: a per-agentId, transcript-ORDER-AWARE state
+    machine — only the LAST observed state per id decides in-flight.
 
-    launched = { toolUseResult.agentId : status == "async_launched" }
-        BACKGROUND dispatches ONLY. A foreground/synchronous agent echoes an
-        `agentId:` token in a *completed non-async* toolUseResult and emits NO
-        <task-notification>; counting it fabricates in-flight entries. The strict
-        `async_launched`-status filter excludes it.
+    agent_state[id] ∈ {"live", "terminal"}, updated in transcript order:
 
-    terminal = { <task-id> : <task-notification> whose <status> is terminal }
-        terminal ∈ {completed, failed, killed, stopped}. `running` is NOT
-        terminal — a running agent is still in flight. (Status set enumerated
-        from real transcripts: completed / failed / killed / stopped / running.)
+      async_launched  (toolUseResult.status == "async_launched", .agentId)
+                      → live   BACKGROUND dispatches ONLY. A foreground agent
+                               echoes an `agentId:` token in a *completed
+                               non-async* toolUseResult and emits NO
+                               <task-notification>; the strict async_launched
+                               filter excludes it.
+
+      terminal-notif  (<task-notification> <task-id>X</task-id> whose <status> ∈
+                       {completed, failed, killed, stopped}; `running` is NOT
+                       terminal — a running agent is still live)
+                      → terminal   (only applied when X is a known agent id, so a
+                                    shell/foreign task-id does not pollute the map)
+
+      resume-message  (toolUseResult is a dict whose `message` matches
+                       `Agent "<id>" had no active task; resumed from transcript`)
+                      → live   THE #72 fix. This event carries NO structured
+                               status/agentId and NO <task-notification>, so it is
+                               invisible to the launched/terminal sets — only the
+                               human-readable message string reveals it. See the
+                               FRAGILITY caveat on ``_RESUME_RE`` below.
+
+    in_flight = [ id for id, st in agent_state.items() if st == "live" ]
+                (insertion order preserved; NOT sorted, to keep dispatch order.)
 
 Also captures ``run_in_background`` bash shells (``toolUseResult.backgroundTaskId``).
+Shells complete through the SAME <task-notification> channel but are NEVER resumed,
+so the shell path keeps the simpler order-blind ``set(bg_shells) - terminal`` — the
+resume state machine is agents-only.
 
 Liveness honesty: from a frozen transcript we can only observe that no terminal
 notification was seen — not that the agent is still running. The result carries
@@ -60,6 +84,25 @@ _TERMINAL_STATUSES = frozenset({"completed", "failed", "killed", "stopped"})
 # <task-id>X</task-id> ... <status>Y</status> inside a <task-notification> block.
 _TASK_ID_RE = re.compile(r"<task-id>\s*([^<\s]+)\s*</task-id>")
 _STATUS_RE = re.compile(r"<status>\s*([^<\s]+)\s*</status>")
+
+# SendMessage RESUME event (Car bug-inflight / #72). A completed agent that is
+# re-dispatched surfaces ONLY as this human-readable message inside
+# ``toolUseResult.message`` — no structured status, no agentId field, no
+# <task-notification>. The captured group is the resumed agent's id.
+#
+# FRAGILITY: this is a string match against Claude-Code-generated prose. If Claude
+# Code changes the wording, resumed agents silently vanish from in-flight capture
+# again (the exact #72 regression). The parser logs a canary when it sees a
+# resume-shaped toolUseResult (success:true + "resumed"/"active task" hint) whose
+# text does NOT match this regex — watch that log line if resume capture regresses.
+# Real sample (verified 2026-07-14):
+#   'Agent "a25e7160620a44521" had no active task; resumed from transcript in the
+#    background with your message. ...'
+_RESUME_RE = re.compile(r'Agent\s+"([^"]+)"\s+had no active task;\s*resumed from transcript')
+
+# Canary: a resume-SHAPED toolUseResult (success ack whose message mentions an
+# active-task resume) that _RESUME_RE failed to parse — signals wording drift.
+_RESUME_CANARY_RE = re.compile(r"had no active task|resumed from transcript", re.IGNORECASE)
 
 _NOTE = "dispatched at compaction; liveness unverified — verify before relying"
 
@@ -120,31 +163,91 @@ def _load_line(raw: str) -> dict | None:
 
 
 @observe(tier="hot")
-def _process_entry(
-    entry: dict, launched: set[str], terminal: set[str], bg_shells: list[str], seen_shells: set[str]
-) -> None:
-    """Fold a single transcript entry into the launched/terminal/bg_shells sets."""
-    tur = entry.get("toolUseResult")
-    if isinstance(tur, dict):
-        # Background agent launch ack — STRICT async_launched filter.
-        if tur.get("status") == "async_launched":
-            aid = tur.get("agentId")
-            if isinstance(aid, str) and aid:
-                launched.add(aid)
-        # run_in_background bash shell.
-        shell = tur.get("backgroundTaskId")
-        if isinstance(shell, str) and shell and shell not in seen_shells:
-            seen_shells.add(shell)
-            bg_shells.append(shell)
+def _apply_resume(msg: str, agent_state: dict[str, str]) -> None:
+    """Fold a SendMessage RESUME message (#72) into ``agent_state``.
 
-    # Completion notifications live in plain-text blocks.
+    The resume event re-activates a completed agent but carries NO structured
+    status/agentId — only this human-readable message string reveals it. On a
+    resume-SHAPED message that ``_RESUME_RE`` fails to parse, log the canary
+    (wording drift) rather than raise.
+    """
+    rm = _RESUME_RE.search(msg)
+    if rm:
+        agent_state[rm.group(1)] = "live"  # order-aware: resume → live
+    elif _RESUME_CANARY_RE.search(msg):
+        logger.warning(
+            "transcript_parse: resume-shaped toolUseResult did not match "
+            "_RESUME_RE (Claude Code wording may have drifted): %.160s",
+            msg,
+        )
+
+
+@observe(tier="hot")
+def _apply_tool_use_result(
+    tur: dict,
+    launched: set[str],
+    bg_shells: list[str],
+    seen_shells: set[str],
+    agent_state: dict[str, str],
+) -> None:
+    """Fold a ``toolUseResult`` dict: launch ack, bg shell, or resume message."""
+    # Background agent launch ack — STRICT async_launched filter.
+    if tur.get("status") == "async_launched":
+        aid = tur.get("agentId")
+        if isinstance(aid, str) and aid:
+            launched.add(aid)
+            agent_state[aid] = "live"  # order-aware: launch → live
+    # run_in_background bash shell.
+    shell = tur.get("backgroundTaskId")
+    if isinstance(shell, str) and shell and shell not in seen_shells:
+        seen_shells.add(shell)
+        bg_shells.append(shell)
+    # SendMessage RESUME (#72): re-activates a completed agent.
+    msg = tur.get("message")
+    if isinstance(msg, str) and msg:
+        _apply_resume(msg, agent_state)
+
+
+@observe(tier="hot")
+def _apply_terminal_notifications(
+    entry: dict, terminal: set[str], agent_state: dict[str, str]
+) -> None:
+    """Fold every terminal ``<task-notification>`` in an entry's text blocks."""
     for txt in _collect_text_blocks(entry):
         if "<task-notification>" not in txt:
             continue
         tid_m = _TASK_ID_RE.search(txt)
         st_m = _STATUS_RE.search(txt)
         if tid_m and st_m and st_m.group(1) in _TERMINAL_STATUSES:
-            terminal.add(tid_m.group(1))
+            tid = tid_m.group(1)
+            terminal.add(tid)
+            # order-aware: a terminal notification re-terminalizes a known agent
+            # (incl. one previously resumed). Gate on membership so shell/foreign
+            # task-ids (e.g. bg_done_002, an un-launched id) don't enter the map.
+            if tid in agent_state:
+                agent_state[tid] = "terminal"
+
+
+@observe(tier="hot")
+def _process_entry(
+    entry: dict,
+    launched: set[str],
+    terminal: set[str],
+    bg_shells: list[str],
+    seen_shells: set[str],
+    agent_state: dict[str, str],
+) -> None:
+    """Fold a single transcript entry into the parse accumulators.
+
+    ``agent_state`` is the ORDER-AWARE map (id → "live"/"terminal") that drives
+    in-flight agent capture; ``launched``/``terminal`` remain as sets for the
+    shell path (``set(bg_shells) - terminal``) and the drift canary.
+    """
+    tur = entry.get("toolUseResult")
+    if isinstance(tur, dict):
+        _apply_tool_use_result(tur, launched, bg_shells, seen_shells, agent_state)
+    # Completion notifications live in plain-text blocks.
+    _apply_terminal_notifications(entry, terminal, agent_state)
 
 
 @observe(tier="stage")
@@ -207,6 +310,9 @@ def parse_in_flight(transcript_path: str | None) -> dict:
     terminal: set[str] = set()
     bg_shells: list[str] = []
     seen_shells: set[str] = set()
+    # ORDER-AWARE agent state (#72): id → "live"/"terminal", last write wins.
+    # dict preserves insertion order → in_flight keeps dispatch order.
+    agent_state: dict[str, str] = {}
 
     if not transcript_path:
         return _empty()
@@ -221,24 +327,29 @@ def parse_in_flight(transcript_path: str | None) -> dict:
                     break
                 entry = _load_line(raw)
                 if entry is not None:
-                    _process_entry(entry, launched, terminal, bg_shells, seen_shells)
+                    _process_entry(entry, launched, terminal, bg_shells, seen_shells, agent_state)
     except OSError:
         # Missing / unreadable transcript — degrade to empty, never raise.
         return _empty()
 
-    in_flight = sorted(launched - terminal)
+    # In-flight agents = those whose LAST observed state is live (launch/resume
+    # not yet re-terminalized). Order-aware — see module docstring / #72.
+    in_flight = [aid for aid, st in agent_state.items() if st == "live"]
     # Background bash shells complete via the SAME <task-notification> channel as
     # agents (verified on real transcripts: 242/251 shells carried a terminal
     # notification whose <task-id> == the shell id). Subtract them so a finished
     # bg-bash is not falsely surfaced as in-flight. A shell with no terminal
-    # notification (still running, or lagged past the freeze) stays.
+    # notification (still running, or lagged past the freeze) stays. Shells are
+    # NEVER resumed, so the simple order-blind set difference is correct here.
     live_shells = sorted(set(bg_shells) - terminal)
 
-    if launched and not in_flight:
-        # Drift canary: a non-empty launched set that fully resolves may be a
-        # completed session (expected) OR a parse-shape drift. Log for triage.
+    if agent_state and not in_flight:
+        # Drift canary: agents were seen but none resolve as live — may be a
+        # fully-completed session (expected) OR a parse-shape drift. Log for triage.
         logger.debug(
-            "transcript_parse: %d launched, 0 in-flight for %s", len(launched), transcript_path
+            "transcript_parse: %d agents seen, 0 in-flight for %s",
+            len(agent_state),
+            transcript_path,
         )
 
     return {

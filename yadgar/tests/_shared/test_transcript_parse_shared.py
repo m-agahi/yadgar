@@ -77,3 +77,84 @@ def test_backend_shim_reexports_parser():
     from yadgar.backend.restoration.transcript_parse import parse_in_flight
 
     assert parse_in_flight is tp.parse_in_flight
+
+
+# --- Car bug-inflight (#72): resume re-activates a completed agent -----------
+#
+# An agent that async_launched, then COMPLETED on an earlier round, then was
+# re-dispatched via SendMessage lands in the transcript as a resume event:
+#   toolUseResult = {"success": true,
+#                    "message": 'Agent "<id>" had no active task; resumed from
+#                                transcript in the background ...'}
+# with NO structured status/agentId and NO <task-notification>. The old
+# order-blind ``launched - terminal`` subtracts such an agent permanently (it is
+# in BOTH sets). The order-aware state machine re-activates it.
+#
+# These fixtures are written to tmp_path (NOT the shared JSONL) so they do not
+# perturb ``test_parse_in_flight_agents_from_fixture``'s {bbbb2, eeee5} assertion.
+
+_LAUNCH = (
+    '{{"type":"user","message":{{"role":"user","content":[{{"tool_use_id":'
+    '"toolu_{aid}","type":"tool_result","content":[{{"type":"text","text":'
+    '"Async agent launched. agentId: {aid}"}}]}}]}},"toolUseResult":'
+    '{{"isAsync":true,"status":"async_launched","agentId":"{aid}"}}}}'
+)
+_COMPLETE = (
+    '{{"type":"user","message":{{"role":"user","content":[{{"type":"text",'
+    '"text":"<task-notification>\\n<task-id>{aid}</task-id>\\n<status>'
+    'completed</status>\\n</task-notification>"}}]}}}}'
+)
+_RESUME = (
+    '{{"type":"user","message":{{"role":"user","content":[{{"type":"text",'
+    '"text":"resumed"}}]}},"toolUseResult":{{"success":true,"message":'
+    '"Agent \\"{aid}\\" had no active task; resumed from transcript in the '
+    "background with your message. You'll be notified when it finishes.\"}}}}"
+)
+
+
+def _write(tmp_path, *lines: str):
+    p = tmp_path / "resume_case.jsonl"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(p)
+
+
+def test_launch_completed_resume_is_in_flight(tmp_path):
+    """THE bug case: launch → completed → resume ⇒ agent IS in-flight.
+
+    The resume re-activates the completed agent. Order-blind subtraction misses
+    it; the order-aware state machine surfaces it.
+    """
+    aid = "a1111111111111111"
+    path = _write(
+        tmp_path,
+        _LAUNCH.format(aid=aid),
+        _COMPLETE.format(aid=aid),
+        _RESUME.format(aid=aid),
+    )
+    result = tp.parse_in_flight(path)
+    assert aid in result["agents"]
+
+
+def test_launch_completed_no_resume_not_in_flight(tmp_path):
+    """launch → completed (no resume) ⇒ agent NOT in-flight (last state terminal)."""
+    aid = "a2222222222222222"
+    path = _write(tmp_path, _LAUNCH.format(aid=aid), _COMPLETE.format(aid=aid))
+    result = tp.parse_in_flight(path)
+    assert aid not in result["agents"]
+
+
+def test_launch_resume_completed_not_in_flight(tmp_path):
+    """launch → resume → completed ⇒ agent NOT in-flight.
+
+    A real terminal notification AFTER a resume correctly re-terminalizes the
+    agent — the LAST state wins.
+    """
+    aid = "a3333333333333333"
+    path = _write(
+        tmp_path,
+        _LAUNCH.format(aid=aid),
+        _RESUME.format(aid=aid),
+        _COMPLETE.format(aid=aid),
+    )
+    result = tp.parse_in_flight(path)
+    assert aid not in result["agents"]

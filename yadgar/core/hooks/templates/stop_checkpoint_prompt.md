@@ -1,3 +1,11 @@
+<!-- YADGAR CHECKPOINT PROTOCOL
+     Substitute these placeholders throughout this file before following instructions:
+       {directory}      = your current working directory (absolute path; the project root)
+       {project}        = basename of {directory}
+       {default_branch} = last segment of `git -C {directory} symbolic-ref refs/remotes/origin/HEAD`;
+                          fall back to "master" for non-git projects or on any git error.
+-->
+
 Yadgar checkpoint. CAPTURE FIRST (steps 1-3), then maintenance (steps 4-5).
 Decisions and findings scroll out of context and are lost forever; maintenance
 signals re-fire next checkpoint. Capture is the irreplaceable work — if you must
@@ -50,9 +58,16 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
 3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
    Scan THIS session for a reusable SUBAGENT DISPATCH PROMPT you crafted or
    refined — one worth reusing for a recurring task shape (review, debug, explore,
-   implement, etc.). If genuinely reusable (NOT a one-off, NOT trivial), call
-   agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
-   content=<the prompt>, purpose=<one line>). Skip one-offs and trivial prompts.
+   implement, etc.). Skip one-offs and trivial prompts.
+   - Read existing patterns FIRST: recall(type="wiki", tags=["agent-prompt"]) (or
+     check the agent-prompt-toc page). See which task-shapes already have a pattern.
+   - If an EXISTING pattern already covers this task-shape, IMPROVE/extend it:
+     agent_prompt_save the SAME pattern slug — agent_prompt_save versions it.
+   - Only create a NEW slug when no existing pattern fits. NEVER mint a
+     near-duplicate: a differently-named clone of an existing shape.
+   - Call agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
+     content=<the prompt>, purpose=<one line>) — same slug to extend a match,
+     a new slug only when genuinely new.
 
 4. Call project_brief("{directory}", mode="signals").
 

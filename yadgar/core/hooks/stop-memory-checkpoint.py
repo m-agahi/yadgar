@@ -27,8 +27,8 @@ INTERVAL = 25  # human messages between checkpoints
 
 
 @observe(tier="stage")
-def _load_prompt_template() -> str:
-    """Load the checkpoint prompt template from package data (task #34).
+def _resolve_prompt_template_path() -> str:
+    """Resolve the on-disk path of the packaged checkpoint protocol template (Car B, task #74).
 
     The template ships as package data at
     yadgar/core/hooks/templates/stop_checkpoint_prompt.md and is resolved via
@@ -38,36 +38,44 @@ def _load_prompt_template() -> str:
     package-resource resolution adds no new runtime dependency; the installer
     does NOT need to copy the template alongside the script).
 
-    Fail-loud: a missing or empty template is a packaging bug — raise
-    RuntimeError instead of silently emitting a broken checkpoint prompt.
+    Returns the absolute on-disk path as a str so main() can emit it in the
+    short pointer reason without loading the full content into the reason field.
+
+    Fail-loud: a missing or unresolvable template is a packaging bug — raise
+    RuntimeError instead of silently emitting a broken checkpoint pointer.
     """
-    from importlib.resources import files
+    from importlib.resources import as_file, files
 
     try:
-        text = (
-            files("yadgar.core.hooks")
-            .joinpath("templates")
-            .joinpath("stop_checkpoint_prompt.md")
-            .read_text(encoding="utf-8")
-        )
+        ref = files("yadgar.core.hooks").joinpath("templates").joinpath("stop_checkpoint_prompt.md")
+        # as_file() extracts to a temp path when inside a zip (wheel); for
+        # source/editable installs it returns the real path directly.
+        with as_file(ref) as p:
+            resolved = str(p)
+        # Sanity check: the resolved path must actually exist and be non-empty.
+        import pathlib
+
+        pp = pathlib.Path(resolved)
+        if not pp.exists():
+            raise RuntimeError(
+                "yadgar stop-hook prompt template resolves to a path that does not exist: "
+                f"{resolved} — broken install/packaging"
+            )
+        if not pp.read_text(encoding="utf-8").strip():
+            raise RuntimeError(f"yadgar stop-hook prompt template is empty: {resolved}")
     except (OSError, ModuleNotFoundError) as exc:
         raise RuntimeError(
             "yadgar stop-hook prompt template missing: "
             "yadgar/core/hooks/templates/stop_checkpoint_prompt.md is not "
             "resolvable as package data — broken install/packaging"
         ) from exc
-    if not text.strip():
-        raise RuntimeError(
-            "yadgar stop-hook prompt template is empty: "
-            "yadgar/core/hooks/templates/stop_checkpoint_prompt.md"
-        )
-    return text
+    return resolved
 
 
-# Loaded at import time so a broken install fails loud on the first hook fire,
-# not silently mid-session. Placeholders ({directory}, {project},
-# {default_branch}) are rendered in main() via str.format.
-_PROMPT_TEMPLATE = _load_prompt_template()
+# Resolved at import time so a broken install fails loud on the first hook fire,
+# not silently mid-session. The path is emitted in the short pointer reason;
+# the full protocol lives in the file at this path.
+_PROMPT_TEMPLATE_PATH = _resolve_prompt_template_path()
 
 
 @observe(tier="hot")
@@ -117,35 +125,6 @@ def _count_human_messages(transcript_path: str) -> int:
     return count
 
 
-@observe(tier="hot")
-def _default_branch(directory: str) -> str:
-    """Return the repo's default branch name (e.g. "master").
-
-    The ADR log is project-canonical and must live on the default branch, not a
-    feature branch. Resolves via `git symbolic-ref refs/remotes/origin/HEAD`.
-    Falls back to "master" for non-git projects or any failure — the ADR system
-    supports non-git projects too.
-    """
-    try:
-        import subprocess
-
-        out = subprocess.run(
-            ["git", "-C", directory, "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        ref = out.stdout.strip()
-        # ref looks like "refs/remotes/origin/master" — take the last segment
-        if out.returncode == 0 and ref:
-            name = ref.rsplit("/", 1)[-1]
-            if name:
-                return name
-    except Exception:
-        pass
-    return "master"
-
-
 def _state_file_path() -> Path:
     """Return path to stop-hook-state.json under XDG state dir."""
     return _paths.STOP_HOOK_STATE_PATH
@@ -191,7 +170,6 @@ def main() -> None:
             "1",
             "yes",
         )
-        directory = data.get("cwd", os.getcwd())
 
         # Infinite-loop guard: Claude already ran a checkpoint this turn — allow stop
         if stop_hook_active:
@@ -218,12 +196,11 @@ def main() -> None:
         state[session_id] = session_state
         _save_state(state)
 
-        project = os.path.basename(directory.rstrip("/")) or "project"
-        default_branch = _default_branch(directory)
-        prompt = _PROMPT_TEMPLATE.format(
-            directory=directory, project=project, default_branch=default_branch
+        reason = (
+            f"[yadgar] Checkpoint due. Read {_PROMPT_TEMPLATE_PATH}"
+            " and follow all the instructions in it."
         )
-        print(json.dumps({"decision": "block", "reason": prompt}))
+        print(json.dumps({"decision": "block", "reason": reason}))
     finally:
         shutdown_tracing()
 

@@ -147,15 +147,34 @@ _IMPORTED_ONLY = {
     "subagent_stop.py",
 }
 
+# #64: hook_runner-dispatched core hooks. These are executed via
+# ``hook_runner.py <type>``'s internal ``_HOOKS`` dict — they are NEVER copied to
+# hooks_dir under any name (the old ``_copy_scope_scripts._files`` copy was pure
+# vestige and is REMOVED). Distinct category from ``_IMPORTED_ONLY`` (which are
+# underscore logic modules imported by a hyphen dispatcher). They lost their sole
+# manifest string-literal when ``_copy_scope_scripts._files`` was deleted, so they
+# must be excluded from ``install_intended`` — they are dispatched, not installed.
+_RUNNER_DISPATCHED = {
+    "post-tool-capture.py",
+    "session-start-context.py",
+    "prompt-recall.py",
+    "pre-compact-drain.sh",
+    "post-compact-rehydrate.sh",
+}
+
 
 def _manifest_referenced_names() -> set[str]:
-    """Every source filename referenced by any of the three manifest lists."""
+    """Every source filename referenced by any surviving manifest list.
+
+    After #64 the manifest literals live in ``_install_global_scripts`` (the
+    always-global scripts), ``_install_append_hooks._append_specs`` (the 4 append
+    hooks, keyed by their hyphen src name + yadgar- dst name), and the
+    ``_MANAGED_NONPREFIXED`` sweep allowlist. The 4 append hooks keep their
+    ``_append_specs`` src literal → they stay install-intended and referenced.
+    """
     referenced: set[str] = set()
-    # _copy_scope_scripts._files dict
     src = _HOOKS_DIR.parent / "install" / "install_hooks_lib.py"
     text = src.read_text()
-    # Pull the literal script names present in the module source. The three
-    # manifest lists all embed the source basenames as string literals.
     import re
 
     for m in re.finditer(r'"([A-Za-z0-9_.-]+\.(?:py|sh))"', text):
@@ -165,14 +184,14 @@ def _manifest_referenced_names() -> set[str]:
 
 def test_manifest_references_all_install_intended_scripts():
     """Every install-intended *.py/*.sh under yadgar/core/hooks/ is referenced
-    by a manifest list. Imported-only underscore modules and __init__ excluded.
-    Tolerates the pre-existing hyphen/yadgar- double-copy (audit Finding 4)."""
+    by a manifest list. Excluded: imported-only underscore modules (imported by a
+    hyphen dispatcher) and hook_runner-dispatched core hooks (never copied)."""
     shipped = {
         p.name
         for p in _HOOKS_DIR.iterdir()
         if p.suffix in (".py", ".sh") and p.name != "__init__.py"
     }
-    install_intended = shipped - _IMPORTED_ONLY
+    install_intended = shipped - _IMPORTED_ONLY - _RUNNER_DISPATCHED
     referenced = _manifest_referenced_names()
     missing = {n for n in install_intended if n not in referenced}
     assert not missing, f"install-intended scripts not referenced by any manifest list: {missing}"

@@ -22,6 +22,18 @@ from unittest.mock import MagicMock, patch
 # Helpers shared across test classes
 # ---------------------------------------------------------------------------
 
+# Car B (#74): the stop-hook block reason is now a short pointer to the packaged
+# protocol template; the capture / write-back steps these tests assert for live in
+# that file, not inline in the reason. Read it once and assert against it (mirrors
+# yadgar/tests/hooks/test_stop_hook_template.py).
+_PROTOCOL_TEMPLATE = (
+    Path(__file__).resolve().parents[2]
+    / "core"
+    / "hooks"
+    / "templates"
+    / "stop_checkpoint_prompt.md"
+).read_text(encoding="utf-8")
+
 ROADMAP_A = """\
 # Yadgar Roadmap 2026
 
@@ -505,14 +517,18 @@ class TestWriteBackNudgeInStopHook:
 
         assert result.get("decision") == "block"
         reason = result.get("reason", "")
+        # Car B (#74): reason is a pointer to the protocol template; the steps live there.
+        assert "stop_checkpoint_prompt.md" in reason, (
+            f"reason must point to the protocol template, got: {reason[:400]}"
+        )
         # ADR capture is the primary write-back: it names the canonical ADR-log
         # page, the capture verb, and the append mechanism.
-        assert "ADR CAPTURE" in reason, f"Prompt must drive ADR capture, got: {reason[:400]}"
-        assert "-adr-log" in reason and "adr_add" in reason, (
-            f"Prompt must reference the ADR-log page + adr_add tool, got: {reason[:400]}"
+        assert "ADR CAPTURE" in _PROTOCOL_TEMPLATE, "Protocol must drive ADR capture"
+        assert "-adr-log" in _PROTOCOL_TEMPLATE and "adr_add" in _PROTOCOL_TEMPLATE, (
+            "Protocol must reference the ADR-log page + adr_add tool"
         )
         # The removed stale-regen path must NOT have crept back in.
-        assert "wiki_refresh_stale" not in reason, (
+        assert "wiki_refresh_stale" not in _PROTOCOL_TEMPLATE, (
             "wiki_refresh_stale was deliberately removed by the #121 ADR redesign"
         )
 
@@ -534,13 +550,16 @@ class TestWriteBackNudgeInStopHook:
 
         assert result.get("decision") == "block"
         reason = result.get("reason", "")
+        assert "stop_checkpoint_prompt.md" in reason, (
+            f"reason must point to the protocol template, got: {reason[:400]}"
+        )
         # New write-back nudge: update the existing topic-owning page in place via
         # replace_slug, rather than spawning near-duplicate pages.
-        assert "STRUCTURAL WRITE-BACK" in reason, (
-            f"Prompt must include structural write-back step, got: {reason[:400]}"
+        assert "STRUCTURAL WRITE-BACK" in _PROTOCOL_TEMPLATE, (
+            "Protocol must include the structural write-back step"
         )
-        assert "replace_slug" in reason, (
-            f"Prompt must nudge update-in-place via replace_slug, got: {reason[:400]}"
+        assert "replace_slug" in _PROTOCOL_TEMPLATE, (
+            "Protocol must nudge update-in-place via replace_slug"
         )
 
     def test_prompt_contains_wiki_history_verification(self, tmp_path):
@@ -561,8 +580,11 @@ class TestWriteBackNudgeInStopHook:
 
         assert result.get("decision") == "block"
         reason = result.get("reason", "")
-        assert "wiki_history" in reason or "wiki_diff" in reason, (
-            f"Prompt must mention wiki_history or wiki_diff for verification, got: {reason[:400]}"
+        assert "stop_checkpoint_prompt.md" in reason, (
+            f"reason must point to the protocol template, got: {reason[:400]}"
+        )
+        assert "wiki_history" in _PROTOCOL_TEMPLATE or "wiki_diff" in _PROTOCOL_TEMPLATE, (
+            "Protocol must mention wiki_history or wiki_diff for verification"
         )
 
     def test_prompt_contains_agent_prompt_capture_step(self, tmp_path):
@@ -588,9 +610,12 @@ class TestWriteBackNudgeInStopHook:
 
         assert result.get("decision") == "block"
         reason = result.get("reason", "")
-        assert "AGENT-PROMPT CAPTURE" in reason, (
-            f"Prompt must include the agent-prompt capture step, got: {reason[:600]}"
+        assert "stop_checkpoint_prompt.md" in reason, (
+            f"reason must point to the protocol template, got: {reason[:600]}"
         )
-        assert "agent_prompt_save" in reason, (
-            f"Prompt must name the agent_prompt_save tool, got: {reason[:600]}"
+        assert "AGENT-PROMPT CAPTURE" in _PROTOCOL_TEMPLATE, (
+            "Protocol must include the agent-prompt capture step"
+        )
+        assert "agent_prompt_save" in _PROTOCOL_TEMPLATE, (
+            "Protocol must name the agent_prompt_save tool"
         )

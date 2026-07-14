@@ -1,17 +1,23 @@
-"""Car 3 (task #34): stop-hook checkpoint prompt lives in an external template.
+"""Car B (task #74): stop-hook emits a short pointer reason instead of the full protocol.
 
-The big capture/maintenance prompt emitted by the Stop hook
-(yadgar/core/hooks/stop-memory-checkpoint.py) is extracted to package data:
-yadgar/core/hooks/templates/stop_checkpoint_prompt.md, loaded at runtime via
-importlib.resources.
+The full capture/maintenance protocol stays in the packaged template file at
+yadgar/core/hooks/templates/stop_checkpoint_prompt.md.  main() emits only:
+
+    [yadgar] Checkpoint due. Read <path> and follow all the instructions in it.
+
+where <path> is the on-disk path resolved via importlib.resources.
 
 Pinned here:
-- template file exists and is byte-equal to the pre-extraction literal
-- module loader resolves it via package resources (works for the standalone
-  copy under ~/.claude/hooks too — that copy already imports yadgar._shared)
-- rendered output (main() reason) byte-equal to the pre-extraction render
-- missing/empty template fails LOUD (RuntimeError), never a silent broken prompt
-- install_hooks' copied standalone script still renders the prompt end-to-end
+- template file exists and content matches the pre-extraction pin (with header)
+- _resolve_prompt_template_path() returns an existing on-disk path
+- _PROMPT_TEMPLATE_PATH (module-level) is an existing on-disk path
+- template file contains the expected protocol content (adr_add, wiki_add,
+  project_brief, {directory}/{project}/{default_branch} placeholders, substitution header)
+- main() reason is the short pointer line, NOT the full protocol
+- decision is still "block" (hook remains blocking)
+- missing/unresolvable template fails LOUD (RuntimeError), never a silent broken pointer
+- install_hooks' copied standalone script emits the short pointer end-to-end,
+  and the path in the pointer resolves to a real file
 """
 
 from __future__ import annotations
@@ -29,11 +35,19 @@ _REPO = Path(__file__).parent.parent.parent
 _HOOK_PATH = _REPO / "core" / "hooks" / "stop-memory-checkpoint.py"
 _TEMPLATE_PATH = _REPO / "core" / "hooks" / "templates" / "stop_checkpoint_prompt.md"
 
-# Byte-exact pin of the checkpoint prompt template (pre-extraction literal).
+# Byte-exact pin of the checkpoint protocol template.
 # Deliberately duplicated here, NOT read from the template file — reading the
-# file back would make the assertion circular. Update this pin ONLY when the
-# prompt text intentionally changes.
-_EXPECTED_TEMPLATE = """Yadgar checkpoint. CAPTURE FIRST (steps 1-3), then maintenance (steps 4-5).
+# file back would make the assertion circular.  Update this pin ONLY when the
+# protocol text intentionally changes.
+_EXPECTED_TEMPLATE = """<!-- YADGAR CHECKPOINT PROTOCOL
+     Substitute these placeholders throughout this file before following instructions:
+       {directory}      = your current working directory (absolute path; the project root)
+       {project}        = basename of {directory}
+       {default_branch} = last segment of `git -C {directory} symbolic-ref refs/remotes/origin/HEAD`;
+                          fall back to "master" for non-git projects or on any git error.
+-->
+
+Yadgar checkpoint. CAPTURE FIRST (steps 1-3), then maintenance (steps 4-5).
 Decisions and findings scroll out of context and are lost forever; maintenance
 signals re-fire next checkpoint. Capture is the irreplaceable work — if you must
 triage anything away under length pressure, drop maintenance, NEVER capture.
@@ -85,9 +99,16 @@ triage anything away under length pressure, drop maintenance, NEVER capture.
 3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
    Scan THIS session for a reusable SUBAGENT DISPATCH PROMPT you crafted or
    refined — one worth reusing for a recurring task shape (review, debug, explore,
-   implement, etc.). If genuinely reusable (NOT a one-off, NOT trivial), call
-   agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
-   content=<the prompt>, purpose=<one line>). Skip one-offs and trivial prompts.
+   implement, etc.). Skip one-offs and trivial prompts.
+   - Read existing patterns FIRST: recall(type="wiki", tags=["agent-prompt"]) (or
+     check the agent-prompt-toc page). See which task-shapes already have a pattern.
+   - If an EXISTING pattern already covers this task-shape, IMPROVE/extend it:
+     agent_prompt_save the SAME pattern slug — agent_prompt_save versions it.
+   - Only create a NEW slug when no existing pattern fits. NEVER mint a
+     near-duplicate: a differently-named clone of an existing shape.
+   - Call agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
+     content=<the prompt>, purpose=<one line>) — same slug to extend a match,
+     a new slug only when genuinely new.
 
 4. Call project_brief("{directory}", mode="signals").
 
@@ -114,6 +135,12 @@ mid-thought, repeat your last question so the conversation continues. Resume aft
 /clear or session end: restore(directory="{directory}").
 """
 
+# The short pointer reason emitted by main() — the only thing that changes in
+# the block reason (Car B, task #74).  The actual path is determined at runtime
+# by _resolve_prompt_template_path(); the format string here is a pattern test.
+_REASON_PREFIX = "[yadgar] Checkpoint due. Read "
+_REASON_SUFFIX = " and follow all the instructions in it."
+
 
 def _load_module():
     spec = importlib.util.spec_from_file_location("stop_memory_checkpoint_t", _HOOK_PATH)
@@ -132,40 +159,75 @@ def test_template_file_exists():
 
 
 def test_template_file_byte_equal_pin():
-    """The template file content is byte-equal to the pre-extraction literal."""
+    """The template file content is byte-equal to the pre-extraction pin."""
     assert _TEMPLATE_PATH.read_text(encoding="utf-8") == _EXPECTED_TEMPLATE
 
 
-def test_loader_resolves_via_package_resources():
-    """_load_prompt_template() reads the packaged template (importlib.resources)."""
+def test_loader_resolves_to_existing_path():
+    """_resolve_prompt_template_path() returns a str pointing at an existing file."""
     mod = _load_module()
-    assert mod._load_prompt_template() == _EXPECTED_TEMPLATE
+    resolved = mod._resolve_prompt_template_path()
+    assert isinstance(resolved, str), "resolved path must be a str"
+    assert Path(resolved).is_file(), f"Resolved path does not exist: {resolved}"
 
 
-def test_module_template_byte_equal_pin():
-    """_PROMPT_TEMPLATE (module-level, used by main()) matches the pin."""
+def test_module_path_is_existing_file():
+    """_PROMPT_TEMPLATE_PATH (module-level) points at an existing file."""
     mod = _load_module()
-    assert mod._PROMPT_TEMPLATE == _EXPECTED_TEMPLATE
-
-
-def test_template_has_all_placeholders_and_no_stray_braces():
-    """format() placeholders survive extraction; no accidental literal braces."""
-    for ph in ("{directory}", "{project}", "{default_branch}"):
-        assert ph in _EXPECTED_TEMPLATE
-    # .format() must succeed without KeyError/IndexError from stray braces.
-    rendered = _EXPECTED_TEMPLATE.format(
-        directory="/tmp/proj", project="proj", default_branch="main"
+    assert Path(mod._PROMPT_TEMPLATE_PATH).is_file(), (
+        f"_PROMPT_TEMPLATE_PATH does not exist: {mod._PROMPT_TEMPLATE_PATH}"
     )
-    assert "{directory}" not in rendered
+
+
+def test_template_has_protocol_content():
+    """Template file contains the expected protocol calls and placeholders."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    # Substitution header present
+    assert "{directory}" in content
+    assert "{project}" in content
+    assert "{default_branch}" in content
+    # Protocol steps present
+    assert "adr_add(" in content
+    assert "wiki_add(" in content
+    assert "project_brief(" in content
+    # Hand-rolled append must be gone
+    assert "wiki_append_section(" not in content
+
+
+def test_template_has_substitution_header():
+    """Template file has the substitution-key header block so the instance can
+    derive {directory}, {project}, {default_branch} without rendering."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert "YADGAR CHECKPOINT PROTOCOL" in content
+    assert "Substitute these placeholders" in content
+    assert "basename of {directory}" in content
+    assert "symbolic-ref refs/remotes/origin/HEAD" in content
+
+
+def test_agent_prompt_step_is_read_first():
+    """Step 3 (AGENT-PROMPT CAPTURE) enforces read-first — recall existing
+    patterns, extend a matching slug, never mint a near-duplicate. This keeps
+    step 3 consistent with the read-first shape of steps 1 (ADR) + 2 (wiki)."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    # Read-existing-first: recall the tagged agent-prompt library before saving.
+    assert 'recall(type="wiki", tags=["agent-prompt"])' in content
+    # Extend a match on the SAME slug (versioning) rather than clone it.
+    assert "SAME pattern slug" in content
+    # Explicit no-near-duplicate guard.
+    assert "near-duplicate" in content
+    # New slug only when nothing fits.
+    assert "NEW slug when no existing pattern fits" in content
+    # The save call itself must still be present.
+    assert "agent_prompt_save(" in content
 
 
 # ---------------------------------------------------------------------------
-# Rendering byte-equal to current output (end-to-end via main())
+# main() emits the short pointer reason
 # ---------------------------------------------------------------------------
 
 
-def test_main_renders_byte_equal(tmp_path, capsys):
-    """main()'s block reason == pinned template rendered with the same fields."""
+def test_main_emits_short_pointer_reason(tmp_path, capsys):
+    """main() reason is the short pointer, NOT the full protocol text."""
     state_path = tmp_path / "state.json"
     transcript = tmp_path / "t.jsonl"
     lines = [json.dumps({"role": "user", "content": f"msg {i}"}) for i in range(25)]
@@ -180,20 +242,63 @@ def test_main_renders_byte_equal(tmp_path, capsys):
         "stop_hook_active": False,
         "cwd": str(project_dir),
     }
-    with patch.object(mod, "_default_branch", return_value="master"):
-        with patch("sys.stdin", io.StringIO(json.dumps(stdin_data))):
-            with patch.object(mod._paths, "STOP_HOOK_STATE_PATH", state_path):
-                mod.main()
-    reason = json.loads(capsys.readouterr().out)["reason"]
+    with patch("sys.stdin", io.StringIO(json.dumps(stdin_data))):
+        with patch.object(mod._paths, "STOP_HOOK_STATE_PATH", state_path):
+            mod.main()
+    result = json.loads(capsys.readouterr().out)
 
-    expected = _EXPECTED_TEMPLATE.format(
-        directory=str(project_dir), project="myproj", default_branch="master"
+    assert result.get("decision") == "block"
+    reason = result["reason"]
+
+    # Reason is the short pointer — not the full protocol
+    assert reason.startswith(_REASON_PREFIX), (
+        f"Reason must start with pointer prefix. Got: {reason[:100]}"
     )
-    assert reason == expected
+    assert reason.endswith(_REASON_SUFFIX), (
+        f"Reason must end with pointer suffix. Got: {reason[-100:]}"
+    )
+
+    # The path in the reason must point at the real template file
+    path_in_reason = reason[len(_REASON_PREFIX) : -len(_REASON_SUFFIX)]
+    assert Path(path_in_reason).is_file(), f"Path in reason does not exist: {path_in_reason}"
+
+    # The reason must NOT contain the full protocol content
+    assert "CAPTURE FIRST" not in reason, "Reason must not contain full protocol text"
+    assert "adr_add(" not in reason, "Reason must not contain protocol step content"
+
+
+def test_main_reason_path_points_at_correct_template(tmp_path, capsys):
+    """The path embedded in the reason points at the file containing the protocol."""
+    state_path = tmp_path / "state.json"
+    transcript = tmp_path / "t.jsonl"
+    lines = [json.dumps({"role": "user", "content": f"msg {i}"}) for i in range(25)]
+    transcript.write_text("\n".join(lines))
+
+    mod = _load_module()
+    project_dir = tmp_path / "myproj"
+    project_dir.mkdir()
+    stdin_data = {
+        "session_id": "s-path",
+        "transcript_path": str(transcript),
+        "stop_hook_active": False,
+        "cwd": str(project_dir),
+    }
+    with patch("sys.stdin", io.StringIO(json.dumps(stdin_data))):
+        with patch.object(mod._paths, "STOP_HOOK_STATE_PATH", state_path):
+            mod.main()
+    result = json.loads(capsys.readouterr().out)
+    reason = result["reason"]
+
+    path_in_reason = reason[len(_REASON_PREFIX) : -len(_REASON_SUFFIX)]
+    template_content = Path(path_in_reason).read_text(encoding="utf-8")
+    # The file at the path must be the actual protocol template
+    assert "YADGAR CHECKPOINT PROTOCOL" in template_content
+    assert "adr_add(" in template_content
+    assert "project_brief(" in template_content
 
 
 # ---------------------------------------------------------------------------
-# Missing / empty template → fail loud
+# Missing / unresolvable template → fail loud
 # ---------------------------------------------------------------------------
 
 
@@ -204,7 +309,7 @@ def test_missing_template_fails_loud():
     mod = _load_module()
     with patch("importlib.resources.files", side_effect=FileNotFoundError("gone")):
         with pytest.raises(RuntimeError, match="stop_checkpoint_prompt.md"):
-            mod._load_prompt_template()
+            mod._resolve_prompt_template_path()
 
 
 def test_empty_template_fails_loud():
@@ -212,28 +317,39 @@ def test_empty_template_fails_loud():
     import pytest
 
     mod = _load_module()
+    import pathlib
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _fake_as_file(ref):
+        # Write an empty file to a tmp location and yield its path
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+            f.write(b"   \n")
+            name = f.name
+        yield pathlib.Path(name)
 
     class _Node:
         def joinpath(self, *_a):
             return self
 
-        def read_text(self, encoding="utf-8"):
-            return "   \n"
-
     with patch("importlib.resources.files", return_value=_Node()):
-        with pytest.raises(RuntimeError, match="empty"):
-            mod._load_prompt_template()
+        with patch("importlib.resources.as_file", _fake_as_file):
+            with pytest.raises(RuntimeError, match="empty"):
+                mod._resolve_prompt_template_path()
 
 
 # ---------------------------------------------------------------------------
-# Installer: the copied standalone script still renders the prompt
+# Installer: the copied standalone script emits the short pointer end-to-end
 # ---------------------------------------------------------------------------
 
 
-def test_installed_copy_renders_prompt_end_to_end(tmp_path):
+def test_installed_copy_emits_short_pointer_end_to_end(tmp_path):
     """install_hooks copies a SINGLE standalone script; the template is NOT
     copied alongside — it resolves from the installed yadgar package, which the
-    copy already imports (yadgar._shared). Prove the copied script renders."""
+    copy already imports (yadgar._shared). Prove the copied script emits the
+    short pointer and that the path in the pointer resolves to a real file."""
     from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
     home = tmp_path / "home"
@@ -271,7 +387,15 @@ def test_installed_copy_renders_prompt_end_to_end(tmp_path):
     assert proc.returncode == 0, f"copied hook crashed: {proc.stderr[-500:]}"
     out = json.loads(proc.stdout.strip())
     assert out.get("decision") == "block"
-    expected = _EXPECTED_TEMPLATE.format(
-        directory=str(project_dir), project="endproj", default_branch="master"
+
+    reason = out["reason"]
+    assert reason.startswith(_REASON_PREFIX), (
+        f"reason must start with pointer prefix: {reason[:120]}"
     )
-    assert out["reason"] == expected
+    assert reason.endswith(_REASON_SUFFIX), f"reason must end with pointer suffix: {reason[-120:]}"
+
+    # Proof that the path resolves post-install (req 2)
+    path_in_reason = reason[len(_REASON_PREFIX) : -len(_REASON_SUFFIX)]
+    assert Path(path_in_reason).is_file(), (
+        f"Path in reason does not exist post-install: {path_in_reason}"
+    )

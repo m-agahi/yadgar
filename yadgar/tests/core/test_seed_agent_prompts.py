@@ -4,6 +4,12 @@ v5.122.0: 5th starter added (plan-executing-build) so the packaged prelude
 contract's rule-4 pointer resolves on fresh installs. All counts 4 → 5.
 v5.123.0 seed backflow: 10 battle-tested live patterns added to the genesis
 corpus. All counts 5 → 15; TOC rows 11 → 21.
+v5.124.0 consolidation: the 10 backflow patterns replaced by the generic
+subset of the consolidated live library (3 merged canonicals rca-diagnose /
+plan-audit-with-modes / scope-and-plan / build-car + retained generics);
+crash-rca / plan-corpus-status-sweep / perf-anomaly-metrics dropped as merged
+or reclassified. Count stays 15 (14 generic + plan-executing-build preamble);
+TOC rows stay 21.
 
 Tests:
   1. test_seed_creates_starters        — fresh store → 15 pages created, all slugs exist
@@ -29,17 +35,20 @@ _EXPECTED_PATTERNS = [
     "explore-codebase",
     "implement-tdd",
     "plan-executing-build",
-    # v5.123.0 seed backflow (live-corpus growth):
-    "stacked-car-parallel-build",
+    # v5.124.0 consolidation (34→18 live map; generic subset seeded).
+    # 3 merged canonicals carry a ## Modes section; retired/reclassified
+    # patterns (crash-rca, plan-corpus-status-sweep, perf-anomaly-metrics)
+    # are no longer seeded — see agent_prompts.yaml prompts: header comment.
+    "rca-diagnose",
+    "plan-audit",
+    "scope-and-plan",
+    "build-car",
+    "drift-audit",
+    "feasibility-design",
     "feature-kill-closeout",
     "dispatch-fix-test-migration",
     "mechanical-refactor-chunk-commit-early",
-    "plan-corpus-status-sweep",
-    "plan-audit",
-    "crash-rca",
-    "drift-audit",
-    "feasibility-design",
-    "perf-anomaly-metrics",
+    "stacked-car-parallel-build",
 ]
 _EXPECTED_SLUGS = [f"agent-prompt-{p}" for p in _EXPECTED_PATTERNS]
 
