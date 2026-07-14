@@ -12,7 +12,7 @@
 
 A 3-car train. New empirical findings on the live 5.139.1 daemon reshaped this: what was "make ADRs recall-native" is now grounded on a **canonical-write foundation** that the just-shipped task-list mirror needs too.
 
-**Car 0 — canonical-write + branch-model FOUNDATION (blocks Car 1 and Car 2).** Today you CANNOT write a canonical (branch=NULL) wiki page through `wiki_add`: with `YADGAR_BRANCH_ENFORCEMENT=true` (default), a `wiki_add` missing `branch`/`branch_hint` is hard-rejected `missing_branch` at BOTH the MCP boundary (`wiki.py:36`) and the drainer (`dlq.py:137`). The only carve-out is `_internal=True` — a payload flag NOT in the `wiki_add` MCP signature and STRIPPED before DB write (`dlq.py:248,254`), so a model can never set it. Car 0 makes canonical a **first-class, git-aware, SERVER-SIDE-only write path** (sets `branch=None` + `_internal` internally), reached by `adr_add` and the task-list writer — never by a model-settable flag. It adds **git-aware gating**: non-git dirs default to canonical (there are no branches to isolate); git dirs get canonical ONLY through the allowlisted system paths; missing-hint-with-no-non-git-signal stays hard-rejected (the corruption guard the v5.42.3 reject exists for).
+**Car 0 — canonical-write + branch-model FOUNDATION (blocks Car 1 and Car 2).** Today you CANNOT write a canonical (branch=NULL) wiki page through `wiki_add`: with `YADGAR_BRANCH_ENFORCEMENT=true` (default), a `wiki_add` missing `branch`/`branch_hint` is hard-rejected `missing_branch` at BOTH the MCP boundary (`wiki.py:36`) and the drainer (`dlq.py:137`). The only carve-out is `_internal=True` — a payload flag NOT in the `wiki_add` MCP signature and STRIPPED before DB write (`dlq.py:248,254`), so a model can never set it. Car 0 makes canonical a **first-class, git-aware, SERVER-SIDE-only write path** (sets `branch=None` + `_internal` internally), reached by `adr_add` and the task-list writer — never by a model-settable flag. The canonical decision falls out of **TRUSTED per-directory git facts** (`gitness`, `default_branch`) computed ONLY by the SessionStart hook, persisted durably, and read through a core cache — non-forgeable by construction. Gating (the 4 flows, §0.4): non-git dirs default to canonical (no branches to isolate); git dirs canonical-write ONLY through sanctioned server paths; a normal git-dir page missing `branch_hint` stays hard-rejected (the v5.42.3 corruption guard).
 
 **Car 1 — task-list mirror FIX (depends Car 0).** The shipped stop-hook template step 4c (`stop_checkpoint_prompt.md:101-132`) instructs a canonical task-list write "WITHOUT branch_hint" — but that write is **hard-rejected by `missing_branch`** as deployed (no `task_list` carve-out exists). The mirror is BROKEN in the field. Car 1 routes the write through Car 0's canonical path and adds the MISSING test: the real task-list write THROUGH the daemon gate (Car 1's original tests covered schema + template text + the read-nudge, never the gated write — the coverage hole that let it ship broken).
 
@@ -31,7 +31,7 @@ A 3-car train. New empirical findings on the live 5.139.1 daemon reshaped this: 
 - Drainer: `_validate_wiki_add` branch check (`dlq.py:137-152`), memory-op `_validate_branch_context` (`dlq.py:172-197`) — both skip when `_internal`.
 - `_internal=True` is the ONLY carve-out (`dlq.py:138,175`); it is **stripped before the DB write** (`dlq.py:248,254`) and is NOT a `wiki_add` MCP parameter → **a model cannot set it.** This non-model-settable property is the security boundary Car 0 builds on.
 - Defaults: `YADGAR_BRANCH_ENFORCEMENT=true` (`config_registry.py:374`, `config.py:345`), `YADGAR_DIRECTORY_ENFORCEMENT=true` (`config_registry.py:373`). `_enforcement_on` (`_shared/security/enforcement.py:17`) fails ON for unknown values.
-- `wiki_add` docstring (`wiki.py:190-193`) already SPECIFIES both-omitted → `branch IS NULL` canonical — but enforcement blocks that path today. So Car 0 is "let the allowlisted system path pass NULL past enforcement," not new storage plumbing.
+- `wiki_add` docstring (`wiki.py:190-193`) already SPECIFIES both-omitted → `branch IS NULL` canonical — but enforcement blocks that path today. So the storage layer already supports NULL; Car 0 makes CORE decide when NULL is correct (via trusted `gitness`, §0.4) rather than relying on a caller arg — not new storage plumbing.
 
 ### The daemon cannot see host git — default-branch-pin is doubly wrong
 - `_get_default_branch_cached` (`project.py:136`) runs `git symbolic-ref` and **unconditionally returns `"master"`** on any error / non-git (`project.py:154`). `_detect_branch` returns `None` on non-git.
@@ -63,51 +63,93 @@ A 3-car train. New empirical findings on the live 5.139.1 daemon reshaped this: 
 
 **Depends on:** nothing. **Blocks:** Car 1, Car 2.
 
-### 0.1 The guardrail (why NOT a model-settable flag or a page_type allowlist-in-wiki_add)
+> **Model LOCKED (user-confirmed 2026-07-15).** The canonical decision is derived from TRUSTED per-directory git facts computed only by the SessionStart hook — never from a model-passable value. The forgeable `__canonical__` sentinel from the prior draft is KILLED (see §0.6 kill-list).
 
-The requirement: *a model must not be able to canonical-write arbitrary git pages* (canonical bypasses branch isolation; a model canonical-writing a feature-branch page corrupts the canonical slot). Grade the options against the ONE property that enforces this — is the canonical decision model-settable?
+### 0.1 Trusted branch-context vars (the foundation)
 
-- **A bare `canonical=True` param on `wiki_add`** → model sets it on anything → guardrail gone. **Rejected.**
-- **A `page_type ∈ {task_list, adr}` + required-tag allowlist evaluated inside `wiki_add`** (the literal spec) → BOTH `page_type` and `tags` are model-supplied → the allowlist blocks *accidents*, not a motivated caller. **It is NOT a real boundary — brutal-honesty: it is a soft accident-guard, not a security gate.** Do not present it as one.
-- **Canonical reached ONLY through SERVER-SIDE system paths that set `branch=None` + `_internal` themselves** → the model never requests canonical; it calls `adr_add` / the task-list writer, which internally decide canonical. `_internal` stays non-model-settable (stripped before DB write). **Chosen.**
+Two per-directory facts drive every branch decision. They are **TRUSTED** — non-forgeable by construction:
 
-**Decision:** Car 0 adds an internal canonical-write helper (call it `_wiki_write_canonical(...)`, core-side) that sets `branch=None` and `_internal=True` on the enqueue payload. `adr_add` (Car 2) and the task-list writer (Car 1) call it. The `page_type ∈ {task_list, adr}` + required-tag check becomes a **server-side assertion INSIDE that helper** (defense-in-depth: refuse to canonical-write a page whose `page_type` is not allowlisted), NOT the primary gate. This still delivers the coordinator's "one-call canonical write" — `adr_add` and the task-list write are each a single call — and kills the two-step `wiki_add`+`wiki_set_metadata` workaround.
+- `gitness: bool` — is this directory a git work-tree?
+- `default_branch: str | NULL` — the repo default branch (`NULL` when non-git).
 
-**Allowlist as a config-visible constant** (I32 capability-registry entry): `CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr"})`. Register it so the capability audit catalogues it.
+**HARD RULE — only the SessionStart hook may write these. Nothing else.** No model-callable tool sets them; no other code path writes them. The daemon runs in a container and cannot see the host `.git`, so the values are computed HOST-SIDE by the SessionStart context hook (`session-start-context.py`), which CAN see `.git`:
 
-### 0.2 Git-aware gating (the three cases)
+- `gitness` = `git -C <dir> rev-parse --is-inside-work-tree` exits 0.
+- `default_branch` = last segment of `git -C <dir> symbolic-ref refs/remotes/origin/HEAD`, or `NULL` when `gitness` is false / git errors.
 
-The canonical helper / enforcement path resolves target branch by case:
+The hook POSTs both to the SessionStart context endpoint (`/hooks/session-context`), which is the **SOLE set-channel**. Because a model cannot reach that channel and cannot invoke any writer for these vars, the canonical decision that falls out of them is non-forgeable — a model can never make a write land canonical by supplying a crafted argument.
 
-1. **Non-git dir → canonical (NULL) is the DEFAULT for ALL pages.** No branches to isolate. The HOST must signal non-git (the container can't see `.git`). See 0.3.
-2. **Git dir + canonical via an allowlisted system path (`page_type ∈ {task_list, adr}` + tag) → write NULL.** The model cannot reach this except through `adr_add` / the task-list writer.
-3. **Git dir + a regular page + missing/empty branch AND no non-git signal → PRESERVE the v5.42.3 hard-reject.** This still guards the git-dropped-hint corruption case the reject was created for. **`non-git-signal` ≠ `missing-hint`:** an explicit non-git signal permits NULL; a merely-absent hint on a git dir is still rejected.
+### 0.2 Durable directory-keyed store (restart-safe)
 
-### 0.3 The non-git host signal (design + files)
+The trusted vars are persisted **DURABLY in the DB, keyed by directory** — NOT in-memory session state. Rationale: a mid-session daemon restart (deploy / vacuum / crash) would wipe in-memory state, and every subsequent write in that session would then hit the "unknown directory" path (§0.4 flow 4) and reject — breaking writes until the next SessionStart. Durable storage survives restart, so the directory stays "known" across the daemon lifecycle.
 
-The host already produces an empty branch for non-git but conflates it with git-errors. Make it explicit:
+- **Storage:** a new durable per-directory record `{directory → {gitness, default_branch}}`, written via the existing ADR-0078-safe core→backend path (`_forward_admin` → `POST /admin` → `run_admin_op` → storage). The `upsert_project_init(directory, content)` upsert (`storage/wiki.py:908`) is the precedent for a durable directory-keyed upsert; add a sibling `upsert_dir_branch_context(directory, gitness, default_branch)`. The SessionStart handler (`hook_session_context`, `http.py:909`) currently persists only in-memory `_st._last_session_context` (`state.py:118`, a throttle dict) — this store is NEW and must be durable.
 
-- **Host-side detection:** in the hook scripts, run `git -C {dir} rev-parse --is-inside-work-tree` (or `--git-dir`); a non-zero exit = genuinely non-git (distinct from "git dir, detached HEAD"). Emit an explicit signal — a sentinel branch value `__canonical__` (or a `non_git=1` query param / payload field) — rather than silently omitting `branch`.
-- **Daemon-side mapping:** the enforcement path (`_check_wiki_add_context` `wiki.py:25`, `_validate_wiki_add` `dlq.py:137`) treats the sentinel as "canonical permitted" → maps to `branch=None` and does NOT reject. A genuinely-absent hint (no sentinel) on a git dir stays rejected.
-- **`_get_default_branch` fix:** stop manufacturing bogus `"master"` for non-git. When the host signals non-git, canonical is the target — the daemon must not invent a branch name it cannot verify.
-- **Files touched:** `yadgar/core/hooks/session-start-context.py` (`:42-49` branch compute), `yadgar/core/hooks/subagent_stop.py` (`:262-295`), `yadgar/core/install/install_hooks_lib.py` (hook wiring / any `{default_branch}` substitution), the template `{default_branch}` placeholder logic (`stop_checkpoint_prompt.md:5-6`), `yadgar/core/server/tools/project.py` (`_get_default_branch` `:154`, `_detect_branch`), `yadgar/core/server/tools/misc.py` (the `_detect_branch → branch_hint → CI_BRANCH → hard-reject` chain), and the enforcement sites `wiki.py:25` / `dlq.py:137`.
+### 0.3 Core read-through cache (no core↔backend chatter on the hot write path)
 
-### 0.4 page_type for ADR
+Every wiki write needs the directory's `gitness` to decide the branch. Reading the durable store from the backend on every write would add a core↔backend round-trip to the hot path. Use the EXISTING core cache engine as a read-through cache.
 
-`PAGE_TYPES` currently has `function, module, service, architecture, decision, analysis` — **no `adr`.** Two choices: (a) add an `adr` page_type to `_shared/schemas/wiki_page_types.yaml` (parallels `task_list` which Car 1 added), or (b) reuse `decision` and gate the allowlist on the `["adr"]` tag. **Recommend (a)** — a distinct `adr` page_type makes the allowlist assertion unambiguous and lets `wiki_lint` format-check ADR pages. Add `adr: {required: [Context, Decision, Consequences]}` (matching the existing `decision` schema shape).
+- **Engine:** `yadgar/core/cache/cache.py` — the generalized `Cache` class (one class, N named namespaces, v5.111). Verified present + usable: supports `Manual` and `TTL(secs)` invalidation and per-namespace `max_bytes` budget.
+- **New namespace:** `dir_branch_context`, key = directory, value = `{gitness, default_branch}`.
+- **Invalidation = `Manual` + `TTL` backstop:**
+  - `Manual`: `cache.invalidate(directory)` fired ON the SessionStart upsert (§0.2). **MUST be wired** — else a directory that changes gitness (rare) keeps a stale cached value.
+  - `TTL(few minutes)`: backstop for the git-init-mid-life edge (a non-git dir becomes git, or vice versa, without a fresh SessionStart).
+- **Read-through flow:** a write's gitness lookup → cache hit returns immediately; cache miss → ONE backend read of the durable store → fill the cache → subsequent writes hit cache. ADR-0078-safe: core asks the backend once and caches, never a direct core DB read.
+- **BUILD-TIME PRECONDITION (must confirm before relying on the cache):** there is NO global core-cache kill-switch env that would silently disable this namespace. Verified in this audit: the only cache-disable knobs are `YADGAR_CE_CACHE_ENABLED` / `YADGAR_EMBED_CACHE_ENABLED` (`config_registry.py:351-352`) — both are BACKEND CE / embed caches, unrelated to the core `cache.py` engine. The per-namespace `max_bytes=0` is a namespace-local kill/flush, not a global switch. **The builder must re-confirm no global kill-switch exists at build time** (if one is introduced later, the write path must fail-safe to flow 4 — require branch_hint — not silently mis-decide canonical).
 
-### 0.5 Migration note (sequenced under Car 2)
+### 0.4 The 4 flows (this table IS the spec — implement verbatim)
 
-Existing mis-pinned pages (`aws-work-adr-log` master→canonical, any other project's default-pinned log) are corrected — but that correction is part of Car 2's migration (§C.6), NOT Car 0. Car 0 only ships the write path + gating.
+CORE (`wiki.py`, the MCP boundary — the FIRST gate) reads the trusted `gitness` (via the §0.3 cache) and decides. The model never touches the canonical decision — it falls out of trusted gitness.
 
-### 0.6 TDD (Car 0)
+| # | Case | Decision |
+|---|---|---|
+| 1 | **Sanctioned page** (`adr_add`, task-list writer), ANY gitness | **ALWAYS canonical**: the server path sets `branch=None` + `_internal=True`. Independent of gitness (cross-branch feature — an ADR / task-list must read from any branch). The model cannot invoke this path. |
+| 2a | **Normal page**, `gitness=true`, `branch_hint` present | **Branch-scoped write** (branch = `branch_hint`). |
+| 2b | **Normal page**, `gitness=true`, `branch_hint` MISSING | **CORE REJECTS** (`missing_branch`) — branch is mandatory in a git repo; preserves the v5.42.3 corruption guard + branch isolation. |
+| 3 | **Normal page**, `gitness=false` (non-git) | **CANONICAL**: core sets `branch=None` + `_internal` from the trusted `gitness`; `branch_hint` is IGNORED (a non-git dir has no meaningful branch). |
+| 4 | **Unknown directory** (no SessionStart row yet) | **Conservative**: require `branch_hint`; missing → **REJECT**. The first SessionStart populates the store, then flows 2/3 apply. |
 
-- non-git signal → NULL for ANY page_type (regular page in a non-git dir writes canonical).
-- git dir + non-allowlisted page_type + canonical requested via the helper → rejected (assertion fires).
-- git dir + `page_type ∈ {task_list, adr}` via the internal helper → writes NULL.
-- git dir + regular page + missing hint + NO non-git signal → hard-reject UNCHANGED (v5.42.3 guard preserved).
-- model calling `wiki_add` directly (no `_internal`) cannot reach canonical — the helper is the only NULL path; `wiki_add` still rejects. Documents that the allowlist is a server-side assertion, not a model-facing gate.
-- `_get_default_branch` no longer returns "master" when the non-git signal is present.
+### 0.5 Where the decision lives + the canonical helper
+
+- **CORE (`wiki.py`, MCP boundary) is the decision point.** `_check_wiki_add_context` (`wiki.py:25`) is extended: instead of "reject when `not branch`", it reads trusted `gitness` for the directory (via §0.3 cache) and applies the §0.4 table — reject (2b/4), branch-scope (2a), or set `branch=None`+`_internal` (3). Sanctioned callers (flow 1) reach canonical via an internal helper `_wiki_write_canonical(...)` that sets `branch=None`+`_internal` directly.
+- **BACKEND drainer just honors + strips `_internal`** — existing behavior (`dlq.py:137` skips the branch reject when `_internal`; `dlq.py:248,254` strips it before DB write). No drainer change needed for the decision; the drainer stays defense-in-depth.
+- **`_internal`** remains the internal, server-set-only enforcement token — never a `wiki_add` MCP param, stripped before DB write. It is the token, not the decision; the DECISION is trusted `gitness`.
+- **page_type allowlist = defense-in-depth ONLY, NOT the gate.** `CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr"})` (register as an I32 capability-registry constant) is asserted INSIDE `_wiki_write_canonical` — refuse to canonical-write a page whose `page_type` is not allowlisted. Brutal-honesty: `page_type` + `tags` are model-supplied, so this assertion is spoofable and is a soft accident-guard, NOT a security boundary. The real boundary is that flow-1 canonical is reachable only through server-side sanctioned callers (never a model arg), and flow-3 canonical is decided by trusted `gitness`. Keep the allowlist assertion; do not present it as the gate.
+
+### 0.6 page_type for ADR + `_get_default_branch` fix + kill-list
+
+- **`adr` page_type:** `PAGE_TYPES` (`_shared/wiki/wiki_meta.py`, loaded from `_shared/schemas/wiki_page_types.yaml`) currently has `function, module, service, architecture, decision, analysis` — no `adr`. Add `adr: {required: [Context, Decision, Consequences]}` (parallels `task_list` which the shipped train added; lets `wiki_lint` format-check ADR pages and makes the allowlist assertion unambiguous).
+- **Fix `_get_default_branch` (`project.py:154`):** stop manufacturing bogus `"master"` for non-git / git-error. Use the TRUSTED `default_branch` (which is `NULL` for non-git). A daemon-side `git symbolic-ref` cannot see the host `.git` and is doubly wrong (returns "master" even for a `main`-default git project) — the trusted var is the only correct source.
+- **KILLED from the prior draft:**
+  - The `__canonical__` model-passable sentinel branch value — FORGEABLE (a model could pass it) → REJECTED. Replaced by trusted `gitness`.
+  - The `page_type ∈ {task_list, adr}` allowlist AS A GATE — demoted to a defense-in-depth server-side assertion inside the canonical helper (§0.5), never the boundary.
+
+### 0.7 Files touched (Car 0)
+
+- `yadgar/core/hooks/session-start-context.py` (`:42-49` — compute `gitness` via `rev-parse --is-inside-work-tree` + `default_branch` via `symbolic-ref`; POST both to the context endpoint).
+- `yadgar/core/server/http.py` (`hook_session_context` `:909` — upsert the trusted vars durably + fire the cache `invalidate(directory)`).
+- `yadgar/backend/admin_exec/` + `yadgar/_shared/storage/wiki.py` (`:908` sibling — durable `upsert_dir_branch_context` / read op via `run_admin_op`).
+- `yadgar/core/cache/cache.py` (new `dir_branch_context` namespace, `Manual`+`TTL`; confirm no global kill-switch).
+- `yadgar/core/server/tools/wiki.py` (`_check_wiki_add_context` `:25` — the §0.4 decision; `_wiki_write_canonical` helper + `CANONICAL_PAGE_TYPES` assertion).
+- `yadgar/core/server/tools/project.py` (`_get_default_branch` `:154` — use trusted `default_branch`, drop the "master" fallback).
+- `yadgar/backend/queue_drainer/dlq.py` (`:137,248,254` — unchanged; confirm it still honors + strips `_internal`).
+- `yadgar/_shared/config/config_registry.py` (register `CANONICAL_PAGE_TYPES` / any TTL knob as I32 entries).
+
+### 0.8 Migration note (sequenced under Car 2)
+
+Existing mis-pinned pages (`aws-work-adr-log` master→canonical, any other project's default-pinned log) are corrected in Car 2's migration (§C.6), NOT Car 0. Car 0 ships the trusted-var write path + gating only.
+
+### 0.9 TDD (Car 0)
+
+- **Flow 1:** sanctioned caller (`adr_add` / task-list writer) → canonical `branch IS NULL` regardless of gitness; a model cannot invoke it.
+- **Flow 2a:** normal page, `gitness=true`, `branch_hint` present → branch-scoped.
+- **Flow 2b:** normal page, `gitness=true`, `branch_hint` missing → REJECT `missing_branch` (v5.42.3 guard preserved).
+- **Flow 3:** normal page, `gitness=false` → canonical `branch IS NULL`; `branch_hint` ignored.
+- **Flow 4:** unknown directory (no SessionStart row) → require `branch_hint`; missing → REJECT.
+- **Trusted-var provenance:** only the SessionStart POST writes `{gitness, default_branch}`; assert no model-callable path can set them.
+- **Restart-safety:** durable store survives a simulated daemon restart (values readable without a fresh SessionStart); in-memory-only would fail flow 2/3 post-restart.
+- **Cache:** read-through fills on miss (one backend read), hits thereafter; `invalidate(directory)` on SessionStart upsert clears the stale entry; TTL backstop expires a stale value.
+- **`_get_default_branch`:** returns the trusted `default_branch` (`NULL` for non-git), never a manufactured "master".
 
 ---
 
@@ -117,7 +159,7 @@ Existing mis-pinned pages (`aws-work-adr-log` master→canonical, any other proj
 
 ### 1.1 The bug + fix
 - **Bug:** template step 4c (`stop_checkpoint_prompt.md:101-132`) tells the stop-hook to `wiki_add(..., NO branch_hint)` to land canonical → hard-rejected `missing_branch` under `BRANCH_ENFORCEMENT=true`. The mirror never persists.
-- **Fix:** route the task-list write through Car 0's canonical path — a system path (dedicated task-list writer, or `wiki_add` recognising the non-git signal / an internal canonical call) that sets `branch=None` + `_internal` server-side. NOT "tell the model to omit branch_hint" (still rejected) and NOT a model-settable canonical flag (breaks the guardrail).
+- **Fix:** route the task-list write through Car 0's sanctioned canonical path (flow 1) — a dedicated task-list writer that sets `branch=None` + `_internal` server-side. NOT "tell the model to omit branch_hint" (still rejected) and NOT a model-settable canonical flag (breaks the guardrail).
 - **Template edit:** step 4c drops the "write WITHOUT branch_hint" instruction (a rejected write) and points at the one-call canonical path Car 0 provides. The model-facing instruction becomes "call the task-list mirror," not "craft a canonical wiki_add".
 
 ### 1.2 The missing coverage
@@ -128,7 +170,7 @@ Add a test that exercises the REAL task-list write THROUGH the daemon gate — e
 
 ### 1.4 TDD (Car 1)
 - task-list write through the gate → lands `branch IS NULL`, not rejected (regression test).
-- non-git project → task-list write lands canonical (Car 0 non-git signal).
+- non-git project (trusted `gitness=false`) → task-list write lands canonical (flow 1/3).
 - restore nudge still resolves the canonical page under a feature-branch caller (guards a Car 1 regression).
 
 ---
@@ -208,7 +250,7 @@ Every wiki read/write in the three flows, under the NEW branch model. Verified a
 |---|---|---|---|---|---|
 | stop step 1 ADR read (`adr.py:265`) | `{proj}-adr-log` | R | `branch_hint=default` | **NO** — non-git = bogus "master"; becomes canonical index read | Car 2 |
 | stop step 1 ADR write (`adr.py:296,320`) | `{proj}-adr-log` | W | `branch_hint=default` | **NO** — becomes canonical per-ADR write | Car 2 |
-| stop step 2 structural (`template:67-70`) | topic page (caller) | W | `branch_hint=default` | OK for git; **non-git = bogus "master"** → needs the non-git canonical default | Car 0 |
+| stop step 2 structural (`template:67-70`) | topic page (caller) | W | `branch_hint=default` | OK for git (flow 2a); **non-git = bogus "master"** → trusted `gitness=false` routes it canonical (flow 3) | Car 0 |
 | stop step 3 agent-prompt read (`template:78`) | `agent-prompt-*` | R | none (global-scoped) | OK — shared/global by design | — |
 | stop step 3 agent-prompt write (`template:85`) | `agent-prompt-*` | W | none → `agent_prompt_save` | OK — global; confirm it writes canonical/global not caller-branch | Car 2 (confirm) |
 | stop step 4b task-list read (`template:97`) | `{proj}-task-list` | R | none (canonical) | OK — reads canonical | — |
@@ -220,7 +262,7 @@ Every wiki read/write in the three flows, under the NEW branch model. Verified a
 | dispatch_prelude contract/prompt read (`dispatch_helper.py`) | `agent-prompt-*` | R | none (global) | OK — global | — |
 | dispatch_prelude context recall (`dispatch_helper.py`) | memories + wiki | R | `branch_hint` propagated | OK | — |
 
-**Other default-branch-pin landmines (like 531352):** the ADR-log reads/writes above are the family. The `{default_branch}` → "master" fallback (`template:5-6`, `_get_default_branch:154`) is the ROOT — Car 0's non-git signal fixes it for all pages; Car 2 moves ADRs off default-pin entirely (canonical). Agent-prompt pages are global (not default-pinned) — safe. Task-list is canonical-by-design — the only remaining fix is Car 1's write path.
+**Other default-branch-pin landmines (like 531352):** the ADR-log reads/writes above are the family. The `{default_branch}` → "master" fallback (`template:5-6`, `_get_default_branch:154`) is the ROOT — Car 0's trusted `gitness`/`default_branch` (NULL for non-git) fixes it for all pages; Car 2 moves ADRs off default-pin entirely (canonical). Agent-prompt pages are global (not default-pinned) — safe. Task-list is canonical-by-design — the only remaining fix is Car 1's write path.
 
 ---
 
@@ -228,7 +270,7 @@ Every wiki read/write in the three flows, under the NEW branch model. Verified a
 
 | Car | Deliverable | Depends on |
 |---|---|---|
-| 0 | Canonical-write helper (`_internal` server-side) + git-aware gating + non-git host signal + `adr` page_type + I32 allowlist constant | — |
+| 0 | Trusted `{gitness, default_branch}` vars (SessionStart-only write) + durable directory-keyed store + core read-through cache (Manual+TTL) + 4-flow decision in `wiki.py` + `_wiki_write_canonical` helper + `adr` page_type + `_get_default_branch` fix | — |
 | 1 | Task-list write routed through Car 0 canonical path; template step 4c fixed; gated-write regression test | 0 |
 | 2 | Per-ADR canonical pages + index; `adr_add`/`adr_list`/`adr_get`; migration (audit→migrate→DELETE→fix mis-pins); `_build_adr_log`+`_get_adr_log_updated_at`+`## Recent ADRs` re-point to index; `agent-discipline-adr-consult` (+ seed-sync); memorize soft-gate; memory_update re-embed; superseding ADR for 531352 | 0 |
 
