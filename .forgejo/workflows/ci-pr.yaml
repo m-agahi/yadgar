@@ -25,7 +25,7 @@ concurrency:
 
 # YADGAR_CI_BRANCH tells the yadgar daemon which branch context to use in the
 # CI runner (B2 fix — CI runner paths are anonymised so git branch detection
-# fails without this hint). See docs/DECISIONS.md PD-42.
+# fails without this hint). See docs/reference/decisions.md PD-42.
 # YADGAR_TEST_SKIP_RUNTIME_CHECK: skip container-runtime detection in Makefile
 # pre-setup target when podman/docker is absent in CI runner (P8 fix v5.46.7).
 env:
@@ -467,6 +467,13 @@ jobs:
         run: npx vitest run
 
   verify-version-bump:
+    # Skip the version-bump gate when the PR carries the 'no-release' label
+    # (docs/chore PRs that touch yadgar/** — e.g. contract-doc path pins — but
+    # intentionally ship no version bump). Absent/empty label list → contains()
+    # is false → !false = true → the gate RUNS (safe default; never silently
+    # skips an unlabeled PR). Referenced by the error string below since v?; the
+    # label + this guard were wired 2026-07-14.
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
     runs-on: ubuntu-latest
     container:
       image: python:3.14-slim

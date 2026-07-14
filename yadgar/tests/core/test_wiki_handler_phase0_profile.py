@@ -224,7 +224,7 @@ def _build_report(timings: dict[str, list[float]], e2e_p50: float) -> str:
         "",
         "- Plan: `docs/plans/archive/PLAN_V5_41_5_HANDLER_I9_FIX.md`",
         "- Perf test (xfail): `yadgar/tests/test_wiki_mcp_handler_perf.py`",
-        "- I9 invariant: `docs/ARCHITECTURE_INVARIANTS.md`",
+        "- I9 invariant: `docs/contracts/ARCHITECTURE_INVARIANTS.md`",
         "- Baseline (task header): ~28.89ms p50 / xfail comment: ~48ms p50",
         f"- This measurement: {e2e_p50:.2f}ms p50",
     ]
@@ -234,7 +234,7 @@ def _build_report(timings: dict[str, list[float]], e2e_p50: float) -> str:
 def test_wiki_add_phase0_profiling(_profile_env, tmp_path):
     """Phase 0: measure per-substep latency of wiki_add(wait=False).
 
-    Generates docs/V5_41_5_PROFILING_REPORT.md.
+    Generates docs/reports/releases/v5-41-5-profiling-report.md.
     Run with -s to see console output.
     """
     real_fq = _profile_env
@@ -272,7 +272,11 @@ def test_wiki_add_phase0_profiling(_profile_env, tmp_path):
 
     report = _build_report(timings, e2e_p50)
     report_path = (
-        Path(__file__).parent.parent.parent.parent / "docs" / "V5_41_5_PROFILING_REPORT.md"
+        Path(__file__).parent.parent.parent.parent
+        / "docs"
+        / "reports"
+        / "releases"
+        / "v5-41-5-profiling-report.md"
     )
     report_path.write_text(report, encoding="utf-8")
     print(f"\nReport: {report_path}")

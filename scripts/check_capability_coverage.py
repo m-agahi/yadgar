@@ -2,7 +2,7 @@
 """I32 — Capability-registry coverage lint (CAPABILITY_REGISTRY domain).
 
 Enforces invariant I32 (catalogue-completeness): every enumerable capability
-surface in the codebase has an entry in docs/CAPABILITY_REGISTRY.md. The
+surface in the codebase has an entry in docs/contracts/CAPABILITY_REGISTRY.md. The
 registry is the single source of truth for "what features/algorithms/behaviours
 exist (wired or not), how they are reached, and their status."
 
@@ -57,8 +57,8 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_REGISTRY = _REPO_ROOT / "docs" / "CAPABILITY_REGISTRY.md"
-_CONTRACT = _REPO_ROOT / "docs" / "BEHAVIOR_CONTRACT.md"
+_REGISTRY = _REPO_ROOT / "docs" / "contracts" / "CAPABILITY_REGISTRY.md"
+_CONTRACT = _REPO_ROOT / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md"
 _CONFIG = _REPO_ROOT / "yadgar" / "_shared" / "config" / "config.py"
 _MIGRATIONS = _REPO_ROOT / "yadgar" / "_shared" / "storage" / "migrations.py"
 _TOOLS_DIR = _REPO_ROOT / "yadgar" / "core" / "server" / "tools"
@@ -309,7 +309,7 @@ def check(repo_root: Path | None = None) -> list[str]:
     """Return a list of violation strings (empty = clean)."""
     if repo_root is None:
         repo_root = _REPO_ROOT
-    registry_file = repo_root / "docs" / "CAPABILITY_REGISTRY.md"
+    registry_file = repo_root / "docs" / "contracts" / "CAPABILITY_REGISTRY.md"
     if not registry_file.is_file():
         return [f"registry not found at {registry_file}"]
 
@@ -329,7 +329,7 @@ def check(repo_root: Path | None = None) -> list[str]:
     migrations = _normalise_migrations(
         enumerate_migrations(repo_root / "yadgar" / "_shared" / "storage" / "migrations.py")
     )
-    bcs = enumerate_bc(repo_root / "docs" / "BEHAVIOR_CONTRACT.md")
+    bcs = enumerate_bc(repo_root / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md")
 
     errors = _check_malformed(entries, repo_root)
     errors += _check_coverage(cov["settings"], settings, "setting", "config.py")
@@ -353,7 +353,7 @@ def _collect_sets(repo_root: Path) -> dict:
                 enumerate_migrations(repo_root / "yadgar" / "_shared" / "storage" / "migrations.py")
             )
         ),
-        "bc": sorted(enumerate_bc(repo_root / "docs" / "BEHAVIOR_CONTRACT.md")),
+        "bc": sorted(enumerate_bc(repo_root / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md")),
     }
 
 

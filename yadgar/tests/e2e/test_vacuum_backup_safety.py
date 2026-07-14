@@ -5,7 +5,7 @@ REAL vacuum / backup code path against a REAL embedded SurrealDB whose on-disk
 ``surrealkv://`` directory IS the directory the vacuum renames/swaps — so the
 06-16 data-loss end-state is actually reproducible.
 
-Contracts (see docs/BEHAVIOR_CONTRACT.md):
+Contracts (see docs/contracts/BEHAVIOR_CONTRACT.md):
     BC-E1  vacuum preserves per-table row counts.           (regression floor)
     BC-E2  vacuum is atomic — any mid-vacuum failure leaves  (RED today)
            the canonical DB intact + populated, never empty.

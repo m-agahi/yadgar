@@ -6,7 +6,7 @@ Non-e2e (runs under CI `-m 'not e2e'`). Validates the three lint rules:
   3. header counts must equal the actual ✅/⏳/❌ + [r]/[u]/none tally.
 
 Test plan:
-  1. Real contract passes (the shipped docs/BEHAVIOR_CONTRACT.md is clean).
+  1. Real contract passes (the shipped docs/contracts/BEHAVIOR_CONTRACT.md is clean).
   2. ✅ without a reference → violation naming rule 1.
   3. dangling reference (file/node absent) → violation naming rule 2.
   4. header status drift → violation naming rule 3.
@@ -38,7 +38,7 @@ _VALID = (
 
 def test_real_contract_passes() -> None:
     """The shipped contract is clean."""
-    text = (_REPO_ROOT / "docs" / "BEHAVIOR_CONTRACT.md").read_text(encoding="utf-8")
+    text = (_REPO_ROOT / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md").read_text(encoding="utf-8")
     assert ccc.check(text) == []
 
 

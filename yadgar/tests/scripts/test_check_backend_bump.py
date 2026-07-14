@@ -465,7 +465,7 @@ class TestCollectPrecommitInputs:
         fake_git = _make_fake_precommit_git(
             merge_base="mb0000",
             branch_files=["yadgar/core/vacuum/__init__.py"],
-            staged_files=["docs/configuration.md"],
+            staged_files=["docs/reference/configuration.md"],
             base_server_json=_SERVER_JSON_501,
             index_server_json=_SERVER_JSON_501,
         )

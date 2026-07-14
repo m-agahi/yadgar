@@ -34,7 +34,7 @@ Source: 2026-06-30 drift diagnosis. Both findings are the same disease — *self
 `idle_threshold_seconds` is **fully dead**: idle-triggered consolidation removed v5.7.0 (`consolidation/orchestrator.py:3-7`); the `IDLE_THRESHOLD_SECONDS` Settings field deleted v5.76.0 (`f28faf5f`). Zero code readers.
 
 - Remove the **orphan `idle_threshold_seconds: 300`** line from `~/.config/yadgar/config.yaml` (dead, pydantic ignores it).
-- Fix **`docs/architecture.md:107`** — STALE, still describes the knob firing after idle.
+- Fix **`docs/reference/architecture.md:107`** — STALE, still describes the knob firing after idle.
 - **Verify `daemon_check_interval`** (`config.yaml:46`) isn't also dead/stale (the astrocyte loop it drove may also be gone); clean if dead.
 
 ---

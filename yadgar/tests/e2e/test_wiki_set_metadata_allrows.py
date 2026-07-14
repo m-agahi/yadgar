@@ -12,7 +12,7 @@ Test design:
 Placement: yadgar/tests/e2e/ → collected by `make e2e`.
 Uses @pytest.mark.e2e for live-surreal DB.
 
-BC-G10 ref: docs/BEHAVIOR_CONTRACT.md
+BC-G10 ref: docs/contracts/BEHAVIOR_CONTRACT.md
 """
 
 from __future__ import annotations

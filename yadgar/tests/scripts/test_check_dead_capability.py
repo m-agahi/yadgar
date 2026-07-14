@@ -101,7 +101,7 @@ def _make_fixture(
     graph_dir.mkdir(parents=True, exist_ok=True)
     contracts_dir = tmp_path / "yadgar" / "_shared" / "contracts"
     contracts_dir.mkdir(parents=True, exist_ok=True)
-    docs_dir = tmp_path / "docs"
+    docs_dir = tmp_path / "docs" / "contracts"
     docs_dir.mkdir(parents=True, exist_ok=True)
 
     # graph_api.py — literal edge type dicts
@@ -123,7 +123,7 @@ def _make_fixture(
         entries += f'    "{rt}": {{"label": "{rt}", "role": "display", "default_on": True}},\n'
     (contracts_dir / "viz.py").write_text(f"EDGE_TYPES: dict[str, dict] = {{\n{entries}}}\n")
 
-    # docs/EDGE_CONTRACT.md
+    # docs/contracts/EDGE_CONTRACT.md
     contract_text = _CONTRACT_HEADER
     for et, role in contract_rows.items():
         contract_text += _CONTRACT_ROW_TMPL.format(edge_type=et, role=role)
@@ -268,7 +268,7 @@ def test_multi_type_contract_row(tmp_path):
     graph_dir.mkdir(parents=True, exist_ok=True)
     contracts_dir = tmp_path / "yadgar" / "_shared" / "contracts"
     contracts_dir.mkdir(parents=True, exist_ok=True)
-    docs_dir = tmp_path / "docs"
+    docs_dir = tmp_path / "docs" / "contracts"
     docs_dir.mkdir(parents=True, exist_ok=True)
 
     # graph_api.py with literal types for co_a and co_b

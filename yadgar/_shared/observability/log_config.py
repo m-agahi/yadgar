@@ -4,7 +4,7 @@ Supports two log formats:
 - 'json' (default for production): I14-conformant JSON, one line per record.
 - 'text' / 'human': standard Python %(asctime)s %(name)s %(levelname)s %(message)s
 
-I14 JSON schema (see docs/ARCHITECTURE_INVARIANTS.md §I14):
+I14 JSON schema (see docs/contracts/ARCHITECTURE_INVARIANTS.md §I14):
     ts          — ISO 8601 timestamp with timezone
     level       — DEBUG/INFO/WARNING/ERROR/CRITICAL
     component   — module/subsystem identifier

@@ -41,7 +41,7 @@ Extract the mockup's design system into `static/viz-theme.css`: CSS variables (p
 - Tempo availability: tab must degrade gracefully (empty state with reason) when Tempo is down — it's an optional observability dependency, never a viz-breaking one.
 
 ## References
-Mockup: docs/plans/viz-trace-replay.mockup.html · Feasibility: session agent a51c646b (data-path options table) · simplify_trace.py (aggregation source) · ADR-0074 (span budget) · docs/diagrams/mcp-tool-traces-2026-07-09.md (trace format + numbers).
+Mockup: docs/plans/viz-trace-replay.mockup.html · Feasibility: session agent a51c646b (data-path options table) · simplify_trace.py (aggregation source) · ADR-0074 (span budget) · docs/reports/releases/mcp-tool-traces-2026-07-09.md (trace format + numbers).
 
 ---
 
@@ -65,7 +65,7 @@ Every load-bearing claim re-verified against master (core 5.132.0, backend 5.43.
 | 8 | `nav-group` pattern (Observability group) for the new tab | VERIFIED | `index.html:563-609` `#tab-bar .nav-group` + `.nav-group-menu` dropdown pattern present. |
 | 9 | vitest test harness (viz-tests/); DOM wiring thin, no browser harness | VERIFIED (w/ path nuance) | `viz-tests/vitest.config.js` `include: ['../yadgar/core/static/**/*.test.js']` — tests are **co-located in `yadgar/core/static/*.test.js`**, run from `viz-tests/`. Plan's "vitest (viz-tests/)" is directionally right; the actual test files live under `core/static`. "No browser render harness" convention CONFIRMED (wiki `viz-frontend-has-no-browser-test-harness`). |
 | 10 | (my mid-audit conclusion) vitest 3.2.7 already on master | **WRONG — CORRECTED** | master `viz-tests/package.json` = `^2.0.0`, `node_modules` = **2.1.9**. `git cherry master car/npm-audit` → `+ fbb48cec` (`+` = **NOT in master**). The `(#36)` is the branch's PR number, not merge proof. **The vitest 2→3.2.7 bump is PENDING on the unmerged `car/npm-audit` branch.** This is a real in-flight dependency (below). |
-| 11 | Referenced `docs/diagrams/mcp-tool-traces-2026-07-09.md` (trace format + numbers) | VERIFIED | file exists (11KB). |
+| 11 | Referenced `docs/reports/releases/mcp-tool-traces-2026-07-09.md` (trace format + numbers) | VERIFIED | file exists (11KB). |
 | 12 | ADR-0074 (span budget) cited | VERIFIED | accepted 2026-07-09; the span-storm→boundary-drop policy this plan's Risk section leans on. |
 | 13 | 3d-force-graph NOT needed (lanes = fixed layout) | VERIFIED (sound) | index.html already loads `3d-force-graph@1.73.0` for the main graph; a fixed-lane canvas/SVG render is the right call for a waterfall — no force sim. Design-defensible. |
 

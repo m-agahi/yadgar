@@ -1,11 +1,11 @@
-"""Phantom-doc guard: docs/configuration.md documented keys ⊆ Settings fields.
+"""Phantom-doc guard: docs/reference/configuration.md documented keys ⊆ Settings fields.
 
 I25 sibling ratchet. The three-way-sync test (test_config_three_way_sync.py)
 proves every *real* Settings field is covered by FIELD_META + _REGISTRY (or
 allowlisted). This test proves the *reverse direction*: every config knob the
 docs claim exists actually exists as a Settings field.
 
-Why this matters: docs/configuration.md drifted to document phantom knobs that
+Why this matters: docs/reference/configuration.md drifted to document phantom knobs that
 were never real Settings fields (e.g. ``fractal_levels`` →
 ``YADGAR_FRACTAL_LEVELS``, ``wrrf_k``, the whole ``confidence_*`` family). A
 user who sets ``YADGAR_FRACTAL_LEVELS=5`` silently gets nothing — the env var is
@@ -24,7 +24,7 @@ import re
 
 from yadgar.tests._paths import REPO_ROOT as _REPO_ROOT
 
-_DOCS_PATH = _REPO_ROOT / "docs" / "configuration.md"
+_DOCS_PATH = _REPO_ROOT / "docs" / "reference" / "configuration.md"
 
 # Match canonical config-knob rows:  | `key` | `YADGAR_KEY` | ...
 # The two backticked, pipe-delimited leading cells (config key + YADGAR_ env)
@@ -46,7 +46,7 @@ def test_docs_path_exists() -> None:
 def test_documented_keys_subset_of_settings() -> None:
     """Every documented config knob must be a real Settings field.
 
-    RED when docs/configuration.md documents a knob with no backing Settings
+    RED when docs/reference/configuration.md documents a knob with no backing Settings
     field (phantom doc). Fix by deleting the phantom row from the doc — never by
     inventing a field to satisfy it.
     """
@@ -59,8 +59,8 @@ def test_documented_keys_subset_of_settings() -> None:
 
     phantom = sorted(documented - fields)
     assert not phantom, (
-        f"{len(phantom)} phantom config knob(s) documented in docs/configuration.md "
+        f"{len(phantom)} phantom config knob(s) documented in docs/reference/configuration.md "
         f"with NO backing Settings field:\n  " + "\n  ".join(phantom) + "\n\n"
-        "Delete the phantom row(s) from docs/configuration.md — a documented "
+        "Delete the phantom row(s) from docs/reference/configuration.md — a documented "
         "YADGAR_* env var that no field reads is silently ignored at runtime."
     )

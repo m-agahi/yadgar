@@ -48,4 +48,4 @@ Dataset: https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned (MIT Lic
 Note: use the `-cleaned` variant (`xiaowu0162/longmemeval-cleaned`), not the deprecated
 `xiaowu0162/longmemeval` or `mtvu/LongMemEval`. The cleaned variant removes noisy history sessions.
 
-See `docs/BENCHMARK_LICENSE.md` and `docs/BENCHMARK_RESULTS.md` for full details.
+See `docs/benchmark-results/BENCHMARK_LICENSE.md` and `docs/benchmark-results/BENCHMARK_RESULTS.md` for full details.

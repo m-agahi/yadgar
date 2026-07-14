@@ -461,7 +461,7 @@ update_check_on_start: true
 
 Default is `false`. When enabled, a background thread probes PyPI on every daemon start and logs the result at WARNING if an update is available.
 
-**Privacy posture:** anonymous GET to `https://pypi.org/pypi/yadgar/json` with `User-Agent: yadgar/<version>`. No user-ID, no telemetry, no IP collection beyond standard PyPI server logs. See `docs/PRIVACY.md` for exact wire format.
+**Privacy posture:** anonymous GET to `https://pypi.org/pypi/yadgar/json` with `User-Agent: yadgar/<version>`. No user-ID, no telemetry, no IP collection beyond standard PyPI server logs. See `docs/reference/privacy.md` for exact wire format.
 
 ### `yadgar update --check` CLI
 
@@ -1379,7 +1379,7 @@ backward-compat shim is a user-action item documented in the module's own migrat
 
 **PAPER-ONLY IMPLEMENTATION.** No macOS host was available at time of shipping. All code paths are implemented and cross-platform render/template tests pass on Linux. Runtime behavior (launchctl load/unload, plutil lint, podman-machine socket) is deferred. Fix-ups via hotfix once macOS host is accessible.
 
-See `docs/DECISIONS.md` PD-38 for the formal deferral record.
+See `docs/reference/decisions.md` PD-38 for the formal deferral record.
 
 ### Who needs to act
 
@@ -2094,11 +2094,11 @@ wiki_append_section(
 )
 ```
 
-Full details in `docs/WORKFLOW_ROADMAP_UPDATE.md`.
+Full details in `docs/roadmap/workflow-roadmap-update.md`.
 
 ### CLAUDE.md note (out of scope for this release)
 
-The workflow rule change is documented in the roadmap wiki and `docs/WORKFLOW_ROADMAP_UPDATE.md`.
+The workflow rule change is documented in the roadmap wiki and `docs/roadmap/workflow-roadmap-update.md`.
 Global `~/.claude/CLAUDE.md` is nix-managed. To propagate the new convention there, update
 `~/git/nix/modules/home/claude.nix` (or wherever CLAUDE.md content is sourced) separately.
 
@@ -2384,7 +2384,7 @@ python -m pytest yadgar/tests/integration/viz/ -m integration
 Layer 2 tests auto-skip if neither Playwright nor Chromium is available — non-blocking for
 users who only need Layers 1 + 3.
 
-See `docs/VIZ_TESTING.md` for full local dev setup and failure interpretation.
+See `docs/testing/viz-testing.md` for full local dev setup and failure interpretation.
 
 ---
 
@@ -2546,7 +2546,7 @@ Core 5.26.0 → 5.31.0. Backend unchanged at 5.4.0. **No DB migration.**
 
 ### Summary
 
-Refactors the 8-stage recall pipeline (FTS + KNN + PPR + spreading + temporal → WRRF fusion → cross-encoder rerank → NLI → MMR diversity → adversarial detection → rules engine) into a plug-in architecture. Implements Refactor-R2 (ADOPT) from `docs/competitor-audit-2026-05-30.md`.
+Refactors the 8-stage recall pipeline (FTS + KNN + PPR + spreading + temporal → WRRF fusion → cross-encoder rerank → NLI → MMR diversity → adversarial detection → rules engine) into a plug-in architecture. Implements Refactor-R2 (ADOPT) from `docs/reports/audits/competitor-audit-2026-05-30.md`.
 
 **Goal:** stages are A/B-testable and swappable. Foundation for ablation studies (D2 NLI on/off, D3 PC causal discovery) and future extract-on-ingest interplay (Adopt-7).
 
@@ -2736,7 +2736,7 @@ See `docs/PLAN_V5_25_X_D2_NLI_AB.md` and `docs/PLAN_V5_25_X_D3_PC_AB.md`.
 - `docs/CHANGELOG.md`: v5.26.0 entry updated with Sonnet headline
 - `docs/benchmarks-current.md`: updated status + per-release table
 - `README.md`: benchmark section updated with Sonnet headline
-- `docs/DECISIONS.md`: D2/D3 DEFER entries updated with post-Sonnet analysis
+- `docs/reference/decisions.md`: D2/D3 DEFER entries updated with post-Sonnet analysis
 
 ### To reproduce
 
@@ -3427,7 +3427,7 @@ Audit Adopt-2 ("Write-time conflict resolution") identified that the lightweight
 **`yadgar/tests/test_write_time_contradiction.py`** (new):
 - 7 tests: default-on fires detector, env-off skips, empty store noop, fail-soft, metric increment, LLM-resolver orthogonality, no-negation no-decay.
 
-**`docs/CONFLICT_RESOLVER.md`**:
+**`docs/reference/conflict-resolver.md`**:
 - New "Lightweight write-time detector" section documenting the two-layer model.
 
 ### Upgrade path
@@ -3630,7 +3630,7 @@ After 11 viz patches (v5.10.7–v5.10.11) every tweak required a code change + r
 
 1. `nix-apply` (or `docker-compose pull && docker-compose up -d`) to deploy new image
 2. Hard-refresh browser (`Ctrl+Shift+R`) to get new `index.html`
-3. (Optional) Add a `viz:` section to `config.yaml` to override any knob — see `docs/VIZ_CONFIG.md`
+3. (Optional) Add a `viz:` section to `config.yaml` to override any knob — see `docs/reference/viz-config.md`
 
 ### Rollback
 

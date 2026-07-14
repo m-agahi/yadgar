@@ -1143,7 +1143,7 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "unified_recall",
     },
     # ── v5.89 #67: FIELD_META backfill — drain the I25 Tier-2 grandfathered ───
-    # backlog. Descriptions sourced from docs/configuration.md + config.py
+    # backlog. Descriptions sourced from docs/reference/configuration.md + config.py
     # inline comments. Each entry also gets a _REGISTRY ConfigEntry so the I25
     # three-way ratchet (test_config_three_way_sync) covers it.
     # core / server

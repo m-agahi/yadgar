@@ -61,7 +61,7 @@ Then restart Claude Code. No auth, no backend container — embed/rerank degrade
 | `SURREAL_USER` / `SURREAL_PASS` | backend container starts | same |
 | `YADGAR_DB_URL` / `YADGAR_EMBED_URL` | core container starts | defaults in `yadgar daemon`; explicit in docker-manual |
 
-Full reference: [`docs/configuration.md`](docs/configuration.md).
+Full reference: [`docs/reference/configuration.md`](docs/reference/configuration.md).
 
 ## Dev environment tips
 
@@ -86,7 +86,7 @@ pytest --lf                           # rerun last failures
 - `asyncio_mode = auto` — no `@pytest.mark.asyncio` decorator needed.
 - Add or update tests in the same change. New retrieval / consolidation / storage code without a failing-then-passing test will fail review.
 - Pre-commit invariant scripts (`scripts/check_*.py`) are real test gates — run `pre-commit run --all-files` before pushing.
-- **I32 — capability registry (HARD).** `docs/CAPABILITY_REGISTRY.md` is the source of truth for every feature/algorithm/behaviour (wired or not). When you add or remove a **Settings field** (`config.py`), an **MCP `@_tool`**, a **`_migration_NNN`**, or a **`BC-*`** row, add/update its entry in the SAME change — `scripts/check_capability_coverage.py` (pre-commit + CI `invariant-checks`) fails on any uncatalogued or stale surface item. A green lint proves the catalogue is COMPLETE, not that each `status:` is accurate — verify status when you touch the subsystem.
+- **I32 — capability registry (HARD).** `docs/contracts/CAPABILITY_REGISTRY.md` is the source of truth for every feature/algorithm/behaviour (wired or not). When you add or remove a **Settings field** (`config.py`), an **MCP `@_tool`**, a **`_migration_NNN`**, or a **`BC-*`** row, add/update its entry in the SAME change — `scripts/check_capability_coverage.py` (pre-commit + CI `invariant-checks`) fails on any uncatalogued or stale surface item. A green lint proves the catalogue is COMPLETE, not that each `status:` is accurate — verify status when you touch the subsystem.
 
 ## Running benchmarks (eval / LongMemEval)
 
@@ -170,7 +170,7 @@ Decide layer in 20 seconds — ask, in order:
 knobs/flags/dual-paths/re-export shims. Intermediate train states need only be
 CI-green, not runnable.
 
-Rules + enforcement (import-linter contracts, DI waivers): `docs/ARCHITECTURE_INVARIANTS.md` §I34 + `wiki:yadgar-adr-log` ADR-0062.
+Rules + enforcement (import-linter contracts, DI waivers): `docs/contracts/ARCHITECTURE_INVARIANTS.md` §I34 + `wiki:yadgar-adr-log` ADR-0062.
 
 ## Operations cheatsheet
 
@@ -222,17 +222,17 @@ curl -s http://127.0.0.1:8765/metrics | head
 
 **Verify subagent claims before integrating.** File edits, contract flips, test assertions, and command output from a subagent are claims, not truth. Re-read the artifact (the actual file, `gh pr view --json body`, `aws describe-*`, etc.) before relaying the result as done. A passing-looking diff excerpt in a report is not a passing test.
 
-If your agent dispatches subagents that may write memories, paste the contract from [`docs/CLAUDE_SUBAGENT_CONTRACT.md`](docs/CLAUDE_SUBAGENT_CONTRACT.md) into the global `~/.claude/CLAUDE.md`, then run `yadgar install_hooks --scope global`. The `SubagentStop` hook scans the final report for a `## Yadgar findings` section and persists each bullet as a memory tagged with the agent type. Opt-in — Yadgar works without it.
+If your agent dispatches subagents that may write memories, paste the contract from [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) into the global `~/.claude/CLAUDE.md`, then run `yadgar install_hooks --scope global`. The `SubagentStop` hook scans the final report for a `## Yadgar findings` section and persists each bullet as a memory tagged with the agent type. Opt-in — Yadgar works without it.
 
 ## Further reading
 
 - [`README.md`](README.md) — human overview, features, benchmark, production scale, roadmap
-- [`docs/architecture.md`](docs/architecture.md) — component map, branch-aware retrieval, security, observability
-- [`docs/CAPABILITY_REGISTRY.md`](docs/CAPABILITY_REGISTRY.md) — source of truth: every feature/algorithm/behaviour (wired or not) + status (I32-enforced)
-- [`docs/configuration.md`](docs/configuration.md) — every env var and config key
-- [`docs/retrieval.md`](docs/retrieval.md) — 8-stage pipeline spec
-- [`docs/memory-lifecycle.md`](docs/memory-lifecycle.md) — heat, decay, consolidation
-- [`docs/HOOKS.md`](docs/HOOKS.md) — Claude Code hook contracts
-- [`docs/RELEASE.md`](docs/RELEASE.md) — version bump → tag → nix
-- [`docs/CLAUDE_SUBAGENT_CONTRACT.md`](docs/CLAUDE_SUBAGENT_CONTRACT.md) — `SubagentStop` protocol
+- [`docs/reference/architecture.md`](docs/reference/architecture.md) — component map, branch-aware retrieval, security, observability
+- [`docs/contracts/CAPABILITY_REGISTRY.md`](docs/contracts/CAPABILITY_REGISTRY.md) — source of truth: every feature/algorithm/behaviour (wired or not) + status (I32-enforced)
+- [`docs/reference/configuration.md`](docs/reference/configuration.md) — every env var and config key
+- [`docs/reference/retrieval.md`](docs/reference/retrieval.md) — 8-stage pipeline spec
+- [`docs/reference/memory-lifecycle.md`](docs/reference/memory-lifecycle.md) — heat, decay, consolidation
+- [`docs/reference/hooks.md`](docs/reference/hooks.md) — Claude Code hook contracts
+- [`docs/reference/release.md`](docs/reference/release.md) — version bump → tag → nix
+- [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) — `SubagentStop` protocol
 - [`MIGRATION_NOTES.md`](MIGRATION_NOTES.md) — operator steps for breaking changes

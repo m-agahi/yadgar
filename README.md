@@ -9,7 +9,7 @@
 
 </div>
 
-[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Architecture](#architecture) · [Roadmap](#roadmap) · [JS/TS SDK](docs/sdk-js.md) · [Agents guide](AGENTS.md)
+[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Architecture](#architecture) · [Roadmap](#roadmap) · [JS/TS SDK](docs/reference/sdk-js.md) · [Agents guide](AGENTS.md)
 
 > **AI coding agents:** the operational guide lives in [`AGENTS.md`](AGENTS.md) — setup commands, dev environment, test runner, code style, PR rules, security gates. This README is the human overview.
 
@@ -115,7 +115,7 @@ Runs nightly while the daemon stays up in maintenance mode (no MCP reconnect). P
 - **Retrieval pipeline** — `recall()` runs FTS + KNN vector + personalized-PageRank + spreading-activation + temporal candidate generation → WRRF fusion → cross-encoder rerank → NLI → MMR diversity → adversarial detection → rules engine. Branch filter (`branch IN (current, default, NULL)`) applies post-fetch; current-branch matches get a 1.5× boost. Behavior is pinned by characterization tests.
 - **Consolidation** — a nightly cycle (19:00 UTC) plus a weekly vacuum; runs in-process while the daemon stays up.
 
-Deeper detail: [docs/architecture.md](docs/architecture.md) · [docs/retrieval.md](docs/retrieval.md) · [docs/memory-lifecycle.md](docs/memory-lifecycle.md).
+Deeper detail: [docs/reference/architecture.md](docs/reference/architecture.md) · [docs/reference/retrieval.md](docs/reference/retrieval.md) · [docs/reference/memory-lifecycle.md](docs/reference/memory-lifecycle.md).
 
 **Layer docs (in-tree):** each layer root carries a `README.md` (subsystem map) and an `AGENTS.md` (placement laws for coding agents) — [`yadgar/_shared/`](yadgar/_shared/README.md) · [`yadgar/backend/`](yadgar/backend/README.md) · [`yadgar/core/`](yadgar/core/README.md). Major subsystem packages (storage, retrieval, config, observability, security, wiki, embed_service, consolidation, server, viz, daemon, cli, install, seed, hooks) carry their own `README.md`; existence is lint-enforced (`scripts/check_subsystem_readmes.py`).
 
@@ -167,7 +167,7 @@ yadgar daemon status
 yadgar stats
 ```
 
-Per-platform detail: [`docs/INSTALL.md`](docs/INSTALL.md).
+Per-platform detail: [`docs/reference/install.md`](docs/reference/install.md).
 
 ### Stdio-only (no daemon, no Docker)
 
@@ -311,7 +311,7 @@ ADR: `adr_add(...)` ⚡ — append an 11-field Architecture Decision Record to t
 
 </details>
 
-A typed **JavaScript / TypeScript SDK** wraps the tool surface as async methods (Node.js, Vercel Edge, Cloudflare Workers, Deno) — see [`docs/sdk-js.md`](docs/sdk-js.md).
+A typed **JavaScript / TypeScript SDK** wraps the tool surface as async methods (Node.js, Vercel Edge, Cloudflare Workers, Deno) — see [`docs/reference/sdk-js.md`](docs/reference/sdk-js.md).
 
 ---
 
@@ -322,7 +322,7 @@ yadgar config init        # write ~/.config/yadgar/config.yaml
 yadgar config set retrieval_profile fast
 ```
 
-Priority: env vars (`YADGAR_*`) > `~/.config/yadgar/config.yaml` > defaults. Knobs are also editable in-browser via **System → Config** in the viz UI. Key vars (full reference in [docs/configuration.md](docs/configuration.md)):
+Priority: env vars (`YADGAR_*`) > `~/.config/yadgar/config.yaml` > defaults. Knobs are also editable in-browser via **System → Config** in the viz UI. Key vars (full reference in [docs/reference/configuration.md](docs/reference/configuration.md)):
 
 | Var | Default | Purpose |
 |---|---|---|
@@ -343,7 +343,7 @@ Priority: env vars (`YADGAR_*`) > `~/.config/yadgar/config.yaml` > defaults. Kno
 
 Yadgar ships a `SubagentStop` hook that captures memory findings from Claude Code subagents: when a subagent completes, its final report is scanned for a `## Yadgar findings` section and each bullet is persisted with `provenance_agent` set to the agent type.
 
-To opt your subagents into the protocol, paste [`docs/CLAUDE_SUBAGENT_CONTRACT.md`](docs/CLAUDE_SUBAGENT_CONTRACT.md) into your `~/.claude/CLAUDE.md`, then run `yadgar install-hooks --scope global`. The contract is opt-in — Yadgar works without it.
+To opt your subagents into the protocol, paste [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) into your `~/.claude/CLAUDE.md`, then run `yadgar install-hooks --scope global`. The contract is opt-in — Yadgar works without it.
 
 ---
 
@@ -361,7 +361,7 @@ Yadgar is evaluated on [**LongMemEval**](https://arxiv.org/abs/2410.10813) (ICLR
 
 Yadgar beats Zep by 5.6 pp on the same 500-question sample. mem0 leads by 25 pp via LLM-extract-on-ingest. **Phase 1 retrieval:** MRR 0.928, Recall@10 0.906, NDCG@10 0.863 — the memory layer surfaces gold context for ~91% of queries, so the remaining QA gap is mostly reader synthesis, not retrieval.
 
-Full methodology and per-type breakdown: [`docs/BENCHMARK_RESULTS.md`](docs/BENCHMARK_RESULTS.md).
+Full methodology and per-type breakdown: [`docs/benchmark-results/BENCHMARK_RESULTS.md`](docs/benchmark-results/BENCHMARK_RESULTS.md).
 
 ---
 
@@ -390,13 +390,13 @@ Full history: [CHANGELOG.md](docs/CHANGELOG.md).
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — operational guide for AI coding agents (setup, dev env, tests, code style, PR rules)
-- [Architecture](docs/architecture.md) — component map, retrieval, security, observability
-- [Memory lifecycle](docs/memory-lifecycle.md) — heat, archiving, pruning, consolidation phases
-- [Retrieval](docs/retrieval.md) — fusion, rerank, branch filter, pipeline stages
-- [Configuration](docs/configuration.md) — configuration reference (env vars, precedence, key knobs)
-- [Install](docs/INSTALL.md) — per-platform setup + the `yadgar setup --doctor` probe
-- [JS/TS SDK](docs/sdk-js.md) — typed client for the MCP tool surface
-- [Release runbook](docs/RELEASE.md) · [Migration notes](MIGRATION_NOTES.md) · [Subagent contract](docs/CLAUDE_SUBAGENT_CONTRACT.md)
+- [Architecture](docs/reference/architecture.md) — component map, retrieval, security, observability
+- [Memory lifecycle](docs/reference/memory-lifecycle.md) — heat, archiving, pruning, consolidation phases
+- [Retrieval](docs/reference/retrieval.md) — fusion, rerank, branch filter, pipeline stages
+- [Configuration](docs/reference/configuration.md) — configuration reference (env vars, precedence, key knobs)
+- [Install](docs/reference/install.md) — per-platform setup + the `yadgar setup --doctor` probe
+- [JS/TS SDK](docs/reference/sdk-js.md) — typed client for the MCP tool surface
+- [Release runbook](docs/reference/release.md) · [Migration notes](MIGRATION_NOTES.md) · [Subagent contract](docs/reference/claude-subagent-contract.md)
 
 ---
 
@@ -412,7 +412,7 @@ Every change to `yadgar/**` must update `README.md` and `docs/` in the same PR. 
 
 Inspired by [Zikkaron](https://github.com/amanhij/Zikkaron) by [@amanhij](https://github.com/amanhij). Different architecture, same north star.
 
-Yadgar stands on a great deal of open-source work — models, databases, frameworks, and tools. Full credits and acknowledgments (including [Tom Aarsen](https://github.com/tomaarsen), whose sentence-transformers + Ettin reranker underpin our retrieval): **[docs/tributes.md](docs/tributes.md)**.
+Yadgar stands on a great deal of open-source work — models, databases, frameworks, and tools. Full credits and acknowledgments (including [Tom Aarsen](https://github.com/tomaarsen), whose sentence-transformers + Ettin reranker underpin our retrieval): **[docs/reference/tributes.md](docs/reference/tributes.md)**.
 
 ## License
 
@@ -425,4 +425,4 @@ Apache 2.0. See [LICENSE](LICENSE).
 - **embed / rerank models** — `sentence-transformers/all-MiniLM-L6-v2`, `cross-encoder/ettin-reranker-32m-v1` (CE primary), `cross-encoder/ettin-reranker-68m-v1` (fallback), `Alibaba-NLP/gte-reranker-modernbert-base` (rollback), `cross-encoder/ms-marco-MiniLM-L-6-v2`, `cross-encoder/nli-deberta-v3-small`: Apache 2.0 weights via Hugging Face.
 - **Benchmarks** (`benchmarks/`): scripts Apache 2.0, but datasets carry their own licenses — **LoCoMo is CC BY-NC 4.0 (non-commercial only)**; LongMemEval MIT. See `benchmarks/README.md`.
 
-Full per-dependency audit: `docs/LICENSE_COMPLIANCE_AUDIT_2026-05-30.md`.
+Full per-dependency audit: `docs/reports/audits/license-compliance-audit-2026-05-30.md`.

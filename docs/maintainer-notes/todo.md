@@ -17,7 +17,7 @@ resolved. Each entry: **gate** (what unblocks it), **probes** (commands), **ship
 ### v5.45.1 — macOS launchd (paper-only ship 2026-06-04)
 
 **Gate:** access to a macOS Ventura+ host with `podman machine` installed.
-**Ship:** v5.45.1 @ master `0dd5171`. Plan: `docs/PLAN_V5_45_1_MACOS_LAUNCHD.md`. Decision: `docs/DECISIONS.md` PD-38.
+**Ship:** v5.45.1 @ master `0dd5171`. Plan: `docs/PLAN_V5_45_1_MACOS_LAUNCHD.md`. Decision: `docs/reference/decisions.md` PD-38.
 **Ref:** `MIGRATION_NOTES.md` v5.45.1 section.
 
 Probes:
