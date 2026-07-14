@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-14 — #84 test-speed SHIPPED v5.104 (~2x CI shards, ADR-0036); #83 backend-bump/version gate MERGED (v5.60.0 — scripts/check_backend_bump.py --ci in ci-pr.yaml + ci-release.yaml). #79 load-test contract remains as the standalone docs/plans/perf-loadtest-contract-2026-06-30.md (being audited to implementation-ready). All velocity legs resolved → archived.
+
 # CI / Velocity Train — unified, audited plan (2026-07-03)
 
 **Status:** test-speed leg (#84) SHIPPED v5.104 (~2x CI shards, PR #156, ADR-0036). Remaining: #83 backend-bump CI gate, #79 load-test contract. **Author:** agent (bot).
