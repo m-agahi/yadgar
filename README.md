@@ -363,6 +363,16 @@ Yadgar beats Zep by 5.6 pp on the same 500-question sample. mem0 leads by 25 pp 
 
 Full methodology and per-type breakdown: [`docs/benchmark-results/BENCHMARK_RESULTS.md`](docs/benchmark-results/BENCHMARK_RESULTS.md).
 
+### Recall speed
+
+**Ettin-32m @ --cpus 3 (ADR-0106 standing config), warm steady-state p50 ~2.6s / mean ~2.3s (n=30, controlled 2026-07-15).**
+
+The cross-encoder reranker swap (GTE-ModernBERT → Ettin-32m, v5.132.0/5.43.0) delivered a measured **2.44× end-to-end recall speedup** on equal hardware (same-image, same-CPU A/B, histogram-delta method per ADR-0098). The 3-CPU standing config (ADR-0106) adds parallel batch scoring via `gather_budget=2` (~24% further reduction vs 2-CPU). CE is ~25% of the cold recall wall (ADR-0105) — the dominant gains come from the model swap.
+
+Controlled re-measurement 2026-07-15 (v5.143.0/5.50.0, n=30 per regime, CE-miss gate PASS): warm steady-state mean **2,332ms** / p50 **2,644ms** / p95 **3,064ms**; cold (post-restart) mean **2,594ms** / p50 **2,682ms** / p95 **3,148ms**. Cold-cache first queries (before in-process caches re-warm, i.e. first 2 calls post-restart) run ~2.9–3.4s; CE snapshot cache persists on disk across restarts. The v5.143.0 module-split (PR #203) is **perf-neutral** — byte-identical retrieval code (pure file moves). The apparent gap vs the older ~4.3s baseline is a cache-regime difference (that baseline was fresh-session cold-graph), not a code change effect.
+
+Full consolidated latency history, measurement protocol, comparability caveats, and per-milestone verdicts: [`docs/benchmark-results/RECALL_SPEED.md`](docs/benchmark-results/RECALL_SPEED.md).
+
 ---
 
 ## Roadmap
