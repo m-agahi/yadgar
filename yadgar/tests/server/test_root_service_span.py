@@ -65,7 +65,7 @@ def test_embeddings_similarity_sentinel():
 
 
 def test_remote_embeddings_encode_sentinel():
-    from yadgar._shared.remote_embeddings import RemoteEmbeddingEngine
+    from yadgar._shared.embeddings.remote_embeddings import RemoteEmbeddingEngine
 
     assert _has_span(RemoteEmbeddingEngine.encode)
 

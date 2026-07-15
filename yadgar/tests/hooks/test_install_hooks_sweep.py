@@ -171,14 +171,21 @@ def _manifest_referenced_names() -> set[str]:
     hooks, keyed by their hyphen src name + yadgar- dst name), and the
     ``_MANAGED_NONPREFIXED`` sweep allowlist. The 4 append hooks keep their
     ``_append_specs`` src literal → they stay install-intended and referenced.
+
+    Car C5 (ADR-0066 split) moved these literals out of the canonical
+    ``install_hooks_lib.py`` into the cohesive siblings ``_settings.py``
+    (``_install_global_scripts`` / ``_install_append_hooks``) and
+    ``_hook_scripts.py`` (``_MANAGED_NONPREFIXED``) — scan the whole install
+    package so the manifest lint follows the split.
     """
-    referenced: set[str] = set()
-    src = _HOOKS_DIR.parent / "install" / "install_hooks_lib.py"
-    text = src.read_text()
     import re
 
-    for m in re.finditer(r'"([A-Za-z0-9_.-]+\.(?:py|sh))"', text):
-        referenced.add(m.group(1))
+    referenced: set[str] = set()
+    install_dir = _HOOKS_DIR.parent / "install"
+    for src in install_dir.glob("*.py"):
+        text = src.read_text()
+        for m in re.finditer(r'"([A-Za-z0-9_.-]+\.(?:py|sh))"', text):
+            referenced.add(m.group(1))
     return referenced
 
 

@@ -15,7 +15,7 @@ import logging
 
 def _make_json_handler():
     """Create a StringIO handler with JSON formatter for testing."""
-    from yadgar._shared.log_config import JsonFormatter
+    from yadgar._shared.observability.log_config import JsonFormatter
 
     buf = io.StringIO()
     handler = logging.StreamHandler(buf)
@@ -138,7 +138,7 @@ def test_configure_json_logging(monkeypatch, tmp_path):
     """configure_logging(format='json') installs JSON handler on root logger (v5.4.3+)."""
     monkeypatch.setenv("YADGAR_LOG_FORMAT", "json")
 
-    from yadgar._shared.log_config import JSONLogFormatter, configure_logging
+    from yadgar._shared.observability.log_config import JSONLogFormatter, configure_logging
 
     configure_logging(log_format="json", level="INFO")
     # v5.4.3+: root-logger approach — JSONLogFormatter attached to root, yadgar propagates up.
@@ -151,7 +151,7 @@ def test_configure_human_logging_default(monkeypatch):
     """configure_logging() without format arg uses human-readable format."""
     monkeypatch.delenv("YADGAR_LOG_FORMAT", raising=False)
 
-    from yadgar._shared.log_config import configure_logging
+    from yadgar._shared.observability.log_config import configure_logging
 
     configure_logging(log_format="human", level="INFO")
     logger = logging.getLogger("yadgar")
@@ -220,7 +220,7 @@ class TestRequestLoggingMiddleware:
         """Middleware emits exactly one log record per HTTP request."""
         import asyncio
 
-        from yadgar._shared.log_config import RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import RequestLoggingMiddleware
 
         _, records, cleanup = self._install_capture_handler("yadgar.requests")
         try:
@@ -235,7 +235,7 @@ class TestRequestLoggingMiddleware:
         """Log record has request_id, tool_name, duration_ms, status."""
         import asyncio
 
-        from yadgar._shared.log_config import RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import RequestLoggingMiddleware
 
         _, records, cleanup = self._install_capture_handler("yadgar.requests")
         try:
@@ -261,7 +261,7 @@ class TestRequestLoggingMiddleware:
         """
         import asyncio
 
-        from yadgar._shared.log_config import RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import RequestLoggingMiddleware
 
         _, records, cleanup = self._install_capture_handler("yadgar.requests")
         try:
@@ -283,7 +283,7 @@ class TestRequestLoggingMiddleware:
         """Log record status matches HTTP response status code."""
         import asyncio
 
-        from yadgar._shared.log_config import RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import RequestLoggingMiddleware
 
         _, records, cleanup = self._install_capture_handler("yadgar.requests")
         try:
@@ -299,7 +299,7 @@ class TestRequestLoggingMiddleware:
         """tool_name field is 'METHOD /path'."""
         import asyncio
 
-        from yadgar._shared.log_config import RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import RequestLoggingMiddleware
 
         _, records, cleanup = self._install_capture_handler("yadgar.requests")
         try:
@@ -315,7 +315,7 @@ class TestRequestLoggingMiddleware:
         """latency_ms is a non-negative integer (was duration_ms pre-v5.4.7)."""
         import asyncio
 
-        from yadgar._shared.log_config import RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import RequestLoggingMiddleware
 
         _, records, cleanup = self._install_capture_handler("yadgar.requests")
         try:
@@ -332,7 +332,7 @@ class TestRequestLoggingMiddleware:
         """Middleware passes through non-HTTP scopes without logging."""
         import asyncio
 
-        from yadgar._shared.log_config import RequestLoggingMiddleware
+        from yadgar._shared.observability.log_config import RequestLoggingMiddleware
 
         _, records, cleanup = self._install_capture_handler("yadgar.requests")
         try:

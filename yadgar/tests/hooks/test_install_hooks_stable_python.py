@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-import yadgar.core.install_hooks_lib as ihl
+import yadgar.core.install.install_hooks_lib as ihl
 
 # ── fixtures / helpers ───────────────────────────────────────────────────────
 

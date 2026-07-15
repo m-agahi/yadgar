@@ -301,9 +301,9 @@ def _wiki_add_wait_path(payload: dict, new_slug: str, title: str) -> dict:
     try:
         from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
 
-        timeout = getattr(_get_settings(), "WIKI_WRITE_WAIT_TIMEOUT_SECONDS", 5.0)
+        timeout = getattr(_get_settings(), "WIKI_WRITE_WAIT_TIMEOUT_SECONDS", 15.0)
     except Exception:
-        timeout = 5.0
+        timeout = 15.0
 
     outcome = fq.wait_for_job(job_id, timeout=timeout)
 

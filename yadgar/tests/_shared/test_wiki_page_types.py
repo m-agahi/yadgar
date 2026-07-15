@@ -13,7 +13,7 @@ Covers:
 import pytest
 
 from yadgar._shared.wiki.contract import WikiAddOptions
-from yadgar._shared.wiki_meta import PAGE_TYPES, WIKI_SCHEMA_VERSION
+from yadgar._shared.wiki.wiki_meta import PAGE_TYPES, WIKI_SCHEMA_VERSION
 from yadgar.core import server
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────

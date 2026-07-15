@@ -57,7 +57,7 @@ def _reset_otel():
         trace.set_tracer_provider(new_provider)
 
         try:
-            import yadgar._shared.tracing as _tr
+            import yadgar._shared.observability.tracing as _tr
 
             _tr._SETUP_DONE.clear()
         except Exception:
@@ -274,7 +274,7 @@ class TestRecallDurationMetricBugA:
         function — an exception in the body left count=0. Fix: observation must be in
         a try/finally so it always fires.
         """
-        from yadgar._shared.metrics import yadgar_recall_duration_ms
+        from yadgar._shared.observability.metrics import yadgar_recall_duration_ms
 
         before = _count_nolabel(yadgar_recall_duration_ms)
         M = 3
@@ -294,7 +294,7 @@ class TestRecallDurationMetricBugA:
         the metric was NEVER observed. After the fix, the finally block fires regardless.
         """
         import yadgar._shared.runtime.state as _st
-        from yadgar._shared.metrics import yadgar_recall_duration_ms
+        from yadgar._shared.observability.metrics import yadgar_recall_duration_ms
 
         mock_storage = _make_mock_storage()
 
@@ -339,7 +339,7 @@ class TestRecallDurationMetricBugA:
 class TestRecallStageMetrics:
     def test_embed_query_stage_observed(self):
         """yadgar_recall_stage_ms{stage='embed_query'} has at least 1 observation after recall."""
-        from yadgar._shared.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_ms
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="embed_query")
         retriever = _make_retriever_with_mocks()
@@ -351,7 +351,7 @@ class TestRecallStageMetrics:
 
     def test_bm25_stage_observed(self):
         """yadgar_recall_stage_ms{stage='bm25'} has at least 1 observation after recall."""
-        from yadgar._shared.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_ms
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="bm25")
         retriever = _make_retriever_with_mocks()
@@ -361,7 +361,7 @@ class TestRecallStageMetrics:
 
     def test_hnsw_stage_observed(self):
         """yadgar_recall_stage_ms{stage='hnsw'} has at least 1 observation after recall."""
-        from yadgar._shared.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_ms
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="hnsw")
         retriever = _make_retriever_with_mocks()
@@ -371,7 +371,7 @@ class TestRecallStageMetrics:
 
     def test_rerank_final_stage_observed(self):
         """yadgar_recall_stage_ms{stage='rerank_final'} has at least 1 observation after recall."""
-        from yadgar._shared.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_ms
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="rerank_final")
         retriever = _make_retriever_with_mocks()
@@ -383,7 +383,7 @@ class TestRecallStageMetrics:
 
     def test_at_least_3_distinct_stages_observed(self):
         """At least 3 distinct stage names have observations after a recall call."""
-        from yadgar._shared.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_ms
 
         before_by_stage: dict[str, float] = {}
         for fam in yadgar_recall_stage_ms.collect():
@@ -472,7 +472,7 @@ class TestWikiQuerySpanEmission:
 class TestWikiQueryDurationMetric:
     def test_wiki_query_duration_increments_by_m(self):
         """After M wiki_query MCP tool calls, yadgar_wiki_query_duration_ms._count == M."""
-        from yadgar._shared.metrics import yadgar_wiki_query_duration_ms
+        from yadgar._shared.observability.metrics import yadgar_wiki_query_duration_ms
 
         before = _count_nolabel(yadgar_wiki_query_duration_ms)
         M = 3
@@ -493,7 +493,7 @@ class TestWikiQueryDurationMetric:
 class TestNliOffNoObservation:
     def test_nli_stage_not_observed_when_disabled(self):
         """With NLI_RERANKING_ENABLED=false, nli stage must not appear in observations."""
-        from yadgar._shared.metrics import yadgar_recall_stage_ms
+        from yadgar._shared.observability.metrics import yadgar_recall_stage_ms
 
         s = _make_settings_mock()
         s.NLI_RERANKING_ENABLED = False  # explicitly off

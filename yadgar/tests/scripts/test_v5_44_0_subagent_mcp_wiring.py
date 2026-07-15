@@ -384,7 +384,7 @@ class TestPlatformPaths:
 
     def test_linux_returns_dot_claude(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Linux")
-        from yadgar._shared.platform_paths import get_claude_config_dir
+        from yadgar.core.install.platform_paths import get_claude_config_dir
 
         result = get_claude_config_dir()
         assert result == Path.home() / ".claude"
@@ -394,10 +394,10 @@ class TestPlatformPaths:
         monkeypatch.setattr("platform.system", lambda: "Darwin")
         import importlib
 
-        from yadgar._shared import platform_paths  # noqa: PLC0415
+        from yadgar.core.install import platform_paths  # noqa: PLC0415
 
         importlib.reload(platform_paths)
-        from yadgar._shared.platform_paths import get_claude_config_dir
+        from yadgar.core.install.platform_paths import get_claude_config_dir
 
         result = get_claude_config_dir()
         assert (
@@ -411,17 +411,17 @@ class TestPlatformPaths:
         monkeypatch.setenv("APPDATA", "C:\\Users\\testuser\\AppData\\Roaming")
         import importlib
 
-        from yadgar._shared import platform_paths  # noqa: PLC0415
+        from yadgar.core.install import platform_paths  # noqa: PLC0415
 
         importlib.reload(platform_paths)
-        from yadgar._shared.platform_paths import get_claude_config_dir
+        from yadgar.core.install.platform_paths import get_claude_config_dir
 
         result = get_claude_config_dir()
         assert "Claude" in str(result)
 
     def test_agents_dir_is_subdir_of_config(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Linux")
-        from yadgar._shared.platform_paths import get_claude_agents_dir, get_claude_config_dir
+        from yadgar.core.install.platform_paths import get_claude_agents_dir, get_claude_config_dir
 
         agents = get_claude_agents_dir()
         config = get_claude_config_dir()
@@ -429,7 +429,7 @@ class TestPlatformPaths:
 
     def test_settings_path_is_settings_json(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Linux")
-        from yadgar._shared.platform_paths import get_claude_settings_path
+        from yadgar.core.install.platform_paths import get_claude_settings_path
 
         path = get_claude_settings_path()
         assert path.name == "settings.json"
@@ -444,7 +444,7 @@ class TestPlatformPaths:
         )
 
         # Can't easily mock Path("/etc/NIXOS").exists() directly but we can check the logic
-        from yadgar._shared.platform_paths import is_nix_managed
+        from yadgar.core.install.platform_paths import is_nix_managed
 
         # On non-NixOS test system: should return False (unless actually on NixOS)
         result = is_nix_managed()
@@ -560,7 +560,7 @@ class TestConfigSync:
 
     def test_missing_key_added_with_default(self, tmp_path):
         """config_sync adds a missing key with its default value."""
-        from yadgar._shared.config_sync import cmd_config_sync
+        from yadgar.core.config_sync.sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         # Write config with one field that should be present
@@ -582,7 +582,7 @@ class TestConfigSync:
 
     def test_user_value_preserved(self, tmp_path):
         """User-set values are preserved byte-for-byte after sync."""
-        from yadgar._shared.config_sync import cmd_config_sync
+        from yadgar.core.config_sync.sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         self._write_minimal_config(config_path, "port: 9999\n")
@@ -601,7 +601,7 @@ class TestConfigSync:
 
     def test_idempotent_second_run_no_changes(self, tmp_path):
         """Running config_sync twice returns added=[] on second run."""
-        from yadgar._shared.config_sync import cmd_config_sync
+        from yadgar.core.config_sync.sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         self._write_minimal_config(config_path, "port: 8765\n")
@@ -623,7 +623,7 @@ class TestConfigSync:
 
     def test_dry_run_no_write(self, tmp_path):
         """--dry-run prints diff but does not modify the file."""
-        from yadgar._shared.config_sync import cmd_config_sync
+        from yadgar.core.config_sync.sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         original = "port: 8765\n"
@@ -642,7 +642,7 @@ class TestConfigSync:
 
     def test_check_flag_nonzero_when_missing_keys(self, tmp_path):
         """--check exits nonzero when keys would be added."""
-        from yadgar._shared.config_sync import cmd_config_sync
+        from yadgar.core.config_sync.sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         self._write_minimal_config(config_path, "port: 8765\n")
@@ -660,7 +660,7 @@ class TestConfigSync:
 
     def test_check_flag_zero_when_no_missing_keys(self, tmp_path):
         """--check exits zero when config is fully synced."""
-        from yadgar._shared.config_sync import cmd_config_sync
+        from yadgar.core.config_sync.sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config.yaml"
         self._write_minimal_config(config_path, "port: 8765\n")
@@ -691,7 +691,7 @@ class TestConfigSync:
 
     def test_config_not_found_returns_error(self, tmp_path):
         """config_sync on missing config file returns graceful error."""
-        from yadgar._shared.config_sync import cmd_config_sync
+        from yadgar.core.config_sync.sync import cmd_config_sync
 
         config_path = tmp_path / ".yadgar" / "config_nonexistent.yaml"
 

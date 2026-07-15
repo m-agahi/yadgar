@@ -7,223 +7,47 @@ Docker container. The host only manages the container lifecycle.
 Two profiles — prod and dev — can run simultaneously on separate ports
 (8765 and 8766) with separate named volumes so dev experiments don't
 pollute prod data.
+
+Car C3 (module-standardization train) split the 948-LOC supervisor into
+cohesive siblings inside this package:
+  runtime.py   — container-runtime + host-env probing (_RUNTIME cache, image
+                 resolution, host memory, source root, _safe_urlopen)
+  profiles.py  — ContainerProfile + _prod_profile/_dev_profile + _ensure_network
+  systemd.py   — systemd user-unit rendering (install_systemd_service body)
+This module keeps the YadgarDaemon orchestrator that drives them. The package
+``__init__`` re-exports every previously-importable symbol, so external
+importers are byte-unaffected.
 """
-# Module size justified: single-responsibility container lifecycle manager — all methods share YadgarDaemon state (self.port, self.db_path).
 
 import json
 import os
-import platform
 import subprocess
 import sys
 import time
 import urllib.error
-import urllib.parse
-import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
-
-
-@observe(tier="stage")
-def _safe_urlopen(url: str, **kwargs):
-    """§8: urlopen wrapper that rejects non-http/https schemes."""
-    scheme = urllib.parse.urlparse(url).scheme
-    if scheme not in {"http", "https"}:
-        raise ValueError(f"Disallowed URL scheme: {scheme!r}")
-    return urllib.request.urlopen(url, **kwargs)  # noqa: S310
-
-
-DEFAULT_PORT = 8765
-DEFAULT_DEV_PORT = 8766
-_HEALTH_TIMEOUT = 60.0  # Docker startup takes longer than a local process
-
-# Container runtime detected at first check_runtime() call.
-# v5.45.0: only check_runtime() + highest-traffic callsites migrated.
-# TODO(v5.46): propagate _RUNTIME through all ~20 remaining subprocess callsites:
-#   start_backend(), pull(), push(), build(), exec_in_container(), _image_exists(),
-#   _container_running(), _container_exists(), _ensure_network(), status(), logs()
-_RUNTIME: str | None = None
-
-
-@observe(tier="hot")
-def _get_runtime() -> str:
-    """Return the active container runtime name (podman or docker).
-
-    Uses YADGAR_CONTAINER_RUNTIME env if set; otherwise uses cached _RUNTIME
-    from last check_runtime() call; otherwise probes once.
-    v5.45.0: replaces hardcoded "docker" in highest-traffic callsites.
-    """
-    env_rt = os.environ.get("YADGAR_CONTAINER_RUNTIME", "").strip()
-    if env_rt:
-        return env_rt
-    if _RUNTIME is not None:
-        return _RUNTIME
-    # Lazy probe: first invocation before check_runtime() called explicitly
-    for rt in ("podman", "docker"):
-        try:
-            r = subprocess.run([rt, "--version"], capture_output=True, timeout=5)
-            if r.returncode == 0:
-                return rt
-        except (FileNotFoundError, subprocess.TimeoutExpired):  # fmt: skip
-            continue
-    return "docker"  # final fallback keeps backward compat
-
-
-@observe(tier="hot")
-def _default_image(repo: str) -> str:
-    """Return repo:version using the installed package version, fallback to :latest."""
-    try:
-        from importlib.metadata import version as _pkg_version
-
-        return f"{repo}:{_pkg_version('yadgar')}"
-    except Exception:
-        return f"{repo}:latest"
-
-
-@observe(tier="stage")
-def _backend_version() -> str:
-    """Return the backend image version from the bundled server.json.
-
-    v5.49.2 Bug 12: backend image track is independent of the core (pip) version.
-    server.json is the single source of truth for backend_version.
-    Falls back to yadgar.BACKEND_VERSION (also from server.json), then 'latest'.
-    """
-    try:
-        import json as _json  # noqa: PLC0415
-
-        _server_json = _source_root() / "server.json"
-        _data = _json.loads(_server_json.read_text())
-        return _data.get("backend_version", "latest")
-    except Exception:
-        pass
-    try:
-        from yadgar import BACKEND_VERSION  # noqa: PLC0415
-
-        return BACKEND_VERSION
-    except Exception:
-        return "latest"
-
-
-DOCKERHUB_IMAGE = _default_image("docker.io/openfantasy/yadgar")
-# v5.49.2 Bug 12: use _backend_version() — backend image is on an independent version track.
-DOCKERHUB_BACKEND_IMAGE = f"docker.io/openfantasy/yadgar-backend:{_backend_version()}"
-DEFAULT_BACKEND_EMBED_PORT = 8001
-_BACKEND_CONTAINER = "yadgar-backend"
-_BACKEND_VOLUME = "yadgar-db-data"
-_NETWORK_NAME = "yadgar-net"
-
-
-# ── Host memory detection ──────────────────────────────────────────────────────
-
-
-@observe(tier="stage")
-def _host_memory_bytes() -> int:
-    """Detect total host RAM. Linux /proc/meminfo, macOS sysctl, POSIX fallback."""
-    if platform.system() == "Linux":
-        try:
-            with open("/proc/meminfo") as f:
-                mem_line = next((ln for ln in f if ln.startswith("MemTotal:")), None)
-            if mem_line:
-                return int(mem_line.split()[1]) * 1024
-        except OSError:
-            pass
-    if platform.system() == "Darwin":
-        try:
-            r = subprocess.run(
-                ["sysctl", "-n", "hw.memsize"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return int(r.stdout.strip())
-        except (subprocess.CalledProcessError, ValueError, FileNotFoundError) as _e:
-            pass
-    # POSIX fallback
-    try:
-        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    except (ValueError, OSError) as _e:
-        return 8 * 1024 * 1024 * 1024  # assume 8 GB
-
-
-def _container_memory_mb() -> int:
-    """1/8 of host RAM, clamped to [512, 8192] MB."""
-    eighth = _host_memory_bytes() // (8 * 1024 * 1024)
-    return max(512, min(int(eighth), 8192))
-
-
-# ── Source root detection ──────────────────────────────────────────────────────
-
-
-@observe(tier="hot")
-def _source_root() -> Path:
-    """Walk up from this file to find the repo root (contains pyproject.toml)."""
-    here = Path(__file__).resolve().parent
-    for candidate in [here, *here.parents]:
-        if (candidate / "pyproject.toml").exists():
-            return candidate
-    return here.parent
-
-
-# ── Container profiles ─────────────────────────────────────────────────────────
-
-
-@dataclass
-class ContainerProfile:
-    container_name: str
-    image_name: str
-    volume_name: str
-    port: int  # host port — maps to container port 8765
-    cpus: float
-    restart_policy: str
-    is_dev: bool
-
-
-@observe(tier="hot")
-def _prod_profile(port: int = DEFAULT_PORT) -> ContainerProfile:
-    return ContainerProfile(
-        container_name=os.environ.get("YADGAR_CONTAINER", "yadgar"),
-        image_name=os.environ.get("YADGAR_IMAGE", DOCKERHUB_IMAGE),
-        volume_name=os.environ.get("YADGAR_VOLUME", "yadgar-data"),
-        port=port,
-        cpus=1.0,
-        restart_policy="on-failure:3",
-        is_dev=False,
-    )
-
-
-@observe(tier="hot")
-def _dev_profile(port: int = DEFAULT_DEV_PORT) -> ContainerProfile:
-    return ContainerProfile(
-        container_name=os.environ.get("YADGAR_DEV_CONTAINER", "yadgar-dev"),
-        image_name=os.environ.get("YADGAR_DEV_IMAGE", "yadgar-dev"),
-        volume_name=os.environ.get("YADGAR_DEV_VOLUME", "yadgar-dev-data"),
-        port=port,
-        cpus=2.0,
-        restart_policy="no",
-        is_dev=True,
-    )
-
-
-# ── Network helper ────────────────────────────────────────────────────────────
-
-
-@observe(tier="stage")
-def _ensure_network() -> None:
-    """Create the yadgar Docker network if it doesn't exist."""
-    result = subprocess.run(
-        ["docker", "network", "inspect", _NETWORK_NAME],
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        subprocess.run(
-            ["docker", "network", "create", "--driver", "bridge", _NETWORK_NAME],
-            check=True,
-            capture_output=True,
-        )
-
-
-# ── Main class ─────────────────────────────────────────────────────────────────
+from yadgar.core.daemon.profiles import (
+    _dev_profile,
+    _ensure_network,
+    _prod_profile,
+)
+from yadgar.core.daemon.runtime import (
+    _BACKEND_CONTAINER,
+    _BACKEND_VOLUME,
+    _HEALTH_TIMEOUT,
+    _NETWORK_NAME,
+    DEFAULT_BACKEND_EMBED_PORT,
+    DEFAULT_PORT,
+    DOCKERHUB_BACKEND_IMAGE,
+    _container_memory_mb,
+    _get_runtime,
+    _safe_urlopen,
+    _source_root,
+)
+from yadgar.core.daemon.runtime import check_runtime as _check_runtime
+from yadgar.core.daemon.systemd import install_systemd_service as _install_systemd_service
 
 
 class YadgarDaemon:
@@ -601,141 +425,8 @@ class YadgarDaemon:
     @observe(tier="boundary")
     def install_systemd_service(self, dev: bool = False) -> dict:
         """Write two systemd user service units: yadgar-backend.service and yadgar.service."""
-
-        from yadgar._shared import paths as _paths  # noqa: PLC0415
-
         profile = _dev_profile() if dev else _prod_profile(self.port)
-        service_dir = Path.home() / ".config" / "systemd" / "user"
-        service_dir.mkdir(parents=True, exist_ok=True)
-
-        backend_name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
-        backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
-        # Bug 11: use XDG DATA_DIR as host bind mount instead of named volume
-        backend_data_dir = _paths.DATA_DIR
-
-        # Bug 5: load backend_version from server.json (not core version)
-        # v5.49.2: refactored to call module-level _backend_version() helper.
-        _bv = _backend_version()
-
-        # Resolve actual backend image with correct version tag
-        # If image already has a tag (from env), use as-is; otherwise append backend_version
-        if ":" not in backend_image.split("/")[-1]:
-            backend_image_tagged = f"{backend_image}:{_bv}"
-        else:
-            # Replace the tag portion with backend_version
-            _base = backend_image.rsplit(":", 1)[0]
-            backend_image_tagged = f"{_base}:{_bv}"
-
-        # Bug 6: use XDG secrets path (not /etc/yadgar/secrets.env)
-        secrets_env_path = _paths.SECRETS_ENV_PATH
-
-        # yadgar-backend.service — backend (SurrealDB + embed)
-        # Bug 9: renamed from yadgar-db.service to yadgar-backend.service
-        hf_cache = Path.home() / ".cache" / "huggingface"
-        hf_mount = (
-            f"    -v {hf_cache}:/home/yadgar/.cache/huggingface \\\n" if hf_cache.exists() else ""
-        )
-
-        backend_unit = f"""\
-[Unit]
-Description=Yadgar Backend — SurrealDB and Embedding Service
-Requires=docker.service
-After=docker.service
-
-[Service]
-Type=notify
-NotifyAccess=all
-EnvironmentFile={secrets_env_path}
-ExecStartPre=-docker network create --driver bridge {_NETWORK_NAME}
-ExecStartPre=-docker stop {backend_name}
-ExecStartPre=-docker rm {backend_name}
-ExecStart=docker run --rm \\
-    --name {backend_name} \\
-    --network {_NETWORK_NAME} \\
-    --cpus 1.0 \\
-    --memory 4g \\
-    --memory-swap 4g \\
-    --user root \\
-    --sdnotify=healthy \\
-    --health-cmd curl -f http://localhost:8001/health || exit 1 \\
-    --health-start-period=60s \\
-    -v {backend_data_dir}:/data \\
-    -p {DEFAULT_BACKEND_EMBED_PORT}:8001 \\
-    -e SURREAL_USER=${{SURREAL_USER}} \\
-    -e SURREAL_PASS=${{SURREAL_PASS}} \\
-    -e YADGAR_RW_USER=${{YADGAR_RW_USER:-}} \\
-    -e YADGAR_RW_PASS=${{YADGAR_RW_PASS:-}} \\
-    -e YADGAR_RO_USER=${{YADGAR_RO_USER:-}} \\
-    -e YADGAR_RO_PASS=${{YADGAR_RO_PASS:-}} \\
-{hf_mount}    {backend_image_tagged}
-ExecStop=docker stop {backend_name}
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-"""
-
-        # yadgar.service — core (MCP server)
-        suffix = "-dev" if dev else ""
-        # Bug 7: use XDG state path for upgrade.env (not /root/.yadgar/upgrade.env)
-        upgrade_env_path = _paths.STATE_DIR / "upgrade.env"
-        # Phase 7 follow-up: Type=notify + upgrade.env EnvironmentFile to match yadgar.service.in template.
-        # sd_notify signals (READY=1, STOPPING=1) require Type=notify.
-        # EnvironmentFile leading '-' makes missing file non-fatal (first install).
-        core_unit = f"""\
-[Unit]
-Description=Yadgar Memory Engine — MCP Core Server
-Requires=docker.service yadgar-backend{suffix}.service
-After=docker.service yadgar-backend{suffix}.service
-
-[Service]
-Type=notify
-NotifyAccess=all
-EnvironmentFile={secrets_env_path}
-EnvironmentFile=-{upgrade_env_path}
-ExecStartPre=-docker stop {profile.container_name}
-ExecStartPre=-docker rm {profile.container_name}
-ExecStart=docker run --rm \\
-    --name {profile.container_name} \\
-    --network {_NETWORK_NAME} \\
-    --cpus {profile.cpus} \\
-    --memory {_container_memory_mb()}m \\
-    --memory-swap {_container_memory_mb()}m \\
-    --user root \\
-    -v {profile.volume_name}:/data \\
-    -p {profile.port}:8765 \\
-    -e YADGAR_DB_URL=http://{backend_name}:8000 \\
-    -e YADGAR_EMBED_URL=http://{backend_name}:8001 \\
-    -e YADGAR_DATA_DIR=/data \\
-    -e YADGAR_MCP_AUTH_TOKEN=${{YADGAR_MCP_AUTH_TOKEN}} \\
-    -e YADGAR_DB_USER=${{YADGAR_RW_USER:-${{YADGAR_DB_USER:-${{SURREAL_USER}}}}}} \\
-    -e YADGAR_DB_PASS=${{YADGAR_RW_PASS:-${{YADGAR_DB_PASS:-${{SURREAL_PASS}}}}}} \\
-    {profile.image_name}
-ExecStop=docker stop {profile.container_name}
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-"""
-
-        # Bug 9: renamed yadgar-db → yadgar-backend
-        backend_service_name = f"yadgar-backend{suffix}.service"
-        core_service_name = f"yadgar{suffix}.service"
-
-        backend_path = service_dir / backend_service_name
-        core_path = service_dir / core_service_name
-        backend_path.write_text(backend_unit)
-        core_path.write_text(core_unit)
-
-        return {
-            "backend_service": str(backend_path),
-            "core_service": str(core_path),
-            "enable": f"systemctl --user enable {backend_service_name} {core_service_name}",
-            "start": f"systemctl --user start {backend_service_name} && systemctl --user start {core_service_name}",
-            "status": f"systemctl --user status {backend_service_name} {core_service_name}",
-        }
+        return _install_systemd_service(profile, dev=dev)
 
     @observe(tier="boundary")
     def pull(self) -> dict:
@@ -844,60 +535,19 @@ WantedBy=default.target
 
     # ── Docker availability ─────────────────────────────────────────────────
 
-    @observe(tier="boundary")
     @staticmethod
     def check_runtime() -> dict:
         """Detect and verify container runtime (podman or docker).
 
-        Detection order (DP2 resolution):
-          1. YADGAR_CONTAINER_RUNTIME env override
-          2. podman (rootless-friendly)
-          3. docker
-          4. Neither → ok=False
+        Delegates to ``runtime.check_runtime`` — the ``@observe``-instrumented
+        writer of the module-level ``_RUNTIME`` cache — so the writer and the
+        ``_get_runtime`` reader stay co-located in ``runtime.py`` (Car C3 seam
+        law: reassigned globals reach THROUGH the module). The span lives on the
+        delegate; this thin wrapper carries no second span.
 
         Returns: {ok, runtime, version} on success; {ok, reason} on failure.
-        Populates module-level _RUNTIME on first successful call.
         """
-        global _RUNTIME  # noqa: PLW0603
-
-        # Check env override first
-        env_rt = os.environ.get("YADGAR_CONTAINER_RUNTIME", "").strip()
-        candidates = [env_rt] if env_rt else ["podman", "docker"]
-
-        for rt in candidates:
-            try:
-                result = subprocess.run(
-                    [rt, "version", "--format", "{{.Server.Version}}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                if result.returncode == 0:
-                    version = result.stdout.strip() or "?"
-                    _RUNTIME = rt
-                    return {"ok": True, "runtime": rt, "version": version}
-                # Binary exists but daemon not running
-                exist = subprocess.run([rt, "--version"], capture_output=True, timeout=5)
-                if exist.returncode == 0:
-                    return {
-                        "ok": False,
-                        "runtime": rt,
-                        "reason": f"{rt} installed but daemon not running",
-                    }
-            except FileNotFoundError:
-                continue
-            except subprocess.TimeoutExpired:
-                return {
-                    "ok": False,
-                    "reason": f"{rt} version timed out (is the daemon running?)",
-                }
-
-        if env_rt:
-            return {
-                "ok": False,
-                "reason": f"{env_rt!r} not found in PATH — check YADGAR_CONTAINER_RUNTIME",
-            }
-        return {"ok": False, "reason": "No container runtime found — install podman or docker"}
+        return _check_runtime()
 
     @staticmethod
     def check_docker() -> dict:

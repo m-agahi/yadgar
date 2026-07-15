@@ -21,7 +21,6 @@ import httpx
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, field_validator
 
 import yadgar._shared.paths as _paths
 from yadgar._shared.config import resolve_knob
@@ -66,9 +65,6 @@ from yadgar.backend.embed_service.embed_service_metrics import (
     embed_dbsize_cache_misses_total as _dbsize_cache_misses,
 )
 from yadgar.backend.embed_service.embed_service_metrics import (
-    embed_drainer_running as _drainer_running,
-)
-from yadgar.backend.embed_service.embed_service_metrics import (
     embed_restart_reason_total as _restart_reason_total,
 )
 from yadgar.backend.embed_service.embed_service_metrics import (
@@ -90,6 +86,28 @@ from yadgar.backend.embed_service.embed_service_metrics import (
     rerank_semaphore_held as _rerank_semaphore_held,
 )
 
+# C1 split (#18): pydantic request/response models live in a sibling module.
+# Re-exported here (F401) so ``embed_service.embed_service.<Model>`` keeps
+# resolving for every importer + test; embed/rerank routes below use the Embed*/
+# Rerank* pair directly, the rest are re-export-only (routes moved to
+# embed_service_routes).
+from yadgar.backend.embed_service.embed_service_models import (  # noqa: F401
+    AdminRequest,
+    AdminResponse,
+    ConsolidateRequest,
+    ConsolidateResponse,
+    EmbedRequest,
+    EmbedResponse,
+    RecallRequest,
+    RecallResponse,
+    RerankRequest,
+    RerankResponse,
+    RestoreRequest,
+    RestoreResponse,
+    VizRequest,
+    VizResponse,
+)
+
 if TYPE_CHECKING:
     from yadgar._shared.embeddings import EmbeddingEngine
     from yadgar.backend.ml_client import LocalMLClient
@@ -99,201 +117,40 @@ logger = logging.getLogger(__name__)
 _http_bearer = HTTPBearer(auto_error=False)
 
 # ---------------------------------------------------------------------------
-# F5-A — Per-mode concurrent-inference semaphore (v5.4.2)
+# C1 split (#18): pure config/knob/ckpt/cache-factory helpers live in a sibling.
+# Re-exported here so ``embed_service.embed_service.<name>`` keeps resolving for
+# tests + callers; the INSTANCES below stay module-level so importlib.reload()
+# re-creates them with fresh env values (several tests depend on that).
 # ---------------------------------------------------------------------------
-# Bounds concurrent /rerank inferences so HALF_OPEN probes fast-fail (503)
-# instead of queueing behind a saturated model thread.
-# Module-level so reload() recreates them with fresh env values in tests.
+from yadgar.backend.embed_service.embed_service_config import (  # noqa: E402, F401
+    CE_SCORING_VERSION,  # re-export: tests import from the service module
+    _backend_cache_ram_pct,  # re-export
+    _cache_snapshot_dir,
+    _cache_snapshot_interval_sec,
+    _ce_cache_enabled,  # re-export
+    _ce_cache_max_entries,  # re-export: tests import from the service module
+    _configure_torch_threads,
+    _dbsize_cache_ttl,
+    _embed_cache_enabled,  # re-export
+    _embed_cache_max_entries,  # re-export: tests import from the service module
+    _get_ce_checkpoint_hash,
+    _get_embed_checkpoint_hash,
+    _make_ce_cache,
+    _make_embed_cache,
+    _make_rerank_semaphores,
+    _rerank_acquire_timeout,
+    _shutdown_marker_path,
+)
 
-
-def _make_rerank_semaphores() -> dict[str, asyncio.Semaphore]:
-    from yadgar._shared.config import get_settings
-
-    _n = int(get_settings().RERANK_MAX_CONCURRENCY)
-    return {mode: asyncio.Semaphore(_n) for mode in ("ce", "nli", "pair")}
-
-
+# F5-A per-mode inference semaphore INSTANCES (reload() recreates with fresh env).
 _rerank_semaphores: dict[str, asyncio.Semaphore] = _make_rerank_semaphores()
 
-
-def _rerank_acquire_timeout() -> float:
-    from yadgar._shared.config import get_settings
-
-    return float(get_settings().RERANK_SEMAPHORE_ACQUIRE_TIMEOUT_SEC)
-
-
-# ---------------------------------------------------------------------------
-# v5.3.0 — /admin/dbsize in-memory cache
-# ---------------------------------------------------------------------------
-# Module-level so importlib.reload() resets both fields, keeping tests isolated.
-
+# v5.3.0 — /admin/dbsize in-memory cache. Reassigned globals: stay here with
+# their writer (admin_dbsize) so importlib.reload() resets both fields.
 _dbsize_cache: dict | None = None  # last computed payload (without cache_age_seconds)
 _dbsize_cache_ts: float = 0.0  # time.time() when last computed
 
-
-def _dbsize_cache_ttl() -> int:
-    """Return DBSIZE_CACHE_TTL_SEC from Settings (yaml/env/default 60). 0 = disabled."""
-    from yadgar._shared.config import get_settings  # noqa: PLC0415
-
-    return int(get_settings().DBSIZE_CACHE_TTL_SEC)
-
-
-@observe(tier="hot")
-def _shutdown_marker_path() -> str:
-    """Return path for clean-shutdown marker file."""
-    return os.environ.get("YADGAR_SHUTDOWN_MARKER_PATH", "/data/.shutdown_clean")
-
-
-# ---------------------------------------------------------------------------
-# backend v5.4.0 — LRU caches for CE scores and embedding vectors
-# ---------------------------------------------------------------------------
-# Module-level so importlib.reload() resets both caches in tests.
-# Cache instances are created lazily on first access so env knobs are resolved
-# after any monkeypatch in tests.
-
-
-def _ce_cache_enabled() -> bool:
-    return resolve_knob(
-        "YADGAR_CE_CACHE_ENABLED",
-        "CE_CACHE_ENABLED",
-        lambda v: v.lower() not in ("0", "false", "no"),
-        True,
-    )
-
-
-def _embed_cache_enabled() -> bool:
-    return resolve_knob(
-        "YADGAR_EMBED_CACHE_ENABLED",
-        "EMBED_CACHE_ENABLED",
-        lambda v: v.lower() not in ("0", "false", "no"),
-        True,
-    )
-
-
-def _ce_cache_max_entries() -> int:
-    return resolve_knob("YADGAR_CE_CACHE_MAX_ENTRIES", "CE_CACHE_MAX_ENTRIES", int, 100000)
-
-
-def _embed_cache_max_entries() -> int:
-    return resolve_knob("YADGAR_EMBED_CACHE_MAX_ENTRIES", "EMBED_CACHE_MAX_ENTRIES", int, 100000)
-
-
-def _backend_cache_ram_pct() -> float:
-    """% of the backend container RAM budgeted for the unified backend cache.
-
-    Byte-bounded eviction sizes each namespace from this (Car 0, backend 5.17.0).
-    The legacy YADGAR_*_CACHE_MAX_ENTRIES knobs no longer cap entry count; the
-    byte budget is authoritative. The *_CACHE_ENABLED kill switches still disable.
-    """
-    return resolve_knob("YADGAR_BACKEND_CACHE_RAM_PCT", "BACKEND_CACHE_RAM_PCT", float, 10.0)
-
-
-def _cache_snapshot_dir() -> str:
-    return resolve_knob("YADGAR_CACHE_SNAPSHOT_DIR", "CACHE_SNAPSHOT_DIR", str, "/data/cache")
-
-
-def _cache_snapshot_interval_sec() -> int:
-    return resolve_knob(
-        "YADGAR_CACHE_SNAPSHOT_INTERVAL_SEC", "CACHE_SNAPSHOT_INTERVAL_SEC", int, 600
-    )
-
-
-# Scoring-version salt for the CE checkpoint hash. Bump whenever CE *scoring
-# semantics* change (preprocessing, truncation, score transform) — the ckpt
-# mismatch at snapshot load then discards the whole persistent snapshot via the
-# existing discard-on-mismatch path. Model-id changes bust the cache on their
-# own; the salt covers legitimately-keyed but semantically-stale scores.
-CE_SCORING_VERSION = "2"
-
-
-@observe(tier="hot")
-def _get_ce_checkpoint_hash() -> str:
-    """Return a short hash identifying the current CE RERANKER checkpoint.
-
-    T4 Car 0 fix: hashes ``GTE_RERANKER_MODEL`` — the model
-    ``ml_client._load_gte_reranker`` actually loads — NOT the embedding model
-    (the pre-fix split-brain: a reranker swap left ``_ckpt`` unchanged, so the
-    disk-persistent ``ce`` snapshot served stale scores across the swap, while
-    an embedding-model change wrongly busted CE scores).
-    """
-    import hashlib  # noqa: PLC0415
-
-    model = resolve_knob(
-        "YADGAR_GTE_RERANKER_MODEL",
-        "GTE_RERANKER_MODEL",
-        str,
-        # Fallback kept in sync with the config default (T4 flip → Ettin-32m).
-        # Reached only if Settings resolution fails; the reranker id must match
-        # what ml_client._load_gte_reranker loads or the ckpt would key the wrong model.
-        "cross-encoder/ettin-reranker-32m-v1",
-    )
-    return hashlib.sha256(f"{model}:{CE_SCORING_VERSION}".encode()).hexdigest()[:16]
-
-
-@observe(tier="hot")
-def _get_embed_checkpoint_hash() -> str:
-    """Return a short hash identifying the current embedding model."""
-    import hashlib  # noqa: PLC0415
-
-    model = resolve_knob("YADGAR_EMBEDDING_MODEL", "EMBEDDING_MODEL", str, "all-MiniLM-L6-v2")
-    return hashlib.sha256(model.encode()).hexdigest()[:16]
-
-
-@observe(tier="stage")
-def _make_ce_cache():
-    """Build the unified `ce` namespace (Car 0). Byte-budget from RAM-%.
-
-    Behaviour-neutral fold-in: same keys (query_sha:text_sha:ckpt), same float
-    values, same ModelCkpt-in-key invalidation, same snapshot format. Only the
-    eviction discipline changed (count-cap → byte-cap). DI note: still a module
-    global for now; consumer constructor-DI deferred to a later car.
-    """
-    from yadgar.backend.cache import (  # noqa: PLC0415
-        Cache,
-        ModelCkpt,
-        _backend_cache_total_budget_bytes,
-        _namespace_budget_bytes,
-    )
-
-    if not _ce_cache_enabled():
-        budget = 0
-    else:
-        total = _backend_cache_total_budget_bytes(_backend_cache_ram_pct())
-        budget = _namespace_budget_bytes("ce", total)
-    return Cache(
-        name="ce",
-        max_bytes=budget,
-        invalidation=ModelCkpt(),
-        checkpoint_hash=_get_ce_checkpoint_hash(),
-        obs_tier="hot",
-    )
-
-
-@observe(tier="stage")
-def _make_embed_cache():
-    """Build the unified `embed` namespace (Car 0). See `_make_ce_cache`."""
-    from yadgar.backend.cache import (  # noqa: PLC0415
-        Cache,
-        ModelCkpt,
-        _backend_cache_total_budget_bytes,
-        _namespace_budget_bytes,
-    )
-
-    if not _embed_cache_enabled():
-        budget = 0
-    else:
-        total = _backend_cache_total_budget_bytes(_backend_cache_ram_pct())
-        budget = _namespace_budget_bytes("embed", total)
-    return Cache(
-        name="embed",
-        max_bytes=budget,
-        invalidation=ModelCkpt(),
-        checkpoint_hash=_get_embed_checkpoint_hash(),
-        obs_tier="hot",
-    )
-
-
-# Module-level cache instances (reset on importlib.reload)
+# backend v5.4.0 — LRU cache INSTANCES (reset on importlib.reload).
 _ce_cache = _make_ce_cache()
 _embed_cache = _make_embed_cache()
 
@@ -395,143 +252,14 @@ async def _run_model_warmup() -> None:
 
 
 # ---------------------------------------------------------------------------
-# backend 5.30.1 — queue drainer lifecycle (P0 fix)
-#
-# R3 Car 1 (87143dd0) moved QueueDrainer core→backend and removed the
-# construction from core _get_file_queue with the note "started by the backend
-# lifecycle half" — but no backend startup code ever built it, so production
-# writes sat in queue/ forever. This is the missing wiring; the FileQueue +
-# DrainerConfig construction mirrors what Car 1 removed from core exactly.
+# backend 5.30.1 — queue drainer lifecycle (P0 fix). The live handle is a
+# reassigned global; it stays HERE (read by /health + drainer tests as
+# es._queue_drainer, reset to None on importlib.reload). The construct/start/stop
+# functions live in embed_service_lifecycle and write this attribute through the
+# module object (imported + re-exported at the bottom of this file).
 # ---------------------------------------------------------------------------
 
 _queue_drainer = None  # live QueueDrainer | None — module-level for /health + shutdown
-
-
-@observe(tier="stage")
-def _queue_base_path() -> Path | None:
-    """Resolve the shared file-queue root from YADGAR_QUEUE_BASE (R3 Car 0).
-
-    The backend container mounts the shared queue volume rw at /queue-data and
-    sets YADGAR_QUEUE_BASE; core mounts the SAME volume at /data. No fallback
-    to YADGAR_DATA_DIR here: on the backend /data is the read-only DB mount,
-    and unit tests always set YADGAR_DATA_DIR — falling back would silently
-    start a drainer where none belongs. Unset → drainer disabled (gauge 0).
-    """
-    base = os.environ.get("YADGAR_QUEUE_BASE", "").strip()
-    return Path(base) if base else None
-
-
-@observe(tier="stage")
-def _start_queue_drainer():
-    """Construct + start the backend QueueDrainer (the R3 Car 1 write-half).
-
-    Wiring mirrors the pre-R3 core _get_file_queue construction: FileQueue on
-    the queue root + QueueDrainer(storage_factory=_get_storage) with
-    drain_interval and DrainerConfig from settings. Ensures the recall engine
-    stack (incl. _st._storage / _st._embeddings) is up BEFORE the first drain
-    pass — ensure_write_engines and the write_exec replay impls read _st.*.
-
-    Fail-loud: queue root missing/unwritable, or any construction error →
-    ERROR log + yadgar_embed_queue_drainer_running=0 + /health drainer=false.
-    Never raises — the embed/rerank service must still come up.
-
-    Returns the started QueueDrainer, or None when disabled/failed.
-    """
-    global _queue_drainer
-    base = _queue_base_path()
-    if base is None:
-        _drainer_running.set(0)
-        logger.warning(
-            "queue_drainer_disabled",
-            extra={
-                "event": "queue_drainer_disabled",
-                "reason": "YADGAR_QUEUE_BASE unset (production backend must set it — R3 Car 0)",
-            },
-        )
-        return None
-
-    try:
-        base.mkdir(parents=True, exist_ok=True)
-        _probe = base / ".drainer-write-probe"
-        _probe.write_text("1")
-        _probe.unlink()
-    except OSError as exc:
-        _drainer_running.set(0)
-        logger.error(
-            "queue_drainer_start_failed",
-            extra={
-                "event": "queue_drainer_start_failed",
-                "queue_base": str(base),
-                "error": str(exc),
-            },
-        )
-        return None
-
-    try:
-        import yadgar._shared.runtime.state as _st  # noqa: PLC0415
-        from yadgar._shared.config import get_settings  # noqa: PLC0415
-        from yadgar._shared.file_queue.queue import FileQueue  # noqa: PLC0415
-        from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
-        from yadgar.backend.queue_drainer import DrainerConfig, QueueDrainer  # noqa: PLC0415
-
-        # Engines first: replay impls + ensure_write_engines read _st._storage.
-        _ensure_recall_engines()
-
-        settings = get_settings()
-        fq = FileQueue(base, wiki_prefix=settings.WIKI_SLUG_PREFIX)
-        drainer = QueueDrainer(
-            fq,
-            _get_storage,
-            drain_interval=float(settings.QUEUE_DRAIN_INTERVAL),
-            config=DrainerConfig(
-                max_permanent_attempts=settings.QUEUE_MAX_PERMANENT_ATTEMPTS,
-                max_transient_attempts=settings.QUEUE_MAX_TRANSIENT_ATTEMPTS,
-                backoff_base_s=float(settings.QUEUE_BACKOFF_BASE_S),
-                backoff_max_s=float(settings.QUEUE_BACKOFF_MAX_S),
-                dlq_retention_days=settings.QUEUE_DLQ_RETENTION_DAYS,
-            ),
-        )
-        drainer.start()
-    except Exception as exc:  # noqa: BLE001 — embed/rerank must still serve
-        _drainer_running.set(0)
-        logger.error(
-            "queue_drainer_start_failed",
-            extra={
-                "event": "queue_drainer_start_failed",
-                "queue_base": str(base),
-                "error": str(exc),
-            },
-        )
-        return None
-
-    _st._file_queue = fq
-    _st._queue_drainer = drainer
-    _queue_drainer = drainer
-    _drainer_running.set(1)
-    logger.info(
-        "queue_drainer_started",
-        extra={
-            "event": "queue_drainer_started",
-            "queue_base": str(base),
-            "drain_interval_s": drainer._drain_interval,
-        },
-    )
-    return drainer
-
-
-@observe(tier="stage")
-def _stop_queue_drainer() -> None:
-    """Stop the QueueDrainer on shutdown (no-op when never started)."""
-    global _queue_drainer
-    if _queue_drainer is None:
-        return
-    try:
-        _queue_drainer.stop()  # sets stop event + joins (5s cap)
-        logger.info("queue_drainer_stopped", extra={"event": "queue_drainer_stopped"})
-    except Exception as exc:  # noqa: BLE001 — shutdown must proceed
-        logger.warning("queue_drainer stop error: %s", exc)
-    _queue_drainer = None
-    _drainer_running.set(0)
 
 
 async def _require_admin_token(
@@ -589,76 +317,6 @@ def _get_reranker() -> LocalMLClient:
                 for _mode in ("ce", "nli", "pair"):
                     _model_loaded.labels(model=_mode).set(1)
     return _reranker
-
-
-class EmbedRequest(BaseModel):
-    texts: list[str]
-    mode: str = "document"  # "document" | "query" | "raw"
-
-    @field_validator("texts")
-    @classmethod
-    def validate_texts(cls, v: list[str]) -> list[str]:
-        if len(v) > 128:
-            raise ValueError("Maximum 128 texts per request")
-        for text in v:
-            if len(text) > 32768:
-                raise ValueError("Text exceeds maximum length of 32768 characters")
-        return v
-
-
-class EmbedResponse(BaseModel):
-    embeddings: list[list[float] | None]
-    model: str
-    dim: int
-
-
-class RerankRequest(BaseModel):
-    query: str
-    texts: list[str]
-    mode: str = "ce"  # "ce" | "nli" | "pair"
-
-    model_config = {"extra": "forbid"}
-
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        if v not in ("ce", "nli", "pair"):
-            raise ValueError(f"mode must be 'ce', 'nli', or 'pair'; got {v!r}")
-        return v
-
-
-class RerankResponse(BaseModel):
-    scores: list[float]
-    mode: str
-
-
-@observe(tier="stage", span=False)
-def _configure_torch_threads() -> int | None:
-    """Set torch intra-op threads to the CPU-aware budget (T3 Car 3).
-
-    Process-global, set once at backend startup. N = ``torch_intraop_threads()``
-    (1 at ncpu ≤ 2 = today's implicit single-thread inference, so byte-identical
-    on the `--cpus 2` deployment; ncpu//2 above, reserving the other half for the
-    provider gather arms — the two budgets compose within ncpu). Zero RAM cost,
-    model-agnostic — the cheapest CE CPU-awareness lever.
-
-    torch is a heavy, lazy import (never at module scope in the backend); this
-    imports it locally and NO-OPS gracefully (returns None) when torch is
-    unavailable, so a torch-less environment still boots. Returns the applied
-    thread count, or None when torch could not be configured.
-    """
-    from yadgar._shared.runtime.cpu import torch_intraop_threads  # noqa: PLC0415
-
-    n = torch_intraop_threads()
-    try:
-        import torch  # noqa: PLC0415
-
-        torch.set_num_threads(n)
-    except Exception as exc:  # noqa: BLE001 — torch missing/unset must not block boot
-        logger.info("torch intra-op thread config skipped (%s)", exc)
-        return None
-    logger.info("torch intra-op threads set to %d (CPU-aware, T3 Car 3)", n)
-    return n
 
 
 @asynccontextmanager
@@ -1204,377 +862,42 @@ def _ensure_recall_engines() -> None:
         _recall_engines_ready = True
 
 
-class RecallRequest(BaseModel):
-    """Request body for POST /recall."""
-
-    query: str
-    directory: str
-    current_branch: str | None = None
-    default_branch: str | None = None
-    max_results: int = 5
-    min_heat: float = 0.0
-    type: str = "all"  # noqa: A003 — matches MCP schema convention
-    profile: str | None = None
-    mode: str | None = None
-    stage_overrides: dict | None = None
-    tags: list[str] | None = None
-    knobs: dict = {}  # noqa: B006 — Pydantic default_factory not needed here
-    # ADR-0077: client compute budget in ms. When set, the route converts it to
-    # a monotonic deadline and the pipeline aborts remaining stages once it is
-    # exceeded (partial results) — a hook client that already timed out at 2.0s
-    # must not keep the backend computing. None = no deadline (MCP recall path).
-    deadline_ms: int | None = None
-
-    model_config = {"extra": "forbid"}
-
-    @field_validator("type")
-    @classmethod
-    def validate_type(cls, v: str) -> str:
-        valid = {"all", "memory", "wiki"}
-        if v not in valid:
-            raise ValueError(f"type must be one of {sorted(valid)}; got {v!r}")
-        return v
-
-
-class RecallResponse(BaseModel):
-    """Response body for POST /recall."""
-
-    results: list[dict]
-
-
-@observe(tier="stage", metric="backend.recall.landscape")
-def _run_landscape_backend(query: str, max_results: int, directory: str, storage) -> list[dict]:
-    """Backend-side landscape recall via AstrocytePool.consensus_retrieve.
-
-    Phase 1 §5.1/§3.2: mirrors core _landscape_recall (recall.py:45-91) but runs
-    inside the backend process where the AstrocytePool is available after
-    init_engines(local_engines=True). The 400 guard at the route level is removed;
-    this function is called when req.mode=="landscape".
-
-    Returns [] gracefully when _pool is None (pool unavailable / disabled).
-    Directory post-filter via is_directory_eligible (same predicate as fanout path).
-    """
-    import yadgar._shared.runtime.state as _st  # noqa: PLC0415
-    from yadgar._shared.storage.directory import is_directory_eligible  # noqa: PLC0415
-
-    if _st._pool is None:
-        logger.debug("landscape_backend: pool unavailable — returning []")
-        return []
-
-    raw = _st._pool.consensus_retrieve(query, top_k=max_results)
-    scoped = [r for r in raw if is_directory_eligible(r.get("directory_context"), directory)]
-    return scoped[:max_results]
-
-
-@observe(tier="stage")
-async def _forked_boost_write(storage, boosted_ids: list[int], now: str) -> None:
-    """T3 Car 2: the forked backend heat DB write (the ~407ms recall tail).
-
-    Runs the batched ``storage.boost_memories_access`` off the recall response
-    critical path (as a tracked task via ``schedule_db_write``, or awaited inline
-    under backpressure). The ``recall.side_effects.db`` span nests under the
-    recall request trace because the task is created while that span is current
-    (contextvars carry the OTEL parent across ``create_task``).
-    """
-    from yadgar._shared.observability.tracing import span as _span  # noqa: PLC0415
-
-    with _span("recall.side_effects.db", results=len(boosted_ids)):
-        await asyncio.to_thread(storage.boost_memories_access, boosted_ids, now)
-
-
-@app.post("/recall", response_model=RecallResponse)
-@observe(tier="boundary", metric="backend.recall")
-async def recall_route(
-    req: RecallRequest, _: None = Depends(_require_admin_token)
-) -> RecallResponse:
-    """Run the fan-out recall pipeline backend-side and return ranked results.
-
-    Phase 1 (backend contract widening, §5.1):
-      - mode=None: _fanout_recall with optional profile/rerank_level threading.
-      - mode="landscape": _landscape_recall via backend-local AstrocytePool.
-
-    The two 400 guards for mode=landscape and profile= are removed — the backend
-    now serves every recall variant. Existing callers (mode=None, profile=None)
-    are unaffected (additive change, not a breaking change).
-
-    Called by the core thin forwarder when RECALL_BACKEND_ENABLED=True.
-    Applies the DB-side bookkeeping half (_apply_recall_db_side_effects) for
-    the fanout path. Landscape side-effects use _apply_recall_db_side_effects too
-    (heat boost + thermo), mirroring the core landscape path.
-
-    Session-side bookkeeping (SR transitions, action buffer, replay counter)
-    runs in the core process on the returned results — NOT here.
-
-    Returns:
-        RecallResponse with the ranked result list.
-    """
-    # Bootstrap engines (idempotent, guarded by lock).
-    await asyncio.to_thread(_ensure_recall_engines)
-
-    from yadgar._shared.runtime.lifecycle import (
-        _get_storage as _backend_get_storage,  # noqa: PLC0415
-    )
-    from yadgar._shared.runtime.recall_side_effects_fork import (  # noqa: PLC0415
-        schedule_db_write,
-    )
-    from yadgar.backend.retrieval.recall_pipeline import (  # noqa: PLC0415
-        _compute_db_boost,
-        _fanout_recall,
-    )
-
-    # ADR-0077: convert the client's compute budget to a monotonic deadline ONCE,
-    # at route entry — the pipeline checks it between stages and aborts remaining
-    # work (partial results) when exceeded. None = no deadline.
-    deadline: float | None = (
-        time.monotonic() + req.deadline_ms / 1000.0 if req.deadline_ms else None
-    )
-
-    # Run the RETRIEVAL + the response-feeding heat mutations in a thread
-    # (CPU-bound + IO-bound mix; don't block the event loop). T3 Car 2: the
-    # in-place heat/last_accessed mutations stay INLINE here (they feed the
-    # response payload — must be byte-identical), but the batched DB WRITE
-    # (~407ms tail) is forked off the response path below.
-    def _run_pipeline() -> tuple[list[dict], list[int], str]:
-        storage = _backend_get_storage()
-
-        if req.mode == "landscape":
-            # §5.1 landscape dispatch: backend-hosted consensus_retrieve via AstrocytePool.
-            # Mirrors core _landscape_recall (recall.py:45-91): consensus_retrieve →
-            # directory post-filter → apply DB side-effects.
-            merged = _run_landscape_backend(
-                query=req.query,
-                max_results=req.max_results,
-                directory=req.directory,
-                storage=storage,
-            )
-        else:
-            # Default fanout path — thread profile/rerank_level.
-            merged = _fanout_recall(
-                query=req.query,
-                max_results=req.max_results,
-                min_heat=req.min_heat,
-                directory=req.directory,
-                current_branch=req.current_branch,
-                default_branch=req.default_branch,
-                type_filter=req.type,
-                tags=req.tags,
-                profile=req.profile,
-                deadline=deadline,
-            )
-
-        # Inline, latency-safe: mutate heat/last_accessed in place + thermo record.
-        boosted_ids, now = _compute_db_boost(merged, storage)
-        return merged, boosted_ids, now
-
-    results, boosted_ids, boost_now = await asyncio.to_thread(_run_pipeline)
-
-    # T3 Car 2: fork the batched heat DB write off the response critical path.
-    # create_task runs while THIS request span is current → contextvars carry the
-    # OTEL parent so recall.side_effects.db nests under the recall trace. If the
-    # fork is disabled OR the in-flight cap is hit, await the SAME coroutine
-    # inline (backpressure — the side-effect always executes, never dropped).
-    if boosted_ids:
-        storage = _backend_get_storage()
-        _coro = _forked_boost_write(storage, boosted_ids, boost_now)
-        if not schedule_db_write(_coro):
-            await _coro
-
-    return RecallResponse(results=results)
-
-
 # ---------------------------------------------------------------------------
-# T2 Car B: backend /restore route — runs the restore COMPUTE backend-side
-# (CheckpointRestore + CognitiveMap SR navigation, census verdict #7). The
-# core restore MCP tool, the post-compact hook, and the CLI restore subcommand
-# forward here via the core _forward_restore helper. Live-proven motivation:
-# restore() on core's 1 CPU exceeded the 95s tool-offload ceiling; the SR
-# matrix compute now runs next to the DB on the backend's CPUs.
-# ---------------------------------------------------------------------------
+# C1 split (#18): the DB-forward routes (/recall, /restore, /consolidate, /admin,
+# /viz) + the recall helpers live in embed_service_routes; the queue-drainer
+# lifecycle (_queue_base_path/_start/_stop_queue_drainer) lives in
+# embed_service_lifecycle. Imported HERE, at the bottom, AFTER `app` +
+# `_ensure_recall_engines` + `_recall_engines_ready` + `_queue_drainer` exist, so
+# the @app.post decorators register on the live app and the helpers reach the
+# guard/writer/handle through the module object.
+#
+# RELOAD-AWARE (recipe crux): importlib.reload(embed_service) re-runs THIS body,
+# creating a fresh `app`, but does NOT re-execute an already-imported sibling —
+# so a plain import would leave the 5 DB-forward routes registered on the OLD
+# app and absent from the reloaded one (test-ordering pollution: any prior
+# reload silently drops /recall,/restore,/consolidate,/admin,/viz). Force a
+# reload of the siblings when they are already loaded so `app = _es.app` at their
+# top rebinds to the new app and the @app.post decorators re-register on it. The
+# lifecycle sibling re-reads its module refs on reload too (harmless, cheap).
+import importlib as _importlib  # noqa: E402
 
+_sib_lifecycle = _importlib.import_module("yadgar.backend.embed_service.embed_service_lifecycle")
+_sib_routes = _importlib.import_module("yadgar.backend.embed_service.embed_service_routes")
+if getattr(_sib_lifecycle, "_YADGAR_ES_LOADED", False):
+    _sib_lifecycle = _importlib.reload(_sib_lifecycle)
+if getattr(_sib_routes, "_YADGAR_ES_LOADED", False):
+    _sib_routes = _importlib.reload(_sib_routes)
 
-class RestoreRequest(BaseModel):
-    """Request body for POST /restore."""
-
-    directory: str = ""
-
-    model_config = {"extra": "forbid"}
-
-
-class RestoreResponse(BaseModel):
-    """Response body for POST /restore.
-
-    ``result`` is the exact payload CheckpointRestore.restore returns (the dict
-    the core restore tool returned pre-Car-B): checkpoint, anchored_memories,
-    recent_memories, hot_memories, predicted_memories, gaps_detected,
-    memory_blocks, epoch, formatted.
-    """
-
-    result: dict
-
-
-@app.post("/restore", response_model=RestoreResponse)
-@observe(tier="boundary", metric="backend.restore")
-async def restore_route(
-    req: RestoreRequest, _: None = Depends(_require_admin_token)
-) -> RestoreResponse:
-    """Run the restore compute backend-side and return the restore payload.
-
-    Mirrors the /recall route: lazily builds the slim engine set (plus the
-    restoration engines) via _ensure_recall_engines, then runs the compute in a
-    worker thread so the event loop is not blocked (SR matrix build + inversion
-    is CPU-bound). Called by the core thin forwarder (_forward_restore).
-    """
-    from yadgar.backend.restoration import run_restore  # noqa: PLC0415
-
-    # Bootstrap engines (idempotent, guarded by lock).
-    await asyncio.to_thread(_ensure_recall_engines)
-
-    result = await asyncio.to_thread(run_restore, req.directory)
-    return RestoreResponse(result=result)
-
-
-# ---------------------------------------------------------------------------
-# R3 Car 1 D2: backend /consolidate route — runs the consolidation COMPUTE
-# backend-side (it uses the backend curator + phase engines). The core
-# orchestrator forwards here and layers its viz/admin tail on the result.
-# ---------------------------------------------------------------------------
-
-
-class ConsolidateRequest(BaseModel):
-    """Request body for POST /consolidate."""
-
-    mode: str = "light"
-
-    model_config = {"extra": "forbid"}
-
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        valid = {"light", "full", "nightly"}
-        if v not in valid:
-            raise ValueError(f"mode must be one of {sorted(valid)}; got {v!r}")
-        return v
-
-
-class ConsolidateResponse(BaseModel):
-    """Response body for POST /consolidate."""
-
-    stats: dict
-
-
-@app.post("/consolidate", response_model=ConsolidateResponse)
-@observe(tier="boundary", metric="backend.consolidate")
-async def consolidate_route(
-    req: ConsolidateRequest, _: None = Depends(_require_admin_token)
-) -> ConsolidateResponse:
-    """Run the consolidation compute cycle backend-side and return the stats.
-
-    Mirrors the /recall route: lazily builds the backend engine set (the
-    consolidation service reuses the slim /recall engines + builds its own
-    scheduler singleton), then runs one cycle in a worker thread so the event
-    loop is not blocked by the CPU/IO-bound compute (light ~30s, full 5–15 min).
-
-    Called by the core consolidation orchestrator (forward-only, R3 Car 1 D3).
-    """
-    from yadgar.backend.consolidation.service import (  # noqa: PLC0415
-        run_consolidation_cycle,
-    )
-
-    stats = await asyncio.to_thread(run_consolidation_cycle, req.mode)
-    return ConsolidateResponse(stats=stats)
-
-
-# ---------------------------------------------------------------------------
-# R3 Car 3a (R5 forward pattern): backend /admin route — runs the storage-WRITE
-# half of the pure-CRUD MCP tools (bookmarks, blocks, …). Core keeps the @_tool
-# shell + validation + secret-gate and forwards the write here via the core
-# _forward_admin helper. Goal: core touches zero DB directly.
-# ---------------------------------------------------------------------------
-
-
-class AdminRequest(BaseModel):
-    """Request body for POST /admin."""
-
-    op: str
-    payload: dict = {}  # noqa: RUF012 — Pydantic model field default, not a mutable class attr
-
-    model_config = {"extra": "forbid"}
-
-
-class AdminResponse(BaseModel):
-    """Response body for POST /admin."""
-
-    result: dict
-
-
-@app.post("/admin", response_model=AdminResponse)
-@observe(tier="boundary", metric="backend.admin")
-async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)) -> AdminResponse:
-    """Run a single admin op's storage-write body backend-side and return its result.
-
-    Mirrors the /recall + /consolidate routes: lazily builds the slim engine set
-    (which includes storage) via _ensure_recall_engines, then runs the op in a
-    worker thread so the event loop is not blocked by the storage IO.
-
-    op must be a registered admin op (yadgar.backend.admin_exec.run_admin_op).
-    Unknown ops → 400. Called by the core thin forwarders (_forward_admin).
-    """
-    from yadgar.backend.admin_exec import run_admin_op  # noqa: PLC0415
-
-    # Bootstrap engines (idempotent, guarded by lock) — the op needs storage.
-    await asyncio.to_thread(_ensure_recall_engines)
-
-    try:
-        result = await asyncio.to_thread(run_admin_op, req.op, req.payload)
-    except KeyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return AdminResponse(result=result)
-
-
-# ---------------------------------------------------------------------------
-# T2 Car E3 (census verdict #11): backend /viz route — runs the DB-heavy graph
-# data assembly (GraphAPI) + cached-layout attach backend-side. The core
-# /api/graph* endpoints keep their route shells and forward here via the core
-# _forward_viz helper. Mirrors /admin + run_admin_op (reads-flavored twin).
-# ---------------------------------------------------------------------------
-
-
-class VizRequest(BaseModel):
-    """Request body for POST /viz."""
-
-    op: str
-    payload: dict = {}  # noqa: RUF012 — Pydantic model field default, not a mutable class attr
-
-    model_config = {"extra": "forbid"}
-
-
-class VizResponse(BaseModel):
-    """Response body for POST /viz."""
-
-    result: dict
-
-
-@app.post("/viz", response_model=VizResponse)
-@observe(tier="boundary", metric="backend.viz")
-async def viz_route(req: VizRequest, _: None = Depends(_require_admin_token)) -> VizResponse:
-    """Run a single viz op's graph-assembly body backend-side and return its result.
-
-    Mirrors the /admin route: lazily builds the slim engine set (which includes
-    storage) via _ensure_recall_engines, then runs the op in a worker thread so
-    the event loop is not blocked by the assembly IO/compute.
-
-    op must be a registered viz op (yadgar.backend.viz_exec.run_viz_op).
-    Unknown ops → 400. Called by the core thin forwarders (_forward_viz).
-    """
-    from yadgar.backend.viz_exec import run_viz_op  # noqa: PLC0415
-
-    # Bootstrap engines (idempotent, guarded by lock) — the op needs storage.
-    await asyncio.to_thread(_ensure_recall_engines)
-
-    try:
-        result = await asyncio.to_thread(run_viz_op, req.op, req.payload)
-    except KeyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return VizResponse(result=result)
+# Re-export so embed_service.embed_service.<name> keeps resolving for callers +
+# tests. lifespan (above) references _start/_stop_queue_drainer via these module
+# globals, so patch.object(es, "_start_queue_drainer") still intercepts.
+_queue_base_path = _sib_lifecycle._queue_base_path
+_start_queue_drainer = _sib_lifecycle._start_queue_drainer
+_stop_queue_drainer = _sib_lifecycle._stop_queue_drainer
+_forked_boost_write = _sib_routes._forked_boost_write
+_run_landscape_backend = _sib_routes._run_landscape_backend
+admin_route = _sib_routes.admin_route
+consolidate_route = _sib_routes.consolidate_route
+recall_route = _sib_routes.recall_route
+restore_route = _sib_routes.restore_route
+viz_route = _sib_routes.viz_route

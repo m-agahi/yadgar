@@ -6,7 +6,7 @@ import pytest
 
 from yadgar.tests._paths import REPO_ROOT
 
-HOOKS_LIB = REPO_ROOT / "yadgar" / "core" / "install_hooks_lib.py"
+HOOKS_LIB = REPO_ROOT / "yadgar" / "core" / "install" / "install_hooks_lib.py"
 
 
 class TestV5_45InstallHooksIndependent:

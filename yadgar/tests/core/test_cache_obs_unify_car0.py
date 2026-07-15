@@ -141,7 +141,7 @@ def _scrape_backend_registry(registry: CollectorRegistry) -> str:
 def test_backend_collector_dual_emits_generic_without_dup_type():
     """The backend CacheStatsCollector must emit ONLY the new generic {cache=}
     series (not re-yield the old bespoke names) so the scrape parses cleanly."""
-    from yadgar.backend import embed_service_metrics as esm
+    from yadgar.backend.embed_service import embed_service_metrics as esm
 
     # Drive real hits/misses on the backend LRUCache instances via the collector's
     # data source — use a fresh isolated registry to avoid double-registration.
@@ -182,7 +182,7 @@ def test_backend_collector_dual_emits_generic_without_dup_type():
 def test_backend_module_registry_still_has_old_bespoke_names():
     """Behavior-neutral: the OLD bespoke CE/embed counters stay declared + scraped
     from the module registry, untouched by this car."""
-    from yadgar.backend import embed_service_metrics as esm
+    from yadgar.backend.embed_service import embed_service_metrics as esm
 
     text = _scrape_backend_registry(esm._registry)
     assert "yadgar_embed_ce_cache_hits_total" in text

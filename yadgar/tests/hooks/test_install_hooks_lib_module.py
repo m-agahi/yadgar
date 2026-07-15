@@ -400,3 +400,58 @@ def test_sweep_stale_hook_scripts_dry_run_noop(tmp_path):
     orphan.write_text("# stale\n")
     _sweep_stale_hook_scripts(package_hooks, hooks_dir, dry_run=True)
     assert orphan.exists()
+
+
+# ── import-surface characterization (Car C5 module split) ─────────────────────
+
+# Every symbol external code + tests import from the canonical module path.
+# Pins the public API across the C5 split into cohesive sibling modules
+# (_interpreter / _hook_scripts / _settings). If a moved symbol stops being
+# re-exported from install_hooks_lib, this fails.
+_CANONICAL_SURFACE = (
+    # public
+    "install_hooks_impl",
+    "is_running_in_container",
+    # interpreter resolution
+    "_is_git_worktree_path",
+    "_is_durable_interpreter",
+    "_existing_registration_ok",
+    "_pipx_python",
+    "_main_repo_root",
+    "_canonical_repo_python",
+    "_stable_python",
+    "_registered_python",
+    "_entry_interpreter",
+    "_resolve_python_shebang",
+    # hook-script copy/sweep
+    "_copy_hook",
+    "_is_nix_symlink",
+    "_sha256_file",
+    "_sweep_stale_hook_scripts",
+    # settings.json manipulation
+    "_make_hook_entry",
+    "_entry_command",
+    "_append_if_absent",
+    "_build_core_hooks",
+    "_install_append_hooks",
+    "_install_global_scripts",
+    "_write_global_stop_hooks",
+    "_resolve_scope_paths",
+    "_load_settings",
+    "_resolve_env_block",
+    "_atomic_write",
+    # module-level constants patched/read by tests
+    "_WORKTREE_MARKER",
+    "_MANAGED_NONPREFIXED",
+    "_TEST_FIXTURE_TOKENS",
+    # the module object still carries `sys` (tests patch ihl.sys.executable)
+    "sys",
+    "logger",
+)
+
+
+def test_canonical_import_surface_preserved():
+    import yadgar.core.install.install_hooks_lib as ihl
+
+    missing = [name for name in _CANONICAL_SURFACE if not hasattr(ihl, name)]
+    assert not missing, f"canonical module lost re-exports: {missing}"

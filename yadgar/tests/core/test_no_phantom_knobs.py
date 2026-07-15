@@ -68,7 +68,7 @@ def _in_scope_fields() -> list[str]:
     has a config_yaml.py FIELD_META entry (i.e. it is surfaced in the yaml/UI).
     """
     from yadgar._shared.config import Settings
-    from yadgar._shared.config_yaml import FIELD_META
+    from yadgar._shared.config.config_yaml import FIELD_META
 
     yaml_keys = set(FIELD_META.keys())
     fields = []

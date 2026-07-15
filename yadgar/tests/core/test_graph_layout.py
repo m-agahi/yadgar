@@ -5,7 +5,7 @@ during consolidation so the viz renders pre-laid-out instead of running a slow
 cold client-side d3-force settle.
 """
 
-from yadgar.core.graph_layout import compute_graph_layout, graph_signature
+from yadgar.backend.graph.graph_layout import compute_graph_layout, graph_signature
 
 
 def _nodes(ids):

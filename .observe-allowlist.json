@@ -349,9 +349,17 @@
     "category": "hot-loop",
     "rationale": "Scans recent episodes to order two entities; called per candidate entity pair inside the detect_causality nested loop (per-pair). A span/metric per call is per-item cardinality bloat. Parent detect_causality carries the boundary span."
   },
-  "predictive_coding:WriteGate._parse_created_at": {
+  "_signals:_SignalsMixin._parse_created_at": {
     "category": "hot-loop",
-    "rationale": "Parses one memory's created_at into a datetime; called per directory-memory inside the _most_recent_mention_dt scan loop (per-item, up to 50 memories per surprisal). A span/metric per call is per-item cardinality bloat with no dashboard value."
+    "rationale": "Parses one memory's created_at into a datetime; called per directory-memory inside the _most_recent_mention_dt scan loop (per-item, up to 50 memories per surprisal). A span/metric per call is per-item cardinality bloat with no dashboard value. Key renamed C6 (stem predictive_coding→_signals per I33)."
+  },
+  "_bypass:_bypass_reason": {
+    "category": "parent-observed",
+    "rationale": "Pure string-returning helper (≤4 lines of regex checks); always called from should_store() or would_reject_at(), both of which carry boundary @observe spans. Adding a span here would nest inside a boundary span for a trivial gate-check, producing cardinality noise with no diagnostic value."
+  },
+  "_signals:_SignalsMixin._get_cached_entities": {
+    "category": "abstract-stub",
+    "rationale": "Pure abstract stub (pragma: no cover) — raises NotImplementedError and is always shadowed at runtime by WriteGate._get_cached_entities (the mixin host). Never executed; decorating an abstract stub produces a phantom span that would never fire in practice."
   },
   "__init__:_drainer_span": {
     "category": "framework-instrumented",
@@ -433,7 +441,7 @@
     "category": "hot-loop",
     "rationale": "Reads a DLQ .error.json sidecar to surface a synchronous duplicate_detected rejection; called per poll iteration on the DLQ-terminal branch of the already-@observe'd wait_for_job (queue.wait_for_job) loop. A span/metric per poll is per-iteration cardinality bloat; the parent stage span covers the wait."
   },
-  "embed_service:ConsolidateRequest.validate_mode": {
+  "embed_service_models:ConsolidateRequest.validate_mode": {
     "category": "framework-instrumented",
     "rationale": "Pydantic v2 field_validator classmethod invoked by the model's validation machinery during request parsing; decorating a validator can perturb pydantic's classmethod/validator resolution and adds a span per field-validate with no dashboard value. Pure input validation, not an observable op."
   },
@@ -561,15 +569,15 @@
     "category": "hot-loop",
     "rationale": "Collects tags above a frequency threshold for one cluster; called per promoted cluster inside abstract_to_schema (per-cluster). A span/metric per call is per-item cardinality bloat with no dashboard value."
   },
-  "cache:LRUCache.get": {
+  "lru:LRUCache.get": {
     "category": "hot-loop",
     "rationale": "O(1) LRU lookup called once per passage inside the _score_ce_with_cache / _encode_all per-text loops on the backend rerank+embed hot path (N calls per request). A span/metric per call is per-candidate cardinality bloat; the enclosing endpoint span covers it."
   },
-  "cache:LRUCache.put": {
+  "lru:LRUCache.put": {
     "category": "hot-loop",
     "rationale": "O(1) LRU insert/evict called once per cache-miss passage inside the _score_ce_with_cache / _encode_all per-text loops on the backend hot path (per-miss per-request). A span/metric per call is per-candidate cardinality bloat with no dashboard value."
   },
-  "cache:LRUCache.snapshot_age_seconds": {
+  "lru:LRUCache.snapshot_age_seconds": {
     "category": "hot-loop",
     "rationale": "A single os.stat mtime read returning seconds since last snapshot; called per cache (ce/embed) inside the periodic snapshot task and feeds the cache_snapshot_age_seconds gauge directly. Wrapping this stat helper in a span is noise; the parent snapshot stage span already covers timing."
   },
@@ -593,11 +601,11 @@
     "category": "framework-instrumented",
     "rationale": "FastAPI dependency (Depends target) that verifies the admin bearer token; decorating it perturbs the Depends() signature resolution FastAPI relies on, and test_admin_auth_still_enforced_after_wrap proves auth must survive wrapping. The enclosing route boundary span already covers the request."
   },
-  "embed_service:EmbedRequest.validate_texts": {
+  "embed_service_models:EmbedRequest.validate_texts": {
     "category": "framework-instrumented",
     "rationale": "Pydantic v2 field_validator classmethod invoked by the model's validation machinery during request parsing; decorating a validator can perturb pydantic's classmethod/validator resolution and adds a span per field-validate with no dashboard value. Pure input validation, not an observable op."
   },
-  "embed_service:RerankRequest.validate_mode": {
+  "embed_service_models:RerankRequest.validate_mode": {
     "category": "framework-instrumented",
     "rationale": "Pydantic v2 field_validator classmethod invoked by the model's validation machinery during request parsing; decorating a validator can perturb pydantic's classmethod/validator resolution and adds a span per field-validate with no dashboard value. Pure input validation, not an observable op."
   },
@@ -629,11 +637,11 @@
     "category": "framework-instrumented",
     "rationale": "Telemetry emitter: sets model_loaded gauges + increments model_unload_total AND opens a manual 'model.unload' start_as_current_span with idle attributes. It emits metrics + opens its own body-span; decorating it would double-span the unload event and wrap counter/gauge writes."
   },
-  "ml_client:_CircuitBreaker._set_gauge": {
+  "circuit_breaker:_CircuitBreaker._set_gauge": {
     "category": "framework-instrumented",
     "rationale": "Metric-emitting primitive: sole body sets yadgar_circuit_breaker_state.labels(endpoint).set(value); wrapping a single gauge .set() in @observe is recursive span noise for one metric touch with no diagnostic value. Called on every breaker state transition."
   },
-  "ml_client:_CircuitBreaker._set_reachable": {
+  "circuit_breaker:_CircuitBreaker._set_reachable": {
     "category": "framework-instrumented",
     "rationale": "Metric-emitting primitive: sole body sets yadgar_backend_reachable.labels(endpoint).set(value); wrapping a single gauge .set() in @observe is recursive span noise for one metric touch with no diagnostic value. Called on every breaker state transition."
   },
@@ -813,11 +821,11 @@
     "category": "framework-instrumented",
     "rationale": "Nested ASGI send-capture closure inside RequestLoggingMiddleware.__call__. Not independently reachable; framework-internal response-capture that patches the ASGI send callable. Covered by the parent __call__ span."
   },
-  "embed_service:RecallRequest.validate_type": {
+  "embed_service_models:RecallRequest.validate_type": {
     "category": "framework-instrumented",
     "rationale": "Pydantic @field_validator: pure input validation called by Pydantic model instantiation before any I/O. Decorating a validator with @observe adds a span to every model construction, which is per-request cardinality bloat on a trivial string-in-set check with no dashboard value."
   },
-  "embed_service:recall_route._run_pipeline": {
+  "embed_service_routes:recall_route._run_pipeline": {
     "category": "framework-instrumented",
     "rationale": "Inner thread-pool closure dispatched via asyncio.to_thread() inside the @observe-decorated recall_route() handler. The outer handler already carries the tri-signal span; adding a second span for the closure body produces a double-span with no boundary value \u2014 the trace already attributes the thread duration under the parent recall_route span."
   },

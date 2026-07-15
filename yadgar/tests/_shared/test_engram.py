@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from yadgar._shared.config import Settings
+from yadgar._shared.contracts.engram import EngramAllocator
 from yadgar._shared.embeddings import EmbeddingEngine
-from yadgar._shared.engram import EngramAllocator
 from yadgar._shared.storage import StorageEngine
 
 

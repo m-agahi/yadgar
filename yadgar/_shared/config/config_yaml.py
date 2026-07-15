@@ -865,7 +865,7 @@ FIELD_META: dict[str, dict[str, object]] = {
     "wiki_write_wait_timeout_seconds": {
         "desc": (
             "Maximum seconds wiki_add(wait=True) may block before returning a timeout error "
-            "(default 5.0). Only applies to the opt-in wait=True path — the default async "
+            "(default 15.0). Only applies to the opt-in wait=True path — the default async "
             "path is completely unaffected. Increase for slow storage; decrease for faster "
             "failure in interactive callers."
         ),

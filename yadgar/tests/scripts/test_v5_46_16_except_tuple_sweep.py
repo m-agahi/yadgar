@@ -59,9 +59,11 @@ SITES = [
     # absent (daemon/embed_service/conflict_resolver) or PEP-562 shims with no
     # except lines (config_registry/log_config), so the audit must read the target.
     (
-        "yadgar/core/daemon/daemon.py",
+        # Car C3 split: container-runtime detection (_get_runtime) moved
+        # daemon.py → runtime.py.
+        "yadgar/core/daemon/runtime.py",
         "FileNotFoundError, subprocess.TimeoutExpired",
-        "daemon.py container-runtime detection",
+        "runtime.py container-runtime detection",
     ),
     (
         "yadgar/_shared/config/config_registry.py",

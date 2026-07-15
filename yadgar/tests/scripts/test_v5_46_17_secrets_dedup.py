@@ -38,6 +38,9 @@ from yadgar.tests._paths import REPO_ROOT
 BOOTSTRAP = REPO_ROOT / "scripts" / "install" / "bootstrap_secrets.sh"
 # T2 Car D: daemon.py packaged under core/daemon/ (ADR-0084 no-lone-files).
 DAEMON_PY = REPO_ROOT / "yadgar" / "core" / "daemon" / "daemon.py"
+# Car C3 split: the systemd unit template (with the nested YADGAR_DB_USER
+# fallback) moved daemon.py → systemd.py.
+DAEMON_SYSTEMD_PY = REPO_ROOT / "yadgar" / "core" / "daemon" / "systemd.py"
 VACUUM_INIT = REPO_ROOT / "yadgar" / "core" / "vacuum" / "__init__.py"
 VACUUM_PHASES = REPO_ROOT / "yadgar" / "core" / "vacuum" / "phases.py"
 
@@ -159,14 +162,16 @@ def test_t3_generated_mode_single_gen_for_rw() -> None:
 
 
 def test_t4_daemon_rw_user_before_db_user() -> None:
-    """daemon.py systemd unit template must pass YADGAR_DB_USER env var sourced
+    """The systemd unit template must pass YADGAR_DB_USER env var sourced
     from YADGAR_RW_USER first (legacy fallback to YADGAR_DB_USER, then SURREAL_USER).
 
     The generated unit line should read:
       -e YADGAR_DB_USER=${YADGAR_RW_USER:-${YADGAR_DB_USER:-${SURREAL_USER}}}
     or equivalent nested fallback starting with YADGAR_RW_USER.
+
+    Car C3 split: the unit template moved daemon.py → systemd.py.
     """
-    content = DAEMON_PY.read_text(encoding="utf-8")
+    content = DAEMON_SYSTEMD_PY.read_text(encoding="utf-8")
 
     # Find the line that sets YADGAR_DB_USER in the docker run template
     db_user_lines = [

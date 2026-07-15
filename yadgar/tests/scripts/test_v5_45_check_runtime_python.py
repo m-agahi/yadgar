@@ -25,7 +25,8 @@ class TestV5_45CheckRuntimeRename:
         mock_result.stdout = "4.9.3\n"
         mock_result.stderr = ""
 
-        with patch("yadgar.core.daemon.daemon.subprocess.run", return_value=mock_result):
+        # Car C3 split: check_runtime()'s subprocess probe runs in runtime.py.
+        with patch("yadgar.core.daemon.runtime.subprocess.run", return_value=mock_result):
             result = YadgarDaemon.check_runtime()
 
         assert isinstance(result, dict), "check_runtime() must return a dict"
@@ -43,8 +44,9 @@ class TestV5_45CheckRuntimeRename:
         mock_result.stdout = "4.9.3\n"
         mock_result.stderr = ""
 
-        with patch("yadgar.core.daemon.daemon.subprocess.run", return_value=mock_result):
-            with patch("yadgar.core.daemon.daemon._RUNTIME", "podman"):
+        # Car C3 split: check_runtime() + the _RUNTIME cache live in runtime.py.
+        with patch("yadgar.core.daemon.runtime.subprocess.run", return_value=mock_result):
+            with patch("yadgar.core.daemon.runtime._RUNTIME", "podman"):
                 result = YadgarDaemon.check_runtime()
 
         if result.get("ok"):
