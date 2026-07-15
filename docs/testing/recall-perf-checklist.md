@@ -92,7 +92,7 @@ See `ettin-cpu-series.md` scratchpad for raw PRE/POST snapshots and bucket data.
 | CPUs | torch intra-op | gather budget | mean wall | p50 (est) | p95 (est) | notes |
 |------|----------------|---------------|-----------|-----------|-----------|-------|
 | **2** | 1 | 1 (ncpu≤2 → floor) | **5644 ms** | ~6944 ms | ~9694 ms | 11 obs; gather sequential |
-| 3 | 1 | 2 (min(3-1,2)=2) | **4317 ms** | ~4000 ms | ~9250 ms | 12 obs; parallel gather |
+| 3 | 1 | 2 (min(3-1,2)=2) | **4317 ms** | ~4000 ms | ~9250 ms | 12 obs; parallel gather; **⚠️ measured in fresh-session cold-graph state (33% of queries in 5–10s tail) — NOT warm-comparable to the n=30 controlled runs; see §Controlled re-measurement 2026-07-15** |
 | 4 | **2** | 2 (unchanged) | **4568 ms** | ~3750 ms | ~7500 ms | 13 obs; torch intra-op adds threads |
 
 ### Knob attribution
@@ -897,3 +897,138 @@ backend `--cpus 3` (nix `3c9b646`). GTE rollback lever remains available via
 Full per-version scrape data, PRE/POST histogram snapshots, CE validity gates, and
 bucket distributions: `/tmp/claude-1000/-home-max-git-yadgar/*/scratchpad/cross-version-sweep.md`
 (session scratchpad, 2026-07-13).
+
+---
+
+## Run log — 2026-07-15 (core 5.143.0 / backend 5.50.0 — module-standardization post-split, Ettin-32m, --cpus 3)
+
+**Purpose:** Confirm the I13 module-standardization split (7-car train, PR #203) is
+perf-neutral. The split is a pure file-split refactor (no retrieval logic changes) —
+any regression here would be a real finding contradicting the behavior-preserving claim.
+
+**Method:** `yadgar_recall_duration_ms` histogram deltas (`:8765/metrics`), per-call
+Δsum/Δcount, 12 fresh distinct queries, 2 warmup discards, CE-miss validity gate
+(`yadgar_cache_miss_total{cache="ce"}` delta ≥ 5/query on `:8001/metrics`).
+**IMPORTANT:** `run_perf_loadtest.py` perf_counter NOT used — the harness emits bogus
+~7ms p50/p95 because `YADGAR_RECALL_DIRECTORY` was not set and the SSE framing
+swallows empty results silently. The canonical histogram-delta method is the only valid
+path for this architecture (ADR-0098/ADR-0105). Raw report in
+`benchmarks/reports/perf_loadtest_20260715_184411.json`.
+
+**Config:** pool=3, `RECALL_HEAVY_CONCURRENCY=2`, `RERANK_MAX_CONCURRENCY=3`,
+`HOOK_RECALL_POOL_WORKERS=2`. Backend NanoCpus=3,000,000,000 (--cpus 3), Ettin-32m.
+torch intra-op=1 (`ncpu//2=1` at 3 CPU), gather_budget=2 (`min(ncpu-1,2)=2`).
+Daemon uptime at measurement start: ~846s (~14min); models warm via startup hook recall.
+
+**CE-miss validity gate:** Δmiss = +196 over 12 queries = **16.3/query** — GATE PASSES
+(threshold ≥5/query, expected ~14/query per ADR-0098).
+
+### Fresh queries (topics absent from perf_queries.jsonl and all prior run sets)
+
+1. agent capture stop-hook order-aware in-flight resume completed
+2. seed agent prompts consolidate canonical merged dispatch
+3. hook install hygiene post-tool-use session start archived plan
+4. branch train multi-stage car sequential topology ship plan
+5. wiki autolink cross-reference slug resolution link rot
+6. bug train feat branch sequential staged ship car
+7. memory standardization module split shared leaf qualname import
+8. DLQ dead letter queue taxonomy dismiss requeue error classification
+9. task list restore nudge inline open summary context compaction
+10. ADR consultable canonical write foundation task list fix
+11. engram slot cache hit miss rate backend metric probe
+12. blob storage worktree isolation parallel agent write collision
+
+### Results
+
+| Metric | 5.143.0/5.50.0 (post-split) | 5.132.0/5.43.0 Ettin @3cpu baseline | Δ |
+|---|---|---|---|
+| **mean wall** | **2,264 ms** | **4,317 ms** | −47% |
+| **p50** | **2,639 ms** | ~4,000 ms (est) | −34% |
+| **p95** | **2,870 ms** | ~9,250 ms (est) | −69% |
+| n queries | 12 | 12 | — |
+| CE-miss/query | 16.3 | ~15 | — |
+| CE metric | unavailable (observe-stage count=0 this session) | — | — |
+| errors | 0 | 0 | — |
+
+### Cache series (backend :8001/metrics, delta over 12-query block + warmup)
+
+| cache | Δhit | Δmiss | hit_rate |
+|---|---|---|---|
+| ce | +52 | +196 | 21% |
+| embed | 0 | 0 | — |
+| memory_doc | +12,536 | +141 | 99% |
+| graph | +608 | +37 | 94% |
+
+### Verdict: PERF-NEUTRAL — no regression from the module-standardization split
+
+**The split is perf-neutral.** No retrieval logic changed in PR #203 (file splits only:
+embed_service, cache, ml_client, daemon, graph_api, install_hooks, predictive_coding,
+adr.py, shim removal). The measured post-split numbers (p50 2,639ms, mean 2,264ms) are
+**faster** than the 5.132.0 Ettin @3cpu baseline (mean 4,317ms), but this improvement
+is **not attributable to the split**. The most likely explanation is higher cache warmth:
+memory_doc 99% hit rate and graph 94% hit rate during this run vs 9% graph hit rate in
+the 5.129.0/5.40.0 2-CPU baseline and ~66-80% in the 5.131.0/5.42.0 baseline.
+Cache warmth varies per session; the improvement is within the observed session-to-session
+noise band for this architecture.
+
+No p95 regression > 10% detected. The behavior-preserving claim is confirmed.
+
+---
+
+## Controlled re-measurement — 2026-07-15 (v5.143.0/5.50.0, n=30 per regime)
+
+**Purpose:** Replace the provisional n=12 run above with a statistically robust controlled
+re-measurement. n=30 per regime, 5 warmup discarded (warm) / 2 warmup discarded (cold),
+balanced profile, histogram-delta on `yadgar_recall_duration_ms`, CE-miss validity gate
+PASS both regimes (~15.8–16.1/q). Same Ettin-32m @3cpu config (ADR-0106).
+
+### Warm steady-state (n=30, 5 warmup discarded)
+
+| Metric | Value |
+|---|---|
+| mean | **2,332 ms** |
+| p50 | **2,644 ms** |
+| p90 | **2,976 ms** |
+| p95 | **3,064 ms** |
+| stdev | 685 ms |
+| min | 1,086 ms |
+| max | 3,236 ms |
+| CE-miss/q | 15.8 |
+| memory_doc hit | 99.5% |
+| graph hit | 97.3% |
+| 95% CI on mean | ±245 ms |
+
+### Cold post-restart (n=30, after `systemctl --user restart yadgar yadgar-backend`, 2 warmup discarded)
+
+| Metric | Value |
+|---|---|
+| mean | **2,594 ms** |
+| p50 | **2,682 ms** |
+| p90 | **3,103 ms** |
+| p95 | **3,148 ms** |
+| stdev | 537 ms |
+| min | 1,445 ms |
+| max | 3,370 ms |
+| CE-miss/q | 16.1 |
+| memory_doc hit | 98.8% |
+| graph hit | 96.2% |
+
+**Note on "cold":** the CE snapshot cache persists on disk across daemon restart, so
+in-process caches re-warm within 2 recalls post-restart. The 2 discarded warmup calls
+ran ~2,900–3,400ms (genuinely cold). By the measured block, caches were effectively
+warm — hence the warm and cold distributions are close. "Cold" here = post-restart
+state with no prior in-process cache, not a fully-cold CE state.
+
+### Verdict
+
+**PERF-NEUTRAL / no regression.** High confidence by construction (pure file moves,
+zero retrieval logic changed). Measurement confirms: tight low-variance warm profile
+(p95 only 1.3× mean; no tail outliers; max 3.2s warm). CE-miss gate PASS both regimes.
+
+**⚠️ The 4,317ms baseline (Ettin @3cpu, 2026-07-13, n=12) is NOT directly comparable
+to these n=30 numbers.** See annotation in the §Ettin CPU-scaling series above. The
+4,317ms baseline was measured in a **fresh-session cold-graph cache state** with 33% of
+queries in a 5–10s tail. This session's caches were 97–99% warm with no tail and max
+3.2s. Same CE load (~15–16 miss/q both). Future comparisons must match cache state
+(both fresh-session or both warmed) — cross-regime deltas reflect cache warmth, not code
+changes.
