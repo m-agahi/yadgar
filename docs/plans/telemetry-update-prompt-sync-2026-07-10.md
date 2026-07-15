@@ -1,6 +1,6 @@
 # Telemetry, Update-Count & Prompt-Sync — Design Plan
 
-**Status: REVIEW — user will extend**
+**Status: F1 DROPPED (pypistats/DockerHub give install+version counts free); F2 DEFERRED→v6; F3 DEFERRED→v8; F3-registry CUT per audit**
 **Date:** 2026-07-10
 **Branch:** `docs/telemetry-prompt-sync-plan`
 **Author:** design pass (opus), plan-only — no code, no version files.
@@ -15,7 +15,7 @@ prompt-sync). **The update-*check* already shipped** and must NOT be re-designed
 | Shipped | Where | Posture |
 |---|---|---|
 | `yadgar update --check` / `--install` / `--rollback` / `--finalize` | `yadgar/core/cli/update.py` (v5.48 → v5.49) | opt-in CLI |
-| Version probe on daemon start | `update_check_on_start` config knob (`config_yaml.py:1035`), **default `false`** | opt-in, OFF |
+| Version probe on daemon start | `update_check_on_start` config knob (`config.py:924`; env registry `config_registry.py:376-378`), **default `false`** | opt-in, OFF |
 | Probe wire format | `GET https://pypi.org/pypi/yadgar/json`, UA `yadgar/<version>`, no body/cookies/params | documented in `docs/reference/privacy.md` (v5.48) |
 | Install-method detection | `detect_install_method()` → `pipx / brew / nix-flake / container / source` | already computed locally |
 
@@ -533,11 +533,19 @@ opt-*in* to build at all. Phase 7 is fenced off as a product, not a feature.
 
 ---
 
+## Audit (folded from telemetry-trio 2026-07-13)
+
+Three verdicts from the follow-up audit (telemetry-trio-2026-07-13.md, now archived):
+
+1. **SPLIT into 3 independent tracks.** F1, F2, F3 have no shared code or deployment dependency — deferred/dropped independently.
+2. **F3 Half-B (registry with accounts/payments) — CUT, not deferred.** Unbounded injection/moderation liability for solo dev. Decision is permanent; do not re-scope into any future feature.
+3. **Stale file:line reference fixed.** `config_yaml.py:1035` was wrong; canonical locations are `config.py:924` (default), `config_registry.py:376-378` (env registry), `config_yaml.py:1027` (FIELD_META).
+
 ## Cross-references (in-repo)
 
 - `docs/reference/privacy.md` — shipped v5.48 update-check privacy policy (F1 baseline)
 - `yadgar/core/cli/update.py` — shipped update CLI (do not re-design)
-- `yadgar/_shared/config_yaml.py:1035` — `update_check_on_start` knob + `FIELD_META`
+- `yadgar/_shared/config.py:924` — `update_check_on_start` default; `config_registry.py:376-378` — env registry; `config_yaml.py:1027` — FIELD_META
 - `yadgar/_shared/storage/ops.py:139` — `get_memory_stats()` (F2 local source)
 - `yadgar/core/seed/materials/agent_prompts.yaml` — genesis corpus (ADR-0091, F3 tier-3 composes above this)
 - `docs/reference/decisions.md` PD-37 — distribution/update train (v5.45–v5.47)

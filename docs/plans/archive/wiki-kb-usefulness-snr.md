@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — D1/D2 decided (D2 edit-primitives shipped); SNR-noise remnant folded into task #9-C4.
+
 # Wiki/KB usefulness + signal-to-noise — discussion + decisions
 
 Status: **DISCUSSION OPEN** (2026-06-15). Investigation + design needed before

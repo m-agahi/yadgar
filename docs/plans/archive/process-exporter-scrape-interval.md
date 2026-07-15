@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — DONE (already `scrape_interval="5s"` in nix repo modules/observability/prometheus.nix).
+
 # PLAN — process-exporter scrape 2s → 5s (observer-effect) (#34)
 
 Created 2026-06-25 (improvement-train #29, group A). theme: observability / nix /

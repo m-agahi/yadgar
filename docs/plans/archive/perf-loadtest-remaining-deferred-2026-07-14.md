@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — re-scoped into task #32 + ADR-0129 (run_perf_loadtest.py found bogus; histogram-delta is canonical).
+
 # Perf load-test — remaining work (DEFERRED for review)
 
 **Status:** DEFERRED — awaiting user review + two decisions (D1, D2). No implementation until those are made. **Date:** 2026-07-14.

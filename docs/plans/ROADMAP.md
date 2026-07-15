@@ -41,14 +41,13 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 |------|-------|--------|-------|
 | [improvement-train](improvement-train.md) | umbrella (#29) | **B+C mostly shipped; A1+A3+C4 remain** | Umbrella for issue #29. Group B ALL SHIPPED (#124): B1–B4 + B5 (#177). Group C: C1+C3 shipped; C4 test unskipped (#124), scoring investigation open. A2 REJECTED (ADR-0043/0067). Open: A1 (cpu-burst Part 2) + A3 (nix scrape) + C4 (recall ranking). |
 | [en2a-comet-fpa-v5.82](archive/en2a-comet-fpa-v5.82.md) + [comet-retire-dormant](archive/comet-retire-dormant.md) | enrichment / eval | **SHIPPED → archived — ADR-0004 RETIRE (in CHANGELOG `[Unreleased]`)** | Ablation concluded: un-FPA'd COMET net-negative recall (−4.2pt) at ~17h/10-core → retired to dormant (flag default True→False), BC-EN2b warning shipped. NOT improvement-train #29. Both plan docs archived 2026-06-25; verdict report `benchmarks/reports/en2a_comet_ablation_2026-06-24.md`. |
-| [db-audit-fix](db-audit-fix.md) | data-integrity | **skeleton — discuss first** | Audit + fix live-store issues (legacy `last_decay_at`, 6-week-dead aftermath, entity heat, wiki↔memory link, archive tier, orphans). User has thoughts to bring before scoping. |
+| [db-audit-fix](db-audit-fix.md) | data-integrity | **DEFERRED INDEFINITELY** | Re-audited 2026-07-16: store healthy. Residuals: ~5 dangling edge rows + unverifiable last_decay_at — not worth work. |
 | [hook-install-hygiene-2026-07-13](hook-install-hygiene-2026-07-13.md) | install / hooks (#64) | **DRAFT — awaiting audit** | FIXES-train Car #64. Hook-install hygiene: `install_hooks_lib.py` HOME-guard + orphan-sweep (content-hash predicate, not sibling-exists). Core-only. |
 | [task-list-mirror-2026-07-14](task-list-mirror-2026-07-14.md) | harness task-list / hooks | **DRAFT — awaiting audit** | Persist harness `TaskCreate` list across instances. FLAT per-project wiki `{project}-task-list`, read-before-write, instruction-driven (AUTO/INJECT/session-sectioning rejected). Stop-prompt 4-case state machine: reconcile own list → `wiki_read` → {create / skip / catch-up-sync / merge-full-rewrite} with per-task context pointers. Catch-up guard: skip `completed` + 14d age gate. Schema: `page_type="task_list"` (yaml, tier b) + one `## task:<id>` section/task (ADR-style, surgical-editable via `wiki_append_section(replace_section)`); status enum `{pending,in_progress,completed}` (verified harness output). Session-context endpoint injects restore line only if page exists (server-side pre-check, main-only, proven). No `project_brief` change + no new tool. Wiki not block (fidelity). |
 
 ### In-flight migrations / investigations
 | Plan | Theme | Status | Notes |
 |------|-------|--------|-------|
-| [wiki-kb-usefulness-snr](wiki-kb-usefulness-snr.md) | wiki-kb | live decision log | Recall-SNR investigation (recall was 37.5% noise; `directory=` no-op; mis-stamp sinks). Feeds the recall train; D1: wiki↔memory linkage dropped (unused field). |
 
 *(`wiki-restamp-migration` completed 2026-06-23 — global wiki count 616 → 5 (legit cross-project remainder); final 3 stragglers cleared via the v5.81 all-rows `wiki_set_metadata`. Archived.)*
 
@@ -58,7 +57,6 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 | [ce-perf-options](archive/ce-perf-options.md) | infra-ops | **SHIPPED — Ettin-32m (Train 4); plan archived** | CE was quoted at ~90% of recall latency (ADR-0035) — _corrected to ~25% cold by ADR-0105 (#192)._ Option B (onnx-int8) rejected (2× slower, ADR-0043/ADR-0067). The actual win came from swapping the CE model: Ettin-32m shipped Train 4 (~4.7× faster per-pass, 2.44× end-to-end; #193). improvement-train A2 / #4. |
 | [full-observability-standard-2026-07-03](full-observability-standard-2026-07-03.md) | observability | **P0 SHIPPED v5.101; per-area rollout remains** | Tri-signal standard (span+metric+log per function). P0 shipped v5.101 (`@observe` + I33 lint warn-mode + histogram fix + traceparent; ADR-0034). Remaining: per-area rollout (flip I33 lint to hard-fail per area) + backend fine-spans. |
 | [cpu-burst-rootcause-and-embedding-scan-fix](cpu-burst-rootcause-and-embedding-scan-fix.md) | perf | **Part 2 buildable; Part 1 OPEN (host-side)** | Part 2 = kill `SELECT *` consolidation scans (projection + server-side decay + sample-then-fetch + incremental linking). Part 1 = fan-burst still open (observer-effect / surrealkv suspect, hand to user). improvement-train A1 / #30–33. |
-| [process-exporter-scrape-interval](process-exporter-scrape-interval.md) | observability / nix | **nix-only — hand to user** | High-res Prometheus scrape 2s→5s (observer-effect diagnostic). No in-repo change; edit `~/git/nix/modules/observability/prometheus.nix`. improvement-train A3 / #34. |
 | [anchor-signal-gap](archive/anchor-signal-gap.md) | signals / anchors | **SHIPPED → archived #177 (a4390c4e)** | project_brief over-signals fix + per-directory scope shipped. improvement-train B5 / #20. Archived 2026-07-09. |
 | [comet-dormant-startup-warning](archive/comet-dormant-startup-warning.md) | observability | **CLOSED / ARCHIVED** | #25: warning IS reached on streamable-http (refutes ticket premise); residual = server-log vs client-visible. improvement-train C3. |
 | [recall-content-integrity-flake](recall-content-integrity-flake.md) | recall / test | **test unskipped (#124); scoring diagnosis open** | #21: skip removed (#124, 6e1629cb); it's a ranking miss (PAT vs "personal access token"). Diagnose per-signal scores → choose fix (tie-break vs test-realism vs re-weight). Don't overfit recall. improvement-train C4. |
@@ -69,13 +67,23 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 ### Horizon — v6 / v7 (skeletons + indices, not ready to build)
 | Plan | Theme | Notes |
 |------|-------|-------|
-| [v6-parallel-trains](v6-parallel-trains.md) | v6 index | Execution index for remaining #82+ trains; sequencing/dependencies. |
+| [v6-parallel-trains](v6-parallel-trains.md) | v6 index | **DEFERRED — v6 horizon (task #19)** | Index stale (T2/T3/T4 shipped); rebuild fresh when v6 resumes. |
 | [PLAN_V6_QUALITY_FOUNDATION](PLAN_V6_QUALITY_FOUNDATION.md) | v6 north-star | Measurement harness → surprise-gate ON → enrichment/retrieval ablations → consolidation efficacy → LLM synthesis. |
 | [v6-llm-curator](v6-llm-curator.md) | future | LLM curator cycle scaffold. |
 | [v6-extract-on-ingest](v6-extract-on-ingest.md) | future | LLM extract-on-ingest (Adopt-7). |
 | [v7-team-usability](v7-team-usability.md) | future | Team usability / multi-user architecture. |
-| [saas-feasibility-skeleton-2026-07-13](saas-feasibility-skeleton-2026-07-13.md) | exploratory / business | **SKELETON** | Open-core SaaS feasibility (repo stays OSS; SaaS sells advanced features) + decision-menu. Not an impl spec. |
-| [security-stack-skeleton-2026-07-13](security-stack-skeleton-2026-07-13.md) | exploratory / security | **SKELETON** | HTTPS + auth + encryption layered menu for future multi-user / cloud / SaaS. Decision-ready menu, nothing scheduled. |
+| [saas-feasibility-skeleton-2026-07-13](saas-feasibility-skeleton-2026-07-13.md) | exploratory / business | **DEFERRED — v8+ horizon** | Open-core SaaS feasibility decision-menu. Not an impl spec. |
+| [security-stack-skeleton-2026-07-13](security-stack-skeleton-2026-07-13.md) | exploratory / security | **DEFERRED — v7 (multi-user)** | HTTPS + auth + encryption layered menu. Decision-ready menu, nothing scheduled. |
+
+## Tasks minted from 2026-07-16 triage
+
+| Task | Origin |
+|------|--------|
+| #30 | agent-brain demoted: incidents-ledger + staleness nags |
+| #32 | perf-loadtest re-scoped (ADR-0129; histogram-delta canonical) |
+| #33 | stamina adoption (build-vs-buy decided = ADR-0103 keep custom) |
+| #9-C4 | wiki-kb SNR noise remnant folded in |
+| #19 | v6 horizon — parallel-trains index to rebuild when v6 resumes |
 
 ## Unfiled (no plan doc yet — candidates)
 - **consolidate `light` latency** — `light` mode took ~5.7 min live (MCP client timed out though server finished). Likely first-run `last_decay_at` backfill + episode/CLS/causal phases at scale. Needs a perf plan if it persists.

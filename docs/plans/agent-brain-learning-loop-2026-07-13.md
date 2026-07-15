@@ -1,6 +1,6 @@
 # Agent-Brain Learning Loop — No-Memorize Rule + SubagentStop Auto-Ingest
 
-**Status:** DRAFT — awaiting audit
+**Status:** DEMOTED → task #30 (incidents-ledger + staleness nags). Premises resolved: worktree-orphan=ADR-0093 shipped; auto-ingest now inert.
 **Task:** #39 — "Agent-brain learning loop: rethink no-memorize rule + stop-hook capture automation (opus design)"
 **Author:** design agent (opus), 2026-07-13
 **Core version at authoring:** 5.132.0

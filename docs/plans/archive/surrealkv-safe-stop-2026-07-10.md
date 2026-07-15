@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — SHIPPED backend 5.35.0 (ADR-0081 gap being fixed).
+
 # SurrealKV Unclean-Stop RCA + Safe-Stop Mitigation Plan
 
 - **Status:** DRAFT — investigation complete, awaiting sign-off. No code changes on master.

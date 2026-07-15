@@ -1,9 +1,6 @@
 # PLAN — Database audit + fix (SKELETON)
 
-Status: **SKELETON — awaiting user input.** Created 2026-06-15. The user has
-specific concerns to discuss before this is scoped; do NOT start implementation
-until that conversation happens. This file captures the frame + the issues
-already surfaced so the discussion starts from facts, not a blank page.
+Status: **DEFERRED INDEFINITELY — live store re-audited 2026-07-16, healthy (over-archive + dead-consolidation self-healed). Residuals: ~5 dangling edge rows (check_invariants: 1 dangling relationship + 4 memory_transition) + last_decay_at unverifiable read-only. Not worth work.**
 
 theme: data-integrity
 priority: high (correctness of the live store)

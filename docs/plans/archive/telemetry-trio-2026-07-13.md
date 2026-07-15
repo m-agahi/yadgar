@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — audit folded into telemetry-update-prompt-sync-2026-07-10.
+
 # Telemetry Trio — Design REVIEW (task #40)
 
 **Status: DRAFT — awaiting audit.**

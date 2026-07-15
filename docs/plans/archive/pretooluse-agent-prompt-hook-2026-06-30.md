@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — subsumed by yadgar-hook-integration-layer; PreToolUse-insert infeasible (ADR-0021).
+
 # PreToolUse Forcing-Function Hook: Force the Agent-Prompt Library at Dispatch Time
 
 **Date:** 2026-06-30
