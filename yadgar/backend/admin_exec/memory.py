@@ -76,7 +76,38 @@ def memory_update(payload: dict) -> dict:
         result.pop("centroid_embedding", None)
         result.pop("implicit_embedding", None)
         return result
+
+    # Car 2 (Part B): content-change re-embed guard. update_memory_fields never
+    # re-encodes, so a content patch would keep a STALE vector — the memory stays
+    # unfindable by its new text (the latent bug this fixes). Re-embed ONLY when
+    # `content` is patched AND actually differs from the stored content; a
+    # metadata-only patch (tags/is_protected/is_stale) or a same-value content
+    # patch stays cheap (no embed round-trip).
+    _reembed_content: str | None = None
+    if "content" in fields:
+        _existing = _st._storage.get_memory(memory_id)
+        if _existing is None:
+            raise ValueError(f"Memory {memory_id} not found")
+        _new_content = fields["content"]
+        if _new_content and _new_content != _existing.get("content"):
+            _reembed_content = _new_content
+
     _st._storage.update_memory_fields(memory_id, **fields)
+
+    if _reembed_content is not None:
+        try:
+            embeddings = _get_embeddings()
+            encoded = embeddings.encode_batch([_reembed_content])
+            emb = encoded[0] if encoded else None
+            if emb is not None:
+                _st._storage.update_memory_embedding(memory_id, emb, embeddings.model_name)
+        except Exception:  # noqa: BLE001 — re-embed is best-effort; the field write already committed
+            logger.warning(
+                "memory_update re-embed failed for memory %s (field write committed)",
+                memory_id,
+                exc_info=True,
+            )
+
     updated = _st._storage.get_memory(memory_id)
     if updated is None:
         raise ValueError(f"Memory {memory_id} not found after update")

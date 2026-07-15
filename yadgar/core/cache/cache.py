@@ -117,6 +117,8 @@ _NAMESPACE_WEIGHTS = {
     "wiki_read": 1.0,
     "wiki_query": 1.0,
     "agent_prompt_prelude": 1.0,
+    # Car 0: trusted per-directory {gitness, default_branch} read-through cache.
+    "dir_branch_context": 1.0,
 }
 
 
@@ -187,6 +189,7 @@ def _namespace_budget_bytes(
         "wiki_read",
         "wiki_query",
         "agent_prompt_prelude",
+        "dir_branch_context",
     ),
 ) -> int:
     """This namespace's weighted share of ``total_budget``.

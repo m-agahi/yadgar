@@ -34,6 +34,7 @@ _EXPECTED_DISCIPLINE_NAMES = [
     "branch-state",
     "plan-lifecycle",
     "commit-hygiene",
+    "adr-consult",
 ]
 _EXPECTED_DISCIPLINE_SLUGS = [f"agent-discipline-{n}" for n in _EXPECTED_DISCIPLINE_NAMES]
 
@@ -101,6 +102,34 @@ class TestDisciplineGenesis:
         assert "git mv" in pl
         assert "ls-files" in pl, "move-not-copy verification missing"
 
+    def test_adr_consult_must_absorb(self):
+        """Car 2: the adr-consult discipline must carry the read-side consult rules."""
+        from yadgar.core.server.tools.agent_prompts import DISCIPLINES
+
+        by_name = {n: c for n, _, c in DISCIPLINES}
+        ac = by_name["adr-consult"]
+        assert 'recall(type="wiki", tags=["adr"])' in ac, "wiki-tagged ADR recall missing"
+        assert "adr_list" in ac, "adr_list open-status consult missing"
+        assert "BIND" in ac, "observed-ADRs-bind rule missing"
+        assert "default recall profile" in ac.lower(), "fast-profile gap note missing"
+
+    def test_adr_consult_composed_into_target_patterns(self):
+        """Car 2: the 5 named patterns must compose [[agent-discipline-adr-consult]]."""
+        from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
+
+        by_pattern = {p: c for p, _, c in STARTER_PROMPTS}
+        for pat in (
+            "plan-executing-build",
+            "build-car",
+            "scope-and-plan",
+            "rca-diagnose",
+            "debug-investigate",
+        ):
+            assert pat in by_pattern, f"target pattern {pat!r} missing from STARTER_PROMPTS"
+            assert "[[agent-discipline-adr-consult]]" in by_pattern[pat], (
+                f"pattern {pat!r} does not compose agent-discipline-adr-consult"
+            )
+
 
 class TestSeedDisciplines:
     def test_seed_creates_disciplines(self, storage):
@@ -110,7 +139,7 @@ class TestSeedDisciplines:
         )
 
         result = seed_agent_prompts(storage=storage)
-        assert result["disciplines_created"] == 5, f"expected 5 disciplines created: {result}"
+        assert result["disciplines_created"] == 6, f"expected 6 disciplines created: {result}"
         assert result["disciplines_skipped"] == 0
         assert sorted(result["disciplines"]) == sorted(_EXPECTED_DISCIPLINE_NAMES)
 
@@ -126,7 +155,7 @@ class TestSeedDisciplines:
         seed_agent_prompts(storage=storage)
         r2 = seed_agent_prompts(storage=storage)
         assert r2["disciplines_created"] == 0
-        assert r2["disciplines_skipped"] == 5
+        assert r2["disciplines_skipped"] == 6
 
     def test_toc_rows_include_disciplines(self, storage):
         from yadgar.core.server.tools.agent_prompts import (

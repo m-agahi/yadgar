@@ -55,7 +55,10 @@ _EXPECTED: list[tuple[str, str, str]] = [
             " root cause, not the symptom.\n"
             "Apply the minimal fix — surgical edit, no opportunistic cleanups.\n"
             "Add a regression test that fails before the fix and passes after.\n"
-            "Run the full suite; loop until green."
+            "Run the full suite; loop until green.\n"
+            "\n"
+            "## Composes\n"
+            "- [[agent-discipline-adr-consult]]"
         ),
     ),
     (

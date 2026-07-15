@@ -68,6 +68,9 @@ prompts:
     Apply the minimal fix — surgical edit, no opportunistic cleanups.
     Add a regression test that fails before the fix and passes after.
     Run the full suite; loop until green.
+
+    ## Composes
+    - [[agent-discipline-adr-consult]]
 - pattern: explore-codebase
   purpose: Map where code lives / how a subsystem works (READ-ONLY).
   content: |-
@@ -127,6 +130,7 @@ prompts:
     - [[agent-discipline-branch-state]]
     - [[agent-discipline-process-hygiene]]
     - [[agent-discipline-commit-hygiene]]
+    - [[agent-discipline-adr-consult]]
 
 # ── v5.124.0 consolidation: merged canonicals + retained generic patterns ──────
 # The 3 generic merged canonicals (rca-diagnose, plan-audit, scope-and-plan, build-car)
@@ -171,6 +175,9 @@ prompts:
       - Mechanism exclusion: enumerate candidate mechanisms; for EACH, PROVE or EXCLUDE it against the code (cite file:line) — do not stop at the first plausible one. A theory that matches the symptom but is excluded by the code is WRONG (e.g. "thread-safety race" excluded because all clients are sync; "timeout leak" excluded because the configured timeout exceeds the operation; "saturation" excluded because the grace never trips at prod knobs).
       - State the single proximate trigger + the load-bearing ROOT flaw (often a latent fragility the change EXPOSED, not created). Flag any step modeled with a STUB vs proven against the real system — don't overclaim.
       - Name WHY the original tests missed it (e.g. a synthetic stand-in that never exercised the real dependency/load pattern), and call `advisor` on the root-cause hypothesis before committing to it.
+
+    ## Composes
+    - [[agent-discipline-adr-consult]]
 - pattern: plan-audit
   purpose: 'Adversarially audit an implementation plan BEFORE building — verify load-bearing claims against actual code, try to break it, verdict build/build-with-changes/don''t-build. writeback=false (default, report only) | true (append ## AUDIT + set AUDITED status in the plan file).'
   content: |-
@@ -231,6 +238,9 @@ prompts:
     - `advisor=N` (default 0): call `advisor()` at least N times — typically N=2: (1) after investigating + drafting the design, BEFORE committing to it; (2) before finalizing. Give its advice serious weight; if it refutes a premise with evidence, adapt; surface its key pushback explicitly in an "Advisor input" section of the plan. Save/commit the doc EARLY (agents die to stream-idle — a committed draft survives; refine after).
     - `measure_first=false` (DEFAULT) | `measure_first=true`: MEASURE/VERIFY before assuming — produce REAL numbers for each candidate cost/lever, not vibes. Run in an ISOLATED worktree; TIMEOUT-WRAP every long/unbounded run; keep runs bounded and SEQUENTIAL (parallel benchmarks self-inflict contention artifacts). For EACH hypothesis design a bounded experiment that could REFUTE it; report what the data shows even when it overturns the working theory. Tag every claim [measured] / [code-read] / [estimated/anchor]. Verify any mechanism claim against source (grep/read the actual code) before asserting it. Size each lever against your measurements (expected win + effort + risk); mark low-value/phantom levers EXPLICITLY (never silently drop a candidate — say why it lost). Output a measured cost-breakdown table → prioritized levers → recommended sequence → open questions.
     - `domain=generic` (DEFAULT) | `domain=perf-lever`: plan for a single perf/optimization lever. State HARD CONSTRAINTS up front (e.g. "backend pinned --cpus 2, no more cores"). Cite the measured problem with real numbers. QUALITY IS CO-EQUAL WITH SPEED — every change gated on the real quality harness, no regression or it aborts. Investigate WHY prior attempts failed (read archived plan/memory — a "wrong knob" or "venv artifact" trap often lurks) and whether the hypothesis even holds at the mechanism level (is cost ∝ the knob, or fixed-batch?). Add to the plan: (a) root-cause of prior failure + how this avoids it; (b) a QUALITY GATE section (harness, metric, threshold, flip-vs-abort criteria — watch dual-knob / metric-invalidation traps); (c) a LATENCY/measure plan (the user-POV path, on the constrained resource, quiet host); (d) an adversarial AUDIT section (risks, what could make this NOT worth it, is the hypothesis even true, cheap-config rollback?, go/no-go). If the lever is infeasible / a no-op / a likely quality-loss, SAY SO with evidence and propose alternatives.
+
+    ## Composes
+    - [[agent-discipline-adr-consult]]
 - pattern: build-car
   purpose: 'Build one train car TDD in an isolated worktree — targeted-then-final test discipline. plan_spec=<docs/plans path> for spec-driven (implement the AUDITED plan exactly); else goal-driven.'
   content: |-
@@ -265,6 +275,9 @@ prompts:
     ## Modes
     - goal-driven (DEFAULT): the TASK block above is the spec — build to the stated acceptance criteria.
     - `plan_spec=<docs/plans/<car>.md>`: spec-driven. Read that plan file IN FULL — the reworked body above any `## AUDIT` section is the AUDITED-ready spec; implement exactly that (write the plan's failing acceptance tests FIRST). Observed state ALWAYS wins over plan text — if the tree contradicts the plan, follow the tree + note the drift. Plan lifecycle per [[agent-discipline-plan-lifecycle]] on partial vs completing scope (the main thread handles archival at integration).
+
+    ## Composes
+    - [[agent-discipline-adr-consult]]
 - pattern: drift-audit
   purpose: 'Detect drift/garbage/gaps between a source-of-truth and the artifacts that should mirror it — find divergence on purpose. mode=plan-corpus classifies plan-corpus files shipped vs remaining.'
   content: |-
@@ -456,3 +469,11 @@ disciplines:
     Commit with the worktree venv on PATH (`PATH=<worktree>/.venv/bin:$PATH git commit` — lint-imports is language:system).
     `git add` explicit paths only (never -A); no staged file >2MB.
     Pre-commit gotchas: py314 except-tuple parens; I13 caps (nesting ≤4, cyclomatic ≤15, params ≤8); I33 observe-coverage (`@observe(span=False)` for hot-loop/per-item helpers, ADR-0074).
+- name: adr-consult
+  purpose: 'Read-side ADR discipline: consult binding ADR decisions before planning/building/debugging a subsystem.'
+  content: |-
+    Before planning / building / debugging a subsystem: consult the ADRs for the touched area —
+    `recall(type="wiki", tags=["adr"])` for semantic decisions + `adr_list(status="open")` for open ones.
+    Observed ADR decisions BIND: a shipped ADR is a constraint, not a suggestion — do NOT re-litigate or contradict it; if the work requires reversing one, record a SUPERSEDING ADR (adr_add) rather than silently diverging.
+    Uses the DEFAULT recall profile — it fans out to the wiki arm, unlike the fast-profile per-turn auto-recall hook (which is memory-only, ADR-0077, so ADR pages do NOT auto-surface each turn). This read is the deliberate counter to that gap.
+    Direct fetch by id: `adr_get(directory, adr_id)`. ADRs are recall-native canonical pages (`<project>-adr-NNNN`) — readable from any branch.

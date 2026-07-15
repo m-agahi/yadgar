@@ -25,6 +25,10 @@ page_types:
     required: [Context, Decision, Consequences]
   analysis:
     required: [Summary, Findings]
+  adr:
+    # Car 0: Architecture Decision Record page type. Lets wiki_lint format-check
+    # ADR pages and makes the CANONICAL_PAGE_TYPES allowlist assertion unambiguous.
+    required: [Context, Decision, Consequences]
   agent_prompt:
     required: [Purpose, Prompt]
     optional: [Preconditions, Failure modes, Verification, Composes]

@@ -129,20 +129,21 @@ class TestSeedIdempotent:
         assert r2["created"] == 0, f"second call should create 0, got {r2}"
         assert r2["skipped"] == 15
 
-        # TOC must have exactly 21 rows (15 starters + 1 contract page + 5
+        # TOC must have exactly 22 rows (15 starters + 1 contract page + 6
         # discipline pages), not 42. v5.122.0: the contract page is seeded
         # alongside the starters by _seed_contract_page; Stage 2 adds the
         # discipline pages via _seed_discipline_pages; v5.123.0 backflow grows
-        # the starters to 15. All rows go through the same agent_prompt_save
-        # machinery (idempotent on re-seed).
+        # the starters to 15; Car 2 (v5.141.0) adds the adr-consult discipline
+        # (5→6). All rows go through the same agent_prompt_save machinery
+        # (idempotent on re-seed).
         import yadgar._shared.runtime.state as _st
 
         toc_page = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
         assert toc_page is not None, "TOC page absent after seed"
         content = toc_page.get("content", "")
         row_matches = list(_TOC_ROW_RE.finditer(content))
-        assert len(row_matches) == 21, (
-            f"TOC should have exactly 21 rows (15 starters + contract + 5 disciplines), "
+        assert len(row_matches) == 22, (
+            f"TOC should have exactly 22 rows (15 starters + contract + 6 disciplines), "
             f"found {len(row_matches)}:\n{content}"
         )
 

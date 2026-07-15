@@ -99,17 +99,14 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      RETURNS — never against a remembered copy of the page. Absent = no saved list
      yet.
    - Step 4c — BRANCH on {have open tasks after reconcile?} × {page exists?}:
-     (CANONICAL WRITE: the task-list page is written WITHOUT branch_hint so it
-     lands on the project-canonical / branch-NULL slot. This is deliberate and
-     DIFFERENT from steps 1-2 above — the session-start restore-nudge is served
-     by a container endpoint that resolves the page under the caller's CURRENT
-     branch; a default-branch-pinned row would be unreachable from any
-     feature-branch session, so the page must be branch-agnostic. Do NOT add
-     branch_hint here.)
-     - have tasks · NO page → CREATE. wiki_add(title="{project} task list",
+     (The task-list page is CANONICAL — one call lands it on the project-canonical
+     / branch-NULL slot via the sanctioned wiki_write_task_list writer, so the
+     session-start restore-nudge resolves it from ANY branch and from a non-git
+     project. You do NOT craft a wiki_add / choose a branch — the writer sets the
+     canonical branch server-side.)
+     - have tasks · NO page → CREATE. wiki_write_task_list(project="{project}",
        content=<full page: ## Meta + one ## task:<id> section each>,
-       replace_slug="{project}-task-list", tags=["task-list"],
-       page_type="task_list", directory="{directory}", wait=True).
+       directory="{directory}").
      - NO tasks · NO page → SKIP. Nothing to do.
      - NO tasks · page EXISTS → CATCH-UP SYNC. The page has tasks you don't.
        Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your harness
@@ -122,10 +119,9 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      - have tasks · page EXISTS → MERGE + WRITE BACK. Reconcile the page's open
        tasks with yours (union; your live status wins for tasks you own; keep
        page-only open tasks). Default write = FULL REWRITE:
-       wiki_add(replace_slug="{project}-task-list", content=<merged full page>,
-       page_type="task_list", tags=["task-list"], directory="{directory}",
-       wait=True). OPTIONAL surgical path (only when your change is confined to
-       ONE task): wiki_append_section(slug="{project}-task-list",
+       wiki_write_task_list(project="{project}", content=<merged full page>,
+       directory="{directory}"). OPTIONAL surgical path (only when your change is
+       confined to ONE task): wiki_append_section(slug="{project}-task-list",
        section_heading="task:<id>", position="replace_section", heading_type="h2",
        content=<that task's body>, directory="{directory}") — the "## task:<id>"
        heading is UNIQUE so this is section-atomic and will not clobber a

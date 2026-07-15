@@ -70,6 +70,7 @@ from yadgar.core.server.tools.admin import (
 )
 from yadgar.core.server.tools.wiki import (
     wiki_add,
+    wiki_write_task_list,
     wiki_query,
     wiki_read,
     wiki_delete,
@@ -130,7 +131,7 @@ from yadgar.core.server.tools.blocks import (
     block_update,
 )
 from yadgar.core.server.tools.repo_wiki import repo_wiki_generate
-from yadgar.core.server.tools.adr import adr_add
+from yadgar.core.server.tools.adr import adr_add, adr_get, adr_list
 
 __all__ = [
     "memorize",
@@ -157,6 +158,7 @@ __all__ = [
     "dlq_requeue",
     "dlq_dismiss",
     "wiki_add",
+    "wiki_write_task_list",
     "wiki_query",
     "wiki_read",
     "wiki_delete",
@@ -206,6 +208,8 @@ __all__ = [
     "archive_purge",
     "repo_wiki_generate",
     "adr_add",
+    "adr_get",
+    "adr_list",
     # Private helpers re-exported for test access
     "_detect_branch",
     "_detect_branch_cached",
