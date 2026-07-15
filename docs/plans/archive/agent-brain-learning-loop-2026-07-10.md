@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — superseded by the -07-13 version.
+
 # Agent-Brain Learning Loop — Design Investigation
 
 **Date:** 2026-07-10

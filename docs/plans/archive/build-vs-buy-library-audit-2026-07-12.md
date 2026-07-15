@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — decided = ADR-0103 (keep custom); stamina adoption = task #33.
+
 # Build-vs-Buy Library Audit — hand-rolled infrastructure vs battle-hardened libraries (2026-07-12)
 
 **Status: REVIEW — user decision pending, no build without approval.**

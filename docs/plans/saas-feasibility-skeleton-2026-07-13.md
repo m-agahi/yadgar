@@ -1,6 +1,6 @@
 # Yadgar SaaS Feasibility — Open-Core Monetization
 
-**Status:** SKELETON — exploratory investigation (feasibility + decision-menu, not an implementation spec).
+**Status:** DEFERRED — v8+ horizon
 **Date:** 2026-07-13.
 **Scope:** Can yadgar sustain an open-core SaaS (repo stays fully OSS; SaaS sells advanced features) — and is it worth the effort? Brutal-honest.
 **Method:** Repo read (README, docs, security/storage source) + fresh 2026 web research on the competitive field. Observed repo state wins over any prior claim.

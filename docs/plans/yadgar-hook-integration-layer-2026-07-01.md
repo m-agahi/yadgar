@@ -1,7 +1,7 @@
 # Yadgar Hook Integration Layer — Feasibility + Design
 
 - date: 2026-07-01
-- status: design (investigate-only; nothing implemented)
+- status: DEFERRED INDEFINITELY
 - branch: master (docs-only)
 - scope: expand Claude Code hooks into a smooth integration layer so the MAIN
   thread AND every SUBAGENT naturally leverage all of Yadgar's features to
@@ -296,3 +296,15 @@ That single gap is the seed task and the highest-leverage build.
   semantic matcher on the hot path.
 - Do not assume `hook_runner.py` is live — the per-event `yadgar-*.py` scripts are.
 - Implement nothing until OQ-1..OQ-5 spikes pass.
+
+---
+
+## Consolidation + disposition (2026-07-16)
+
+The narrow pretooluse plan (`pretooluse-agent-prompt-hook-2026-06-30.md`) is subsumed here and archived. Both plans shared the same central lever: using a PreToolUse hook to auto-inject the agent-prompt library prompt into `Agent` tool calls before dispatch.
+
+**That lever is INFEASIBLE.** Runtime spike (ADR-0021 resolution 2026-07-16) confirmed: PreToolUse hooks are allow/deny only — `updatedInput` for the `Agent` tool is not supported. Hooks cannot rewrite or inject into Agent tool input. The auto-inject architecture both plans depended on cannot be built.
+
+The working fix is the CLAUDE.md read-side rule (`agent_dispatch_prelude` mandatory call before any Agent dispatch). That is a discipline rule, not a hook mechanism.
+
+**Status: DEFERRED INDEFINITELY.** No feasible hook lever exists. Revisit only if Claude Code adds PreToolUse input-rewrite support for the Agent tool.

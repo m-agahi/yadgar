@@ -1,6 +1,6 @@
 # Security Stack Skeleton — HTTPS + Auth + Encryption for Multi-User / Cloud / SaaS
 
-**Status:** SKELETON — exploratory investigation. Decision-ready menu, not an implementation spec.
+**Status:** DEFERRED — v7 (multi-user)
 **Date:** 2026-07-13
 **Scope:** Future eventuality — yadgar as a self-hostable *and* cloud/SaaS multi-tenant service. Nothing here is scheduled or committed; this is a layered menu of choices with recommendations, alternatives, phasing, and rough effort.
 

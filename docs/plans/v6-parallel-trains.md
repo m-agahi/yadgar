@@ -1,5 +1,7 @@
 # v6 Parallel Trains — execution plan (2026-06-20)
 
+**Status:** DEFERRED — v6 horizon (task #19); index is stale (T2/T3/T4 shipped) — rebuild fresh when v6 resumes
+
 Composed from the plan audit + file-collision map. Goal: maximise simultaneous,
 collision-free work. Each train = its own branch → **one PR at the end**.
 

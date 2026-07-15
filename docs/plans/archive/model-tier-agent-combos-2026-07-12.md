@@ -1,3 +1,5 @@
+> Archived 2026-07-16 — codified in CLAUDE.md tier matrix + ADRs; practiced.
+
 # Model-Tier Agent-Combo Strategy (task #41)
 
 **Status: REVIEW — user confirmation pending, no implementation.**
