@@ -893,12 +893,72 @@ async def _task_list_restore_nudge(directory: str, branch_hint: str | None) -> s
         )
         if not page:
             return ""
-        return (
+
+        # v5.142.0 — inline a compact open-task summary (checkpoint-symmetric).
+        # Parse the page body to extract pending/in_progress tasks and inline
+        # them so the model sees content directly, mirroring the checkpoint hint
+        # at lines 1076-1082.  Fail-open: any parse error falls back to the old
+        # existence-only nudge so session-start is never blocked by a bad page.
+        _OLD_NUDGE = (
             f"\n[yadgar] Saved task list found ({slug}). To restore: "
             f'wiki_read("{slug}", directory="{directory}"), then recreate '
             "the open tasks (status pending / in_progress) with TaskCreate "
             "before proceeding (skip completed).\n"
         )
+        try:
+            _content = page.get("content", "") or ""
+            # Parse ## task:NNNN sections.  Each section header starts a block
+            # that ends at the next ## heading or EOF.
+            import re as _re  # noqa: PLC0415
+
+            _TASK_RE = _re.compile(r"^## task:(\d+)", _re.MULTILINE)
+            _STATUS_RE = _re.compile(r"^- status:\s*(\S+)", _re.MULTILINE)
+            _SUBJECT_RE = _re.compile(r"^- subject:\s*(.+)", _re.MULTILINE)
+
+            _sections = _TASK_RE.split(_content)
+            # split gives: [pre, id1, body1, id2, body2, ...]
+            _open_tasks: list[tuple[str, str, str]] = []  # (id, subject, status)
+            _i = 1
+            while _i + 1 < len(_sections):
+                _task_id = _sections[_i].strip()
+                _body = _sections[_i + 1]
+                _sm = _STATUS_RE.search(_body)
+                _status = _sm.group(1).lower() if _sm else ""
+                if _status in ("pending", "in_progress"):
+                    _subm = _SUBJECT_RE.search(_body)
+                    _subject = _subm.group(1).strip() if _subm else "(no subject)"
+                    _open_tasks.append((_task_id, _subject, _status))
+                _i += 2
+
+            _CAP = 12
+            if not _open_tasks:
+                # All tasks complete — brief note, no TaskCreate instruction.
+                return (
+                    f"\n[yadgar] Saved task list ({slug}) — all tasks complete.\n"
+                    f'Full list: wiki_read("{slug}", directory="{directory}")\n'
+                )
+
+            _shown = _open_tasks[:_CAP]
+            _overflow = len(_open_tasks) - len(_shown)
+            _k = len(_open_tasks)
+            _lines = [
+                f"\n[yadgar] Saved task list ({slug}) — {_k} open task(s):",
+            ]
+            for _tid, _subj, _st in _shown:
+                _lines.append(f"  - [{_tid}] {_subj} ({_st})")
+            if _overflow > 0:
+                _lines.append(f"  …and {_overflow} more")
+            _lines.append(
+                f'Full list: wiki_read("{slug}", directory="{directory}"), then '
+                "recreate open tasks (status pending / in_progress) with TaskCreate "
+                "before proceeding (skip completed).\n"
+            )
+            return "\n".join(_lines)
+        except Exception as _pe:
+            logger.debug("session-context task-list nudge parse error: %s", _pe)
+            # Parse failed — fall back to the old existence-only nudge so the
+            # model at least knows the page exists and how to restore manually.
+            return _OLD_NUDGE
     except Exception as _te:
         logger.debug("session-context task-list nudge error: %s", _te)
         return ""

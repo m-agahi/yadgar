@@ -258,12 +258,19 @@ def test_session_context_non_compact_still_renders_catalog(tmp_path, monkeypatch
 # Task-list mirror restore-nudge (existence-checked, main-thread-only)
 # ---------------------------------------------------------------------------
 
-_NUDGE_MARKER = "Saved task list found"
+_NUDGE_MARKER = "Saved task list"
 
 
-def _seed_task_list_page(directory: str, branch: str | None) -> None:
+def _seed_task_list_page(
+    directory: str,
+    branch: str | None,
+    content: str | None = None,
+) -> None:
     """Seed a <project>-task-list wiki page the way Edit 1 (the stop-hook step)
     writes it: page_type='task_list', scoped to `directory`, branch=`branch`.
+
+    `content` overrides the default 1-open-task body. Pass None (default) to
+    get the original single-pending-task seed used by existing callers.
     """
     from pathlib import Path
 
@@ -272,12 +279,16 @@ def _seed_task_list_page(directory: str, branch: str | None) -> None:
     project = Path(directory).name
     storage = _get_storage()
     assert storage is not None, "storage engine not initialised"
+    if content is None:
+        content = (
+            f"## Meta\n- project: {project}\n- open: 1 · completed: 0\n\n"
+            "## task:0001\n- subject: seed\n- status: pending\n"
+        )
     storage.insert_wiki_page(
         {
             "slug": f"{project}-task-list",
             "title": f"{project} task list",
-            "content": f"## Meta\n- project: {project}\n- open: 1 · completed: 0\n\n"
-            "## task:0001\n- subject: seed\n- status: pending\n",
+            "content": content,
             "tags": ["task-list"],
             "page_type": "task_list",
             "wiki_schema_version": 1,
@@ -473,6 +484,149 @@ def test_task_list_nudge_fail_open_on_existence_check_error(tmp_path, monkeypatc
     # Fail-open: nudge omitted but the catalog render survives.
     assert _NUDGE_MARKER not in body["text"]
     assert "CATALOG BODY" in body["text"]
+
+
+# ---------------------------------------------------------------------------
+# Inline open-task summary (checkpoint-symmetric, v5.142.0)
+# ---------------------------------------------------------------------------
+
+_MIXED_CONTENT = """\
+## Meta
+- project: myproj
+- open: 3 · completed: 1
+
+## task:0001
+- subject: Write failing tests
+- status: in_progress
+- description: TDD first pass
+
+## task:0002
+- subject: Implement inline summary
+- status: pending
+
+## task:0003
+- subject: Done already
+- status: completed
+
+## task:0004
+- subject: Another open task
+- status: pending
+"""
+
+_ALL_COMPLETED_CONTENT = """\
+## Meta
+- project: myproj
+- open: 0 · completed: 2
+
+## task:0001
+- subject: Old done task
+- status: completed
+
+## task:0002
+- subject: Another done
+- status: completed
+"""
+
+
+def _seed_many_open_tasks(directory: str, n: int) -> str:
+    """Return content string with `n` pending tasks + 1 completed."""
+    from pathlib import Path
+
+    project = Path(directory).name
+    lines = [f"## Meta\n- project: {project}\n- open: {n} · completed: 1\n"]
+    for i in range(1, n + 1):
+        lines.append(f"\n## task:{i:04d}\n- subject: task {i}\n- status: pending\n")
+    lines.append(f"\n## task:{n + 1:04d}\n- subject: done task\n- status: completed\n")
+    return "".join(lines)
+
+
+def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
+    """Render CONTAINS subjects + count for pending/in_progress tasks (v5.142.0).
+
+    The nudge must inline a compact open-task summary — not just note page
+    existence — mirroring how the checkpoint hint inlines task + timestamp.
+    """
+    token = "tl-inline"
+    from pathlib import Path
+
+    from yadgar.core import server as _server
+
+    project = Path(str(tmp_path)).name
+    content = _MIXED_CONTENT.replace("myproj", project)
+    _seed_task_list_page(str(tmp_path), branch=None, content=content)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    text = resp.json()["text"]
+
+    # Header must include open count and slug. _MIXED_CONTENT has 3 open tasks
+    # (1 in_progress + 2 pending) and 1 completed.
+    assert "3 open task" in text, f"expected open task count in render; got: {text!r}"
+    # Subjects for open tasks must appear inline.
+    assert "Write failing tests" in text, f"expected subject 'Write failing tests'; got: {text!r}"
+    assert "Implement inline summary" in text, (
+        f"expected subject 'Implement inline summary'; got: {text!r}"
+    )
+    # wiki_read pointer and TaskCreate instruction must still be present.
+    slug = f"{project}-task-list"
+    assert slug in text
+    assert "TaskCreate" in text
+
+
+def test_task_list_nudge_excludes_completed_tasks(tmp_path, monkeypatch):
+    """Completed tasks MUST NOT appear in the inline summary (v5.142.0)."""
+    token = "tl-excl-done"
+    from pathlib import Path
+
+    from yadgar.core import server as _server
+
+    project = Path(str(tmp_path)).name
+    content = _MIXED_CONTENT.replace("myproj", project)
+    _seed_task_list_page(str(tmp_path), branch=None, content=content)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    text = resp.json()["text"]
+    assert "Done already" not in text, (
+        f"completed task subject must be excluded from inline summary; got: {text!r}"
+    )
+
+
+def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
+    """When >12 open tasks exist, render shows 12 + '…and N more' (v5.142.0)."""
+    token = "tl-cap12"
+    from yadgar.core import server as _server
+
+    n = 15
+    content = _seed_many_open_tasks(str(tmp_path), n)
+    _seed_task_list_page(str(tmp_path), branch=None, content=content)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    text = resp.json()["text"]
+
+    # Must show exactly 12 tasks (subjects task 1–12) and a "…and 3 more" tail.
+    assert "task 12" in text, f"expected 12th task to appear; got: {text!r}"
+    assert "task 13" not in text, f"task 13 must be hidden behind the cap; got: {text!r}"
+    assert "and 3 more" in text, f"expected '…and 3 more' overflow marker; got: {text!r}"
 
 
 # ---------------------------------------------------------------------------
