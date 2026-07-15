@@ -36,6 +36,7 @@ class TestSchemaFileLoads:
             "architecture",
             "decision",
             "analysis",
+            "adr",
             "agent_prompt",
             "task_list",
         }

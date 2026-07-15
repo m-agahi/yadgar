@@ -21,6 +21,7 @@ from ._memorize_phases import (
     phase_embed,
     phase_post_write,
     phase_resolve_branch,
+    phase_soft_gate,
     phase_store,
     phase_validate,
 )
@@ -79,6 +80,10 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     result = phase_embed(ctx, settings)
     if result is not None:
         return result
+
+    # Car 2 (Part B): non-blocking soft-gate — attaches ctx.near_duplicates for
+    # durable writes (embedding now available). NEVER returns a rejection.
+    phase_soft_gate(ctx, settings)
 
     result = phase_contradiction(ctx)
     if result is not None:

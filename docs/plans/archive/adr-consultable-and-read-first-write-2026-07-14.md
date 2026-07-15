@@ -1,6 +1,8 @@
+> ARCHIVED 2026-07-15 — shipped as the ADR-consultable train (Cars 0-2), PR <pending>
+
 # Canonical-Write Foundation + Task-List Fix + ADR-Consultable (3-Car Train)
 
-**Status:** AUDITED-ready — implementable by a builder
+**Status:** IN PROGRESS — **Car 0 built** (branch `car/branch-model-foundation`, v5.140.0 / backend 5.48.0); Cars 1 (task-list mirror fix) + 2 (ADR-consultable + migration) remaining
 **Date:** 2026-07-14 (re-planned 2026-07-14 after live-daemon empirical findings; verified against `origin/master` @ `aed223c9`, v5.139.1)
 **Scope:** core (`yadgar/core/server/tools/{adr,wiki,project,memorize,admin_other,dispatch_helper}.py`, `yadgar/core/hooks/{session-start-context,subagent_stop}.py`, `yadgar/core/hooks/templates/stop_checkpoint_prompt.md`, `yadgar/core/install/install_hooks_lib.py`, `yadgar/core/server/http.py`), backend (`yadgar/backend/queue_drainer/dlq.py`, `yadgar/backend/retrieval/recall_pipeline.py`, `yadgar/backend/write_exec/memorize_impl.py`, `yadgar/backend/admin_exec/memory.py`), config (`yadgar/_shared/config/{config,config_registry}.py`), seed (`yadgar/core/seed/materials/agent_prompts.yaml`), migration script (`scripts/`), tests.
 **Tracks:** task #76 (ADRs consultable) + the read-first-write discipline + the branch-model bug surfaced live (task-list mirror hard-reject + non-git default-branch-pin).

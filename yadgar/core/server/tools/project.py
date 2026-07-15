@@ -155,25 +155,30 @@ def _get_default_branch_cached(directory: str, _ts_bucket: int) -> str:
 
 
 @observe(tier="stage", metric="tools.project._get_default_branch")
-def _get_default_branch(directory: str) -> str:
-    """Return the repo default branch name (e.g. 'master' or 'main').
+def _get_default_branch(directory: str) -> str | None:
+    """Return the repo default branch name (e.g. 'master' or 'main'), or ``None``.
 
-    Uses git symbolic-ref refs/remotes/origin/HEAD to detect the configured
-    default. Falls back to 'master' if the repo has no remote or the command
-    fails. LRU-cached with a 5-minute TTL.
+    Car 0 §0.6: sources from the TRUSTED per-directory ``default_branch`` (computed
+    HOST-SIDE by the SessionStart hook, read via the ``dir_branch_context``
+    read-through cache) — NOT a daemon-side ``git symbolic-ref``, which cannot see
+    the host ``.git`` and is "doubly wrong" (returns "master" even for a
+    ``main``-default project, and always for a non-git dir).
+
+    Returns:
+      * the trusted ``default_branch`` for a known git dir,
+      * ``None`` for a non-git dir, an unknown dir (no SessionStart row yet), or a
+        backend read error — the manufactured "master" fallback is DROPPED.
+
+    Callers must tolerate ``None`` (the §25 resolution path already treats a NULL
+    default branch as "no default-branch slot", falling through to the canonical
+    NULL-branch slot).
     """
-    _before = _get_default_branch_cached.cache_info().hits
-    result = _get_default_branch_cached(directory, int(time.time() // 300))
-    try:
-        from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
+    from yadgar.core.server.tools import _dir_branch  # noqa: PLC0415
 
-        if _get_default_branch_cached.cache_info().hits > _before:
-            record_cache_hit("default_branch")
-        else:
-            record_cache_miss("default_branch")
-    except Exception:
-        pass
-    return result
+    ctx = _dir_branch.get_context(directory)
+    if ctx.get("found") and ctx.get("gitness"):
+        return ctx.get("default_branch")
+    return None
 
 
 # ── Project tools ──────────────────────────────────────────────────────
@@ -263,6 +268,23 @@ def _render_project_brief(brief: dict) -> str:
     else:
         lines.append("*(none)*")
     lines.append("")
+
+    # Car 2 (ADR-consultable): Recent ADRs — temporal newest-N from the canonical
+    # index. Complements semantic recall (default profile fans out to the wiki arm).
+    # Rendered in catalog/full (signals mode omits _render entirely).
+    recent_adrs = brief.get("recent_adrs")
+    if recent_adrs is not None:
+        latest_ids = recent_adrs.get("latest_ids") or []
+        lines.append("## Recent ADRs")
+        if latest_ids:
+            lines.append(", ".join(latest_ids))
+            lines.append(
+                f"*(consult: `adr_list(status='open')` or "
+                f"`recall(type='wiki', tags=['adr'])` — index `{recent_adrs.get('slug', '')}`)*"
+            )
+        else:
+            lines.append("*(none captured yet — use `adr_add` to record decisions)*")
+        lines.append("")
 
     # v5.53.0: Wiki Catalog section — grouped titles + counts, length-capped.
     # Replaces the bare-slug "Wiki Keys" block so Claude sees a real index.
@@ -1338,16 +1360,18 @@ def _apply_rejection_signal(resolved: str, actions: list) -> int:
 
 @observe(tier="stage", metric="tools.project._get_adr_log_updated_at")
 def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
-    """Return ADR log wiki page updated_at as a unix timestamp float.
+    """Return the ADR index wiki page updated_at as a unix timestamp float.
 
-    Queries wiki_page table directly for the project's ADR log slug.
-    Returns None when page not found or timestamp unparseable.
-    Same pattern as _get_roadmap_wiki_updated_at.
+    Car 2 (ADR-consultable): re-pointed to the CANONICAL `<project>-adr-index`
+    (the monolith `<project>-adr-log` is deleted in migration; the ADR-due nudge
+    keyed on a deleted slug would never fire). Same raw-query pattern as before —
+    no NEW core DB read introduced, only the queried slug changed.
+    Returns None when the page is not found or the timestamp is unparseable.
     """
     import os as _os  # noqa: PLC0415
 
     project_name = _os.path.basename(resolved)
-    slug = f"{project_name}-adr-log"
+    slug = f"{project_name}-adr-index"
     try:
         rows = storage._q(
             "SELECT updated_at FROM wiki_page WHERE slug = $slug LIMIT 1",
@@ -1835,29 +1859,33 @@ def _build_recent_writes(storage, resolved: str, limit: int = 10) -> list[dict]:
 
 @observe(tier="stage", metric="tools.project._build_adr_log")
 def _build_adr_log(resolved: str) -> dict:
-    """Build the adr_log field for restore mode (car #13).
+    """Build the adr_log field for restore mode.
 
-    Returns a cheap metadata-only dict: slug + up to 3 most-recent IDs.
-    Full body is never included to keep the restore payload token-budget safe.
+    Car 2 (ADR-consultable): re-pointed to the CANONICAL `<project>-adr-index`.
+    The write-only `<project>-adr-log` monolith is deleted in migration — a read
+    still pinned to it (with branch_hint=default) would resolve a deleted slug
+    and silently return empty. The canonical index reads via §25 step-2 (dir +
+    branch IS NULL) from any caller branch AND in non-git dirs (no branch_hint).
 
-    Uses lazy imports to avoid circular imports:
-      - adr.py imports project.py helpers at module level (_get_default_branch,
-        _resolve_project_root), so a top-level import of adr in project.py would
-        create a circular dependency at load time. Lazy import inside the function
-        body is safe because both modules are fully loaded by the time it is called.
-      - wiki.py also imports project.py helpers; same pattern applies.
+    Returns a cheap metadata-only dict: index slug + up to 3 most-recent IDs.
+
+    Lazy import avoids the adr.py ↔ project.py circular dependency at load time
+    (adr imports project helpers at module level; both are loaded by call time).
     """
-    from yadgar.core.server.tools.adr import adr_log_slug, parse_adr_ids  # noqa: PLC0415
+    from yadgar.core.server.tools.adr import adr_index_slug, parse_index_rows  # noqa: PLC0415
     from yadgar.core.server.tools.wiki import wiki_read  # noqa: PLC0415
 
-    slug = adr_log_slug(resolved)
-    default_branch = _get_default_branch(resolved)
+    slug = adr_index_slug(resolved)
     try:
-        page = wiki_read(slug, directory=resolved, branch_hint=default_branch)
+        page = wiki_read(slug, directory=resolved)
         if "error" in page or not page.get("content"):
             latest_ids: list[str] = []
         else:
-            latest_ids = parse_adr_ids(page["content"])[:3]
+            rows = parse_index_rows(page["content"])
+            latest_ids = [
+                r["adr_id"]
+                for r in sorted(rows, key=lambda r: int(r["adr_id"].split("-")[1]), reverse=True)
+            ][:3]
     except Exception:
         latest_ids = []
     return {"slug": slug, "latest_ids": latest_ids}
@@ -1961,6 +1989,8 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
         "checkpoint": _build_checkpoint_dict(checkpoint_rows),
         # v5.53.0: grouped wiki catalog (metadata-only, length-capped).
         "wiki_catalog": _build_wiki_catalog(storage, resolved),
+        # Car 2: Recent ADRs (temporal) — reads the canonical index (reuses _build_adr_log).
+        "recent_adrs": _build_adr_log(resolved),
     }
     if mode == "full":
         result["init_memory"] = init_rows[0].get("content") if init_rows else None

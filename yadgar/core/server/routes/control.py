@@ -83,6 +83,7 @@ SECTION_TO_CATEGORY: dict[str, str] = {
     "session_end_capture": "write-path",
     "table_retention": "write-path",
     "write_queue": "write-path",
+    "memorize_similarity_gate": "write-path",
     # thermodynamics / brain-dynamics
     "thermodynamics": "brain-dynamics",
     "neuromorphic": "brain-dynamics",

@@ -284,4 +284,9 @@ def _build_response(ctx: MemorizeContext, storage, settings) -> dict:
     if ctx.related_context:
         memory["related_context"] = ctx.related_context
 
+    # Car 2 (Part B): non-blocking soft-gate result — surface near-duplicates so
+    # the caller can UPDATE-in-place instead of accumulating redundant memories.
+    if ctx.near_duplicates:
+        memory["near_duplicates"] = ctx.near_duplicates
+
     return memory

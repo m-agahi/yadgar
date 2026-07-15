@@ -83,6 +83,44 @@ def update_active_work(payload: dict) -> dict:
     return result
 
 
+@observe(tier="boundary", metric="backend.admin.upsert_dir_branch_context")
+def upsert_dir_branch_context(payload: dict) -> dict:
+    """Persist the TRUSTED per-directory git-context (Car 0). Storage-write half.
+
+    payload: {"directory": str, "gitness": bool, "default_branch": str | None}
+    The SessionStart context endpoint (host-side, sees .git) computed these; this
+    is the DURABLE, restart-safe upsert. Returns the stored context dict.
+    """
+    directory = payload["directory"]
+    gitness = bool(payload.get("gitness"))
+    default_branch = payload.get("default_branch")
+    storage = _get_storage()
+    return storage.upsert_dir_branch_context(directory, gitness, default_branch)
+
+
+@observe(tier="boundary", metric="backend.admin.get_dir_branch_context")
+def get_dir_branch_context(payload: dict) -> dict:
+    """Read the TRUSTED per-directory git-context (Car 0). Read half.
+
+    payload: {"directory": str}
+    Returns {"found": bool, "gitness": bool, "default_branch": str | None}. The
+    core read-through cache fills from this on a miss (ADR-0078: core never reads
+    the DB directly). ``found=False`` = "unknown directory" (§0.4 flow 4).
+    """
+    directory = payload.get("directory")
+    if not directory:
+        return {"found": False, "gitness": False, "default_branch": None}
+    storage = _get_storage()
+    ctx = storage.get_dir_branch_context(directory)
+    if ctx is None:
+        return {"found": False, "gitness": False, "default_branch": None}
+    return {
+        "found": True,
+        "gitness": ctx["gitness"],
+        "default_branch": ctx["default_branch"],
+    }
+
+
 @observe(tier="boundary", metric="backend.admin.record_prelude_marker")
 def record_prelude_marker(payload: dict) -> dict:
     """Upsert the _dispatch_prelude marker for a directory. Storage-write half.

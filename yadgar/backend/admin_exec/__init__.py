@@ -85,6 +85,9 @@ _ADMIN_OPS: dict[str, Callable[[dict], dict]] = {
     "bootstrap_project_store": project.bootstrap_project_store,
     "wiki_cleanup_merged_branches": project.wiki_cleanup_merged_branches,
     "record_prelude_marker": project.record_prelude_marker,
+    # Car 0: trusted per-directory git-context durable store (upsert + read).
+    "upsert_dir_branch_context": project.upsert_dir_branch_context,
+    "get_dir_branch_context": project.get_dir_branch_context,
     # restoration writes (T2 Car B — pre-compact drain is write-only, no compute)
     "pre_compact_drain": restoration.pre_compact_drain,
 }

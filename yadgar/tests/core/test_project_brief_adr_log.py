@@ -34,9 +34,9 @@ def test_restore_mode_has_adr_log_field():
 
 
 def test_restore_adr_log_slug_matches_project():
-    """adr_log['slug'] must be '<project>-adr-log' for the test project."""
+    """Car 2: adr_log['slug'] must be the canonical '<project>-adr-index'."""
     result = server.project_brief("/tmp/myspecialproject", mode="restore")
-    assert result["adr_log"]["slug"] == "myspecialproject-adr-log"
+    assert result["adr_log"]["slug"] == "myspecialproject-adr-index"
 
 
 # ── 3. latest_ids empty when absent ──────────────────────────────────────────
@@ -52,16 +52,27 @@ def test_restore_adr_log_latest_ids_empty_when_absent():
 
 
 def test_restore_adr_log_latest_ids_when_present(tmp_path):
-    """Seed log with 3 ADRs; latest_ids must be ['ADR-0003', 'ADR-0002', 'ADR-0001'] (descending)."""
-    log_content = (
-        "# ADR Log\n\n"
-        "## ADR-0001: First decision\n\nsome content\n\n"
-        "## ADR-0002: Second decision\n\nsome content\n\n"
-        "## ADR-0003: Third decision\n\nsome content\n"
+    """Car 2: seed the canonical INDEX with 3 ADR rows; latest_ids descending."""
+    from yadgar.core.server.tools.adr import _build_index_content
+
+    index_content = _build_index_content(
+        "test",
+        [
+            {
+                "adr_id": f"ADR-000{i}",
+                "status": "accepted",
+                "date": "2026-01-01",
+                "title": f"Decision {i}",
+                "supersedes": "none",
+                "superseded_by": "-",
+                "slug": f"test-adr-000{i}",
+            }
+            for i in (1, 2, 3)
+        ],
     )
     with patch(
         "yadgar.core.server.tools.wiki.wiki_read",
-        return_value={"content": log_content, "slug": "test-adr-log"},
+        return_value={"content": index_content, "slug": "test-adr-index"},
     ):
         result = server.project_brief(str(tmp_path), mode="restore")
 
@@ -72,18 +83,27 @@ def test_restore_adr_log_latest_ids_when_present(tmp_path):
 
 
 def test_restore_adr_log_latest_ids_capped_at_three(tmp_path):
-    """Seed log with 5 ADRs; latest_ids must contain exactly 3, starting with ADR-0005."""
-    log_content = (
-        "# ADR Log\n\n"
-        "## ADR-0001: First\n\nsome content\n\n"
-        "## ADR-0002: Second\n\nsome content\n\n"
-        "## ADR-0003: Third\n\nsome content\n\n"
-        "## ADR-0004: Fourth\n\nsome content\n\n"
-        "## ADR-0005: Fifth\n\nsome content\n"
+    """Car 2: index with 5 ADR rows; latest_ids capped at 3, newest first (ADR-0005)."""
+    from yadgar.core.server.tools.adr import _build_index_content
+
+    index_content = _build_index_content(
+        "test",
+        [
+            {
+                "adr_id": f"ADR-000{i}",
+                "status": "open",
+                "date": "2026-01-01",
+                "title": f"Decision {i}",
+                "supersedes": "none",
+                "superseded_by": "-",
+                "slug": f"test-adr-000{i}",
+            }
+            for i in (1, 2, 3, 4, 5)
+        ],
     )
     with patch(
         "yadgar.core.server.tools.wiki.wiki_read",
-        return_value={"content": log_content, "slug": "test-adr-log"},
+        return_value={"content": index_content, "slug": "test-adr-index"},
     ):
         result = server.project_brief(str(tmp_path), mode="restore")
 
@@ -102,11 +122,16 @@ def test_restore_adr_log_body_absent():
     )
 
 
-# ── 7. wiki_read called with branch_hint from _get_default_branch ────────────
+# ── 7. Car 2: canonical index read uses NO branch_hint (531352 fix) ──────────
 
 
-def test_restore_adr_log_uses_default_branch_hint(tmp_path):
-    """wiki_read must be called with branch_hint matching _get_default_branch(resolved)."""
+def test_restore_adr_log_reads_canonical_index_no_branch_hint(tmp_path):
+    """Car 2: the ADR index read must be CANONICAL — no branch_hint (531352 fix).
+
+    Under the old model the read pinned branch_hint=default_branch, which returned
+    empty on feature branches / non-git dirs. The canonical index resolves via §25
+    step-2 (dir + branch IS NULL) from any caller — so branch_hint must be absent.
+    """
     captured_calls: list[dict] = []
 
     def fake_wiki_read(slug, directory=None, branch_hint=None):
@@ -116,14 +141,11 @@ def test_restore_adr_log_uses_default_branch_hint(tmp_path):
     with patch("yadgar.core.server.tools.wiki.wiki_read", side_effect=fake_wiki_read):
         server.project_brief(str(tmp_path), mode="restore")
 
-    # At least one call should be for the ADR log slug
-    from yadgar.core.server.tools.project import _get_default_branch
-
-    expected_branch = _get_default_branch(str(tmp_path))
-    adr_calls = [c for c in captured_calls if "adr-log" in (c.get("slug") or "")]
-    assert len(adr_calls) >= 1, f"No wiki_read call for ADR log slug. All calls: {captured_calls}"
-    assert adr_calls[0]["branch_hint"] == expected_branch, (
-        f"Expected branch_hint={expected_branch!r}, got {adr_calls[0]['branch_hint']!r}"
+    adr_calls = [c for c in captured_calls if "adr-index" in (c.get("slug") or "")]
+    assert len(adr_calls) >= 1, f"No wiki_read for canonical ADR index. All calls: {captured_calls}"
+    assert adr_calls[0]["branch_hint"] is None, (
+        f"Canonical index read must NOT pin a branch (531352 fix); "
+        f"got branch_hint={adr_calls[0]['branch_hint']!r}"
     )
 
 

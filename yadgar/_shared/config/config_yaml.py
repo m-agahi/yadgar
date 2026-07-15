@@ -914,6 +914,27 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "wiki_similarity_gate",
     },
+    # v5.141.0: memorize soft-gate knobs (Car 2 Part B)
+    "memorize_sim_gate_enabled": {
+        "desc": (
+            "Enable the memorize soft-gate (default true): a NON-BLOCKING near-duplicate "
+            "check for durable writes (tags ∩ {feedback,decision,_anchor} OR is_protected "
+            "OR any tier). Returns near_duplicates without blocking the store. Set false to disable."
+        ),
+        "section": "memorize_similarity_gate",
+    },
+    "memorize_sim_threshold": {
+        "desc": (
+            "Minimum cosine similarity to flag a near-duplicate memory (default 0.85; "
+            "stricter than the wiki 0.80 gate). Raise toward 0.90 to reduce false positives; "
+            "lower to 0.75 to surface looser near-dups."
+        ),
+        "section": "memorize_similarity_gate",
+    },
+    "memorize_sim_top_k": {
+        "desc": "Max near-duplicate candidates returned in the memorize near_duplicates list (default 3).",
+        "section": "memorize_similarity_gate",
+    },
     # v5.42.6: enforcement knobs
     "directory_enforcement": {
         "desc": (

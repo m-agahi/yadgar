@@ -336,6 +336,18 @@ class Settings(BaseSettings):
     # Flip to True after operator confidence that embed service is reliable.
     WIKI_EMBED_FAILURE_BLOCKS_WRITE: bool = False
 
+    # v5.141.0 (Car 2 Part B): memorize soft-gate knobs. NON-BLOCKING near-duplicate
+    # check for DURABLE writes only (tags ∩ {feedback,decision,_anchor} OR is_protected
+    # OR any tier set). Returns near_duplicates WITHOUT blocking the store — the mirror
+    # of the wiki 0.80 gate but advisory, not rejecting. Episodic writes bypass entirely.
+    MEMORIZE_SIM_GATE_ENABLED: bool = True
+    # Cosine-similarity threshold to flag a near-duplicate memory. 0.85 (stricter than
+    # the wiki 0.80) — memories are shorter/noisier so a higher bar avoids false dups.
+    # CONFIGURABLE knob; calibrate before relying on the surfaced dups downstream.
+    MEMORIZE_SIM_THRESHOLD: float = 0.85
+    # Max near-duplicate candidates returned in the (non-blocking) near_duplicates list.
+    MEMORIZE_SIM_TOP_K: int = 3
+
     # v5.42.6: enforcement knobs (I25 three-way registered).
     # Default True: strict enforcement — missing directory/branch rejects the write.
     # False: relax enforcement, emit WARN log + metric instead of rejecting.

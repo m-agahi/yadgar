@@ -1,30 +1,41 @@
 # ruff: noqa: PLR0913  — adr_add / _build_adr_body intentionally have 11 params (ADR schema
 #   has 10 mandatory content fields; FastMCP derives JSON Schema from flat keyword args).
 #   Collapsing into **kwargs loses schema enforcement. PERMANENT — see .complexity-allowlist.json.
-"""ADR (Architecture Decision Record) MCP tool registrations (car #12 — improvement-train).
+"""ADR (Architecture Decision Record) MCP tool registrations.
 
-One tool:
-  adr_add — create a new ADR entry in the project's ADR log wiki page.
+Car 2 (ADR-consultable, v5.141.0) made ADRs recall-native. The write-only
+`<project>-adr-log` monolith is replaced by:
 
-The ADR log is a wiki page named `<project>-adr-log`, scoped to the project's
-default branch (branch_hint=default_branch). IDs are assigned sequentially by
-scanning `## ADR-NNNN:` headers in the log.
+  * one CANONICAL wiki page per ADR — slug `<project>-adr-NNNN`, page_type `adr`,
+    tags `["adr","decisions","adr-status:<status>","adr-<NNNN>"]`, category
+    `decision`. The stored wiki TITLE equals the slug string (so `_slugify(title)`
+    yields the deterministic `<project>-adr-NNNN` slug); the human-readable
+    `ADR-NNNN: <title>` is the content's H1.
+  * one thin CANONICAL index page — slug `<project>-adr-index`, tags
+    `["adr","adr-index"]` — a metadata table (ID source of truth for max+1).
 
-If the log does not exist, `adr_add` creates it via `wiki_add(wait=True)`.
-If the log exists, `adr_add` appends a new `## ADR-NNNN:` section via
-`wiki_append_section(..., position="new_section_bottom")`.
+Both are written CANONICAL (branch IS NULL) via Car 0's server-side
+`_wiki_write_canonical` (flow 1: page_type in CANONICAL_PAGE_TYPES, `_internal`
+set server-side, `force=True` to bypass the drainer sim gate). Canonical pages
+resolve via §25 step-2 (dir + branch IS NULL) from ANY caller branch AND in
+non-git dirs — this closes the memory-531352 default-branch-pin bug (a non-git
+`aws-work-adr-log` was mis-pinned to a bogus "master" and unreadable).
+
+Three tools:
+  adr_add  — assign next ID from the index, write the per-ADR page + index row,
+             flip supersede targets' status tag.
+  adr_get  — read `<project>-adr-NNNN` canonical (direct fetch, no branch footgun).
+  adr_list — read the index; optional status filter ("show all open").
 
 Decisions:
-- @_tool(power=True) — write tool convention (matches wiki_append_section).
-- wait=True on wiki_add create-path — ensures read-your-writes consistency for
-  sequential ID assignment (avoids race when caller immediately adds ADR-0002).
-- ID scan anchored to ``^## ADR-(\\d{4})`` (re.MULTILINE) — body text refs ignored.
-- branch_hint=default_branch on both read and write — ADR log is canonical/global.
-- Per-project threading.Lock (_adr_log_lock) wraps the full read-modify-write
-  triple (wiki_read → _next_adr_id → wiki_append_section/wiki_add) to prevent
-  duplicate ID assignment under concurrent adr_add calls (car #26 — fix for the
-  ID-assignment race when YADGAR_OFFLOAD_TOOLS=1). Lock is process-local; see
-  docs/plans/adr-add-id-race-2026-07-13.md for the full rationale.
+- @_tool(power=True) — write-tool convention (adr_add); reads are also power to
+  match the module (adr_get/adr_list are cheap reads but sit next to the write).
+- The index create + first-row write use `wait=True` (read-your-writes) so a
+  subsequent adr_add reads the just-written index when assigning the next ID.
+  The per-ADR page write is async (deterministic slug, does not feed IDs).
+- Per-project threading.Lock (_adr_log_lock) wraps the full read-assign-write
+  sequence to prevent duplicate ID assignment under concurrent adr_add calls
+  (single-process assumption; see docs/plans/archive/adr-add-id-race-2026-07-13.md).
 """
 
 from __future__ import annotations
@@ -36,37 +47,34 @@ import threading
 from yadgar._shared.contracts.models import ADR
 from yadgar._shared.observability.observe import observe
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools.project import _get_default_branch, _resolve_project_root
 
 # Imported lazily at call-time to match the pattern in other tool modules,
 # but we list them here for clarity and to enable patching in tests.
-from yadgar.core.server.tools.wiki import wiki_add, wiki_append_section, wiki_read
+from yadgar.core.server.tools.admin_other import wiki_update
+from yadgar.core.server.tools.project import _resolve_project_root
+from yadgar.core.server.tools.wiki import (
+    _resolve_page_id_by_slug,
+    _wiki_write_canonical,
+    wiki_read,
+)
 
-# ── Per-project ADR-log write lock ─────────────────────────────────────────────
+# ── Per-project ADR write lock ─────────────────────────────────────────────────
 # The core daemon is a single persistent process (streamable-http). When
 # YADGAR_OFFLOAD_TOOLS=1 the ThreadPoolExecutor can run two adr_add calls
-# concurrently: both would read the same log content, derive the same
-# _next_adr_id, and both write — producing duplicate IDs (lost-update).
+# concurrently: both would read the same index content, derive the same next ID,
+# and both write — producing duplicate IDs (lost-update).
 #
 # A threading.Lock keyed by resolved project root serializes the full
-# wiki_read → _next_adr_id → wiki_append_section/wiki_add triple inside
-# adr_add. The lock is process-local; single-process single-backend topology
-# is an explicit assumption (see docs/plans/adr-add-id-race-2026-07-13.md).
-#
-# Lock dict grows at one entry per distinct resolved path — typically one
-# project per daemon; no eviction needed.
+# read-index → next-id → write-page → append-index-row sequence. The lock is
+# process-local; single-process single-backend topology is an explicit
+# assumption (see docs/plans/archive/adr-add-id-race-2026-07-13.md).
 _ADR_LOG_LOCKS: dict[str, threading.Lock] = {}
 _ADR_LOG_LOCKS_GUARD = threading.Lock()
 
 
 @observe(exempt="trivial dict-lookup; no I/O, no external call, no error branch worth spanning")
 def _adr_log_lock(resolved: str) -> threading.Lock:
-    """Return the per-project threading.Lock for the ADR log write sequence.
-
-    Creates a new Lock on first call for a given resolved path.  The guard
-    lock serializes the dict insert only; after lookup callers hold a
-    project-specific lock that does not contend with other projects.
-    """
+    """Return the per-project threading.Lock for the ADR write sequence."""
     with _ADR_LOG_LOCKS_GUARD:
         if resolved not in _ADR_LOG_LOCKS:
             _ADR_LOG_LOCKS[resolved] = threading.Lock()
@@ -78,8 +86,22 @@ _VALID_STATUSES: frozenset[str] = frozenset(
     {"open", "accepted", "superseded", "rejected", "deprecated"}
 )
 
-# Regex that matches ## ADR-NNNN at column 0 (header-only scan).
+# Regex that matches ## ADR-NNNN at column 0 (header-only scan — used by the
+# migration to parse the legacy monolith, and by parse_adr_ids).
 _ADR_HEADER_RE = re.compile(r"^## ADR-(\d{4})", re.MULTILINE)
+
+# Index table row: | ADR-NNNN | status | date | title | supersedes | superseded-by | slug |
+_INDEX_ROW_RE = re.compile(
+    r"^\|\s*(ADR-\d{4})\s*\|\s*(?P<status>[^|]*?)\s*\|\s*(?P<date>[^|]*?)\s*\|"
+    r"\s*(?P<title>[^|]*?)\s*\|\s*(?P<supersedes>[^|]*?)\s*\|"
+    r"\s*(?P<superseded_by>[^|]*?)\s*\|\s*(?P<slug>[^|]*?)\s*\|\s*$",
+    re.MULTILINE,
+)
+
+_INDEX_HEADER = (
+    "| ADR | Status | Date | Title | Supersedes | Superseded-by | Slug |\n"
+    "| --- | --- | --- | --- | --- | --- | --- |\n"
+)
 
 # Required caller-supplied content fields (directory is handled separately).
 _REQUIRED_FIELDS: tuple[str, ...] = (
@@ -96,49 +118,176 @@ _REQUIRED_FIELDS: tuple[str, ...] = (
 )
 
 
+# ── Slug helpers ───────────────────────────────────────────────────────────────
+
+
 def adr_log_slug(resolved: str) -> str:
-    """Return the ADR log wiki slug for an already-resolved project root.
+    """Legacy monolith slug `<project>-adr-log` (migration source + back-compat).
 
-    Exported helper (car #13) — shared between adr_add and _build_adr_log in project.py.
-
-    Args:
-        resolved: Absolute path to the project root (already resolved by
-                  _resolve_project_root in project.py).
-
-    Returns:
-        Slug string, e.g. "yadgar-adr-log" for /home/user/projects/yadgar.
+    Retained for the migration script (reads the old monolith) and
+    _get_adr_log_updated_at back-compat. New writes never touch this slug.
     """
     return f"{os.path.basename(resolved)}-adr-log"
 
 
+def adr_index_slug(resolved: str) -> str:
+    """The canonical ADR index slug `<project>-adr-index`."""
+    return f"{os.path.basename(resolved)}-adr-index"
+
+
+def adr_page_slug(resolved: str, adr_id: str) -> str:
+    """The canonical per-ADR page slug `<project>-adr-NNNN`.
+
+    ``adr_id`` is an "ADR-NNNN" string; the slug lowercases it to `adr-NNNN`
+    (slugify maps "ADR-0001" → "adr-0001"), so the stored wiki title must equal
+    this slug string to make ``_slugify(title)`` deterministic.
+    """
+    return f"{os.path.basename(resolved)}-{adr_id.lower()}"
+
+
 def parse_adr_ids(content: str) -> list[str]:
-    """Extract ADR IDs from wiki page content, sorted descending (most recent first).
+    """Extract ADR IDs from legacy monolith content, sorted descending.
 
-    Exported helper (car #13) — shared between adr_add and _build_adr_log in project.py.
-
-    Args:
-        content: Full text of an ADR log wiki page.
-
-    Returns:
-        List of "ADR-NNNN" strings in descending order, e.g. ["ADR-0003", "ADR-0002", "ADR-0001"].
-        Empty list if no ADR headings found.
+    Retained for the migration (parses the old `## ADR-NNNN` monolith) and
+    _build_adr_log back-compat. Returns ["ADR-NNNN", ...] descending, [] if none.
     """
     matches = _ADR_HEADER_RE.findall(content)
     return [f"ADR-{int(n):04d}" for n in sorted(matches, key=int, reverse=True)]
 
 
-@observe(tier="stage", metric="tools.adr._next_adr_id")
-def _next_adr_id(content: str) -> str:
-    """Return the next sequential ADR id (e.g. 'ADR-0004') from log content.
+# ── Index parsing / rendering ──────────────────────────────────────────────────
 
-    Scans only ## ADR-NNNN headers at column 0 (re.MULTILINE); ignores any
-    ADR references in body text.  Returns 'ADR-0001' when log is empty/absent.
+
+@observe(tier="stage", metric="tools.adr.parse_index_rows")
+def parse_index_rows(content: str) -> list[dict]:
+    """Parse the ADR index table into a list of row dicts (in file order).
+
+    Each row: {adr_id, status, date, title, supersedes, superseded_by, slug}.
+    Empty list if the index is absent or has no data rows.
     """
-    matches = _ADR_HEADER_RE.findall(content)
-    if not matches:
-        return "ADR-0001"
-    max_n = max(int(m) for m in matches)
-    return f"ADR-{max_n + 1:04d}"
+    rows: list[dict] = []
+    for m in _INDEX_ROW_RE.finditer(content):
+        rows.append(
+            {
+                "adr_id": m.group(1),
+                "status": m.group("status").strip(),
+                "date": m.group("date").strip(),
+                "title": m.group("title").strip(),
+                "supersedes": m.group("supersedes").strip(),
+                "superseded_by": m.group("superseded_by").strip(),
+                "slug": m.group("slug").strip(),
+            }
+        )
+    return rows
+
+
+def _index_max_id(content: str) -> int:
+    """Max ADR number from index table rows (0 when empty/absent)."""
+    ids = [int(r["adr_id"].split("-")[1]) for r in parse_index_rows(content)]
+    return max(ids) if ids else 0
+
+
+# Committed per-ADR page slug pattern: <project>-adr-NNNN.
+_ADR_PAGE_SLUG_RE = re.compile(r"-adr-(\d{4})$")
+
+
+@observe(tier="stage", metric="tools.adr._committed_page_max_id")
+def _committed_page_max_id(resolved: str) -> int:
+    """Max ADR number from COMMITTED `<project>-adr-NNNN` page slugs (0 when none).
+
+    The per-ADR page is the ID-BEARING artifact and is written wait=True (committed
+    within the per-project lock). Scanning committed page slugs makes the next-ID
+    assignment resilient to a LAGGING index: even if the index write is still queued
+    (wait_timeout — the write converges but is not yet in the DB), the freshly
+    committed per-ADR page slug is already visible here, so a subsequent adr_add
+    never re-assigns a used ID. Fixes the RYW-on-timeout duplicate-ID race.
+    """
+    project = os.path.basename(resolved)
+    prefix = f"{project}-adr-"
+    try:
+        from yadgar.core.server.tools.wiki import wiki_list  # noqa: PLC0415
+
+        pages = wiki_list(slug_prefix=prefix, directory=resolved, limit=10000)
+    except Exception:  # noqa: BLE001 — fall back to index-only on a list failure
+        return 0
+    max_n = 0
+    for p in pages:
+        m = _ADR_PAGE_SLUG_RE.search(p.get("slug") or "")
+        if m:
+            max_n = max(max_n, int(m.group(1)))
+    return max_n
+
+
+@observe(tier="stage", metric="tools.adr._next_adr_id")
+def _next_adr_id(resolved: str, index_content: str) -> str:
+    """Next sequential ADR id from BOTH the index rows AND committed page slugs.
+
+    Authoritative source = the committed per-ADR page slugs (ID-bearing, wait=True);
+    the index is a derived convenience view that may lag when its write is queued.
+    Taking the max over both guarantees uniqueness even on an index wait_timeout.
+    """
+    n = max(_index_max_id(index_content), _committed_page_max_id(resolved))
+    return f"ADR-{n + 1:04d}"
+
+
+@observe(tier="stage", metric="tools.adr._next_adr_id_from_index")
+def _next_adr_id_from_index(content: str) -> str:
+    """Index-only next-ID (retained for tests / callers that pass only index text).
+
+    Prefer ``_next_adr_id(resolved, content)`` which also scans committed page
+    slugs and is resilient to a lagging index.
+    """
+    n = _index_max_id(content)
+    return f"ADR-{n + 1:04d}"
+
+
+def _render_index_row(
+    adr_id: str,
+    status: str,
+    date: str,
+    title: str,
+    supersedes: str,
+    superseded_by: str,
+    slug: str,
+) -> str:
+    """Render one index table row. Pipes/newlines in free text are sanitised."""
+
+    def _clean(v: str) -> str:
+        return str(v).replace("|", "/").replace("\n", " ").strip() or "-"
+
+    return (
+        f"| {adr_id} | {_clean(status)} | {_clean(date)} | {_clean(title)} | "
+        f"{_clean(supersedes)} | {_clean(superseded_by)} | {slug} |"
+    )
+
+
+@observe(tier="stage", metric="tools.adr._build_index_content")
+def _build_index_content(project_name: str, rows: list[dict]) -> str:
+    """Build the full index page content from row dicts (ascending by ID)."""
+    ordered = sorted(rows, key=lambda r: int(r["adr_id"].split("-")[1]))
+    body = _INDEX_HEADER
+    for r in ordered:
+        body += (
+            _render_index_row(
+                r["adr_id"],
+                r["status"],
+                r["date"],
+                r["title"],
+                r.get("supersedes", "none"),
+                r.get("superseded_by", "-"),
+                r["slug"],
+            )
+            + "\n"
+        )
+    return (
+        f"# {project_name} ADR Index\n\n"
+        f"Architecture Decision Records for `{project_name}` — one canonical page per ADR "
+        f"(`{project_name}-adr-NNNN`). This index is the ID source of truth.\n\n"
+        f"{body}"
+    )
+
+
+# ── Body builder ───────────────────────────────────────────────────────────────
 
 
 def _build_adr_body(
@@ -153,13 +302,13 @@ def _build_adr_body(
     consequences: str,
     revisit_trigger: str,
     supersedes: str,
-) -> tuple[str, str]:
-    """Return (section_heading, section_body) for wiki_append_section.
+) -> str:
+    """Return the per-ADR page CONTENT (H1 + Context/Decision/Consequences + bullets).
 
-    section_heading is the bare heading text (without ##) — the store adds ## automatically.
-    section_body is the markdown content under the heading.
+    The page_type `adr` requires sections Context / Decision / Consequences (for
+    wiki_lint). The 9 flat bullets carry the full structured record; the three
+    required ## sections satisfy the page_type template.
     """
-    section_heading = f"{adr_id}: {title}"
     record = ADR(
         adr_id=adr_id,
         title=title,
@@ -173,7 +322,151 @@ def _build_adr_body(
         revisit_trigger=revisit_trigger,
         supersedes=supersedes,
     )
-    return section_heading, record.to_markdown_body()
+    bullets = record.to_markdown_body()
+    return (
+        f"# {adr_id}: {title}\n\n"
+        f"{bullets}\n"
+        f"## Context\n\n{context}\n\n"
+        f"## Decision\n\n{decision}\n\n"
+        f"## Consequences\n\n{consequences}\n"
+    )
+
+
+def _adr_tags(adr_id: str, status: str) -> list[str]:
+    """Tags for a per-ADR page. adr_id is 'ADR-NNNN'."""
+    nnnn = adr_id.split("-")[1]
+    return ["adr", "decisions", f"adr-status:{status}", f"adr-{nnnn}"]
+
+
+# ── Supersede handling ─────────────────────────────────────────────────────────
+
+
+@observe(tier="stage", metric="tools.adr._parse_supersedes")
+def _parse_supersedes(supersedes: str) -> list[str]:
+    """Parse a 'supersedes' field into a list of 'ADR-NNNN' ids ([] for none)."""
+    if not supersedes or supersedes.strip().lower() == "none":
+        return []
+    ids = re.findall(r"ADR-(\d{4})", supersedes)
+    return [f"ADR-{n}" for n in ids]
+
+
+@observe(tier="stage", metric="tools.adr._flip_superseded_target")
+def _flip_superseded_target(resolved: str, target_id: str, new_adr_id: str) -> None:
+    """Flip a superseded ADR page's status tag to 'superseded' (best-effort).
+
+    Reads the target page canonically, replaces its adr-status:* tag with
+    adr-status:superseded, and records the superseding id in an adr-superseded-by
+    tag. Never raises — a missing target must not abort the new ADR write.
+    """
+    try:
+        slug = adr_page_slug(resolved, target_id)
+        page_id, page = _resolve_page_id_by_slug(slug, directory=resolved)
+        if page_id is None or page is None:
+            return
+        tags = list(page.get("tags") or [])
+        tags = [t for t in tags if not t.startswith("adr-status:")]
+        tags.append("adr-status:superseded")
+        nnnn = new_adr_id.split("-")[1]
+        sb_tag = f"adr-superseded-by:{nnnn}"
+        if sb_tag not in tags:
+            tags.append(sb_tag)
+        wiki_update(page_id, {"tags": tags})
+    except Exception:  # noqa: BLE001 — supersede patch is best-effort
+        return
+
+
+# ── adr_add helpers (extracted to keep adr_add under the I30 cyclomatic cap) ───
+
+
+def _canonical_adr_payload(
+    slug: str,
+    content: str,
+    category: str,
+    tags: list[str],
+    directory: str,
+    *,
+    replace_slug: str | None = None,
+) -> dict:
+    """Build a canonical (branch-NULL) wiki_add payload for the ADR write path.
+
+    ``title`` == ``slug`` so ``_slugify(title)`` yields the deterministic slug.
+    ``force=True`` bypasses the drainer sim gate (canonical ADR/index pages are
+    legitimately near-duplicate). ``page_type="adr"`` satisfies the
+    ``_wiki_write_canonical`` CANONICAL_PAGE_TYPES allowlist assertion.
+    """
+    return {
+        "wiki_schema_version": 2,
+        "slug": slug,
+        "title": slug,
+        "content": content,
+        "category": category,
+        "tags": tags,
+        "source_memory_ids": None,
+        "confidence": "high",
+        "append": False,
+        "force": True,
+        "replace_slug": replace_slug,
+        "directory_context": directory,
+        "page_type": "adr",
+    }
+
+
+@observe(tier="stage", metric="tools.adr._assemble_index_rows")
+def _assemble_index_rows(
+    existing_index: str,
+    new_row: dict,
+    new_adr_id: str,
+    target_ids: list[str],
+) -> list[dict]:
+    """Return the full ADR index row-set after adding ``new_row`` + supersede back-links.
+
+    Two-pass: append the new row, then flip each supersede target's status to
+    'superseded' and record the new ADR's NNNN in its ``superseded_by`` column.
+    """
+    rows = parse_index_rows(existing_index)
+    rows.append(new_row)
+    if not target_ids:
+        return rows
+    by_id = {r["adr_id"]: r for r in rows}
+    nnnn = new_adr_id.split("-")[1]
+    for tid in target_ids:
+        row = by_id.get(tid)
+        if row is None:
+            continue
+        row["status"] = "superseded"
+        prev = row.get("superseded_by", "-")
+        row["superseded_by"] = nnnn if prev in ("-", "") else f"{prev},{nnnn}"
+    return rows
+
+
+# A wait=True canonical write that is still QUEUED after wait_timeout WILL commit
+# on the next drain — it is NOT a failure. Only these terminal reasons are fatal.
+_FATAL_WRITE_REASONS: frozenset[str] = frozenset(
+    {"duplicate_detected", "rejected", "content_too_large", "invalid_unicode_surrogates"}
+)
+
+
+@observe(exempt="trivial dict-field predicate; no I/O, no error branch worth spanning")
+def _write_ok(result: dict) -> bool:
+    """True when a canonical write committed OR is safely queued (converges).
+
+    ``_wiki_write_canonical(wait=True)`` returns ``stored:False, reason:wait_timeout,
+    queued:True`` when the drainer did not commit within the wait budget — the write
+    is still queued and WILL land. That is NOT a failure for the ADR path (next-ID
+    correctness comes from the committed page-slug scan, not the index). Only a hard
+    terminal rejection (duplicate_detected / blocked / oversize) is fatal.
+    """
+    if result.get("stored") is not False:
+        return True
+    if result.get("queued"):
+        return True  # wait_timeout — converges on next drain
+    reason = str(result.get("reason", ""))
+    if reason.startswith("blocked_by_policy"):
+        return False
+    return reason not in _FATAL_WRITE_REASONS if reason else False
+
+
+# ── Tools ──────────────────────────────────────────────────────────────────────
 
 
 @_tool(power=True)
@@ -190,11 +483,12 @@ def adr_add(
     revisit_trigger: str,
     supersedes: str,
 ) -> dict:
-    """Create a new Architecture Decision Record (ADR) in the project's ADR log.
+    """Create a new Architecture Decision Record (ADR).
 
-    The ADR log is a wiki page `<project>-adr-log` scoped to the project's default
-    branch.  If it does not exist, this tool creates it.  IDs are assigned
-    sequentially by scanning existing ## ADR-NNNN headers.
+    Car 2: writes ONE canonical wiki page per ADR (`<project>-adr-NNNN`,
+    branch IS NULL — readable from any branch AND in non-git dirs) plus a row in
+    the canonical `<project>-adr-index`. IDs are assigned sequentially from the
+    index (max+1). Supersede targets' status tag is flipped to `superseded`.
 
     Args:
         directory: Absolute path to the project root.
@@ -210,11 +504,10 @@ def adr_add(
         supersedes: "none" or a comma-separated list of superseded ADR IDs (e.g. "ADR-0002").
 
     Returns:
-        {"adr_id": "ADR-NNNN", "version": M} on success.
+        {"adr_id": "ADR-NNNN", "slug": "<project>-adr-NNNN"} on success.
         {"error": "...", "ok": False} on validation failure or storage error.
     """
-    # ── Validation ─────────────────────────────────────────────────────────────
-    # Validate all required content fields first (before any storage access).
+    # ── Validation (before any storage access) ─────────────────────────────────
     provided: dict[str, str] = {
         "title": title,
         "status": status,
@@ -230,47 +523,39 @@ def adr_add(
     for field in _REQUIRED_FIELDS:
         val = provided.get(field)
         if not val or not str(val).strip():
-            return {
-                "ok": False,
-                "error": f"missing required field: {field!r}",
-            }
+            return {"ok": False, "error": f"missing required field: {field!r}"}
     if status not in _VALID_STATUSES:
         return {
             "ok": False,
             "error": (f"invalid status {status!r}; must be one of {sorted(_VALID_STATUSES)}"),
         }
 
-    # ── Resolve project root and ADR log slug ───────────────────────────────────
     try:
         resolved = _resolve_project_root(directory)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"cannot resolve project root: {exc}"}
 
     project_name = os.path.basename(resolved)
-    slug = adr_log_slug(resolved)
-    default_branch = _get_default_branch(resolved)
+    index_slug = adr_index_slug(resolved)
 
-    # ── Serialize the read-modify-write triple under a per-project lock ─────────
-    # Without this lock, two concurrent adr_add calls (possible when
-    # YADGAR_OFFLOAD_TOOLS=1 and a ThreadPoolExecutor runs two tool bodies
-    # simultaneously) both reach wiki_read before either writes, derive the
-    # same _next_adr_id from stale content, and produce duplicate IDs.
-    # threading.Lock is correct here: adr_add is a sync def, and the
-    # blocking httpx.post forward runs on whichever thread holds the GIL —
-    # an asyncio.Lock cannot be awaited inside a sync body.
-    # Single-process guarantee: this lock protects against in-process
-    # concurrency only; multi-replica deployments are explicitly out of scope.
+    # ── Serialize the read-assign-write sequence under a per-project lock ───────
     with _adr_log_lock(resolved):
-        # ── Read existing log (branch-pinned to default branch) ─────────────────
-        log_page = wiki_read(slug, directory=resolved, branch_hint=default_branch)
-        log_exists = "error" not in log_page
-        existing_content = log_page.get("content", "") if log_exists else ""
+        # Read the canonical index (no branch_hint — canonical resolves via §25 step-2).
+        index_page = wiki_read(index_slug, directory=resolved)
+        index_exists = "error" not in index_page
+        existing_index = index_page.get("content", "") if index_exists else ""
 
-        # ── Assign next ID ────────────────────────────────────────────────────────
-        adr_id = _next_adr_id(existing_content)
+        # ID = max over the index rows AND the COMMITTED per-ADR page slugs. The
+        # page-slug scan makes this resilient to a lagging index (an index write
+        # still queued after wait_timeout): the committed page carries the ID.
+        adr_id = _next_adr_id(resolved, existing_index)
+        page_slug = adr_page_slug(resolved, adr_id)
 
-        # ── Build section content ─────────────────────────────────────────────────
-        section_heading, section_body = _build_adr_body(
+        # ── Write the per-ADR canonical page — wait=True (ID-bearing artifact) ──
+        # It is written FIRST + synchronously so it is committed WITHIN this lock,
+        # making its slug visible to the next adr_add's _committed_page_max_id scan
+        # even if the index write below only converges later.
+        page_content = _build_adr_body(
             adr_id=adr_id,
             title=title,
             status=status,
@@ -283,52 +568,105 @@ def adr_add(
             revisit_trigger=revisit_trigger,
             supersedes=supersedes,
         )
+        # Stored TITLE equals the slug string so _slugify(title) == page_slug.
+        page_payload = _canonical_adr_payload(
+            page_slug, page_content, "decision", _adr_tags(adr_id, status), resolved
+        )
+        page_result = _wiki_write_canonical(page_payload, wait=True)
+        if not _write_ok(page_result):
+            return {
+                "ok": False,
+                "error": f"per-ADR page write failed: {page_result.get('reason', 'unknown')}",
+                "adr_id": adr_id,
+            }
 
-        # ── Append or create ──────────────────────────────────────────────────────
-        if log_exists:
-            # Append new section to existing log.
-            append_result = wiki_append_section(
-                slug,
-                section_heading=section_heading,
-                content=section_body,
-                position="new_section_bottom",
-                directory=resolved,
-                branch_hint=default_branch,
-            )
-            if "error" in append_result:
-                return {
-                    "ok": False,
-                    "error": f"wiki_append_section failed: {append_result['error']}",
-                    "adr_id": adr_id,
-                }
-            new_version = append_result.get("new_version")
-            result: dict = {"adr_id": adr_id}
-            if new_version is not None:
-                result["version"] = new_version
-            return result
-        else:
-            # Create the log page with the first ADR entry.
-            log_title = f"{project_name} ADR Log"
-            full_content = (
-                f"# {log_title}\n\n"
-                f"Architecture Decision Records for `{project_name}`.\n\n"
-                f"---\n\n"
-                f"## {section_heading}\n\n"
-                f"{section_body}"
-            )
-            create_result = wiki_add(
-                title=log_title,
-                content=full_content,
-                category="reference",
-                tags=["adr", "decisions"],
-                directory=resolved,
-                branch_hint=default_branch,
-                wait=True,  # synchronous — ensures read-your-writes for sequential IDs
-            )
-            if create_result.get("stored") is False:
-                return {
-                    "ok": False,
-                    "error": f"wiki_add failed: {create_result.get('reason', 'unknown')}",
-                    "adr_id": adr_id,
-                }
-            return {"adr_id": adr_id}
+        # ── Append the index row + rebuild the canonical index ─────────────────
+        # The index is a DERIVED convenience view (not the ID source of truth), so a
+        # queued/wait_timeout index write is NOT a failure — it converges on the next
+        # drain, and next-ID correctness is guaranteed by the committed page slug scan
+        # above. Only a hard rejection (duplicate_detected / blocked) is fatal.
+        target_ids = _parse_supersedes(supersedes)
+        new_row = {
+            "adr_id": adr_id,
+            "status": status,
+            "date": date,
+            "title": title,
+            "supersedes": supersedes if supersedes.strip().lower() != "none" else "none",
+            "superseded_by": "-",
+            "slug": page_slug,
+        }
+        rows = _assemble_index_rows(existing_index, new_row, adr_id, target_ids)
+        index_content = _build_index_content(project_name, rows)
+        index_payload = _canonical_adr_payload(
+            index_slug,
+            index_content,
+            "reference",
+            ["adr", "adr-index"],
+            resolved,
+            replace_slug=index_slug if index_exists else None,
+        )
+        index_result = _wiki_write_canonical(index_payload, wait=True)
+        if not _write_ok(index_result):
+            return {
+                "ok": False,
+                "error": f"index write failed: {index_result.get('reason', 'unknown')}",
+                "adr_id": adr_id,
+                "slug": page_slug,
+            }
+
+        # ── Flip superseded targets' page status tag (best-effort) ─────────────
+        for tid in target_ids:
+            _flip_superseded_target(resolved, tid, adr_id)
+
+        return {"adr_id": adr_id, "slug": page_slug}
+
+
+@_tool(power=True)
+def adr_get(directory: str, adr_id: str) -> dict:
+    """Read a single ADR's canonical page directly.
+
+    Args:
+        directory: Absolute path to the project root.
+        adr_id: "ADR-NNNN" (case-insensitive; "adr-1" / "1" also accepted).
+
+    Returns:
+        The wiki page dict for `<project>-adr-NNNN`, or {"error": "..."} if absent.
+    """
+    try:
+        resolved = _resolve_project_root(directory)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"cannot resolve project root: {exc}"}
+
+    m = re.search(r"(\d+)", adr_id or "")
+    if not m:
+        return {"error": f"invalid adr_id {adr_id!r}; expected 'ADR-NNNN'"}
+    normalized = f"ADR-{int(m.group(1)):04d}"
+    slug = adr_page_slug(resolved, normalized)
+    return wiki_read(slug, directory=resolved)
+
+
+@_tool(power=True)
+def adr_list(directory: str, status: str | None = None) -> dict:
+    """List ADRs from the canonical index; optional status filter.
+
+    Args:
+        directory: Absolute path to the project root.
+        status: Optional filter (open/accepted/superseded/rejected/deprecated).
+
+    Returns:
+        {"adrs": [{adr_id, status, date, title, supersedes, superseded_by, slug}, ...],
+         "count": N}. Empty list when the index is absent.
+    """
+    try:
+        resolved = _resolve_project_root(directory)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"cannot resolve project root: {exc}"}
+
+    index_slug = adr_index_slug(resolved)
+    page = wiki_read(index_slug, directory=resolved)
+    if "error" in page or not page.get("content"):
+        return {"adrs": [], "count": 0}
+    rows = parse_index_rows(page["content"])
+    if status is not None:
+        rows = [r for r in rows if r["status"] == status]
+    return {"adrs": rows, "count": len(rows)}

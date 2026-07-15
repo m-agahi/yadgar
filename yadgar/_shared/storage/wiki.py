@@ -1011,6 +1011,90 @@ class _WikiMixin:
         return {"previous_content": previous_content, "new_memory": new_memory}
 
     @observe(tier="stage")
+    def upsert_dir_branch_context(
+        self, directory: str, gitness: bool, default_branch: str | None
+    ) -> dict:
+        """Atomic delete-then-insert of the TRUSTED per-directory git-context row.
+
+        Car 0 (canonical-write foundation): persists the two TRUSTED branch-model
+        facts — ``gitness`` (is this dir a git work-tree) and ``default_branch``
+        (repo default, ``None`` when non-git) — DURABLY keyed by directory so they
+        survive a daemon restart. Written ONLY via the SessionStart context
+        endpoint (the sole set-channel); no model-callable path reaches this.
+
+        Storage shape mirrors ``upsert_dispatch_prelude_marker`` — a single memory
+        row tagged ``_dir_branch_context`` whose content is a JSON blob. No schema
+        migration (memory-table row, not a new table).
+
+        Returns the stored ``{directory, gitness, default_branch}`` dict.
+        """
+        import json  # noqa: PLC0415
+
+        now = self._now_iso()
+        mid = self._next_id("memory")
+        blob = json.dumps({"gitness": bool(gitness), "default_branch": default_branch})
+        self._q(
+            "BEGIN TRANSACTION;\n"
+            "DELETE FROM memory WHERE directory_context = $dir "
+            "AND '_dir_branch_context' INSIDE tags;\n"
+            "CREATE type::record('memory', $id) SET "
+            "content = $content, embedding = NONE, tags = $tags, "
+            "source_episode_id = NONE, directory_context = $dir, "
+            "created_at = $now, last_accessed = $now, "
+            "heat = $heat, is_stale = false, file_hash = NONE, "
+            "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
+            "excitability = 1.0, store_type = $store_type, "
+            "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
+            "reconsolidation_count = 0, provenance_agent = $agent, "
+            "vector_clock = '{}', is_protected = true;\n"
+            "COMMIT TRANSACTION",
+            {
+                "id": mid,
+                "content": blob,
+                "tags": ["_dir_branch_context"],
+                "dir": directory,
+                "now": now,
+                "heat": 1.0,
+                "store_type": "semantic",
+                "agent": "default",
+            },
+        )
+        return {
+            "directory": directory,
+            "gitness": bool(gitness),
+            "default_branch": default_branch,
+        }
+
+    @observe(tier="stage")
+    def get_dir_branch_context(self, directory: str) -> dict | None:
+        """Read the TRUSTED per-directory git-context row (Car 0).
+
+        Returns ``{gitness: bool, default_branch: str | None}`` when a SessionStart
+        row exists for the directory, else ``None`` (the "unknown directory" case
+        — §0.4 flow 4). A malformed/legacy blob also returns ``None`` (fail-safe:
+        an unreadable row is treated as unknown, forcing the conservative path).
+        """
+        import json  # noqa: PLC0415
+
+        rows = self._q(
+            "SELECT content FROM memory WHERE directory_context = $dir "
+            "AND '_dir_branch_context' INSIDE tags LIMIT 1",
+            {"dir": directory},
+        )
+        if not rows:
+            return None
+        try:
+            data = json.loads(rows[0].get("content") or "")
+        except (ValueError, TypeError):  # fmt: skip
+            return None
+        if not isinstance(data, dict) or "gitness" not in data:
+            return None
+        return {
+            "gitness": bool(data.get("gitness")),
+            "default_branch": data.get("default_branch"),
+        }
+
+    @observe(tier="stage")
     def upsert_dispatch_prelude_marker(self, directory: str) -> dict:
         """Atomic delete-then-insert for _dispatch_prelude marker memory.
 

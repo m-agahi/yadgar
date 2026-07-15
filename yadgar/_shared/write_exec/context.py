@@ -60,3 +60,8 @@ class MemorizeContext:
     engram_result: dict | None = None
     auto_protected: bool = False
     related_context: list[dict] = field(default_factory=list)
+
+    # Car 2 (Part B) — memorize soft-gate (non-blocking near-duplicate surface).
+    # Populated by phase_soft_gate for DURABLE writes only; attached to the
+    # response by _phase_post_write. Empty list = no near-duplicates / gate off.
+    near_duplicates: list[dict] = field(default_factory=list)

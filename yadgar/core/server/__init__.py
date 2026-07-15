@@ -171,6 +171,7 @@ from yadgar.core.server.tools import (  # noqa: F401
     dlq_dismiss,
     archive_purge,
     wiki_add,
+    wiki_write_task_list,
     wiki_query,
     wiki_read,
     wiki_delete,
