@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from yadgar._shared.secrets import check_secrets
+from yadgar._shared.security.secrets import check_secrets
 
 
 class TestCheckSecretsBlocked:
@@ -353,7 +353,7 @@ class TestGitleaksPortBackCompatView:
             assert name == rule_name
 
     def test_shim_reexports_secret_patterns(self):
-        from yadgar._shared.secrets import _SECRET_PATTERNS
+        from yadgar._shared.security.secrets import _SECRET_PATTERNS
 
         assert isinstance(_SECRET_PATTERNS, list)
         assert len(_SECRET_PATTERNS) > 0

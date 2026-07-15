@@ -359,7 +359,7 @@ _REGISTRY: list[ConfigEntry] = [
     # core 5.112.0 (#49) — unified core Cache byte budget as % of core container RAM.
     ConfigEntry("YADGAR_CORE_CACHE_RAM_PCT", "10.0", "float"),
     # ── v5.41.2 wiki write wait timeout ─────────────────────────────────────
-    ConfigEntry("YADGAR_WIKI_WRITE_WAIT_TIMEOUT_SECONDS", "5.0", "float"),
+    ConfigEntry("YADGAR_WIKI_WRITE_WAIT_TIMEOUT_SECONDS", "15.0", "float"),
     # ── v5.39.0 wiki similarity gate knobs ───────────────────────────────────
     ConfigEntry("YADGAR_WIKI_SIM_GATE_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_WIKI_SIM_CONTENT_THRESHOLD", "0.80", "float"),

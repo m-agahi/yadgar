@@ -407,7 +407,7 @@ class TestGracefulStop:
         mock_sp_running = MagicMock(returncode=0, stdout="false\n")
         with (
             patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls),
-            patch("yadgar.core.daemon.daemon._prod_profile") as mock_prod,
+            patch("yadgar.core.daemon.profiles._prod_profile") as mock_prod,
             patch("subprocess.run", return_value=mock_sp_running),
         ):
             mock_prod.return_value = MagicMock(container_name="yadgar-prod")
@@ -427,7 +427,7 @@ class TestGracefulStop:
 
         with (
             patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls),
-            patch("yadgar.core.daemon.daemon._prod_profile") as mock_prod,
+            patch("yadgar.core.daemon.profiles._prod_profile") as mock_prod,
             patch("subprocess.run", side_effect=sp_side_effect),
         ):
             mock_prod.return_value = MagicMock(container_name="yadgar-prod")
@@ -443,7 +443,7 @@ class TestGracefulStop:
         )
         with (
             patch("yadgar.core.daemon.daemon.YadgarDaemon", mock_cls),
-            patch("yadgar.core.daemon.daemon._prod_profile") as mock_prod,
+            patch("yadgar.core.daemon.profiles._prod_profile") as mock_prod,
         ):
             mock_prod.return_value = MagicMock(container_name="yadgar-prod")
             with pytest.raises(SystemExit) as exc_info:

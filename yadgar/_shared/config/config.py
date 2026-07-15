@@ -310,7 +310,9 @@ class Settings(BaseSettings):
     # v5.41.2: wiki write wait timeout (opt-in read-your-writes path)
     # Maximum seconds wiki_add(wait=True) may block before returning a timeout error.
     # Only applies when wait=True is passed explicitly; default async path is unaffected.
-    WIKI_WRITE_WAIT_TIMEOUT_SECONDS: float = 5.0
+    # Bumped 5→15 (Car #26): post-deploy cold drain measured ~12s; 15s covers that
+    # plus margin so wait=True actually observes convergence in normal conditions.
+    WIKI_WRITE_WAIT_TIMEOUT_SECONDS: float = 15.0
 
     # v5.39.0: wiki similarity gate knobs
     # Master switch — set to False to disable the gate entirely (WIKI_SIM_GATE_ENABLED=0).

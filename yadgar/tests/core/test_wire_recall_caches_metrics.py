@@ -239,7 +239,7 @@ def _collector_series() -> dict[str, dict[str, float]]:
     prometheus_client strips the ``_total`` suffix from ``CounterMetricFamily.name``
     but the emitted sample keeps it.
     """
-    from yadgar.backend.embed_service_metrics import CacheStatsCollector
+    from yadgar.backend.embed_service.embed_service_metrics import CacheStatsCollector
 
     out: dict[str, dict[str, float]] = {}
     for fam in CacheStatsCollector().collect():
@@ -313,7 +313,7 @@ def test_collector_emits_only_generic_names_no_bespoke_collision():
     Re-yielding a statically-declared counter in the same process = duplicate
     # TYPE at scrape → Prometheus rejects the whole scrape (the line-284 guard).
     """
-    from yadgar.backend.embed_service_metrics import CacheStatsCollector
+    from yadgar.backend.embed_service.embed_service_metrics import CacheStatsCollector
 
     # CounterMetricFamily.name has the _total suffix stripped by prometheus_client.
     names = {fam.name for fam in CacheStatsCollector().collect()}
@@ -341,7 +341,7 @@ def test_generated_metrics_output_includes_data_caches():
         get_graph_cache,
         get_memory_doc_cache,
     )
-    from yadgar.backend.embed_service_metrics import _registry
+    from yadgar.backend.embed_service.embed_service_metrics import _registry
 
     get_memory_doc_cache()
     get_engram_slot_cache()

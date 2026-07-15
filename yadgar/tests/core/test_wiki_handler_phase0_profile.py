@@ -64,7 +64,7 @@ def _measure_substeps(real_fq) -> dict[str, list[float]]:
     import re as _re
 
     import yadgar._shared.runtime.state as _st
-    import yadgar._shared.secrets as _secrets_mod
+    import yadgar._shared.security.secrets as _secrets_mod
     from yadgar.backend.queue_drainer import QueueDrainer
 
     _gate_drainer = QueueDrainer(queue=real_fq, storage_factory=lambda: None, drain_interval=9999)

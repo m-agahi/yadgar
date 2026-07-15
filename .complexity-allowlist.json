@@ -22,17 +22,6 @@
   "added_by": "safestop-car2"
  },
  {
-  "path": "yadgar/backend/embed_service/embed_service.py",
-  "function": "<file>",
-  "lineno": 1,
-  "metrics": {
-   "file_loc": 1350
-  },
-  "rationale": "Train 1 added /recall route + models + _ensure_recall_engines (~126 LOC, 875 -> 1001). R3 Car 1 D2 added /consolidate (+51, -> 1194). backend 5.30.1 P0 fix added the queue-drainer lifecycle (_start/_stop_queue_drainer + fail-loud gating, ~150 LOC, -> 1350) — the wiring Car 1 removed from core without a backend construction point; lifespan-cohesive with the other startup/shutdown blocks here. All growth is HTTP-boundary + lifecycle glue around the same FastAPI app; splitting would scatter the lifespan across thin sub-modules for no readability gain. Next structural addition should split (e.g. drainer/lifespan into embed_service_lifecycle.py).",
-  "added": "2026-07-04",
-  "added_by": "recall-backend-train1"
- },
- {
   "path": "yadgar/backend/causal_discovery/pc.py",
   "function": "pc_algorithm",
   "lineno": 105,
@@ -360,9 +349,9 @@
   "added_by": "feat/v5.104-perf-train"
  },
  {
-  "path": "yadgar/core/server/tools/adr.py",
+  "path": "yadgar/core/server/tools/adr_render.py",
   "function": "_build_adr_body",
-  "lineno": 70,
+  "lineno": 46,
   "metrics": {
    "params": 11
   },

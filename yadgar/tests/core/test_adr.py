@@ -15,7 +15,6 @@ Tests cover:
   4. Supersede: status tag flip + index back-link
   5. Concurrent ID assignment (per-project lock)
   6. adr_due signal (unchanged — still nudges on capture)
-  7. Migration-parse helpers (monolith → index) — see test_migrate_adr_monolith.py
 
 RED before implementation; GREEN after.
 """

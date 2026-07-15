@@ -91,19 +91,20 @@ def test_dockerhub_image_still_uses_core_version():
     """Bug 12 sanity: DOCKERHUB_IMAGE (core) must still use the core pip version."""
     import json
 
-    from yadgar.core.daemon import daemon as daemon_mod
+    # DOCKERHUB_IMAGE canonically lives in yadgar.core.daemon.runtime and is
+    # exposed on the package via __getattr__ (see __init__.py) — the same access
+    # path yadgar.core.cli.daemon uses. The daemon submodule does not re-export it.
+    from yadgar.core.daemon import DOCKERHUB_IMAGE
 
     server_json = Path(__file__).resolve().parent.parent.parent.parent / "server.json"
     data = json.loads(server_json.read_text())
     core_version = data["version"]
 
-    assert daemon_mod.DOCKERHUB_IMAGE.endswith(
-        f":{core_version}"
-    ) or daemon_mod.DOCKERHUB_IMAGE.endswith(":latest"), (
-        f"DOCKERHUB_IMAGE={daemon_mod.DOCKERHUB_IMAGE!r} does not end with :{core_version} or :latest."
+    assert DOCKERHUB_IMAGE.endswith(f":{core_version}") or DOCKERHUB_IMAGE.endswith(":latest"), (
+        f"DOCKERHUB_IMAGE={DOCKERHUB_IMAGE!r} does not end with :{core_version} or :latest."
     )
-    assert "yadgar-backend" not in daemon_mod.DOCKERHUB_IMAGE, (
-        f"DOCKERHUB_IMAGE should be the core image, got: {daemon_mod.DOCKERHUB_IMAGE!r}"
+    assert "yadgar-backend" not in DOCKERHUB_IMAGE, (
+        f"DOCKERHUB_IMAGE should be the core image, got: {DOCKERHUB_IMAGE!r}"
     )
 
 

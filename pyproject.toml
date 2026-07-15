@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.142.0"
+version = "5.143.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -125,12 +125,9 @@ ignore = [
 "yadgar/backend/curation/__init__.py" = ["PLR0913"]
 "yadgar/backend/curation/ingestion.py" = ["PLR0913"]
 "yadgar/backend/curation/prune_passes.py" = ["C901"]
-"yadgar/core/graph/graph_api.py" = ["C901"]
-"yadgar/core/install/install_hooks_lib.py" = ["C901"]
 "yadgar/_shared/metacognition/cognitive_load.py" = ["C901"]
 "yadgar/_shared/metacognition/coverage.py" = ["C901"]
 "yadgar/_shared/metacognition/gap_detection.py" = ["C901"]
-"yadgar/backend/predictive_coding/predictive_coding.py" = ["C901"]
 "yadgar/backend/restoration/checkpoint_restore.py" = ["C901", "PLR0913"]
 "yadgar/_shared/retrieval/_reranking_heuristic.py" = ["C901"]
 "yadgar/_shared/retrieval/fusion.py" = ["C901"]

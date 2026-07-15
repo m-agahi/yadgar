@@ -73,41 +73,41 @@ def test_safe_urlopen_rejects_javascript_scheme():
 
 
 def test_get_runtime_uses_env_override(monkeypatch):
-    from yadgar.core.daemon import daemon
+    from yadgar.core.daemon import runtime
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "podman")
-    result = daemon._get_runtime()
+    result = runtime._get_runtime()
     assert result == "podman"
 
 
 def test_get_runtime_uses_env_override_docker(monkeypatch):
-    from yadgar.core.daemon import daemon
+    from yadgar.core.daemon import runtime
 
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
-    result = daemon._get_runtime()
+    result = runtime._get_runtime()
     assert result == "docker"
 
 
 def test_get_runtime_uses_cached_runtime(monkeypatch):
-    from yadgar.core.daemon import daemon
+    from yadgar.core.daemon import runtime
 
     monkeypatch.delenv("YADGAR_CONTAINER_RUNTIME", raising=False)
-    monkeypatch.setattr(daemon, "_RUNTIME", "podman")
-    result = daemon._get_runtime()
+    monkeypatch.setattr(runtime, "_RUNTIME", "podman")
+    result = runtime._get_runtime()
     assert result == "podman"
 
 
 def test_get_runtime_falls_back_to_docker_when_none_found(monkeypatch):
-    from yadgar.core.daemon import daemon
+    from yadgar.core.daemon import runtime
 
     monkeypatch.delenv("YADGAR_CONTAINER_RUNTIME", raising=False)
-    monkeypatch.setattr(daemon, "_RUNTIME", None)
+    monkeypatch.setattr(runtime, "_RUNTIME", None)
 
     def fake_run(cmd, **kwargs):
         raise FileNotFoundError("not found")
 
     with patch("subprocess.run", side_effect=fake_run):
-        result = daemon._get_runtime()
+        result = runtime._get_runtime()
     assert result == "docker"
 
 
@@ -137,7 +137,7 @@ def test_container_memory_mb_min_clamped():
     from yadgar.core.daemon import _container_memory_mb
 
     # Very small host RAM → clamped to 512
-    with patch("yadgar.core.daemon.daemon._host_memory_bytes", return_value=256 * 1024 * 1024):
+    with patch("yadgar.core.daemon.runtime._host_memory_bytes", return_value=256 * 1024 * 1024):
         result = _container_memory_mb()
     assert result == 512
 
@@ -147,7 +147,7 @@ def test_container_memory_mb_max_clamped():
 
     # 1 TB host RAM → clamped to 8192
     with patch(
-        "yadgar.core.daemon.daemon._host_memory_bytes", return_value=1024 * 1024 * 1024 * 1024
+        "yadgar.core.daemon.runtime._host_memory_bytes", return_value=1024 * 1024 * 1024 * 1024
     ):
         result = _container_memory_mb()
     assert result == 8192
@@ -158,7 +158,7 @@ def test_container_memory_mb_quarter_in_range():
 
     # 32 GB host RAM → 32768 / 8 = 4096 MB → in [512, 8192]
     with patch(
-        "yadgar.core.daemon.daemon._host_memory_bytes", return_value=32 * 1024 * 1024 * 1024
+        "yadgar.core.daemon.runtime._host_memory_bytes", return_value=32 * 1024 * 1024 * 1024
     ):
         result = _container_memory_mb()
     assert result == 4096
@@ -177,13 +177,13 @@ def test_host_memory_bytes_returns_int():
 
 def test_host_memory_bytes_linux_fallback_on_no_meminfo(monkeypatch, tmp_path):
     """When /proc/meminfo is missing, falls back to sysconf."""
-    from yadgar.core.daemon import daemon
+    from yadgar.core.daemon import runtime
 
     monkeypatch.setattr(platform, "system", lambda: "Linux")
 
     with patch("builtins.open", side_effect=OSError("no file")):
         with patch("os.sysconf", side_effect=lambda x: 4096 if x == "SC_PAGE_SIZE" else 2097152):
-            result = daemon._host_memory_bytes()
+            result = runtime._host_memory_bytes()
     assert result == 4096 * 2097152
 
 

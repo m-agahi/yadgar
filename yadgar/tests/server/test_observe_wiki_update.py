@@ -42,7 +42,7 @@ def test_update_check_instrumented():
 
 
 def test_wiki_meta_instrumented():
-    from yadgar._shared import wiki_meta
+    from yadgar._shared.wiki import wiki_meta
 
     assert _has_span(wiki_meta.check_page_type_format)
 

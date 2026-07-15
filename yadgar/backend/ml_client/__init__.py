@@ -12,14 +12,14 @@ directly.
 from typing import Final
 
 _EXPORTS: Final = {
-    "Callable": "yadgar.backend.ml_client.ml_client",
+    "Callable": "yadgar.backend.ml_client.circuit_breaker",
     "LocalMLClient": "yadgar.backend.ml_client.ml_client",
     "MLClient": "yadgar.backend.ml_client.ml_client",
     "RemoteMLClient": "yadgar.backend.ml_client.ml_client",
-    "_CircuitBreaker": "yadgar.backend.ml_client.ml_client",
-    "_STATE_CLOSED": "yadgar.backend.ml_client.ml_client",
-    "_STATE_HALF_OPEN": "yadgar.backend.ml_client.ml_client",
-    "_STATE_OPEN": "yadgar.backend.ml_client.ml_client",
+    "_CircuitBreaker": "yadgar.backend.ml_client.circuit_breaker",
+    "_STATE_CLOSED": "yadgar.backend.ml_client.circuit_breaker",
+    "_STATE_HALF_OPEN": "yadgar.backend.ml_client.circuit_breaker",
+    "_STATE_OPEN": "yadgar.backend.ml_client.circuit_breaker",
     "_emit_unload_telemetry": "yadgar.backend.ml_client.ml_client",
     "_idle_eviction_seconds": "yadgar.backend.ml_client.ml_client",
     "_record_model_load": "yadgar.backend.ml_client.ml_client",
@@ -30,7 +30,7 @@ _EXPORTS: Final = {
     "observe": "yadgar.backend.ml_client.ml_client",
     "os": "yadgar.backend.ml_client.ml_client",
     "resolve_knob": "yadgar.backend.ml_client.ml_client",
-    "threading": "yadgar.backend.ml_client.ml_client",
+    "threading": "yadgar.backend.ml_client.circuit_breaker",
     "time": "yadgar.backend.ml_client.ml_client",
 }
 

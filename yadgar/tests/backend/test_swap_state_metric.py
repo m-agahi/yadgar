@@ -20,7 +20,7 @@ from pathlib import Path
 
 from prometheus_client import generate_latest
 
-from yadgar.backend import embed_service_metrics as m
+from yadgar.backend.embed_service import embed_service_metrics as m
 
 # ---------------------------------------------------------------------------
 # _swap_state_flags (pure)

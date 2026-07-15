@@ -1,9 +1,5 @@
-"""LRU cache with msgpack snapshot for backend hot-path caching.
+"""Unified byte-bounded backend cache (``Cache``) + namespace factories.
 
-Two shapes live here:
-
-  * ``LRUCache`` (backend v5.4.0) — the original count-capped LRU. Kept intact
-    for its own tests + snapshot format; NOT the unified surface.
   * ``Cache`` (backend 5.17.0, Car 0 of the backend caching train) — the unified
     backend cache, one class / N named instances / policy bound at construction.
     Mirrors the core ``yadgar/cache.py`` ``Cache`` but with **byte-bounded LRU
@@ -13,17 +9,16 @@ Two shapes live here:
     fold into it behaviour-neutrally (same keys, same values, same
     ModelCkpt-in-key invalidation, same external metric series, same snapshot).
 
+The original count-capped ``LRUCache`` + the shared msgpack snapshot format
+(``_write_snapshot`` / ``_read_snapshot``) live in the sibling ``lru.py`` (task
+#18 C2 internal split); ``Cache.save_snapshot`` / ``load_snapshot`` delegate to
+those free functions for ce/embed parity. ``ScopeVersions`` (version-in-key
+invalidation) lives in ``scope_versions.py``. Both are re-exported through the
+package ``__init__`` so external importers are byte-unaffected.
+
 Consumers depend on ``CacheProtocol`` (``get`` / ``put`` / ``invalidate`` /
 ``stats``), never the concrete class — constructor-DI ready. ``NullCache`` is the
 disable/test double.
-
-Snapshot format (shared by LRUCache + Cache):
-  YADCACHE\\0 (9 bytes magic)
-  version byte (1 byte, currently 0x01)
-  checkpoint_hash as UTF-8 length-prefixed string (4-byte LE len + bytes)
-  msgpack-encoded list of [key, value] pairs (all remaining bytes)
-On load: magic + version must match, checkpoint_hash must match current model
-hash — mismatch silently returns empty cache.
 
 I13: nesting ≤ 4.
 """
@@ -32,7 +27,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import struct
 import threading
 import time
 from collections import OrderedDict
@@ -48,182 +42,22 @@ from yadgar._shared.observability.metrics import (
 )
 from yadgar._shared.observability.observe import observe
 
+# LRUCache + the shared msgpack snapshot format moved to ``lru.py`` (task #18 C2
+# internal split). ``Cache.save_snapshot``/``load_snapshot`` delegate to the
+# ``_write_snapshot`` / ``_read_snapshot`` free functions; both are re-exported
+# from the package ``__init__`` for back-compat importers.
+from yadgar.backend.cache.lru import (
+    LRUCache as LRUCache,  # noqa: PLC0414 — intentional re-export
+)
+from yadgar.backend.cache.lru import (
+    _read_snapshot,
+    _write_snapshot,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
-
-# Snapshot file magic header + version
-_MAGIC = b"YADCACHE\x00"
-_VERSION = b"\x01"
-
-
-class LRUCache:
-    """OrderedDict-backed LRU cache with msgpack snapshot.
-
-    Args:
-        max_entries: Maximum number of entries. 0 = disabled (all puts no-op).
-        checkpoint_hash: Hash of the model checkpoint. Snapshots written with a
-            different hash are silently discarded on load.
-    """
-
-    def __init__(self, max_entries: int, checkpoint_hash: str) -> None:
-        self._max = max_entries
-        self._ckpt = checkpoint_hash
-        self._store: OrderedDict[str, Any] = OrderedDict()
-        self._lock = threading.Lock()
-        # Counters (informational, not thread-safe at int level but acceptable
-        # for metric reporting — off-by-one on counter in rare race is fine)
-        self.hits: int = 0
-        self.misses: int = 0
-        self.evictions: int = 0
-
-    # ── Core ops ─────────────────────────────────────────────────────────────
-
-    def get(self, key: str) -> Any | None:
-        """Return value for key, or None on miss. Promotes to MRU on hit."""
-        if self._max == 0:
-            self.misses += 1
-            return None
-        with self._lock:
-            if key not in self._store:
-                self.misses += 1
-                return None
-            # Move to end (most-recently-used)
-            self._store.move_to_end(key)
-            self.hits += 1
-            return self._store[key]
-
-    def put(self, key: str, value: Any) -> None:
-        """Insert or update key → value. Evicts LRU entry if at cap."""
-        if self._max == 0:
-            return
-        with self._lock:
-            if key in self._store:
-                self._store.move_to_end(key)
-                self._store[key] = value
-            else:
-                self._store[key] = value
-                if len(self._store) > self._max:
-                    self._store.popitem(last=False)  # evict LRU (oldest)
-                    self.evictions += 1
-
-    # ── Properties ────────────────────────────────────────────────────────────
-
-    @property
-    def size_entries(self) -> int:
-        return len(self._store)
-
-    @property
-    def size_bytes(self) -> int:
-        """Rough byte estimate via sys.getsizeof on the internal dict."""
-        import sys
-
-        with self._lock:
-            return sys.getsizeof(self._store)
-
-    # ── Snapshot I/O ─────────────────────────────────────────────────────────
-
-    @observe(tier="stage", metric="backend.cache.save_snapshot")
-    def save_snapshot(self, snap_dir: str, name: str) -> None:
-        """Serialize cache to <snap_dir>/<name>.snap using msgpack.
-
-        Takes a shallow copy under lock, then writes without holding the lock.
-        Writes to a temp file and renames atomically.
-        """
-        try:
-            import msgpack  # noqa: PLC0415
-        except ImportError:
-            logger.warning("cache.save_snapshot: msgpack not installed — skipping")
-            return
-
-        with self._lock:
-            items = list(self._store.items())
-
-        path = Path(snap_dir) / f"{name}.snap"
-        tmp_path = path.with_suffix(".snap.tmp")
-
-        ckpt_bytes = self._ckpt.encode("utf-8")
-        ckpt_len = struct.pack("<I", len(ckpt_bytes))
-
-        payload = msgpack.packb(items, use_bin_type=True)
-        header = _MAGIC + _VERSION + ckpt_len + ckpt_bytes
-
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path.write_bytes(header + payload)
-            tmp_path.replace(path)
-        except OSError as exc:
-            logger.warning("cache.save_snapshot: write failed for %s: %s", path, exc)
-
-    @observe(tier="stage", metric="backend.cache.load_snapshot")
-    def load_snapshot(self, snap_dir: str, name: str) -> None:
-        """Restore entries from <snap_dir>/<name>.snap.
-
-        Silently discards on: missing file, magic mismatch, version mismatch,
-        checkpoint hash mismatch, or any parse error.
-        """
-        try:
-            import msgpack  # noqa: PLC0415
-        except ImportError:
-            logger.warning("cache.load_snapshot: msgpack not installed — skipping")
-            return
-
-        path = Path(snap_dir) / f"{name}.snap"
-        if not path.exists():
-            return
-
-        try:
-            data = path.read_bytes()
-            # Check magic (9 bytes) + version (1 byte)
-            if len(data) < 10 or data[:9] != _MAGIC or data[9:10] != _VERSION:
-                logger.warning("cache.load_snapshot: bad header in %s — discarding", path)
-                return
-
-            offset = 10
-            if len(data) < offset + 4:
-                logger.warning("cache.load_snapshot: truncated ckpt len in %s", path)
-                return
-            ckpt_len = struct.unpack("<I", data[offset : offset + 4])[0]
-            offset += 4
-
-            if len(data) < offset + ckpt_len:
-                logger.warning("cache.load_snapshot: truncated ckpt hash in %s", path)
-                return
-            stored_ckpt = data[offset : offset + ckpt_len].decode("utf-8", errors="replace")
-            offset += ckpt_len
-
-            if stored_ckpt != self._ckpt:
-                logger.info(
-                    "cache.load_snapshot: checkpoint mismatch (%s != %s) — discarding %s",
-                    stored_ckpt[:16],
-                    self._ckpt[:16],
-                    path,
-                )
-                return
-
-            items: list = msgpack.unpackb(data[offset:], raw=False)
-            with self._lock:
-                self._store.clear()
-                for k, v in items:
-                    self._store[k] = v
-                    if self._max > 0 and len(self._store) > self._max:
-                        self._store.popitem(last=False)
-                        self.evictions += 1
-        except Exception as exc:
-            logger.warning("cache.load_snapshot: error loading %s: %s — discarding", path, exc)
-            with self._lock:
-                self._store.clear()
-
-    def snapshot_age_seconds(self, snap_dir: str, name: str) -> float:
-        """Return seconds since snapshot was last written, or -1 if no file."""
-        path = Path(snap_dir) / f"{name}.snap"
-        if not path.exists():
-            return -1.0
-        try:
-            return time.time() - path.stat().st_mtime
-        except OSError:
-            return -1.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -648,59 +482,12 @@ class Cache:
             record_cache_evict(self.name)
 
 
-class ScopeVersions:
-    """Per-scope monotonic version map — the reusable version-in-key mechanism.
-
-    A small in-process, thread-safe ``(scope_kind, scope_id) -> int`` counter.
-    Structural writes bump the version of the scope they mutate; a reader embeds
-    the current version in its cache key (e.g. ``(slot_index, slot_version)``), so
-    a bump makes every prior key for that scope unreachable — a stale entry is
-    simply never hit, with NO explicit ``invalidate`` call and NO cross-service
-    round-trip (the version is read cheaply, in-process, on the read path).
-
-    Car 3 uses ``scope_kind="slot"`` (slot occupancy). Car 4 will reuse the SAME
-    map with ``scope_kind="entity"`` (graph neighbourhoods) — different kind,
-    identical mechanism. Bumps are O(1); versions start at 0 and only increase.
-
-    Staleness guarantee: a cached ``(scope, v)`` entry is served ONLY while the
-    scope's version equals ``v``. The instant a structural mutator bumps the
-    scope (create/reslot-into for slots), the reader computes ``(scope, v+1)`` →
-    miss → recompute. Vectors that the fresh read-side recheck already covers
-    (delete, reslot-away, heat→0 for slots) need NO bump — see the engram_slot
-    cache docstring.
-    """
-
-    def __init__(self) -> None:
-        self._versions: dict[tuple[str, Hashable], int] = {}
-        self._lock = threading.Lock()
-
-    @observe(tier="hot", metric="backend.cache.scope_version_read")
-    def version(self, scope_kind: str, scope_id: Hashable) -> int:
-        """Current version for a scope (0 if never bumped)."""
-        with self._lock:
-            return self._versions.get((scope_kind, scope_id), 0)
-
-    @observe(tier="hot", metric="backend.cache.scope_version_bump")
-    def bump(self, scope_kind: str, scope_id: Hashable) -> int:
-        """Increment and return the scope's version. O(1), cheap enough for the
-        write hot-path (a single dict update under a short lock)."""
-        key = (scope_kind, scope_id)
-        with self._lock:
-            v = self._versions.get(key, 0) + 1
-            self._versions[key] = v
-            return v
-
-
-# Process-global ScopeVersions — the version store the backend StorageEngine reads
-# on the slot-read path and bumps at the slot-write site. Single instance because
-# slot writes (assign_memory_slot) and the slot read (get_memories_in_slot) share
-# ONE backend process, so no header-passing / cross-service signal is needed.
-_SCOPE_VERSIONS = ScopeVersions()
-
-
-def get_scope_versions() -> ScopeVersions:
-    """Return the process-global :class:`ScopeVersions` (version-in-key store)."""
-    return _SCOPE_VERSIONS
+# ── Version-in-key invalidation ───────────────────────────────────────────────
+#
+# ``ScopeVersions`` + the process-global ``_SCOPE_VERSIONS`` singleton +
+# ``get_scope_versions()`` moved to ``scope_versions.py`` (task #18 C2 internal
+# split). Re-exported from the package ``__init__`` for back-compat importers
+# (the StorageEngine slot/graph read paths + the invalidation e2e tests).
 
 
 @observe(tier="stage", metric="backend.cache.get_engram_slot_cache")
@@ -841,69 +628,6 @@ class NullCache:
 
     def stats(self) -> dict:
         return {"hits": 0, "misses": 0, "evictions": 0, "size": 0, "bytes": 0}
-
-
-# ── Snapshot helpers (shared free functions; LRUCache-compatible format) ──────
-
-
-@observe(tier="stage", metric="backend.cache.write_snapshot")
-def _write_snapshot(items: list, ckpt: str, snap_dir: str, name: str) -> None:
-    try:
-        import msgpack  # noqa: PLC0415
-    except ImportError:
-        logger.warning("cache.save_snapshot: msgpack not installed — skipping")
-        return
-    path = Path(snap_dir) / f"{name}.snap"
-    tmp_path = path.with_suffix(".snap.tmp")
-    ckpt_bytes = ckpt.encode("utf-8")
-    ckpt_len = struct.pack("<I", len(ckpt_bytes))
-    payload = msgpack.packb(items, use_bin_type=True)
-    header = _MAGIC + _VERSION + ckpt_len + ckpt_bytes
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path.write_bytes(header + payload)
-        tmp_path.replace(path)
-    except OSError as exc:
-        logger.warning("cache.save_snapshot: write failed for %s: %s", path, exc)
-
-
-@observe(tier="stage", metric="backend.cache.read_snapshot")
-def _read_snapshot(ckpt: str, snap_dir: str, name: str) -> list | None:
-    """Return the [key, value] list, or None on any discard condition."""
-    try:
-        import msgpack  # noqa: PLC0415
-    except ImportError:
-        logger.warning("cache.load_snapshot: msgpack not installed — skipping")
-        return None
-    path = Path(snap_dir) / f"{name}.snap"
-    if not path.exists():
-        return None
-    try:
-        data = path.read_bytes()
-        if len(data) < 10 or data[:9] != _MAGIC or data[9:10] != _VERSION:
-            logger.warning("cache.load_snapshot: bad header in %s — discarding", path)
-            return None
-        offset = 10
-        if len(data) < offset + 4:
-            return None
-        ckpt_len = struct.unpack("<I", data[offset : offset + 4])[0]
-        offset += 4
-        if len(data) < offset + ckpt_len:
-            return None
-        stored_ckpt = data[offset : offset + ckpt_len].decode("utf-8", errors="replace")
-        offset += ckpt_len
-        if stored_ckpt != ckpt:
-            logger.info(
-                "cache.load_snapshot: checkpoint mismatch (%s != %s) — discarding %s",
-                stored_ckpt[:16],
-                ckpt[:16],
-                path,
-            )
-            return None
-        return msgpack.unpackb(data[offset:], raw=False)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("cache.load_snapshot: error loading %s: %s — discarding", path, exc)
-        return None
 
 
 # ── RAM-% byte-budget machinery ───────────────────────────────────────────────

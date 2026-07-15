@@ -39,6 +39,7 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     ttl_days: int | None = None,
     reason: str = "",
     branch_hint: str | None = None,
+    wait: bool = False,
 ) -> dict:
     """Store a new memory with embedding.
 
@@ -73,6 +74,15 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
       (e.g., daemon runs in a container without access to the host .git directory).
       Resolution order: _detect_branch(context) → branch_hint → hard-reject (v5.42.3).
       SessionStart hooks should always pass branch_hint=<current-branch>.
+
+    wait: read-your-writes surface (mirrors wiki_add's wait semantics).
+      wait=False (default): enqueue and return {stored, queued, queue_id}
+        immediately — the drainer commits asynchronously.
+      wait=True: enqueue, nudge the drainer, and block until the write drains
+        or WIKI_WRITE_WAIT_TIMEOUT_SECONDS elapses, returning:
+          {"stored": True, "committed": True, "queued": False, ...} — committed
+          {"stored": False, "reason": "wait_timeout", "queued": True, ...} — still queued
+          {"stored": False, "reason": "rejected", "queued": False, ...} — DLQ'd
     """
     # secret-gate: skip — gate_or_reject() called in phase_validate() (see _memorize_phases/_phase_validate.py)
     ctx = MemorizeContext(
@@ -106,7 +116,7 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     # the SubagentStop footer path too (it calls this same tool).
     ctx.context, ctx.resolved_branch = normalize_write_context(ctx.context, ctx.resolved_branch)
 
-    return _enqueue(ctx)
+    return _enqueue(ctx, wait=wait)
 
 
 @observe(tier="hot", metric="tools.memorize._resolve_memorize_branch")
@@ -146,8 +156,12 @@ def _resolve_memorize_branch(ctx: MemorizeContext) -> tuple[str | None, dict | N
 
 
 @observe(tier="stage")
-def _enqueue(ctx: MemorizeContext) -> dict:
-    """Enqueue a memorize job. Returns the queued result."""
+def _enqueue(ctx: MemorizeContext, wait: bool = False) -> dict:
+    """Enqueue a memorize job. Returns the queued result.
+
+    wait=True routes through _memorize_wait_path for read-your-writes (mirrors
+    wiki_add). wait=False returns the async {stored, queued, queue_id} shape.
+    """
     payload: dict = {
         "content": ctx.content,
         "context": ctx.context,
@@ -164,5 +178,76 @@ def _enqueue(ctx: MemorizeContext) -> dict:
     # run_memorize_replay can re-validate on the drainer side (R3 write-path).
     if ctx.reason:
         payload["reason"] = ctx.reason
+
+    if wait:
+        return _memorize_wait_path(payload)
+
     job_id = _get_file_queue().enqueue("memorize", payload)
     return {"stored": True, "queued": True, "queue_id": job_id}
+
+
+@observe(tier="stage", metric="tools.memorize._memorize_wait_path")
+def _memorize_wait_path(payload: dict) -> dict:
+    """Handle memorize(wait=True): enqueue then poll for the terminal file.
+
+    Mirrors wiki._wiki_add_wait_path exactly: enqueue, nudge the background
+    drainer (drain_now) so the caller doesn't wait a full drain interval, then
+    poll the shared archive/dlq dirs for the job's terminal state
+    (FileQueue.wait_for_job). Reuses the same wait/drain plumbing wiki_add uses —
+    no new machinery.
+
+    Returns:
+      {"stored": True, "committed": True, "queued": False, "queue_id": ...} — archived
+      {"stored": False, "reason": "wait_timeout", "queued": True, ...} — drainer timeout
+      {"stored": False, "reason": "rejected", "queued": False, ...} — DLQ'd
+    """
+    import yadgar._shared.runtime.state as _st  # noqa: PLC0415
+
+    fq = _get_file_queue()
+    job_id = fq.enqueue("memorize", payload)
+
+    # Nudge the background drainer to flush promptly (runtime shared-state access
+    # — guarded, non-fatal), matching wiki_add's wait path.
+    _drainer = _st._queue_drainer
+    if _drainer is not None:
+        try:
+            _drainer.drain_now()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memorize wait: drain_now() failed (non-fatal): %s", exc)
+
+    # Reuse wiki_add's wait-timeout knob (WIKI_WRITE_WAIT_TIMEOUT_SECONDS) rather
+    # than inventing a memorize-specific one — the shared file-queue wait budget.
+    # (Sibling car #26 owns this knob's default; do not change it here.)
+    try:
+        timeout = getattr(settings, "WIKI_WRITE_WAIT_TIMEOUT_SECONDS", 5.0)
+    except Exception:  # noqa: BLE001
+        timeout = 5.0
+
+    outcome = fq.wait_for_job(job_id, timeout=timeout)
+
+    if outcome["status"] == "timeout":
+        return {
+            "stored": False,
+            "reason": "wait_timeout",
+            "queued": True,
+            "queue_id": job_id,
+            "hint": "Write still queued — will commit on next drain or hit DLQ on repeated failure.",
+        }
+
+    if outcome["status"] == "rejected":
+        rejection = outcome.get("result")
+        if rejection is not None:
+            return rejection
+        return {
+            "stored": False,
+            "reason": "rejected",
+            "queued": False,
+            "queue_id": job_id,
+        }
+
+    return {
+        "stored": True,
+        "committed": True,
+        "queued": False,
+        "queue_id": job_id,
+    }

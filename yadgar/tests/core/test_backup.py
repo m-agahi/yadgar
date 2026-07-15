@@ -415,7 +415,7 @@ class TestEnvKnob:
 
     def test_config_registry_contains_knob(self) -> None:
         """YADGAR_BACKUP_RETENTION is registered in config_registry."""
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = [e.name for e in list_config()]
         assert "YADGAR_BACKUP_RETENTION" in names
@@ -662,7 +662,7 @@ class TestBackupPathLayout:
 
     def test_knob_in_config_registry(self) -> None:
         """YADGAR_BACKUP_RETENTION is registered in config_registry (no regression)."""
-        from yadgar._shared.config_registry import list_config
+        from yadgar._shared.config.config_registry import list_config
 
         names = [e.name for e in list_config()]
         assert "YADGAR_BACKUP_RETENTION" in names
