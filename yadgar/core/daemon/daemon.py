@@ -19,6 +19,13 @@ This module keeps the YadgarDaemon orchestrator that drives them. The package
 importers are byte-unaffected.
 """
 
+# I13 note (ADR-0130): this module is an ACCEPTED single-file case over the ≤500
+# soft cap — do NOT split it in future audits. `YadgarDaemon` is one cohesive
+# orchestrator class: every lifecycle method shares `self` state + the internal
+# helper suite (_container_running / _health_ok / _image_exists / _container_exists),
+# and Car C3 already extracted the pure utilities (runtime/profiles/systemd). No
+# further seam exists. Kept in the soft baseline ratchet intentionally.
+
 import json
 import os
 import subprocess
