@@ -660,9 +660,9 @@ Rows older than these thresholds are pruned each consolidation cycle. Set to `0`
 | `viz_search_match_color` | `YADGAR_VIZ_SEARCH_MATCH_COLOR` | str | `#ffffff` | Stroke colour for search-matched nodes. |
 | `viz_search_pinned_color` | `YADGAR_VIZ_SEARCH_PINNED_COLOR` | str | `#ffd700` | Stroke colour for pinned nodes. |
 | `viz_search_dim_opacity` | `YADGAR_VIZ_SEARCH_DIM_OPACITY` | float | `0.18` | Opacity for non-matched dimmed nodes. |
-| `viz_max_memories` | `YADGAR_VIZ_MAX_MEMORIES` | int | `500` | Max memory nodes in the `/api/graph` payload (`0` or `-1` = unlimited). |
-| `viz_max_wiki` | `YADGAR_VIZ_MAX_WIKI` | int | `200` | Max wiki nodes in the `/api/graph` payload (`0`/`-1` = unlimited). |
-| `viz_max_entities` | `YADGAR_VIZ_MAX_ENTITIES` | int | `2000` | Max entity nodes in the `/api/graph` payload (`0`/`-1` = unlimited). |
+| `viz_max_memories` | `YADGAR_VIZ_MAX_MEMORIES` | int | `0` | Max memory nodes in the `/api/graph` payload (`0` = unlimited default; any positive N caps to N). |
+| `viz_max_wiki` | `YADGAR_VIZ_MAX_WIKI` | int | `0` | Max wiki nodes in the `/api/graph` payload (`0` = unlimited default; any positive N caps to N). |
+| `viz_max_entities` | `YADGAR_VIZ_MAX_ENTITIES` | int | `0` | Max entity nodes in the `/api/graph` payload (`0` = unlimited default; any positive N caps to N). |
 | `viz_layout_iterations` | `YADGAR_VIZ_LAYOUT_ITERATIONS` | int | `50` | `spring_layout` iteration cap for the (unconditional) precomputed layout (lower = faster/looser). |
 | `viz_max_transitions` | `YADGAR_VIZ_MAX_TRANSITIONS` | int | `0` | Max transition (co-recall) edges in `/api/graph` (`0`/`-1` = unlimited; ordered by count). |
 | `viz_max_wiki_crossrefs` | `YADGAR_VIZ_MAX_WIKI_CROSSREFS` | int | `0` | Max wiki cross-reference edges in `/api/graph` (`0`/`-1` = unlimited). |

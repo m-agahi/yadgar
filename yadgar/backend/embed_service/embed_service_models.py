@@ -165,3 +165,26 @@ class VizResponse(BaseModel):
     """Response body for POST /viz."""
 
     result: dict
+
+
+class ReadQueryRequest(BaseModel):
+    """Request body for POST /read_query (sanctioned read-only DB inspection).
+
+    The query runs on the VIEWER-role RO DB connection (writes rejected at the
+    DB regardless of query text — ADR-0078). ``timeout_ms`` bounds the per-call
+    DB timeout.
+    """
+
+    query: str
+    params: dict = {}  # noqa: RUF012 — Pydantic model field default, not a mutable class attr
+    timeout_ms: int = 5000
+
+    model_config = {"extra": "forbid"}
+
+
+class ReadQueryResponse(BaseModel):
+    """Response body for POST /read_query."""
+
+    rows: list[dict]
+    row_count: int
+    truncated: bool

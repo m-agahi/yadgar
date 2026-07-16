@@ -38,6 +38,12 @@ _CAMEL_CASE_RE = re.compile(r"([a-z])([A-Z])")
 # param is an integer (the canonical record-id type), dropping the inlined param.
 _TYPE_RECORD_RE = re.compile(r"type::record\(\s*'(\w+)'\s*,\s*\$(\w+)\s*\)")
 
+# Hard row-cap for the read-only DB inspection surface (_q_ro / POST /read_query /
+# db_inspect). A module constant, NOT a knob (avoid I25 config-surface churn): the
+# cap bounds how many rows the debug read can pull into an LLM's context. Callers
+# may clamp LOWER but must never raise it.
+_RO_QUERY_ROW_CAP: int = 500
+
 
 @observe(tier="hot")
 def _inline_int_record_ids(surql: str, params: dict | None) -> tuple[str, dict | None]:
@@ -507,6 +513,79 @@ class _ClientMixin:
 
         # Normalise to flat list of dicts (same as _q).
         return _normalize_rows(raw)
+
+    @observe(tier="stage")
+    def _q_ro(
+        self,
+        surql: str,
+        params: dict | None = None,
+        *,
+        timeout_ms: int = 5000,
+        row_cap: int = _RO_QUERY_ROW_CAP,
+    ) -> tuple[list, bool]:
+        """Run *surql* on the READ-ONLY (VIEWER-role) DB connection.
+
+        This is the safety-critical read path behind the ``/read_query`` debug
+        surface (ADR-0078). It runs on ``_get_ro_http()`` (the ``yadgar-ro``
+        VIEWER-authed httpx client) — a write over this connection does NOT
+        persist regardless of the query text. This is the REAL guard; the
+        parse-guard in the route is defense-in-depth only.
+
+        NOTE (empirical, 2026-07-16): SurrealDB VIEWER signals write-refusal
+        INCONSISTENTLY — a hard "read only transaction" RuntimeError when the
+        write implies DDL (auto-defining a table), but a SILENT status=OK /
+        result=None no-op for a record write to an existing table. The guarantee
+        is "no mutation persists", not "the write errors" — callers must NOT rely
+        on _q_ro raising on a write attempt.
+
+        Applies a hard row cap post-fetch (``row_cap``, ceiling ``_RO_QUERY_ROW_CAP``
+        = 500) and the per-call httpx timeout from ``timeout_ms``.
+
+        Returns ``(rows, truncated)`` where ``truncated`` is True iff the result
+        was capped (more rows existed than were returned).
+
+        Server mode only — raises RuntimeError in embedded mode (via ``_get_ro_http``).
+        """
+        import json as _json
+
+        # Never let a caller raise the ceiling; clamp to the module hard cap.
+        effective_cap = min(int(row_cap), _RO_QUERY_ROW_CAP)
+
+        client = self._get_ro_http()
+        if params:
+            lets = [f"LET ${k} = {_json.dumps(v, ensure_ascii=False)};" for k, v in params.items()]
+            body = "\n".join(lets) + "\n" + surql
+        else:
+            body = surql
+
+        _t0 = time.perf_counter()
+        resp = client.post(
+            "/sql",
+            content=body.encode(),
+            headers={"Content-Type": "text/plain"},
+            timeout=max(0.001, timeout_ms / 1000.0),
+        )
+        resp.raise_for_status()
+        results = resp.json()
+        # Raise on any SurrealDB-level error (HTTP is always 200). A write over the
+        # VIEWER connection MAY surface here as an ERR entry (when it implies DDL,
+        # e.g. auto-defining a table → "read only transaction"), but may also
+        # SILENTLY no-op with status=OK — either way it does not persist. This
+        # error-raise is for genuine query errors; write-safety is proven by the
+        # VIEWER role not persisting, asserted via read-back in the go/no-go test.
+        for entry in results:
+            if entry.get("status") == "ERR":
+                raise RuntimeError(
+                    f"SurrealDB error: {entry.get('detail') or entry.get('result') or entry}"
+                )
+        raw = results[-1].get("result") if results else None
+        _observe_query_metrics(surql, time.perf_counter() - _t0)
+
+        rows = _normalize_rows(raw)
+        truncated = len(rows) > effective_cap
+        if truncated:
+            rows = rows[:effective_cap]
+        return rows, truncated
 
     @observe(tier="stage")
     def _q_server(self, surql: str, params: dict | None) -> object:

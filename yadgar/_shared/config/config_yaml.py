@@ -817,15 +817,15 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "viz_config",
     },
     "viz_max_memories": {
-        "desc": "Max memory nodes in the /api/graph payload (default 500; 0 or -1 = unlimited)",
+        "desc": "Max memory nodes in the /api/graph payload (default 0 = unlimited; any positive N caps to N)",
         "section": "viz_config",
     },
     "viz_max_wiki": {
-        "desc": "Max wiki nodes in the /api/graph payload (default 200; 0 or -1 = unlimited)",
+        "desc": "Max wiki nodes in the /api/graph payload (default 0 = unlimited; any positive N caps to N)",
         "section": "viz_config",
     },
     "viz_max_entities": {
-        "desc": "Max entity nodes in the /api/graph payload (default 2000; 0 or -1 = unlimited)",
+        "desc": "Max entity nodes in the /api/graph payload (default 0 = unlimited; any positive N caps to N)",
         "section": "viz_config",
     },
     "viz_layout_iterations": {

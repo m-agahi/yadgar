@@ -21,6 +21,7 @@ import yadgar.core.server.tools.bookmarks  # noqa: F401 — side-effects: tool r
 import yadgar.core.server.tools.blocks  # noqa: F401 — side-effects: tool registration (v5.33.0)
 import yadgar.core.server.tools.repo_wiki  # noqa: F401 — side-effects: tool registration (T8)
 import yadgar.core.server.tools.adr  # noqa: F401 — side-effects: tool registration (car #12)
+import yadgar.core.server.tools.db_inspect  # noqa: F401 — side-effects: tool registration (db-inspect, ADR-0078)
 
 # Fix A (daemon-offload-A): import triggers register_test_tools() at its module
 # bottom — registers _test_sleep/_test_thread_id only when YADGAR_TEST_TOOLS=1
@@ -132,10 +133,12 @@ from yadgar.core.server.tools.blocks import (
 )
 from yadgar.core.server.tools.repo_wiki import repo_wiki_generate
 from yadgar.core.server.tools.adr import adr_add, adr_get, adr_list
+from yadgar.core.server.tools.db_inspect import db_inspect
 
 __all__ = [
     "memorize",
     "recall",
+    "db_inspect",
     "project_brief",
     "bootstrap_project",
     "update_active_work",
