@@ -40,6 +40,7 @@ _DEBUG_API_PREFIXES: tuple[str, ...] = (
     "/api/control/action/",
     "/api/control/restart/",
     "/api/logs/",  # v5.52.0: log streaming endpoints
+    "/api/debug/read_query",  # db-inspect: read-only DB inspection (ADR-0078)
 )
 
 _startup_warned = False

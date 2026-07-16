@@ -286,9 +286,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_VIZ_SEARCH_PINNED_COLOR", "#ffd700", "string"),
     ConfigEntry("YADGAR_VIZ_SEARCH_DIM_OPACITY", "0.18", "float"),
     # ── Graph node caps (v5.88; 0 or -1 = unlimited) ─────────────────────────
-    ConfigEntry("YADGAR_VIZ_MAX_MEMORIES", "500", "int"),
-    ConfigEntry("YADGAR_VIZ_MAX_WIKI", "200", "int"),
-    ConfigEntry("YADGAR_VIZ_MAX_ENTITIES", "2000", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_MEMORIES", "0", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_WIKI", "0", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_ENTITIES", "0", "int"),
     # ── Precomputed server-side graph layout (viz-render-perf: unconditional) ─
     ConfigEntry("YADGAR_VIZ_LAYOUT_ITERATIONS", "50", "int"),
     # ── Per-edge-type caps (viz-render-perf; 0/-1 = unlimited) ────────────────

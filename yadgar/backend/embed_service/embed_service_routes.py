@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 
 from fastapi import Depends, HTTPException
@@ -43,12 +44,30 @@ from yadgar.backend.embed_service.embed_service_models import (
     AdminResponse,
     ConsolidateRequest,
     ConsolidateResponse,
+    ReadQueryRequest,
+    ReadQueryResponse,
     RecallRequest,
     RecallResponse,
     RestoreRequest,
     RestoreResponse,
     VizRequest,
     VizResponse,
+)
+
+# Defense-in-depth parse-guard keywords for POST /read_query. NOTE: this is NOT
+# the primary guard — the RO VIEWER DB connection rejects writes at the DB
+# regardless of query text (ADR-0078). SurrealQL is multi-statement, so
+# "SELECT 1; DELETE memory" defeats a naive prefix check; this keyword scan is a
+# cheap early-reject layer only.
+_WRITE_KEYWORDS: tuple[str, ...] = (
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "CREATE",
+    "DEFINE",
+    "REMOVE",
+    "RELATE",
+    "UPSERT",
 )
 
 logger = logging.getLogger(__name__)
@@ -328,6 +347,77 @@ async def viz_route(req: VizRequest, _: None = Depends(_require_admin_token)) ->
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return VizResponse(result=result)
+
+
+# ---------------------------------------------------------------------------
+# Sanctioned read-only DB inspection surface (ADR-0078 named debug read path).
+# The query runs on the VIEWER-role RO DB connection (_q_ro) — a write over that
+# connection does NOT persist regardless of query text (the REAL guard; VIEWER may
+# silently no-op or hard-error). The keyword parse-guard below is defense-in-depth
+# only. Core forwards here via _forward_read_query.
+# ---------------------------------------------------------------------------
+
+
+@observe(tier="stage")
+def _contains_write_keyword(query: str) -> bool:
+    """Return True if *query* contains any write keyword as a whole word.
+
+    Defense-in-depth only (NOT the primary guard — the RO connection is). Uses
+    word boundaries so identifiers like ``updated_at`` do not false-positive.
+    """
+    upper = query.upper()
+    for kw in _WRITE_KEYWORDS:
+        if re.search(rf"\b{kw}\b", upper):
+            return True
+    return False
+
+
+@app.post("/read_query", response_model=ReadQueryResponse)
+@observe(tier="boundary", metric="backend.read_query")
+async def read_query_route(
+    req: ReadQueryRequest, _: None = Depends(_require_admin_token)
+) -> ReadQueryResponse:
+    """Run a read-only ad-hoc query against SurrealDB and return the rows.
+
+    Safety = the query runs on the VIEWER-authed RO DB connection (``_q_ro``); a
+    write over that connection does NOT persist regardless of query text
+    (ADR-0078; VIEWER may silently no-op or hard-error). The keyword parse-guard
+    below is DEFENSE-IN-DEPTH only — SurrealQL is multi-statement, so a prefix
+    check is defeatable; the RO connection is the real guard.
+
+    Row-capped at 500 (module constant ``_RO_QUERY_ROW_CAP``) and bounded by
+    ``req.timeout_ms``. Called by the core thin forwarder ``_forward_read_query``
+    (and thus the ``db_inspect`` MCP tool). Unknown/malformed query → the DB
+    surfaces an error → 400.
+    """
+    # Defense-in-depth: cheap early-reject. The RO connection is the real guard.
+    if _contains_write_keyword(req.query):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "read_query rejects statements containing write keywords "
+                "(defense-in-depth; the read-only DB connection is the real guard)."
+            ),
+        )
+
+    # Bootstrap engines (idempotent, guarded by lock) — we need the storage engine.
+    await asyncio.to_thread(_es._ensure_recall_engines)
+
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+
+    storage = _get_storage()
+
+    def _run() -> tuple[list[dict], bool]:
+        return storage._q_ro(req.query, req.params or None, timeout_ms=req.timeout_ms)
+
+    try:
+        rows, truncated = await asyncio.to_thread(_run)
+    except RuntimeError as exc:
+        # SurrealDB-level error (incl. a write rejected by the VIEWER role, or a
+        # malformed query) → 400 with the DB's message.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ReadQueryResponse(rows=rows, row_count=len(rows), truncated=truncated)
 
 
 # Sentinel: set on first import so embed_service.py knows to force-reload this

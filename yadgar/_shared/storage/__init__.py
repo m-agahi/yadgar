@@ -182,6 +182,33 @@ def _resolve_db_credentials() -> tuple[str, str]:
     return _user, _pass
 
 
+@observe(tier="hot")
+def _resolve_ro_db_credentials() -> tuple[str, str]:
+    """Return (user, password) for the READ-ONLY (VIEWER-role) SurrealDB user.
+
+    Separate from ``_resolve_db_credentials`` (which resolves the OWNER/RW user):
+    the RO credentials authenticate as the ``yadgar-ro`` VIEWER user provisioned
+    by ``entrypoint-backend.sh`` (``DEFINE USER ... ROLES VIEWER``). The DB rejects
+    writes over this connection regardless of query text — this is the real safety
+    guard behind the ``/read_query`` debug surface (ADR-0078 sanctioned read path).
+
+    Reads ``YADGAR_RO_USER`` / ``YADGAR_RO_PASS`` (no RW fallback — falling back to
+    the writer credentials would silently re-grant write access and defeat the
+    entire safety claim). Raises ValueError naming both vars when unset.
+    """
+    _user = os.environ.get("YADGAR_RO_USER")
+    _pass = os.environ.get("YADGAR_RO_PASS")
+    if not _user or not _pass:
+        raise ValueError(
+            "Missing read-only database credentials. Set YADGAR_RO_USER + "
+            "YADGAR_RO_PASS (the VIEWER-role DB user) in secrets.env or "
+            "environment. Re-run 'yadgar setup' to regenerate secrets.env. "
+            "There is deliberately NO RW fallback — the RO surface must never "
+            "authenticate as the writer."
+        )
+    return _user, _pass
+
+
 # StorageEngine
 # ---------------------------------------------------------------------------
 
@@ -357,11 +384,17 @@ class StorageEngine(
         except Exception:
             pass
         if getattr(self, "_db_url", None):
-            # Server mode: close the shared httpx client.
+            # Server mode: close the shared httpx client(s) — OWNER + optional RO.
             http = getattr(self, "_http", None)
             if http is not None:
                 try:
                     http.close()
+                except Exception:
+                    pass
+            ro_http = getattr(self, "_http_ro", None)
+            if ro_http is not None:
+                try:
+                    ro_http.close()
                 except Exception:
                     pass
             return
@@ -387,3 +420,58 @@ class StorageEngine(
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    @observe(tier="stage")
+    def _get_ro_http(self):
+        """Return a lazily-built httpx.Client authed as the READ-ONLY VIEWER user.
+
+        Server mode only. Mirrors the OWNER ``self._http`` construction but with
+        the ``YADGAR_RO_USER``/``YADGAR_RO_PASS`` VIEWER credentials — the DB
+        rejects writes over this connection regardless of query text (the real
+        guard behind the ``/read_query`` debug surface, ADR-0078). Built on first
+        use and reused (single connection, like the OWNER client); closed in
+        ``close()``.
+
+        Raises RuntimeError in embedded mode (no HTTP transport; the debug read
+        surface is a server-mode-only capability).
+        """
+        if not getattr(self, "_db_url", None):
+            raise RuntimeError(
+                "_get_ro_http requires server mode (YADGAR_DB_URL set); the "
+                "read-only DB inspection surface is not available in embedded mode."
+            )
+        existing = getattr(self, "_http_ro", None)
+        if existing is not None:
+            return existing
+        import httpx
+
+        _user, _pass = _resolve_ro_db_credentials()
+        _auth = base64.b64encode(f"{_user}:{_pass}".encode()).decode()
+        from yadgar._shared.config import get_settings as _get_settings
+
+        _settings = _get_settings()
+        _http_timeout_sec = float(_settings.BACKEND_HTTP_TIMEOUT_SEC)
+        # Mirror the OWNER client's namespace/db so the RO connection reads the
+        # SAME database. The OWNER client's surreal-db header may have been
+        # rewritten (e.g. the test harness routes each StorageEngine to its own
+        # per-path namespace) — hardcoding "main" would point the RO client at a
+        # different, empty db where a SELECT triggers an implicit table-define
+        # write ("read only transaction" error). Fall back to the production
+        # defaults when the OWNER client is absent.
+        _owner = getattr(self, "_http", None)
+        _owner_headers = getattr(_owner, "headers", {}) if _owner is not None else {}
+        _ns = _owner_headers.get("surreal-ns", "yadgar")
+        _db = _owner_headers.get("surreal-db", "main")
+        self._http_ro = httpx.Client(
+            base_url=self._db_url,
+            headers={
+                "Authorization": f"Basic {_auth}",
+                "surreal-ns": _ns,
+                "surreal-db": _db,
+                "Accept": "application/json",
+            },
+            timeout=httpx.Timeout(
+                connect=2.0, read=_http_timeout_sec, write=_http_timeout_sec, pool=5.0
+            ),
+        )
+        return self._http_ro

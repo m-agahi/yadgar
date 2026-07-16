@@ -111,6 +111,57 @@ def _forward_viz(op: str, payload: dict, timeout_s: float = 60.0) -> dict:
     return data.get("result", {})
 
 
+@observe(tier="boundary", metric="tools._forward._forward_read_query")
+def _forward_read_query(query: str, params: dict | None = None, timeout_ms: int = 5000) -> dict:
+    """Forward a read-only DB query to the backend POST /read_query endpoint.
+
+    ADR-0078 sanctioned read path: the query executes backend-side on the
+    VIEWER-role RO DB connection (a write over that connection does not persist,
+    regardless of query text). Core touches zero DB — it forwards HTTP only.
+    Called by the core ``/api/debug/read_query`` route AND the ``db_inspect``
+    MCP tool.
+
+    Args:
+        query: The SurrealQL SELECT/INFO statement to run.
+        params: Bind params for the query (``$name`` in the statement).
+        timeout_ms: Per-call DB timeout (backend applies it to ``_q_ro``). Also
+            used to size the httpx request timeout (+ a small forward margin).
+
+    Returns:
+        The backend's ``ReadQueryResponse`` dict: ``{rows, row_count, truncated}``.
+
+    Raises:
+        RuntimeError: if ``YADGAR_EMBED_URL`` is not configured.
+        httpx.HTTPError: if the backend request fails (400 on write-keyword /
+            malformed query).
+    """
+    import httpx  # noqa: PLC0415
+
+    backend_base = os.environ.get("YADGAR_EMBED_URL", "").rstrip("/")
+    if not backend_base:
+        raise RuntimeError(
+            "YADGAR_EMBED_URL is not set; cannot forward read_query to backend. "
+            "ADR-0078: the read-only DB inspection surface is forward-only — "
+            "core touches zero DB directly."
+        )
+
+    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    # httpx timeout = DB timeout + a forward margin so the backend's own timeout
+    # surfaces as a 400 rather than a client-side read timeout.
+    _client_timeout_s = (timeout_ms / 1000.0) + 5.0
+
+    resp = httpx.post(
+        f"{backend_base}/read_query",
+        json={"query": query, "params": params or {}, "timeout_ms": timeout_ms},
+        headers=headers,
+        timeout=_client_timeout_s,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 @observe(tier="boundary", metric="tools._forward._forward_restore")
 def _forward_restore(directory: str = "", timeout_s: float = 120.0) -> dict:
     """Forward restore to the backend POST /restore endpoint (T2 Car B).

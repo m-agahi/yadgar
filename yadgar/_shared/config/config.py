@@ -928,9 +928,9 @@ class Settings(BaseSettings):
     VIZ_SEARCH_PINNED_COLOR: str = "#ffd700"  # stroke for pinned (clicked-to-pin) nodes
     VIZ_SEARCH_DIM_OPACITY: float = 0.18  # opacity for non-matched dimmed nodes
     # v5.88 — Graph node caps (I25 three-way registered; 0 or -1 = unlimited)
-    VIZ_MAX_MEMORIES: int = 500  # max memory nodes in /api/graph (0/-1 = all)
-    VIZ_MAX_WIKI: int = 200  # max wiki nodes in /api/graph (0/-1 = all)
-    VIZ_MAX_ENTITIES: int = 2000  # max entity nodes in /api/graph (0/-1 = all)
+    VIZ_MAX_MEMORIES: int = 0  # max memory nodes in /api/graph (0/-1 = all; 0 = unlimited default)
+    VIZ_MAX_WIKI: int = 0  # max wiki nodes in /api/graph (0/-1 = all; 0 = unlimited default)
+    VIZ_MAX_ENTITIES: int = 0  # max entity nodes in /api/graph (0/-1 = all; 0 = unlimited default)
     # Precomputed server-side graph layout (I25 three-way registered).
     # viz-render-perf (Car A): the nightly/full consolidation cycle always computes
     # 3D node positions + caches them; /api/graph attaches x/y/z so the viz renders
