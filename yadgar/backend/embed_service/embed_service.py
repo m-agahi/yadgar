@@ -6,6 +6,14 @@ GET /health returns 200 only when SurrealDB is also reachable (true readiness si
 GET /metrics exposes Prometheus metrics (unauthenticated — V1a, v5.5.0).
 """
 
+# I13 note (ADR-0130): this module is an ACCEPTED single-file case over the ≤500
+# soft cap — do NOT split it in future audits. The FastAPI `app` + reload-hit route
+# handlers must co-reside with the module-level singletons
+# (_engine / _reranker / _ce_cache / _embed_cache / _queue_drainer), which MUST
+# survive `importlib.reload(embed_service)` for test isolation (route siblings are
+# force-reloaded via the _YADGAR_ES_LOADED sentinel). Splitting breaks the
+# reload/monkeypatch reach. Kept in the soft baseline ratchet intentionally.
+
 from __future__ import annotations
 
 import asyncio

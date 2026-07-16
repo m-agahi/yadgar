@@ -173,7 +173,8 @@ class TestByteBoundedEviction:
 
 class TestRamPctBudget:
     def test_budget_from_cgroup_limit(self, monkeypatch) -> None:
-        from yadgar.backend.cache import cache as cmod
+        # RAM-% budget machinery moved to cache_budgets (backend 5.51.0 I13 split).
+        from yadgar.backend.cache import cache_budgets as cmod
 
         # 1 GiB container, 10% → ~107 MB total backend cache budget.
         monkeypatch.setattr(cmod, "_read_container_memory_bytes", lambda: 1024**3)
@@ -181,14 +182,14 @@ class TestRamPctBudget:
         assert budget == pytest.approx(0.10 * 1024**3, rel=1e-6)
 
     def test_budget_fallback_outside_container(self, monkeypatch) -> None:
-        from yadgar.backend.cache import cache as cmod
+        from yadgar.backend.cache import cache_budgets as cmod
 
         monkeypatch.setattr(cmod, "_read_container_memory_bytes", lambda: None)
         budget = cmod._backend_cache_total_budget_bytes(pct=10.0)
         assert budget > 0  # sane non-zero fallback
 
     def test_namespace_split_sums_within_total(self, monkeypatch) -> None:
-        from yadgar.backend.cache import cache as cmod
+        from yadgar.backend.cache import cache_budgets as cmod
 
         monkeypatch.setattr(cmod, "_read_container_memory_bytes", lambda: 1000)
         total = cmod._backend_cache_total_budget_bytes(pct=100.0)

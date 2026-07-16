@@ -4,9 +4,12 @@ T2 Car D (D2, layer-boundary train): the flat ``cache.py`` packaged per
 the no-lone-files law (ADR-0084). ``yadgar.backend.cache`` IS the old dotted
 path — imports keep working through this PEP-562 re-export ``__init__``
 (Car 0 #167 precedent). New code may import ``yadgar.backend.cache.cache``
-directly.
+or ``yadgar.backend.cache.cache_budgets`` directly.
 
-  cache.py — Cache/LRUCache + namespace budgets + scope-version invalidation
+  cache.py         — Cache class + invalidation-policy dataclasses + _REGISTRY
+  cache_budgets.py — namespace factories + RAM-% budget machinery (backend 5.51.0 split)
+  lru.py           — LRUCache + shared msgpack snapshot format
+  scope_versions.py — ScopeVersions + get_scope_versions
 """
 
 from typing import Final
@@ -27,36 +30,35 @@ _EXPORTS: Final = {
     "ScopeVersions": "yadgar.backend.cache.scope_versions",
     "TTL": "yadgar.backend.cache.cache",
     "TYPE_CHECKING": "yadgar.backend.cache.cache",
-    "_CGROUP_V1": "yadgar.backend.cache.cache",
-    "_CGROUP_V2": "yadgar.backend.cache.cache",
-    "_FALLBACK_CONTAINER_BYTES": "yadgar.backend.cache.cache",
+    "_CGROUP_V1": "yadgar.backend.cache.cache_budgets",
+    "_CGROUP_V2": "yadgar.backend.cache.cache_budgets",
+    "_FALLBACK_CONTAINER_BYTES": "yadgar.backend.cache.cache_budgets",
     "_MAGIC": "yadgar.backend.cache.cache",
-    "_NAMESPACE_WEIGHTS": "yadgar.backend.cache.cache",
+    "_NAMESPACE_WEIGHTS": "yadgar.backend.cache.cache_budgets",
     "_REGISTRY": "yadgar.backend.cache.cache",
-    "_SCOPE_VERSIONS": "yadgar.backend.cache.scope_versions",
     "_VERSION": "yadgar.backend.cache.cache",
-    "_backend_cache_ram_pct_local": "yadgar.backend.cache.cache",
-    "_backend_cache_total_budget_bytes": "yadgar.backend.cache.cache",
-    "_engram_slot_cache_enabled": "yadgar.backend.cache.cache",
+    "_backend_cache_ram_pct_local": "yadgar.backend.cache.cache_budgets",
+    "_backend_cache_total_budget_bytes": "yadgar.backend.cache.cache_budgets",
+    "_engram_slot_cache_enabled": "yadgar.backend.cache.cache_budgets",
     "_estimate_bytes": "yadgar.backend.cache.cache",
-    "_graph_cache_enabled": "yadgar.backend.cache.cache",
+    "_graph_cache_enabled": "yadgar.backend.cache.cache_budgets",
     "_identity": "yadgar.backend.cache.cache",
-    "_make_engram_slot_cache": "yadgar.backend.cache.cache",
-    "_make_graph_cache": "yadgar.backend.cache.cache",
-    "_make_memory_doc_cache": "yadgar.backend.cache.cache",
-    "_memory_doc_cache_enabled": "yadgar.backend.cache.cache",
-    "_memory_doc_cache_ttl_sec": "yadgar.backend.cache.cache",
-    "_namespace_budget_bytes": "yadgar.backend.cache.cache",
-    "_read_container_memory_bytes": "yadgar.backend.cache.cache",
+    "_make_engram_slot_cache": "yadgar.backend.cache.cache_budgets",
+    "_make_graph_cache": "yadgar.backend.cache.cache_budgets",
+    "_make_memory_doc_cache": "yadgar.backend.cache.cache_budgets",
+    "_memory_doc_cache_enabled": "yadgar.backend.cache.cache_budgets",
+    "_memory_doc_cache_ttl_sec": "yadgar.backend.cache.cache_budgets",
+    "_namespace_budget_bytes": "yadgar.backend.cache.cache_budgets",
+    "_read_container_memory_bytes": "yadgar.backend.cache.cache_budgets",
     "_read_snapshot": "yadgar.backend.cache.cache",
     "_write_snapshot": "yadgar.backend.cache.cache",
     "annotations": "yadgar.backend.cache.cache",
     "copy": "yadgar.backend.cache.cache",
     "dataclass": "yadgar.backend.cache.cache",
-    "get_ce_cache": "yadgar.backend.cache.cache",
-    "get_engram_slot_cache": "yadgar.backend.cache.cache",
-    "get_graph_cache": "yadgar.backend.cache.cache",
-    "get_memory_doc_cache": "yadgar.backend.cache.cache",
+    "get_ce_cache": "yadgar.backend.cache.cache_budgets",
+    "get_engram_slot_cache": "yadgar.backend.cache.cache_budgets",
+    "get_graph_cache": "yadgar.backend.cache.cache_budgets",
+    "get_memory_doc_cache": "yadgar.backend.cache.cache_budgets",
     "get_scope_versions": "yadgar.backend.cache.scope_versions",
     "logger": "yadgar.backend.cache.cache",
     "logging": "yadgar.backend.cache.cache",
