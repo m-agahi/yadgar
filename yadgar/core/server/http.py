@@ -30,6 +30,7 @@ from yadgar import __version__
 from yadgar._shared.config import resolve_knob
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.server_helpers import _push_event  # F2: re-stamp relayed backend events
 from yadgar.core.sanitize import sanitize_log_field
 from yadgar.core.server._app import mcp_server
 
@@ -41,6 +42,7 @@ from yadgar.core.server._helpers import (  # noqa: F401
     _build_dlq_alert_text,
     _extract_record_id,
 )
+from yadgar.core.server.tools._forward import _forward_viz  # F2: poll backend /viz events op
 
 logger = logging.getLogger(__name__)
 
@@ -2246,6 +2248,53 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
 
 
 @observe(
+    span=False,
+    metric="core.viz.backend_event_relay",
+)
+def _poll_backend_events() -> None:
+    """Relay backend-process SSE events onto core's own queue (F2).
+
+    memory_added / wiki_added / wiki_updated (write-exec) and heat_updated (heat
+    decay) are pushed in the BACKEND process, into ITS process-local
+    ``_event_queue`` — a buffer no core SSE client can read. This helper polls
+    the backend ``/viz`` ``events`` op for entries past a process-global cursor
+    and re-pushes each onto core's queue via ``_push_event``, which RE-STAMPS a
+    fresh core seq. The backend ``seq`` is stripped before re-push so it cannot
+    overwrite the core seq (``{"seq": core, **event}`` would otherwise let the
+    backend value win) and corrupt the client cursor.
+
+    Runs synchronously (blocking httpx) — callers MUST invoke via
+    ``asyncio.to_thread`` so the event loop is never blocked (ADR-0018). The
+    poll-lock serializes concurrent SSE clients to one backend round-trip per
+    tick and keeps the read-cursor→fetch→advance atomic across the HTTP call.
+    Best-effort: any backend/transport error is swallowed (viz relay is
+    non-critical; the periodic full-reload path still shows the data).
+    """
+    if not _st._backend_poll_lock.acquire(blocking=False):
+        return  # another client is already polling this tick; skip.
+    try:
+        since = _st._backend_event_cursor
+        try:
+            result = _forward_viz("events", {"since": max(since, 0)}, timeout_s=5.0)
+        except Exception as exc:  # noqa: BLE001 — relay is best-effort
+            logger.debug("backend event relay poll failed (%s): %s", type(exc).__name__, exc)
+            return
+        latest = int(result.get("latest_seq", 0))
+        if since < 0:
+            # First poll: seed the cursor to the backend head. Do NOT replay the
+            # existing backlog (up to 500 stale events) onto a fresh client.
+            _st._backend_event_cursor = latest
+            return
+        for e in result.get("events", []):
+            if int(e.get("seq", 0)) <= since:
+                continue
+            _push_event({k: v for k, v in e.items() if k != "seq"})
+        _st._backend_event_cursor = max(latest, since)
+    finally:
+        _st._backend_poll_lock.release()
+
+
+@observe(
     exempt="async generator (SSE event stream); @observe sync-wraps and would fire the signal at generator creation not exhaustion"
 )
 async def _make_event_stream(request: Request):
@@ -2299,6 +2348,11 @@ async def _make_event_stream(request: Request):
             if await request.is_disconnected():
                 logger.debug("SSE client %s disconnected; closing stream", client_id)
                 return
+
+            # F2 relay: pull backend-process events (memory_added/wiki_added/
+            # heat_updated) onto core's own queue so they drain below. Runs in a
+            # worker thread (sync httpx) — never block the event loop (ADR-0018).
+            await asyncio.to_thread(_poll_backend_events)
 
             now = time.time()
             try:

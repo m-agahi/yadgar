@@ -11,7 +11,7 @@
  */
 
 /** @type {Set<string>} */
-export const VALID_TABS = new Set(['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help', 'config-ref']);
+export const VALID_TABS = new Set(['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help', 'config-ref', 'traces']);
 
 /**
  * Resolve a window.location.hash value to a tab name.

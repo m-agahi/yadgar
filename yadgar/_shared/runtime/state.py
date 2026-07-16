@@ -124,6 +124,19 @@ _event_queue: deque = deque(maxlen=500)
 _event_seq: int = 0
 _system_metrics_cache: dict = {}
 
+# F2 backend→core event relay: core polls the backend /viz "events" op and
+# re-stamps new backend events onto its OWN _event_queue (the backend push path
+# — memory_added/wiki_added/heat_updated — runs in a different process whose
+# queue no core SSE client can read). These two globals live in CORE only.
+#   _backend_event_cursor: last BACKEND seq consumed (-1 = not yet seeded; the
+#     first poll seeds it to the backend head so a fresh client is not flooded
+#     with up-to-500 stale backlog events).
+#   _backend_poll_lock: serializes the poll so N concurrent SSE clients issue at
+#     most one backend round-trip per loop tick AND the read-cursor→fetch→advance
+#     stays atomic (a plain _event_lock would not span the HTTP call).
+_backend_event_cursor: int = -1
+_backend_poll_lock = threading.Lock()
+
 # Session state for transition tracking (bounded to prevent unbounded growth)
 _last_recalled_ids: OrderedDict[str, int] = OrderedDict()  # session_id → last recalled memory_id
 _DICT_MAX_SIZE = 1000  # max entries for all bounded dicts

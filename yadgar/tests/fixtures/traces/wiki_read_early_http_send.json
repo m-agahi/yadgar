@@ -1,0 +1,21 @@
+{
+ "label": "wiki_read",
+ "tool_span": "tool.wiki_read",
+ "trace_id": "3686bfacebc2bf602f68d514932148b9",
+ "total_ms": 30.5,
+ "span_count": 12,
+ "spans": [
+  {"rel_ms": 0.0,   "dur_ms": 30.51, "depth": 0, "svc": "yadgar-core", "name": "POST /mcp"},
+  {"rel_ms": 1.76,  "dur_ms": 0.02,  "depth": 2, "svc": "yadgar-core", "name": "POST /mcp http send"},
+  {"rel_ms": 2.28,  "dur_ms": 27.94, "depth": 2, "svc": "yadgar-core", "name": "POST /mcp http receive"},
+  {"rel_ms": 2.96,  "dur_ms": 26.2,  "depth": 4, "svc": "yadgar-core", "name": "tool.wiki_read"},
+  {"rel_ms": 3.03,  "dur_ms": 0.64,  "depth": 5, "svc": "yadgar-core", "name": "yadgar.core.server.tools.project._detect_branch"},
+  {"rel_ms": 4.55,  "dur_ms": 0.03,  "depth": 5, "svc": "yadgar-core", "name": "yadgar.core.cache.Cache.get"},
+  {"rel_ms": 4.7,   "dur_ms": 24.29, "depth": 5, "svc": "yadgar-core", "name": "yadgar._shared.storage.wiki._WikiMixin.get_wiki_page_by_slug_directory_branch"},
+  {"rel_ms": 4.75,  "dur_ms": 24.13, "depth": 6, "svc": "yadgar-core", "name": "yadgar._shared.storage.client._ClientMixin._q"},
+  {"rel_ms": 5.15,  "dur_ms": 22.85, "depth": 8, "svc": "yadgar-backend", "name": "POST"},
+  {"rel_ms": 29.03, "dur_ms": 0.12,  "depth": 5, "svc": "yadgar-core", "name": "yadgar.core.cache.Cache.put"},
+  {"rel_ms": 29.93, "dur_ms": 0.01,  "depth": 2, "svc": "yadgar-core", "name": "POST /mcp http send"},
+  {"rel_ms": 30.07, "dur_ms": 0.01,  "depth": 2, "svc": "yadgar-core", "name": "POST /mcp http send"}
+ ]
+}

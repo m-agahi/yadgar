@@ -130,7 +130,7 @@ export function serializePositionStore(map) {
 /**
  * Count nodes that arrive already carrying a finite (x, y) position (v5.88).
  *
- * The server-side precomputed-layout feature (VIZ_PRECOMPUTED_LAYOUT_ENABLED)
+ * The server-side precomputed-layout feature (unconditional; knob removed)
  * attaches x/y/z to nodes in the /api/graph payload. Those nodes are already
  * seeded — so the localStorage warm-start restore (which only touches nodes
  * WITHOUT finite x) leaves them alone and server positions take priority. This

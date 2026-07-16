@@ -71,20 +71,19 @@ def _get_scheduler():
 
 @observe(tier="stage", metric="backend.consolidation.maybe_precompute_graph_layout")
 def _maybe_precompute_graph_layout(storage, settings) -> None:
-    """v5.88: precompute + cache the 3D graph layout (nightly / full paths only).
+    """Precompute + cache the 3D graph layout (nightly / full paths only).
 
     T2 Car E3 (census verdict #11): moved from the core orchestrator — the
     graph assembly + spring-layout compute run next to the DB on the backend's
     CPUs, inside the same full/nightly cycle that owns the rest of the heavy
     compute.
 
-    Gated three ways so it never blocks: (1) VIZ_PRECOMPUTED_LAYOUT_ENABLED flag
-    (default OFF), (2) a graph-signature no-op — when the live graph shape matches
-    the cached signature nothing is recomputed, (3) only called from the
-    nightly/full paths, never the light budget. Non-fatal.
+    viz-render-perf (Car A): the VIZ_PRECOMPUTED_LAYOUT_ENABLED knob was removed —
+    precompute now runs unconditionally (supersedes ADR-0010's default-OFF stance).
+    Two gates remain so it never blocks: (1) a graph-signature no-op — when the
+    live graph shape matches the cached signature nothing is recomputed, (2) only
+    called from the nightly/full paths, never the light budget. Non-fatal.
     """
-    if not getattr(settings, "VIZ_PRECOMPUTED_LAYOUT_ENABLED", False):
-        return
     try:
         import time as _time  # noqa: PLC0415
         from datetime import UTC, datetime  # noqa: PLC0415

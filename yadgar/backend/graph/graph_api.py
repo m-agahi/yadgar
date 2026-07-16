@@ -27,6 +27,7 @@ helpers in ``graph_nodes.py``, edge builders in ``graph_edges.py``, merged into
 """
 
 import logging
+from dataclasses import dataclass
 
 # T2 Car E3: the edge registry is a _shared CONTRACT (dual: backend stamps
 # roles, core styles the legend) — never import core.viz from the backend.
@@ -40,6 +41,23 @@ from .graph_edges import GraphAPIEdgesMixin
 from .graph_nodes import GraphAPINodesMixin
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class EdgeCaps:
+    """Per-edge-type render caps for get_full_graph (viz-render-perf, Car A).
+
+    Each field is a max edge count (0/-1 = unlimited). Bundled into one dataclass
+    so get_full_graph stays within the I13 param cap. The /api/graph call site
+    (_op_graph) builds this from VIZ_MAX_* settings; the nightly precompute uses
+    the default (all unlimited) so its layout stays over the full graph.
+    """
+
+    transitions: int = 0
+    wiki_crossrefs: int = 0
+    causal_edges: int = 0
+    relationships: int = 0
+    similarity_links: int = 0
 
 
 def _limit_clause(cap: int) -> tuple[str, dict]:
@@ -107,6 +125,7 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
         as_of: str | None = None,
         max_wiki: int = 200,
         max_entities: int = 2000,
+        edge_caps: EdgeCaps | None = None,
     ) -> dict:
         """Return full graph: memory + wiki + entity nodes with typed edges.
 
@@ -115,7 +134,14 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
 
         v5.54.3: entity typed-relation edges added; all edges carry `role`
         field sourced from EDGE_TYPES. (v5.87 C3: semantic edge type removed.)
+
+        viz-render-perf (Car A): ``edge_caps`` (an EdgeCaps, all fields 0/unlimited
+        by default) is THREADED in, not read from settings — the /api/graph call
+        site (_op_graph) builds it from VIZ_MAX_* and passes it; the nightly
+        precompute calls get_full_graph without it so its layout stays over the
+        full uncapped graph.
         """
+        caps = edge_caps or EdgeCaps()
         nodes: list[dict] = []
         edges: list[dict] = []
 
@@ -126,14 +152,16 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
         edges.extend(self._build_temporal_edges(slot_map))
 
         # ── Transition edges ──────────────────────────────────────────────────
-        transition_edges, weak_edges_hidden = self._build_transition_edges(mem_ids)
+        transition_edges, weak_edges_hidden = self._build_transition_edges(
+            mem_ids, limit=caps.transitions
+        )
         edges.extend(transition_edges)
 
         # ── Wiki nodes ────────────────────────────────────────────────────────
         _wiki_pages, wiki_slug_to_id = self._assemble_wiki_nodes(nodes, max_wiki)
 
         # ── Wiki cross-reference edges ────────────────────────────────────────
-        edges.extend(self._build_wiki_crossref_edges(wiki_slug_to_id))
+        edges.extend(self._build_wiki_crossref_edges(wiki_slug_to_id, limit=caps.wiki_crossrefs))
 
         # ── Memory → Wiki edges (P2.1: reverse memory.wiki_refs bridge) ───────
         edges.extend(self._build_memory_wiki_edges(wiki_refs_map, wiki_slug_to_id))
@@ -142,13 +170,13 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
         self._assemble_entity_nodes(nodes, max_entities)
 
         # ── Causal edges (PC-algorithm) ───────────────────────────────────────
-        edges.extend(self._build_causal_edges(include_invalidated, as_of))
+        edges.extend(self._build_causal_edges(include_invalidated, as_of, limit=caps.causal_edges))
 
         # ── Entity typed-relation edges (v5.54.3 — retrieval-active, was invisible) ─
-        edges.extend(self._build_entity_rel_edges())
+        edges.extend(self._build_entity_rel_edges(limit=caps.relationships))
 
         # ── Memory similarity-link edges (v5.80 — informational near-duplicate links) ─
-        edges.extend(self._build_similarity_link_edges(mem_ids))
+        edges.extend(self._build_similarity_link_edges(mem_ids, limit=caps.similarity_links))
 
         # ── Orphan-edge filter (v5.10.9) ──────────────────────────────────────
         node_ids = {n["id"] for n in nodes}

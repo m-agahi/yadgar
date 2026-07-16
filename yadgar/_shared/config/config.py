@@ -134,6 +134,12 @@ class Settings(BaseSettings):
     # I25 three-way config sync (config.py + config_yaml.py + config_registry.py).
     OTLP_INSECURE: bool = True  # reserved/no-op for http exporter — scheme decides TLS.
 
+    # viz-trace-replay (Car B): Tempo query API base URL for the Traces tab
+    # (e.g. http://localhost:3200). Empty = disabled → /api/traces/* graceful-degrade
+    # to a 200 empty payload. Distinct from OTLP_ENDPOINT (the EXPORT sink); this is
+    # the READ endpoint the mesh pipeline fetches by-id + searches.
+    TEMPO_QUERY_URL: str = ""
+
     # v5.7.11 backend cache knob (formerly env-only, now yaml-overridable)
     DBSIZE_CACHE_TTL_SEC: int = 60  # /admin/dbsize cache TTL in seconds. 0 = disabled.
 
@@ -925,12 +931,21 @@ class Settings(BaseSettings):
     VIZ_MAX_MEMORIES: int = 500  # max memory nodes in /api/graph (0/-1 = all)
     VIZ_MAX_WIKI: int = 200  # max wiki nodes in /api/graph (0/-1 = all)
     VIZ_MAX_ENTITIES: int = 2000  # max entity nodes in /api/graph (0/-1 = all)
-    # v5.88 — Precomputed server-side graph layout (I25 three-way registered).
-    # OFF by default (opt-in, safe): when ON, the nightly consolidation cycle
-    # computes 3D node positions once + caches them; /api/graph attaches x/y/z so
-    # the viz renders pre-laid-out instead of a slow cold client-side force settle.
-    VIZ_PRECOMPUTED_LAYOUT_ENABLED: bool = False  # opt-in: server-side layout cache
+    # Precomputed server-side graph layout (I25 three-way registered).
+    # viz-render-perf (Car A): the nightly/full consolidation cycle always computes
+    # 3D node positions + caches them; /api/graph attaches x/y/z so the viz renders
+    # pre-laid-out instead of a slow cold client-side force settle. The enable knob
+    # was removed — precompute is unconditional (supersedes ADR-0010's default-OFF).
     VIZ_LAYOUT_ITERATIONS: int = 50  # spring_layout iteration cap (lower=faster/looser)
+    # viz-render-perf (Car A) — per-edge-type caps for the /api/graph edge scans
+    # (I25 three-way registered). Default 0 = unlimited → behavior-preserving day one.
+    # Applied at the graph call sites only (ORDER BY strongest-first under any LIMIT);
+    # the nightly precompute lays out the full uncapped graph.
+    VIZ_MAX_TRANSITIONS: int = 0  # max transition (co-recall) edges (0/-1 = all)
+    VIZ_MAX_WIKI_CROSSREFS: int = 0  # max wiki cross-reference edges (0/-1 = all)
+    VIZ_MAX_CAUSAL_EDGES: int = 0  # max PC-algorithm causal edges (0/-1 = all)
+    VIZ_MAX_RELATIONSHIPS: int = 0  # max entity typed-relation edges (0/-1 = all)
+    VIZ_MAX_SIMILARITY_LINKS: int = 0  # max memory_similarity_link edges (0/-1 = all)
 
     # v5.48.0 — Update mechanism (I25 three-way registered)
     # Privacy: auto-check is OFF by default. Enable explicitly in config.yaml.

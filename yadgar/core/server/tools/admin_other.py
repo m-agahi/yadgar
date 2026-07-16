@@ -90,7 +90,7 @@ def consolidate_now(mode: str = "light") -> dict:
     mode="full": consolidation cycle + full sleep cycle (dream replay,
         community detection, cluster summaries, re-embedding, compression,
         auto-narrate) + anchor audit pass (if ANCHOR_AUDIT_CONSOLIDATION_ENABLED)
-        + graph-layout precompute (if VIZ_PRECOMPUTED_LAYOUT_ENABLED).
+        + graph-layout precompute (unconditional on the full path).
         Takes 5–15 minutes. Use for deliberate maintenance before a multi-day
         break or after a large memory import. Also sets the 6-hour sleep cycle
         gate timestamp so the nightly cron does not double-fire.

@@ -1,0 +1,23 @@
+{
+ "label": "recall-storm",
+ "tool_span": "tool.recall",
+ "trace_id": "1234abcd5678ef901234abcd5678ef90",
+ "total_ms": 200.0,
+ "span_count": 14,
+ "spans": [
+  {"rel_ms": 0.0,   "dur_ms": 200.0, "depth": 0, "svc": "yadgar-core", "name": "tool.recall"},
+  {"rel_ms": 2.0,   "dur_ms": 50.0,  "depth": 1, "svc": "yadgar-core", "name": "yadgar._shared.retrieval.scoring._ScoringMixin._run_fts_bm25"},
+  {"rel_ms": 4.0,   "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 8.0,   "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 12.0,  "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 16.0,  "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 20.0,  "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 24.0,  "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 28.0,  "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 32.0,  "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 36.0,  "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 40.0,  "dur_ms": 4.0,   "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.server_helpers._cosine_similarity"},
+  {"rel_ms": 60.0,  "dur_ms": 90.0,  "depth": 1, "svc": "yadgar-backend", "name": "yadgar.backend.ml.rerank.LocalMLClient._try_gte_reranker"},
+  {"rel_ms": 152.0, "dur_ms": 6.0,   "depth": 1, "svc": "yadgar-core", "name": "yadgar._shared.retrieval.fusion._fuse_scores"}
+ ]
+}

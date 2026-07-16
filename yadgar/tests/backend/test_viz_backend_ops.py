@@ -83,16 +83,11 @@ class TestRunVizOp:
         assert isinstance(result.get("nodes"), list)
         assert isinstance(result.get("edges"), list)
 
-    def test_graph_attaches_cached_layout_positions(self, storage, monkeypatch):
-        """When the layout flag is on and a cache exists, nodes carry x/y/z."""
+    def test_graph_attaches_cached_layout_positions(self, storage):
+        """A layout cache exists → nodes carry x/y/z (attach is unconditional now)."""
         from datetime import UTC, datetime
 
         from yadgar.backend.viz_exec import run_viz_op
-
-        monkeypatch.setenv("YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED", "1")
-        from yadgar._shared.config import get_settings
-
-        get_settings.cache_clear()
 
         mem_id = storage.insert_memory(
             {
@@ -107,13 +102,10 @@ class TestRunVizOp:
             {f"mem:{mem_id}": [1.0, 2.0, 3.0]},
             datetime.now(UTC).isoformat(),
         )
-        try:
-            result = run_viz_op(
-                "graph",
-                {"max_memories": 50, "top_k": 8, "max_wiki": 0, "max_entities": 0},
-            )
-        finally:
-            get_settings.cache_clear()
+        result = run_viz_op(
+            "graph",
+            {"max_memories": 50, "top_k": 8, "max_wiki": 0, "max_entities": 0},
+        )
 
         target = [n for n in result["nodes"] if n.get("id") == f"mem:{mem_id}"]
         assert target and target[0].get("x") == 1.0 and target[0].get("z") == 3.0

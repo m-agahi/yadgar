@@ -29,14 +29,31 @@ Tests (real behavioral — no string-grep-the-HTML):
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import patch
 
+import pytest
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
 _TOKEN = "test-control-tok"
 _YADGAR_STATE_DIR_ENV = "XDG_STATE_HOME"
+
+
+@pytest.fixture(autouse=True)
+def _reset_restart_rate_limit():
+    """Clear the module-global restart rate-limit state between tests (Car D).
+
+    ``control_audit._last_restart`` is process-global; without this reset a
+    successful restart in one test would stamp the 30s window and make a later
+    test's first restart return 429 (passes-in-isolation / fails-in-suite).
+    """
+    from yadgar.core.server.routes import control_audit
+
+    control_audit._last_restart.clear()
+    yield
+    control_audit._last_restart.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +68,14 @@ def _make_app(monkeypatch, *, debug_apis_on: bool = False, extra_env: dict | Non
     monkeypatch.setenv("YADGAR_DEBUG_APIS_ENABLED", "on" if debug_apis_on else "off")
     # Stub out YADGAR_UPDATE_DEBUG_APIS_ENABLED separately
     monkeypatch.setenv("YADGAR_UPDATE_DEBUG_APIS_ENABLED", "off")
+    # Car D: audit-log + restart-sentinel writes land under XDG_STATE_HOME. Point
+    # it at an isolated temp dir when the caller has NOT already set it (restart
+    # tests setenv it to their own tmp_path before calling _make_app and assert on
+    # that location — do NOT clobber those).
+    if _YADGAR_STATE_DIR_ENV not in os.environ:
+        import tempfile  # noqa: PLC0415 — test-only isolation
+
+        monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, tempfile.mkdtemp(prefix="yadgar-ctl-audit-"))
     if extra_env:
         for k, v in extra_env.items():
             monkeypatch.setenv(k, v)
@@ -495,7 +520,7 @@ def test_config_post_bool_value_is_lowercase(monkeypatch, tmp_path):
     AND that os.environ is left untouched.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    knob = "YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED"
+    knob = "YADGAR_UPDATE_CHECK_ON_START"
     monkeypatch.delenv(knob, raising=False)
     client = _make_app(monkeypatch, debug_apis_on=False)
     resp = client.post(
@@ -1139,3 +1164,295 @@ def test_config_post_env_knob_still_409_and_locked(monkeypatch, tmp_path):
     assert resp.status_code == 409, (
         f"Genuine env knob must still 409, got {resp.status_code}: {resp.text}"
     )
+
+
+# ===========================================================================
+# Car D — PHASE D1: destructive metadata + 428 armed gate
+# ===========================================================================
+
+# A destructive retention/purge knob (int, not env-locked in the test env) and a
+# benign non-destructive control knob (float).
+_DESTRUCTIVE_KNOB = "YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS"
+_NON_DESTRUCTIVE_KNOB = "YADGAR_VIZ_NODE_SIZE_3D"
+
+
+def test_config_get_marks_destructive_knob(monkeypatch, tmp_path):
+    """GET /api/control/config: a destructive knob carries destructive=True."""
+    monkeypatch.delenv(_DESTRUCTIVE_KNOB, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+    resp = client.get("/api/control/config", headers=_auth_headers())
+    assert resp.status_code == 200
+    knobs = {k["name"]: k for k in resp.json()["knobs"]}
+    assert _DESTRUCTIVE_KNOB in knobs
+    assert knobs[_DESTRUCTIVE_KNOB]["destructive"] is True, (
+        f"Expected destructive=True for {_DESTRUCTIVE_KNOB}, got {knobs[_DESTRUCTIVE_KNOB]}"
+    )
+
+
+def test_config_get_non_destructive_knob_is_false(monkeypatch, tmp_path):
+    """GET /api/control/config: a non-destructive knob carries destructive=False."""
+    client = _make_app(monkeypatch, debug_apis_on=True)
+    resp = client.get("/api/control/config", headers=_auth_headers())
+    assert resp.status_code == 200
+    knobs = {k["name"]: k for k in resp.json()["knobs"]}
+    assert _NON_DESTRUCTIVE_KNOB in knobs
+    assert knobs[_NON_DESTRUCTIVE_KNOB]["destructive"] is False, (
+        f"Expected destructive=False for {_NON_DESTRUCTIVE_KNOB}"
+    )
+    # Every knob must carry the key as a bool (contract completeness).
+    for knob in knobs.values():
+        assert isinstance(knob["destructive"], bool), (
+            f"'destructive' must be bool for {knob['name']}, got {type(knob['destructive'])}"
+        )
+
+
+def test_config_post_destructive_without_armed_returns_428(monkeypatch, tmp_path):
+    """POST a destructive knob WITHOUT armed:true → 428 Precondition Required.
+
+    The security guards (write-blocked 400, env-lock 409) still fire BEFORE the
+    armed gate; a destructive knob that is neither of those, sent unarmed, is
+    refused with 428 + a hint to resend armed.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv(_DESTRUCTIVE_KNOB, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+    resp = client.post(
+        "/api/control/config",
+        json={"name": _DESTRUCTIVE_KNOB, "value": 120},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 428, f"Expected 428, got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert body.get("destructive") is True
+    assert "hint" in body
+    assert "armed" in body["hint"].lower()
+
+
+def test_config_post_destructive_with_armed_writes_through(monkeypatch, tmp_path):
+    """POST a destructive knob WITH armed:true → 200 (writes through)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv(_DESTRUCTIVE_KNOB, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+    resp = client.post(
+        "/api/control/config",
+        json={"name": _DESTRUCTIVE_KNOB, "value": 120, "armed": True},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    assert resp.json()["value"] == "120"
+
+
+def test_config_post_non_destructive_without_armed_unaffected(monkeypatch, tmp_path):
+    """POST a NON-destructive knob WITHOUT armed → still 200 (gate does not apply)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv(_NON_DESTRUCTIVE_KNOB, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+    resp = client.post(
+        "/api/control/config",
+        json={"name": _NON_DESTRUCTIVE_KNOB, "value": 9.0},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+
+def test_is_destructive_helper(monkeypatch):
+    """control_audit.is_destructive resolves the FIELD_META destructive flag."""
+    from yadgar.core.server.routes.control_audit import is_destructive
+
+    assert is_destructive(_DESTRUCTIVE_KNOB) is True
+    assert is_destructive(_NON_DESTRUCTIVE_KNOB) is False
+    # Unknown knob → False (no meta).
+    assert is_destructive("YADGAR_TOTALLY_UNKNOWN_KNOB") is False
+
+
+# ===========================================================================
+# Car D — PHASE D2: JSONL config-audit log + restart rate-limit
+# ===========================================================================
+
+
+def _read_audit_rows(state_dir) -> list[dict]:
+    """Parse config-audit.jsonl under a state dir (empty list if absent)."""
+    from pathlib import Path
+
+    p = Path(str(state_dir)) / "yadgar" / "config-audit.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+
+
+def test_audit_config_write_success_appends_row(monkeypatch, tmp_path):
+    """A successful config write appends one JSONL audit row (kind=config_write)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path / "state"))
+    monkeypatch.delenv(_NON_DESTRUCTIVE_KNOB, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+
+    resp = client.post(
+        "/api/control/config",
+        json={"name": _NON_DESTRUCTIVE_KNOB, "value": 9.0},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = _read_audit_rows(tmp_path / "state")
+    writes = [
+        r
+        for r in rows
+        if r.get("kind") == "config_write" and r.get("knob") == _NON_DESTRUCTIVE_KNOB
+    ]
+    assert writes, f"no config_write audit row; rows={rows}"
+    row = writes[-1]
+    assert row["status"] == 200
+    assert row["new"] is not None
+    assert "ts" in row
+    # Actor identity is best-effort only (no principal) — the keys still exist.
+    assert "client" in row and "user_agent" in row
+
+
+def test_audit_config_write_refusal_appends_row(monkeypatch, tmp_path):
+    """A refused write (428 unarmed destructive) still appends an audit row.
+
+    old must be present (captured early); new = the attempted value; status 428.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path / "state"))
+    monkeypatch.delenv(_DESTRUCTIVE_KNOB, raising=False)
+    client = _make_app(monkeypatch, debug_apis_on=True)
+
+    resp = client.post(
+        "/api/control/config",
+        json={"name": _DESTRUCTIVE_KNOB, "value": 120},
+        headers=_auth_headers(),
+    )
+    assert resp.status_code == 428, resp.text
+
+    rows = _read_audit_rows(tmp_path / "state")
+    refusals = [r for r in rows if r.get("knob") == _DESTRUCTIVE_KNOB and r.get("status") == 428]
+    assert refusals, f"no 428 refusal audit row; rows={rows}"
+    row = refusals[-1]
+    assert row["kind"] == "config_write"
+    assert row["old"] is not None, "old value must be captured before the refusal"
+    assert str(row["new"]) == "120", f"new must be the attempted value, got {row['new']!r}"
+
+
+def test_audit_env_locked_409_appends_row(monkeypatch, tmp_path):
+    """An env-lock 409 refusal appends an audit row with status 409."""
+    knob = "YADGAR_VIZ_HEALTH_REFRESH_SEC"
+    monkeypatch.setenv(knob, "30")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path / "state"))
+    client = _make_app(monkeypatch, debug_apis_on=True, extra_env={knob: "30"})
+
+    resp = client.post(
+        "/api/control/config", json={"name": knob, "value": 60}, headers=_auth_headers()
+    )
+    assert resp.status_code == 409, resp.text
+    rows = _read_audit_rows(tmp_path / "state")
+    assert any(r.get("knob") == knob and r.get("status") == 409 for r in rows), (
+        f"no 409 audit row; rows={rows}"
+    )
+
+
+def test_audit_restart_success_appends_row(monkeypatch, tmp_path):
+    """A successful restart appends a kind=restart audit row (status 202)."""
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path))
+    client = _make_app(monkeypatch, debug_apis_on=False)
+
+    resp = client.post(
+        "/api/control/restart/yadgar", json={"confirm": "yadgar"}, headers=_auth_headers()
+    )
+    assert resp.status_code == 202, resp.text
+    rows = _read_audit_rows(tmp_path)
+    restarts = [r for r in rows if r.get("kind") == "restart"]
+    assert restarts, f"no restart audit row; rows={rows}"
+    assert restarts[-1]["status"] == 202
+    assert restarts[-1]["knob"] == "yadgar"
+
+
+def test_restart_rate_limited_second_within_window_returns_429(monkeypatch, tmp_path):
+    """A 2nd restart of the SAME service within the window → 429 + audit row."""
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path))
+    client = _make_app(monkeypatch, debug_apis_on=False)
+
+    first = client.post(
+        "/api/control/restart/yadgar", json={"confirm": "yadgar"}, headers=_auth_headers()
+    )
+    assert first.status_code == 202, first.text
+
+    second = client.post(
+        "/api/control/restart/yadgar", json={"confirm": "yadgar"}, headers=_auth_headers()
+    )
+    assert second.status_code == 429, f"expected 429 within window, got {second.status_code}"
+
+    rows = _read_audit_rows(tmp_path)
+    assert any(r.get("kind") == "restart" and r.get("status") == 429 for r in rows), (
+        f"no 429 restart audit row; rows={rows}"
+    )
+
+
+def test_restart_after_window_returns_202(monkeypatch, tmp_path):
+    """After the window elapses (backdated stamp), a restart succeeds again (202)."""
+    import time
+
+    from yadgar.core.server.routes import control_audit
+
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path))
+    client = _make_app(monkeypatch, debug_apis_on=False)
+
+    first = client.post(
+        "/api/control/restart/yadgar", json={"confirm": "yadgar"}, headers=_auth_headers()
+    )
+    assert first.status_code == 202, first.text
+
+    # Backdate the stamp beyond the 30s window instead of monkeypatching monotonic.
+    control_audit._last_restart["yadgar"] = time.monotonic() - 31.0
+
+    again = client.post(
+        "/api/control/restart/yadgar", json={"confirm": "yadgar"}, headers=_auth_headers()
+    )
+    assert again.status_code == 202, f"expected 202 after window, got {again.status_code}"
+
+
+def test_restart_confirm_mismatch_does_not_consume_window(monkeypatch, tmp_path):
+    """A confirm-mismatch (400) must NOT stamp the rate-limit window.
+
+    A valid restart immediately after a mismatched attempt must still return 202.
+    """
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(tmp_path))
+    client = _make_app(monkeypatch, debug_apis_on=False)
+
+    mismatch = client.post(
+        "/api/control/restart/yadgar", json={"confirm": "wrong"}, headers=_auth_headers()
+    )
+    assert mismatch.status_code == 400, mismatch.text
+
+    valid = client.post(
+        "/api/control/restart/yadgar", json={"confirm": "yadgar"}, headers=_auth_headers()
+    )
+    assert valid.status_code == 202, (
+        f"mismatch must not consume the window; got {valid.status_code}: {valid.text}"
+    )
+
+
+def test_audit_handler_reselects_path_per_call(monkeypatch, tmp_path):
+    """audit_config_event must resolve the state dir PER CALL, not cache the first.
+
+    Two different XDG_STATE_HOME values in sequence must each get their OWN file
+    (guards the RotatingJSONLFileHandler baseFilename-binds-at-ctor trap).
+    """
+    from yadgar.core.server.routes import control_audit
+
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+
+    class _FakeReq:
+        client = type("C", (), {"host": "1.2.3.4"})()
+        headers = {"user-agent": "pytest"}
+
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(dir_a))
+    control_audit.audit_config_event("config_write", "K", "old", "new", 200, _FakeReq())
+    monkeypatch.setenv(_YADGAR_STATE_DIR_ENV, str(dir_b))
+    control_audit.audit_config_event("config_write", "K", "old", "new", 200, _FakeReq())
+
+    assert _read_audit_rows(dir_a), "dir A audit file missing"
+    assert _read_audit_rows(dir_b), "dir B audit file missing (path was cached — trap)"

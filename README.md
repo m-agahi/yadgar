@@ -76,7 +76,7 @@ Runs nightly while the daemon stays up in maintenance mode (no MCP reconnect). P
 
 ### Knowledge-graph viz
 - `yadgar viz` serves an interactive force-directed graph of memories, wiki pages, entities, and relationships at **http://localhost:42069** (2D + 3D; memory = sphere, wiki = octahedron, anchor = cube; heat encoded as color). Filter by node type, edge type, and heat; focus mode, hover-neighborhood highlight, search, and connection-count badges.
-- **Precomputed server-side layout** (`VIZ_PRECOMPUTED_LAYOUT_ENABLED`, default off): the nightly cycle computes 3D node positions once (`networkx.spring_layout`, signature-cached) so the graph renders pre-laid-out instead of a cold client-side layout per load. Otherwise the client warm-starts from localStorage.
+- **Precomputed server-side layout** (unconditional): the nightly/full cycle computes 3D node positions once (`networkx.spring_layout`, signature-cached) so the graph renders pre-laid-out instead of a cold client-side layout per load. On a seed miss (empty cache or nodes newer than the last precompute) the client warm-starts from localStorage / runs a cold layout.
 - The UI is organized into four menus: **Graph** · **Bookmarks** · **System** {Config, Health, Stats} · **Help** {Guide, Config Reference, About, Debug}.
 
 ### Config system
@@ -334,7 +334,6 @@ Priority: env vars (`YADGAR_*`) > `~/.config/yadgar/config.yaml` > defaults. Kno
 | `YADGAR_METRICS_ENABLED` | `1` | Expose Prometheus `/metrics` (loopback, unauthenticated). |
 | `YADGAR_LOG_FORMAT` | `human` | Set `json` for structured logs. |
 | `YADGAR_VIZ_MAX_MEMORIES` / `_WIKI` / `_ENTITIES` | `500` / `200` / `2000` | Viz node caps (`0`/`-1` = unlimited). |
-| `VIZ_PRECOMPUTED_LAYOUT_ENABLED` | `false` | Serve nightly-precomputed 3D layout. |
 | `YADGAR_MODEL_IDLE_EVICTION_SECONDS` | `0` | Unload heavy ML models after idle seconds (`0` = stay loaded). |
 
 ---

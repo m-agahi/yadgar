@@ -1,8 +1,10 @@
-"""v5.88: precomputed graph layout hook on the consolidation cycle.
+"""viz-render-perf (Car A): precomputed graph layout hook on the consolidation cycle.
 
-Gated by VIZ_PRECOMPUTED_LAYOUT_ENABLED (default OFF) + a graph-signature
-no-op so recompute only happens when the graph shape changed, and wired into
-the NIGHTLY path only so it never blocks the light consolidate_now budget.
+Precompute now runs UNCONDITIONALLY on the full/nightly consolidation path —
+the VIZ_PRECOMPUTED_LAYOUT_ENABLED knob was removed (the plan supersedes ADR-0010's
+default-OFF stance). Only a graph-signature no-op (skip when the graph shape is
+unchanged) and the full/nightly-only wiring (never the light consolidate_now budget)
+remain as gates.
 """
 
 import pytest
@@ -30,10 +32,9 @@ def embeddings():
     return engine
 
 
-def _settings(tmp_path, enabled):
+def _settings(tmp_path):
     return Settings(
         DB_PATH=str(tmp_path / "s.db"),
-        VIZ_PRECOMPUTED_LAYOUT_ENABLED=enabled,
         VIZ_LAYOUT_ITERATIONS=10,
     )
 
@@ -48,27 +49,10 @@ def _seed_graph(storage):
     )
 
 
-def test_flag_off_no_layout_cached(tmp_path, storage):
-    """Default OFF: the precompute gate is a no-op, cache stays empty.
-
-    R3 Car 1 D1: the graph-layout precompute moved from the backend scheduler to
-    the CORE orchestrator (_maybe_precompute_graph_layout). This test drives the
-    core function directly so it actually guards the VIZ_PRECOMPUTED_LAYOUT_ENABLED
-    gate (asserting via the backend scheduler now passes vacuously — the backend
-    never computes the layout regardless of the flag).
-    """
+def test_precompute_computes_and_caches_unconditionally(tmp_path, storage):
+    """No flag involved: precompute caches positions + signature over a live graph."""
     _seed_graph(storage)
-    _maybe_precompute_graph_layout(storage, _settings(tmp_path, False))
-    assert storage.get_graph_layout_cache() is None
-
-
-def test_flag_on_computes_and_caches(tmp_path, storage):
-    """Flag ON + non-empty graph: precompute caches positions + signature.
-
-    R3 Car 1 D1: precompute is now core-side (_maybe_precompute_graph_layout).
-    """
-    _seed_graph(storage)
-    _maybe_precompute_graph_layout(storage, _settings(tmp_path, True))
+    _maybe_precompute_graph_layout(storage, _settings(tmp_path))
     cached = storage.get_graph_layout_cache()
     assert cached is not None
     assert cached["signature"]
@@ -79,10 +63,19 @@ def test_flag_on_computes_and_caches(tmp_path, storage):
         assert len(coord) == 3
 
 
+def test_empty_graph_caches_no_positions(tmp_path, storage):
+    """Empty graph → cache carries no positions → attach is a no-op (fallback contract)."""
+    _maybe_precompute_graph_layout(storage, _settings(tmp_path))
+    cached = storage.get_graph_layout_cache()
+    # An empty graph yields a signature but zero positions; attach_cached_positions
+    # short-circuits on empty positions, so nodes stay bare and the client places them.
+    assert not (cached or {}).get("positions")
+
+
 def test_signature_unchanged_is_noop(tmp_path, storage):
     """Second precompute with an unchanged graph does not recompute."""
     _seed_graph(storage)
-    settings = _settings(tmp_path, True)
+    settings = _settings(tmp_path)
     _maybe_precompute_graph_layout(storage, settings)
     first = storage.get_graph_layout_cache()
     # Run again — graph shape unchanged → computed_at must be preserved.
@@ -95,7 +88,7 @@ def test_signature_unchanged_is_noop(tmp_path, storage):
 def test_light_consolidate_never_computes_layout(tmp_path, storage, embeddings):
     """force_consolidate (light path) must NOT trigger layout precompute."""
     _seed_graph(storage)
-    sched = ConsolidationScheduler(storage, embeddings, _settings(tmp_path, True))
+    sched = ConsolidationScheduler(storage, embeddings, _settings(tmp_path))
     sched.force_consolidate()
     assert storage.get_graph_layout_cache() is None
 
@@ -103,7 +96,7 @@ def test_light_consolidate_never_computes_layout(tmp_path, storage, embeddings):
 def test_signature_change_recomputes(tmp_path, storage):
     """Adding a node changes the signature → layout recomputes."""
     _seed_graph(storage)
-    settings = _settings(tmp_path, True)
+    settings = _settings(tmp_path)
     _maybe_precompute_graph_layout(storage, settings)
     first = storage.get_graph_layout_cache()
     # Mutate the graph shape.

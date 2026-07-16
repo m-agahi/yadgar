@@ -26,8 +26,10 @@ class GraphAPINodesMixin:
         _suffix, _params = self._limit_clause(max_memories)
         try:
             memories = self._s._q(
+                # viz-render-perf (Car A): embedding dropped from the SELECT — the
+                # node dict never emits it (pure ~MBs/request waste over the wire).
                 "SELECT id, content, heat, tags, directory_context, created_at, "
-                "slot_index, embedding, cluster_id, wiki_refs FROM memory "
+                "slot_index, cluster_id, wiki_refs FROM memory "
                 "ORDER BY heat DESC" + _suffix,
                 _params,
             )
@@ -75,8 +77,10 @@ class GraphAPINodesMixin:
         _suffix, _params = self._limit_clause(max_wiki)
         try:
             wiki_pages = self._s._q(
+                # viz-render-perf (Car A): embedding dropped — neither the node dict
+                # nor the returned wiki_pages consumer reads it (pure wire waste).
                 "SELECT id, title, slug, category, tags, links, source_memory_ids, "
-                "embedding, updated_at FROM wiki_page ORDER BY updated_at DESC" + _suffix,
+                "updated_at FROM wiki_page ORDER BY updated_at DESC" + _suffix,
                 _params,
             )
         except Exception:
