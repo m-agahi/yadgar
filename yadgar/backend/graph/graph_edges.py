@@ -38,7 +38,9 @@ class GraphAPIEdgesMixin:
         return result
 
     @observe(tier="stage")
-    def _build_transition_edges(self, mem_ids: set[int], limit: int = 0) -> tuple[list[dict], int]:
+    def _build_transition_edges(
+        self, mem_ids: set[int], limit: int = 0, include_weak: bool = False
+    ) -> tuple[list[dict], int]:
         """Build transition (co-recall) edges from memory_transition table.
 
         Returns (edges, weak_hidden) where weak_hidden is the count of count<2
@@ -49,6 +51,11 @@ class GraphAPIEdgesMixin:
         limit (viz-render-perf, Car A): per-type edge cap (0 = unlimited), applied
         at the storage query (ORDER BY count DESC). Threaded from the /api/graph
         call site — the precompute passes 0 so its layout stays over the full graph.
+
+        include_weak (#89): when True, render the count<2 weak transitions too
+        (weak_hidden stays a count of what would have been hidden with the default
+        gate, for the F4 affordance). Default False preserves the prior behavior —
+        weak edges are excluded and only surfaced via weak_edges_hidden.
         """
         role = EDGE_TYPES.get("transition", {}).get("role", "retrieval")
         try:
@@ -66,9 +73,13 @@ class GraphAPIEdgesMixin:
             if from_id not in mem_ids or to_id not in mem_ids:
                 continue
             if count < 2:
-                # F4: don't silently drop — track for affordance
+                # F4: don't silently drop — track for affordance. #89: when
+                # include_weak is on, still emit the edge (it's rendered dimmer
+                # frontend-side); weak_hidden keeps counting so the affordance
+                # reflects the default-gate hidden count regardless of the toggle.
                 weak_hidden += 1
-                continue
+                if not include_weak:
+                    continue
             result.append(
                 {
                     "source": f"mem:{from_id}",
@@ -183,7 +194,12 @@ class GraphAPIEdgesMixin:
         # v5.86 VIZ Batch-2 (P0.4): imports/calls dropped — code-only relations,
         # always empty on a prose corpus, made the legend lie. resolved_by is now
         # genuinely populated (extractor emits the solution entity); kept.
-        _ENTITY_REL_TYPES = ["co_occurrence", "resolved_by", "caused_by"]
+        # viz-rest (#209): derived_from added — the LARGEST rel type (3304 rows),
+        # previously hidden (entities with only derived_from edges looked like "0
+        # connections" lone spheres). Retrieval-active (PPR/spreading traverse all
+        # types), role="retrieval" per EDGE_TYPES. semantic_similarity stays out
+        # (retired by ADR-0009). Shares the caps.relationships cap (no per-type cap).
+        _ENTITY_REL_TYPES = ["co_occurrence", "resolved_by", "caused_by", "derived_from"]
         try:
             entity_rels = self._s.get_relationships_by_types(_ENTITY_REL_TYPES, limit=limit)
         except Exception:
@@ -259,12 +275,18 @@ class GraphAPIEdgesMixin:
         calls per /api/graph). P2.2 semantics are preserved exactly — member_count is
         the pre-intersection DB count, member_node_ids the intersection with mem_ids.
 
+        #14 (astrocyte cluster source): astrocyte_process rows are surfaced as a
+        SECOND cluster source (source="astrocyte_domain") alongside memory_cluster.
+        Each process holds its assigned memory IDs in a memory_ids array (the inverse
+        relationship — domains are not denormalised onto memory rows). member_node_ids
+        is intersected with mem_ids; member_count is the pre-intersection DB count.
+
         Returns [] if no clusters exist or storage is unavailable.
         """
         try:
             cluster_rows = self._s.get_memory_clusters()
         except Exception:
-            return []
+            cluster_rows = []
         try:
             all_members = self._s.get_all_cluster_members()
         except Exception:
@@ -288,6 +310,47 @@ class GraphAPIEdgesMixin:
                     # may be off-screen (outside the top-heat node cap) so member_node_ids
                     # can be empty while the cluster is non-empty — the sidebar needs the
                     # true count, otherwise 761/769 clusters render as empty.
+                    "member_count": len(member_int_ids),
+                }
+            )
+        result.extend(self._build_astrocyte_clusters(mem_ids))
+        return result
+
+    @observe(tier="stage")
+    def _build_astrocyte_clusters(self, mem_ids: set[int]) -> list[dict]:
+        """Surface astrocyte_process rows as source="astrocyte_domain" clusters.
+
+        #14: astrocyte domains (code-patterns/decisions/errors/dependencies) each
+        hold their assigned memory IDs in a memory_ids array. get_astrocyte_processes()
+        returns every process ORDER BY heat DESC. Mirrors _build_clusters_payload's
+        memory_cluster shape so the frontend renders both sources identically.
+        member_node_ids is the intersection with rendered mem_ids; member_count is
+        the pre-intersection DB count (members may be off the top-heat node cap).
+
+        Returns [] if no astrocyte processes exist or storage is unavailable.
+        """
+        try:
+            procs = self._s.get_astrocyte_processes()
+        except Exception:
+            return []
+        result = []
+        for proc in procs or []:
+            raw_id = self._extract_id(proc.get("id"))
+            if raw_id is None:
+                continue
+            member_int_ids = [
+                eid
+                for eid in (self._extract_id(mid) for mid in (proc.get("memory_ids") or []))
+                if eid is not None
+            ]
+            member_node_ids = [f"mem:{mid}" for mid in member_int_ids if mid in mem_ids]
+            result.append(
+                {
+                    "id": f"astro:{raw_id}",
+                    "source": "astrocyte_domain",
+                    "label": proc.get("domain") or proc.get("name") or f"domain:{raw_id}",
+                    "level": 0,
+                    "member_node_ids": member_node_ids,
                     "member_count": len(member_int_ids),
                 }
             )

@@ -29,7 +29,7 @@ class GraphAPINodesMixin:
                 # viz-render-perf (Car A): embedding dropped from the SELECT — the
                 # node dict never emits it (pure ~MBs/request waste over the wire).
                 "SELECT id, content, heat, tags, directory_context, created_at, "
-                "slot_index, cluster_id, wiki_refs FROM memory "
+                "last_accessed, slot_index, cluster_id, wiki_refs FROM memory "
                 "ORDER BY heat DESC" + _suffix,
                 _params,
             )
@@ -47,23 +47,31 @@ class GraphAPINodesMixin:
             refs = m.get("wiki_refs") or []
             if refs:
                 wiki_refs_map[raw_id] = [str(r) for r in refs]
+            # Coalesce content + created_at ONCE (used twice each below) — keeps the
+            # loop's ``or`` count (and thus cyclomatic) flat despite the added
+            # last_accessed field (#55), so _assemble_memory_nodes stays within I13.
+            _content = m.get("content") or ""
+            _created = str(m.get("created_at") or "")
             nodes.append(
                 {
                     "id": node_id,
                     "type": "memory",
                     "heat": round(float(m.get("heat") or 0), 4),
-                    "label": (m.get("content") or "")[:60],
-                    "content": (m.get("content") or "")[:400],
+                    "label": _content[:60],
+                    "content": _content[:400],
                     "tags": m.get("tags") or [],
                     "directory": m.get("directory_context") or "",
-                    "created_at": str(m.get("created_at") or ""),
+                    "created_at": _created,
+                    # #55: last_accessed (recency) — shown in the detail panel so a
+                    # node's freshness reads independently of its heat value.
+                    "last_accessed": str(m.get("last_accessed") or ""),
                     # P2.3: cluster_id (column on the memory row) → viz cluster tint
                     "cluster_id": self._extract_id(m.get("cluster_id")),
                 }
             )
             slot = m.get("slot_index")
             if slot is not None:
-                slot_map.setdefault(int(slot), []).append((raw_id, str(m.get("created_at") or "")))
+                slot_map.setdefault(int(slot), []).append((raw_id, _created))
         return mem_ids, slot_map, wiki_refs_map
 
     @observe(tier="stage")

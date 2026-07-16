@@ -49,6 +49,8 @@ def _op_graph(payload: dict) -> dict:
         causal_edges=int(getattr(_settings, "VIZ_MAX_CAUSAL_EDGES", 0)),
         relationships=int(getattr(_settings, "VIZ_MAX_RELATIONSHIPS", 0)),
         similarity_links=int(getattr(_settings, "VIZ_MAX_SIMILARITY_LINKS", 0)),
+        # viz-rest #89: opt-in weak-edge render, threaded from ?include_weak.
+        include_weak=bool(payload.get("include_weak", False)),
     )
     data = GraphAPI(storage).get_full_graph(
         int(payload.get("max_memories", 0)),

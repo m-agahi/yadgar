@@ -78,6 +78,39 @@ export function edgeVisible(link, toggleState) {
 }
 
 /**
+ * viz-rest #70: return an edge's numeric weight for the threshold filter.
+ * `count` (transition co-recall strength) takes precedence over `weight`
+ * (entity-relation / similarity-link strength). Returns null for edges that
+ * carry no weight metric — those are never pruned by the weight filter.
+ *
+ * @param {Object} link - edge object, may carry {count} and/or {weight}
+ * @returns {number|null}
+ */
+export function edgeWeightOf(link) {
+  if (!link) return null;
+  if (typeof link.count === 'number') return link.count;
+  if (typeof link.weight === 'number') return link.weight;
+  return null;
+}
+
+/**
+ * viz-rest #70: does an edge pass the min-weight threshold?
+ * Threshold 0 (default) passes everything. An edge with no weight metric always
+ * passes (the filter only prunes weighted edges). A weighted edge passes only
+ * when its weight is >= minWeight.
+ *
+ * @param {Object} link - edge object
+ * @param {number} minWeight - slider threshold (>= 0)
+ * @returns {boolean}
+ */
+export function edgePassesWeight(link, minWeight) {
+  if (!minWeight || minWeight <= 0) return true;
+  const w = edgeWeightOf(link);
+  if (w === null) return true;  // unweighted edge — not subject to the filter
+  return w >= minWeight;
+}
+
+/**
  * Return the role ("retrieval" | "display") for an edge type.
  *
  * @param {string} type - edge type key

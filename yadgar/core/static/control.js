@@ -45,7 +45,12 @@ import {
   isDestructive,
   toggleArmed,
   classify428,
+  formatConfigStatus,
 } from './control_helpers.js';
+
+// viz-rest #29: daemon version captured from the update-check, surfaced in the
+// config header status line. '' until the check resolves.
+let _daemonVersion = '';
 
 // ---------------------------------------------------------------------------
 // Pure / exported helpers (fully testable without DOM)
@@ -360,7 +365,7 @@ function _buildShell() {
   <div class="ctrl-buttons"></div>
 </div>
 <div class="ctrl-config-section ctrl-section">
-  <div class="ctrl-section-title">CONFIG EDITOR <span class="ctrl-knob-count"></span></div>
+  <div class="ctrl-section-title">CONFIG EDITOR <span class="ctrl-knob-count"></span><span class="ctrl-cfg-status"></span></div>
   <div class="cfg-shell">
     <nav class="cfg-rail">
       <div class="cfg-rail-search-wrap">
@@ -473,6 +478,14 @@ function _renderActions(container, root) {
       } else if (r.ok) {
         const body = await r.json().catch(() => ({}));
         updateBtn.disabled = false;
+        // viz-rest #29: capture the version for the config header status line.
+        if (body.current_version) {
+          _daemonVersion = body.current_version;
+          const _statusEl = root.querySelector('.ctrl-cfg-status');
+          if (_statusEl && !_statusEl.textContent) {
+            _statusEl.textContent = ' — ' + formatConfigStatus(_daemonVersion, 0, false);
+          }
+        }
         updateBtn.title = body.update_available
           ? `Update available: ${body.available_version}`
           : `Up to date: ${body.current_version}`;
@@ -539,6 +552,9 @@ function _renderConfigEditor(container, knobs) {
     // knobs (Car D — surfaced in red on the pending bar).
     const knobsView = knobs.map(k => ({ name: k.name, reload: k.reload, destructive: k.destructive }));
     const p = computePending(knobsView, originalValues, currentValues);
+    // viz-rest #29: keep the config header status line (version · pending · restart) in sync.
+    const statusEl = container.querySelector('.ctrl-cfg-status');
+    if (statusEl) statusEl.textContent = ' — ' + formatConfigStatus(_daemonVersion, p.count, p.restartRequired);
     if (p.count > 0) {
       pendingBar.style.display = '';
       let label = `${p.count} unsaved change${p.count === 1 ? '' : 's'}`;

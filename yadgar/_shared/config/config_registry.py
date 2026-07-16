@@ -291,6 +291,11 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_VIZ_MAX_ENTITIES", "0", "int"),
     # ── Precomputed server-side graph layout (viz-render-perf: unconditional) ─
     ConfigEntry("YADGAR_VIZ_LAYOUT_ITERATIONS", "50", "int"),
+    # ── Milky-Way galaxy layout (finish-viz; default-on) ─────────────────────
+    ConfigEntry("YADGAR_VIZ_GALAXY_LAYOUT", "true", "bool"),
+    ConfigEntry("YADGAR_VIZ_GALAXY_ARMS", "4", "int"),
+    ConfigEntry("YADGAR_VIZ_GALAXY_SPIRAL_PITCH", "0.30", "float"),
+    ConfigEntry("YADGAR_VIZ_GALAXY_CORE_DENSITY", "1.0", "float"),
     # ── Per-edge-type caps (viz-render-perf; 0/-1 = unlimited) ────────────────
     ConfigEntry("YADGAR_VIZ_MAX_TRANSITIONS", "0", "int"),
     ConfigEntry("YADGAR_VIZ_MAX_WIKI_CROSSREFS", "0", "int"),

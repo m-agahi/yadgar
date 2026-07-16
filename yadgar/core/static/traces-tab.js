@@ -174,6 +174,38 @@ function _buildScaffold() {
   _root.appendChild(deck);
 }
 
+// ── live append (trace-replay Phase 3) ────────────────────────────────────────
+
+const _RECENT_MAX = 50; // mirror the backend _RECENT_LIMIT_MAX cap
+
+/**
+ * Live-append a completed trace to the recent-traces sidebar (finish-viz Phase 3).
+ *
+ * Fired from the `trace_complete` SSE event (index.html connectSSE → this). The
+ * event carries {trace_id, tool, total_ms, status}; we prepend it (newest-first,
+ * matching /api/traces/recent ordering), de-dupe by trace_id, cap the list, and
+ * re-render — but ONLY when the tab has already been built (_root set on first
+ * open). Before first open, _fetchRecent() picks up the trace from Tempo anyway,
+ * so a no-op is correct (no buffering needed).
+ *
+ * @param {{trace_id?:string, tool?:string, total_ms?:number, status?:string}} tr
+ */
+export function ingestTraceComplete(tr) {
+  if (!tr || !tr.trace_id) return;
+  const entry = {
+    trace_id: String(tr.trace_id),
+    tool: tr.tool || '',
+    total_ms: Number(tr.total_ms) || 0,
+    status: tr.status === 'error' || tr.status === 'timeout' ? tr.status : 'ok',
+  };
+  // De-dupe (a re-delivered event must not double-list the same trace).
+  _state.recent = _state.recent.filter((r) => r.trace_id !== entry.trace_id);
+  _state.recent.unshift(entry);
+  if (_state.recent.length > _RECENT_MAX) _state.recent.length = _RECENT_MAX;
+  // Only touch the DOM when the tab is built (lazy-init on first open).
+  if (_root && _listEl) _renderRecent();
+}
+
 // ── data ──────────────────────────────────────────────────────────────────────
 
 async function _fetchRecent() {

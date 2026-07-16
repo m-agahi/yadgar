@@ -142,6 +142,34 @@ describe('showDetail — wiki → memory sequence', () => {
   });
 });
 
+// ── #55: last_accessed row in the memory detail panel ──────────────────────────
+
+describe('showDetail — last_accessed row (#55)', () => {
+  let showDetail;
+
+  beforeEach(() => {
+    buildDom();
+    ({ showDetail } = createDetailPanel({
+      wikiCatColor: () => ({}),
+      heatColorFn: (h) => `hsl(${h * 100},60%,50%)`,
+      allLinksFn: () => [],
+      fetchImpl: () => new Promise(() => {}),
+    }));
+  });
+
+  it('renders a "Last accessed" row when last_accessed is present', () => {
+    showDetail({ type: 'memory', id: 'mem:42', content: 'x', heat: 0.5, last_accessed: '2024-06-01T12:30:45Z' });
+    const body = document.getElementById('det-body').innerHTML;
+    expect(body).toContain('Last accessed');
+    expect(body).toContain('2024-06-01T12:30:45');
+  });
+
+  it('omits the "Last accessed" row when last_accessed is empty', () => {
+    showDetail({ type: 'memory', id: 'mem:42', content: 'x', heat: 0.5, last_accessed: '' });
+    expect(document.getElementById('det-body').innerHTML).not.toContain('Last accessed');
+  });
+});
+
 describe('showDetail — memory → wiki sequence', () => {
   let showDetail;
 

@@ -832,6 +832,22 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "spring_layout iteration cap for the precomputed layout (default 50; lower=faster)",
         "section": "viz_config",
     },
+    "viz_galaxy_layout": {
+        "desc": "Milky-Way galaxy layout: loose→dense core, clusters→spiral arms (default true; false → spring_layout)",
+        "section": "viz_config",
+    },
+    "viz_galaxy_arms": {
+        "desc": "Number of galaxy spiral arms K (default 4)",
+        "section": "viz_config",
+    },
+    "viz_galaxy_spiral_pitch": {
+        "desc": "Galaxy log-spiral tightness — smaller winds tighter (default 0.30)",
+        "section": "viz_config",
+    },
+    "viz_galaxy_core_density": {
+        "desc": "Galaxy core-bulge packing density — higher packs the core tighter (default 1.0)",
+        "section": "viz_config",
+    },
     "viz_max_transitions": {
         "desc": "Max transition (co-recall) edges in /api/graph (default 0 = unlimited)",
         "section": "viz_config",

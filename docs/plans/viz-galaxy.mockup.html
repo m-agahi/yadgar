@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yadgar · Milky-Way Galaxy Layout (mockup)</title>
+<style>
+  /* ============================================================================
+   * viz-galaxy.mockup.html — STANDALONE synthetic-data galaxy layout mockup.
+   * Tokens mirror yadgar/core/static/viz-theme.css (phosphor-oscilloscope).
+   * No yadgar wiring. No build step. Open with file:// in a browser.
+   * ========================================================================== */
+  :root{
+    /* backgrounds — abyssal blue-black → raised */
+    --viz-bg-0:#03070b; --viz-bg-1:#060d13; --viz-bg-2:#0a141c; --viz-bg-3:#101d27;
+    --viz-hair:#14232e; --viz-hair-soft:#0d1922;
+    /* lane colors */
+    --viz-ph:#49ffa4; --viz-ph-dim:#1d6b48; --viz-ph-glow:rgba(73,255,164,.16);
+    --viz-cy:#3ec9ff; --viz-cy-dim:#1a5f80; --viz-cy-glow:rgba(62,201,255,.15);
+    /* caution + fault */
+    --viz-amber:#ffc35c; --viz-err:#ff4059; --viz-err-glow:rgba(255,64,89,.22);
+    /* text ramp */
+    --viz-tx-0:#e8f4ec; --viz-tx-1:#9fc0ae; --viz-tx-2:#5c7a68; --viz-tx-3:#354a3e;
+    /* typography — system-mono fallback, no CDN blocking */
+    --viz-disp:'Michroma',ui-sans-serif,sans-serif;
+    --viz-mono:'Spline Sans Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    /* panel chrome */
+    --viz-panel-bg:rgba(6,13,19,.72);
+    --viz-hdr-grad:linear-gradient(180deg,rgba(10,20,28,.85),rgba(3,7,11,.6));
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--viz-bg-0);
+    color:var(--viz-tx-1);
+    font-family:var(--viz-mono);
+    font-size:12px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+    position:relative;
+  }
+  /* graticule + scanline atmosphere over the canvas */
+  #atmos{
+    position:fixed;inset:0;pointer-events:none;z-index:2;
+  }
+  #atmos::before{
+    content:"";position:absolute;inset:0;
+    background-image:
+      linear-gradient(var(--viz-hair-soft) 1px,transparent 1px),
+      linear-gradient(90deg,var(--viz-hair-soft) 1px,transparent 1px);
+    background-size:52px 52px;
+    opacity:.28;
+    mask-image:radial-gradient(ellipse 130% 100% at 50% 42%,transparent 32%,#000 92%);
+  }
+  #atmos::after{
+    content:"";position:absolute;inset:0;opacity:.05;
+    background-image:repeating-linear-gradient(0deg,#000 0 1px,transparent 1px 3px);
+    mix-blend-mode:overlay;
+  }
+  canvas{display:block;position:fixed;inset:0;z-index:0}
+
+  /* ── header strip ── */
+  header{
+    position:fixed;top:0;left:0;right:0;z-index:5;
+    display:flex;align-items:center;gap:20px;
+    padding:11px 22px;border-bottom:1px solid var(--viz-hair);
+    background:var(--viz-hdr-grad);backdrop-filter:blur(7px);
+  }
+  .brand{display:flex;align-items:baseline;gap:11px}
+  .brand .glyph{
+    font-family:var(--viz-disp);font-weight:700;font-size:16px;color:var(--viz-ph);
+    letter-spacing:.02em;text-shadow:0 0 16px var(--viz-ph-glow);
+  }
+  .brand .sub{font-size:11px;color:var(--viz-tx-2);letter-spacing:.14em;text-transform:uppercase}
+  .caption{
+    margin-left:auto;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--viz-amber);border:1px solid var(--viz-amber);border-radius:999px;
+    padding:3px 12px;background:rgba(255,195,92,.07);
+  }
+  .caption b{color:var(--viz-amber);font-weight:600}
+
+  /* ── control panel ── */
+  .panel{
+    position:fixed;top:58px;right:16px;z-index:5;width:290px;
+    max-height:calc(100vh - 76px);overflow-y:auto;
+    background:var(--viz-panel-bg);border:1px solid var(--viz-hair);
+    border-radius:11px;backdrop-filter:blur(9px);
+    box-shadow:0 12px 40px rgba(0,0,0,.55),0 0 0 1px rgba(73,255,164,.02) inset;
+  }
+  .panel-hd{
+    display:flex;align-items:center;gap:9px;padding:11px 15px;
+    border-bottom:1px solid var(--viz-hair);background:var(--viz-hdr-grad);
+    position:sticky;top:0;z-index:1;
+  }
+  .panel-hd .led{width:7px;height:7px;border-radius:50%;background:var(--viz-ph);
+    box-shadow:0 0 9px var(--viz-ph);animation:pulse 2.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.5;transform:scale(.82)}50%{opacity:1;transform:scale(1.12)}}
+  .panel-hd h1{font-family:var(--viz-disp);font-size:11px;letter-spacing:.06em;color:var(--viz-tx-0);font-weight:400}
+  .panel-body{padding:14px 15px 18px}
+
+  .ctl{margin-bottom:16px}
+  .ctl-lbl{
+    display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;
+    font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--viz-tx-2);
+  }
+  .ctl-lbl .val{color:var(--viz-ph);font-weight:600;letter-spacing:.02em;
+    font-variant-numeric:tabular-nums;font-size:11px}
+
+  /* slider */
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:999px;
+    background:var(--viz-bg-3);outline:none;cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--viz-ph);border:2px solid var(--viz-bg-0);
+    box-shadow:0 0 10px var(--viz-ph-glow),0 0 0 1px var(--viz-ph-dim);cursor:pointer;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:15px;height:15px;border-radius:50%;background:var(--viz-ph);
+    border:2px solid var(--viz-bg-0);box-shadow:0 0 10px var(--viz-ph-glow);cursor:pointer;
+  }
+
+  /* segmented toggle */
+  .seg{display:flex;border:1px solid var(--viz-hair);border-radius:7px;overflow:hidden;background:var(--viz-bg-1)}
+  .seg button{
+    flex:1;padding:7px 4px;font-family:var(--viz-mono);font-size:10.5px;letter-spacing:.04em;
+    background:transparent;color:var(--viz-tx-2);border:none;cursor:pointer;transition:.16s;
+    border-right:1px solid var(--viz-hair);text-transform:uppercase;
+  }
+  .seg button:last-child{border-right:none}
+  .seg button:hover{color:var(--viz-tx-0);background:var(--viz-bg-2)}
+  .seg button.on{
+    color:var(--viz-bg-0);font-weight:600;
+    background:linear-gradient(180deg,var(--viz-ph),var(--viz-ph-dim));
+    box-shadow:0 0 14px var(--viz-ph-glow) inset;
+  }
+  .seg.cy button.on{background:linear-gradient(180deg,var(--viz-cy),var(--viz-cy-dim));box-shadow:0 0 14px var(--viz-cy-glow) inset}
+
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .divider{height:1px;background:var(--viz-hair);margin:4px 0 16px}
+
+  /* legend */
+  .legend{
+    position:fixed;left:16px;bottom:16px;z-index:5;width:214px;
+    background:var(--viz-panel-bg);border:1px solid var(--viz-hair);border-radius:10px;
+    backdrop-filter:blur(9px);padding:12px 14px;
+    box-shadow:0 10px 34px rgba(0,0,0,.5);
+  }
+  .legend h2{font-family:var(--viz-disp);font-size:9.5px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--viz-tx-2);margin-bottom:10px;font-weight:400}
+  .lg-row{display:flex;align-items:center;gap:9px;margin-bottom:6px;font-size:11px;color:var(--viz-tx-1)}
+  .lg-dot{width:9px;height:9px;border-radius:50%;flex:none;box-shadow:0 0 8px currentColor}
+  .lg-row .ct{margin-left:auto;color:var(--viz-tx-3);font-variant-numeric:tabular-nums}
+  .heatbar{
+    margin-top:11px;height:8px;border-radius:999px;
+    background:linear-gradient(90deg,#0a4a6b,#3ec9ff,#49ffa4,#ffc35c,#ff4059);
+    box-shadow:0 0 12px rgba(62,201,255,.2);
+  }
+  .heat-lbls{display:flex;justify-content:space-between;margin-top:4px;
+    font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--viz-tx-3)}
+
+  /* hud (bottom-center stats) */
+  .hud{
+    position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:5;
+    display:flex;gap:20px;padding:8px 18px;
+    background:var(--viz-panel-bg);border:1px solid var(--viz-hair);border-radius:999px;
+    backdrop-filter:blur(9px);font-size:10.5px;color:var(--viz-tx-2);
+  }
+  .hud .st b{color:var(--viz-tx-0);font-weight:600;font-variant-numeric:tabular-nums}
+  .hud .st .k{color:var(--viz-tx-3);letter-spacing:.06em;text-transform:uppercase;margin-right:6px;font-size:9.5px}
+
+  .note{font-size:10px;color:var(--viz-tx-3);line-height:1.5;margin-top:2px}
+  a.reset{color:var(--viz-cy);text-decoration:none;border-bottom:1px dotted var(--viz-cy-dim);cursor:pointer}
+  a.reset:hover{color:var(--viz-ph)}
+
+  /* scrollbar */
+  .panel::-webkit-scrollbar{width:8px}
+  .panel::-webkit-scrollbar-thumb{background:var(--viz-hair);border-radius:999px}
+  .panel::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+  <div id="atmos"></div>
+
+  <header>
+    <div class="brand">
+      <span class="glyph">YADGAR</span>
+      <span class="sub">Galaxy Layout</span>
+    </div>
+    <span class="caption"><b>MOCKUP</b> · synthetic · core=loose · arms=clusters</span>
+  </header>
+
+  <div class="panel">
+    <div class="panel-hd"><span class="led"></span><h1>LAYOUT CONTROLS</h1></div>
+    <div class="panel-body">
+
+      <div class="ctl">
+        <div class="ctl-lbl">Spiral arms <span class="val" id="v-arms">4</span></div>
+        <input type="range" id="arms" min="2" max="6" step="1" value="4">
+      </div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Spiral tightness (pitch) <span class="val" id="v-pitch">0.30</span></div>
+        <input type="range" id="pitch" min="0.08" max="0.75" step="0.01" value="0.30">
+      </div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Arm radius mapping</div>
+        <div class="seg" id="radmode">
+          <button data-v="heat" class="on">Heat</button>
+          <button data-v="age">Age</button>
+        </div>
+      </div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Disk thickness <span class="val" id="v-thick">0.9</span></div>
+        <input type="range" id="thick" min="0.1" max="3.0" step="0.05" value="0.9">
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Loose / single nodes</div>
+        <div class="seg cy" id="single">
+          <button data-v="core" class="on">Dense core</button>
+          <button data-v="halo">Outer halo</button>
+        </div>
+      </div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Core density <span class="val" id="v-coredens">1.0</span></div>
+        <input type="range" id="coredens" min="0.3" max="2.5" step="0.05" value="1.0">
+      </div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Core-bulge size / glow <span class="val" id="v-bulge">1.0</span></div>
+        <input type="range" id="bulge" min="0.2" max="2.5" step="0.05" value="1.0">
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Type z-layering</div>
+        <div class="seg cy" id="layer">
+          <button data-v="off" class="on">Off</button>
+          <button data-v="on">On</button>
+        </div>
+      </div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Faint intra-arm edges</div>
+        <div class="seg cy" id="edges">
+          <button data-v="off" class="on">Off</button>
+          <button data-v="on">On</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="ctl">
+        <div class="ctl-lbl">Auto-rotate speed <span class="val" id="v-spin">0.35</span></div>
+        <input type="range" id="spin" min="0" max="2.0" step="0.05" value="0.35">
+      </div>
+
+      <div class="note">
+        Positions recompute live from the same synthetic corpus — no reload.
+        <a class="reset" id="reset">reset defaults</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <h2>Structure</h2>
+    <div class="lg-row" style="color:#ffc35c"><span class="lg-dot"></span><span style="color:var(--viz-tx-1)">core = loose / single nodes</span></div>
+    <div class="lg-row" style="color:#49ffa4"><span class="lg-dot"></span><span style="color:var(--viz-tx-1)">arms = real clusters</span></div>
+    <div class="lg-row" style="color:#5c7a68"><span class="lg-dot" style="box-shadow:none;border:1px solid currentColor"></span><span style="color:var(--viz-tx-1)">density → exp falloff outward</span></div>
+    <h2 style="margin-top:13px">Node types</h2>
+    <div class="lg-row" style="color:#49ffa4"><span class="lg-dot"></span><span style="color:var(--viz-tx-1)">memory</span><span class="ct">500</span></div>
+    <div class="lg-row" style="color:#3ec9ff"><span class="lg-dot"></span><span style="color:var(--viz-tx-1)">wiki</span><span class="ct">200</span></div>
+    <div class="lg-row" style="color:#5c7a68"><span class="lg-dot"></span><span style="color:var(--viz-tx-1)">entity</span><span class="ct">1800</span></div>
+    <div class="heatbar"></div>
+    <div class="heat-lbls"><span>cold</span><span>heat → brightness</span><span>hot</span></div>
+  </div>
+
+  <div class="hud">
+    <div class="st"><span class="k">nodes</span><b id="h-nodes">2500</b></div>
+    <div class="st"><span class="k">core</span><b id="h-core">—</b></div>
+    <div class="st"><span class="k">arms</span><b id="h-arms">4</b></div>
+    <div class="st"><span class="k">clusters</span><b>40</b></div>
+    <div class="st"><span class="k">fps</span><b id="h-fps">—</b></div>
+  </div>
+
+<!-- Three.js r160 (UMD build) pinned via cdnjs with verified SRI. OrbitControls
+     is reimplemented inline (MiniOrbit) so this is the ONLY network fetch. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"
+        integrity="sha512-vnmn/Qqn6aG0POAc9mIGzjq0IybrvxJXYDafNvp9JSnDGxeF3pbkSqLvf+YGd5ku63pT7sa/jxHn7/d0mU8+tA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+/* ===========================================================================
+ * 1. SYNTHETIC CORPUS  (generated once; layout recomputes from it live)
+ * ========================================================================= */
+const N_MEMORY = 500, N_WIKI = 200, N_ENTITY = 1800;
+const N_TOTAL  = N_MEMORY + N_WIKI + N_ENTITY;      // 2500
+const N_CLUSTERS = 40;
+
+// deterministic PRNG so the corpus is stable across relayouts
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rnd = mulberry32(0xBEEF1234|0);
+function gauss(){ // Box-Muller
+  let u=0,v=0; while(u===0)u=rnd(); while(v===0)v=rnd();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+
+// power-law cluster sizes: a few big, many small
+const clusterWeights = [];
+for(let c=0;c<N_CLUSTERS;c++){ clusterWeights.push(Math.pow((c+1),-1.35)); }
+const wSum = clusterWeights.reduce((a,b)=>a+b,0);
+const clusterCDF = [];
+{ let acc=0; for(const w of clusterWeights){ acc+=w/wSum; clusterCDF.push(acc); } }
+function pickCluster(){ const r=rnd(); for(let i=0;i<clusterCDF.length;i++) if(r<=clusterCDF[i]) return i; return N_CLUSTERS-1; }
+
+// build nodes: {type, cluster (-1 == unclustered/singleton), heat, age, single}
+// cluster == -1 marks a LOOSE node: not in a real multi-member cluster. Loose
+// nodes = the galactic core population (old/diffuse stars), NOT arm material.
+const nodes = new Array(N_TOTAL);
+let idx = 0;
+function heatSkewed(){ // few very hot — cube skews toward 0
+  const u = rnd(); return Math.pow(u, 2.4);
+}
+// per-type probability a node is LOOSE (unclustered). Entities are mostly
+// loose (diffuse, low-degree → core); memory/wiki mostly join clusters.
+const LOOSE_P = { memory:0.18, wiki:0.10, entity:0.78 };
+function addNodes(count, type){
+  for(let i=0;i<count;i++){
+    const loose = rnd() < LOOSE_P[type];
+    const cluster = loose ? -1 : pickCluster();
+    // hot clusters (low id) bias their members hotter; loose nodes skew cooler/older
+    const clusterHeatBias = cluster>=0 ? (1 - cluster/N_CLUSTERS) : 0.15;
+    let heat = heatSkewed()*0.55 + clusterHeatBias*0.45*rnd();
+    heat = Math.min(1, Math.max(0, heat));
+    const age = loose ? Math.min(1, 0.45 + rnd()*0.55) : rnd(); // loose = older
+    nodes[idx++] = { type, cluster, heat, age, single:loose };
+  }
+}
+addNodes(N_MEMORY,'memory');
+addNodes(N_WIKI,'wiki');
+addNodes(N_ENTITY,'entity');
+
+// per-cluster aggregate heat + size. Clusters that ended up with a single
+// member are DEMOTED to loose (single-member cluster == not a real cluster).
+const clusterStat = Array.from({length:N_CLUSTERS},()=>({n:0,heat:0}));
+for(const nd of nodes){ if(nd.cluster>=0){ const s=clusterStat[nd.cluster]; s.n++; s.heat+=nd.heat; } }
+for(const nd of nodes){ if(nd.cluster>=0 && clusterStat[nd.cluster].n < 2){ nd.cluster=-1; nd.single=true; } }
+clusterStat.forEach((s,i)=>{ s.id=i; s.score = s.n*0.6 + (s.heat/(s.n||1))*s.n*0.4; });
+// arm assignment computed per-relayout (depends on arm count).
+// A node belongs in an ARM iff nd.cluster>=0 (multi-member cluster).
+// A node belongs in the CORE iff nd.single (loose / unclustered).
+
+/* ===========================================================================
+ * 2. THREE.JS SCENE
+ * ========================================================================= */
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x03070b, 0.010);
+
+const camera = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.1, 2000);
+camera.position.set(0, 46, 72);
+camera.lookAt(0,0,0);
+
+// ── minimal OrbitControls (inline; avoids a 2nd CDN module fetch) ──────────
+class MiniOrbit{
+  constructor(cam,dom){
+    this.cam=cam; this.dom=dom; this.target=new THREE.Vector3(0,0,0);
+    this.theta=Math.atan2(cam.position.x-this.target.x, cam.position.z-this.target.z);
+    const dx=cam.position.x-this.target.x, dy=cam.position.y-this.target.y, dz=cam.position.z-this.target.z;
+    this.radius=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    this.phi=Math.acos(Math.min(1,Math.max(-1,dy/this.radius)));
+    this.dragging=false; this.px=0; this.py=0;
+    dom.addEventListener('pointerdown',e=>{this.dragging=true;this.px=e.clientX;this.py=e.clientY;dom.setPointerCapture(e.pointerId);});
+    dom.addEventListener('pointerup',e=>{this.dragging=false;});
+    dom.addEventListener('pointermove',e=>{
+      if(!this.dragging)return;
+      const dxp=e.clientX-this.px, dyp=e.clientY-this.py; this.px=e.clientX; this.py=e.clientY;
+      this.theta -= dxp*0.005;
+      this.phi = Math.min(Math.PI-0.05, Math.max(0.05, this.phi - dyp*0.005));
+    });
+    dom.addEventListener('wheel',e=>{e.preventDefault();this.radius=Math.min(320,Math.max(14,this.radius*(1+Math.sign(e.deltaY)*0.08)));},{passive:false});
+  }
+  addAzimuth(d){ this.theta += d; }
+  update(){
+    const s=Math.sin(this.phi)*this.radius;
+    this.cam.position.set(this.target.x+s*Math.sin(this.theta), this.target.y+Math.cos(this.phi)*this.radius, this.target.z+s*Math.cos(this.theta));
+    this.cam.lookAt(this.target);
+  }
+}
+const controls = new MiniOrbit(camera, renderer.domElement);
+
+// ── color ramp: cold cyan → phosphor → amber → fault-red (per heat) ────────
+const COLD  = new THREE.Color(0x0a4a6b);
+const CYAN  = new THREE.Color(0x3ec9ff);
+const PHOS  = new THREE.Color(0x49ffa4);
+const AMBER = new THREE.Color(0xffc35c);
+const REDH  = new THREE.Color(0xff4059);
+const _c1=new THREE.Color(), _c2=new THREE.Color(), _out=new THREE.Color();
+function heatColor(h, target){
+  // piecewise gradient across 4 segments
+  let a,b,t;
+  if(h<0.30){ a=COLD; b=CYAN; t=h/0.30; }
+  else if(h<0.60){ a=CYAN; b=PHOS; t=(h-0.30)/0.30; }
+  else if(h<0.82){ a=PHOS; b=AMBER; t=(h-0.60)/0.22; }
+  else { a=AMBER; b=REDH; t=(h-0.82)/0.18; }
+  target.copy(a).lerp(b, Math.min(1,Math.max(0,t)));
+  return target;
+}
+const TYPE_TINT = { // subtle per-type hue nudge blended into heat color
+  memory: new THREE.Color(0x49ffa4),
+  wiki:   new THREE.Color(0x3ec9ff),
+  entity: new THREE.Color(0x8fb0a0),
+};
+
+/* ── point clouds: one for disk (memory+wiki+arm-entities), one for halo ─── */
+const diskGeo = new THREE.BufferGeometry();
+const diskPos = new Float32Array(N_TOTAL*3);
+const diskCol = new Float32Array(N_TOTAL*3);
+const diskSz  = new Float32Array(N_TOTAL);
+diskGeo.setAttribute('position', new THREE.BufferAttribute(diskPos,3));
+diskGeo.setAttribute('color',    new THREE.BufferAttribute(diskCol,3));
+diskGeo.setAttribute('size',     new THREE.BufferAttribute(diskSz,1));
+
+// round soft sprite texture (glowing dot)
+function makeSprite(){
+  const s=64, cv=document.createElement('canvas'); cv.width=cv.height=s;
+  const g=cv.getContext('2d'); const grad=g.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);
+  grad.addColorStop(0,'rgba(255,255,255,1)');
+  grad.addColorStop(0.35,'rgba(255,255,255,0.85)');
+  grad.addColorStop(0.7,'rgba(255,255,255,0.18)');
+  grad.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle=grad; g.fillRect(0,0,s,s);
+  const tex=new THREE.CanvasTexture(cv); tex.needsUpdate=true; return tex;
+}
+const sprite = makeSprite();
+
+const pointMat = new THREE.ShaderMaterial({
+  uniforms:{ uTex:{value:sprite}, uPix:{value:renderer.getPixelRatio()} },
+  vertexShader:`
+    attribute float size; varying vec3 vCol;
+    uniform float uPix;
+    void main(){
+      vCol=color;
+      vec4 mv=modelViewMatrix*vec4(position,1.0);
+      gl_PointSize = size * uPix * (300.0 / -mv.z);
+      gl_Position = projectionMatrix*mv;
+    }`,
+  fragmentShader:`
+    uniform sampler2D uTex; varying vec3 vCol;
+    void main(){
+      vec4 t=texture2D(uTex, gl_PointCoord);
+      if(t.a<0.02) discard;
+      gl_FragColor=vec4(vCol, t.a);
+    }`,
+  transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, vertexColors:true,
+});
+const diskPoints = new THREE.Points(diskGeo, pointMat);
+scene.add(diskPoints);
+
+// ── central bulge glow (billboard sprite) ──────────────────────────────────
+const coreGlowMat = new THREE.SpriteMaterial({map:makeSprite(), color:0x9effd0, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false});
+const coreGlow = new THREE.Sprite(coreGlowMat);
+coreGlow.scale.set(34,34,1);
+scene.add(coreGlow);
+const coreGlow2 = new THREE.Sprite(new THREE.SpriteMaterial({map:makeSprite(), color:0xffd98a, transparent:true, opacity:0.32, blending:THREE.AdditiveBlending, depthWrite:false}));
+coreGlow2.scale.set(15,15,1);
+scene.add(coreGlow2);
+
+// ── faint edge lines ───────────────────────────────────────────────────────
+let edgeLines = null;
+
+// ── far starfield backdrop ─────────────────────────────────────────────────
+(function starfield(){
+  const g=new THREE.BufferGeometry(); const n=900; const p=new Float32Array(n*3);
+  for(let i=0;i<n;i++){ const r=380+rnd()*520; const th=rnd()*Math.PI*2; const ph=Math.acos(2*rnd()-1);
+    p[i*3]=r*Math.sin(ph)*Math.cos(th); p[i*3+1]=r*Math.sin(ph)*Math.sin(th)*0.6; p[i*3+2]=r*Math.cos(ph);}
+  g.setAttribute('position',new THREE.BufferAttribute(p,3));
+  const m=new THREE.PointsMaterial({color:0x2a4a5c,size:1.1,sizeAttenuation:false,transparent:true,opacity:0.55});
+  scene.add(new THREE.Points(g,m));
+})();
+
+/* ===========================================================================
+ * 3. LAYOUT  (log-spiral disk; recomputed on every control change)
+ * ========================================================================= */
+const P = { // live params
+  arms:4, pitch:0.30, radmode:'heat', thick:0.9, bulge:1.0,
+  coredens:1.0, single:'core', layer:'off', edges:'off', spin:0.35,
+};
+const DEFAULTS = {...P};
+
+const R_MAX = 46;      // outer disk radius
+const R_CORE = 3.2;    // core bulge radius scale
+const R_SCALE = 12.0;  // exponential disk scale-length (surface density e^{-r/R_SCALE})
+const Z_LAYER = 2.4;   // per-type z offset when layering on
+
+/* exponential-disk radius sampler: dense inner, sparse outer.
+ * Inverse-CDF of r·e^{-r/L} truncated at R_MAX, biased tighter by `tight`. */
+function expRadius(L, rMax, tight){
+  // rejection-free approx: sample u, map through -L*ln(1-u*k) then clamp.
+  const k = 1 - Math.exp(-rMax/L);
+  let r = -L*Math.log(1 - rnd()*k);
+  if(tight>0) r *= Math.pow(rnd(), tight*0.6); // extra inward pull
+  return Math.min(rMax, r);
+}
+
+function layout(){
+  // rank clusters by score, assign the multi-member clusters to arms round-robin.
+  // Only real clusters (n>=2) are eligible — loose nodes never enter an arm.
+  const realClusters = clusterStat.filter(s=>s.n>=2).sort((a,b)=>b.score-a.score);
+  const armOfCluster = new Array(N_CLUSTERS).fill(-1);
+  const nSpine = Math.min(realClusters.length, P.arms*3);
+  for(let i=0;i<nSpine;i++){ armOfCluster[realClusters[i].id] = i % P.arms; }
+  // real clusters beyond the spine budget scatter inter-arm (arm = -2 marker)
+  for(let i=nSpine;i<realClusters.length;i++){ armOfCluster[realClusters[i].id] = -2; }
+
+  const armBase = i => (i/P.arms)*Math.PI*2;
+  const armHue  = i => (i/P.arms - 0.5)*0.10;  // subtle per-arm hue shift
+
+  let coreCount=0, armCount=0, haloCount=0;
+
+  for(let i=0;i<N_TOTAL;i++){
+    const nd = nodes[i];
+    // LOOSE node → core (default) or optional outer halo. Clustered → arm.
+    const loose = nd.single;                    // cluster == -1
+    const arm = loose ? -1 : armOfCluster[nd.cluster];
+    const toHalo = loose && P.single==='halo';
+    const toCore = loose && !toHalo;
+
+    let x,y,z;
+
+    if(toCore){
+      // ── DENSE central bulge: packed loose/old stars, exponential falloff ──
+      // bulge scale shrinks as core-density rises → tighter packing.
+      const bulgeL = (R_SCALE*0.42) / (0.6 + P.coredens*0.9);
+      let rr = expRadius(bulgeL, R_MAX*0.55, 1.4*P.bulge);
+      // spheroidal (3D) bulge, mildly flattened
+      const th = rnd()*Math.PI*2, ph = Math.acos(2*rnd()-1);
+      x = rr*Math.sin(ph)*Math.cos(th);
+      z = rr*Math.sin(ph)*Math.sin(th);
+      y = rr*Math.cos(ph)*0.62;
+      coreCount++;
+    } else if(toHalo){
+      // ── diffuse outer halo (optional) ──
+      const rr = R_CORE*1.6 + Math.pow(rnd(),0.55)*(R_MAX*1.15);
+      const th = rnd()*Math.PI*2, ph = Math.acos(2*rnd()-1);
+      x = rr*Math.sin(ph)*Math.cos(th);
+      z = rr*Math.sin(ph)*Math.sin(th);
+      y = rr*Math.cos(ph)*0.55;
+      haloCount++;
+    } else {
+      // ── ARM material (multi-member clusters) on an exponential disk ──
+      // radius: exponential surface density (dense at arm-roots, sparse rim).
+      // radmode heat|age biases WHERE on the arm a node lands.
+      const drive = P.radmode==='heat' ? (1-nd.heat) : nd.age; // hot/young → inner
+      let radius = expRadius(R_SCALE, R_MAX, 0);
+      // blend the exp radius toward the drive so hot arm-nodes sit inner
+      radius = radius*0.55 + Math.pow(drive,0.8)*R_MAX*0.45;
+      radius = Math.max(R_CORE, radius);
+
+      let angle;
+      if(arm>=0){
+        angle = armBase(arm) + Math.log(radius/R_CORE + 1.0)/P.pitch;
+        angle += gauss()*0.16; // arm width jitter
+      } else {
+        // real cluster beyond spine budget: inter-arm scatter
+        angle = rnd()*Math.PI*2 + gauss()*0.5;
+      }
+      x = Math.cos(angle)*radius;
+      z = Math.sin(angle)*radius;
+      const thick = P.thick * (0.35 + 0.65*(radius/R_MAX));
+      y = gauss()*thick;
+      if(P.layer==='on'){ y += (nd.type==='memory'? Z_LAYER : nd.type==='wiki'? 0 : -Z_LAYER); }
+      armCount++;
+    }
+
+    diskPos[i*3]=x; diskPos[i*3+1]=y; diskPos[i*3+2]=z;
+
+    // color: heat ramp + tiny per-arm hue shift + type tint blend
+    heatColor(nd.heat, _out);
+    if(arm>=0 && !toHalo && !toCore){ _out.offsetHSL(armHue(arm),0,0); }
+    _out.lerp(TYPE_TINT[nd.type], toHalo?0.35:(toCore?0.20:0.14));
+    // hot nodes brightest (heat still drives brightness, incl. dense core)
+    if(nd.heat>0.82){ _out.lerp(new THREE.Color(0xffffff), (nd.heat-0.82)/0.18*0.4); }
+    diskCol[i*3]=_out.r; diskCol[i*3+1]=_out.g; diskCol[i*3+2]=_out.b;
+
+    // size ~ heat (hot larger). Loose core stars a touch smaller (old/faint).
+    let sz = 0.45 + nd.heat*nd.heat*2.6;
+    if(toCore) sz *= 0.66;
+    if(toHalo) sz *= 0.42;
+    if(nd.type==='entity' && !loose) sz *= 0.55;
+    if(nd.heat>0.9) sz *= 1.35;
+    diskSz[i]=sz;
+  }
+
+  diskGeo.attributes.position.needsUpdate=true;
+  diskGeo.attributes.color.needsUpdate=true;
+  diskGeo.attributes.size.needsUpdate=true;
+
+  // core glow tracks core-density + bulge intensity (the packed core glows)
+  const coreI = 0.30 + 0.22*Math.min(2,P.bulge) + 0.18*Math.min(2,P.coredens);
+  coreGlowMat.opacity = P.single==='halo' ? coreI*0.5 : coreI;
+  coreGlow.scale.setScalar(22 + 10*P.bulge + 6*P.coredens);
+  coreGlow2.material.opacity = (P.single==='halo'?0.16:0.34);
+
+  buildEdges(armOfCluster, armBase);
+
+  document.getElementById('h-arms').textContent = P.arms;
+  const hc=document.getElementById('h-core'); if(hc) hc.textContent = coreCount;
+}
+
+/* faint intra-arm edges: connect a few near-neighbor hot nodes within same arm */
+function buildEdges(armOfCluster, armBase){
+  if(edgeLines){ scene.remove(edgeLines); edgeLines.geometry.dispose(); edgeLines=null; }
+  if(P.edges!=='on') return;
+  // gather hot disk nodes per arm, sort by radius, link consecutive
+  const perArm = Array.from({length:P.arms},()=>[]);
+  for(let i=0;i<N_TOTAL;i++){
+    const nd=nodes[i]; if(nd.single) continue;              // loose → not in arms
+    const arm=armOfCluster[nd.cluster]; if(arm<0) continue; // only spine arms (>=0)
+    if(nd.heat<0.35) continue;
+    const x=diskPos[i*3], y=diskPos[i*3+1], z=diskPos[i*3+2];
+    perArm[arm].push({i,r:Math.hypot(x,z)});
+  }
+  const segs=[];
+  for(const arr of perArm){
+    arr.sort((a,b)=>a.r-b.r);
+    for(let k=0;k<arr.length-1;k++){
+      if(rnd()>0.5) continue; // keep sparse
+      const a=arr[k].i, b=arr[k+1].i;
+      const dr=arr[k+1].r-arr[k].r; if(dr>6) continue;
+      segs.push(diskPos[a*3],diskPos[a*3+1],diskPos[a*3+2],diskPos[b*3],diskPos[b*3+1],diskPos[b*3+2]);
+    }
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(segs,3));
+  const m=new THREE.LineBasicMaterial({color:0x1d6b48,transparent:true,opacity:0.22,blending:THREE.AdditiveBlending});
+  edgeLines=new THREE.LineSegments(g,m); scene.add(edgeLines);
+}
+
+/* ===========================================================================
+ * 4. CONTROLS WIRING
+ * ========================================================================= */
+function bindSlider(id, key, fmt){
+  const el=document.getElementById(id), out=document.getElementById('v-'+id);
+  const apply=()=>{ P[key]= (key==='arms')?parseInt(el.value):parseFloat(el.value);
+    if(out) out.textContent = fmt?fmt(P[key]):P[key]; };
+  el.addEventListener('input',()=>{ apply(); if(key!=='spin') layout(); });
+  apply();
+}
+bindSlider('arms','arms', v=>v);
+bindSlider('pitch','pitch', v=>v.toFixed(2));
+bindSlider('thick','thick', v=>v.toFixed(1));
+bindSlider('coredens','coredens', v=>v.toFixed(1));
+bindSlider('bulge','bulge', v=>v.toFixed(1));
+bindSlider('spin','spin', v=>v.toFixed(2));
+
+function bindSeg(id, key){
+  const box=document.getElementById(id);
+  box.addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b)return;
+    box.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); P[key]=b.dataset.v; layout();
+  });
+}
+bindSeg('radmode','radmode');
+bindSeg('single','single');
+bindSeg('layer','layer');
+bindSeg('edges','edges');
+
+document.getElementById('reset').addEventListener('click',()=>{
+  Object.assign(P, DEFAULTS);
+  document.getElementById('arms').value=P.arms; document.getElementById('v-arms').textContent=P.arms;
+  document.getElementById('pitch').value=P.pitch; document.getElementById('v-pitch').textContent=P.pitch.toFixed(2);
+  document.getElementById('thick').value=P.thick; document.getElementById('v-thick').textContent=P.thick.toFixed(1);
+  document.getElementById('coredens').value=P.coredens; document.getElementById('v-coredens').textContent=P.coredens.toFixed(1);
+  document.getElementById('bulge').value=P.bulge; document.getElementById('v-bulge').textContent=P.bulge.toFixed(1);
+  document.getElementById('spin').value=P.spin; document.getElementById('v-spin').textContent=P.spin.toFixed(2);
+  const setSeg=(id,v)=>{const box=document.getElementById(id);box.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.v===v));};
+  setSeg('radmode',P.radmode); setSeg('single',P.single); setSeg('layer',P.layer); setSeg('edges',P.edges);
+  layout();
+});
+
+/* ===========================================================================
+ * 5. RENDER LOOP
+ * ========================================================================= */
+let last=performance.now(), fpsAcc=0, fpsN=0;
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  controls.addAzimuth(P.spin*dt*0.4);
+  controls.update();
+  // core glow gently faces camera (sprite auto-billboards)
+  renderer.render(scene,camera);
+  // fps
+  fpsAcc+=dt; fpsN++; if(fpsAcc>0.5){ document.getElementById('h-fps').textContent=Math.round(fpsN/fpsAcc); fpsAcc=0;fpsN=0; }
+  requestAnimationFrame(frame);
+}
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+layout();               // DEFAULT: arms=real clusters, loose/single→dense core, arm-radius=heat
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

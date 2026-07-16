@@ -125,6 +125,22 @@ EDGE_TYPES: dict[str, dict] = {
         "role": "retrieval",
         "default_on": True,
     },
+    # viz-rest (#209): derived_from is the LARGEST entity relationship type (3304
+    # rows) yet was INVISIBLE in the viz — entities whose only edges are
+    # derived_from rendered as misleading "0 connections" lone spheres. It is
+    # retrieval-active: the PPR + spreading-activation frontier expansion
+    # (_get_adjacent_batch(..., None) in backend/retrieval/graph_helpers.py +
+    # core.py) traverses ALL relationship types, so derived_from feeds recall.
+    # role="retrieval" per EDGE_CONTRACT (viz must reflect what drives behavior).
+    # NOT semantic_similarity — that stays hidden (retired by ADR-0009).
+    "derived_from": {
+        "label": "Derived From",
+        "description": "Entity derived from another (one entity's meaning/existence traces to another). Retrieval-active: traversed by PPR + spreading-activation frontier expansion (all-types).",
+        "settings_color_key": None,
+        "fallback_color": "#39c5cf",
+        "role": "retrieval",
+        "default_on": True,
+    },
 }
 
 # ---------------------------------------------------------------------------

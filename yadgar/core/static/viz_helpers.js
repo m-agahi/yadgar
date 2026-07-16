@@ -63,6 +63,55 @@ export function _linkWidth(l) {
 }
 
 /**
+ * viz-rest #48: bounded directional-particle count for an edge (3D only).
+ * Directional edges (transition/memory_wiki/wiki_crossref) get particles;
+ * transition scales 1→2 with co-recall count (capped at 2 for perf), the other
+ * two get 1. All other edge types get 0. Pure — mirrors the inline index.html
+ * _particleCount so the bound stays unit-tested.
+ *
+ * @param {Object} l - Edge object with {type, count?}
+ * @returns {number} Particle count (0, 1, or 2)
+ */
+export function particleCount(l) {
+  if (!l) return 0;
+  if (l.type === 'transition') {
+    return Math.min(2, Math.max(1, Math.round(Math.log2((l.count || 1) + 1))));
+  }
+  if (l.type === 'memory_wiki' || l.type === 'wiki_crossref') return 1;
+  return 0;
+}
+
+/**
+ * viz-rest #13: 2D convex hull (Andrew's monotone chain) for cluster hulls.
+ * Returns the hull vertices in counter-clockwise order. Input points are
+ * {x, y} objects. Pure — no DOM. Degenerate inputs (0/1/2 points) return the
+ * input points as-is (the caller falls back to no-hull / a line).
+ *
+ * @param {Array<{x:number, y:number}>} points
+ * @returns {Array<{x:number, y:number}>} hull vertices (CCW)
+ */
+export function convexHull(points) {
+  const pts = (points || []).filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (pts.length < 3) return pts.slice();
+  const sorted = pts.slice().sort((a, b) => (a.x - b.x) || (a.y - b.y));
+  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower = [];
+  for (const p of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const p = sorted[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+/**
  * Check whether a graph payload has orphan edges.
  * Returns the set of endpoint IDs not present in the node set.
  *

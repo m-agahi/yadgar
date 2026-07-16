@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { _fmtBytes, _fmtUptime, _linkWidth, esc, findOrphanEdgeEndpoints, shouldFitOnStop } from './viz_helpers.js';
+import { _fmtBytes, _fmtUptime, _linkWidth, esc, findOrphanEdgeEndpoints, shouldFitOnStop, particleCount, convexHull } from './viz_helpers.js';
 
 // ── _fmtBytes ─────────────────────────────────────────────────────────────────
 
@@ -235,5 +235,54 @@ describe('shouldFitOnStop', () => {
     expect(shouldFitOnStop(50, false, 50)).toBe(true);
     expect(shouldFitOnStop(79, false, 50)).toBe(true);
     expect(shouldFitOnStop(79, true, 50)).toBe(false);
+  });
+});
+
+// ── viz-rest #48: particleCount ────────────────────────────────────────────────
+
+describe('particleCount', () => {
+  it('returns 0 for null / unweighted / non-directional edges', () => {
+    expect(particleCount(null)).toBe(0);
+    expect(particleCount({ type: 'temporal' })).toBe(0);
+    expect(particleCount({ type: 'causal' })).toBe(0);
+  });
+  it('returns 1 for memory_wiki and wiki_crossref', () => {
+    expect(particleCount({ type: 'memory_wiki' })).toBe(1);
+    expect(particleCount({ type: 'wiki_crossref' })).toBe(1);
+  });
+  it('transition scales 1→2 with count, capped at 2', () => {
+    expect(particleCount({ type: 'transition', count: 1 })).toBe(1);
+    expect(particleCount({ type: 'transition', count: 2 })).toBe(2);
+    expect(particleCount({ type: 'transition', count: 1000 })).toBe(2);
+  });
+  it('transition with no count is at least 1', () => {
+    expect(particleCount({ type: 'transition' })).toBe(1);
+  });
+});
+
+// ── viz-rest #13: convexHull ───────────────────────────────────────────────────
+
+describe('convexHull', () => {
+  it('returns input as-is for fewer than 3 points', () => {
+    expect(convexHull([])).toEqual([]);
+    expect(convexHull([{ x: 1, y: 1 }])).toEqual([{ x: 1, y: 1 }]);
+    expect(convexHull([{ x: 1, y: 1 }, { x: 2, y: 2 }]).length).toBe(2);
+  });
+  it('computes the hull of a square with an interior point', () => {
+    const pts = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 },
+      { x: 2, y: 2 }, // interior — must be excluded
+    ];
+    const hull = convexHull(pts);
+    expect(hull.length).toBe(4);
+    expect(hull.some(p => p.x === 2 && p.y === 2)).toBe(false);
+  });
+  it('filters non-finite coordinates', () => {
+    const pts = [
+      { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 },
+      { x: NaN, y: 1 },
+    ];
+    const hull = convexHull(pts);
+    expect(hull.length).toBe(4);
   });
 });

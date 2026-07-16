@@ -923,6 +923,19 @@ body.dh-open #dh-toggle { right: 480px; }
   content: ''; position: absolute; left: -10px; top: 50%; transform: translateY(-50%);
   width: 3px; height: 22px; border-radius: 2px; background: #58a6ff;
 }
+/* viz-rest #26: destructive-knob styling — the JS already adds these classes
+   (control.js), but the CSS rules were missing so the danger signal never showed.
+   Red border on the row, red ⚠ marker, red pending-bar label when destructive
+   changes are staged. */
+.setting-row.destructive {
+  border-left: 2px solid rgba(248,81,73,.55);
+  padding-left: 8px; margin-left: -10px;
+  background: linear-gradient(90deg, rgba(248,81,73,.06), transparent 60%);
+}
+.destructive-marker { color: #f85149; font-weight: 700; cursor: help; }
+.cfg-pending-label.cfg-pending-destructive { color: #f85149; }
+/* viz-rest #29: config header status line (version · pending · restart). */
+.ctrl-cfg-status { font-size: 10px; font-weight: 400; color: #8b949e; }
 .row-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .row-label { font-size: 12px; font-weight: 500; color: #c9d1d9; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .row-knob { font-family: monospace; font-size: 10px; color: #8b949e; opacity: .8; }
@@ -1244,20 +1257,20 @@ body.dh-open #dh-toggle { right: 480px; }
     <a href="#home" class="tab-link" data-tab="home">Graph</a>
     <!-- Bookmarks (leaf) -->
     <a href="#bookmarks" class="tab-link" data-tab="bookmarks">Bookmarks</a>
-    <!-- System (group): Config · Health · Stats -->
+    <!-- System (group): Config -->
     <div class="nav-group" data-group="system">
       <button type="button" class="nav-group-label" aria-haspopup="true" aria-expanded="false">System</button>
       <div class="nav-group-menu" role="menu">
         <a href="#control" class="tab-link" data-tab="control" role="menuitem">Config</a>
-        <a href="#health" class="tab-link" data-tab="health" role="menuitem">Health</a>
-        <a href="#stats" class="tab-link" data-tab="stats" role="menuitem">Stats</a>
       </div>
     </div>
-    <!-- Observability (group): Traces (viz-trace-replay Car B) -->
+    <!-- Observability (group): Traces · Stats · Health (viz-rest #1 nav reorg) -->
     <div class="nav-group" data-group="observability">
       <button type="button" class="nav-group-label" aria-haspopup="true" aria-expanded="false">Observability</button>
       <div class="nav-group-menu" role="menu">
         <a href="#traces" class="tab-link" data-tab="traces" role="menuitem">Traces</a>
+        <a href="#stats" class="tab-link" data-tab="stats" role="menuitem">Stats</a>
+        <a href="#health" class="tab-link" data-tab="health" role="menuitem">Health</a>
       </div>
     </div>
     <!-- Help (group): Guide · Config Reference · About · Debug -->
@@ -1281,6 +1294,10 @@ body.dh-open #dh-toggle { right: 480px; }
     <button class="btn" onclick="fitGraph()">⊞ Fit</button>
     <button class="btn" onclick="resetLayout()">⟳ Reset</button>
     <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
+    <!-- finish-viz: Galaxy ↔ Force-directed layout toggle. Galaxy is the default
+         when the server serves precomputed galaxy positions (physics frozen so the
+         Milky-Way shape holds); flipping to Force re-runs the d3-force settle. -->
+    <button class="btn" id="galaxy-btn" onclick="toggleLayoutMode()" title="Toggle Galaxy ↔ Force-directed layout">✦ Galaxy</button>
     <button class="btn" onclick="loadGraph()">↺ Reload</button>
     <!-- v5.87 car A: View control — show/hide floating panels. The memory-cluster
          panel defaults OFF and is recovered here. -->
@@ -1316,9 +1333,22 @@ body.dh-open #dh-toggle { right: 480px; }
       <label><input type="checkbox" id="show-wiki" checked> <span style="color:#d2a8ff">⬡</span> Wiki</label>
     </div>
     <div>
+      <div class="sec-title">Display</div>
+      <!-- viz-rest #13: convex hulls per cluster (2D). Default OFF (ring tint stays on). -->
+      <label><input type="checkbox" id="show-cluster-hulls"> Cluster hulls</label>
+      <!-- viz-rest #89: render weak (count<2) transition edges. Default OFF. -->
+      <label><input type="checkbox" id="show-weak-edges"> Weak edges</label>
+    </div>
+    <div>
       <div class="sec-title">Heat Filter</div>
       <div class="heat-val-row"><span style="color:#8b949e">Min heat</span><span id="heat-val">0.00</span></div>
       <input type="range" id="heat-slider" min="0" max="1" step="0.01" value="0">
+    </div>
+    <div>
+      <!-- viz-rest #70: hide edges whose weight/count is below the threshold. -->
+      <div class="sec-title">Edge Weight Filter</div>
+      <div class="heat-val-row"><span style="color:#8b949e">Min weight</span><span id="edge-weight-val">0</span></div>
+      <input type="range" id="edge-weight-slider" min="0" max="10" step="1" value="0">
     </div>
     <div>
       <div class="sec-title">Graph Stats</div>
@@ -2002,6 +2032,88 @@ function _applyClusterColors(clusters) {
   }
 }
 
+// viz-rest #13: cluster hull toggle (default OFF — hulls add overdraw; the ring
+// tint stays the always-on affordance). Wired to a checkbox further below.
+let _showClusterHulls = false;
+// viz-rest #89: weak-edge (count<2 transition) render toggle. Default OFF —
+// flipping it re-fetches /api/graph?include_weak=1.
+let _includeWeakEdges = false;
+
+// finish-viz: Galaxy ↔ Force-directed layout toggle (client preference).
+//   'galaxy' (default): when the server serves precomputed galaxy positions
+//     (payload.layout_mode === 'galaxy'), FREEZE physics — cooldownTicks(0) — so
+//     the seeded Milky-Way shape holds instead of d3-force relaxing it to a blob.
+//   'force': ignore server galaxy positions and run the normal d3-force settle.
+// Persisted so the choice survives reloads. The server layout_mode of the LAST
+// payload is tracked so toggleLayoutMode can re-apply the right cooldown.
+let _layoutModePref = localStorage.getItem('yadgar-layout-mode') || 'galaxy';
+let _serverLayoutMode = 'spring';  // layout_mode of the most recent /api/graph payload
+
+// viz-rest #13: 2D convex hull (Andrew's monotone chain). Pure; mirrors
+// viz_helpers.convexHull (unit-tested there). Points are {x,y}. <3 pts → as-is.
+function _convexHull2D(points) {
+  const pts = points.filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (pts.length < 3) return pts.slice();
+  const sorted = pts.slice().sort((a, b) => (a.x - b.x) || (a.y - b.y));
+  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower = [];
+  for (const p of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const p = sorted[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+// viz-rest #13: render a translucent convex hull per cluster BEHIND the nodes
+// (onRenderFramePre). Only visible member nodes contribute vertices, so a hull
+// tracks the on-screen footprint of its cluster. Bounded: a cluster with <3
+// visible members draws nothing (the per-node ring tint already marks those).
+function _drawClusterHulls(ctx, globalScale) {
+  if (!_showClusterHulls || !graph || !_memoryClusters.length) return;
+  let nodeById = _hullNodeIndex;
+  if (!nodeById) {
+    nodeById = _hullNodeIndex = {};
+    for (const n of allNodes) nodeById[n.id] = n;
+  }
+  const pad = 10 / globalScale; // world-space padding around the hull
+  for (const cl of _memoryClusters) {
+    const members = (cl.member_node_ids || [])
+      .map(id => nodeById[id])
+      .filter(n => n && n.__visible !== false && Number.isFinite(n.x) && Number.isFinite(n.y));
+    if (members.length < 3) continue;
+    const hull = _convexHull2D(members.map(n => ({ x: n.x, y: n.y })));
+    if (hull.length < 3) continue;
+    // Centroid — expand each hull vertex outward by `pad` so nodes sit inside.
+    let cx = 0, cy = 0;
+    for (const p of hull) { cx += p.x; cy += p.y; }
+    cx /= hull.length; cy /= hull.length;
+    ctx.beginPath();
+    hull.forEach((p, i) => {
+      const dx = p.x - cx, dy = p.y - cy;
+      const len = Math.hypot(dx, dy) || 1;
+      const ex = p.x + (dx / len) * pad, ey = p.y + (dy / len) * pad;
+      i === 0 ? ctx.moveTo(ex, ey) : ctx.lineTo(ex, ey);
+    });
+    ctx.closePath();
+    const color = cl.__color || '#8b949e';
+    ctx.fillStyle = _hexToRgbaInline(color, 0.08);
+    ctx.fill();
+    ctx.strokeStyle = _hexToRgbaInline(color, 0.5);
+    ctx.lineWidth = 1.5 / globalScale;
+    ctx.stroke();
+  }
+}
+// Node-id → node index for hull lookup; rebuilt whenever the node set changes.
+let _hullNodeIndex = null;
+
 // Render memory clusters into sidebar (#cluster-list) and floating overlay (#fo-cluster-list).
 function renderMemoryClusters(clusters) {
   _applyClusterColors(clusters);
@@ -2167,6 +2279,13 @@ function _hexToRgbaInline(hex, alpha) {
 function _linkColor(l) {
   const meta = _edgeTypeMap[l.type];
   const baseColor = (meta && meta.color) || _edgeColor()[l.type] || '#484f58';
+  // viz-rest #61: intra-match edges (BOTH endpoints matched the search) are
+  // BRIGHTENED with the match color so the connective tissue between hits stands
+  // out — the AND-bright counterpart to the OR-dim branch below. Only fires when
+  // a search is active (at least one node carries __match).
+  if (l.source && l.target && l.source.__match && l.target.__match) {
+    return YADGAR_VIZ_CONFIG.search.match_color;
+  }
   // P0.3: when a search is active, fade edges whose endpoints are dimmed so the
   // matched subgraph stands out (previously only nodes dimmed; edges stayed lit).
   // l.source/.target are node objects post-layout (id strings pre-layout).
@@ -2186,6 +2305,15 @@ function _linkWidth(l) {
   return 0.8;
 }
 function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? YADGAR_VIZ_CONFIG.edge.arrow_len : 0; }
+// viz-rest #48: directional edge particles (3D only). Same directional edge set
+// as _arrowLen (transition/memory_wiki/wiki_crossref). Count is BOUNDED for perf:
+// transition edges scale 1→2 with co-recall count (capped at 2), others get 1.
+// Non-directional edges get 0 (no particles). Arrows remain the 2D fallback.
+function _particleCount(l) {
+  if (l.type === 'transition') return Math.min(2, Math.max(1, Math.round(Math.log2((l.count || 1) + 1))));
+  if (l.type === 'memory_wiki' || l.type === 'wiki_crossref') return 1;
+  return 0;
+}
 
 // v5.87 C1: the link set handed to graph.graphData() (and thus the d3 link FORCE)
 // must EXCLUDE edge types toggled off — otherwise the invisible link force keeps
@@ -2342,6 +2470,11 @@ function initGraph(mode) {
       .linkOpacity(YADGAR_VIZ_CONFIG.edge.opacity)  // v5.50.0 Variant C: 0.9
       .linkDirectionalArrowLength(_arrowLen)
       .linkDirectionalArrowRelPos(1)
+      // viz-rest #48: animated particles on directional edges (3D only). Count is
+      // bounded per-edge (_particleCount ≤ 2) so a dense graph stays performant.
+      .linkDirectionalParticles(_particleCount)
+      .linkDirectionalParticleWidth(1.2)
+      .linkDirectionalParticleSpeed(0.006)
       .nodeVisibility(n => n.__visible !== false)
       .linkVisibility(l => {
         const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
@@ -2395,6 +2528,8 @@ function initGraph(mode) {
       .linkDirectionalArrowRelPos(1)
       .nodeCanvasObject(drawNode)
       .nodeCanvasObjectMode(() => 'replace')
+      // viz-rest #13: draw translucent convex hulls behind the nodes, per cluster.
+      .onRenderFramePre(_drawClusterHulls)
       .nodePointerAreaPaint((node, color, ctx) => {
         ctx.fillStyle = color;
         ctx.beginPath();
@@ -2486,6 +2621,45 @@ function toggleMode() {
   }
 }
 
+// ── finish-viz: Galaxy ↔ Force-directed layout toggle ─────────────────────────
+// Sync the toolbar button label + active styling to the current preference.
+function _syncGalaxyBtn() {
+  const btn = document.getElementById('galaxy-btn');
+  if (!btn) return;
+  const galaxy = _layoutModePref === 'galaxy';
+  btn.textContent = galaxy ? '✦ Galaxy' : '✦ Force';
+  btn.classList.toggle('active', galaxy);
+  // When galaxy is preferred but the server served a spring layout (knob off /
+  // no cache yet), hint that the shape came from force, not the galaxy generator.
+  btn.title = galaxy
+    ? (_serverLayoutMode === 'galaxy'
+        ? 'Galaxy layout (frozen) — click for Force-directed'
+        : 'Galaxy preferred, but server served a force layout — click for Force-directed')
+    : 'Force-directed layout — click for Galaxy';
+}
+
+function toggleLayoutMode() {
+  _layoutModePref = (_layoutModePref === 'galaxy') ? 'force' : 'galaxy';
+  localStorage.setItem('yadgar-layout-mode', _layoutModePref);
+  if (!graph) { _syncGalaxyBtn(); return; }
+  if (_layoutModePref === 'force') {
+    // Switch to Force-directed: unfreeze the sim and let d3-force relax the
+    // (currently galaxy-seeded) positions. Keep the seeded x/y/z as a warm start
+    // so it eases into the force layout instead of a cold phyllotaxis settle.
+    if (typeof graph.cooldownTicks === 'function') graph.cooldownTicks(Infinity);
+    _engineCooled = false;
+    if (typeof graph.d3ReheatSimulation === 'function') graph.d3ReheatSimulation();
+    status('Force-directed layout', 'ok');
+    _syncGalaxyBtn();
+  } else {
+    // Switch to Galaxy: re-fetch so the server galaxy positions re-seed, then the
+    // loadGraph cooldown path freezes physics (cooldownTicks(0)) on the payload.
+    status('Galaxy layout', 'ok');
+    _syncGalaxyBtn();
+    loadGraph();
+  }
+}
+
 // P3.6 [46]: connection-count badge. __deg is precomputed by calcDegrees().
 // Drawn at the node's upper-right, gated behind zoom (cheap: only when zoomed in,
 // matching the label gate) so a 2476-node overview stays clean. DRY for both branches.
@@ -2557,8 +2731,18 @@ function drawNode(node, ctx, scale) {
     ctx.stroke();
   }
 
+  // viz-rest #54: anchored/protected memories get a distinct SHAPE (square) in 2D,
+  // matching the 3D cube branch (index.html ~2109). is_protected is absent from
+  // the payload, so the '_anchor' tag is the available signal (same as 3D). A
+  // square path is used instead of an arc so anchors read as prominent at a glance.
+  const _isAnchor = Array.isArray(node.tags) && node.tags.includes('_anchor');
   ctx.beginPath();
-  ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+  if (_isAnchor) {
+    const s = r * 1.4; // slightly larger — mirrors the 3D cube's 1.4× side
+    ctx.rect(node.x - s, node.y - s, s * 2, s * 2);
+  } else {
+    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+  }
   ctx.fillStyle = heatColor(heat);
   ctx.fill();
 
@@ -2587,13 +2771,17 @@ async function loadGraph() {
   _zoomFitDone = false;
   status('Loading…', 'wait');
   try {
-    const r = await fetch(`${DAEMON}/api/graph`);
+    // viz-rest #89: opt-in weak-edge render — pass ?include_weak=1 when the toggle
+    // is on so the backend includes count<2 transition edges (default OFF).
+    const _gq = _includeWeakEdges ? '?include_weak=1' : '';
+    const r = await fetch(`${DAEMON}/api/graph${_gq}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     // Preserve existing node positions across reloads
     const posMap = {};
     for (const n of allNodes) { if (n.x != null) posMap[n.id] = { x: n.x, y: n.y, vx: n.vx, vy: n.vy }; }
     allNodes = d.nodes || [];
+    _hullNodeIndex = null; // viz-rest #13: node set changed → rebuild hull index lazily
     // v5.88: server precomputed layout — count nodes that arrived already
     // carrying x/y/z from /api/graph (precompute is unconditional now). On a FRESH
     // page reload (the slow cold-load case this targets) the in-session posMap is
@@ -2634,15 +2822,22 @@ async function loadGraph() {
     calcDegrees();
     // v5.80: consume real clusters[] from backend (memory_cluster rows)
     renderMemoryClusters(d.clusters || []);
+    // finish-viz: track the server's layout_mode so the toggle + cooldown pick the
+    // right strategy. galaxy positions are a deliberate SHAPE (not a warm scaffold),
+    // so when the client pref is Galaxy we FREEZE the sim (cooldownTicks(0)) — the
+    // Milky-Way arrangement must hold, not d3-force-relax to a blob.
+    _serverLayoutMode = (d.layout_mode === 'galaxy') ? 'galaxy' : 'spring';
+    const _galaxyFrozen = (_serverLayoutMode === 'galaxy') && (_layoutModePref === 'galaxy') && (_serverSeeded > 0);
     // v5.87 C2: when seeded from saved positions, cap the cooldown so the sim
     // relaxes the warm scaffold (~60 ticks) instead of the full cold settle
     // (cooldownTime=15000ms default ≈ hundreds of ticks). 60 is deliberately
     // ABOVE the onEngineStop >=50-tick guard so v5.86 idle-pause still arms and
     // 2D pinning still fires. Cold load keeps the default (Infinity) for a full
-    // first-time layout.
+    // first-time layout. finish-viz: a frozen galaxy uses 0 (no settle at all).
     if (typeof graph.cooldownTicks === 'function') {
-      graph.cooldownTicks(_warmStarted ? 60 : Infinity);
+      graph.cooldownTicks(_galaxyFrozen ? 0 : (_warmStarted ? 60 : Infinity));
     }
+    _syncGalaxyBtn();
     // C1: force set = visible edge types only (hidden types must not bind nodes)
     graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
     applyFilters();
@@ -2651,12 +2846,16 @@ async function loadGraph() {
     // F2: stamp load time so SSE can mark view stale when heat drifts.
     _lastGraphLoadTime = Date.now();
     // F4: surface weak-edge affordance when the server suppressed count<2 transitions.
+    // F1 (finish-viz): also surface node/edge CAP truncation (0 at the default
+    // full-graph render; only bites when a VIZ_MAX_* cap is set > 0).
     const weakHidden = d.weak_edges_hidden || 0;
-    if (weakHidden > 0) {
-      status(`live · ${weakHidden} weak edge${weakHidden === 1 ? '' : 's'} hidden (count<2)`, 'ok');
-    } else {
-      status('live', 'ok');
-    }
+    const nodesHidden = d.nodes_hidden || 0;
+    const edgesHidden = d.edges_hidden || 0;
+    const _parts = [];
+    if (nodesHidden > 0) _parts.push(`${nodesHidden} node${nodesHidden === 1 ? '' : 's'} hidden (cap)`);
+    if (edgesHidden > 0) _parts.push(`${edgesHidden} edge${edgesHidden === 1 ? '' : 's'} hidden (cap)`);
+    if (weakHidden > 0) _parts.push(`${weakHidden} weak edge${weakHidden === 1 ? '' : 's'} hidden (count<2)`);
+    status(_parts.length ? `live · ${_parts.join(' · ')}` : 'live', 'ok');
   } catch (e) { status(`⚠ ${e.message}`, 'err'); }
 
   try {
@@ -2765,11 +2964,26 @@ function applyFilters() {
     if (n.__visible) { vis.add(n.id); visCount++; }
   }
 
+  // viz-rest #70: edge weight threshold — edges carry `count` (transition) or
+  // `weight` (entity-rel / similarity_link). An edge with a numeric weight below
+  // the slider value is hidden; edges with no weight metric are unaffected (the
+  // filter only prunes weighted edges, so a threshold of 0 keeps every edge).
+  const minEdgeW = parseInt(document.getElementById('edge-weight-slider')?.value ?? '0', 10) || 0;
+  const _edgeWeightOf = l => {
+    if (typeof l.count === 'number') return l.count;
+    if (typeof l.weight === 'number') return l.weight;
+    return null; // unweighted edge — not subject to the weight filter
+  };
+
   // Dynamic edge filter — driven by _edgeToggleState, not a hardcoded list.
   // A type NOT in _edgeToggleState defaults to visible (render-from-source).
   const linkVisFn = l => {
     const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
     if (!vis.has(s) || !vis.has(t)) return false;
+    if (minEdgeW > 0) {
+      const w = _edgeWeightOf(l);
+      if (w !== null && w < minEdgeW) return false;
+    }
     const t_type = l.type;
     if (t_type && t_type in _edgeToggleState) {
       return !!_edgeToggleState[t_type];
@@ -3105,6 +3319,11 @@ function connectSSE() {
       if (msg.event === 'system_metrics') { updateSys(msg.data); return; }
       if (msg.event === 'daemon_health')  { updateDaemonHealth(msg.data); return; }
       if (msg.seq) lastSeq = msg.seq;
+      // finish-viz Phase 3: a completed tool trace → live-append to the Traces tab.
+      if (msg.event === 'trace_complete') {
+        if (typeof window._ingestTraceComplete === 'function') window._ingestTraceComplete(msg);
+        return;
+      }
       const mod = window._graphDetailModule;
       if (msg.event === 'memory_added' && msg.node) {
         // v5.50.12: delegate to ingestSseNode (sets type='memory' explicitly)
@@ -3556,6 +3775,35 @@ document.getElementById('heat-slider').addEventListener('input', e => {
   document.getElementById('heat-val').textContent = parseFloat(e.target.value).toFixed(2);
   applyFilters();
 });
+
+// viz-rest #70: edge weight/threshold slider — hide edges below the min weight.
+{
+  const _ews = document.getElementById('edge-weight-slider');
+  if (_ews) _ews.addEventListener('input', e => {
+    const v = parseInt(e.target.value, 10) || 0;
+    const lbl = document.getElementById('edge-weight-val');
+    if (lbl) lbl.textContent = String(v);
+    applyFilters();
+  });
+}
+
+// viz-rest #13: cluster-hull toggle — repaint (no reheat) so the hull layer shows.
+{
+  const _hullCb = document.getElementById('show-cluster-hulls');
+  if (_hullCb) _hullCb.addEventListener('change', e => {
+    _showClusterHulls = e.target.checked;
+    if (graph && typeof graph.nodeCanvasObject === 'function') graph.nodeCanvasObject(drawNode); // nudge a repaint
+  });
+}
+
+// viz-rest #89: weak-edge toggle — re-fetch the graph with/without include_weak.
+{
+  const _weakCb = document.getElementById('show-weak-edges');
+  if (_weakCb) _weakCb.addEventListener('change', e => {
+    _includeWeakEdges = e.target.checked;
+    loadGraph();
+  });
+}
 
 document.getElementById('search').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
@@ -4126,6 +4374,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   _renderEdgeLegendOverlay(); // v5.50.13: update overlay labels/colors from legend
   // Activate the correct tab before initGraph (so #tab-home is visible)
   _switchTab(_getActiveTab());
+  _syncGalaxyBtn();  // finish-viz: reflect the persisted Galaxy/Force preference
   initGraph(_graphMode);
   loadGraph();
   connectSSE();
@@ -4150,7 +4399,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import { initBookmarksTab } from './bookmarks-tab.js';
   import { initControlTab } from './control.js';
   import { initConfigRefTab } from './config-ref.js';
-  import { initTracesTab } from './traces-tab.js';
+  import { initTracesTab, ingestTraceComplete } from './traces-tab.js';
   import { nodeType as _nodeTypeModule, createDetailPanel, ingestSseNode, removeSseNode } from './graph-detail.js';
   import * as Help from './help.js';
   import { shouldInitTab, overlaysToMenuDescriptors } from './control_helpers.js';
@@ -4212,6 +4461,9 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     _tracesInited = true;
     initTracesTab(_tracesTab);
   };
+  // finish-viz Phase 3: expose the live-append handler so the plain-script SSE
+  // dispatcher (connectSSE) can push a `trace_complete` event to the Traces tab.
+  window._ingestTraceComplete = ingestTraceComplete;
 
   // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────
   // DOMContentLoaded already fired by the time module scripts run, so call
@@ -4323,6 +4575,10 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     const _active = (typeof _getActiveTab === 'function') ? _getActiveTab() : null;
     if (shouldInitTab(_active, 'control')) window._lazyInitControlTab?.();
     if (shouldInitTab(_active, 'config-ref')) window._lazyInitConfigRefTab?.();
+    // viz-rest #2: Traces was added (Car B) after the Bug-B catch-up but never
+    // wired here, so a refresh-while-on-#traces left the pane blank (boot's
+    // _switchTab('traces') no-op'd because _lazyInitTracesTab wasn't defined yet).
+    if (shouldInitTab(_active, 'traces')) window._lazyInitTracesTab?.();
   } catch (_e) { /* boot helpers not ready — tab switch will init on navigation */ }
 </script>
 </body>

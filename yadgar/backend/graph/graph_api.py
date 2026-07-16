@@ -58,6 +58,10 @@ class EdgeCaps:
     causal_edges: int = 0
     relationships: int = 0
     similarity_links: int = 0
+    # viz-rest #89: opt-in weak-edge render (count<2 transitions). Bundled here
+    # (rather than a 9th get_full_graph param) to stay under the I13 param cap.
+    # Default False preserves the prior payload — weak edges hidden.
+    include_weak: bool = False
 
 
 def _limit_clause(cap: int) -> tuple[str, dict]:
@@ -140,6 +144,11 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
         site (_op_graph) builds it from VIZ_MAX_* and passes it; the nightly
         precompute calls get_full_graph without it so its layout stays over the
         full uncapped graph.
+
+        edge_caps.include_weak (#89): render count<2 weak transition edges too
+        (default OFF preserves the prior behavior). Threaded from the /api/graph
+        ?include_weak query param; weak_edges_hidden always reflects the
+        default-gate hidden count.
         """
         caps = edge_caps or EdgeCaps()
         nodes: list[dict] = []
@@ -153,7 +162,7 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
 
         # ── Transition edges ──────────────────────────────────────────────────
         transition_edges, weak_edges_hidden = self._build_transition_edges(
-            mem_ids, limit=caps.transitions
+            mem_ids, limit=caps.transitions, include_weak=caps.include_weak
         )
         edges.extend(transition_edges)
 
@@ -194,12 +203,85 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
         # ── Cluster payload (v5.80 — real memory_cluster rows) ────────────────
         clusters = self._build_clusters_payload(mem_ids)
 
+        # ── F1 cap-affordance (finish-viz) — surface node + edge cap truncation ─
+        nodes_hidden = self._count_nodes_hidden(nodes, max_memories, max_wiki, max_entities)
+        edges_hidden = self._count_edges_hidden(filtered_edges, caps.transitions)
+
         return {
             "nodes": nodes,
             "edges": filtered_edges,
             "weak_edges_hidden": weak_edges_hidden,  # F4 affordance — never silently drop DB truth
+            # F1 (finish-viz): node/edge cap truncation counts — never silently drop
+            # DB truth. Both are 0 at the default (caps 0 = unlimited → no query).
+            "nodes_hidden": nodes_hidden,
+            "edges_hidden": edges_hidden,
             "clusters": clusters,  # BC-VZ-R3: real memory_cluster rows (informational)
         }
+
+    @trace_span()
+    def _count_nodes_hidden(
+        self, nodes: list[dict], max_memories: int, max_wiki: int, max_entities: int
+    ) -> int:
+        """F1 cap-affordance: count nodes hidden by the per-type node caps.
+
+        Mirrors the ``weak_edges_hidden`` philosophy (never silently drop DB truth):
+        when a per-type node cap actually truncates, surface how many were hidden.
+        NO-OP at the default — every cap of 0/-1 means unlimited, so no count query
+        runs (the plan requires zero overhead at the default full-graph render).
+
+        For a capped type, hidden = max(0, total_of_type - rendered_of_type). The
+        total is one ``count()`` per capped type (memory/wiki/entity); the rendered
+        count is taken from the already-assembled ``nodes`` list (no extra fetch).
+        Best-effort per type: a count failure contributes 0 rather than raising.
+        """
+        specs = (
+            (max_memories, "memory", "memory"),
+            (max_wiki, "wiki", "wiki_page"),
+            (max_entities, "entity", "entity"),
+        )
+        rendered: dict[str, int] = {}
+        for n in nodes:
+            t = n.get("type")
+            if t in ("memory", "wiki", "entity"):
+                rendered[t] = rendered.get(t, 0) + 1
+        hidden = 0
+        for cap, node_type, table in specs:
+            if cap <= 0:
+                continue  # unlimited → nothing hidden, no query
+            try:
+                rows = self._s._q(f"SELECT count() AS c FROM {table} GROUP ALL")
+                total = int(rows[0]["c"]) if rows else 0
+            except Exception:
+                continue  # best-effort: a count failure must not break the payload
+            hidden += max(0, total - rendered.get(node_type, 0))
+        return hidden
+
+    @trace_span()
+    def _count_edges_hidden(self, edges: list[dict], transitions_cap: int) -> int:
+        """F1 cap-affordance: count edges hidden by the transition edge cap.
+
+        NO-OP at the default (``transitions_cap`` 0/-1 = unlimited → no query).
+        Scope note: only the TRANSITION cap is surfaced here because it is the one
+        edge type with a cheap predicate-matched total — the default render gates
+        transitions on ``count >= 2``, and ``memory_transition WHERE count >= 2`` is
+        exactly that total (mirrors ``get_graph_stats``). The other four edge caps
+        (wiki_crossref/causal/relationships/similarity_links) each carry a distinct
+        builder-side predicate whose matching total is not cheaply derivable, so a
+        plain table ``count()`` would LIE (the ``weak_edges_hidden`` lesson) — they
+        are intentionally not counted rather than reported wrong. hidden =
+        max(0, total_count>=2 - rendered_transition_edges). Best-effort.
+        """
+        if transitions_cap <= 0:
+            return 0  # unlimited → nothing hidden, no query
+        rendered = sum(1 for e in edges if e.get("type") == "transition")
+        try:
+            rows = self._s._q(
+                "SELECT count() AS c FROM memory_transition WHERE count >= 2 GROUP ALL"
+            )
+            total = int(rows[0]["c"]) if rows else 0
+        except Exception:
+            return 0  # best-effort: a count failure must not break the payload
+        return max(0, total - rendered)
 
     @trace_span()
     def get_edges_by_type(

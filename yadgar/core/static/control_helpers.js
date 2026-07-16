@@ -207,6 +207,24 @@ export function computePending(knobs, originalValues, currentValues) {
 }
 
 /**
+ * viz-rest #29: build the config header status line — version + pending count +
+ * restart indicator. Pure; the DOM layer sets textContent from this.
+ *
+ * @param {string} version - daemon version string ('' when unknown)
+ * @param {number} pendingCount - unsaved-change count
+ * @param {boolean} restartRequired - a pending change needs a restart
+ * @returns {string} e.g. "v5.146.0 · 2 pending · ↻ restart"
+ */
+export function formatConfigStatus(version, pendingCount, restartRequired) {
+  const parts = [];
+  if (version) parts.push(`v${String(version).replace(/^v/, '')}`);
+  const n = Number(pendingCount) || 0;
+  parts.push(n > 0 ? `${n} pending` : 'no pending changes');
+  if (restartRequired) parts.push('↻ restart');
+  return parts.join(' · ');
+}
+
+/**
  * Car D: whether a knob is destructive (retention/purge/DLQ pruning). The GET
  * /api/control/config response carries a `destructive` boolean per knob.
  * @param {Object} knob
