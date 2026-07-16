@@ -65,7 +65,7 @@ class _CausalMixin:
 
     @observe(tier="stage")
     def get_all_causal_edges(
-        self, include_invalidated: bool = False, as_of: str | None = None
+        self, include_invalidated: bool = False, as_of: str | None = None, limit: int = 0
     ) -> list[dict]:
         """Return causal DAG edges.
 
@@ -74,20 +74,26 @@ class _CausalMixin:
 
         as_of (v5.29.0): ISO-8601 timestamp. When provided, returns edges valid
         at that point in time via as_of_filter. Default None = current state.
+
+        limit (viz-render-perf, Car A): 0/-1 = unlimited. Applied AFTER the existing
+        ``ORDER BY confidence DESC`` so a capped subset is the strongest edges.
+        Default unlimited keeps non-viz callers + the uncapped precompute unchanged.
         """
+        _lim = " LIMIT $lim" if limit and limit > 0 else ""
+        _params = {"lim": limit} if _lim else {}
         if as_of is not None:
             from yadgar._shared.storage.bitemporal import as_of_filter
 
             clause = as_of_filter("causal_dag_edge", as_of=as_of)
-            rows = self._q(
-                f"SELECT * FROM causal_dag_edge WHERE 1=1{clause} ORDER BY confidence DESC"
-            )
+            sql = f"SELECT * FROM causal_dag_edge WHERE 1=1{clause} ORDER BY confidence DESC{_lim}"
         elif include_invalidated:
-            rows = self._q("SELECT * FROM causal_dag_edge ORDER BY confidence DESC")
+            sql = f"SELECT * FROM causal_dag_edge ORDER BY confidence DESC{_lim}"
         else:
-            rows = self._q(
-                "SELECT * FROM causal_dag_edge WHERE valid_until IS NONE ORDER BY confidence DESC"
+            sql = (
+                "SELECT * FROM causal_dag_edge WHERE valid_until IS NONE "
+                f"ORDER BY confidence DESC{_lim}"
             )
+        rows = self._q(sql, _params) if _params else self._q(sql)
         return self._rows_to_dicts(rows)
 
     @observe(tier="stage")

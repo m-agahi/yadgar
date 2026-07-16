@@ -42,6 +42,12 @@ from yadgar._shared.config.config_registry import clear_config_caches, list_conf
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
 from yadgar.core.server._app import mcp_server
+from yadgar.core.server.routes.control_audit import (
+    audit_config_event,
+    is_destructive,
+    restart_rate_limited,
+    stamp_restart,
+)
 from yadgar.core.server.tools.admin_other import consolidate_now, reembed_all
 from yadgar.core.server.tools.admin_vacuum import vacuum_now
 
@@ -159,6 +165,9 @@ def _enrich_knob(knob: dict, field_meta_key: str) -> dict:
     # the config panel can branch on a <select> vs a free-text input.
     choices = meta.get("choices")
     knob["enum_choices"] = list(choices) if isinstance(choices, (list, tuple)) else []
+    # Car D: destructive knobs (retention/purge/DLQ pruning) surface a flag so the
+    # panel can render a warning + require a typed-confirm arm before writing.
+    knob["destructive"] = bool(meta.get("destructive", False))
     return knob
 
 
@@ -380,11 +389,17 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     if entry is None:
         return JSONResponse({"error": f"unknown knob: {name!r}"}, status_code=400)
 
+    # Car D: capture the pre-write value ONCE, live for every refusal audit below
+    # (409 / 422 / 428 all return before the write). armed is echoed on each row.
+    old = entry._raw_value()
+    armed = body.get("armed")
+
     if entry._should_redact() or entry.name in _WRITE_BLOCKED:
         return JSONResponse({"error": f"knob {name!r} is write-protected"}, status_code=400)
 
     # Env-locked: yaml write would be silently shadowed by the env var — refuse with 409.
     if entry.source() == "env":
+        audit_config_event("config_write", entry.name, old, raw_value, 409, request, armed=armed)
         return JSONResponse(
             {
                 "error": (
@@ -398,6 +413,21 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
             status_code=409,
         )
 
+    # Car D 428 armed gate — AFTER the security guards (write-blocked 400, env-lock
+    # 409 must never be bypassed). A destructive knob (retention/purge/DLQ) needs an
+    # explicit ``"armed": true`` in the body. Own FIELD_META lookup via is_destructive
+    # (the POST path does not call _enrich_knob, so the GET-side flag is unavailable).
+    if is_destructive(entry.name) and armed is not True:
+        audit_config_event("config_write", entry.name, old, raw_value, 428, request, armed=armed)
+        return JSONResponse(
+            {
+                "error": f"knob {name!r} is destructive and requires arming",
+                "destructive": True,
+                "hint": 'resend with "armed": true',
+            },
+            status_code=428,
+        )
+
     # Coerce via the SHARED writer's annotation-driven coercion (identical path to
     # the CLI). Coercion failure → 422 (well-formed request, value not coercible).
     from yadgar._shared.config.config_yaml import coerce_value  # noqa: PLC0415 — call-site import
@@ -406,6 +436,7 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     try:
         coerced = coerce_value(yaml_key, str(raw_value))
     except (ValueError, TypeError) as exc:
+        audit_config_event("config_write", entry.name, old, raw_value, 422, request, armed=armed)
         return JSONResponse({"error": f"type mismatch: {exc}"}, status_code=422)
 
     # Range check (semantic bound, distinct from type coercion) → 400.
@@ -438,6 +469,7 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     # bool knobs as lowercase ``"true"``/``"false"`` (ADR-0013 bool-display fix).
     value_str = _serialize_knob_value(coerced)
 
+    audit_config_event("config_write", entry.name, old, value_str, 200, request, armed=armed)
     return JSONResponse(
         {
             "name": entry.name,
@@ -536,6 +568,8 @@ async def control_restart_handler(request: Request) -> JSONResponse:
 
     confirm = body.get("confirm")
     if confirm != service:
+        # Confirm-mismatch checked FIRST (Car D) — a rejected attempt must NOT
+        # consume the rate-limit window (stamp only fires on a successful write).
         return JSONResponse(
             {
                 "error": f"confirmation mismatch: expected {service!r}, got {confirm!r}",
@@ -544,9 +578,19 @@ async def control_restart_handler(request: Request) -> JSONResponse:
             status_code=400,
         )
 
+    # Car D rate-limit — THEN (after confirm passes, before the sentinel write).
+    if restart_rate_limited(service):
+        audit_config_event("restart", service, None, "rate_limited", 429, request)
+        return JSONResponse(
+            {"error": f"restart of {service!r} rate-limited; try again shortly."},
+            status_code=429,
+        )
+
     # Write sentinel file ONLY — no exec, no subprocess, no systemctl
     logger.info("Control restart %s triggered via control API", service)
     sentinel_path = _write_restart_sentinel(service)
+    stamp_restart(service)  # window starts only on a successful sentinel write
+    audit_config_event("restart", service, None, "sentinel_written", 202, request)
     logger.info(
         "Restart sentinel written for service %s at %s (no daemon restart performed — "
         "requires systemd .path unit; see MIGRATION_NOTES.md)",

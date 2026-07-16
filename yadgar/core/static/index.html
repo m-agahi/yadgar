@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
+<!-- Phase 0 (viz-trace-replay train): shared phosphor-oscilloscope design tokens.
+     Loaded before the inline <style> so tokens (--viz-*) + vendored fonts are
+     available to the shared chrome and to per-tab stylesheets (traces-tab.css). -->
+<link rel="stylesheet" href="viz-theme.css">
 <title>Yadgar — Knowledge Graph</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -616,6 +620,23 @@ body.dh-open #dh-toggle { right: 480px; }
   border-bottom: none;
   border-left-color: #58a6ff;
   background: #1c2128;
+}
+
+/* ── Phase 0 (viz-trace-replay): shared-chrome token adoption ─────────────
+   Layer the phosphor-oscilloscope tokens (viz-theme.css) onto the SHARED
+   nav-group dropdown chrome + panel frames. Additive only — the leaf-tab
+   accent colours above are untouched; this restyles the raised dropdown
+   surface + hairline treatment so the shared frame reads as one instrument. */
+#tab-bar .nav-group > .nav-group-menu {
+  background: var(--viz-bg-1);
+  border-color: var(--viz-hair);
+  box-shadow: 0 6px 22px rgba(3, 7, 11, .55);
+}
+#tab-bar .nav-group-menu a.tab-link:hover {
+  background: var(--viz-bg-3);
+}
+#tab-bar .nav-group > .nav-group-label {
+  font-family: var(--viz-mono);
 }
 
 /* ── v5.50.0 Tab containers ───────────────────────────────── */
@@ -1232,6 +1253,13 @@ body.dh-open #dh-toggle { right: 480px; }
         <a href="#stats" class="tab-link" data-tab="stats" role="menuitem">Stats</a>
       </div>
     </div>
+    <!-- Observability (group): Traces (viz-trace-replay Car B) -->
+    <div class="nav-group" data-group="observability">
+      <button type="button" class="nav-group-label" aria-haspopup="true" aria-expanded="false">Observability</button>
+      <div class="nav-group-menu" role="menu">
+        <a href="#traces" class="tab-link" data-tab="traces" role="menuitem">Traces</a>
+      </div>
+    </div>
     <!-- Help (group): Guide · Config Reference · About · Debug -->
     <div class="nav-group" data-group="help">
       <button type="button" class="nav-group-label" aria-haspopup="true" aria-expanded="false">Help</button>
@@ -1532,6 +1560,11 @@ body.dh-open #dh-toggle { right: 480px; }
 <div id="tab-bookmarks" class="tab-pane">
   <!-- v5.50.1: bookmarks tab content (search, list, preview) comes here -->
 </div><!-- /#tab-bookmarks -->
+
+<div id="tab-traces" class="tab-pane">
+  <!-- viz-trace-replay Car B: Traces tab content (recent sidebar, mesh replay,
+       drill-down) is built by traces-tab.js::initTracesTab on first open. -->
+</div><!-- /#tab-traces -->
 
 <!-- ── Tab: Info ──────────────────────────────────────────── -->
 <div id="tab-info" class="tab-pane">
@@ -2562,7 +2595,7 @@ async function loadGraph() {
     for (const n of allNodes) { if (n.x != null) posMap[n.id] = { x: n.x, y: n.y, vx: n.vx, vy: n.vy }; }
     allNodes = d.nodes || [];
     // v5.88: server precomputed layout — count nodes that arrived already
-    // carrying x/y/z from /api/graph (VIZ_PRECOMPUTED_LAYOUT_ENABLED). On a FRESH
+    // carrying x/y/z from /api/graph (precompute is unconditional now). On a FRESH
     // page reload (the slow cold-load case this targets) the in-session posMap is
     // empty, so server positions survive the pass below, and the localStorage
     // restore further down only touches nodes WITHOUT finite x — so server
@@ -3836,7 +3869,7 @@ function updateDaemonHealth(data) {
 function _getActiveTab() {
   // YadgarTabs is set by the module script below; falls back gracefully if not yet loaded
   if (window.YadgarTabs) return window.YadgarTabs.resolveTab(window.location.hash);
-  const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help']);
+  const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help','config-ref','traces']);
   const hash = (window.location.hash || '#home').replace(/^#/, '').split('/')[0];
   return _VALID.has(hash) ? hash : 'home';
 }
@@ -3847,7 +3880,7 @@ function _switchTab(tabName) {
     window.YadgarTabs.switchTab(tabName);
   } else {
     // Fallback: inline activation (same logic as tabs.js) if module not yet loaded
-    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help','config-ref']);
+    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help','config-ref','traces']);
     if (!_VALID.has(tabName)) tabName = 'home';
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('#tab-bar .tab-link').forEach(a => a.classList.remove('active'));
@@ -3874,6 +3907,7 @@ function _switchTab(tabName) {
   // page load. window._lazyInitControlTab is defined in the module script.
   if (tabName === 'control') window._lazyInitControlTab?.();
   if (tabName === 'config-ref') window._lazyInitConfigRefTab?.();
+  if (tabName === 'traces') window._lazyInitTracesTab?.();
 }
 
 // Stats tab: fetch /api/graph/stats + charts from /api/metrics/*
@@ -4116,6 +4150,7 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import { initBookmarksTab } from './bookmarks-tab.js';
   import { initControlTab } from './control.js';
   import { initConfigRefTab } from './config-ref.js';
+  import { initTracesTab } from './traces-tab.js';
   import { nodeType as _nodeTypeModule, createDetailPanel, ingestSseNode, removeSseNode } from './graph-detail.js';
   import * as Help from './help.js';
   import { shouldInitTab, overlaysToMenuDescriptors } from './control_helpers.js';
@@ -4163,6 +4198,19 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     if (_cfgRefInited || !_cfgRefTab) return;
     _cfgRefInited = true;
     initConfigRefTab(_cfgRefTab);
+  };
+
+  // ── viz-trace-replay Car B: Lazy-init Traces tab ──────────────────────────
+  // initTracesTab fetches GET /api/traces/recent on open. Deferred until the
+  // user navigates to #traces (same lazy pattern as control/config-ref) so the
+  // fetch does not run on page load. The endpoint degrades gracefully (200 empty
+  // when Tempo is disabled), so no console errors either way. Once-guarded.
+  const _tracesTab = document.getElementById('tab-traces');
+  let _tracesInited = false;
+  window._lazyInitTracesTab = () => {
+    if (_tracesInited || !_tracesTab) return;
+    _tracesInited = true;
+    initTracesTab(_tracesTab);
   };
 
   // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────

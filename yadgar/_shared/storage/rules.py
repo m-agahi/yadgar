@@ -202,7 +202,20 @@ class _RulesMixin:
         )
         return self._rows_to_dicts(rows)
 
-    def get_all_transitions(self) -> list[dict]:
-        rows = self._q("SELECT from_memory_id, to_memory_id, count FROM memory_transition")
+    @observe(tier="stage")
+    def get_all_transitions(self, limit: int = 0) -> list[dict]:
+        """Return all memory_transition rows.
+
+        viz-render-perf (Car A): optional ``limit`` (0/-1 = unlimited). The
+        deterministic ``ORDER BY count DESC`` is added ONLY when limiting so a
+        capped subset is the strongest edges, not a random slice; the unlimited
+        path stays byte-identical for non-viz callers (sr_session/cls/cognitive_map).
+        """
+        sql = "SELECT from_memory_id, to_memory_id, count FROM memory_transition"
+        if limit and limit > 0:
+            sql += " ORDER BY count DESC LIMIT $lim"
+            rows = self._q(sql, {"lim": limit})
+        else:
+            rows = self._q(sql)
         # No id to extract; pass through as-is (no embedding fields)
         return [dict(r) for r in rows]

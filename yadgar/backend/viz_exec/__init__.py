@@ -9,7 +9,7 @@ dispatches through ``run_viz_op`` — mirroring the ``/admin`` +
 
 Ops:
   graph              — full graph payload (nodes/edges/clusters) + cached
-                       layout positions when VIZ_PRECOMPUTED_LAYOUT_ENABLED.
+                       layout positions (attached whenever a cache row exists).
   graph_stats        — counts + top entities by heat.
   graph_edges        — on-demand lazy edge computation.
   graph_neighborhood — 1–2 hop subgraph around a node.
@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 
@@ -34,9 +35,21 @@ def _op_graph(payload: dict) -> dict:
               "max_entities": int} — caps already resolved core-side
     (query params over VIZ_MAX_* settings defaults).
     """
-    from yadgar.backend.graph.graph_api import GraphAPI  # noqa: PLC0415
+    from yadgar._shared.config import get_settings  # noqa: PLC0415
+    from yadgar.backend.graph.graph_api import EdgeCaps, GraphAPI  # noqa: PLC0415
 
     storage = _get_storage()
+    # viz-render-perf (Car A): per-edge-type caps resolved from settings here (at the
+    # /api/graph call site) and threaded into get_full_graph. The precompute path
+    # calls get_full_graph without edge_caps → uncapped full-graph layout.
+    _settings = get_settings()
+    edge_caps = EdgeCaps(
+        transitions=int(getattr(_settings, "VIZ_MAX_TRANSITIONS", 0)),
+        wiki_crossrefs=int(getattr(_settings, "VIZ_MAX_WIKI_CROSSREFS", 0)),
+        causal_edges=int(getattr(_settings, "VIZ_MAX_CAUSAL_EDGES", 0)),
+        relationships=int(getattr(_settings, "VIZ_MAX_RELATIONSHIPS", 0)),
+        similarity_links=int(getattr(_settings, "VIZ_MAX_SIMILARITY_LINKS", 0)),
+    )
     data = GraphAPI(storage).get_full_graph(
         int(payload.get("max_memories", 0)),
         int(payload.get("top_k", 8)),
@@ -44,23 +57,23 @@ def _op_graph(payload: dict) -> dict:
         None,
         int(payload.get("max_wiki", 0)),
         int(payload.get("max_entities", 0)),
+        edge_caps=edge_caps,
     )
 
-    # v5.88: attach precomputed positions (by node-id) when the flag is on and
-    # a layout cache exists. Default OFF → no x/y/z. Ran core-side pre-E3;
-    # both the cache read and the attach live backend-side now.
-    from yadgar._shared.config import get_settings  # noqa: PLC0415
+    # viz-render-perf (Car A): attach precomputed positions (by node-id) whenever
+    # a layout cache exists — unconditional now (the VIZ_PRECOMPUTED_LAYOUT_ENABLED
+    # knob was removed). Empty cache → no x/y/z → the client seed-miss fallback
+    # (cold d3-force layout) runs. Ran core-side pre-E3; both the cache read and
+    # the attach live backend-side now.
+    try:
+        from yadgar.backend.graph.graph_layout import (  # noqa: PLC0415
+            attach_cached_positions,
+        )
 
-    if getattr(get_settings(), "VIZ_PRECOMPUTED_LAYOUT_ENABLED", False):
-        try:
-            from yadgar.backend.graph.graph_layout import (  # noqa: PLC0415
-                attach_cached_positions,
-            )
-
-            cache = storage.get_graph_layout_cache()
-            attach_cached_positions(data, cache, enabled=True)
-        except Exception:  # noqa: BLE001 — layout attach is best-effort
-            logger.debug("attach_cached_positions failed (non-fatal)", exc_info=True)
+        cache = storage.get_graph_layout_cache()
+        attach_cached_positions(data, cache)
+    except Exception:  # noqa: BLE001 — layout attach is best-effort
+        logger.debug("attach_cached_positions failed (non-fatal)", exc_info=True)
     return data
 
 
@@ -97,6 +110,28 @@ def _op_graph_neighborhood(payload: dict) -> dict:
     )
 
 
+@observe(tier="boundary", metric="backend.viz.events")
+def _op_events(payload: dict) -> dict:
+    """Return backend SSE ring-buffer entries with ``seq > since`` (F2 relay).
+
+    The write-path (memory_added/wiki_added/wiki_updated) and heat decay
+    (heat_updated) push events into the BACKEND process's ``_event_queue`` — a
+    process-local deque that the CORE ``/api/graph/events`` SSE stream cannot
+    read. Core polls this op each SSE loop iteration and re-stamps the returned
+    entries onto its own queue so browser clients see them (relay option (a)).
+
+    payload: {"since": int} — the client's last-seen BACKEND seq cursor.
+    Returns: {"events": [ring-buffer dicts with seq>since], "latest_seq": int}.
+    ``latest_seq`` lets core seed its cursor to the head on first poll without
+    replaying the whole backlog.
+    """
+    since = int(payload.get("since", 0))
+    with _st._event_lock:
+        events = [dict(e) for e in _st._event_queue if e["seq"] > since]
+        latest_seq = _st._event_seq
+    return {"events": events, "latest_seq": latest_seq}
+
+
 # Dispatch table: op name → backend impl. Single source of truth for the /viz
 # surface; the /viz route validates ``op`` against these keys (mirrors _ADMIN_OPS).
 _VIZ_OPS: dict[str, Callable[[dict], dict]] = {
@@ -104,6 +139,7 @@ _VIZ_OPS: dict[str, Callable[[dict], dict]] = {
     "graph_stats": _op_graph_stats,
     "graph_edges": _op_graph_edges,
     "graph_neighborhood": _op_graph_neighborhood,
+    "events": _op_events,
 }
 
 

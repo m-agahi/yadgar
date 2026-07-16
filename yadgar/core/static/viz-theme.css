@@ -1,0 +1,79 @@
+/* ============================================================================
+ * viz-theme.css — Yadgar viz design tokens (Phase 0, viz-trace-replay train)
+ *
+ * The phosphor-oscilloscope design system extracted from
+ * docs/plans/viz-trace-replay.mockup.html :root. This is the SHARED token
+ * layer: the abyssal palette, phosphor-green (core) / signal-cyan (backend)
+ * lanes, fault-red, the Michroma display + Spline Sans Mono data fonts, and
+ * the panel/chrome chrome treatments.
+ *
+ * Fonts are VENDORED locally as WOFF2 subsets under ./lib/ (no CDN <link>,
+ * therefore no Subresource-Integrity hash needed — SRI applies to remote
+ * resources only). Latin subset only; the viz UI is ASCII.
+ *
+ * Rolling adoption rule (plan Phase 0): the shared chrome (tab bar, panel
+ * frames, headers) consumes these tokens now; individual tab contents adopt
+ * them fully whenever they are next touched. Cars C/D of the train adopt
+ * these tokens, so this file must be mergeable independently.
+ * ========================================================================== */
+
+/* ── Vendored font faces (WOFF2, latin subset) ───────────────────────────── */
+@font-face {
+  font-family: 'Michroma';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./lib/michroma-latin-400.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Spline Sans Mono';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('./lib/spline-sans-mono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── Design tokens ───────────────────────────────────────────────────────── */
+:root {
+  /* backgrounds — abyssal blue-black → raised */
+  --viz-bg-0: #03070b;        /* abyssal blue-black */
+  --viz-bg-1: #060d13;        /* panel */
+  --viz-bg-2: #0a141c;        /* raised */
+  --viz-bg-3: #101d27;        /* hover */
+  --viz-hair: #14232e;        /* hairline border */
+  --viz-hair-soft: #0d1922;   /* faint hairline / graticule */
+
+  /* lane colors — phosphor green (core), signal cyan (backend) */
+  --viz-ph: #49ffa4;          /* phosphor green — core lane */
+  --viz-ph-dim: #1d6b48;
+  --viz-ph-glow: rgba(73, 255, 164, .16);
+  --viz-cy: #3ec9ff;          /* signal cyan — backend lane */
+  --viz-cy-dim: #1a5f80;
+  --viz-cy-glow: rgba(62, 201, 255, .15);
+
+  /* caution + fault — red is RESERVED for faults */
+  --viz-amber: #ffc35c;       /* caution / p95 hot */
+  --viz-err: #ff4059;         /* fault */
+  --viz-err-glow: rgba(255, 64, 89, .22);
+
+  /* text ramp */
+  --viz-tx-0: #e8f4ec;
+  --viz-tx-1: #9fc0ae;
+  --viz-tx-2: #5c7a68;
+  --viz-tx-3: #354a3e;
+
+  /* typography */
+  --viz-disp: 'Michroma', ui-sans-serif, sans-serif;
+  --viz-mono: 'Spline Sans Mono', ui-monospace, monospace;
+
+  /* panel chrome */
+  --viz-panel-bg: rgba(6, 13, 19, .6);
+  --viz-panel-border: 1px solid var(--viz-hair);
+  --viz-header-grad: linear-gradient(180deg, rgba(10, 20, 28, .85), rgba(3, 7, 11, .6));
+}

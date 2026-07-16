@@ -463,6 +463,10 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Use plain HTTP for OTLP export (true = HTTP, false = TLS; default true)",
         "section": "observability",
     },
+    "tempo_query_url": {
+        "desc": "Tempo query API base URL for the viz Traces tab (e.g. http://localhost:3200). Empty = disabled → /api/traces/* returns 200 empty.",
+        "section": "observability",
+    },
     # backend_cache
     "dbsize_cache_ttl_sec": {
         "desc": "/admin/dbsize response cache TTL in seconds (0 = disabled, default 60)",
@@ -824,15 +828,28 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Max entity nodes in the /api/graph payload (default 2000; 0 or -1 = unlimited)",
         "section": "viz_config",
     },
-    "viz_precomputed_layout_enabled": {
-        "desc": (
-            "Precompute + cache 3D graph layout server-side during consolidation "
-            "so /api/graph serves x/y/z for near-instant viz render (default OFF)"
-        ),
-        "section": "viz_config",
-    },
     "viz_layout_iterations": {
         "desc": "spring_layout iteration cap for the precomputed layout (default 50; lower=faster)",
+        "section": "viz_config",
+    },
+    "viz_max_transitions": {
+        "desc": "Max transition (co-recall) edges in /api/graph (default 0 = unlimited)",
+        "section": "viz_config",
+    },
+    "viz_max_wiki_crossrefs": {
+        "desc": "Max wiki cross-reference edges in /api/graph (default 0 = unlimited)",
+        "section": "viz_config",
+    },
+    "viz_max_causal_edges": {
+        "desc": "Max PC-algorithm causal edges in /api/graph (default 0 = unlimited)",
+        "section": "viz_config",
+    },
+    "viz_max_relationships": {
+        "desc": "Max entity typed-relation edges in /api/graph (default 0 = unlimited)",
+        "section": "viz_config",
+    },
+    "viz_max_similarity_links": {
+        "desc": "Max memory_similarity_link edges in /api/graph (default 0 = unlimited)",
         "section": "viz_config",
     },
     # memory_blocks (v5.35.1)
@@ -1000,6 +1017,7 @@ FIELD_META: dict[str, dict[str, object]] = {
             "Set to 0 to disable permanent deletion entirely."
         ),
         "section": "memory_archive_retention",
+        "destructive": True,
     },
     "memory_archive_retention_circuit_breaker": {
         "desc": (
@@ -1031,6 +1049,7 @@ FIELD_META: dict[str, dict[str, object]] = {
             "Set true only after reviewing the yadgar_cold_purge_candidates gauge trend."
         ),
         "section": "cold_memory_retention",
+        "destructive": True,
     },
     "cold_memory_purge_dry_run": {
         "desc": (
@@ -1039,6 +1058,7 @@ FIELD_META: dict[str, dict[str, object]] = {
             "be set (enabled=true, dry_run=false) to trigger real deletes."
         ),
         "section": "cold_memory_retention",
+        "destructive": True,
     },
     # v5.48.0 — update mechanism
     "update_check_on_start": {
@@ -1648,11 +1668,13 @@ FIELD_META: dict[str, dict[str, object]] = {
     "queue_dlq_retention_days": {
         "desc": "Prune DLQ entries older than this many days (default 90).",
         "section": "write_queue",
+        "destructive": True,
     },
     # table / memory retention windows
     "action_log_retention_days": {
         "desc": "Prune processed action_log rows older than this each consolidation cycle (default 7). 0 = disable.",
         "section": "table_retention",
+        "destructive": True,
     },
     "episode_retention_days": {
         "desc": "Prune episode rows older than this each consolidation cycle (default 14). 0 = disable.",

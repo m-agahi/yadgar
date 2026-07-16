@@ -826,9 +826,21 @@ class _WikiMixin:
         )
         return [row["from_slug"] for row in rows if "from_slug" in row]
 
-    def get_all_wiki_crossrefs(self) -> list[dict]:
-        """Get all cross-references for graph visualization."""
-        rows = self._q("SELECT from_slug, to_slug FROM wiki_crossref")
+    @observe(tier="stage")
+    def get_all_wiki_crossrefs(self, limit: int = 0) -> list[dict]:
+        """Get all cross-references for graph visualization.
+
+        viz-render-perf (Car A): optional ``limit`` (0/-1 = unlimited). No natural
+        weight column, so when limiting we order deterministically on the selected
+        slug pair for a stable subset. The unlimited path stays byte-identical for
+        non-viz callers (invariants / wiki store backlinks).
+        """
+        sql = "SELECT from_slug, to_slug FROM wiki_crossref"
+        if limit and limit > 0:
+            sql += " ORDER BY from_slug, to_slug LIMIT $lim"
+            rows = self._q(sql, {"lim": limit})
+        else:
+            rows = self._q(sql)
         return [{"from_slug": r["from_slug"], "to_slug": r["to_slug"]} for r in rows]
 
     # ------------------------------------------------------------------ Wiki Drafts

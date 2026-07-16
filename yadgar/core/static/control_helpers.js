@@ -180,26 +180,77 @@ export function controlKind(knob) {
 /**
  * Pending-changes reducer. Compares an original-values map to a current-values
  * map (keyed by knob name) and reports the dirty set + whether any dirty knob is
- * restart-required (reload === 'restart_required').
+ * restart-required (reload === 'restart_required') + how many dirty knobs are
+ * destructive (Car D — surfaced in red in the pending bar).
  *
  * Values are compared as strings so '8' and 8 don't spuriously differ.
  *
- * @param {Array<Object>} knobs    - knob list (for the reload classification)
+ * @param {Array<Object>} knobs    - knob list (for reload + destructive lookup)
  * @param {Object} originalValues  - { name: value }
  * @param {Object} currentValues   - { name: value }
- * @returns {{count: number, dirty: Set<string>, restartRequired: boolean}}
+ * @returns {{count: number, dirty: Set<string>, restartRequired: boolean, destructiveCount: number}}
  */
 export function computePending(knobs, originalValues, currentValues) {
   const reloadByName = new Map(knobs.map(k => [k.name, k.reload]));
+  const destructiveByName = new Map(knobs.map(k => [k.name, isDestructive(k)]));
   const dirty = new Set();
   let restartRequired = false;
+  let destructiveCount = 0;
   for (const name of Object.keys(currentValues)) {
     if (String(currentValues[name]) !== String(originalValues[name])) {
       dirty.add(name);
       if (reloadByName.get(name) === 'restart_required') restartRequired = true;
+      if (destructiveByName.get(name)) destructiveCount += 1;
     }
   }
-  return { count: dirty.size, dirty, restartRequired };
+  return { count: dirty.size, dirty, restartRequired, destructiveCount };
+}
+
+/**
+ * Car D: whether a knob is destructive (retention/purge/DLQ pruning). The GET
+ * /api/control/config response carries a `destructive` boolean per knob.
+ * @param {Object} knob
+ * @returns {boolean}
+ */
+export function isDestructive(knob) {
+  return !!(knob && knob.destructive);
+}
+
+/**
+ * Car D armed-state reducer. Returns a NEW Set (pure — input is never mutated)
+ * with `name` added when `armed` is truthy, removed otherwise. The set tracks
+ * which destructive rows the user has armed via the typed-confirm control.
+ *
+ * @param {Set<string>} armedSet - current armed names
+ * @param {string} name          - knob name to arm/disarm
+ * @param {boolean} armed        - desired armed state
+ * @returns {Set<string>}
+ */
+export function toggleArmed(armedSet, name, armed) {
+  const next = new Set(armedSet);
+  if (armed) next.add(name);
+  else next.delete(name);
+  return next;
+}
+
+/**
+ * Car D: defensively classify a POST /api/control/config response. A 428 means
+ * the knob is destructive and the write must be re-sent armed. We treat ANY 428
+ * as needs-arming (even if a proxy stripped the JSON body), reading the hint
+ * when present.
+ *
+ * @param {{status: number, body?: Object}} response
+ * @returns {{needsArming: boolean, destructive: boolean, hint: string}}
+ */
+export function classify428(response) {
+  const status = response && response.status;
+  const body = (response && response.body) || {};
+  const needsArming = status === 428;
+  return {
+    needsArming,
+    destructive: needsArming || !!body.destructive,
+    hint: body.hint || (needsArming ? 'resend with "armed": true' : ''),
+  };
 }
 
 /**

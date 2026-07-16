@@ -663,8 +663,12 @@ Rows older than these thresholds are pruned each consolidation cycle. Set to `0`
 | `viz_max_memories` | `YADGAR_VIZ_MAX_MEMORIES` | int | `500` | Max memory nodes in the `/api/graph` payload (`0` or `-1` = unlimited). |
 | `viz_max_wiki` | `YADGAR_VIZ_MAX_WIKI` | int | `200` | Max wiki nodes in the `/api/graph` payload (`0`/`-1` = unlimited). |
 | `viz_max_entities` | `YADGAR_VIZ_MAX_ENTITIES` | int | `2000` | Max entity nodes in the `/api/graph` payload (`0`/`-1` = unlimited). |
-| `viz_precomputed_layout_enabled` | `YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED` | bool | `false` | Precompute + cache the 3D graph layout server-side during consolidation so `/api/graph` serves x/y/z for near-instant render. |
-| `viz_layout_iterations` | `YADGAR_VIZ_LAYOUT_ITERATIONS` | int | `50` | `spring_layout` iteration cap for the precomputed layout (lower = faster/looser). |
+| `viz_layout_iterations` | `YADGAR_VIZ_LAYOUT_ITERATIONS` | int | `50` | `spring_layout` iteration cap for the (unconditional) precomputed layout (lower = faster/looser). |
+| `viz_max_transitions` | `YADGAR_VIZ_MAX_TRANSITIONS` | int | `0` | Max transition (co-recall) edges in `/api/graph` (`0`/`-1` = unlimited; ordered by count). |
+| `viz_max_wiki_crossrefs` | `YADGAR_VIZ_MAX_WIKI_CROSSREFS` | int | `0` | Max wiki cross-reference edges in `/api/graph` (`0`/`-1` = unlimited). |
+| `viz_max_causal_edges` | `YADGAR_VIZ_MAX_CAUSAL_EDGES` | int | `0` | Max PC-algorithm causal edges in `/api/graph` (`0`/`-1` = unlimited; ordered by confidence). |
+| `viz_max_relationships` | `YADGAR_VIZ_MAX_RELATIONSHIPS` | int | `0` | Max entity typed-relation edges in `/api/graph` (`0`/`-1` = unlimited; ordered by weight). |
+| `viz_max_similarity_links` | `YADGAR_VIZ_MAX_SIMILARITY_LINKS` | int | `0` | Max memory_similarity_link edges in `/api/graph` (`0`/`-1` = unlimited; ordered by weight). |
 
 ---
 

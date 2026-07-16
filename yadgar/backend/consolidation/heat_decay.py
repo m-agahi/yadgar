@@ -11,9 +11,32 @@ import logging
 from datetime import UTC, datetime
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.server_helpers import _push_event
 from yadgar._shared.storage.heat_writer import HeatWriter
 
 logger = logging.getLogger("yadgar.consolidation")
+
+
+@observe(tier="stage", metric="consolidation.build_heat_updates")
+def _build_heat_updates(
+    mem_intents: list[tuple[str, dict | None]],
+    ent_intents: list[tuple[str, dict | None]],
+) -> list[dict]:
+    """Build the SSE heat_updated payload from the reconciled heat intents.
+
+    Each intent carries the persisted new heat in ``params["heat"]`` and the row
+    id in ``params["id"]``. Only rows that CHANGED produce an intent, so this
+    naturally emits one update per changed row. Ids are typed to match the viz
+    node id space: memories → ``mem:{id}``, entities → ``entity:{id}`` (the
+    frontend patch loop is id-generic — CAP-VIZ-011 / F2).
+    """
+    updates: list[dict] = []
+    for prefix, intents in (("mem", mem_intents), ("entity", ent_intents)):
+        for _sql, params in intents:
+            if not params or "id" not in params or "heat" not in params:
+                continue
+            updates.append({"id": f"{prefix}:{params['id']}", "heat": params["heat"]})
+    return updates
 
 
 def _reconcile_heat_intents(
@@ -53,6 +76,14 @@ class _HeatDecayMixin:
         all_intents = _reconcile_heat_intents(mem_intents, ent_intents)
         # Phase 3 — single apply via HeatWriter facade (BC-CSW1)
         HeatWriter(self._storage).apply_heat_intents(all_intents)
+        # Phase 4 — emit ONE heat_updated SSE event for the changed rows (F2).
+        # After apply, so the payload references persisted heat values. Skip the
+        # push entirely when nothing changed (the idempotency fix makes repeat
+        # cycles near-noop — don't spam empty events). Backend-process push;
+        # core's SSE loop relays it to browsers via the /viz events op.
+        updates = _build_heat_updates(mem_intents, ent_intents)
+        if updates:
+            _push_event({"event": "heat_updated", "updates": updates})
 
     @observe(tier="stage", metric="consolidation.build_domain_multiplier_map")
     def _build_domain_multiplier_map(self) -> dict[int, float]:

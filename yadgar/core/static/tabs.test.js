@@ -56,7 +56,7 @@ describe('resolveTab', () => {
 // ── VALID_TABS — exported set ─────────────────────────────────────────────────
 
 describe('VALID_TABS', () => {
-  it('contains all nine defined tabs', () => {
+  it('contains all defined tabs', () => {
     expect(VALID_TABS.has('home')).toBe(true);
     expect(VALID_TABS.has('stats')).toBe(true);
     expect(VALID_TABS.has('health')).toBe(true);
@@ -67,10 +67,12 @@ describe('VALID_TABS', () => {
     expect(VALID_TABS.has('help')).toBe(true);
     // v5.87 car A: Config Reference sub-page under the Help menu
     expect(VALID_TABS.has('config-ref')).toBe(true);
+    // viz-trace-replay Car B: Traces sub-page under the Observability menu
+    expect(VALID_TABS.has('traces')).toBe(true);
   });
 
-  it('has exactly 9 entries', () => {
-    expect(VALID_TABS.size).toBe(9);
+  it('has exactly 10 entries', () => {
+    expect(VALID_TABS.size).toBe(10);
   });
 });
 

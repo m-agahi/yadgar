@@ -42,6 +42,9 @@ import {
   deriveBadgeState,
   computePending,
   controlKind,
+  isDestructive,
+  toggleArmed,
+  classify428,
 } from './control_helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -517,6 +520,9 @@ function _renderConfigEditor(container, knobs) {
   const originalValues = {};
   const currentValues = {};
   const sourceOverride = {};
+  // Car D: destructive rows the user has typed-confirm armed (drives applyOne's
+  // {armed:true} POST + enables the row's edit control).
+  let armedRows = new Set();
   for (const k of knobs) {
     const disp = displayKnobValue(k.current, k.kind);
     originalValues[k.name] = disp;
@@ -529,14 +535,22 @@ function _renderConfigEditor(container, knobs) {
 
   // ── Pending bar ─────────────────────────────────────────────────────────────
   function refreshPending() {
-    const knobsView = knobs.map(k => ({ name: k.name, reload: k.reload }));
+    // Carry `destructive` through so computePending can count dirty destructive
+    // knobs (Car D — surfaced in red on the pending bar).
+    const knobsView = knobs.map(k => ({ name: k.name, reload: k.reload, destructive: k.destructive }));
     const p = computePending(knobsView, originalValues, currentValues);
     if (p.count > 0) {
       pendingBar.style.display = '';
-      pendingLabel.textContent = `${p.count} unsaved change${p.count === 1 ? '' : 's'}`;
+      let label = `${p.count} unsaved change${p.count === 1 ? '' : 's'}`;
+      if (p.destructiveCount > 0) {
+        label += ` — ${p.destructiveCount} destructive`;
+      }
+      pendingLabel.textContent = label;
+      pendingLabel.classList.toggle('cfg-pending-destructive', p.destructiveCount > 0);
       restartBtn.style.display = p.restartRequired ? '' : 'none';
     } else {
       pendingBar.style.display = 'none';
+      pendingLabel.classList.remove('cfg-pending-destructive');
     }
     return p;
   }
@@ -573,13 +587,20 @@ function _renderConfigEditor(container, knobs) {
   // ── A single setting row (shared by category + search panes) ──────────────────
   function buildRow(knob, query) {
     const badge = deriveBadgeState({ source: sourceOverride[knob.name], locked: knob.locked });
+    const destructive = isDestructive(knob);
     const row = _el('div', { class: 'setting-row', 'data-name': knob.name });
     if (badge.locked) row.classList.add('env-locked');
+    if (destructive) row.classList.add('destructive');  // Car D: red border via CSS
     if (String(currentValues[knob.name]) !== String(originalValues[knob.name])) row.classList.add('cfg-changed');
 
     // LEFT
     const left = _el('div', { class: 'row-left' });
     const labelLine = _el('div', { class: 'row-label' });
+    if (destructive) {
+      // ⚠ marker before the label (Car D). Title spells out the consequence.
+      const warn = _el('span', { class: 'destructive-marker', title: 'Destructive — permanently deletes data. Arm before saving.' }, '⚠ ');
+      labelLine.appendChild(warn);
+    }
     _appendHighlighted(labelLine, knob.description || knob.name.replace('YADGAR_', ''), query);
     if (query) {
       const chip = _el('span', { class: 'cat-chip' }, knobCategory(knob));
@@ -602,7 +623,39 @@ function _renderConfigEditor(container, knobs) {
       right.appendChild(reset);
     }
 
-    right.appendChild(_buildControl(knob, badge.editable, setCurrent, () => currentValues[knob.name]));
+    // Car D: a destructive row must be typed-confirm armed before its control is
+    // editable. Reuse the restart typed-confirm pattern — type the knob name to arm.
+    // The control is BUILT with listeners attached (editable=badge.editable) so
+    // arming can flip .disabled inline WITHOUT a rerender (a per-keystroke rerender
+    // would tear the arm input down mid-type — the field could never be filled).
+    const disableControlFor = destructive && badge.editable && !armedRows.has(knob.name);
+    const controlEl = _buildControl(knob, badge.editable, setCurrent, () => currentValues[knob.name]);
+
+    if (destructive && badge.editable) {
+      const armInput = _el('input', {
+        type: 'text',
+        class: 'cfg-arm-input',
+        placeholder: 'type name to arm',
+        'aria-label': `arm ${knob.name}`,
+      });
+      if (armedRows.has(knob.name)) armInput.value = knob.name;
+      armInput.addEventListener('input', () => {
+        const armed = armInput.value.trim() === knob.name;
+        armedRows = toggleArmed(armedRows, knob.name, armed);
+        // Toggle the control's own inputs inline — NO rerender (keeps focus in the
+        // arm field so the user can finish typing the name).
+        controlEl.querySelectorAll('input, select, textarea')
+          .forEach(el => { el.disabled = !armed; });
+      });
+      right.appendChild(armInput);
+    }
+
+    // Disable the destructive control's inputs until armed (build-time state).
+    if (disableControlFor) {
+      controlEl.querySelectorAll('input, select, textarea')
+        .forEach(el => { el.disabled = true; });
+    }
+    right.appendChild(controlEl);
     row.append(left, right);
     return row;
   }
@@ -665,10 +718,15 @@ function _renderConfigEditor(container, knobs) {
   async function applyOne(knob) {
     const { value, error } = parseEditValue(String(currentValues[knob.name]), knob.kind);
     if (error) return { name: knob.name, ok: false, error };
+    // Car D: a destructive knob's write must carry armed:true. The row control is
+    // only editable once armed, so an armed row is guaranteed here — but send the
+    // flag explicitly so the 428 gate passes.
+    const payload = { name: knob.name, value };
+    if (isDestructive(knob)) payload.armed = true;
     try {
       const r = await _apiFetch(`${_BASE}/api/control/config`, {
         method: 'POST',
-        body: JSON.stringify({ name: knob.name, value }),
+        body: JSON.stringify(payload),
       });
       const body = await r.json().catch(() => ({}));
       if (r.ok) {
@@ -676,9 +734,17 @@ function _renderConfigEditor(container, knobs) {
         originalValues[knob.name] = newCurrent;
         currentValues[knob.name] = newCurrent;
         sourceOverride[knob.name] = 'yaml'; // a saved knob is now yaml-sourced
+        armedRows = toggleArmed(armedRows, knob.name, false); // disarm after a save
         const idx = knobs.findIndex(k => k.name === knob.name);
         if (idx !== -1) knobs[idx] = Object.assign({}, knobs[idx], { current: newCurrent, source: 'yaml' });
         return { name: knob.name, ok: true };
+      }
+      // Defensive: a 428 means the write needs arming (the gate refused it). Surface
+      // it as an actionable "arm this row" error rather than a raw status.
+      const cls = classify428({ status: r.status, body });
+      if (cls.needsArming) {
+        armedRows = toggleArmed(armedRows, knob.name, false);
+        return { name: knob.name, ok: false, error: `needs arming: ${cls.hint}`, status: r.status };
       }
       return { name: knob.name, ok: false, error: body.error || `error ${r.status}`, status: r.status };
     } catch (err) {

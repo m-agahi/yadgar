@@ -82,9 +82,9 @@ def test_env_wins_over_yaml(monkeypatch, tmp_path):
 
 def test_yaml_bool_renders_lowercase(monkeypatch, tmp_path):
     """yaml bool true must stringify as 'true' (not Python 'True') — ADR-0013."""
-    monkeypatch.delenv("YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED", raising=False)
-    _write_yaml(monkeypatch, tmp_path, "viz_precomputed_layout_enabled: true\n")
-    entry = ConfigEntry("YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED", "false", "bool")
+    monkeypatch.delenv("YADGAR_UPDATE_CHECK_ON_START", raising=False)
+    _write_yaml(monkeypatch, tmp_path, "update_check_on_start: true\n")
+    entry = ConfigEntry("YADGAR_UPDATE_CHECK_ON_START", "false", "bool")
     assert entry.source() == "yaml"
     assert entry._raw_value() == "true"
 

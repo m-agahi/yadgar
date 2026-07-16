@@ -382,6 +382,58 @@ describe('initControlTab DOM wiring', () => {
     expect(posts[0].value).toBeCloseTo(12.5);
   });
 
+  // Car D: destructive row must be typed-confirm armed; then Apply POSTs armed:true.
+  it('destructive row: control disabled until armed, then Apply POSTs {armed:true}', async () => {
+    const posts = [];
+    const KNOB = 'YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS';
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      if (typeof url === 'string' && url.includes('/api/control/config') && (!opts?.method || opts.method === 'GET')) {
+        return { ok: true, status: 200, json: async () => ({ knobs: [
+          { name: KNOB, kind: 'int', current: '90', default: '90', source: 'default', reload: 'restart_required', category: 'write-path', section: 'memory_archive_retention', description: 'archive retention', locked: false, enum_choices: [], destructive: true },
+        ] }) };
+      }
+      if (typeof url === 'string' && url.includes('/api/control/config') && opts?.method === 'POST') {
+        posts.push(JSON.parse(opts.body));
+        return { ok: true, status: 200, json: async () => ({ name: KNOB, value: '120', reload: 'restart_required' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    await initControlTab(root);
+
+    const row = root.querySelector(`.setting-row[data-name="${KNOB}"]`);
+    expect(row).not.toBeNull();
+    expect(row.classList.contains('destructive')).toBe(true);
+    // The ⚠ marker is present.
+    expect(row.querySelector('.destructive-marker')).not.toBeNull();
+
+    // The numeric control starts DISABLED (unarmed).
+    const numInput = row.querySelector('.num-input');
+    expect(numInput).not.toBeNull();
+    expect(numInput.disabled).toBe(true);
+
+    // Type the knob name into the arm input → control becomes enabled INLINE
+    // (the arm input itself survives — no rerender teardown).
+    const armInput = row.querySelector('.cfg-arm-input');
+    expect(armInput).not.toBeNull();
+    armInput.value = KNOB;
+    armInput.dispatchEvent(new Event('input'));
+    expect(numInput.disabled).toBe(false);
+    // Same arm-input node still in the DOM (focus not destroyed).
+    expect(root.querySelector(`.setting-row[data-name="${KNOB}"] .cfg-arm-input`)).toBe(armInput);
+
+    // Edit + Apply → POST carries armed:true.
+    numInput.value = '120';
+    numInput.dispatchEvent(new Event('input'));
+    const applyBtn = root.querySelector('.cfg-btn-apply');
+    await applyBtn.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(posts.length).toBeGreaterThan(0);
+    expect(posts[0].name).toBe(KNOB);
+    expect(posts[0].armed).toBe(true);
+  });
+
   // ADR-0013: vacuum button requires explicit confirm before POSTing
   it('vacuum button POSTs {confirm:"vacuum"} only after confirm', async () => {
     const posts = [];

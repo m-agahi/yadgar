@@ -38,17 +38,21 @@ class GraphAPIEdgesMixin:
         return result
 
     @observe(tier="stage")
-    def _build_transition_edges(self, mem_ids: set[int]) -> tuple[list[dict], int]:
+    def _build_transition_edges(self, mem_ids: set[int], limit: int = 0) -> tuple[list[dict], int]:
         """Build transition (co-recall) edges from memory_transition table.
 
         Returns (edges, weak_hidden) where weak_hidden is the count of count<2
         transitions that exist in the DB but are excluded from the payload.
         The caller surfaces this as 'weak_edges_hidden' in the graph response
         (F4 fidelity affordance — never silently drop DB truth).
+
+        limit (viz-render-perf, Car A): per-type edge cap (0 = unlimited), applied
+        at the storage query (ORDER BY count DESC). Threaded from the /api/graph
+        call site — the precompute passes 0 so its layout stays over the full graph.
         """
         role = EDGE_TYPES.get("transition", {}).get("role", "retrieval")
         try:
-            transitions = self._s.get_all_transitions()
+            transitions = self._s.get_all_transitions(limit=limit)
         except Exception:
             transitions = []
         result = []
@@ -77,11 +81,16 @@ class GraphAPIEdgesMixin:
         return result, weak_hidden
 
     @observe(tier="stage")
-    def _build_wiki_crossref_edges(self, wiki_slug_to_id: dict[str, str]) -> list[dict]:
-        """Build wiki cross-reference edges from wiki_crossref table."""
+    def _build_wiki_crossref_edges(
+        self, wiki_slug_to_id: dict[str, str], limit: int = 0
+    ) -> list[dict]:
+        """Build wiki cross-reference edges from wiki_crossref table.
+
+        limit (viz-render-perf, Car A): per-type edge cap (0 = unlimited).
+        """
         role = EDGE_TYPES.get("wiki_crossref", {}).get("role", "informational")
         try:
-            crossrefs = self._s.get_all_wiki_crossrefs()
+            crossrefs = self._s.get_all_wiki_crossrefs(limit=limit)
         except Exception:
             crossrefs = []
         result = []
@@ -124,17 +133,18 @@ class GraphAPIEdgesMixin:
 
     @observe(tier="stage")
     def _build_causal_edges(
-        self, include_invalidated: bool = False, as_of: str | None = None
+        self, include_invalidated: bool = False, as_of: str | None = None, limit: int = 0
     ) -> list[dict]:
         """Build PC-algorithm causal edges from causal_edge table.
 
         C1: filter out invalidated edges by default.
         v5.29.0: as_of parameter enables point-in-time graph snapshots.
+        limit (viz-render-perf, Car A): per-type edge cap (0 = unlimited).
         """
         role = EDGE_TYPES.get("causal", {}).get("role", "informational")
         try:
             causal_edges_raw = self._s.get_all_causal_edges(
-                include_invalidated=include_invalidated, as_of=as_of
+                include_invalidated=include_invalidated, as_of=as_of, limit=limit
             )
         except Exception:
             causal_edges_raw = []
@@ -159,7 +169,7 @@ class GraphAPIEdgesMixin:
         return result
 
     @observe(tier="stage")
-    def _build_entity_rel_edges(self) -> list[dict]:
+    def _build_entity_rel_edges(self, limit: int = 0) -> list[dict]:
         """Build entity typed-relation edges (v5.54.3 — the big hidden capability).
 
         co_occurrence/resolved_by/caused_by power PPR + spreading + graph_prior
@@ -167,13 +177,15 @@ class GraphAPIEdgesMixin:
         imports/calls — code-only relations, always empty on a prose corpus.)
         Uses get_relationships_by_types — avoids the PC-algorithm causal edges
         (separate path via _build_causal_edges / get_all_causal_edges).
+
+        limit (viz-render-perf, Car A): per-type edge cap (0 = unlimited).
         """
         # v5.86 VIZ Batch-2 (P0.4): imports/calls dropped — code-only relations,
         # always empty on a prose corpus, made the legend lie. resolved_by is now
         # genuinely populated (extractor emits the solution entity); kept.
         _ENTITY_REL_TYPES = ["co_occurrence", "resolved_by", "caused_by"]
         try:
-            entity_rels = self._s.get_relationships_by_types(_ENTITY_REL_TYPES)
+            entity_rels = self._s.get_relationships_by_types(_ENTITY_REL_TYPES, limit=limit)
         except Exception:
             entity_rels = []
         result = []
@@ -195,16 +207,18 @@ class GraphAPIEdgesMixin:
         return result
 
     @observe(tier="stage")
-    def _build_similarity_link_edges(self, mem_ids: set[int]) -> list[dict]:
+    def _build_similarity_link_edges(self, mem_ids: set[int], limit: int = 0) -> list[dict]:
         """Build memory_similarity_link edges from CLS-phase near-duplicate links.
 
         v5.80 (#80 viz-fidelity-v2): first viz consumer of memory_similarity_link.
         role="informational" — structural dedup signal, not a retrieval edge.
         Only emits edges where both endpoints are in the current node set.
+
+        limit (viz-render-perf, Car A): per-type edge cap (0 = unlimited).
         """
         role = EDGE_TYPES.get("memory_similarity_link", {}).get("role", "informational")
         try:
-            links = self._s.get_all_memory_similarity_links()
+            links = self._s.get_all_memory_similarity_links(limit=limit)
         except Exception:
             links = []
         result = []
@@ -240,21 +254,27 @@ class GraphAPIEdgesMixin:
         top-heat node cap), so member_node_ids can be empty while the cluster is
         non-empty; the sidebar uses member_count so real clusters aren't shown empty.
 
+        viz-render-perf (Car A): membership is fetched with ONE get_all_cluster_members
+        round-trip instead of a per-cluster get_cluster_members loop (was ~770 DB
+        calls per /api/graph). P2.2 semantics are preserved exactly — member_count is
+        the pre-intersection DB count, member_node_ids the intersection with mem_ids.
+
         Returns [] if no clusters exist or storage is unavailable.
         """
         try:
             cluster_rows = self._s.get_memory_clusters()
         except Exception:
             return []
+        try:
+            all_members = self._s.get_all_cluster_members()
+        except Exception:
+            all_members = {}
         result = []
         for cr in cluster_rows:
             raw_id = self._extract_id(cr.get("id"))
             if raw_id is None:
                 continue
-            try:
-                member_int_ids = self._s.get_cluster_members(raw_id)
-            except Exception:
-                member_int_ids = []
+            member_int_ids = all_members.get(raw_id, [])
             # Intersect with rendered node set — only emit members visible in this graph
             member_node_ids = [f"mem:{mid}" for mid in member_int_ids if mid in mem_ids]
             result.append(

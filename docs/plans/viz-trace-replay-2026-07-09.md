@@ -1,6 +1,6 @@
 # Plan: Viz "Traces" tab — live trace-replay mesh + oscilloscope design language
 
-**Status:** AGREED — user approved mockup + aesthetic 2026-07-09 ("i wish the entire viz ui could look as sleek" → design-language extraction is in scope as Phase 0/rolling restyle).
+**Status:** Phases 0-2 SHIPPED (core 5.145.0, viz-train); Phase 3 (SSE trace_complete + live metrics) OPEN — deferred, see task backlog.
 **Date:** 2026-07-09
 **Mockup (design spec):** `docs/plans/viz-trace-replay.mockup.html` — phosphor-oscilloscope: dark instrument base, graticule + scanlines, phosphor-green Core lane / signal-cyan Backend lane, comet-trail pulses with duration-proportional dwell, Michroma display + Spline Sans Mono data, red reserved for faults.
 **Feasibility study:** session 2026-07-09 (agent a51c646b) — verdict FEASIBLE, ~11–15 days, Option B data path.

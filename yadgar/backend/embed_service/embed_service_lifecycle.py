@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 
 import yadgar.backend.embed_service.embed_service as _es
@@ -163,6 +164,51 @@ def _stop_queue_drainer() -> None:
         logger.warning("queue_drainer stop error: %s", exc)
     _es._queue_drainer = None
     _drainer_running.set(0)
+
+
+@observe(tier="stage")
+def _run_layout_bootstrap(storage, settings, precompute=None) -> None:
+    """Compute + cache the graph layout ONCE if the cache is empty (synchronous).
+
+    viz-render-perf (Car A): the precompute knob was removed, so a fresh deploy
+    would otherwise have no cached positions until the first nightly/full cycle —
+    the first viz load would pay the slow client cold layout. This warms the cache
+    on boot when it is empty. No-op when a cache row already exists. Non-fatal:
+    any error is logged and swallowed (the embed/rerank service must still serve).
+
+    The precompute callable is injected for testing; production uses
+    ``_maybe_precompute_graph_layout`` (same non-fatal wrapper + signature no-op).
+    """
+    try:
+        if storage.get_graph_layout_cache():
+            return  # already warm — nothing to do
+        if precompute is None:
+            from yadgar._shared.config import get_settings  # noqa: PLC0415
+            from yadgar.backend.consolidation.service import (  # noqa: PLC0415
+                _maybe_precompute_graph_layout,
+            )
+
+            precompute = _maybe_precompute_graph_layout
+            settings = settings if settings is not None else get_settings()
+        logger.info("graph_layout_bootstrap: empty cache — computing initial layout")
+        precompute(storage, settings)
+    except Exception as exc:  # noqa: BLE001 — bootstrap is best-effort, non-fatal
+        logger.warning("graph_layout_bootstrap failed (non-fatal): %s", exc)
+
+
+def _bootstrap_graph_layout_if_empty(storage) -> None:
+    """Kick the layout-cache bootstrap in a background daemon thread (non-blocking).
+
+    Called from the FastAPI ``lifespan`` after the recall engines + storage are up.
+    Threaded so the (potentially multi-second) spring-layout compute never delays
+    backend readiness. Daemon so it never blocks shutdown.
+    """
+    threading.Thread(
+        target=_run_layout_bootstrap,
+        args=(storage, None),
+        name="graph-layout-bootstrap",
+        daemon=True,
+    ).start()
 
 
 # Sentinel: set on first import so embed_service.py force-reloads this sibling

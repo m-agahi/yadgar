@@ -176,16 +176,23 @@ class _EntityMixin:
         rows = self._q("SELECT * FROM relationship")
         return self._rows_to_dicts(rows)
 
-    def get_relationships_by_types(self, rel_types: list[str]) -> list[dict]:
+    @observe(tier="stage")
+    def get_relationships_by_types(self, rel_types: list[str], limit: int = 0) -> list[dict]:
         """Return all relationships whose relationship_type is in rel_types.
 
         Used by memify_derive to avoid the O(N²) per-pair HTTP pattern.
         One HTTP request instead of N(N-1)/2.
+
+        limit (viz-render-perf, Car A): 0/-1 = unlimited. When limiting, order
+        ``weight DESC`` so a capped subset is the strongest relations. The unlimited
+        path stays byte-identical for non-viz callers (memify_derive / strengthen).
         """
-        rows = self._q(
-            "SELECT * FROM relationship WHERE relationship_type IN $types",
-            {"types": rel_types},
-        )
+        sql = "SELECT * FROM relationship WHERE relationship_type IN $types"
+        params: dict = {"types": rel_types}
+        if limit and limit > 0:
+            sql += " ORDER BY weight DESC LIMIT $lim"
+            params["lim"] = limit
+        rows = self._q(sql, params)
         return self._rows_to_dicts(rows)
 
     def get_relationships_among_entities(self, entity_ids: list[int]) -> list[dict]:

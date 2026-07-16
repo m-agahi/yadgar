@@ -411,6 +411,17 @@ async def lifespan(app: FastAPI):
     # (or fail-loud logged) before the app reports ready.
     await asyncio.to_thread(_start_queue_drainer)
 
+    # viz-render-perf (Car A): warm the graph-layout cache on boot when empty so a
+    # fresh deploy renders the viz pre-laid-out instead of the slow client cold
+    # layout on the first load. Non-blocking (daemon thread) + non-fatal. Storage
+    # is up now (_start_queue_drainer ran _ensure_recall_engines).
+    try:
+        from yadgar._shared.runtime.lifecycle import _get_storage as _get_storage_boot
+
+        _bootstrap_graph_layout_if_empty(_get_storage_boot())
+    except Exception as _exc:  # noqa: BLE001 — bootstrap kick must not block boot
+        logger.warning("graph_layout_bootstrap kick failed (non-fatal): %s", _exc)
+
     # Start periodic snapshot background task (ExceptionGroup-safe: task is
     # cancelled on lifespan exit).
     _snap_task = asyncio.create_task(_run_cache_snapshot_task())
@@ -902,6 +913,7 @@ if getattr(_sib_routes, "_YADGAR_ES_LOADED", False):
 _queue_base_path = _sib_lifecycle._queue_base_path
 _start_queue_drainer = _sib_lifecycle._start_queue_drainer
 _stop_queue_drainer = _sib_lifecycle._stop_queue_drainer
+_bootstrap_graph_layout_if_empty = _sib_lifecycle._bootstrap_graph_layout_if_empty
 _forked_boost_write = _sib_routes._forked_boost_write
 _run_landscape_backend = _sib_routes._run_landscape_backend
 admin_route = _sib_routes.admin_route

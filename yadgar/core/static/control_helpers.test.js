@@ -21,6 +21,9 @@ import {
   shouldInitTab,
   overlaysToMenuDescriptors,
   controlKind,
+  isDestructive,
+  toggleArmed,
+  classify428,
 } from './control_helpers.js';
 
 function knob(over = {}) {
@@ -200,10 +203,11 @@ describe('computePending', () => {
     knob({ name: 'B', reload: 'restart_required' }),
   ];
 
-  it('no edits → count 0, no restart', () => {
+  it('no edits → count 0, no restart, destructiveCount 0', () => {
     const p = computePending(knobs, { A: '8.0', B: '8.0' }, { A: '8.0', B: '8.0' });
     expect(p.count).toBe(0);
     expect(p.restartRequired).toBe(false);
+    expect(p.destructiveCount).toBe(0);
     expect([...p.dirty]).toEqual([]);
   });
 
@@ -218,6 +222,94 @@ describe('computePending', () => {
     const p = computePending(knobs, { A: '8.0', B: '8.0' }, { A: '8.0', B: '9.0' });
     expect(p.count).toBe(1);
     expect(p.restartRequired).toBe(true);
+  });
+
+  it('counts dirty destructive knobs in destructiveCount', () => {
+    const kk = [
+      knob({ name: 'A', reload: 'hot_reload', destructive: true }),
+      knob({ name: 'B', reload: 'restart_required', destructive: false }),
+      knob({ name: 'C', reload: 'hot_reload', destructive: true }),
+    ];
+    // A + C edited (both destructive), B unchanged → destructiveCount 2, count 2.
+    const p = computePending(kk, { A: '8', B: '8', C: '8' }, { A: '9', B: '8', C: '9' });
+    expect(p.count).toBe(2);
+    expect(p.destructiveCount).toBe(2);
+  });
+
+  it('a non-destructive dirty knob does not raise destructiveCount', () => {
+    const kk = [knob({ name: 'A', destructive: false })];
+    const p = computePending(kk, { A: '8' }, { A: '9' });
+    expect(p.count).toBe(1);
+    expect(p.destructiveCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Car D — isDestructive
+// ---------------------------------------------------------------------------
+
+describe('isDestructive', () => {
+  it('true when knob.destructive is true', () => {
+    expect(isDestructive(knob({ destructive: true }))).toBe(true);
+  });
+  it('false when destructive is false / missing', () => {
+    expect(isDestructive(knob({ destructive: false }))).toBe(false);
+    expect(isDestructive(knob({ destructive: undefined }))).toBe(false);
+    expect(isDestructive({})).toBe(false);
+  });
+  it('coerces truthy/falsy to a strict boolean', () => {
+    expect(isDestructive({ destructive: 1 })).toBe(true);
+    expect(isDestructive({ destructive: 0 })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Car D — toggleArmed (armed-state reducer for destructive rows)
+// ---------------------------------------------------------------------------
+
+describe('toggleArmed', () => {
+  it('arms a row (returns a new Set containing it)', () => {
+    const next = toggleArmed(new Set(), 'YADGAR_X', true);
+    expect(next.has('YADGAR_X')).toBe(true);
+  });
+  it('disarms a row', () => {
+    const next = toggleArmed(new Set(['YADGAR_X']), 'YADGAR_X', false);
+    expect(next.has('YADGAR_X')).toBe(false);
+  });
+  it('does not mutate the input set (pure)', () => {
+    const orig = new Set(['A']);
+    const next = toggleArmed(orig, 'B', true);
+    expect([...orig]).toEqual(['A']);
+    expect(next.has('B')).toBe(true);
+    expect(next.has('A')).toBe(true);
+  });
+  it('arming an already-armed row is idempotent', () => {
+    const next = toggleArmed(new Set(['A']), 'A', true);
+    expect([...next]).toEqual(['A']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Car D — classify428 (defensive 428 → needs-arming classifier)
+// ---------------------------------------------------------------------------
+
+describe('classify428', () => {
+  it('classifies a 428 destructive response as needs-arming', () => {
+    const r = classify428({ status: 428, body: { destructive: true, hint: 'resend with "armed": true' } });
+    expect(r.needsArming).toBe(true);
+    expect(r.hint).toContain('armed');
+  });
+  it('a non-428 response is not needs-arming', () => {
+    expect(classify428({ status: 200, body: {} }).needsArming).toBe(false);
+    expect(classify428({ status: 409, body: {} }).needsArming).toBe(false);
+  });
+  it('428 without a destructive flag still needs arming (defensive)', () => {
+    // Some proxies may strip the body; a 428 status alone implies arming.
+    expect(classify428({ status: 428, body: {} }).needsArming).toBe(true);
+  });
+  it('tolerates a missing body', () => {
+    expect(classify428({ status: 428 }).needsArming).toBe(true);
+    expect(classify428({ status: 200 }).needsArming).toBe(false);
   });
 });
 

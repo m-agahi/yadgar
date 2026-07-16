@@ -121,11 +121,13 @@ def compute_graph_layout(
     return {nid: [round(float(c), 6) for c in coords] for nid, coords in raw.items()}
 
 
-def attach_cached_positions(data: dict, cache: dict | None, enabled: bool) -> dict:
+def attach_cached_positions(data: dict, cache: dict | None) -> dict:
     """Attach cached x/y/z to each served node BY ID. Returns ``data`` mutated.
 
-    No positions are attached when ``enabled`` is False (flag off — preserves
-    current behavior exactly) or ``cache`` is None (no layout computed yet).
+    No positions are attached when ``cache`` is None or empty (no layout computed
+    yet) — the served nodes stay bare and the client runs its cold d3-force layout
+    (the seed-miss fallback). viz-render-perf (Car A) removed the
+    VIZ_PRECOMPUTED_LAYOUT_ENABLED gate: attach is unconditional given a cache.
 
     Attach is BY NODE-ID, with no serve-side signature gate: the layout is
     computed over the full uncapped graph, so the cached positions are a
@@ -137,7 +139,7 @@ def attach_cached_positions(data: dict, cache: dict | None, enabled: bool) -> di
     needs to re-litigate it. Stale-by-a-bit seeds are harmless: the viz cooldown
     relaxes them, exactly like the localStorage warm-start.
     """
-    if not enabled or not cache:
+    if not cache:
         return data
     positions = cache.get("positions") or {}
     if not positions:

@@ -76,7 +76,10 @@ def _make_storage(*, memory_rows=None, wiki_rows=None, clusters=None, cluster_me
     s.get_all_memory_similarity_links.return_value = []
     s.get_memory_clusters.return_value = clusters or []
     members = cluster_members or {}
+    # viz-render-perf (Car A): _build_clusters_payload batches membership via a
+    # single get_all_cluster_members() round-trip (was per-cluster get_cluster_members).
     s.get_cluster_members.side_effect = lambda cid: members.get(cid, [])
+    s.get_all_cluster_members.return_value = members
     return s
 
 
@@ -190,3 +193,61 @@ class TestClusterMemberCount:
         cl = [c for c in result["clusters"] if c["id"] == 5][0]
         assert cl["member_count"] == 3
         assert set(cl["member_node_ids"]) == {"mem:1", "mem:2"}
+
+    def test_cluster_membership_batched_into_one_roundtrip(self):
+        """viz-render-perf (Car A): membership fetched via ONE get_all_cluster_members
+        call — the per-cluster get_cluster_members N+1 is gone from the payload build."""
+        mem = [_mem_row(1), _mem_row(2)]
+        clusters = [
+            {"id": 5, "name": "a", "level": 0},
+            {"id": 6, "name": "b", "level": 0},
+            {"id": 7, "name": "c", "level": 0},
+        ]
+        members = {5: [1], 6: [2], 7: [900]}
+        s = _make_storage(memory_rows=mem, clusters=clusters, cluster_members=members)
+        result = GraphAPI(s).get_full_graph()
+        # Exactly one batch call, zero per-cluster calls from the cluster payload build.
+        assert s.get_all_cluster_members.call_count == 1
+        assert s.get_cluster_members.call_count == 0
+        # Semantics preserved across all three clusters.
+        by_id = {c["id"]: c for c in result["clusters"]}
+        assert by_id[5]["member_count"] == 1 and by_id[5]["member_node_ids"] == ["mem:1"]
+        assert by_id[6]["member_count"] == 1 and by_id[6]["member_node_ids"] == ["mem:2"]
+        assert by_id[7]["member_count"] == 1 and by_id[7]["member_node_ids"] == []
+
+
+# ---------------------------------------------------------------------------
+# viz-render-perf (Car A) — per-edge-type caps threaded from the call site
+# ---------------------------------------------------------------------------
+
+
+class TestEdgeCaps:
+    def test_default_get_full_graph_passes_unlimited(self):
+        """Default get_full_graph (the precompute path) forwards limit=0 to every scan."""
+        s = _make_storage(memory_rows=[_mem_row(1)])
+        GraphAPI(s).get_full_graph()
+        assert s.get_all_transitions.call_args.kwargs.get("limit") == 0
+        assert s.get_all_wiki_crossrefs.call_args.kwargs.get("limit") == 0
+        assert s.get_all_causal_edges.call_args.kwargs.get("limit") == 0
+        assert s.get_relationships_by_types.call_args.kwargs.get("limit") == 0
+        assert s.get_all_memory_similarity_links.call_args.kwargs.get("limit") == 0
+
+    def test_caps_threaded_to_each_scan(self):
+        """EdgeCaps fields reach the matching storage scan as limit=."""
+        from yadgar.backend.graph.graph_api import EdgeCaps
+
+        s = _make_storage(memory_rows=[_mem_row(1)])
+        GraphAPI(s).get_full_graph(
+            edge_caps=EdgeCaps(
+                transitions=3,
+                wiki_crossrefs=4,
+                causal_edges=5,
+                relationships=6,
+                similarity_links=7,
+            )
+        )
+        assert s.get_all_transitions.call_args.kwargs["limit"] == 3
+        assert s.get_all_wiki_crossrefs.call_args.kwargs["limit"] == 4
+        assert s.get_all_causal_edges.call_args.kwargs["limit"] == 5
+        assert s.get_relationships_by_types.call_args.kwargs["limit"] == 6
+        assert s.get_all_memory_similarity_links.call_args.kwargs["limit"] == 7

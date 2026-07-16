@@ -154,9 +154,20 @@ class _ClusterMixin:
             {"id": link_id, "delta": weight_delta, "now": self._now_iso()},
         )
 
-    def get_all_memory_similarity_links(self) -> list[dict]:
-        """Return all memory_similarity_link rows. Used for pre-loading before batch writes."""
-        rows = self._q("SELECT * FROM memory_similarity_link")
+    @observe(tier="stage")
+    def get_all_memory_similarity_links(self, limit: int = 0) -> list[dict]:
+        """Return all memory_similarity_link rows. Used for pre-loading before batch writes.
+
+        limit (viz-render-perf, Car A): 0/-1 = unlimited. When limiting, order
+        ``weight DESC`` so a capped subset is the strongest links. The unlimited path
+        stays byte-identical for non-viz callers (cls pre-load / batch writes).
+        """
+        sql = "SELECT * FROM memory_similarity_link"
+        if limit and limit > 0:
+            sql += " ORDER BY weight DESC LIMIT $lim"
+            rows = self._q(sql, {"lim": limit})
+        else:
+            rows = self._q(sql)
         return self._rows_to_dicts(rows)
 
     # ------------------------------------------------------------------ Cluster read helpers (v5.80)
@@ -191,3 +202,26 @@ class _ClusterMixin:
             if mid is not None:
                 result.append(mid)
         return result
+
+    @observe(tier="stage")
+    def get_all_cluster_members(self) -> dict[int, list[int]]:
+        """Return {cluster_id: [member memory ids]} for ALL clusters in one query.
+
+        viz-render-perf (Car A): batches the per-cluster get_cluster_members loop
+        in _build_clusters_payload into a single round-trip (was ~one DB call per
+        cluster — ~770 at the current corpus). Membership is stored as cluster_id
+        on the memory row, so a single grouped SELECT over the memory table yields
+        every cluster's membership. Both keys and member ids are coerced to int so
+        the mapping is directly comparable with the graph's rendered mem_ids set.
+        """
+        rows = self._q(
+            "SELECT id, cluster_id FROM memory WHERE cluster_id IS NOT NONE",
+        )
+        out: dict[int, list[int]] = {}
+        for row in rows:
+            cid = _coerce_record_id(row.get("cluster_id"))
+            mid = _coerce_record_id(row.get("id"))
+            if cid is None or mid is None:
+                continue
+            out.setdefault(cid, []).append(mid)
+        return out

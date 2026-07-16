@@ -5,7 +5,7 @@ to the backend.  consolidate_now() now calls run_consolidate_now() which
 forwards to backend via orchestrator._forward_to_backend.  Core retains:
   - mode validation (returns error before forwarding)
   - anchor audit pass (mode='full', ENABLED=True)
-  - graph-layout precompute (mode='full', VIZ_PRECOMPUTED_LAYOUT_ENABLED)
+  - graph-layout precompute (mode='full', unconditional)
   - result shape: {status: "completed", mode: <mode>, **backend_stats}
 
 Backend-owned behaviour (no longer testable from core unit tests):

@@ -27,6 +27,10 @@ lib64/
 # Vendored JS libs (v5.24.0) must not be excluded by the `lib/` rule above
 !yadgar/static/lib/
 !yadgar/static/lib/**
+# Post-Reorg path (viz-trace-replay train): vendored viz libs + fonts live under
+# yadgar/core/static/lib/ — same intent, the `lib/` rule above must not hide them.
+!yadgar/core/static/lib/
+!yadgar/core/static/lib/**
 parts/
 sdist/
 var/

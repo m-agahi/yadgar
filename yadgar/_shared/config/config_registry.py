@@ -289,9 +289,14 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_VIZ_MAX_MEMORIES", "500", "int"),
     ConfigEntry("YADGAR_VIZ_MAX_WIKI", "200", "int"),
     ConfigEntry("YADGAR_VIZ_MAX_ENTITIES", "2000", "int"),
-    # ── Precomputed server-side graph layout (v5.88; default OFF) ────────────
-    ConfigEntry("YADGAR_VIZ_PRECOMPUTED_LAYOUT_ENABLED", "false", "bool"),
+    # ── Precomputed server-side graph layout (viz-render-perf: unconditional) ─
     ConfigEntry("YADGAR_VIZ_LAYOUT_ITERATIONS", "50", "int"),
+    # ── Per-edge-type caps (viz-render-perf; 0/-1 = unlimited) ────────────────
+    ConfigEntry("YADGAR_VIZ_MAX_TRANSITIONS", "0", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_WIKI_CROSSREFS", "0", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_CAUSAL_EDGES", "0", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_RELATIONSHIPS", "0", "int"),
+    ConfigEntry("YADGAR_VIZ_MAX_SIMILARITY_LINKS", "0", "int"),
     # ── DB path (embedded mode) ──────────────────────────────────────────────
     ConfigEntry("YADGAR_DB_PATH", str(_paths.DB_PATH), "string"),
     # ── OTLP / Tempo exporter ────────────────────────────────────────────────
@@ -299,6 +304,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_OTLP_HEADERS", "", "string"),
     ConfigEntry("YADGAR_OTLP_TIMEOUT_SEC", "10", "int"),
     ConfigEntry("YADGAR_OTLP_INSECURE", "1", "bool"),
+    # ── Tempo query API (viz-trace-replay Car B) ─────────────────────────────
+    ConfigEntry("YADGAR_TEMPO_QUERY_URL", "", "string"),
     # ── Memory block caps (v5.35.1, I25) ────────────────────────────────────
     ConfigEntry("YADGAR_MEMORY_BLOCK_MAX_PER_SCOPE", "10", "int"),
     ConfigEntry("YADGAR_MEMORY_BLOCK_DEFAULT_CHAR_LIMIT", "2000", "int"),
