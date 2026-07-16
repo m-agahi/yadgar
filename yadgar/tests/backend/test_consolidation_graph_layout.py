@@ -32,10 +32,11 @@ def embeddings():
     return engine
 
 
-def _settings(tmp_path):
+def _settings(tmp_path, galaxy=True):
     return Settings(
         DB_PATH=str(tmp_path / "s.db"),
         VIZ_LAYOUT_ITERATIONS=10,
+        VIZ_GALAXY_LAYOUT=galaxy,
     )
 
 
@@ -106,3 +107,37 @@ def test_signature_change_recomputes(tmp_path, storage):
     _maybe_precompute_graph_layout(storage, settings)
     second = storage.get_graph_layout_cache()
     assert second["signature"] != first["signature"]
+
+
+# ── finish-viz: galaxy layout mode selection ─────────────────────────────────
+
+
+def test_galaxy_is_default_mode(tmp_path, storage):
+    """VIZ_GALAXY_LAYOUT defaults on → cache records layout_mode="galaxy"."""
+    _seed_graph(storage)
+    _maybe_precompute_graph_layout(storage, _settings(tmp_path, galaxy=True))
+    cached = storage.get_graph_layout_cache()
+    assert cached is not None
+    assert cached["layout_mode"] == "galaxy"
+    assert len(cached["positions"]) >= 2
+
+
+def test_spring_mode_when_galaxy_off(tmp_path, storage):
+    """VIZ_GALAXY_LAYOUT=False → spring_layout path → layout_mode="spring"."""
+    _seed_graph(storage)
+    _maybe_precompute_graph_layout(storage, _settings(tmp_path, galaxy=False))
+    cached = storage.get_graph_layout_cache()
+    assert cached is not None
+    assert cached["layout_mode"] == "spring"
+
+
+def test_mode_flip_recomputes(tmp_path, storage):
+    """Flipping the galaxy knob recomputes even when the graph shape is unchanged."""
+    _seed_graph(storage)
+    _maybe_precompute_graph_layout(storage, _settings(tmp_path, galaxy=True))
+    first = storage.get_graph_layout_cache()
+    assert first["layout_mode"] == "galaxy"
+    # Same graph, flipped mode → must recompute to spring (not a signature no-op).
+    _maybe_precompute_graph_layout(storage, _settings(tmp_path, galaxy=False))
+    second = storage.get_graph_layout_cache()
+    assert second["layout_mode"] == "spring"

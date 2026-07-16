@@ -193,6 +193,10 @@
     "category": "framework-instrumented",
     "rationale": "Nested helper that writes the shared per-tool RED metric families for the wrapper; it IS the metric-emission path, so decorating it with @observe (which emits metrics) would be circular and double-count the tool boundary signal."
   },
+  "_app:_push_trace_complete_event": {
+    "category": "framework-instrumented",
+    "rationale": "Best-effort helper called from the tool-boundary finally (both wrappers, same site as _emit_metrics) to push the trace_complete SSE event for the viz Traces tab; it runs under the tool's own RED span+metric and MUST NOT open a second per-call span (per-tool-call cardinality on the hot boundary) nor raise (fire-and-forget), so it is instrumentation-adjacent like its _emit_metrics sibling. Module-level only to keep _build_tool_wrappers under the I13 cyclomatic cap."
+  },
   "_app:_build_tool_wrappers._maintenance": {
     "category": "framework-instrumented",
     "rationale": "Nested per-invocation maintenance hook (pool bookkeeping) inside the tool wrapper; runs under the wrapper's own RED span+metric, a separate per-call signal is redundant with the tool-boundary instrumentation already present."

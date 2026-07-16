@@ -23,7 +23,14 @@ import pytest
 
 # ── Allowed values ────────────────────────────────────────────────────────────
 ALLOWED_NODE_TYPES = {"memory", "wiki", "entity"}
-ALLOWED_EDGE_TYPES = {"semantic", "temporal", "causal", "transition", "crossref"}
+# Sourced from the canonical EDGE_TYPES registry (single source of truth) rather
+# than a hand-maintained literal — the old literal was stale (missing the entity
+# typed-relations) and only passed because no test seeded entities. Now that the
+# derived_from test seeds an entity relationship into the module-scoped DB, entity
+# edges appear for every subsequent test, so the allowed set must be the real one.
+from yadgar._shared.contracts.viz import EDGE_TYPES as _EDGE_TYPES  # noqa: E402
+
+ALLOWED_EDGE_TYPES = set(_EDGE_TYPES.keys())
 _TEST_TOKEN = "contract-test-token"
 
 
@@ -77,6 +84,30 @@ def _seed_memories(n: int = 5) -> None:
         )
 
 
+def _seed_derived_from_relationship() -> tuple[str, str]:
+    """Insert two entities + a derived_from relationship between them.
+
+    Returns the (source, target) node-id strings ("entity:<id>") so the caller
+    can assert the derived_from edge is present in the /api/graph payload.
+    viz-rest (#209): derived_from was the LARGEST rel type yet hidden from viz.
+    """
+    import yadgar._shared.runtime.state as _st
+
+    storage = _st._storage
+    assert storage is not None, "StorageEngine not initialized"
+    src_id = storage.insert_entity({"name": "derived-src-entity", "type": "concept", "heat": 0.9})
+    tgt_id = storage.insert_entity({"name": "derived-tgt-entity", "type": "concept", "heat": 0.9})
+    storage.insert_relationship(
+        {
+            "source_entity_id": src_id,
+            "target_entity_id": tgt_id,
+            "relationship_type": "derived_from",
+            "weight": 0.75,
+        }
+    )
+    return f"entity:{src_id}", f"entity:{tgt_id}"
+
+
 # ── Shape tests ───────────────────────────────────────────────────────────────
 
 
@@ -105,6 +136,27 @@ class TestApiGraphEndpointShape:
         client = _make_client(monkeypatch)
         data = client.get("/api/graph", headers=_auth_headers()).json()
         assert isinstance(data["edges"], list), f"'edges' is not a list: {type(data['edges'])}"
+
+    def test_cap_affordance_keys_present_and_zero_at_default(self, monkeypatch):
+        """finish-viz F1: nodes_hidden / edges_hidden present; 0 at the default
+        (caps unset → unlimited → nothing truncated)."""
+        _seed_memories(4)
+        client = _make_client(monkeypatch)
+        data = client.get("/api/graph", headers=_auth_headers()).json()
+        assert "nodes_hidden" in data, f"'nodes_hidden' missing: {list(data.keys())}"
+        assert "edges_hidden" in data, f"'edges_hidden' missing: {list(data.keys())}"
+        assert data["nodes_hidden"] == 0  # default caps = unlimited → nothing hidden
+        assert data["edges_hidden"] == 0
+
+    def test_node_cap_truncation_surfaced(self, monkeypatch):
+        """A memory cap below the seeded total → nodes_hidden reflects the drop."""
+        _seed_memories(6)
+        client = _make_client(monkeypatch)
+        data = client.get("/api/graph?max_memories=2", headers=_auth_headers()).json()
+        mem_nodes = [n for n in data["nodes"] if n.get("type") == "memory"]
+        assert len(mem_nodes) == 2  # capped
+        # At least the 4 seeded-beyond-cap memories are hidden (>=6-2).
+        assert data["nodes_hidden"] >= 4
 
 
 # ── Orphan edge tests ─────────────────────────────────────────────────────────
@@ -212,6 +264,40 @@ class TestApiGraphNodeFields:
             f"Duplicate node IDs in /api/graph response: {[x for x in ids if ids.count(x) > 1]}"
         )
 
+    def test_memory_nodes_have_last_accessed(self, monkeypatch):
+        """viz-rest #55: memory nodes carry a last_accessed key."""
+        _seed_memories(5)
+        client = _make_client(monkeypatch)
+        data = client.get("/api/graph", headers=_auth_headers()).json()
+        mem_nodes = [n for n in data["nodes"] if n["type"] == "memory"]
+        assert mem_nodes, "expected memory nodes from seeded DB"
+        for n in mem_nodes:
+            assert "last_accessed" in n, f"memory node missing 'last_accessed': {n}"
+
+
+# ── viz-rest #89: weak-edge include_weak query param ──────────────────────────
+
+
+class TestApiGraphIncludeWeak:
+    """The include_weak query param is accepted and preserves the response shape."""
+
+    def test_include_weak_accepted(self, monkeypatch):
+        _seed_memories(5)
+        client = _make_client(monkeypatch)
+        r = client.get("/api/graph?include_weak=1", headers=_auth_headers())
+        assert r.status_code == 200
+        data = r.json()
+        assert "nodes" in data and "edges" in data
+        # weak_edges_hidden is always present (F4 affordance), regardless of the toggle.
+        assert "weak_edges_hidden" in data
+
+    def test_default_omits_include_weak(self, monkeypatch):
+        _seed_memories(5)
+        client = _make_client(monkeypatch)
+        r = client.get("/api/graph", headers=_auth_headers())
+        assert r.status_code == 200
+        assert "weak_edges_hidden" in r.json()
+
 
 # ── Edge field tests ──────────────────────────────────────────────────────────
 
@@ -236,6 +322,64 @@ class TestApiGraphEdgeFields:
             assert e["type"] in ALLOWED_EDGE_TYPES, (
                 f"Edge has unknown type {e['type']!r}. Allowed: {ALLOWED_EDGE_TYPES}"
             )
+
+
+# ── derived_from edge tests (viz-rest #209) ───────────────────────────────────
+
+
+class TestApiGraphDerivedFromEdges:
+    """derived_from entity edges must be rendered in /api/graph (viz-rest #209).
+
+    Regression guard for the "lone entity sphere" bug: derived_from is the
+    LARGEST relationship type (3304 rows live) but was excluded from the payload,
+    so entities whose only edges were derived_from showed a misleading
+    "0 connections" badge. This asserts they now appear, with role="retrieval"
+    stamped (they feed PPR + spreading-activation frontier expansion).
+    """
+
+    def test_derived_from_edge_present_in_payload(self, monkeypatch):
+        src_id, tgt_id = _seed_derived_from_relationship()
+        client = _make_client(monkeypatch)
+        data = client.get("/api/graph", headers=_auth_headers()).json()
+        derived = [e for e in data["edges"] if e.get("type") == "derived_from"]
+        assert derived, (
+            "No derived_from edge in /api/graph payload despite a seeded "
+            "derived_from relationship — the LARGEST rel type is still hidden."
+        )
+        # The seeded pair must be among the rendered derived_from edges
+        endpoints = {(e["source"], e["target"]) for e in derived}
+        assert (src_id, tgt_id) in endpoints, (
+            f"Seeded derived_from edge {(src_id, tgt_id)} not rendered. "
+            f"Rendered derived_from endpoints: {sorted(endpoints)[:10]}"
+        )
+
+    def test_derived_from_edge_has_retrieval_role(self, monkeypatch):
+        _seed_derived_from_relationship()
+        client = _make_client(monkeypatch)
+        data = client.get("/api/graph", headers=_auth_headers()).json()
+        derived = [e for e in data["edges"] if e.get("type") == "derived_from"]
+        assert derived, "No derived_from edge to check role on"
+        for e in derived:
+            assert e.get("role") == "retrieval", (
+                f"derived_from edge role is {e.get('role')!r}, expected 'retrieval' "
+                "(it feeds PPR + spreading-activation — EDGE_CONTRACT: viz must "
+                "reflect what drives behavior)."
+            )
+
+    def test_derived_from_in_legend_config(self, monkeypatch):
+        """derived_from must surface in /api/viz/config legend so the frontend
+        auto-generates its toggle checkbox + legend row (data-driven, default ON)."""
+        client = _make_client(monkeypatch)
+        resp = client.get("/api/viz/config", headers=_auth_headers())
+        assert resp.status_code == 200, f"/api/viz/config → {resp.status_code}"
+        legend = resp.json().get("legend", {})
+        edges = {e["key"]: e for e in legend.get("edges", [])}
+        assert "derived_from" in edges, (
+            f"derived_from missing from legend.edges: {sorted(edges.keys())}"
+        )
+        entry = edges["derived_from"]
+        assert entry["role"] == "retrieval", f"legend role wrong: {entry}"
+        assert entry.get("default_on") is True, f"derived_from should default ON: {entry}"
 
 
 # ── Stats tests ───────────────────────────────────────────────────────────────

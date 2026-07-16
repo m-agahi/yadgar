@@ -2003,6 +2003,10 @@ async def api_graph(request: Request) -> JSONResponse:
             max_entities = int(request.query_params.get("max_entities", _cfg.VIZ_MAX_ENTITIES))
         except (ValueError, TypeError) as _e:
             max_entities = _cfg.VIZ_MAX_ENTITIES
+        # #89: opt-in weak-edge render (count<2 transitions). Default OFF preserves
+        # the prior payload; the frontend toggle passes ?include_weak=1.
+        _iw = request.query_params.get("include_weak", "")
+        include_weak = _iw.lower() in ("1", "true", "yes", "on")
         _t0 = time.time()
         # T2 Car E3: the assembly (+ cached-layout attach) runs backend-side.
         from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
@@ -2015,6 +2019,7 @@ async def api_graph(request: Request) -> JSONResponse:
                 "top_k": top_k,
                 "max_wiki": max_wiki,
                 "max_entities": max_entities,
+                "include_weak": include_weak,
             },
         )
         _elapsed_ms = (time.time() - _t0) * 1000.0

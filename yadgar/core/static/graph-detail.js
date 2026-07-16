@@ -250,6 +250,14 @@ export function createDetailPanel({ wikiCatColor, heatColorFn, allLinksFn, fetch
         <div class="det-val" style="color:#8b949e">${String(node.created_at).slice(0, 19)}</div>
       </div>`);
 
+    // #55: last_accessed (recency) — reads independently of heat so a warm-but-stale
+    // node is distinguishable from a warm-and-fresh one.
+    if (node.last_accessed)
+      rows.push(`<div class="det-sec">
+        <div class="det-lbl">Last accessed</div>
+        <div class="det-val" style="color:#8b949e">${String(node.last_accessed).slice(0, 19)}</div>
+      </div>`);
+
     // F1 fidelity fix: derive count from the SAME rendered edge set (_edgeToggleState),
     // not a hardcoded subset of 4 types. Entity nodes wired by co_occurrence/imports/
     // calls/resolved_by/caused_by previously showed "0 connections" while their edges

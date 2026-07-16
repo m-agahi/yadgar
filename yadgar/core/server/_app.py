@@ -404,6 +404,45 @@ def _tool(power: bool = False, always_load: bool = False):
     return decorator
 
 
+def _push_trace_complete_event(tool_name: str, t0: float, status: str) -> None:
+    """Push a `trace_complete` SSE event when a tool trace finalizes (Phase 3).
+
+    finish-viz trace-replay Phase 3: the viz "Traces" tab live-appends the
+    completed trace. Called from the tool-boundary ``finally`` (both sync + async
+    wrappers, same site as ``_emit_metrics``) via the F2 SSE relay path
+    (``_push_event`` → backend ``_op_events`` → core ``_poll_backend_events`` →
+    browser). The trace_id is read from the still-active enclosing span (all spans
+    in a trace share one trace_id) — an internal/test direct call with no active
+    span yields no trace_id, so the emit is skipped (correct: only real MCP tool
+    traces reach Tempo and the Traces tab). Best-effort: never raises, never
+    blocks. Module-level (not a wrapper closure) to keep ``_build_tool_wrappers``
+    under the I13 cyclomatic cap.
+    """
+    import time as _time  # noqa: PLC0415
+
+    try:
+        from yadgar._shared.observability.tracing import (  # noqa: PLC0415
+            get_current_trace_id,
+        )
+
+        trace_id = get_current_trace_id()
+        if not trace_id:
+            return  # no active trace (direct/internal call) → nothing to append
+        from yadgar._shared.server_helpers import _push_event  # noqa: PLC0415
+
+        _push_event(
+            {
+                "event": "trace_complete",
+                "trace_id": trace_id,
+                "tool": tool_name,
+                "total_ms": round((_time.monotonic() - t0) * 1000, 1),
+                "status": status,
+            }
+        )
+    except Exception:  # noqa: BLE001 — SSE emit is best-effort, must not affect the tool
+        pass
+
+
 @observe(tier="stage")
 def _build_tool_wrappers(func, traced_func, estimate_tokens):
     """Build the (sync, async) instrumented wrappers for a tool (Fix A).
@@ -463,6 +502,7 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
             raise
         finally:
             _emit_metrics(_t0, _status, result)
+            _push_trace_complete_event(func.__name__, _t0, _status)
 
     @functools.wraps(func)
     async def _instrumented_async(*args, **kwargs):
@@ -493,5 +533,6 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
             raise
         finally:
             _emit_metrics(_t0, _status, result)
+            _push_trace_complete_event(func.__name__, _t0, _status)
 
     return _instrumented, _instrumented_async

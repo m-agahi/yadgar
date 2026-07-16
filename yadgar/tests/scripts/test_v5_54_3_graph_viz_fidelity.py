@@ -122,12 +122,14 @@ class TestEntityEdgesInDefaultPayload:
         """GraphAPI queries get_relationships_by_types with the viz entity-rel set.
 
         v5.86 VIZ Batch-2 (P0.4): imports/calls dropped from the queried set.
+        finish-viz #209: derived_from added (largest entity-rel type, was hidden;
+        role=retrieval — feeds recall via all-types adjacency).
         """
         s = _make_mock()
         GraphAPI(s).get_full_graph()
         s.get_relationships_by_types.assert_called_once()
         call_args = s.get_relationships_by_types.call_args[0][0]
-        expected = {"co_occurrence", "resolved_by", "caused_by"}
+        expected = {"co_occurrence", "resolved_by", "caused_by", "derived_from"}
         assert set(call_args) == expected, f"Expected types {expected}, got {set(call_args)}"
 
     def test_entity_rel_edges_orphan_filtered(self):

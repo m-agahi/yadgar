@@ -937,6 +937,14 @@ class Settings(BaseSettings):
     # pre-laid-out instead of a slow cold client-side force settle. The enable knob
     # was removed — precompute is unconditional (supersedes ADR-0010's default-OFF).
     VIZ_LAYOUT_ITERATIONS: int = 50  # spring_layout iteration cap (lower=faster/looser)
+    # finish-viz — Milky-Way galaxy layout (I25 three-way registered). When on
+    # (default), the nightly precompute produces galaxy positions (loose→dense core
+    # bulge, multi-member clusters→K log-spiral arms) instead of spring_layout; the
+    # client freezes physics on a galaxy payload so the shape holds.
+    VIZ_GALAXY_LAYOUT: bool = True  # galaxy layout default-on (False → spring_layout)
+    VIZ_GALAXY_ARMS: int = 4  # number of spiral arms (K)
+    VIZ_GALAXY_SPIRAL_PITCH: float = 0.30  # log-spiral tightness (smaller=tighter winding)
+    VIZ_GALAXY_CORE_DENSITY: float = 1.0  # core bulge packing density (higher=tighter core)
     # viz-render-perf (Car A) — per-edge-type caps for the /api/graph edge scans
     # (I25 three-way registered). Default 0 = unlimited → behavior-preserving day one.
     # Applied at the graph call sites only (ORDER BY strongest-first under any LIMIT);

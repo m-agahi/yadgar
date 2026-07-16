@@ -83,6 +83,13 @@ def _maybe_precompute_graph_layout(storage, settings) -> None:
     Two gates remain so it never blocks: (1) a graph-signature no-op — when the
     live graph shape matches the cached signature nothing is recomputed, (2) only
     called from the nightly/full paths, never the light budget. Non-fatal.
+
+    finish-viz (galaxy): when ``VIZ_GALAXY_LAYOUT`` is on (default), the Milky-Way
+    ``galaxy_layout`` generator runs instead of ``networkx.spring_layout`` — loose
+    nodes → dense core bulge, multi-member clusters → K log-spiral arms. The cache
+    row records ``layout_mode`` so the client freezes physics on a galaxy payload.
+    The signature no-op also invalidates on a mode flip (mode is folded into the
+    cached-signature comparison) so toggling the knob recomputes on the next cycle.
     """
     try:
         import time as _time  # noqa: PLC0415
@@ -91,6 +98,7 @@ def _maybe_precompute_graph_layout(storage, settings) -> None:
         from yadgar.backend.graph.graph_api import GraphAPI  # noqa: PLC0415
         from yadgar.backend.graph.graph_layout import (  # noqa: PLC0415
             compute_graph_layout,
+            galaxy_layout,
             graph_signature,
         )
 
@@ -98,18 +106,38 @@ def _maybe_precompute_graph_layout(storage, settings) -> None:
         # the per-request /api/graph node caps change.
         data = GraphAPI(storage).get_full_graph(0, 8, False, None, 0, 0)
         nodes, edges = data.get("nodes", []), data.get("edges", [])
+        clusters = data.get("clusters", [])
+        galaxy_on = bool(getattr(settings, "VIZ_GALAXY_LAYOUT", True))
+        mode = "galaxy" if galaxy_on else "spring"
         sig = graph_signature(nodes, edges)
         cached = storage.get_graph_layout_cache()
-        if cached and cached.get("signature") == sig:
-            return  # graph shape unchanged — keep the cached layout
+        # Recompute when the graph SHAPE changes OR the layout mode flips (so a
+        # knob toggle re-lays-out on the next cycle rather than serving stale
+        # positions of the other kind).
+        if (
+            cached
+            and cached.get("signature") == sig
+            and cached.get("layout_mode", "spring") == mode
+        ):
+            return  # graph shape + mode unchanged — keep the cached layout
 
         _t = _time.monotonic()
-        iterations = getattr(settings, "VIZ_LAYOUT_ITERATIONS", 50)
-        logger.info("phase_start: precompute_graph_layout nodes=%d", len(nodes))
-        positions = compute_graph_layout(nodes, edges, dim=3, iterations=iterations)
-        storage.set_graph_layout_cache(sig, positions, datetime.now(UTC).isoformat())
+        logger.info("phase_start: precompute_graph_layout mode=%s nodes=%d", mode, len(nodes))
+        if galaxy_on:
+            positions = galaxy_layout(
+                nodes,
+                edges,
+                clusters,
+                arms=int(getattr(settings, "VIZ_GALAXY_ARMS", 4)),
+                spiral_pitch=float(getattr(settings, "VIZ_GALAXY_SPIRAL_PITCH", 0.30)),
+                core_density=float(getattr(settings, "VIZ_GALAXY_CORE_DENSITY", 1.0)),
+            )
+        else:
+            iterations = getattr(settings, "VIZ_LAYOUT_ITERATIONS", 50)
+            positions = compute_graph_layout(nodes, edges, dim=3, iterations=iterations)
+        storage.set_graph_layout_cache(sig, positions, datetime.now(UTC).isoformat(), mode)
         _dur_ms = int((_time.monotonic() - _t) * 1000)
-        logger.info("phase_end: precompute_graph_layout duration_ms=%d", _dur_ms)
+        logger.info("phase_end: precompute_graph_layout mode=%s duration_ms=%d", mode, _dur_ms)
     except Exception as _exc:
         from yadgar._shared.observability.exception_telemetry import (
             record_exception,  # noqa: PLC0415

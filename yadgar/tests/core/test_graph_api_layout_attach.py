@@ -65,6 +65,24 @@ def test_attach_uncached_node_gets_no_position():
     assert "x" not in by_id["b"]
 
 
+def test_attach_surfaces_galaxy_layout_mode():
+    """finish-viz: a galaxy cache stamps data["layout_mode"]="galaxy" so the client
+    can FREEZE physics on the seeded shape."""
+    data = _payload(["a"])
+    cache = {"signature": "s", "positions": {"a": [1.0, 2.0, 3.0]}, "layout_mode": "galaxy"}
+    out = attach_cached_positions(data, cache)
+    assert out["layout_mode"] == "galaxy"
+
+
+def test_attach_layout_mode_defaults_spring():
+    """A legacy cache row without layout_mode → payload defaults to "spring"
+    (client keeps the relax warm-start behaviour)."""
+    data = _payload(["a"])
+    cache = {"signature": "s", "positions": {"a": [1.0, 2.0, 3.0]}}  # no layout_mode
+    out = attach_cached_positions(data, cache)
+    assert out["layout_mode"] == "spring"
+
+
 # ── HTTP endpoint ─────────────────────────────────────────────────────────────
 
 _TEST_TOKEN = "layout-attach-test-token"

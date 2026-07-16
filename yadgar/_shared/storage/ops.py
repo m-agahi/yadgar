@@ -104,14 +104,18 @@ class _OpsMixin:
 
     @observe(tier="stage", metric="storage.ops.get_graph_layout_cache")
     def get_graph_layout_cache(self) -> dict | None:
-        """Return the cached layout {signature, positions, computed_at}, or None.
+        """Return the cached layout {signature, positions, computed_at, layout_mode}, or None.
 
-        ``positions`` is a ``{node_id: [x, y, z]}`` map. Returns None when no
-        layout has been computed yet.
+        ``positions`` is a ``{node_id: [x, y, z]}`` map. ``layout_mode`` is
+        "galaxy" (finish-viz) or "spring" (the networkx precompute); it defaults
+        to "spring" for legacy rows written before the field existed. Returns None
+        when no layout has been computed yet.
         """
         from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
 
-        rows = self._q("SELECT signature, positions, computed_at FROM graph_layout_cache:current")
+        rows = self._q(
+            "SELECT signature, positions, computed_at, layout_mode FROM graph_layout_cache:current"
+        )
         if not rows or not rows[0].get("signature"):
             record_cache_miss("graph_layout")
             return None
@@ -121,19 +125,32 @@ class _OpsMixin:
             "signature": str(row["signature"]),
             "positions": dict(row.get("positions") or {}),
             "computed_at": str(row.get("computed_at") or ""),
+            # Legacy rows (pre-finish-viz) have no layout_mode → default "spring".
+            "layout_mode": str(row.get("layout_mode") or "spring"),
         }
 
     @observe(tier="stage", metric="storage.ops.set_graph_layout_cache")
-    def set_graph_layout_cache(self, signature: str, positions: dict, computed_at: str) -> None:
+    def set_graph_layout_cache(
+        self, signature: str, positions: dict, computed_at: str, layout_mode: str = "spring"
+    ) -> None:
         """Upsert the singleton precomputed-layout row in place.
 
         ``positions`` is bound as a parameter ($pos) so SurrealDB serialises the
-        nested object safely (no raw interpolation).
+        nested object safely (no raw interpolation). ``layout_mode`` records which
+        generator produced the positions ("galaxy" or "spring") so the client can
+        FREEZE physics on a galaxy payload (the seeded shape must hold, not relax).
         """
         self._q(
             "UPSERT graph_layout_cache:current SET "
-            "signature = $sig, positions = $pos, computed_at = $ts, updated_at = $now",
-            {"sig": signature, "pos": positions, "ts": computed_at, "now": self._now_iso()},
+            "signature = $sig, positions = $pos, computed_at = $ts, "
+            "layout_mode = $mode, updated_at = $now",
+            {
+                "sig": signature,
+                "pos": positions,
+                "ts": computed_at,
+                "mode": layout_mode,
+                "now": self._now_iso(),
+            },
         )
 
     # ------------------------------------------------------------------ Stats

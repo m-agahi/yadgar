@@ -22,7 +22,9 @@ from yadgar.core.viz.viz_meta import EDGE_TYPES, build_legend
 # ---------------------------------------------------------------------------
 
 
-def _mem_row(mid, *, heat=1.0, wiki_refs=None, cluster_id=None, slot_index=None):
+def _mem_row(
+    mid, *, heat=1.0, wiki_refs=None, cluster_id=None, slot_index=None, last_accessed=None
+):
     return {
         "id": mid,
         "content": f"mem {mid}",
@@ -30,6 +32,7 @@ def _mem_row(mid, *, heat=1.0, wiki_refs=None, cluster_id=None, slot_index=None)
         "tags": [],
         "directory_context": "/x",
         "created_at": "2024-01-01",
+        "last_accessed": last_accessed,
         "slot_index": slot_index,
         "embedding": None,
         "cluster_id": cluster_id,
@@ -51,10 +54,20 @@ def _wiki_row(wid, slug):
     }
 
 
-def _make_storage(*, memory_rows=None, wiki_rows=None, clusters=None, cluster_members=None):
+def _make_storage(
+    *,
+    memory_rows=None,
+    wiki_rows=None,
+    clusters=None,
+    cluster_members=None,
+    transitions=None,
+    astrocyte_processes=None,
+):
     """Storage mock that routes the two _q SELECTs (memory then wiki) correctly.
 
     cluster_members: dict[cluster_id -> list[int member mem ids]].
+    transitions: list of memory_transition rows (from_memory_id/to_memory_id/count).
+    astrocyte_processes: list of astrocyte_process rows (id/domain/memory_ids).
     """
     s = MagicMock()
     mem = memory_rows or []
@@ -68,7 +81,7 @@ def _make_storage(*, memory_rows=None, wiki_rows=None, clusters=None, cluster_me
         return []
 
     s._q.side_effect = _q_side_effect
-    s.get_all_transitions.return_value = []
+    s.get_all_transitions.return_value = transitions or []
     s.get_all_wiki_crossrefs.return_value = []
     s.get_all_causal_edges.return_value = []
     s.get_relationships_by_types.return_value = []
@@ -80,6 +93,7 @@ def _make_storage(*, memory_rows=None, wiki_rows=None, clusters=None, cluster_me
     # single get_all_cluster_members() round-trip (was per-cluster get_cluster_members).
     s.get_cluster_members.side_effect = lambda cid: members.get(cid, [])
     s.get_all_cluster_members.return_value = members
+    s.get_astrocyte_processes.return_value = astrocyte_processes or []
     return s
 
 
@@ -251,3 +265,133 @@ class TestEdgeCaps:
         assert s.get_all_causal_edges.call_args.kwargs["limit"] == 5
         assert s.get_relationships_by_types.call_args.kwargs["limit"] == 6
         assert s.get_all_memory_similarity_links.call_args.kwargs["limit"] == 7
+
+
+# ---------------------------------------------------------------------------
+# viz-rest #55 — last_accessed per memory node payload
+# ---------------------------------------------------------------------------
+
+
+class TestLastAccessedNodePayload:
+    def test_memory_node_has_last_accessed_field(self):
+        """Every memory node dict carries a last_accessed key (#55)."""
+        mem = [_mem_row(1, last_accessed="2024-06-01T12:00:00Z")]
+        s = _make_storage(memory_rows=mem)
+        result = GraphAPI(s).get_full_graph()
+        nodes = [n for n in result["nodes"] if n["id"] == "mem:1"]
+        assert nodes, "memory node must be present"
+        assert nodes[0]["last_accessed"] == "2024-06-01T12:00:00Z"
+
+    def test_last_accessed_empty_string_when_absent(self):
+        """A memory with no last_accessed yields '' (never KeyError / None leak)."""
+        mem = [_mem_row(1, last_accessed=None)]
+        s = _make_storage(memory_rows=mem)
+        result = GraphAPI(s).get_full_graph()
+        nodes = [n for n in result["nodes"] if n["id"] == "mem:1"]
+        assert nodes[0]["last_accessed"] == ""
+
+    def test_select_requests_last_accessed_column(self):
+        """The memory SELECT includes last_accessed (else the payload can't carry it)."""
+        s = _make_storage(memory_rows=[_mem_row(1)])
+        GraphAPI(s).get_full_graph()
+        sql = s._q.call_args_list[0][0][0]
+        assert "last_accessed" in sql
+
+
+# ---------------------------------------------------------------------------
+# viz-rest #89 — weak-edge (count<2 transition) render toggle
+# ---------------------------------------------------------------------------
+
+
+def _txn(a, b, count):
+    return {"from_memory_id": a, "to_memory_id": b, "count": count}
+
+
+class TestWeakEdgeToggle:
+    def test_weak_edges_hidden_by_default(self):
+        """count<2 transitions are excluded by default; counted in weak_edges_hidden."""
+        mem = [_mem_row(1), _mem_row(2)]
+        txns = [_txn(1, 2, 1)]  # weak (count=1)
+        s = _make_storage(memory_rows=mem, transitions=txns)
+        result = GraphAPI(s).get_full_graph()
+        te = [e for e in result["edges"] if e.get("type") == "transition"]
+        assert te == [], "weak edge must be hidden by default"
+        assert result["weak_edges_hidden"] == 1
+
+    def test_include_weak_renders_weak_edges(self):
+        """include_weak=True renders the count<2 edge; weak_edges_hidden still counts it."""
+        from yadgar.backend.graph.graph_api import EdgeCaps
+
+        mem = [_mem_row(1), _mem_row(2)]
+        txns = [_txn(1, 2, 1)]
+        s = _make_storage(memory_rows=mem, transitions=txns)
+        result = GraphAPI(s).get_full_graph(edge_caps=EdgeCaps(include_weak=True))
+        te = [e for e in result["edges"] if e.get("type") == "transition"]
+        assert len(te) == 1, "weak edge must render when include_weak is on"
+        assert te[0]["source"] == "mem:1"
+        assert te[0]["target"] == "mem:2"
+        assert te[0]["count"] == 1
+        # F4 affordance count is independent of the render toggle
+        assert result["weak_edges_hidden"] == 1
+
+    def test_strong_edges_render_regardless(self):
+        """count>=2 transitions always render (both default and include_weak)."""
+        mem = [_mem_row(1), _mem_row(2)]
+        txns = [_txn(1, 2, 5)]
+        s = _make_storage(memory_rows=mem, transitions=txns)
+        default = GraphAPI(s).get_full_graph()
+        assert len([e for e in default["edges"] if e.get("type") == "transition"]) == 1
+        assert default["weak_edges_hidden"] == 0
+
+
+# ---------------------------------------------------------------------------
+# viz-rest #14 — astrocyte_domain as a cluster source
+# ---------------------------------------------------------------------------
+
+
+class TestAstrocyteClusterSource:
+    def test_astrocyte_process_surfaces_as_cluster(self):
+        """A populated astrocyte process appears as source=astrocyte_domain."""
+        mem = [_mem_row(1), _mem_row(2)]
+        procs = [{"id": 3, "domain": "errors", "memory_ids": [1, 2]}]
+        s = _make_storage(memory_rows=mem, astrocyte_processes=procs)
+        result = GraphAPI(s).get_full_graph()
+        astro = [c for c in result["clusters"] if c["source"] == "astrocyte_domain"]
+        assert astro, "expected an astrocyte_domain cluster"
+        assert astro[0]["label"] == "errors"
+        assert astro[0]["id"] == "astro:3"
+        assert set(astro[0]["member_node_ids"]) == {"mem:1", "mem:2"}
+        assert astro[0]["member_count"] == 2
+
+    def test_astrocyte_member_intersected_with_rendered_nodes(self):
+        """member_count is the pre-intersection DB count; member_node_ids the intersection."""
+        mem = [_mem_row(1)]  # only mem:1 rendered
+        procs = [{"id": 3, "domain": "decisions", "memory_ids": [1, 900, 901]}]
+        s = _make_storage(memory_rows=mem, astrocyte_processes=procs)
+        result = GraphAPI(s).get_full_graph()
+        astro = [c for c in result["clusters"] if c["source"] == "astrocyte_domain"]
+        assert astro[0]["member_node_ids"] == ["mem:1"]
+        assert astro[0]["member_count"] == 3
+
+    def test_no_astrocyte_processes_no_astrocyte_clusters(self):
+        """Empty astrocyte data → no astrocyte_domain clusters (memory_cluster unaffected)."""
+        mem = [_mem_row(1)]
+        s = _make_storage(memory_rows=mem, astrocyte_processes=[])
+        result = GraphAPI(s).get_full_graph()
+        assert [c for c in result["clusters"] if c["source"] == "astrocyte_domain"] == []
+
+    def test_astrocyte_coexists_with_memory_cluster(self):
+        """Both cluster sources appear together."""
+        mem = [_mem_row(1)]
+        clusters = [{"id": 7, "name": "mc", "level": 0}]
+        members = {7: [1]}
+        procs = [{"id": 3, "domain": "code-patterns", "memory_ids": [1]}]
+        s = _make_storage(
+            memory_rows=mem,
+            clusters=clusters,
+            cluster_members=members,
+            astrocyte_processes=procs,
+        )
+        result = GraphAPI(s).get_full_graph()
+        sources = {c["source"] for c in result["clusters"]}
+        assert sources == {"memory_cluster", "astrocyte_domain"}

@@ -18,6 +18,7 @@ import {
   groupKnobsAlphabetical,
   deriveBadgeState,
   computePending,
+  formatConfigStatus,
   shouldInitTab,
   overlaysToMenuDescriptors,
   controlKind,
@@ -391,5 +392,25 @@ describe('overlaysToMenuDescriptors (Bug C)', () => {
       querySelector: () => null,
     };
     expect(overlaysToMenuDescriptors([el])[0].label).toBe('edge-legend');
+  });
+});
+
+// ── viz-rest #29: formatConfigStatus ───────────────────────────────────────────
+
+describe('formatConfigStatus', () => {
+  it('shows version + no-pending when clean', () => {
+    expect(formatConfigStatus('5.146.0', 0, false)).toBe('v5.146.0 · no pending changes');
+  });
+  it('shows pending count', () => {
+    expect(formatConfigStatus('5.146.0', 2, false)).toBe('v5.146.0 · 2 pending');
+  });
+  it('appends restart indicator', () => {
+    expect(formatConfigStatus('5.146.0', 1, true)).toBe('v5.146.0 · 1 pending · ↻ restart');
+  });
+  it('strips a leading v from the version', () => {
+    expect(formatConfigStatus('v5.146.0', 0, false)).toBe('v5.146.0 · no pending changes');
+  });
+  it('omits version when unknown', () => {
+    expect(formatConfigStatus('', 3, false)).toBe('3 pending');
   });
 });
