@@ -721,277 +721,308 @@ body.dh-open #dh-toggle { right: 480px; }
   overflow: hidden;
 }
 
-/* ── Control tab — v5.50.2 ─────────────────────────────────── */
-/* `display` must be scoped to `.active` — a bare `#tab-control{display:block}`
-   outranks `.tab-pane{display:none}` and forces the pane always-visible. */
+/* ══ Control tab — NEURAL CONSOLE restyle (Surface 2, viz-mockup-fidelity) ══════
+   Visual source of truth: docs/plans/viz-config-control-panel.mockup.html.
+   A deliberately DIFFERENT design system from the phosphor-green sibling tabs:
+   amber→coral heat / teal synapse / red alarm, Fraunces display + IBM Plex Mono.
+   EVERY selector is scoped under #tab-control so nothing leaks to the siblings;
+   the neural-console tokens live on #tab-control (not :root) for the same reason.
+   Fonts are vendored WOFF2 (latin subset) under ./lib/ — no CDN, no SRI. */
+@font-face {
+  font-family: 'Fraunces'; font-style: normal; font-weight: 400 900; font-display: swap;
+  src: url('./lib/fraunces-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('./lib/ibm-plex-mono-latin-400.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('./lib/ibm-plex-mono-latin-500.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('./lib/ibm-plex-mono-latin-600.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 #tab-control {
+  /* neural-console tokens (scoped — never leak to phosphor-green siblings) */
+  --nc-ink-0:#0a0907; --nc-ink-1:#13110d; --nc-ink-2:#1c1913; --nc-ink-3:#272219;
+  --nc-line:#332c20; --nc-line-soft:#241f17;
+  --nc-heat-1:#ffb347; --nc-heat-2:#ff7a3c; --nc-heat-3:#ff5e57;
+  --nc-heat-glow:rgba(255,122,60,.22);
+  --nc-syn:#3fd0c9; --nc-syn-dim:#1f5e5b; --nc-syn-glow:rgba(63,208,201,.18);
+  --nc-red:#ff4d4d; --nc-red-deep:#b81e1e; --nc-red-glow:rgba(255,77,77,.20);
+  --nc-tx-0:#f4ecdd; --nc-tx-1:#cdc3b2; --nc-tx-2:#8c8273; --nc-tx-3:#5c554a;
+  --nc-mono:'IBM Plex Mono',ui-monospace,monospace;
+  --nc-disp:'Fraunces',Georgia,serif;
+
   padding: 16px 20px;
   overflow-y: auto;
-  font-size: 12px;
+  font-size: 13px;
+  font-family: var(--nc-mono);
+  color: var(--nc-tx-1);
+  background: var(--nc-ink-0);
+  position: relative;
 }
 #tab-control.active { display: block; }
-
-.ctrl-banner {
-  padding: 8px 12px;
-  border-radius: 4px;
-  margin-bottom: 12px;
-  font-size: 12px;
+/* grid + grain atmosphere — scoped to the tab (mockup body::before/::after) */
+#tab-control::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(var(--nc-line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--nc-line-soft) 1px, transparent 1px);
+  background-size: 46px 46px; opacity: .30;
+  -webkit-mask-image: radial-gradient(ellipse 120% 90% at 30% 0%, #000 30%, transparent 80%);
+  mask-image: radial-gradient(ellipse 120% 90% at 30% 0%, #000 30%, transparent 80%);
 }
-.ctrl-banner--warn  { background: #2d2a1a; color: #d29922; border: 1px solid #d29922; }
-.ctrl-banner--error { background: #2a1a1a; color: #f85149; border: 1px solid #f85149; }
-.ctrl-banner--info  { background: #1a2a2a; color: #58a6ff; border: 1px solid #58a6ff; }
+#tab-control > * { position: relative; z-index: 1; }
 
-.ctrl-section {
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 4px;
-  padding: 12px 14px;
+#tab-control .ctrl-banner {
+  padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 12px;
+}
+#tab-control .ctrl-banner--warn  { background: #241d10; color: var(--nc-heat-1); border: 1px solid var(--nc-heat-2); }
+#tab-control .ctrl-banner--error { background: #1f100e; color: var(--nc-red); border: 1px solid var(--nc-red-deep); }
+#tab-control .ctrl-banner--info  { background: #0e1a1a; color: var(--nc-syn); border: 1px solid var(--nc-syn-dim); }
+
+#tab-control .ctrl-section {
+  background: linear-gradient(180deg, var(--nc-ink-1), var(--nc-ink-0));
+  border: 1px solid var(--nc-line);
+  border-radius: 11px;
+  padding: 14px 16px;
   margin-bottom: 12px;
 }
 
-.ctrl-section-title {
-  color: #58a6ff;
+#tab-control .ctrl-section-title {
+  color: var(--nc-tx-3);
   font-size: 10px;
-  letter-spacing: 1.5px;
+  letter-spacing: .16em;
   text-transform: uppercase;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
-.ctrl-buttons {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+#tab-control.active .ctrl-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 
-.ctrl-btn {
-  background: #21262d;
-  border: 1px solid #30363d;
-  color: #c9d1d9;
-  padding: 5px 10px;
-  border-radius: 3px;
+#tab-control .ctrl-btn {
+  background: var(--nc-ink-2);
+  border: 1px solid var(--nc-line);
+  color: var(--nc-tx-1);
+  padding: 7px 13px;
+  border-radius: 7px;
   cursor: pointer;
-  font-size: 11px;
-  font-family: inherit;
-  transition: background 150ms ease-out;
+  font-size: 11.5px;
+  font-family: var(--nc-mono);
+  letter-spacing: .03em;
+  transition: .18s;
 }
-.ctrl-btn:hover:not(:disabled) { background: #2d333b; border-color: #58a6ff; }
-.ctrl-btn:disabled, .ctrl-btn--disabled { opacity: 0.45; cursor: not-allowed; }
-.ctrl-btn--save   { color: #3fb950; border-color: #3fb950; }
-.ctrl-btn--cancel { color: #f85149; border-color: #f85149; }
-.ctrl-btn--restart { color: #f85149; }
+#tab-control .ctrl-btn:hover:not(:disabled) { background: var(--nc-ink-3); border-color: var(--nc-heat-2); color: var(--nc-heat-1); }
+#tab-control .ctrl-btn:disabled, #tab-control .ctrl-btn--disabled { opacity: 0.4; cursor: not-allowed; }
+#tab-control .ctrl-btn--save   { color: var(--nc-ink-0); background: var(--nc-syn); border-color: var(--nc-syn); box-shadow: 0 0 16px var(--nc-syn-glow); }
+#tab-control .ctrl-btn--save:hover:not(:disabled) { filter: brightness(1.12); background: var(--nc-syn); color: var(--nc-ink-0); }
+#tab-control .ctrl-btn--restart { color: var(--nc-heat-1); border-color: var(--nc-heat-2); background: var(--nc-heat-glow); }
 
-.ctrl-config-controls {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
-}
+/* legacy table/edit-input classes (kept for back-compat — unused by v5.89+ DOM) */
+#tab-control .ctrl-knob-name { color: var(--nc-tx-0); font-family: var(--nc-mono); }
+#tab-control .ctrl-knob-current { color: var(--nc-heat-1); }
+#tab-control .ctrl-knob-default { color: var(--nc-tx-3); }
+#tab-control .ctrl-pill { font-size: 9px; padding: 2px 5px; border-radius: 10px; letter-spacing: .5px; }
+#tab-control .ctrl-pill--hot     { background: #1a2f1e; color: var(--nc-syn); }
+#tab-control .ctrl-pill--restart { background: #241d10; color: var(--nc-heat-1); }
+#tab-control .ctrl-edit-hint { font-size: 10px; color: var(--nc-tx-2); margin-left: 4px; }
+#tab-control .ctrl-edit-hint--error { color: var(--nc-red); }
 
-.ctrl-filter, .ctrl-group {
-  background: #010409;
-  border: 1px solid #30363d;
-  color: #c9d1d9;
-  padding: 4px 8px;
-  border-radius: 3px;
-  font-size: 11px;
-  font-family: inherit;
+#tab-control.active .ctrl-restart-item {
+  margin-bottom: 10px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
 }
-.ctrl-filter { flex: 1; }
-
-.ctrl-config-table-wrap { overflow-x: auto; }
-
-.ctrl-config-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
+#tab-control.active .ctrl-restart-label { color: var(--nc-tx-2); font-size: 11px; display: flex; align-items: center; gap: 6px; }
+#tab-control .ctrl-restart-confirm-input {
+  background: var(--nc-ink-0); border: 1px solid var(--nc-line); color: var(--nc-tx-0);
+  padding: 6px 10px; border-radius: 7px; font-size: 11.5px; font-family: var(--nc-mono); width: 170px; outline: none;
 }
-.ctrl-config-table th {
-  color: #8b949e;
-  text-align: left;
-  padding: 4px 8px;
-  border-bottom: 1px solid #30363d;
-  font-weight: normal;
-  letter-spacing: 0.5px;
-  font-size: 10px;
-}
-.ctrl-config-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid #21262d;
-  vertical-align: middle;
-}
-.ctrl-knob-name { color: #c9d1d9; font-family: monospace; }
-.ctrl-knob-type { color: #8b949e; }
-.ctrl-knob-current { color: #58a6ff; }
-.ctrl-knob-default { color: #484f58; }
-
-.ctrl-pill {
-  font-size: 9px;
-  padding: 2px 5px;
-  border-radius: 10px;
-  letter-spacing: 0.5px;
-}
-.ctrl-pill--hot     { background: #1a3a2a; color: #3fb950; }
-.ctrl-pill--restart { background: #2a1a2a; color: #a371f7; }
-
-.ctrl-edit-input {
-  background: #010409;
-  border: 1px solid #58a6ff;
-  color: #c9d1d9;
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 11px;
-  font-family: monospace;
-  width: 120px;
-}
-.ctrl-edit-hint { font-size: 10px; color: #8b949e; margin-left: 4px; }
-.ctrl-edit-hint--error { color: #f85149; }
-
-.ctrl-restart-item {
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.ctrl-restart-label { color: #8b949e; font-size: 11px; display: flex; align-items: center; gap: 6px; }
-.ctrl-restart-confirm-input {
-  background: #010409;
-  border: 1px solid #30363d;
-  color: #c9d1d9;
-  padding: 3px 8px;
-  border-radius: 3px;
-  font-size: 11px;
-  font-family: monospace;
-  width: 160px;
-}
-.ctrl-restart-confirm-input:focus { border-color: #f85149; outline: none; }
+#tab-control .ctrl-restart-confirm-input:focus { border-color: var(--nc-red-deep); box-shadow: 0 0 0 3px var(--nc-red-glow); }
 
 /* ── v5.87 B2a Config-editor help icon ──────────────────────────────────────── */
-.ctrl-knob-help-cell { text-align: center; width: 24px; }
-.ctrl-knob-help {
-  color: #484f58;
-  font-size: 12px;
-  text-decoration: none;
-  cursor: pointer;
-  padding: 0 2px;
-  transition: color 0.15s;
+#tab-control .ctrl-knob-help-cell { text-align: center; width: 24px; }
+#tab-control .ctrl-knob-help {
+  color: var(--nc-tx-3); font-size: 12px; text-decoration: none; cursor: pointer; padding: 0 2px; transition: color .15s;
 }
-.ctrl-knob-help:hover { color: #58a6ff; }
+#tab-control .ctrl-knob-help:hover { color: var(--nc-heat-1); }
 
-/* ── v5.89 chrome://settings-style config editor ─────────────────────────────── */
-.cfg-shell { display: flex; min-height: 420px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
-.cfg-rail {
-  width: 200px; flex-shrink: 0; border-right: 1px solid #30363d; background: #0d1117;
-  display: flex; flex-direction: column; overflow-y: auto;
+/* ══ 3-column config shell: rail | content | commit tray ═══════════════════════ */
+#tab-control.active .cfg-shell {
+  display: grid; grid-template-columns: 214px 1fr 300px; min-height: 460px;
+  border: 1px solid var(--nc-line); border-radius: 11px; overflow: hidden;
+  background: var(--nc-ink-0);
 }
-.cfg-rail-search-wrap { padding: 10px; border-bottom: 1px solid #21262d; }
-.cfg-search {
-  width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 6px;
-  color: #c9d1d9; font: inherit; font-size: 12px; padding: 6px 10px; outline: none;
+#tab-control.active .cfg-rail {
+  border-right: 1px solid var(--nc-line); background: rgba(10,9,7,.5);
+  display: flex; flex-direction: column; overflow-y: auto; min-width: 0;
 }
-.cfg-search:focus { border-color: #58a6ff; }
-.cfg-rail-section-label {
-  padding: 12px 12px 4px; font-size: 10px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: .06em; color: #8b949e;
+#tab-control .cfg-rail-search-wrap { padding: 12px 11px; }
+#tab-control .cfg-search {
+  width: 100%; background: var(--nc-ink-2); border: 1px solid var(--nc-line); border-radius: 7px;
+  color: var(--nc-tx-0); font-family: var(--nc-mono); font-size: 12px; padding: 8px 11px; outline: none;
 }
-.rail-item {
-  display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer;
-  color: #8b949e; font-size: 12px; border-left: 3px solid transparent; user-select: none;
+#tab-control .cfg-search::placeholder { color: var(--nc-tx-3); }
+#tab-control .cfg-search:focus { border-color: var(--nc-syn-dim); box-shadow: 0 0 0 3px var(--nc-syn-glow); }
+#tab-control .cfg-rail-section-label {
+  padding: 6px 14px 10px; font-size: 9.5px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: .18em; color: var(--nc-tx-3);
 }
-.rail-item:hover { background: #161b22; color: #c9d1d9; }
-.rail-item.active { background: rgba(88,166,255,.10); color: #58a6ff; border-left-color: #58a6ff; font-weight: 500; }
-.rail-count {
-  margin-left: auto; font-size: 10px; background: #1c2128; border: 1px solid #21262d;
-  border-radius: 10px; padding: 1px 6px; color: #8b949e; font-family: monospace;
+#tab-control.active .rail-item {
+  display: flex; align-items: center; gap: 9px; padding: 8px 12px; cursor: pointer;
+  color: var(--nc-tx-2); font-size: 12px; margin: 0 6px 1px; border-radius: 7px; user-select: none; transition: .18s;
 }
-.rail-item.active .rail-count { background: rgba(88,166,255,.10); border-color: #58a6ff; color: #58a6ff; }
-
-.cfg-content-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.cfg-content { flex: 1; overflow-y: auto; padding: 0 20px 16px; max-height: 520px; }
-.cfg-search-header { padding: 14px 0 10px; font-size: 12px; color: #8b949e; border-bottom: 1px solid #21262d; }
-.cfg-search-empty { padding: 40px 0; text-align: center; color: #8b949e; }
-.cfg-cat-heading { padding: 16px 0 4px; font-size: 16px; font-weight: 600; color: #c9d1d9; }
-.cfg-section-group { margin-top: 12px; }
-.cfg-section-label {
-  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em;
-  color: #8b949e; padding-bottom: 8px; border-bottom: 1px solid #21262d;
+#tab-control .rail-item:hover { background: var(--nc-ink-1); color: var(--nc-tx-0); }
+#tab-control .rail-item.active { color: var(--nc-heat-1); background: linear-gradient(90deg, var(--nc-heat-glow), transparent); }
+#tab-control .rail-count {
+  margin-left: auto; font-size: 10.5px; color: var(--nc-tx-3); font-family: var(--nc-mono);
+}
+#tab-control .rail-item.active .rail-count { color: var(--nc-heat-2); }
+/* per-category pending badge (Surface 2 — amber→coral heat pip) */
+#tab-control .rail-pending {
+  font-size: 9.5px; min-width: 16px; text-align: center; padding: 1px 5px; border-radius: 999px;
+  background: var(--nc-heat-3); color: #1a0c06; font-weight: 600; margin-left: 6px;
 }
 
-.setting-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid #21262d; position: relative; }
-.setting-row:last-child { border-bottom: none; }
-.setting-row.env-locked .row-left { opacity: .55; }
-.setting-row.cfg-changed::before {
-  content: ''; position: absolute; left: -10px; top: 50%; transform: translateY(-50%);
-  width: 3px; height: 22px; border-radius: 2px; background: #58a6ff;
+#tab-control.active .cfg-content-wrap { display: flex; flex-direction: column; min-width: 0; }
+#tab-control .cfg-content { flex: 1; overflow-y: auto; padding: 4px 24px 20px; max-height: 560px; }
+#tab-control .cfg-search-header { padding: 16px 0 10px; font-size: 12px; color: var(--nc-tx-2); border-bottom: 1px solid var(--nc-line); }
+#tab-control .cfg-search-empty { padding: 44px 0; text-align: center; color: var(--nc-tx-3); font-family: var(--nc-disp); font-style: italic; }
+#tab-control .cfg-cat-heading {
+  padding: 20px 0 6px; font-family: var(--nc-disp); font-weight: 600; font-size: 23px;
+  color: var(--nc-tx-0); letter-spacing: -.01em;
 }
-/* viz-rest #26: destructive-knob styling — the JS already adds these classes
-   (control.js), but the CSS rules were missing so the danger signal never showed.
-   Red border on the row, red ⚠ marker, red pending-bar label when destructive
-   changes are staged. */
-.setting-row.destructive {
-  border-left: 2px solid rgba(248,81,73,.55);
-  padding-left: 8px; margin-left: -10px;
-  background: linear-gradient(90deg, rgba(248,81,73,.06), transparent 60%);
+#tab-control .cfg-section-group { margin-top: 14px; }
+#tab-control .cfg-section-label {
+  font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .14em;
+  color: var(--nc-tx-3); padding-bottom: 9px; border-bottom: 1px solid var(--nc-line);
 }
-.destructive-marker { color: #f85149; font-weight: 700; cursor: help; }
-.cfg-pending-label.cfg-pending-destructive { color: #f85149; }
-/* viz-rest #29: config header status line (version · pending · restart). */
-.ctrl-cfg-status { font-size: 10px; font-weight: 400; color: #8b949e; }
-.row-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.row-label { font-size: 12px; font-weight: 500; color: #c9d1d9; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.row-knob { font-family: monospace; font-size: 10px; color: #8b949e; opacity: .8; }
-.row-right { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
 
-.badge {
-  display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .05em; padding: 2px 6px; border-radius: 3px; border: 1px solid;
+#tab-control.active .setting-row {
+  display: flex; align-items: center; gap: 16px; padding: 14px 0;
+  border-bottom: 1px solid var(--nc-line-soft); position: relative;
 }
-.badge-default { color: #8b949e; border-color: #30363d; background: #1c2128; }
-.badge-yaml { color: #3fb950; border-color: rgba(63,185,80,.35); background: rgba(63,185,80,.12); }
-.badge-env { color: #f85149; border-color: rgba(248,81,73,.35); background: rgba(248,81,73,.12); cursor: help; }
-.badge-env::before { content: '🔒'; font-size: 8px; }
-.restart-pill {
-  display: inline-flex; align-items: center; font-size: 9px; font-weight: 500; color: #d29922;
-  background: rgba(210,153,34,.12); border: 1px solid rgba(210,153,34,.35); border-radius: 3px; padding: 2px 6px; white-space: nowrap;
+#tab-control .setting-row:last-child { border-bottom: none; }
+#tab-control .setting-row.env-locked .row-left { opacity: .55; }
+#tab-control .setting-row.cfg-changed::before {
+  content: ''; position: absolute; left: -12px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 24px; border-radius: 2px; background: var(--nc-heat-1); box-shadow: 0 0 10px var(--nc-heat-1);
 }
-.cat-chip {
-  display: inline-flex; align-items: center; font-size: 9px; font-weight: 600; text-transform: uppercase;
-  color: #8b949e; background: #1c2128; border: 1px solid #30363d; border-radius: 3px; padding: 1px 5px;
+/* destructive knob — red alarm treatment (mockup .card.destructive) */
+#tab-control .setting-row.destructive {
+  border-left: 2px solid var(--nc-red-deep); padding-left: 10px; margin-left: -12px;
+  background: linear-gradient(90deg, var(--nc-red-glow), transparent 60%);
 }
-.cfg-reset-btn { font-size: 11px; color: #8b949e; background: none; border: none; cursor: pointer; padding: 2px 4px; border-radius: 3px; white-space: nowrap; }
-.cfg-reset-btn:hover { color: #c9d1d9; background: #1c2128; }
-#tab-control mark { background: rgba(88,166,255,.22); color: #58a6ff; border-radius: 2px; padding: 0 1px; }
+#tab-control .destructive-marker { color: var(--nc-red); font-weight: 700; cursor: help; }
+#tab-control .cfg-pending-label.cfg-pending-destructive { color: var(--nc-red); }
+/* config header status line (version · pending · destructive · restart) */
+#tab-control .ctrl-cfg-status { font-size: 10px; font-weight: 400; color: var(--nc-tx-2); }
+#tab-control .ctrl-knob-count { font-size: 10px; color: var(--nc-tx-3); }
+#tab-control.active .row-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+#tab-control.active .row-label { font-size: 12px; font-weight: 500; color: var(--nc-tx-1); display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+#tab-control .row-knob { font-family: var(--nc-mono); font-size: 10px; color: var(--nc-tx-3); letter-spacing: -.01em; }
+#tab-control.active .row-right { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
 
-/* Controls */
-.toggle-wrap { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
-.toggle-wrap input[type="checkbox"] { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; z-index: 1; margin: 0; }
-.toggle-wrap input[type="checkbox"]:disabled { cursor: not-allowed; }
-.toggle-track { position: absolute; inset: 0; border-radius: 11px; background: #30363d; transition: background .2s; pointer-events: none; }
-.toggle-wrap input:checked + .toggle-track { background: #58a6ff; }
-.toggle-thumb { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; pointer-events: none; }
-.toggle-wrap input:checked ~ .toggle-thumb { transform: translateX(18px); }
-.slider-wrap { display: flex; align-items: center; gap: 8px; min-width: 200px; }
-#tab-control input[type="range"] { flex: 1; height: 4px; accent-color: #58a6ff; cursor: pointer; }
+#tab-control.active .badge {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .08em; padding: 3px 8px; border-radius: 5px; border: 1px solid;
+}
+#tab-control .badge-default { color: var(--nc-tx-3); border: 1px dashed var(--nc-tx-3); background: transparent; }
+#tab-control .badge-yaml { color: var(--nc-syn); border-color: var(--nc-syn-dim); background: var(--nc-syn-glow); }
+#tab-control .badge-env { color: var(--nc-tx-2); border-color: var(--nc-tx-3); background: #100e0a; cursor: help; }
+#tab-control .badge-env::before { content: '🔒'; font-size: 8px; }
+#tab-control.active .restart-pill {
+  display: inline-flex; align-items: center; font-size: 9.5px; font-weight: 500; color: var(--nc-heat-1);
+  background: var(--nc-heat-glow); border: 1px solid var(--nc-heat-2); border-radius: 999px; padding: 3px 9px; white-space: nowrap;
+}
+#tab-control .danger-tag {
+  font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--nc-red);
+  border: 1px solid var(--nc-red-deep); padding: 3px 8px; border-radius: 5px; background: var(--nc-red-glow); white-space: nowrap;
+}
+#tab-control.active .cat-chip {
+  display: inline-flex; align-items: center; font-size: 9px; font-weight: 500; text-transform: uppercase;
+  color: var(--nc-tx-3); background: var(--nc-ink-2); border: 1px solid var(--nc-line); border-radius: 5px; padding: 1px 6px;
+}
+#tab-control .cfg-reset-btn { font-size: 11px; color: var(--nc-tx-2); background: none; border: none; cursor: pointer; padding: 2px 4px; border-radius: 5px; white-space: nowrap; }
+#tab-control .cfg-reset-btn:hover { color: var(--nc-tx-0); background: var(--nc-ink-2); }
+#tab-control mark { background: var(--nc-heat-glow); color: var(--nc-heat-1); border-radius: 2px; padding: 0 1px; }
+
+/* ── typed controls ────────────────────────────────────────────────────────── */
+#tab-control .toggle-wrap { position: relative; width: 52px; height: 28px; flex-shrink: 0; }
+#tab-control .toggle-wrap input[type="checkbox"] { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; z-index: 1; margin: 0; }
+#tab-control .toggle-wrap input[type="checkbox"]:disabled { cursor: not-allowed; }
+#tab-control .toggle-track { position: absolute; inset: 0; border-radius: 999px; background: var(--nc-ink-3); border: 1px solid var(--nc-line); transition: .22s; pointer-events: none; }
+#tab-control .toggle-wrap input:checked + .toggle-track { background: linear-gradient(90deg, var(--nc-heat-2), var(--nc-heat-1)); border-color: var(--nc-heat-1); box-shadow: 0 0 16px var(--nc-heat-glow); }
+#tab-control .toggle-thumb { position: absolute; top: 4px; left: 4px; width: 20px; height: 20px; border-radius: 50%; background: var(--nc-tx-2); transition: transform .22s cubic-bezier(.4,1.4,.5,1); pointer-events: none; }
+#tab-control .toggle-wrap input:checked ~ .toggle-thumb { transform: translateX(24px); background: #1a0c06; }
+#tab-control.active .slider-wrap { display: flex; align-items: center; gap: 12px; min-width: 220px; }
+#tab-control input[type="range"] { flex: 1; height: 5px; accent-color: var(--nc-heat-1); cursor: pointer; }
 #tab-control input[type="range"]:disabled { opacity: .4; cursor: not-allowed; }
-.num-input { width: 70px; background: #010409; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-family: monospace; font-size: 11px; padding: 3px 6px; text-align: right; outline: none; }
-.num-input:focus { border-color: #58a6ff; }
-.num-input:disabled { opacity: .4; cursor: not-allowed; }
-.sel-input { background: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font: inherit; font-size: 12px; padding: 5px 9px; outline: none; cursor: pointer; min-width: 120px; }
-.sel-input:focus { border-color: #58a6ff; }
-.sel-input:disabled { opacity: .4; cursor: not-allowed; }
-.text-input { background: #010409; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-family: monospace; font-size: 11px; padding: 5px 9px; outline: none; min-width: 200px; }
-.text-input:focus { border-color: #58a6ff; }
-.text-input:disabled { opacity: .4; cursor: not-allowed; }
+#tab-control .num-input { width: 78px; background: var(--nc-ink-0); border: 1px solid var(--nc-line); border-radius: 7px; color: var(--nc-heat-1); font-family: var(--nc-mono); font-weight: 600; font-size: 13px; padding: 5px 8px; text-align: right; outline: none; }
+#tab-control .num-input:focus { border-color: var(--nc-syn-dim); box-shadow: 0 0 0 3px var(--nc-syn-glow); }
+#tab-control .num-input:disabled { opacity: .4; cursor: not-allowed; color: var(--nc-tx-2); }
+#tab-control .sel-input { background: var(--nc-ink-0); border: 1px solid var(--nc-line); border-radius: 7px; color: var(--nc-tx-0); font-family: var(--nc-mono); font-size: 12.5px; padding: 7px 10px; outline: none; cursor: pointer; min-width: 140px; }
+#tab-control .sel-input:focus { border-color: var(--nc-syn-dim); box-shadow: 0 0 0 3px var(--nc-syn-glow); }
+#tab-control .sel-input:disabled { opacity: .4; cursor: not-allowed; }
+#tab-control .text-input { background: var(--nc-ink-0); border: 1px solid var(--nc-line); border-radius: 7px; color: var(--nc-tx-0); font-family: var(--nc-mono); font-size: 12.5px; padding: 7px 10px; outline: none; min-width: 200px; }
+#tab-control .text-input:focus { border-color: var(--nc-syn-dim); box-shadow: 0 0 0 3px var(--nc-syn-glow); }
+#tab-control .text-input:disabled { opacity: .4; cursor: not-allowed; }
 
-/* Pending bar */
-.cfg-pending-bar {
-  display: flex; align-items: center; gap: 10px; padding: 0 16px; height: 48px;
-  background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0;
+/* ── arm button + countdown (destructive-row UX, Surface 2) ────────────────────── */
+#tab-control .cfg-arm-btn {
+  font-family: var(--nc-mono); font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+  padding: 7px 13px; border-radius: 7px; cursor: pointer; border: 1px solid var(--nc-red-deep);
+  color: var(--nc-red); background: transparent; transition: .18s; white-space: nowrap;
 }
-.cfg-pending-label { font-weight: 500; color: #c9d1d9; font-size: 12px; }
-.cfg-pending-spacer { flex: 1; }
-.cfg-btn-restart { color: #d29922; border-color: rgba(210,153,34,.4); }
-.cfg-btn-apply { color: #0d1117; background: #3fb950; border-color: #3fb950; }
-[data-tooltip] { position: relative; }
+#tab-control .cfg-arm-btn:hover { background: var(--nc-red-glow); }
+#tab-control .cfg-arm-btn.armed {
+  background: var(--nc-red); color: #1a0606; border-color: var(--nc-red); font-weight: 600;
+  animation: nc-armthrob 1s ease-in-out infinite;
+}
+@keyframes nc-armthrob { 0%,100%{ box-shadow: 0 0 0 0 var(--nc-red-glow); } 50%{ box-shadow: 0 0 0 7px transparent; } }
+#tab-control .cfg-arm-countdown { font-size: 11px; color: var(--nc-tx-2); white-space: nowrap; }
+
+/* ══ commit tray (3rd column — mockup .tray) ═══════════════════════════════════ */
+#tab-control.active .cfg-tray {
+  border-left: 1px solid var(--nc-line); background: rgba(10,9,7,.6);
+  display: flex; flex-direction: column; min-width: 0;
+}
+#tab-control .cfg-tray-head { padding: 16px 18px; border-bottom: 1px solid var(--nc-line); }
+#tab-control .cfg-tray-title { font-family: var(--nc-disp); font-weight: 600; font-size: 18px; color: var(--nc-tx-0); margin: 0; }
+#tab-control .cfg-tray-sub { font-size: 11px; color: var(--nc-tx-2); margin-top: 3px; }
+#tab-control .cfg-tray-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+#tab-control .cfg-tray-empty { color: var(--nc-tx-3); font-size: 11.5px; text-align: center; padding: 26px 0; font-style: italic; font-family: var(--nc-disp); }
+#tab-control .cfg-chg { background: var(--nc-ink-2); border: 1px solid var(--nc-line); border-radius: 8px; padding: 11px 13px; margin-bottom: 10px; }
+#tab-control .cfg-chg.destructive { border-color: var(--nc-red-deep); background: linear-gradient(180deg,#1f100e,#150a08); }
+#tab-control .cfg-chg-name { font-size: 11.5px; color: var(--nc-tx-0); font-weight: 600; word-break: break-all; }
+#tab-control.active .cfg-chg-diff { display: flex; align-items: center; gap: 9px; margin-top: 7px; font-size: 12px; flex-wrap: wrap; }
+#tab-control .cfg-chg-old { color: var(--nc-tx-3); text-decoration: line-through; }
+#tab-control .cfg-chg-arr { color: var(--nc-syn); }
+#tab-control .cfg-chg-new { color: var(--nc-heat-1); font-weight: 600; }
+#tab-control .cfg-chg-new.destructive { color: var(--nc-red); }
+#tab-control.active .cfg-chg-meta { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+/* tray foot (was the bottom pending-bar; .cfg-pending-bar class preserved) */
+#tab-control.active .cfg-pending-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 14px 16px;
+  border-top: 1px solid var(--nc-line); flex-shrink: 0;
+}
+#tab-control .cfg-pending-bar.cfg-empty { opacity: .7; }
+#tab-control .cfg-pending-label { flex: 1 1 100%; font-weight: 500; color: var(--nc-tx-1); font-size: 12px; margin-bottom: 2px; }
+#tab-control .cfg-pending-spacer { flex: 1; }
+#tab-control .cfg-btn-restart { color: var(--nc-heat-1); border-color: var(--nc-heat-2); background: var(--nc-heat-glow); }
+#tab-control .cfg-btn-apply { flex: 1; color: var(--nc-ink-0); background: var(--nc-syn); border-color: var(--nc-syn); box-shadow: 0 0 16px var(--nc-syn-glow); }
+#tab-control .cfg-btn-apply:hover:not(:disabled) { filter: brightness(1.12); }
+#tab-control [data-tooltip] { position: relative; }
 
 /* ── v5.87 B2b Config Reference tab ──────────────────────────────────────────── */
 .cfgref-body { max-width: 760px; }
@@ -2049,6 +2080,67 @@ let _includeWeakEdges = false;
 let _layoutModePref = localStorage.getItem('yadgar-layout-mode') || 'galaxy';
 let _serverLayoutMode = 'spring';  // layout_mode of the most recent /api/graph payload
 
+// ── ADR-0135: galaxy = a SEPARATE raw-Three.js renderer (galaxy-view.js), not
+// the #209 physics-freeze inside 3d-force-graph. _renderMode is DERIVED from
+// _layoutModePref (single source of truth — never let a 2nd var drift):
+//   'galaxy' → window._galaxyView owns #canvas-wrap; global `graph` is null.
+//   'fg'     → the 2D/3D force-graph owns #canvas-wrap.
+// Invariant: exactly ONE of {FG renderer, galaxy renderer} owns #canvas-wrap at
+// any time. Tear the other down before mounting. In galaxy mode `graph===null`,
+// so every `graph.` site must be routed (→ _galaxyView) or skipped, never run.
+function _renderMode() { return _layoutModePref === 'galaxy' ? 'galaxy' : 'fg'; }
+function _isGalaxy() { return _layoutModePref === 'galaxy'; }
+
+// Bridge a galaxy pick (raw /api/graph node) into the shared detail panel.
+function _galaxyOnPick(node) {
+  if (!node) return;
+  try { showDetail(node); } catch (_) { /* detail panel not yet wired */ }
+}
+
+// Build the {id: visible} map the galaxy renderer consumes from applyFilters'
+// __visible flags (the same backbone FG uses via nodeVisibility).
+function _galaxyVisibilityMap() {
+  const m = Object.create(null);
+  for (const n of allNodes) m[n.id] = n.__visible !== false;
+  return m;
+}
+
+// Mount the galaxy scene into #canvas-wrap with the current payload. Tears down
+// the FG renderer first so only one renderer owns the canvas + a WebGL context.
+function _mountGalaxy() {
+  if (!window._galaxyView) return;   // module not loaded yet (boot ordering)
+  // tear down FG if it owns the canvas
+  if (graph) {
+    try { graph._destructor && graph._destructor(); } catch (_) {}
+    graph = null;
+  }
+  _galaxyView.mount(document.getElementById('canvas-wrap'), {
+    onPick: _galaxyOnPick,
+    payload: { nodes: allNodes, clusters: _memoryClusters },
+  });
+  // apply the current filter visibility immediately (first paint respects filters)
+  _galaxyView.setVisible(_galaxyVisibilityMap());
+  _syncModeBtnDisabled();
+}
+
+// Tear the galaxy scene down (dispose GPU resources + listeners + DOM).
+function _teardownGalaxy() {
+  if (window._galaxyView && _galaxyView.isMounted()) _galaxyView.destroy();
+}
+
+// mode-btn (2D/3D) is meaningless in galaxy → grey it out; re-enable in FG.
+function _syncModeBtnDisabled() {
+  const btn = document.getElementById('mode-btn');
+  if (!btn) return;
+  const galaxy = _isGalaxy();
+  btn.disabled = galaxy;
+  btn.classList.toggle('disabled', galaxy);
+  btn.title = galaxy ? '2D/3D unavailable in Galaxy mode' : 'Toggle 2D/3D';
+  // hide the FG floating overlays + show/hide is handled by CSS body.galaxy-active,
+  // toggled here so the phosphor overlays don't float over the galaxy scene.
+  document.body.classList.toggle('galaxy-active', galaxy);
+}
+
 // viz-rest #13: 2D convex hull (Andrew's monotone chain). Pure; mirrors
 // viz_helpers.convexHull (unit-tested there). Points are {x,y}. <3 pts → as-is.
 function _convexHull2D(points) {
@@ -2339,6 +2431,12 @@ function _visibleForceLinks() {
 // Symmetric gate: every pause must have a reachable resume or the canvas freezes.
 let _graphAnimationPaused = false;
 function _pauseGraphAnimation() {
+  // ADR-0135: galaxy has its own RAF (window._galaxyView). Pause it too so the
+  // "high CPU when tab-away/idle" complaint holds for the galaxy renderer.
+  if (_isGalaxy()) {
+    if (window._galaxyView && _galaxyView.isMounted()) { _galaxyView.pause(); _graphAnimationPaused = true; }
+    return;
+  }
   if (!graph || _graphAnimationPaused) return;
   if (typeof graph.pauseAnimation === 'function') {
     graph.pauseAnimation();
@@ -2346,6 +2444,10 @@ function _pauseGraphAnimation() {
   }
 }
 function _resumeGraphAnimation() {
+  if (_isGalaxy()) {
+    if (window._galaxyView && _galaxyView.isMounted()) { _galaxyView.resume(); _graphAnimationPaused = false; }
+    return;
+  }
   if (!graph || !_graphAnimationPaused) return;
   if (typeof graph.resumeAnimation === 'function') {
     graph.resumeAnimation();
@@ -2588,7 +2690,9 @@ function initGraph(mode) {
   }
 
   window.addEventListener('resize', () => {
-    graph.width(wrap.clientWidth).height(wrap.clientHeight);
+    // ADR-0135: this listener persists after a galaxy toggle tears FG down (graph
+    // null). Guard so a resize in galaxy mode doesn't crash — galaxy has its own.
+    if (graph) graph.width(wrap.clientWidth).height(wrap.clientHeight);
   });
 
   // P1.1: a freshly-built graph starts with its render loop running.
@@ -2607,6 +2711,7 @@ function initGraph(mode) {
 
 // ── 2D/3D mode toggle (V4) ────────────────────────────────────────────────────
 function toggleMode() {
+  if (_isGalaxy()) return; // ADR-0135: 2D/3D is meaningless in galaxy mode (mode-btn greyed)
   _graphMode = _graphMode === '2d' ? '3d' : '2d';
   localStorage.setItem('yadgar-graph-mode', _graphMode);
   // Re-initialise graph, then reload data
@@ -2639,24 +2744,31 @@ function _syncGalaxyBtn() {
 }
 
 function toggleLayoutMode() {
+  // ADR-0135: galaxy is a SEPARATE renderer, not an FG physics mode. Toggling
+  // mounts/tears down window._galaxyView and swaps which renderer owns the canvas.
   _layoutModePref = (_layoutModePref === 'galaxy') ? 'force' : 'galaxy';
   localStorage.setItem('yadgar-layout-mode', _layoutModePref);
-  if (!graph) { _syncGalaxyBtn(); return; }
-  if (_layoutModePref === 'force') {
-    // Switch to Force-directed: unfreeze the sim and let d3-force relax the
-    // (currently galaxy-seeded) positions. Keep the seeded x/y/z as a warm start
-    // so it eases into the force layout instead of a cold phyllotaxis settle.
-    if (typeof graph.cooldownTicks === 'function') graph.cooldownTicks(Infinity);
-    _engineCooled = false;
-    if (typeof graph.d3ReheatSimulation === 'function') graph.d3ReheatSimulation();
-    status('Force-directed layout', 'ok');
-    _syncGalaxyBtn();
-  } else {
-    // Switch to Galaxy: re-fetch so the server galaxy positions re-seed, then the
-    // loadGraph cooldown path freezes physics (cooldownTicks(0)) on the payload.
+  _syncGalaxyBtn();
+  if (_isGalaxy()) {
+    // Switch TO galaxy: tear down FG, mount the raw-Three.js galaxy scene on the
+    // current node set. layout() runs client-side from the payload — no re-fetch.
+    _mountGalaxy();
     status('Galaxy layout', 'ok');
-    _syncGalaxyBtn();
-    loadGraph();
+  } else {
+    // Switch TO force-directed: tear down the galaxy scene and re-init the FG
+    // renderer + apply the current data (full d3-force settle, no galaxy freeze).
+    _teardownGalaxy();
+    _syncModeBtnDisabled();
+    initGraph(_graphMode);
+    if (allNodes.length > 0) {
+      graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
+      applyFilters();
+      _reheatSimulation();
+      if (typeof graph.zoomToFit === 'function') graph.zoomToFit(600, 50);
+    } else {
+      loadGraph();
+    }
+    status('Force-directed layout', 'ok');
   }
 }
 
@@ -2822,27 +2934,35 @@ async function loadGraph() {
     calcDegrees();
     // v5.80: consume real clusters[] from backend (memory_cluster rows)
     renderMemoryClusters(d.clusters || []);
-    // finish-viz: track the server's layout_mode so the toggle + cooldown pick the
-    // right strategy. galaxy positions are a deliberate SHAPE (not a warm scaffold),
-    // so when the client pref is Galaxy we FREEZE the sim (cooldownTicks(0)) — the
-    // Milky-Way arrangement must hold, not d3-force-relax to a blob.
+    // finish-viz: track the server's layout_mode (still used by _syncGalaxyBtn's
+    // title hint). ADR-0135 retired #209's cooldownTicks(0) physics-freeze — the
+    // galaxy is now a SEPARATE renderer (galaxy-view.js), not an FG payload shape.
     _serverLayoutMode = (d.layout_mode === 'galaxy') ? 'galaxy' : 'spring';
-    const _galaxyFrozen = (_serverLayoutMode === 'galaxy') && (_layoutModePref === 'galaxy') && (_serverSeeded > 0);
-    // v5.87 C2: when seeded from saved positions, cap the cooldown so the sim
-    // relaxes the warm scaffold (~60 ticks) instead of the full cold settle
-    // (cooldownTime=15000ms default ≈ hundreds of ticks). 60 is deliberately
-    // ABOVE the onEngineStop >=50-tick guard so v5.86 idle-pause still arms and
-    // 2D pinning still fires. Cold load keeps the default (Infinity) for a full
-    // first-time layout. finish-viz: a frozen galaxy uses 0 (no settle at all).
-    if (typeof graph.cooldownTicks === 'function') {
-      graph.cooldownTicks(_galaxyFrozen ? 0 : (_warmStarted ? 60 : Infinity));
-    }
     _syncGalaxyBtn();
-    // C1: force set = visible edge types only (hidden types must not bind nodes)
-    graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
-    applyFilters();
-    // B: zoom-to-fit ALL nodes (including disconnected) on load
-    graph.zoomToFit(600, 50);
+    if (_isGalaxy()) {
+      // ── GALAXY MODE ─────────────────────────────────────────────────────────
+      // The FG `graph` is null here — route to window._galaxyView. layout() runs
+      // client-side from the payload; server x/y/z are ignored (they feed FG only).
+      applyFilters();  // stamps n.__visible so setVisible respects filters on mount
+      if (window._galaxyView && _galaxyView.isMounted()) {
+        _galaxyView.relayout({ nodes: allNodes, clusters: _memoryClusters });
+        _galaxyView.setVisible(_galaxyVisibilityMap());
+      } else {
+        _mountGalaxy();  // first load (or module just finished loading)
+      }
+    } else {
+      // ── FORCE-DIRECTED MODE ─────────────────────────────────────────────────
+      // v5.87 C2: cap cooldownTicks to relax a warm scaffold (~60 ticks) vs the
+      // full cold settle; cold load keeps Infinity for a full first-time layout.
+      if (typeof graph.cooldownTicks === 'function') {
+        graph.cooldownTicks(_warmStarted ? 60 : Infinity);
+      }
+      // C1: force set = visible edge types only (hidden types must not bind nodes)
+      graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
+      applyFilters();
+      // B: zoom-to-fit ALL nodes (including disconnected) on load
+      graph.zoomToFit(600, 50);
+    }
     // F2: stamp load time so SSE can mark view stale when heat drifts.
     _lastGraphLoadTime = Date.now();
     // F4: surface weak-edge affordance when the server suppressed count<2 transitions.
@@ -2915,7 +3035,10 @@ function _typeToggleOn(id) {
 }
 
 function applyFilters() {
-  if (!graph) return;
+  // ADR-0135: in galaxy mode `graph` is null but the __visible loop MUST still
+  // run — otherwise filters silently no-op (they never reach _galaxyView). Only
+  // bail when NEITHER renderer is present (nothing to filter).
+  if (!graph && !_isGalaxy()) return;
   const showWiki   = _typeToggleOn('show-wiki');
   const showMemory = _typeToggleOn('show-memory');   // P3.8 [51]
   const showEntity = _typeToggleOn('show-entity');   // P3.8 [51]
@@ -2990,9 +3113,18 @@ function applyFilters() {
     }
     return true; // type unknown to toggle state: show by default
   };
-  graph
-    .nodeVisibility(n => n.__visible)
-    .linkVisibility(linkVisFn);
+  // ADR-0135: route visibility to whichever renderer owns the canvas. Galaxy hides
+  // a node via per-vertex size=0 (no edges — decorative only); FG uses its
+  // node/link visibility accessors. The __visible loop above ran for both.
+  if (_isGalaxy()) {
+    if (window._galaxyView && _galaxyView.isMounted()) {
+      _galaxyView.setVisible(_galaxyVisibilityMap());
+    }
+  } else if (graph) {
+    graph
+      .nodeVisibility(n => n.__visible)
+      .linkVisibility(linkVisFn);
+  }
 
   document.getElementById('s-vis').textContent = visCount;
 }
@@ -3003,6 +3135,10 @@ function applyFilters() {
 // then calls applyFilters (visibility, NOT reheat — we FREEZE the layout and
 // let the user use resetLayout() if they want a full re-layout).
 async function _fetchLazyEdges(edgeType) {
+  // ADR-0135: galaxy has no edges (decorative intra-arm lines only), and `graph`
+  // is null → the graphData() rebuild below would crash. The edge legend is CSS-
+  // hidden in galaxy so this is normally unreachable; guard as defence-in-depth.
+  if (_isGalaxy() || !graph) return;
   if (_lazyEdgesLoaded[edgeType]) return; // idempotent
   _lazyEdgesLoaded[edgeType] = true; // mark before fetch to prevent double-fetch
   try {
@@ -3386,10 +3522,16 @@ function connectSSE() {
         }
         if (patched > 0) {
           applyFilters();
-          if (_graphMode === '3d') {
-            graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject);
-          } else {
-            graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
+          // ADR-0135: `graph.nodeColor/nodeCanvasObject` crash when graph is null
+          // (galaxy mode). Galaxy live-heat-patch is DEFERRED (plan v1) — no-op the
+          // repaint here rather than route to patchHeat, so a heat tick in galaxy
+          // updates allNodes.heat (for a later Reload/relayout) without crashing.
+          if (!_isGalaxy() && graph) {
+            if (_graphMode === '3d') {
+              graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject);
+            } else {
+              graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
+            }
           }
           status(`heat updated (${patched} node${patched === 1 ? '' : 's'})`, 'ok');
         }
@@ -4142,6 +4284,10 @@ function _switchTab(tabName) {
   // leaving home; resume when returning so the graph repaints + stays live.
   if (tabName === 'home') {
     _resumeGraphAnimation();
+    // ADR-0135: no window resize fires on a tab switch, so a galaxy scene that
+    // mounted / was resized while home was hidden may be sized 0×0. Nudge a resize
+    // on return so the projection + renderer pick up the now-visible dimensions.
+    if (_isGalaxy() && window._galaxyView && _galaxyView.isMounted()) _galaxyView.resize();
   } else {
     _pauseGraphAnimation();
   }
@@ -4375,7 +4521,12 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   // Activate the correct tab before initGraph (so #tab-home is visible)
   _switchTab(_getActiveTab());
   _syncGalaxyBtn();  // finish-viz: reflect the persisted Galaxy/Force preference
-  initGraph(_graphMode);
+  _syncModeBtnDisabled(); // ADR-0135: grey 2D/3D + toggle body.galaxy-active in galaxy
+  // ADR-0135: galaxy is the first-paint DEFAULT (_layoutModePref default 'galaxy').
+  // Only init the FG renderer when NOT in galaxy mode — otherwise we'd mount FG and
+  // immediately tear it down (wasting a WebGL context on the ~16-ceiling). In galaxy
+  // mode loadGraph() mounts window._galaxyView once the payload arrives.
+  if (!_isGalaxy()) initGraph(_graphMode);
   loadGraph();
   connectSSE();
 })();
@@ -4400,6 +4551,9 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import { initControlTab } from './control.js';
   import { initConfigRefTab } from './config-ref.js';
   import { initTracesTab, ingestTraceComplete } from './traces-tab.js';
+  // ADR-0135: galaxy render mode. Importing sets window._galaxyView (side-effect
+  // at module bottom). Kept as a namespace import so the module executes.
+  import * as GalaxyView from './galaxy-view.js';
   import { nodeType as _nodeTypeModule, createDetailPanel, ingestSseNode, removeSseNode } from './graph-detail.js';
   import * as Help from './help.js';
   import { shouldInitTab, overlaysToMenuDescriptors } from './control_helpers.js';
@@ -4464,6 +4618,21 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   // finish-viz Phase 3: expose the live-append handler so the plain-script SSE
   // dispatcher (connectSSE) can push a `trace_complete` event to the Traces tab.
   window._ingestTraceComplete = ingestTraceComplete;
+
+  // ── ADR-0135: galaxy first-paint mount (boot-ordering close) ───────────────
+  // galaxy-view.js is a deferred module; the classic-script boot IIFE (loadGraph)
+  // may have already fetched the payload and tried _mountGalaxy() before
+  // window._galaxyView existed (its guard no-ops in that case). Now that the
+  // module is loaded, if galaxy is the active pref and the payload is in but the
+  // scene isn't mounted, mount it. Harmless in force mode / when already mounted.
+  try {
+    if (window._galaxyView && typeof _isGalaxy === 'function' && _isGalaxy()
+        && !window._galaxyView.isMounted()
+        && typeof allNodes !== 'undefined' && Array.isArray(allNodes) && allNodes.length > 0
+        && typeof _mountGalaxy === 'function') {
+      _mountGalaxy();
+    }
+  } catch (_) { /* boot race — loadGraph will mount on its own path */ }
 
   // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────
   // DOMContentLoaded already fired by the time module scripts run, so call

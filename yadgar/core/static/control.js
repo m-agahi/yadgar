@@ -46,6 +46,9 @@ import {
   toggleArmed,
   classify428,
   formatConfigStatus,
+  categoryPendingCounts,
+  pendingDiffs,
+  armCountdown,
 } from './control_helpers.js';
 
 // viz-rest #29: daemon version captured from the update-check, surfaced in the
@@ -357,6 +360,12 @@ export async function initControlTab(root) {
 // Rendering helpers
 // ---------------------------------------------------------------------------
 
+// Surface 2 (neural-console restyle): the config editor is a 3-column shell —
+// rail (categories + per-category pending badges) | content | commit tray. The
+// former bottom pending-BAR is now the tray FOOT (.cfg-pending-bar preserved as a
+// class so control.js's queries + test 19 still resolve). The tray is always
+// visible with an empty-state; refreshPending() renders diffs into .cfg-tray-body
+// rather than hiding the whole column.
 function _buildShell() {
   return `
 <div class="ctrl-banner" style="display:none;"></div>
@@ -381,14 +390,20 @@ function _buildShell() {
         <div class="cfg-search-empty" style="display:none">No settings match the search.</div>
         <div class="cfg-category-pane"></div>
       </div>
-      <div class="cfg-pending-bar" style="display:none">
+    </div>
+    <aside class="cfg-tray">
+      <div class="cfg-tray-head">
+        <h3 class="cfg-tray-title">Commit tray</h3>
+        <div class="cfg-tray-sub"></div>
+      </div>
+      <div class="cfg-tray-body"></div>
+      <div class="cfg-pending-bar">
         <span class="cfg-pending-label">0 unsaved changes</span>
-        <span class="cfg-pending-spacer"></span>
         <button class="ctrl-btn cfg-btn-restart" style="display:none">↻ Restart daemon</button>
         <button class="ctrl-btn cfg-btn-discard">Discard</button>
         <button class="ctrl-btn ctrl-btn--save cfg-btn-apply">Apply</button>
       </div>
-    </div>
+    </aside>
   </div>
 </div>
 <div class="ctrl-restart-section ctrl-section">
@@ -525,6 +540,9 @@ function _renderConfigEditor(container, knobs) {
   const applyBtn  = container.querySelector('.cfg-btn-apply');
   const discardBtn = container.querySelector('.cfg-btn-discard');
   const restartBtn = container.querySelector('.cfg-btn-restart');
+  // Surface 2: commit-tray body + subtitle (new 3rd column).
+  const trayBody  = container.querySelector('.cfg-tray-body');
+  const traySub   = container.querySelector('.cfg-tray-sub');
   if (!railItems || !searchEl || !catPane) return;
 
   // ── Edit state ────────────────────────────────────────────────────────────
@@ -533,9 +551,18 @@ function _renderConfigEditor(container, knobs) {
   const originalValues = {};
   const currentValues = {};
   const sourceOverride = {};
-  // Car D: destructive rows the user has typed-confirm armed (drives applyOne's
-  // {armed:true} POST + enables the row's edit control).
+  // Car D: destructive rows the user has armed (drives applyOne's {armed:true}
+  // POST + enables the row's edit control).
   let armedRows = new Set();
+  // Surface 2: per-row arm expiry timestamps (ms) + countdown interval handles.
+  // The arm auto-expires after _ARM_TTL_MS, re-disabling the control.
+  const _ARM_TTL_MS = 15000;
+  const _armExpiry = new Map();
+  const _armTimers = new Map();
+  function _clearArmTimer(name) {
+    const t = _armTimers.get(name);
+    if (t) { clearInterval(t); _armTimers.delete(name); }
+  }
   for (const k of knobs) {
     const disp = displayKnobValue(k.current, k.kind);
     originalValues[k.name] = disp;
@@ -546,29 +573,95 @@ function _renderConfigEditor(container, knobs) {
   const cats = alphabeticalCategories(knobs);
   let activeCategory = cats.length ? cats[0].category : null;
 
-  // ── Pending bar ─────────────────────────────────────────────────────────────
+  // ── Pending / commit tray ─────────────────────────────────────────────────
+  // Surface 2: the tray is ALWAYS the 3rd column. refreshPending drives its
+  // subtitle + body (diff cards) + foot (Apply/Discard/Restart) rather than
+  // hiding a bottom bar. The rail's per-category pending badges + the header
+  // status line are re-synced here too, all off the same computePending diff so
+  // rail, tray, and header can never diverge.
   function refreshPending() {
     // Carry `destructive` through so computePending can count dirty destructive
-    // knobs (Car D — surfaced in red on the pending bar).
+    // knobs (Car D — surfaced in red on the tray + header).
     const knobsView = knobs.map(k => ({ name: k.name, reload: k.reload, destructive: k.destructive }));
     const p = computePending(knobsView, originalValues, currentValues);
-    // viz-rest #29: keep the config header status line (version · pending · restart) in sync.
+    // viz-rest #29 + Surface 2: config header status line (version · pending ·
+    // destructive · restart).
     const statusEl = container.querySelector('.ctrl-cfg-status');
-    if (statusEl) statusEl.textContent = ' — ' + formatConfigStatus(_daemonVersion, p.count, p.restartRequired);
-    if (p.count > 0) {
-      pendingBar.style.display = '';
-      let label = `${p.count} unsaved change${p.count === 1 ? '' : 's'}`;
-      if (p.destructiveCount > 0) {
-        label += ` — ${p.destructiveCount} destructive`;
-      }
-      pendingLabel.textContent = label;
-      pendingLabel.classList.toggle('cfg-pending-destructive', p.destructiveCount > 0);
-      restartBtn.style.display = p.restartRequired ? '' : 'none';
-    } else {
-      pendingBar.style.display = 'none';
-      pendingLabel.classList.remove('cfg-pending-destructive');
-    }
+    if (statusEl) statusEl.textContent = ' — ' + formatConfigStatus(_daemonVersion, p.count, p.restartRequired, p.destructiveCount);
+
+    // Foot label + destructive tint + restart button visibility.
+    let label = p.count > 0
+      ? `${p.count} unsaved change${p.count === 1 ? '' : 's'}`
+      : 'No pending changes';
+    if (p.destructiveCount > 0) label += ` — ${p.destructiveCount} destructive`;
+    pendingLabel.textContent = label;
+    pendingLabel.classList.toggle('cfg-pending-destructive', p.destructiveCount > 0);
+    restartBtn.style.display = p.restartRequired ? '' : 'none';
+    applyBtn.disabled = p.count === 0;
+    discardBtn.disabled = p.count === 0;
+    // The tray/foot stays mounted (mockup: permanent 3rd column). A .cfg-empty
+    // class dims the foot when nothing is staged.
+    pendingBar.style.display = '';
+    pendingBar.classList.toggle('cfg-empty', p.count === 0);
+
+    renderTray(p);
+    renderRailBadges();
     return p;
+  }
+
+  // Render the commit-tray body (one diff card per dirty knob) + subtitle.
+  function renderTray(p) {
+    if (!trayBody) return;
+    const diffs = pendingDiffs({ knobs, originalValues, currentValues });
+    if (traySub) {
+      const restartN = diffs.filter(d => d.restart).length;
+      traySub.textContent = diffs.length === 0
+        ? 'Nothing staged'
+        : `${diffs.length} pending change${diffs.length === 1 ? '' : 's'}` +
+          (restartN ? ` · ${restartN} need restart` : '');
+    }
+    trayBody.innerHTML = '';
+    if (diffs.length === 0) {
+      trayBody.appendChild(_el('div', { class: 'cfg-tray-empty' }, 'No changes yet'));
+      return;
+    }
+    for (const d of diffs) {
+      const card = _el('div', { class: 'cfg-chg' + (d.destructive ? ' destructive' : '') });
+      card.appendChild(_el('div', { class: 'cfg-chg-name' }, d.name));
+      const diffLine = _el('div', { class: 'cfg-chg-diff' });
+      diffLine.appendChild(_el('span', { class: 'cfg-chg-old' }, d.oldValue));
+      diffLine.appendChild(_el('span', { class: 'cfg-chg-arr' }, '→'));
+      diffLine.appendChild(_el('span', { class: 'cfg-chg-new' + (d.destructive ? ' destructive' : '') }, d.newValue));
+      card.appendChild(diffLine);
+      if (d.restart || d.destructive) {
+        const meta = _el('div', { class: 'cfg-chg-meta' });
+        if (d.destructive) meta.appendChild(_el('span', { class: 'danger-tag' }, 'destructive'));
+        if (d.restart) meta.appendChild(_el('span', { class: 'restart-pill' }, '↻ restart'));
+        card.appendChild(meta);
+      }
+      trayBody.appendChild(card);
+    }
+  }
+
+  // Update the per-category pending badges on the rail without a full re-render
+  // (keeps rail-item click listeners intact). Adds/updates/removes a .rail-pending
+  // pill per category off categoryPendingCounts.
+  function renderRailBadges() {
+    const counts = categoryPendingCounts({ knobs, originalValues, currentValues });
+    railItems.querySelectorAll('.rail-item').forEach(item => {
+      const cat = item.getAttribute('data-cat');
+      const n = counts[cat] || 0;
+      let pill = item.querySelector('.rail-pending');
+      if (n > 0) {
+        if (!pill) {
+          pill = _el('span', { class: 'rail-pending' });
+          item.appendChild(pill);
+        }
+        pill.textContent = String(n);
+      } else if (pill) {
+        pill.remove();
+      }
+    });
   }
 
   function setCurrent(name, value) {
@@ -598,6 +691,8 @@ function _renderConfigEditor(container, knobs) {
       });
       railItems.appendChild(item);
     }
+    // Surface 2: re-apply per-category pending badges after a rail rebuild.
+    renderRailBadges();
   }
 
   // ── A single setting row (shared by category + search panes) ──────────────────
@@ -639,31 +734,72 @@ function _renderConfigEditor(container, knobs) {
       right.appendChild(reset);
     }
 
-    // Car D: a destructive row must be typed-confirm armed before its control is
-    // editable. Reuse the restart typed-confirm pattern — type the knob name to arm.
-    // The control is BUILT with listeners attached (editable=badge.editable) so
-    // arming can flip .disabled inline WITHOUT a rerender (a per-keystroke rerender
-    // would tear the arm input down mid-type — the field could never be filled).
+    // Car D + Surface 2: a destructive row must be ARMED before its control is
+    // editable. The typed-name confirm is replaced by an arm BUTTON + a live
+    // "expires in Ns" countdown (mockup fidelity). Arming toggles inline WITHOUT a
+    // rerender so focus/countdown are not torn down. The armed Set gates control
+    // editability; applyOne sends armed:true off isDestructive() — the countdown is
+    // PRESENTATION ONLY and never feeds the POST flag (an expired arm re-disables
+    // the control, so a dirty destructive knob is always still-armed at Apply).
     const disableControlFor = destructive && badge.editable && !armedRows.has(knob.name);
     const controlEl = _buildControl(knob, badge.editable, setCurrent, () => currentValues[knob.name]);
 
     if (destructive && badge.editable) {
-      const armInput = _el('input', {
-        type: 'text',
-        class: 'cfg-arm-input',
-        placeholder: 'type name to arm',
+      const armBtn = _el('button', {
+        class: 'cfg-arm-btn',
         'aria-label': `arm ${knob.name}`,
-      });
-      if (armedRows.has(knob.name)) armInput.value = knob.name;
-      armInput.addEventListener('input', () => {
-        const armed = armInput.value.trim() === knob.name;
-        armedRows = toggleArmed(armedRows, knob.name, armed);
-        // Toggle the control's own inputs inline — NO rerender (keeps focus in the
-        // arm field so the user can finish typing the name).
+        'data-arm': knob.name,
+      }, '⚠ Arm');
+      const countdownEl = _el('span', { class: 'cfg-arm-countdown' });
+
+      const setControlDisabled = (disabled) => {
         controlEl.querySelectorAll('input, select, textarea')
-          .forEach(el => { el.disabled = !armed; });
+          .forEach(el => { el.disabled = disabled; });
+      };
+
+      const disarm = () => {
+        _clearArmTimer(knob.name);
+        armedRows = toggleArmed(armedRows, knob.name, false);
+        armBtn.classList.remove('armed');
+        armBtn.textContent = '⚠ Arm';
+        countdownEl.textContent = '';
+        setControlDisabled(true);
+      };
+
+      const tickCountdown = () => {
+        const expiry = _armExpiry.get(knob.name);
+        const { seconds, expired } = armCountdown(expiry, Date.now());
+        if (expired) { disarm(); return; }
+        countdownEl.textContent = `armed — expires in ${seconds}s`;
+      };
+
+      const arm = () => {
+        armedRows = toggleArmed(armedRows, knob.name, true);
+        armBtn.classList.add('armed');
+        armBtn.textContent = '⚠ Armed';
+        setControlDisabled(false);
+        _armExpiry.set(knob.name, Date.now() + _ARM_TTL_MS);
+        tickCountdown();
+        _clearArmTimer(knob.name);
+        _armTimers.set(knob.name, setInterval(tickCountdown, 1000));
+      };
+
+      // Reflect a pre-existing armed state (e.g. after a category re-render while
+      // the arm is still live).
+      if (armedRows.has(knob.name)) {
+        armBtn.classList.add('armed');
+        armBtn.textContent = '⚠ Armed';
+        tickCountdown();
+        _clearArmTimer(knob.name);
+        _armTimers.set(knob.name, setInterval(tickCountdown, 1000));
+      }
+
+      armBtn.addEventListener('click', () => {
+        if (armedRows.has(knob.name)) disarm();
+        else arm();
       });
-      right.appendChild(armInput);
+
+      right.append(armBtn, countdownEl);
     }
 
     // Disable the destructive control's inputs until armed (build-time state).
@@ -751,6 +887,7 @@ function _renderConfigEditor(container, knobs) {
         currentValues[knob.name] = newCurrent;
         sourceOverride[knob.name] = 'yaml'; // a saved knob is now yaml-sourced
         armedRows = toggleArmed(armedRows, knob.name, false); // disarm after a save
+        _clearArmTimer(knob.name); _armExpiry.delete(knob.name);
         const idx = knobs.findIndex(k => k.name === knob.name);
         if (idx !== -1) knobs[idx] = Object.assign({}, knobs[idx], { current: newCurrent, source: 'yaml' });
         return { name: knob.name, ok: true };
@@ -760,6 +897,7 @@ function _renderConfigEditor(container, knobs) {
       const cls = classify428({ status: r.status, body });
       if (cls.needsArming) {
         armedRows = toggleArmed(armedRows, knob.name, false);
+        _clearArmTimer(knob.name); _armExpiry.delete(knob.name);
         return { name: knob.name, ok: false, error: `needs arming: ${cls.hint}`, status: r.status };
       }
       return { name: knob.name, ok: false, error: body.error || `error ${r.status}`, status: r.status };
@@ -785,6 +923,11 @@ function _renderConfigEditor(container, knobs) {
 
   function handleDiscard() {
     for (const name of Object.keys(currentValues)) currentValues[name] = originalValues[name];
+    // Surface 2: discarding also disarms every armed destructive row + stops its
+    // countdown (the edits it guarded are gone).
+    for (const name of [...armedRows]) { armedRows = toggleArmed(armedRows, name, false); }
+    for (const name of [..._armTimers.keys()]) _clearArmTimer(name);
+    _armExpiry.clear();
     rerender();
     refreshPending();
   }

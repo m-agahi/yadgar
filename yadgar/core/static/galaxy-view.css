@@ -1,0 +1,165 @@
+/* ============================================================================
+ * galaxy-view.css — chrome for the raw-Three.js galaxy render mode (ADR-0135).
+ *
+ * Ports the mockup's phosphor-oscilloscope panel / legend / HUD / #atmos onto
+ * the live #canvas-wrap. Tokens come from viz-theme.css (--viz-*). All IDs/
+ * classes are galaxy-prefixed so they never collide with the force-graph
+ * floating overlays. body.galaxy-active hides the FG overlays in galaxy mode.
+ * ========================================================================== */
+
+/* the galaxy scene owns #canvas-wrap; its canvas fills the panel. */
+#canvas-wrap.galaxy-mode { position: relative; overflow: hidden; }
+#canvas-wrap.galaxy-mode .galaxy-gl {
+  display: block; position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0;
+}
+
+/* graticule + scanline atmosphere over the canvas (mockup #atmos). */
+#galaxy-atmos { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+#galaxy-atmos::before {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--viz-hair-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--viz-hair-soft) 1px, transparent 1px);
+  background-size: 52px 52px; opacity: .28;
+  -webkit-mask-image: radial-gradient(ellipse 130% 100% at 50% 42%, transparent 32%, #000 92%);
+  mask-image: radial-gradient(ellipse 130% 100% at 50% 42%, transparent 32%, #000 92%);
+}
+#galaxy-atmos::after {
+  content: ""; position: absolute; inset: 0; opacity: .05;
+  background-image: repeating-linear-gradient(0deg, #000 0 1px, transparent 1px 3px);
+  mix-blend-mode: overlay;
+}
+
+.galaxy-chrome {
+  position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  font-family: var(--viz-mono); font-size: 12px; line-height: 1.5; color: var(--viz-tx-1);
+}
+.galaxy-chrome > * { pointer-events: auto; }
+
+/* ── control panel (right) ── */
+.galaxy-panel {
+  position: absolute; top: 12px; right: 12px; width: 290px;
+  max-height: calc(100% - 24px); overflow-y: auto;
+  background: var(--viz-panel-bg); border: 1px solid var(--viz-hair);
+  border-radius: 11px; backdrop-filter: blur(9px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .55), 0 0 0 1px rgba(73, 255, 164, .02) inset;
+}
+.galaxy-panel-hd {
+  display: flex; align-items: center; gap: 9px; padding: 11px 15px;
+  border-bottom: 1px solid var(--viz-hair); background: var(--viz-header-grad);
+  position: sticky; top: 0; z-index: 1;
+}
+.galaxy-led {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--viz-ph);
+  box-shadow: 0 0 9px var(--viz-ph); animation: galaxy-pulse 2.6s ease-in-out infinite;
+}
+@keyframes galaxy-pulse {
+  0%, 100% { opacity: .5; transform: scale(.82); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+.galaxy-panel-hd h1 {
+  font-family: var(--viz-disp); font-size: 11px; letter-spacing: .06em;
+  color: var(--viz-tx-0); font-weight: 400; margin: 0;
+}
+.galaxy-panel-body { padding: 14px 15px 18px; }
+
+.galaxy-ctl { margin-bottom: 16px; }
+.galaxy-ctl-lbl {
+  display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px;
+  font-size: 10px; letter-spacing: .11em; text-transform: uppercase; color: var(--viz-tx-2);
+}
+.galaxy-val {
+  color: var(--viz-ph); font-weight: 600; letter-spacing: .02em;
+  font-variant-numeric: tabular-nums; font-size: 11px;
+}
+
+.galaxy-chrome input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 999px;
+  background: var(--viz-bg-3); outline: none; cursor: pointer;
+}
+.galaxy-chrome input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--viz-ph); border: 2px solid var(--viz-bg-0);
+  box-shadow: 0 0 10px var(--viz-ph-glow), 0 0 0 1px var(--viz-ph-dim); cursor: pointer;
+}
+.galaxy-chrome input[type=range]::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%; background: var(--viz-ph);
+  border: 2px solid var(--viz-bg-0); box-shadow: 0 0 10px var(--viz-ph-glow); cursor: pointer;
+}
+
+.galaxy-seg {
+  display: flex; border: 1px solid var(--viz-hair); border-radius: 7px;
+  overflow: hidden; background: var(--viz-bg-1);
+}
+.galaxy-seg button {
+  flex: 1; padding: 7px 4px; font-family: var(--viz-mono); font-size: 10.5px;
+  letter-spacing: .04em; background: transparent; color: var(--viz-tx-2);
+  border: none; cursor: pointer; transition: .16s; border-right: 1px solid var(--viz-hair);
+  text-transform: uppercase;
+}
+.galaxy-seg button:last-child { border-right: none; }
+.galaxy-seg button:hover { color: var(--viz-tx-0); background: var(--viz-bg-2); }
+.galaxy-seg button.on {
+  color: var(--viz-bg-0); font-weight: 600;
+  background: linear-gradient(180deg, var(--viz-ph), var(--viz-ph-dim));
+  box-shadow: 0 0 14px var(--viz-ph-glow) inset;
+}
+.galaxy-seg.cy button.on {
+  background: linear-gradient(180deg, var(--viz-cy), var(--viz-cy-dim));
+  box-shadow: 0 0 14px var(--viz-cy-glow) inset;
+}
+
+.galaxy-divider { height: 1px; background: var(--viz-hair); margin: 4px 0 16px; }
+.galaxy-note { font-size: 10px; color: var(--viz-tx-3); line-height: 1.5; margin-top: 2px; }
+.galaxy-reset {
+  color: var(--viz-cy); text-decoration: none; cursor: pointer;
+  border-bottom: 1px dotted var(--viz-cy-dim);
+}
+.galaxy-reset:hover { color: var(--viz-ph); }
+
+.galaxy-panel::-webkit-scrollbar { width: 8px; }
+.galaxy-panel::-webkit-scrollbar-thumb { background: var(--viz-hair); border-radius: 999px; }
+.galaxy-panel::-webkit-scrollbar-track { background: transparent; }
+
+/* ── legend (bottom-left) ── */
+.galaxy-legend {
+  position: absolute; left: 12px; bottom: 12px; width: 214px;
+  background: var(--viz-panel-bg); border: 1px solid var(--viz-hair); border-radius: 10px;
+  backdrop-filter: blur(9px); padding: 12px 14px; box-shadow: 0 10px 34px rgba(0, 0, 0, .5);
+}
+.galaxy-legend h2 {
+  font-family: var(--viz-disp); font-size: 9.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--viz-tx-2); margin: 0 0 10px; font-weight: 400;
+}
+.galaxy-lg-row {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 6px;
+  font-size: 11px; color: var(--viz-tx-1);
+}
+.galaxy-lg-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 8px currentColor; }
+.galaxy-ct { margin-left: auto; color: var(--viz-tx-3); font-variant-numeric: tabular-nums; }
+.galaxy-heatbar {
+  margin-top: 11px; height: 8px; border-radius: 999px;
+  background: linear-gradient(90deg, #0a4a6b, #3ec9ff, #49ffa4, #ffc35c, #ff4059);
+  box-shadow: 0 0 12px rgba(62, 201, 255, .2);
+}
+.galaxy-heat-lbls {
+  display: flex; justify-content: space-between; margin-top: 4px;
+  font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--viz-tx-3);
+}
+
+/* ── HUD (bottom-center) ── */
+.galaxy-hud {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  display: flex; gap: 20px; padding: 8px 18px;
+  background: var(--viz-panel-bg); border: 1px solid var(--viz-hair); border-radius: 999px;
+  backdrop-filter: blur(9px); font-size: 10.5px; color: var(--viz-tx-2);
+}
+.galaxy-st b { color: var(--viz-tx-0); font-weight: 600; font-variant-numeric: tabular-nums; }
+.galaxy-k {
+  color: var(--viz-tx-3); letter-spacing: .06em; text-transform: uppercase;
+  margin-right: 6px; font-size: 9.5px;
+}
+
+/* ── mode-btn greyed in galaxy; FG overlays hidden when body.galaxy-active ── */
+#mode-btn.disabled, #mode-btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+body.galaxy-active .floating-overlay { display: none !important; }

@@ -210,18 +210,99 @@ export function computePending(knobs, originalValues, currentValues) {
  * viz-rest #29: build the config header status line — version + pending count +
  * restart indicator. Pure; the DOM layer sets textContent from this.
  *
+ * Surface 2 (neural-console restyle): an optional 4th arg surfaces the
+ * destructive count between the pending and restart segments. Omitted / 0 keeps
+ * the exact legacy 3-arg output (back-compat with the viz-rest #29 callers).
+ *
  * @param {string} version - daemon version string ('' when unknown)
  * @param {number} pendingCount - unsaved-change count
  * @param {boolean} restartRequired - a pending change needs a restart
- * @returns {string} e.g. "v5.146.0 · 2 pending · ↻ restart"
+ * @param {number} [destructiveCount=0] - dirty destructive-knob count
+ * @returns {string} e.g. "v5.146.0 · 2 pending · 1 destructive · ↻ restart"
  */
-export function formatConfigStatus(version, pendingCount, restartRequired) {
+export function formatConfigStatus(version, pendingCount, restartRequired, destructiveCount = 0) {
   const parts = [];
   if (version) parts.push(`v${String(version).replace(/^v/, '')}`);
   const n = Number(pendingCount) || 0;
   parts.push(n > 0 ? `${n} pending` : 'no pending changes');
+  const d = Number(destructiveCount) || 0;
+  if (d > 0) parts.push(`${d} destructive`);
   if (restartRequired) parts.push('↻ restart');
   return parts.join(' · ');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Surface 2 (neural-console restyle) — pure helpers for the 3-col shell.
+//
+// A `state` is { knobs, originalValues, currentValues } — the same triad the
+// DOM layer already tracks. These reuse the SAME string-comparison dirty logic
+// as computePending so the rail badges, commit tray, and header count can never
+// diverge.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Iterate the dirty knobs of a state, yielding each dirty knob object.
+ * Dirty = String(current) !== String(original), matching computePending.
+ * Preserves knobs-array order.
+ *
+ * @param {{knobs: Array<Object>, originalValues: Object, currentValues: Object}} state
+ * @returns {Array<Object>} the subset of state.knobs that are dirty
+ */
+function _dirtyKnobs(state) {
+  const { knobs, originalValues, currentValues } = state;
+  return knobs.filter(
+    k => String(currentValues[k.name]) !== String(originalValues[k.name]),
+  );
+}
+
+/**
+ * Per-category dirty counts for the left-rail pending badges. Knobs with no
+ * category bucket under 'config' (same default as knobCategory).
+ *
+ * @param {{knobs, originalValues, currentValues}} state
+ * @returns {Object<string, number>} category → dirty count (only non-zero keys)
+ */
+export function categoryPendingCounts(state) {
+  const counts = {};
+  for (const k of _dirtyKnobs(state)) {
+    const cat = knobCategory(k);
+    counts[cat] = (counts[cat] || 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * One descriptor per dirty knob for the commit tray, in knobs-array order.
+ *
+ * @param {{knobs, originalValues, currentValues}} state
+ * @returns {Array<{name, oldValue, newValue, restart, destructive}>}
+ */
+export function pendingDiffs(state) {
+  const { originalValues, currentValues } = state;
+  return _dirtyKnobs(state).map(k => ({
+    name: k.name,
+    oldValue: String(originalValues[k.name]),
+    newValue: String(currentValues[k.name]),
+    restart: k.reload === 'restart_required',
+    destructive: isDestructive(k),
+  }));
+}
+
+/**
+ * Remaining whole seconds until an arm expiry, plus an expired flag. Seconds are
+ * rounded UP so a live arm never displays "0". A null/undefined/past expiry is
+ * expired with 0 seconds. PRESENTATION ONLY — this never feeds the armed:true
+ * POST flag (that stays gated on the armed Set, per applyOne).
+ *
+ * @param {number|null|undefined} expiryTs - expiry epoch ms
+ * @param {number} now - current epoch ms
+ * @returns {{seconds: number, expired: boolean}}
+ */
+export function armCountdown(expiryTs, now) {
+  if (expiryTs == null) return { seconds: 0, expired: true };
+  const remainingMs = expiryTs - now;
+  if (remainingMs <= 0) return { seconds: 0, expired: true };
+  return { seconds: Math.ceil(remainingMs / 1000), expired: false };
 }
 
 /**

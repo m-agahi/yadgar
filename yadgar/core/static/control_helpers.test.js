@@ -25,6 +25,9 @@ import {
   isDestructive,
   toggleArmed,
   classify428,
+  categoryPendingCounts,
+  pendingDiffs,
+  armCountdown,
 } from './control_helpers.js';
 
 function knob(over = {}) {
@@ -412,5 +415,137 @@ describe('formatConfigStatus', () => {
   });
   it('omits version when unknown', () => {
     expect(formatConfigStatus('', 3, false)).toBe('3 pending');
+  });
+
+  // Surface 2 (neural-console restyle): an optional 4th arg surfaces destructive
+  // count. Omitted / 0 → identical output to the 3-arg form (back-compat).
+  it('appends a destructive segment when destructiveCount > 0', () => {
+    expect(formatConfigStatus('5.146.0', 2, false, 1)).toBe('v5.146.0 · 2 pending · 1 destructive');
+  });
+  it('destructiveCount 0 or omitted keeps the legacy 3-arg output', () => {
+    expect(formatConfigStatus('5.146.0', 2, false, 0)).toBe('v5.146.0 · 2 pending');
+    expect(formatConfigStatus('5.146.0', 2, false)).toBe('v5.146.0 · 2 pending');
+  });
+  it('orders segments version · pending · destructive · restart', () => {
+    expect(formatConfigStatus('5.146.0', 2, true, 1)).toBe('v5.146.0 · 2 pending · 1 destructive · ↻ restart');
+  });
+});
+
+// ── Surface 2: categoryPendingCounts ───────────────────────────────────────────
+// Per-category dirty counts for the left-rail pending badges. Reuses the same
+// string-comparison dirty logic as computePending so the rail can never diverge
+// from the tray / header count.
+
+describe('categoryPendingCounts', () => {
+  const knobs = [
+    knob({ name: 'A', category: 'viz' }),
+    knob({ name: 'B', category: 'viz' }),
+    knob({ name: 'C', category: 'wiki' }),
+    knob({ name: 'D', category: undefined }),  // → 'config'
+  ];
+
+  it('no edits → empty map', () => {
+    const state = { knobs, originalValues: { A: '1', B: '1', C: '1', D: '1' }, currentValues: { A: '1', B: '1', C: '1', D: '1' } };
+    expect(categoryPendingCounts(state)).toEqual({});
+  });
+
+  it('counts dirty knobs bucketed by category', () => {
+    const state = {
+      knobs,
+      originalValues: { A: '1', B: '1', C: '1', D: '1' },
+      currentValues:  { A: '2', B: '1', C: '9', D: '1' },  // A (viz) + C (wiki) dirty
+    };
+    expect(categoryPendingCounts(state)).toEqual({ viz: 1, wiki: 1 });
+  });
+
+  it('two dirty in the same category sum', () => {
+    const state = {
+      knobs,
+      originalValues: { A: '1', B: '1', C: '1', D: '1' },
+      currentValues:  { A: '2', B: '3', C: '1', D: '1' },  // A + B both viz
+    };
+    expect(categoryPendingCounts(state)).toEqual({ viz: 2 });
+  });
+
+  it('missing knob category buckets under config', () => {
+    const state = {
+      knobs,
+      originalValues: { A: '1', B: '1', C: '1', D: '1' },
+      currentValues:  { A: '1', B: '1', C: '1', D: '9' },  // D → config
+    };
+    expect(categoryPendingCounts(state)).toEqual({ config: 1 });
+  });
+});
+
+// ── Surface 2: pendingDiffs ────────────────────────────────────────────────────
+// One descriptor per dirty knob for the commit tray: name, old→new, restart flag,
+// destructive flag. Ordering follows the knobs array (stable render order).
+
+describe('pendingDiffs', () => {
+  const knobs = [
+    knob({ name: 'A', reload: 'hot_reload', destructive: false }),
+    knob({ name: 'B', reload: 'restart_required', destructive: false }),
+    knob({ name: 'C', reload: 'hot_reload', destructive: true }),
+  ];
+
+  it('no edits → empty array', () => {
+    const state = { knobs, originalValues: { A: '1', B: '1', C: '1' }, currentValues: { A: '1', B: '1', C: '1' } };
+    expect(pendingDiffs(state)).toEqual([]);
+  });
+
+  it('emits a diff descriptor per dirty knob with old→new', () => {
+    const state = {
+      knobs,
+      originalValues: { A: '1', B: '2', C: '3' },
+      currentValues:  { A: '9', B: '2', C: '3' },
+    };
+    expect(pendingDiffs(state)).toEqual([
+      { name: 'A', oldValue: '1', newValue: '9', restart: false, destructive: false },
+    ]);
+  });
+
+  it('flags restart and destructive', () => {
+    const state = {
+      knobs,
+      originalValues: { A: '1', B: '1', C: '1' },
+      currentValues:  { A: '1', B: '2', C: '2' },  // B restart, C destructive
+    };
+    const diffs = pendingDiffs(state);
+    expect(diffs.map(d => d.name)).toEqual(['B', 'C']);
+    expect(diffs.find(d => d.name === 'B').restart).toBe(true);
+    expect(diffs.find(d => d.name === 'C').destructive).toBe(true);
+  });
+
+  it('preserves knobs-array order (stable render)', () => {
+    const state = {
+      knobs,
+      originalValues: { A: '1', B: '1', C: '1' },
+      currentValues:  { A: '2', B: '2', C: '2' },
+    };
+    expect(pendingDiffs(state).map(d => d.name)).toEqual(['A', 'B', 'C']);
+  });
+});
+
+// ── Surface 2: armCountdown ────────────────────────────────────────────────────
+// Given an expiry timestamp (ms) and a now (ms), compute the remaining whole
+// seconds and whether the arm has expired. Used by the destructive-row arm button
+// countdown label ("expires in Ns"). PRESENTATION ONLY — never feeds armed:true.
+
+describe('armCountdown', () => {
+  it('returns whole seconds remaining, not expired', () => {
+    expect(armCountdown(10000, 3000)).toEqual({ seconds: 7, expired: false });
+  });
+  it('rounds up a partial second so the label never shows 0 while live', () => {
+    expect(armCountdown(10000, 3500)).toEqual({ seconds: 7, expired: false });  // 6.5s → 7
+  });
+  it('exactly at expiry → 0 and expired', () => {
+    expect(armCountdown(10000, 10000)).toEqual({ seconds: 0, expired: true });
+  });
+  it('past expiry → 0 and expired (never negative)', () => {
+    expect(armCountdown(10000, 12000)).toEqual({ seconds: 0, expired: true });
+  });
+  it('a null / undefined expiry is treated as not-armed → expired', () => {
+    expect(armCountdown(null, 1000)).toEqual({ seconds: 0, expired: true });
+    expect(armCountdown(undefined, 1000)).toEqual({ seconds: 0, expired: true });
   });
 });
