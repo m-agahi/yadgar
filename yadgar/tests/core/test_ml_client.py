@@ -8,6 +8,34 @@ from __future__ import annotations
 import sys
 from unittest.mock import ANY, MagicMock, patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _reset_rerank_semaphores():
+    """Rebind the /rerank semaphores to fresh (unbound) objects per test.
+
+    ``embed_service._rerank_semaphores`` is a module-global dict of
+    ``asyncio.Semaphore`` created at import. A Semaphore binds lazily to the
+    loop of its *first* ``acquire()``. Each ``starlette.testclient.TestClient``
+    request runs the ASGI app on a fresh anyio portal loop, so once one rerank
+    test (or a warm-up) acquires the ``ce`` semaphore on loop A, a later rerank
+    test on loop B raises ``RuntimeError: ... bound to a different event loop``.
+    Under xdist loadgroup + rerun ordering this surfaces as a flake
+    (``TestRerankEndpointCE`` most often, per CI runs 1490/1492).
+
+    Resetting to fresh unbound semaphores before each test makes every test's
+    first acquire bind to its *own* loop — deterministic. Production is
+    unaffected: the ASGI app runs on a single long-lived loop, so the original
+    bind is stable there. Harness-only reset; no assertion weakened.
+    """
+    _mod = "yadgar.backend.embed_service.embed_service"
+    if _mod in sys.modules:
+        _es = sys.modules[_mod]
+        _es._rerank_semaphores = _es._make_rerank_semaphores()
+    yield
+
+
 # ── RemoteMLClient tests ─────────────────────────────────────────────
 
 

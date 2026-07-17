@@ -382,8 +382,10 @@ describe('initControlTab DOM wiring', () => {
     expect(posts[0].value).toBeCloseTo(12.5);
   });
 
-  // Car D: destructive row must be typed-confirm armed; then Apply POSTs armed:true.
-  it('destructive row: control disabled until armed, then Apply POSTs {armed:true}', async () => {
+  // Car D + Surface 2: destructive row is armed by CLICKING the arm button (the
+  // typed-name confirm was replaced by a button + countdown). The POST still
+  // carries armed:true (behavior unchanged, only presentation).
+  it('destructive row: control disabled until arm button clicked, then Apply POSTs {armed:true}', async () => {
     const posts = [];
     const KNOB = 'YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS';
     globalThis.fetch = vi.fn(async (url, opts) => {
@@ -412,15 +414,18 @@ describe('initControlTab DOM wiring', () => {
     expect(numInput).not.toBeNull();
     expect(numInput.disabled).toBe(true);
 
-    // Type the knob name into the arm input → control becomes enabled INLINE
-    // (the arm input itself survives — no rerender teardown).
-    const armInput = row.querySelector('.cfg-arm-input');
-    expect(armInput).not.toBeNull();
-    armInput.value = KNOB;
-    armInput.dispatchEvent(new Event('input'));
+    // Click the arm button → control becomes enabled INLINE (no rerender
+    // teardown) and the button flips to its armed state with a countdown label.
+    const armBtn = row.querySelector('.cfg-arm-btn');
+    expect(armBtn).not.toBeNull();
+    armBtn.click();
     expect(numInput.disabled).toBe(false);
-    // Same arm-input node still in the DOM (focus not destroyed).
-    expect(root.querySelector(`.setting-row[data-name="${KNOB}"] .cfg-arm-input`)).toBe(armInput);
+    expect(armBtn.classList.contains('armed')).toBe(true);
+    const countdown = row.querySelector('.cfg-arm-countdown');
+    expect(countdown).not.toBeNull();
+    expect(countdown.textContent).toMatch(/expires in \d+s/);
+    // Same arm-button node still in the DOM (focus not destroyed by a rerender).
+    expect(root.querySelector(`.setting-row[data-name="${KNOB}"] .cfg-arm-btn`)).toBe(armBtn);
 
     // Edit + Apply → POST carries armed:true.
     numInput.value = '120';
@@ -432,6 +437,60 @@ describe('initControlTab DOM wiring', () => {
     expect(posts.length).toBeGreaterThan(0);
     expect(posts[0].name).toBe(KNOB);
     expect(posts[0].armed).toBe(true);
+  });
+
+  // Surface 2: clicking the arm button a second time disarms (re-disables the
+  // control) — the countdown/expiry is presentation only.
+  it('destructive row: clicking arm button again disarms and re-disables the control', async () => {
+    const KNOB = 'YADGAR_MEMORY_ARCHIVE_RETENTION_DAYS';
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      if (typeof url === 'string' && url.includes('/api/control/config') && (!opts?.method || opts.method === 'GET')) {
+        return { ok: true, status: 200, json: async () => ({ knobs: [
+          { name: KNOB, kind: 'int', current: '90', default: '90', source: 'default', reload: 'restart_required', category: 'write-path', section: 'memory_archive_retention', description: 'archive retention', locked: false, enum_choices: [], destructive: true },
+        ] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    await initControlTab(root);
+    const row = root.querySelector(`.setting-row[data-name="${KNOB}"]`);
+    const numInput = row.querySelector('.num-input');
+    const armBtn = row.querySelector('.cfg-arm-btn');
+
+    armBtn.click();               // arm
+    expect(numInput.disabled).toBe(false);
+    armBtn.click();               // disarm
+    expect(numInput.disabled).toBe(true);
+    expect(armBtn.classList.contains('armed')).toBe(false);
+    expect(row.querySelector('.cfg-arm-countdown').textContent).toBe('');
+  });
+
+  // Surface 2: an edited knob renders a diff card in the commit tray.
+  it('editing a knob renders a diff card (name + old→new) in the commit tray', async () => {
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      if (typeof url === 'string' && url.includes('/api/control/config') && (!opts?.method || opts.method !== 'POST')) {
+        return { ok: true, status: 200, json: async () => ({ knobs: [
+          { name: 'YADGAR_VIZ_NODE_SIZE_3D', kind: 'float', current: '8.0', default: '8.0', source: 'default', reload: 'hot_reload', category: 'viz', section: 'viz_config', description: 'Node size', locked: false, enum_choices: [] },
+        ] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    await initControlTab(root);
+    const trayBody = root.querySelector('.cfg-tray-body');
+    expect(trayBody).not.toBeNull();
+    // Empty state before any edit.
+    expect(trayBody.querySelector('.cfg-tray-empty')).not.toBeNull();
+
+    const numInput = root.querySelector('.setting-row[data-name="YADGAR_VIZ_NODE_SIZE_3D"] .num-input');
+    numInput.value = '12.5';
+    numInput.dispatchEvent(new Event('input'));
+
+    const chg = trayBody.querySelector('.cfg-chg');
+    expect(chg).not.toBeNull();
+    expect(chg.querySelector('.cfg-chg-name').textContent).toBe('YADGAR_VIZ_NODE_SIZE_3D');
+    expect(chg.querySelector('.cfg-chg-old').textContent).toBe('8.0');
+    expect(chg.querySelector('.cfg-chg-new').textContent).toBe('12.5');
   });
 
   // ADR-0013: vacuum button requires explicit confirm before POSTing

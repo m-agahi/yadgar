@@ -161,7 +161,7 @@ async def _tempo_search_recent(base: str, limit: int) -> list[dict]:
     """
     now = int(time.time())
     params = {
-        "q": '{ name =~ "tool\\..*" }',
+        "q": r'{ name =~ "tool\\..*" }',
         "start": now - _SEARCH_WINDOW_S,
         "end": now + 5,
         "limit": limit,

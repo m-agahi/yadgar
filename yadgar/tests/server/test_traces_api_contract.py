@@ -205,6 +205,50 @@ class TestRecent:
         r = client.get("/api/traces/recent?limit=9999", headers=_auth())
         assert r.status_code == 200  # clamp handled, no crash
 
+    def test_traceql_query_has_correct_escape(self, monkeypatch):
+        r"""Wire form must be tool\\.* (Tempo-escaped backslash + literal dot).
+
+        The broken form tool\\.* (bare backslash-dot) is rejected by Tempo with
+        HTTP 400 "invalid char escape".  Use a capturing fake to inspect the
+        actual ``q`` param sent on the search call.
+        """
+        captured: list[str] = []
+
+        class _CapturingClient(_FakeClient):
+            async def get(self, url, **kwargs):
+                if "/api/search" in url:
+                    captured.append(kwargs.get("params", {}).get("q", ""))
+                return await super().get(url, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", _CapturingClient)
+        client = _make_app(monkeypatch)
+        client.get("/api/traces/recent", headers=_auth())
+
+        assert captured, "no /api/search call was made"
+        q = captured[0]
+        assert r"tool\\..*" in q, f"expected Tempo-escaped form 'tool\\\\..*' in q, got: {q!r}"
+        assert r"tool\..*" not in q.replace(r"tool\\.", ""), (
+            f"bare unescaped form 'tool\\..*' must not appear in q, got: {q!r}"
+        )
+
+    def test_traceql_400_degrades_to_empty(self, monkeypatch):
+        """HTTP 400 from Tempo (e.g. bad TraceQL) must degrade to traces:[] not 500."""
+
+        class _Http400Client(_FakeClient):
+            async def get(self, url, **kwargs):
+                if "/api/search" in url:
+                    return _FakeResp(400, {})
+                return await super().get(url, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Http400Client)
+        client = _make_app(monkeypatch)
+        r = client.get("/api/traces/recent", headers=_auth())
+        assert r.status_code == 200
+        body = r.json()
+        assert body["traces"] == [], (
+            "HTTP 400 from Tempo must degrade to empty traces list, not propagate error"
+        )
+
 
 # ---------------------------------------------------------------------------
 # /{id}/mesh

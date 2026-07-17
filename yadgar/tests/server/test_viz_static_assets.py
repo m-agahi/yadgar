@@ -517,3 +517,125 @@ class TestV5110VizConfigFetch:
             "expected at least 3 (node color, edge color, physics/layout). "
             "Hardcoded constants must be replaced."
         )
+
+
+def _static_dir() -> pathlib.Path:
+    return pathlib.Path(__file__).parent.parent.parent / "core" / "static"
+
+
+class TestADR0135GalaxyRenderMode:
+    """ADR-0135: galaxy is a SEPARATE raw-Three.js renderer (galaxy-view.js), not
+    the #209 physics-freeze inside 3d-force-graph. These guard the wiring + the
+    graph-null routing that keeps the viz alive on an SSE tick / filter in galaxy.
+
+    Render / picking / teardown are the user's browser smoke-check (no harness);
+    the layout MATH lives in galaxy-view.test.js (vitest). These string checks are
+    the "allowlist" the plan asks for: proof the module exists, is imported, and
+    that the risky graph-null sites are routed rather than left to crash.
+    """
+
+    def test_galaxy_view_module_file_exists(self) -> None:
+        assert (_static_dir() / "galaxy-view.js").is_file(), (
+            "galaxy-view.js missing — ADR-0135 galaxy render mode not present."
+        )
+        assert (_static_dir() / "galaxy-view.css").is_file(), (
+            "galaxy-view.css missing — galaxy chrome styles not present."
+        )
+
+    def test_galaxy_view_exposes_public_surface(self) -> None:
+        js = (_static_dir() / "galaxy-view.js").read_text(encoding="utf-8")
+        assert "window._galaxyView" in js, (
+            "galaxy-view.js does not expose window._galaxyView — index.html drives "
+            "the scene through this global surface."
+        )
+        for fn in ("mount", "destroy", "setVisible", "patchHeat", "relayout"):
+            assert fn in js, f"window._galaxyView.{fn} missing from galaxy-view.js"
+
+    def test_galaxy_reuses_loaded_three_not_a_second_global(self) -> None:
+        js = (_static_dir() / "galaxy-view.js").read_text(encoding="utf-8")
+        assert "window.THREE" in js, (
+            "galaxy-view.js must reuse the already-loaded window.THREE (r0.158), not "
+            "load a second THREE global (a 2nd THREE clobbers the shared WebGL ctx)."
+        )
+        # Must not create a 2nd THREE global via a script tag / three.min.js load.
+        # (Bare mentions of 'cdnjs'/'0.160' in comments are fine — check for an
+        # actual injected loader.)
+        assert "three.min.js" not in js and "<script src" not in js, (
+            "galaxy-view.js appears to load its own Three.js — ADR-0135 requires "
+            "reusing the r0.158 already loaded by index.html."
+        )
+
+    def test_index_imports_galaxy_view_module(self) -> None:
+        html = _html()
+        assert "./galaxy-view.js" in html, (
+            "index.html does not import galaxy-view.js — the module block must import "
+            "it so window._galaxyView is populated."
+        )
+
+    def test_render_mode_single_source_of_truth(self) -> None:
+        html = _html()
+        assert "_renderMode" in html and "_isGalaxy" in html, (
+            "index.html missing _renderMode/_isGalaxy — the galaxy render mode must "
+            "derive from _layoutModePref (single source of truth)."
+        )
+
+    def test_applyFilters_does_not_bail_in_galaxy(self) -> None:
+        """The `if (!graph) return;` early-return trap: in galaxy graph is null, so
+        a naked guard silently no-ops every filter. It must permit galaxy mode."""
+        html = _html()
+        lines = html.splitlines()
+        in_func = False
+        func_lines: list[str] = []
+        brace_depth = 0
+        for line in lines:
+            if "function applyFilters()" in line:
+                in_func = True
+            if in_func:
+                func_lines.append(line)
+                brace_depth += line.count("{") - line.count("}")
+                if in_func and brace_depth == 0 and len(func_lines) > 1:
+                    break
+        body = "\n".join(func_lines)
+        assert "if (!graph) return;" not in body, (
+            "applyFilters() still has the naked `if (!graph) return;` — in galaxy mode "
+            "graph is null so this silently no-ops every filter. Must allow galaxy."
+        )
+        assert "_isGalaxy" in body, (
+            "applyFilters() must branch on _isGalaxy so galaxy visibility routes to "
+            "_galaxyView.setVisible instead of the null `graph`."
+        )
+
+    def test_sse_heat_updated_guards_null_graph(self) -> None:
+        """SSE heat_updated repaints via graph.nodeColor / graph.nodeCanvasObject —
+        these crash when graph is null (galaxy). Must be guarded."""
+        html = _html()
+        idx = html.find("heat_updated")
+        assert idx != -1
+        window = html[idx : idx + 1400]
+        assert "_isGalaxy" in window or "!graph" in window or "&& graph" in window, (
+            "SSE heat_updated repaint not guarded against a null graph — a heat tick "
+            "in galaxy mode would throw on graph.nodeColor/nodeCanvasObject."
+        )
+
+    def test_boot_skips_fg_init_in_galaxy(self) -> None:
+        html = _html()
+        assert "if (!_isGalaxy()) initGraph(_graphMode);" in html, (
+            "boot IIFE must NOT init the FG renderer when galaxy is the default "
+            "(_layoutModePref default 'galaxy') — that wastes a WebGL context on the "
+            "~16-context ceiling. It should mount _galaxyView via loadGraph instead."
+        )
+
+    def test_teardown_disposes_and_forces_context_loss(self) -> None:
+        js = (_static_dir() / "galaxy-view.js").read_text(encoding="utf-8")
+        assert "forceContextLoss()" in js, (
+            "galaxy destroy() must call renderer.forceContextLoss() so the WebGL "
+            "context is released (the ~16-context ceiling caps mode switching)."
+        )
+        assert "cancelAnimationFrame" in js, (
+            "galaxy destroy()/pause() must cancelAnimationFrame — a leaked RAF keeps "
+            "burning CPU after teardown."
+        )
+        assert "removeEventListener" in js, (
+            "galaxy teardown must removeEventListener on the named bound handlers "
+            "(the mockup's anonymous arrow listeners were unremovable)."
+        )
