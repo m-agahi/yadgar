@@ -258,7 +258,7 @@ def test_session_context_non_compact_still_renders_catalog(tmp_path, monkeypatch
 # Task-list mirror restore-nudge (existence-checked, main-thread-only)
 # ---------------------------------------------------------------------------
 
-_NUDGE_MARKER = "Saved task list"
+_NUDGE_MARKER = "restore your task list"
 
 
 def _seed_task_list_page(
@@ -577,6 +577,12 @@ def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
     slug = f"{project}-task-list"
     assert slug in text
     assert "TaskCreate" in text
+    # v5.149 (Option B): forcing form + hoisted FIRST so it is not buried under the
+    # project-brief catalog (the advisory tail nudge was ignored).
+    assert "ACTION REQUIRED" in text, f"expected forcing nudge; got: {text!r}"
+    assert text.lstrip().startswith("[yadgar] ACTION REQUIRED"), (
+        f"task-restore nudge must lead the render (first), not be appended; got: {text[:120]!r}"
+    )
 
 
 def test_task_list_nudge_excludes_completed_tasks(tmp_path, monkeypatch):

@@ -902,10 +902,10 @@ async def _task_list_restore_nudge(directory: str, branch_hint: str | None) -> s
         # at lines 1076-1082.  Fail-open: any parse error falls back to the old
         # existence-only nudge so session-start is never blocked by a bad page.
         _OLD_NUDGE = (
-            f"\n[yadgar] Saved task list found ({slug}). To restore: "
-            f'wiki_read("{slug}", directory="{directory}"), then recreate '
-            "the open tasks (status pending / in_progress) with TaskCreate "
-            "before proceeding (skip completed).\n"
+            f"\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work. "
+            f'wiki_read("{slug}", directory="{directory}") and recreate every open '
+            "task (pending / in_progress) with TaskCreate before proceeding "
+            "(skip completed). Do this FIRST.\n"
         )
         try:
             _content = page.get("content", "") or ""
@@ -943,17 +943,24 @@ async def _task_list_restore_nudge(directory: str, branch_hint: str | None) -> s
             _shown = _open_tasks[:_CAP]
             _overflow = len(_open_tasks) - len(_shown)
             _k = len(_open_tasks)
+            # Forcing form (v5.149): imperative + enumerated + hoisted FIRST by the
+            # caller. The advisory tail-nudge was ignored (tasks stayed in yadgar,
+            # harness TaskList empty); a hook cannot COMPEL a TaskCreate call, so this
+            # maximizes salience. Mechanical writer is the fallback if this still fails
+            # (docs/plans/harness-task-seed-inbound-2026-07-17.md, Option A / task A).
             _lines = [
-                f"\n[yadgar] Saved task list ({slug}) — {_k} open task(s):",
+                "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
+                f"{_k} open task(s) from the last session ({slug}). "
+                "Call TaskCreate for EACH one now:",
             ]
             for _tid, _subj, _st in _shown:
                 _lines.append(f"  - [{_tid}] {_subj} ({_st})")
             if _overflow > 0:
                 _lines.append(f"  …and {_overflow} more")
             _lines.append(
-                f'Full list: wiki_read("{slug}", directory="{directory}"), then '
-                "recreate open tasks (status pending / in_progress) with TaskCreate "
-                "before proceeding (skip completed).\n"
+                f'Full descriptions: wiki_read("{slug}", directory="{directory}"). '
+                "Recreate every open task (pending / in_progress) with TaskCreate "
+                "before proceeding; skip completed. Do this FIRST.\n"
             )
             return "\n".join(_lines)
         except Exception as _pe:
@@ -1151,7 +1158,10 @@ async def hook_session_context(request: Request) -> JSONResponse:
         # _task_list_restore_nudge to keep this handler under the I13 complexity
         # cap; that helper is fail-open (returns "" on any error).
         if source != "compact":
-            render = render + await _task_list_restore_nudge(directory, branch_hint)
+            # Hoisted FIRST (v5.149): the task-restore nudge led the render so it is
+            # not buried under the project-brief catalog — the advisory tail form was
+            # ignored. Prepend keeps it the first thing the model reads this session.
+            render = await _task_list_restore_nudge(directory, branch_hint) + render
 
         return JSONResponse({"text": render})
     except Exception as _e:

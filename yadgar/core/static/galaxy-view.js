@@ -42,6 +42,27 @@ export const R_CORE = 3.2; // core bulge radius scale
 export const R_SCALE = 12.0; // exponential disk scale-length
 export const Z_LAYER = 2.4; // per-type z offset when layering on
 
+// Default camera pose (matches the GalaxyScene constructor). resetView() restores
+// exactly this; fitView() reuses CAM_TARGET + a computed distance.
+export const CAM_DEFAULT_POS = Object.freeze({ x: 0, y: 46, z: 72 });
+export const CAM_TARGET = Object.freeze({ x: 0, y: 0, z: 0 });
+export const CAM_FOV_DEG = 52; // PerspectiveCamera vertical FOV
+
+/**
+ * Camera distance that frames a disk of radius `rMax` inside the vertical FOV.
+ * dist = (rMax * pad) / tan(fov/2). Pure — the exact `pad` is smoke-check-tunable.
+ * @param {number} rMax   disk radius (world units)
+ * @param {number} fovDeg vertical field of view (degrees)
+ * @param {number} [pad]  headroom multiplier (>1 leaves margin around the disk)
+ * @returns {number} camera distance from the target
+ */
+export function fitDistanceForDisk(rMax, fovDeg, pad = 1.15) {
+  const half = (Math.max(1, fovDeg) * Math.PI) / 360; // (fov/2) in radians
+  const t = Math.tan(half);
+  const d = (rMax * pad) / (t > 1e-6 ? t : 1e-6);
+  return Math.max(14, Math.min(320, d)); // clamp to MiniOrbit's wheel bounds
+}
+
 // live-tunable layout params (mirrors the mockup's `P`); GALAXY_DEFAULTS is the
 // reset target.
 export const GALAXY_DEFAULTS = Object.freeze({
@@ -311,6 +332,35 @@ export function buildNodeModel(payload, opts = {}) {
   return { nodes, idToIndex, clusterStat, armClusters, counts };
 }
 
+/**
+ * Balance the spiral arms by GREEDY LIGHTEST-ARM bin-packing (first-fit
+ * decreasing). Round-robin by rank (`i % arms`) dumped the biggest clusters into
+ * arms 0/1, so 2 arms held most of the nodes. Instead we walk the spine clusters
+ * largest-first (they arrive score-sorted, which tracks node count) and drop each
+ * onto the arm with the smallest running node-count load — ties go to the lowest
+ * arm index for determinism (the layout determinism vitest depends on it).
+ *
+ * @param {Array<{id:number,n:number}>} spine  spine clusters, largest-first
+ * @param {number} arms  arm count (P.arms)
+ * @returns {Map<number, number>} clusterId → arm index
+ */
+export function assignArmsBalanced(spine, arms) {
+  const out = new Map();
+  const k = Math.max(1, arms | 0);
+  const armLoad = new Array(k).fill(0);
+  for (const c of spine || []) {
+    if (!c) continue;
+    // lightest arm; first (lowest index) wins ties for determinism.
+    let best = 0;
+    for (let a = 1; a < k; a++) {
+      if (armLoad[a] < armLoad[best]) best = a;
+    }
+    out.set(c.id, best);
+    armLoad[best] += (typeof c.n === 'number' ? c.n : 0);
+  }
+  return out;
+}
+
 // ── exponential-disk radius sampler (verbatim maths from the mockup) ────────────
 /**
  * Inverse-CDF of r*e^{-r/L} truncated at rMax; `tight` adds an inward pull.
@@ -343,13 +393,15 @@ export function layoutPositions(model, P, seed = GALAXY_SEED) {
   const N = nodes.length;
   const pos = new Float32Array(N * 3);
 
-  // rank real clusters, assign to arms round-robin (spine budget arms*3); the
-  // rest scatter inter-arm (arm = -2 marker).
-  const real = model.armClusters; // already score-sorted, all n>=2
+  // rank real clusters, assign spine clusters to arms by GREEDY lightest-arm
+  // bin-packing (balanced node counts, not rank round-robin — which starved half
+  // the arms); the rest scatter inter-arm (arm = -2 marker).
+  const real = model.armClusters; // already score-sorted (largest-first), all n>=2
   const nCluster = model.clusterStat.length;
   const armOfCluster = new Array(nCluster).fill(-1);
   const nSpine = Math.min(real.length, P.arms * 3);
-  for (let i = 0; i < nSpine; i++) armOfCluster[real[i].id] = i % P.arms;
+  const armMap = assignArmsBalanced(real.slice(0, nSpine), P.arms);
+  for (let i = 0; i < nSpine; i++) armOfCluster[real[i].id] = armMap.get(real[i].id);
   for (let i = nSpine; i < real.length; i++) armOfCluster[real[i].id] = -2;
 
   const armBase = (i) => (i / P.arms) * Math.PI * 2;
@@ -1071,6 +1123,38 @@ class GalaxyScene {
     this._handleResize();
   }
 
+  // ── Fit / Reset camera (toolbar ⊞ Fit / ⟳ Reset — wired in index.html) ─────────
+  // Both write MiniOrbit's {theta,phi,radius,target}, NOT camera.position: the RAF
+  // loop calls controls.update() every frame, which recomputes camera.position
+  // from that state — setting camera.position directly would be clobbered next tick.
+
+  // Frame the whole galaxy disk (R_MAX) centred at the origin. Keeps the current
+  // azimuth (theta) so Fit doesn't feel like a jarring re-orient; only re-centres,
+  // re-tilts to a pleasant top-down-ish phi, and pulls the distance to fit.
+  fitView() {
+    if (!this.controls) return;
+    this.controls.target.set(CAM_TARGET.x, CAM_TARGET.y, CAM_TARGET.z);
+    this.controls.radius = fitDistanceForDisk(R_MAX, CAM_FOV_DEG);
+    // phi derived from the default pose's vertical angle so the tilt reads natural.
+    const defR = Math.hypot(CAM_DEFAULT_POS.x, CAM_DEFAULT_POS.y, CAM_DEFAULT_POS.z);
+    this.controls.phi = Math.acos(Math.min(1, Math.max(-1, CAM_DEFAULT_POS.y / (defR || 1))));
+    this.controls.update();
+  }
+
+  // Restore the exact default pose (recenter target + reset azimuth/phi/distance so
+  // any drifted auto-rotation offset is cleared). Auto-rotate resumes from here.
+  resetView() {
+    if (!this.controls) return;
+    this.controls.target.set(CAM_TARGET.x, CAM_TARGET.y, CAM_TARGET.z);
+    const dx = CAM_DEFAULT_POS.x - CAM_TARGET.x;
+    const dy = CAM_DEFAULT_POS.y - CAM_TARGET.y;
+    const dz = CAM_DEFAULT_POS.z - CAM_TARGET.z;
+    this.controls.radius = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    this.controls.theta = Math.atan2(dx, dz);
+    this.controls.phi = Math.acos(Math.min(1, Math.max(-1, dy / (this.controls.radius || 1))));
+    this.controls.update();
+  }
+
   // MiniOrbit forwards pointer/wheel here purely so teardown can removeEventListener
   // named handlers; the actual orbit maths live in MiniOrbit.
   _handlePointerDown(e) {
@@ -1386,10 +1470,19 @@ export function highlight(idSet) {
   if (_scene) _scene.highlight(idSet);
 }
 
+// ── toolbar camera controls (⊞ Fit / ⟳ Reset) ────────────────────────────────
+export function fitView() {
+  if (_scene) _scene.fitView();
+}
+
+export function resetView() {
+  if (_scene) _scene.resetView();
+}
+
 // Expose on window so index.html's plain <script> (non-module) can drive it.
 if (typeof window !== 'undefined') {
   window._galaxyView = {
     mount, destroy, setVisible, patchHeat, relayout, pause, resume, resize, isMounted,
-    showHalo, hideHalo, nodeScreenPos, highlight,
+    showHalo, hideHalo, nodeScreenPos, highlight, fitView, resetView,
   };
 }
