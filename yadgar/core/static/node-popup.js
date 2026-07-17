@@ -158,3 +158,26 @@ export function clampPopupPosition(anchor, popupSize, viewport) {
   const top = Math.min(Math.max((anchor.y || 0) + OFFSET, MARGIN), maxTop);
   return { left, top };
 }
+
+/**
+ * Clamp a drag-target position so a w×h popup stays fully inside a vw×vh viewport
+ * (8px margin). Distinct from clampPopupPosition: no click-anchor offset — the
+ * caller supplies the raw desired top-left (x,y) mid-drag, we keep it on-screen.
+ *
+ * @param {number} x   desired left
+ * @param {number} y   desired top
+ * @param {number} w   popup width
+ * @param {number} h   popup height
+ * @param {number} vw  viewport width
+ * @param {number} vh  viewport height
+ * @returns {{left:number, top:number}}
+ */
+export function clampToViewport(x, y, w, h, vw, vh) {
+  const MARGIN = 8;
+  const maxLeft = Math.max(MARGIN, vw - w - MARGIN);
+  const maxTop = Math.max(MARGIN, vh - h - MARGIN);
+  return {
+    left: Math.min(Math.max(x || 0, MARGIN), maxLeft),
+    top: Math.min(Math.max(y || 0, MARGIN), maxTop),
+  };
+}

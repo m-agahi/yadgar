@@ -33,6 +33,9 @@ import {
   P_BOUNDS,
   GALAXY_SEED,
   R_MAX,
+  assignArmsBalanced,
+  fitDistanceForDisk,
+  CAM_FOV_DEG,
 } from './galaxy-view.js';
 
 // Minimal in-memory localStorage-compatible stub (overlays.js test pattern).
@@ -456,5 +459,91 @@ describe('loadSavedP / saveP', () => {
     const raw = JSON.parse(store.getItem(GALAXY_P_KEY));
     expect(raw.arms).toBe(6); // clamped on write
     expect('junk' in raw).toBe(false);
+  });
+});
+
+// ── assignArmsBalanced: greedy lightest-arm bin-packing (fixes unbalanced arms) ──
+// Replaces the old `i % arms` round-robin, which dumped the biggest (rank 0/1)
+// clusters into arms 0/1 → 2 arms held most of the nodes. Greedy first-fit-
+// decreasing by node count keeps per-arm totals near-equal + stays deterministic.
+describe('assignArmsBalanced', () => {
+  // Helper: given a cluster list + arms, return the per-arm total node count.
+  function armLoads(clusters, arms) {
+    const map = assignArmsBalanced(clusters, arms);
+    const load = new Array(arms).fill(0);
+    for (const c of clusters) load[map.get(c.id)] += c.n;
+    return load;
+  }
+  const spread = (load) => Math.max(...load) / Math.max(1, Math.min(...load));
+
+  it('is materially tighter than round-robin on a skewed corpus', () => {
+    // Skewed: a few big clusters + many small. Score-sorted (largest-first) input,
+    // mirroring model.armClusters.
+    const clusters = [
+      { id: 0, n: 100 }, { id: 1, n: 90 }, { id: 2, n: 20 }, { id: 3, n: 18 },
+      { id: 4, n: 12 }, { id: 5, n: 10 }, { id: 6, n: 8 }, { id: 7, n: 6 },
+    ];
+    const arms = 4;
+    const balanced = armLoads(clusters, arms);
+    // round-robin baseline: i % arms
+    const rr = new Array(arms).fill(0);
+    clusters.forEach((c, i) => { rr[i % arms] += c.n; });
+    expect(spread(balanced)).toBeLessThan(spread(rr));
+  });
+
+  it('beats round-robin on the user-reported dominant-cluster corpus', () => {
+    // The actual complaint: "2 arms have tons of nodes, the other 2 don't." A
+    // couple of dominant clusters (rank 0/1) + a small tail. Round-robin dumps
+    // both giants into arms 0/1; greedy splits them across arms.
+    const clusters = [
+      { id: 0, n: 100 }, { id: 1, n: 90 }, { id: 2, n: 20 }, { id: 3, n: 18 },
+      { id: 4, n: 12 }, { id: 5, n: 10 }, { id: 6, n: 8 }, { id: 7, n: 6 },
+    ];
+    const rr = new Array(4).fill(0);
+    clusters.forEach((c, i) => { rr[i % 4] += c.n; });
+    // greedy ~2.78 vs round-robin ~4.67 — the giants no longer share an arm.
+    expect(spread(armLoads(clusters, 4))).toBeLessThan(spread(rr));
+  });
+
+  it('is deterministic (ties → lowest arm index)', () => {
+    const clusters = [
+      { id: 0, n: 10 }, { id: 1, n: 10 }, { id: 2, n: 10 }, { id: 3, n: 10 },
+    ];
+    const a = assignArmsBalanced(clusters, 4);
+    const b = assignArmsBalanced(clusters, 4);
+    expect([...a.entries()]).toEqual([...b.entries()]);
+    // equal weights → one cluster per arm, in index order.
+    expect(a.get(0)).toBe(0);
+    expect(a.get(1)).toBe(1);
+    expect(a.get(2)).toBe(2);
+    expect(a.get(3)).toBe(3);
+  });
+
+  it('handles empty input and arms>=1 defensively', () => {
+    expect([...assignArmsBalanced([], 4).entries()]).toEqual([]);
+    expect([...assignArmsBalanced(null, 4).entries()]).toEqual([]);
+    // arms coerced to >=1
+    const map = assignArmsBalanced([{ id: 0, n: 5 }], 0);
+    expect(map.get(0)).toBe(0);
+  });
+});
+
+// ── fitDistanceForDisk: camera distance to frame the galaxy disk (Fit button) ────
+describe('fitDistanceForDisk', () => {
+  it('larger disk / narrower FOV → greater distance (monotonic)', () => {
+    const near = fitDistanceForDisk(46, CAM_FOV_DEG);
+    const far = fitDistanceForDisk(92, CAM_FOV_DEG);
+    expect(far).toBeGreaterThan(near);
+    // narrower FOV needs more distance for the same disk.
+    expect(fitDistanceForDisk(46, 30)).toBeGreaterThan(fitDistanceForDisk(46, 52));
+  });
+  it('clamps to the MiniOrbit wheel bounds [14, 320]', () => {
+    expect(fitDistanceForDisk(1, 170)).toBeGreaterThanOrEqual(14); // tiny → min
+    expect(fitDistanceForDisk(100000, 1)).toBeLessThanOrEqual(320); // huge → max
+  });
+  it('matches dist = rMax*pad / tan(fov/2)', () => {
+    const rMax = 46, fov = 52, pad = 1.15;
+    const expected = (rMax * pad) / Math.tan((fov * Math.PI) / 360);
+    expect(fitDistanceForDisk(rMax, fov, pad)).toBeCloseTo(expected, 6);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { popupFieldModel, clampPopupPosition, isWideType } from './node-popup.js';
+import { popupFieldModel, clampPopupPosition, clampToViewport, isWideType } from './node-popup.js';
 
 const links = [
   { source: 'mem:1', target: 'wiki:2', type: 'memory_wiki' },
@@ -106,5 +106,32 @@ describe('clampPopupPosition', () => {
     const pos = clampPopupPosition({ x: -50, y: -50 }, size, viewport);
     expect(pos.left).toBeGreaterThanOrEqual(8);
     expect(pos.top).toBeGreaterThanOrEqual(8);
+  });
+});
+
+// ── Car D: draggable popup — clampToViewport (raw top-left, no click offset) ─────
+describe('clampToViewport', () => {
+  it('passes through a position that fully fits', () => {
+    expect(clampToViewport(100, 120, 340, 400, 1000, 800)).toEqual({ left: 100, top: 120 });
+  });
+  it('clamps the right edge so w never overflows', () => {
+    const pos = clampToViewport(900, 100, 340, 400, 1000, 800);
+    expect(pos.left).toBe(1000 - 340 - 8); // 652
+  });
+  it('clamps the bottom edge so h never overflows', () => {
+    const pos = clampToViewport(100, 700, 340, 400, 1000, 800);
+    expect(pos.top).toBe(800 - 400 - 8); // 392
+  });
+  it('clamps to the 8px margin on the top/left', () => {
+    const pos = clampToViewport(-200, -200, 340, 400, 1000, 800);
+    expect(pos).toEqual({ left: 8, top: 8 });
+  });
+  it('never returns below the margin even when the popup is larger than the viewport', () => {
+    const pos = clampToViewport(500, 500, 2000, 2000, 1000, 800);
+    expect(pos.left).toBeGreaterThanOrEqual(8);
+    expect(pos.top).toBeGreaterThanOrEqual(8);
+  });
+  it('treats a nullish coordinate as 0 (then clamps to margin)', () => {
+    expect(clampToViewport(undefined, undefined, 100, 100, 1000, 800)).toEqual({ left: 8, top: 8 });
   });
 });

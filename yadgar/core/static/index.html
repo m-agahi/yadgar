@@ -1547,13 +1547,10 @@ body.galaxy-active #right { display: none !important; }
        exit button stays here (it is a graph-interaction affordance, not search). -->
   <div id="topbar-graph-controls">
     <button class="btn" id="focus-clear-btn" onclick="clearFocus()" style="display:none" title="Exit focus mode">✕ Focus</button>
+    <!-- ADR-0135 (galaxy-only): galaxy is the sole renderer. Fit/Reset drive the
+         galaxy camera. The old 2D/3D button + Galaxy↔Force toggle were removed. -->
     <button class="btn" onclick="fitGraph()">⊞ Fit</button>
     <button class="btn" onclick="resetLayout()">⟳ Reset</button>
-    <button class="btn" id="mode-btn" onclick="toggleMode()">2D</button>
-    <!-- finish-viz: Galaxy ↔ Force-directed layout toggle. Galaxy is the default
-         when the server serves precomputed galaxy positions (physics frozen so the
-         Milky-Way shape holds); flipping to Force re-runs the d3-force settle. -->
-    <button class="btn" id="galaxy-btn" onclick="toggleLayoutMode()" title="Toggle Galaxy ↔ Force-directed layout">✦ Galaxy</button>
     <button class="btn" onclick="loadGraph()">↺ Reload</button>
     <!-- v5.87 car A: View control — show/hide floating panels. The memory-cluster
          panel defaults OFF and is recovered here. -->
@@ -1590,8 +1587,6 @@ body.galaxy-active #right { display: none !important; }
     </div>
     <div>
       <div class="sec-title">Display</div>
-      <!-- viz-rest #13: convex hulls per cluster (2D). Default OFF (ring tint stays on). -->
-      <label><input type="checkbox" id="show-cluster-hulls"> Cluster hulls</label>
       <!-- viz-rest #89: render weak (count<2) transition edges. Default OFF. -->
       <label><input type="checkbox" id="show-weak-edges"> Weak edges</label>
     </div>
@@ -2138,8 +2133,6 @@ async function loadVizConfig() {
     // v5.50.13: legend block for Help tab renderer
     if (cfg.legend) YADGAR_VIZ_CONFIG.legend = cfg.legend;
   } catch (_) { /* silent fallback */ }
-  // v5.54.3: build role/color/lazy map from legend for styling
-  _buildEdgeTypeMapFromConfig();
 }
 
 // Convenience aliases — updated after loadVizConfig() runs
@@ -2216,20 +2209,12 @@ function _renderEdgeLegendOverlay() {
         // Update applyFilters state and re-filter
         _edgeToggleState[edge.key] = cb.checked;
         // Lazy types: trigger on-demand fetch when flipped ON for first time.
-        // _fetchLazyEdges rebuilds graphData with the visible force set itself.
         if (edge.lazy && cb.checked && !_lazyEdgesLoaded[edge.key]) {
           _fetchLazyEdges(edge.key);
-        } else if (graph) {
-          // C1: rebuild the d3 force-link set from the visible edge types so a
-          // toggled-OFF type's links leave the force — otherwise the (now hidden)
-          // link force keeps the formerly-linked nodes clumped on reheat.
-          graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
         }
+        // Galaxy is the sole renderer + edges are decorative; re-filter so
+        // visibility (setVisible) reflects the toggle. No force-set rebuild.
         applyFilters();
-        // P3.1: reheat so the layout adapts to the changed edge set instead of
-        // showing a stale frozen graph (also wakes the paused render loop).
-        // With the force set now rebuilt above, formerly-linked nodes drift apart.
-        _reheatSimulation();
       });
     } else {
       // ── Update existing row in-place (don't replace <input> — preserves listeners) ─
@@ -2258,19 +2243,14 @@ function _renderEdgeLegendOverlay() {
 
 // ── State ───────────────────────────────────────────────────────────────────
 let allNodes = [], allLinks = [];
-let graph = null;
+// ADR-0135 galaxy-only: the force-directed renderer (`graph`) is gone. Galaxy
+// (window._galaxyView) is the sole renderer; there is no `graph` global anymore.
 let lastSeq = 0;
 let sse = null;
 let debugTab = 'graph';
 const sparkCpu = Array(60).fill(0);
 const sparkDb  = Array(60).fill(0);
 let sparkDbMax = 1;
-// V4: 2D/3D mode. Default '3d'. Persisted in localStorage.
-let _graphMode = localStorage.getItem('yadgar-graph-mode') || '3d';
-// v5.10.8 Bug A: count engine ticks so onEngineStop can skip premature pin.
-let _engineTickCount = 0;
-// v5.10.10: zoom-fit flag — reset per initGraph + loadGraph so fit fires once per load.
-let _zoomFitDone = false;
 // v5.54.3: per-type edge toggle state (populated from legend.edges default_on)
 let _edgeToggleState = {};
 // v5.54.3: tracks which lazy edge types have been fetched (prevents double-fetch)
@@ -2280,91 +2260,6 @@ let _lazyEdgesLoaded = {};
 // diverges from DB. When the SSE pushes a memory_added after load, we mark
 // the view stale so the user knows to Reload for accurate heat values.
 let _lastGraphLoadTime = 0;
-
-// ── v5.87 C2: warm-start node positions (persist + seed) ────────────────────
-// On a FRESH page reload the in-memory allNodes is empty, so the in-session
-// posMap below restores nothing and the d3 force layout runs its full cold
-// settle from a phyllotaxis spiral — the graph "flies around" for the cooldown
-// window on every reload. We persist settled positions to localStorage on
-// onEngineStop and seed them back here so first paint shows the laid-out graph
-// and the sim settles in far fewer ticks.
-//
-// Inline copy of the unit-tested viz_positions.js (the plain <script> can't
-// import the ES module — same convention as _visibleForceLinks). Keep in sync.
-const _POS_STORE_KEY = 'yadgar-graph-positions';
-function _isFiniteNum(v) { return typeof v === 'number' && Number.isFinite(v); }
-function _serializeNodePositions(nodes) {
-  const out = {};
-  for (const n of (nodes || [])) {
-    if (!n || n.id == null) continue;
-    if (!_isFiniteNum(n.x) || !_isFiniteNum(n.y)) continue;
-    const rec = { x: n.x, y: n.y };
-    if (_isFiniteNum(n.z)) rec.z = n.z;   // z only in 3D mode
-    out[n.id] = rec;
-  }
-  return out;
-}
-function _restoreNodePositions(nodes, saved) {
-  if (!saved) return 0;
-  let count = 0;
-  for (const n of (nodes || [])) {
-    if (!n || n.id == null) continue;
-    const p = saved[n.id];
-    if (!p || !_isFiniteNum(p.x) || !_isFiniteNum(p.y)) continue;
-    // x/y/z ONLY — never fx/fy/fz: hard pins would freeze the layout so new
-    // nodes could not integrate, and would break the 2D onEngineStop pinning.
-    n.x = p.x; n.y = p.y;
-    if (_isFiniteNum(p.z)) n.z = p.z;
-    count++;
-  }
-  return count;
-}
-function _pruneStalePositions(saved, currentIds) {
-  const keep = currentIds instanceof Set ? currentIds : new Set(currentIds || []);
-  const out = {};
-  for (const id of Object.keys(saved || {})) {
-    if (keep.has(id)) out[id] = saved[id];
-  }
-  return out;
-}
-function _parsePositionStore(json) {
-  if (!json || typeof json !== 'string') return {};
-  try {
-    const v = JSON.parse(json);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-    return v;
-  } catch { return {}; }
-}
-// v5.88: count nodes that arrive already carrying a finite (x,y) position. The
-// server precomputed-layout feature attaches x/y/z in the /api/graph payload;
-// those nodes are already seeded so the localStorage restore (which only touches
-// nodes WITHOUT finite x) leaves them alone — server positions take priority.
-// A non-zero count means the payload was server-seeded → cap cooldownTicks for a
-// near-instant render. Inline copy of viz_positions.countSeededPositions.
-function _countSeededPositions(nodes) {
-  let count = 0;
-  for (const n of (nodes || [])) {
-    if (n && _isFiniteNum(n.x) && _isFiniteNum(n.y)) count++;
-  }
-  return count;
-}
-// Read the persisted store (safe — never throws).
-function _loadSavedPositions() {
-  try { return _parsePositionStore(localStorage.getItem(_POS_STORE_KEY)); }
-  catch { return {}; }   // localStorage may throw in private mode
-}
-// Persist settled positions, pruned to the live node set so the store stays
-// bounded. Called from onEngineStop (after the >=50-tick settle guard).
-function _persistNodePositions(nodes) {
-  try {
-    const ids = new Set((nodes || []).map(n => n && n.id).filter(id => id != null));
-    const map = _pruneStalePositions(_serializeNodePositions(nodes), ids);
-    localStorage.setItem(_POS_STORE_KEY, JSON.stringify(map));
-  } catch { /* QuotaExceededError / private mode — warm-start is best-effort */ }
-}
-// True once a fresh load seeded saved positions onto allNodes — lets initGraph
-// cap cooldownTicks so the sim relaxes the scaffold instead of a full cold run.
-let _warmStarted = false;
 
 // ── Memory cluster state (v5.80: real memory_cluster rows) ──────────────────
 // Palette of visually distinct colors for cluster tinting (up to 12 clusters).
@@ -2392,33 +2287,14 @@ function _applyClusterColors(clusters) {
   }
 }
 
-// viz-rest #13: cluster hull toggle (default OFF — hulls add overdraw; the ring
-// tint stays the always-on affordance). Wired to a checkbox further below.
-let _showClusterHulls = false;
 // viz-rest #89: weak-edge (count<2 transition) render toggle. Default OFF —
 // flipping it re-fetches /api/graph?include_weak=1.
 let _includeWeakEdges = false;
 
-// finish-viz: Galaxy ↔ Force-directed layout toggle (client preference).
-//   'galaxy' (default): when the server serves precomputed galaxy positions
-//     (payload.layout_mode === 'galaxy'), FREEZE physics — cooldownTicks(0) — so
-//     the seeded Milky-Way shape holds instead of d3-force relaxing it to a blob.
-//   'force': ignore server galaxy positions and run the normal d3-force settle.
-// Persisted so the choice survives reloads. The server layout_mode of the LAST
-// payload is tracked so toggleLayoutMode can re-apply the right cooldown.
-let _layoutModePref = localStorage.getItem('yadgar-layout-mode') || 'galaxy';
-let _serverLayoutMode = 'spring';  // layout_mode of the most recent /api/graph payload
-
-// ── ADR-0135: galaxy = a SEPARATE raw-Three.js renderer (galaxy-view.js), not
-// the #209 physics-freeze inside 3d-force-graph. _renderMode is DERIVED from
-// _layoutModePref (single source of truth — never let a 2nd var drift):
-//   'galaxy' → window._galaxyView owns #canvas-wrap; global `graph` is null.
-//   'fg'     → the 2D/3D force-graph owns #canvas-wrap.
-// Invariant: exactly ONE of {FG renderer, galaxy renderer} owns #canvas-wrap at
-// any time. Tear the other down before mounting. In galaxy mode `graph===null`,
-// so every `graph.` site must be routed (→ _galaxyView) or skipped, never run.
-function _renderMode() { return _layoutModePref === 'galaxy' ? 'galaxy' : 'fg'; }
-function _isGalaxy() { return _layoutModePref === 'galaxy'; }
+// ── ADR-0135 (galaxy-only): galaxy is the SOLE renderer — a raw-Three.js scene
+// (galaxy-view.js) mounted on #canvas-wrap via window._galaxyView. The old
+// 2D/3D force-directed renderer and the Galaxy↔Force toggle were removed; there
+// is no `graph` global and no render-mode switch anymore.
 
 // Bridge a galaxy pick (raw /api/graph node) into the FLOATING galaxy popup
 // (Car D #4) — replaces the #right sidebar in galaxy mode. Anchors near the
@@ -2481,6 +2357,18 @@ function _clampPopupPosition(anchor, size, viewport) {
   return {
     left: Math.min(Math.max((anchor.x || 0) + OFFSET, MARGIN), maxLeft),
     top: Math.min(Math.max((anchor.y || 0) + OFFSET, MARGIN), maxTop),
+  };
+}
+// Car D drag: clamp a raw drag-target top-left (x,y) so a w×h popup stays fully
+// on-screen (8px margin). Inline copy of node-popup.js clampToViewport (the plain
+// <script> can't import the ES module — same convention as _clampPopupPosition).
+function _clampToViewport(x, y, w, h, vw, vh) {
+  const MARGIN = 8;
+  const maxLeft = Math.max(MARGIN, vw - w - MARGIN);
+  const maxTop = Math.max(MARGIN, vh - h - MARGIN);
+  return {
+    left: Math.min(Math.max(x || 0, MARGIN), maxLeft),
+    top: Math.min(Math.max(y || 0, MARGIN), maxTop),
   };
 }
 
@@ -2576,9 +2464,46 @@ function _showGalaxyPopup(node) {
   popup.style.top = pos.top + 'px';
 }
 
+// ── Car D #4: draggable popup — drag by the .np-header ────────────────────────
+// mousedown on the header (but NOT the × close button) begins a drag: document
+// mousemove moves the popup (clamped on-screen), mouseup ends it. The move/up
+// listeners are self-cleaning (removed on mouseup) so no leak accumulates. A
+// close mid-drag (× / ESC / click-away) must also tear them down — _dragCleanup.
+let _dragMove = null, _dragUp = null;
+function _dragCleanup() {
+  if (_dragMove) { document.removeEventListener('mousemove', _dragMove); _dragMove = null; }
+  if (_dragUp) { document.removeEventListener('mouseup', _dragUp); _dragUp = null; }
+}
+function _wireGalaxyPopupDrag() {
+  const popup = document.getElementById('galaxy-node-popup');
+  if (!popup) return;
+  const header = popup.querySelector('.np-header');
+  if (!header) return;
+  header.addEventListener('mousedown', (e) => {
+    // Bail if the mousedown is on the × close button (its click must still close).
+    if (e.target && e.target.closest && e.target.closest('#gnp-close')) return;
+    e.preventDefault();
+    const rect = popup.getBoundingClientRect();
+    const offX = e.clientX - rect.left;   // cursor offset within the popup
+    const offY = e.clientY - rect.top;
+    const w = rect.width, h = rect.height;
+    _dragCleanup(); // defensively drop any stale drag before starting a new one
+    _dragMove = (mv) => {
+      const pos = _clampToViewport(mv.clientX - offX, mv.clientY - offY, w, h,
+        window.innerWidth, window.innerHeight);
+      popup.style.left = pos.left + 'px';
+      popup.style.top = pos.top + 'px';
+    };
+    _dragUp = () => _dragCleanup(); // self-cleaning: remove both on release
+    document.addEventListener('mousemove', _dragMove);
+    document.addEventListener('mouseup', _dragUp);
+  });
+}
+
 function _closeGalaxyPopup() {
   const popup = document.getElementById('galaxy-node-popup');
   if (!popup || popup.hidden) return;
+  _dragCleanup(); // drop any in-flight drag listeners so nothing lingers after close
   popup.hidden = true;
   _galaxyPopupNode = null;
   if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.hideHalo === 'function') {
@@ -2586,7 +2511,9 @@ function _closeGalaxyPopup() {
   }
 }
 
-// Click-away (document mousedown outside the popup) + × + ESC close.
+// Click-away (document mousedown outside the popup) + × + ESC close. The drag
+// mousedown fires INSIDE the popup, so popup.contains(e.target) is true and this
+// click-away never closes on a drag-start.
 document.addEventListener('mousedown', (e) => {
   const popup = document.getElementById('galaxy-node-popup');
   if (!popup || popup.hidden) return;
@@ -2597,10 +2524,11 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') _closeGalaxyPopup();
 });
-// × close button (wired once DOM is parsed via defer of this script block).
+// × close button + header drag (wired once DOM is parsed via defer of this block).
 (function _wireGalaxyPopupClose() {
   const btn = document.getElementById('gnp-close');
   if (btn) btn.addEventListener('click', _closeGalaxyPopup);
+  _wireGalaxyPopupDrag();
 })();
 
 // Build the {id: visible} map the galaxy renderer consumes from applyFilters'
@@ -2611,108 +2539,22 @@ function _galaxyVisibilityMap() {
   return m;
 }
 
-// Mount the galaxy scene into #canvas-wrap with the current payload. Tears down
-// the FG renderer first so only one renderer owns the canvas + a WebGL context.
+// Mount the galaxy scene into #canvas-wrap with the current payload. Galaxy is
+// the only renderer, so there is nothing else to tear down first.
 function _mountGalaxy() {
   if (!window._galaxyView) return;   // module not loaded yet (boot ordering)
-  // tear down FG if it owns the canvas
-  if (graph) {
-    try { graph._destructor && graph._destructor(); } catch (_) {}
-    graph = null;
-  }
   _galaxyView.mount(document.getElementById('canvas-wrap'), {
     onPick: _galaxyOnPick,
     payload: { nodes: allNodes, clusters: _memoryClusters },
   });
   // apply the current filter visibility immediately (first paint respects filters)
   _galaxyView.setVisible(_galaxyVisibilityMap());
-  _syncModeBtnDisabled();
 }
 
 // Tear the galaxy scene down (dispose GPU resources + listeners + DOM).
 function _teardownGalaxy() {
   if (window._galaxyView && _galaxyView.isMounted()) _galaxyView.destroy();
 }
-
-// mode-btn (2D/3D) is meaningless in galaxy → grey it out; re-enable in FG.
-function _syncModeBtnDisabled() {
-  const btn = document.getElementById('mode-btn');
-  if (!btn) return;
-  const galaxy = _isGalaxy();
-  btn.disabled = galaxy;
-  btn.classList.toggle('disabled', galaxy);
-  btn.title = galaxy ? '2D/3D unavailable in Galaxy mode' : 'Toggle 2D/3D';
-  // hide the FG floating overlays + show/hide is handled by CSS body.galaxy-active,
-  // toggled here so the phosphor overlays don't float over the galaxy scene.
-  document.body.classList.toggle('galaxy-active', galaxy);
-  // Car D #4: the galaxy popup only lives in galaxy mode — close it on exit.
-  if (!galaxy && typeof _closeGalaxyPopup === 'function') _closeGalaxyPopup();
-}
-
-// viz-rest #13: 2D convex hull (Andrew's monotone chain). Pure; mirrors
-// viz_helpers.convexHull (unit-tested there). Points are {x,y}. <3 pts → as-is.
-function _convexHull2D(points) {
-  const pts = points.filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y));
-  if (pts.length < 3) return pts.slice();
-  const sorted = pts.slice().sort((a, b) => (a.x - b.x) || (a.y - b.y));
-  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  const lower = [];
-  for (const p of sorted) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-    lower.push(p);
-  }
-  const upper = [];
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const p = sorted[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-    upper.push(p);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-// viz-rest #13: render a translucent convex hull per cluster BEHIND the nodes
-// (onRenderFramePre). Only visible member nodes contribute vertices, so a hull
-// tracks the on-screen footprint of its cluster. Bounded: a cluster with <3
-// visible members draws nothing (the per-node ring tint already marks those).
-function _drawClusterHulls(ctx, globalScale) {
-  if (!_showClusterHulls || !graph || !_memoryClusters.length) return;
-  let nodeById = _hullNodeIndex;
-  if (!nodeById) {
-    nodeById = _hullNodeIndex = {};
-    for (const n of allNodes) nodeById[n.id] = n;
-  }
-  const pad = 10 / globalScale; // world-space padding around the hull
-  for (const cl of _memoryClusters) {
-    const members = (cl.member_node_ids || [])
-      .map(id => nodeById[id])
-      .filter(n => n && n.__visible !== false && Number.isFinite(n.x) && Number.isFinite(n.y));
-    if (members.length < 3) continue;
-    const hull = _convexHull2D(members.map(n => ({ x: n.x, y: n.y })));
-    if (hull.length < 3) continue;
-    // Centroid — expand each hull vertex outward by `pad` so nodes sit inside.
-    let cx = 0, cy = 0;
-    for (const p of hull) { cx += p.x; cy += p.y; }
-    cx /= hull.length; cy /= hull.length;
-    ctx.beginPath();
-    hull.forEach((p, i) => {
-      const dx = p.x - cx, dy = p.y - cy;
-      const len = Math.hypot(dx, dy) || 1;
-      const ex = p.x + (dx / len) * pad, ey = p.y + (dy / len) * pad;
-      i === 0 ? ctx.moveTo(ex, ey) : ctx.lineTo(ex, ey);
-    });
-    ctx.closePath();
-    const color = cl.__color || '#8b949e';
-    ctx.fillStyle = _hexToRgbaInline(color, 0.08);
-    ctx.fill();
-    ctx.strokeStyle = _hexToRgbaInline(color, 0.5);
-    ctx.lineWidth = 1.5 / globalScale;
-    ctx.stroke();
-  }
-}
-// Node-id → node index for hull lookup; rebuilt whenever the node set changes.
-let _hullNodeIndex = null;
 
 // Render memory clusters into sidebar (#cluster-list) and floating overlay (#fo-cluster-list).
 function renderMemoryClusters(clusters) {
@@ -2764,631 +2606,27 @@ function heatColor(h) {
   return `hsl(${(1 - h) * ht.hue_start + h * ht.hue_end},${ht.sat_base + h * ht.sat_gain}%,${ht.light_base + h * ht.light_gain}%)`;
 }
 
-// ── 3D node colour resolver (S2.1) ──────────────────────────────────────────
-// Used by .nodeColor() in 3D mode and by _applySearchHighlight re-trigger.
-// v5.80: clustered memory nodes use cluster color; unclustered use heat color.
-function _nodeColorFor(node) {
-  const dimOpacity = YADGAR_VIZ_CONFIG.search.dim_opacity;
-  if (node.__dimmed) return `rgba(80,80,80,${dimOpacity})`;
-  const mod = window._graphDetailModule;
-  const nt = mod ? mod.nodeType(node) : (node.type || '');
-  if (nt === 'wiki') return _wikiCatColor()[node.category] || '#8b949e';
-  // v5.80: use cluster tint when node belongs to a real memory_cluster
-  const clusterColor = _nodeClusterColorMap[node.id];
-  if (clusterColor) return clusterColor;
-  return heatColor(node.heat || 0);
-}
-
-// ── 3D node rendering ───────────────────────────────────────────────────────
-// REVERTED in v5.10.7.3 — three attempts at custom mesh (Lambert v5.10.7,
-// Basic v5.10.7.1, conditional transparent v5.10.7.2) all rendered as
-// fragmented triangle shards. Falling back to ForceGraph3D default solid
-// sphere rendering, which was the last-known-good visual state from v5.3.7.
-// .nodeColor() below still applies heat-based colouring to the default sphere
-// material; S2.2 shape distinction (wiki octahedra vs memory spheres) is
-// deferred until deeper ForceGraph3D + ThreeJS investigation.
-//
-// v5.50.6: _makeNodeThreeObject re-introduced with correct material.
-// Three prior attempts (v5.10.7, .1, .2) produced fragmented shards because all
-// used `transparent: true`, which disables depthWrite → THREE renders faces in
-// submit order, not depth order → visible triangle-ordering artifacts on 3D polyhedra.
-// Fix: MeshBasicMaterial with NO transparent flag (defaults to false, depthWrite=true).
-// Wiki nodes → OctahedronGeometry; memory/other nodes → return null (ForceGraph default sphere).
-// Respects YADGAR_VIZ_CONFIG.node.wiki_shape: 'octahedron' | 'sphere'.
-// Exported for unit tests: window._makeNodeThreeObject = _makeNodeThreeObject.
-// NOTE: keep in lock-step with graph-node-factory.js makeNodeThreeObject()
-// (the unit-tested copy). index.html can't import the ES module, so the logic
-// is duplicated here; edit BOTH or the browser and tests diverge silently.
-function _makeNodeThreeObject(node) {
-  const THREE = window.THREE;
-  if (!THREE) return null;
-  const mod = window._graphDetailModule;
-  const nt = mod ? mod.nodeType(node) : (node.type || '');
-  const nodeRelSize = YADGAR_VIZ_CONFIG.node.size_3d || 8;
-  const radius = Math.cbrt(1) * nodeRelSize;  // matches ForceGraph's own sphere sizing (nodeVal defaults to 1)
-  const color = _nodeColorFor(node) || '#8b949e';
-
-  // wiki → octahedron (config-gated). Wiki wins even if also _anchor-tagged.
-  const shape = YADGAR_VIZ_CONFIG.node.wiki_shape || 'octahedron';
-  if (nt === 'wiki') {
-    if (shape !== 'octahedron') return null; // sphere override → ForceGraph default
-    const geo = new THREE.OctahedronGeometry(radius, 0);
-    // MeshBasicMaterial: unlit, transparent:false (default) → depthWrite:true → solid rendering
-    const mat = new THREE.MeshBasicMaterial({ color });
-    return new THREE.Mesh(geo, mat);
-  }
-
-  // P3.7 / item #6: anchored/protected memories get a distinct GEOMETRY (cube)
-  // vs the default sphere. is_protected is absent from the graph payload, so the
-  // '_anchor' tag (added by restoration.anchor_memory alongside is_protected) is
-  // the available signal. Gated on type==='memory' so untyped/temporal stay null.
-  if (nt === 'memory' && Array.isArray(node.tags) && node.tags.includes('_anchor')) {
-    const side = radius * 1.4; // slightly larger so anchors read as prominent
-    const geo = new THREE.BoxGeometry(side, side, side);
-    const mat = new THREE.MeshBasicMaterial({ color });
-    return new THREE.Mesh(geo, mat);
-  }
-
-  // Plain memory / other → null → ForceGraph default sphere (cheap; CPU-safe).
-  // .nodeColor(_nodeColorFor) still tints the default sphere, so per-node DIM
-  // works on these via the color path (dimmed → solid dark RGB) without a mesh.
-  return null;
-}
-// Expose for unit tests
-if (typeof window !== 'undefined') window._makeNodeThreeObject = _makeNodeThreeObject;
-
-// ── Graph initialisation ────────────────────────────────────────────────────
-function _nodeLabel(n) {
-  // P3.6 [46]: connections count is shown inline on the hover tooltip. In 3D,
-  // per-node sprite badges are the expensive three.js path (would regress the
-  // CPU win), so the degree rides the existing nodeLabel tooltip instead.
-  const deg = (n.__deg != null) ? ` · ${n.__deg} conn` : '';
-  return n.type === 'wiki'
-    ? `[wiki:${n.category}]${deg} ${n.label}`
-    : `[heat=${(n.heat||0).toFixed(3)}]${deg} ${(n.content || n.label || '').slice(0, 120)}`;
-}
-
-// ── Edge styling helpers (v5.54.3: role-distinguished, driven from legend) ────
-// _edgeTypeMap is populated by _buildEdgeTypeMapFromConfig() after loadVizConfig().
-// Until then it falls back to empty (safe: returns fallback color/width).
-let _edgeTypeMap = {};
-function _buildEdgeTypeMapFromConfig() {
-  const edges = YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges;
-  if (!edges) return;
-  _edgeTypeMap = {};
-  for (const e of edges) {
-    _edgeTypeMap[e.key] = {
-      role: e.role || 'informational',
-      color: e.color || '#484f58',
-      default_on: e.default_on !== false,
-      lazy: e.lazy === true,
-    };
-  }
-}
-
-function _hexToRgbaInline(hex, alpha) {
-  try {
-    const h = hex.replace('#', '');
-    const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
-    if (isNaN(r)||isNaN(g)||isNaN(b)) throw new Error('bad');
-    return `rgba(${r},${g},${b},${alpha})`;
-  } catch { return `rgba(130,130,130,${alpha})`; }
-}
-
-// Role-distinguished link color: retrieval=full-opacity, informational=dimmed(0.35)
-function _linkColor(l) {
-  const meta = _edgeTypeMap[l.type];
-  const baseColor = (meta && meta.color) || _edgeColor()[l.type] || '#484f58';
-  // viz-rest #61: intra-match edges (BOTH endpoints matched the search) are
-  // BRIGHTENED with the match color so the connective tissue between hits stands
-  // out — the AND-bright counterpart to the OR-dim branch below. Only fires when
-  // a search is active (at least one node carries __match).
-  if (l.source && l.target && l.source.__match && l.target.__match) {
-    return YADGAR_VIZ_CONFIG.search.match_color;
-  }
-  // P0.3: when a search is active, fade edges whose endpoints are dimmed so the
-  // matched subgraph stands out (previously only nodes dimmed; edges stayed lit).
-  // l.source/.target are node objects post-layout (id strings pre-layout).
-  if ((l.source && l.source.__dimmed) || (l.target && l.target.__dimmed)) {
-    return _hexToRgbaInline(baseColor, YADGAR_VIZ_CONFIG.search.dim_opacity);
-  }
-  if (meta && meta.role === 'retrieval') return baseColor;
-  // informational edges: muted opacity — stored relationship, not a ranking signal
-  return _hexToRgbaInline(baseColor, 0.35);
-}
-// Role-distinguished link width: retrieval=1.5, transition=count-scaled, informational=0.8
-function _linkWidth(l) {
-  if (l.type === 'transition') return Math.min(4, 1 + Math.log2(l.count || 1));
-  const meta = _edgeTypeMap[l.type];
-  if (meta && meta.role === 'retrieval') return 1.5;
-  // informational (including memory_similarity_link, temporal, wiki_crossref, etc.): thinner
-  return 0.8;
-}
-function _arrowLen(l) { return (l.type === 'transition' || l.type === 'memory_wiki' || l.type === 'wiki_crossref') ? YADGAR_VIZ_CONFIG.edge.arrow_len : 0; }
-// viz-rest #48: directional edge particles (3D only). Same directional edge set
-// as _arrowLen (transition/memory_wiki/wiki_crossref). Count is BOUNDED for perf:
-// transition edges scale 1→2 with co-recall count (capped at 2), others get 1.
-// Non-directional edges get 0 (no particles). Arrows remain the 2D fallback.
-function _particleCount(l) {
-  if (l.type === 'transition') return Math.min(2, Math.max(1, Math.round(Math.log2((l.count || 1) + 1))));
-  if (l.type === 'memory_wiki' || l.type === 'wiki_crossref') return 1;
-  return 0;
-}
-
-// v5.87 C1: the link set handed to graph.graphData() (and thus the d3 link FORCE)
-// must EXCLUDE edge types toggled off — otherwise the invisible link force keeps
-// the formerly-linked nodes clumped after a toggle-off (linkVisibility hides them
-// visually but the force still binds them). Mirrors visibleForceLinks() in
-// viz_filters.js (unit-tested). Keys off edge-TYPE only via _edgeToggleState —
-// deliberately NOT node-visibility (__visible) or search/focus, which live on the
-// visual linkVisibility layer (folding them here would rebuild+reheat on every
-// search keystroke → graph jumps while typing). Every graphData({links}) site
-// MUST use this, or a later call resurrects hidden types into the force.
-function _visibleForceLinks() {
-  return allLinks.filter(l => {
-    const t = l && l.type;
-    if (!t) return true;                       // unknown type: keep
-    if (t in _edgeToggleState) return !!_edgeToggleState[t];
-    return true;                               // type not toggled: render-from-source
-  });
-}
-
-// P1.1: CPU fix — force-graph + 3d-force-graph run an unconditional rAF render
-// loop (60fps forever, even when idle/static). Pause it when the scene goes
-// static (onEngineStop) and resume on user interaction / simulation reheat.
-// Symmetric gate: every pause must have a reachable resume or the canvas freezes.
+// P1.1: CPU fix — the galaxy scene runs an rAF auto-rotate render loop. Pause it
+// when the scene goes idle / the home tab is hidden and resume on interaction.
 let _graphAnimationPaused = false;
 function _pauseGraphAnimation() {
-  // ADR-0135: galaxy has its own RAF (window._galaxyView). Pause it too so the
-  // "high CPU when tab-away/idle" complaint holds for the galaxy renderer.
-  if (_isGalaxy()) {
-    if (window._galaxyView && _galaxyView.isMounted()) { _galaxyView.pause(); _graphAnimationPaused = true; }
-    return;
-  }
-  if (!graph || _graphAnimationPaused) return;
-  if (typeof graph.pauseAnimation === 'function') {
-    graph.pauseAnimation();
-    _graphAnimationPaused = true;
-  }
+  // Galaxy has its own RAF (window._galaxyView) — pause it when idle/tab-away so
+  // the auto-rotate render loop doesn't burn CPU.
+  if (window._galaxyView && _galaxyView.isMounted()) { _galaxyView.pause(); _graphAnimationPaused = true; }
 }
 function _resumeGraphAnimation() {
-  if (_isGalaxy()) {
-    if (window._galaxyView && _galaxyView.isMounted()) { _galaxyView.resume(); _graphAnimationPaused = false; }
-    return;
-  }
-  if (!graph || !_graphAnimationPaused) return;
-  if (typeof graph.resumeAnimation === 'function') {
-    graph.resumeAnimation();
-    _graphAnimationPaused = false;
-  }
+  if (window._galaxyView && _galaxyView.isMounted()) { _galaxyView.resume(); _graphAnimationPaused = false; }
 }
-
-// ── P1.1 (Batch-3 completion): idle re-pause debounce ────────────────────────
-// Batch-1 only re-paused via reheat→cool→onEngineStop. After a pan/zoom that does
-// NOT reheat the sim (e.g. a canvas drag, or a hover that woke the loop), the rAF
-// loop stayed awake at 60fps forever. Fix: a debounce timer armed on every canvas
-// interaction; if the engine has cooled AND no interaction fires for IDLE_MS, pause.
-// onEngineStop sets _engineCooled=true (physics settled); resume clears it only if
-// a reheat is in flight. Mouse-move keeps the loop awake (3D hover raycast needs it).
-const _IDLE_PAUSE_MS = 4000;
-let _engineCooled = false;
-let _idlePauseTimer = null;
-function _armIdlePause() {
-  if (_idlePauseTimer) clearTimeout(_idlePauseTimer);
-  _idlePauseTimer = setTimeout(() => {
-    _idlePauseTimer = null;
-    // Only pause if physics has settled — pausing mid-layout freezes a half-cooked
-    // frame. If still hot, onEngineStop will arm the pause when it cools.
-    if (_engineCooled) _pauseGraphAnimation();
-  }, _IDLE_PAUSE_MS);
-}
-// Called on every canvas interaction: wake the loop and (re)start the idle countdown.
-function _onCanvasActivity() {
-  _resumeGraphAnimation();
-  _armIdlePause();
-}
-// P1.1/P3.1: reheat the force simulation AND wake the render loop. Any code that
-// restarts physics must go through here so a paused rAF loop resumes — otherwise
-// the layout re-cooks invisibly and the canvas shows a stale frame.
-function _reheatSimulation() {
-  if (!graph) return;
-  _engineCooled = false;  // physics about to run again → block idle-pause until it cools
-  _resumeGraphAnimation();
-  if (typeof graph.d3ReheatSimulation === 'function') graph.d3ReheatSimulation();
-}
-
-// ── v5.87.1: settle-fit-then-pause for onEngineStop ──────────────────────────
-// Inline copy of the unit-tested shouldFitOnStop (viz_helpers.js) — the plain
-// <script> can't import the ES module (same convention as _visibleForceLinks /
-// _restoreNodePositions). Keep in sync.
-//
-// Bug: warm-start (v5.87 C2) caps cooldownTicks(60) so the engine stops at ~60
-// ticks, but the inline onEngineTick auto-fit fires only at tick
-// auto_zoom_fit_tick_threshold (80). 60 < 80 → the camera is never fitted to the
-// warm-started node bounds → nodes sit off-screen → the canvas looks blank until
-// the user tab-aways/back (resumes the rAF loop) + Resets (reheats the sim, whose
-// tick counter — reset only in initGraph — continues 61→80 and trips the inline
-// fit). This catch-up does an INSTANT fit (0ms transition: nothing in flight to
-// interrupt, unlike raising the cap which would freeze the 800ms pan mid-flight),
-// then defers the pause by one rAF so the fitted frame actually paints.
-function _shouldFitOnStop(tickCount, fitDone, minTicks) {
-  // No fitThreshold gate: stomp protection is covered by fitDone (the inline fit
-  // sets _zoomFitDone before its transition); gating on the threshold would
-  // suppress the catch-up on the Reload path (counter not reset → already >80).
-  return !fitDone && tickCount >= minTicks;
-}
-function _settleFitAndPause() {
-  if (!graph) return;
-  if (_shouldFitOnStop(_engineTickCount, _zoomFitDone, 50)) {
-    _zoomFitDone = true;
-    if (typeof graph.zoomToFit === 'function') {
-      // 0ms = instant: the warm-started bounds are already final, so there is no
-      // multi-frame pan to interrupt before we pause the loop one frame later.
-      graph.zoomToFit(0, YADGAR_VIZ_CONFIG.layout.zoom_fit_padding);
-    }
-  }
-  // Defer the pause one rAF so the (possibly just-fitted) frame paints before the
-  // render loop stops. force-graph keeps its last drawn frame, so pausing AFTER a
-  // painted+fitted frame leaves the graph visible; pausing before it would freeze
-  // an unfitted (blank-looking) frame.
-  const _raf = (typeof requestAnimationFrame === 'function')
-    ? requestAnimationFrame
-    : (fn) => setTimeout(fn, 16);
-  _raf(() => {
-    // If a reheat landed in this one-frame gap (_engineCooled flipped back to
-    // false), physics is running again — don't pause a live loop.
-    if (_engineCooled) _pauseGraphAnimation();
-  });
-}
-
-function initGraph(mode) {
-  if (!mode) mode = _graphMode;
-  // v5.10.8 Bug A: reset tick counter so 2D↔3D toggle restarts the guard.
-  _engineTickCount = 0;
-  // v5.10.10: reset zoom-fit flag so toggle / re-init re-fits on next data load.
-  _zoomFitDone = false;
-  const wrap = document.getElementById('canvas-wrap');
-  // Clear previous graph instance
-  if (graph) {
-    try { graph._destructor && graph._destructor(); } catch(_) {}
-    wrap.innerHTML = '';
-    graph = null;
-  }
-
-  // Update mode button label
-  const modeBtn = document.getElementById('mode-btn');
-  if (modeBtn) modeBtn.textContent = mode === '3d' ? '2D' : '3D';
-
-  if (mode === '3d') {
-    // 3D mode using 3d-force-graph + Three.js
-    graph = ForceGraph3D()(wrap)
-      .backgroundColor('#0d1117')
-      .nodeRelSize(YADGAR_VIZ_CONFIG.node.size_3d)  // v5.10.10: 2x default; v5.11.0: config-driven
-      .nodeId('id')
-      .linkSource('source')
-      .linkTarget('target')
-      .nodeLabel(_nodeLabel)
-      .nodeColor(_nodeColorFor)           // S2.1: heat-based colour applied to default sphere mesh
-      // v5.50.6: re-introduce custom 3D node mesh with corrected material.
-      // Prior attempts (v5.10.7–.2) used transparent:true → depthWrite:false → triangle-sort shards.
-      // Fix: MeshBasicMaterial with transparent:false (default) so depthWrite:true.
-      // wiki nodes → OctahedronGeometry; null return → ForceGraph uses its default sphere.
-      .nodeThreeObject(_makeNodeThreeObject)
-      .nodeThreeObjectExtend(false)
-      .linkColor(_linkColor)
-      .linkWidth(l => _linkWidth(l) * YADGAR_VIZ_CONFIG.edge.width_3d_multiplier)  // v5.10.11: 3D-only; v5.11.0: config-driven
-      .linkOpacity(YADGAR_VIZ_CONFIG.edge.opacity)  // v5.50.0 Variant C: 0.9
-      .linkDirectionalArrowLength(_arrowLen)
-      .linkDirectionalArrowRelPos(1)
-      // viz-rest #48: animated particles on directional edges (3D only). Count is
-      // bounded per-edge (_particleCount ≤ 2) so a dense graph stays performant.
-      .linkDirectionalParticles(_particleCount)
-      .linkDirectionalParticleWidth(1.2)
-      .linkDirectionalParticleSpeed(0.006)
-      .nodeVisibility(n => n.__visible !== false)
-      .linkVisibility(l => {
-        const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
-        const vis = new Set(allNodes.filter(n => n.__visible !== false).map(n => n.id));
-        return vis.has(s) && vis.has(t);
-      })
-      .onNodeClick(_onNodeClickInteractive)
-      .onNodeHover(_onNodeHover)          // P3.4 [45]: neighborhood highlight
-      .onBackgroundClick(closeDetail)
-      .onEngineTick(() => {
-        _engineTickCount++;
-        // v5.10.10: auto-fit once layout has settled; v5.11.0: tick threshold config-driven.
-        if (!_zoomFitDone && _engineTickCount === YADGAR_VIZ_CONFIG.layout.auto_zoom_fit_tick_threshold) {
-          _zoomFitDone = true;
-          if (typeof graph.zoomToFit === 'function') {
-            graph.zoomToFit(YADGAR_VIZ_CONFIG.layout.zoom_fit_transition_ms, YADGAR_VIZ_CONFIG.layout.zoom_fit_padding);
-          }
-        }
-      })
-      // P1.1: 3D had NO onEngineStop — the rAF render loop ran at 60fps forever
-      // even after the layout went static, burning CPU when focused/idle. Pause
-      // the render loop once physics settles; user interaction resumes it.
-      .onEngineStop(() => {
-        // v5.10.8 Bug A guard: only treat physics as settled after it has
-        // actually run (≥50 ticks). If the engine stops at 0 ticks (no data,
-        // or immediate stop on init), the layout never ran — marking it cooled
-        // and pausing the rAF loop here would freeze nodes before they settle.
-        if (_engineTickCount < 50) return;
-        // v5.87 C2: persist settled positions for warm-start on next reload.
-        _persistNodePositions(graph.graphData().nodes);
-        // v5.87.1: warm-start caps cooldownTicks(60), but the inline onEngineTick
-        // fit fires only at tick auto_zoom_fit_tick_threshold (80). 60 < 80 → the
-        // camera was never fitted → nodes off-screen → blank canvas until the user
-        // tab-aways/back + Resets. Catch up with an INSTANT fit (0ms, nothing to
-        // interrupt) so the warm-started frame is on-screen before we pause.
-        _engineCooled = true;   // physics settled — idle-pause may now fire
-        _settleFitAndPause();
-      });
-    graph.d3Force('link').distance(YADGAR_VIZ_CONFIG.physics.link_distance_3d);  // v5.10.11: 3D-only; v5.11.0: config-driven
-  } else {
-    // 2D mode (force-graph canvas) — default
-    graph = ForceGraph()(wrap)
-      .backgroundColor('#0d1117')
-      .nodeId('id')
-      .linkSource('source')
-      .linkTarget('target')
-      .nodeLabel(_nodeLabel)
-      .linkColor(_linkColor)
-      .linkWidth(_linkWidth)
-      .linkDirectionalArrowLength(_arrowLen)
-      .linkDirectionalArrowRelPos(1)
-      .nodeCanvasObject(drawNode)
-      .nodeCanvasObjectMode(() => 'replace')
-      // viz-rest #13: draw translucent convex hulls behind the nodes, per cluster.
-      .onRenderFramePre(_drawClusterHulls)
-      .nodePointerAreaPaint((node, color, ctx) => {
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, 8, 0, 2 * Math.PI);
-        ctx.fill();
-      })
-      .onNodeClick(_onNodeClickInteractive)
-      .onNodeHover(_onNodeHover)          // P3.4 [45]: neighborhood highlight
-      .onBackgroundClick(closeDetail)
-      .onNodeDrag((node) => {
-        graph.enableZoomInteraction(false);
-        // Pin all other nodes so they don't drift
-        for (const n of graph.graphData().nodes) {
-          if (n !== node) { n.fx = n.x; n.fy = n.y; }
-        }
-      })
-      .onNodeDragEnd((node) => {
-        graph.enableZoomInteraction(true);
-        // Keep dragged node pinned at its new position too
-        node.fx = node.x;
-        node.fy = node.y;
-      })
-      .onEngineTick(() => {
-        _engineTickCount++;
-        // v5.10.10: auto-fit once layout has settled; v5.11.0: tick threshold config-driven.
-        if (!_zoomFitDone && _engineTickCount === YADGAR_VIZ_CONFIG.layout.auto_zoom_fit_tick_threshold) {
-          _zoomFitDone = true;
-          if (typeof graph.zoomToFit === 'function') {
-            graph.zoomToFit(YADGAR_VIZ_CONFIG.layout.zoom_fit_transition_ms, YADGAR_VIZ_CONFIG.layout.zoom_fit_padding);
-          }
-        }
-      })
-      .onEngineStop(() => {
-        // v5.10.8 Bug A: only pin after physics has actually run (≥50 ticks).
-        // If engine stops at 0 ticks (e.g. no data, or immediate stop on init),
-        // all n.x values are still 0 — pinning would clump everything at origin.
-        if (_engineTickCount < 50) return;
-        // v5.87 C2: persist settled positions (x/y, not the pins) for warm-start.
-        _persistNodePositions(graph.graphData().nodes);
-        // After layout settles, pin everything so forces can't push nodes around
-        for (const n of graph.graphData().nodes) {
-          if (n.fx == null) { n.fx = n.x; n.fy = n.y; }
-        }
-        // v5.87.1: warm-start caps cooldownTicks(60), but the inline onEngineTick
-        // fit fires only at tick auto_zoom_fit_tick_threshold (80). 60 < 80 → the
-        // camera was never fitted → nodes off-screen → blank canvas until the user
-        // tab-aways/back + Resets. Catch up with an INSTANT fit (0ms, nothing to
-        // interrupt) so the warm-started frame is on-screen before we pause.
-        _engineCooled = true;   // physics settled — idle-pause may now fire
-        _settleFitAndPause();
-      });
-
-    // Softer repulsion — default -30 spreads clusters too far; v5.11.0: config-driven
-    graph.d3Force('charge').strength(YADGAR_VIZ_CONFIG.physics.charge_strength);
-    graph.d3Force('link').distance(YADGAR_VIZ_CONFIG.physics.link_distance_2d);
-  }
-
-  window.addEventListener('resize', () => {
-    // ADR-0135: this listener persists after a galaxy toggle tears FG down (graph
-    // null). Guard so a resize in galaxy mode doesn't crash — galaxy has its own.
-    if (graph) graph.width(wrap.clientWidth).height(wrap.clientHeight);
-  });
-
-  // P1.1: a freshly-built graph starts with its render loop running.
-  _graphAnimationPaused = false;
-  _engineCooled = false;
-  // Resume the render loop on any user interaction with the canvas, and (re)arm
-  // the idle-pause countdown. pointermove is included so 3D hover raycasting keeps
-  // working (it runs inside the render loop) and so the loop stays awake while the
-  // cursor moves — when it stops for _IDLE_PAUSE_MS and the engine has cooled, the
-  // debounce pauses the loop (CPU ~0). Batch-1 only paused via reheat→cool; this
-  // closes the pan/zoom/hover-keeps-awake gap.
-  for (const evt of ['pointerdown', 'pointermove', 'pointerup', 'wheel']) {
-    wrap.addEventListener(evt, _onCanvasActivity, { passive: true });
-  }
-}
-
-// ── 2D/3D mode toggle (V4) ────────────────────────────────────────────────────
-function toggleMode() {
-  if (_isGalaxy()) return; // ADR-0135: 2D/3D is meaningless in galaxy mode (mode-btn greyed)
-  _graphMode = _graphMode === '2d' ? '3d' : '2d';
-  localStorage.setItem('yadgar-graph-mode', _graphMode);
-  // Re-initialise graph, then reload data
-  initGraph(_graphMode);
-  if (allNodes.length > 0) {
-    // Re-apply existing data to new renderer (C1: force set = visible edge types only)
-    graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
-    applyFilters();
-    status(`Switched to ${_graphMode.toUpperCase()} mode`, 'ok');
-  } else {
-    loadGraph();
-  }
-}
-
-// ── finish-viz: Galaxy ↔ Force-directed layout toggle ─────────────────────────
-// Sync the toolbar button label + active styling to the current preference.
-function _syncGalaxyBtn() {
-  const btn = document.getElementById('galaxy-btn');
-  if (!btn) return;
-  const galaxy = _layoutModePref === 'galaxy';
-  btn.textContent = galaxy ? '✦ Galaxy' : '✦ Force';
-  btn.classList.toggle('active', galaxy);
-  // When galaxy is preferred but the server served a spring layout (knob off /
-  // no cache yet), hint that the shape came from force, not the galaxy generator.
-  btn.title = galaxy
-    ? (_serverLayoutMode === 'galaxy'
-        ? 'Galaxy layout (frozen) — click for Force-directed'
-        : 'Galaxy preferred, but server served a force layout — click for Force-directed')
-    : 'Force-directed layout — click for Galaxy';
-}
-
-function toggleLayoutMode() {
-  // ADR-0135: galaxy is a SEPARATE renderer, not an FG physics mode. Toggling
-  // mounts/tears down window._galaxyView and swaps which renderer owns the canvas.
-  _layoutModePref = (_layoutModePref === 'galaxy') ? 'force' : 'galaxy';
-  localStorage.setItem('yadgar-layout-mode', _layoutModePref);
-  _syncGalaxyBtn();
-  if (_isGalaxy()) {
-    // Switch TO galaxy: tear down FG, mount the raw-Three.js galaxy scene on the
-    // current node set. layout() runs client-side from the payload — no re-fetch.
-    _mountGalaxy();
-    status('Galaxy layout', 'ok');
-  } else {
-    // Switch TO force-directed: tear down the galaxy scene and re-init the FG
-    // renderer + apply the current data (full d3-force settle, no galaxy freeze).
-    _teardownGalaxy();
-    _syncModeBtnDisabled();
-    initGraph(_graphMode);
-    if (allNodes.length > 0) {
-      graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
-      applyFilters();
-      _reheatSimulation();
-      if (typeof graph.zoomToFit === 'function') graph.zoomToFit(600, 50);
-    } else {
-      loadGraph();
-    }
-    status('Force-directed layout', 'ok');
-  }
-}
-
-// P3.6 [46]: connection-count badge. __deg is precomputed by calcDegrees().
-// Drawn at the node's upper-right, gated behind zoom (cheap: only when zoomed in,
-// matching the label gate) so a 2476-node overview stays clean. DRY for both branches.
-function _drawDegreeBadge(node, ctx, scale, r) {
-  const deg = node.__deg || 0;
-  if (deg <= 0 || scale <= 2) return;
-  const txt = String(deg);
-  const sz = 8 / scale;
-  const bx = node.x + r * 0.85;
-  const by = node.y - r * 0.85;
-  const pad = 1.5 / scale;
-  ctx.font = `${sz}px monospace`;
-  const w = ctx.measureText(txt).width + pad * 2;
-  ctx.fillStyle = 'rgba(13,17,23,0.85)';
-  ctx.beginPath();
-  ctx.arc(bx, by, Math.max(w / 2, sz * 0.7), 0, 2 * Math.PI);
-  ctx.fill();
-  ctx.fillStyle = '#58a6ff';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(txt, bx, by);
-  ctx.textBaseline = 'alphabetic'; // restore default for subsequent label draws
-}
-
-function drawNode(node, ctx, scale) {
-  const dimAlpha = node.__dimmed ? YADGAR_VIZ_CONFIG.search.dim_opacity : 1.0;
-  ctx.globalAlpha = dimAlpha;
-
-  if (node.type === 'wiki') {
-    // Hexagon
-    const r = node.__pinned ? 11 : 8;
-    const color = _wikiCatColor()[node.category] || '#8b949e';
-    ctx.beginPath();
-    for (let i = 0; i < 6; i++) {
-      const angle = Math.PI / 3 * i - Math.PI / 6;
-      const x = node.x + r * Math.cos(angle);
-      const y = node.y + r * Math.sin(angle);
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-    if (node.__match || node.__pinned) {
-      ctx.strokeStyle = node.__pinned ? YADGAR_VIZ_CONFIG.search.pinned_color : YADGAR_VIZ_CONFIG.search.match_color;
-      ctx.lineWidth = (node.__pinned ? 2.5 : 1.5) / scale;
-      ctx.stroke();
-    }
-    if (scale > 3 && node.label) {
-      const sz = 9 / scale;
-      ctx.font = `${sz}px monospace`;
-      ctx.fillStyle = '#c9d1d9';
-      ctx.textAlign = 'center';
-      ctx.fillText(node.label.slice(0, 28), node.x, node.y + r + sz * 1.2);
-    }
-    _drawDegreeBadge(node, ctx, scale, r); // P3.6 [46]
-    ctx.globalAlpha = 1.0;
-    return;
-  }
-  // Memory node
-  const heat = node.heat || 0;
-  const r = node.__pinned ? 9 : 6;
-  // v5.80: cluster ring — drawn behind the heat-filled circle
-  const clusterColor = _nodeClusterColorMap[node.id];
-  if (clusterColor) {
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, r + 2.5 / scale + 1.5, 0, 2 * Math.PI);
-    ctx.strokeStyle = clusterColor;
-    ctx.lineWidth = 2.5 / scale;
-    ctx.stroke();
-  }
-
-  // viz-rest #54: anchored/protected memories get a distinct SHAPE (square) in 2D,
-  // matching the 3D cube branch (index.html ~2109). is_protected is absent from
-  // the payload, so the '_anchor' tag is the available signal (same as 3D). A
-  // square path is used instead of an arc so anchors read as prominent at a glance.
-  const _isAnchor = Array.isArray(node.tags) && node.tags.includes('_anchor');
-  ctx.beginPath();
-  if (_isAnchor) {
-    const s = r * 1.4; // slightly larger — mirrors the 3D cube's 1.4× side
-    ctx.rect(node.x - s, node.y - s, s * 2, s * 2);
-  } else {
-    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-  }
-  ctx.fillStyle = heatColor(heat);
-  ctx.fill();
-
-  if (node.__match || node.__pinned) {
-    ctx.strokeStyle = node.__pinned ? YADGAR_VIZ_CONFIG.search.pinned_color : YADGAR_VIZ_CONFIG.search.match_color;
-    ctx.lineWidth = (node.__pinned ? 2.5 : 1.5) / scale;
-    ctx.stroke();
-  }
-
-  if (scale > 3 && node.label) {
-    const sz = 9 / scale;
-    ctx.font = `${sz}px monospace`;
-    ctx.fillStyle = '#c9d1d9';
-    ctx.textAlign = 'center';
-    ctx.fillText(node.label.slice(0, 28), node.x, node.y + r + sz * 1.2);
-  }
-  _drawDegreeBadge(node, ctx, scale, r); // P3.6 [46]
-  ctx.globalAlpha = 1.0;
-}
+// Note: the FG per-canvas-activity idle-pause debounce (_onCanvasActivity /
+// _armIdlePause) was removed with initGraph, which was its only wiring point.
+// Tab-switch pause/resume (in _switchTab) still stops the galaxy RAF when the
+// home tab is hidden; idle-while-viewing auto-pause is not re-wired (the galaxy
+// auto-rotate is cheap, and re-wiring it to the galaxy canvas is out of scope).
 
 // ── Data loading ────────────────────────────────────────────────────────────
 async function loadGraph() {
-  // v5.11.0: fetch viz config before graph init so all knobs apply on first render.
+  // v5.11.0: fetch viz config before the scene mounts so all knobs apply first render.
   await loadVizConfig();
-  // v5.10.10: reset zoom-fit flag so reload button re-fits on next engine settle.
-  _zoomFitDone = false;
   status('Loading…', 'wait');
   try {
     // viz-rest #89: opt-in weak-edge render — pass ?include_weak=1 when the toggle
@@ -3397,37 +2635,12 @@ async function loadGraph() {
     const r = await fetch(`${DAEMON}/api/graph${_gq}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
-    // Preserve existing node positions across reloads
-    const posMap = {};
-    for (const n of allNodes) { if (n.x != null) posMap[n.id] = { x: n.x, y: n.y, vx: n.vx, vy: n.vy }; }
     allNodes = d.nodes || [];
-    _hullNodeIndex = null; // viz-rest #13: node set changed → rebuild hull index lazily
-    // v5.88: server precomputed layout — count nodes that arrived already
-    // carrying x/y/z from /api/graph (precompute is unconditional now). On a FRESH
-    // page reload (the slow cold-load case this targets) the in-session posMap is
-    // empty, so server positions survive the pass below, and the localStorage
-    // restore further down only touches nodes WITHOUT finite x — so server
-    // positions take priority over localStorage on first paint. (On an in-session
-    // reload posMap holds fresher settled x/y which intentionally win, same as
-    // v5.87 — server z is kept; the cooldown relaxes any mix.)
-    const _serverSeeded = _countSeededPositions(allNodes);
-    for (const n of allNodes) { const p = posMap[n.id]; if (p) Object.assign(n, p); }
-    // v5.87 C2 warm-start: on a FRESH page reload the in-session posMap is empty
-    // (allNodes was []), so seed positions from the localStorage store. Only
-    // touches nodes the in-session pass left without coords, so in-session
-    // positions (fresher) always win. Sets _warmStarted so initGraph can cap
-    // cooldownTicks and skip the long cold settle.
-    const _seeded = _restoreNodePositions(
-      allNodes.filter(n => !_isFiniteNum(n.x)),
-      _loadSavedPositions(),
-    );
-    // Warm-started when EITHER the server seeded positions OR localStorage did —
-    // both let initGraph cap cooldownTicks for a near-instant render.
-    _warmStarted = (_serverSeeded > 0) || (_seeded > 0);
     allLinks = d.edges || [];
-    // v5.10.9: filter orphan edges before passing to force-graph library.
-    // force-graph throws 'node not found: <id>' synchronously when a link references
-    // an ID absent from the node set — one orphan edge crashes the physics simulation.
+    // Orphan-filter edges: drop any whose endpoint id is absent from the node set.
+    // The galaxy renderer is decorative-edge only, but allLinks still feeds the
+    // node popup's per-type connection counts (_npConnections) + calcDegrees, so a
+    // clean edge set matters.
     const nodeIdSet = new Set(allNodes.map(n => n.id));
     const beforeCount = allLinks.length;
     allLinks = allLinks.filter(l => {
@@ -3442,34 +2655,15 @@ async function loadGraph() {
     calcDegrees();
     // v5.80: consume real clusters[] from backend (memory_cluster rows)
     renderMemoryClusters(d.clusters || []);
-    // finish-viz: track the server's layout_mode (still used by _syncGalaxyBtn's
-    // title hint). ADR-0135 retired #209's cooldownTicks(0) physics-freeze — the
-    // galaxy is now a SEPARATE renderer (galaxy-view.js), not an FG payload shape.
-    _serverLayoutMode = (d.layout_mode === 'galaxy') ? 'galaxy' : 'spring';
-    _syncGalaxyBtn();
-    if (_isGalaxy()) {
-      // ── GALAXY MODE ─────────────────────────────────────────────────────────
-      // The FG `graph` is null here — route to window._galaxyView. layout() runs
-      // client-side from the payload; server x/y/z are ignored (they feed FG only).
-      applyFilters();  // stamps n.__visible so setVisible respects filters on mount
-      if (window._galaxyView && _galaxyView.isMounted()) {
-        _galaxyView.relayout({ nodes: allNodes, clusters: _memoryClusters });
-        _galaxyView.setVisible(_galaxyVisibilityMap());
-      } else {
-        _mountGalaxy();  // first load (or module just finished loading)
-      }
+    // ── GALAXY (sole renderer) ───────────────────────────────────────────────
+    // layout() runs client-side from the payload; the raw-Three.js scene owns the
+    // canvas. applyFilters() stamps n.__visible so setVisible respects filters.
+    applyFilters();
+    if (window._galaxyView && _galaxyView.isMounted()) {
+      _galaxyView.relayout({ nodes: allNodes, clusters: _memoryClusters });
+      _galaxyView.setVisible(_galaxyVisibilityMap());
     } else {
-      // ── FORCE-DIRECTED MODE ─────────────────────────────────────────────────
-      // v5.87 C2: cap cooldownTicks to relax a warm scaffold (~60 ticks) vs the
-      // full cold settle; cold load keeps Infinity for a full first-time layout.
-      if (typeof graph.cooldownTicks === 'function') {
-        graph.cooldownTicks(_warmStarted ? 60 : Infinity);
-      }
-      // C1: force set = visible edge types only (hidden types must not bind nodes)
-      graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
-      applyFilters();
-      // B: zoom-to-fit ALL nodes (including disconnected) on load
-      graph.zoomToFit(600, 50);
+      _mountGalaxy();  // first load (or module just finished loading)
     }
     // F2: stamp load time so SSE can mark view stale when heat drifts.
     _lastGraphLoadTime = Date.now();
@@ -3511,24 +2705,13 @@ function calcDegrees() {
 }
 
 // ── Fly-to-cluster (used by renderMemoryClusters click handlers) ─────────────
-function _flyToCluster(nodes) {
-  if (!graph || !nodes.length) return;
-  const xs = nodes.map(n => n.x).filter(v => v != null);
-  const ys = nodes.map(n => n.y).filter(v => v != null);
-  const zs = nodes.map(n => n.z).filter(v => v != null);
-  if (!xs.length) return;
-  const cx = xs.reduce((a,b) => a+b, 0) / xs.length;
-  const cy = ys.reduce((a,b) => a+b, 0) / ys.length;
-  const cz = zs.length ? zs.reduce((a,b) => a+b, 0) / zs.length : 0;
-  if (_graphMode === '3d') {
-    // 3d-force-graph: cameraPosition({x,y,z}, lookAt, ms)
-    const dist = Math.max(200, Math.sqrt(nodes.length) * 40);
-    graph.cameraPosition({ x: cx, y: cy, z: cz + dist }, { x: cx, y: cy, z: cz }, 800);
-  } else {
-    // force-graph 2D: centerAt(x, y, ms) + zoom(k, ms)
-    const k = Math.max(1.5, Math.min(6, 300 / Math.sqrt(nodes.length + 1)));
-    graph.centerAt(cx, cy, 800);
-    graph.zoom(k, 800);
+// The FG camera-fly relied on per-node world coords + graph.cameraPosition, both
+// gone with the force renderer. Galaxy owns positions inside its point buffer and
+// exposes no fly-to-point API yet, so a cluster click currently just frames the
+// whole disk (a galaxy per-cluster fly is smoke-check-deferred future work).
+function _flyToCluster(_nodes) {
+  if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.fitView === 'function') {
+    _galaxyView.fitView();
   }
 }
 
@@ -3543,10 +2726,7 @@ function _typeToggleOn(id) {
 }
 
 function applyFilters() {
-  // ADR-0135: in galaxy mode `graph` is null but the __visible loop MUST still
-  // run — otherwise filters silently no-op (they never reach _galaxyView). Only
-  // bail when NEITHER renderer is present (nothing to filter).
-  if (!graph && !_isGalaxy()) return;
+  // Galaxy-only: always stamp n.__visible, then route to _galaxyView.setVisible.
   const showWiki   = _typeToggleOn('show-wiki');
   const showMemory = _typeToggleOn('show-memory');   // P3.8 [51]
   const showEntity = _typeToggleOn('show-entity');   // P3.8 [51]
@@ -3595,43 +2775,10 @@ function applyFilters() {
     if (n.__visible) { vis.add(n.id); visCount++; }
   }
 
-  // viz-rest #70: edge weight threshold — edges carry `count` (transition) or
-  // `weight` (entity-rel / similarity_link). An edge with a numeric weight below
-  // the slider value is hidden; edges with no weight metric are unaffected (the
-  // filter only prunes weighted edges, so a threshold of 0 keeps every edge).
-  const minEdgeW = parseInt(document.getElementById('edge-weight-slider')?.value ?? '0', 10) || 0;
-  const _edgeWeightOf = l => {
-    if (typeof l.count === 'number') return l.count;
-    if (typeof l.weight === 'number') return l.weight;
-    return null; // unweighted edge — not subject to the weight filter
-  };
-
-  // Dynamic edge filter — driven by _edgeToggleState, not a hardcoded list.
-  // A type NOT in _edgeToggleState defaults to visible (render-from-source).
-  const linkVisFn = l => {
-    const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target;
-    if (!vis.has(s) || !vis.has(t)) return false;
-    if (minEdgeW > 0) {
-      const w = _edgeWeightOf(l);
-      if (w !== null && w < minEdgeW) return false;
-    }
-    const t_type = l.type;
-    if (t_type && t_type in _edgeToggleState) {
-      return !!_edgeToggleState[t_type];
-    }
-    return true; // type unknown to toggle state: show by default
-  };
-  // ADR-0135: route visibility to whichever renderer owns the canvas. Galaxy hides
-  // a node via per-vertex size=0 (no edges — decorative only); FG uses its
-  // node/link visibility accessors. The __visible loop above ran for both.
-  if (_isGalaxy()) {
-    if (window._galaxyView && _galaxyView.isMounted()) {
-      _galaxyView.setVisible(_galaxyVisibilityMap());
-    }
-  } else if (graph) {
-    graph
-      .nodeVisibility(n => n.__visible)
-      .linkVisibility(linkVisFn);
+  // Galaxy hides a node via per-vertex size=0 (edges are decorative only). Route
+  // the __visible flags stamped above into the scene.
+  if (window._galaxyView && _galaxyView.isMounted()) {
+    _galaxyView.setVisible(_galaxyVisibilityMap());
   }
 
   document.getElementById('s-vis').textContent = visCount;
@@ -3643,10 +2790,10 @@ function applyFilters() {
 // then calls applyFilters (visibility, NOT reheat — we FREEZE the layout and
 // let the user use resetLayout() if they want a full re-layout).
 async function _fetchLazyEdges(edgeType) {
-  // ADR-0135: galaxy has no edges (decorative intra-arm lines only), and `graph`
-  // is null → the graphData() rebuild below would crash. The edge legend is CSS-
-  // hidden in galaxy so this is normally unreachable; guard as defence-in-depth.
-  if (_isGalaxy() || !graph) return;
+  // Galaxy renders edges decoratively only — the edge legend is CSS-hidden in
+  // galaxy so this is normally unreachable. When reached, we still fetch + append
+  // to allLinks (feeds the popup's per-type connection counts) but do NOT rebuild
+  // any force graph (there is none).
   if (_lazyEdgesLoaded[edgeType]) return; // idempotent
   _lazyEdgesLoaded[edgeType] = true; // mark before fetch to prevent double-fetch
   try {
@@ -3668,20 +2815,7 @@ async function _fetchLazyEdges(edgeType) {
       return nodeIdSet.has(s) && nodeIdSet.has(t);
     });
     allLinks = allLinks.concat(validEdges);
-    const afterCount = allLinks.length;
-    // Only update graphData + recalc degrees when links actually changed.
-    // This triggers d3-force to re-recognize the new links.
-    // We FREEZE (don't reheat) for lazy heavy types — user can hit Reset to re-layout.
-    if (afterCount !== beforeCount) {
-      calcDegrees();
-      // C1: force set = visible edge types only — passing raw allLinks here would
-      // resurrect every hidden edge type back into the force on each lazy fetch.
-      graph.graphData({ nodes: allNodes, links: _visibleForceLinks() });
-      // Gentle reheat: bump alpha briefly so the layout adapts (not a full reset)
-      // P1.1: resume the render loop — reheating restarts physics, so the paused
-      // rAF loop must wake or the new layout never paints.
-      _reheatSimulation();
-    }
+    if (allLinks.length !== beforeCount) calcDegrees();
     applyFilters();
     status(`${edgeType}: ${validEdges.length} edge(s) loaded`, 'ok');
   } catch (e) {
@@ -3804,20 +2938,13 @@ function _renderSearchResults(rows, q) {
   }
 }
 
-// Center the graph camera on a node id (2D + 3D), best-effort. Mirrors the
-// centering used by _applySearchHighlight.
+// Highlight a node in the galaxy on search-result click. The FG camera-center is
+// gone; the galaxy scene surfaces the node with its selection halo instead (the
+// search highlight/dim also runs via _applySearchHighlight).
 function _searchCenterOnNode(nodeId) {
-  if (!graph) return;
-  const node = allNodes.find((n) => n.id === nodeId);
-  if (!node) return;
-  try {
-    if (_graphMode === '3d') {
-      graph.zoomToFit(600, 60, (n) => n.id === nodeId);
-    } else if (node.x != null && node.y != null) {
-      graph.centerAt(node.x, node.y, 600);
-      graph.zoom(2.5, 600);
-    }
-  } catch (_) { /* graph not ready */ }
+  if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.showHalo === 'function') {
+    try { _galaxyView.showHalo(nodeId); } catch (_) { /* node not in scene */ }
+  }
 }
 
 function _onSearchResultClick(row) {
@@ -3879,11 +3006,7 @@ function clearSearch() {
   status('Search cleared', 'ok');
 }
 
-// ── Interaction state (Batch-3) ──────────────────────────────────────────────
-// __dimmed has three possible sources: search pins, hover neighborhood, focus.
-// They must compose through ONE writer (_recomputeDim) or one clobbers another.
-let _hoverNodeId = null;          // P3.4 [45]: node currently hovered (null = none)
-let _hoverNeighbors = null;       // Set of ids in hovered node's neighborhood (incl self)
+// ── Interaction state ────────────────────────────────────────────────────────
 let _focusNodeId = null;          // P3.5 [47]: isolated node (null = focus off)
 let _searchHideMode = false;      // P3.9 [60]: search HIDES non-matches vs only dimming
 
@@ -3901,100 +3024,20 @@ function _neighborSet(nodeId) {
   return s;
 }
 
-// Single writer of n.__dimmed. Composes search pins + hover neighborhood.
-// (Focus mode hides via __visible in applyFilters, so it isn't a dim source.)
-// Precedence: hover (transient, follows the cursor) overrides search dim.
-function _recomputeDim() {
-  const hasPins = _searchPinnedIds.size > 0;
-  for (const n of allNodes) {
-    n.__pinned = _searchPinnedIds.has(n.id);
-    if (_hoverNeighbors) {
-      // Hover active: dim everything outside the hovered neighborhood.
-      n.__dimmed = !_hoverNeighbors.has(n.id);
-    } else if (hasPins) {
-      // Search active (no hover): dim non-matched.
-      n.__dimmed = !n.__pinned;
-    } else {
-      n.__dimmed = false;
-    }
-  }
-}
-
-// Shared render re-apply for a dim/color change that does NOT alter layout.
-// Re-wires the node + link accessors so ForceGraph repaints __dimmed/color.
-// NEVER reheats (that would scatter nodes on every hover) — just wakes the loop.
-function _repaintDimState() {
-  if (!graph) return;
-  _resumeGraphAnimation();
-  if (_graphMode === '3d') {
-    // 3D re-wires node accessors but not link accessors → re-apply linkColor too,
-    // else edges miss the new __dimmed state. nodeColor tints the default sphere
-    // (dimmed → dark RGB), nodeThreeObject refreshes wiki octahedra / anchor cubes.
-    graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject).linkColor(_linkColor);
-  } else {
-    graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
-  }
-}
-
 function _applySearchHighlight() {
-  // Car D #10b: in galaxy mode the FG `graph` is null — route the highlight to
-  // the galaxy renderer instead of bailing (the deferred-v1 behavior).
-  if (!graph) {
-    if (_isGalaxy() && window._galaxyView && _galaxyView.isMounted()) {
-      _galaxyView.highlight(_searchPinnedIds.size > 0 ? _searchPinnedIds : null);
-    }
-    return;
-  }
-  _recomputeDim();
-  _repaintDimState();
-  const hasPins = _searchPinnedIds.size > 0;
-  if (!hasPins) return;
-  const matched = allNodes.filter(n => n.__pinned);
-  if (matched.length === 0) return;
-  if (_graphMode === '3d') {
-    graph.zoomToFit(600, 50, n => n.__pinned);
-  } else {
-    const xs = matched.map(n => n.x).filter(x => x != null);
-    const ys = matched.map(n => n.y).filter(y => y != null);
-    if (xs.length > 0) {
-      const cx = xs.reduce((a, b) => a + b, 0) / xs.length;
-      const cy = ys.reduce((a, b) => a + b, 0) / ys.length;
-      graph.centerAt(cx, cy, 600);
-      graph.zoom(2.5, 600);
-    }
+  // Galaxy-only: the scene brightens matched nodes + dims the rest from the pinned
+  // id set (empty/none → restore full colour). No FG dim-repaint / camera-fit.
+  if (window._galaxyView && _galaxyView.isMounted()) {
+    _galaxyView.highlight(_searchPinnedIds.size > 0 ? _searchPinnedIds : null);
   }
 }
 
-// ── P3.4 [45]: hover → neighborhood highlight ────────────────────────────────
-// Highlight hovered node + its edges + immediate neighbors; dim the rest.
-// Clears on un-hover (node === null). Works in 2D (drawNode reads __dimmed) and
-// 3D (color path + re-wired linkColor). Pure repaint — no layout reheat.
-function _onNodeHover(node) {
-  const newId = node ? node.id : null;
-  if (newId === _hoverNodeId) return; // no change
-  _hoverNodeId = newId;
-  _hoverNeighbors = newId ? _neighborSet(newId) : null;
-  _recomputeDim();
-  _repaintDimState();
-}
-
-// ── P3.5 [47]: focus mode (isolate a node + its edges) ───────────────────────
-// Modifier-click (Shift / Ctrl / Cmd / Alt) a node → show ONLY it + neighbors.
-// Re-modifier-clicking the same node (or clearFocus) exits. Plain click is the
-// usual detail-panel open. Reversible via __visible (applyFilters owns it).
-function _onNodeClickInteractive(node, event) {
-  const modifier = event && (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey);
-  if (modifier && node) {
-    _toggleFocus(node.id);
-    return;
-  }
-  showDetail(node);
-}
-
+// ── P3.5 [47]: focus mode (isolate a node + its neighbors) ───────────────────
+// Modifier-click a node → show ONLY it + neighbors. clearFocus / re-toggle exits.
+// Reversible via __visible (applyFilters owns it → _galaxyView.setVisible).
 function _toggleFocus(nodeId) {
   _focusNodeId = (_focusNodeId === nodeId) ? null : nodeId;
-  applyFilters();          // applyFilters reads _focusNodeId → __visible
-  _reheatSimulation();     // node set changed → re-layout the isolated subgraph
+  applyFilters();          // applyFilters reads _focusNodeId → __visible → setVisible
   const fb = document.getElementById('focus-clear-btn');
   if (fb) fb.style.display = _focusNodeId ? '' : 'none';
   if (_focusNodeId) {
@@ -4161,16 +3204,11 @@ function connectSSE() {
         }
         if (patched > 0) {
           applyFilters();
-          // ADR-0135: `graph.nodeColor/nodeCanvasObject` crash when graph is null
-          // (galaxy mode). Galaxy live-heat-patch is DEFERRED (plan v1) — no-op the
-          // repaint here rather than route to patchHeat, so a heat tick in galaxy
-          // updates allNodes.heat (for a later Reload/relayout) without crashing.
-          if (!_isGalaxy() && graph) {
-            if (_graphMode === '3d') {
-              graph.nodeColor(_nodeColorFor).nodeThreeObject(_makeNodeThreeObject);
-            } else {
-              graph.nodeCanvasObject(drawNode).nodeCanvasObjectMode(() => 'replace');
-            }
+          // Route the live heat patch to the galaxy scene so brightness/size
+          // updates without a full reload. allNodes.heat is already patched above
+          // (feeds a later relayout / the popup) regardless.
+          if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.patchHeat === 'function') {
+            try { _galaxyView.patchHeat(msg.updates); } catch (_) { /* scene not ready */ }
           }
           status(`heat updated (${patched} node${patched === 1 ? '' : 's'})`, 'ok');
         }
@@ -4188,20 +3226,20 @@ function status(msg, state) {
   else if (state === 'wait') dot.className = '';
 }
 
-// ── Graph controls ───────────────────────────────────────────────────────────
-function fitGraph() { graph?.zoomToFit(400, 40); }
+// ── Graph controls (⊞ Fit / ⟳ Reset — wired to the galaxy camera) ─────────────
+// Galaxy is the sole renderer; both drive the raw-Three.js MiniOrbit camera.
+//   Fit   → frame the whole galaxy disk (default distance/target).
+//   Reset → restore the default azimuth/phi/distance/target (recenter + clear any
+//           drifted auto-rotation offset).
+function fitGraph() {
+  if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.fitView === 'function') {
+    _galaxyView.fitView();
+  }
+}
 function resetLayout() {
-  if (!graph) return;
-  // v5.87.1: re-arm the auto-fit so the re-layout re-fits the camera. Without
-  // this, _zoomFitDone (set true by the v5.87.1 catch-up on initial load) stays
-  // true, so neither the inline tick-80 fit nor the onEngineStop catch-up fires
-  // on Reset — the historical tab-away/back + Reset recovery would break.
-  _zoomFitDone = false;
-  const d = graph.graphData();
-  d.nodes.forEach(n => { n.fx = undefined; n.fy = undefined; delete n.x; delete n.y; delete n.vx; delete n.vy; });
-  // v5.10.8 Bug B: direct re-data instead of empty-then-restore (which leaked
-  // Three.js Mesh objects on every call — orphan meshes accumulated 3.3× node count).
-  graph.graphData(d);
+  if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.resetView === 'function') {
+    _galaxyView.resetView();
+  }
 }
 
 // ── Debug panel ──────────────────────────────────────────────────────────────
@@ -4679,14 +3717,12 @@ document.addEventListener('DOMContentLoaded', _initLogPanels);
 // P0.1: the hidden-sidebar edge-checkbox mirror was removed. _edgeToggleState is
 // the canonical filter driver and is now wired directly by _renderEdgeLegendOverlay()
 // at row-creation time (the dynamic floating overlay is the single source).
-// wiki node toggle (not an edge type — directly calls applyFilters)
-// P3.1: reheat after the filter so the layout re-settles around the changed node
-// set (and the paused render loop wakes), instead of a frozen stale graph.
 // P3.8 [51]: node-type toggles (wiki/memory/entity). Each flips __visible via
-// applyFilters, then reheats so the layout re-settles around the new node set.
+// applyFilters → _galaxyView.setVisible. Galaxy hides via per-vertex size=0, so
+// there is no layout to reheat — a re-filter is enough.
 for (const _id of ['show-wiki', 'show-memory', 'show-entity']) {
   const _el = document.getElementById(_id);
-  if (_el) _el.addEventListener('change', () => { applyFilters(); _reheatSimulation(); });
+  if (_el) _el.addEventListener('change', () => { applyFilters(); });
 }
 
 document.getElementById('heat-slider').addEventListener('input', e => {
@@ -4702,15 +3738,6 @@ document.getElementById('heat-slider').addEventListener('input', e => {
     const lbl = document.getElementById('edge-weight-val');
     if (lbl) lbl.textContent = String(v);
     applyFilters();
-  });
-}
-
-// viz-rest #13: cluster-hull toggle — repaint (no reheat) so the hull layer shows.
-{
-  const _hullCb = document.getElementById('show-cluster-hulls');
-  if (_hullCb) _hullCb.addEventListener('change', e => {
-    _showClusterHulls = e.target.checked;
-    if (graph && typeof graph.nodeCanvasObject === 'function') graph.nodeCanvasObject(drawNode); // nudge a repaint
   });
 }
 
@@ -5063,10 +4090,10 @@ function _switchTab(tabName) {
   // leaving home; resume when returning so the graph repaints + stays live.
   if (tabName === 'home') {
     _resumeGraphAnimation();
-    // ADR-0135: no window resize fires on a tab switch, so a galaxy scene that
-    // mounted / was resized while home was hidden may be sized 0×0. Nudge a resize
-    // on return so the projection + renderer pick up the now-visible dimensions.
-    if (_isGalaxy() && window._galaxyView && _galaxyView.isMounted()) _galaxyView.resize();
+    // No window resize fires on a tab switch, so a galaxy scene that mounted / was
+    // resized while home was hidden may be sized 0×0. Nudge a resize on return so
+    // the projection + renderer pick up the now-visible dimensions.
+    if (window._galaxyView && _galaxyView.isMounted()) _galaxyView.resize();
   } else {
     _pauseGraphAnimation();
   }
@@ -5302,15 +4329,12 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
 (async () => {
   await loadVizConfig();
   _renderEdgeLegendOverlay(); // v5.50.13: update overlay labels/colors from legend
-  // Activate the correct tab before initGraph (so #tab-home is visible)
+  // Activate the correct tab before the scene mounts (so #tab-home is visible)
   _switchTab(_getActiveTab());
-  _syncGalaxyBtn();  // finish-viz: reflect the persisted Galaxy/Force preference
-  _syncModeBtnDisabled(); // ADR-0135: grey 2D/3D + toggle body.galaxy-active in galaxy
-  // ADR-0135: galaxy is the first-paint DEFAULT (_layoutModePref default 'galaxy').
-  // Only init the FG renderer when NOT in galaxy mode — otherwise we'd mount FG and
-  // immediately tear it down (wasting a WebGL context on the ~16-ceiling). In galaxy
-  // mode loadGraph() mounts window._galaxyView once the payload arrives.
-  if (!_isGalaxy()) initGraph(_graphMode);
+  // ADR-0135 (galaxy-only): galaxy is the SOLE renderer. body.galaxy-active is now
+  // permanent — CSS keys the #right sidebar suppression + overlay handling off it.
+  // loadGraph() mounts window._galaxyView once the /api/graph payload arrives.
+  document.body.classList.add('galaxy-active');
   loadGraph();
   connectSSE();
 })();
@@ -5407,11 +4431,10 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   // galaxy-view.js is a deferred module; the classic-script boot IIFE (loadGraph)
   // may have already fetched the payload and tried _mountGalaxy() before
   // window._galaxyView existed (its guard no-ops in that case). Now that the
-  // module is loaded, if galaxy is the active pref and the payload is in but the
-  // scene isn't mounted, mount it. Harmless in force mode / when already mounted.
+  // module is loaded, if the payload is in but the scene isn't mounted, mount it.
+  // Harmless when already mounted.
   try {
-    if (window._galaxyView && typeof _isGalaxy === 'function' && _isGalaxy()
-        && !window._galaxyView.isMounted()
+    if (window._galaxyView && !window._galaxyView.isMounted()
         && typeof allNodes !== 'undefined' && Array.isArray(allNodes) && allNodes.length > 0
         && typeof _mountGalaxy === 'function') {
       _mountGalaxy();
