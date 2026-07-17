@@ -21,21 +21,26 @@
  * Data map (/api/graph → scene). The payload has gaps this module fills:
  *   - No per-node cluster_id → derive membership from clusters[].member_node_ids
  *     (a node in a cluster of >=2 members = ARM material; else CORE/single).
- *   - heat is [0,inf) → normalize to [0,1] via soft-saturation h/(h+H0).
+ *   - heat is already hard-capped [0,1] system-wide → clamp defensively, feed
+ *     RAW to the ramp (mockup parity — no soft-saturation compression).
  *   - WIKI nodes carry no heat → colour by type tint (heat treated as ~0).
  *   - ENTITY nodes carry no age → age fallback 0.5.
+ *
+ * Car D #4: node-selection halo + search highlight. The halo is a world-space
+ * billboard Sprite added to the scene at the picked node's diskPos (tracks the
+ * camera orbit for free — the disk has no transform; spin rotates the camera).
+ * ndcToScreen/haloScale (galaxy-halo.js) are the unit-tested projection + pulse
+ * math; nodeScreenPos() projects a node world→screen ONCE at click so index.html
+ * can anchor the floating popup near it.
  */
+
+import { ndcToScreen, haloScale } from './galaxy-halo.js';
 
 // ── constants (lifted from the mockup, R_MAX / R_CORE / R_SCALE / Z_LAYER) ──────
 export const R_MAX = 46; // outer disk radius
 export const R_CORE = 3.2; // core bulge radius scale
 export const R_SCALE = 12.0; // exponential disk scale-length
 export const Z_LAYER = 2.4; // per-type z offset when layering on
-
-// Heat soft-saturation half-point: heat=H0 → 0.5 normalized. Payload heat is
-// [0,inf); most nodes sit well under 1.0, a few run hot. H0=1 maps the [0,~3]
-// working range across the ramp without clipping the long tail.
-export const HEAT_H0 = 1.0;
 
 // live-tunable layout params (mirrors the mockup's `P`); GALAXY_DEFAULTS is the
 // reset target.
@@ -51,6 +56,92 @@ export const GALAXY_DEFAULTS = Object.freeze({
   edges: 'off', // 'off' | 'on'  (faint intra-arm edges)
   spin: 0.35,
 });
+
+// localStorage key for persisted layout params (Bug 1).
+export const GALAXY_P_KEY = 'yadgar-galaxy-params';
+
+// Per-control bounds — the CLAMP SOURCE for loadSavedP (NOT the DOM, so the
+// clamp stays pure/testable). MUST mirror the GALAXY_CHROME_HTML slider
+// min/max/step + segmented allowed values exactly; drift = silent corruption.
+export const P_BOUNDS = Object.freeze({
+  arms: { min: 2, max: 6, int: true },
+  pitch: { min: 0.08, max: 0.75 },
+  thick: { min: 0.1, max: 3.0 },
+  coredens: { min: 0.3, max: 2.5 },
+  bulge: { min: 0.2, max: 2.5 },
+  spin: { min: 0, max: 2.0 },
+  radmode: { enum: ['heat', 'age'] },
+  single: { enum: ['core', 'halo'] },
+  layer: { enum: ['off', 'on'] },
+  edges: { enum: ['off', 'on'] },
+});
+
+/** Clamp/validate one param value against P_BOUNDS; returns null if unusable. */
+function _clampParam(key, val) {
+  const b = P_BOUNDS[key];
+  if (!b) return null; // unknown key → drop
+  if (b.enum) return b.enum.includes(val) ? val : null;
+  let v = Number(val);
+  if (!Number.isFinite(v)) return null;
+  if (b.int) v = Math.round(v);
+  return Math.min(b.max, Math.max(b.min, v));
+}
+
+/**
+ * Load persisted layout params, merged over GALAXY_DEFAULTS. Pure + injectable
+ * storage (overlays.js pattern) so private-mode throw + malformed JSON are
+ * testable. Unknown keys dropped; each value clamped to its control's bounds;
+ * any failure → clean GALAXY_DEFAULTS.
+ *
+ * @param {Storage} [storage] localStorage-compatible; defaults to window.localStorage
+ */
+export function loadSavedP(storage) {
+  const P = { ...GALAXY_DEFAULTS };
+  const store = storage ?? (typeof window !== 'undefined' ? window.localStorage : null);
+  if (!store) return P;
+  let raw;
+  try {
+    raw = store.getItem(GALAXY_P_KEY);
+  } catch (_) {
+    return P; // private-mode / access throw
+  }
+  if (!raw) return P;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (_) {
+    return P; // malformed JSON → defaults
+  }
+  if (!parsed || typeof parsed !== 'object') return P;
+  for (const key of Object.keys(P_BOUNDS)) {
+    if (!(key in parsed)) continue;
+    const v = _clampParam(key, parsed[key]);
+    if (v !== null) P[key] = v;
+  }
+  return P;
+}
+
+/**
+ * Persist the current params (only known+clamped keys). Pure + injectable
+ * storage; a private-mode setItem throw is swallowed (persistence is best-effort).
+ *
+ * @param {object} P live params
+ * @param {Storage} [storage] localStorage-compatible; defaults to window.localStorage
+ */
+export function saveP(P, storage) {
+  const store = storage ?? (typeof window !== 'undefined' ? window.localStorage : null);
+  if (!store || !P) return;
+  const out = {};
+  for (const key of Object.keys(P_BOUNDS)) {
+    const v = _clampParam(key, P[key]);
+    if (v !== null) out[key] = v;
+  }
+  try {
+    store.setItem(GALAXY_P_KEY, JSON.stringify(out));
+  } catch (_) {
+    /* private-mode / quota — best-effort */
+  }
+}
 
 // Deterministic seed so a given (nodes, P) always yields the same layout — the
 // determinism the vitest test pins. The mockup shared one rnd() stream across
@@ -78,15 +169,18 @@ function gaussWith(rnd) {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-// ── heat → normalized [0,1] ────────────────────────────────────────────────────
+// ── heat → clamped [0,1] ────────────────────────────────────────────────────────
 /**
- * Soft-saturating heat normalization: [0,inf) → [0,1). h/(h+H0).
- * Monotone, boundary-safe: 0→0, H0→0.5, ->1 as h→inf. NaN/negative → 0.
+ * Heat is hard-capped [0,1] system-wide (thermodynamics.py / heat_decay.py /
+ * DB maxh=1.0). Clamp defensively and pass the RAW value straight to the ramp —
+ * mockup parity. The old h/(h+1) soft-saturation compressed [0,1]→[0,0.5],
+ * making the upper colour ramp unreachable AND holding spiral arms out of the
+ * core (drive=1-heat≥0.5). NaN / negative → 0; values above 1 → 1.
  */
-export function normalizeHeat(h, h0 = HEAT_H0) {
+export function normalizeHeat(h) {
   const v = Number(h);
   if (!Number.isFinite(v) || v <= 0) return 0;
-  return v / (v + h0);
+  return Math.min(1, v);
 }
 
 // ── age derivation ─────────────────────────────────────────────────────────────
@@ -331,6 +425,26 @@ export function sizeOf(nd) {
   return sz;
 }
 
+/**
+ * Build the per-vertex visibility mask from a {id: visible} map. Missing id =
+ * visible (1); explicit `false` = hidden (0). Pure — the scene's setVisible()
+ * delegates here so the mask logic is vitest-covered (the render/discard is the
+ * smoke-check). Order matches `nodes` (== the point-buffer vertex order).
+ *
+ * @param {Array<{id:*}>} nodes  model nodes (buildNodeModel().nodes)
+ * @param {Object<string,boolean>} visById  id → visible; missing = visible
+ * @returns {Uint8Array} 1=visible, 0=hidden, length == nodes.length
+ */
+export function visibilityMask(nodes, visById) {
+  const arr = nodes || [];
+  const map = visById || {};
+  const mask = new Uint8Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    mask[i] = map[arr[i].id] === false ? 0 : 1;
+  }
+  return mask;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // THREE-DEPENDENT SCENE. Not exercised by vitest (no WebGL); the user smoke-check
 // covers render / picking / teardown. Guarded so importing this module in jsdom
@@ -348,7 +462,7 @@ class GalaxyScene {
     this.THREE = THREE;
     this.container = container;
     this.deps = deps || {};
-    this.P = { ...GALAXY_DEFAULTS };
+    this.P = loadSavedP(); // Bug 1: restore persisted params (falls back to defaults)
     this._raf = null;
     this._visible = null; // Uint8Array mask (1=visible) or null=all visible
     this._disposed = false;
@@ -512,12 +626,16 @@ class GalaxyScene {
     this.pointMat = new THREE.ShaderMaterial({
       uniforms: { uTex: { value: this.sprite }, uPix: { value: this.renderer.getPixelRatio() } },
       vertexShader:
-        'attribute float size; varying vec3 vCol; uniform float uPix;' +
-        'void main(){ vCol=color; vec4 mv=modelViewMatrix*vec4(position,1.0);' +
+        'attribute float size; varying vec3 vCol; varying float vSize; uniform float uPix;' +
+        'void main(){ vCol=color; vSize=size; vec4 mv=modelViewMatrix*vec4(position,1.0);' +
         'gl_PointSize = size * uPix * (300.0 / -mv.z); gl_Position = projectionMatrix*mv; }',
+      // Hidden verts carry size=0. WebGL clamps gl_PointSize to >=1 (spec
+      // ALIASED_POINT_SIZE_RANGE), so a size=0 point still rasterises a 1px
+      // additive dot — the discard below drops it (Bug 3).
       fragmentShader:
-        'uniform sampler2D uTex; varying vec3 vCol;' +
-        'void main(){ vec4 t=texture2D(uTex, gl_PointCoord); if(t.a<0.02) discard;' +
+        'uniform sampler2D uTex; varying vec3 vCol; varying float vSize;' +
+        'void main(){ if(vSize<=0.0) discard;' +
+        'vec4 t=texture2D(uTex, gl_PointCoord); if(t.a<0.02) discard;' +
         'gl_FragColor=vec4(vCol, t.a); }',
       transparent: true,
       depthWrite: false,
@@ -630,12 +748,7 @@ class GalaxyScene {
   /** @param {Object<string,boolean>} visById  id → visible; missing id = visible. */
   setVisible(visById) {
     if (this._disposed) return;
-    const nodes = this.model.nodes;
-    const mask = new Uint8Array(nodes.length);
-    for (let i = 0; i < nodes.length; i++) {
-      const v = visById[nodes[i].id];
-      mask[i] = v === false ? 0 : 1;
-    }
+    const mask = visibilityMask(this.model.nodes, visById);
     this._visible = mask;
     this._applyVisibilityMask();
     this.diskGeo.attributes.size.needsUpdate = true;
@@ -665,6 +778,106 @@ class GalaxyScene {
     }
     if (patched > 0) this.relayout();
     return patched;
+  }
+
+  // ── Car D #4: node-selection halo (world-space billboard Sprite) ──────────────
+  // The halo is placed at the node's diskPos world coords. Because the disk has
+  // NO transform (added at origin) and spin rotates the CAMERA, the halo tracks
+  // the node as the camera orbits. Pulses via haloScale() in _frame.
+  _ensureHaloSprite() {
+    if (this.haloSprite || this._disposed) return;
+    const THREE = this.THREE;
+    // radial-gradient ring texture on a canvas → additive sprite.
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const ctx = cv.getContext('2d');
+    const g = ctx.createRadialGradient(32, 32, 10, 32, 32, 30);
+    g.addColorStop(0, 'rgba(63,208,201,0)');
+    g.addColorStop(0.72, 'rgba(63,208,201,0)');
+    g.addColorStop(0.82, 'rgba(63,208,201,0.85)');
+    g.addColorStop(1, 'rgba(63,208,201,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+    this.haloTex = new THREE.CanvasTexture(cv);
+    this.haloMat = new THREE.SpriteMaterial({
+      map: this.haloTex,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.haloSprite = new THREE.Sprite(this.haloMat);
+    this.haloSprite.visible = false;
+    this.haloSprite.renderOrder = 999;
+    this.scene.add(this.haloSprite);
+  }
+
+  /** Show the pulsing selection halo at node `id`; hides if not found. */
+  showHalo(id) {
+    if (this._disposed) return;
+    this._ensureHaloSprite();
+    const idx = this.model.idToIndex[id];
+    if (idx == null) {
+      this.hideHalo();
+      return;
+    }
+    this._haloBase = Math.max(3, (this._baseSz ? this._baseSz[idx] : 1) * 3.2);
+    this.haloSprite.position.set(
+      this.diskPos[idx * 3],
+      this.diskPos[idx * 3 + 1],
+      this.diskPos[idx * 3 + 2],
+    );
+    this.haloSprite.visible = true;
+    this._haloId = id;
+    this.resume(); // ensure the RAF is running so the halo pulses
+  }
+
+  hideHalo() {
+    this._haloId = null;
+    if (this.haloSprite) this.haloSprite.visible = false;
+  }
+
+  /**
+   * Project node `id`'s world position to screen pixel coords (once, at click).
+   * @returns {{x,y,onscreen}|null}
+   */
+  nodeScreenPos(id) {
+    if (this._disposed) return null;
+    const idx = this.model.idToIndex[id];
+    if (idx == null) return null;
+    const THREE = this.THREE;
+    const v = new THREE.Vector3(
+      this.diskPos[idx * 3],
+      this.diskPos[idx * 3 + 1],
+      this.diskPos[idx * 3 + 2],
+    );
+    v.project(this.camera);
+    const rect = this.canvas.getBoundingClientRect();
+    const scr = ndcToScreen(v.x, v.y, rect.width, rect.height, v.z);
+    return { x: rect.left + scr.x, y: rect.top + scr.y, onscreen: scr.onscreen };
+  }
+
+  /**
+   * Search highlight: brighten matched nodes, dim the rest by scaling per-vertex
+   * colour. idSet empty/null → restore full colour (relayout recomputes diskCol).
+   * @param {Set<string>|null} idSet
+   */
+  highlight(idSet) {
+    if (this._disposed) return;
+    if (!idSet || idSet.size === 0) {
+      this.relayout(); // restore pristine colours
+      return;
+    }
+    // relayout first to get pristine base colours, then scale the dimmed ones.
+    this.relayout();
+    const nodes = this.model.nodes;
+    for (let i = 0; i < nodes.length; i++) {
+      if (idSet.has(nodes[i].id)) continue;
+      this.diskCol[i * 3] *= 0.18;
+      this.diskCol[i * 3 + 1] *= 0.18;
+      this.diskCol[i * 3 + 2] *= 0.18;
+    }
+    this.diskGeo.attributes.color.needsUpdate = true;
   }
 
   // ── picking: Raycaster(Points) → idToIndex → onPick(node) ─────────────────────
@@ -699,6 +912,10 @@ class GalaxyScene {
   _wireControls() {
     const root = this.chrome;
     const q = (sel) => root.querySelector(sel);
+    // Bug 1 ordering trap: push restored P INTO the DOM before binding, so the
+    // bind-time apply() below reads back the restored values — not the static
+    // HTML defaults (which would clobber the restored P).
+    this._syncControlsToP();
     let debTimer = null;
     const debouncedRelayout = () => {
       if (debTimer) clearTimeout(debTimer);
@@ -715,6 +932,7 @@ class GalaxyScene {
       };
       el.addEventListener('input', () => {
         apply();
+        saveP(this.P); // Bug 1: persist — BEFORE the spin early-return so spin persists too
         if (key === 'spin') return; // spin only affects the RAF, not the layout
         debouncedRelayout();
       });
@@ -736,6 +954,7 @@ class GalaxyScene {
         box.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
         b.classList.add('on');
         this.P[key] = b.dataset.v;
+        saveP(this.P); // Bug 1: persist segmented choice
         this.relayout();
       });
     };
@@ -748,6 +967,7 @@ class GalaxyScene {
     if (resetBtn) {
       resetBtn.addEventListener('click', () => {
         this.P = { ...GALAXY_DEFAULTS };
+        saveP(this.P); // Bug 1: persist the reset
         this._syncControlsToP();
         this.relayout();
       });
@@ -801,8 +1021,13 @@ class GalaxyScene {
     if (this._disposed) return;
     const dt = Math.min(0.05, (now - this._last) / 1000);
     this._last = now;
-    this.controls.addAzimuth(this.P.spin * dt * 0.4);
+    this.controls.addAzimuth(-this.P.spin * dt * 0.4); // Bug 12: auto-rotate direction
     this.controls.update();
+    // Car D #4: pulse the selection halo (world-space; tracks camera orbit).
+    if (this.haloSprite && this.haloSprite.visible && this._haloBase) {
+      const s = haloScale(this._haloBase, now);
+      this.haloSprite.scale.set(s, s, s);
+    }
     this.renderer.render(this.scene, this.camera);
     this._fpsAcc += dt;
     this._fpsN++;
@@ -897,6 +1122,9 @@ class GalaxyScene {
     disp(this.sprite);
     disp(this.coreGlowMat && this.coreGlowMat.map);
     disp(this.coreGlow2Mat && this.coreGlow2Mat.map);
+    // Car D #4: selection-halo GPU resources
+    disp(this.haloTex);
+    disp(this.haloMat);
     // renderer — release the WebGL context so the ~16-context ceiling doesn't fill
     if (this.renderer) {
       disp(this.renderer);
@@ -918,6 +1146,9 @@ class GalaxyScene {
     this.coreGlow = null;
     this.coreGlow2 = null;
     this.edgeLines = null;
+    this.haloSprite = null;
+    this.haloMat = null;
+    this.haloTex = null;
   }
 }
 
@@ -1138,9 +1369,27 @@ export function isMounted() {
   return _scene != null;
 }
 
+// ── Car D #4: selection halo + search highlight + screen-projection ───────────
+export function showHalo(id) {
+  if (_scene) _scene.showHalo(id);
+}
+
+export function hideHalo() {
+  if (_scene) _scene.hideHalo();
+}
+
+export function nodeScreenPos(id) {
+  return _scene ? _scene.nodeScreenPos(id) : null;
+}
+
+export function highlight(idSet) {
+  if (_scene) _scene.highlight(idSet);
+}
+
 // Expose on window so index.html's plain <script> (non-module) can drive it.
 if (typeof window !== 'undefined') {
   window._galaxyView = {
     mount, destroy, setVisible, patchHeat, relayout, pause, resume, resize, isMounted,
+    showHalo, hideHalo, nodeScreenPos, highlight,
   };
 }

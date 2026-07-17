@@ -11,7 +11,7 @@
  */
 
 /** @type {Set<string>} */
-export const VALID_TABS = new Set(['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help', 'config-ref', 'traces']);
+export const VALID_TABS = new Set(['home', 'stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help', 'config-ref', 'traces', 'search']);
 
 /**
  * Resolve a window.location.hash value to a tab name.
@@ -23,6 +23,18 @@ export const VALID_TABS = new Set(['home', 'stats', 'health', 'bookmarks', 'info
 export function resolveTab(hash) {
   const name = (hash || '#home').replace(/^#/, '').split('/')[0];
   return VALID_TABS.has(name) ? name : 'home';
+}
+
+/**
+ * CSS `display` value for the graph toolbar (#topbar-graph-controls) on a tab.
+ * The toolbar (search + fit/reset + view controls) is only meaningful on the
+ * graph tab (home); it must be hidden on every other tab (Bug 8).
+ *
+ * @param {string} tabName
+ * @returns {'' | 'none'} '' shows (default), 'none' hides
+ */
+export function graphControlsDisplay(tabName) {
+  return tabName === 'home' ? '' : 'none';
 }
 
 /**
@@ -40,4 +52,7 @@ export function switchTab(tabName) {
   if (pane) pane.classList.add('active');
   const link = document.querySelector('#tab-bar a[data-tab="' + tabName + '"]');
   if (link) link.classList.add('active');
+  // Bug 8: the graph toolbar only belongs on the graph (home) tab.
+  const gc = document.getElementById('topbar-graph-controls');
+  if (gc) gc.style.display = graphControlsDisplay(tabName);
 }

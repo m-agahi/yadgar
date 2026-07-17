@@ -14,12 +14,26 @@
 
 /* ── Design tokens ─────────────────────────────────────────────────────────── */
 #tab-bookmarks {
+  /* Car C (global theme unification): alias the local base/text/surface tokens
+     to the shared --viz-* palette so this tab reads as one instrument with its
+     siblings. Structure is untouched — the `var(--…, fallback)` call sites below
+     keep their hex fallbacks for the null-token case, but these aliases now win. */
+  --bg-base:   var(--viz-bg-0);
+  --bg-panel:  var(--viz-bg-1);
+  --bg-hover:  var(--viz-bg-2);
+  --bg-sunken: var(--viz-bg-0);
+  --border:    var(--viz-hair);
+  --accent:    var(--viz-ph);
+  --accent-dim: var(--viz-ph-dim);
+  --text-main: var(--viz-tx-0);
+  --text-mute: var(--viz-tx-2);
+
   --star: #e6b800;
-  --scope-current: #58a6ffb3;
+  --scope-current: var(--viz-ph);
   --diff-add: #1a4d2eaa;
   --diff-del: #4d1a1aaa;
   --diff-ctx: var(--text-mute, #8b949e);
-  --surface-2: #1f2428;
+  --surface-2: var(--viz-bg-2);
 
   /* Typography */
   --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
@@ -734,7 +748,7 @@
 
 .bm-modal-btn.confirm {
   background: var(--accent, #58a6ff);
-  color: #fff;
+  color: var(--viz-bg-0);
   border-color: var(--accent, #58a6ff);
 }
 
@@ -749,7 +763,7 @@
 }
 
 .bm-error {
-  color: #f78166;
+  color: var(--viz-err);
   font-family: var(--font-sans);
   font-size: 13px;
   padding: 8px 12px;

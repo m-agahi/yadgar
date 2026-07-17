@@ -30,7 +30,7 @@ from yadgar.core import server  # noqa: E402
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
 _EXPECTED_PATTERNS = [
-    "code-review",
+    "pr-review",
     "debug-investigate",
     "explore-codebase",
     "implement-tdd",

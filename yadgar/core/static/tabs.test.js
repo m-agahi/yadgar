@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach } from 'vitest';
-import { resolveTab, VALID_TABS } from './tabs.js';
+import { resolveTab, VALID_TABS, graphControlsDisplay } from './tabs.js';
 
 // ── resolveTab — pure hash-to-tab-name ────────────────────────────────────────
 
@@ -69,10 +69,26 @@ describe('VALID_TABS', () => {
     expect(VALID_TABS.has('config-ref')).toBe(true);
     // viz-trace-replay Car B: Traces sub-page under the Observability menu
     expect(VALID_TABS.has('traces')).toBe(true);
+    // Car D #10b: dedicated global-search tab
+    expect(VALID_TABS.has('search')).toBe(true);
   });
 
-  it('has exactly 10 entries', () => {
-    expect(VALID_TABS.size).toBe(10);
+  it('has exactly 11 entries', () => {
+    expect(VALID_TABS.size).toBe(11);
+  });
+});
+
+// ── graphControlsDisplay — pure predicate (Bug 8) ─────────────────────────────
+
+describe('graphControlsDisplay', () => {
+  it('shows the graph toolbar only on the home (graph) tab', () => {
+    expect(graphControlsDisplay('home')).toBe('');
+  });
+
+  it('hides the graph toolbar on every non-graph tab', () => {
+    for (const t of ['stats', 'health', 'bookmarks', 'info', 'control', 'debug', 'help', 'config-ref', 'traces']) {
+      expect(graphControlsDisplay(t)).toBe('none');
+    }
   });
 });
 
@@ -109,12 +125,17 @@ function makeTabDOM() {
     return div;
   });
 
+  // graph toolbar (Bug 8: hidden off the graph tab)
+  const toolbar = document.createElement('div');
+  toolbar.id = 'topbar-graph-controls';
+
   // mount
   document.body.innerHTML = '';
   document.body.appendChild(tabBar);
+  document.body.appendChild(toolbar);
   panes.forEach(p => document.body.appendChild(p));
 
-  return { tabs, panes };
+  return { tabs, panes, toolbar };
 }
 
 describe('switchTab DOM behavior', () => {
@@ -151,5 +172,22 @@ describe('switchTab DOM behavior', () => {
     const active = [...links].filter(l => l.classList.contains('active'));
     expect(active.length).toBe(1);
     expect(active[0].dataset.tab).toBe('health');
+  });
+
+  // Bug 8: the graph toolbar must hide off the graph tab and show on it.
+  it('hides #topbar-graph-controls when leaving the graph tab', () => {
+    switchTab('traces');
+    expect(document.getElementById('topbar-graph-controls').style.display).toBe('none');
+  });
+
+  it('shows #topbar-graph-controls on the graph (home) tab', () => {
+    switchTab('traces');
+    switchTab('home');
+    expect(document.getElementById('topbar-graph-controls').style.display).toBe('');
+  });
+
+  it('does not throw when the graph toolbar element is absent', () => {
+    document.getElementById('topbar-graph-controls').remove();
+    expect(() => switchTab('stats')).not.toThrow();
   });
 });

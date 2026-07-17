@@ -15,13 +15,17 @@ _STATIC = Path(__file__).resolve().parent.parent.parent / "core" / "static"
 _CSS_SOURCES = [
     _STATIC / "index.html",
     _STATIC / "bookmarks-tab.css",
+    _STATIC / "traces-tab.css",
 ]
 # Matches a CSS rule whose selector targets a tab-PANE id (not #tab-bar / links).
 # Captures the selector and the rule body.
 # `(?![\w-])` so the pane name must END here — a hyphenated child like
 # `#tab-stats-body` (a legit content container) is NOT treated as the pane.
+# `config-ref` is matched in full (the trailing `-ref` is part of the pane id,
+# not a hyphenated child); the lookahead still fires after it.
 _RULE = re.compile(
-    r"(#tab-(?:home|stats|health|bookmarks|info|control|debug)(?![\w-])[^\{]*?)\{([^}]*)\}",
+    r"(#tab-(?:home|stats|health|bookmarks|info|control|debug"
+    r"|traces|config-ref|help|search)(?![\w-])[^\{]*?)\{([^}]*)\}",
     re.DOTALL,
 )
 

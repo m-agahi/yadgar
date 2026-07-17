@@ -11,8 +11,8 @@
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  background: #0d1117;
-  color: #c9d1d9;
+  background: var(--viz-bg-0);
+  color: var(--viz-tx-0);
   font-family: 'Cascadia Code', 'Fira Mono', monospace;
   font-size: 12px;
   display: flex;
@@ -27,12 +27,12 @@ body {
   align-items: center;
   gap: 8px;
   padding: 0 8px 0 12px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border-bottom: 1px solid var(--viz-hair);
   flex-shrink: 0;
   height: 34px;
 }
-#topbar h1 { font-size: 13px; color: #58a6ff; letter-spacing: 2px; margin-right: 2px; }
+#topbar h1 { font-size: 13px; color: var(--viz-ph); letter-spacing: 2px; margin-right: 2px; }
 /* Graph-controls section inside topbar */
 #topbar-graph-controls {
   display: flex;
@@ -41,35 +41,35 @@ body {
   margin-left: auto;
 }
 #search {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  color: #c9d1d9;
+  background: var(--viz-bg-0);
+  border: 1px solid var(--viz-hair);
+  color: var(--viz-tx-0);
   padding: 3px 8px;
   font-size: 11px;
   width: 220px;
   outline: none;
 }
-#search:focus { border-color: #58a6ff; }
-#search-btn.searching { background: #1f3a5c; border-color: #58a6ff; color: #58a6ff; }
+#search:focus { border-color: var(--viz-ph); }
+#search-btn.searching { background: var(--viz-bg-3); border-color: var(--viz-ph); color: var(--viz-ph); }
 .btn {
   padding: 3px 10px;
-  background: #21262d;
-  color: #c9d1d9;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-2);
+  color: var(--viz-tx-0);
+  border: 1px solid var(--viz-hair);
   cursor: pointer;
   font-size: 11px;
   font-family: inherit;
   white-space: nowrap;
 }
-.btn:hover { background: #30363d; }
-.btn.active { background: #1f3a5c; border-color: #58a6ff; color: #58a6ff; }
+.btn:hover { background: var(--viz-bg-3); }
+.btn.active { background: var(--viz-bg-3); border-color: var(--viz-ph); color: var(--viz-ph); }
 #status-dot {
   width: 7px; height: 7px; border-radius: 50%;
-  background: #8b949e; flex-shrink: 0;
+  background: var(--viz-tx-2); flex-shrink: 0;
 }
-#status-dot.live { background: #3fb950; }
-#status-dot.err  { background: #f85149; }
-#status-text { font-size: 10px; color: #8b949e; margin-left: auto; }
+#status-dot.live { background: var(--viz-ph); }
+#status-dot.err  { background: var(--viz-err); }
+#status-text { font-size: 10px; color: var(--viz-tx-2); margin-left: auto; }
 
 /* ── Main layout ───────────────────────────────────────── */
 #content-area { flex: 1; min-height: 0; position: relative; overflow: hidden; }
@@ -79,8 +79,8 @@ body {
 #left {
   width: 180px;
   flex-shrink: 0;
-  background: #161b22;
-  border-right: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border-right: 1px solid var(--viz-hair);
   padding: 10px;
   overflow-y: auto;
   display: flex;
@@ -88,22 +88,22 @@ body {
   gap: 14px;
 }
 .sec-title {
-  color: #58a6ff;
+  color: var(--viz-ph);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 1px;
   margin-bottom: 5px;
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid var(--viz-hair);
   padding-bottom: 3px;
 }
 label { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 0; line-height: 1.4; }
-label:hover { color: #58a6ff; }
-input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
+label:hover { color: var(--viz-ph); }
+input[type=range] { width: 100%; accent-color: var(--viz-ph); cursor: pointer; }
 .heat-val-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
-#heat-val { color: #58a6ff; }
+#heat-val { color: var(--viz-ph); }
 .stat-row { display: flex; justify-content: space-between; padding: 2px 0; }
-.stat-lbl { color: #8b949e; }
-.stat-val { color: #c9d1d9; font-weight: bold; }
+.stat-lbl { color: var(--viz-tx-2); }
+.stat-val { color: var(--viz-tx-0); font-weight: bold; }
 
 /* ── Memory clusters panel (v5.80: real memory_cluster rows) ── */
 /* P3.2: cap the cluster list height so a long cluster set scrolls rather than
@@ -112,11 +112,11 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
 #cluster-list { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; max-height: 40vh; overflow-y: auto; }
 .cluster-item {
   padding: 3px 6px;
-  background: #21262d;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-2);
+  border: 1px solid var(--viz-hair);
   cursor: pointer;
   border-radius: 2px;
-  color: #c9d1d9;
+  color: var(--viz-tx-0);
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
@@ -125,13 +125,13 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   align-items: center;
   gap: 5px;
 }
-.cluster-item:hover { background: #30363d; border-color: #58a6ff; color: #58a6ff; }
+.cluster-item:hover { background: var(--viz-bg-3); border-color: var(--viz-ph); color: var(--viz-ph); }
 .cluster-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-#cluster-none { color: #8b949e; font-size: 11px; }
+#cluster-none { color: var(--viz-tx-2); font-size: 11px; }
 /* ── Edge legend role note ──────────────────────────────── */
 .edge-legend-role-note {
   font-size: 9px;
-  color: #6e7681;
+  color: var(--viz-tx-3);
   margin-top: 4px;
   line-height: 1.4;
   font-style: italic;
@@ -145,8 +145,8 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   position: relative;
   width: 280px;
   flex-shrink: 0;
-  background: #161b22;
-  border-left: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border-left: 1px solid var(--viz-hair);
   padding: 10px 10px 10px 14px;
   overflow-y: auto;
   display: none;
@@ -163,29 +163,29 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   z-index: 10;
   transition: background 0.1s;
 }
-#right-resizer:hover, #right-resizer.dragging { background: #58a6ff44; }
+#right-resizer:hover, #right-resizer.dragging { background: var(--viz-ph-glow); }
 #det-header { display: flex; justify-content: space-between; align-items: flex-start; }
-#det-close { cursor: pointer; color: #8b949e; font-size: 16px; line-height: 1; padding: 0 2px; }
-#det-close:hover { color: #f0f0f0; }
-#det-type { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
-#det-title { font-size: 13px; color: #58a6ff; word-break: break-word; line-height: 1.4; }
-.heat-bar { height: 4px; background: #21262d; border-radius: 2px; }
+#det-close { cursor: pointer; color: var(--viz-tx-2); font-size: 16px; line-height: 1; padding: 0 2px; }
+#det-close:hover { color: var(--viz-tx-0); }
+#det-type { font-size: 9px; color: var(--viz-tx-2); text-transform: uppercase; letter-spacing: 1px; }
+#det-title { font-size: 13px; color: var(--viz-ph); word-break: break-word; line-height: 1.4; }
+.heat-bar { height: 4px; background: var(--viz-bg-2); border-radius: 2px; }
 .heat-fill { height: 100%; border-radius: 2px; }
 .det-sec { display: flex; flex-direction: column; gap: 3px; }
-.det-lbl { color: #8b949e; font-size: 9px; text-transform: uppercase; letter-spacing: 1px; }
-.det-val { word-break: break-word; overflow-wrap: anywhere; line-height: 1.5; color: #c9d1d9; }
+.det-lbl { color: var(--viz-tx-2); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; }
+.det-val { word-break: break-word; overflow-wrap: anywhere; line-height: 1.5; color: var(--viz-tx-0); }
 .tag {
-  display: inline-block; background: #21262d; border: 1px solid #30363d;
+  display: inline-block; background: var(--viz-bg-2); border: 1px solid var(--viz-hair);
   padding: 1px 6px; margin: 2px 2px 0 0; font-size: 10px; border-radius: 10px;
 }
-.rel-row { padding: 2px 0; color: #8b949e; }
-.rel-type { color: #58a6ff; }
+.rel-row { padding: 2px 0; color: var(--viz-tx-2); }
+.rel-type { color: var(--viz-ph); }
 
 /* ── System metrics bar ────────────────────────────────── */
 #sys-bar {
   flex-shrink: 0;
-  background: #161b22;
-  border-top: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border-top: 1px solid var(--viz-hair);
   padding: 6px 12px;
 }
 #sys-tiles {
@@ -195,8 +195,8 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   flex-wrap: wrap;
 }
 .metric-tile {
-  background: #0d1117;
-  border: 1px solid #21262d;
+  background: var(--viz-bg-0);
+  border: 1px solid var(--viz-hair);
   border-radius: 4px;
   padding: 4px 10px;
   display: flex;
@@ -204,11 +204,11 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   align-items: center;
   min-width: 70px;
 }
-.metric-tile .m-lbl { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
-.metric-tile .m-val { font-size: 14px; color: #58a6ff; font-weight: bold; line-height: 1.3; }
-.metric-tile .m-sub { font-size: 9px; color: #8b949e; }
-.metric-tile.warn .m-val { color: #d29922; }
-.metric-tile.crit .m-val { color: #f85149; }
+.metric-tile .m-lbl { font-size: 9px; color: var(--viz-tx-2); text-transform: uppercase; letter-spacing: 1px; }
+.metric-tile .m-val { font-size: 14px; color: var(--viz-ph); font-weight: bold; line-height: 1.3; }
+.metric-tile .m-sub { font-size: 9px; color: var(--viz-tx-2); }
+.metric-tile.warn .m-val { color: var(--viz-amber); }
+.metric-tile.crit .m-val { color: var(--viz-err); }
 #sys-sparks {
   display: flex;
   gap: 8px;
@@ -216,7 +216,7 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   margin-left: 8px;
 }
 .spark-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.spark-lbl { font-size: 9px; color: #8b949e; }
+.spark-lbl { font-size: 9px; color: var(--viz-tx-2); }
 
 /* ── Debug tab pane ──────────────────────────────────────── */
 #tab-debug.active {
@@ -227,24 +227,24 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border-bottom: 1px solid var(--viz-hair);
   flex-shrink: 0;
 }
-#debug-header h2 { color: #58a6ff; font-size: 13px; letter-spacing: 1px; }
+#debug-header h2 { color: var(--viz-ph); font-size: 13px; letter-spacing: 1px; }
 #debug-tabs { display: flex; gap: 2px; padding: 6px 14px 0; flex-shrink: 0; }
 .dtab {
   padding: 4px 14px;
   cursor: pointer;
-  background: #21262d;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-2);
+  border: 1px solid var(--viz-hair);
   border-bottom: none;
   font-size: 11px;
   font-family: inherit;
-  color: #8b949e;
+  color: var(--viz-tx-2);
   border-radius: 4px 4px 0 0;
 }
-.dtab.active { background: #161b22; color: #58a6ff; border-color: #58a6ff; }
+.dtab.active { background: var(--viz-bg-1); color: var(--viz-ph); border-color: var(--viz-ph); }
 #debug-body {
   flex: 1;
   overflow: auto;
@@ -254,12 +254,12 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   gap: 10px;
 }
 #debug-toolbar { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
-#debug-url { color: #8b949e; font-size: 10px; }
-#debug-status { font-size: 10px; color: #3fb950; }
+#debug-url { color: var(--viz-tx-2); font-size: 10px; }
+#debug-status { font-size: 10px; color: var(--viz-ph); }
 #debug-json {
   flex: 1;
-  background: #0d1117;
-  border: 1px solid #21262d;
+  background: var(--viz-bg-0);
+  border: 1px solid var(--viz-hair);
   border-radius: 4px;
   padding: 10px;
   overflow: auto;
@@ -267,13 +267,85 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
-  color: #c9d1d9;
+  color: var(--viz-tx-0);
 }
 /* JSON syntax highlight classes */
-.jk { color: #79c0ff; }  /* key */
-.js { color: #a5d6ff; }  /* string value */
-.jn { color: #3fb950; }  /* number */
-.jb { color: #d29922; }  /* bool/null */
+.jk { color: var(--viz-cy); }  /* key */
+.js { color: var(--viz-cy); }  /* string value */
+.jn { color: var(--viz-ph); }  /* number */
+.jb { color: var(--viz-amber); }  /* bool/null */
+
+/* ── Car D #11: rebuilt debug panel sections (themed with --viz-*) ── */
+#debug-sections {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.debug-section {
+  background: var(--viz-bg-1, #060d13);
+  border: 1px solid var(--viz-hair, #14232e);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.debug-sec-title {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: var(--viz-disp, sans-serif);
+  font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--viz-tx-0, #e8f4ec); margin: 0 0 8px;
+}
+.debug-sec-ep { font-family: var(--viz-mono, ui-monospace, monospace); font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--viz-cy, #3ec9ff); }
+.debug-sec-refresh { padding: 2px 8px; font-size: 11px; }
+.debug-sec-link { font-size: 10px; color: var(--viz-cy, #3ec9ff); text-decoration: none; }
+.debug-sec-link:hover { text-decoration: underline; }
+.debug-banner {
+  background: var(--viz-err-glow, rgba(255,64,89,.22));
+  border: 1px solid var(--viz-err, #ff4059);
+  color: var(--viz-tx-0, #e8f4ec);
+  font-size: 11px; padding: 6px 10px; border-radius: 5px; margin-bottom: 8px;
+}
+.debug-banner code { color: var(--viz-amber, #ffc35c); }
+#debug-dbquery-input {
+  width: 100%; min-height: 64px; resize: vertical;
+  background: var(--viz-bg-0, #03070b);
+  border: 1px solid var(--viz-hair, #14232e);
+  color: var(--viz-tx-0, #e8f4ec);
+  font-family: var(--viz-mono, ui-monospace, monospace); font-size: 12px;
+  padding: 8px; border-radius: 5px;
+}
+#debug-dbquery-input:focus { outline: none; border-color: var(--viz-cy, #3ec9ff); }
+.debug-sec-actions { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.debug-section .debug-json {
+  background: var(--viz-bg-0, #03070b);
+  border: 1px solid var(--viz-hair-soft, #0d1922);
+  border-radius: 5px; padding: 8px; margin: 0;
+  max-height: 260px; overflow: auto;
+  font-family: var(--viz-mono, ui-monospace, monospace); font-size: 11px;
+  line-height: 1.6; white-space: pre-wrap; word-break: break-all;
+  color: var(--viz-tx-1, #9fc0ae);
+}
+.debug-count { color: var(--viz-amber, #ffc35c); font-size: 11px; margin-bottom: 4px; }
+.debug-dlq-row, .debug-sse-row {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 3px 2px; border-bottom: 1px solid var(--viz-hair-soft, #0d1922);
+  font-family: var(--viz-mono, ui-monospace, monospace); font-size: 10.5px;
+}
+.debug-dlq-op { color: var(--viz-cy, #3ec9ff); flex: none; min-width: 90px; }
+.debug-dlq-reason { color: var(--viz-err, #ff4059); flex: none; min-width: 130px; }
+.debug-dlq-att { color: var(--viz-amber, #ffc35c); flex: none; }
+.debug-dlq-err { color: var(--viz-tx-2, #5c7a68); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.debug-dlq-file { color: var(--viz-tx-3, #354a3e); font-size: 9px; }
+.debug-sse-list { max-height: 220px; }
+.debug-sse-ts { color: var(--viz-tx-3, #354a3e); flex: none; }
+.debug-sse-ev { color: var(--viz-ph, #49ffa4); flex: none; min-width: 110px; }
+.debug-sse-data { color: var(--viz-tx-2, #5c7a68); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Logs section: give each log panel a bounded height (no longer inside the old
+   #debug-body flex column that used to size them). */
+#debug-sec-logs { display: flex; flex-direction: column; }
+#debug-sec-logs .log-panel { height: 220px; flex: none; margin-top: 8px; }
 
 /* ── Debug log panels (v5.52.0) ──────────────────────────────────────────── */
 .log-panel {
@@ -281,8 +353,8 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   flex-direction: column;
   flex: 1;
   min-height: 120px;
-  background: #0d1117;
-  border: 1px solid #21262d;
+  background: var(--viz-bg-0);
+  border: 1px solid var(--viz-hair);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -291,14 +363,14 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  background: #161b22;
-  border-bottom: 1px solid #21262d;
+  background: var(--viz-bg-1);
+  border-bottom: 1px solid var(--viz-hair);
   flex-shrink: 0;
   flex-wrap: wrap;
 }
 .log-panel-title {
   font-size: 11px;
-  color: #58a6ff;
+  color: var(--viz-ph);
   font-weight: 600;
   margin-right: 4px;
 }
@@ -306,26 +378,26 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   padding: 2px 7px;
   font-size: 10px;
   cursor: pointer;
-  background: #21262d;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-2);
+  border: 1px solid var(--viz-hair);
   border-radius: 3px;
-  color: #8b949e;
+  color: var(--viz-tx-2);
   font-family: inherit;
 }
-.log-filter-btn.active { background: #0d419d; border-color: #58a6ff; color: #e6edf3; }
+.log-filter-btn.active { background: var(--viz-bg-3); border-color: var(--viz-ph); color: var(--viz-tx-0); }
 .log-action-btn {
   padding: 2px 7px;
   font-size: 10px;
   cursor: pointer;
-  background: #21262d;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-2);
+  border: 1px solid var(--viz-hair);
   border-radius: 3px;
-  color: #8b949e;
+  color: var(--viz-tx-2);
   font-family: inherit;
   margin-left: 2px;
 }
-.log-action-btn:hover { color: #e6edf3; border-color: #8b949e; }
-.log-action-btn.paused { color: #e6a817; border-color: #e6a817; }
+.log-action-btn:hover { color: var(--viz-tx-0); border-color: var(--viz-tx-2); }
+.log-action-btn.paused { color: var(--viz-amber); border-color: var(--viz-amber); }
 .log-entries {
   flex: 1;
   overflow-y: auto;
@@ -333,29 +405,29 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   font-size: 10px;
   line-height: 1.5;
   font-family: monospace;
-  color: #c9d1d9;
+  color: var(--viz-tx-0);
 }
 .log-entry { display: flex; gap: 6px; margin-bottom: 2px; }
-.log-entry .le-ts { color: #484f58; flex-shrink: 0; }
+.log-entry .le-ts { color: var(--viz-tx-3); flex-shrink: 0; }
 .log-entry .le-lvl { flex-shrink: 0; min-width: 38px; font-weight: 600; }
-.log-entry .le-lvl.DEBUG  { color: #8b949e; }
-.log-entry .le-lvl.INFO   { color: #3fb950; }
-.log-entry .le-lvl.WARN, .log-entry .le-lvl.WARNING { color: #e6a817; }
-.log-entry .le-lvl.ERROR  { color: #f85149; }
-.log-entry .le-lvl.log    { color: #8b949e; }
-.log-entry .le-lvl.info   { color: #3fb950; }
-.log-entry .le-lvl.warn   { color: #e6a817; }
-.log-entry .le-lvl.error  { color: #f85149; }
-.log-entry .le-lvl.debug  { color: #79c0ff; }
+.log-entry .le-lvl.DEBUG  { color: var(--viz-tx-2); }
+.log-entry .le-lvl.INFO   { color: var(--viz-ph); }
+.log-entry .le-lvl.WARN, .log-entry .le-lvl.WARNING { color: var(--viz-amber); }
+.log-entry .le-lvl.ERROR  { color: var(--viz-err); }
+.log-entry .le-lvl.log    { color: var(--viz-tx-2); }
+.log-entry .le-lvl.info   { color: var(--viz-ph); }
+.log-entry .le-lvl.warn   { color: var(--viz-amber); }
+.log-entry .le-lvl.error  { color: var(--viz-err); }
+.log-entry .le-lvl.debug  { color: var(--viz-cy); }
 .log-entry .le-msg { word-break: break-all; }
-.log-entry .le-stack { color: #484f58; font-size: 9px; margin-top: 2px; }
+.log-entry .le-stack { color: var(--viz-tx-3); font-size: 9px; margin-top: 2px; }
 
 /* ── V1c Daemon Health sidebar ─────────────────────────────────────────────── */
 :root {
-  --dh-ok:       #3fb950;  /* CB CLOSED / healthy */
-  --dh-warn:     #e6a817;  /* CB HALF_OPEN / recovering */
-  --dh-degraded: #f85149;  /* CB OPEN / error */
-  --dh-idle:     #8b949e;  /* unknown / null */
+  --dh-ok:       var(--viz-ph);     /* CB CLOSED / healthy */
+  --dh-warn:     var(--viz-amber);  /* CB HALF_OPEN / recovering */
+  --dh-degraded: var(--viz-err);    /* CB OPEN / error */
+  --dh-idle:     var(--viz-tx-2);   /* unknown / null */
 }
 
 /* Collapsible toggle tab — sits on left edge of panel */
@@ -368,17 +440,17 @@ input[type=range] { width: 100%; accent-color: #58a6ff; cursor: pointer; }
   writing-mode: vertical-rl;
   text-orientation: mixed;
   padding: 12px 6px;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border: 1px solid var(--viz-hair);
   border-right: none;
-  color: #58a6ff;
+  color: var(--viz-ph);
   font-size: 10px;
   letter-spacing: 2px;
   cursor: pointer;
   user-select: none;
   transition: background 0.15s, right 0.25s;
 }
-#dh-toggle:hover { background: #21262d; }
+#dh-toggle:hover { background: var(--viz-bg-2); }
 #dh-panel.open ~ #dh-toggle,
 body.dh-open #dh-toggle { right: 480px; }
 
@@ -390,8 +462,8 @@ body.dh-open #dh-toggle { right: 480px; }
   width: 480px;
   height: 100vh;
   z-index: 199;
-  background: #0d1117;
-  border-left: 1px solid #30363d;
+  background: var(--viz-bg-0);
+  border-left: 1px solid var(--viz-hair);
   display: flex;
   flex-direction: column;
   transition: right 0.25s ease;
@@ -404,16 +476,16 @@ body.dh-open #dh-toggle { right: 480px; }
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border-bottom: 1px solid var(--viz-hair);
   flex-shrink: 0;
 }
-#dh-header h2 { font-size: 12px; color: #58a6ff; letter-spacing: 2px; flex: 1; }
-#dh-scraped { font-size: 9px; color: #8b949e; }
+#dh-header h2 { font-size: 12px; color: var(--viz-ph); letter-spacing: 2px; flex: 1; }
+#dh-scraped { font-size: 9px; color: var(--viz-tx-2); }
 #dh-close {
-  cursor: pointer; color: #8b949e; font-size: 16px; line-height: 1; padding: 0 2px;
+  cursor: pointer; color: var(--viz-tx-2); font-size: 16px; line-height: 1; padding: 0 2px;
 }
-#dh-close:hover { color: #f0f0f0; }
+#dh-close:hover { color: var(--viz-tx-0); }
 
 #dh-body {
   flex: 1;
@@ -442,8 +514,8 @@ body.dh-open #dh-toggle { right: 480px; }
 
 /* Section card */
 .dh-card {
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border: 1px solid var(--viz-hair);
   border-radius: 4px;
   padding: 7px 9px;
   display: flex;
@@ -452,16 +524,16 @@ body.dh-open #dh-toggle { right: 480px; }
 }
 .dh-card-title {
   font-size: 9px;
-  color: #58a6ff;
+  color: var(--viz-ph);
   text-transform: uppercase;
   letter-spacing: 1px;
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid var(--viz-hair);
   padding-bottom: 3px;
   margin-bottom: 2px;
 }
 .dh-col-head {
   font-size: 10px;
-  color: #c9d1d9;
+  color: var(--viz-tx-0);
   font-weight: bold;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -472,8 +544,8 @@ body.dh-open #dh-toggle { right: 480px; }
   align-items: center;
   padding: 1px 0;
 }
-.dh-lbl { color: #8b949e; font-size: 10px; }
-.dh-val { color: #c9d1d9; font-size: 10px; font-weight: bold; }
+.dh-lbl { color: var(--viz-tx-2); font-size: 10px; }
+.dh-val { color: var(--viz-tx-0); font-size: 10px; font-weight: bold; }
 .dh-val.ok  { color: var(--dh-ok); }
 .dh-val.warn { color: var(--dh-warn); }
 .dh-val.crit { color: var(--dh-degraded); }
@@ -496,7 +568,7 @@ body.dh-open #dh-toggle { right: 480px; }
 .dh-cb-badge.half     { background: var(--dh-warn); }
 .dh-cb-badge.open     { background: var(--dh-degraded); box-shadow: 0 0 4px var(--dh-degraded); }
 .dh-cb-badge.unknown  { background: var(--dh-idle); }
-.dh-cb-ep  { color: #8b949e; font-size: 10px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-cb-ep  { color: var(--viz-tx-2); font-size: 10px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dh-cb-lbl { font-size: 9px; }
 .dh-cb-lbl.closed  { color: var(--dh-ok); }
 .dh-cb-lbl.half    { color: var(--dh-warn); }
@@ -554,14 +626,14 @@ body.dh-open #dh-toggle { right: 480px; }
   padding: 0 14px;
   font-size: 11px;
   font-family: inherit;
-  color: #8b949e;
+  color: var(--viz-tx-2);
   text-decoration: none;
   border-bottom: 2px solid transparent;
   transition: color 0.15s, border-color 0.15s;
   white-space: nowrap;
 }
-#tab-bar a.tab-link:hover { color: #c9d1d9; }
-#tab-bar a.tab-link.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+#tab-bar a.tab-link:hover { color: var(--viz-tx-0); }
+#tab-bar a.tab-link.active { color: var(--viz-ph); border-bottom-color: var(--viz-ph); }
 
 /* ── v5.87 car A: two-level menu IA — top-level groups + dropdown sub-pages ── */
 #tab-bar .nav-group {
@@ -577,7 +649,7 @@ body.dh-open #dh-toggle { right: 480px; }
   padding: 0 14px;
   font-size: 11px;
   font-family: inherit;
-  color: #8b949e;
+  color: var(--viz-tx-2);
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
@@ -585,12 +657,12 @@ body.dh-open #dh-toggle { right: 480px; }
   white-space: nowrap;
   transition: color 0.15s, border-color 0.15s;
 }
-#tab-bar .nav-group > .nav-group-label:hover { color: #c9d1d9; }
+#tab-bar .nav-group > .nav-group-label:hover { color: var(--viz-tx-0); }
 #tab-bar .nav-group > .nav-group-label::after { content: '▾'; font-size: 8px; opacity: 0.7; }
 /* Parent shows active when one of its child links is active */
 #tab-bar .nav-group:has(.tab-link.active) > .nav-group-label {
-  color: #58a6ff;
-  border-bottom-color: #58a6ff;
+  color: var(--viz-ph);
+  border-bottom-color: var(--viz-ph);
 }
 /* Dropdown panel — hidden until hover/focus-within/open */
 #tab-bar .nav-group > .nav-group-menu {
@@ -598,8 +670,8 @@ body.dh-open #dh-toggle { right: 480px; }
   top: 100%;
   left: 0;
   min-width: 160px;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border: 1px solid var(--viz-hair);
   border-radius: 0 0 4px 4px;
   flex-direction: column;
   padding: 4px 0;
@@ -618,8 +690,8 @@ body.dh-open #dh-toggle { right: 480px; }
 }
 #tab-bar .nav-group-menu a.tab-link.active {
   border-bottom: none;
-  border-left-color: #58a6ff;
-  background: #1c2128;
+  border-left-color: var(--viz-ph);
+  background: var(--viz-bg-2);
 }
 
 /* ── Phase 0 (viz-trace-replay): shared-chrome token adoption ─────────────
@@ -704,17 +776,17 @@ body.dh-open #dh-toggle { right: 480px; }
 /* Info tab: brand header + author card */
 .ti-brand { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
 .ti-logo { height: 64px; width: auto; image-rendering: auto; }
-.ti-tagline { color: #8b949e; font-size: 12px; margin-top: 4px; max-width: 520px; }
+.ti-tagline { color: var(--viz-tx-2); font-size: 12px; margin-top: 4px; max-width: 520px; }
 .ti-author { display: flex; gap: 16px; align-items: flex-start; max-width: 560px; }
 .ti-author-photo {
   width: 84px; height: 84px; object-fit: cover; border-radius: 6px;
-  border: 1px solid #30363d; flex: 0 0 auto;
+  border: 1px solid var(--viz-hair); flex: 0 0 auto;
 }
 .ti-author-body { min-width: 0; }
-.ti-author-name { color: #c9d1d9; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
-.ti-author-bio { color: #c9d1d9; font-size: 12px; line-height: 1.5; margin: 0 0 6px; }
-.ti-author-meta { color: #8b949e; font-size: 11px; }
-.ti-author-meta a { color: #58a6ff; text-decoration: none; }
+.ti-author-name { color: var(--viz-tx-0); font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.ti-author-bio { color: var(--viz-tx-0); font-size: 12px; line-height: 1.5; margin: 0 0 6px; }
+.ti-author-meta { color: var(--viz-tx-2); font-size: 11px; }
+.ti-author-meta a { color: var(--viz-ph); text-decoration: none; }
 
 /* Bookmarks tab: left-split layout */
 #tab-bookmarks {
@@ -1027,38 +1099,38 @@ body.dh-open #dh-toggle { right: 480px; }
 /* ── v5.87 B2b Config Reference tab ──────────────────────────────────────────── */
 .cfgref-body { max-width: 760px; }
 .cfgref-banner { font-size: 12px; padding: 10px 12px; border-radius: 4px; margin: 0 0 12px; }
-.cfgref-banner--warn  { background: #2a1a2a; color: #e6a817; }
-.cfgref-banner--error { background: #2a1a1a; color: #f85149; }
+.cfgref-banner--warn  { background: var(--viz-bg-1); color: var(--viz-amber); }
+.cfgref-banner--error { background: var(--viz-bg-1); color: var(--viz-err); }
 
 .cfgref-group { margin-bottom: 24px; }
 .cfgref-group-header {
-  color: #58a6ff;
+  color: var(--viz-ph);
   font-size: 10px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
   margin: 0 0 10px;
   padding-bottom: 4px;
-  border-bottom: 1px solid #30363d;
+  border-bottom: 1px solid var(--viz-hair);
 }
 
 .cfgref-knob {
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border: 1px solid var(--viz-hair);
   border-radius: 5px;
   padding: 12px 14px;
   margin-bottom: 10px;
   scroll-margin-top: 12px;
 }
-.cfgref-knob:target { border-color: #58a6ff; }
+.cfgref-knob:target { border-color: var(--viz-ph); }
 .cfgref-knob-name {
-  color: #c9d1d9;
+  color: var(--viz-tx-0);
   font-family: monospace;
   font-size: 13px;
   font-weight: 600;
   margin: 0 0 6px;
 }
 .cfgref-knob-desc {
-  color: #8b949e;
+  color: var(--viz-tx-2);
   font-size: 12px;
   line-height: 1.5;
   margin: 0 0 10px;
@@ -1072,20 +1144,20 @@ body.dh-open #dh-toggle { right: 480px; }
   font-size: 11px;
 }
 .cfgref-knob-meta dt {
-  color: #8b949e;
+  color: var(--viz-tx-2);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-size: 10px;
 }
 .cfgref-knob-meta dd {
-  color: #c9d1d9;
+  color: var(--viz-tx-0);
   font-family: monospace;
   margin: 0;
 }
 .cfgref-enum-list {
   margin: 0;
   padding-left: 16px;
-  color: #58a6ff;
+  color: var(--viz-ph);
 }
 
 /* ── v5.50.13 Help tab ──────────────────────────────────────────────────────── */
@@ -1096,9 +1168,9 @@ body.dh-open #dh-toggle { right: 480px; }
 }
 #tab-help.active { display: block; }
 #tab-help-body { max-width: 620px; }
-.help-intro { color: #8b949e; margin: 0 0 16px; line-height: 1.5; }
+.help-intro { color: var(--viz-tx-2); margin: 0 0 16px; line-height: 1.5; }
 .help-section-title {
-  color: #58a6ff;
+  color: var(--viz-ph);
   font-size: 10px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
@@ -1120,12 +1192,12 @@ body.dh-open #dh-toggle { right: 480px; }
   display: inline-block;
 }
 .help-swatch-gradient { flex: 0 0 60px; width: 60px; border-radius: 3px; }
-.help-label { color: #c9d1d9; min-width: 110px; font-weight: 500; }
-.help-desc { color: #8b949e; }
-.help-note { color: #6e7681; font-style: italic; margin: 2px 0 6px; }
-.help-heat-desc { color: #8b949e; margin: 4px 0 0; }
-.help-empty { color: #484f58; font-style: italic; }
-.help-error { color: #f85149; }
+.help-label { color: var(--viz-tx-0); min-width: 110px; font-weight: 500; }
+.help-desc { color: var(--viz-tx-2); }
+.help-note { color: var(--viz-tx-3); font-style: italic; margin: 2px 0 6px; }
+.help-heat-desc { color: var(--viz-tx-2); margin: 4px 0 0; }
+.help-empty { color: var(--viz-tx-3); font-style: italic; }
+.help-error { color: var(--viz-err); }
 
 /* ── v5.50.5 Health tab daemon detail (CORE/BACKEND columns) ──────────────── */
 #th-daemon-cols {
@@ -1141,11 +1213,11 @@ body.dh-open #dh-toggle { right: 480px; }
   padding: 10px 0;
   animation: dh-blink 1.2s step-end infinite;
 }
-#th-scraped { font-size: 9px; color: #8b949e; margin-left: auto; }
+#th-scraped { font-size: 9px; color: var(--viz-tx-2); margin-left: auto; }
 
 /* Health / Info / Stats tab content styles */
 .tab-section-title {
-  color: #58a6ff;
+  color: var(--viz-ph);
   font-size: 11px;
   letter-spacing: 1px;
   margin-bottom: 8px;
@@ -1159,15 +1231,15 @@ body.dh-open #dh-toggle { right: 480px; }
   margin-bottom: 12px;
 }
 .tab-card {
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border: 1px solid var(--viz-hair);
   border-radius: 4px;
   padding: 10px 12px;
 }
-.tab-card-title { color: #8b949e; font-size: 10px; margin-bottom: 6px; }
+.tab-card-title { color: var(--viz-tx-2); font-size: 10px; margin-bottom: 6px; }
 .tab-kv { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin: 2px 0; }
-.tab-kv .k { color: #8b949e; }
-.tab-kv .v { color: #e6edf3; font-variant-numeric: tabular-nums; }
+.tab-kv .k { color: var(--viz-tx-2); }
+.tab-kv .v { color: var(--viz-tx-0); font-variant-numeric: tabular-nums; }
 
 /* App container must be flex column to hold tab-bar + tab-panes */
 #app-container {
@@ -1184,8 +1256,8 @@ body.dh-open #dh-toggle { right: 480px; }
 .floating-overlay {
   position: absolute;
   z-index: 50;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border: 1px solid var(--viz-hair);
   border-radius: 3px;
   min-width: 160px;
   max-width: 240px;
@@ -1200,11 +1272,11 @@ body.dh-open #dh-toggle { right: 480px; }
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px;
-  background: #21262d;
-  border-bottom: 1px solid #30363d;
+  background: var(--viz-bg-2);
+  border-bottom: 1px solid var(--viz-hair);
   cursor: grab;
   font-size: 10px;
-  color: #58a6ff;
+  color: var(--viz-ph);
   letter-spacing: 1px;
   text-transform: uppercase;
   gap: 6px;
@@ -1214,7 +1286,7 @@ body.dh-open #dh-toggle { right: 480px; }
 .overlay-collapse {
   background: none;
   border: none;
-  color: #8b949e;
+  color: var(--viz-tx-2);
   cursor: pointer;
   font-size: 13px;
   line-height: 1;
@@ -1222,7 +1294,7 @@ body.dh-open #dh-toggle { right: 480px; }
   font-family: inherit;
   flex-shrink: 0;
 }
-.overlay-collapse:hover { color: #c9d1d9; }
+.overlay-collapse:hover { color: var(--viz-tx-0); }
 
 .overlay-body {
   padding: 8px 10px;
@@ -1251,8 +1323,8 @@ body.dh-open #dh-toggle { right: 480px; }
   right: 0;
   margin-top: 4px;
   min-width: 180px;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--viz-bg-1);
+  border: 1px solid var(--viz-hair);
   border-radius: 4px;
   padding: 6px 0;
   z-index: 60;
@@ -1265,11 +1337,163 @@ body.dh-open #dh-toggle { right: 480px; }
   gap: 6px;
   padding: 5px 12px;
   font-size: 11px;
-  color: #c9d1d9;
+  color: var(--viz-tx-0);
   cursor: pointer;
   white-space: nowrap;
 }
-#view-menu-panel label:hover { background: #1c2128; }
+#view-menu-panel label:hover { background: var(--viz-bg-2); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Car D — Search tab (#10b), galaxy node popup (#4). New surfaces use --viz-*
+   tokens (viz-theme.css), never hardcoded phosphor-green hexes.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* ── #tab-search: dedicated global semantic search ── */
+#tab-search {
+  flex-direction: column;
+  padding: 18px 22px;
+  overflow-y: auto;
+  color: var(--viz-tx-1, #9fc0ae);
+  font-family: var(--viz-mono, ui-monospace, monospace);
+}
+#tab-search.active { display: flex; }
+#search-tab-head h2 {
+  font-family: var(--viz-disp, sans-serif);
+  font-size: 14px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--viz-tx-0, #e8f4ec); margin: 0 0 4px;
+}
+#search-tab-controls {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 16px 0 12px;
+}
+#tab-search #search {
+  flex: 1; min-width: 220px; max-width: 480px;
+  background: var(--viz-bg-1, #060d13);
+  border: 1px solid var(--viz-hair, #14232e);
+  color: var(--viz-tx-0, #e8f4ec);
+  font-family: var(--viz-mono, ui-monospace, monospace);
+  font-size: 13px; padding: 8px 12px; border-radius: 6px;
+}
+#tab-search #search:focus {
+  outline: none; border-color: var(--viz-cy, #3ec9ff);
+  box-shadow: 0 0 0 2px var(--viz-cy-glow, rgba(62,201,255,.15));
+}
+#search-hide-label {
+  font-size: 11px; color: var(--viz-tx-2, #5c7a68);
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+}
+#search-results {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 6px; max-width: 720px;
+}
+.search-empty {
+  color: var(--viz-tx-2, #5c7a68); font-size: 12px; padding: 12px 4px;
+}
+.search-result {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 12px; border-radius: 7px;
+  background: var(--viz-bg-1, #060d13);
+  border: 1px solid var(--viz-hair, #14232e);
+  cursor: pointer; transition: background .12s, border-color .12s;
+}
+.search-result:hover, .search-result:focus {
+  background: var(--viz-bg-2, #0a141c);
+  border-color: var(--viz-cy-dim, #1a5f80); outline: none;
+}
+.search-badge {
+  flex: none; font-size: 9px; font-weight: 600; letter-spacing: .1em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 4px;
+  margin-top: 1px;
+  background: var(--viz-bg-3, #101d27); color: var(--viz-tx-2, #5c7a68);
+  border: 1px solid var(--viz-hair, #14232e);
+}
+.search-badge--memory { color: var(--viz-amber, #ffc35c); border-color: rgba(255,195,92,.3); }
+.search-badge--wiki   { color: var(--viz-cy, #3ec9ff); border-color: var(--viz-cy-dim, #1a5f80); }
+.search-badge--entity { color: var(--viz-err, #ff4059); border-color: rgba(255,64,89,.3); }
+.search-result-main { flex: 1; min-width: 0; }
+.search-result-title {
+  font-size: 12.5px; color: var(--viz-tx-0, #e8f4ec);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.search-result-sub {
+  font-size: 10px; color: var(--viz-tx-2, #5c7a68); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── #4 galaxy node popup — floating, click-away, --viz-* themed ── */
+/* In galaxy mode the phosphor #right sidebar is suppressed entirely; the popup
+   replaces it. */
+body.galaxy-active #right { display: none !important; }
+
+#galaxy-node-popup.node-popup {
+  position: fixed; z-index: 60;
+  width: 340px;
+  background: var(--viz-bg-1, #060d13);
+  border: 1px solid var(--viz-hair, #14232e);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.7), 0 0 0 1px var(--viz-cy-glow, rgba(62,201,255,.04)) inset;
+  overflow: hidden;
+  font-family: var(--viz-mono, ui-monospace, monospace);
+  font-size: 12px; color: var(--viz-tx-1, #9fc0ae);
+}
+#galaxy-node-popup[hidden] { display: none; }
+.node-popup--wide { width: 500px; }
+.node-popup .np-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px 10px;
+  border-bottom: 1px solid var(--viz-hair, #14232e);
+  background: var(--viz-header-grad, linear-gradient(180deg, rgba(10,20,28,.85), rgba(3,7,11,.6)));
+}
+.node-popup .np-type-badge {
+  flex: none; font-size: 9px; letter-spacing: .14em; font-weight: 600;
+  padding: 2px 7px; border-radius: 4px; text-transform: uppercase;
+  background: var(--viz-bg-3, #101d27); color: var(--viz-tx-2, #5c7a68);
+  border: 1px solid var(--viz-hair, #14232e);
+}
+.node-popup .np-type-badge--memory { background: rgba(255,195,92,.12); color: var(--viz-amber, #ffc35c); border-color: rgba(255,195,92,.3); }
+.node-popup .np-type-badge--wiki   { background: var(--viz-cy-glow, rgba(62,201,255,.15)); color: var(--viz-cy, #3ec9ff); border-color: var(--viz-cy-dim, #1a5f80); }
+.node-popup .np-type-badge--entity { background: var(--viz-err-glow, rgba(255,64,89,.22)); color: var(--viz-err, #ff4059); border-color: rgba(255,64,89,.3); }
+.node-popup .np-title {
+  flex: 1; min-width: 0;
+  font-family: var(--viz-disp, sans-serif); font-size: 12px; font-weight: 600;
+  color: var(--viz-tx-0, #e8f4ec);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.node-popup .np-close {
+  flex: none; width: 22px; height: 22px; border-radius: 5px;
+  background: transparent; border: 1px solid var(--viz-hair, #14232e);
+  color: var(--viz-tx-2, #5c7a68); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1;
+}
+.node-popup .np-close:hover { background: var(--viz-bg-2, #0a141c); color: var(--viz-tx-0, #e8f4ec); }
+.node-popup .np-cat-bar { height: 3px; background: var(--viz-cy, #3ec9ff); box-shadow: 0 0 10px var(--viz-cy-glow, rgba(62,201,255,.15)); }
+.node-popup .np-cat-bar--entity { background: var(--viz-err, #ff4059); box-shadow: 0 0 10px var(--viz-err-glow, rgba(255,64,89,.22)); }
+.node-popup .np-cat-bar--memory { background: var(--viz-amber, #ffc35c); }
+.node-popup .np-heat-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px 6px; border-bottom: 1px solid var(--viz-hair-soft, #0d1922);
+}
+.node-popup .np-heat-lbl { flex: none; width: 34px; font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--viz-tx-2, #5c7a68); }
+.node-popup .np-heat-track { flex: 1; height: 5px; background: var(--viz-bg-3, #101d27); border-radius: 999px; overflow: hidden; }
+.node-popup .np-heat-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--viz-cy, #3ec9ff), var(--viz-ph, #49ffa4), var(--viz-amber, #ffc35c), var(--viz-err, #ff4059)); }
+.node-popup .np-heat-val { flex: none; width: 46px; text-align: right; font-size: 10.5px; font-weight: 600; color: var(--viz-amber, #ffc35c); font-variant-numeric: tabular-nums; }
+.node-popup .np-body { padding: 8px 0 4px; max-height: 360px; overflow-y: auto; }
+.node-popup .np-sec { padding: 5px 14px; border-bottom: 1px solid var(--viz-hair-soft, #0d1922); }
+.node-popup .np-sec:last-child { border-bottom: none; }
+.node-popup .np-lbl { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--viz-tx-2, #5c7a68); margin-bottom: 3px; }
+.node-popup .np-val { font-size: 11.5px; color: var(--viz-tx-1, #9fc0ae); line-height: 1.45; word-break: break-word; }
+.node-popup .np-val--dim { color: var(--viz-tx-2, #5c7a68); }
+.node-popup .np-val--mono { font-family: var(--viz-mono, ui-monospace, monospace); font-size: 10.5px; }
+.node-popup .np-val--content { max-height: 100px; overflow-y: auto; font-size: 11px; line-height: 1.5; background: var(--viz-bg-0, #03070b); padding: 6px 8px; border-radius: 5px; border: 1px solid var(--viz-hair-soft, #0d1922); white-space: pre-wrap; }
+.node-popup--wide .np-val--content { max-height: 180px; }
+.node-popup .np-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.node-popup .np-tag { font-size: 9.5px; padding: 1px 7px; border-radius: 99px; background: var(--viz-bg-2, #0a141c); border: 1px solid var(--viz-hair, #14232e); color: var(--viz-tx-2, #5c7a68); }
+.node-popup .np-conn-list { display: flex; flex-direction: column; gap: 2px; }
+.node-popup .np-conn-row { display: flex; justify-content: space-between; align-items: baseline; }
+.node-popup .np-conn-type { font-size: 10px; color: var(--viz-tx-2, #5c7a68); }
+.node-popup .np-conn-ct { font-size: 10.5px; font-weight: 600; color: var(--viz-tx-0, #e8f4ec); font-variant-numeric: tabular-nums; }
+.node-popup .np-nodeid { display: inline-flex; align-items: center; font-size: 9.5px; color: var(--viz-tx-2, #5c7a68); font-family: var(--viz-mono, ui-monospace, monospace); background: var(--viz-bg-0, #03070b); border: 1px solid var(--viz-hair-soft, #0d1922); padding: 2px 8px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -1288,11 +1512,14 @@ body.dh-open #dh-toggle { right: 480px; }
     <a href="#home" class="tab-link" data-tab="home">Graph</a>
     <!-- Bookmarks (leaf) -->
     <a href="#bookmarks" class="tab-link" data-tab="bookmarks">Bookmarks</a>
-    <!-- System (group): Config -->
+    <!-- Search (leaf) — Car D #10b: dedicated global semantic-search tab -->
+    <a href="#search" class="tab-link" data-tab="search">Search</a>
+    <!-- System (group): Config · Debug (Car D #10a: Debug moved here from Help) -->
     <div class="nav-group" data-group="system">
       <button type="button" class="nav-group-label" aria-haspopup="true" aria-expanded="false">System</button>
       <div class="nav-group-menu" role="menu">
         <a href="#control" class="tab-link" data-tab="control" role="menuitem">Config</a>
+        <a href="#debug" class="tab-link" data-tab="debug" role="menuitem">Debug</a>
       </div>
     </div>
     <!-- Observability (group): Traces · Stats · Health (viz-rest #1 nav reorg) -->
@@ -1304,23 +1531,21 @@ body.dh-open #dh-toggle { right: 480px; }
         <a href="#health" class="tab-link" data-tab="health" role="menuitem">Health</a>
       </div>
     </div>
-    <!-- Help (group): Guide · Config Reference · About · Debug -->
+    <!-- Help (group): Guide · Config Reference · About (Car D #10a: Debug moved to System) -->
     <div class="nav-group" data-group="help">
       <button type="button" class="nav-group-label" aria-haspopup="true" aria-expanded="false">Help</button>
       <div class="nav-group-menu" role="menu">
         <a href="#help" class="tab-link" data-tab="help" role="menuitem">Guide</a>
         <a href="#config-ref" class="tab-link" data-tab="config-ref" role="menuitem">Config Reference</a>
         <a href="#info" class="tab-link" data-tab="info" role="menuitem">About</a>
-        <a href="#debug" class="tab-link" data-tab="debug" role="menuitem">Debug</a>
       </div>
     </div>
   </div>
   <!-- Graph controls (right side) -->
+  <!-- Car D #10b: the semantic-search input + Search/Clear/Hide controls moved
+       OUT of this toolbar into the dedicated #tab-search pane. The graph-focus
+       exit button stays here (it is a graph-interaction affordance, not search). -->
   <div id="topbar-graph-controls">
-    <input id="search" type="search" placeholder="Semantic search…" style="width:180px">
-    <button class="btn" id="search-btn" onclick="runSearch()">⌕ Search</button>
-    <button class="btn" id="search-clear-btn" onclick="clearSearch()" style="display:none">✕ Clear</button>
-    <label id="search-hide-label" title="When on, search hides non-matches instead of dimming them" style="font-size:11px;color:#8b949e;display:inline-flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="search-hide-mode"> Hide</label>
     <button class="btn" id="focus-clear-btn" onclick="clearFocus()" style="display:none" title="Exit focus mode">✕ Focus</button>
     <button class="btn" onclick="fitGraph()">⊞ Fit</button>
     <button class="btn" onclick="resetLayout()">⟳ Reset</button>
@@ -1410,6 +1635,25 @@ body.dh-open #dh-toggle { right: 480px; }
     <div id="det-title"></div>
     <div class="heat-bar"><div class="heat-fill" id="det-heat-fill"></div></div>
     <div id="det-body"></div>
+  </div>
+
+  <!-- Car D #4: galaxy node-click popup — floating, click-away, replaces #right
+       in galaxy mode. Anchored near the clicked node; pulsing-halo-only (no
+       backdrop dim); wiki variant auto-widens 340→500. Themed with --viz-*.
+       Body is built by _showGalaxyPopup() from popupFieldModel(). -->
+  <div id="galaxy-node-popup" class="node-popup" role="dialog" aria-label="Node detail" hidden>
+    <div class="np-cat-bar" id="gnp-cat-bar" hidden></div>
+    <div class="np-header">
+      <span class="np-type-badge" id="gnp-badge">Node</span>
+      <span class="np-title" id="gnp-title"></span>
+      <button class="np-close" id="gnp-close" title="Close (×)" aria-label="Close">×</button>
+    </div>
+    <div class="np-heat-row" id="gnp-heat-row" hidden>
+      <span class="np-heat-lbl">Heat</span>
+      <div class="np-heat-track"><div class="np-heat-fill" id="gnp-heat-fill"></div></div>
+      <span class="np-heat-val" id="gnp-heat-val"></span>
+    </div>
+    <div class="np-body" id="gnp-body"></div>
   </div>
 </div>
 
@@ -1622,6 +1866,25 @@ body.dh-open #dh-toggle { right: 480px; }
   <!-- v5.50.1: bookmarks tab content (search, list, preview) comes here -->
 </div><!-- /#tab-bookmarks -->
 
+<!-- ── Tab: Search (Car D #10b: dedicated global semantic search) ── -->
+<div id="tab-search" class="tab-pane">
+  <div id="search-tab-body">
+    <div id="search-tab-head">
+      <h2>SEARCH</h2>
+      <div style="color:var(--viz-tx-2,#8b949e);font-size:11px">Global semantic search across memories, wiki pages, and entities.</div>
+    </div>
+    <div id="search-tab-controls">
+      <input id="search" type="search" placeholder="Semantic search…" autocomplete="off">
+      <button class="btn" id="search-btn" onclick="runSearch()">⌕ Search</button>
+      <button class="btn" id="search-clear-btn" onclick="clearSearch()" style="display:none">✕ Clear</button>
+      <label id="search-hide-label" title="When on, search hides non-matches in the graph instead of dimming them"><input type="checkbox" id="search-hide-mode"> Hide in graph</label>
+    </div>
+    <div id="search-results" role="listbox" aria-label="Search results">
+      <div class="search-empty">Type a query and press Search.</div>
+    </div>
+  </div>
+</div><!-- /#tab-search -->
+
 <div id="tab-traces" class="tab-pane">
   <!-- viz-trace-replay Car B: Traces tab content (recent sidebar, mesh replay,
        drill-down) is built by traces-tab.js::initTracesTab on first open. -->
@@ -1677,23 +1940,88 @@ body.dh-open #dh-toggle { right: 480px; }
   <!-- Filled by control.js initControlTab() on DOMContentLoaded -->
 </div><!-- /#tab-control -->
 
-<!-- ── Tab: Debug (v5.50.8 API inspector + v5.52.0 log panels) ────────── -->
+<!-- ── Tab: Debug (Car D #11: 7-section rebuild) ────────── -->
 <div id="tab-debug" class="tab-pane">
   <div id="debug-header">
-    <h2>API DEBUG</h2>
-    <span style="color:#8b949e;font-size:10px" id="debug-url"></span>
-    <button class="btn" onclick="refreshDebug()">↺ Refresh</button>
+    <h2>DEBUG</h2>
     <span id="debug-status"></span>
   </div>
-  <div id="debug-tabs">
-    <button class="dtab active" onclick="switchDebugView('graph')">GET /api/graph</button>
-    <button class="dtab" onclick="switchDebugView('stats')">GET /api/graph/stats</button>
-    <button class="dtab" onclick="switchDebugView('system')">GET /api/system</button>
-    <button class="dtab" onclick="switchDebugView('search')">GET /api/viz/search</button>
-    <button class="dtab" onclick="switchDebugView('nodes')">Nodes table</button>
-  </div>
-  <div id="debug-body">
-    <pre id="debug-json">Select a tab and click Refresh.</pre>
+  <div id="debug-sections">
+
+    <!-- (1) DB-query console — POST /api/debug/read_query (debug-gated) -->
+    <section class="debug-section" id="debug-sec-dbquery">
+      <h3 class="debug-sec-title">DB Query Console <span class="debug-sec-ep">POST /api/debug/read_query</span></h3>
+      <div id="debug-dbquery-banner" class="debug-banner" hidden>Debug APIs disabled — set <code>YADGAR_DEBUG_APIS_ENABLED=on</code> to enable read-only DB queries.</div>
+      <textarea id="debug-dbquery-input" spellcheck="false" placeholder="SELECT * FROM memory LIMIT 5;"></textarea>
+      <div class="debug-sec-actions">
+        <button class="btn" onclick="_debugRunDbQuery()">▶ Run</button>
+        <span id="debug-dbquery-status"></span>
+      </div>
+      <pre id="debug-dbquery-out" class="debug-json"></pre>
+    </section>
+
+    <!-- (2) Health — GET /health -->
+    <section class="debug-section" id="debug-sec-health">
+      <h3 class="debug-sec-title">Health <span class="debug-sec-ep">GET /health</span>
+        <button class="btn debug-sec-refresh" onclick="_debugFetchInto('/health','debug-health-out','debug-health-status')">↺</button>
+        <span id="debug-health-status"></span></h3>
+      <pre id="debug-health-out" class="debug-json">Click ↺ to load.</pre>
+    </section>
+
+    <!-- (3) Memory stats — GET /api/stats -->
+    <section class="debug-section" id="debug-sec-stats">
+      <h3 class="debug-sec-title">Memory Stats <span class="debug-sec-ep">GET /api/stats</span>
+        <button class="btn debug-sec-refresh" onclick="_debugFetchInto('/api/stats','debug-stats-out','debug-stats-status')">↺</button>
+        <span id="debug-stats-status"></span></h3>
+      <pre id="debug-stats-out" class="debug-json">Click ↺ to load.</pre>
+    </section>
+
+    <!-- (4) Config snapshot — GET /api/control/config (gated) -->
+    <section class="debug-section" id="debug-sec-config">
+      <h3 class="debug-sec-title">Config Snapshot <span class="debug-sec-ep">GET /api/control/config</span>
+        <button class="btn debug-sec-refresh" onclick="_debugFetchConfig()">↺</button>
+        <a href="#control" class="debug-sec-link">open full Config →</a>
+        <span id="debug-config-status"></span></h3>
+      <div id="debug-config-banner" class="debug-banner" hidden>Debug APIs disabled — config snapshot requires <code>YADGAR_DEBUG_APIS_ENABLED=on</code>.</div>
+      <pre id="debug-config-out" class="debug-json">Click ↺ to load.</pre>
+    </section>
+
+    <!-- (6) SSE event tail — /api/graph/events (section 5 Logs is below) -->
+    <section class="debug-section" id="debug-sec-sse">
+      <h3 class="debug-sec-title">SSE Event Tail <span class="debug-sec-ep">/api/graph/events</span>
+        <button class="btn debug-sec-refresh" id="debug-sse-toggle" onclick="_debugToggleSse()">▶ Connect</button>
+        <button class="btn debug-sec-refresh" onclick="_debugClearSse()">✕ Clear</button>
+        <span id="debug-sse-status"></span></h3>
+      <div id="debug-sse-out" class="debug-json debug-sse-list"></div>
+    </section>
+
+    <!-- (7) DLQ — GET /api/debug/dlq (new; wraps dlq_inspect, debug-gated) -->
+    <section class="debug-section" id="debug-sec-dlq">
+      <h3 class="debug-sec-title">Dead-Letter Queue <span class="debug-sec-ep">GET /api/debug/dlq</span>
+        <button class="btn debug-sec-refresh" onclick="_debugFetchDlq()">↺</button>
+        <span id="debug-dlq-status"></span></h3>
+      <div id="debug-dlq-banner" class="debug-banner" hidden>Debug APIs disabled — DLQ inspection requires <code>YADGAR_DEBUG_APIS_ENABLED=on</code>.</div>
+      <div id="debug-dlq-out" class="debug-json">Click ↺ to load.</div>
+    </section>
+
+    <!-- API explorer (kept from the prior debug panel) -->
+    <section class="debug-section" id="debug-sec-explorer">
+      <h3 class="debug-sec-title">API Explorer
+        <button class="btn debug-sec-refresh" onclick="refreshDebug()">↺</button>
+        <span style="color:var(--viz-tx-2,#8b949e);font-size:10px" id="debug-url"></span></h3>
+      <div id="debug-tabs">
+        <button class="dtab active" onclick="switchDebugView('graph')">GET /api/graph</button>
+        <button class="dtab" onclick="switchDebugView('stats')">GET /api/graph/stats</button>
+        <button class="dtab" onclick="switchDebugView('system')">GET /api/system</button>
+        <button class="dtab" onclick="switchDebugView('search')">GET /api/viz/search</button>
+        <button class="dtab" onclick="switchDebugView('nodes')">Nodes table</button>
+      </div>
+      <pre id="debug-json">Select a tab and click Refresh.</pre>
+    </section>
+
+    <!-- (5) Logs — daemon + browser console panels (kept verbatim) -->
+    <section class="debug-section" id="debug-sec-logs">
+      <h3 class="debug-sec-title">Logs</h3>
 
     <!-- ── Daemon log panel (v5.52.0) ──────────────────────────── -->
     <div class="log-panel" id="log-panel-daemon">
@@ -1726,6 +2054,7 @@ body.dh-open #dh-toggle { right: 480px; }
       </div>
       <div class="log-entries" id="console-log-entries"></div>
     </div>
+    </section>
   </div>
 </div><!-- /#tab-debug -->
 
@@ -2091,11 +2420,188 @@ let _serverLayoutMode = 'spring';  // layout_mode of the most recent /api/graph 
 function _renderMode() { return _layoutModePref === 'galaxy' ? 'galaxy' : 'fg'; }
 function _isGalaxy() { return _layoutModePref === 'galaxy'; }
 
-// Bridge a galaxy pick (raw /api/graph node) into the shared detail panel.
+// Bridge a galaxy pick (raw /api/graph node) into the FLOATING galaxy popup
+// (Car D #4) — replaces the #right sidebar in galaxy mode. Anchors near the
+// clicked node, shows a pulsing halo, wiki auto-widens, click-away closes.
 function _galaxyOnPick(node) {
   if (!node) return;
-  try { showDetail(node); } catch (_) { /* detail panel not yet wired */ }
+  try { _showGalaxyPopup(node); } catch (_) { /* popup not yet wired */ }
 }
+
+// ── Car D #4: galaxy node popup — pure field-model + position clamp (inline
+// copies of the vitest-covered node-popup.js; plain <script> cannot import).
+// Read-verified equivalent to yadgar/core/static/node-popup.js. ──────────────
+const _NP_TYPE_BADGE = { memory: 'Memory', wiki: 'Wiki', entity: 'Entity' };
+function _npIsWide(type) { return type === 'wiki'; }
+function _npEndId(end) { return end && end.id != null ? end.id : end; }
+function _npConnections(nodeId, links) {
+  const byType = new Map();
+  for (const l of links || []) {
+    const s = _npEndId(l.source), t = _npEndId(l.target);
+    if (s !== nodeId && t !== nodeId) continue;
+    const et = l.type || 'unknown';
+    byType.set(et, (byType.get(et) || 0) + 1);
+  }
+  return Array.from(byType.entries()).map(([type, count]) => ({ type, count }));
+}
+function _popupFieldModel(node, links) {
+  const type = ((node && node.type) || 'memory').toString().toLowerCase().trim() || 'memory';
+  const badge = _NP_TYPE_BADGE[type] || (type ? type[0].toUpperCase() + type.slice(1) : 'Unknown');
+  const connections = _npConnections(node && node.id, links);
+  const tags = (node && Array.isArray(node.tags) && node.tags) || [];
+  const nodeId = (node && node.id) || '';
+  if (type === 'wiki') {
+    const fields = [];
+    fields.push({ label: 'Category', value: (node && node.category) || 'uncategorized' });
+    if (node && node.slug) fields.push({ label: 'Slug', value: node.slug, mono: true, dim: true });
+    if (node && node.updated_at) fields.push({ label: 'Updated', value: String(node.updated_at).slice(0, 19), dim: true });
+    return { type, badge, title: (node && (node.label || node.slug)) || nodeId, showHeat: false, heat: 0,
+      wide: true, slug: (node && node.slug) || null, category: (node && node.category) || null, tags, fields, connections, nodeId, hasContent: true };
+  }
+  if (type === 'entity') {
+    const fields = [];
+    if (node && node.entity_type) fields.push({ label: 'Type', value: node.entity_type });
+    fields.push({ label: 'Label', value: (node && node.label) || nodeId });
+    return { type, badge, title: (node && node.label) || nodeId, showHeat: false, heat: 0, wide: false,
+      slug: null, category: null, tags, fields, connections, nodeId, hasContent: false };
+  }
+  const heat = (node && Number(node.heat)) || 0;
+  const fields = [];
+  if (node && node.content) fields.push({ label: 'Content', value: node.content, content: true });
+  if (node && node.directory) fields.push({ label: 'Project', value: node.directory, mono: true, dim: true });
+  if (node && node.created_at) fields.push({ label: 'Created', value: String(node.created_at).slice(0, 19), dim: true });
+  if (node && node.last_accessed) fields.push({ label: 'Last accessed', value: String(node.last_accessed).slice(0, 19), dim: true });
+  return { type, badge, title: node ? String(node.content || node.label || node.id || '').slice(0, 100) : nodeId,
+    showHeat: true, heat, wide: false, slug: null, category: null, tags, fields, connections, nodeId, hasContent: false };
+}
+function _clampPopupPosition(anchor, size, viewport) {
+  const OFFSET = 16, MARGIN = 8;
+  const maxLeft = Math.max(MARGIN, viewport.width - size.width - MARGIN);
+  const maxTop = Math.max(MARGIN, viewport.height - size.height - MARGIN);
+  return {
+    left: Math.min(Math.max((anchor.x || 0) + OFFSET, MARGIN), maxLeft),
+    top: Math.min(Math.max((anchor.y || 0) + OFFSET, MARGIN), maxTop),
+  };
+}
+
+let _galaxyPopupNode = null;
+
+function _renderGalaxyPopupBody(model) {
+  const body = document.getElementById('gnp-body');
+  if (!body) return;
+  const rows = [];
+  for (const f of model.fields) {
+    let valClass = 'np-val';
+    if (f.dim) valClass += ' np-val--dim';
+    if (f.mono) valClass += ' np-val--mono';
+    if (f.content) valClass += ' np-val--content';
+    rows.push(`<div class="np-sec"><div class="np-lbl">${esc(f.label)}</div><div class="${valClass}">${esc(f.value)}</div></div>`);
+  }
+  if (model.tags.length) {
+    rows.push(`<div class="np-sec"><div class="np-lbl">Tags</div><div class="np-tags">${
+      model.tags.map(t => `<span class="np-tag">${esc(t)}</span>`).join('')}</div></div>`);
+  }
+  if (model.connections.length) {
+    rows.push(`<div class="np-sec"><div class="np-lbl">Connections</div><div class="np-conn-list">${
+      model.connections.map(c => `<div class="np-conn-row"><span class="np-conn-type">${esc(c.type)}</span><span class="np-conn-ct">${c.count}</span></div>`).join('')}</div></div>`);
+  }
+  // Async wiki content placeholder — fetched by slug.
+  if (model.type === 'wiki' && model.slug) {
+    rows.push(`<div class="np-sec"><div class="np-lbl">Content</div><div class="np-val np-val--content" id="gnp-wiki-content" style="font-style:italic;color:var(--viz-tx-2,#8b949e)">Loading…</div></div>`);
+  }
+  rows.push(`<div class="np-sec"><div class="np-lbl">Node ID</div><div class="np-val"><span class="np-nodeid">${esc(model.nodeId)}</span></div></div>`);
+  body.innerHTML = rows.join('');
+  if (model.type === 'wiki' && model.slug) _fetchGalaxyPopupWiki(model.slug);
+}
+
+async function _fetchGalaxyPopupWiki(slug) {
+  const el = document.getElementById('gnp-wiki-content');
+  if (!el) return;
+  try {
+    const r = await fetch(`${DAEMON}/api/wiki/read?slug=${encodeURIComponent(slug)}`);
+    const el2 = document.getElementById('gnp-wiki-content');
+    if (!el2) return;
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    const content = (d && (d.content || (d.result && d.result.content))) || '';
+    el2.style.fontStyle = ''; el2.style.color = '';
+    el2.textContent = content ? (content.length > 800 ? content.slice(0, 800) + '…' : content) : '(no content)';
+  } catch (err) {
+    const el2 = document.getElementById('gnp-wiki-content');
+    if (el2) { el2.style.fontStyle = ''; el2.textContent = `(fetch failed: ${err.message})`; }
+  }
+}
+
+function _showGalaxyPopup(node) {
+  const popup = document.getElementById('galaxy-node-popup');
+  if (!popup) return;
+  _galaxyPopupNode = node;
+  // Suppress the #right sidebar in galaxy mode (mockup: separate handling).
+  const right = document.getElementById('right');
+  if (right) right.classList.remove('open');
+
+  const model = _popupFieldModel(node, allLinks);
+  // Wiki auto-widen 340→500.
+  popup.classList.toggle('node-popup--wide', !!model.wide);
+  // Badge + type styling.
+  const badge = document.getElementById('gnp-badge');
+  badge.textContent = model.badge;
+  badge.className = 'np-type-badge np-type-badge--' + model.type;
+  document.getElementById('gnp-title').textContent = model.title;
+  // Category accent bar (wiki/entity) vs heat row (memory).
+  const catBar = document.getElementById('gnp-cat-bar');
+  const heatRow = document.getElementById('gnp-heat-row');
+  if (model.showHeat) {
+    heatRow.hidden = false; catBar.hidden = true;
+    document.getElementById('gnp-heat-fill').style.width = `${Math.max(0, Math.min(1, model.heat)) * 100}%`;
+    document.getElementById('gnp-heat-val').textContent = model.heat.toFixed(4);
+  } else {
+    heatRow.hidden = true; catBar.hidden = false;
+    catBar.className = 'np-cat-bar np-cat-bar--' + model.type;
+  }
+  _renderGalaxyPopupBody(model);
+
+  // Show + position near the node (once, at click). Halo tracks the node.
+  popup.hidden = false;
+  let anchor = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.nodeScreenPos === 'function') {
+    const sp = _galaxyView.nodeScreenPos(node.id);
+    if (sp && sp.onscreen) anchor = sp;
+    if (typeof _galaxyView.showHalo === 'function') _galaxyView.showHalo(node.id);
+  }
+  const rect = popup.getBoundingClientRect();
+  const pos = _clampPopupPosition(anchor, { width: rect.width || 340, height: rect.height || 400 },
+    { width: window.innerWidth, height: window.innerHeight });
+  popup.style.left = pos.left + 'px';
+  popup.style.top = pos.top + 'px';
+}
+
+function _closeGalaxyPopup() {
+  const popup = document.getElementById('galaxy-node-popup');
+  if (!popup || popup.hidden) return;
+  popup.hidden = true;
+  _galaxyPopupNode = null;
+  if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.hideHalo === 'function') {
+    _galaxyView.hideHalo();
+  }
+}
+
+// Click-away (document mousedown outside the popup) + × + ESC close.
+document.addEventListener('mousedown', (e) => {
+  const popup = document.getElementById('galaxy-node-popup');
+  if (!popup || popup.hidden) return;
+  if (popup.contains(e.target)) return;
+  // Ignore clicks on the galaxy canvas — those are picks that reopen the popup.
+  _closeGalaxyPopup();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') _closeGalaxyPopup();
+});
+// × close button (wired once DOM is parsed via defer of this script block).
+(function _wireGalaxyPopupClose() {
+  const btn = document.getElementById('gnp-close');
+  if (btn) btn.addEventListener('click', _closeGalaxyPopup);
+})();
 
 // Build the {id: visible} map the galaxy renderer consumes from applyFilters'
 // __visible flags (the same backbone FG uses via nodeVisibility).
@@ -2139,6 +2645,8 @@ function _syncModeBtnDisabled() {
   // hide the FG floating overlays + show/hide is handled by CSS body.galaxy-active,
   // toggled here so the phosphor overlays don't float over the galaxy scene.
   document.body.classList.toggle('galaxy-active', galaxy);
+  // Car D #4: the galaxy popup only lives in galaxy mode — close it on exit.
+  if (!galaxy && typeof _closeGalaxyPopup === 'function') _closeGalaxyPopup();
 }
 
 // viz-rest #13: 2D convex hull (Andrew's monotone chain). Pure; mirrors
@@ -3213,6 +3721,122 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 // ── Semantic search (V1) ──────────────────────────────────────────────────────
 let _searchPinnedIds = new Set();
 
+// ── Car D #10b: dedicated Search tab — pure helpers (inline copies of the
+// vitest-covered viz-search.js; plain <script> cannot import). Read-verified
+// equivalent to yadgar/core/static/viz-search.js.
+const _SEARCH_PREFIX_TYPE = { mem: 'memory', wiki: 'wiki', entity: 'entity' };
+function _parseNodeRef(id) {
+  const s = id == null ? '' : String(id);
+  const i = s.indexOf(':');
+  if (i < 0) return { type: '', rawId: s };
+  const type = _SEARCH_PREFIX_TYPE[s.slice(0, i)];
+  return type ? { type, rawId: s.slice(i + 1) } : { type: '', rawId: s };
+}
+function _buildSearchResults(nodeIds, nodesById) {
+  if (!Array.isArray(nodeIds) || nodeIds.length === 0) return [];
+  const seen = new Set();
+  const rows = [];
+  for (const id of nodeIds) {
+    if (id == null || seen.has(id)) continue;
+    seen.add(id);
+    const node = nodesById.get(id) || null;
+    const parsed = _parseNodeRef(id).type;
+    const type = (node && node.type) || parsed || '';
+    let title, subtitle = '', slug = null;
+    if (type === 'wiki') {
+      title = (node && (node.label || node.slug)) || id;
+      slug = (node && node.slug) || null;
+      subtitle = (node && node.category) || 'wiki';
+    } else if (type === 'entity') {
+      title = (node && node.label) || id;
+      subtitle = (node && node.entity_type) || 'entity';
+    } else {
+      const t = node ? String(node.content || node.label || node.id || '') : id;
+      title = t.length > 120 ? t.slice(0, 120) + '…' : t;
+      subtitle = 'memory';
+    }
+    rows.push({ id, type, title, subtitle, slug, node, inGraph: node != null });
+  }
+  return rows;
+}
+function _routeSearchResult(row) {
+  if (!row) return { action: 'none', nodeId: '' };
+  if (row.type === 'wiki' && row.slug) return { action: 'open-wiki', slug: row.slug, nodeId: row.id };
+  if (row.inGraph && row.node) return { action: 'focus-graph', nodeId: row.id };
+  return { action: 'none', nodeId: row.id };
+}
+
+function _renderSearchResults(rows, q) {
+  const box = document.getElementById('search-results');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'search-empty';
+    empty.textContent = `No matches for "${q}".`;
+    box.appendChild(empty);
+    return;
+  }
+  for (const row of rows) {
+    const el = document.createElement('div');
+    el.className = 'search-result search-result--' + (row.type || 'unknown');
+    el.setAttribute('role', 'option');
+    el.tabIndex = 0;
+    const badge = document.createElement('span');
+    badge.className = 'search-badge search-badge--' + (row.type || 'unknown');
+    badge.textContent = row.type || '?';
+    const main = document.createElement('div');
+    main.className = 'search-result-main';
+    const title = document.createElement('div');
+    title.className = 'search-result-title';
+    title.textContent = row.title;
+    const sub = document.createElement('div');
+    sub.className = 'search-result-sub';
+    sub.textContent = row.subtitle + (row.inGraph ? '' : ' · not in current graph') + ' · ' + row.id;
+    main.appendChild(title);
+    main.appendChild(sub);
+    el.appendChild(badge);
+    el.appendChild(main);
+    const activate = () => _onSearchResultClick(row);
+    el.addEventListener('click', activate);
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+    box.appendChild(el);
+  }
+}
+
+// Center the graph camera on a node id (2D + 3D), best-effort. Mirrors the
+// centering used by _applySearchHighlight.
+function _searchCenterOnNode(nodeId) {
+  if (!graph) return;
+  const node = allNodes.find((n) => n.id === nodeId);
+  if (!node) return;
+  try {
+    if (_graphMode === '3d') {
+      graph.zoomToFit(600, 60, (n) => n.id === nodeId);
+    } else if (node.x != null && node.y != null) {
+      graph.centerAt(node.x, node.y, 600);
+      graph.zoom(2.5, 600);
+    }
+  } catch (_) { /* graph not ready */ }
+}
+
+function _onSearchResultClick(row) {
+  const route = _routeSearchResult(row);
+  if (route.action === 'none') {
+    status(`"${row.title}" is not in the loaded graph (500-node cap)`, 'warn');
+    return;
+  }
+  // Both wiki-with-slug and memory/entity route into the graph: navigate to the
+  // graph tab, open the detail panel (showDetail async-fetches wiki content by
+  // slug), and center the camera on the node.
+  window.location.hash = '#home';
+  // Defer so the home tab is active + graph visible before focusing.
+  setTimeout(() => {
+    if (row.node && typeof showDetail === 'function') { try { showDetail(row.node); } catch (_) {} }
+    _searchCenterOnNode(route.nodeId);
+  }, 40);
+}
+
 async function runSearch() {
   const q = document.getElementById('search').value.trim();
   if (!q) return;
@@ -3223,15 +3847,21 @@ async function runSearch() {
     const r = await fetch(`${DAEMON}/api/viz/search?q=${encodeURIComponent(q)}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
-    _searchPinnedIds = new Set(d.node_ids || []);
+    const ids = d.node_ids || [];
+    _searchPinnedIds = new Set(ids);
     // P3.9 [60]: applyFilters first so hide-mode acts on the fresh pin set
     // (visibility), then the highlight applies the dim/ring on the survivors.
     applyFilters();
     _applySearchHighlight();
+    // Car D #10b: also render the type-aware results list in the Search tab.
+    const nodesById = new Map(allNodes.map((n) => [n.id, n]));
+    _renderSearchResults(_buildSearchResults(ids, nodesById), q);
     document.getElementById('search-clear-btn').style.display = '';
     status(`Search: ${_searchPinnedIds.size} match(es) for "${q}"`, 'ok');
   } catch (e) {
     status(`Search error: ${e.message}`, 'err');
+    const box = document.getElementById('search-results');
+    if (box) box.innerHTML = `<div class="search-empty">Search error: ${e.message}</div>`;
   } finally {
     btn.classList.remove('searching');
     btn.textContent = '⌕ Search';
@@ -3242,6 +3872,8 @@ function clearSearch() {
   _searchPinnedIds.clear();
   document.getElementById('search').value = '';
   document.getElementById('search-clear-btn').style.display = 'none';
+  const box = document.getElementById('search-results');
+  if (box) box.innerHTML = '<div class="search-empty">Type a query and press Search.</div>';
   _applySearchHighlight();
   applyFilters();
   status('Search cleared', 'ok');
@@ -3305,7 +3937,14 @@ function _repaintDimState() {
 }
 
 function _applySearchHighlight() {
-  if (!graph) return;
+  // Car D #10b: in galaxy mode the FG `graph` is null — route the highlight to
+  // the galaxy renderer instead of bailing (the deferred-v1 behavior).
+  if (!graph) {
+    if (_isGalaxy() && window._galaxyView && _galaxyView.isMounted()) {
+      _galaxyView.highlight(_searchPinnedIds.size > 0 ? _searchPinnedIds : null);
+    }
+    return;
+  }
   _recomputeDim();
   _repaintDimState();
   const hasPins = _searchPinnedIds.size > 0;
@@ -3622,6 +4261,143 @@ async function refreshDebug() {
     el.textContent = `Error: ${err.message}`;
     stEl.textContent = '';
   }
+}
+
+// ── Car D #11: debug-panel section handlers ──────────────────────────────────
+
+// Generic GET → pretty-JSON into a <pre>, with status + best-effort 403 banner.
+async function _debugFetchInto(path, outId, statusId, bannerId) {
+  const out = document.getElementById(outId);
+  const st = statusId && document.getElementById(statusId);
+  if (!out) return;
+  out.textContent = 'Fetching…';
+  const t0 = Date.now();
+  try {
+    const r = await fetch(DAEMON + path);
+    const ms = Date.now() - t0;
+    if (bannerId) {
+      const banner = document.getElementById(bannerId);
+      if (banner) banner.hidden = r.status !== 403;
+    }
+    const raw = await r.json();
+    out.innerHTML = syntaxHL(esc(JSON.stringify(raw, null, 2)));
+    if (st) st.textContent = `HTTP ${r.status} · ${ms}ms`;
+    return { ok: r.ok, status: r.status, data: raw };
+  } catch (err) {
+    out.textContent = `Error: ${err.message}`;
+    if (st) st.textContent = '';
+    return { ok: false, error: err.message };
+  }
+}
+
+// (1) DB-query console — POST /api/debug/read_query.
+async function _debugRunDbQuery() {
+  const input = document.getElementById('debug-dbquery-input');
+  const out = document.getElementById('debug-dbquery-out');
+  const st = document.getElementById('debug-dbquery-status');
+  const banner = document.getElementById('debug-dbquery-banner');
+  const q = (input && input.value || '').trim();
+  if (!q) { if (st) st.textContent = 'empty query'; return; }
+  out.textContent = 'Running…';
+  const t0 = Date.now();
+  try {
+    const r = await fetch(DAEMON + '/api/debug/read_query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q }),
+    });
+    const ms = Date.now() - t0;
+    if (banner) banner.hidden = r.status !== 403;
+    const raw = await r.json();
+    out.innerHTML = syntaxHL(esc(JSON.stringify(raw, null, 2)));
+    if (st) st.textContent = `HTTP ${r.status} · ${ms}ms`;
+  } catch (err) {
+    out.textContent = `Error: ${err.message}`;
+    if (st) st.textContent = '';
+  }
+}
+
+// (4) Config snapshot — GET /api/control/config (gated). Show counts + raw.
+async function _debugFetchConfig() {
+  const res = await _debugFetchInto('/api/control/config', 'debug-config-out', 'debug-config-status', 'debug-config-banner');
+  const out = document.getElementById('debug-config-out');
+  if (res && res.ok && res.data && out) {
+    const cfg = res.data.config || res.data.settings || res.data;
+    const count = cfg && typeof cfg === 'object' ? Object.keys(cfg).length : 0;
+    // Prepend a count summary line above the raw JSON.
+    out.innerHTML = `<div class="debug-count">${count} config keys</div>` + out.innerHTML;
+  }
+}
+
+// (7) DLQ — GET /api/debug/dlq (new route wrapping dlq_inspect).
+async function _debugFetchDlq() {
+  const out = document.getElementById('debug-dlq-out');
+  const st = document.getElementById('debug-dlq-status');
+  const banner = document.getElementById('debug-dlq-banner');
+  if (!out) return;
+  out.textContent = 'Fetching…';
+  try {
+    const r = await fetch(DAEMON + '/api/debug/dlq');
+    if (banner) banner.hidden = r.status !== 403;
+    const raw = await r.json();
+    if (!r.ok) { out.innerHTML = syntaxHL(esc(JSON.stringify(raw, null, 2))); if (st) st.textContent = `HTTP ${r.status}`; return; }
+    const entries = raw.entries || [];
+    if (st) st.textContent = `${raw.count != null ? raw.count : entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`;
+    if (!entries.length) { out.innerHTML = '<div class="debug-count">DLQ empty</div>'; return; }
+    const rows = entries.map(e =>
+      `<div class="debug-dlq-row"><span class="debug-dlq-op">${esc(e.op_type || '?')}</span>`
+      + `<span class="debug-dlq-reason">${esc(e.failure_reason || '?')}</span>`
+      + `<span class="debug-dlq-att">×${e.attempts != null ? e.attempts : '?'}</span>`
+      + `<span class="debug-dlq-err">${esc((e.last_error || '').slice(0, 80))}</span>`
+      + `<span class="debug-dlq-file">${esc(e.file || '')}</span></div>`
+    ).join('');
+    out.innerHTML = rows;
+  } catch (err) {
+    out.textContent = `Error: ${err.message}`;
+    if (st) st.textContent = '';
+  }
+}
+
+// (6) SSE event tail — /api/graph/events. Tails events into a scrolling list.
+let _debugSse = null;
+function _debugToggleSse() {
+  const btn = document.getElementById('debug-sse-toggle');
+  const st = document.getElementById('debug-sse-status');
+  if (_debugSse) {
+    _debugSse.close(); _debugSse = null;
+    if (btn) btn.textContent = '▶ Connect';
+    if (st) st.textContent = 'disconnected';
+    return;
+  }
+  try {
+    _debugSse = new EventSource(DAEMON + '/api/graph/events');
+    if (btn) btn.textContent = '⏸ Disconnect';
+    if (st) st.textContent = 'connecting…';
+    _debugSse.onopen = () => { if (st) st.textContent = 'connected'; };
+    _debugSse.onerror = () => { if (st) st.textContent = 'error / reconnecting…'; };
+    _debugSse.onmessage = (ev) => _debugAppendSse('message', ev.data);
+    for (const t of ['memory_added', 'wiki_added', 'wiki_updated', 'wiki_deleted', 'heat_updated']) {
+      _debugSse.addEventListener(t, (ev) => _debugAppendSse(t, ev.data));
+    }
+  } catch (err) {
+    if (st) st.textContent = `error: ${err.message}`;
+  }
+}
+function _debugAppendSse(type, data) {
+  const box = document.getElementById('debug-sse-out');
+  if (!box) return;
+  const row = document.createElement('div');
+  row.className = 'debug-sse-row';
+  row.innerHTML = `<span class="debug-sse-ts">${new Date().toTimeString().slice(0,8)}</span>`
+    + `<span class="debug-sse-ev">${esc(type)}</span>`
+    + `<span class="debug-sse-data">${esc((data || '').slice(0, 200))}</span>`;
+  box.appendChild(row);
+  // cap to last 100 rows
+  while (box.childElementCount > 100) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+function _debugClearSse() {
+  const box = document.getElementById('debug-sse-out');
+  if (box) box.innerHTML = '';
 }
 
 // esc() — HTML-escape untrusted strings before inserting into innerHTML.
@@ -4259,7 +5035,7 @@ function updateDaemonHealth(data) {
 function _getActiveTab() {
   // YadgarTabs is set by the module script below; falls back gracefully if not yet loaded
   if (window.YadgarTabs) return window.YadgarTabs.resolveTab(window.location.hash);
-  const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help','config-ref','traces']);
+  const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help','config-ref','traces','search']);
   const hash = (window.location.hash || '#home').replace(/^#/, '').split('/')[0];
   return _VALID.has(hash) ? hash : 'home';
 }
@@ -4270,7 +5046,7 @@ function _switchTab(tabName) {
     window.YadgarTabs.switchTab(tabName);
   } else {
     // Fallback: inline activation (same logic as tabs.js) if module not yet loaded
-    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help','config-ref','traces']);
+    const _VALID = new Set(['home','stats','health','bookmarks','info','control','debug','help','config-ref','traces','search']);
     if (!_VALID.has(tabName)) tabName = 'home';
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('#tab-bar .tab-link').forEach(a => a.classList.remove('active'));
@@ -4278,6 +5054,9 @@ function _switchTab(tabName) {
     if (pane) pane.classList.add('active');
     const link = document.querySelector('#tab-bar a[data-tab="' + tabName + '"]');
     if (link) link.classList.add('active');
+    // Bug 8: mirror tabs.js — the graph toolbar only belongs on the home tab.
+    const gc = document.getElementById('topbar-graph-controls');
+    if (gc) gc.style.display = (tabName === 'home') ? '' : 'none';
   }
   // P1.2: the force-graph render loop keeps running on the (now display:none)
   // home canvas while another tab is active — pure wasted CPU. Pause it when
@@ -4302,6 +5081,11 @@ function _switchTab(tabName) {
   if (tabName === 'control') window._lazyInitControlTab?.();
   if (tabName === 'config-ref') window._lazyInitConfigRefTab?.();
   if (tabName === 'traces') window._lazyInitTracesTab?.();
+  // Car D #10b: focus the search input when the Search tab opens.
+  if (tabName === 'search') {
+    const si = document.getElementById('search');
+    if (si) setTimeout(() => si.focus(), 0);
+  }
 }
 
 // Stats tab: fetch /api/graph/stats + charts from /api/metrics/*

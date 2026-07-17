@@ -116,9 +116,14 @@ jobs:
           if echo "$changed" | grep -qE '^(Dockerfile\.backend$|entrypoint-backend\.sh$|yadgar/backend/)'; then
             backend_changed=true
           fi
-          # pyproject.toml also touches backend (ml-extra deps live there)
+          # pyproject.toml triggers backend ONLY when dependencies or ml-extra deps changed,
+          # NOT for a version-only bump (avoids wasteful rebuild on CORE-only releases).
+          # Mirrors the server.json field-compare pattern at lines 126-131.
           if echo "$changed" | grep -q '^pyproject\.toml$'; then
-            backend_changed=true
+            BE_DEPS='import tomllib,sys,json; p=tomllib.load(sys.stdin.buffer)["project"]; print(json.dumps([p.get("dependencies"), p.get("optional-dependencies",{}).get("ml")], sort_keys=True))'
+            old_be_deps=$(git show HEAD~1:pyproject.toml | python3 -c "$BE_DEPS")
+            new_be_deps=$(python3 -c "$BE_DEPS" < pyproject.toml)
+            [ "$old_be_deps" != "$new_be_deps" ] && backend_changed=true
           fi
 
           # server.json — only the relevant version field counts
