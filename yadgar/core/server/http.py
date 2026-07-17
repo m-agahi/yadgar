@@ -2224,16 +2224,23 @@ async def api_consolidation_log(request: Request) -> JSONResponse:
         limit = 30
 
     def _fetch() -> list:
+        # Bug 9: legacy rows carry a NONE timestamp (+ NONE data columns). NONE
+        # sorts FIRST ascending, so `ORDER BY timestamp ASC LIMIT N` returned N
+        # all-zero legacy rows → the chart plotted a permanent flat zero. Fetch
+        # the NEWEST non-NONE-timestamp rows (DESC), then reverse to ascending
+        # for the chart. Same raw-`_q` seam as before (no new DB read).
         rows = (
             _st._storage._q(
                 "SELECT timestamp, memories_added, memories_updated, "
                 "memories_archived, memories_deleted, memify_pruned, "
                 "cls_promoted, duration_ms "
-                "FROM consolidation_log ORDER BY timestamp ASC LIMIT $lim",
+                "FROM consolidation_log WHERE timestamp IS NOT NONE "
+                "ORDER BY timestamp DESC LIMIT $lim",
                 {"lim": limit},
             )
             or []
         )
+        rows = list(reversed(rows))  # DESC newest-window → ascending for display
         return [
             {
                 "timestamp": str(r.get("timestamp") or ""),

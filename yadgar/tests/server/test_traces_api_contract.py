@@ -117,6 +117,49 @@ class _ConnErrClient(_FakeClient):
         raise httpx.ConnectError("tempo down")
 
 
+class _ByIdHttp500Client(_FakeClient):
+    """By-id fetch 500s (Tempo querier/blocklist exhaustion); search works.
+
+    Mirrors the real Bug 7 field state: `GET /api/traces/{id}` returns HTTP 500
+    with a queue-full body while `/api/search` still returns spanSet hits. Used
+    to assert (a) the 500 reason is surfaced and (b) the search-fallback mesh has
+    ≥1 stage. The search hit carries per-span timing (startTimeUnixNano +
+    durationNanos), matching Tempo's spanSet shape.
+    """
+
+    _SEARCH_BODY = {
+        "traces": [
+            {
+                "traceID": "abc123",
+                "rootTraceName": "POST /mcp",
+                "durationMs": 42.0,
+                "startTimeUnixNano": "200",
+                "spanSet": {
+                    "spans": [
+                        {
+                            "name": "tool.recall",
+                            "startTimeUnixNano": "1000000000",
+                            "durationNanos": "42000000",
+                        },
+                        {
+                            "name": "yadgar._shared.retrieval.scoring._run_fts_bm25",
+                            "startTimeUnixNano": "1005000000",
+                            "durationNanos": "8000000",
+                        },
+                    ]
+                },
+            }
+        ]
+    }
+
+    async def get(self, url, **kwargs):
+        _FakeClient.calls.append(url)
+        if "/api/search" in url:
+            return _FakeResp(200, self._SEARCH_BODY)
+        # by-id fetch → HTTP 500 with a queue-full body
+        return _FakeResp(500, {"error": "queue doesn't have room for ~1150 jobs"})
+
+
 # ---------------------------------------------------------------------------
 # App / fixtures
 # ---------------------------------------------------------------------------
@@ -294,6 +337,45 @@ class TestMesh:
         assert r2.json()["cached"] is True
         # second call served from cache → no new Tempo fetch
         assert len(_FakeClient.calls) == calls_after_first
+
+    # ── Bug 7: hardening — surface reason + search-fallback ──────────────────
+
+    def test_mesh_surfaces_upstream_500_reason(self, monkeypatch):
+        """A by-id HTTP 500 must surface the upstream status/body in `reason`.
+
+        The UI needs to show WHY replay is empty/partial, not a generic
+        "trace unavailable". Never 500 — always graceful 200.
+        """
+        monkeypatch.setattr(httpx, "AsyncClient", _ByIdHttp500Client)
+        client = _make_app(monkeypatch)
+        r = client.get("/api/traces/abc123/mesh", headers=_auth())
+        assert r.status_code == 200
+        body = r.json()
+        assert "reason" in body
+        # the upstream 500 signal must be surfaced (status code and/or body text)
+        assert "500" in body["reason"] or "queue" in body["reason"], body["reason"]
+
+    def test_mesh_search_fallback_yields_nonzero_stages(self, monkeypatch):
+        """When by-id fails, the mesh is rebuilt from the /api/search spanSet.
+
+        Degrades to a PARTIAL timeline (≥1 stage) instead of 0 stages. Real
+        Tempo spanSet shape (startTimeUnixNano/durationNanos) is smoke-check —
+        here we assert the fallback path produces stages from the search hit.
+        """
+        monkeypatch.setattr(httpx, "AsyncClient", _ByIdHttp500Client)
+        client = _make_app(monkeypatch)
+        r = client.get("/api/traces/abc123/mesh", headers=_auth())
+        assert r.status_code == 200
+        mesh = r.json()["mesh"]
+        assert len(mesh["nodes"]) >= 1, f"search-fallback must yield ≥1 stage, got: {mesh['nodes']}"
+
+    def test_mesh_fallback_is_graceful_when_search_also_down(self, monkeypatch):
+        """By-id 500 AND search network-error → still 200 empty mesh, never raise."""
+        monkeypatch.setattr(httpx, "AsyncClient", _ConnErrClient)
+        client = _make_app(monkeypatch)
+        r = client.get("/api/traces/abc123/mesh", headers=_auth())
+        assert r.status_code == 200
+        assert r.json()["mesh"]["nodes"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -21,3 +21,4 @@ build
 benchmarks
 result
 PLAN*.md
+uv.lock

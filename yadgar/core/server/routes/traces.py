@@ -219,11 +219,14 @@ def _search_tool_name(trace_hit: dict) -> str:
 
 
 @observe(tier="stage")
-async def _tempo_fetch_trace(base: str, trace_id: str) -> dict | None:
+async def _tempo_fetch_trace(base: str, trace_id: str) -> tuple[dict | None, str]:
     """Fetch one trace by id and flatten to a capture_trace-shaped payload.
 
-    Returns None on any Tempo failure or empty trace (caller degrades to empty
-    mesh). Never raises.
+    Returns ``(data, reason)``. ``data`` is None on any Tempo failure or empty
+    trace (caller degrades / falls back); ``reason`` carries the WHY — the
+    upstream HTTP status + body snippet, the network error class, or "empty
+    trace" — so the UI can show why replay is empty/partial (Bug 7). Never
+    raises. ``reason`` is "" on success.
     """
     try:
         async with httpx.AsyncClient(timeout=_TEMPO_TIMEOUT_S) as client:
@@ -233,18 +236,155 @@ async def _tempo_fetch_trace(base: str, trace_id: str) -> dict | None:
             )
     except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError) as exc:
         logger.warning("Tempo fetch %s failed (network): %s", trace_id, exc)
-        return None
+        return None, f"Tempo unreachable ({type(exc).__name__})"
     if resp.status_code != 200:
+        # Surface the upstream status + a body snippet (Tempo's 500 typically
+        # carries "queue doesn't have room for ~N jobs" on blocklist exhaustion).
+        snippet = _body_snippet(resp)
         logger.warning("Tempo fetch %s returned HTTP %s", trace_id, resp.status_code)
-        return None
+        return None, f"Tempo returned HTTP {resp.status_code}{snippet}"
     try:
         spans = _extract_spans(resp.json())
     except ValueError:
-        return None
+        return None, "Tempo returned a malformed trace"
     if not spans:
-        return None
+        return None, "empty trace (no spans)"
 
     total_ms = round(max(s["rel_ms"] + s["dur_ms"] for s in spans), 1)
+    tool_span = next((s["name"] for s in spans if s["name"].startswith("tool.")), "")
+    label = tool_span.removeprefix("tool.") if tool_span else trace_id[:8]
+    return {
+        "label": label,
+        "tool_span": tool_span,
+        "trace_id": trace_id,
+        "total_ms": total_ms,
+        "span_count": len(spans),
+        "spans": spans,
+    }, ""
+
+
+@observe(tier="hot", span=False)
+def _body_snippet(resp: object, limit: int = 160) -> str:
+    """A short, safe ' — <body>' snippet from a Tempo error response, or ''.
+
+    Best-effort: any access/decoding failure yields ''. Bounded to `limit` chars.
+    """
+    try:
+        text = getattr(resp, "text", "") or ""
+        if not text:
+            payload = resp.json()  # type: ignore[attr-defined]
+            text = payload if isinstance(payload, str) else str(payload)
+    except Exception:  # noqa: BLE001 — reason surfacing is best-effort
+        return ""
+    text = " ".join(str(text).split())  # collapse whitespace
+    if not text:
+        return ""
+    return f" — {text[:limit]}"
+
+
+@observe(tier="stage")
+async def _tempo_fallback_mesh(base: str, trace_id: str) -> dict | None:
+    """Build a minimal capture from the /api/search spanSet when by-id fails.
+
+    Reuses the SAME proven TraceQL as ``_tempo_search_recent`` — ``{ name =~
+    "tool\\..*" }`` (the query that already populates the clickable sidebar) —
+    then filters to ``trace_id`` client-side. A hand-written ``trace:id`` query
+    would be unverifiable while Tempo is down; any trace clickable in the sidebar
+    is a tool.* trace in the search window, so it is findable here.
+
+    Tempo's search returns the matched tool.* span (and any sibling spans) with
+    per-span ``startTimeUnixNano`` + ``durationNanos`` in the hit's
+    ``spanSet``/``spanSets`` — thinner than the full by-id trace, but it lets
+    replay degrade to a PARTIAL timeline instead of 0 stages (Bug 7). Returns a
+    capture_trace-shaped dict or None (no usable spans / any failure). Never raises.
+    """
+    try:
+        now = int(time.time())
+        params = {
+            "q": r'{ name =~ "tool\\..*" }',  # proven query (mirrors _tempo_search_recent)
+            "start": now - _SEARCH_WINDOW_S,
+            "end": now + 5,
+            "limit": _RECENT_LIMIT_MAX,
+        }
+        async with httpx.AsyncClient(timeout=_TEMPO_TIMEOUT_S) as client:
+            resp = await client.get(
+                f"{base}/api/search",
+                params=params,
+                headers={"Accept": "application/json"},
+            )
+        if resp.status_code != 200:
+            return None
+        traces = resp.json().get("traces", [])
+    except httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError:
+        return None
+    except ValueError:
+        return None
+    except Exception:  # noqa: BLE001 — fallback must never raise (graceful degrade)
+        return None
+
+    hit = next((t for t in traces if t.get("traceID") == trace_id), None)
+    if not hit:
+        return None
+    return _spanset_to_capture(hit, trace_id)
+
+
+@observe(tier="hot", span=False)
+def _ns_int(v: object) -> int:
+    """Coerce a Tempo nanosecond field to int; 0 on missing/non-numeric."""
+    try:
+        return int(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):  # fmt: skip
+        return 0
+
+
+@observe(tier="hot", span=False)
+def _partial_span_entry(s: dict, t0: int) -> dict:
+    """One flat spanSet span → a capture-shaped span dict (rel-timed against t0).
+
+    The search spanSet is flat (no parent hierarchy): the tool.* boundary is made
+    the depth-0 root and every other span its depth-1 child so build_tree reparents
+    them under the tool span (else they become siblings and select_stages sees 0).
+    """
+    start = _ns_int(s.get("startTimeUnixNano"))
+    dur = _ns_int(s.get("durationNanos"))
+    rel_ms = round((start - t0) / 1e6, 2) if (t0 and start) else 0.0
+    name = s.get("name", "")
+    return {
+        "rel_ms": max(0.0, rel_ms),
+        "dur_ms": round(dur / 1e6, 2),
+        "depth": 0 if name.startswith("tool.") else 1,
+        "svc": "yadgar-core",
+        "name": name,
+    }
+
+
+@observe(tier="stage")
+def _spanset_to_capture(hit: dict, trace_id: str) -> dict | None:
+    """Convert a Tempo search hit's spanSet into a capture_trace-shaped payload.
+
+    Each spanSet span carries ``name`` and (optionally) ``startTimeUnixNano`` +
+    ``durationNanos``. We rel-time against the earliest span start; spans with no
+    timing collapse to rel_ms=0/dur_ms=0 so a name-only spanSet still yields a
+    (flat) partial timeline. Returns None when no spans are present.
+    """
+    span_sets = hit.get("spanSets") or []
+    if not span_sets and hit.get("spanSet"):
+        span_sets = [hit["spanSet"]]
+    raw: list[dict] = []
+    for ss in span_sets:
+        raw.extend(ss.get("spans", []))
+    if not raw:
+        return None
+
+    t0 = min((v for v in (_ns_int(s.get("startTimeUnixNano")) for s in raw) if v > 0), default=0)
+    spans: list[dict] = [_partial_span_entry(s, t0) for s in raw]
+    # build_tree consumes spans in list order (start-ordered): the depth-0 tool
+    # span must precede its depth-1 children. Sort by start so it does.
+    spans.sort(key=lambda s: (s["rel_ms"], 0 if s["name"].startswith("tool.") else 1))
+    total_ms = round(max((s["rel_ms"] + s["dur_ms"] for s in spans), default=0.0), 1)
+    if not total_ms:
+        # search reported a duration even when per-span timing is absent
+        total_ms = round(float(hit.get("durationMs", 0.0)), 1)
     tool_span = next((s["name"] for s in spans if s["name"].startswith("tool.")), "")
     label = tool_span.removeprefix("tool.") if tool_span else trace_id[:8]
     return {
@@ -296,16 +436,33 @@ async def trace_mesh_handler(request: Request) -> JSONResponse:
     if cached is not None:
         return JSONResponse({"tempo": True, "mesh": cached, "cached": True})
 
-    data = await _tempo_fetch_trace(base, trace_id)
-    if data is None:
-        # graceful: Tempo down, non-200, or empty/absent trace → empty mesh, 200.
+    data, reason = await _tempo_fetch_trace(base, trace_id)
+    if data is not None:
+        mesh = build_mesh(data)
+        _cache_put(trace_id, mesh)
+        return JSONResponse({"tempo": True, "mesh": mesh, "cached": False})
+
+    # Bug 7: by-id fetch failed (e.g. Tempo querier 500 on blocklist exhaustion).
+    # Degrade to a PARTIAL mesh from the /api/search spanSet instead of 0 stages,
+    # and surface WHY the full replay is unavailable so the UI can show it.
+    fallback = await _tempo_fallback_mesh(base, trace_id)
+    if fallback is not None:
+        mesh = build_mesh(fallback)
+        # do NOT cache the partial fallback — a later by-id success should win.
         return JSONResponse(
-            {"tempo": True, "mesh": _empty_mesh(trace_id), "reason": "trace unavailable"}
+            {
+                "tempo": True,
+                "mesh": mesh,
+                "cached": False,
+                "partial": True,
+                "reason": reason or "trace unavailable",
+            }
         )
 
-    mesh = build_mesh(data)
-    _cache_put(trace_id, mesh)
-    return JSONResponse({"tempo": True, "mesh": mesh, "cached": False})
+    # graceful: Tempo down, non-200, or empty/absent trace → empty mesh, 200.
+    return JSONResponse(
+        {"tempo": True, "mesh": _empty_mesh(trace_id), "reason": reason or "trace unavailable"}
+    )
 
 
 @observe(tier="hot", span=False)

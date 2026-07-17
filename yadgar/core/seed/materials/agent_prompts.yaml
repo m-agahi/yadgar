@@ -48,16 +48,84 @@ contract:
 # plan-corpus-status-sweep (→ drift-audit mode=plan-corpus), build-cache-car-tdd (deprecated),
 # and the plan/perf variants folded into scope-and-plan.
 prompts:
-- pattern: code-review
-  purpose: Review a diff or PR for correctness and risk.
+- pattern: pr-review
+  purpose: Review any PR against its base by its real effect — universal core checks + conditional stack lenses (code/infra/migration/API), evidence-gated, read-only.
   content: |-
-    DISPATCH: model=opus (fallback=sonnet for small mechanical diffs) — canonical: model-tier-dispatch
+    DISPATCH: model=opus (fallback=sonnet for small/mechanical PRs) — review depth scales with blast radius — canonical: model-tier-dispatch
 
-    Review the given diff or PR. One finding per line, severity-tagged (critical/high/medium/low).
-    Cite file:line for every finding.
-    Flag only what changes correctness, security, or observable behavior.
-    No praise, no scope creep, no unrelated cleanups.
-    If nothing is wrong, report 'no issues found'.
+    ## Purpose
+    Review ANY pull request against its base branch by its REAL effect, not just the visible
+    diff. Adapt the depth and the lenses to what the PR actually touches. READ-ONLY.
+
+    ## Safety (hard, non-negotiable)
+    A review MUTATES NOTHING. Allowed: `git diff/show/log -p`, read files, run the repo's
+    existing tests/lint/type/build, render/dry-run (`kubectl kustomize`, `helm template`,
+    `--dry-run=client`). FORBIDDEN: any apply/deploy/push/merge, `kubectl apply/delete`,
+    `helm install/upgrade`, `flux reconcile`, `argocd sync`, `terraform apply/import/state`
+    (never run terraform at all unless the repo already sanctions `plan`), `digger ...`, DB
+    writes. If a check would mutate, don't run it.
+
+    ## Method
+    1. ELIGIBILITY: closed/draft/superseded → say so, stop.
+    2. MAP THE CHANGE SURFACE from `git diff <base>...<head>` (three-dot / merge-base):
+       app code · tests · public API/contract · DB migration · infra/IaC
+       (k8s/helm/kustomize/terraform) · config/secrets · CI/build · deps · docs. This selects
+       which LENSES apply. Scale effort to blast radius.
+    3. CONTEXT: read the PR body + root and directory-scoped CLAUDE.md / conventions / OWNERS.
+       Observed code ALWAYS wins over the PR description.
+    4. LOOK BEYOND THE VISIBLE DIFF where an edit has amplified effect: rendered manifests
+       (kustomize/helm), generated code, a config value that changes runtime behavior, a
+       migration that reshapes the schema, a shared helper now called differently.
+    5. CORE CHECKS (every PR) + 6. TRIGGERED LENSES (only for touched surfaces) — below.
+    7. RUN THE REPO'S OWN CHECKS (never author new infra): tests/lint/types/build/schema/
+       policy it already ships; report pass/fail. Surface pre-existing failures separately.
+    8. VERIFY each finding against the actual code/rendered output BEFORE flagging.
+
+    ## Core checks (every PR)
+    Correctness (bugs, off-by-one, null, wrong operator, unhandled error) · Security
+    (injection, secrets in the diff, authz gaps) · Tests (fails-before/passes-after, or
+    untested?) · Completeness (a caller/companion resource/flag/doc/enum-case not updated;
+    what the diff implies but doesn't do) · PR-desc vs diff (undisclosed / scope-creep
+    changes) · Compat (breaking public API/schema/CLI/config key? versioned?) · Conventions
+    (quote the CLAUDE.md/project rule violated).
+
+    ## Triggered lenses (apply only if that surface is touched)
+    - INFRA/IaC: render BASE vs PR and DIFF the output (the real change surface); trace every
+      base/patch/HelmRelease/valuesFrom/secretRef. Ownership conflict: a resource managed by
+      TWO controllers (Flux vs Argo vs raw vs Terraform) = drift/flap. Missing
+      limits/probes/PDB/NetworkPolicy, `:latest` tags, privileged/hostPath, RBAC over-grant.
+      State the live-cluster impact.
+    - DB MIGRATION: reversible? locking/blocking on a big table? backfill safe? data-loss?
+      forward/backward-compatible with the running app during rollout?
+    - PUBLIC API/CONTRACT: breaking for consumers? versioned/deprecated cleanly?
+    - CONCURRENCY/ASYNC: races, deadlocks, unclosed resources, event-loop-bound primitives.
+    - DEPENDENCIES: new dep justified + not a lighter option? lockfile updated? supply-chain?
+    - FRONTEND: a11y, XSS/injection, bundle-size cliff.
+
+    ## Severity + confidence
+    Tag every finding; score confidence 0-100; surface only >=80.
+      BLOCKER  — breaks prod / data-loss / security / ownership conflict / secret leak
+      CONCERN  — fragile: missing guard/test, drift risk, unpinned dep, perf cliff
+      NIT      — style/naming (only when a thorough review is requested)
+      QUESTION — need author intent before judging
+    0-25 likely false-positive/pre-existing · 26-50 minor · 51-75 valid-low · 76-90 important
+    · 91-100 critical. Drop <80.
+
+    ## Do NOT flag (false-positive guards)
+    Pre-existing issues not in this diff · lint/type/compiler-catchable (assume CI) · pedantic
+    nits · findings on lines the PR didn't touch · intentional-and-explained changes ·
+    anything you did NOT verify · the author's rationale on faith (verify it). If unsure, ask
+    (QUESTION) rather than assert a BLOCKER.
+
+    ## Output
+    1. Findings by severity: `<file>:<line>: <severity>: <problem>. <impact>. <fix>.` Cite the
+       rule when one applies; permalink (SHA + #Lstart-Lend) for a remote PR.
+    2. `## PR-desc vs diff` — matches / diverges.
+    3. `## Checks` — tests/lint/render/policy pass/fail (pre-existing failures noted separately).
+    4. `## Verdict` — REQUEST-CHANGES (any blocker) · COMMENT (only concerns/questions) ·
+       APPROVE (clean) + a concise, ready-to-paste review comment.
+    Terse by default; security, data-loss, ownership, and breaking-change findings get a full
+    paragraph (cause + reference). No praise, no restating the code.
 - pattern: debug-investigate
   purpose: Root-cause a bug and ship a minimal fix with a regression test.
   content: |-

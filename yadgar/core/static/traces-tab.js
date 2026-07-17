@@ -55,6 +55,8 @@ let _emptyEl = null;
 const _state = {
   recent: [],
   mesh: null,
+  reason: '', // Bug 7: WHY replay is empty/partial (surfaced from the endpoint)
+  partial: false, // Bug 7: mesh rebuilt from the /api/search spanSet fallback
   stages: [], // laid-out + timelined
   total: 0,
   t: 0,
@@ -230,14 +232,18 @@ async function _loadTrace(traceId) {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = await resp.json();
     const mesh = body.mesh || { nodes: [], edges: [], timeline_ms: 0 };
-    _applyMesh(mesh);
+    // Bug 7: the endpoint surfaces WHY replay is empty/partial (Tempo 500 body,
+    // network error, empty trace). Carry it through so the overview can show it.
+    _applyMesh(mesh, { reason: body.reason || '', partial: !!body.partial });
   } catch (err) {
     _detailEl.textContent = `Could not load trace: ${err.message}`;
   }
 }
 
-function _applyMesh(mesh) {
+function _applyMesh(mesh, meta) {
   _state.mesh = mesh;
+  _state.reason = (meta && meta.reason) || '';
+  _state.partial = !!(meta && meta.partial);
   _state.total = Number(mesh.timeline_ms) || 0;
   const laid = layoutStages(mesh.nodes || []);
   _state.stages = computeTimeline(laid, _state.total);
@@ -353,11 +359,18 @@ function _buildMesh() {
 function _renderOverview() {
   const m = _state.mesh;
   const dropped = m.dropped_boundary ? ' · boundary span dropped (flat forest)' : '';
-  // Span names / labels originate from Tempo (semi-trusted) — escape before
-  // interpolating into innerHTML (XSS guard).
+  // Bug 7: when the by-id trace was unavailable, the endpoint surfaces WHY
+  // (Tempo 500 / network / empty). Show it so an empty or partial mesh reads as
+  // "replay degraded because X", not a silent blank. Tempo text is semi-trusted
+  // → escape (XSS guard, same as span labels).
+  const partial = _state.partial ? ' · partial replay (search fallback)' : '';
+  const note = _state.reason
+    ? `<div class="tr-d-note">⚠ ${_esc(_state.reason)}</div>`
+    : '';
   _detailEl.innerHTML =
     `<div class="tr-d-title">${_esc(m.tool || m.label || 'trace')}</div>` +
-    `<div class="tr-d-sub">${(m.nodes || []).length} stages · ${_esc(_state.total)} ms${dropped}</div>` +
+    `<div class="tr-d-sub">${(m.nodes || []).length} stages · ${_esc(_state.total)} ms${dropped}${partial}</div>` +
+    note +
     `<ul class="tr-stage-list">` +
     _state.stages
       .map(

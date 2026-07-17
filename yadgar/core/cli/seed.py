@@ -183,7 +183,7 @@ def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
     dry_run: prints what would be seeded, makes zero HTTP calls.
     """
     _STARTER_PATTERNS = [
-        "code-review",
+        "pr-review",
         "debug-investigate",
         "explore-codebase",
         "implement-tdd",

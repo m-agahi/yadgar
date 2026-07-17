@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<!--
+  viz-node-popup.mockup.html
+  ===========================
+  MOCKUP #4 in the viz follow-up train — Galaxy node-click detail popup.
+
+  PURPOSE
+  -------
+  Clicking a galaxy node currently opens the OLD phosphor-green right sidebar
+  (#right panel), which clashes with the galaxy oscilloscope theme.  This
+  mockup proposes a floating popup (not a sidebar) that appears near the
+  clicked node and dismisses on click-away.
+
+  CLICK-AWAY / POSITIONING BEHAVIOR (for the eventual builder)
+  ------------------------------------------------------------
+  - A semi-transparent backdrop <div id="popup-backdrop"> sits behind the
+    popup (above the canvas, below the popup).  Clicking the backdrop fires
+    closePopup().  The backdrop is display:none when no popup is open.
+  - Optionally: no backdrop at all, just a document-level mousedown listener
+    that closes if the event target is outside the popup element.
+  - Popup is positioned via JS: anchor point = screen coords of the clicked
+    node (graph.graphToScreenCoords(node)).  Offset ~16px right/below so the
+    node glyph stays visible.  Clamp to viewport edges so it never clips.
+  - A × close button is always present as a secondary affordance.
+  - ESC key also closes (not shown in mockup but required in production).
+
+  VARIANTS IN THIS FILE
+  ---------------------
+  Two side-by-side mockup cards over a faux-galaxy dark backdrop:
+    Variant A — MEMORY node  (heat bar, content, tags, project, timestamps,
+                               connections grouped by type, node ID)
+    Variant B — WIKI node    (category, slug, tags, updated, cross-refs,
+                               source memories, node ID, async content)
+    Variant B' — ENTITY node (label, type, co-occurrence / calls / imports
+                               connections, node ID — no heat, no content)
+
+  The popup also shows a SIZE NOTE: the compact form (≤340px wide) is the
+  primary proposal.  A wider reading variant (≤520px) for content-heavy
+  wiki nodes is shown as a modifier class.
+
+  THEME TOKENS MATCHED
+  --------------------
+  galaxy-view.css:  --viz-panel-bg, --viz-hair, --viz-tx-*, --viz-ph,
+                    --viz-ph-dim, --viz-ph-glow, --viz-cy, --viz-cy-dim,
+                    --viz-cy-glow, --viz-amber, --viz-err, --viz-bg-0..3,
+                    --viz-disp (Michroma), --viz-mono (Spline Sans Mono),
+                    #galaxy-atmos graticule pattern, galaxy-pulse animation.
+  index.html #tab-control neural-console:
+                    --nc-ink-* bg stack, --nc-heat-* amber/coral,
+                    --nc-syn teal, --nc-tx-* text ramp,
+                    Fraunces display + IBM Plex Mono data fonts.
+  Unified here into a single --gp-* token set on :root for mockup clarity.
+  NOT phosphor-green (#49ffa4) for accent — that is the core-lane color in
+  the trace/graph view; galaxy popup uses amber/coral heat + teal synapse
+  to match the neural-console palette.
+
+  OPEN DESIGN QUESTIONS
+  ---------------------
+  1. ANCHOR vs FIXED CORNER: should the popup float near the clicked node
+     (anchor-to-node, requires clamp logic) or always appear at a fixed
+     corner (simpler, but disconnects from the node)?  Mockup shows
+     anchor-to-node.
+  2. BACKDROP DIM vs NONE: a subtle dim (rgba(0,0,0,.35)) feels safer to
+     signal "click away to close", but dims the galaxy.  Alternatively:
+     a thin ring/halo around the clicked node indicates selection without
+     a backdrop.  Both are shown via a toggle button in the mockup.
+  3. CONTENT TRUNCATION: memory content truncated at ~300 chars with a
+     "show more" toggle, or always scrollable?  Currently scroll approach.
+  4. WIKI POPUP WIDTH: 340px compact fits most, but long wiki content
+     benefits from 520px reading width.  Auto-widen on content type, or
+     always compact with scroll?
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yadgar — Galaxy Node Popup Mockup #4</title>
+<style>
+/* ─── Mockup-only token layer (inlined since this is a self-contained file) ── */
+:root {
+  /* galaxy/oscilloscope backdrop */
+  --gp-bg-0:   #03070b;
+  --gp-bg-1:   #060d13;
+  --gp-bg-2:   #0a141c;
+  --gp-bg-3:   #101d27;
+  --gp-hair:   #14232e;
+  --gp-hair-soft: #0d1922;
+
+  /* neural-console ink stack (popup panels use this warmer palette) */
+  --gp-ink-0:  #0a0907;
+  --gp-ink-1:  #13110d;
+  --gp-ink-2:  #1c1913;
+  --gp-ink-3:  #272219;
+  --gp-line:   #332c20;
+  --gp-line-s: #241f17;
+
+  /* heat — amber → coral (memory heat ramp) */
+  --gp-heat-1: #ffb347;
+  --gp-heat-2: #ff7a3c;
+  --gp-heat-3: #ff5e57;
+  --gp-heat-g: rgba(255,122,60,.22);
+
+  /* synapse — teal (wiki / entity accent) */
+  --gp-syn:    #3fd0c9;
+  --gp-syn-d:  #1f5e5b;
+  --gp-syn-g:  rgba(63,208,201,.18);
+
+  /* alarm */
+  --gp-red:    #ff4d4d;
+  --gp-red-g:  rgba(255,77,77,.20);
+
+  /* phosphor (used ONLY for galaxy canvas dots / node glyphs — not popup accent) */
+  --gp-ph:     #49ffa4;
+  --gp-ph-dim: #1d6b48;
+  --gp-ph-g:   rgba(73,255,164,.14);
+
+  /* text ramp — warmer (nc palette) */
+  --gp-tx-0:   #f4ecdd;
+  --gp-tx-1:   #cdc3b2;
+  --gp-tx-2:   #8c8273;
+  --gp-tx-3:   #5c554a;
+
+  /* typography */
+  --gp-mono: 'IBM Plex Mono', 'Spline Sans Mono', ui-monospace, monospace;
+  --gp-disp: 'Fraunces', 'Michroma', Georgia, serif;
+}
+
+/* ─── Page chrome (faux galaxy backdrop) ─────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  min-height: 100vh;
+  background: var(--gp-bg-0);
+  font-family: var(--gp-mono);
+  color: var(--gp-tx-1);
+  font-size: 13px;
+}
+
+/* graticule + scanline (mirrors #galaxy-atmos) */
+body::before {
+  content: "";
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(var(--gp-hair-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--gp-hair-soft) 1px, transparent 1px);
+  background-size: 52px 52px;
+  opacity: .28;
+  -webkit-mask-image: radial-gradient(ellipse 130% 100% at 50% 42%, transparent 32%, #000 92%);
+  mask-image: radial-gradient(ellipse 130% 100% at 50% 42%, transparent 32%, #000 92%);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .05;
+  background-image: repeating-linear-gradient(0deg, #000 0 1px, transparent 1px 3px);
+  mix-blend-mode: overlay;
+}
+
+/* faux galaxy stars */
+.starfield {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgba(73,255,164,.6) 0, transparent 100%),
+    radial-gradient(1px 1px at 37% 55%, rgba(62,201,255,.5) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 62% 21%, rgba(73,255,164,.4) 0, transparent 100%),
+    radial-gradient(1px 1px at 78% 71%, rgba(255,179,71,.5) 0, transparent 100%),
+    radial-gradient(1px 1px at 22% 82%, rgba(62,201,255,.35) 0, transparent 100%),
+    radial-gradient(1px 1px at 91% 14%, rgba(73,255,164,.45) 0, transparent 100%),
+    radial-gradient(2px 2px at 55% 88%, rgba(255,122,60,.35) 0, transparent 100%),
+    radial-gradient(1px 1px at 44% 42%, rgba(244,236,221,.25) 0, transparent 100%),
+    radial-gradient(1px 1px at 7%  63%, rgba(244,236,221,.2) 0, transparent 100%),
+    radial-gradient(1px 1px at 83% 38%, rgba(62,201,255,.3) 0, transparent 100%);
+}
+
+/* faux node glyphs on the canvas */
+.faux-nodes {
+  position: fixed; inset: 0; pointer-events: none; z-index: 1;
+}
+.faux-node {
+  position: absolute; border-radius: 50%;
+  box-shadow: 0 0 18px currentColor, 0 0 4px currentColor;
+  opacity: .85;
+}
+.faux-node--mem  { width:10px; height:10px; color: var(--gp-ph); background: var(--gp-ph); }
+.faux-node--wiki { width:11px; height:11px; color: var(--gp-syn); background: var(--gp-syn); }
+.faux-node--ent  { width:9px;  height:9px;  color: var(--gp-heat-1); background: var(--gp-heat-1); }
+
+/* "clicked" node halo ring */
+.faux-node--active::after {
+  content: ""; position: absolute; inset: -6px;
+  border: 1.5px solid currentColor; border-radius: 50%;
+  animation: ring-pulse 1.8s ease-in-out infinite;
+  opacity: .7;
+}
+@keyframes ring-pulse {
+  0%, 100% { transform: scale(.9); opacity: .4; }
+  50%       { transform: scale(1.2); opacity: .9; }
+}
+
+/* ─── Page layout ─────────────────────────────────────────────────────────── */
+.page-wrap {
+  position: relative; z-index: 2;
+  min-height: 100vh;
+  padding: 32px 24px 64px;
+}
+
+.page-label {
+  font-family: var(--gp-disp); font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--gp-tx-3);
+  margin-bottom: 8px;
+}
+.page-title {
+  font-family: var(--gp-disp); font-size: 18px; font-weight: 700;
+  color: var(--gp-tx-0); margin-bottom: 4px; letter-spacing: -.01em;
+}
+.page-sub {
+  font-size: 11px; color: var(--gp-tx-3); margin-bottom: 48px; letter-spacing: .04em;
+}
+
+/* toggle strip */
+.toggle-strip {
+  display: flex; gap: 10px; margin-bottom: 40px; flex-wrap: wrap;
+}
+.tog {
+  padding: 6px 14px; border: 1px solid var(--gp-line); border-radius: 6px;
+  background: var(--gp-ink-1); color: var(--gp-tx-2);
+  font-family: var(--gp-mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; cursor: pointer;
+  transition: background .14s, color .14s, border-color .14s;
+}
+.tog:hover { background: var(--gp-ink-2); color: var(--gp-tx-0); border-color: var(--gp-line); }
+.tog.on { background: var(--gp-syn-d); color: var(--gp-syn); border-color: var(--gp-syn-d); }
+
+/* variants row */
+.variants-row {
+  display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start;
+}
+
+.variant-wrap {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.variant-label {
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--gp-tx-3);
+}
+
+/* "click-away" backdrop — default off; toggled by JS */
+.popup-backdrop {
+  display: none;
+  position: fixed; inset: 0; z-index: 10;
+  background: rgba(0,0,0,.35);
+  cursor: default;
+}
+.popup-backdrop.on { display: block; }
+
+/* ─── THE POPUP ───────────────────────────────────────────────────────────── */
+.node-popup {
+  position: relative;                  /* static in mockup; absolute near node in prod */
+  z-index: 20;
+  width: 340px;
+  background: var(--gp-ink-0);
+  border: 1px solid var(--gp-line);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 20px 60px rgba(0,0,0,.7),
+    0  0 0 1px rgba(63,208,201,.04) inset,
+    0  0 40px rgba(0,0,0,.4);
+  overflow: hidden;
+  font-family: var(--gp-mono);
+  font-size: 12px;
+  color: var(--gp-tx-1);
+}
+
+/* grid atmosphere inside popup */
+.node-popup::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(var(--gp-line-s) 1px, transparent 1px),
+    linear-gradient(90deg, var(--gp-line-s) 1px, transparent 1px);
+  background-size: 46px 46px; opacity: .22;
+  -webkit-mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, #000 20%, transparent 80%);
+  mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, #000 20%, transparent 80%);
+}
+
+.node-popup > * { position: relative; z-index: 1; }
+
+/* ── Popup header ── */
+.np-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px 10px;
+  border-bottom: 1px solid var(--gp-line);
+  background: linear-gradient(180deg, rgba(19,17,13,.9), rgba(10,9,7,.6));
+}
+.np-type-badge {
+  font-size: 9px; letter-spacing: .14em; font-weight: 600;
+  padding: 2px 7px; border-radius: 4px; text-transform: uppercase;
+  flex: none;
+}
+.np-type-badge--memory {
+  background: var(--gp-heat-g); color: var(--gp-heat-1);
+  border: 1px solid rgba(255,179,71,.3);
+}
+.np-type-badge--wiki {
+  background: var(--gp-syn-g); color: var(--gp-syn);
+  border: 1px solid rgba(63,208,201,.3);
+}
+.np-type-badge--entity {
+  background: rgba(255,94,87,.12); color: var(--gp-heat-3);
+  border: 1px solid rgba(255,94,87,.25);
+}
+
+.np-title {
+  flex: 1; min-width: 0;
+  font-family: var(--gp-disp); font-size: 12px; font-weight: 600;
+  color: var(--gp-tx-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: .01em;
+}
+
+.np-close {
+  flex: none; width: 22px; height: 22px; border-radius: 5px;
+  background: transparent; border: 1px solid var(--gp-line);
+  color: var(--gp-tx-3); cursor: pointer; display: flex; align-items: center;
+  justify-content: center; font-size: 13px; line-height: 1;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.np-close:hover { background: var(--gp-ink-2); color: var(--gp-tx-0); border-color: var(--gp-line); }
+
+/* ── Heat bar (memory / entity) ── */
+.np-heat-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px 6px;
+  border-bottom: 1px solid var(--gp-line-s);
+}
+.np-heat-lbl { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--gp-tx-3); flex: none; width: 34px; }
+.np-heat-track {
+  flex: 1; height: 5px; background: var(--gp-ink-3); border-radius: 999px; overflow: hidden;
+}
+.np-heat-fill {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, #0a4a6b, #3ec9ff, #49ffa4, #ffc35c, #ff4059);
+  background-size: 200% 100%;
+  transition: width .3s;
+  box-shadow: 0 0 8px rgba(255,122,60,.35);
+}
+.np-heat-val {
+  font-size: 10.5px; font-weight: 600; color: var(--gp-heat-1);
+  font-variant-numeric: tabular-nums; flex: none; width: 40px; text-align: right;
+}
+
+/* ── Wiki category accent bar (replaces heat bar for wiki) ── */
+.np-cat-bar {
+  height: 3px; background: var(--gp-syn);
+  box-shadow: 0 0 10px var(--gp-syn-g);
+}
+
+/* ── Body ── */
+.np-body {
+  padding: 10px 0 4px;
+  max-height: 340px; overflow-y: auto;
+}
+.np-body::-webkit-scrollbar { width: 5px; }
+.np-body::-webkit-scrollbar-thumb { background: var(--gp-line); border-radius: 999px; }
+.np-body::-webkit-scrollbar-track { background: transparent; }
+
+/* content section */
+.np-sec {
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--gp-line-s);
+}
+.np-sec:last-child { border-bottom: none; }
+
+.np-lbl {
+  font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--gp-tx-3); margin-bottom: 3px;
+}
+
+.np-val {
+  font-size: 11.5px; color: var(--gp-tx-1); line-height: 1.45;
+  word-break: break-word;
+}
+.np-val--dim { color: var(--gp-tx-2); }
+.np-val--mono { font-family: var(--gp-mono); font-size: 10.5px; }
+.np-val--content {
+  max-height: 90px; overflow-y: auto; font-size: 11px; line-height: 1.5;
+  color: var(--gp-tx-1); background: var(--gp-ink-1); padding: 6px 8px;
+  border-radius: 5px; border: 1px solid var(--gp-line-s);
+}
+.np-val--content::-webkit-scrollbar { width: 4px; }
+.np-val--content::-webkit-scrollbar-thumb { background: var(--gp-line); border-radius: 999px; }
+
+/* tag pills */
+.np-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.np-tag {
+  font-size: 9.5px; padding: 1px 7px; border-radius: 99px;
+  background: var(--gp-ink-2); border: 1px solid var(--gp-line);
+  color: var(--gp-tx-2); letter-spacing: .04em;
+}
+.np-tag--heat { background: var(--gp-heat-g); border-color: rgba(255,179,71,.25); color: var(--gp-heat-1); }
+.np-tag--syn  { background: var(--gp-syn-g);  border-color: rgba(63,208,201,.25);  color: var(--gp-syn); }
+
+/* connections list */
+.np-conn-list { display: flex; flex-direction: column; gap: 2px; }
+.np-conn-row  { display: flex; justify-content: space-between; align-items: baseline; }
+.np-conn-type { font-size: 10px; color: var(--gp-tx-2); letter-spacing: .04em; }
+.np-conn-ct   { font-size: 10.5px; font-weight: 600; color: var(--gp-tx-0); font-variant-numeric: tabular-nums; }
+
+/* node-id chip */
+.np-nodeid {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 9.5px; color: var(--gp-tx-3); font-family: var(--gp-mono); letter-spacing: .05em;
+  background: var(--gp-ink-1); border: 1px solid var(--gp-line-s);
+  padding: 2px 8px; border-radius: 4px;
+}
+
+/* ── Footer ── */
+.np-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px;
+  border-top: 1px solid var(--gp-line);
+  background: linear-gradient(0deg, rgba(10,9,7,.8), rgba(19,17,13,.4));
+}
+
+.np-action-row { display: flex; gap: 6px; }
+.np-action {
+  font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--gp-line); background: var(--gp-ink-1);
+  color: var(--gp-tx-2); transition: all .12s;
+}
+.np-action:hover { background: var(--gp-ink-2); color: var(--gp-tx-0); border-color: var(--gp-line); }
+.np-action--focus {
+  color: var(--gp-syn); border-color: var(--gp-syn-d); background: var(--gp-syn-g);
+}
+.np-action--focus:hover { filter: brightness(1.12); }
+
+/* led pulse (reused from galaxy-view.css .galaxy-led) */
+@keyframes galaxy-pulse {
+  0%, 100% { opacity: .5; transform: scale(.82); }
+  50%       { opacity: 1; transform: scale(1.12); }
+}
+
+/* ── Wide variant (wiki reading mode) ── */
+.node-popup--wide { width: 500px; }
+.node-popup--wide .np-val--content { max-height: 160px; }
+
+/* ─── Mockup controls & legend ────────────────────────────────────────────── */
+.design-note {
+  margin-top: 52px; padding: 18px 20px;
+  border: 1px solid var(--gp-line-s); border-radius: 10px;
+  background: var(--gp-ink-0);
+  max-width: 900px;
+}
+.design-note h2 {
+  font-family: var(--gp-disp); font-size: 11px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--gp-tx-2); margin-bottom: 12px; font-weight: 400;
+}
+.design-note ul { padding-left: 18px; }
+.design-note li { color: var(--gp-tx-2); font-size: 11px; line-height: 1.7; }
+.design-note li strong { color: var(--gp-tx-1); }
+
+/* anchor-to-node demo arrow */
+.anchor-arrow {
+  position: absolute; pointer-events: none; z-index: 15;
+}
+</style>
+</head>
+<body>
+
+<!-- Faux galaxy canvas -->
+<div class="starfield" aria-hidden="true"></div>
+<div class="faux-nodes" aria-hidden="true">
+  <!-- cluster of memory nodes -->
+  <div class="faux-node faux-node--mem" style="left:18%;top:22%"></div>
+  <div class="faux-node faux-node--mem" style="left:23%;top:31%"></div>
+  <div class="faux-node faux-node--mem" style="left:15%;top:39%"></div>
+  <div class="faux-node faux-node--mem" style="left:28%;top:19%"></div>
+  <!-- wiki nodes -->
+  <div class="faux-node faux-node--wiki" style="left:55%;top:18%"></div>
+  <div class="faux-node faux-node--wiki" style="left:61%;top:28%"></div>
+  <!-- entity nodes -->
+  <div class="faux-node faux-node--ent" style="left:72%;top:60%"></div>
+  <div class="faux-node faux-node--ent" style="left:67%;top:70%"></div>
+  <!-- "active" clicked node (each mockup section shows its own) -->
+  <div class="faux-node faux-node--mem faux-node--active" style="left:19%;top:72%"></div>
+  <div class="faux-node faux-node--wiki faux-node--active" style="left:46%;top:72%"></div>
+  <div class="faux-node faux-node--ent faux-node--active" style="left:73%;top:72%"></div>
+</div>
+
+<!-- Backdrop (click-away affordance) -->
+<div class="popup-backdrop" id="popup-backdrop" onclick="this.classList.remove('on')" role="presentation" aria-hidden="true"></div>
+
+<!-- ─── Page ─────────────────────────────────────────────────────────────── -->
+<div class="page-wrap">
+
+  <div class="page-label">Yadgar viz · popup mockup #4</div>
+  <div class="page-title">Galaxy node-click popup</div>
+  <div class="page-sub">Float near clicked node · click-away or × to dismiss · themed to galaxy oscilloscope</div>
+
+  <!-- backdrop toggle (demo only) -->
+  <div class="toggle-strip">
+    <button class="tog on" id="tog-backdrop" onclick="toggleBackdrop(this)">Backdrop dim: ON</button>
+    <button class="tog" id="tog-wide" onclick="toggleWide(this)">Wiki wide mode: OFF</button>
+  </div>
+
+  <!-- variants row -->
+  <div class="variants-row">
+
+    <!-- ── Variant A: MEMORY node ── -->
+    <div class="variant-wrap">
+      <div class="variant-label">A — Memory node (heat)</div>
+
+      <div class="node-popup" id="popup-a">
+        <!-- Header -->
+        <div class="np-header">
+          <span class="np-type-badge np-type-badge--memory">Memory</span>
+          <span class="np-title">Recurring pattern: change merge build nix bump user…</span>
+          <button class="np-close" onclick="document.getElementById('popup-a').style.opacity='0.3'" title="Close (×)">×</button>
+        </div>
+
+        <!-- Heat bar -->
+        <div class="np-heat-row">
+          <span class="np-heat-lbl">Heat</span>
+          <div class="np-heat-track">
+            <div class="np-heat-fill" style="width:82%;background-position:18% 0"></div>
+          </div>
+          <span class="np-heat-val">0.8211</span>
+        </div>
+
+        <!-- Body -->
+        <div class="np-body">
+          <div class="np-sec">
+            <div class="np-lbl">Content</div>
+            <div class="np-val np-val--content">
+              Recurring pattern across 3 observations: change merge build nix bump user codeberg cyclonedx-bom tabs toolbar fixed shipped viz restart inline — tagged release project. Observed 2026-06-16, last surfaced 2026-07-17.
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Tags</div>
+            <div class="np-tags">
+              <span class="np-tag np-tag--heat">_anchor</span>
+              <span class="np-tag">release</span>
+              <span class="np-tag">project</span>
+              <span class="np-tag">semantic</span>
+              <span class="np-tag">auto-abstracted</span>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Project</div>
+            <div class="np-val np-val--dim np-val--mono">/home/max/git/yadgar</div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Created</div>
+            <div class="np-val np-val--dim">2026-06-16 16:11:34</div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Last accessed</div>
+            <div class="np-val np-val--dim">2026-07-17 09:25:01</div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Connections</div>
+            <div class="np-conn-list">
+              <div class="np-conn-row">
+                <span class="np-conn-type">memory_similarity_link</span>
+                <span class="np-conn-ct">12</span>
+              </div>
+              <div class="np-conn-row">
+                <span class="np-conn-type">memory_wiki</span>
+                <span class="np-conn-ct">3</span>
+              </div>
+              <div class="np-conn-row">
+                <span class="np-conn-type">co_occurrence</span>
+                <span class="np-conn-ct">1</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Node ID</div>
+            <div class="np-val"><span class="np-nodeid">mem:530093</span></div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="np-footer">
+          <div class="np-action-row">
+            <button class="np-action np-action--focus">Focus</button>
+            <button class="np-action">Recall</button>
+          </div>
+          <span class="np-nodeid" style="font-size:9px">cluster 3339</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Variant B: WIKI node ── -->
+    <div class="variant-wrap">
+      <div class="variant-label">B — Wiki node (category accent · wide toggle above)</div>
+
+      <div class="node-popup" id="popup-b">
+        <!-- Category accent bar -->
+        <div class="np-cat-bar" style="background: linear-gradient(90deg, var(--gp-syn), var(--gp-syn-d))"></div>
+
+        <!-- Header -->
+        <div class="np-header">
+          <span class="np-type-badge np-type-badge--wiki">Wiki</span>
+          <span class="np-title">Viz triage checklist — 2026-06-27</span>
+          <button class="np-close" onclick="document.getElementById('popup-b').style.opacity='0.3'" title="Close (×)">×</button>
+        </div>
+
+        <!-- Body -->
+        <div class="np-body">
+          <div class="np-sec">
+            <div class="np-lbl">Category</div>
+            <div class="np-val" style="color:var(--gp-syn)">decision</div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Slug</div>
+            <div class="np-val np-val--dim np-val--mono">viz-triage-checklist-2026-06-27-needs-user-verdict</div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Tags</div>
+            <div class="np-tags">
+              <span class="np-tag np-tag--syn">viz</span>
+              <span class="np-tag">triage</span>
+              <span class="np-tag">needs-input</span>
+              <span class="np-tag">plan</span>
+              <span class="np-tag">checklist</span>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Updated</div>
+            <div class="np-val np-val--dim">2026-07-16 18:25:28</div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Content <span style="color:var(--gp-tx-3);font-size:9px;margin-left:4px">loading…</span></div>
+            <div class="np-val np-val--content" style="font-style:italic; color:var(--gp-tx-3)">
+              Consolidated from the last 4 viz plans. User reports post-refactor regressions: slow graph load, outdated legends, high CPU when tab focused even idle, most prior issues unfixed. Triage one-by-one with user (mark each: OK / MISSING / PARTIAL)…
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Connections</div>
+            <div class="np-conn-list">
+              <div class="np-conn-row">
+                <span class="np-conn-type">wiki_crossref</span>
+                <span class="np-conn-ct">7</span>
+              </div>
+              <div class="np-conn-row">
+                <span class="np-conn-type">memory_wiki</span>
+                <span class="np-conn-ct">4</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Node ID</div>
+            <div class="np-val"><span class="np-nodeid">wiki:6782</span></div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="np-footer">
+          <div class="np-action-row">
+            <button class="np-action np-action--focus">Focus</button>
+            <button class="np-action">Open</button>
+          </div>
+          <span class="np-nodeid" style="font-size:9px;color:var(--gp-syn)">wiki · decision</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Variant B': ENTITY node ── -->
+    <div class="variant-wrap">
+      <div class="variant-label">B&prime; — Entity node (no heat · relation connections)</div>
+
+      <div class="node-popup" id="popup-c">
+        <!-- thin entity accent bar -->
+        <div class="np-cat-bar" style="background: linear-gradient(90deg, var(--gp-heat-3), var(--gp-heat-2)); box-shadow: 0 0 10px var(--gp-heat-g);"></div>
+
+        <!-- Header -->
+        <div class="np-header">
+          <span class="np-type-badge np-type-badge--entity">Entity</span>
+          <span class="np-title">galaxy-view.js</span>
+          <button class="np-close" onclick="document.getElementById('popup-c').style.opacity='0.3'" title="Close (×)">×</button>
+        </div>
+
+        <!-- Body -->
+        <div class="np-body">
+          <div class="np-sec">
+            <div class="np-lbl">Type</div>
+            <div class="np-val" style="color:var(--gp-heat-2)">file</div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Label</div>
+            <div class="np-val">galaxy-view.js</div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Tags</div>
+            <div class="np-tags">
+              <span class="np-tag">entity</span>
+              <span class="np-tag">file</span>
+              <span class="np-tag">yadgar</span>
+            </div>
+          </div>
+
+          <div class="np-sec">
+            <div class="np-lbl">Connections</div>
+            <div class="np-conn-list">
+              <div class="np-conn-row">
+                <span class="np-conn-type">imports</span>
+                <span class="np-conn-ct">6</span>
+              </div>
+              <div class="np-conn-row">
+                <span class="np-conn-type">calls</span>
+                <span class="np-conn-ct">18</span>
+              </div>
+              <div class="np-conn-row">
+                <span class="np-conn-type">co_occurrence</span>
+                <span class="np-conn-ct">4</span>
+              </div>
+              <div class="np-conn-row">
+                <span class="np-conn-type">resolved_by</span>
+                <span class="np-conn-ct">1</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- entities have no heat, no created_at, no project field shown here
+               (would show if present in the payload) -->
+          <div class="np-sec">
+            <div class="np-lbl">Node ID</div>
+            <div class="np-val"><span class="np-nodeid">entity:galaxy-view.js</span></div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="np-footer">
+          <div class="np-action-row">
+            <button class="np-action np-action--focus">Focus</button>
+            <button class="np-action">Neighbors</button>
+          </div>
+          <span class="np-nodeid" style="font-size:9px;color:var(--gp-heat-2)">entity · file</span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /variants-row -->
+
+  <!-- ─── Positioning legend ─────────────────────────────────────────────── -->
+  <div class="design-note">
+    <h2>Behavior notes for builder</h2>
+    <ul>
+      <li><strong>Anchor-to-node:</strong> <code>graph.graphToScreenCoords(node) → {x,y}</code>.
+          Popup positioned at <code>(x+16, y+16)</code> clamped to
+          <code>viewport.width − popup.width − 8</code> and
+          <code>viewport.height − popup.height − 8</code>.</li>
+      <li><strong>Click-away close:</strong> two approaches — (a) semi-transparent backdrop
+          <code>#popup-backdrop</code> with <code>pointer-events:all</code> behind the popup,
+          onclick closes; (b) <code>document.addEventListener('mousedown', outsideClickHandler)</code>
+          that checks <code>!popup.contains(e.target)</code>.  Approach (b) has no dim effect.
+          Toggle above demos approach (a).</li>
+      <li><strong>Close button (×):</strong> always present; top-right of header.</li>
+      <li><strong>ESC key:</strong> <code>document.addEventListener('keydown', e => { if (e.key==='Escape') closePopup(); })</code>.</li>
+      <li><strong>Clicked node halo:</strong> pulsing ring <code>.faux-node--active::after</code>
+          stays on the node while popup is open; removed on close.</li>
+      <li><strong>Wiki content:</strong> async fetch after popup renders — placeholder "Loading…"
+          swapped on resolve (see <code>graph-detail.js _fetchWikiContent</code>).</li>
+      <li><strong>Wide wiki mode:</strong> add class <code>node-popup--wide</code> (500px) for
+          wiki nodes, or auto-detect on click.  Toggle above demos the switch.</li>
+      <li><strong>OLD sidebar:</strong> <code>document.getElementById('right').classList.remove('open')</code>
+          before opening the popup — suppress the phosphor-green panel entirely in galaxy mode
+          (body.galaxy-active already hides <code>.floating-overlay</code>; #right needs separate handling).</li>
+    </ul>
+  </div>
+
+</div><!-- /page-wrap -->
+
+<script>
+// Demo toggle: backdrop dim on/off
+function toggleBackdrop(btn) {
+  const backdrop = document.getElementById('popup-backdrop');
+  const on = btn.classList.toggle('on');
+  if (on) {
+    btn.textContent = 'Backdrop dim: ON';
+    backdrop.classList.add('on');
+  } else {
+    btn.textContent = 'Backdrop dim: OFF';
+    backdrop.classList.remove('on');
+  }
+}
+// Demo toggle: wiki wide mode
+function toggleWide(btn) {
+  const popupB = document.getElementById('popup-b');
+  const on = btn.classList.toggle('on');
+  if (on) {
+    btn.textContent = 'Wiki wide mode: ON';
+    popupB.classList.add('node-popup--wide');
+  } else {
+    btn.textContent = 'Wiki wide mode: OFF';
+    popupB.classList.remove('node-popup--wide');
+  }
+}
+// Backdrop click resets opacity of all popups (demo reset)
+document.getElementById('popup-backdrop').addEventListener('click', function() {
+  ['popup-a','popup-b','popup-c'].forEach(id => {
+    document.getElementById(id).style.opacity = '';
+  });
+});
+</script>
+</body>
+</html>

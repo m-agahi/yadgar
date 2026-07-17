@@ -24,35 +24,68 @@ import {
   layoutPositions,
   expRadius,
   sizeOf,
+  visibilityMask,
+  loadSavedP,
+  saveP,
   mulberry32,
   GALAXY_DEFAULTS,
+  GALAXY_P_KEY,
+  P_BOUNDS,
   GALAXY_SEED,
   R_MAX,
-  HEAT_H0,
 } from './galaxy-view.js';
 
-// ── normalizeHeat: [0,inf) → [0,1) soft-saturation ──────────────────────────────
+// Minimal in-memory localStorage-compatible stub (overlays.js test pattern).
+function makeStore(initial = {}) {
+  const m = new Map(Object.entries(initial));
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => m.set(k, String(v)),
+    removeItem: (k) => m.delete(k),
+    _map: m,
+  };
+}
+
+// ── normalizeHeat: heat is hard-capped [0,1] → clamp only, NO compression ───────
+// Bug 2+6: the old h/(h+1) soft-saturation mapped [0,1]→[0,0.5], starving the
+// upper colour ramp (Bug 2) AND holding arms out of the core via drive=1-heat
+// (Bug 6). Fixed to a defensive clamp that feeds raw bounded heat to the ramp.
 describe('normalizeHeat', () => {
+  it('passes through bounded heat unchanged (0.2/0.6/1.0)', () => {
+    expect(normalizeHeat(0.2)).toBeCloseTo(0.2, 10);
+    expect(normalizeHeat(0.6)).toBeCloseTo(0.6, 10);
+    expect(normalizeHeat(1.0)).toBeCloseTo(1.0, 10);
+  });
   it('maps 0 → 0', () => {
     expect(normalizeHeat(0)).toBe(0);
   });
-  it('maps H0 → 0.5 (soft-saturation half-point)', () => {
-    expect(normalizeHeat(HEAT_H0)).toBeCloseTo(0.5, 10);
+  it('clamps out-of-range >1 heat down to 1 (defensive)', () => {
+    expect(normalizeHeat(2)).toBe(1);
+    expect(normalizeHeat(1000)).toBe(1);
   });
-  it('is monotone increasing and stays < 1 for large heat', () => {
-    const a = normalizeHeat(2);
-    const b = normalizeHeat(10);
-    const c = normalizeHeat(1000);
-    expect(a).toBeGreaterThan(0.5);
-    expect(b).toBeGreaterThan(a);
-    expect(c).toBeGreaterThan(b);
-    expect(c).toBeLessThan(1);
-  });
-  it('clamps NaN / negative / undefined to 0', () => {
+  it('clamps NaN / negative / undefined / null to 0', () => {
     expect(normalizeHeat(NaN)).toBe(0);
     expect(normalizeHeat(-5)).toBe(0);
     expect(normalizeHeat(undefined)).toBe(0);
     expect(normalizeHeat(null)).toBe(0);
+  });
+
+  // DISCRIMINATING test (plan Surface-1). The Bug-2+6 defect was that heat=1.0
+  // (the system-wide max) mapped to 0.5 under h/(h+1) — the TOP HALF of the
+  // colour ramp was unreachable and drive=1-heat never fell below 0.5. The
+  // guard: the hottest bounded heat must reach the TOP of the ramp, and the
+  // {0.2,0.6,1.0} corpus must land its max ABOVE the old 0.5 ceiling. A bare
+  // span check is NOT discriminating — the old raw span was already 0.667.
+  it('hottest bounded heat (1.0) reaches the top of the [0,1] ramp', () => {
+    // OLD h/(h+1): 1.0 → 0.5 (fails). NEW clamp: 1.0 → 1.0.
+    expect(normalizeHeat(1.0)).toBeGreaterThan(0.95);
+  });
+  it('a {0.2,0.6,1.0} corpus reaches above the old 0.5 compression ceiling', () => {
+    const vals = [0.2, 0.6, 1.0].map((h) => normalizeHeat(h));
+    // every value must be its RAW self, not compressed below it
+    expect(vals[0]).toBeGreaterThan(0.15);
+    expect(vals[1]).toBeGreaterThan(0.5); // 0.6 raw > 0.5; OLD gave 0.375 (fails)
+    expect(vals[2]).toBeGreaterThan(0.95); // 1.0 raw; OLD gave 0.5 (fails)
   });
 });
 
@@ -158,11 +191,11 @@ describe('buildNodeModel', () => {
     expect(byId['mem:3'].single).toBe(true); // only 1 present member
     expect(byId['ent:2'].single).toBe(true); // never in any cluster
   });
-  it('normalizes heat and zeroes wiki heat', () => {
+  it('passes bounded heat through and zeroes wiki heat', () => {
     const byId = Object.fromEntries(m.nodes.map((n) => [n.id, n]));
-    expect(byId['mem:1'].heat).toBeCloseTo(0.5, 6); // heat 1.0 → 0.5
+    expect(byId['mem:1'].heat).toBeCloseTo(1.0, 6); // heat 1.0 → 1.0 (raw)
     expect(byId['wiki:1'].heat).toBe(0); // wiki has no heat
-    expect(byId['mem:2'].heat).toBeCloseTo(0.75, 6); // heat 3.0 → 0.75
+    expect(byId['mem:2'].heat).toBe(1); // out-of-range 3.0 → clamped to 1.0
   });
   it('entity with no timestamp gets age 0.5', () => {
     const byId = Object.fromEntries(m.nodes.map((n) => [n.id, n]));
@@ -302,5 +335,126 @@ describe('layoutPositions', () => {
     const { coreCount, haloCount } = layoutPositions(model, { ...P, single: 'halo' });
     expect(coreCount).toBe(0);
     expect(haloCount).toBe(40);
+  });
+});
+
+// ── visibilityMask: filter-mask backbone (Bug 3 — pure part) ────────────────────
+describe('visibilityMask', () => {
+  const nodes = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  it('missing id = visible (1), explicit false = hidden (0)', () => {
+    const mask = visibilityMask(nodes, { b: false });
+    expect(Array.from(mask)).toEqual([1, 0, 1]);
+  });
+  it('explicit true also visible; only strict false hides', () => {
+    const mask = visibilityMask(nodes, { a: true, b: false, c: 0 });
+    // c:0 is falsy but NOT === false → still visible (matches setVisible contract)
+    expect(Array.from(mask)).toEqual([1, 0, 1]);
+  });
+  it('empty / missing visById → all visible', () => {
+    expect(Array.from(visibilityMask(nodes, {}))).toEqual([1, 1, 1]);
+    expect(Array.from(visibilityMask(nodes))).toEqual([1, 1, 1]);
+  });
+  it('returns a Uint8Array of length == nodes.length', () => {
+    const mask = visibilityMask(nodes, {});
+    expect(mask).toBeInstanceOf(Uint8Array);
+    expect(mask.length).toBe(3);
+  });
+  it('empty node set → empty mask, no throw', () => {
+    expect(Array.from(visibilityMask([], { x: false }))).toEqual([]);
+    expect(Array.from(visibilityMask(undefined))).toEqual([]);
+  });
+});
+
+// ── P_BOUNDS mirrors the control HTML (drift guard) ─────────────────────────────
+describe('P_BOUNDS', () => {
+  it('slider bounds match the GALAXY_CHROME_HTML min/max exactly', () => {
+    // If a slider range in GALAXY_CHROME_HTML changes, update P_BOUNDS to match
+    // (loadSavedP clamps against P_BOUNDS, NOT the DOM — drift = silent corruption).
+    expect(P_BOUNDS.arms).toMatchObject({ min: 2, max: 6, int: true });
+    expect(P_BOUNDS.pitch).toMatchObject({ min: 0.08, max: 0.75 });
+    expect(P_BOUNDS.thick).toMatchObject({ min: 0.1, max: 3.0 });
+    expect(P_BOUNDS.coredens).toMatchObject({ min: 0.3, max: 2.5 });
+    expect(P_BOUNDS.bulge).toMatchObject({ min: 0.2, max: 2.5 });
+    expect(P_BOUNDS.spin).toMatchObject({ min: 0, max: 2.0 });
+  });
+  it('every GALAXY_DEFAULTS key has a bound entry', () => {
+    for (const key of Object.keys(GALAXY_DEFAULTS)) {
+      expect(P_BOUNDS[key]).toBeDefined();
+    }
+  });
+});
+
+// ── loadSavedP / saveP: persistence round-trip + clamp + malformed fallback ─────
+// Bug 1: controls didn't persist. Pure + injectable storage so private-mode
+// throw and malformed JSON are testable without a real localStorage.
+describe('loadSavedP / saveP', () => {
+  it('round-trips a saved P (only known keys) through a store', () => {
+    const store = makeStore();
+    const P = { ...GALAXY_DEFAULTS, arms: 5, pitch: 0.5, single: 'halo', spin: 1.2 };
+    saveP(P, store);
+    const loaded = loadSavedP(store);
+    expect(loaded.arms).toBe(5);
+    expect(loaded.pitch).toBeCloseTo(0.5, 10);
+    expect(loaded.single).toBe('halo');
+    expect(loaded.spin).toBeCloseTo(1.2, 10);
+  });
+  it('no stored value → clean GALAXY_DEFAULTS', () => {
+    expect(loadSavedP(makeStore())).toEqual({ ...GALAXY_DEFAULTS });
+  });
+  it('clamps out-of-range numbers to control bounds', () => {
+    const store = makeStore({
+      [GALAXY_P_KEY]: JSON.stringify({ arms: 99, pitch: -1, thick: 100, spin: 5 }),
+    });
+    const P = loadSavedP(store);
+    expect(P.arms).toBe(6); // max 6
+    expect(P.pitch).toBeCloseTo(0.08, 10); // min 0.08
+    expect(P.thick).toBe(3.0); // max 3.0
+    expect(P.spin).toBe(2.0); // max 2.0
+  });
+  it('rounds arms to an integer', () => {
+    const store = makeStore({ [GALAXY_P_KEY]: JSON.stringify({ arms: 3.7 }) });
+    expect(loadSavedP(store).arms).toBe(4);
+  });
+  it('drops unknown keys and invalid enum values → keeps default', () => {
+    const store = makeStore({
+      [GALAXY_P_KEY]: JSON.stringify({ bogus: 42, radmode: 'nonsense', single: 'halo' }),
+    });
+    const P = loadSavedP(store);
+    expect('bogus' in P).toBe(false);
+    expect(P.radmode).toBe(GALAXY_DEFAULTS.radmode); // invalid enum → default
+    expect(P.single).toBe('halo'); // valid enum → applied
+  });
+  it('malformed JSON → clean defaults (no throw)', () => {
+    const store = makeStore({ [GALAXY_P_KEY]: '{not valid json' });
+    expect(loadSavedP(store)).toEqual({ ...GALAXY_DEFAULTS });
+  });
+  it('non-object JSON (array / scalar) → defaults', () => {
+    expect(loadSavedP(makeStore({ [GALAXY_P_KEY]: '[1,2,3]' }))).toEqual({ ...GALAXY_DEFAULTS });
+    expect(loadSavedP(makeStore({ [GALAXY_P_KEY]: '7' }))).toEqual({ ...GALAXY_DEFAULTS });
+  });
+  it('getItem throw (private mode) → defaults, no throw', () => {
+    const store = {
+      getItem: () => {
+        throw new Error('SecurityError');
+      },
+      setItem: () => {},
+    };
+    expect(loadSavedP(store)).toEqual({ ...GALAXY_DEFAULTS });
+  });
+  it('setItem throw (private mode / quota) is swallowed', () => {
+    const store = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('QuotaExceeded');
+      },
+    };
+    expect(() => saveP({ ...GALAXY_DEFAULTS }, store)).not.toThrow();
+  });
+  it('saveP persists only clamped known keys (drops garbage)', () => {
+    const store = makeStore();
+    saveP({ ...GALAXY_DEFAULTS, arms: 100, junk: 'x' }, store);
+    const raw = JSON.parse(store.getItem(GALAXY_P_KEY));
+    expect(raw.arms).toBe(6); // clamped on write
+    expect('junk' in raw).toBe(false);
   });
 });
