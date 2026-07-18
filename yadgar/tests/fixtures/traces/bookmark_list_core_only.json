@@ -1,0 +1,13 @@
+{
+ "label": "bookmark_list",
+ "tool_span": "tool.bookmark_list",
+ "trace_id": "5555eeee6666ffff7777aaaa8888bbbb",
+ "total_ms": 22.0,
+ "span_count": 4,
+ "spans": [
+  {"rel_ms": 0.0,  "dur_ms": 22.0, "depth": 0, "svc": "yadgar-core", "name": "tool.bookmark_list"},
+  {"rel_ms": 0.5,  "dur_ms": 0.6,  "depth": 1, "svc": "yadgar-core", "name": "yadgar.core.server.tools.project._detect_branch"},
+  {"rel_ms": 1.5,  "dur_ms": 19.0, "depth": 1, "svc": "yadgar-core", "name": "yadgar._shared.storage.bookmarks._BookmarkMixin.list_bookmarks"},
+  {"rel_ms": 1.8,  "dur_ms": 18.4, "depth": 2, "svc": "yadgar-core", "name": "yadgar._shared.storage.client._ClientMixin._q"}
+ ]
+}

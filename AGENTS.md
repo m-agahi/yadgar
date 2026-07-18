@@ -21,8 +21,8 @@ Pick one path. All three end up MCP-registered with Claude Code.
 
 ```bash
 pipx install yadgar          # or: pip install yadgar
-yadgar setup                 # writes ~/.yadgar/{config.yaml,secrets.env}
-set -a && . ~/.yadgar/secrets.env && set +a
+yadgar setup                 # writes ~/.config/yadgar/{config.yaml,secrets.env}
+set -a && . ~/.config/yadgar/secrets.env && set +a
 yadgar daemon start
 yadgar daemon configure-mcp  # writes ~/.claude.json with bearer header
 ```
@@ -57,7 +57,7 @@ Then restart Claude Code. No auth, no backend container — embed/rerank degrade
 
 | Var | Required when | Source |
 |---|---|---|
-| `YADGAR_MCP_AUTH_TOKEN` | `YADGAR_REQUIRE_AUTH=1` (v5 default) | `~/.yadgar/secrets.env` |
+| `YADGAR_MCP_AUTH_TOKEN` | `YADGAR_REQUIRE_AUTH=1` (v5 default) | `~/.config/yadgar/secrets.env` |
 | `SURREAL_USER` / `SURREAL_PASS` | backend container starts | same |
 | `YADGAR_DB_URL` / `YADGAR_EMBED_URL` | core container starts | defaults in `yadgar daemon`; explicit in docker-manual |
 
@@ -129,28 +129,55 @@ PYTHONUNBUFFERED=1 OTEL_SDK_DISABLED=true uv run --extra test --extra ml \
 
 ## Architecture map
 
+Three-layer split (ADR-0056/0060/0062/0063; import-linter enforced). Each layer root has its own `README.md` and `AGENTS.md`.
+
+**yadgar/core** — MCP server (thin router only, no compute):
+
 | Path | Purpose |
 |---|---|
 | `yadgar/__main__.py` | CLI entry point + Click command tree |
-| `yadgar/cli/` | Subcommand implementations (daemon, vacuum, seed, config, rules, viz, setup, install_hooks) |
-| `yadgar/server/http.py` | FastAPI app — `/health`, `/metrics`, `/api/*`, `/hooks/*`, `/mcp`, `/static/` |
-| `yadgar/server/tools/` | MCP tool handlers (memory, wiki, bookmarks, project, ops, admin) — one file per group |
-| `yadgar/storage/` | SurrealDB layer + idempotent migrations |
-| `yadgar/retrieval/` | 8-stage pipeline: FTS, KNN, PPR, spreading, temporal, fusion, rerank, NLI, MMR, rules |
-| `yadgar/consolidation/` | Nightly cycle: decay, episodic→semantic (CLS), merge, link, causal discovery |
-| `yadgar/curation/` | Ingestion, dedup, surprise gate, pruning |
-| `yadgar/security/` | Bearer auth, secret-pattern blocker, allowlist |
-| `yadgar/file_queue/` | Async write queue + DLQ + drainer |
-| `yadgar/vacuum/` | SurrealKV compaction |
-| `yadgar/observability/` | OpenTelemetry tracing, distributed spans |
-| `yadgar/hooks/` | Claude Code hook scripts (e.g. `db-lockdown-check.py`) |
-| `yadgar/install_assets/` | Anchor seeds, CLAUDE.md fragments, systemd/launchd templates |
-| `yadgar/static/` | Viz UI + bookmarks UI |
-| `yadgar/tests/` | pytest suite |
+| `yadgar/core/cli/` | Subcommand implementations (daemon, vacuum, seed, config, rules, viz, setup, install-hooks) |
+| `yadgar/core/server/` | FastAPI app, MCP tool handlers, auth middleware, transport |
+| `yadgar/core/hooks/` | Claude Code hook runner scripts (SessionStart, SubagentStop, PreCompact) |
+| `yadgar/core/daemon/` | systemd-style daemon start/stop/status, MCP transport switching |
+| `yadgar/core/repo_wiki/` | `repo_wiki_generate` — AST-scan Python repo → wiki store |
+| `yadgar/core/export/` | DuckDB exporter for offline analytics |
+| `yadgar/core/viz/` | Viz server entry point (reverse-proxies `/api/*` to backend at :8765) |
+
+**yadgar/_shared** — contracts + config + observability (imported by both core and backend):
+
+| Path | Purpose |
+|---|---|
+| `yadgar/_shared/config/` | Pydantic settings; `FIELD_META` registry; three-way-sync |
+| `yadgar/_shared/storage/` | SurrealDB client + schema contracts |
+| `yadgar/_shared/observability/` | `@observe` decorator (span+metric+log), tracing, metrics |
+| `yadgar/_shared/security/` | Secret-gate patterns, allowlist |
+| `yadgar/_shared/file_queue/` | Async write queue client + DLQ |
+| `yadgar/_shared/rules_engine/` | Write-block and write-allow rules evaluation |
+| `yadgar/_shared/knowledge_graph/` | Entity extraction, relationship edges |
+
+**yadgar/backend** — all compute (reached only over HTTP boundary):
+
+| Path | Purpose |
+|---|---|
+| `yadgar/backend/retrieval/` | Full recall pipeline: FTS+KNN+PPR+spreading → WRRF → CE rerank → NLI → MMR → adversarial → rules |
+| `yadgar/backend/consolidation/` | Nightly cycle: decay, CLS, merge, link, causal discovery |
+| `yadgar/backend/embed_service/` | Sentence-transformer embed endpoint (:8001); CE reranker (Ettin-32m) |
+| `yadgar/backend/queue_drainer/` | Async drainer: dequeues file queue, runs similarity gate, commits to SurrealDB |
+| `yadgar/backend/graph/` | Galaxy layout precompute (networkx spring_layout); `/api/graph` endpoint |
+| `yadgar/backend/curation/` | Duplicate detection, merge, `_memify_prune` |
+| `yadgar/backend/cache/` | Unified cache (N named instances, ScopeVersions invalidation) |
+
+**Shared:**
+
+| Path | Purpose |
+|---|---|
+| `yadgar/static/` | Viz UI + bookmarks UI (Three.js galaxy renderer) |
+| `yadgar/tests/` | pytest suite (mirrors three-layer structure: `tests/core/`, `tests/_shared/`, `tests/backend/`) |
 | `scripts/` | Pre-commit invariant checks + version sync |
 | `docs/` | Architecture, retrieval, configuration, hooks, benchmark, roadmap |
 
-53 MCP tools across memory, wiki, bookmarks, project, ops. Full table in `README.md § Tools`.
+~79 MCP tools across memory, wiki, bookmarks, project, ops, ADR, agent-prompts. Full table in `README.md § Tools`.
 
 ### Where does new code go?
 
@@ -182,8 +209,8 @@ yadgar viz                            # graph UI at http://localhost:42069
 yadgar export duckdb --output snap.duckdb   # analytics snapshot (needs [analytics])
 yadgar seed <directory>               # bootstrap memory from README + docs
 yadgar rules add|export|import        # retrieval / write policy rules
-yadgar config init|list|get|set|edit  # ~/.yadgar/config.yaml
-yadgar install_hooks --scope global   # wire Claude Code hooks; injects bearer token
+yadgar config init|list|get|set|edit  # ~/.config/yadgar/config.yaml
+yadgar install-hooks --scope global   # wire Claude Code hooks; injects bearer token
 yadgar update --check                 # PyPI version probe (v5.48.0+)
 yadgar update --install               # multi-step coordinated upgrade (gated; opt-in)
 yadgar update --rollback              # restore prior image from latest snapshot
@@ -201,7 +228,7 @@ curl -s http://127.0.0.1:8765/metrics | head
 
 - **Upgrade orchestrator is opt-in** (`update.install_enabled: false` by default). Snapshot artefacts at `~/.local/state/yadgar/upgrade-snapshots/` may contain prior systemd unit content — chmod 700, do not commit to VCS.
 - **Never bypass auth.** Bearer middleware guards `/api/*`, `/hooks/*`, `/mcp`. `YADGAR_REQUIRE_AUTH=0` is initial-rollout only — production must run with `1`.
-- **Never log secrets.** Always-on secret patterns block AWS, GCP, Stripe, Slack, OpenAI, Anthropic keys, JWT, GitHub PATs, private keys, DB URIs at write time — adding an exception requires the context-aware allowlist (`~/.yadgar/secret-gate-allowlist.yaml`) plus the `check-secret-gate` pre-commit gate.
+- **Never log secrets.** Always-on secret patterns block AWS, GCP, Stripe, Slack, OpenAI, Anthropic keys, JWT, GitHub PATs, private keys, DB URIs at write time — adding an exception requires the context-aware allowlist (`~/.config/yadgar/secret-gate-allowlist.yaml`) plus the `check-secret-gate` pre-commit gate.
 - **Never query SurrealDB directly** (no `docker exec` into `yadgar-backend`, no raw `surreal sql`, no opening the surrealkv file). Use MCP tools (`recall`, `memory_stats`, `project_brief`) or the HTTP API.
 - `/metrics` is loopback-only by default — do not bind it to a public interface without auth in front.
 - `install_hooks` is a real Python script with `shlex.quote`'d paths; if you touch it, do not introduce string interpolation into shell commands.
@@ -222,7 +249,7 @@ curl -s http://127.0.0.1:8765/metrics | head
 
 **Verify subagent claims before integrating.** File edits, contract flips, test assertions, and command output from a subagent are claims, not truth. Re-read the artifact (the actual file, `gh pr view --json body`, `aws describe-*`, etc.) before relaying the result as done. A passing-looking diff excerpt in a report is not a passing test.
 
-If your agent dispatches subagents that may write memories, paste the contract from [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) into the global `~/.claude/CLAUDE.md`, then run `yadgar install_hooks --scope global`. The `SubagentStop` hook scans the final report for a `## Yadgar findings` section and persists each bullet as a memory tagged with the agent type. Opt-in — Yadgar works without it.
+If your agent dispatches subagents that may write memories, paste the contract from [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) into the global `~/.claude/CLAUDE.md`, then run `yadgar install-hooks --scope global`. The `SubagentStop` hook scans the final report for a `## Yadgar findings` section and persists each bullet as a memory tagged with the agent type. Opt-in — Yadgar works without it.
 
 ## Further reading
 

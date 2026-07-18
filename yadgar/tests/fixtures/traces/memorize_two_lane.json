@@ -1,0 +1,17 @@
+{
+ "label": "memorize",
+ "tool_span": "tool.memorize",
+ "trace_id": "9999cccc0000dddd1111eeee2222ffff",
+ "total_ms": 160.0,
+ "span_count": 8,
+ "spans": [
+  {"rel_ms": 0.0,   "dur_ms": 160.0, "depth": 0, "svc": "yadgar-core",    "name": "tool.memorize"},
+  {"rel_ms": 1.0,   "dur_ms": 12.0,  "depth": 1, "svc": "yadgar-core",    "name": "yadgar.core.server.tools.memory.phase_validate"},
+  {"rel_ms": 1.5,   "dur_ms": 6.0,   "depth": 2, "svc": "yadgar-core",    "name": "yadgar._shared.gate._validate_content_and_provenance"},
+  {"rel_ms": 14.0,  "dur_ms": 5.0,   "depth": 1, "svc": "yadgar-core",    "name": "yadgar.core.server.tools.memory._enqueue"},
+  {"rel_ms": 20.0,  "dur_ms": 138.0, "depth": 1, "svc": "yadgar-core",    "name": "yadgar._shared.storage.client._ClientMixin._q"},
+  {"rel_ms": 22.0,  "dur_ms": 135.0, "depth": 2, "svc": "yadgar-backend", "name": "POST"},
+  {"rel_ms": 25.0,  "dur_ms": 90.0,  "depth": 3, "svc": "yadgar-backend", "name": "yadgar.backend.ml.embed.EmbeddingEngine.encode"},
+  {"rel_ms": 116.0, "dur_ms": 38.0,  "depth": 3, "svc": "yadgar-backend", "name": "yadgar._shared.storage.memory.embed"}
+ ]
+}

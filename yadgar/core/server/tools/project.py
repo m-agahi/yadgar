@@ -215,7 +215,12 @@ def _render_project_brief(brief: dict) -> str:
         )
     if not active_present:
         lines.append(
-            "*Suggestion: call `update_active_work(directory, ...)` once you start a session.*"
+            "*Suggestion: call `update_active_work(directory, ...)` once you start a session"
+            " to store working-state and checkpoint context.*"
+        )
+        lines.append(
+            "*To track TODOs/tasks use the harness task list (TaskCreate)"
+            " — yadgar mirrors it via the stop-hook.*"
         )
     if not init_present or not active_present:
         lines.append("")

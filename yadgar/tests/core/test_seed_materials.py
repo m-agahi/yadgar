@@ -68,32 +68,64 @@ _EXPECTED: list[tuple[str, str, str]] = [
     (
         "implement-tdd",
         (
-            "Implement a feature test-first (red→green→refactor), writing the least"
-            " code that satisfies it — a YAGNI least-code ladder applied before coding."
+            "Implement a feature test-first with a 5-phase hardening pipeline"
+            " (RED-VERIFY → adversarial critic → green → mutation+fuzz → gates)"
+            " — risk-tiered so trivial diffs skip the expensive phases."
         ),
         (
-            "DISPATCH: model=sonnet (fallback=opus for multi-seam scope)"
+            "DISPATCH: model=sonnet (fallback=opus) — mechanical when the spec is"
+            " crisp; opus for gnarly logic. Background; worktree if parallel writers."
             " — canonical: model-tier-dispatch\n"
             "\n"
-            "Write a failing test that pins the desired behavior (red) before any"
-            " implementation code.\n"
+            "Build application/library code test-first with a hardening pipeline."
+            " Phases are RISK-TIERED: run the FULL pipeline (all 5) for load-bearing"
+            " app/lib logic; for trivial/mechanical diffs (config, infra .nix/.yaml,"
+            " one-liners, version bumps, docs, codemods) run phases 1+3+5 ONLY.\n"
             "\n"
-            "Before writing implementation, climb the least-code ladder — STOP at the"
-            " first rung that works:\n"
-            "  1. Does it need to exist at all? Drop speculative / just-in-case scope.\n"
-            "  2. Already in the codebase → reuse it.\n"
-            "  3. Standard library / language built-in.\n"
-            "  4. Native feature of a framework/platform already in use.\n"
-            "  5. An already-installed dependency. (Do NOT add a new dep without asking.)\n"
-            "  6. A one-liner.\n"
-            "  7. Else: the minimal implementation — no abstraction a second caller"
-            " doesn't yet need.\n"
+            "Contract: recall-first; observed-state-wins; end your report with"
+            " `## Yadgar findings`.\n"
             "\n"
-            "Implement the minimal code to pass (green). Refactor with tests green —"
-            " no behaviour change.\n"
-            "Run the full check surface (tests/lint/types) and loop until clean.\n"
-            "Done = tests pass, checks green, and no code exists that a higher rung"
-            " could have avoided."
+            "PHASE 1 — TESTS FIRST + RED-VERIFY\n"
+            "- Write tests before implementation, one per acceptance criterion in the spec.\n"
+            "- Run them. Confirm they FAIL — and fail for the RIGHT reason: an assertion"
+            " failure or NotImplementedError, NOT ImportError / SyntaxError / collection"
+            " error. A test that ERRORS instead of failing has not been shown to test"
+            " anything. Fix until the failure is a genuine assertion miss.\n"
+            "\n"
+            "PHASE 2 — ADVERSARIAL TEST-CRITIC (load-bearing code only; skip for trivial)\n"
+            "- Review the tests adversarially (assume they are weak) against this rubric:\n"
+            "  - Real assertions — not assertTrue(True), not tautological, not asserting"
+            " a mock return you just set.\n"
+            "  - Tests BEHAVIOR/contract, not implementation detail.\n"
+            "  - Every acceptance criterion AND every non-trivial branch has a test.\n"
+            "  - Edge + error cases present (empty, boundary, malformed, exception paths).\n"
+            "  - No over-mocking that stubs out the unit under test.\n"
+            "- Fix gaps. Loop MAX 2 rounds; still weak → STOP + report (do not spin).\n"
+            "\n"
+            "PHASE 3 — IMPLEMENT → GREEN\n"
+            "- Minimal code to pass. Red → green.\n"
+            "\n"
+            "PHASE 4 — POST-GREEN HARDEN (load-bearing code only; skip for trivial)\n"
+            "- Mutation testing (mutmut) on the CHANGED module(s) ONLY, time-boxed (~10 min)."
+            " Exhaustive per module (NOT sampled). A surviving mutant = a bug your tests miss"
+            " → add a test that kills it. Loop MAX 2. A genuinely-equivalent mutant may be"
+            " allowlisted with a one-line justification comment.\n"
+            "- Property/fuzz (hypothesis) for pure functions + parsers: invariant-driven"
+            " (never-raises / idempotent / round-trip / conserves-invariant),"
+            " max_examples >= 200 (>= 500 for critical paths). A fuzz failure → fix the"
+            " code, PIN the discovered case with @example so it cannot re-flake, and keep"
+            " it as a regression test.\n"
+            "\n"
+            "PHASE 5 — GATES + COMMIT\n"
+            "- Run available checks (lint, types, complexity, observe-coverage, e2e). Fix"
+            " root cause; surface pre-existing failures separately. Same fix fails 2×"
+            " → stop + report.\n"
+            "- No --no-verify / hook bypass. No Co-Authored-By. Then commit.\n"
+            "\n"
+            "CAPS: every fix-loop bounded (critic 2, mutation 2, fuzz 2) → escalate,"
+            " never infinite-loop.\n"
+            "TIER RULE: does the diff carry non-trivial branching/logic in app/lib code?"
+            " yes → full 5 phases; no → phases 1+3+5."
         ),
     ),
 ]
@@ -164,16 +196,21 @@ def test_plan_executing_build_starter_pinned():
     assert "git ls-files docs/plans/" in lifecycle
 
 
-def test_implement_tdd_has_yagni_ladder():
-    """implement-tdd carries the new YAGNI least-code ladder (purpose + 7 rungs)."""
+def test_implement_tdd_has_hardening_pipeline():
+    """implement-tdd carries the 5-phase hardening pipeline (purpose + load-bearing markers)."""
     from yadgar.core.server.tools.agent_prompts import STARTER_PROMPTS
 
     by_pattern = {p: (purpose, content) for p, purpose, content in STARTER_PROMPTS}
     purpose, content = by_pattern["implement-tdd"]
-    assert "YAGNI least-code ladder" in purpose
-    for rung in range(1, 8):
-        assert f"  {rung}. " in content, f"rung {rung} missing from implement-tdd prompt"
-    assert "no code exists that a higher rung" in content
+    assert "hardening pipeline" in purpose
+    for marker in [
+        "RED-VERIFY",
+        "ADVERSARIAL TEST-CRITIC",
+        "mutmut",
+        "max_examples >= 200",
+        "TIER RULE",
+    ]:
+        assert marker in content, f"marker {marker!r} missing from implement-tdd prompt"
 
 
 # ── v5.123.0 seed backflow: live-corpus growth ───────────────────────────────

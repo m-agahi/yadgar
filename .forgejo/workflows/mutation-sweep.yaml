@@ -1,0 +1,60 @@
+name: Mutation sweep (weekly health signal — non-blocking)
+
+# NON-GATING: scheduled health signal only. Does NOT run on pull_request.
+# Adds ZERO jobs to PR CI. Reports surviving mutants for triage only.
+#
+# Runs mutmut over a high-value core module subset time-boxed to ~10 minutes.
+# Surviving mutants surface test gaps; they do NOT fail the build.
+# Triage findings manually after each weekly run.
+#
+# Target: yadgar/backend/retrieval/ + yadgar/_shared/cognitive_map.py —
+# high-value fusion/retrieval logic, small enough to fit the time-box.
+#
+# How to run manually:
+#   Forgejo UI → Actions → "Mutation sweep (...)" → Run workflow
+#   OR: gh workflow run mutation-sweep.yaml --repo <org>/<repo>
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"   # Weekly Monday ~04:17 UTC
+  workflow_dispatch: {}
+
+env:
+  YADGAR_CI_BRANCH: master
+  YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
+  OTEL_SDK_DISABLED: "true"
+
+jobs:
+  mutation-sweep:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/library/python:3.14-slim
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-mutation-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-mutation-
+
+      - name: Install dependencies
+        run: pip install -e ".[test]" mutmut
+
+      - name: Run mutation sweep (time-boxed ~10 min)
+        continue-on-error: true
+        run: |
+          timeout 600 mutmut run \
+            --paths-to-mutate yadgar/backend/retrieval/,yadgar/_shared/cognitive_map.py \
+            --runner "python -m pytest yadgar/tests/ -x -q --timeout=30 2>/dev/null" \
+            || true
+
+      - name: Print surviving mutants summary
+        if: always()
+        run: |
+          echo "=== Mutation sweep results ==="
+          mutmut results || true
+          echo ""
+          echo "=== Surviving mutants (bugs your tests may miss) ==="
+          mutmut show || true

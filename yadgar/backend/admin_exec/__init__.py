@@ -20,6 +20,7 @@ from yadgar.backend.admin_exec import (
     audit,
     blocks,
     bookmarks,
+    drain,
     invariants,
     memory,
     project,
@@ -90,6 +91,10 @@ _ADMIN_OPS: dict[str, Callable[[dict], dict]] = {
     "get_dir_branch_context": project.get_dir_branch_context,
     # restoration writes (T2 Car B — pre-compact drain is write-only, no compute)
     "pre_compact_drain": restoration.pre_compact_drain,
+    # cross-process drain nudge (task #29 — wiki_add/memorize wait cold-drain fix):
+    # runs the LIVE backend drainer's drain_now() synchronously so the core
+    # wait-path can flush promptly over HTTP instead of waiting a full interval.
+    "drain_now": drain.drain_now,
 }
 
 

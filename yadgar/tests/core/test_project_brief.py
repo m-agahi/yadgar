@@ -334,8 +334,16 @@ def test_anchor_scope_split_project_not_in_other_project(flush_queue):
     assert not any("dirA private anchor" in t for t in project_titles)
 
 
-def test_anchor_scope_global_includes_system_context(flush_queue):
-    """F1: rows with directory_context='global' or '' surface in global bucket."""
+def test_anchor_scope_global_includes_system_context(flush_queue, monkeypatch):
+    """F1: rows with directory_context='global' or '' surface in global bucket.
+
+    #28: anchor context="global" is the global sentinel, not a filesystem path.
+    normalize_write_context resolves it relative to CWD via git heuristics —
+    in a linked-worktree CWD this finds the worktree .git FILE and returns the
+    canonical repo root instead of passing "global" through. Fix: chdir to /tmp
+    so the heuristic finds no .git and the sentinel is stored verbatim.
+    """
+    monkeypatch.chdir("/tmp")
     server.anchor("global anchor with explicit global ctx", "global", "global_hint")
     flush_queue()
 

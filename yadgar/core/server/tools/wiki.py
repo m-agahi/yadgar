@@ -221,7 +221,11 @@ def wiki_write_task_list(
             the caller can verify via wiki_history / wiki_read immediately).
 
     Returns the ``wiki_add``-shaped result: ``{stored, committed|queued, slug, ...}``.
-    Applies the same secret-gate / size / surrogate guards as ``wiki_add``.
+    On wait-budget expiry returns ``{stored: False, committed: False,
+    converging: True, reason: "wait_timeout", queued: True}`` — NOT a failure: the
+    write is durably queued and converges on the next drain (treat converging=True
+    as success-pending). Applies the same secret-gate / size / surrogate guards as
+    ``wiki_add``.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
@@ -289,8 +293,18 @@ def _wiki_add_wait_path(payload: dict, new_slug: str, title: str) -> dict:
     fq = _get_file_queue()
     job_id = fq.enqueue("wiki_add", payload)
 
-    # Nudge the background drainer to flush promptly so the caller does not wait a
-    # full drain interval. Runtime shared-state access — guarded, non-fatal.
+    # Nudge the drainer to flush promptly so the caller does not wait a full drain
+    # interval. Task #29 cold-drain fix: after the ADR-0078 split the live drainer
+    # runs ONLY in the backend process — in-core ``_st._queue_drainer`` is None, so
+    # the historical in-process nudge was a silent no-op in production. POST a
+    # cross-process ``drain_now`` nudge to the backend first (synchronous, durable);
+    # then keep the in-process nudge for single-process runs + existing tests.
+    # Best-effort: if the backend POST fails (backend down / older backend without
+    # the endpoint) swallow and fall through to the passive poll (mixed-version safe).
+    try:
+        _forward_admin("drain_now", {})
+    except Exception as exc:  # noqa: BLE001 — non-fatal; passive poll still converges
+        logger.warning("wiki_add wait: backend drain_now nudge failed (non-fatal): %s", exc)
     _drainer = _st._queue_drainer
     if _drainer is not None:
         try:
@@ -308,8 +322,15 @@ def _wiki_add_wait_path(payload: dict, new_slug: str, title: str) -> dict:
     outcome = fq.wait_for_job(job_id, timeout=timeout)
 
     if outcome["status"] == "timeout":
+        # Car 3 (contract clarity): wait_timeout is NOT a failure — the write is
+        # durably queued and converges on the next drain. Signal that explicitly
+        # (converging=True, committed=False) alongside the back-compat keys so
+        # naive callers don't read wait_timeout as a hard error. stored/reason/
+        # queued are UNCHANGED (adr._write_ok + the timeout tests depend on them).
         return {
             "stored": False,
+            "committed": False,
+            "converging": True,
             "reason": "wait_timeout",
             "queued": True,
             "slug": new_slug,
@@ -392,15 +413,13 @@ def wiki_add(
        the daemon CWD is not the caller's repo and would always resolve to "master".
 
     wait=False (default): async fast path — returns immediately with {"queued": True}.
-    Default async. Only set wait=True when callers depend on next-call read-your-writes.
-    wait=True: read-your-writes path — enqueues then blocks until the drainer
-      commits the write, then returns {"committed": True, "queued": False}.
-      Preserves FIFO ordering (earlier queued writes to the same slug still land
-      before this one). On timeout returns {"stored": False, "reason":
-      "wait_timeout", "queued": True} — the write is still in the queue and will
-      eventually commit or hit DLQ. I9 latency budget does NOT apply to wait=True
-      (opt-in slow path). If no drainer is running or replace_slug is set, falls
-      back to the sync write path with the same committed=True response.
+    Only set wait=True when callers depend on next-call read-your-writes.
+    wait=True: enqueues then blocks until the drainer commits, returning
+      {"committed": True, "queued": False}. Preserves FIFO ordering. On timeout
+      returns {"stored": False, "committed": False, "converging": True, "reason":
+      "wait_timeout", "queued": True} — NOT a failure: the write is durably queued
+      and converges on the next drain (treat converging=True as success-pending).
+      I9 latency budget does NOT apply to wait=True.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
