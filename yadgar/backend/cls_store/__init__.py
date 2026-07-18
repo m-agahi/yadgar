@@ -31,6 +31,9 @@ from yadgar.backend.cls_store.patterns import (
 from yadgar.backend.cls_store.patterns import (
     _is_degenerate_auto_abstracted as _is_degenerate_auto_abstracted,
 )
+from yadgar.backend.cls_store.patterns import (
+    _is_thin_auto_abstracted as _is_thin_auto_abstracted,
+)
 from yadgar.backend.cls_store.promotion import _PromotionMixin
 
 logger = logging.getLogger(__name__)

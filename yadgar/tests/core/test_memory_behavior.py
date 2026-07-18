@@ -132,6 +132,87 @@ class TestContentIntegrity:
         assert mem["content"] == content, "consolidate_now() modified memory content"
 
 
+# ── A2. Multi-candidate ranking (C4.1 diagnostic — 1b) ────────────────────────
+
+
+class TestRankingDiagnostics:
+    """DIAGNOSTIC for concern 1b (abbreviation hard-miss), C4.1 / ADR-0142.
+
+    The single-candidate ``test_specific_detail_preserved`` (nrows=1) cannot
+    exercise a ranking miss — the target is the sole candidate, so it always
+    ranks #1. This class adds the *multi-candidate* case the plan (§1.1b, option
+    B1) flagged as missing: seed the "Codeberg PAT" memory alongside plausible
+    distractors, query with the EXPANSION ("personal access token"), and assert
+    the PAT memory survives into the top-k.
+
+    Why this is a genuine abbreviation test (not an FTS-overlap test): the PAT
+    memory's content contains only "PAT" — never the literal phrase "personal
+    access token" — so FTS/BM25 has ZERO word overlap with the query. Only the
+    vector layer (or CE, if the target reaches its pool) can bridge PAT ↔
+    expansion. Whether this passes DECIDES 1b's scope:
+      - PASS → the vector layer already bridges the abbreviation; 1b is resolved
+        by the retrieval layer and this stays a passing regression.
+      - FAIL → 1b is a genuine hard-miss; its real fix is research-sized
+        (semantic abbreviation bridging) and is PARKED per ADR-0142 / #62. The
+        test is then marked xfail — fusion is NOT to be overfit to green it
+        (plan §5 gate G2).
+    """
+
+    # Distractors: on-topic-adjacent secrets/credentials memories that share NO
+    # unusual token with the query, so they don't crowd out the target by
+    # accident — they exist to make top-k a real cutoff (multi-candidate).
+    _DISTRACTORS = [
+        "AWS access key for the staging account rotates every 90 days via IAM",
+        "The Datadog API key lives in ~/.secrets/datadog and is read at boot",
+        "SSH deploy key for the CI runner is mounted from a Kubernetes secret",
+        "Vault stores the Postgres admin password under secret/db/postgres",
+        "GPG signing key passphrase is cached in gpg-agent for 8 hours",
+        "The Stripe webhook signing secret is set in the STRIPE_WHSEC env var",
+        "OAuth client secret for the Slack app is stored in 1Password vault Ops",
+        "TLS private key for the ingress cert is issued by cert-manager",
+    ]
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "1b abbreviation-bridging DEFERRED (research-sized), ADR-0142 / #62. "
+            "VERDICT 2026-07-18 (C4.1): the 'Codeberg PAT' memory ranked BELOW 5 "
+            "distractors (top_ids were all distractors, pat_id absent) for the "
+            "expansion query 'personal access token' — a genuine abbreviation "
+            "hard-miss: 'PAT' has zero FTS overlap with the expansion and the "
+            "vector layer (all-MiniLM-L6-v2) does not bridge the 3-letter acronym. "
+            "The honest fix is semantic abbreviation bridging (query-side expansion "
+            "or synonym injection), NOT fusion tuning — plan §5 gate G2 forbids "
+            "overfitting fusion to green this one fixture. strict=True so an "
+            "accidental future fix flips this xpass→fail and forces the marker's "
+            "removal (turning it into a live regression test)."
+        ),
+    )
+    def test_pat_abbreviation_multi_candidate_ranking(self, recall_backend_bypass):
+        directory = "/home/user"
+        pat_content = "Codeberg PAT is stored in 1Password item zqq55bz2qi53gw375jlm2sh4jq"
+
+        # Sanity: the guard-rail the whole diagnostic rests on — the target must
+        # NOT contain the query phrase, else we'd be measuring FTS overlap.
+        assert "personal access token" not in pat_content.lower()
+
+        pat = memorize_sync(pat_content, directory, ["codeberg", "secrets"])
+        pat_id = pat["id"]
+        for i, dc in enumerate(self._DISTRACTORS):
+            memorize_sync(dc, directory, ["secrets", f"distractor{i}"])
+
+        # Expansion query — no "PAT" token, so FTS cannot bridge it.
+        hits = server.recall("personal access token", directory=directory, max_results=5)
+        top_ids = [h["id"] for h in hits]
+        assert pat_id in top_ids, (
+            "1b DIAGNOSTIC: the 'Codeberg PAT' memory did NOT rank in the top-5 "
+            "for the expansion query 'personal access token' among "
+            f"{len(self._DISTRACTORS)} distractors. top_ids={top_ids}. "
+            "This is the abbreviation hard-miss (ADR-0142 1b) — its fix is "
+            "research-sized and PARKED (#62); do NOT overfit fusion to green it."
+        )
+
+
 # ── B. No Compression ────────────────────────────────────────────────────────
 
 

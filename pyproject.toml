@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.150.0"
+version = "5.151.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -231,6 +231,7 @@ markers = [
     "xdist_group: group tests that share server module-level globals into one worker",
     "integration: requires docker/podman + spins up live containers (slow, opt-in)",
     "e2e: behavior-contract end-to-end tests against a real local SurrealDB (run via make e2e; excluded from CI)",
+    "perf: timing-sensitive perf guard; run SERIALLY only (unreliable under xdist CPU contention) — dedicated test-perf job",
 ]
 # v5.46.3 — B7 fix: auto mode avoids per-test @pytest.mark.asyncio decoration noise
 asyncio_mode = "auto"

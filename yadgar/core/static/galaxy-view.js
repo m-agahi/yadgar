@@ -181,6 +181,69 @@ export function mulberry32(a) {
   };
 }
 
+/**
+ * Deterministic cosmic-backdrop starfield buffers (far shell, r 280..1380).
+ *
+ * Replaces the old dim 900-pt field that FogExp2 swallowed past r≈380 — this
+ * shell is rendered fog-exempt + additive so the stars actually read on black.
+ * Positions squash the vertical axis (*0.7) into a mild disk; per-vertex colours
+ * are mostly cool-white with a ~12% warm minority. All draws come from a single
+ * mulberry32(seed) stream, so the field is fully reproducible for the unit test.
+ *
+ * @param {number} n     star count
+ * @param {number} seed  PRNG seed
+ * @returns {{positions: Float32Array, colors: Float32Array}}
+ */
+export function buildStarfield(n = 3200, seed = GALAXY_SEED) {
+  const rnd = mulberry32((seed ^ 0x51ce) | 0);
+  const positions = new Float32Array(n * 3);
+  const colors = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const r = 280 + rnd() * 1100; // 280..1380 (< camera far plane 2000)
+    const th = rnd() * Math.PI * 2;
+    const ph = Math.acos(2 * rnd() - 1);
+    positions[i * 3] = r * Math.sin(ph) * Math.cos(th);
+    positions[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th) * 0.7; // vertical squash
+    positions[i * 3 + 2] = r * Math.cos(ph);
+    const b = 0.45 + rnd() * 0.55; // brightness 0.45..1.0
+    const warm = rnd() < 0.12;
+    colors[i * 3] = b;
+    colors[i * 3 + 1] = b * (warm ? 0.88 : 0.98);
+    colors[i * 3 + 2] = warm ? b * 0.72 : b;
+  }
+  return { positions, colors };
+}
+
+// ── seamless nebula skydome shader (direction-based fbm → no UV seam) ────────────
+// Additive on black so unlit directions add nothing (no grey haze); the camera
+// only tilts, so the fixed-orientation dome parallaxes against the nearer stars.
+const NEBULA_VERT = `
+  varying vec3 vDir;
+  void main() {
+    vDir = normalize(position);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }`;
+const NEBULA_FRAG = `
+  precision highp float;
+  varying vec3 vDir;
+  uniform float uIntensity;
+  vec3 hash3(vec3 p){ p = vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6)));
+    return -1.0 + 2.0*fract(sin(p)*43758.5453123); }
+  float noise(vec3 p){ vec3 i=floor(p),f=fract(p),u=f*f*(3.0-2.0*f);
+    return mix(mix(mix(dot(hash3(i+vec3(0,0,0)),f-vec3(0,0,0)),dot(hash3(i+vec3(1,0,0)),f-vec3(1,0,0)),u.x),
+                   mix(dot(hash3(i+vec3(0,1,0)),f-vec3(0,1,0)),dot(hash3(i+vec3(1,1,0)),f-vec3(1,1,0)),u.x),u.y),
+               mix(mix(dot(hash3(i+vec3(0,0,1)),f-vec3(0,0,1)),dot(hash3(i+vec3(1,0,1)),f-vec3(1,0,1)),u.x),
+                   mix(dot(hash3(i+vec3(0,1,1)),f-vec3(0,1,1)),dot(hash3(i+vec3(1,1,1)),f-vec3(1,1,1)),u.x),u.y),u.z); }
+  float fbm(vec3 p){ float v=0.0,a=0.5; for(int k=0;k<5;k++){ v+=a*noise(p); p*=2.02; a*=0.5; } return v; }
+  void main(){
+    vec3 d = normalize(vDir);
+    float m = smoothstep(0.30, 0.85, fbm(d*2.4)*0.5+0.5);            // sparse mask → mostly black
+    float t = fbm(d*5.0 + 11.0)*0.5+0.5;                             // colour mix
+    vec3 col = mix(vec3(0.06,0.11,0.30), vec3(0.22,0.07,0.26), t);   // blue ↔ purple
+    col += vec3(0.02,0.12,0.13) * smoothstep(0.55, 0.95, fbm(d*3.3-7.0)*0.5+0.5); // teal wisp
+    gl_FragColor = vec4(col * m * uIntensity, 1.0);
+  }`;
+
 /** Box-Muller gaussian driven by a supplied rnd() (so it stays deterministic). */
 function gaussWith(rnd) {
   let u = 0;
@@ -580,6 +643,7 @@ class GalaxyScene {
     this.renderer.setSize(w, h);
 
     this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x000000); // pitch black — nebula/stars add over it
     this.scene.fog = new THREE.FogExp2(0x03070b, 0.01);
 
     this.camera = new THREE.PerspectiveCamera(52, w / h, 0.1, 2000);
@@ -592,26 +656,39 @@ class GalaxyScene {
       wheel: this._onWheel,
     });
 
-    // starfield backdrop (900 far points; deterministic).
-    const rnd = mulberry32(GALAXY_SEED ^ 0x51ce);
-    const n = 900;
-    const p = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const r = 380 + rnd() * 520;
-      const th = rnd() * Math.PI * 2;
-      const ph = Math.acos(2 * rnd() - 1);
-      p[i * 3] = r * Math.sin(ph) * Math.cos(th);
-      p[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th) * 0.6;
-      p[i * 3 + 2] = r * Math.cos(ph);
-    }
-    this.starGeo = new THREE.BufferGeometry();
-    this.starGeo.setAttribute('position', new THREE.BufferAttribute(p, 3));
-    this.starMat = new THREE.PointsMaterial({
-      color: 0x2a4a5c,
-      size: 1.1,
-      sizeAttenuation: false,
+    // ── cosmic backdrop: seamless nebula skydome + fog-exempt starfield ─────────
+    // The old dim 900-pt field sat inside FogExp2's reach (r≥380 → fog factor ≈ 1)
+    // and read as flat black. Both layers below are fog:false + additive so they
+    // paint on the pitch-black scene background; the dome is a direction-based fbm
+    // shader (no UV seam) and, since the camera only tilts, its fixed orientation
+    // parallaxes against the nearer star shell.
+    this.nebulaGeo = new THREE.SphereGeometry(1600, 48, 32);
+    this.nebulaMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
       transparent: true,
-      opacity: 0.55,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+      uniforms: { uIntensity: { value: 0.55 } },
+      vertexShader: NEBULA_VERT,
+      fragmentShader: NEBULA_FRAG,
+    });
+    this.nebula = new THREE.Mesh(this.nebulaGeo, this.nebulaMat);
+    this.scene.add(this.nebula);
+
+    const sf = buildStarfield(3200, GALAXY_SEED);
+    this.starGeo = new THREE.BufferGeometry();
+    this.starGeo.setAttribute('position', new THREE.BufferAttribute(sf.positions, 3));
+    this.starGeo.setAttribute('color', new THREE.BufferAttribute(sf.colors, 3));
+    this.starMat = new THREE.PointsMaterial({
+      size: 1.5,
+      sizeAttenuation: false,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.95,
+      fog: false,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
     });
     this.starfield = new THREE.Points(this.starGeo, this.starMat);
     this.scene.add(this.starfield);
@@ -1193,6 +1270,7 @@ class GalaxyScene {
     // geometries
     disp(this.diskGeo);
     disp(this.starGeo);
+    disp(this.nebulaGeo);
     if (this.edgeLines) {
       disp(this.edgeLines.geometry);
       disp(this.edgeLines.material);
@@ -1200,6 +1278,7 @@ class GalaxyScene {
     // materials
     disp(this.pointMat);
     disp(this.starMat);
+    disp(this.nebulaMat); // ShaderMaterial — no texture map to dispose
     disp(this.coreGlowMat);
     disp(this.coreGlow2Mat);
     // textures (3 CanvasTextures: standalone sprite + 2 core-glow maps)
@@ -1227,6 +1306,7 @@ class GalaxyScene {
     this.scene = null;
     this.diskPoints = null;
     this.starfield = null;
+    this.nebula = null;
     this.coreGlow = null;
     this.coreGlow2 = null;
     this.edgeLines = null;

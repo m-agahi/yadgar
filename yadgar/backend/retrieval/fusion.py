@@ -9,6 +9,22 @@ from yadgar._shared.observability.observe import observe
 
 logger = logging.getLogger(__name__)
 
+
+def _tiebreak_key(item: tuple[int, float]) -> tuple[float, int]:
+    """Deterministic fusion sort key: ``(score, id)`` used with ``reverse=True``.
+
+    C4.0 / ADR-0108 A: equal fused scores must break by id DESCENDING
+    (newer-wins) so ranking is a deterministic total order. Score-only sorts
+    left equal-score rows in ``set``-iteration / insertion order, which varies
+    across runs (notably the ``set[int]`` union in :func:`_convex_fuse`) and
+    let a target tied at the top-N boundary cross the cutoff nondeterministically.
+
+    ``item`` is a ``(memory_id, score)`` pair; the key is ``(score, memory_id)``
+    so that under ``reverse=True`` both score and id sort descending.
+    """
+    return (item[1], item[0])
+
+
 # Retrieval profiles: fast < balanced < full
 # fast:     vector + FTS only, no reranking — lowest latency
 # balanced: all 4 signals + cross-encoder — default
@@ -73,7 +89,7 @@ def _wrrf_fuse(
         for rank, mem_id in enumerate(mem_ids):
             scores[mem_id] = scores.get(mem_id, 0.0) + w / (k + rank + 1)
 
-    return sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return sorted(scores.items(), key=_tiebreak_key, reverse=True)
 
 
 @observe(tier="hot", metric="retrieval.fusion.convex_fuse_fn")
@@ -107,12 +123,15 @@ def _convex_fuse(
     for scores in normalized.values():
         all_mids.update(scores.keys())
 
+    # C4.0: iterate ids in a deterministic order — `set[int]` iteration order
+    # varies across runs, and although the final sort re-orders by score, equal
+    # scores would otherwise inherit this nondeterministic insertion order.
     combined: dict[int, float] = {}
-    for mid in all_mids:
+    for mid in sorted(all_mids):
         combined[mid] = sum(
             norm_weights.get(sig, 0) * normalized.get(sig, {}).get(mid, 0) for sig in normalized
         )
-    return sorted(combined.items(), key=lambda x: x[1], reverse=True)
+    return sorted(combined.items(), key=_tiebreak_key, reverse=True)
 
 
 class _FusionMixin:
@@ -187,7 +206,7 @@ class _FusionMixin:
                     total *= signal_count
                 fused_scores[mid] = total
 
-        return fused_scores, sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+        return fused_scores, sorted(fused_scores.items(), key=_tiebreak_key, reverse=True)
 
     @staticmethod
     @observe(tier="hot", metric="retrieval.fusion.apply_prior_boost")
@@ -196,7 +215,7 @@ class _FusionMixin:
         for mid, prior_val in priors.items():
             if prior_val and mid in fused_scores:
                 fused_scores[mid] = fused_scores[mid] + weight * prior_val
-        return sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+        return sorted(fused_scores.items(), key=_tiebreak_key, reverse=True)
 
     @observe(tier="stage", metric="retrieval.fusion")
     def _fuse_scores(
@@ -272,9 +291,13 @@ class _FusionMixin:
         if open_domain_mode:
             diversity_k = max(diversity_k, 15)
         for sig in ["fts", "vector"]:
+            # C4.0: tie-break applied at the truncation sort — equal signal
+            # scores must break by id deterministically so the SAME candidates
+            # survive the `[:diversity_k]` slice across runs (a clean final sort
+            # cannot recover a candidate dropped nondeterministically here).
             top_sig = sorted(
                 [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0],
-                key=lambda x: x[1],
+                key=_tiebreak_key,
                 reverse=True,
             )[:diversity_k]
             for mid, _ in top_sig:

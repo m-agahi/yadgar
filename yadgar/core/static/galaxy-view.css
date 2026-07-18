@@ -3,8 +3,9 @@
  *
  * Ports the mockup's phosphor-oscilloscope panel / legend / HUD / #atmos onto
  * the live #canvas-wrap. Tokens come from viz-theme.css (--viz-*). All IDs/
- * classes are galaxy-prefixed so they never collide with the force-graph
- * floating overlays. body.galaxy-active hides the FG overlays in galaxy mode.
+ * classes are galaxy-prefixed so they never collide with the floating
+ * overlays (heat-slider / graph-stats / node-types / edge-legend / clusters),
+ * which remain visible and drive the galaxy renderer.
  * ========================================================================== */
 
 /* the galaxy scene owns #canvas-wrap; its canvas fills the panel. */
@@ -15,8 +16,12 @@
 
 /* graticule + scanline atmosphere over the canvas (mockup #atmos). */
 #galaxy-atmos { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+/* Graticule dot-grid retired with the cosmic backdrop — the graph-paper grid
+   competed with the nebula/starfield. The faint scanline (::after) is kept.
+   To bring the grid back, restore `display: block`. */
 #galaxy-atmos::before {
   content: ""; position: absolute; inset: 0;
+  display: none;
   background-image:
     linear-gradient(var(--viz-hair-soft) 1px, transparent 1px),
     linear-gradient(90deg, var(--viz-hair-soft) 1px, transparent 1px);
@@ -160,6 +165,15 @@
   margin-right: 6px; font-size: 9.5px;
 }
 
-/* ── mode-btn greyed in galaxy; FG overlays hidden when body.galaxy-active ── */
+/* ── mode-btn greyed in galaxy ─────────────────────────────────────────────── */
 #mode-btn.disabled, #mode-btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
-body.galaxy-active .floating-overlay { display: none !important; }
+/* NOTE: the old `body.galaxy-active .floating-overlay { display: none !important }`
+   rule was removed (fix/viz-panels-galaxy-regression). It dated from the dual-
+   renderer era (2D force-graph + galaxy) and hid the FG overlays only in galaxy
+   mode. ADR-0135 made galaxy the SOLE renderer and body.galaxy-active permanent,
+   so that rule hid the heat-slider / graph-stats / node-types / edge-legend panels
+   forever AND `!important` overrode the View-menu toggle (which flips the plain
+   `.overlay-hidden` display:none) — a dead no-op. Panel visibility is now governed
+   solely by `.overlay-hidden` (View menu) and `.collapsed`; those panels all drive
+   the galaxy renderer, so they stay visible. The `clusters` panel still defaults
+   hidden via its own `.overlay-hidden` class in index.html. */

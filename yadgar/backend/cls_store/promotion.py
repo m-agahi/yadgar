@@ -4,9 +4,36 @@ import logging
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage.directory import dominant_directory
-from yadgar.backend.cls_store.patterns import _is_degenerate_auto_abstracted
+from yadgar.backend.cls_store.patterns import (
+    _is_degenerate_auto_abstracted,
+    _is_thin_auto_abstracted,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _schema_rejected_pre_promotion(schema: str) -> bool:
+    """Return True when *schema* must NOT be promoted to a semantic memory.
+
+    Two write-time corpus guards, OR'd:
+      - degenerate: no meaningful subject (exact "frequently modified together"
+        class / no meaningful token) — PR #60.
+      - thin (C4.3 / S1, ADR-0142): a meta-token-dense bag of yadgar-internal
+        plumbing tokens (entity:/graph/derived_from/co_occurrence/…) with too
+        few distinct real domain tokens. These win meta-queries about the memory
+        system by construction and are never demoted at recall — cheapest fix is
+        to not promote them.
+
+    Kept as a module helper so _promote_pattern stays within the I13 cyclomatic
+    cap (adding the thin branch inline pushed it to 16).
+    """
+    if _is_degenerate_auto_abstracted(schema):
+        logger.debug("Skipping degenerate CLS pattern (no meaningful subject): %r", schema[:80])
+        return True
+    if _is_thin_auto_abstracted(schema):
+        logger.debug("Skipping thin auto-abstracted CLS pattern (meta-dense): %r", schema[:80])
+        return True
+    return False
 
 
 class _PromotionMixin:
@@ -33,9 +60,9 @@ class _PromotionMixin:
         if not schema:
             return False
 
-        # b. Guard: skip degenerate schemas with no meaningful subject.
-        if _is_degenerate_auto_abstracted(schema):
-            logger.debug("Skipping degenerate CLS pattern (no meaningful subject): %r", schema[:80])
+        # b. Guard: skip degenerate (no meaningful subject) OR thin
+        # (meta-token-dense) schemas before promotion — see helper.
+        if _schema_rejected_pre_promotion(schema):
             return False
 
         # c. Check if we already have a similar semantic memory

@@ -269,7 +269,12 @@ def fuse_candidates(
         ce = wiki_ce_scores.get(j, wiki_cand.native_score)
         placement_score = ce + wiki_prior_weight * wiki_cand.native_score
         wiki_with_placement.append((wiki_cand, placement_score))
-    wiki_with_placement.sort(key=lambda x: x[1], reverse=True)
+    # C4.0 (ADR-0108 A): break equal placement scores by candidate id desc so
+    # wiki placement is a deterministic total order. wiki candidate ids are
+    # homogeneous slug strings here, so `(score, id)` desc is well-ordered; the
+    # tie-break also feeds the max_results trim in Step 6, so equal-score wikis
+    # survive the cut deterministically.
+    wiki_with_placement.sort(key=lambda x: (x[1], x[0].id), reverse=True)
 
     # Step 4: interleave wiki into the memory-ordered list.
     # mem_pool order is PRESERVED — memories never reordered by CE.

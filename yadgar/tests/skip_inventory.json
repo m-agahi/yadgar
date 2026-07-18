@@ -70,13 +70,6 @@
       "note": "Regen-on-demand skip by design. Fixture committed at yadgar/tests/backend/fixtures/causal_discovery_expected.json (Car 2: generated INSIDE the yadgar-ci container — scipy FP sensitivity across BLAS builds). Regenerate only inside the CI container; command in the test module docstring."
     },
     {
-      "id": "consolidation-perf-xdist",
-      "file": "yadgar/tests/backend/test_consolidation.py",
-      "verdict": "LEGIT-CONDITIONAL",
-      "reason_pattern": "timing-sensitive perf guard unreliable under xdist parallel CPU contention",
-      "note": "Performance gate test; unreliable under xdist parallel CPU contention. Correct design: run serially for perf gating."
-    },
-    {
       "id": "export-duckdb-01",
       "file": "yadgar/tests/core/test_export_duckdb.py",
       "verdict": "LEGIT-CONDITIONAL",
