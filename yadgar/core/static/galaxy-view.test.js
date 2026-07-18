@@ -36,6 +36,7 @@ import {
   assignArmsBalanced,
   fitDistanceForDisk,
   CAM_FOV_DEG,
+  buildStarfield,
 } from './galaxy-view.js';
 
 // Minimal in-memory localStorage-compatible stub (overlays.js test pattern).
@@ -545,5 +546,48 @@ describe('fitDistanceForDisk', () => {
     const rMax = 46, fov = 52, pad = 1.15;
     const expected = (rMax * pad) / Math.tan((fov * Math.PI) / 360);
     expect(fitDistanceForDisk(rMax, fov, pad)).toBeCloseTo(expected, 6);
+  });
+});
+
+// ── buildStarfield: deterministic cosmic-backdrop star buffers ──────────────────
+describe('buildStarfield', () => {
+  it('returns position + colour buffers of length n*3', () => {
+    const { positions, colors } = buildStarfield(500, 123);
+    expect(positions).toBeInstanceOf(Float32Array);
+    expect(colors).toBeInstanceOf(Float32Array);
+    expect(positions.length).toBe(500 * 3);
+    expect(colors.length).toBe(500 * 3);
+  });
+
+  it('is deterministic for a given seed', () => {
+    const a = buildStarfield(200, 777);
+    const b = buildStarfield(200, 777);
+    expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
+    expect(Array.from(a.colors)).toEqual(Array.from(b.colors));
+  });
+
+  it('differs across seeds', () => {
+    const a = buildStarfield(200, 1);
+    const b = buildStarfield(200, 2);
+    expect(Array.from(a.positions)).not.toEqual(Array.from(b.positions));
+  });
+
+  it('places every star in the 280..1380 radius shell (< camera far 2000)', () => {
+    const { positions } = buildStarfield(1000, 42);
+    for (let i = 0; i < 1000; i++) {
+      // un-squash the vertical axis to recover the sampled radius
+      const x = positions[i * 3], y = positions[i * 3 + 1] / 0.7, z = positions[i * 3 + 2];
+      const r = Math.sqrt(x * x + y * y + z * z);
+      expect(r).toBeGreaterThanOrEqual(280 - 1e-3);
+      expect(r).toBeLessThanOrEqual(1380 + 1e-3);
+    }
+  });
+
+  it('keeps every colour channel in [0,1]', () => {
+    const { colors } = buildStarfield(1000, 9);
+    for (let i = 0; i < colors.length; i++) {
+      expect(colors[i]).toBeGreaterThanOrEqual(0);
+      expect(colors[i]).toBeLessThanOrEqual(1);
+    }
   });
 });

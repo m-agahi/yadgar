@@ -1,4 +1,3 @@
-import os
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
@@ -534,6 +533,7 @@ def process_episodes_at_scale(tmp_path, settings):
     engine.close()
 
 
+@pytest.mark.perf
 @pytest.mark.timeout(60)
 def test_process_episodes_under_10s_at_50_entities(process_episodes_at_scale):
     """Regression guard for the O(N²) per-pair HTTP bug fixed in v4.4.10.
@@ -640,10 +640,7 @@ def _make_merge_duplicates_storage(tmp_path, n: int, high_sim_pairs: int = 5):
     return engine
 
 
-@pytest.mark.skipif(
-    os.environ.get("PYTEST_XDIST_WORKER") is not None,
-    reason="timing-sensitive perf guard unreliable under xdist parallel CPU contention; run serially for perf gating",
-)
+@pytest.mark.perf
 @pytest.mark.timeout(60)
 def test_merge_duplicates_under_5s_at_500_memories_with_embeddings(tmp_path, settings):
     """Regression guard for the O(N²) Python-loop cosine sim in _merge_duplicates.

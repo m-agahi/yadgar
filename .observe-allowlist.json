@@ -561,6 +561,18 @@
     "category": "hot-loop",
     "rationale": "Detects a degenerate auto-abstracted schema for one content string; called per candidate pattern inside _promote_pattern (per-pattern in the CLS promotion loop). A span/metric per call is per-item cardinality bloat. Parent consolidation.cls.promote carries the stage span."
   },
+  "patterns:_is_thin_auto_abstracted": {
+    "category": "hot-loop",
+    "rationale": "Detects a thin (meta-token-dense) auto-abstracted schema for one content string; called per candidate pattern inside _schema_rejected_pre_promotion on the CLS promotion loop (per-pattern). A span/metric per call is per-item cardinality bloat. Parent consolidation.cls.promote carries the stage span."
+  },
+  "patterns:_distinct_real_tokens": {
+    "category": "hot-loop",
+    "rationale": "Tokenizes one schema body and counts distinct real domain tokens; called once per candidate schema inside _is_thin_auto_abstracted on the per-pattern CLS promotion path. A span/metric per call is per-item cardinality bloat with no dashboard value."
+  },
+  "promotion:_schema_rejected_pre_promotion": {
+    "category": "hot-loop",
+    "rationale": "OR's the degenerate + thin write-time guards for one candidate schema; called per candidate pattern inside _promote_pattern (per-pattern in the CLS promotion loop). A span/metric per call is per-item cardinality bloat. Parent consolidation.cls.promote carries the stage span."
+  },
   "patterns:_collect_word_freq": {
     "category": "hot-loop",
     "rationale": "Computes per-token document frequencies for one cluster's memories; called per promoted cluster inside abstract_to_schema (per-cluster). A span/metric per call is per-item cardinality bloat. Parent abstract_to_schema carries the hot span."

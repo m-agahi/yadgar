@@ -1,6 +1,9 @@
 """Tests for dual-store Complementary Learning Systems (CLS)."""
 
 import pytest
+from hypothesis import example, given
+from hypothesis import settings as hyp_settings
+from hypothesis import strategies as st
 
 from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
@@ -672,6 +675,7 @@ def cls_consolidation_at_scale(tmp_path):
     engine.close()
 
 
+@pytest.mark.perf
 @pytest.mark.timeout(60)
 def test_consolidation_cycle_derived_links_under_10s_at_40_memories(
     cls_consolidation_at_scale,
@@ -1093,6 +1097,176 @@ class TestIsDegenerateAutoAbstracted:
         assert _is_degenerate_auto_abstracted(content) is False, (
             "Recurring prefix + Japanese body must NOT be marked degenerate"
         )
+
+
+class TestIsThinAutoAbstracted:
+    """Unit tests for _is_thin_auto_abstracted (C4.3 / S1, ADR-0142).
+
+    A meta-token-DENSE auto-abstracted schema — a bag dominated by yadgar-internal
+    plumbing tokens (entity:NNNN, derived_from, co_occurrence, N-edge, graph, viz)
+    with too few distinct real domain tokens — must NOT be promoted to a semantic
+    memory. This is distinct from the DEGENERATE guard (exact "frequently modified
+    together" / no-meaningful-token): a thin schema DOES contain meaningful tokens,
+    it is just internal noise.
+
+    Load-bearing invariant (over-suppression guard): a genuinely useful abstraction
+    with several distinct real domain tokens must STILL be promoted. The guard
+    targets meta-token DENSITY, not verbosity — a long topical schema with real
+    anchors (jwt, docker, longmemeval) is kept.
+    """
+
+    def test_meta_dense_internal_plumbing_is_thin(self):
+        """The canonical live example: entity-namespace / graph-plumbing bag."""
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        content = (
+            "Recurring pattern across 4 observations: 2026-07-16 via earlier entities "
+            "0-edge dead weight entity:4551 viz connections derived_from edges graph "
+            "only co_occurrence [tags: reference, entity, viz, graph_prior]"
+        )
+        assert _is_thin_auto_abstracted(content) is True, (
+            "meta-token-dense internal-plumbing schema must be flagged thin"
+        )
+
+    def test_pure_namespace_tokens_is_thin(self):
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        content = (
+            "Recurring pattern across 6 observations: entity:9001 entity:9002 "
+            "derived_from co_occurrence edges graph edge [tags: entity, graph]"
+        )
+        assert _is_thin_auto_abstracted(content) is True
+
+    # ── Over-suppression guard: real abstractions must NOT be flagged thin ──
+
+    def test_jwt_auth_abstraction_not_thin(self):
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        content = (
+            "Recurring pattern across 3 observations: jwt auth middleware token "
+            "refresh endpoint [tags: auth]"
+        )
+        assert _is_thin_auto_abstracted(content) is False
+
+    def test_docker_deploy_abstraction_not_thin(self):
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        content = (
+            "Recurring pattern across 4 observations: docker deployment pipeline "
+            "container registry push [tags: devops]"
+        )
+        assert _is_thin_auto_abstracted(content) is False
+
+    def test_topical_verbose_benchmark_abstraction_not_thin(self):
+        """The topical-but-verbose benchmark schema carries REAL recall anchors
+        (longmemeval, dataset, benchmarks) — suppressing it would be a genuine
+        recall loss. It is verbose, not meta-dense → must NOT be flagged thin."""
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        content = (
+            "Recurring pattern across 3 observations: run benchmarks running commit "
+            "harnesses make fast longmemeval primary rigorous benchmark mit dataset "
+            "500 self-seeds [tags: benchmark, longmemeval, eval, feedback]"
+        )
+        assert _is_thin_auto_abstracted(content) is False
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "Recurring pattern across 3 observations: postgres migration index concurrently lock",
+            "Recurring pattern across 5 observations: react hooks state effect memo callback",
+            "Recurring pattern across 2 observations: kafka consumer offset commit rebalance",
+            "Recurring pattern across 4 observations: terraform module vpc subnet routing",
+            "Recurring pattern across 3 observations: redis sentinel quorum failover replica",
+        ],
+    )
+    def test_real_domain_abstractions_not_thin(self, content):
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        assert _is_thin_auto_abstracted(content) is False, (
+            f"real domain abstraction over-suppressed as thin: {content!r}"
+        )
+
+    def test_non_recurring_prefix_never_thin(self):
+        """Guard only fires on the Recurring-pattern prefix (auto-abstracted shape).
+        Arbitrary user content must NOT be reached by the thin gate."""
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        content = "entity:4551 derived_from co_occurrence edges graph"
+        assert _is_thin_auto_abstracted(content) is False
+
+    # ── Threshold boundary (pins _THIN_MIN_REAL_TOKENS == 3 exactly) ──
+
+    def test_exactly_two_real_tokens_is_thin(self):
+        """A schema whose body has exactly TWO distinct real tokens (the rest
+        meta/stop) is below the min-information bar → thin. Pins the lower edge:
+        a laxer threshold (K=2) would wrongly promote it."""
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        # real tokens: {kafka, consumer}; entity/graph/derived_from are meta.
+        content = (
+            "Recurring pattern across 3 observations: kafka consumer entity:9 "
+            "graph derived_from co_occurrence [tags: entity]"
+        )
+        assert _is_thin_auto_abstracted(content) is True
+
+    def test_exactly_three_real_tokens_not_thin(self):
+        """A schema with exactly THREE distinct real tokens clears the bar →
+        NOT thin. Pins the upper edge: a stricter threshold (K=4) or a `<=`
+        comparison would wrongly suppress it."""
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        # real tokens: {kafka, consumer, offset}; entity/graph are meta.
+        content = (
+            "Recurring pattern across 3 observations: kafka consumer offset "
+            "entity:9 graph [tags: entity]"
+        )
+        assert _is_thin_auto_abstracted(content) is False
+
+
+class TestThinAutoAbstractedProperty:
+    """Hypothesis: over-suppression is a falsifiable property.
+
+    Any Recurring-pattern schema whose body is >= K distinct real (non-meta,
+    non-stopword) domain tokens is NEVER flagged thin, regardless of how many
+    extra tokens surround them.
+    """
+
+    _REAL_TOKENS = [
+        "jwt",
+        "auth",
+        "middleware",
+        "docker",
+        "kafka",
+        "postgres",
+        "redis",
+        "terraform",
+        "pipeline",
+        "migration",
+        "consumer",
+        "sentinel",
+        "vpc",
+        "hooks",
+        "endpoint",
+        "registry",
+        "offset",
+        "quorum",
+        "subnet",
+        "index",
+    ]
+
+    @hyp_settings(max_examples=200)
+    @given(
+        tokens=st.lists(st.sampled_from(_REAL_TOKENS), min_size=4, max_size=10, unique=True),
+        n=st.integers(min_value=2, max_value=40),
+    )
+    @example(tokens=["jwt", "auth", "middleware", "docker"], n=3)
+    def test_enough_real_tokens_never_thin(self, tokens, n):
+        from yadgar.backend.cls_store import _is_thin_auto_abstracted
+
+        body = " ".join(tokens)
+        content = f"Recurring pattern across {n} observations: {body}"
+        assert _is_thin_auto_abstracted(content) is False
 
 
 class TestDegeneratePatternNotEmitted:

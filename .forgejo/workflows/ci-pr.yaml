@@ -83,7 +83,7 @@ jobs:
             -q -rs --tb=short \
             -n 4 --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
-            -m 'not integration and not e2e' \
+            -m 'not integration and not e2e and not perf' \
             2>&1 | tee pytest-rs-fast.txt
 
       - name: Upload -rs output for skip gate
@@ -128,7 +128,7 @@ jobs:
             -q -rs --tb=short \
             -n 4 --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
-            -m 'not integration and not e2e' \
+            -m 'not integration and not e2e and not perf' \
             2>&1 | tee pytest-rs-shared.txt
 
       - name: Upload -rs output for skip gate
@@ -180,7 +180,7 @@ jobs:
             -q -rs --tb=short \
             -n 4 --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
-            -m 'not integration and not e2e' \
+            -m 'not integration and not e2e and not perf' \
             2>&1 | tee pytest-rs-backend.txt
 
       - name: Upload -rs output for skip gate
@@ -259,7 +259,7 @@ jobs:
             -q -rs --tb=short \
             -n 4 --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
-            -m 'not integration and not e2e' \
+            -m 'not integration and not e2e and not perf' \
             --splits 2 --group ${{ matrix.group }} \
             --splitting-algorithm least_duration \
             2>&1 | tee pytest-rs-core-${{ matrix.group }}.txt
@@ -270,6 +270,46 @@ jobs:
           name: pytest-rs-core-${{ matrix.group }}
           path: pytest-rs-core-${{ matrix.group }}.txt
           retention-days: 1
+
+  test-perf:
+    runs-on: ubuntu-latest
+    # Serial perf-guard job: runs only @pytest.mark.perf tests without xdist
+    # (-n 0 overrides addopts -n 4 while keeping the plugin loaded — avoids
+    # "unrecognized arguments: -n" that -p no:xdist triggers against addopts).
+    # ~3 tests, lightweight; dedicated wave so timing is trustworthy.
+    needs: [test-fast, test-shared, test-backend, test-core]  # scheduling throttle only
+    if: ${{ always() }}
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      HF_HOME: ${{ vars.HF_HOME }}
+      YADGAR_OTLP_ENDPOINT: ''
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
+        run: |
+          uv pip install --system --no-deps -e .
+
+      - name: Run perf guards (serial)
+        run: |
+          python -m pytest yadgar/tests/ \
+            -m perf \
+            -n 0 \
+            -q --tb=short
 
   check-skip-inventory:
     runs-on: ubuntu-latest
@@ -375,7 +415,7 @@ jobs:
   # when any subsystem job fails, which would leave the PR green incorrectly.
   test-gate:
     runs-on: ubuntu-latest
-    needs: [test-fast, test-shared, test-backend, test-core, check-skip-inventory]
+    needs: [test-fast, test-shared, test-backend, test-core, test-perf, check-skip-inventory]
     if: ${{ always() }}
     steps:
       - name: Assert all subsystem test jobs passed
@@ -394,6 +434,10 @@ jobs:
           fi
           if [ "${{ needs.test-core.result }}" != "success" ]; then
             echo "test-core failed (result: ${{ needs.test-core.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-perf.result }}" != "success" ]; then
+            echo "test-perf failed (result: ${{ needs.test-perf.result }})"
             exit 1
           fi
           if [ "${{ needs.check-skip-inventory.result }}" != "success" ]; then

@@ -192,6 +192,111 @@ def _has_meaningful_token(text: str) -> bool:
 _has_ascii_identifier_token = _has_meaningful_token
 
 
+# ── C4.3 / S1: thin (meta-token-dense) auto-abstracted guard ─────────────────
+#
+# Yadgar-internal plumbing tokens that carry NO project-code signal. An
+# auto-abstracted schema dominated by these (with too few distinct REAL domain
+# tokens left over) is noise: it wins meta-queries about the memory system
+# itself by construction (ADR-0142 concern-2, H2-corpus). These are the graph /
+# entity / consolidation-namespace words, distinct from _SUBJECT_STOP_WORDS
+# (which are ordinary English function words).
+_META_PLUMBING_TOKENS = frozenset(
+    {
+        "entity",
+        "entities",
+        "edge",
+        "edges",
+        "graph",
+        "node",
+        "nodes",
+        "viz",
+        "connection",
+        "connections",
+        "derived",
+        "co_occurrence",
+        "cooccurrence",
+        "occurrence",
+        "weight",
+        "dead",
+        "prior",
+        "cofire",
+        "spreading",
+        "cluster",
+        "clusters",
+        "via",
+        "earlier",
+        "later",
+        "observation",
+    }
+)
+
+# Namespace / synthetic tokens that are always meta regardless of surrounding
+# text: entity:4551, memory:12, 0-edge, derived_from, an ISO date, a bare number.
+_META_NAMESPACE_RE = re.compile(
+    r"^(?:"
+    r"[a-z]+:\w+"  # entity:4551, memory:12
+    r"|\d+-\w+"  # 0-edge, 3-node
+    r"|derived_from"  # relationship-type token
+    r"|\d{4}-\d{2}-\d{2}"  # ISO date
+    r"|\d[\d.]*"  # bare numbers (500, 4551)
+    r")$",
+    re.IGNORECASE,
+)
+
+# Minimum distinct REAL domain tokens an auto-abstracted schema must carry to be
+# worth promoting. Below this it is a meta-token bag. Chosen so a 3-token real
+# abstraction (e.g. "jwt auth middleware") survives while an entity/graph
+# plumbing bag does not. Mutation-tested (C4.3 hardening).
+_THIN_MIN_REAL_TOKENS = 3
+
+
+def _distinct_real_tokens(body: str) -> set[str]:
+    """Return the distinct real domain tokens in *body*.
+
+    Real = a meaningful (Unicode-letter) token that is NOT an ordinary
+    stop-word, NOT yadgar meta-plumbing, and NOT a namespace/synthetic token.
+    """
+    real: set[str] = set()
+    for raw in body.lower().split():
+        tok = raw.strip(_PUNCT_STRIP)
+        if not tok:
+            continue
+        if _META_NAMESPACE_RE.match(tok):
+            continue
+        if tok in _SUBJECT_STOP_WORDS or tok in _META_PLUMBING_TOKENS:
+            continue
+        # Must contain a Unicode-letter run of >=2 (drops "500", punctuation).
+        if not _MEANINGFUL_TOKEN_RE.search(tok):
+            continue
+        real.add(tok)
+    return real
+
+
+def _is_thin_auto_abstracted(content: str) -> bool:
+    """Return True when *content* is a thin (meta-token-dense) auto-abstracted schema.
+
+    Fires ONLY when the "Recurring pattern[...]:" prefix is present (i.e. the
+    content is an auto-abstracted schema, not arbitrary user text). Thin means:
+    after stripping the prefix + [tags:...] suffix and removing stop-words,
+    yadgar meta-plumbing tokens (entity:/graph/derived_from/co_occurrence/…) and
+    namespace/synthetic tokens, FEWER than ``_THIN_MIN_REAL_TOKENS`` distinct
+    real domain tokens remain.
+
+    This targets meta-token DENSITY (ADR-0142 concern-2 H2-corpus), NOT verbosity
+    — a long topical schema with real anchors (jwt, docker, longmemeval, dataset)
+    keeps enough distinct real tokens to pass. It is deliberately conservative:
+    an over-broad guard would suppress genuinely useful abstractions, a worse
+    outcome than the thin noise it removes (plan §5 gate G2, corpus edition).
+    """
+    content = content[:4096]  # cap to bound regex backtracking
+    body, n_prefix = _RECURRING_PREFIX_RE.subn("", content)
+    if n_prefix == 0:
+        # Not an auto-abstracted schema — the thin gate does not apply.
+        return False
+    body = _TAGS_SUFFIX_RE.sub("", body).strip()
+    return len(_distinct_real_tokens(body)) < _THIN_MIN_REAL_TOKENS
+
+
 def _is_degenerate_auto_abstracted(content: str) -> bool:
     """Return True when *content* is a degenerate auto-abstracted memory.
 

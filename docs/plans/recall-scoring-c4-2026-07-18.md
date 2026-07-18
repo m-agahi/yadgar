@@ -1,10 +1,16 @@
-# Recall scoring C4 — ranking-miss + wiki-KB SNR (SCOPING)
+# Recall scoring C4 — ranking-miss + wiki-KB SNR (SCOPING → PARTIALLY BUILT)
 
-**Status:** PROPOSED
+**Status:** DECISIONS LOCKED — C4.0 + C4.1 + C4.3 BUILT (train `feat/recall-scoring-c4`, v5.151.0); 1b-fix + S3 DEFERRED
 **Date:** 2026-07-18
 **Task:** #62 (improvement-train #29, car C4)
-**Theme:** recall / retrieval quality. **Scope:** SCOPING ONLY — investigate → diagnose → options. NO code in this doc.
+**Theme:** recall / retrieval quality. **Scope (original):** SCOPING ONLY — investigate → diagnose → options.
 **Author note:** read-only investigation. Every code claim below cites `file:line` on branch `feat/bug-train`.
+
+> **BUILD UPDATE (2026-07-18):** the C4 recall-scoring train shipped the three
+> NON-scoring cars from §6 — C4.0 (tie-break), C4.1 (1b diagnostic), C4.3 (S1
+> thin-content guard). The five §7 decisions are now LOCKED (see §7). 1b's real
+> fix (§6 C4.2) and S3 (§6 C4.5) are DEFERRED. The C4.1 diagnostic VERDICT is
+> **FAIL** → 1b is a genuine abbreviation hard-miss, parked (xfail, #62).
 
 ---
 
@@ -123,7 +129,7 @@ demoted. Score-side down-weighting is possible but fights the fact that these ar
 |---|---|---|---|
 | **B1 — add a multi-candidate ranking test (make the assertion realistic)** | New test: seed the PAT memory + N distractors, assert PAT beats distractors for the expansion query. Do NOT touch the existing passing test. | Honest; surfaces whether recall *actually* guarantees this today; zero prod risk; may reveal vector layer already bridges it (→ done). | If it fails, motivates B2/C but doesn't fix; "realistic k" could hide a real gap. |
 | **B2 — query-side expansion** | Expand acronyms/abbreviations at query analysis (`analyze_query`) or index-side synonym injection so PAT↔"personal access token" overlap exists for FTS. | Targets the actual gap (lexical bridge); no fusion-weight change → lighter LongMemEval exposure. | Where do synonyms come from? Hand-list is brittle; generic acronym expansion is a research task; scope creep risk. |
-| **C — recall re-weight / CE-pool change** | Raise vector weight, or widen the CE candidate pool so a low-FTS target still reaches CE (which *can* bridge PAT). | Directly addresses "buried below CE pool cutoff"; principled. | **Changes scoring → mandatory LongMemEval recall@k gate** (~0.868 baseline); pool-widening costs latency (CE is ~90% of recall time, ADR-0035); **highest regression risk.** |
+| **C — recall re-weight / CE-pool change** | Raise vector weight, or widen the CE candidate pool so a low-FTS target still reaches CE (which *can* bridge PAT). | Directly addresses "buried below CE pool cutoff"; principled. | **Changes scoring → mandatory LongMemEval recall@k gate** (~0.868 baseline); pool-widening costs latency (CE ≈25% of recall wall, ADR-0105 supersedes ADR-0035's "CE ~70-90%" — the CE metric was dead since ADR-0078); **highest regression risk.** |
 
 ### Concern 2 (SNR)
 
@@ -193,20 +199,27 @@ decide ADR-0108 disposition (see §7).
 
 ---
 
-## 7. USER DECISIONS needed (do not invent — user must answer)
+## 7. USER DECISIONS — LOCKED (2026-07-18)
 
-1. **ADR-0108 disposition.** It is still `status: open` but empirically overtaken by ADR-0110
-   (test passes) and re-scoped into 1a/1b here. Close it, supersede it with a C4 ADR, or leave open
-   as the 1b tracker? (This doc recommends: supersede with a new C4 ADR that records the 1a/1b split.)
-2. **Concern-1 priority:** is 1b (abbreviation hard-miss) actually in scope for C4, or is C4 satisfied
-   by shipping 1a (tie-break) + the SNR work? 1b's honest fix (semantic abbreviation bridging) may be
-   a research-sized item, not a car.
-3. **SNR strategy pick:** corpus-side (S1/S2) vs score-side (S3/S4) vs both. This doc leans **corpus-side
-   S1** (thin content shouldn't exist) as the primary; S3 only if residual.
-4. **Re-weight appetite:** are you willing to run the LongMemEval gate at all this train, or should C4
-   stay to non-scoring changes (tie-break + corpus guard + test) and defer all re-weighting?
-5. **Tie-break direction:** `(score, id)` **desc** = newer-wins-ties (recency bias). Confirm that is the
-   desired semantics before C4.0 builds.
+All five are settled; the C4 train (`feat/recall-scoring-c4`, v5.151.0) was built against them.
+
+1. **ADR-0108 disposition → SUPERSEDE.** ADR-0108 is superseded by a NEW C4 ADR (recorded at ship)
+   that captures the 1a/1b split + the built cars. (ADR add is flagged for the main thread to run
+   post-merge — the train did not `adr_add` mid-build.)
+2. **Concern-1 priority → 1b is DIAGNOSED, its FIX is DEFERRED.** C4.1 adds the multi-candidate
+   ranking test (option B1) as a DIAGNOSTIC only. VERDICT: **FAIL** — the "Codeberg PAT" memory ranked
+   below 5 distractors for the expansion query, a genuine abbreviation hard-miss. Its real fix
+   (semantic abbreviation bridging) is research-sized and PARKED (#62); the test is `xfail(strict=True)`.
+   Fusion was deliberately NOT overfit to green it (gate G2).
+3. **SNR strategy → CORPUS-SIDE S1 only.** C4.3 broadens the write-time guard (new
+   `_is_thin_auto_abstracted`) so meta-token-dense auto-abstracted schemas are not promoted. S3
+   (score-side provenance demote) is DEFERRED to task #65. Back-prune of existing thin rows is OUT of
+   scope (write-time guard only; no migration this train).
+4. **Re-weight appetite → NO re-weighting this train, NO LongMemEval run.** C4 stayed entirely to
+   non-scoring changes (tie-break + corpus guard + diagnostic test). No fusion weights changed, so the
+   G1 LongMemEval gate did not need to run.
+5. **Tie-break direction → `(score, id)` DESC (newer-wins-ties) CONFIRMED.** Built into C4.0 across all
+   6 sort sites + the `set[int]` union ordering.
 
 ---
 
