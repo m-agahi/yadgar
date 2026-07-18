@@ -8,21 +8,36 @@ import { describe, it, expect } from 'vitest';
 import {
   laneX,
   layoutStages,
+  scatterLayout,
   computeTimeline,
   stageStateAt,
   scrubFractionToMs,
   msToFraction,
   playheadX,
   advanceClock,
-  nextSpeedIdx,
+  loadSpeedId,
+  saveSpeedId,
+  speedById,
   meshHasFault,
   firstFaultStage,
   edgeLaneClass,
   LANE_Y,
+  LANE_BAND,
+  LANE_DIVIDER_Y,
   MESH,
-  SPEEDS,
-  DILATION,
+  SPEED_PRESETS,
+  DEFAULT_SPEED_ID,
 } from './traces-replay.js';
+
+// Minimal injectable localStorage double (galaxy-view test pattern).
+function fakeStore(initial = {}) {
+  const m = new Map(Object.entries(initial));
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => m.set(k, String(v)),
+    _map: m,
+  };
+}
 
 // ── layout ────────────────────────────────────────────────────────────────
 
@@ -123,30 +138,199 @@ describe('scrub mapping', () => {
   });
 });
 
-// ── play clock ────────────────────────────────────────────────────────────
+// ── scatter layout (item-2) ─────────────────────────────────────────────────
 
-describe('advanceClock', () => {
-  it('advances t by dt/DILATION*speed at ×1', () => {
-    const { t, playing } = advanceClock(0, DILATION, 1, 1000); // speedIdx 1 = ×1
-    expect(t).toBeCloseTo(1, 6); // DILATION wall-ms → 1 trace-ms
-    expect(playing).toBe(true);
+describe('scatterLayout', () => {
+  it('returns [] for an empty node list', () => {
+    expect(scatterLayout([], 100)).toEqual([]);
+    expect(scatterLayout(null, 100)).toEqual([]);
   });
-  it('scales by speed (×2 index)', () => {
-    const idx2 = SPEEDS.indexOf(2);
-    const { t } = advanceClock(0, DILATION, idx2, 1000);
-    expect(t).toBeCloseTo(2, 6);
+
+  it('centers a single node in x and at its lane centre in y', () => {
+    const out = scatterLayout([{ rel_ms: 40, lane: 'core' }], 100);
+    expect(out).toHaveLength(1);
+    expect(out[0].x).toBe(MESH.x0 + (MESH.x1 - MESH.x0) * 0.4);
+    expect(out[0].y).toBe(LANE_Y.core);
   });
-  it('clamps to total and stops playing at the end', () => {
-    const { t, playing } = advanceClock(999, DILATION * 100, 1, 1000);
-    expect(t).toBe(1000);
-    expect(playing).toBe(false);
+
+  it('x is monotonic non-decreasing in rel_ms within a lane', () => {
+    const nodes = [
+      { rel_ms: 0, lane: 'backend' },
+      { rel_ms: 50, lane: 'backend' },
+      { rel_ms: 90, lane: 'backend' },
+    ];
+    const out = scatterLayout(nodes, 100);
+    const xs = out.map((n) => n.x);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]).toBeGreaterThanOrEqual(xs[i - 1]);
+  });
+
+  it('keeps y strictly inside the node lane band (never crosses the divider)', () => {
+    // 8 backend nodes all at nearly the same rel_ms → maximum y spread.
+    const nodes = Array.from({ length: 8 }, (_, i) => ({ rel_ms: 40 + i * 0.1, lane: 'backend' }));
+    const out = scatterLayout(nodes, 100);
+    for (const n of out) {
+      expect(n.y).toBeGreaterThanOrEqual(LANE_Y.backend - LANE_BAND.half);
+      expect(n.y).toBeLessThanOrEqual(LANE_Y.backend + LANE_BAND.half);
+      // band stays below the divider midline
+      expect(n.y).toBeGreaterThan(LANE_DIVIDER_Y);
+    }
+  });
+
+  it('de-overlaps a cluster: nodes closer than minGapX in x get distinct y', () => {
+    const nodes = [
+      { rel_ms: 40.0, lane: 'core' },
+      { rel_ms: 40.1, lane: 'core' },
+      { rel_ms: 40.2, lane: 'core' },
+    ];
+    const out = scatterLayout(nodes, 100);
+    const ys = out.map((n) => n.y);
+    expect(new Set(ys).size).toBeGreaterThan(1); // not all on one line
+  });
+
+  it('no two same-lane nodes overlap: NOT (Δx<minGapX AND Δy<ring-diameter)', () => {
+    // dense backend lane (the 18-recall-stage case) all clustered in time.
+    const RING = 2 * MESH.r; // circle diameter — overlap threshold
+    const nodes = Array.from({ length: 18 }, (_, i) => ({ rel_ms: 40 + i * 0.1, lane: 'backend' }));
+    const out = scatterLayout(nodes, 100);
+    for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        const dx = Math.abs(out[i].x - out[j].x);
+        const dy = Math.abs(out[i].y - out[j].y);
+        expect(dx >= LANE_BAND.minGapX || dy >= RING).toBe(true);
+      }
+    }
+  });
+
+  it('nodes stay in their own lane band (core vs backend never mix)', () => {
+    const nodes = [
+      { rel_ms: 10, lane: 'core' },
+      { rel_ms: 20, lane: 'backend' },
+    ];
+    const out = scatterLayout(nodes, 100);
+    expect(out[0].y).toBeLessThan(LANE_DIVIDER_Y); // core above
+    expect(out[1].y).toBeGreaterThan(LANE_DIVIDER_Y); // backend below
+  });
+
+  it('falls back to index spacing when totalMs<=0', () => {
+    const nodes = [
+      { rel_ms: 0, lane: 'core' },
+      { rel_ms: 0, lane: 'core' },
+    ];
+    const out = scatterLayout(nodes, 0);
+    expect(out[0].x).toBe(MESH.x0);
+    expect(out[1].x).toBe(MESH.x1);
+  });
+
+  it('is deterministic — same input twice → identical output', () => {
+    const nodes = [
+      { rel_ms: 5, lane: 'core' },
+      { rel_ms: 5, lane: 'core' },
+      { rel_ms: 60, lane: 'backend' },
+    ];
+    expect(scatterLayout(nodes, 100)).toEqual(scatterLayout(nodes, 100));
+  });
+
+  it('does not crash on an empty backend lane (core-only tool)', () => {
+    const nodes = [
+      { rel_ms: 0, lane: 'core' },
+      { rel_ms: 20, lane: 'core' },
+    ];
+    const out = scatterLayout(nodes, 22);
+    expect(out).toHaveLength(2);
+    expect(out.every((n) => n.y < LANE_DIVIDER_Y)).toBe(true);
+  });
+
+  it('does not mutate input nodes', () => {
+    const nodes = [{ rel_ms: 10, lane: 'core' }];
+    scatterLayout(nodes, 100);
+    expect(nodes[0].x).toBeUndefined();
+    expect(nodes[0].y).toBeUndefined();
   });
 });
 
-describe('nextSpeedIdx', () => {
-  it('cycles and wraps', () => {
-    expect(nextSpeedIdx(0)).toBe(1);
-    expect(nextSpeedIdx(SPEEDS.length - 1)).toBe(0);
+// ── speed presets + persistence (item-4) ────────────────────────────────────
+
+describe('SPEED_PRESETS', () => {
+  it('has the 6 requested presets with realtime default', () => {
+    expect(SPEED_PRESETS.map((p) => p.id)).toEqual([
+      'slow',
+      'medium',
+      'fast',
+      'realtime',
+      '2x',
+      '10x',
+    ]);
+    expect(DEFAULT_SPEED_ID).toBe('realtime');
+    expect(speedById('realtime').msPerMs).toBe(1);
+    expect(speedById('10x').msPerMs).toBe(0.1);
+    expect(speedById('slow').msPerMs).toBe(100);
+  });
+});
+
+describe('speedById', () => {
+  it('returns the preset for a known id', () => {
+    expect(speedById('fast').label).toBe('Fast');
+  });
+  it('falls back to realtime for an unknown id', () => {
+    expect(speedById('nope').id).toBe('realtime');
+  });
+});
+
+describe('loadSpeedId / saveSpeedId', () => {
+  it('empty store → default', () => {
+    expect(loadSpeedId(fakeStore())).toBe(DEFAULT_SPEED_ID);
+  });
+  it('garbage value → default', () => {
+    expect(loadSpeedId(fakeStore({ 'yadgar.traces.speed': 'bogus' }))).toBe(DEFAULT_SPEED_ID);
+  });
+  it('valid id → that id', () => {
+    expect(loadSpeedId(fakeStore({ 'yadgar.traces.speed': '10x' }))).toBe('10x');
+  });
+  it('saveSpeedId round-trips through a fake store', () => {
+    const s = fakeStore();
+    saveSpeedId('fast', s);
+    expect(loadSpeedId(s)).toBe('fast');
+  });
+  it('saveSpeedId coerces an unknown id to default', () => {
+    const s = fakeStore();
+    saveSpeedId('nope', s);
+    expect(loadSpeedId(s)).toBe(DEFAULT_SPEED_ID);
+  });
+  it('load swallows a private-mode getItem throw → default', () => {
+    const throwing = {
+      getItem: () => {
+        throw new Error('SecurityError');
+      },
+      setItem: () => {},
+    };
+    expect(loadSpeedId(throwing)).toBe(DEFAULT_SPEED_ID);
+  });
+});
+
+// ── play clock ────────────────────────────────────────────────────────────
+
+describe('advanceClock', () => {
+  it('advances t by dt / msPerMs at realtime (1:1)', () => {
+    const { t, playing } = advanceClock(0, 10, 1, 1000); // msPerMs=1 → 10ms wall = 10ms trace
+    expect(t).toBeCloseTo(10, 6);
+    expect(playing).toBe(true);
+  });
+  it('slow preset (msPerMs=100) advances 100× slower', () => {
+    const { t } = advanceClock(0, 100, 100, 1000); // 100ms wall → 1ms trace
+    expect(t).toBeCloseTo(1, 6);
+  });
+  it('10× preset (msPerMs=0.1) advances 10× faster than realtime', () => {
+    const { t } = advanceClock(0, 10, 0.1, 1000); // 10ms wall → 100ms trace
+    expect(t).toBeCloseTo(100, 6);
+  });
+  it('clamps to total and stops playing at the end', () => {
+    const { t, playing } = advanceClock(999, 1000, 1, 1000);
+    expect(t).toBe(1000);
+    expect(playing).toBe(false);
+  });
+  it('guards a non-positive msPerMs → treated as realtime', () => {
+    const { t } = advanceClock(0, 5, 0, 1000);
+    expect(t).toBeCloseTo(5, 6);
   });
 });
 

@@ -1,5 +1,7 @@
 # Improvement Train (#29) — umbrella
 
+> **ARCHIVED 2026-07-18** — umbrella #29 resolved. Group B + A2/A3 + C1–C3 shipped; A1 → task #13 (deferred); C4 → task #62 (recall-scoring, own plan). Kept for history.
+
 **Status (updated 2026-07-09):** umbrella #29 — Group B ALL SHIPPED (#124, 6e1629cb): B1 read-side branch_hint (#19), B2 adr_add tool (#12), B3 project_brief ADR surfacing (#13), B4 models.py ADR shape (#14), B5 anchor-signal (#177, a4390c4e). Group C: C1 stale_wiki_count fix shipped #124; C3 CLOSED (warning reachable); C4 test unskipped #124 (scoring investigation remains open). A2 REJECTED (ADR-0043/ADR-0067 — onnx-int8 removed). Open: A1 (cpu-burst Part 2, #30–33) + A3 (process-exporter nix hand-off, #34) + C4 diagnosis/fix.
 
 Created 2026-06-25. Umbrella for issue **#29**: a batch of independent improvements

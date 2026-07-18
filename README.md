@@ -13,7 +13,9 @@
 
 > **AI coding agents:** the operational guide lives in [`AGENTS.md`](AGENTS.md) — setup commands, dev environment, test runner, code style, PR rules, security gates. This README is the human overview.
 
-**A persistent memory engine for Claude Code.** Tell it what matters and it survives across sessions — decaying what you stop touching, promoting what repeats, filtering recall to the git branch you're on, and pairing every memory with a curated wiki that searches through the same ranking pipeline.
+**A persistent memory engine for MCP clients.** Tell it what matters and it survives across sessions — decaying what you stop touching, promoting what repeats, filtering recall to the git branch you're on, and pairing every memory with a curated wiki that searches through the same ranking pipeline.
+
+> **Supported clients:** the memory and wiki MCP surface works on any MCP client. Claude Code gets the full harness integration (hooks, task-list mirror, CLAUDE.md sync). OpenCode and other agentic clients are supported for the MCP surface; harness-glue porting is under investigation.
 
 *Yadgar* (یادگار) is Persian for "memento, keepsake."
 
@@ -31,10 +33,10 @@ A single `recall()` query searches **both stores at once**, fuses and re-ranks t
 ### Why
 
 - **Survives sessions.** Heat decay drops what you stopped using; surprise gating drops duplicates on arrival; anchors pin what must never be lost.
-- **Branch-aware.** Recall boosts current-branch matches 1.5×; wiki pages resolve in branch precedence (current → default → unscoped) so canonical knowledge stays reachable from feature work.
+- **Branch-aware.** Recall boosts current-branch matches; wiki pages resolve in branch precedence (current → default → unscoped) so canonical knowledge stays reachable from feature work.
 - **One ranking pipeline for memory + wiki.** Curated knowledge and episodic memory come back in a single ranked result, not two separate searches.
 - **Consolidates while you sleep.** A nightly brain cycle decays heat, promotes episodes to semantics, discovers causal links, forms associative links, and merges duplicates — without dropping the MCP connection.
-- **Self-documenting.** Architecture Decision Records, a reusable agent-prompt library, and an interactive 3D knowledge-graph all live in the same store.
+- **Self-documenting.** Architecture Decision Records, a reusable agent-prompt library, a harness task-list mirror, and an interactive 3D knowledge-graph all live in the same store.
 
 ---
 
@@ -59,6 +61,24 @@ A single `recall()` query searches **both stores at once**, fuses and re-ranks t
 ### Unified recall
 - One `recall()` query retrieves **memory + wiki together**, fused through WRRF, cross-encoder reranked, NLI- and MMR-filtered, and run through the rules engine — heat-weighted, decay-gated, branch-scoped. Filter by `type=` (`"memory"`, `"wiki"`, or both). `wiki_query` remains for wiki-only search.
 
+### Harness task-list mirror
+- `wiki_write_task_list(project, content, directory)` persists the Claude Code harness task list (TaskCreate/TaskList) to the wiki store so it survives `/clear` and session exit. The stop-hook checkpoint step writes it out; the SessionStart restore-nudge re-injects open tasks. Written canonical (branch-NULL) so it resolves from any branch. A dedicated MCP tool — not a raw `wiki_add` — because the canonical-write path is structurally bounded to the `{project}-task-list` slug.
+
+### Architecture Decision Records (ADR)
+- `adr_add(...)` writes a per-ADR wiki page (`yadgar-adr-NNNN`) enforcing an 11-field schema with auto-incrementing IDs. Each ADR gets its own page indexed in a thin `yadgar-adr-index`; `recall()` IS the read path (pages are recall-visible and immortal — no decay). `adr_get(directory, adr_id)` fetches a single ADR; `adr_list(directory, status=)` reads the index with optional status filter. A stop-hook prompt captures decisions at session end. Yadgar dogfoods its own system with 138 real ADRs.
+
+### Agent-prompt library
+- Reusable subagent dispatch prompts, stored as tagged wiki pages (`agent-prompt-<pattern>`), versioned and improving over time. `agent_prompt_save(pattern, content, purpose)` upserts one page per pattern; `agent_dispatch_prelude(pattern)` builds a prelude to prepend to a subagent prompt — recall-first contract + mandatory `## Yadgar findings` footer. `seed_agent_prompts()` seeds starter patterns. Lookup is via tagged recall (`recall(type="wiki", tags=["agent-prompt"])`), kept out of normal recall noise.
+
+### Knowledge-graph viz (galaxy)
+- `yadgar viz` serves an interactive 3D **galaxy layout** of memories, wiki pages, entities, and relationships at **http://localhost:42069**. The galaxy arranges nodes spatially: loose low-heat memories form the outer halo, recurring semantic clusters spiral as arms, and core/anchor nodes form a central bulge. Heat encodes brightness. The force-directed / 2D engine is removed (ADR-0138) — galaxy is the sole renderer.
+- Features: draggable node popups, Fit/Reset galaxy camera, filter by node type, heat slider, hover-neighborhood highlight, search, **traces replay** (replay a tool trace from Tempo), and an **in-browser config panel** (System → Config).
+- **Precomputed server-side layout** (unconditional): the nightly/full cycle computes 3D node positions, signature-caches them, and `/api/graph` serves the precomputed coordinates. On a seed miss, the client runs a cold layout.
+- The UI is organized into four menus: **Graph** · **Bookmarks** · **System** {Config, Health, Stats} · **Help** {Guide, Config Reference, About, Debug}.
+
+### Read-only DB inspection (`db_inspect`)
+- `db_inspect(query, params, limit)` executes a SurrealQL SELECT against a read-only viewer client (`YADGAR_RO_PASS`), gated by `YADGAR_DEBUG_APIS_ENABLED`. No writes possible from this surface (ADR-0132). Forwarded by core to the backend `/api/debug/read_query` endpoint.
+
 ### Nightly consolidation (the "brain cycle")
 Runs nightly while the daemon stays up in maintenance mode (no MCP reconnect). Phases:
 `apply_decay → process_episodes → merge_duplicates → link_similar → detect_causality → memify → cls_consolidation` plus a dream/sleep phase.
@@ -66,18 +86,7 @@ Runs nightly while the daemon stays up in maintenance mode (no MCP reconnect). P
 - **Causal discovery** — PC-algorithm causal-DAG inference over co-occurring memories.
 - **Dream replay** — associative `co_occurrence` linking + insight generation; insights cap at 21 days if unaccessed.
 - **Community detection** — graph clustering surfaced as clusters in the viz.
-- Re-embeds stale memories; optionally precomputes the graph layout (below).
-
-### Architecture Decision Records
-- `adr_add` writes to a per-project ADR log in the wiki store, enforcing an 11-field schema and auto-incrementing IDs (ADR-0001, ADR-0002, …). A Stop-hook prompt captures decisions at session end. Yadgar dogfoods its own ADR system (ADR-0004, 0007, 0011, 0013 are all real entries).
-
-### Agent-prompt library
-- Reusable subagent dispatch prompts, stored as tagged wiki pages (`agent-prompt-<pattern>`), versioned and improving over time. `agent_prompt_save(pattern, content, purpose)` upserts one page per pattern; `agent_dispatch_prelude(pattern)` builds a prelude to prepend to a subagent prompt; `seed_agent_prompts()` seeds four starter patterns. Lookup is via tagged recall (`recall(type="wiki", tags=["agent-prompt"])`), kept out of normal recall noise.
-
-### Knowledge-graph viz
-- `yadgar viz` serves an interactive force-directed graph of memories, wiki pages, entities, and relationships at **http://localhost:42069** (2D + 3D; memory = sphere, wiki = octahedron, anchor = cube; heat encoded as color). Filter by node type, edge type, and heat; focus mode, hover-neighborhood highlight, search, and connection-count badges.
-- **Precomputed server-side layout** (unconditional): the nightly/full cycle computes 3D node positions once (`networkx.spring_layout`, signature-cached) so the graph renders pre-laid-out instead of a cold client-side layout per load. On a seed miss (empty cache or nodes newer than the last precompute) the client warm-starts from localStorage / runs a cold layout.
-- The UI is organized into four menus: **Graph** · **Bookmarks** · **System** {Config, Health, Stats} · **Help** {Guide, Config Reference, About, Debug}.
+- Re-embeds stale memories; precomputes the galaxy graph layout.
 
 ### Config system
 - [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) with precedence **env vars (`YADGAR_*`) > `~/.config/yadgar/config.yaml` > defaults**.
@@ -87,43 +96,53 @@ Runs nightly while the daemon stays up in maintenance mode (no MCP reconnect). P
 - **Bearer-token MCP auth** on `/api/*`, `/hooks/*`, `/mcp` — default-deny CORS, timing-safe compare, loopback-only by default. `/health` and `/metrics` exempt on loopback.
 - **Always-on secret gate** blocks AWS / GCP / Stripe / Slack / OpenAI / Anthropic keys, JWTs, GitHub PATs, private keys, and DB URIs before they reach the store (cannot be disabled; context-aware allowlist for known-good fixtures).
 - **Auto-capture sanitization** strips ANSI escapes, control chars, and Unicode bidi-override before action-log insert.
-- **Prometheus `/metrics`** + OpenTelemetry distributed tracing across core + backend (core→backend traceparent joins one trace); structured JSON logs; per-phase consolidation duration markers. **Tri-signal standard** (v5.101, ADR-0034): every in-scope function emits span+metric+log via the `@observe` decorator, ratcheted by the I33 coverage lint.
-- **Async write queue** with retry/backoff, dead-letter for permanent failures, and DLQ inspection tools (`dlq_inspect`, `dlq_requeue`, `dlq_dismiss`).
+- **Prometheus `/metrics`** + OpenTelemetry distributed tracing across core + backend (core→backend W3C traceparent joins one trace in Tempo); structured JSON logs; per-phase consolidation duration markers. **Tri-signal standard** (v5.101, ADR-0034): every in-scope function emits span+metric+log via the `@observe` decorator, ratcheted by the I33 coverage lint.
+- **Async write queue** (file-queue, ADR-0075) with retry/backoff, dead-letter for permanent failures, and DLQ inspection tools (`dlq_inspect`, `dlq_requeue`, `dlq_dismiss`).
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────┐         MCP (stdio / streamable-http)        ┌──────────────────────────┐
-│  Claude Code │ ◄──────────────────────────────────────────► │  yadgar core (:8765)     │
-│   + hooks    │   memorize / recall / wiki_* / checkpoint …   │  FastAPI + MCP server    │
-└──────────────┘                                               │  retrieval pipeline      │
-                                                               │  consolidation scheduler │
-                                                               │  viz web UI (:42069)     │
-                                                               └────────────┬─────────────┘
+┌──────────────┐        MCP (streamable-HTTP / stdio)         ┌──────────────────────────────┐
+│  Claude Code │ ◄────────────────────────────────────────── ►│  yadgar/core (:8765)          │
+│   + hooks    │  memorize / recall / wiki_* / checkpoint …   │  MCP server (thin router)     │
+└──────────────┘                                               │  auth · rules · hooks · viz  │
+                                                               └────────────┬─────────────────┘
+                                                                            │ HTTP + file queue
+                                                               ┌────────────▼─────────────────┐
+                                                               │  yadgar/_shared              │
+                                                               │  config · storage contracts  │
+                                                               │  observability · security    │
+                                                               └────────────┬─────────────────┘
                                                                             │ HTTP
-                                                               ┌────────────▼─────────────┐
-                                                               │  yadgar-backend           │
-                                                               │  SurrealDB store (:8000)  │
-                                                               │  embed + rerank (:8001)   │
-                                                               └───────────────────────────┘
+                                                               ┌────────────▼─────────────────┐
+                                                               │  yadgar/backend               │
+                                                               │  SurrealDB store (:8000)      │
+                                                               │  embed + rerank (:8001)       │
+                                                               │  retrieval pipeline (POST /recall) │
+                                                               │  consolidation compute       │
+                                                               └──────────────────────────────┘
 ```
 
-- **yadgar core** — the MCP server (FastAPI + the `mcp` SDK). Hosts the retrieval pipeline, the nightly consolidation scheduler, the rules engine, the security middleware, and the viz web UI on `:42069`. Talks to Claude Code over stdio or streamable-HTTP.
-- **yadgar-backend** — SurrealDB as the vector + full-text store (`:8000`) and the embedding / cross-encoder rerank service (`:8001`). Versioned on an independent track from core.
-- **Retrieval pipeline** — `recall()` runs FTS + KNN vector + personalized-PageRank + spreading-activation + temporal candidate generation → WRRF fusion → cross-encoder rerank → NLI → MMR diversity → adversarial detection → rules engine. Branch filter (`branch IN (current, default, NULL)`) applies post-fetch; current-branch matches get a 1.5× boost. Behavior is pinned by characterization tests.
-- **Consolidation** — a nightly cycle (19:00 UTC) plus a weekly vacuum; runs in-process while the daemon stays up.
+Three physical layers (ADR-0056 / ADR-0060 / ADR-0062):
+- **yadgar/core** — the MCP server (FastAPI). Routes tool calls; forwards recall to backend via `POST /recall`; hosts the viz web UI routing layer. No heavy compute lives here.
+- **yadgar/_shared** — contracts, config (pydantic-settings), storage client, observability (`@observe`), security gate. No direct MCP tool code.
+- **yadgar/backend** — SurrealDB (`:8000`) + embed/rerank service (`:8001`). Owns the full retrieval pipeline, consolidation compute, and the async write drainer. ML models are baked into the backend image (ADR-0101).
+
+**Write path (ADR-0075):** MCP tool → core → file queue (`YADGAR_QUEUE_BASE=/data/queue`) → backend drainer → SurrealDB. Writes are async by default; `wait=True` blocks until drainer commits.
+
+**Recall path (ADR-0044):** `recall()` in core is a thin forwarder → backend `POST /recall` runs the full pipeline (FTS + KNN + PPR + spreading activation → WRRF fusion → Ettin-32m CE rerank → NLI → MMR → adversarial → rules). Branch filter (`branch IN (current, default, NULL)`) and current-branch boost applied post-fetch.
 
 Deeper detail: [docs/reference/architecture.md](docs/reference/architecture.md) · [docs/reference/retrieval.md](docs/reference/retrieval.md) · [docs/reference/memory-lifecycle.md](docs/reference/memory-lifecycle.md).
 
-**Layer docs (in-tree):** each layer root carries a `README.md` (subsystem map) and an `AGENTS.md` (placement laws for coding agents) — [`yadgar/_shared/`](yadgar/_shared/README.md) · [`yadgar/backend/`](yadgar/backend/README.md) · [`yadgar/core/`](yadgar/core/README.md). Major subsystem packages (storage, retrieval, config, observability, security, wiki, embed_service, consolidation, server, viz, daemon, cli, install, seed, hooks) carry their own `README.md`; existence is lint-enforced (`scripts/check_subsystem_readmes.py`).
+**Layer docs (in-tree):** each layer root carries a `README.md` (subsystem map) and an `AGENTS.md` (placement laws for coding agents) — [`yadgar/_shared/`](yadgar/_shared/README.md) · [`yadgar/backend/`](yadgar/backend/README.md) · [`yadgar/core/`](yadgar/core/README.md).
 
 ---
 
 ## Install
 
-Python 3.14+ on the host (or use the Docker path for zero host Python). All paths reach the same `yadgar setup` post-install step.
+Python 3.14+ on the host (or use the Docker / Compose path for zero host Python). All paths reach the same `yadgar setup` post-install step.
 
 **pipx (recommended for isolated install):**
 ```bash
@@ -177,32 +196,31 @@ Single-session use. Skip `yadgar setup`. Add to `~/.claude.json`:
 { "mcpServers": { "yadgar": { "command": "yadgar", "args": [] } } }
 ```
 
-Restart Claude Code. No bearer auth; embed / rerank degrade gracefully without the backend.
+Restart Claude Code. No bearer auth; embed / rerank degrade gracefully without the backend. Note: the installed daemon uses streamable-HTTP transport by default; stdio mode is for single-session / no-Docker use.
 
-### Docker
+### Docker Compose (recommended for production)
 
-Two containers — backend (SurrealDB + embed service) and core (MCP server + viz). Note the **independent version tracks**: core tracks the project version, backend tracks its own.
+Two containers — backend (SurrealDB + embed/rerank service) and core (MCP server). Independent version tracks.
 
 ```bash
-docker network create yadgar-net
+# Source secrets first
+set -a && . ~/.config/yadgar/secrets.env && set +a
 
-docker run -d --name yadgar-backend --network yadgar-net \
-  -v yadgar-db-data:/data \
-  -e SURREAL_USER=$SURREAL_USER \
-  -e SURREAL_PASS=$SURREAL_PASS \
-  openfantasy/yadgar-backend:5.43.0
-
-docker run -d --name yadgar --network yadgar-net \
-  -v yadgar-data:/data \
-  -p 127.0.0.1:8765:8765 \
-  -p 127.0.0.1:42069:42069 \
-  -e YADGAR_DB_URL=http://yadgar-backend:8000 \
-  -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
-  -e YADGAR_MCP_AUTH_TOKEN=$YADGAR_MCP_AUTH_TOKEN \
-  openfantasy/yadgar:5.132.0
+docker compose up -d
 ```
 
-Containers bundle Python 3.14 — no host Python required. Source `~/.config/yadgar/secrets.env` (or generate the required vars yourself) before launching.
+The compose file (`docker-compose.yml`) defines:
+- **`yadgar-backend`** — `openfantasy/yadgar-backend:5.55.0`, SurrealDB on `:8000` + embed/rerank on `:8001`. Mounts `yadgar-db-data` (read-only) + `yadgar-queue-data` (file queue, `YADGAR_QUEUE_BASE=/queue-data`).
+- **`yadgar-core`** — `openfantasy/yadgar:5.149.0`, MCP server on `:8765`. Mounts `yadgar-queue-data` at `/data` (shared file queue). Depends on backend healthcheck before starting.
+
+The knowledge-graph viz UI is **not** part of the compose service. Run `yadgar viz` separately on the host to launch the viz server at `http://localhost:42069` — it reverse-proxies `/api/*` to the daemon at `:8765`.
+
+Then register with Claude Code:
+```bash
+yadgar daemon configure-mcp
+```
+
+> Note: for the manual `docker run` path or systemd-based production deploy, see [`docs/reference/install.md`](docs/reference/install.md). The compose file above is the recommended development/production path.
 
 ### Updating
 
@@ -214,12 +232,53 @@ For `pipx` the suggested command is `pipx upgrade yadgar`; then re-run `yadgar s
 
 ---
 
+## Common commands
+
+### Setup / install
+```bash
+yadgar setup                          # first-run: config, secrets, hooks, units
+yadgar install-hooks                  # (re-)wire Claude Code hooks + bearer token
+yadgar install-subagents              # install subagent templates
+yadgar daemon configure-mcp           # write ~/.claude.json with streamable-HTTP + bearer header
+yadgar seed <directory>               # bootstrap memory for an existing project
+```
+
+### Daily use
+```bash
+yadgar daemon start|stop|status|logs|health   # manage the background daemon
+yadgar viz                                     # launch knowledge-graph UI at http://localhost:42069
+yadgar stats [--project /path]                 # memory counts + health
+yadgar daemon restart                          # restart after config change
+```
+
+### Maintenance / backup
+```bash
+yadgar vacuum                         # compact the SurrealKV store
+yadgar export duckdb --output snap.duckdb    # analytics snapshot (requires yadgar[analytics])
+yadgar config set <key> <value>       # change a config knob (also editable in viz System→Config)
+yadgar config list                    # show all config knobs with current values
+yadgar update --check                 # check for new version on PyPI
+yadgar update --install               # orchestrated upgrade (snapshot → pull → restart → verify)
+```
+
+### Debugging
+```bash
+yadgar daemon logs                    # tail daemon container logs
+yadgar daemon health                  # check /health endpoint
+yadgar --version                      # core + backend + daemon versions
+yadgar config get YADGAR_LOG_FORMAT   # inspect a single knob
+# MCP-level: dlq_inspect() · audit_anchors() · check_invariants() · db_inspect("SELECT ...")
+```
+
+---
+
 ## CLI
 
 ```
-yadgar                              # MCP server (stdio); --transport {stdio,sse,streamable-http}
-yadgar daemon start|stop|logs|health|status
-yadgar daemon configure-mcp         # write ~/.claude.json with bearer header
+yadgar                              # MCP server (streamable-HTTP default); --transport {sse,streamable-http}
+yadgar daemon start|stop|logs|health|status|restart
+yadgar daemon configure-mcp         # write ~/.claude.json with bearer header + streamable-HTTP transport
+yadgar daemon install-service       # install systemd / launchd unit
 yadgar setup                        # first-run config + secrets + MCP snippet
 yadgar stats [--project /path]      # memory statistics
 yadgar viz                          # knowledge graph at http://localhost:42069
@@ -231,13 +290,17 @@ yadgar config init|list|get|set     # configuration
 yadgar update --check|--install|--rollback
 yadgar export duckdb --output snap.duckdb   # analytics snapshot (pip install yadgar[analytics])
 yadgar install-hooks|install-subagents      # wire Claude Code hooks + agent templates
+yadgar restore <directory>          # (hook-internal) restore context post-compaction
+yadgar capture                      # (hook-internal) lightweight action capture
+yadgar drain                        # (hook-internal) flush file queue
+yadgar context                      # (hook-internal) session-start context inject
 ```
 
 ---
 
 ## MCP tools
 
-Yadgar exposes **75 MCP tools**. ⚡ marks `power=True` tools (gated in the minimal MCP profile). A categorized selection — full list via the running server's tool catalog:
+Yadgar exposes **~79 MCP tools** (excluding test-only stubs). ⚡ marks `power=True` tools (gated in the minimal MCP profile). A categorized selection — full list via the running server's tool catalog:
 
 <details><summary><b>Memory</b></summary>
 
@@ -265,6 +328,8 @@ Editing: `wiki_append_section` ⚡ · `wiki_replace_text` ⚡ · `wiki_delete_te
 
 Maintenance: `wiki_coverage` · `wiki_refresh_stale` ⚡ · `wiki_cleanup_merged_branches` ⚡ · `repo_wiki_generate`
 
+**Task-list mirror:** `wiki_write_task_list(project, content, directory)` — canonical write bounded to `{project}-task-list` slug; used by stop-hook checkpoint (step 4).
+
 > `wiki_add` commits directly — there is no draft/approve workflow on the production write path. (`wiki_drafts` / `wiki_approve` / `wiki_discard` exist but no path produces drafts.)
 
 </details>
@@ -281,7 +346,7 @@ Blocks (Letta-style core memory, all ⚡): `block_create` · `block_get` · `blo
 
 | Tool | Power | Purpose |
 |---|:---:|---|
-| `project_brief(directory, mode)` | | Layered bootstrap — `catalog` (~500 tok), full (~1050 tok), or `signals` |
+| `project_brief(directory, mode)` | | Layered bootstrap — `signals` (<100 tok), `restore` (~800 tok), `catalog` (~500 tok), `full` (~1050 tok) |
 | `bootstrap_project(directory, content)` | ⚡ | Set `_project_init` |
 | `update_active_work(directory, content)` | ⚡ | Atomic replace of `_active_work` |
 | `seed_project(directory)` | ⚡ | Bootstrap memory from README + top-level docs |
@@ -291,17 +356,39 @@ Blocks (Letta-style core memory, all ⚡): `block_create` · `block_get` · `blo
 
 </details>
 
-<details><summary><b>Consolidation &amp; ops</b></summary>
+<details><summary><b>ADR system</b></summary>
 
-`consolidate_now()` ⚡ · `vacuum_now()` ⚡ · `vacuum_checkpoints()` ⚡ · `reembed_all()` ⚡ · `check_invariants(repair)` ⚡ · `sync_instructions()` ⚡ · `archive_purge()` ⚡ · `add_rule(...)` ⚡ · `get_rules(...)` ⚡ · `audit_anchors()` ⚡
+| Tool | Power | Purpose |
+|---|:---:|---|
+| `adr_add(directory, title, context, decision, …)` | ⚡ | Append 11-field ADR to per-project index; writes `{project}-adr-NNNN` wiki page |
+| `adr_get(directory, adr_id)` | ⚡ | Fetch a single ADR page by ID (e.g. `"ADR-0042"`) |
+| `adr_list(directory, status=)` | ⚡ | Read the index; optional status filter (`"open"`, `"accepted"`, etc.) |
 
 </details>
 
-<details><summary><b>Agent-prompt library &amp; ADR</b></summary>
+<details><summary><b>Agent-prompt library</b></summary>
 
-Agent prompts: `agent_prompt_save(pattern, content, purpose)` ⚡ · `agent_dispatch_prelude(pattern)` · `seed_agent_prompts()` ⚡
+| Tool | Power | Purpose |
+|---|:---:|---|
+| `agent_dispatch_prelude(pattern, task_topic)` | | Build a subagent prompt prelude from the saved prompt library |
+| `agent_prompt_save(pattern, content, purpose)` | ⚡ | Upsert a reusable dispatch pattern page |
+| `seed_agent_prompts()` | ⚡ | Seed starter patterns into the library |
 
-ADR: `adr_add(...)` ⚡ — append an 11-field Architecture Decision Record to the project ADR log
+Patterns are wiki pages tagged `["agent-prompt"]`; lookup: `recall(type="wiki", tags=["agent-prompt"])`.
+
+</details>
+
+<details><summary><b>DB inspection</b></summary>
+
+| Tool | Power | Purpose |
+|---|:---:|---|
+| `db_inspect(query, params, limit)` | | Read-only SurrealQL SELECT; gated by `YADGAR_DEBUG_APIS_ENABLED` (ADR-0132) |
+
+</details>
+
+<details><summary><b>Consolidation &amp; ops</b></summary>
+
+`consolidate_now()` ⚡ · `vacuum_now()` ⚡ · `vacuum_checkpoints()` ⚡ · `reembed_all()` ⚡ · `check_invariants(repair)` ⚡ · `sync_instructions()` ⚡ · `archive_purge()` ⚡ · `add_rule(...)` ⚡ · `get_rules(...)` ⚡ · `audit_anchors()` ⚡
 
 </details>
 
@@ -333,8 +420,10 @@ Priority: env vars (`YADGAR_*`) > `~/.config/yadgar/config.yaml` > defaults. Kno
 | `YADGAR_ALLOWED_ORIGINS` | loopback | CORS allowlist. |
 | `YADGAR_METRICS_ENABLED` | `1` | Expose Prometheus `/metrics` (loopback, unauthenticated). |
 | `YADGAR_LOG_FORMAT` | `human` | Set `json` for structured logs. |
-| `YADGAR_VIZ_MAX_MEMORIES` / `_WIKI` / `_ENTITIES` | `500` / `200` / `2000` | Viz node caps (`0`/`-1` = unlimited). |
+| `YADGAR_VIZ_MAX_MEMORIES` / `_WIKI` / `_ENTITIES` | `0` (unlimited) | Galaxy node caps (`0`/`-1` = unlimited). |
 | `YADGAR_MODEL_IDLE_EVICTION_SECONDS` | `0` | Unload heavy ML models after idle seconds (`0` = stay loaded). |
+| `GTE_RERANKER_MODEL` | `cross-encoder/ettin-reranker-32m-v1` | Primary CE reranker (Train 4; ADR-0104). Rollback: `Alibaba-NLP/gte-reranker-modernbert-base`. |
+| `YADGAR_DEBUG_APIS_ENABLED` | `0` | Enable `/api/logs/*` + `db_inspect` surface. |
 
 ---
 
@@ -343,6 +432,8 @@ Priority: env vars (`YADGAR_*`) > `~/.config/yadgar/config.yaml` > defaults. Kno
 Yadgar ships a `SubagentStop` hook that captures memory findings from Claude Code subagents: when a subagent completes, its final report is scanned for a `## Yadgar findings` section and each bullet is persisted with `provenance_agent` set to the agent type.
 
 To opt your subagents into the protocol, paste [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) into your `~/.claude/CLAUDE.md`, then run `yadgar install-hooks --scope global`. The contract is opt-in — Yadgar works without it.
+
+The **agent-prompt library** (`agent_prompt_save` / `agent_dispatch_prelude`) gives subagent dispatch prompts a versioned home: save a good prompt once, improve it over time, and every dispatch pulls the latest version automatically. `agent_dispatch_prelude(pattern, task_topic)` builds a compliant prelude (recall-first contract + `## Yadgar findings` footer) from the stored pattern.
 
 ---
 
@@ -368,7 +459,7 @@ Full methodology and per-type breakdown: [`docs/benchmark-results/BENCHMARK_RESU
 
 The cross-encoder reranker swap (GTE-ModernBERT → Ettin-32m, v5.132.0/5.43.0) delivered a measured **2.44× end-to-end recall speedup** on equal hardware (same-image, same-CPU A/B, histogram-delta method per ADR-0098). The 3-CPU standing config (ADR-0106) adds parallel batch scoring via `gather_budget=2` (~24% further reduction vs 2-CPU). CE is ~25% of the cold recall wall (ADR-0105) — the dominant gains come from the model swap.
 
-Controlled re-measurement 2026-07-15 (v5.143.0/5.50.0, n=30 per regime, CE-miss gate PASS): warm steady-state mean **2,332ms** / p50 **2,644ms** / p95 **3,064ms**; cold (post-restart) mean **2,594ms** / p50 **2,682ms** / p95 **3,148ms**. Cold-cache first queries (before in-process caches re-warm, i.e. first 2 calls post-restart) run ~2.9–3.4s; CE snapshot cache persists on disk across restarts. The v5.143.0 module-split (PR #203) is **perf-neutral** — byte-identical retrieval code (pure file moves). The apparent gap vs the older ~4.3s baseline is a cache-regime difference (that baseline was fresh-session cold-graph), not a code change effect.
+Controlled re-measurement 2026-07-15 (v5.143.0/5.50.0, n=30 per regime, CE-miss gate PASS): warm steady-state mean **2,332ms** / p50 **2,644ms** / p95 **3,064ms**; cold (post-restart) mean **2,594ms** / p50 **2,682ms** / p95 **3,148ms**.
 
 Full consolidated latency history, measurement protocol, comparability caveats, and per-milestone verdicts: [`docs/benchmark-results/RECALL_SPEED.md`](docs/benchmark-results/RECALL_SPEED.md).
 
@@ -376,21 +467,28 @@ Full consolidated latency history, measurement protocol, comparability caveats, 
 
 ## Roadmap
 
-### Shipped highlights (v5.78 → v5.104)
+### Shipped highlights (v5.78 → current)
 - **Unified recall** (v5.78–v5.81) — memory + wiki merged into one ranked, heat-weighted, branch-scoped result; now the default.
-- **ADR tooling** (`adr_add`, v5.85) + capture-first Stop-hook prompt.
-- **Agent-prompt library rework** (v5.85, ADR-0007) — wiki-backed, tagged-recall lookup.
+- **ADR tooling** (`adr_add` / `adr_get` / `adr_list`, v5.85+) + capture-first Stop-hook prompt. Per-ADR wiki pages with thin index; `recall()` is the read path. 138 real ADRs dogfooded.
+- **Agent-prompt library** (v5.85, ADR-0007) — wiki-backed, tagged-recall lookup; `agent_dispatch_prelude` builds compliant subagent preludes.
+- **Harness task-list mirror** — `wiki_write_task_list` (stop-hook out) + session-start restore-nudge (in); persists the Claude Code task list across `/clear`.
+- **Galaxy viz** (post-#52, ADR-0134/0138) — galaxy is the sole renderer (force-directed/2D engine removed); galaxy layout (loose/core/arms), traces replay, in-browser config panel.
+- **Read-only DB inspection** (`db_inspect`, ADR-0132) — gated SurrealQL SELECT surface.
 - **Wiki autolink + repo-wiki store-bridge** (v5.85).
 - **Viz overhaul + precomputed server-side layout + System → Config editor** (v5.86–v5.88).
-- **Recall perf + accounting** (v5.97–v5.104) — fusion/MMR N+1 batches, GTE-ModernBERT reranker (Lever-1, v5.98), spreading-activation N+1 batched (v5.104); latency FULLY accounted via MCP-tool traces (fusion pass quality-load-bearing — ADR-0035). _CE metric corrected post-T4: CE is **~25%** of the cold recall wall, not the "~90%" once quoted here (dead-metric artifact — ADR-0105, #192)._
-- **Ettin-32m CE reranker** (Train 4) — CE primary swapped GTE-ModernBERT → `cross-encoder/ettin-reranker-32m-v1` (~4.7× faster per-pass, 2.44× end-to-end recall; GTE-ModernBERT kept as config-revert rollback). ADR-0106: backend standing config `--cpus 3`.
-- **Tri-signal observability standard** (v5.100–v5.101, ADR-0034) — span+metric+log per function via the `@observe` decorator, I33 coverage lint, core→backend traceparent, OTLP → Tempo.
-- **Test-speed train** (v5.104, ADR-0036) — module-scoped `storage` fixture + batched SurrealDB wipe → CI shards ~2× faster.
-- **Observability train** (v5.83) — `/health` 503-on-degraded, OTLP circuit breaker, off-loop span logs.
+- **Core/_shared/backend layer split** (ADR-0056/0060/0062/0063) — import-linter-enforced three-layer architecture; forward-only recall (ADR-0044) with full pipeline in backend.
+- **Recall perf + accounting** (v5.97–v5.104) — WRRF N+1 batches, spreading-activation N+1 batched; CE is ~25% of cold recall wall (ADR-0105 corrected).
+- **Ettin-32m CE reranker** (Train 4, ADR-0104) — 2.44× end-to-end recall speedup; 3-CPU standing config (ADR-0106).
+- **Tri-signal observability standard** (v5.100–v5.101, ADR-0034) — span+metric+log per function, I33 coverage lint, core→backend W3C traceparent, OTLP → Tempo.
+- **Test-speed train** (v5.104, ADR-0036) — CI shards ~2× faster.
+- **File-queue write path** (ADR-0075) — async write queue on shared volume; both containers share `yadgar-queue-data`.
+- **Deps modernization** (ADR-0100) — transformers 5.x; optimum-onnx removed.
+- **Module standardization** (ADR-0128/0130) — major subsystems promoted to package dirs; import-linter enforced; perf-neutral (ADR-0129).
 
-### Major upcoming
-- **v6 — Nightly LLM curator.** A local agent (Ollama; two-tier deepseek-r1 + qwen3:8b) runs each night to detect staleness, annotate contradictions, find semantic correlations beyond co-occurrence, propose merges/forgets, and dedupe wiki pages — skipping cleanly if Ollama is offline.
-- **v7 — Real-time synthesis.** `recall(synthesize=True)` / `wiki_query(synthesize=True)` append a synthesized answer alongside raw records; a new `ask()` tool returns synthesis-only output. Depends on a sub-10 s local synthesis model.
+### Open horizon
+- **v6 — Nightly LLM curator.** A local agent (Ollama; two-tier deepseek-r1 + qwen3:8b) runs each night to detect staleness, annotate contradictions, find semantic correlations beyond co-occurrence, propose merges/forgets, and dedupe wiki pages.
+- **v7 — Real-time synthesis.** `recall(synthesize=True)` / `ask()` tool; depends on a sub-10 s local synthesis model.
+- **Open work:** improvement-train A1+C4 · full-observability per-area rollout (#I33) · ci-velocity remaining (#83/#79) · cpu-burst Part 2 · task-routing fix · fusion tiebreak determinism · obs velocity completion.
 
 Full history: [CHANGELOG.md](docs/CHANGELOG.md).
 

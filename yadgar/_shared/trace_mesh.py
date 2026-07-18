@@ -138,6 +138,8 @@ ALIASES: dict[str, str] = {
     "RulesEngine.get_applicable_rules": "fetch applicable rules",
     "_get_file_queue": "get DLQ file-queue handle",
     # ── forward / admin boundary ─────────────────────────────────────────────
+    "recall": "Recall",
+    "_forward_to_backend": "forward to backend",
     "_forward_admin": "forward to backend /admin",
     "POST": "HTTP POST to backend",
     "GET /admin/dbsize": "backend DB-size query",
@@ -511,6 +513,77 @@ def _lane(svc: str) -> str:
 
 
 @observe(tier="hot", span=False)
+def _find_forwarder(tool: Span) -> Span | None:
+    """The core-svc hand-off span: the DEEPEST core-lane descendant of ``tool``
+    that has a lane-crossing (backend) descendant — i.e. the span that actually
+    forwards to the backend. Returns None when the tool is core-only (no crossing)
+    or the crossing is directly off the tool span itself.
+
+    Pure. The returned span is core-svc so ``_lane`` places it in the core lane;
+    it is distinct from the crossing span itself (which is backend-svc → backend lane).
+    """
+    best: Span | None = None
+    best_depth = -1
+    stack: list[Span] = list(tool.children)
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children)
+        if _lane(node.svc) != "core":
+            continue
+        # core span that owns a backend crossing somewhere below it
+        if any(_lane(c.svc) == "backend" for c in node.children) or subtree_has(
+            node, lambda x: _lane(x.svc) == "backend"
+        ):
+            if node.depth > best_depth:
+                best, best_depth = node, node.depth
+    return best
+
+
+@observe(tier="hot", span=False)
+def core_boundary_stages(tool: Span) -> list[Span]:
+    """Return the 0-2 synthetic CORE-lane lead nodes for a forward-only tool trace.
+
+    In a forward-only recall the heavy pipeline all carries ``svc=yadgar-backend``
+    (recall runs in the backend process), so the tool's *descendants* are all
+    backend-lane and the core lane renders empty. But the boundary tool span itself
+    and the core->backend forwarder genuinely exist core-side — surface them:
+
+    1. **Boundary** — the tool span (e.g. ``tool.recall``) as a core node, dur =
+       core self-time (tool.dur - core children dur), floored so the dwell is visible.
+    2. **Forwarder** — the core-svc hand-off span (``_find_forwarder``), if present.
+
+    Skipped entirely when the tool span is backend-svc (no phantom core node).
+    Pure — returned Spans get laned by ``_lane(svc)`` like any other node.
+    """
+    if _lane(tool.svc) != "core":
+        return []
+    core_child_dur = sum(c.dur for c in tool.children if _lane(c.svc) == "core")
+    self_ms = max(0.5, tool.dur - core_child_dur)
+    boundary = Span(
+        name=tool.name,
+        rel=tool.rel,
+        dur=self_ms,
+        svc=tool.svc,
+        depth=tool.depth,
+        parent=tool.parent,
+    )
+    out = [boundary]
+    fwd = _find_forwarder(tool)
+    if fwd is not None:
+        out.append(
+            Span(
+                name=fwd.name,
+                rel=fwd.rel,
+                dur=fwd.dur,
+                svc=fwd.svc,
+                depth=fwd.depth,
+                parent=fwd.parent,
+            )
+        )
+    return out
+
+
+@observe(tier="hot", span=False)
 def _node_type(s: Span, error_names: list[str]) -> str:
     if any(s.name.endswith(e) for e in error_names):
         return "error"
@@ -562,6 +635,17 @@ def build_mesh(data: dict) -> dict:
         tool.svc = "yadgar-core"
 
     stages = select_stages(tool, total, error_names)
+
+    # Item-1: forward-only tools (recall etc.) run their whole pipeline in the
+    # backend process, so select_stages — which returns the tool's DESCENDANTS —
+    # yields zero core-lane nodes. Prepend the real core-side boundary + forwarder
+    # so the core lane is never empty. Skipped on the dropped-boundary flat forest
+    # (tool is root — no genuine tool span to promote).
+    if not dropped_boundary:
+        lead = core_boundary_stages(tool)
+        selected_names = {s.name for s in stages}
+        lead = [s for s in lead if s.name not in selected_names]
+        stages = lead + stages
 
     nodes: list[dict] = []
     for i, s in enumerate(stages):

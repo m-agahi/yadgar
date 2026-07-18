@@ -1,0 +1,20 @@
+{
+ "label": "recall",
+ "tool_span": "tool.recall",
+ "trace_id": "1111aaaa2222bbbb3333cccc4444dddd",
+ "total_ms": 300.0,
+ "span_count": 11,
+ "spans": [
+  {"rel_ms": 0.0,    "dur_ms": 300.0, "depth": 0, "svc": "yadgar-core",    "name": "tool.recall"},
+  {"rel_ms": 1.0,    "dur_ms": 298.0, "depth": 1, "svc": "yadgar-core",    "name": "yadgar._shared.retrieval.recall._forward_to_backend"},
+  {"rel_ms": 1.3,    "dur_ms": 297.0, "depth": 2, "svc": "yadgar-core",    "name": "yadgar._shared.storage.client._ClientMixin._q"},
+  {"rel_ms": 2.0,    "dur_ms": 296.0, "depth": 3, "svc": "yadgar-backend", "name": "POST"},
+  {"rel_ms": 5.0,    "dur_ms": 40.0,  "depth": 4, "svc": "yadgar-backend", "name": "yadgar._shared.retrieval.scoring._ScoringMixin._run_fts_bm25"},
+  {"rel_ms": 45.0,   "dur_ms": 35.0,  "depth": 4, "svc": "yadgar-backend", "name": "yadgar._shared.retrieval.scoring._ScoringMixin._collect_vector_scores"},
+  {"rel_ms": 80.0,   "dur_ms": 30.0,  "depth": 4, "svc": "yadgar-backend", "name": "yadgar.backend.retrieval.graph.Retriever.ppr_retrieve"},
+  {"rel_ms": 110.0,  "dur_ms": 45.0,  "depth": 4, "svc": "yadgar-backend", "name": "yadgar.backend.retrieval.graph.Retriever.spreading_activation"},
+  {"rel_ms": 155.0,  "dur_ms": 20.0,  "depth": 4, "svc": "yadgar-backend", "name": "yadgar._shared.retrieval.fusion._fuse_scores"},
+  {"rel_ms": 175.0,  "dur_ms": 110.0, "depth": 4, "svc": "yadgar-backend", "name": "yadgar.backend.ml.rerank.LocalMLClient._try_gte_reranker"},
+  {"rel_ms": 285.0,  "dur_ms": 10.0,  "depth": 4, "svc": "yadgar-backend", "name": "yadgar._shared.storage.memory.boost_memories_access"}
+ ]
+}

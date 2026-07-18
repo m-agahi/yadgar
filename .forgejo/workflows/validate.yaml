@@ -3,6 +3,7 @@ name: Validate
 on:
   pull_request:
     branches: [master]
+    types: [opened, synchronize, reopened, edited]
 
 # Cancel superseded runs on the same PR branch (rapid push storms).
 concurrency:
@@ -23,6 +24,12 @@ jobs:
           pip install --no-cache-dir ruff==0.15.10
 
       - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Validate PR title and body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 scripts/check_pr_metadata.py
 
       - name: Install pre-commit and uv
         # uv: required by pre-commit check-config-three-way-sync hook

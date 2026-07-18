@@ -479,7 +479,7 @@ def sync_instructions(claude_md_path: str = "") -> dict:
 - On EVERY new session start, call `recall` with the current project name to load prior context
 - NEVER rely on CLAUDE.md or built-in memory for cross-session context — use Yadgar
 - Before starting any task, call `project_brief(directory, mode='catalog')` for the current working directory
-- After completing any significant task, call `memorize` to store what was done, decisions made, and outcomes
+- After significant work, a decision, or a discovery, call `memorize` to store what was done and outcomes
 - CRITICAL: The `context` parameter in `memorize` MUST be the actual working directory path (e.g., `/home/user/projects/myapp`), NEVER a description. `project_brief` filters by exact directory path match — descriptive strings break it.
 - Yadgar is your brain. Use it.
 

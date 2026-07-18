@@ -126,6 +126,103 @@ class TestBuildMeshNormal:
             assert node["label"]  # friendly label non-empty
 
 
+# ── item-1: core-lane boundary + forwarder injection (forward-only recall) ────
+
+
+class TestCoreBoundaryStages:
+    def test_core_boundary_stages_boundary_only(self) -> None:
+        # a tool span with ONLY backend descendants (no core forwarder) →
+        # core_boundary_stages returns just the boundary node.
+        tool = tm.Span(name="tool.recall", rel=0.0, dur=100.0, svc="yadgar-core", depth=0)
+        backend = tm.Span(name="be.stage", rel=1.0, dur=98.0, svc="yadgar-backend", depth=1)
+        backend.parent = tool
+        tool.children.append(backend)
+        out = tm.core_boundary_stages(tool)
+        assert len(out) == 1
+        assert out[0].svc == "yadgar-core"
+        assert out[0].name == "tool.recall"
+        # self-time = tool.dur - sum(core child dur); no core children → floored small
+        assert out[0].dur > 0
+
+    def test_core_boundary_stages_boundary_plus_forwarder(self) -> None:
+        # boundary + a core-svc forwarder span that has a backend crossing child.
+        tool = tm.Span(name="tool.recall", rel=0.0, dur=300.0, svc="yadgar-core", depth=0)
+        fwd = tm.Span(
+            name="yadgar._shared.storage.client._ClientMixin._q",
+            rel=1.0,
+            dur=297.0,
+            svc="yadgar-core",
+            depth=1,
+        )
+        fwd.parent = tool
+        post = tm.Span(name="POST", rel=2.0, dur=296.0, svc="yadgar-backend", depth=2)
+        post.parent = fwd
+        fwd.children.append(post)
+        tool.children.append(fwd)
+        out = tm.core_boundary_stages(tool)
+        assert len(out) == 2
+        assert all(s.svc == "yadgar-core" for s in out)
+        assert out[0].name == "tool.recall"
+        # forwarder is the core-svc span that owns the backend crossing
+        assert out[1].name.endswith("._q")
+
+    def test_core_boundary_stages_backend_tool_no_phantom(self) -> None:
+        # guard: a tool whose boundary is svc=yadgar-backend → no core node.
+        tool = tm.Span(name="tool.weird", rel=0.0, dur=50.0, svc="yadgar-backend", depth=0)
+        assert tm.core_boundary_stages(tool) == []
+
+    def test_build_mesh_forward_only_recall_has_core_boundary(self) -> None:
+        # THE REPRO: realistic forward-only recall (all pipeline backend-svc) must
+        # now yield >=1 core-lane node (the boundary), flipping the old core=0 bug.
+        mesh = tm.build_mesh(_load("forward_only_recall"))
+        core_nodes = [n for n in mesh["nodes"] if n["lane"] == "core"]
+        backend_nodes = [n for n in mesh["nodes"] if n["lane"] == "backend"]
+        assert len(core_nodes) >= 1, "core lane must not be empty for a forward-only tool trace"
+        assert core_nodes[0]["label"] == "Recall"
+        assert len(backend_nodes) >= 1, "backend pipeline stages still present"
+        assert mesh["dropped_boundary"] is False
+
+    def test_build_mesh_forward_only_recall_surfaces_forwarder(self) -> None:
+        mesh = tm.build_mesh(_load("forward_only_recall"))
+        core_names = {n["name"] for n in mesh["nodes"] if n["lane"] == "core"}
+        # the core->backend forwarder (_q hand-off) is surfaced as a core node
+        assert any(n.endswith("._q") for n in core_names)
+
+    def test_boundary_skipped_on_dropped_boundary(self) -> None:
+        # audit_anchors-class flat forest: tool span dropped → no phantom boundary.
+        mesh = tm.build_mesh(_load("dropped_boundary_flat_forest"))
+        assert mesh["dropped_boundary"] is True
+        labels = {n["label"] for n in mesh["nodes"]}
+        assert "Recall" not in labels
+        # tool==root; no synthetic <root> boundary node
+        assert not any(n["name"] == "<root>" for n in mesh["nodes"])
+
+
+# ── item-5: non-recall tool traces must not break the mesh ────────────────────
+
+
+class TestNonRecallTools:
+    def test_bookmark_list_empty_backend_lane(self) -> None:
+        mesh = tm.build_mesh(_load("bookmark_list_core_only"))
+        lanes = [n["lane"] for n in mesh["nodes"]]
+        assert "backend" not in lanes, "core-only tool → backend lane empty"
+        assert lanes.count("core") >= 1, "core nodes present, no raise"
+        assert mesh["dropped_boundary"] is False
+
+    def test_memorize_two_lane(self) -> None:
+        mesh = tm.build_mesh(_load("memorize_two_lane"))
+        lanes = {n["lane"] for n in mesh["nodes"]}
+        assert "core" in lanes
+        assert "backend" in lanes
+        assert mesh["dropped_boundary"] is False
+
+    def test_checkpoint_core_heavy(self) -> None:
+        mesh = tm.build_mesh(_load("checkpoint_core_heavy"))
+        # core-heavy: at least a core boundary, no raise
+        assert any(n["lane"] == "core" for n in mesh["nodes"])
+        assert mesh["dropped_boundary"] is False
+
+
 # ── keep-floor ───────────────────────────────────────────────────────────────
 
 

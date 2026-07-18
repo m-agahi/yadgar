@@ -118,6 +118,13 @@
   stroke: var(--viz-hair);
   stroke-dasharray: 2 6;
 }
+.tr-lane-divider {
+  stroke: var(--viz-amber);
+  stroke-width: 1.6;
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
 .tr-edge {
   stroke: var(--viz-hair);
   stroke-width: 1.4;
@@ -244,6 +251,11 @@
   color: var(--viz-ph);
   border-color: var(--viz-ph-dim);
   box-shadow: 0 0 12px var(--viz-ph-glow) inset;
+}
+.tr-tb.tr-speed {
+  width: auto;
+  padding: 8px 6px;
+  cursor: pointer;
 }
 .tr-clock {
   font-family: var(--viz-disp);

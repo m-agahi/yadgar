@@ -150,24 +150,40 @@ prompts:
     Quote function signatures exactly as they appear in source.
     Do NOT propose or apply fixes; report the map, not opinions.
 - pattern: implement-tdd
-  purpose: Implement a feature test-first (red→green→refactor), writing the least code that satisfies it — a YAGNI least-code ladder applied before coding.
+  purpose: Implement a feature test-first with a 5-phase hardening pipeline (RED-VERIFY → adversarial critic → green → mutation+fuzz → gates) — risk-tiered so trivial diffs skip the expensive phases.
   content: |-
-    DISPATCH: model=sonnet (fallback=opus for multi-seam scope) — canonical: model-tier-dispatch
+    DISPATCH: model=sonnet (fallback=opus) — mechanical when the spec is crisp; opus for gnarly logic. Background; worktree if parallel writers. — canonical: model-tier-dispatch
 
-    Write a failing test that pins the desired behavior (red) before any implementation code.
+    Build application/library code test-first with a hardening pipeline. Phases are RISK-TIERED: run the FULL pipeline (all 5) for load-bearing app/lib logic; for trivial/mechanical diffs (config, infra .nix/.yaml, one-liners, version bumps, docs, codemods) run phases 1+3+5 ONLY.
 
-    Before writing implementation, climb the least-code ladder — STOP at the first rung that works:
-      1. Does it need to exist at all? Drop speculative / just-in-case scope.
-      2. Already in the codebase → reuse it.
-      3. Standard library / language built-in.
-      4. Native feature of a framework/platform already in use.
-      5. An already-installed dependency. (Do NOT add a new dep without asking.)
-      6. A one-liner.
-      7. Else: the minimal implementation — no abstraction a second caller doesn't yet need.
+    Contract: recall-first; observed-state-wins; end your report with `## Yadgar findings`.
 
-    Implement the minimal code to pass (green). Refactor with tests green — no behaviour change.
-    Run the full check surface (tests/lint/types) and loop until clean.
-    Done = tests pass, checks green, and no code exists that a higher rung could have avoided.
+    PHASE 1 — TESTS FIRST + RED-VERIFY
+    - Write tests before implementation, one per acceptance criterion in the spec.
+    - Run them. Confirm they FAIL — and fail for the RIGHT reason: an assertion failure or NotImplementedError, NOT ImportError / SyntaxError / collection error. A test that ERRORS instead of failing has not been shown to test anything. Fix until the failure is a genuine assertion miss.
+
+    PHASE 2 — ADVERSARIAL TEST-CRITIC (load-bearing code only; skip for trivial)
+    - Review the tests adversarially (assume they are weak) against this rubric:
+      - Real assertions — not assertTrue(True), not tautological, not asserting a mock return you just set.
+      - Tests BEHAVIOR/contract, not implementation detail.
+      - Every acceptance criterion AND every non-trivial branch has a test.
+      - Edge + error cases present (empty, boundary, malformed, exception paths).
+      - No over-mocking that stubs out the unit under test.
+    - Fix gaps. Loop MAX 2 rounds; still weak → STOP + report (do not spin).
+
+    PHASE 3 — IMPLEMENT → GREEN
+    - Minimal code to pass. Red → green.
+
+    PHASE 4 — POST-GREEN HARDEN (load-bearing code only; skip for trivial)
+    - Mutation testing (mutmut) on the CHANGED module(s) ONLY, time-boxed (~10 min). Exhaustive per module (NOT sampled). A surviving mutant = a bug your tests miss → add a test that kills it. Loop MAX 2. A genuinely-equivalent mutant may be allowlisted with a one-line justification comment.
+    - Property/fuzz (hypothesis) for pure functions + parsers: invariant-driven (never-raises / idempotent / round-trip / conserves-invariant), max_examples >= 200 (>= 500 for critical paths). A fuzz failure → fix the code, PIN the discovered case with @example so it cannot re-flake, and keep it as a regression test.
+
+    PHASE 5 — GATES + COMMIT
+    - Run available checks (lint, types, complexity, observe-coverage, e2e). Fix root cause; surface pre-existing failures separately. Same fix fails 2× → stop + report.
+    - No --no-verify / hook bypass. No Co-Authored-By. Then commit.
+
+    CAPS: every fix-loop bounded (critic 2, mutation 2, fuzz 2) → escalate, never infinite-loop.
+    TIER RULE: does the diff carry non-trivial branching/logic in app/lib code? yes → full 5 phases; no → phases 1+3+5.
 - pattern: plan-executing-build
   purpose: 'Standing preamble for plan-executing build dispatches: ADR-0081/0082 plan lifecycle + full incident-tested discipline set'
   # v5.122.0: seeded so the prelude contract's rule 4 pointer (wiki_read

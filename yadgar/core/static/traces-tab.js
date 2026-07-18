@@ -19,18 +19,21 @@
  */
 
 import {
-  layoutStages,
+  scatterLayout,
   computeTimeline,
   stageStateAt,
   scrubFractionToMs,
   msToFraction,
   playheadX,
   advanceClock,
-  nextSpeedIdx,
   edgeLaneClass,
+  loadSpeedId,
+  saveSpeedId,
+  speedById,
+  SPEED_PRESETS,
   LANE_Y,
+  LANE_DIVIDER_Y,
   MESH,
-  SPEEDS,
 } from './traces-replay.js';
 
 const DAEMON = typeof window !== 'undefined' && window.DAEMON ? window.DAEMON : '';
@@ -47,7 +50,7 @@ let _lanesG = null;
 let _detailEl = null; // right panel body
 let _clockEl = null;
 let _playBtn = null;
-let _speedBtn = null;
+let _speedSel = null;
 let _scrubEl = null;
 let _playheadEl = null;
 let _emptyEl = null;
@@ -61,7 +64,7 @@ const _state = {
   total: 0,
   t: 0,
   playing: false,
-  speedIdx: 1,
+  speedId: 'realtime',
   lastFrame: null,
   rafId: null,
 };
@@ -126,7 +129,16 @@ function _buildScaffold() {
   // transport
   const transport = _el('div', 'tr-transport');
   _playBtn = _el('button', 'tr-tb tr-play', '▶');
-  _speedBtn = _el('button', 'tr-tb', '×1');
+  // Speed: a <select> of the 6 presets (item-4). 6 is too many to cycle blindly.
+  _speedSel = document.createElement('select');
+  _speedSel.className = 'tr-tb tr-speed';
+  _speedSel.setAttribute('aria-label', 'Replay speed');
+  SPEED_PRESETS.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.label;
+    _speedSel.appendChild(opt);
+  });
   const restartBtn = _el('button', 'tr-tb', '⟲');
   restartBtn.addEventListener('click', () => {
     _setTime(0);
@@ -134,7 +146,7 @@ function _buildScaffold() {
   });
   const btns = _el('div', 'tr-tbtns');
   btns.appendChild(_playBtn);
-  btns.appendChild(_speedBtn);
+  btns.appendChild(_speedSel);
   btns.appendChild(restartBtn);
   transport.appendChild(btns);
 
@@ -245,7 +257,7 @@ function _applyMesh(mesh, meta) {
   _state.reason = (meta && meta.reason) || '';
   _state.partial = !!(meta && meta.partial);
   _state.total = Number(mesh.timeline_ms) || 0;
-  const laid = layoutStages(mesh.nodes || []);
+  const laid = scatterLayout(mesh.nodes || [], _state.total);
   _state.stages = computeTimeline(laid, _state.total);
   _buildMesh();
   _renderOverview();
@@ -311,6 +323,15 @@ function _buildMesh() {
     t.textContent = txt;
     _lanesG.appendChild(t);
   });
+
+  // orange dotted core/backend divider midline (item-3) — brighter than the guides.
+  const divider = document.createElementNS(SVGNS, 'line');
+  divider.setAttribute('class', 'tr-lane-divider');
+  divider.setAttribute('x1', '30');
+  divider.setAttribute('x2', String(MESH.w - 30));
+  divider.setAttribute('y1', String(LANE_DIVIDER_Y));
+  divider.setAttribute('y2', String(LANE_DIVIDER_Y));
+  _lanesG.appendChild(divider);
 
   const stages = _state.stages;
   // edges
@@ -427,7 +448,8 @@ function _tick(now) {
   const dt = now - _state.lastFrame;
   _state.lastFrame = now;
   if (_state.playing && _state.total > 0) {
-    const { t, playing } = advanceClock(_state.t, dt, _state.speedIdx, _state.total);
+    const msPerMs = speedById(_state.speedId).msPerMs;
+    const { t, playing } = advanceClock(_state.t, dt, msPerMs, _state.total);
     _state.t = t;
     _renderFrame();
     if (!playing) _setPlaying(false);
@@ -442,13 +464,16 @@ function _startRaf() {
 }
 
 function _wireTransport() {
+  // restore the persisted speed choice (localStorage; realtime on first use).
+  _state.speedId = loadSpeedId();
+  if (_speedSel) _speedSel.value = _state.speedId;
   _playBtn.addEventListener('click', () => {
     if (!_state.playing && _state.t >= _state.total) _setTime(0);
     _setPlaying(!_state.playing);
   });
-  _speedBtn.addEventListener('click', () => {
-    _state.speedIdx = nextSpeedIdx(_state.speedIdx);
-    _speedBtn.textContent = '×' + SPEEDS[_state.speedIdx];
+  _speedSel.addEventListener('change', () => {
+    _state.speedId = _speedSel.value;
+    saveSpeedId(_state.speedId);
   });
   // scrub: click/drag over the track
   let dragging = false;

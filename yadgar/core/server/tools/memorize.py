@@ -19,6 +19,7 @@ from yadgar._shared.write_exec import (
 # R2a Car D2: _get_file_queue lives in yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 
@@ -206,8 +207,17 @@ def _memorize_wait_path(payload: dict) -> dict:
     fq = _get_file_queue()
     job_id = fq.enqueue("memorize", payload)
 
-    # Nudge the background drainer to flush promptly (runtime shared-state access
-    # — guarded, non-fatal), matching wiki_add's wait path.
+    # Nudge the drainer to flush promptly, matching wiki_add's wait path. Task #29
+    # cold-drain fix: the live drainer runs ONLY in the backend after the ADR-0078
+    # split (in-core ``_st._queue_drainer`` is None → the in-process nudge is a
+    # silent no-op in production). POST a cross-process ``drain_now`` nudge first
+    # (synchronous, durable); keep the in-process nudge for single-process runs +
+    # existing tests. Best-effort: a failed POST (backend down / older backend) is
+    # swallowed and we fall through to the passive poll (mixed-version safe).
+    try:
+        _forward_admin("drain_now", {})
+    except Exception as exc:  # noqa: BLE001 — non-fatal; passive poll still converges
+        logger.warning("memorize wait: backend drain_now nudge failed (non-fatal): %s", exc)
     _drainer = _st._queue_drainer
     if _drainer is not None:
         try:
@@ -226,8 +236,13 @@ def _memorize_wait_path(payload: dict) -> dict:
     outcome = fq.wait_for_job(job_id, timeout=timeout)
 
     if outcome["status"] == "timeout":
+        # Car 3 (contract clarity): wait_timeout is convergence-pending, not a
+        # failure. Signal it explicitly (converging=True, committed=False) while
+        # keeping stored/reason/queued unchanged for back-compat.
         return {
             "stored": False,
+            "committed": False,
+            "converging": True,
             "reason": "wait_timeout",
             "queued": True,
             "queue_id": job_id,

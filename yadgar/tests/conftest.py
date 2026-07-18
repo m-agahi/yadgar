@@ -858,6 +858,14 @@ def _reset_server_state():
         from yadgar.core.server.tools import project as _proj  # noqa: PLC0415
 
         _proj._resolve_project_root.cache_clear()
+        # #28: _worktree_canonical_root is lru_cached at process level — a test
+        # that anchors with context="global" from a worktree CWD would corrupt
+        # this cache (resolves "global" as a relative path → finds worktree .git
+        # FILE → returns canonical repo root instead of None). Clear per-test so
+        # CWD-sensitive resolutions never bleed across test boundaries.
+        from yadgar._shared.server_helpers import server_helpers as _sh  # noqa: PLC0415
+
+        _sh._worktree_canonical_root.cache_clear()
     except Exception:
         pass
     # T3 Car 2: drain + drop the deferred recall side-effect executors so a
