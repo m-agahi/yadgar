@@ -1315,33 +1315,8 @@ body.dh-open #dh-toggle { right: 480px; }
    The memory-cluster panel defaults to this; the View control toggles it. */
 .floating-overlay.overlay-hidden { display: none; }
 
-/* v5.87 car A: View control (panel show/hide) in the graph topbar */
-#view-menu { position: relative; display: inline-flex; }
-#view-menu-panel {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
-  min-width: 180px;
-  background: var(--viz-bg-1);
-  border: 1px solid var(--viz-hair);
-  border-radius: 4px;
-  padding: 6px 0;
-  z-index: 60;
-  display: none;
-}
-#view-menu.open #view-menu-panel { display: block; }
-#view-menu-panel label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  font-size: 11px;
-  color: var(--viz-tx-0);
-  cursor: pointer;
-  white-space: nowrap;
-}
-#view-menu-panel label:hover { background: var(--viz-bg-2); }
+/* #69: the ▦ View control CSS (#view-menu / #view-menu-panel) was removed with
+   the button — all panels now live in the always-on #galaxy-side-panel. */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Car D — Search tab (#10b), galaxy node popup (#4). New surfaces use --viz-*
@@ -1552,13 +1527,9 @@ body.galaxy-active #right { display: none !important; }
     <button class="btn" onclick="fitGraph()">⊞ Fit</button>
     <button class="btn" onclick="resetLayout()">⟳ Reset</button>
     <button class="btn" onclick="loadGraph()">↺ Reload</button>
-    <!-- v5.87 car A: View control — show/hide floating panels. The memory-cluster
-         panel defaults OFF and is recovered here. -->
-    <span id="view-menu">
-      <button type="button" class="btn" id="view-menu-btn" aria-haspopup="true" aria-expanded="false" title="Show / hide panels">▦ View</button>
-      <!-- v5.89 Bug C: items built dynamically from every floating overlay -->
-      <div id="view-menu-panel" role="menu"></div>
-    </span>
+    <!-- #69: the ▦ View menu (show/hide floating panels) was removed. All panels
+         now live in the always-on #galaxy-side-panel, collapse-controlled per
+         section — nothing is View-toggled anymore. -->
     <span id="status-dot"></span>
     <span id="status-text">Connecting…</span>
   </div>
@@ -1571,14 +1542,13 @@ body.galaxy-active #right { display: none !important; }
 <div id="tab-home" class="tab-pane">
 <div id="content-area">
 <div id="main">
-  <!-- Controls (hidden — overlays float over canvas; IDs preserved for filter bindings) -->
+  <!-- #69: hidden CANONICAL filter-state block. `#left` is display:none — it is
+       the single source of truth for node-type + heat + edge-weight filter state
+       that applyFilters() reads. The always-on #galaxy-side-panel drives these
+       inputs (change→dispatch), so no filter binding here changes. Edge type
+       visibility state lives in _edgeToggleState (built by _renderEdgePanelSection
+       from the legend); it is NOT mirrored here. -->
   <div id="left">
-    <div>
-      <div class="sec-title">Edge Types</div>
-      <!-- P0.1: hidden edge-type checkboxes removed. Edge legend + filter state is
-           owned by _renderEdgeLegendOverlay() / _edgeToggleState (the floating
-           overlay). These hidden mirrors were legacy duplication. -->
-    </div>
     <div>
       <div class="sec-title">Node Types</div>
       <label><input type="checkbox" id="show-memory" checked> <span style="color:#58a6ff">●</span> Memory</label>
@@ -1620,6 +1590,62 @@ body.galaxy-active #right { display: none !important; }
   <!-- Graph canvas -->
   <div id="canvas-wrap"></div>
 
+  <!-- ── #69: unified always-on left panel ───────────────────────────────────
+       Folds STRUCTURE + NODES + HEAT FILTER + EDGES into ONE always-on panel
+       with collapsible sections (thin dividers). Replaces the bottom-left legend
+       (moved out of galaxy chrome) + the 4 floating View-menu overlays + the View
+       button (all removed). Controls DRIVE the canonical hidden #left inputs
+       (#show-*, #heat-slider) via a change→dispatch bridge, so applyFilters +
+       every existing filter binding keep working untouched. Node-type counts are
+       fed by the galaxy via deps.onCounts → _renderPanelCounts. Edge rows are
+       built from YADGAR_VIZ_CONFIG.legend.edges by _renderEdgePanelSection. -->
+  <div id="galaxy-side-panel">
+    <!-- 1. STRUCTURE (expanded) -->
+    <div class="gsp-section" data-gsp-section="structure">
+      <div class="gsp-head" data-gsp-toggle="structure">Structure<span class="gsp-caret">▾</span></div>
+      <div class="gsp-body">
+        <div class="gsp-row" style="color:#ffc35c"><span class="gsp-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">core = loose / single nodes</span></div>
+        <div class="gsp-row" style="color:#49ffa4"><span class="gsp-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">arms = real clusters</span></div>
+      </div>
+    </div>
+    <!-- 2. NODES (expanded) — per-type visibility toggles + counts + heat gradient -->
+    <div class="gsp-section" data-gsp-section="nodes">
+      <div class="gsp-head" data-gsp-toggle="nodes">Nodes<span class="gsp-caret">▾</span></div>
+      <div class="gsp-body">
+        <div class="gsp-row" style="color:#49ffa4">
+          <label><input type="checkbox" id="panel-show-memory" checked> <span class="gsp-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">memory</span></label>
+          <span class="gsp-ct" id="panel-ct-memory">—</span>
+        </div>
+        <div class="gsp-row" style="color:#3ec9ff">
+          <label><input type="checkbox" id="panel-show-wiki" checked> <span class="gsp-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">wiki</span></label>
+          <span class="gsp-ct" id="panel-ct-wiki">—</span>
+        </div>
+        <div class="gsp-row" style="color:#8fb0a0">
+          <label><input type="checkbox" id="panel-show-entity" checked> <span class="gsp-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">entity</span></label>
+          <span class="gsp-ct" id="panel-ct-entity">—</span>
+        </div>
+        <div class="gsp-heatbar"></div>
+        <div class="gsp-heat-lbls"><span>cold</span><span>heat → brightness</span><span>hot</span></div>
+      </div>
+    </div>
+    <!-- 3. HEAT FILTER (expanded) — min-heat slider (drives canonical #heat-slider) -->
+    <div class="gsp-section" data-gsp-section="heat">
+      <div class="gsp-head" data-gsp-toggle="heat">Heat Filter<span class="gsp-caret">▾</span></div>
+      <div class="gsp-body">
+        <div class="gsp-val-row"><span>Min heat</span><span id="panel-heat-val">0.00</span></div>
+        <input type="range" class="gsp-slider" id="panel-heat-slider" min="0" max="1" step="0.01" value="0">
+      </div>
+    </div>
+    <!-- 4. EDGES (collapsed) — Retrieval / Informational master toggles + per-type
+         sub-toggles + counts. Built by _renderEdgePanelSection from the legend. -->
+    <div class="gsp-section collapsed" data-gsp-section="edges">
+      <div class="gsp-head" data-gsp-toggle="edges">Edges<span class="gsp-caret">▾</span></div>
+      <div class="gsp-body" id="panel-edges-body">
+        <div class="gsp-note" id="panel-edge-role-note">retrieval = affects recall ranking (warm); informational = stored relationship, not a ranking signal (dim). Faint by default — click a node to light up its edges.</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Node detail panel -->
   <div id="right">
     <div id="right-resizer"></div>
@@ -1654,77 +1680,11 @@ body.galaxy-active #right { display: none !important; }
 
 <!-- ── v5.50.0 Floating overlays (drag-repositionable chrome over canvas) ── -->
 
-<!-- Heat Filter overlay -->
-<div class="floating-overlay" data-overlay-name="heat-slider" style="left:16px;top:16px">
-  <div class="overlay-grip">
-    ⋮ Heat Filter
-    <button class="overlay-collapse" title="Collapse">−</button>
-  </div>
-  <div class="overlay-body">
-    <div class="heat-val-row"><span style="color:#8b949e;font-size:10px">Min heat</span><span id="fo-heat-val" style="color:#58a6ff;font-size:10px">0.00</span></div>
-    <input type="range" id="fo-heat-slider" min="0" max="1" step="0.01" value="0" style="width:100%;accent-color:#58a6ff;cursor:pointer">
-  </div>
-</div>
-
-<!-- Graph Stats overlay -->
-<div class="floating-overlay" data-overlay-name="graph-stats" style="left:220px;top:16px">
-  <div class="overlay-grip">
-    ⋮ Graph Stats
-    <button class="overlay-collapse" title="Collapse">−</button>
-  </div>
-  <div class="overlay-body">
-    <div class="stat-row"><span class="stat-lbl">Memories</span><span class="stat-val" id="fo-s-mem">—</span></div>
-    <div class="stat-row"><span class="stat-lbl">Temporal</span><span class="stat-val" id="fo-s-tmp">—</span></div>
-    <div class="stat-row"><span class="stat-lbl">Transitions</span><span class="stat-val" id="fo-s-trn">—</span></div>
-    <div class="stat-row"><span class="stat-lbl">Wiki</span><span class="stat-val" id="fo-s-wiki">—</span></div>
-    <div class="stat-row"><span class="stat-lbl">Visible</span><span class="stat-val" id="fo-s-vis">—</span></div>
-  </div>
-</div>
-
-<!-- Node Types overlay -->
-<div class="floating-overlay" data-overlay-name="node-types" style="left:420px;top:16px">
-  <div class="overlay-grip">
-    ⋮ Node Types
-    <button class="overlay-collapse" title="Collapse">−</button>
-  </div>
-  <div class="overlay-body">
-    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-memory" checked> <span style="color:#58a6ff">●</span> Memory</label>
-    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-entity" checked> <span style="color:#7ee787">◆</span> Entity</label>
-    <label style="pointer-events:auto"><input type="checkbox" id="fo-show-wiki" checked> <span style="color:#d2a8ff">⬡</span> Wiki</label>
-  </div>
-</div>
-
-<!-- Edge Legend overlay — v5.50.13: labels/colors populated from YADGAR_VIZ_CONFIG.legend.edges -->
-<!-- Checkboxes use stable fo-show-<key> IDs for filter wiring; labels rendered by _renderEdgeLegendOverlay -->
-<div class="floating-overlay" data-overlay-name="edge-legend" style="left:16px;top:160px">
-  <div class="overlay-grip">
-    ⋮ Edge Types
-    <button class="overlay-collapse" title="Collapse">−</button>
-  </div>
-  <div class="overlay-body" id="fo-edge-legend-body">
-    <!-- P0.1: edge rows are the SOLE responsibility of _renderEdgeLegendOverlay()
-         (driven by YADGAR_VIZ_CONFIG.legend.edges from viz_meta.py). The previous
-         hardcoded fallback lied — it showed "Semantic" as a default-on stored edge
-         when semantic is lazy/off-by-default — so it was removed. On config-load
-         failure the legend renders empty rather than misrepresenting the graph. -->
-    <!-- v5.80: role semantics note -->
-    <div id="fo-edge-role-note" class="edge-legend-role-note">retrieval = affects recall ranking; informational = stored relationship, not a ranking signal</div>
-  </div>
-</div>
-
-<!-- Memory Clusters overlay (v5.80: real memory_cluster rows)
-     v5.87 car A: defaults OFF (.overlay-hidden) — recoverable via the View control. -->
-<div class="floating-overlay overlay-hidden" data-overlay-name="clusters" style="left:220px;top:180px">
-  <div class="overlay-grip">
-    ⋮ Memory Clusters
-    <button class="overlay-collapse" title="Collapse">−</button>
-  </div>
-  <div class="overlay-body">
-    <div id="fo-cluster-list" style="display:flex;flex-direction:column;gap:3px">
-      <span id="fo-cluster-none" style="color:#8b949e;font-size:10px">None</span>
-    </div>
-  </div>
-</div>
+<!-- #69: the 5 floating View-menu overlays (heat-slider / graph-stats /
+     node-types / edge-legend / clusters) were REMOVED. Their functions now live
+     in the always-on #galaxy-side-panel above (STRUCTURE / NODES / HEAT FILTER /
+     EDGES sections). The View button + its menu were removed too. The canonical
+     filter inputs still live in the hidden #left block; the panel drives them. -->
 
 
 </div><!-- /#content-area -->
@@ -2152,92 +2112,147 @@ function _wikiCatColor() { return YADGAR_VIZ_CONFIG.node.category_colors; }
 //
 // Role badge: shows "[retrieval]" or "[display]" next to label.
 // Lazy badge: shows "[lazy]" for types fetched on-demand.
-function _renderEdgeLegendOverlay() {
-  const edges = YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges;
-  if (!edges || !edges.length) return; // keep fallback static content
-  const body = document.getElementById('fo-edge-legend-body');
+// #69: build the EDGES panel section — 2 role-group master toggles
+// (Retrieval / Informational) each with per-type sub-toggles + a live COUNT next
+// to every type and group (the edge counts that used to live in GRAPH STATS fold
+// in here). Toggling a group flips all its types; toggling a type flips just it.
+// Every toggle writes _edgeToggleState and calls _applyEdgeToggles() which pushes
+// the new state to the galaxy (setEdgeToggleState — a colour-only repaint) so a
+// toggled-off class visibly dims. Rebuilt idempotently from the legend config.
+const _EDGE_GROUPS = [
+  { role: 'retrieval', label: 'Retrieval', cls: 'gsp-role-retrieval', desc: 'affects recall ranking' },
+  { role: 'informational', label: 'Informational', cls: 'gsp-role-informational', desc: 'stored structure' },
+];
+let _edgeRoleOf = Object.create(null); // type → role (from legend)
+
+function _renderEdgePanelSection() {
+  const edges = (YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges) || [];
+  const body = document.getElementById('panel-edges-body');
   if (!body) return;
+  const note = document.getElementById('panel-edge-role-note');
 
-  for (const edge of edges) {
-    const cbKey = (edge.key || '').replace(/_/g, '-');
-    const cbId = 'fo-show-' + cbKey;
-    let cb = document.getElementById(cbId);
+  // (re)build role map + seed _edgeToggleState defaults.
+  _edgeRoleOf = Object.create(null);
+  for (const e of edges) {
+    if (!e || e.key == null) continue;
+    _edgeRoleOf[e.key] = e.role === 'retrieval' ? 'retrieval' : 'informational';
+    if (!(e.key in _edgeToggleState)) _edgeToggleState[e.key] = e.default_on !== false;
+  }
 
-    if (!cb) {
-      // ── Create new row for this edge type ──────────────────────────────────
+  // Clear previously-rendered groups (keep the note), then rebuild.
+  for (const g of Array.from(body.querySelectorAll('.gsp-group'))) g.remove();
+
+  const roleColor = { retrieval: '#d6a15e', informational: '#7fa6ac' };
+  for (const grp of _EDGE_GROUPS) {
+    const typesInGroup = edges.filter(e => (_edgeRoleOf[e.key]) === grp.role);
+    if (!typesInGroup.length) continue;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'gsp-group';
+
+    // Master row
+    const head = document.createElement('div');
+    head.className = 'gsp-group-head ' + grp.cls;
+    const mcb = document.createElement('input');
+    mcb.type = 'checkbox';
+    mcb.id = 'panel-edge-group-' + grp.role;
+    const swM = document.createElement('span');
+    swM.className = 'gsp-swatch';
+    swM.style.background = roleColor[grp.role];
+    const mlabel = document.createElement('label');
+    mlabel.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;flex:1';
+    mlabel.appendChild(mcb); mlabel.appendChild(swM);
+    mlabel.appendChild(document.createTextNode(' ' + grp.label));
+    const mct = document.createElement('span');
+    mct.className = 'gsp-group-ct';
+    mct.id = 'panel-edge-groupct-' + grp.role;
+    head.appendChild(mlabel); head.appendChild(mct);
+    wrap.appendChild(head);
+
+    // Sub rows (per type)
+    const sub = document.createElement('div');
+    sub.className = 'gsp-sub';
+    for (const e of typesInGroup) {
+      const row = document.createElement('div');
+      row.className = 'gsp-row';
       const lbl = document.createElement('label');
-      lbl.style.pointerEvents = 'auto';
-      // Role badge CSS class
-      lbl.className = 'edge-legend-row' + (edge.role === 'retrieval' ? ' edge-role-retrieval' : ' edge-role-informational');
-
-      cb = document.createElement('input');
+      const cb = document.createElement('input');
       cb.type = 'checkbox';
-      cb.id = cbId;
-      cb.checked = edge.default_on !== false;
-      lbl.appendChild(cb);
+      cb.id = 'panel-edge-type-' + e.key;
+      cb.checked = _edgeToggleState[e.key] !== false;
+      const sw = document.createElement('span');
+      sw.className = 'gsp-swatch';
+      sw.style.background = e.color || '#484f58';
+      lbl.appendChild(cb); lbl.appendChild(sw);
+      lbl.appendChild(document.createTextNode(' ' + (e.label || e.key)));
+      const ct = document.createElement('span');
+      ct.className = 'gsp-ct';
+      ct.id = 'panel-edge-typect-' + e.key;
+      row.appendChild(lbl); row.appendChild(ct);
+      sub.appendChild(row);
 
-      const swatch = document.createElement('span');
-      swatch.style.color = edge.color || '#484f58';
-      swatch.textContent = '■';
-      lbl.appendChild(swatch);
-
-      const labelText = document.createTextNode(' ' + (edge.label || edge.key));
-      lbl.appendChild(labelText);
-
-      // Role badge
-      if (edge.role) {
-        const badge = document.createElement('span');
-        badge.className = 'edge-role-badge';
-        badge.textContent = ' [' + edge.role + (edge.lazy ? ', lazy' : '') + ']';
-        badge.style.fontSize = '9px';
-        badge.style.color = edge.role === 'retrieval' ? '#3fb950' : '#6e40c9';
-        badge.style.opacity = '0.8';
-        lbl.appendChild(badge);
-      }
-
-      // P0.1: insert edge rows ABOVE the role-semantics note so the note stays
-      // last (it was previously after the now-removed hardcoded fallback labels).
-      const roleNote = document.getElementById('fo-edge-role-note');
-      if (roleNote && roleNote.parentNode === body) {
-        body.insertBefore(lbl, roleNote);
-      } else {
-        body.appendChild(lbl);
-      }
-
-      // Wire change listener at creation (never orphaned — only created once)
       cb.addEventListener('change', () => {
-        // Update applyFilters state and re-filter
-        _edgeToggleState[edge.key] = cb.checked;
-        // Lazy types: trigger on-demand fetch when flipped ON for first time.
-        if (edge.lazy && cb.checked && !_lazyEdgesLoaded[edge.key]) {
-          _fetchLazyEdges(edge.key);
-        }
-        // Galaxy is the sole renderer + edges are decorative; re-filter so
-        // visibility (setVisible) reflects the toggle. No force-set rebuild.
-        applyFilters();
+        _edgeToggleState[e.key] = cb.checked;
+        if (e.lazy && cb.checked && !_lazyEdgesLoaded[e.key]) _fetchLazyEdges(e.key);
+        _syncEdgeGroupMasters();
+        _applyEdgeToggles();
       });
-    } else {
-      // ── Update existing row in-place (don't replace <input> — preserves listeners) ─
-      const lbl = cb.closest('label');
-      if (lbl) {
-        const swatch = lbl.querySelector('span:not(.edge-role-badge)');
-        if (swatch) swatch.style.color = edge.color || '#484f58';
-        const textNodes = [...lbl.childNodes].filter(n => n.nodeType === Node.TEXT_NODE);
-        const lastText = textNodes[textNodes.length - 1];
-        if (lastText) lastText.textContent = ' ' + (edge.label || edge.key);
-        // Update role badge if present
-        const badge = lbl.querySelector('.edge-role-badge');
-        if (badge && edge.role) {
-          badge.textContent = ' [' + edge.role + (edge.lazy ? ', lazy' : '') + ']';
-          badge.style.color = edge.role === 'retrieval' ? '#3fb950' : '#6e40c9';
-        }
-      }
     }
+    wrap.appendChild(sub);
 
-    // Sync default_on state to _edgeToggleState (only if not already set by user)
-    if (!(edge.key in _edgeToggleState)) {
-      _edgeToggleState[edge.key] = edge.default_on !== false;
-    }
+    mcb.addEventListener('change', () => {
+      _edgeToggleState = YadgarVizHelpers.edgeGroupToggleReducer(_edgeToggleState, grp.role, mcb.checked, _edgeRoleOf);
+      // reflect into the sub checkboxes
+      for (const e of typesInGroup) {
+        const scb = document.getElementById('panel-edge-type-' + e.key);
+        if (scb) scb.checked = _edgeToggleState[e.key] !== false;
+        if (e.lazy && mcb.checked && !_lazyEdgesLoaded[e.key]) _fetchLazyEdges(e.key);
+      }
+      _applyEdgeToggles();
+    });
+
+    // note stays first; groups appended after it
+    body.appendChild(wrap);
+  }
+  if (note && note.parentNode === body) body.insertBefore(note, body.firstChild);
+
+  _syncEdgeGroupMasters();
+  _renderEdgeCounts();
+}
+
+// Master checkbox reads "on" iff ≥1 sub-type in its group is shown.
+function _syncEdgeGroupMasters() {
+  const isOn = (window.YadgarVizHelpers && YadgarVizHelpers.edgeGroupIsOn) || (() => true);
+  for (const grp of _EDGE_GROUPS) {
+    const mcb = document.getElementById('panel-edge-group-' + grp.role);
+    if (mcb) mcb.checked = isOn(_edgeToggleState, grp.role, _edgeRoleOf);
+  }
+}
+
+// Push the current edge-toggle state to the galaxy (colour-only repaint) and
+// refresh the visible-node count. Edges are NOT a node-visibility filter, so this
+// does NOT go through applyFilters (which is node-vis) — it only repaints edges.
+function _applyEdgeToggles() {
+  if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.setEdgeToggleState === 'function') {
+    _galaxyView.setEdgeToggleState(_edgeToggleState);
+  }
+}
+
+// Fold the old GRAPH STATS edge counts (Temporal, Transitions, …) into the EDGES
+// section: per-type + per-group counts from the live allLinks, via the pure
+// aggregateEdgeCounts reducer.
+function _renderEdgeCounts() {
+  const legendEdges = (YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges) || [];
+  const agg = (window.YadgarVizHelpers && YadgarVizHelpers.aggregateEdgeCounts)
+    ? YadgarVizHelpers.aggregateEdgeCounts(allLinks, legendEdges)
+    : { byType: {}, byGroup: { retrieval: 0, informational: 0 } };
+  for (const e of legendEdges) {
+    const el = document.getElementById('panel-edge-typect-' + e.key);
+    if (el) el.textContent = String(agg.byType[e.key] || 0);
+  }
+  for (const grp of _EDGE_GROUPS) {
+    const el = document.getElementById('panel-edge-groupct-' + grp.role);
+    if (el) el.textContent = String(agg.byGroup[grp.role] || 0);
   }
 }
 
@@ -2301,6 +2316,14 @@ let _includeWeakEdges = false;
 // clicked node, shows a pulsing halo, wiki auto-widens, click-away closes.
 function _galaxyOnPick(node) {
   if (!node) return;
+  // #69 edge focus-highlight: a plain node click lights up THAT node's incident
+  // edges (bright per-type) while the rest recede to the faint backdrop. Cleared
+  // on popup close (_closeGalaxyPopup). This is a pure edge-colour repaint and is
+  // independent of the modifier-click node-ISOLATION focus (_toggleFocus, which
+  // hides non-neighbours) — the two do not collide (different concerns/state).
+  if (window._galaxyView && typeof _galaxyView.setFocus === 'function') {
+    try { _galaxyView.setFocus(node.id); } catch (_) { /* scene not ready */ }
+  }
   try { _showGalaxyPopup(node); } catch (_) { /* popup not yet wired */ }
 }
 
@@ -2509,6 +2532,10 @@ function _closeGalaxyPopup() {
   if (window._galaxyView && _galaxyView.isMounted() && typeof _galaxyView.hideHalo === 'function') {
     _galaxyView.hideHalo();
   }
+  // #69: clear edge focus-highlight so edges fall back to the faint 2-class backdrop.
+  if (window._galaxyView && typeof _galaxyView.setFocus === 'function') {
+    try { _galaxyView.setFocus(null); } catch (_) { /* scene torn down */ }
+  }
 }
 
 // Click-away (document mousedown outside the popup) + × + ESC close. The drag
@@ -2541,14 +2568,29 @@ function _galaxyVisibilityMap() {
 
 // Mount the galaxy scene into #canvas-wrap with the current payload. Galaxy is
 // the only renderer, so there is nothing else to tear down first.
+// #69: build the type→role map the galaxy uses as a fallback when an edge lacks
+// an explicit wire role (belt-and-suspenders — the backend does stamp role).
+function _edgeTypeRoleMap() {
+  const m = Object.create(null);
+  const edges = (YADGAR_VIZ_CONFIG.legend && YADGAR_VIZ_CONFIG.legend.edges) || [];
+  for (const e of edges) if (e && e.key != null) m[e.key] = e.role === 'retrieval' ? 'retrieval' : 'informational';
+  return m;
+}
+
 function _mountGalaxy() {
   if (!window._galaxyView) return;   // module not loaded yet (boot ordering)
   _galaxyView.mount(document.getElementById('canvas-wrap'), {
     onPick: _galaxyOnPick,
-    payload: { nodes: allNodes, clusters: _memoryClusters },
+    // #69: pass real edges + toggle-state + type→role so the galaxy renders the
+    // 2-class faint backdrop; onCounts feeds the NODES section node-type counts.
+    payload: { nodes: allNodes, clusters: _memoryClusters, edges: allLinks },
+    edgeToggleState: _edgeToggleState,
+    edgeTypeRole: _edgeTypeRoleMap(),
+    onCounts: (c) => { _renderPanelCounts(c); },
   });
   // apply the current filter visibility immediately (first paint respects filters)
   _galaxyView.setVisible(_galaxyVisibilityMap());
+  _renderEdgeCounts(); // refresh EDGES-section per-type/group counts from allLinks
 }
 
 // Tear the galaxy scene down (dispose GPU resources + listeners + DOM).
@@ -2660,8 +2702,12 @@ async function loadGraph() {
     // canvas. applyFilters() stamps n.__visible so setVisible respects filters.
     applyFilters();
     if (window._galaxyView && _galaxyView.isMounted()) {
-      _galaxyView.relayout({ nodes: allNodes, clusters: _memoryClusters });
+      // #69: pass real edges so the galaxy rebuilds the typed-edge geometry; also
+      // refresh the toggle-state + type→role deps and the EDGES-section counts.
+      _galaxyView.setEdgeToggleState(_edgeToggleState);
+      _galaxyView.relayout({ nodes: allNodes, clusters: _memoryClusters, edges: allLinks });
       _galaxyView.setVisible(_galaxyVisibilityMap());
+      _renderEdgeCounts();
     } else {
       _mountGalaxy();  // first load (or module just finished loading)
     }
@@ -4269,66 +4315,77 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   document.addEventListener('click', () => closeAll(null));
 })();
 
-// v5.87 car A → v5.89 Bug C: View control — show/hide EVERY floating panel.
-// Previously only the clusters overlay was wired (1 of 5). Now we iterate every
-// .floating-overlay[data-overlay-name] and render one checkbox per overlay,
-// toggling each panel's .overlay-hidden class (the show/hide class the overlays
-// already use). The checkbox initial state reflects current visibility.
-//
-// overlaysToMenuDescriptors() (control_helpers.js, vitest-covered) defines the
-// name/label/checked mapping; this is its inlined plain-script equivalent (the
-// module-scoped helper isn't importable from this non-module script).
-(function initViewMenu() {
-  const wrap = document.getElementById('view-menu');
-  const btn = document.getElementById('view-menu-btn');
-  const panel = document.getElementById('view-menu-panel');
-  if (!wrap || !btn || !panel) return;
+// ── #69: unified always-on left panel wiring ────────────────────────────────
+// Replaces the removed ▦ View menu + 5 floating overlays. Wires:
+//   (a) section collapse toggles (STRUCTURE/NODES/HEAT/EDGES headers)
+//   (b) NODES per-type checkboxes → canonical hidden #show-* inputs (+applyFilters)
+//   (c) HEAT slider → canonical #heat-slider
+//   (d) node-type counts fed by the galaxy via deps.onCounts → _renderPanelCounts
+// The EDGES section rows are built separately by _renderEdgePanelSection (needs
+// YADGAR_VIZ_CONFIG.legend.edges, so it runs after loadVizConfig in boot).
+(function initSidePanel() {
+  const panel = document.getElementById('galaxy-side-panel');
+  if (!panel) return;
 
-  const overlays = Array.from(document.querySelectorAll('.floating-overlay[data-overlay-name]'));
-  for (const overlay of overlays) {
-    const name = overlay.getAttribute('data-overlay-name') || '';
-    // Label from the overlay grip title (strip the ⋮ marker + trailing collapse
-    // glyph); fall back to the data-overlay-name.
-    const grip = overlay.querySelector('.overlay-grip');
-    let label = name;
-    if (grip && grip.textContent) {
-      const cleaned = grip.textContent.replace(/⋮/g, '').replace(/[−–-]\s*$/, '').trim();
-      if (cleaned) label = cleaned;
-    }
-    const item = document.createElement('label');
-    item.setAttribute('role', 'menuitemcheckbox');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = !overlay.classList.contains('overlay-hidden');
-    cb.setAttribute('data-overlay-toggle', name);
-    cb.addEventListener('change', () => {
-      overlay.classList.toggle('overlay-hidden', !cb.checked);
+  // (a) collapsible sections — click a header toggles .collapsed on its section.
+  for (const head of panel.querySelectorAll('[data-gsp-toggle]')) {
+    head.addEventListener('click', () => {
+      const name = head.getAttribute('data-gsp-toggle');
+      const sec = panel.querySelector(`[data-gsp-section="${name}"]`);
+      if (sec) sec.classList.toggle('collapsed');
     });
-    item.appendChild(cb);
-    item.appendChild(document.createTextNode(' ' + label));
-    panel.appendChild(item);
   }
 
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const open = !wrap.classList.contains('open');
-    wrap.classList.toggle('open', open);
-    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  });
-  // Keep the panel open while interacting with its controls.
-  wrap.addEventListener('click', (e) => e.stopPropagation());
-  document.addEventListener('click', () => {
-    wrap.classList.remove('open');
-    btn.setAttribute('aria-expanded', 'false');
-  });
+  // (b) NODES per-type visibility → canonical hidden #show-* (preserves the
+  // applyFilters binding at the 'show-*' change listener). Two-way so a
+  // programmatic reset of the canonical input reflects back into the panel.
+  for (const key of ['memory', 'wiki', 'entity']) {
+    const p = document.getElementById(`panel-show-${key}`);
+    const orig = document.getElementById(`show-${key}`);
+    if (p && orig) {
+      p.checked = orig.checked;
+      p.addEventListener('change', () => {
+        orig.checked = p.checked;
+        orig.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      orig.addEventListener('change', () => { p.checked = orig.checked; });
+    }
+  }
+
+  // (c) HEAT slider → canonical #heat-slider (mirrors the old fo-heat bridge).
+  const pHeat = document.getElementById('panel-heat-slider');
+  const origHeat = document.getElementById('heat-slider');
+  const pHeatVal = document.getElementById('panel-heat-val');
+  if (pHeat && origHeat) {
+    pHeat.value = origHeat.value;
+    pHeat.addEventListener('input', () => {
+      origHeat.value = pHeat.value;
+      if (pHeatVal) pHeatVal.textContent = parseFloat(pHeat.value).toFixed(2);
+      origHeat.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    origHeat.addEventListener('input', () => {
+      pHeat.value = origHeat.value;
+      if (pHeatVal) pHeatVal.textContent = parseFloat(origHeat.value).toFixed(2);
+    });
+  }
 })();
+
+// #69: node-type counts pushed by the galaxy (deps.onCounts) into the NODES
+// section. Called from _mountGalaxy's onCounts callback.
+function _renderPanelCounts(counts) {
+  if (!counts) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v == null ? '—' : String(v); };
+  set('panel-ct-memory', counts.memory);
+  set('panel-ct-wiki', counts.wiki);
+  set('panel-ct-entity', counts.entity);
+}
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 // v5.11.0: fetch viz config before initGraph so value-based ForceGraph setters
 // (nodeRelSize, d3Force distances, charge strength) apply config overrides.
 (async () => {
   await loadVizConfig();
-  _renderEdgeLegendOverlay(); // v5.50.13: update overlay labels/colors from legend
+  _renderEdgePanelSection(); // #69: build the EDGES section rows from the legend
   // Activate the correct tab before the scene mounts (so #tab-home is visible)
   _switchTab(_getActiveTab());
   // ADR-0135 (galaxy-only): galaxy is the SOLE renderer. body.galaxy-active is now
@@ -4364,11 +4421,15 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
   import * as GalaxyView from './galaxy-view.js';
   import { nodeType as _nodeTypeModule, createDetailPanel, ingestSseNode, removeSseNode } from './graph-detail.js';
   import * as Help from './help.js';
-  import { shouldInitTab, overlaysToMenuDescriptors } from './control_helpers.js';
+  import { shouldInitTab } from './control_helpers.js';
+  // #69: pure panel reducers (edge counts + group/section toggles) used by the
+  // plain-script side-panel wiring. Exposed on window since that script is non-module.
+  import * as VizHelpers from './viz_helpers.js';
   window.YadgarTabs    = Tabs;
   window.YadgarInfo    = Info;
   window.YadgarOverlays = Overlays;
   window.YadgarHelp    = Help;
+  window.YadgarVizHelpers = VizHelpers;
 
   // v5.50.12: wire graph-detail module to the plain-script showDetail/SSE handlers.
   // createDetailPanel is called lazily on first use so allLinks/wikiCatColor/heatColor
@@ -4441,103 +4502,12 @@ window.addEventListener('hashchange', () => _switchTab(_getActiveTab()));
     }
   } catch (_) { /* boot race — loadGraph will mount on its own path */ }
 
-  // ── v5.50.0: Init floating overlays at DOMContentLoaded ──────────────────
-  // DOMContentLoaded already fired by the time module scripts run, so call
-  // immediately (modules execute after the parser has processed the document).
-  Overlays.initOverlays({ canvasSelector: '#canvas-wrap', fadeDebounceMs: 200 });
-
-  // ── Bridge floating overlay inputs → hidden originals (filter bindings) ──
-  // The main <script> block wires applyFilters() to #heat-slider and #show-*.
-  // Mirror overlay inputs so the filters still fire without touching the bindings.
-
-  // Heat slider
-  const foHeatSlider = document.getElementById('fo-heat-slider');
-  const origHeatSlider = document.getElementById('heat-slider');
-  const foHeatVal = document.getElementById('fo-heat-val');
-  if (foHeatSlider && origHeatSlider) {
-    foHeatSlider.addEventListener('input', () => {
-      origHeatSlider.value = foHeatSlider.value;
-      if (foHeatVal) foHeatVal.textContent = parseFloat(foHeatSlider.value).toFixed(2);
-      origHeatSlider.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    // Also mirror updates from original (e.g. programmatic resets) back to overlay
-    origHeatSlider.addEventListener('input', () => {
-      foHeatSlider.value = origHeatSlider.value;
-      if (foHeatVal) foHeatVal.textContent = parseFloat(origHeatSlider.value).toFixed(2);
-    });
-  }
-
-  // Edge type checkboxes
-  // P0.1: the hidden-sidebar edge mirror (fo-show-* ↔ show-*) was removed.
-  // _renderEdgeLegendOverlay() wires each edge row's change listener directly to
-  // _edgeToggleState at creation, so no separate sync loop is needed.
-
-  // Node type checkboxes — sidebar is canonical; overlay mirrors via dispatch.
-  // P3.8 [51]: memory + entity toggles added alongside the original wiki one.
-  for (const _key of ['wiki', 'memory', 'entity']) {
-    const fo   = document.getElementById(`fo-show-${_key}`);
-    const orig = document.getElementById(`show-${_key}`);
-    if (fo && orig) {
-      fo.addEventListener('change', () => {
-        orig.checked = fo.checked;
-        orig.dispatchEvent(new Event('change', { bubbles: true }));
-      });
-      orig.addEventListener('change', () => { fo.checked = orig.checked; });
-    }
-  }
-
-  // Sync graph stats from hidden spans to floating overlay spans
-  // Observe the hidden stat spans and mirror their textContent to fo-* counterparts
-  const statPairs = [
-    ['s-mem',  'fo-s-mem'],
-    ['s-tmp',  'fo-s-tmp'],
-    ['s-trn',  'fo-s-trn'],
-    ['s-wiki', 'fo-s-wiki'],
-    ['s-vis',  'fo-s-vis'],
-  ];
-  const statObserver = new MutationObserver(() => {
-    for (const [origId, foId] of statPairs) {
-      const orig = document.getElementById(origId);
-      const fo   = document.getElementById(foId);
-      if (orig && fo) fo.textContent = orig.textContent;
-    }
-  });
-  for (const [origId] of statPairs) {
-    const orig = document.getElementById(origId);
-    if (orig) statObserver.observe(orig, { childList: true, characterData: true, subtree: true });
-  }
-
-  // Sync memory cluster items from hidden #cluster-list → #fo-cluster-list (v5.80)
-  // Click on overlay item delegates to corresponding original item (preserves _flyToCluster binding).
-  function _syncClusterOverlay() {
-    const origList = document.getElementById('cluster-list');
-    const foList   = document.getElementById('fo-cluster-list');
-    const foNone   = document.getElementById('fo-cluster-none');
-    if (!origList || !foList) return;
-    const origItems = Array.from(origList.querySelectorAll('.cluster-item'));
-    // Remove stale fo items (keep fo-cluster-none)
-    for (const el of Array.from(foList.querySelectorAll('.cluster-item'))) el.remove();
-    if (!origItems.length) {
-      if (foNone) foNone.style.display = '';
-      return;
-    }
-    if (foNone) foNone.style.display = 'none';
-    origItems.forEach((origItem, idx) => {
-      const foItem = document.createElement('div');
-      foItem.className = 'cluster-item';
-      foItem.style.pointerEvents = 'auto';
-      foItem.textContent = origItem.textContent;
-      foItem.title = origItem.title;
-      foItem.addEventListener('click', () => origItems[idx].click());
-      foList.appendChild(foItem);
-    });
-  }
-  const origClusterList = document.getElementById('cluster-list');
-  if (origClusterList) {
-    const clusterObserver = new MutationObserver(_syncClusterOverlay);
-    clusterObserver.observe(origClusterList, { childList: true, subtree: false });
-    _syncClusterOverlay(); // run once in case already populated
-  }
+  // #69: the 5 floating View-menu overlays were removed (their functions live in
+  // the always-on #galaxy-side-panel, wired by initSidePanel in the plain script).
+  // Overlays.initOverlays + the fo-* bridges + the stat/cluster mirror observers
+  // are gone with them. The canonical filter inputs remain in the hidden #left
+  // block and are driven directly by the panel. The Overlays module import is kept
+  // (harmless) so unrelated overlay helpers stay available if reintroduced.
 
   // ── Bug B (v5.89): init the active tab once THIS module has executed ──────────
   // The boot IIFE calls _switchTab(_getActiveTab()) → window._lazyInitControlTab?.()

@@ -152,6 +152,59 @@
   font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--viz-tx-3);
 }
 
+/* ── #69 unified always-on left panel (STRUCTURE / NODES / HEAT / EDGES) ──────
+   Replaces the bottom-left legend + the 4 floating View-menu overlays + the View
+   button. One panel, top-left, collapsible sections separated by hairline
+   dividers. Reuses the legend vocabulary (--viz-* tokens, tabular counts). */
+#galaxy-side-panel {
+  position: absolute; left: 12px; top: 12px; width: 226px; z-index: 6;
+  max-height: calc(100vh - 120px); overflow-y: auto;
+  background: var(--viz-panel-bg); border: 1px solid var(--viz-hair); border-radius: 10px;
+  backdrop-filter: blur(9px); box-shadow: 0 10px 34px rgba(0, 0, 0, .5);
+  font-size: 11px; color: var(--viz-tx-1);
+}
+#galaxy-side-panel::-webkit-scrollbar { width: 7px; }
+#galaxy-side-panel::-webkit-scrollbar-thumb { background: var(--viz-hair); border-radius: 999px; }
+.gsp-section { padding: 11px 14px; }
+.gsp-section + .gsp-section { border-top: 1px solid var(--viz-hair); }
+.gsp-head {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+  font-family: var(--viz-disp); font-size: 9.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--viz-tx-2); font-weight: 400;
+}
+.gsp-head .gsp-caret { margin-left: auto; transition: transform .15s; font-size: 9px; color: var(--viz-tx-3); }
+.gsp-section.collapsed .gsp-caret { transform: rotate(-90deg); }
+.gsp-section.collapsed .gsp-body { display: none; }
+.gsp-body { margin-top: 10px; }
+.gsp-row {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 6px; font-size: 11px;
+}
+.gsp-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: 1; }
+.gsp-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 8px currentColor; }
+.gsp-ct { margin-left: auto; color: var(--viz-tx-3); font-variant-numeric: tabular-nums; font-size: 10px; }
+.gsp-heatbar {
+  margin-top: 10px; height: 8px; border-radius: 999px;
+  background: linear-gradient(90deg, #0a4a6b, #3ec9ff, #49ffa4, #ffc35c, #ff4059);
+  box-shadow: 0 0 12px rgba(62, 201, 255, .2);
+}
+.gsp-heat-lbls {
+  display: flex; justify-content: space-between; margin-top: 4px;
+  font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--viz-tx-3);
+}
+.gsp-note { color: var(--viz-tx-3); font-size: 10px; line-height: 1.35; margin-top: 4px; }
+.gsp-slider { width: 100%; accent-color: #58a6ff; cursor: pointer; }
+.gsp-val-row { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 5px; color: var(--viz-tx-2); }
+/* EDGES: role-group master rows + per-type sub rows */
+.gsp-group { margin-bottom: 8px; }
+.gsp-group-head { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.gsp-group-head .gsp-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.gsp-group-ct { margin-left: auto; color: var(--viz-tx-3); font-variant-numeric: tabular-nums; font-size: 10px; }
+.gsp-sub { margin: 5px 0 0 20px; }
+.gsp-sub .gsp-row { margin-bottom: 4px; font-size: 10px; }
+.gsp-sub .gsp-swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.gsp-role-retrieval { color: #d6a15e; }
+.gsp-role-informational { color: #7fa6ac; }
+
 /* ── HUD (bottom-center) ── */
 .galaxy-hud {
   position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
