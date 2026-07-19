@@ -8,7 +8,10 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { _fmtBytes, _fmtUptime, esc } from './viz_helpers.js';
+import {
+  _fmtBytes, _fmtUptime, esc,
+  aggregateEdgeCounts, edgeGroupToggleReducer, edgeGroupIsOn, sectionToggleReducer,
+} from './viz_helpers.js';
 
 // ── _fmtBytes ─────────────────────────────────────────────────────────────────
 
@@ -95,5 +98,111 @@ describe('esc', () => {
   it('coerces non-string to string', () => {
     expect(esc(42)).toBe('42');
     expect(esc(null)).toBe('null');
+  });
+});
+
+// ── #69 unified-panel reducers ──────────────────────────────────────────────────
+
+const LEGEND = [
+  { key: 'transition', role: 'retrieval' },
+  { key: 'co_occurrence', role: 'retrieval' },
+  { key: 'temporal', role: 'informational' },
+  { key: 'wiki_crossref', role: 'informational' },
+];
+
+describe('aggregateEdgeCounts', () => {
+  it('counts per type and per role group', () => {
+    const links = [
+      { type: 'transition', role: 'retrieval' },
+      { type: 'transition', role: 'retrieval' },
+      { type: 'temporal', role: 'informational' },
+    ];
+    const { byType, byGroup } = aggregateEdgeCounts(links, LEGEND);
+    expect(byType.transition).toBe(2);
+    expect(byType.temporal).toBe(1);
+    expect(byGroup.retrieval).toBe(2);
+    expect(byGroup.informational).toBe(1);
+  });
+
+  it('reports declared-but-empty legend types as 0', () => {
+    const { byType } = aggregateEdgeCounts([], LEGEND);
+    expect(byType.transition).toBe(0);
+    expect(byType.co_occurrence).toBe(0);
+    expect(byType.wiki_crossref).toBe(0);
+  });
+
+  it('classifies an unknown type via its wire role, defaulting informational', () => {
+    const links = [
+      { type: 'mystery', role: 'retrieval' },
+      { type: 'other' }, // no role → informational
+    ];
+    const { byType, byGroup, roleOf } = aggregateEdgeCounts(links, LEGEND);
+    expect(byType.mystery).toBe(1);
+    expect(roleOf.mystery).toBe('retrieval');
+    expect(roleOf.other).toBe('informational');
+    expect(byGroup.retrieval).toBe(1);
+    expect(byGroup.informational).toBe(1);
+  });
+
+  it('handles null/empty inputs', () => {
+    const { byType, byGroup } = aggregateEdgeCounts(null, null);
+    expect(Object.keys(byType).length).toBe(0);
+    expect(byGroup).toEqual({ retrieval: 0, informational: 0 });
+  });
+});
+
+describe('edgeGroupToggleReducer', () => {
+  const roleOf = { transition: 'retrieval', co_occurrence: 'retrieval', temporal: 'informational' };
+
+  it('turning a master OFF sets all types in that group off, leaving others alone', () => {
+    const next = edgeGroupToggleReducer({}, 'retrieval', false, roleOf);
+    expect(next.transition).toBe(false);
+    expect(next.co_occurrence).toBe(false);
+    expect('temporal' in next).toBe(false); // informational untouched
+  });
+
+  it('turning a master ON sets all types in that group on', () => {
+    const next = edgeGroupToggleReducer({ transition: false }, 'retrieval', true, roleOf);
+    expect(next.transition).toBe(true);
+    expect(next.co_occurrence).toBe(true);
+  });
+
+  it('does not mutate the input state', () => {
+    const input = { transition: true };
+    const next = edgeGroupToggleReducer(input, 'retrieval', false, roleOf);
+    expect(input.transition).toBe(true);
+    expect(next).not.toBe(input);
+  });
+});
+
+describe('edgeGroupIsOn', () => {
+  const roleOf = { transition: 'retrieval', co_occurrence: 'retrieval', temporal: 'informational' };
+
+  it('is on when at least one group type is shown (missing = shown)', () => {
+    expect(edgeGroupIsOn({}, 'retrieval', roleOf)).toBe(true); // all missing = shown
+    expect(edgeGroupIsOn({ transition: false }, 'retrieval', roleOf)).toBe(true); // co_occurrence still on
+  });
+
+  it('is off when every group type is explicitly off', () => {
+    expect(edgeGroupIsOn({ transition: false, co_occurrence: false }, 'retrieval', roleOf)).toBe(false);
+  });
+
+  it('is off for an empty group', () => {
+    expect(edgeGroupIsOn({}, 'retrieval', {})).toBe(false);
+  });
+});
+
+describe('sectionToggleReducer', () => {
+  it('flips an unset section to expanded=true', () => {
+    expect(sectionToggleReducer({}, 'edges')).toEqual({ edges: true });
+  });
+  it('flips an expanded section back to collapsed', () => {
+    expect(sectionToggleReducer({ edges: true }, 'edges')).toEqual({ edges: false });
+  });
+  it('does not mutate the input', () => {
+    const input = { nodes: true };
+    const next = sectionToggleReducer(input, 'nodes');
+    expect(input.nodes).toBe(true);
+    expect(next.nodes).toBe(false);
   });
 });

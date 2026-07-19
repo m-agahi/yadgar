@@ -37,6 +37,11 @@ import {
   fitDistanceForDisk,
   CAM_FOV_DEG,
   buildStarfield,
+  edgeEndId,
+  edgeRole,
+  edgeSegments,
+  EDGE_ROLE_COLOR,
+  EDGE_TYPE_COLOR,
 } from './galaxy-view.js';
 
 // Minimal in-memory localStorage-compatible stub (overlays.js test pattern).
@@ -589,5 +594,128 @@ describe('buildStarfield', () => {
       expect(colors[i]).toBeGreaterThanOrEqual(0);
       expect(colors[i]).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+// ── edge rendering (#69): endpoint resolution + role classification + segments ──
+describe('edgeEndId', () => {
+  it('returns bare id from a node-object endpoint', () => {
+    expect(edgeEndId({ id: 'mem:7' })).toBe('mem:7');
+  });
+  it('passes through an id-string endpoint', () => {
+    expect(edgeEndId('entity:9')).toBe('entity:9');
+  });
+  it('handles null/undefined without throwing', () => {
+    expect(edgeEndId(null)).toBe(null);
+    expect(edgeEndId(undefined)).toBe(undefined);
+  });
+});
+
+describe('edgeRole', () => {
+  it('prefers an explicit retrieval/informational role on the wire', () => {
+    expect(edgeRole({ role: 'retrieval', type: 'temporal' })).toBe('retrieval');
+    expect(edgeRole({ role: 'informational', type: 'transition' })).toBe('informational');
+  });
+  it('falls back to the type→role map when role is absent/garbage', () => {
+    const tr = { transition: 'retrieval', temporal: 'informational' };
+    expect(edgeRole({ type: 'transition' }, tr)).toBe('retrieval');
+    expect(edgeRole({ type: 'temporal' }, tr)).toBe('informational');
+    expect(edgeRole({ role: 'bogus', type: 'transition' }, tr)).toBe('retrieval');
+  });
+  it('defaults to informational when nothing resolves', () => {
+    expect(edgeRole({ type: 'mystery' }, {})).toBe('informational');
+    expect(edgeRole({})).toBe('informational');
+  });
+});
+
+describe('edgeSegments', () => {
+  // 3 nodes at distinct positions; a→b retrieval, b→c informational.
+  const idToIndex = { a: 0, b: 1, c: 2 };
+  const diskPos = new Float32Array([
+    0, 0, 0, // a
+    1, 2, 3, // b
+    4, 5, 6, // c
+  ]);
+  const edges = [
+    { source: 'a', target: 'b', type: 'transition', role: 'retrieval' },
+    { source: { id: 'b' }, target: { id: 'c' }, type: 'temporal', role: 'informational' },
+  ];
+
+  it('emits one 2-vertex segment per edge with both endpoints resolvable', () => {
+    const { positions, colors, count } = edgeSegments({ edges, idToIndex, diskPos });
+    expect(count).toBe(2);
+    expect(positions.length).toBe(12); // 2 edges * 2 verts * 3
+    expect(colors.length).toBe(12);
+    // segment 0 endpoints are node a then node b positions
+    expect(Array.from(positions.slice(0, 6))).toEqual([0, 0, 0, 1, 2, 3]);
+    expect(Array.from(positions.slice(6, 12))).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('skips an edge whose endpoint is not in the index (orphan)', () => {
+    const { count } = edgeSegments({
+      edges: [{ source: 'a', target: 'zzz', type: 'temporal' }],
+      idToIndex, diskPos,
+    });
+    expect(count).toBe(0);
+  });
+
+  it('colours the 2 backdrop classes by role (retrieval warm, informational cool)', () => {
+    const { colors } = edgeSegments({ edges, idToIndex, diskPos });
+    // edge 0 = retrieval
+    expect(colors[0]).toBeCloseTo(EDGE_ROLE_COLOR.retrieval.r, 6);
+    expect(colors[1]).toBeCloseTo(EDGE_ROLE_COLOR.retrieval.g, 6);
+    expect(colors[2]).toBeCloseTo(EDGE_ROLE_COLOR.retrieval.b, 6);
+    // edge 1 = informational (its verts start at index 6)
+    expect(colors[6]).toBeCloseTo(EDGE_ROLE_COLOR.informational.r, 6);
+    expect(colors[7]).toBeCloseTo(EDGE_ROLE_COLOR.informational.g, 6);
+    // both endpoints of a segment share one colour
+    expect(Array.from(colors.slice(0, 3))).toEqual(Array.from(colors.slice(3, 6)));
+    // retrieval must read brighter than informational (warm > cool luminance-ish)
+    const rSum = colors[0] + colors[1] + colors[2];
+    const iSum = colors[6] + colors[7] + colors[8];
+    expect(rSum).toBeGreaterThan(iSum);
+  });
+
+  it('paints a toggled-off edge type black (invisible under additive)', () => {
+    const { colors } = edgeSegments({
+      edges, idToIndex, diskPos, toggleState: { transition: false },
+    });
+    // edge 0 (transition) → black
+    expect(colors[0]).toBe(0);
+    expect(colors[1]).toBe(0);
+    expect(colors[2]).toBe(0);
+    // edge 1 (temporal, still on) → non-black
+    expect(colors[6]).toBeGreaterThan(0);
+  });
+
+  it('paints an edge black when either endpoint is hidden by the visMask', () => {
+    const visMask = new Uint8Array([1, 0, 1]); // b hidden
+    const { colors } = edgeSegments({ edges, idToIndex, diskPos, visMask });
+    // edge 0 (a→b) touches hidden b → black
+    expect(colors[0]).toBe(0);
+    // edge 1 (b→c) touches hidden b → black
+    expect(colors[6]).toBe(0);
+  });
+
+  it('on focus, brightens the focused node incident edge to its per-type colour', () => {
+    const { colors } = edgeSegments({ edges, idToIndex, diskPos, focusId: 'a' });
+    // edge 0 (a→b) is incident to a → full per-type transition colour
+    expect(colors[0]).toBeCloseTo(EDGE_TYPE_COLOR.transition.r, 6);
+    expect(colors[1]).toBeCloseTo(EDGE_TYPE_COLOR.transition.g, 6);
+    expect(colors[2]).toBeCloseTo(EDGE_TYPE_COLOR.transition.b, 6);
+  });
+
+  it('on focus, dims a non-incident edge below its backdrop colour', () => {
+    const { colors } = edgeSegments({ edges, idToIndex, diskPos, focusId: 'a' });
+    // edge 1 (b→c) NOT incident to a → dimmed informational backdrop
+    expect(colors[6]).toBeLessThan(EDGE_ROLE_COLOR.informational.r);
+    expect(colors[6]).toBeGreaterThan(0);
+  });
+
+  it('is a no-op-safe empty build with no edges', () => {
+    const { positions, colors, count } = edgeSegments({ edges: [], idToIndex, diskPos });
+    expect(count).toBe(0);
+    expect(positions.length).toBe(0);
+    expect(colors.length).toBe(0);
   });
 });

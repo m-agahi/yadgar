@@ -170,6 +170,14 @@ export function saveP(P, storage) {
 // entry instead.
 export const GALAXY_SEED = 0xbeef1234 | 0;
 
+// #69: the cosmic-backdrop starfield drifts at ~this fraction of the galaxy's
+// apparent auto-rotate speed, so the far shell trails slowly behind the faster-
+// spinning disk (parallax / depth). Auto-rotate is a CAMERA orbit, so to make
+// the starfield APPEAR to move at 0.25× we co-rotate the star object by
+// (1 − 0.25) of the per-frame azimuth delta (cancelling 75% of the apparent
+// motion). Tunable; the nebula dome stays fixed (see _frame).
+export const BACKDROP_ROTATE_FACTOR = 0.25;
+
 // ── deterministic PRNG (mulberry32, verbatim from the mockup) ──────────────────
 export function mulberry32(a) {
   return function () {
@@ -560,6 +568,135 @@ export function visibilityMask(nodes, visById) {
   return mask;
 }
 
+// ── edge rendering (#69): 2-class faint backdrop, bright-per-type on focus ──────
+// The galaxy previously drew ONLY decorative intra-arm lines (one hardcoded
+// colour, no node identity). #69 renders the REAL typed edges from the /api/graph
+// payload as a single additive LineSegments. Colour is where the meaning lives:
+//   - global backdrop → 2 subtle classes by edge ROLE
+//       retrieval     (affects recall ranking) → warm, brighter
+//       informational (stored structure)       → cool, dimmer
+//     Neither fights node-heat brightness (both stay well below full white).
+//   - on FOCUS (a node clicked/hovered) → that node's incident edges light up in
+//     their full PER-TYPE colour; every other edge fades to the quiet backdrop.
+// Under AdditiveBlending an RGB of (0,0,0) adds nothing → invisible, so a
+// toggled-off type or a hidden-endpoint edge is painted black (not removed) and
+// live-repaint is a pure colour-buffer rewrite — no geometry rebuild.
+
+/** 2-class backdrop colours keyed by edge role. Dim so nodes stay dominant. */
+export const EDGE_ROLE_COLOR = Object.freeze({
+  // warm amber — retrieval edges are the load-bearing ones.
+  retrieval: { r: 0.62, g: 0.42, b: 0.16 },
+  // cool teal — informational structure, quieter.
+  informational: { r: 0.17, g: 0.34, b: 0.40 },
+});
+
+/** Focus-mode per-type bright colours (0-1 rgb). Fallback = brightened role. */
+export const EDGE_TYPE_COLOR = Object.freeze({
+  transition: { r: 0.25, g: 0.72, b: 0.31 },
+  co_occurrence: { r: 0.91, g: 0.72, b: 0.43 },
+  resolved_by: { r: 0.97, g: 0.32, b: 0.29 },
+  caused_by: { r: 1.0, g: 0.48, b: 0.45 },
+  derived_from: { r: 0.22, g: 0.77, b: 0.81 },
+  temporal: { r: 0.43, g: 0.25, b: 0.81 },
+  wiki_crossref: { r: 0.82, g: 0.66, b: 1.0 },
+  memory_wiki: { r: 1.0, g: 0.65, b: 0.34 },
+  causal: { r: 0.75, g: 0.58, b: 0.79 },
+  memory_similarity_link: { r: 0.35, g: 0.65, b: 1.0 },
+});
+
+/**
+ * Resolve an edge endpoint (id string OR {id} node object) to a bare id.
+ * Mirrors index.html's _npEndId — kept local so this module is self-contained.
+ */
+export function edgeEndId(end) {
+  return end && end.id != null ? end.id : end;
+}
+
+/**
+ * Classify a raw edge to 'retrieval' | 'informational'. Prefers an explicit
+ * `role` on the wire (backend stamps it, graph_edges.py); falls back to a
+ * type→role map for robustness (older payloads / lazy fetches).
+ * @param {{role?:string,type?:string}} edge
+ * @param {Object<string,string>} [typeRole]  type → role override map
+ */
+export function edgeRole(edge, typeRole) {
+  if (edge && (edge.role === 'retrieval' || edge.role === 'informational')) return edge.role;
+  const t = edge && edge.type;
+  const m = typeRole && t != null ? typeRole[t] : undefined;
+  return m === 'retrieval' ? 'retrieval' : 'informational';
+}
+
+/**
+ * Build the GL segment buffers (positions + per-vertex colours) for the edge
+ * LineSegments from the CURRENT render state. Pure — no THREE, no DOM — so the
+ * colour policy is vitest-covered while the draw call stays a smoke-check.
+ *
+ * An edge contributes a 2-vertex segment iff BOTH endpoints resolve to a node
+ * index. Its colour is decided by (in order):
+ *   1. type toggled OFF  → black (invisible under additive)
+ *   2. either endpoint hidden (visMask 0) → black
+ *   3. focusId set AND edge incident to it → full per-type bright colour
+ *   4. focusId set, edge NOT incident → heavily dimmed backdrop (recede)
+ *   5. no focus → 2-class backdrop colour by role
+ *
+ * @param {object} args
+ * @param {Array} args.edges          raw edges [{source,target,type,role}]
+ * @param {Object<string,number>} args.idToIndex   node id → vertex index
+ * @param {Float32Array} args.diskPos  node world positions (index*3)
+ * @param {Uint8Array} [args.visMask]  per-index 1=visible/0=hidden (null=all vis)
+ * @param {Object<string,boolean>} [args.toggleState]  edge type → shown (missing=shown)
+ * @param {*} [args.focusId]           focused node id, or null
+ * @param {Object<string,string>} [args.typeRole]  type→role fallback map
+ * @returns {{positions:Float32Array, colors:Float32Array, count:number}}
+ */
+export function edgeSegments(args) {
+  const {
+    edges = [], idToIndex = {}, diskPos = new Float32Array(0),
+    visMask = null, toggleState = {}, focusId = null, typeRole = {},
+  } = args || {};
+  const pos = [];
+  const col = [];
+  const BLACK = { r: 0, g: 0, b: 0 };
+  // Non-incident edges recede further when a node is focused (backdrop * this).
+  const UNFOCUS_DIM = 0.35;
+  for (const e of edges) {
+    const sId = edgeEndId(e.source);
+    const tId = edgeEndId(e.target);
+    const a = idToIndex[sId];
+    const b = idToIndex[tId];
+    if (a == null || b == null) continue; // orphan endpoint → skip
+    pos.push(diskPos[a * 3], diskPos[a * 3 + 1], diskPos[a * 3 + 2]);
+    pos.push(diskPos[b * 3], diskPos[b * 3 + 1], diskPos[b * 3 + 2]);
+
+    let c;
+    const type = e.type;
+    const shown = type == null || toggleState[type] !== false;
+    const endpointVisible = !visMask || (visMask[a] && visMask[b]);
+    if (!shown || !endpointVisible) {
+      c = BLACK;
+    } else {
+      const role = edgeRole(e, typeRole);
+      const backdrop = EDGE_ROLE_COLOR[role] || EDGE_ROLE_COLOR.informational;
+      if (focusId != null) {
+        const incident = sId === focusId || tId === focusId;
+        if (incident) {
+          c = EDGE_TYPE_COLOR[type] || { r: backdrop.r * 1.8, g: backdrop.g * 1.8, b: backdrop.b * 1.8 };
+        } else {
+          c = { r: backdrop.r * UNFOCUS_DIM, g: backdrop.g * UNFOCUS_DIM, b: backdrop.b * UNFOCUS_DIM };
+        }
+      } else {
+        c = backdrop;
+      }
+    }
+    col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+  }
+  return {
+    positions: new Float32Array(pos),
+    colors: new Float32Array(col),
+    count: pos.length / 6,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // THREE-DEPENDENT SCENE. Not exercised by vitest (no WebGL); the user smoke-check
 // covers render / picking / teardown. Guarded so importing this module in jsdom
@@ -580,6 +717,7 @@ class GalaxyScene {
     this.P = loadSavedP(); // Bug 1: restore persisted params (falls back to defaults)
     this._raf = null;
     this._visible = null; // Uint8Array mask (1=visible) or null=all visible
+    this._focusId = null; // #69: focused node id → brighten its incident edges
     this._disposed = false;
     this._last = typeof performance !== 'undefined' ? performance.now() : Date.now();
     this._fpsAcc = 0;
@@ -718,7 +856,9 @@ class GalaxyScene {
     this.coreGlow2.scale.set(15, 15, 1);
     this.scene.add(this.coreGlow2);
 
-    this.edgeLines = null; // built by relayout when P.edges==='on'
+    this.edgeLines = null; // #69: built from payload edges on relayout (_buildEdges)
+    this._edgeColAttr = null;
+    this._edgePosAttr = null;
     window.addEventListener('resize', this._onResize);
     this.canvas.addEventListener('click', this._onClick);
   }
@@ -820,12 +960,19 @@ class GalaxyScene {
     this.coreGlow.scale.setScalar(22 + 10 * this.P.bulge + 6 * this.P.coredens);
     this.coreGlow2Mat.opacity = this.P.single === 'halo' ? 0.16 : 0.34;
 
-    this._buildEdges(armOfCluster);
+    this._buildEdges();
     this._coreCount = coreCount;
     this._syncCounts();
   }
 
-  _buildEdges(armOfCluster) {
+  // ── real typed edges (#69) ────────────────────────────────────────────────────
+  // #69 replaced the decorative intra-arm lines with the REAL /api/graph edges,
+  // rendered as ONE additive LineSegments with per-vertex colours. Geometry is
+  // built here (rebuilt only when node positions change on relayout); colour is a
+  // separate _repaintEdges() pass so node-vis / type-toggle / focus changes are a
+  // cheap colour-buffer rewrite with NO geometry rebuild (edgeSegments is pure +
+  // vitest-covered). One draw call; positions are static (physics-frozen galaxy).
+  _buildEdges() {
     const THREE = this.THREE;
     if (this.edgeLines) {
       this.scene.remove(this.edgeLines);
@@ -833,44 +980,66 @@ class GalaxyScene {
       this.edgeLines.material.dispose();
       this.edgeLines = null;
     }
-    if (this.P.edges !== 'on') return;
-    const rnd = mulberry32(GALAXY_SEED ^ 0xed6e);
-    const perArm = Array.from({ length: this.P.arms }, () => []);
-    const nodes = this.model.nodes;
-    for (let i = 0; i < nodes.length; i++) {
-      const nd = nodes[i];
-      if (nd.single) continue;
-      const arm = armOfCluster[nd.cluster];
-      if (arm < 0) continue;
-      if (nd.heat < 0.35) continue;
-      const x = this.diskPos[i * 3];
-      const z = this.diskPos[i * 3 + 2];
-      perArm[arm].push({ i, r: Math.hypot(x, z) });
-    }
-    const segs = [];
-    for (const arr of perArm) {
-      arr.sort((a, b) => a.r - b.r);
-      for (let k = 0; k < arr.length - 1; k++) {
-        if (rnd() > 0.5) continue;
-        const a = arr[k].i;
-        const b = arr[k + 1].i;
-        if (arr[k + 1].r - arr[k].r > 6) continue;
-        segs.push(
-          this.diskPos[a * 3], this.diskPos[a * 3 + 1], this.diskPos[a * 3 + 2],
-          this.diskPos[b * 3], this.diskPos[b * 3 + 1], this.diskPos[b * 3 + 2],
-        );
-      }
-    }
+    const edges = (this.deps.payload && this.deps.payload.edges) || [];
+    if (!edges.length) return;
+    const { positions, colors } = edgeSegments({
+      edges,
+      idToIndex: this.model.idToIndex,
+      diskPos: this.diskPos,
+      visMask: this._visible,
+      toggleState: this.deps.edgeToggleState || {},
+      focusId: this._focusId != null ? this._focusId : null,
+      typeRole: this.deps.edgeTypeRole || {},
+    });
+    if (!positions.length) return;
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(segs, 3));
+    this._edgePosAttr = new THREE.BufferAttribute(positions, 3);
+    this._edgeColAttr = new THREE.BufferAttribute(colors, 3);
+    g.setAttribute('position', this._edgePosAttr);
+    g.setAttribute('color', this._edgeColAttr);
     const m = new THREE.LineBasicMaterial({
-      color: 0x1d6b48,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.9, // colour magnitude carries the "faintness"; additive on black
       blending: THREE.AdditiveBlending,
+      vertexColors: true,
+      depthWrite: false,
     });
     this.edgeLines = new THREE.LineSegments(g, m);
     this.scene.add(this.edgeLines);
+  }
+
+  // Colour-only repaint (no geometry rebuild). Cheap: rewrites the colour buffer
+  // from current visibility + type-toggle + focus state via the pure edgeSegments
+  // helper (positions are identical, so we reuse them). Called from setVisible,
+  // setEdgeToggleState, and setFocus.
+  _repaintEdges() {
+    if (this._disposed || !this.edgeLines || !this._edgeColAttr) return;
+    const edges = (this.deps.payload && this.deps.payload.edges) || [];
+    if (!edges.length) return;
+    const { colors } = edgeSegments({
+      edges,
+      idToIndex: this.model.idToIndex,
+      diskPos: this.diskPos,
+      visMask: this._visible,
+      toggleState: this.deps.edgeToggleState || {},
+      focusId: this._focusId != null ? this._focusId : null,
+      typeRole: this.deps.edgeTypeRole || {},
+    });
+    if (colors.length !== this._edgeColAttr.array.length) return; // stale — skip
+    this._edgeColAttr.array.set(colors);
+    this._edgeColAttr.needsUpdate = true;
+  }
+
+  /** Update the edge type→shown map and repaint (no geometry rebuild). */
+  setEdgeToggleState(toggleState) {
+    this.deps.edgeToggleState = toggleState || {};
+    this._repaintEdges();
+  }
+
+  /** Set (or clear, with null) the focused node → brighten its incident edges. */
+  setFocus(nodeId) {
+    this._focusId = nodeId != null ? nodeId : null;
+    this._repaintEdges();
   }
 
   // ── filter visibility: per-vertex size=0 to hide (shares the model backbone) ──
@@ -881,6 +1050,7 @@ class GalaxyScene {
     this._visible = mask;
     this._applyVisibilityMask();
     this.diskGeo.attributes.size.needsUpdate = true;
+    this._repaintEdges(); // #69: hidden-endpoint edges recede (painted black)
     let n = 0;
     for (let i = 0; i < mask.length; i++) n += mask[i];
     this._setHud('galaxy-h-nodes', n);
@@ -1090,7 +1260,8 @@ class GalaxyScene {
     bindSeg('radmode', 'radmode');
     bindSeg('single', 'single');
     bindSeg('layer', 'layer');
-    bindSeg('edges', 'edges');
+    // #69: 'edges' seg-control removed (real edges render unconditionally). The
+    // P.edges param is kept for back-compat persistence but no longer wired.
 
     const resetBtn = q('#g-reset');
     if (resetBtn) {
@@ -1126,16 +1297,21 @@ class GalaxyScene {
     setSeg('radmode', this.P.radmode);
     setSeg('single', this.P.single);
     setSeg('layer', this.P.layer);
-    setSeg('edges', this.P.edges);
+    // #69: 'edges' seg-control removed from the panel (see _wireControls).
   }
 
   _syncCounts() {
     this._setHud('galaxy-h-arms', this.P.arms);
     if (this._coreCount != null) this._setHud('galaxy-h-core', this._coreCount);
     const c = this.model.counts;
-    this._setHud('galaxy-lg-memory', c.memory);
-    this._setHud('galaxy-lg-wiki', c.wiki);
-    this._setHud('galaxy-lg-entity', c.entity);
+    // #69: the STRUCTURE/NODES legend moved OUT of the galaxy chrome into the
+    // unified left panel (index.html). Node-type counts are handed out via
+    // deps.onCounts so index.html owns that DOM (Architecture B — galaxy renders,
+    // index.html controls). The .galaxy-hud bottom status bar STAYS in chrome and
+    // keeps using _setHud (this.chrome-scoped) below.
+    if (typeof this.deps.onCounts === 'function') {
+      try { this.deps.onCounts({ ...c, clusters: this.model.clusterStat.length }); } catch (_) { /* panel not wired */ }
+    }
     this._setHud('galaxy-h-clusters', this.model.clusterStat.length);
     if (this._visible == null) this._setHud('galaxy-h-nodes', c.total);
   }
@@ -1150,8 +1326,16 @@ class GalaxyScene {
     if (this._disposed) return;
     const dt = Math.min(0.05, (now - this._last) / 1000);
     this._last = now;
-    this.controls.addAzimuth(-this.P.spin * dt * 0.4); // Bug 12: auto-rotate direction
+    const azDelta = -this.P.spin * dt * 0.4; // Bug 12: auto-rotate direction
+    this.controls.addAzimuth(azDelta);
     this.controls.update();
+    // #69 backdrop parallax: co-rotate the starfield so it APPEARS to drift at
+    // BACKDROP_ROTATE_FACTOR of the disk's auto-rotate speed. Camera orbits by
+    // azDelta; rotating the star object the same way by (1 − factor) cancels
+    // that fraction of the apparent motion. Nebula dome left fixed (no seam).
+    if (this.starfield) {
+      this.starfield.rotation.y += azDelta * (1 - BACKDROP_ROTATE_FACTOR);
+    }
     // Car D #4: pulse the selection halo (world-space; tracks camera orbit).
     if (this.haloSprite && this.haloSprite.visible && this._haloBase) {
       const s = haloScale(this._haloBase, now);
@@ -1310,6 +1494,8 @@ class GalaxyScene {
     this.coreGlow = null;
     this.coreGlow2 = null;
     this.edgeLines = null;
+    this._edgeColAttr = null;
+    this._edgePosAttr = null;
     this.haloSprite = null;
     this.haloMat = null;
     this.haloTex = null;
@@ -1436,12 +1622,10 @@ const GALAXY_CHROME_HTML = `
         <button data-v="off" class="on">Off</button><button data-v="on">On</button>
       </div>
     </div>
-    <div class="galaxy-ctl">
-      <div class="galaxy-ctl-lbl">Faint intra-arm edges</div>
-      <div class="galaxy-seg cy" id="g-edges">
-        <button data-v="off" class="on">Off</button><button data-v="on">On</button>
-      </div>
-    </div>
+    <!-- #69: the "Faint intra-arm edges" Off/On control was removed. Edges now
+         render the REAL typed graph (2-class colour, faint backdrop, bright on
+         focus) unconditionally, and edge visibility is owned by the EDGES section
+         of the left panel — a second on/off here would just confuse. -->
     <div class="galaxy-divider"></div>
     <div class="galaxy-ctl">
       <div class="galaxy-ctl-lbl">Auto-rotate speed <span class="galaxy-val" id="gv-spin">0.35</span></div>
@@ -1453,17 +1637,11 @@ const GALAXY_CHROME_HTML = `
     </div>
   </div>
 </div>
-<div class="galaxy-legend">
-  <h2>Structure</h2>
-  <div class="galaxy-lg-row" style="color:#ffc35c"><span class="galaxy-lg-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">core = loose / single nodes</span></div>
-  <div class="galaxy-lg-row" style="color:#49ffa4"><span class="galaxy-lg-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">arms = real clusters</span></div>
-  <h2 style="margin-top:13px">Node types</h2>
-  <div class="galaxy-lg-row" style="color:#49ffa4"><span class="galaxy-lg-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">memory</span><span class="galaxy-ct" id="galaxy-lg-memory">—</span></div>
-  <div class="galaxy-lg-row" style="color:#3ec9ff"><span class="galaxy-lg-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">wiki</span><span class="galaxy-ct" id="galaxy-lg-wiki">—</span></div>
-  <div class="galaxy-lg-row" style="color:#8fb0a0"><span class="galaxy-lg-dot"></span><span style="color:var(--viz-tx-1,#9fc0ae)">entity</span><span class="galaxy-ct" id="galaxy-lg-entity">—</span></div>
-  <div class="galaxy-heatbar"></div>
-  <div class="galaxy-heat-lbls"><span>cold</span><span>heat → brightness</span><span>hot</span></div>
-</div>
+<!-- #69: the STRUCTURE / NODE-TYPES legend moved OUT of the galaxy chrome into
+     the always-on unified left panel (#galaxy-side-panel in index.html), which
+     folds STRUCTURE + NODES + HEAT FILTER + EDGES into one collapsible-section
+     panel. Node-type counts flow to it via deps.onCounts. The .galaxy-hud bottom
+     status bar below STAYS here (untouched). -->
 <div class="galaxy-hud">
   <div class="galaxy-st"><span class="galaxy-k">nodes</span><b id="galaxy-h-nodes">—</b></div>
   <div class="galaxy-st"><span class="galaxy-k">core</span><b id="galaxy-h-core">—</b></div>
@@ -1550,6 +1728,15 @@ export function highlight(idSet) {
   if (_scene) _scene.highlight(idSet);
 }
 
+// ── #69: edge type-toggle + focus (colour-only repaint, no geometry rebuild) ───
+export function setEdgeToggleState(toggleState) {
+  if (_scene) _scene.setEdgeToggleState(toggleState);
+}
+
+export function setFocus(nodeId) {
+  if (_scene) _scene.setFocus(nodeId);
+}
+
 // ── toolbar camera controls (⊞ Fit / ⟳ Reset) ────────────────────────────────
 export function fitView() {
   if (_scene) _scene.fitView();
@@ -1564,5 +1751,6 @@ if (typeof window !== 'undefined') {
   window._galaxyView = {
     mount, destroy, setVisible, patchHeat, relayout, pause, resume, resize, isMounted,
     showHalo, hideHalo, nodeScreenPos, highlight, fitView, resetView,
+    setEdgeToggleState, setFocus,
   };
 }
