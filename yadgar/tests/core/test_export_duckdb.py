@@ -66,11 +66,6 @@ def seeded_storage(tmp_db: str):
         "directory_context = '/test/sandbox'",
         {"s": "test-page", "c": "wiki content", "t": "Test Page"},
     )
-    # wiki_draft
-    storage._q(
-        "CREATE wiki_draft SET slug = $s, content = $c, created_at = time::now()",
-        {"s": "draft-page", "c": "draft content"},
-    )
     # wiki_crossref
     storage._q(
         "CREATE wiki_crossref SET from_slug = $f, to_slug = $t",
@@ -201,7 +196,6 @@ class TestExporterCreatesTables:
         expected = {
             "memory",
             "wiki_page",
-            "wiki_draft",
             "wiki_crossref",
             "action_log",
             "consolidation_log",

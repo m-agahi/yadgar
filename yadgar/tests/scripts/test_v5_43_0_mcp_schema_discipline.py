@@ -14,10 +14,6 @@ R2.  recall uses branch_hint when daemon-side _detect_branch returns None.
 R3.  recall branch_hint boosts matching-branch memories over canonical-slot memories.
 R4.  recall with directory + branch_hint scopes to caller directory.
 
-A1.  wiki_approve: draft with branch="feat/X" → wiki_page.branch="feat/X" (DP-2).
-A2.  wiki_approve: legacy draft with branch=None → wiki_page.branch=None (canonical).
-A3.  wiki_approve: draft branch propagated even when directory is absent.
-
 V1.  wiki_history already accepts directory + branch_hint (v5.42.5 regression guard).
 V2.  wiki_read_version already accepts directory + branch_hint (v5.42.5 regression guard).
 V3.  wiki_diff already accepts directory + branch_hint (v5.42.5 regression guard).
@@ -334,96 +330,6 @@ def test_r4_recall_directory_plus_branch_hint_combined(tmp_path):
     dirs = [r.get("directory_context") for r in results]
     assert all(d == "/proj/r4" for d in dirs if d is not None), (
         "R4: results should only come from /proj/r4"
-    )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# A — wiki_approve branch inheritance
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def test_a1_wiki_approve_propagates_draft_branch():
-    """wiki_approve: draft with branch="feat/schema" → wiki_page.branch="feat/schema" (A1)."""
-    from yadgar.core.server.tools.wiki import wiki_approve
-
-    st = _storage()
-    slug = "approve-branch-a1"
-    st.insert_wiki_draft(
-        {
-            "slug": slug,
-            "title": "Approve Branch A1",
-            "content": "Content for approve branch test A1",
-            "category": "reference",
-            "tags": ["test"],
-            "source_memory_ids": [],
-            "confidence": "high",
-            "branch": "feat/schema",
-            "directory_context": "/proj/test",
-        }
-    )
-
-    result = wiki_approve(slug)
-    assert result.get("approved") is True
-    page = result.get("page", {})
-    assert page.get("branch") == "feat/schema", (
-        f"A1: approved page should have branch='feat/schema', got {page.get('branch')!r}"
-    )
-
-
-def test_a2_wiki_approve_legacy_null_branch():
-    """wiki_approve: legacy draft with branch=None → wiki_page.branch=None (A2)."""
-    from yadgar.core.server.tools.wiki import wiki_approve
-
-    st = _storage()
-    slug = "approve-branch-a2"
-    st.insert_wiki_draft(
-        {
-            "slug": slug,
-            "title": "Approve Branch A2",
-            "content": "Content for approve branch test A2 legacy null",
-            "category": "reference",
-            "tags": ["test"],
-            "source_memory_ids": [],
-            "confidence": "high",
-            "branch": None,
-            "directory_context": "/proj/test",
-        }
-    )
-
-    result = wiki_approve(slug)
-    assert result.get("approved") is True
-    page = result.get("page", {})
-    assert page.get("branch") is None, (
-        f"A2: legacy null-branch draft should produce wiki_page.branch=None, got {page.get('branch')!r}"
-    )
-
-
-def test_a3_wiki_approve_branch_propagated_without_directory():
-    """wiki_approve branch propagated even when draft has no directory_context (A3)."""
-    from yadgar.core.server.tools.wiki import wiki_approve
-
-    st = _storage()
-    slug = "approve-branch-a3"
-    # Simulate pre-v5.42.5 draft that may have no directory_context
-    st.insert_wiki_draft(
-        {
-            "slug": slug,
-            "title": "Approve Branch A3",
-            "content": "Content for approve branch test A3 no directory",
-            "category": "reference",
-            "tags": ["test"],
-            "source_memory_ids": [],
-            "confidence": "high",
-            "branch": "feat/schema",
-            "directory_context": None,
-        }
-    )
-
-    result = wiki_approve(slug)
-    assert result.get("approved") is True
-    page = result.get("page", {})
-    assert page.get("branch") == "feat/schema", (
-        f"A3: branch should propagate even without directory_context, got {page.get('branch')!r}"
     )
 
 

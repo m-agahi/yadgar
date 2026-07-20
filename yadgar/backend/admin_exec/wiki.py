@@ -8,7 +8,7 @@ stay in ``yadgar.core.server.tools.*`` and forward the DB write here over HTTP
 Group 3 (R5) ops: wiki_delete, wiki_restore, wiki_update, wiki_append_section,
 wiki_replace_text, wiki_delete_text, wiki_insert_after, wiki_insert_before,
 wiki_replace_at, wiki_delete_at, wiki_insert_at, wiki_replace_markdown_block,
-wiki_set_metadata, wiki_approve, wiki_discard, wiki_autolink, agent_prompt_save.
+wiki_set_metadata, wiki_autolink, agent_prompt_save.
 
 DESIGN — slug→page_id resolution stays CORE.
 ``_resolve_page_id_by_slug`` calls ``os.getcwd()`` + ``_detect_branch(cwd)``. The
@@ -93,52 +93,6 @@ def wiki_delete(payload: dict) -> dict:
     slug = payload["slug"]
     deleted = _st._wiki.delete(slug)
     return {"deleted": bool(deleted)}
-
-
-@observe(tier="boundary", metric="backend.admin.wiki_discard")
-def wiki_discard(payload: dict) -> dict:
-    """Discard a pending wiki draft by slug. Storage-write half.
-
-    payload: {"slug": str}
-    Returns {deleted: bool}.
-    """
-    storage = _get_storage()
-    deleted = storage.delete_wiki_draft(payload["slug"])
-    return {"deleted": bool(deleted)}
-
-
-@observe(tier="boundary", metric="backend.admin.wiki_approve")
-def wiki_approve(payload: dict) -> dict:
-    """Promote a pending draft to a full wiki page. Storage-write half.
-
-    payload: {"slug": str}
-    Returns {approved: bool, page: dict, content: str} on success, or
-    {approved: False, error: str} when no draft exists. The core shell handles
-    the file-queue mirror (write_wiki) after this returns — the impl surfaces the
-    draft content for that mirror.
-    """
-    assert _st._wiki is not None, "WikiStore not initialized"
-    slug = payload["slug"]
-    storage = _get_storage()
-    draft = storage.get_wiki_draft_by_slug(slug)
-    if draft is None:
-        return {"approved": False, "error": f"Draft '{slug}' not found"}
-
-    draft_branch = draft.get("branch")
-    result = _st._wiki.add(
-        title=draft["title"],
-        content=draft["content"],
-        category=draft.get("category", "reference"),
-        tags=draft.get("tags", []),
-        opts=WikiAddOptions(
-            source_memory_ids=draft.get("source_memory_ids", []),
-            confidence=draft.get("confidence", "medium"),
-            branch=draft_branch,
-        ),
-    )
-    result.pop("embedding", None)
-    storage.delete_wiki_draft(slug)
-    return {"approved": True, "page": result, "content": draft["content"]}
 
 
 @observe(tier="boundary", metric="backend.admin.wiki_autolink")

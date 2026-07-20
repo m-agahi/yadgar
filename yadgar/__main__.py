@@ -26,9 +26,8 @@ Active modules:
 Core tools: memorize, recall, forget, project_brief, checkpoint, restore,
             anchor, wiki_query, wiki_add, memory_stats
 Power tools: add_rule, get_rules, wiki_read, wiki_list, wiki_delete,
-             wiki_approve, wiki_discard, wiki_drafts, consolidate_now,
-             reembed_all, validate_memory, seed_project, install_hooks,
-             sync_instructions
+             consolidate_now, reembed_all, validate_memory, seed_project,
+             install_hooks, sync_instructions
 v5 tools:   memory_get, wiki_get, memory_update, wiki_update,
              bootstrap_project, update_active_work, wiki_refresh_stale,
              wiki_cleanup_merged_branches

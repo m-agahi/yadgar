@@ -4,11 +4,19 @@ ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect her
 ### Core contract (all clients)
 
 1. **MCP endpoint**: `http://127.0.0.1:8765/mcp` — connect here for memory tools.
-2. **Recall first**: before answering questions about repo structure, AWS resources,
-   or past decisions, call `recall(query, directory=<cwd>)`.
-3. **Write back**: after significant work, discoveries, or decisions — call
+2. **Recall first**: before answering questions about repo structure, external
+   resources, or past decisions, call `recall(query, directory=<cwd>)`.
+   Read-first triggers also include **WebFetch / WebSearch and external API calls**.
+   Triage the result: **Hit** → use it. **Miss** → do the work, then write back.
+   **Drift** (memory conflicts observed state) → do the work + update memory.
+   **Observed state always wins.**
+3. **Write back**: after significant or multi-step work — call
    `memorize(content, context=<cwd>, tags=[...])`. Tag all writes. Context MUST be
    an absolute directory path (e.g. `/home/user/myapp`), never a description.
+   Also write back after any discovery that is non-obvious or reusable across sessions,
+   or that contradicts prior memory; and on structural changes (new
+   file/module/service). Stale = contradicted by observed state or explicitly
+   deprecated → delete it.
 4. **Agent-Prompt Library** — before any dispatch, call
    `agent_dispatch_prelude(pattern, task_topic)` and build the dispatch on the
    returned contract; register a good reusable prompt with `agent_prompt_save(...)`.
@@ -31,6 +39,9 @@ ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect her
 ### Memory discipline
 
 - NEVER write to `memory/` dirs or `MEMORY.md` — use Yadgar MCP tools only.
+- `recall` searches episodic memory; `wiki_query` / `wiki_read` read the curated
+  wiki. Use both when unsure which store holds the answer.
 - Use `restore(directory=...)` after `/clear` or `/compact` — NOT `recall`.
-- Supply `branch_hint` on every `wiki_add` call (project-canonical → `"master"`).
+- Pass `branch_hint` on `wiki_add` (project-canonical → `"master"`); hook-enabled
+  clients get it auto-supplied by the SessionStart context hook.
 - Don't memorize: ephemeral debug findings, single-use trivia, secrets.

@@ -265,9 +265,9 @@
   "function": "<file>",
   "lineno": 1,
   "metrics": {
-   "file_loc": 1153
+   "file_loc": 1387
   },
-  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.157.0 #76: recorded 1153 had drifted to ~1369 from migrations accumulated since 2026-06-13 (this touch only adds migration 026_drop_wiki_draft, ~+18 LoC net after removing the wiki_draft _init_schema entry); resyncing the recorded value. Each migration is an append-only single-responsibility fn — the module is a migration ledger by design; wave N split remains deferred.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },

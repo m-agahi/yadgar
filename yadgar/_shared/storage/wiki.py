@@ -1,11 +1,10 @@
-"""Wiki page CRUD, search, cross-references, drafts, and project-init helpers.
+"""Wiki page CRUD, search, cross-references, and project-init helpers.
 
 _WikiMixin provides:
   - insert_wiki_page / update_wiki_page / get_wiki_page / get_wiki_page_by_slug
   - get_wiki_page_by_slug_and_branch / delete_wiki_page / list_wiki_pages
   - search_wiki_fts / search_wiki_fts_scored / search_wiki_vectors
   - replace_wiki_crossrefs / get_wiki_backlinks / get_all_wiki_crossrefs
-  - insert_wiki_draft / get_wiki_draft_by_slug / list_wiki_drafts / delete_wiki_draft
   - upsert_project_init / upsert_active_work
   - insert_wiki_page_version / get_max_version_for_page
   - list_wiki_page_versions / get_wiki_page_version
@@ -842,77 +841,6 @@ class _WikiMixin:
         else:
             rows = self._q(sql)
         return [{"from_slug": r["from_slug"], "to_slug": r["to_slug"]} for r in rows]
-
-    # ------------------------------------------------------------------ Wiki Drafts
-
-    @trace_span()
-    def insert_wiki_draft(self, draft: dict) -> int:
-        """Insert a wiki draft. Returns draft ID.
-
-        v5.42.3: branch field added (migration 015). Pass branch=<value> to associate
-        the draft with a specific branch context; branch=None (default) for legacy/canonical
-        writes. wiki_approve reads this field and propagates it to the stored wiki page.
-        """
-        now = self._now_iso()
-        did = self._next_id("wiki_draft")
-        branch = draft.get("branch")
-        # v5.42.3: only include branch in SET when non-None.
-        # SurrealDB option<string> requires NONE (omission), not JSON null.
-        draft_set = (
-            "title = $title, slug = $slug, content = $content, "
-            "category = $category, tags = $tags, confidence = $confidence, "
-            "source_memory_ids = $source_memory_ids, created_at = $created_at"
-        )
-        params: dict = {
-            "id": did,
-            "title": draft.get("title", ""),
-            "slug": draft["slug"],
-            "content": draft.get("content", ""),
-            "category": draft.get("category", "reference"),
-            "tags": draft.get("tags", []),
-            "confidence": draft.get("confidence", "medium"),
-            "source_memory_ids": draft.get("source_memory_ids", []),
-            "created_at": draft.get("created_at", now),
-        }
-        if branch is not None:
-            draft_set += ", branch = $branch"
-            params["branch"] = branch
-        self._q(
-            f"CREATE type::record('wiki_draft', $id) SET {draft_set}",
-            params,
-        )
-        return did
-
-    @trace_span()
-    def get_wiki_draft_by_slug(self, slug: str) -> dict | None:
-        """Get a wiki draft by slug."""
-        rows = self._q(
-            "SELECT * FROM wiki_draft WHERE slug = $slug LIMIT 1",
-            {"slug": slug},
-        )
-        return self._row_to_dict(rows[0]) if rows else None
-
-    @trace_span()
-    def list_wiki_drafts(self) -> list[dict]:
-        """List all wiki drafts ordered by creation time."""
-        rows = self._q("SELECT * FROM wiki_draft ORDER BY created_at DESC")
-        return self._rows_to_dicts(rows)
-
-    @trace_span()
-    def delete_wiki_draft(self, slug: str) -> bool:
-        """Delete a wiki draft by slug. Return True if deleted."""
-        rows = self._q(
-            "SELECT id FROM wiki_draft WHERE slug = $slug LIMIT 1",
-            {"slug": slug},
-        )
-        if not rows:
-            return False
-        did = self._extract_id(rows[0].get("id"))
-        self._q(
-            "DELETE type::record('wiki_draft', $id)",
-            {"id": did},
-        )
-        return True
 
     # ------------------------------------------------------------------ _project_init / _active_work atomic helpers
 

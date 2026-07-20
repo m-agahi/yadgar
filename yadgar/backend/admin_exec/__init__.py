@@ -61,8 +61,6 @@ _ADMIN_OPS: dict[str, Callable[[dict], dict]] = {
     "seed_store": seed.seed_store,
     # wiki-edit + agent_prompt writes (R3 Car 3c / R5 group 3)
     "wiki_delete": wiki.wiki_delete,
-    "wiki_discard": wiki.wiki_discard,
-    "wiki_approve": wiki.wiki_approve,
     "wiki_autolink": wiki.wiki_autolink,
     "wiki_update": wiki.wiki_update,
     "wiki_restore": wiki.wiki_restore,
