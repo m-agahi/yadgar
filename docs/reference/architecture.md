@@ -194,7 +194,6 @@ SurrealDB tables:
 | `relationships` | Edges between entities (co_occurrence, causal, etc.) |
 | `wiki_page` | Wiki pages (markdown), `directory_context: string NOT NULL`, `branch: option<string>`. Includes task-list pages (`page_type="task_list"`) and ADR pages (`page_type="adr"`) |
 | `wiki_page_version` | Immutable version snapshots: full content + change_summary per version (v5.41.0) |
-| `wiki_draft` | Pending drafts. `wiki_add` writes DIRECTLY — no draft path in production |
 | `wiki_bookmark` | Ordered bookmark entries; powers `bookmark_*` MCP tools |
 | `memory_block` | Named scope-bounded text containers (v5.33.0, migration 012). `project` + `global` scopes |
 | `memory_archive` | Archived memory records with back-reference |
@@ -229,7 +228,7 @@ On non-Docker hosts, `yadgar-vacuum.service` (systemd oneshot) runs `yadgar vacu
 ## Branch + Directory Contract (v5.42.x)
 
 **Schema:**
-- Every `memory`, `wiki_page`, and `wiki_draft` row carries `directory_context: string NOT NULL` — either an absolute project path or the literal `"global"`.
+- Every `memory` and `wiki_page` row carries `directory_context: string NOT NULL` — either an absolute project path or the literal `"global"`.
 - `branch: option<string>` (NULL-able) — non-NULL = branch-scoped; NULL = canonical (branch-invariant).
 - Three semantic categories: **project-canonical** (`directory=path, branch=NULL`), **project-branch-scoped** (`directory=path, branch=name`), **global** (`directory="global", branch=NULL`).
 

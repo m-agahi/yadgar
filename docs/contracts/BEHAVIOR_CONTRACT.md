@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**248 SHALLs / 39 subsystems.** Today: **56 ✅ · 189 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3) Of the 189 ⏳:
-**61 `[r]` (real-path coverage exists) · 96 `[u]` (unit-only) · 32 none.**
+**244 SHALLs / 39 subsystems.** Today: **56 ✅ · 185 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76) Of the 185 ⏳:
+**59 `[r]` (real-path coverage exists) · 94 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -74,7 +74,6 @@ Goal: every SHALL → ✅ or ❌.
 - BC-G2 wiki_query(term, directory=A) excludes other-project pages. ⏳[r] P1
 - BC-G3 wiki_read §25 resolution: dir+branch → dir+null → global → not-found. ⏳[r] P1
 - BC-G4 every wiki_add/update creates an immutable wiki_page_version. ⏳[r] P1
-- BC-G5 draft → approve workflow end-to-end. ⏳[r] P2
 - BC-G6 similarity gate blocks near-duplicate page. ⏳[r] P2
 - BC-G7 wiki bookmarks CRUD. ⏳[r] P2
 - BC-G8 wiki_cleanup_merged_branches removes merged-branch pages. ⏳[u] P2
@@ -320,9 +319,6 @@ Goal: every SHALL → ✅ or ❌.
 | BC-T33 | wiki_query | ⏳[r] | =G2 |
 | BC-T34 | wiki_list | ⏳[u] | catalog listing |
 | BC-T35 | wiki_update | ⏳[r] | =G4 |
-| BC-T36 | wiki_approve | ⏳[r] | =G5 |
-| BC-T37 | wiki_drafts | ⏳[u] | =G5 |
-| BC-T38 | wiki_discard | ⏳[u] | =G5 |
 | BC-T39 | wiki_check_duplicate | ⏳[r] | =G6 |
 | BC-T40 | wiki_history | ⏳[u] | =G4 |
 | BC-T41 | wiki_read_version | ⏳[u] | =G4 |

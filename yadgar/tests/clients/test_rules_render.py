@@ -208,6 +208,60 @@ def test_render_body_no_addenda():
     assert "http://127.0.0.1:8765/mcp" in body
 
 
+# ── 5b. render_body — generic product-truth discipline present (#79) ──────────
+
+
+def test_render_body_contains_read_first_triage():
+    """Core template must carry the Hit/Miss/Drift triage + observed-state-wins."""
+    desc = CLIENT_REGISTRY["codex"]  # no addenda — pure core
+    body = rr.render_body(desc, _VERSION)
+    low = body.lower()
+    assert "observed state" in low, "missing observed-state-wins triage"
+    # The three triage outcomes.
+    assert "hit" in low and "miss" in low and "drift" in low, (
+        "missing Hit/Miss/Drift read-first triage"
+    )
+
+
+def test_render_body_contains_webfetch_websearch_trigger():
+    """Read-first triggers must name WebFetch / WebSearch + external API calls."""
+    desc = CLIENT_REGISTRY["codex"]
+    body = rr.render_body(desc, _VERSION)
+    assert "WebFetch" in body and "WebSearch" in body, (
+        "read-first triggers must include WebFetch/WebSearch"
+    )
+
+
+def test_render_body_contains_write_back_and_stale():
+    """Write-back triggers + stale-deletion discipline must be present."""
+    desc = CLIENT_REGISTRY["codex"]
+    body = rr.render_body(desc, _VERSION)
+    low = body.lower()
+    assert "write-back" in low or "write back" in low
+    assert "reusable across sessions" in low, "missing reusable-across-sessions criterion"
+    assert "stale" in low, "missing stale-deletion discipline"
+
+
+def test_render_body_contains_recall_vs_wiki_guidance():
+    """recall (episodic) vs wiki_query/wiki_read (curated) selection guidance."""
+    desc = CLIENT_REGISTRY["codex"]
+    body = rr.render_body(desc, _VERSION)
+    assert "episodic" in body.lower(), "missing recall-vs-wiki (episodic) guidance"
+    assert "wiki_read" in body, "missing wiki_read in recall-vs-wiki guidance"
+
+
+def test_render_body_no_defect_workaround_text():
+    """#79: template must NOT document defects being fixed (no alarmist framing)."""
+    desc = CLIENT_REGISTRY["codex"]
+    body = rr.render_body(desc, _VERSION)
+    # The similarity-gate score leak and the wrong-slot warning are DEFECTS,
+    # not product truth — they must never appear in the shipped template.
+    assert "0.34" not in body, "template leaks similarity-gate score (defect text)"
+    assert "wrong branch" not in body.lower() and "wrong slot" not in body.lower(), (
+        "template documents a defect workaround instead of product truth"
+    )
+
+
 # ── 6. render_body — unknown addendum key silently ignored ───────────────────
 
 

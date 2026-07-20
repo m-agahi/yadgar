@@ -17,9 +17,6 @@ Coverage:
 11. memorize hard-reject when _detect_branch returns None + no branch_hint
 12. memorize with branch_hint passes when _detect_branch returns None
 13. memorize hard-reject → DLQ entry created, no memory stored
-14. Migration 015: wiki_draft.branch column added; existing rows have branch=None
-15. insert_wiki_draft stores branch; wiki_approve reads and propagates it
-16. wiki_approve legacy null-branch draft uses _internal=True carve-out
 17. yadgar_dlq_rejection_count metric increments on missing_branch rejection
 18. MCP boundary validator: wiki_add missing branch → synchronous error dict
 19. MCP boundary validator: memorize missing branch → synchronous error dict
@@ -443,100 +440,6 @@ class TestMemorizeHardReject:
         assert sidecar.exists()
         meta = json.loads(sidecar.read_text())
         assert meta["failure_reason"] == "missing_branch"
-
-
-# ── 14: Migration 015 — wiki_draft.branch column ──────────────────────────────
-
-
-class TestMigration015WikiDraftBranch:
-    """Migration 015: wiki_draft table gains a 'branch' column."""
-
-    def test_insert_wiki_draft_with_branch(self):
-        """insert_wiki_draft stores branch field for new drafts."""
-        storage = server._get_storage()
-        storage.insert_wiki_draft(
-            {
-                "title": "Test Draft",
-                "slug": "test-draft-branch",
-                "content": "Draft content",
-                "category": "reference",
-                "tags": [],
-                "confidence": "medium",
-                "branch": "feat/my-branch",
-            }
-        )
-        draft = storage.get_wiki_draft_by_slug("test-draft-branch")
-        assert draft is not None
-        assert draft.get("branch") == "feat/my-branch"
-
-    def test_insert_wiki_draft_null_branch_backfill(self):
-        """Legacy drafts (branch=None) are stored with branch=None."""
-        storage = server._get_storage()
-        storage.insert_wiki_draft(
-            {
-                "title": "Legacy Draft",
-                "slug": "legacy-draft-no-branch",
-                "content": "Legacy content",
-                "category": "reference",
-                "tags": [],
-                "confidence": "medium",
-            }
-        )
-        draft = storage.get_wiki_draft_by_slug("legacy-draft-no-branch")
-        assert draft is not None
-        # branch may be absent or None — both are acceptable for legacy rows
-        assert draft.get("branch") is None
-
-
-# ── 15: wiki_approve propagates draft branch ──────────────────────────────────
-
-
-class TestWikiApproveBranchPropagation:
-    """wiki_approve reads branch from draft and stores it on the wiki page."""
-
-    def test_wiki_approve_preserves_draft_branch(self, admin_backend_bypass):
-        """Draft with branch='feat/x' → approved page has branch='feat/x'."""
-        storage = server._get_storage()
-        storage.insert_wiki_draft(
-            {
-                "title": "Approve Branch Test",
-                "slug": "approve-branch-test",
-                "content": "Content to approve.",
-                "category": "reference",
-                "tags": [],
-                "confidence": "medium",
-                "branch": "feat/my-feature",
-            }
-        )
-
-        result = server.wiki_approve(slug="approve-branch-test")
-        assert result.get("approved") is True
-
-        # Check stored page has correct branch
-        rows = storage._q("SELECT slug, branch FROM wiki_page WHERE slug = 'approve-branch-test'")
-        assert rows, "Approved page should be in wiki_page"
-        assert rows[0].get("branch") == "feat/my-feature", (
-            f"Expected branch='feat/my-feature', got: {rows[0].get('branch')!r}"
-        )
-
-    def test_wiki_approve_legacy_null_branch_uses_internal_flag(self, admin_backend_bypass):
-        """Legacy null-branch draft approved → page stored (backward compat path)."""
-        storage = server._get_storage()
-        storage.insert_wiki_draft(
-            {
-                "title": "Legacy Null Branch Approve",
-                "slug": "legacy-null-branch-approve",
-                "content": "Legacy content to approve.",
-                "category": "reference",
-                "tags": [],
-                "confidence": "medium",
-                # No branch key = legacy null
-            }
-        )
-
-        # Should succeed even with null branch (backward-compat)
-        result = server.wiki_approve(slug="legacy-null-branch-approve")
-        assert result.get("approved") is True
 
 
 # ── 17: Metric counter for missing_branch ──────────────────────────────────────

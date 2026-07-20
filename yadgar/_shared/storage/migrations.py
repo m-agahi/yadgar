@@ -1031,6 +1031,23 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
             _log.info("migration_025: deleted %s", row.get("slug"))
 
 
+def _migration_026_drop_wiki_draft(storage) -> None:
+    """Drop the dead wiki_draft table (v5.157.0, #76).
+
+    No production code path ever created a wiki_draft row — wiki_add commits
+    directly with no draft/approve workflow — so the table was always empty
+    and the wiki_drafts/wiki_approve/wiki_discard tools operated on nothing.
+    Migrations 015 + 016 (which added branch + directory_context columns to
+    wiki_draft) are kept for history immutability; this forward migration
+    removes the table they touched.
+
+    REMOVE TABLE IF EXISTS is idempotent — safe to run twice and a no-op when
+    the table is already absent.
+    """
+    storage._q("REMOVE TABLE IF EXISTS wiki_draft;")
+    _log.info("migration_026: dropped dead wiki_draft table")
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -1119,6 +1136,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "025_agent_prompt_slug_collapse",
         "fn": _migration_025_agent_prompt_slug_collapse,
+    },
+    {
+        "version": "026_drop_wiki_draft",
+        "fn": _migration_026_drop_wiki_draft,
     },
 ]
 
@@ -1211,7 +1232,6 @@ class _MigrationsMixin:
             "counter",
             "wiki_page",
             "wiki_crossref",
-            "wiki_draft",
             "wiki_bookmark",
             "wiki_page_version",
         ):

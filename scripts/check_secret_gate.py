@@ -45,7 +45,6 @@ _SKIP_ANNOTATION = "# secret-gate: skip"
 _DELEGATING_TOOLS: frozenset[str] = frozenset(
     {
         "seed_project",  # delegates to _seed() which calls memorize()
-        "wiki_approve",  # reads a draft, calls wiki store directly (no free-text input)
     }
 )
 

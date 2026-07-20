@@ -124,8 +124,6 @@ def test_admin_ops_registry_covers_wiki_edit_family():
     ops = admin_ops()
     assert {
         "wiki_delete",
-        "wiki_discard",
-        "wiki_approve",
         "wiki_autolink",
         "wiki_update",
         "wiki_restore",

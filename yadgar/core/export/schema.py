@@ -50,7 +50,6 @@ EXCLUDED_TABLES: frozenset[str] = frozenset(
 EXPORT_TABLE_NAMES: list[str] = [
     "memory",
     "wiki_page",
-    "wiki_draft",
     "wiki_crossref",
     "action_log",
     "consolidation_log",
@@ -121,17 +120,6 @@ WIKI_PAGE_COLUMNS: list[Column] = [
     Column("updated_at", "updated_at", "TIMESTAMP"),
     Column("branch", "branch", "VARCHAR"),
     Column("summary", "summary", "VARCHAR"),
-]
-
-WIKI_DRAFT_COLUMNS: list[Column] = [
-    Column("id", "id", "VARCHAR"),
-    Column("id", "id_table", "VARCHAR"),
-    Column("id", "id_pk", "VARCHAR"),
-    Column("slug", "slug", "VARCHAR"),
-    Column("content", "content", "VARCHAR"),
-    Column("tags", "tags", "JSON"),
-    Column("created_at", "created_at", "TIMESTAMP"),
-    Column("updated_at", "updated_at", "TIMESTAMP"),
 ]
 
 WIKI_CROSSREF_COLUMNS: list[Column] = [
@@ -315,7 +303,6 @@ MEMORY_SIMILARITY_LINK_COLUMNS: list[Column] = [
 TABLE_COLUMNS: dict[str, list[Column]] = {
     "memory": MEMORY_COLUMNS,
     "wiki_page": WIKI_PAGE_COLUMNS,
-    "wiki_draft": WIKI_DRAFT_COLUMNS,
     "wiki_crossref": WIKI_CROSSREF_COLUMNS,
     "action_log": ACTION_LOG_COLUMNS,
     "consolidation_log": CONSOLIDATION_LOG_COLUMNS,

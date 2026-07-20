@@ -925,7 +925,6 @@ def _reset_backend_caches() -> None:
 _WIPE_TABLES = (
     "memory",
     "wiki_page",
-    "wiki_draft",
     "wiki_bookmark",
     "entity",
     "relationship",

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Sync version from pyproject.toml into server.json, flake.nix, and docker-compose.yml."""
+"""Sync version from pyproject.toml into server.json, flake.nix, docker-compose.yml,
+and yadgar/__init__.py BACKEND_VERSION (the 4th backend site, #68 — daemon
+DOCKERHUB_BACKEND_IMAGE derives from it)."""
 
 import json
 import re
@@ -110,6 +112,29 @@ if compose_path.exists():
         compose_path.write_text(new_compose_text)
         print(f"docker-compose.yml updated (core={version}, backend={backend_version})")
         changed = True
+
+# ── yadgar/__init__.py BACKEND_VERSION (#68 — 4th backend site) ───────────────
+# The daemon's DOCKERHUB_BACKEND_IMAGE derives from this literal, so it MUST track
+# server.json backend_version. Previously unsynced → drift caught only by the
+# canonical/hotfix drift-guard tests (bit #214, #218, v5.157.0).
+if backend_version:
+    init_path = root / "yadgar" / "__init__.py"
+    if init_path.exists():
+        init_text = init_path.read_text()
+        new_init_text, n_init = re.subn(
+            r'(^BACKEND_VERSION\s*=\s*")[^"]+(")',
+            rf"\g<1>{backend_version}\g<2>",
+            init_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if n_init == 0:
+            print("ERROR: could not find BACKEND_VERSION in yadgar/__init__.py", file=sys.stderr)
+            sys.exit(1)
+        if new_init_text != init_text:
+            init_path.write_text(new_init_text)
+            print(f"yadgar/__init__.py BACKEND_VERSION updated to {backend_version}")
+            changed = True
 
 if changed:
     sys.exit(1)  # exit 1 so pre-commit re-stages the file

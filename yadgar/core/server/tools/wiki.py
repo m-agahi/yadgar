@@ -931,62 +931,6 @@ def wiki_autolink(
     )
 
 
-@_tool(power=True)
-def wiki_drafts() -> list[dict]:
-    """List all pending wiki drafts awaiting review.
-
-    Drafts are candidate wiki pages queued but not yet approved.
-    Use wiki_approve to promote a draft to a full page, or wiki_discard to delete it.
-    """
-    storage = _get_storage()
-    drafts = storage.list_wiki_drafts()
-    for d in drafts:
-        if d.get("content"):
-            d["content"] = d["content"][:200]
-    return drafts
-
-
-@_tool(power=True)
-def wiki_approve(slug: str) -> dict:
-    """Promote a pending draft wiki page to a full wiki page.
-
-    Moves the draft into the wiki knowledge base with all its metadata,
-    then deletes the draft. Fails if no draft with that slug exists.
-
-    v5.42.3: reads branch from draft row (migration 015). If the draft carries
-    a branch value, it is propagated to the wiki page. Legacy NULL-branch drafts
-    (pre-v5.42.3 or explicit canonical-slot drafts) write to the NULL-branch
-    canonical slot — this is now explicit rather than accidental.
-    """
-    # R3 Car 3c: the draft→page promotion (wiki.add + draft delete + epoch bump)
-    # forwards to the backend /admin op. The file-queue mirror (write_wiki) is a
-    # CORE-side side-effect — it stays here, driven by the draft content the impl
-    # surfaces back.
-    result = _forward_admin("wiki_approve", {"slug": slug})
-    if not result.get("approved"):
-        return {"approved": False, "error": result.get("error", f"Draft '{slug}' not found")}
-    page = result.get("page", {})
-    content = result.get("content", "")
-    try:
-        _get_file_queue().write_wiki(page.get("slug", slug), content)
-    except Exception as _fq_exc:
-        logger.debug("File queue wiki mirror failed (non-fatal): %s", _fq_exc)
-    return {"approved": True, "slug": slug, "page": page}
-
-
-@_tool(power=True)
-def wiki_discard(slug: str) -> dict:
-    """Discard a pending wiki draft without promoting it to a full page.
-
-    Permanently deletes the draft. Use for incorrect or low-value drafts.
-    """
-    # R3 Car 3c: draft delete forwards to the backend /admin op.
-    deleted = _forward_admin("wiki_discard", {"slug": slug}).get("deleted", False)
-    if deleted:
-        return {"discarded": True, "slug": slug}
-    return {"discarded": False, "error": f"Draft '{slug}' not found"}
-
-
 @_tool()
 def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writes to DB
     title: str,

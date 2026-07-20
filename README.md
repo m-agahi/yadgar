@@ -340,7 +340,7 @@ Maintenance: `wiki_coverage` · `wiki_refresh_stale` ⚡ · `wiki_cleanup_merged
 
 **Task-list mirror:** `wiki_write_task_list(project, content, directory)` — canonical write bounded to `{project}-task-list` slug; used by stop-hook checkpoint (step 4).
 
-> `wiki_add` commits directly — there is no draft/approve workflow on the production write path. (`wiki_drafts` / `wiki_approve` / `wiki_discard` exist but no path produces drafts.)
+> `wiki_add` commits directly — there is no draft/approve workflow. The draft-workflow tools (`wiki_drafts`, `wiki_approve`, `wiki_discard`) were removed in v5.157.0 (Fix #76); no production path ever produced drafts.
 
 </details>
 

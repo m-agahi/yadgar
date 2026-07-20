@@ -55,7 +55,7 @@ Supported agent types (used as `provenance_agent` in memorize calls):
 
 ### What NOT to do
 
-- Do NOT call `memorize`, `remember`, `wiki_add`, `wiki_approve`, or `wiki_update`.
+- Do NOT call `memorize`, `remember`, `wiki_add`, or `wiki_update`.
 - Do NOT call `checkpoint` or `restore`.
 - Do NOT modify `.claude/settings.json` or `CLAUDE.md`.
 - Explore/Plan subagents: no write tools at all — report only.

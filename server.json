@@ -7,8 +7,8 @@
     "url": "https://codeberg.org/maxagahi/yadgar",
     "source": "codeberg"
   },
-  "version": "5.156.0",
-  "backend_version": "5.57.0",
+  "version": "5.157.0",
+  "backend_version": "5.58.0",
   "remotes": [
     {
       "type": "streamable-http",
