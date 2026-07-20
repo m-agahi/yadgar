@@ -143,12 +143,11 @@ EDGE_TYPES: dict[str, dict] = {
         "settings_color_key": None,
         "fallback_color": "#39c5cf",
         "role": "retrieval",
-        # v5.154.0 (#216): default OFF despite role=retrieval. This is the LARGEST
-        # edge type (~3.5k rows); with near-duplicate it was ~8.3k of ~12k edges,
-        # whiting out the galaxy core. role stays "retrieval" (it DOES drive recall
-        # — the legend must reflect that); only the default toggle is flipped off
-        # to keep the at-rest render legible. Toggle it on to see derived_from.
-        "default_on": False,
+        # ADR-0152: default ON. #217 flipped this OFF (mass edge type) but the user
+        # reversed that call — retrieval-role edges (which DRIVE recall) should be
+        # shown by default. Only near-duplicate (memory_similarity_link, the ~4.8k
+        # spiderweb) stays default OFF. derived_from renders again at rest.
+        "default_on": True,
     },
 }
 

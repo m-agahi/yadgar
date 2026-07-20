@@ -381,9 +381,10 @@ class TestApiGraphDerivedFromEdges:
         )
         entry = edges["derived_from"]
         assert entry["role"] == "retrieval", f"legend role wrong: {entry}"
-        # #216: mass edge type → default OFF (was True pre-v5.154.0).
-        assert entry.get("default_on") is False, (
-            f"derived_from should default OFF post-#216: {entry}"
+        # ADR-0152: derived_from default-off (#217) is REVERTED — retrieval-role
+        # edges are shown by default; only near-duplicate stays off.
+        assert entry.get("default_on") is True, (
+            f"derived_from should default ON post-ADR-0152: {entry}"
         )
 
 

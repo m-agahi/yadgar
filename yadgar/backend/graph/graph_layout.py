@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 # Fixed seed → reproducible layout across runs/processes.
 _LAYOUT_SEED = 42
 
+# viz-layout-backend (ADR-0152, R6): the graph SHAPE hash (graph_signature) alone
+# no-ops the nightly recompute when the shape is stable, so new layout math never
+# takes effect. Fold this version constant + the galaxy params into the signature
+# input so shipping new math (bump this) or changing a VIZ_GALAXY_* setting auto-
+# invalidates the cache. BUMP on every layout-math change.
+_LAYOUT_VERSION = 2
+
 # Default coordinate extent. spring_layout natively returns ~[-1, 1]; the 3D viz
 # force model uses a link distance of ~36 (VIZ_PHYSICS_LINK_DISTANCE_3D), so we
 # scale the seeded layout to that natural extent. Matching the client's extent
@@ -63,11 +70,29 @@ def _edge_pairs(edges: list[dict], valid: set[str]) -> list[tuple[str, str]]:
     return sorted(pairs)
 
 
-def graph_signature(nodes: list[dict], edges: list[dict]) -> str:
-    """Order-independent hash of the graph shape (node ids + edge endpoints).
+def graph_signature(
+    nodes: list[dict],
+    edges: list[dict],
+    layout_version: int = _LAYOUT_VERSION,
+    params: dict | None = None,
+) -> str:
+    """Cache-invalidation hash: graph shape + layout code version + galaxy params.
 
-    Used as a cache-invalidation key: when the signature is unchanged the cached
-    layout is still valid and recompute is skipped. Returns a short hex digest.
+    Historically hashed only the graph SHAPE (node ids + edge endpoints). That
+    no-ops the nightly recompute whenever the shape is stable — so new layout
+    math (or a changed VIZ_GALAXY_* setting) would never take effect (ADR-0152
+    R6). We now fold ``layout_version`` and the galaxy ``params`` into the digest
+    so bumping the code version or changing a param invalidates the cache even on
+    an identical graph shape.
+
+    Args:
+        nodes: node dicts (each with an ``id``).
+        edges: edge dicts (``source`` + ``target``); missing endpoints ignored.
+        layout_version: the layout-math version constant (bump on math changes).
+        params: galaxy params folded into the hash (arms/pitch/coredens). ``None``
+            → params contribute nothing (legacy shape-only behaviour is a subset).
+
+    Returns a short hex digest.
     """
     ids = _node_ids(nodes)
     pairs = _edge_pairs(edges, set(ids))
@@ -81,6 +106,16 @@ def graph_signature(nodes: list[dict], edges: list[dict]) -> str:
         h.update(s.encode("utf-8"))
         h.update(b"\x01")
         h.update(t.encode("utf-8"))
+        h.update(b"\x00")
+    # R6: version + params fold. Serialise deterministically (sorted keys) so the
+    # digest is stable across dict insertion order.
+    h.update(b"V")
+    h.update(str(int(layout_version)).encode("utf-8"))
+    h.update(b"P")
+    for k in sorted((params or {}).keys()):
+        h.update(str(k).encode("utf-8"))
+        h.update(b"=")
+        h.update(repr((params or {})[k]).encode("utf-8"))
         h.update(b"\x00")
     return h.hexdigest()[:32]
 
@@ -245,10 +280,127 @@ def _rank_clusters(clusters: list[dict] | None, membership: dict[str, dict]) -> 
     return sorted(counts, key=lambda cid: (-counts[cid], str(cid)))
 
 
+def _cluster_member_counts(membership: dict[str, dict]) -> dict:
+    """Count PRESENT (rendered) members per real cluster from a membership map."""
+    counts: dict = {}
+    for info in membership.values():
+        if info["loose"]:
+            continue
+        cid = info["cluster"]
+        counts[cid] = counts.get(cid, 0) + 1
+    return counts
+
+
+def _assign_arms_balanced(ranked: list, counts: dict, arms: int) -> dict:
+    """Greedy lightest-arm bin-packing: each cluster → the arm with the smallest
+    running node-count load. Ties go to the lowest arm index (determinism).
+
+    Port of the client ``assignArmsBalanced`` (galaxy-view.js) — round-robin
+    ``i % arms`` dumped the biggest clusters onto arms 0/1 and starved the rest.
+    ADR-0152 bug #4: EVERY multi-member cluster maps to exactly ONE real arm
+    (0..arms-1); the old ``arms*3`` spine budget + ``arm=-2`` inter-arm scatter
+    are gone (clusters past the budget used to scatter randomly).
+
+    Args:
+        ranked: cluster ids, largest-first (from ``_rank_clusters``).
+        counts: cluster id → present-member count (from ``_cluster_member_counts``).
+        arms: arm count (K).
+
+    Returns ``{cluster_id: arm_index}`` with every ranked cluster on a real arm.
+    """
+    k = max(1, int(arms))
+    arm_load = [0] * k
+    out: dict = {}
+    for cid in ranked:
+        best = 0
+        for a in range(1, k):
+            if arm_load[a] < arm_load[best]:
+                best = a
+        out[cid] = best
+        arm_load[best] += int(counts.get(cid, 0))
+    return out
+
+
+def galaxy_membership(
+    nodes: list[dict],
+    edges: list[dict] | None,
+    clusters: list[dict] | None,
+    arms: int = 4,
+) -> dict[str, dict]:
+    """Per-node ``{id: {'loose': bool, 'arm': int}}`` — the single source of truth
+    for galaxy placement (positions) AND edge suppression (client Car B).
+
+    Two layers, in order:
+      1. Cluster membership (``_galaxy_node_membership``): nodes in a real
+         (>=2-member) cluster are ARM material on that cluster's assigned arm.
+      2. Connectivity eligibility (ADR-0152 bug #3a, LIGHT path): a LOOSE node
+         (typically an entity/wiki hub that never appears in the memory-only
+         ``member_node_ids``) that has edges into a real cluster is promoted onto
+         the arm of its DOMINANT neighbour cluster (the cluster most of its edges
+         point into). A truly-single (0-edge, or edges only to loose nodes) node
+         stays loose → core.
+
+    ``arm`` is -1 for loose/core nodes, else the assigned arm index in [0, arms).
+    Deterministic: cluster ranking + greedy arm assignment + sorted tie-breaks.
+    """
+    membership = _galaxy_node_membership(nodes, clusters)
+    ranked = _rank_clusters(clusters, membership)
+    counts = _cluster_member_counts(membership)
+    arm_of_cluster = _assign_arms_balanced(ranked, counts, arms)
+
+    # Base per-node arm from cluster membership.
+    out: dict[str, dict] = {}
+    for nid, info in membership.items():
+        if info["loose"]:
+            out[nid] = {"loose": True, "arm": -1, "cluster": None}
+        else:
+            out[nid] = {
+                "loose": False,
+                "arm": int(arm_of_cluster.get(info["cluster"], 0)),
+                "cluster": info["cluster"],
+            }
+
+    # ── bug #3a light: promote connected loose hubs onto a neighbour arm ──────
+    # Build a per-node tally of which real cluster its edges point into, then move
+    # any loose node whose edges reach a real cluster onto that cluster's arm.
+    # Deterministic: dominant cluster = highest edge count, ties by str(cluster).
+    if edges:
+        neighbour_clusters: dict[str, dict] = {}
+        for e in edges:
+            s = e.get("source")
+            t = e.get("target")
+            if s is None or t is None:
+                continue
+            s, t = str(s), str(t)
+            for a, b in ((s, t), (t, s)):
+                # `a` is the (possibly loose) node; `b` its neighbour.
+                a_info = out.get(a)
+                b_info = out.get(b)
+                if a_info is None or b_info is None:
+                    continue
+                if not a_info["loose"] or b_info["loose"]:
+                    continue  # only promote loose nodes via ARM neighbours
+                tally = neighbour_clusters.setdefault(a, {})
+                cid = b_info["cluster"]
+                tally[cid] = tally.get(cid, 0) + 1
+        for nid, tally in neighbour_clusters.items():
+            # Dominant neighbour cluster (deterministic tie-break).
+            dom = sorted(tally, key=lambda c: (-tally[c], str(c)))[0]
+            out[nid] = {
+                "loose": False,
+                "arm": int(arm_of_cluster.get(dom, 0)),
+                "cluster": dom,
+            }
+
+    # Strip the internal 'cluster' key from the public shape (positions +
+    # attach only need loose/arm).
+    return {nid: {"loose": v["loose"], "arm": v["arm"]} for nid, v in out.items()}
+
+
 @observe(tier="stage", metric="backend.graph.galaxy_layout")
 def galaxy_layout(
     nodes: list[dict],
-    edges: list[dict] | None = None,  # noqa: ARG001 — parity with compute_graph_layout signature
+    edges: list[dict] | None = None,
     clusters: list[dict] | None = None,
     arms: int = 4,
     spiral_pitch: float = 0.30,
@@ -262,12 +414,13 @@ def galaxy_layout(
 
     Args:
         nodes: node dicts (each with an ``id``).
-        edges: accepted for signature parity with ``compute_graph_layout`` (galaxy
-            positions derive from cluster membership, not edges).
+        edges: real graph edges (``source`` + ``target``). Consumed for the ADR-0152
+            bug #3a light path: a loose entity/wiki hub with edges into a real
+            cluster is promoted onto that neighbour cluster's arm (leaves the core).
         clusters: the ``/api/graph`` ``clusters[]`` payload (member_node_ids +
             member_count). Multi-member clusters become arms; loose nodes the core.
-        arms: number of spiral arms (K). Real clusters bucket round-robin into arms
-            by rank; clusters past the spine budget scatter inter-arm.
+        arms: number of spiral arms (K). EVERY multi-member cluster maps to exactly
+            ONE arm via greedy lightest-arm bin-packing (no spine budget / scatter).
         spiral_pitch: log-spiral tightness (smaller = tighter winding).
         core_density: packs the core bulge tighter as it rises (mockup ``coredens``).
         scale: coordinate extent (positions rescaled so the disk radius ~ scale).
@@ -287,21 +440,16 @@ def galaxy_layout(
     coredens = max(0.1, float(core_density))
     rng = _Mulberry32(_GALAXY_SEED)
 
-    membership = _galaxy_node_membership(nodes, clusters)
-    ranked = _rank_clusters(clusters, membership)
-
-    # Assign multi-member clusters to arms round-robin by rank (mockup spine
-    # budget = arms*3). Clusters past the budget scatter inter-arm (arm = -2).
-    arm_of_cluster: dict = {}
-    n_spine = min(len(ranked), arms * 3)
-    for i, cid in enumerate(ranked):
-        arm_of_cluster[cid] = (i % arms) if i < n_spine else -2
+    # Single source of truth for placement: loose→core, clustered/connected→arm.
+    # ADR-0152 bug #4: every multi-member cluster gets exactly one real arm (no
+    # arms*3 budget, no arm=-2 scatter). Bug #3a: connected loose hubs join arms.
+    membership = galaxy_membership(nodes, edges, clusters, arms)
 
     positions: dict[str, list[float]] = {}
     for nid in ids:
-        info = membership.get(nid, {"loose": True, "cluster": None})
+        info = membership.get(nid, {"loose": True, "arm": -1})
         loose = info["loose"]
-        arm = -1 if loose else arm_of_cluster.get(info["cluster"], -2)
+        arm = info["arm"]
 
         if loose:
             # ── DENSE central bulge: packed loose stars, exponential falloff ──
@@ -321,7 +469,8 @@ def galaxy_layout(
                 angle += math.log(radius / _GALAXY_R_CORE + 1.0) / pitch
                 angle += rng.gauss() * 0.16  # arm width jitter
             else:
-                # real cluster beyond the spine budget → inter-arm scatter
+                # Defensive: with bug #4 fixed every clustered node has arm>=0, so
+                # this branch is unreachable. Kept as a non-crashing fallback.
                 angle = rng.random() * math.pi * 2 + rng.gauss() * 0.5
             x = math.cos(angle) * radius
             z = math.sin(angle) * radius
@@ -342,42 +491,83 @@ def galaxy_layout(
     return {nid: [round(c * factor, 6) for c in coords] for nid, coords in positions.items()}
 
 
+def _place_in_core(node_id: str, scale: float = _LAYOUT_SCALE) -> list[float]:
+    """Deterministic core-bulge placement for an uncached node (ADR-0152 R1).
+
+    Since the client stops computing on load, an uncached node with no served
+    position would render at the origin dot. Place it in the dense central bulge
+    (ADR-0134 "intra-day nodes sit near origin" precedent) — deterministic per
+    node id (a stable hash seeds a fresh PRNG) so the same node lands in the same
+    spot across requests. NEVER returns the literal origin (radius floored > 0).
+    """
+    import math  # noqa: PLC0415
+
+    seed = int(hashlib.sha256(node_id.encode("utf-8")).hexdigest()[:8], 16)
+    rng = _Mulberry32(seed or 1)
+    # Same bulge sampler as the loose branch of galaxy_layout, at default density.
+    bulge_l = (_GALAXY_R_SCALE * 0.42) / (0.6 + 1.0 * 0.9)
+    rr = _exp_radius(rng, bulge_l, _GALAXY_R_MAX * 0.55, 1.4)
+    rr = max(rr, _GALAXY_R_CORE * 0.25)  # floor > 0 so it never sits at the origin
+    th = rng.random() * math.pi * 2
+    ph = math.acos(2 * rng.random() - 1)
+    x = rr * math.sin(ph) * math.cos(th)
+    z = rr * math.sin(ph) * math.sin(th)
+    y = rr * math.cos(ph) * _GALAXY_SPHEROID_FLATTEN
+    # Rescale to the layout extent (positions in the cache are already scaled;
+    # _GALAXY_R_MAX is the pre-scale disk radius). Approximate scale-up so the
+    # placed node sits inside the served core, not at native ~[-46, 46].
+    factor = scale / _GALAXY_R_MAX
+    return [round(x * factor, 6), round(y * factor, 6), round(z * factor, 6)]
+
+
 def attach_cached_positions(data: dict, cache: dict | None) -> dict:
-    """Attach cached x/y/z to each served node BY ID. Returns ``data`` mutated.
+    """Attach cached x/y/z (+ loose/arm membership) to each served node BY ID.
 
-    No positions are attached when ``cache`` is None or empty (no layout computed
-    yet) — the served nodes stay bare and the client runs its cold d3-force layout
-    (the seed-miss fallback). viz-render-perf (Car A) removed the
-    VIZ_PRECOMPUTED_LAYOUT_ENABLED gate: attach is unconditional given a cache.
+    Returns ``data`` mutated. No positions are attached when ``cache`` is None or
+    has no positions — the served nodes stay bare and the client runs its cold
+    fallback. viz-render-perf removed the VIZ_PRECOMPUTED_LAYOUT_ENABLED gate:
+    attach is unconditional given a cache.
 
-    Attach is BY NODE-ID, with no serve-side signature gate: the layout is
-    computed over the full uncapped graph, so the cached positions are a
-    superset of any capped /api/graph subset. Every served node that has a
-    cached position gets x/y/z; nodes added since the last precompute aren't in
-    the cache, so they stay bare and the client places them. Freshness /
-    invalidation is a COMPUTE-side concern — _maybe_precompute_graph_layout
-    recomputes when the full-graph signature changes — so the serve path never
-    needs to re-litigate it. Stale-by-a-bit seeds are harmless: the viz cooldown
-    relaxes them, exactly like the localStorage warm-start.
+    Attach is BY NODE-ID over the full-graph cache (a superset of any capped
+    subset). ADR-0152:
+      - **place-if-missing (R1):** a node absent from the cache (added since the
+        last precompute) gets a deterministic core-bulge position so it never
+        renders at the origin dot — the client no longer computes on load.
+      - **membership seam:** when the cache carries a ``membership`` sibling
+        (``{id: {loose, arm}}``), stamp ``n["loose"]`` + ``n["arm"]`` so the
+        client (Car B) reads ONE backend source of truth for positioning AND
+        core-node edge suppression.
 
     finish-viz (galaxy): the cache's ``layout_mode`` is stamped onto the payload as
-    ``data["layout_mode"]`` so the client can FREEZE physics (``cooldownTicks(0)``)
-    on a "galaxy" payload — the seeded galaxy shape must HOLD, not relax to a blob.
-    A "spring" payload keeps the existing warm-start relax behaviour.
+    ``data["layout_mode"]`` so the client can FREEZE physics on a "galaxy" payload.
     """
     if not cache:
         return data
     positions = cache.get("positions") or {}
     if not positions:
         return data
+    membership = cache.get("membership") or {}
     # Surface which generator produced these positions so the client can pick its
     # cooldown strategy (galaxy → freeze; spring → relax).
-    data["layout_mode"] = str(cache.get("layout_mode") or "spring")
+    mode = str(cache.get("layout_mode") or "spring")
+    data["layout_mode"] = mode
+    place_missing = mode == "galaxy"  # only galaxy layout has a core to place into
     for n in data.get("nodes", []):
         nid = n.get("id")
         if nid is None:
             continue
-        coords = positions.get(str(nid))
+        skey = str(nid)
+        coords = positions.get(skey)
         if coords and len(coords) >= 3:
             n["x"], n["y"], n["z"] = coords[0], coords[1], coords[2]
+        elif place_missing:
+            # R1: uncached node → deterministic core placement (not the origin).
+            px, py, pz = _place_in_core(skey)
+            n["x"], n["y"], n["z"] = px, py, pz
+            n.setdefault("loose", True)  # placed in the core → loose by construction
+            n.setdefault("arm", -1)
+        m = membership.get(skey)
+        if m:
+            n["loose"] = bool(m.get("loose", True))
+            n["arm"] = int(m.get("arm", -1))
     return data

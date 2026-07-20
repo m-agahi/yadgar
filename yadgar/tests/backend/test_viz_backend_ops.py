@@ -166,3 +166,68 @@ class TestCoreForwards:
         assert calls == ["precompute"]
         svc.run_consolidation_cycle("nightly")
         assert calls == ["precompute", "precompute"]
+
+
+# ---------------------------------------------------------------------------
+# Car C (ADR-0152): slider server-recompute op (Option A)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRelayoutOp:
+    """The graph_relayout op recomputes galaxy positions with per-request slider
+    params and RETURNS them (positions + membership). It MUST NOT write the
+    canonical singleton cache (that row is nightly/shared)."""
+
+    def _seed(self, storage, n=6):
+        for i in range(n):
+            storage.insert_memory(
+                {
+                    "content": f"relayout node {i}",
+                    "directory_context": "/tmp/relayoutproj",
+                    "tags": ["test"],
+                    "heat": float(i + 1) / n,
+                }
+            )
+
+    def test_op_registered(self):
+        from yadgar.backend.viz_exec import viz_ops
+
+        assert "graph_relayout" in viz_ops()
+
+    def test_returns_positions_and_membership(self, storage):
+        from yadgar.backend.viz_exec import run_viz_op
+
+        self._seed(storage)
+        out = run_viz_op("graph_relayout", {"arms": 4, "spiral_pitch": 0.3, "core_density": 1.0})
+        assert "positions" in out and out["positions"]
+        assert "membership" in out
+        for coord in out["positions"].values():
+            assert len(coord) == 3
+        for info in out["membership"].values():
+            assert "loose" in info and "arm" in info
+
+    def test_param_override_changes_output(self, storage):
+        """A per-request param override actually changes the returned positions.
+
+        The seeded corpus has no real multi-member clusters (all memories loose →
+        core), so arms don't move anything, but core_density repacks the bulge —
+        a robust discriminator that the request param reaches galaxy_layout."""
+        from yadgar.backend.viz_exec import run_viz_op
+
+        self._seed(storage)
+        a = run_viz_op("graph_relayout", {"arms": 4, "spiral_pitch": 0.3, "core_density": 0.5})
+        b = run_viz_op("graph_relayout", {"arms": 4, "spiral_pitch": 0.3, "core_density": 3.0})
+        assert a["positions"] != b["positions"]
+        # The echoed params reflect the overrides (proves they were threaded).
+        assert a["core_density"] == 0.5 and b["core_density"] == 3.0
+
+    def test_does_not_write_canonical_cache(self, storage):
+        """R3: the slider recompute must NOT overwrite graph_layout_cache:current
+        — one user's slider fiddle must not leak to everyone / no-op the nightly."""
+        from yadgar.backend.viz_exec import run_viz_op
+
+        self._seed(storage)
+        before = storage.get_graph_layout_cache()
+        run_viz_op("graph_relayout", {"arms": 6, "spiral_pitch": 0.5, "core_density": 1.5})
+        after = storage.get_graph_layout_cache()
+        assert before == after, "graph_relayout must not mutate the canonical cache"

@@ -7,6 +7,12 @@
      Loaded before the inline <style> so tokens (--viz-*) + vendored fonts are
      available to the shared chrome and to per-tab stylesheets (traces-tab.css). -->
 <link rel="stylesheet" href="viz-theme.css">
+<!-- ADR-0152 bug #1 (FOUC): load galaxy-view.css in <head> so the always-on
+     galaxy side-panel is styled on first paint. Previously the stylesheet was
+     injected late from galaxy-view.js (_buildDom), only AFTER /api/graph
+     returned, so the panel flashed unstyled. galaxy-view.js keeps an idempotent
+     guarded injection as a fallback (harmless double-load prevention). -->
+<link rel="stylesheet" href="galaxy-view.css">
 <title>Yadgar — Knowledge Graph</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }

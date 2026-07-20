@@ -99,6 +99,7 @@ def _maybe_precompute_graph_layout(storage, settings) -> None:
         from yadgar.backend.graph.graph_layout import (  # noqa: PLC0415
             compute_graph_layout,
             galaxy_layout,
+            galaxy_membership,
             graph_signature,
         )
 
@@ -109,7 +110,20 @@ def _maybe_precompute_graph_layout(storage, settings) -> None:
         clusters = data.get("clusters", [])
         galaxy_on = bool(getattr(settings, "VIZ_GALAXY_LAYOUT", True))
         mode = "galaxy" if galaxy_on else "spring"
-        sig = graph_signature(nodes, edges)
+        arms = int(getattr(settings, "VIZ_GALAXY_ARMS", 4))
+        spiral_pitch = float(getattr(settings, "VIZ_GALAXY_SPIRAL_PITCH", 0.30))
+        core_density = float(getattr(settings, "VIZ_GALAXY_CORE_DENSITY", 1.0))
+        # ADR-0152 R6: fold the layout-code version + galaxy params into the
+        # signature so new math (bumped _LAYOUT_VERSION) or a changed VIZ_GALAXY_*
+        # setting invalidates the cache even on an unchanged graph SHAPE — else the
+        # nightly no-ops and keeps serving the old positions.
+        sig = graph_signature(
+            nodes,
+            edges,
+            params={"arms": arms, "pitch": spiral_pitch, "coredens": core_density}
+            if galaxy_on
+            else None,
+        )
         cached = storage.get_graph_layout_cache()
         # Recompute when the graph SHAPE changes OR the layout mode flips (so a
         # knob toggle re-lays-out on the next cycle rather than serving stale
@@ -123,19 +137,25 @@ def _maybe_precompute_graph_layout(storage, settings) -> None:
 
         _t = _time.monotonic()
         logger.info("phase_start: precompute_graph_layout mode=%s nodes=%d", mode, len(nodes))
+        membership: dict = {}
         if galaxy_on:
             positions = galaxy_layout(
                 nodes,
                 edges,
                 clusters,
-                arms=int(getattr(settings, "VIZ_GALAXY_ARMS", 4)),
-                spiral_pitch=float(getattr(settings, "VIZ_GALAXY_SPIRAL_PITCH", 0.30)),
-                core_density=float(getattr(settings, "VIZ_GALAXY_CORE_DENSITY", 1.0)),
+                arms=arms,
+                spiral_pitch=spiral_pitch,
+                core_density=core_density,
             )
+            # Cache the loose/arm membership sibling so the serve path stamps it
+            # onto nodes without recomputing (single source of truth for Car B).
+            membership = galaxy_membership(nodes, edges, clusters, arms)
         else:
             iterations = getattr(settings, "VIZ_LAYOUT_ITERATIONS", 50)
             positions = compute_graph_layout(nodes, edges, dim=3, iterations=iterations)
-        storage.set_graph_layout_cache(sig, positions, datetime.now(UTC).isoformat(), mode)
+        storage.set_graph_layout_cache(
+            sig, positions, datetime.now(UTC).isoformat(), mode, membership=membership
+        )
         _dur_ms = int((_time.monotonic() - _t) * 1000)
         logger.info("phase_end: precompute_graph_layout mode=%s duration_ms=%d", mode, _dur_ms)
     except Exception as _exc:

@@ -79,6 +79,47 @@ def _op_graph(payload: dict) -> dict:
     return data
 
 
+@observe(tier="boundary", metric="backend.viz.graph_relayout")
+def _op_graph_relayout(payload: dict) -> dict:
+    """ADR-0152 Car C (Option A): recompute galaxy positions with per-request
+    slider params and RETURN them — never write the canonical cache.
+
+    payload: {"arms": int, "spiral_pitch": float, "core_density": float} —
+    per-request overrides for the layout-control sliders. The op lays out the FULL
+    uncapped graph (same as the nightly precompute) with these overrides and
+    returns {"positions": {id:[x,y,z]}, "membership": {id:{loose,arm}}, "arms":…}.
+
+    R3 (critical): this MUST NOT call ``set_graph_layout_cache`` — the
+    ``graph_layout_cache:current`` singleton is the nightly/shared canonical row.
+    Overwriting it would hand one user's slider fiddle to everyone AND no-op the
+    signature-gate on the next nightly. Read-compute-return-discard only.
+    """
+    from yadgar.backend.graph.graph_api import GraphAPI  # noqa: PLC0415
+    from yadgar.backend.graph.graph_layout import (  # noqa: PLC0415
+        galaxy_layout,
+        galaxy_membership,
+    )
+
+    storage = _get_storage()
+    data = GraphAPI(storage).get_full_graph(0, 8, False, None, 0, 0)
+    nodes, edges = data.get("nodes", []), data.get("edges", [])
+    clusters = data.get("clusters", [])
+    arms = max(1, int(payload.get("arms", 4)))
+    spiral_pitch = float(payload.get("spiral_pitch", 0.30))
+    core_density = float(payload.get("core_density", 1.0))
+    positions = galaxy_layout(
+        nodes, edges, clusters, arms=arms, spiral_pitch=spiral_pitch, core_density=core_density
+    )
+    membership = galaxy_membership(nodes, edges, clusters, arms)
+    return {
+        "positions": positions,
+        "membership": membership,
+        "arms": arms,
+        "spiral_pitch": spiral_pitch,
+        "core_density": core_density,
+    }
+
+
 @observe(tier="boundary", metric="backend.viz.graph_stats")
 def _op_graph_stats(payload: dict) -> dict:  # noqa: ARG001 — uniform op signature
     """Graph statistics: counts + top entities by heat."""
@@ -138,6 +179,7 @@ def _op_events(payload: dict) -> dict:
 # surface; the /viz route validates ``op`` against these keys (mirrors _ADMIN_OPS).
 _VIZ_OPS: dict[str, Callable[[dict], dict]] = {
     "graph": _op_graph,
+    "graph_relayout": _op_graph_relayout,
     "graph_stats": _op_graph_stats,
     "graph_edges": _op_graph_edges,
     "graph_neighborhood": _op_graph_neighborhood,
