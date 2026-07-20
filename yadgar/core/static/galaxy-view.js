@@ -382,15 +382,23 @@ export function buildNodeModel(payload, opts = {}) {
     // WIKI carries no heat → treat as ~0 (coloured by type tint downstream).
     const heat = type === 'wiki' ? 0 : normalizeHeat(rn.heat);
     const age = ageOf(rn, nowMs, spanMs);
-    const cluster = rn.id in idToCluster ? idToCluster[rn.id] : -1;
-    const single = cluster < 0;
-    nodes[i] = { id: rn.id, type, heat, age, cluster, single };
+    // ADR-0152 Car B: the backend is authoritative for membership. When it stamps
+    // `loose`/`arm` on a node (galaxy layout), read THOSE — do NOT re-derive from
+    // clusters[] client-side (that derivation is the client half of the #3a/#4
+    // bugs and must die with client compute). Fall back to the client cluster
+    // derivation only when the backend didn't stamp (spring mode / no cache).
+    const backendStamped = typeof rn.loose === 'boolean';
+    const clientCluster = rn.id in idToCluster ? idToCluster[rn.id] : -1;
+    const single = backendStamped ? rn.loose : clientCluster < 0;
+    const cluster = single ? -1 : clientCluster;
+    const arm = backendStamped && typeof rn.arm === 'number' ? rn.arm : null;
+    nodes[i] = { id: rn.id, type, heat, age, cluster, single, arm };
     idToIndex[rn.id] = i;
     counts[type]++;
     if (single) counts.core++;
     else counts.arm++;
-    if (cluster >= 0) {
-      const s = clusterStat[cluster];
+    if (clientCluster >= 0 && !single) {
+      const s = clusterStat[clientCluster];
       s.n++;
       s.heat += heat;
     }
@@ -536,6 +544,104 @@ export function layoutPositions(model, P, seed = GALAXY_SEED) {
 }
 
 /**
+ * ADR-0152 Car B: RENDER the backend-served x/y/z instead of computing on load.
+ *
+ * The backend (`graph_layout.py`) is now authoritative for galaxy positions — it
+ * computes + caches them nightly and `/api/graph` attaches x/y/z to every node
+ * (place-if-missing covers uncached nodes so nothing lands at the origin). This
+ * reads those served coordinates straight into the position buffer. The client
+ * `layoutPositions()` compute-on-load path is gone from `relayout()`; the ONLY
+ * remaining client-compute is (a) the deferred live-slider override path (Car C)
+ * and (b) this function's fallback when the payload carries NO served coords
+ * (spring mode / cold start with no cache) — then it delegates to
+ * `layoutPositions` so a bare payload still renders.
+ *
+ * @param {ReturnType<typeof buildNodeModel>} model
+ * @param {object} payload  the raw /api/graph payload (nodes carry x/y/z)
+ * @param {object} P  live params (only used on the fallback compute path)
+ * @param {number} [seed] fallback PRNG seed
+ * @returns {{pos:Float32Array, coreCount:number, armCount:number,
+ *            haloCount:number, armOfCluster:Array<number>, served:boolean}}
+ */
+export function buildDiskPositions(model, payload, P, seed = GALAXY_SEED) {
+  const rawById = Object.create(null);
+  for (const rn of (payload && payload.nodes) || []) {
+    if (rn && rn.id != null) rawById[rn.id] = rn;
+  }
+  const nodes = model.nodes;
+  const N = nodes.length;
+  // Served iff EVERY node carries finite x/y/z (place-if-missing guarantees this
+  // for galaxy payloads). Any gap → fall back to the client compute for all.
+  let allServed = N > 0;
+  for (let i = 0; i < N && allServed; i++) {
+    const rn = rawById[nodes[i].id];
+    if (!rn || typeof rn.x !== 'number' || typeof rn.y !== 'number' || typeof rn.z !== 'number') {
+      allServed = false;
+    }
+  }
+  if (!allServed) {
+    const out = layoutPositions(model, P, seed);
+    out.served = false;
+    return out;
+  }
+  const pos = new Float32Array(N * 3);
+  let coreCount = 0;
+  let armCount = 0;
+  for (let i = 0; i < N; i++) {
+    const rn = rawById[nodes[i].id];
+    pos[i * 3] = rn.x;
+    pos[i * 3 + 1] = rn.y;
+    pos[i * 3 + 2] = rn.z;
+    if (nodes[i].single) coreCount++;
+    else armCount++;
+  }
+  return { pos, coreCount, armCount, haloCount: 0, armOfCluster: [], served: true };
+}
+
+/**
+ * ADR-0152 Car C: apply a server slider-recompute response to the model.
+ *
+ * The /api/graph/relayout op returns {positions:{id:[x,y,z]}, membership:{id:
+ * {loose,arm}}} for per-request slider params. This RE-STAMPS each model node's
+ * `single`/`arm` from the returned membership (critical: the `arms` slider
+ * changes arm ASSIGNMENT, so the arm-hue tint would go stale if we only moved
+ * positions) and builds the position buffer in model order. Pure so it's
+ * vitest-covered; the scene applies the returned buffer to diskPos + relayout.
+ *
+ * @param {ReturnType<typeof buildNodeModel>} model  MUTATED: nodes[].single/arm
+ * @param {{positions:Object, membership:Object}} resp  server response
+ * @returns {{pos:Float32Array, coreCount:number, armCount:number,
+ *            armOfCluster:Array<number>}}
+ */
+export function applyServedRelayout(model, resp) {
+  const positions = (resp && resp.positions) || {};
+  const membership = (resp && resp.membership) || {};
+  const nodes = model.nodes;
+  const N = nodes.length;
+  const pos = new Float32Array(N * 3);
+  let coreCount = 0;
+  let armCount = 0;
+  for (let i = 0; i < N; i++) {
+    const nd = nodes[i];
+    // Re-stamp membership (arm reassignment) — NOT just positions.
+    const m = membership[nd.id];
+    if (m) {
+      nd.single = !!m.loose;
+      nd.arm = typeof m.arm === 'number' ? m.arm : -1;
+    }
+    const p = positions[nd.id];
+    if (p && p.length >= 3) {
+      pos[i * 3] = p[0];
+      pos[i * 3 + 1] = p[1];
+      pos[i * 3 + 2] = p[2];
+    }
+    if (nd.single) coreCount++;
+    else armCount++;
+  }
+  return { pos, coreCount, armCount, armOfCluster: [] };
+}
+
+/**
  * Per-vertex size from heat (hot larger; loose core stars smaller/fainter;
  * clustered entities smaller). Pure — mirrors the mockup's size formula so the
  * scene and the size buffer stay in sync. Returns a size scalar (>0).
@@ -660,6 +766,7 @@ export function edgeSegments(args) {
   const {
     edges = [], idToIndex = {}, diskPos = new Float32Array(0),
     visMask = null, toggleState = {}, focusId = null, typeRole = {},
+    looseById = null,
   } = args || {};
   const pos = [];
   const col = [];
@@ -679,7 +786,12 @@ export function edgeSegments(args) {
     const type = e.type;
     const shown = type == null || toggleState[type] !== false;
     const endpointVisible = !visMask || (visMask[a] && visMask[b]);
-    if (!shown || !endpointVisible) {
+    // ADR-0152 bug #3b: suppress edges BETWEEN two core (backend-`loose`) nodes.
+    // The dense core is a hairball of intra-core links that veil the bulge; keyed
+    // off the SINGLE backend `loose` flag (not the old client-derived `single`).
+    // Only suppresses when a looseById map is supplied (back-compat: no map = keep).
+    const coreCore = looseById != null && looseById[sId] === true && looseById[tId] === true;
+    if (!shown || !endpointVisible || coreCore) {
       c = HIDDEN;
     } else {
       const role = edgeRole(e, typeRole);
@@ -747,6 +859,7 @@ class GalaxyScene {
     this._raf = null;
     this._visible = null; // Uint8Array mask (1=visible) or null=all visible
     this._focusId = null; // #69: focused node id → brighten its incident edges
+    this._sliderPos = null; // Car C: {pos,coreCount,armOfCluster} from a slider recompute
     this._disposed = false;
     this._last = typeof performance !== 'undefined' ? performance.now() : Date.now();
     this._fpsAcc = 0;
@@ -937,7 +1050,12 @@ class GalaxyScene {
         'gl_FragColor=vec4(vCol, t.a); }',
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      // ADR-0152 bug #2: NormalBlending (was AdditiveBlending). Under additive,
+      // overlapping disk points re-summed as the camera auto-spun → the colour
+      // flicker. NormalBlending alpha-composites so overlaps stay stable. The
+      // core-GLOW sprites (coreGlowMat / coreGlow2Mat) + nebula + starfield stay
+      // AdditiveBlending — they are SEPARATE halo layers, not the disk points.
+      blending: THREE.NormalBlending,
       vertexColors: true,
     });
     this.diskPoints = new THREE.Points(this.diskGeo, this.pointMat);
@@ -952,7 +1070,18 @@ class GalaxyScene {
     const THREE = this.THREE;
     const model = this.model;
     const N = model.nodes.length;
-    const { pos, coreCount, armOfCluster } = layoutPositions(model, this.P);
+    // ADR-0152 Car B: render backend-served x/y/z (place-if-missing covers gaps).
+    // buildDiskPositions falls back to a client compute only for a bare payload
+    // (spring/cold-start with no cache). The live-slider override path (Car C)
+    // supplies its own recomputed positions via this._sliderPos.
+    let pos;
+    let coreCount;
+    let armOfCluster;
+    if (this._sliderPos) {
+      ({ pos, coreCount, armOfCluster } = this._sliderPos);
+    } else {
+      ({ pos, coreCount, armOfCluster } = buildDiskPositions(model, this.deps.payload, this.P));
+    }
     const armHue = (i) => (i / this.P.arms - 0.5) * 0.1;
     const _c = new THREE.Color();
     const _white = new THREE.Color(0xffffff);
@@ -961,7 +1090,13 @@ class GalaxyScene {
       this.diskPos[i * 3] = pos[i * 3];
       this.diskPos[i * 3 + 1] = pos[i * 3 + 1];
       this.diskPos[i * 3 + 2] = pos[i * 3 + 2];
-      const arm = nd.single ? -1 : armOfCluster[nd.cluster];
+      // Arm index for the arm-hue tint: prefer the backend-stamped nd.arm (served
+      // path), else the client armOfCluster (fallback/slider compute path).
+      const arm = nd.single
+        ? -1
+        : nd.arm != null
+          ? nd.arm
+          : armOfCluster[nd.cluster];
       const toHalo = nd.single && this.P.single === 'halo';
       const toCore = nd.single && !toHalo;
       const rgb = heatColorRGB(nd.heat);
@@ -994,6 +1129,17 @@ class GalaxyScene {
     this._syncCounts();
   }
 
+  // ADR-0152 bug #3b: id → is-core (backend `loose`) map for edgeSegments'
+  // core-core suppression. Built from the model's `single` (which now reads the
+  // backend `loose` flag — see buildNodeModel). Only nodes flagged loose appear.
+  _looseById() {
+    const out = Object.create(null);
+    for (const nd of this.model.nodes) {
+      if (nd.single) out[nd.id] = true;
+    }
+    return out;
+  }
+
   // ── real typed edges (#69) ────────────────────────────────────────────────────
   // #69 replaced the decorative intra-arm lines with the REAL /api/graph edges,
   // rendered as ONE additive LineSegments with per-vertex colours. Geometry is
@@ -1019,6 +1165,7 @@ class GalaxyScene {
       toggleState: this.deps.edgeToggleState || {},
       focusId: this._focusId != null ? this._focusId : null,
       typeRole: this.deps.edgeTypeRole || {},
+      looseById: this._looseById(),
     });
     if (!positions.length) return;
     const g = new THREE.BufferGeometry();
@@ -1076,6 +1223,7 @@ class GalaxyScene {
       toggleState: this.deps.edgeToggleState || {},
       focusId: this._focusId != null ? this._focusId : null,
       typeRole: this.deps.edgeTypeRole || {},
+      looseById: this._looseById(),
     });
     if (colors.length !== this._edgeColAttr.array.length) return; // stale — skip
     this._edgeColAttr.array.set(colors);
@@ -1275,6 +1423,13 @@ class GalaxyScene {
       debTimer = setTimeout(() => this.relayout(), 60);
     };
 
+    // ADR-0152 Car C: the arms/pitch/core-density sliders drive a SERVER
+    // recompute (Option A). They fire on `change` (slider RELEASE), not `input`
+    // — a POST-per-drag-tick would hammer the backend. debounced release → POST →
+    // re-stamp membership + apply served positions. The other position sliders
+    // (thick/bulge glow etc.) stay client-instant on `input`.
+    const backendSliders = new Set(['arms', 'pitch', 'coredens']);
+
     const bindSlider = (id, key, fmt) => {
       const el = q('#g-' + id);
       const out = q('#gv-' + id);
@@ -1287,8 +1442,13 @@ class GalaxyScene {
         apply();
         saveP(this.P); // Bug 1: persist — BEFORE the spin early-return so spin persists too
         if (key === 'spin') return; // spin only affects the RAF, not the layout
+        if (backendSliders.has(key)) return; // server recompute fires on release
         debouncedRelayout();
       });
+      if (backendSliders.has(key)) {
+        // Slider release → one debounced server recompute round-trip.
+        el.addEventListener('change', () => this._debouncedServerRelayout());
+      }
       apply();
     };
     bindSlider('arms', 'arms', (v) => v);
@@ -1322,9 +1482,48 @@ class GalaxyScene {
       resetBtn.addEventListener('click', () => {
         this.P = { ...GALAXY_DEFAULTS };
         saveP(this.P); // Bug 1: persist the reset
+        this._sliderPos = null; // Car C: drop any slider override → back to served
         this._syncControlsToP();
+        // Restore the backend-served membership/positions after a slider fiddle.
+        this.model = buildNodeModel(this.deps.payload || { nodes: [], clusters: [] });
         this.relayout();
       });
+    }
+  }
+
+  // ── Car C: debounced server slider-recompute (Option A) ───────────────────────
+  // Slider release → POST the position params to /api/graph/relayout → apply the
+  // returned positions + re-stamped membership. Debounced so a flurry of release
+  // events (or rapid tweaks) collapses to one round-trip. Never writes the cache
+  // (the op is read-compute-return); this only mutates THIS scene's positions.
+  _debouncedServerRelayout() {
+    if (this._srvTimer) clearTimeout(this._srvTimer);
+    this._srvTimer = setTimeout(() => this._serverRelayout(), 180);
+  }
+
+  async _serverRelayout() {
+    if (this._disposed) return;
+    const body = {
+      arms: this.P.arms,
+      spiral_pitch: this.P.pitch,
+      core_density: this.P.coredens,
+    };
+    try {
+      const base = (this.deps && this.deps.apiBase) || '';
+      const resp = await fetch(base + '/api/graph/relayout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (this._disposed || !data || !data.positions) return;
+      // Re-stamp membership (arm reassignment) + build the position buffer, then
+      // route relayout through this override so colours/edges track the new arms.
+      this._sliderPos = applyServedRelayout(this.model, data);
+      this.relayout();
+    } catch (_e) {
+      /* network/transport error — keep the current view (no throw into the RAF) */
     }
   }
 
@@ -1716,6 +1915,12 @@ export function mount(container, deps) {
   if (_scene) destroy();
   if (!container) return null;
   _scene = new GalaxyScene(container, deps || {});
+  // ADR-0152 bug #1 (FOUC): the panel + canvas are hidden by CSS until the graph
+  // data is ready; mount() runs only once the payload is in hand, so flag ready
+  // here to reveal them (also masks the cold-start blank from R1).
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.add('galaxy-ready');
+  }
   return _scene;
 }
 
@@ -1723,6 +1928,9 @@ export function destroy() {
   if (_scene) {
     _scene.destroy();
     _scene = null;
+  }
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.remove('galaxy-ready');
   }
 }
 
@@ -1741,6 +1949,11 @@ export function relayout(payload) {
     _scene.deps.payload = payload;
     _scene.model = buildNodeModel(payload);
     _scene._visible = null;
+    // ADR-0152 Car C: a slider-override buffer (_sliderPos) is indexed to the
+    // PREVIOUS model + diskPos length. A payload refresh rebuilds both, so the
+    // override MUST die or relayout would copy from a stale (wrong-length) buffer
+    // → NaN / misaligned positions. Drop it so the refresh renders served x/y/z.
+    _scene._sliderPos = null;
     if (_scene.diskPoints) _scene.scene.remove(_scene.diskPoints);
     if (_scene.diskGeo) _scene.diskGeo.dispose();
     if (_scene.pointMat) _scene.pointMat.dispose();

@@ -2168,6 +2168,34 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
     return JSONResponse(data, headers=_CORS)
 
 
+@mcp_server.custom_route("/api/graph/relayout", methods=["POST", "OPTIONS"])
+@trace_span()
+async def api_graph_relayout(request: Request) -> JSONResponse:
+    """ADR-0152 Car C: recompute galaxy positions with per-request slider params.
+
+    Body (JSON): {"arms": int, "spiral_pitch": float, "core_density": float}.
+    Returns {"positions": {id:[x,y,z]}, "membership": {id:{loose,arm}}, ...}.
+    Read-compute-return only — does NOT mutate the canonical layout cache (R3).
+    """
+    if request.method == "OPTIONS":
+        return JSONResponse({}, headers=_CORS)
+    if _st._storage is None:
+        return JSONResponse({"positions": {}}, status_code=503, headers=_CORS)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — malformed body → empty overrides (defaults)
+        body = {}
+    payload: dict = {}
+    for key in ("arms", "spiral_pitch", "core_density"):
+        if isinstance(body, dict) and body.get(key) is not None:
+            payload[key] = body[key]
+    # T2 Car E3: layout compute runs backend-side.
+    from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+
+    data = await asyncio.to_thread(_forward_viz, "graph_relayout", payload)
+    return JSONResponse(data, headers=_CORS)
+
+
 @mcp_server.custom_route("/api/system", methods=["GET"])
 @trace_span()
 async def api_system(request: Request) -> JSONResponse:

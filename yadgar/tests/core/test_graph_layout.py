@@ -8,8 +8,11 @@ cold client-side d3-force settle.
 import math
 
 from yadgar.backend.graph.graph_layout import (
+    _LAYOUT_VERSION,
+    attach_cached_positions,
     compute_graph_layout,
     galaxy_layout,
+    galaxy_membership,
     graph_signature,
 )
 
@@ -292,3 +295,243 @@ def test_galaxy_heat_is_not_position():
         n["heat"] = 0.99
     clusters = [_cluster(1, ["mem:0", "mem:1", "mem:2"])]
     assert galaxy_layout(n_cold, [], clusters) == galaxy_layout(n_hot, [], clusters)
+
+
+# ---------------------------------------------------------------------------
+# Car A (ADR-0152): arm-budget fix, connectivity eligibility, membership flag,
+# signature-includes-params, place-if-missing.
+# ---------------------------------------------------------------------------
+
+
+def test_galaxy_no_scatter_every_cluster_gets_an_arm():
+    """Bug #4: drop the arms*3 spine budget — EVERY multi-member cluster maps to a
+    real arm 0..arms-1 (no inter-arm scatter). With arms=2 and 10 clusters, all 10
+    land on a real arm."""
+    nodes = _nodes([f"mem:{i}" for i in range(50)])
+    # 10 clusters of 5 members each; arms=2 → old code scattered clusters past
+    # slot 6 (arms*3) to arm=-2. New code: all 10 get a real arm.
+    clusters = [_cluster(c, [f"mem:{c * 5 + i}" for i in range(5)]) for c in range(10)]
+    mem = galaxy_membership(nodes, [], clusters, arms=2)
+    # Every clustered node is on a real arm in [0, 2).
+    arm_nodes = [nid for nid, info in mem.items() if not info["loose"]]
+    assert arm_nodes
+    for nid in arm_nodes:
+        assert 0 <= mem[nid]["arm"] < 2, f"{nid} scattered to arm {mem[nid]['arm']}"
+
+
+def test_galaxy_arms_balanced_not_round_robin():
+    """Greedy lightest-arm bin-packing balances node counts across arms — a few big
+    clusters do not all pile onto arm 0/1 (the round-robin failure the client fixed)."""
+    nodes = _nodes([f"mem:{i}" for i in range(60)])
+    # Descending sizes: 20, 15, 10, 8, 4, 3 — greedy packs to balance load.
+    sizes = [20, 15, 10, 8, 4, 3]
+    clusters = []
+    off = 0
+    for c, n in enumerate(sizes):
+        clusters.append(_cluster(c, [f"mem:{off + i}" for i in range(n)]))
+        off += n
+    mem = galaxy_membership(nodes[:off], [], clusters, arms=3)
+    load = {0: 0, 1: 0, 2: 0}
+    for info in mem.values():
+        if not info["loose"]:
+            load[info["arm"]] += 1
+    counts = sorted(load.values())
+    # Balanced: the heaviest arm is not absurdly larger than the lightest.
+    assert counts[-1] <= counts[0] * 2 + 5
+
+
+def test_galaxy_entity_with_edges_joins_neighbour_arm():
+    """Bug #3a light: an entity node whose edges point into cluster C lands on C's
+    arm (leaves the core), via the passed edges — not always-core."""
+    nodes = _nodes([f"mem:{i}" for i in range(6)] + ["entity:hub"])
+    clusters = [_cluster(1, [f"mem:{i}" for i in range(6)])]  # one real arm cluster
+    # entity:hub connects to 3 members of cluster 1 → dominant neighbour = cluster 1.
+    edges = _edges([("entity:hub", "mem:0"), ("entity:hub", "mem:1"), ("entity:hub", "mem:2")])
+    mem = galaxy_membership(nodes, edges, clusters, arms=4)
+    assert mem["entity:hub"]["loose"] is False
+    # It shares cluster-1's arm.
+    cluster1_arm = mem["mem:0"]["arm"]
+    assert mem["entity:hub"]["arm"] == cluster1_arm
+
+
+def test_galaxy_zero_edge_entity_stays_core():
+    """A truly-single (0-edge) entity/wiki node stays loose → core."""
+    nodes = _nodes([f"mem:{i}" for i in range(6)] + ["entity:lonely"])
+    clusters = [_cluster(1, [f"mem:{i}" for i in range(6)])]
+    mem = galaxy_membership(nodes, [], clusters, arms=4)  # no edges
+    assert mem["entity:lonely"]["loose"] is True
+    assert mem["entity:lonely"]["arm"] == -1
+
+
+def test_galaxy_membership_deterministic():
+    """Membership is deterministic given identical (nodes, edges, clusters, arms)."""
+    nodes, clusters, _a, _l = _galaxy_fixture()
+    edges = _edges([("entity:0", "mem:0"), ("entity:1", "mem:1")])
+    assert galaxy_membership(nodes, edges, clusters, arms=4) == galaxy_membership(
+        nodes, edges, clusters, arms=4
+    )
+
+
+def test_galaxy_entity_edges_to_core_only_stays_core():
+    """An entity whose only edges point to loose/core nodes (no cluster) stays core."""
+    nodes = _nodes([f"mem:{i}" for i in range(6)] + ["mem:99", "entity:x"])
+    clusters = [_cluster(1, [f"mem:{i}" for i in range(6)])]
+    # entity:x connects only to mem:99 which is loose (not in any cluster).
+    edges = _edges([("entity:x", "mem:99")])
+    mem = galaxy_membership(nodes, edges, clusters, arms=4)
+    assert mem["entity:x"]["loose"] is True
+
+
+# ── signature folds in _LAYOUT_VERSION + galaxy params (R6) ───────────────────
+
+
+def test_signature_changes_on_layout_version_bump():
+    """R6: bumping _LAYOUT_VERSION changes the signature on an IDENTICAL graph shape
+    so new layout math actually recomputes on the nightly (not a no-op)."""
+    nodes = _nodes(["a", "b", "c"])
+    edges = _edges([("a", "b")])
+    sig_v = graph_signature(nodes, edges, layout_version=_LAYOUT_VERSION)
+    sig_other = graph_signature(nodes, edges, layout_version=_LAYOUT_VERSION + 1)
+    assert sig_v != sig_other
+
+
+def test_signature_changes_on_galaxy_param_change():
+    """R6: changing arms/pitch/core_density changes the signature on an identical
+    graph shape so a VIZ_GALAXY_* setting change takes effect on the next cycle."""
+    nodes = _nodes(["a", "b", "c"])
+    edges = _edges([("a", "b")])
+    base = graph_signature(nodes, edges, params={"arms": 4, "pitch": 0.30, "coredens": 1.0})
+    diff_arms = graph_signature(nodes, edges, params={"arms": 6, "pitch": 0.30, "coredens": 1.0})
+    diff_pitch = graph_signature(nodes, edges, params={"arms": 4, "pitch": 0.50, "coredens": 1.0})
+    assert base != diff_arms
+    assert base != diff_pitch
+
+
+def test_signature_backward_compatible_default():
+    """graph_signature(nodes, edges) still works (2-arg legacy call) and is stable."""
+    nodes = _nodes(["a", "b"])
+    edges = _edges([("a", "b")])
+    assert graph_signature(nodes, edges) == graph_signature(nodes, edges)
+
+
+# ── place-if-missing (R1): uncached node gets a served core position ──────────
+
+
+def test_attach_place_if_missing_gives_uncached_node_a_core_position():
+    """R1: since the client stops computing on load, an uncached node MUST get a
+    served position (place-if-missing) so it does not render at the origin dot."""
+    data = {
+        "nodes": [{"id": "a", "type": "memory"}, {"id": "new:1", "type": "entity"}],
+        "edges": [],
+    }
+    cache = {
+        "signature": "s",
+        "positions": {"a": [10.0, 0.0, 0.0]},  # 'new:1' is uncached
+        "layout_mode": "galaxy",
+    }
+    out = attach_cached_positions(data, cache)
+    by_id = {n["id"]: n for n in out["nodes"]}
+    # cached node keeps its position
+    assert by_id["a"]["x"] == 10.0
+    # uncached node gets SOME finite position (not bare, not at literal origin)
+    assert "x" in by_id["new:1"] and "y" in by_id["new:1"] and "z" in by_id["new:1"]
+    assert math.isfinite(by_id["new:1"]["x"])
+    origin_dist = math.hypot(by_id["new:1"]["x"], by_id["new:1"]["y"], by_id["new:1"]["z"])
+    assert origin_dist > 0.0, "uncached node must not sit at the literal origin"
+
+
+def test_attach_place_if_missing_deterministic():
+    """Place-if-missing is deterministic per node id (stable across requests)."""
+    data1 = {"nodes": [{"id": "new:7", "type": "memory"}], "edges": []}
+    data2 = {"nodes": [{"id": "new:7", "type": "memory"}], "edges": []}
+    cache = {"signature": "s", "positions": {"other": [1.0, 1.0, 1.0]}, "layout_mode": "galaxy"}
+    o1 = attach_cached_positions(data1, cache)
+    o2 = attach_cached_positions(data2, cache)
+    n1 = o1["nodes"][0]
+    n2 = o2["nodes"][0]
+    assert (n1["x"], n1["y"], n1["z"]) == (n2["x"], n2["y"], n2["z"])
+
+
+def test_attach_stamps_membership_flag():
+    """Car A seam: the cache carries a membership sibling → attach stamps n['loose']
+    and n['arm'] so the client (Car B) reads ONE backend source of truth."""
+    data = {"nodes": [{"id": "a"}, {"id": "b"}], "edges": []}
+    cache = {
+        "signature": "s",
+        "positions": {"a": [1.0, 2.0, 3.0], "b": [4.0, 5.0, 6.0]},
+        "membership": {"a": {"loose": True, "arm": -1}, "b": {"loose": False, "arm": 2}},
+        "layout_mode": "galaxy",
+    }
+    out = attach_cached_positions(data, cache)
+    by_id = {n["id"]: n for n in out["nodes"]}
+    assert by_id["a"]["loose"] is True
+    assert by_id["a"]["arm"] == -1
+    assert by_id["b"]["loose"] is False
+    assert by_id["b"]["arm"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Car A hardening (task #72): Hypothesis property tests for the pure functions
+# (arm assignment, place-if-missing, signature). Fuzz the invariants the unit
+# tests pin by example.
+# ---------------------------------------------------------------------------
+
+from hypothesis import given, settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+from yadgar.backend.graph.graph_layout import _place_in_core  # noqa: E402
+
+
+@settings(max_examples=200)
+@given(
+    n_clusters=st.integers(min_value=1, max_value=12),
+    sizes=st.lists(st.integers(min_value=2, max_value=8), min_size=1, max_size=12),
+    arms=st.integers(min_value=1, max_value=8),
+)
+def test_prop_membership_arm_in_range(n_clusters, sizes, arms):
+    """Every NON-loose node lands on a real arm in [0, arms) — never scatter (-2)
+    and never out of range — for any cluster shape (bug #4 invariant)."""
+    sizes = sizes[:n_clusters] or [2]
+    clusters = []
+    off = 0
+    for c, sz in enumerate(sizes):
+        clusters.append(_cluster(c, [f"mem:{off + i}" for i in range(sz)]))
+        off += sz
+    nodes = _nodes([f"mem:{i}" for i in range(off)])
+    mem = galaxy_membership(nodes, [], clusters, arms=arms)
+    for info in mem.values():
+        if not info["loose"]:
+            assert 0 <= info["arm"] < arms
+
+
+@settings(max_examples=200)
+@given(node_id=st.text(min_size=1, max_size=40))
+def test_prop_place_in_core_finite_nonorigin_deterministic(node_id):
+    """place-if-missing: always finite, never the literal origin, deterministic
+    per id (R1 — an uncached node must not render at the origin dot)."""
+    a = _place_in_core(node_id)
+    b = _place_in_core(node_id)
+    assert a == b  # deterministic per id
+    assert len(a) == 3
+    assert all(math.isfinite(c) for c in a)
+    assert math.hypot(*a) > 0.0  # not the origin
+
+
+@settings(max_examples=200)
+@given(
+    ids=st.lists(st.text(min_size=1, max_size=8), min_size=1, max_size=10, unique=True),
+    edge_ids=st.lists(st.integers(min_value=0, max_value=9), min_size=0, max_size=10),
+    version=st.integers(min_value=0, max_value=99),
+)
+def test_prop_signature_reorder_invariant_version_sensitive(ids, edge_ids, version):
+    """graph_signature is invariant under node/edge reordering but changes when the
+    layout version bumps (R6) — for any graph shape."""
+    nodes = _nodes(ids)
+    pairs = [(ids[i % len(ids)], ids[(i + 1) % len(ids)]) for i in edge_ids]
+    edges = _edges(pairs)
+    sig = graph_signature(nodes, edges, layout_version=version)
+    sig_reordered = graph_signature(
+        _nodes(list(reversed(ids))), _edges(list(reversed(pairs))), layout_version=version
+    )
+    assert sig == sig_reordered  # order-independent
+    assert sig != graph_signature(nodes, edges, layout_version=version + 1)  # version-sensitive

@@ -114,7 +114,8 @@ class _OpsMixin:
         from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
 
         rows = self._q(
-            "SELECT signature, positions, computed_at, layout_mode FROM graph_layout_cache:current"
+            "SELECT signature, positions, membership, computed_at, layout_mode "
+            "FROM graph_layout_cache:current"
         )
         if not rows or not rows[0].get("signature"):
             record_cache_miss("graph_layout")
@@ -124,6 +125,9 @@ class _OpsMixin:
         return {
             "signature": str(row["signature"]),
             "positions": dict(row.get("positions") or {}),
+            # ADR-0152 Car A: {id: {loose, arm}} sibling to positions. Legacy rows
+            # (pre-viz-layout-backend) have no membership → {} (attach stamps nothing).
+            "membership": dict(row.get("membership") or {}),
             "computed_at": str(row.get("computed_at") or ""),
             # Legacy rows (pre-finish-viz) have no layout_mode → default "spring".
             "layout_mode": str(row.get("layout_mode") or "spring"),
@@ -131,7 +135,12 @@ class _OpsMixin:
 
     @observe(tier="stage", metric="storage.ops.set_graph_layout_cache")
     def set_graph_layout_cache(
-        self, signature: str, positions: dict, computed_at: str, layout_mode: str = "spring"
+        self,
+        signature: str,
+        positions: dict,
+        computed_at: str,
+        layout_mode: str = "spring",
+        membership: dict | None = None,
     ) -> None:
         """Upsert the singleton precomputed-layout row in place.
 
@@ -139,14 +148,17 @@ class _OpsMixin:
         nested object safely (no raw interpolation). ``layout_mode`` records which
         generator produced the positions ("galaxy" or "spring") so the client can
         FREEZE physics on a galaxy payload (the seeded shape must hold, not relax).
+        ``membership`` (ADR-0152 Car A) is the ``{id: {loose, arm}}`` map stamped
+        onto served nodes so the client reads one backend source of truth.
         """
         self._q(
             "UPSERT graph_layout_cache:current SET "
-            "signature = $sig, positions = $pos, computed_at = $ts, "
-            "layout_mode = $mode, updated_at = $now",
+            "signature = $sig, positions = $pos, membership = $mem, "
+            "computed_at = $ts, layout_mode = $mode, updated_at = $now",
             {
                 "sig": signature,
                 "pos": positions,
+                "mem": membership or {},
                 "ts": computed_at,
                 "mode": layout_mode,
                 "now": self._now_iso(),

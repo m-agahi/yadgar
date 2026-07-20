@@ -152,6 +152,20 @@
   font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--viz-tx-3);
 }
 
+/* ── ADR-0152 bug #1 (FOUC): hide the always-on galaxy panel + canvas until the
+   graph data is ready. galaxy-view.js adds `body.galaxy-ready` from mount() once
+   the payload is in hand (which also masks the cold-start blank from R1). The
+   opacity transition softens the reveal instead of a hard pop. */
+body:not(.galaxy-ready) #galaxy-side-panel,
+body:not(.galaxy-ready) #canvas-wrap.galaxy-mode {
+  opacity: 0;
+  pointer-events: none;
+}
+#galaxy-side-panel,
+#canvas-wrap.galaxy-mode {
+  transition: opacity .25s ease;
+}
+
 /* ── #69 unified always-on left panel (STRUCTURE / NODES / HEAT / EDGES) ──────
    Replaces the bottom-left legend + the 4 floating View-menu overlays + the View
    button. One panel, top-left, collapsible sections separated by hairline

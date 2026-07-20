@@ -141,3 +141,32 @@ def test_mode_flip_recomputes(tmp_path, storage):
     _maybe_precompute_graph_layout(storage, _settings(tmp_path, galaxy=False))
     second = storage.get_graph_layout_cache()
     assert second["layout_mode"] == "spring"
+
+
+# ── Car A (ADR-0152): membership cached + signature folds version+params ─────
+
+
+def test_precompute_caches_membership(tmp_path, storage):
+    """Galaxy precompute stores a membership sibling ({id:{loose,arm}}) so the
+    serve path can stamp loose/arm without recomputing."""
+    _seed_graph(storage)
+    _maybe_precompute_graph_layout(storage, _settings(tmp_path, galaxy=True))
+    cached = storage.get_graph_layout_cache()
+    assert cached is not None
+    membership = cached.get("membership")
+    assert membership, "galaxy cache must carry a membership map"
+    for info in membership.values():
+        assert "loose" in info and "arm" in info
+
+
+def test_galaxy_param_change_recomputes(tmp_path, storage):
+    """R6: changing a VIZ_GALAXY_* param recomputes even on an unchanged graph
+    shape (params fold into the signature)."""
+    _seed_graph(storage)
+    s1 = Settings(DB_PATH=str(tmp_path / "s.db"), VIZ_GALAXY_LAYOUT=True, VIZ_GALAXY_ARMS=4)
+    _maybe_precompute_graph_layout(storage, s1)
+    first = storage.get_graph_layout_cache()
+    s2 = Settings(DB_PATH=str(tmp_path / "s.db"), VIZ_GALAXY_LAYOUT=True, VIZ_GALAXY_ARMS=6)
+    _maybe_precompute_graph_layout(storage, s2)
+    second = storage.get_graph_layout_cache()
+    assert second["signature"] != first["signature"]

@@ -22,6 +22,8 @@ import {
   galaxyType,
   buildNodeModel,
   layoutPositions,
+  buildDiskPositions,
+  applyServedRelayout,
   expRadius,
   sizeOf,
   visibilityMask,
@@ -750,5 +752,113 @@ describe('edgeMaterialState (#216 at-rest faint / focus pop)', () => {
   it('treats a 0 / falsy-but-present id as a real focus (only null/undefined is at-rest)', () => {
     const s = edgeMaterialState(0);
     expect(s.blending).toBe('additive');
+  });
+});
+
+// ── Car B (ADR-0152): render backend-served x/y/z + backend loose/arm ───────────
+describe('buildDiskPositions (renders served x/y/z)', () => {
+  it('reads served node.x/y/z into the position buffer (no client compute)', () => {
+    const payload = {
+      nodes: [
+        { id: 'a', type: 'memory', heat: 1, x: 10, y: 20, z: 30, loose: false, arm: 1 },
+        { id: 'b', type: 'entity', heat: 0.2, x: -5, y: 0, z: 5, loose: true, arm: -1 },
+      ],
+      clusters: [],
+    };
+    const model = buildNodeModel(payload);
+    const { pos, served } = buildDiskPositions(model, payload, GALAXY_DEFAULTS);
+    expect(served).toBe(true); // used served coords, did NOT client-compute
+    expect(Array.from(pos.slice(0, 3))).toEqual([10, 20, 30]);
+    expect(Array.from(pos.slice(3, 6))).toEqual([-5, 0, 5]);
+  });
+
+  it('falls back to layoutPositions when the payload carries no served coords', () => {
+    const payload = {
+      nodes: [
+        { id: 'a', type: 'memory', heat: 1 },
+        { id: 'b', type: 'memory', heat: 1 },
+      ],
+      clusters: [{ member_node_ids: ['a', 'b'] }],
+    };
+    const model = buildNodeModel(payload);
+    const { pos, served } = buildDiskPositions(model, payload, GALAXY_DEFAULTS);
+    expect(served).toBe(false);
+    // still produces a full position buffer (client fallback path)
+    expect(pos.length).toBe(6);
+  });
+});
+
+describe('buildNodeModel reads backend loose/arm when stamped', () => {
+  it('uses backend node.loose for single (not client cluster derivation)', () => {
+    // No clusters in payload, but backend stamped 'a' as arm material (loose:false).
+    const payload = {
+      nodes: [
+        { id: 'a', type: 'entity', heat: 0.5, loose: false, arm: 2 },
+        { id: 'b', type: 'memory', heat: 0.5, loose: true, arm: -1 },
+      ],
+      clusters: [],
+    };
+    const m = buildNodeModel(payload);
+    const byId = Object.fromEntries(m.nodes.map((n) => [n.id, n]));
+    expect(byId['a'].single).toBe(false); // backend authority: connected hub → arm
+    expect(byId['a'].arm).toBe(2);
+    expect(byId['b'].single).toBe(true);
+    expect(byId['b'].arm).toBe(-1);
+  });
+});
+
+describe('edgeSegments suppresses core-core edges via backend loose (bug #3b)', () => {
+  const idToIndex = { a: 0, b: 1, c: 2 };
+  const diskPos = new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]);
+  it('hides an edge where BOTH endpoints are backend-loose (core)', () => {
+    // a,b loose (core); c on an arm. a-b must be suppressed; a-c kept.
+    const looseById = { a: true, b: true, c: false };
+    const edges = [
+      { source: 'a', target: 'b', type: 'temporal', role: 'informational' },
+      { source: 'a', target: 'c', type: 'transition', role: 'retrieval' },
+    ];
+    const { colors } = edgeSegments({ edges, idToIndex, diskPos, looseById });
+    // edge 0 (core-core) → alpha 0 (suppressed)
+    expect(colors[3]).toBe(0);
+    // edge 1 (core-arm) → visible (alpha 1)
+    expect(colors[11]).toBe(1);
+  });
+  it('keeps core-core edges when no looseById is supplied (back-compat)', () => {
+    const edges = [{ source: 'a', target: 'b', type: 'temporal', role: 'informational' }];
+    const { colors } = edgeSegments({ edges, idToIndex, diskPos });
+    expect(colors[3]).toBe(1); // visible — no suppression without the flag map
+  });
+});
+
+// ── Car C (ADR-0152): slider server-recompute re-stamps membership ──────────────
+describe('applyServedRelayout (slider recompute)', () => {
+  const payload = {
+    nodes: [
+      { id: 'a', type: 'memory', heat: 1, loose: false, arm: 0 },
+      { id: 'b', type: 'entity', heat: 0.3, loose: true, arm: -1 },
+    ],
+    clusters: [],
+  };
+  it('re-stamps nd.single/arm from the response membership (arms reassignment)', () => {
+    const model = buildNodeModel(payload);
+    // server response: 'a' moved to arm 3, 'b' promoted onto arm 1.
+    const resp = {
+      positions: { a: [1, 2, 3], b: [4, 5, 6] },
+      membership: { a: { loose: false, arm: 3 }, b: { loose: false, arm: 1 } },
+    };
+    const { pos, armCount } = applyServedRelayout(model, resp);
+    const byId = Object.fromEntries(model.nodes.map((n) => [n.id, n]));
+    expect(byId['a'].arm).toBe(3); // NOT the stale arm 0
+    expect(byId['b'].single).toBe(false); // promoted
+    expect(byId['b'].arm).toBe(1);
+    expect(Array.from(pos.slice(0, 3))).toEqual([1, 2, 3]);
+    expect(armCount).toBe(2);
+  });
+  it('tolerates a missing membership entry (keeps prior stamp)', () => {
+    const model = buildNodeModel(payload);
+    const resp = { positions: { a: [7, 8, 9] }, membership: {} };
+    applyServedRelayout(model, resp);
+    const byId = Object.fromEntries(model.nodes.map((n) => [n.id, n]));
+    expect(byId['a'].arm).toBe(0); // unchanged (no membership entry)
   });
 });

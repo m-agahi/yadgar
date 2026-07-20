@@ -370,18 +370,31 @@ class TestEdgeTypesRegistry:
         for t in ["co_occurrence", "resolved_by", "caused_by"]:
             assert EDGE_TYPES[t]["default_on"] is True, f"Expected {t} default_on=True"
 
-    def test_mass_edge_types_default_off_216(self):
-        """v5.154.0 (#216): the two MASS edge types default OFF so the galaxy core
-        doesn't white out. memory_similarity_link (~4.8k, "Near-Duplicate") +
-        derived_from (~3.5k) were ~8.3k of ~12k edges."""
-        for t in ["memory_similarity_link", "derived_from"]:
-            assert EDGE_TYPES[t]["default_on"] is False, f"Expected {t} default_on=False post-#216"
+    def test_near_duplicate_stays_default_off(self):
+        """ADR-0152: near-duplicate (memory_similarity_link, the ~4.8k spiderweb) is
+        the ONLY edge type kept default OFF — it dominated the render. Every other
+        type (retrieval + informational) is default ON."""
+        assert EDGE_TYPES["memory_similarity_link"]["default_on"] is False
+
+    def test_derived_from_default_on_reverted(self):
+        """ADR-0152 reverts #217's derived_from default-off: it's a retrieval-role
+        edge (drives recall) and the user wants role-having edges shown by default."""
+        assert EDGE_TYPES["derived_from"]["default_on"] is True
+
+    def test_all_types_default_on_except_near_duplicate(self):
+        """ADR-0152 net target: EVERY edge type is default_on=True EXCEPT
+        memory_similarity_link (near-duplicate)."""
+        for key, meta in EDGE_TYPES.items():
+            expected = key != "memory_similarity_link"
+            assert meta["default_on"] is expected, (
+                f"{key} default_on should be {expected} (only near-duplicate is off)"
+            )
 
     def test_non_mass_types_stay_default_on_216(self):
-        """#216 flipped ONLY the two mass types — everything else stays default ON."""
+        """Informational + retrieval types (non near-duplicate) stay default ON."""
         for t in ["transition", "wiki_crossref", "temporal", "co_occurrence"]:
             assert EDGE_TYPES[t]["default_on"] is True, (
-                f"{t} must stay default ON — #216 only touched the mass types"
+                f"{t} must stay default ON — only near-duplicate is off"
             )
 
     def test_derived_from_role_unchanged_by_216(self):
