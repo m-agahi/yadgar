@@ -209,3 +209,7 @@ docs/diagrams/out/
 
 # Local hand-off channel (CLAUDE.md) — never committed
 MIGRATION_NOTES.md
+
+# mutmut mutation-testing sandbox (ad-hoc dev tool; never committed)
+mutants/
+.mutmut-cache

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.154.0"
+version = "5.155.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -69,6 +69,9 @@ dependencies = [
     "msgpack>=1.0",
     # v5.10.2 — surrealdb promoted from dev-only to base dep (StorageEngine uses it at runtime)
     "surrealdb>=1.0.0",
+    # multi-client framework (Car 0) — format-preserving TOML merge for the Codex
+    # config.toml MCP-registration target (preserves user comments + key order).
+    "tomlkit>=0.13",
 ]
 
 [project.scripts]

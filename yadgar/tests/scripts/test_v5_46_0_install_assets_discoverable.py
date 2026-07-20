@@ -34,6 +34,28 @@ def test_package_install_assets_has_agents():
     assert templates, "yadgar/install_assets/agents/ is empty"
 
 
+def test_package_install_assets_has_rules_template():
+    """yadgar/install_assets/rules/AGENTS.md.template must exist (Car 2, D2).
+
+    The canonical rules template is the single source for all client rules files.
+    """
+    rules_dir = Path(__file__).parent.parent.parent / "core" / "install_assets" / "rules"
+    assert rules_dir.is_dir(), f"rules/ dir missing: {rules_dir}"
+    template = rules_dir / "AGENTS.md.template"
+    assert template.exists(), f"AGENTS.md.template missing: {template}"
+
+
+def test_package_install_assets_has_rules_addenda():
+    """yadgar/install_assets/rules/addenda/ must exist with CC addendum files."""
+    addenda_dir = (
+        Path(__file__).parent.parent.parent / "core" / "install_assets" / "rules" / "addenda"
+    )
+    assert addenda_dir.is_dir(), f"addenda/ dir missing: {addenda_dir}"
+    for key in ("compaction_shield", "auto_capture"):
+        path = addenda_dir / f"{key}.md"
+        assert path.exists(), f"Addendum file missing: {path}"
+
+
 def test_package_install_assets_has_claude_fragment():
     """CLAUDE.md.fragment exists in yadgar/install_assets/ OR top-level install_assets/.
 

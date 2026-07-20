@@ -15,7 +15,17 @@
 
 **A persistent memory engine for MCP clients.** Tell it what matters and it survives across sessions — decaying what you stop touching, promoting what repeats, filtering recall to the git branch you're on, and pairing every memory with a curated wiki that searches through the same ranking pipeline.
 
-> **Supported clients:** the memory and wiki MCP surface works on any MCP client. Claude Code gets the full harness integration (hooks, task-list mirror, CLAUDE.md sync). OpenCode and other agentic clients are supported for the MCP surface; harness-glue porting is under investigation.
+> **Supported clients:** one shared streamable-HTTP daemon (`http://127.0.0.1:8765/mcp`) serves the memory and wiki MCP surface to all 9 supported clients: `claude-code`, `codex`, `gemini`, `cursor`, `cline`, `windsurf`, `kiro`, `amp`, `opencode`. Claude Code additionally gets the full harness integration (hooks, task-list mirror, CLAUDE.md sync). All other clients receive MCP registration and a rules file (AGENTS.md-equivalent).
+>
+> **Multi-client setup:** use `yadgar install` to wire any client. Register a single client by name, or probe and register all detected clients at once:
+>
+> ```bash
+> yadgar install --client <name>           # e.g. --client opencode
+> yadgar install --auto-detect             # detect + register all installed clients
+> yadgar install --client <name> --print   # dry-run: emit JSON to stdout, no file writes
+> ```
+>
+> `--print` is the nix/home-manager contract (task #67): it outputs the full config without touching the filesystem, suitable for declarative activation. Per-platform detail and flag reference: [`docs/reference/install.md`](docs/reference/install.md).
 
 *Yadgar* (یادگار) is Persian for "memento, keepsake."
 

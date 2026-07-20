@@ -672,6 +672,7 @@ def structural_novelty_at_scale(tmp_path, settings, embeddings):
     engine.close()
 
 
+@pytest.mark.perf
 @pytest.mark.timeout(60)
 def test_structural_novelty_under_5s_at_50_entities(structural_novelty_at_scale):
     """Regression guard: _compute_structural_novelty must use bulk SQL not per-pair HTTP.

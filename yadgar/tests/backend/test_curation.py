@@ -516,6 +516,7 @@ def memory_curator_at_scale(tmp_path, embeddings, settings):
 # ── Test 1: performance regression guard ─────────────────────────────────
 
 
+@pytest.mark.perf
 @pytest.mark.timeout(60)
 def test_memify_reweight_under_30s_at_500_entities(memory_curator_at_scale):
     """At production-like scale, memify_reweight must not block the cycle.

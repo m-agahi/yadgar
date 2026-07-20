@@ -400,34 +400,20 @@ class YadgarDaemon:
 
     @observe(tier="boundary")
     def configure_mcp(self, dev: bool = False) -> dict:
-        """Switch ~/.claude.json MCP config to streamable-http transport."""
+        """Switch ~/.claude.json MCP config to streamable-http transport.
+
+        Delegates to ``mcp_register.register_mcp_for_claude_code`` (Car 1).
+        The non-atomic ``write_text`` from the original implementation is
+        replaced by the atomic merge path in ``clients/merge.py``.
+
+        Return shape is preserved: ``{"updated": str, "old": dict, "new": dict}``.
+        """
         profile = _dev_profile() if dev else _prod_profile(self.port)
-        config_path = Path.home() / ".claude.json"
-        config: dict = {}
-        if config_path.exists():
-            try:
-                config = json.loads(config_path.read_text())
-            except Exception:
-                config = {}
+        from yadgar.core.install.clients.mcp_register import (  # noqa: PLC0415
+            register_mcp_for_claude_code,
+        )
 
-        old = config.get("mcpServers", {}).get("yadgar", {})
-        mcp_servers = config.get("mcpServers", {})
-        entry: dict = {
-            "type": "streamable-http",
-            "url": f"http://127.0.0.1:{profile.port}/mcp",
-        }
-        token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "").strip()
-        if token:
-            entry["headers"] = {"Authorization": f"Bearer {token}"}
-        mcp_servers["yadgar"] = entry
-        config["mcpServers"] = mcp_servers
-        config_path.write_text(json.dumps(config, indent=2))
-
-        return {
-            "updated": str(config_path),
-            "old": old,
-            "new": mcp_servers["yadgar"],
-        }
+        return register_mcp_for_claude_code(port=profile.port, dev=False)
 
     @observe(tier="boundary")
     def install_systemd_service(self, dev: bool = False) -> dict:
