@@ -960,6 +960,17 @@ config knobs.
 - **wiring:** `audit_anchors()` MCP tool: resolves project root, fetches cfg, calls `_build_expire_actions`, `_build_verify_grace_actions`, `_build_promote_actions`, `_build_merge_actions` per directory, caps at `ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN`. When `dry_run=False` applies mutations via `_apply_mutations`. Also computes cross-project redundancy via `_fetch_cross_project_candidates` (uses `ANCHOR_CROSS_PROJECT_COSINE=0.95`). `ANCHOR_AUDIT_CONSOLIDATION_ENABLED=true`: auto-run dry-pass during `consolidate_now(mode='full')` for dirs with anchor count ≥ `ANCHOR_AUDIT_THRESHOLD` (default 15). `ANCHOR_AUDIT_HISTORY_RETENTION_DAYS=30` is defined but has no active consumer beyond the config definition (CONFIG-ONLY for that sub-knob).
 - **explanation:** Scans all anchors for a directory for four conditions: expiry (valid_until < now), migration-grace expiry (migration_grace=True + expired), size-based promotion candidates (prose-only archives), and cosine-based redundancy (pairwise cosine ≥ ANCHOR_REDUNDANCY_COSINE). The tool never auto-applies semantic_immortal or is_protected=True rows. Cross-project candidates are always surfaced but never mutated. The nightly auto-pass (via `_run_anchor_audit_pass`) writes a sentinel memory tagged `_audit_anchors` after each pass.
 
+### CAP-STOR-031 — Anchor retire (de_anchor tool + stop-hook maintenance scheduler)
+- **status:** LIVE
+- **category:** storage
+- **settings:** `ANCHOR_AUDIT_STOP_INTERVAL`
+- **tools:** `de_anchor`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/admin_other.py::de_anchor`, `yadgar/core/hooks/stop-memory-checkpoint.py`
+- **wiring:** `de_anchor(memory_id)` MCP tool (Car #85): fetches the memory, strips `_anchor` + any `anchor:*` tags, then forwards a `memory_update` with `is_protected=False`, `importance=0.5`, and `tier='ephemeral'`. Clearing `is_protected` re-admits the row to the decay query (`get_all_memories_for_decay_scalar` excludes protected rows); resetting importance to 0.5 re-enables the fast `DECAY_FACTOR` (`compute_decay` uses the slow `IMPORTANCE_DECAY_FACTOR` only when importance>0.7). Requires `_MEMORY_UPDATE_ALLOWED` widened to include `importance` + `tier`. Missing memory returns `{ok: False, error}`. The single Stop hook runs an ordered `MaintenanceItem` registry (checkpoint priority 0, anchor-audit priority 1); it injects exactly one `{decision: block}` (FIRST DUE WINS) and advances only the injected item's per-session counter. `ANCHOR_AUDIT_STOP_INTERVAL` (default 100) is the human-message cadence between anchor-audit injections; a due checkpoint (`INTERVAL=25`) preempts the audit, which then fires on the next eligible stop. The injected `anchor_audit_prompt.md` template gates on an empty candidate list (no-nag), shows+confirms before `de_anchor`, and reserves `forget` for explicit user delete requests.
+- **explanation:** The RETIRE path is the gentle counterpart to `forget` — instead of deleting an anchor outright, `de_anchor` undoes its protection + importance boost so it ages out of the surfacing channels naturally over months (a de-anchored row falls below `COLD_THRESHOLD` within ~2 years of no access). This lets the periodic stop-hook maintenance pass shrink an over-large anchor set without data loss: stale anchors decay away while still-useful ones keep their compaction-proof slot.
+
 ### CAP-STOR-030 — CRDT vector clock and agent identity
 - **status:** LIVE
 - **category:** storage

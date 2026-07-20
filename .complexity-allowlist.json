@@ -232,9 +232,9 @@
   "function": "<file>",
   "lineno": 1,
   "metrics": {
-   "file_loc": 2284
+   "file_loc": 2748
   },
-  "rationale": "pre-existing large file; updated from 1842 in v5.100.0 after three hook endpoints received shadow-observe instrumentation blocks (~90 LoC) plus accumulated growth from v5.97-v5.100 hook additions. Scheduled for wave N split.",
+  "rationale": "pre-existing large file; updated from 1842 in v5.100.0 after three hook endpoints received shadow-observe instrumentation blocks (~90 LoC) plus accumulated growth from v5.97-v5.100 hook additions. Re-baselined 2284->2748: the bulk is accumulated growth since v5.100.0; #30 added ~44 LoC (two _record_subagent_* metric helpers + the subagent-capture wiring). Scheduled for wave N split.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },

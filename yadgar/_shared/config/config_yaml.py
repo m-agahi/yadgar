@@ -588,6 +588,11 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "anchor_count_project threshold above which audit_anchors action is emitted (default 15)",
         "section": "anchor_hygiene",
     },
+    # v5.158.0 Car #85: stop-hook anchor-audit maintenance cadence
+    "anchor_audit_stop_interval": {
+        "desc": "Human messages between anchor-audit maintenance injections in the Stop hook (default 100)",
+        "section": "anchor_hygiene",
+    },
     # v5.9.0: anchor audit pass knobs
     "anchor_audit_consolidation_enabled": {
         "desc": "Toggle anchor audit pass inside consolidate_now() (default true)",

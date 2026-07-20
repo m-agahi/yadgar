@@ -346,7 +346,7 @@ class TestHookRunnerSourcePropagation:
 
         # Import hook_runner and patch its _http_get
 
-        import yadgar.core.scripts.hook_runner as hr
+        import yadgar.core.cli.hook as hr
 
         monkeypatch.setattr(hr, "_http_get", _fake_get)
 
@@ -372,7 +372,7 @@ class TestHookRunnerSourcePropagation:
             captured_url["params"] = params or {}
             return {"text": ""}
 
-        import yadgar.core.scripts.hook_runner as hr
+        import yadgar.core.cli.hook as hr
 
         monkeypatch.setattr(hr, "_http_get", _fake_get)
 
@@ -400,7 +400,7 @@ class TestHookRunnerSourcePropagation:
             captured_url["params"] = params or {}
             return {"text": ""}
 
-        import yadgar.core.scripts.hook_runner as hr
+        import yadgar.core.cli.hook as hr
 
         monkeypatch.setattr(hr, "_http_get", _fake_get)
 

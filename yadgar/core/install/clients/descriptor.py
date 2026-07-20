@@ -74,6 +74,41 @@ class CapabilityTier(StrEnum):
     MCP_RULES = "mcp_rules"  # MCP + rules only; no blocking hooks
 
 
+class StopMechanism(StrEnum):
+    """How a client can service the Stop checkpoint hook (plan §1/§2).
+
+    Only Stop needs a *blocking* hook. A client that can neither block nor hand
+    the daemon a transcript degrades Stop to opportunistic capture (4/5 hooks
+    still work). Encoded structurally so "genuinely can't" is data, not a fake.
+    """
+
+    BLOCK = "block"  # inject the checkpoint prompt, model self-reports (CC's mechanism)
+    TRANSCRIPT = "transcript"  # deliver a transcript the daemon derives from (Windsurf/Amp)
+    NONE = "none"  # neither → opportunistic checkpoint only (Codex)
+
+
+@dataclasses.dataclass(frozen=True)
+class HookCapability:
+    """Per-client hook-surface support matrix (plan §2, ADR-0143 snapshot).
+
+    Enumerates which of the 5 core hook events a client supports plus the Stop
+    mechanism, so the emitter emits ONLY the supported subset — the structural
+    encoding of "this client genuinely can't support hook X" (never faked).
+
+    The five booleans map to the 5 CC hooks (the ``session_start`` event is the
+    ``session-start-context`` + ``post-compact-rehydrate`` pair; both ride the
+    client's session-start surface). ``verified_date`` stamps the primary-source
+    verification per ADR-0143 (fast-moving tools; re-verify before each build).
+    """
+
+    session_start: bool
+    user_prompt_submit: bool
+    post_tool_use: bool
+    pre_compact: bool
+    stop: StopMechanism
+    verified_date: str  # ISO date of last primary-source verification (ADR-0143)
+
+
 @dataclasses.dataclass(frozen=True)
 class PathSpec:
     """Per-client config-file location, split into global + project variants.
@@ -122,7 +157,10 @@ class ClientDescriptor:
     rules_addendum: list[str]
     rules_bridge: RulesBridge | None
 
-    # --- hooks (carried for the later hook layer) ---
+    # --- hooks (the hook-emitter layer — Car 0 makes hooks_kind live) ---
     hooks_kind: str | None
     task_mirror: str | None
     capability_tier: CapabilityTier
+    # Per-client hook-event support matrix (plan §2). ``None`` only for clients
+    # with no hook surface (``hooks_kind is None``, e.g. Gemini advisory-only).
+    hook_capability: HookCapability | None = None

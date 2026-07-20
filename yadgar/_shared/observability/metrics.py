@@ -576,12 +576,33 @@ yadgar_subagent_dispatch_count = Counter(
 
 yadgar_subagent_capture_rate = Gauge(
     "yadgar_subagent_capture_rate",
-    "Subagent findings capture rate (captured / dispatched)",
+    "Subagent findings captured in the last /hooks/subagent-stop POST "
+    "(count of stored bullets from the most recent batch). Was dead (set(0) "
+    "at import, never updated) until #30 wired it on the subagent-stop path.",
     registry=_registry,
 )
-# Placeholder: no in-process capture tracking yet — set 0 so dashboard panels
-# have a sample rather than rendering "no data".
+# Seed 0 so dashboard panels have a sample rather than rendering "no data".
+# Now updated per POST at yadgar/core/server/http.py:hook_subagent_stop.
 yadgar_subagent_capture_rate.set(0)
+
+# #30: raw capture volume — unambiguous 0-vs-N. Increments by the number of
+# findings bullets successfully stored on each /hooks/subagent-stop POST.
+yadgar_subagent_captures_total = Counter(
+    "yadgar_subagent_captures_total",
+    "Total subagent findings bullets stored via /hooks/subagent-stop (raw volume). "
+    "Complements the capture_rate gauge — a flat 0 here proves the capture loop "
+    "never lands memories despite dispatches.",
+    registry=_registry,
+)
+
+# #30: count of non-empty /hooks/subagent-stop POSTs that reached the endpoint.
+# Distinguishes "arrived with findings" from "never arrived" (the latter shows
+# as a flat 0 while yadgar_subagent_dispatch_count keeps rising).
+yadgar_subagent_stop_posts_total = Counter(
+    "yadgar_subagent_stop_posts_total",
+    "Total /hooks/subagent-stop POSTs received with a non-empty findings list.",
+    registry=_registry,
+)
 
 # ── P11 — Viz ─────────────────────────────────────────────────────────────────
 

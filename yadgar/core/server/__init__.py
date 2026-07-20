@@ -168,6 +168,7 @@ from yadgar.core.server.tools import (  # noqa: F401
     memory_get,
     wiki_get,
     memory_update,
+    de_anchor,
     wiki_update,
     dlq_inspect,
     dlq_requeue,

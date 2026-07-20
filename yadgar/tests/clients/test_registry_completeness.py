@@ -62,7 +62,7 @@ def test_every_descriptor_has_all_required_fields(name):
     for field in dataclasses.fields(ClientDescriptor):
         value = getattr(desc, field.name)
         # Only the explicitly-optional fields may be None.
-        if field.name in {"rules_bridge", "hooks_kind", "task_mirror"}:
+        if field.name in {"rules_bridge", "hooks_kind", "task_mirror", "hook_capability"}:
             continue
         assert value is not None, f"{name}.{field.name} is None"
 

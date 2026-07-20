@@ -78,6 +78,7 @@ def cli():
         daemon,
         drain,
         export,
+        hook,
         install,
         install_hooks,
         install_mcp,
@@ -94,6 +95,7 @@ def cli():
     )
 
     drain.register(subparsers)
+    hook.register(subparsers)
     export.register(subparsers)
     restore.register(subparsers)
     capture.register(subparsers)
