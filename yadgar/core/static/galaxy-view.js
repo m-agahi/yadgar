@@ -633,11 +633,18 @@ export function edgeRole(edge, typeRole) {
  *
  * An edge contributes a 2-vertex segment iff BOTH endpoints resolve to a node
  * index. Its colour is decided by (in order):
- *   1. type toggled OFF  → black (invisible under additive)
- *   2. either endpoint hidden (visMask 0) → black
- *   3. focusId set AND edge incident to it → full per-type bright colour
- *   4. focusId set, edge NOT incident → heavily dimmed backdrop (recede)
- *   5. no focus → 2-class backdrop colour by role
+ *   1. type toggled OFF  → alpha 0 (truly invisible under BOTH blend modes)
+ *   2. either endpoint hidden (visMask 0) → alpha 0
+ *   3. focusId set AND edge incident to it → full per-type bright colour, alpha 1
+ *   4. focusId set, edge NOT incident → heavily dimmed backdrop (recede), alpha 1
+ *   5. no focus → 2-class backdrop colour by role, alpha 1
+ *
+ * Colours are RGBA (itemSize 4). The at-rest material is NormalBlending (v5.154.0
+ * #216 fix): under NormalBlending an RGB of (0,0,0) is NOT a no-op — it darkens
+ * whatever renders behind it (edges draw on top of the bright core with
+ * depthWrite:false). So a hidden edge MUST zero its alpha, not just its RGB, or
+ * ~8k default-off edges veil the galaxy core with a dark smudge. alpha 0 also
+ * zeroes the fragment under AdditiveBlending (focus mode) → consistent.
  *
  * @param {object} args
  * @param {Array} args.edges          raw edges [{source,target,type,role}]
@@ -656,7 +663,7 @@ export function edgeSegments(args) {
   } = args || {};
   const pos = [];
   const col = [];
-  const BLACK = { r: 0, g: 0, b: 0 };
+  const HIDDEN = { r: 0, g: 0, b: 0, a: 0 };
   // Non-incident edges recede further when a node is focused (backdrop * this).
   const UNFOCUS_DIM = 0.35;
   for (const e of edges) {
@@ -673,7 +680,7 @@ export function edgeSegments(args) {
     const shown = type == null || toggleState[type] !== false;
     const endpointVisible = !visMask || (visMask[a] && visMask[b]);
     if (!shown || !endpointVisible) {
-      c = BLACK;
+      c = HIDDEN;
     } else {
       const role = edgeRole(e, typeRole);
       const backdrop = EDGE_ROLE_COLOR[role] || EDGE_ROLE_COLOR.informational;
@@ -688,13 +695,35 @@ export function edgeSegments(args) {
         c = backdrop;
       }
     }
-    col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    const alpha = c.a != null ? c.a : 1;
+    col.push(c.r, c.g, c.b, alpha, c.r, c.g, c.b, alpha);
   }
   return {
     positions: new Float32Array(pos),
     colors: new Float32Array(col),
     count: pos.length / 6,
   };
+}
+
+/**
+ * Pure focus→edge-material state policy (v5.154.0 #216 fix). Vitest-covered so
+ * the blend-mode swap is testable without a WebGL context (the GalaxyScene draw
+ * call itself stays a smoke-check).
+ *
+ * At rest (focusId == null): NormalBlending @ opacity 0.15 — alpha-composited so
+ *   overlapping faint edges can never sum past their own dim colour → the dense
+ *   core can't white out (the #216 additive-whiteout hairball bug).
+ * On focus (focusId != null): AdditiveBlending @ opacity 0.9 — only a handful of
+ *   incident edges are bright (the rest receded/alpha-0), so they POP without
+ *   saturating the core.
+ *
+ * @param {*} focusId  focused node id, or null/undefined for at-rest.
+ * @returns {{blending:'additive'|'normal', opacity:number}}
+ */
+export function edgeMaterialState(focusId) {
+  return focusId != null
+    ? { blending: 'additive', opacity: 0.9 }
+    : { blending: 'normal', opacity: 0.15 };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -994,18 +1023,41 @@ class GalaxyScene {
     if (!positions.length) return;
     const g = new THREE.BufferGeometry();
     this._edgePosAttr = new THREE.BufferAttribute(positions, 3);
-    this._edgeColAttr = new THREE.BufferAttribute(colors, 3);
+    // RGBA (itemSize 4) — the alpha channel carries visibility so a hidden edge
+    // contributes ZERO under NormalBlending (black RGB alone darkens the core).
+    this._edgeColAttr = new THREE.BufferAttribute(colors, 4);
     g.setAttribute('position', this._edgePosAttr);
     g.setAttribute('color', this._edgeColAttr);
     const m = new THREE.LineBasicMaterial({
       transparent: true,
-      opacity: 0.9, // colour magnitude carries the "faintness"; additive on black
-      blending: THREE.AdditiveBlending,
+      // #216 fix (v5.154.0): FAINT at rest via NormalBlending @ 0.15 so
+      // overlapping edges alpha-composite (can't sum to white). setFocus swaps
+      // to AdditiveBlending @ 0.9 so incident edges POP. _applyEdgeFocusMaterial
+      // keeps this in sync when relayout rebuilds the material while focused.
+      opacity: 0.15,
+      blending: THREE.NormalBlending,
       vertexColors: true,
       depthWrite: false,
     });
     this.edgeLines = new THREE.LineSegments(g, m);
+    this._applyEdgeFocusMaterial();
     this.scene.add(this.edgeLines);
+  }
+
+  // Sync the edge material's blend mode + opacity to the current focus state.
+  // Pure policy lives in edgeMaterialState() (vitest-covered); this just maps it
+  // onto the live THREE material. Called from _buildEdges (relayout) and
+  // _repaintEdges (setFocus / setVisible / setEdgeToggleState).
+  _applyEdgeFocusMaterial() {
+    if (this._disposed || !this.edgeLines) return;
+    const THREE = this.THREE;
+    const { blending, opacity } = edgeMaterialState(
+      this._focusId != null ? this._focusId : null,
+    );
+    const m = this.edgeLines.material;
+    m.blending = blending === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending;
+    m.opacity = opacity;
+    m.needsUpdate = true;
   }
 
   // Colour-only repaint (no geometry rebuild). Cheap: rewrites the colour buffer
@@ -1028,6 +1080,8 @@ class GalaxyScene {
     if (colors.length !== this._edgeColAttr.array.length) return; // stale — skip
     this._edgeColAttr.array.set(colors);
     this._edgeColAttr.needsUpdate = true;
+    // #216: focus drives the blend mode (Additive-pop) / at-rest (Normal-faint).
+    this._applyEdgeFocusMaterial();
   }
 
   /** Update the edge type→shown map and repaint (no geometry rebuild). */

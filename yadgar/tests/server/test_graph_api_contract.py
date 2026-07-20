@@ -368,7 +368,9 @@ class TestApiGraphDerivedFromEdges:
 
     def test_derived_from_in_legend_config(self, monkeypatch):
         """derived_from must surface in /api/viz/config legend so the frontend
-        auto-generates its toggle checkbox + legend row (data-driven, default ON)."""
+        auto-generates its toggle checkbox + legend row (data-driven). Its toggle
+        defaults OFF (v5.154.0 #216: mass edge type, whited out the galaxy core),
+        but role stays 'retrieval' — the legend must reflect that it drives recall."""
         client = _make_client(monkeypatch)
         resp = client.get("/api/viz/config", headers=_auth_headers())
         assert resp.status_code == 200, f"/api/viz/config → {resp.status_code}"
@@ -379,7 +381,10 @@ class TestApiGraphDerivedFromEdges:
         )
         entry = edges["derived_from"]
         assert entry["role"] == "retrieval", f"legend role wrong: {entry}"
-        assert entry.get("default_on") is True, f"derived_from should default ON: {entry}"
+        # #216: mass edge type → default OFF (was True pre-v5.154.0).
+        assert entry.get("default_on") is False, (
+            f"derived_from should default OFF post-#216: {entry}"
+        )
 
 
 # ── Stats tests ───────────────────────────────────────────────────────────────

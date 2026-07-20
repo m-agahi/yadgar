@@ -370,6 +370,25 @@ class TestEdgeTypesRegistry:
         for t in ["co_occurrence", "resolved_by", "caused_by"]:
             assert EDGE_TYPES[t]["default_on"] is True, f"Expected {t} default_on=True"
 
+    def test_mass_edge_types_default_off_216(self):
+        """v5.154.0 (#216): the two MASS edge types default OFF so the galaxy core
+        doesn't white out. memory_similarity_link (~4.8k, "Near-Duplicate") +
+        derived_from (~3.5k) were ~8.3k of ~12k edges."""
+        for t in ["memory_similarity_link", "derived_from"]:
+            assert EDGE_TYPES[t]["default_on"] is False, f"Expected {t} default_on=False post-#216"
+
+    def test_non_mass_types_stay_default_on_216(self):
+        """#216 flipped ONLY the two mass types — everything else stays default ON."""
+        for t in ["transition", "wiki_crossref", "temporal", "co_occurrence"]:
+            assert EDGE_TYPES[t]["default_on"] is True, (
+                f"{t} must stay default ON — #216 only touched the mass types"
+            )
+
+    def test_derived_from_role_unchanged_by_216(self):
+        """#216 flips only the toggle default, NOT the role — derived_from still
+        drives recall (PPR + spreading), so its legend role stays 'retrieval'."""
+        assert EDGE_TYPES["derived_from"]["role"] == "retrieval"
+
 
 # ---------------------------------------------------------------------------
 # 6. LAZY_EDGE_TYPES

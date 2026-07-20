@@ -90,7 +90,11 @@ EDGE_TYPES: dict[str, dict] = {
         "settings_color_key": None,
         "fallback_color": "#58a6ff",
         "role": "informational",
-        "default_on": True,
+        # v5.154.0 (#216): default OFF. This is a MASS edge type (~4.8k rows) that
+        # dominated the galaxy render — combined with derived_from it was ~8.3k of
+        # ~12k edges, saturating the additive-blended core to a white hairball.
+        # Off by default keeps the at-rest view legible; user can toggle it on.
+        "default_on": False,
     },
     # ── Retrieval-active entity typed-relations (the big hidden capability) ───
     # These power PPR (w=0.5) + spreading (w=0.3) in balanced/full profiles,
@@ -139,7 +143,12 @@ EDGE_TYPES: dict[str, dict] = {
         "settings_color_key": None,
         "fallback_color": "#39c5cf",
         "role": "retrieval",
-        "default_on": True,
+        # v5.154.0 (#216): default OFF despite role=retrieval. This is the LARGEST
+        # edge type (~3.5k rows); with near-duplicate it was ~8.3k of ~12k edges,
+        # whiting out the galaxy core. role stays "retrieval" (it DOES drive recall
+        # — the legend must reflect that); only the default toggle is flipped off
+        # to keep the at-rest render legible. Toggle it on to see derived_from.
+        "default_on": False,
     },
 }
 
