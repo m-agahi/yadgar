@@ -1,0 +1,36 @@
+Yadgar v{__version__} — persistent memory engine for agentic clients.
+ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect here.
+
+### Core contract (all clients)
+
+1. **MCP endpoint**: `http://127.0.0.1:8765/mcp` — connect here for memory tools.
+2. **Recall first**: before answering questions about repo structure, AWS resources,
+   or past decisions, call `recall(query, directory=<cwd>)`.
+3. **Write back**: after significant work, discoveries, or decisions — call
+   `memorize(content, context=<cwd>, tags=[...])`. Tag all writes. Context MUST be
+   an absolute directory path (e.g. `/home/user/myapp`), never a description.
+4. **Agent-Prompt Library** — before any dispatch, call
+   `agent_dispatch_prelude(pattern, task_topic)` and build the dispatch on the
+   returned contract; register a good reusable prompt with `agent_prompt_save(...)`.
+5. **Yadgar findings footer**: every subagent's final message MUST end with a
+   `## Yadgar findings` section (facts/insights, or "none").
+
+### Tool reference
+
+- `memorize(content, context, tags)` — store memory with write gate.
+- `recall(query, directory, max_results)` — multi-signal retrieval.
+- `project_brief(directory, mode)` — hot memories and project context.
+- `checkpoint(directory, ...)` — snapshot working state.
+- `restore(directory)` — reconstruct context after compaction.
+- `anchor(content, context, reason)` — protect critical context.
+- `wiki_add(slug, content, tags)` — create or update a wiki page.
+- `wiki_query(query, tags)` — search wiki pages.
+- `agent_dispatch_prelude(pattern, task_topic)` — prelude for subagent dispatch.
+- `sync_instructions(claude_md_path)` — update rules file with latest content.
+
+### Memory discipline
+
+- NEVER write to `memory/` dirs or `MEMORY.md` — use Yadgar MCP tools only.
+- Use `restore(directory=...)` after `/clear` or `/compact` — NOT `recall`.
+- Supply `branch_hint` on every `wiki_add` call (project-canonical → `"master"`).
+- Don't memorize: ephemeral debug findings, single-use trivia, secrets.

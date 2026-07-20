@@ -4,7 +4,7 @@ Operational guide for AI coding agents working on Yadgar. Human-oriented context
 
 ## Project overview
 
-Yadgar is a persistent memory engine for Claude Code, packaged as an MCP server. Python 3.14+. Two process tiers:
+Yadgar is a persistent memory engine for agentic coding clients, packaged as an MCP server. Python 3.14+. One shared streamable-HTTP daemon (`http://127.0.0.1:8765/mcp`) serves the memory and wiki MCP surface to all 9 supported clients: `claude-code`, `codex`, `gemini`, `cursor`, `cline`, `windsurf`, `kiro`, `amp`, `opencode`. Claude Code additionally receives the full harness integration (hooks, task-list mirror, CLAUDE.md sync); all other clients get MCP registration and a rules file. Two process tiers:
 
 - **Core** (`openfantasy/yadgar`, this repo) — MCP + HTTP server, retrieval pipeline, consolidation, CLI. Default port `8765`.
 - **Backend** (`openfantasy/yadgar-backend`, separate image) — SurrealDB + embed/rerank service. Default port `8001` (embed), `8000` (SurrealDB).
@@ -15,7 +15,22 @@ Entry point: `yadgar.__main__:cli` (console script `yadgar`). Run `yadgar --help
 
 ## Setup commands
 
-Pick one path. All three end up MCP-registered with Claude Code.
+Pick one path. All three end up MCP-registered with your chosen client(s).
+
+### Multi-client setup — `yadgar install`
+
+After the daemon is running, use `yadgar install` to register any of the 9 supported clients:
+
+```bash
+yadgar install --client <name>           # register one client (e.g. --client opencode)
+yadgar install --auto-detect             # detect + register all installed clients
+yadgar install --client <name> --mcp     # MCP registration config only
+yadgar install --client <name> --rules   # rules file only (AGENTS.md-equivalent)
+yadgar install --client <name> --print   # dry-run: emit JSON to stdout, no file writes
+yadgar install --client <name> --scope project --project-directory /path/to/repo
+```
+
+`--print` is the nix/home-manager integration path: it outputs the full config JSON without touching the filesystem. Full flag reference: [`docs/reference/install.md`](docs/reference/install.md).
 
 ### Fast path — user install (pipx)
 
@@ -24,7 +39,10 @@ pipx install yadgar          # or: pip install yadgar
 yadgar setup                 # writes ~/.config/yadgar/{config.yaml,secrets.env}
 set -a && . ~/.config/yadgar/secrets.env && set +a
 yadgar daemon start
+# Claude Code (full harness):
 yadgar daemon configure-mcp  # writes ~/.claude.json with bearer header
+# Any other client:
+yadgar install --client <name>
 ```
 
 `configure-mcp` reads `$YADGAR_MCP_AUTH_TOKEN` from env at invocation time — if unset the header is omitted and `/mcp` returns 401.

@@ -90,6 +90,72 @@ and (on macOS) plist validity.
 
 ---
 
+## Multi-client setup
+
+One shared streamable-HTTP daemon (`http://127.0.0.1:8765/mcp`) serves the memory and wiki MCP surface to all 9 supported clients. After the daemon is running, use `yadgar install` to register any client. For the architectural rationale, see ADR-0144.
+
+### Basic usage
+
+```bash
+# Register one client
+yadgar install --client <name>
+
+# Detect and register all installed clients
+yadgar install --auto-detect
+
+# Dry-run: emit JSON to stdout, write nothing (nix/home-manager contract)
+yadgar install --client <name> --print
+```
+
+### Flags
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--client NAME` | — | Target client (mutually exclusive with `--auto-detect`) |
+| `--auto-detect` | — | Probe and register all detected clients |
+| `--mcp` | — | Write MCP registration config only |
+| `--rules` | — | Write rules file only (AGENTS.md-equivalent) |
+| (neither) | — | Write both MCP config and rules file |
+| `--print` | — | Dry-run: emit JSON to stdout, no file writes; auth uses env-ref (never literal tokens) |
+| `--port PORT` | `8765` | Daemon port for the MCP endpoint URL |
+| `--scope {global,project}` | `global` | Global home-dir config or per-project config |
+| `--project-directory PATH` | — | Required when `--scope project` |
+
+`--print` JSON shape:
+```json
+{"client": "opencode", "mcp": {"path": "...", "content": "..."}, "rules": {"path": "...", "content": "..."}, "dry_run": true}
+```
+
+`mcp` or `rules` is `null` when the corresponding `--mcp` / `--rules` flag was omitted.
+
+### Per-client config paths
+
+| Client | MCP config | Capability |
+|---|---|---|
+| `claude-code` | `~/.claude.json` | Full harness (hooks, task-list mirror, CLAUDE.md sync) |
+| `codex` | `~/.codex/config.toml` | MCP + rules |
+| `gemini` | `~/.gemini/settings.json` | MCP + rules |
+| `cursor` | `~/.cursor/mcp.json` | MCP + rules |
+| `cline` | VS Code globalStorage `cline_mcp_settings.json` | MCP + rules |
+| `windsurf` | `~/.codeium/windsurf/mcp_config.json` | MCP + rules |
+| `kiro` | `~/.kiro/settings/mcp.json` | MCP + rules |
+| `amp` | `~/.config/amp/settings.json` | MCP + rules |
+| `opencode` | `~/.config/opencode/opencode.json` | MCP + rules |
+
+Rules files (AGENTS.md-equivalent) follow each client's native convention. Claude Code bridges via `@AGENTS.md` import; Gemini uses a `context.fileName` alias. All clients share the same daemon endpoint — no per-client server binary is needed.
+
+### Nix / home-manager
+
+Use `--print` for declarative activation (task #67). The flag guarantees no file writes and emits env-ref auth (`${YADGAR_MCP_AUTH_TOKEN}`) rather than a literal token — safe to bake into a nix derivation:
+
+```bash
+yadgar install --client <name> --print
+```
+
+The nix home-manager module reads this output and manages config files declaratively.
+
+---
+
 ## Flags
 
 ```

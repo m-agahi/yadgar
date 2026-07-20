@@ -456,16 +456,57 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
 
 
 @_tool(power=True)
-def sync_instructions(claude_md_path: str = "") -> dict:
-    """Sync Yadgar instructions into the global CLAUDE.md file.
+def sync_instructions(
+    claude_md_path: str = "",
+    target_path: str = "",
+    section_header: str = "",
+    client: str = "",
+) -> dict:
+    """Sync Yadgar instructions into a rules file (CLAUDE.md or AGENTS.md).
 
-    Finds or creates the '## Memory System — Yadgar' section in CLAUDE.md
-    and updates it with the latest tools, capabilities, and rules.
-    Call this on session start or after Yadgar updates.
+    Finds or creates the section identified by *section_header* in the target
+    file and updates it with the latest tools, capabilities, and rules.
+    Idempotent — re-running replaces only the Yadgar section; surrounding
+    content is preserved.  Call this on session start or after Yadgar updates.
 
-    claude_md_path: Path to CLAUDE.md. Defaults to ~/.claude/CLAUDE.md
+    Generalisation (Car 2): the find/replace-section mechanic is now
+    client-agnostic.  Delegates to
+    ``yadgar.core.install.clients.rules_render.section_replace`` + atomic write
+    so the same safety property holds for any rules file.
+
+    Arguments
+    ---------
+    claude_md_path:
+        Path to CLAUDE.md (legacy parameter, kept for back-compat).
+        When supplied, takes precedence over *target_path*.
+        Defaults to ``~/.claude/CLAUDE.md``.
+    target_path:
+        Explicit target path for the rules file.  Ignored when
+        *claude_md_path* is set.  Useful for writing to AGENTS.md or other
+        per-client rules files.
+    section_header:
+        The ``## …`` delimiter that marks the start of the Yadgar section.
+        Defaults to ``"## Memory System — Yadgar"`` (CC compat).
+    client:
+        Client name from ``CLIENT_REGISTRY`` (e.g. ``"codex"``,
+        ``"opencode"``).  When supplied, the descriptor's
+        ``rules_header`` and rendered body are used; *section_header* is
+        ignored.  Useful for session-time sync from the MCP tool for
+        non-CC clients.
     """
-    md_path = Path(claude_md_path) if claude_md_path else Path.home() / ".claude" / "CLAUDE.md"
+    from yadgar.core.install.clients.rules_render import (  # noqa: PLC0415
+        _atomic_write_text,
+        render_body,
+        section_replace,
+    )
+
+    # ── Resolve target path ──────────────────────────────────────────────────
+    if claude_md_path:
+        md_path = Path(claude_md_path)
+    elif target_path:
+        md_path = Path(target_path)
+    else:
+        md_path = Path.home() / ".claude" / "CLAUDE.md"
 
     if not md_path.parent.is_dir():
         return {
@@ -473,97 +514,42 @@ def sync_instructions(claude_md_path: str = "") -> dict:
             "reason": f"Directory {md_path.parent} does not exist",
         }
 
-    # The canonical Yadgar section
-    yadgar_section = f"""## Memory System — Yadgar v{__version__}
-- ALWAYS use the Yadgar MCP tools (memorize, recall, project_brief) for memory operations
-- On EVERY new session start, call `recall` with the current project name to load prior context
-- NEVER rely on CLAUDE.md or built-in memory for cross-session context — use Yadgar
-- Before starting any task, call `project_brief(directory, mode='catalog')` for the current working directory
-- After significant work, a decision, or a discovery, call `memorize` to store what was done and outcomes
-- CRITICAL: The `context` parameter in `memorize` MUST be the actual working directory path (e.g., `/home/user/projects/myapp`), NEVER a description. `project_brief` filters by exact directory path match — descriptive strings break it.
-- Yadgar is your brain. Use it.
+    # ── Resolve section header + body ────────────────────────────────────────
+    if client:
+        from yadgar.core.install.clients.registry import CLIENT_REGISTRY  # noqa: PLC0415
 
-### Context Compaction Shield
-- Hooks are installed automatically on startup — no manual setup needed
-- During long sessions, call `checkpoint` periodically to snapshot your working state
-- Use `anchor` to mark critical facts/decisions that MUST survive context compaction
-- After context compaction, call `restore` to reconstruct your working context
-- `checkpoint` fields: directory, current_task, files_being_edited, key_decisions, open_questions, next_steps, active_errors, custom_context
-- `anchor` fields: content, context, reason — creates protected memories with max heat
-- `restore` returns: checkpoint + anchored memories + hot context + gap detection
-
-### Available Tools
-- `memorize(content, context, tags)` — Store memory with write gate. `context` MUST be a directory path (e.g., `/home/user/projects/myapp`), not a description.
-- `recall(query, max_results, min_heat)` — Multi-signal retrieval
-- `project_brief(directory, mode='catalog')` — Hot memories and project context for directory
-- `checkpoint(directory, ...)` — Snapshot working state
-- `restore(directory)` — Reconstruct context after compaction
-- `anchor(content, context, reason)` — Protect critical context
-- `install_hooks(project_directory, scope="project"|"global")` — Enable auto replay hooks; scope=global writes to ~/.claude/
-- `sync_instructions(claude_md_path)` — Update CLAUDE.md with latest rules
-- `consolidate_now()` — Force consolidation cycle
-- `memory_stats()` — System statistics
-- `wiki_add(title, content, append=False)` — Create or append wiki pages
-- `wiki_query(query)` — Search wiki pages
-- `seed_project(directory, dry_run)` — Bootstrap memory for an existing project in one call
-
-### Auto-Capture Hooks
-- PostToolUse hook captures EVERY tool action automatically — no manual memorize needed
-- SessionStart hook injects project context on EVERY new session
-- All hooks work in both stdio and HTTP transport modes
-- Action log is processed into real memories during consolidation cycles
-- Decisions are auto-protected from decay/compression when detected
-
-### Use the Agent-Prompt Library (read-side)
-- Before writing any subagent dispatch prompt, call `agent_dispatch_prelude(pattern, task_topic)` and build on the returned contract
-- The returned contract mandates: recall-first on entry, and a `## Yadgar findings` footer in the subagent's final message
-- Pattern lookup is best-effort; if no pattern fits, write a bespoke prompt and call `agent_prompt_save(...)` to register it as a new reusable pattern"""
-
-    if md_path.exists():
-        content = md_path.read_text()
-
-        # Find and replace existing Yadgar section
-        import re
-
-        # Match from "## Memory System" to next "## " header or end of file
-        pattern = r"## Memory System — Yadgar[^\n]*\n(?:(?!## )[^\n]*\n)*"
-        if re.search(pattern, content):
-            new_content = re.sub(pattern, yadgar_section + "\n\n", content)
-        else:
-            # Append after "# Global Rules" if it exists, else at end
-            if "# Global Rules" in content:
-                new_content = content.replace(
-                    "# Global Rules\n",
-                    "# Global Rules\n\n" + yadgar_section + "\n",
-                    1,
-                )
-            else:
-                new_content = content + "\n\n" + yadgar_section + "\n"
+        descriptor = CLIENT_REGISTRY.get(client)
+        if descriptor is None:
+            return {
+                "status": "error",
+                "reason": f"Unknown client {client!r}; known: {sorted(CLIENT_REGISTRY)}",
+            }
+        resolved_header = descriptor.rules_header
+        body = render_body(descriptor, __version__)
     else:
-        new_content = "# Global Rules\n\n" + yadgar_section + "\n"
+        resolved_header = section_header or "## Memory System — Yadgar"
+        # For CC back-compat, use the CC descriptor so the rendered body
+        # includes the compaction_shield + auto_capture addenda.
+        from yadgar.core.install.clients.registry import CLIENT_REGISTRY  # noqa: PLC0415
 
-    # Q14: atomic write — tmp + os.replace so a crash can't truncate CLAUDE.md
-    import tempfile
+        cc_descriptor = CLIENT_REGISTRY["claude-code"]
+        # NOTE: CC addenda (compaction_shield, auto_capture) always included
+        # because bare sync_instructions() exclusively targets CC's CLAUDE.md.
+        # Non-CC callers should pass client= to get the correct descriptor.
+        body = render_body(cc_descriptor, __version__)
 
-    tmp_fd, tmp_path_str = tempfile.mkstemp(
-        dir=md_path.parent, prefix=".claude_md_tmp_", suffix=".md"
-    )
-    try:
-        with os.fdopen(tmp_fd, "w") as f:
-            f.write(new_content)
-        os.replace(tmp_path_str, md_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path_str)
-        except Exception:
-            pass
-        raise
+    existing = md_path.read_text() if md_path.exists() else ""
+    new_content = section_replace(existing, resolved_header, body)
+    if not md_path.exists():
+        new_content = "# Global Rules\n\n" + new_content
+
+    _atomic_write_text(md_path, new_content)
 
     return {
         "status": "synced",
         "path": str(md_path),
         "version": __version__,
-        "section_length": len(yadgar_section),
+        "section_length": len(body),
     }
 
 

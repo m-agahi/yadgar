@@ -2313,6 +2313,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tomlkit"
+version = "0.15.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/96/e07752635b98536177fa1f37671c8f3cdde2e724c6bcf6034b2cfb571565/tomlkit-0.15.1.tar.gz", hash = "sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97", size = 180129, upload-time = "2026-07-17T01:48:04.562Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/bc/8c13eb66537dce1d2bd3a57132902f38d0e7f5bb46fa9f4daed9fe9d76ee/tomlkit-0.15.1-py3-none-any.whl", hash = "sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304", size = 49449, upload-time = "2026-07-17T01:48:05.728Z" },
+]
+
+[[package]]
 name = "torch"
 version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2574,7 +2583,7 @@ wheels = [
 
 [[package]]
 name = "yadgar"
-version = "5.154.0"
+version = "5.155.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -2597,6 +2606,7 @@ dependencies = [
     { name = "scipy" },
     { name = "sse-starlette" },
     { name = "surrealdb" },
+    { name = "tomlkit" },
     { name = "urllib3" },
     { name = "uvicorn" },
     { name = "watchdog" },
@@ -2692,6 +2702,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'ml'", specifier = ">=2.2.0,<5.5" },
     { name = "sse-starlette", specifier = ">=1.6.0" },
     { name = "surrealdb", specifier = ">=1.0.0" },
+    { name = "tomlkit", specifier = ">=0.13" },
     { name = "transformers", marker = "extra == 'ml'", specifier = ">=5.0" },
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "uvicorn", specifier = ">=0.24.0" },

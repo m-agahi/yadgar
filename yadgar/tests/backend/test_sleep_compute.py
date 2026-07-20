@@ -496,6 +496,7 @@ def communities_at_scale(tmp_path, settings, mock_embeddings):
     engine.close()
 
 
+@pytest.mark.perf
 @pytest.mark.timeout(60)
 def test_detect_communities_under_5s_at_100_entities(communities_at_scale):
     """Regression guard: detect_communities must use bulk SQL not per-pair HTTP.
@@ -593,6 +594,7 @@ def dream_replay_at_scale(tmp_path, settings):
     engine.close()
 
 
+@pytest.mark.perf
 @pytest.mark.timeout(60)
 def test_dream_replay_under_5s_at_60_memories(dream_replay_at_scale):
     """Regression guard: dream_replay must use bulk SQL not per-pair HTTP.

@@ -571,29 +571,41 @@ _step_config_sync() {
 }
 
 _step_install_rules() {
-    log "Step 9/11: Appending CLAUDE.md rules fragment..."
-    local assets_dir
-    assets_dir="$(_locate_install_assets)"
-    local fragment="${assets_dir}/CLAUDE.md.fragment"
-    local claude_md="${HOME}/.claude/CLAUDE.md"
-
-    if [ ! -f "$fragment" ]; then
-        warn "CLAUDE.md.fragment not found at $fragment; skipping"
-        return
-    fi
-
-    local scripts_dir
-    scripts_dir="$(_locate_setup_scripts)"
-    if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/append_claude_rules.sh" ]; then
-        run env \
-            YADGAR_CLAUDE_MD_TARGET="$claude_md" \
-            YADGAR_FRAGMENT_PATH="$fragment" \
-            bash "$scripts_dir/append_claude_rules.sh"
+    # Car 3: route through the unified install command (rules_render.write_rules).
+    # The old fragment-based path (append_claude_rules.sh + CLAUDE.md.fragment)
+    # is retired in favour of the descriptor-driven generator so setup-time and
+    # session-time rules agree.  Back-compat: if `yadgar install` is unavailable
+    # (e.g. very old install running setup before upgrade) we fall back to the
+    # legacy fragment path and warn.
+    log "Step 9/11: Installing Claude Code rules via yadgar install..."
+    if command -v yadgar > /dev/null 2>&1 && yadgar install --help 2>&1 | grep -q -- '--rules'; then
+        run yadgar install --client claude-code --rules
     else
-        if [ "$DRYRUN" -eq 1 ]; then
-            echo "[dryrun] append_claude_rules.sh ($fragment -> $claude_md)"
+        # Legacy fallback — will be removed in a future release.
+        warn "yadgar install not available; falling back to legacy CLAUDE.md.fragment path"
+        local assets_dir
+        assets_dir="$(_locate_install_assets)"
+        local fragment="${assets_dir}/CLAUDE.md.fragment"
+        local claude_md="${HOME}/.claude/CLAUDE.md"
+
+        if [ ! -f "$fragment" ]; then
+            warn "CLAUDE.md.fragment not found at $fragment; skipping"
+            return
+        fi
+
+        local scripts_dir
+        scripts_dir="$(_locate_setup_scripts)"
+        if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/append_claude_rules.sh" ]; then
+            run env \
+                YADGAR_CLAUDE_MD_TARGET="$claude_md" \
+                YADGAR_FRAGMENT_PATH="$fragment" \
+                bash "$scripts_dir/append_claude_rules.sh"
         else
-            warn "append_claude_rules.sh not found; skipping rules install"
+            if [ "$DRYRUN" -eq 1 ]; then
+                echo "[dryrun] append_claude_rules.sh ($fragment -> $claude_md)"
+            else
+                warn "append_claude_rules.sh not found; skipping rules install"
+            fi
         fi
     fi
 }

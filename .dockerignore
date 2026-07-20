@@ -21,4 +21,9 @@ build
 benchmarks
 result
 PLAN*.md
-uv.lock
+# NOTE: uv.lock is intentionally NOT ignored — Dockerfile.ci `COPY uv.lock`
+# bakes the frozen test+ml deps (lock parity, ADR-0089). Excluding it here
+# broke the yadgar-ci rebuild (dormant since v5.148.0 until the #215 tomlkit
+# lock change forced a rebuild). Backend's `COPY . /app` includes it harmlessly;
+# the backend-rebuild guard is ci-release `backend_changed` (dep-section compare),
+# not this file — see test_dockerignore_ci_copy_consistency.
