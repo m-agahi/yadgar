@@ -667,6 +667,11 @@ class Settings(BaseSettings):
     ANCHOR_PROMOTE_HEADERS: int = 2
     # anchor_count_project threshold above which audit_anchors action is emitted.
     ANCHOR_AUDIT_THRESHOLD: int = 15
+    # v5.158.0 (Car #85): stop-hook maintenance cadence — human messages between
+    # anchor-audit maintenance injections in the Stop hook. Lower priority than the
+    # checkpoint (INTERVAL=25); a due checkpoint preempts the audit, which then
+    # fires on the next eligible stop.
+    ANCHOR_AUDIT_STOP_INTERVAL: int = 100
     # v5.9.0: anchor audit pass in consolidate_now() (anchor_audit section)
     # Toggle anchor pass inside consolidate_now().
     ANCHOR_AUDIT_CONSOLIDATION_ENABLED: bool = True

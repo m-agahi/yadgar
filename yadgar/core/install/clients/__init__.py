@@ -25,4 +25,12 @@ Car 3 adds the unified install orchestrator + auto-detect:
 
 from __future__ import annotations
 
-__all__ = ["descriptor", "detect", "install", "merge", "mcp_register", "registry"]
+__all__ = [
+    "descriptor",
+    "detect",
+    "hooks_render",
+    "install",
+    "mcp_register",
+    "merge",
+    "registry",
+]

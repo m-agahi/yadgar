@@ -1,3 +1,20 @@
+<!--
+ARCHIVED 2026-07-20. Original scope (SubagentStop footer auto-ingest + worktree-orphan
+fix) SHIPPED: /hooks/subagent-stop memorizes one memory per footer bullet (tags
+from-subagent, agent-type:<t>); worktree-context orphaning fixed by ADR-0093.
+
+Task #30 was demoted to three residual candidates: (1) wire the dead
+yadgar_subagent_capture_rate gauge + verify the capture loop; (2) an incidents-ledger;
+(3) discipline-staleness / genesis-drift nags.
+
+DECISION 2026-07-20 (stats-backed): DO item 1 only. This change wires the gauge and
+verifies the loop (the live DB showed 0 `from-subagent` memories — capture was
+unmeasured). DROPPED item 2 (recurring-failure lessons are already captured as
+high-recall main-thread `feedback` memories — access counts 40/486 — a formal ledger
+buys consistency, not lost data) and item 3 (no drift evidence: agent_prompts.yaml was
+maintained 2 days prior; the 6 discipline pages were fresh). Full pre-archive analysis
+is in this file's git history.
+-->
 # Agent-Brain Learning Loop — No-Memorize Rule + SubagentStop Auto-Ingest
 
 **Status:** DEMOTED → task #30 (incidents-ledger + staleness nags). Premises resolved: worktree-orphan=ADR-0093 shipped; auto-ingest now inert.

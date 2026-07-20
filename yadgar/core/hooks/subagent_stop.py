@@ -14,14 +14,30 @@ import logging
 import os
 import re
 import sys
-import urllib.parse
-import urllib.request
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import shutdown_tracing
 
-_PORT = os.environ.get("YADGAR_PORT", "8765")
-_AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+# car #87: the extract-footer + POST helpers live in the shared module so BOTH
+# capture paths (this legacy SubagentStop body + the live Stop-hook sweep) use
+# one implementation. Re-export the pre-existing private names so importers +
+# the characterization suite (which import _extract_findings / _post_findings
+# from THIS module) are byte-unaffected.
+from yadgar.core.hooks.findings_capture import (  # noqa: F401
+    _auth_headers,
+)
+from yadgar.core.hooks.findings_capture import (
+    detect_branch_from_cwd as _detect_branch_from_cwd,
+)
+from yadgar.core.hooks.findings_capture import (
+    extract_findings as _extract_findings,
+)
+from yadgar.core.hooks.findings_capture import (
+    last_assistant_text as _last_assistant_text,
+)
+from yadgar.core.hooks.findings_capture import (
+    post_findings as _post_findings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,188 +104,16 @@ def _parse_directive(bullet: str) -> dict | None:
     return {"type": directive_type, "params": params}
 
 
-# Lenient heading matcher — any H1–H6 whose text contains both "yadgar" and
-# "find" (matches: "## Yadgar findings", "### Yadgar Findings",
-# "## Findings (Yadgar)", "## yadgar-findings", "## FINDINGS — YADGAR", etc.)
-_HEADING_RE = re.compile(r"^(#{1,6})\s+([^\n]+)$", re.MULTILINE)
-# Any ## heading (used to find end of findings section)
-_NEXT_HEADING_RE = re.compile(r"\n#{1,6}\s+")
-
-# Legacy strict pattern kept for reference — superseded by _extract_findings logic
-_FINDINGS_SECTION_RE = re.compile(
-    r"##\s+Yadgar\s+findings(?:\s+\[.*?\])?\s*\n(.*?)(?=\n##\s|\Z)",
-    re.DOTALL | re.IGNORECASE,
-)
-
-# A bullet line: starts with optional whitespace + "- "
-_BULLET_RE = re.compile(r"^\s*-\s+(.+)$", re.MULTILINE)
-
-
-@observe(tier="hot")
-def _auth_headers() -> dict:
-    if _AUTH_TOKEN:
-        return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
-    return {}
-
-
-@observe(tier="stage")
-def _extract_findings(text: str) -> list[str]:
-    """Return list of bullet texts from the Yadgar findings section.
-
-    Lenient parser — accepts any heading (H1–H6) whose text contains both
-    'yadgar' and 'find' (case-insensitive). Handles:
-      ## Yadgar findings, ### Yadgar Findings, ## Findings (Yadgar),
-      ## yadgar-findings, ## FINDINGS — YADGAR, etc.
-
-    Returns empty list if the section is absent or contains no bullets.
-    Skips comment lines (<!-- ... -->) and the literal bullet "none".
-    """
-    section_body: str | None = None
-    for hm in _HEADING_RE.finditer(text):
-        heading_text = hm.group(2).lower()
-        if "yadgar" in heading_text and "find" in heading_text:
-            # Slice from end of this heading line to next heading or EOF
-            start = hm.end()
-            rest = text[start:]
-            end_m = _NEXT_HEADING_RE.search(rest)
-            section_body = rest[: end_m.start()] if end_m else rest
-            break
-
-    if section_body is None:
-        return []
-
-    bullets = []
-    for m in _BULLET_RE.finditer(section_body):
-        text_val = m.group(1).strip()
-        # Skip comment lines and the sentinel "none" marker
-        if text_val.startswith("<!--") or text_val.lower() == "none":
-            continue
-        if text_val:
-            bullets.append(text_val)
-    return bullets
-
-
-@observe(tier="hot")
-def _extract_content_from_msg(msg: dict) -> str:
-    """Extract text content from an assistant message dict (helper for _get_report_text)."""
-    content = msg.get("content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = [
-            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
-        ]
-        return "\n".join(p for p in parts if p.strip())
-    return ""
-
-
-@observe(tier="hot")
-def _parse_transcript_line(raw: str) -> str:
-    """Parse one JSONL line from a transcript; return assistant text or empty string."""
-    if not raw:
-        return ""
-    try:
-        entry = json.loads(raw)
-    except json.JSONDecodeError:
-        return ""
-    msg = entry.get("message", entry)
-    if not isinstance(msg, dict) or msg.get("role") != "assistant":
-        return ""
-    return _extract_content_from_msg(msg)
-
-
 @observe(tier="stage")
 def _get_report_text(data: dict) -> str:
     """Extract the agent's final report text from the SubagentStop payload.
 
     Claude Code SubagentStop does not include the full report text directly
-    in the payload — reads the last assistant turn from the transcript JSONL.
-    Falls back to empty string if transcript is unavailable.
+    in the payload — reads the last assistant turn from the transcript JSONL
+    (delegated to the shared ``last_assistant_text`` helper). Falls back to
+    empty string if the transcript is unavailable.
     """
-    import pathlib  # noqa: PLC0415
-
-    transcript_path = data.get("transcript_path", "")
-    if not transcript_path:
-        return ""
-
-    try:
-        p = pathlib.Path(transcript_path)
-        if not p.exists():
-            return ""
-
-        last_assistant_content = ""
-        for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
-            text = _parse_transcript_line(raw.strip())
-            if text:
-                last_assistant_content = text
-
-        return last_assistant_content
-    except Exception:
-        return ""
-
-
-@observe(tier="stage")
-def _post_findings(
-    agent_type: str,
-    cwd: str,
-    findings: list[str],
-    branch_hint: str | None = None,
-) -> None:
-    """POST findings to /hooks/subagent-stop endpoint.
-
-    v5.44.0 X2: branch_hint forwarded in payload so daemon writes land on the
-    correct branch (regression guard for v5.42.2 precedent — writer + checker
-    must use the same branch, NOT daemon CWD). Also adds _subagent_writeback
-    signal tag.
-
-    Silently swallows all errors — must never block subagent completion.
-    """
-    if not findings:
-        return
-
-    payload_dict: dict = {
-        "agent_type": agent_type,
-        "cwd": cwd,
-        "findings": findings,
-        # v5.44.0 X2: signal tag for daemon-side tagging
-        "_subagent_writeback": True,
-    }
-    if branch_hint:
-        payload_dict["branch_hint"] = branch_hint
-
-    payload = json.dumps(payload_dict).encode()
-
-    url = f"http://127.0.0.1:{_PORT}/hooks/subagent-stop"
-    headers = {"Content-Type": "application/json", **_auth_headers()}
-    try:
-        req = urllib.request.Request(url, data=payload, headers=headers)
-        urllib.request.urlopen(req, timeout=3.0)
-    except Exception:
-        pass  # Daemon down or error — fail silently, never block subagent
-
-
-@observe(tier="stage")
-def _detect_branch_from_cwd(cwd: str) -> str | None:
-    """Detect the git branch from the caller's cwd.
-
-    Returns branch name or None. Never raises.
-    Used by SubagentStop hook to supply branch_hint to daemon so writes land
-    on the correct branch (v5.44.0 X2, regression guard for v5.42.2).
-    """
-    import subprocess  # noqa: PLC0415
-
-    try:
-        result = subprocess.run(
-            ["git", "-C", cwd, "symbolic-ref", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=3.0,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip() or None
-    except Exception:
-        pass
-    return None
+    return _last_assistant_text(data.get("transcript_path", ""))
 
 
 @observe(tier="boundary")

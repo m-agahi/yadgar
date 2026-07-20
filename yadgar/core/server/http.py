@@ -412,6 +412,44 @@ def _hook_observe_response(hook: str, status_code: int) -> None:
             pass
 
 
+@observe(tier="stage")
+def _record_subagent_post() -> None:
+    """#30: count a non-empty /hooks/subagent-stop POST that reached the endpoint.
+
+    Distinguishes "arrived with findings" from "never arrived" (the latter shows
+    as a flat 0 while yadgar_subagent_dispatch_count keeps rising). Never raises.
+    """
+    try:
+        from yadgar._shared.observability.metrics import (  # noqa: PLC0415
+            yadgar_subagent_stop_posts_total,
+        )
+
+        yadgar_subagent_stop_posts_total.inc()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@observe(tier="stage")
+def _record_subagent_captures(stored: int) -> None:
+    """#30: wire the subagent capture metrics from a /hooks/subagent-stop batch.
+
+    captures_total rises by the raw bullet volume stored (0-vs-N unambiguous);
+    the previously-dead capture_rate gauge reflects this batch's captured count
+    (last-batch semantic). Never raises.
+    """
+    try:
+        from yadgar._shared.observability.metrics import (  # noqa: PLC0415
+            yadgar_subagent_capture_rate,
+            yadgar_subagent_captures_total,
+        )
+
+        if stored:
+            yadgar_subagent_captures_total.inc(stored)
+        yadgar_subagent_capture_rate.set(stored)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # C2 P1 (obs-train, docs/plans/observability-health-otlp-fix.md): outer bound on the
 # whole /health handler body so it can never exceed this even if a dependency probe
 # hangs. The container healthcheck uses --health-timeout 5s; with db+embed probed
@@ -1348,6 +1386,11 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
         if not findings:
             return JSONResponse({"status": "ok", "stored": 0})
 
+        # #30: a non-empty POST reached the endpoint — count it so "arrived with
+        # findings" is distinguishable from "never arrived" (flat 0 while
+        # yadgar_subagent_dispatch_count keeps rising ⇒ the stop hook never fires).
+        _record_subagent_post()
+
         # Import memorize at call time to avoid circular import at module load
         import sys as _sys
 
@@ -1390,6 +1433,11 @@ async def hook_subagent_stop(request: Request) -> JSONResponse:
             except Exception as _e:
                 logger.debug("subagent-stop memorize failed: %s", _e)
                 errors.append(str(_e)[:100])
+
+        # #30: wire the capture metrics. captures_total rises by the raw bullet
+        # volume stored (0-vs-N unambiguous); the previously-dead capture_rate
+        # gauge reflects this batch's captured count (last-batch semantic).
+        _record_subagent_captures(stored)
 
         response: dict = {"status": "ok", "stored": stored, "agent_type": agent_type}
         if errors:

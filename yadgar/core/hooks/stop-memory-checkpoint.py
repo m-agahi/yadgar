@@ -4,8 +4,17 @@
 Fires every INTERVAL human messages and prompts Claude to evaluate signals
 via project_brief() and take action (wiki regen, active_work refresh, etc.).
 
-This hook is a DUMB PIPE — no Python signal detection, no API calls.
+This hook is a DUMB PIPE for signal-evaluation — no Python signal detection.
 All evaluation happens in the Claude session via tool calls.
+
+Car #87 exception: on EVERY stop it ALSO runs the subagent findings-capture
+sweep (``_run_subagent_sweep``) — one HTTP POST per newly-completed subagent
+whose transcript carries a ``## Yadgar findings`` footer. This is the LIVE
+trigger for subagent capture: the ``SubagentStop`` hook never fires for
+Agent-tool / ``run_in_background`` dispatches (upstream #33049 / #25147), so the
+footer is harvested here from the on-disk subagent ``.output`` transcripts
+instead. The sweep runs unconditionally, before the checkpoint-interval gate,
+so it is not throttled to 1/25 stops.
 
 State: ~/.local/state/yadgar/stop-hook-state.json (keyed by session_id, atomic writes).
 
@@ -20,34 +29,38 @@ import sys
 from pathlib import Path
 
 import yadgar._shared.paths as _paths
+from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import shutdown_tracing
 
 INTERVAL = 25  # human messages between checkpoints
 
+# v5.158.0 (Car #85): human messages between anchor-audit maintenance injections.
+# Config-driven so operators can retune without editing the hook.
+ANCHOR_AUDIT_STOP_INTERVAL = get_settings().ANCHOR_AUDIT_STOP_INTERVAL
+
 
 @observe(tier="stage")
-def _resolve_prompt_template_path() -> str:
-    """Resolve the on-disk path of the packaged checkpoint protocol template (Car B, task #74).
+def _resolve_prompt_template_path(filename: str = "stop_checkpoint_prompt.md") -> str:
+    """Resolve the on-disk path of a packaged stop-hook protocol template (Car B, task #74).
 
-    The template ships as package data at
-    yadgar/core/hooks/templates/stop_checkpoint_prompt.md and is resolved via
-    importlib.resources — works from a source checkout, an installed wheel, AND
-    the standalone copy under ~/.claude/hooks (that copy already requires the
-    yadgar package importable for the yadgar._shared imports above, so
-    package-resource resolution adds no new runtime dependency; the installer
+    Templates ship as package data under yadgar/core/hooks/templates/ and are
+    resolved via importlib.resources — works from a source checkout, an installed
+    wheel, AND the standalone copy under ~/.claude/hooks (that copy already
+    requires the yadgar package importable for the yadgar._shared imports above,
+    so package-resource resolution adds no new runtime dependency; the installer
     does NOT need to copy the template alongside the script).
 
     Returns the absolute on-disk path as a str so main() can emit it in the
     short pointer reason without loading the full content into the reason field.
 
     Fail-loud: a missing or unresolvable template is a packaging bug — raise
-    RuntimeError instead of silently emitting a broken checkpoint pointer.
+    RuntimeError instead of silently emitting a broken pointer.
     """
     from importlib.resources import as_file, files
 
     try:
-        ref = files("yadgar.core.hooks").joinpath("templates").joinpath("stop_checkpoint_prompt.md")
+        ref = files("yadgar.core.hooks").joinpath("templates").joinpath(filename)
         # as_file() extracts to a temp path when inside a zip (wheel); for
         # source/editable installs it returns the real path directly.
         with as_file(ref) as p:
@@ -66,16 +79,17 @@ def _resolve_prompt_template_path() -> str:
     except (OSError, ModuleNotFoundError) as exc:
         raise RuntimeError(
             "yadgar stop-hook prompt template missing: "
-            "yadgar/core/hooks/templates/stop_checkpoint_prompt.md is not "
+            f"yadgar/core/hooks/templates/{filename} is not "
             "resolvable as package data — broken install/packaging"
         ) from exc
     return resolved
 
 
 # Resolved at import time so a broken install fails loud on the first hook fire,
-# not silently mid-session. The path is emitted in the short pointer reason;
-# the full protocol lives in the file at this path.
-_PROMPT_TEMPLATE_PATH = _resolve_prompt_template_path()
+# not silently mid-session. The paths are emitted in the short pointer reason;
+# the full protocol lives in the file at each path.
+_PROMPT_TEMPLATE_PATH = _resolve_prompt_template_path("stop_checkpoint_prompt.md")
+_ANCHOR_AUDIT_TEMPLATE_PATH = _resolve_prompt_template_path("anchor_audit_prompt.md")
 
 
 @observe(tier="hot")
@@ -155,6 +169,99 @@ def _save_state(state: dict) -> None:
         pass
 
 
+def _subagent_sweep_state_path() -> Path:
+    """Return path to subagent-capture sweep state (path -> captured mtime)."""
+    return _paths.STOP_HOOK_STATE_PATH.parent / "subagent-capture-state.json"
+
+
+@observe(tier="stage")
+def _run_subagent_sweep(data: dict) -> None:
+    """Car #87 — capture completed-subagent findings footers on every stop.
+
+    Sweeps the session's on-disk subagent ``.output`` transcripts and POSTs any
+    ``## Yadgar findings`` footers to the unchanged ``/hooks/subagent-stop``
+    endpoint. Runs on EVERY stop (not gated on the checkpoint interval) and
+    never raises — capture must never block a session stop.
+
+    The session-uuid is derived from the transcript_path stem (guaranteed
+    present when this hook fires; ``session_id`` can be "unknown").
+    """
+    try:
+        from yadgar.core.hooks.findings_capture import (  # noqa: PLC0415
+            sweep_subagent_transcripts,
+        )
+
+        transcript_path = data.get("transcript_path", "")
+        if not transcript_path:
+            return
+        cwd = data.get("cwd", "") or os.getcwd()
+        sweep_subagent_transcripts(
+            transcript_path,
+            cwd,
+            str(_subagent_sweep_state_path()),
+        )
+    except Exception:
+        pass  # never block the stop hook on capture failure
+
+
+# ── Maintenance scheduler (Car #85) ────────────────────────────────────────
+#
+# The single Stop hook drives an ordered registry of maintenance items. On each
+# stop (past the loop/transcript guards) items are evaluated by priority and
+# EXACTLY ONE {decision: block} is injected — FIRST DUE WINS. Only the injected
+# item's per-session counter is advanced, so a checkpoint that preempts a due
+# anchor-audit does not consume the audit's turn: the audit fires on the next
+# eligible stop.
+#
+# Each item is a dict:
+#   name        — stable key; also the session_state counter key via `state_key`.
+#   priority    — lower wins ties (0 = checkpoint, 1 = anchor-audit).
+#   state_key   — session_state field holding the last-injected count watermark.
+#   is_due      — (count, session_state) -> bool.
+#   reason      — (count) -> str; the {decision: block} reason string.
+
+
+def _checkpoint_is_due(count: int, session_state: dict) -> bool:
+    return count - int(session_state.get("last_save", 0)) >= INTERVAL
+
+
+def _checkpoint_reason(count: int) -> str:
+    return (
+        f"[yadgar] Checkpoint due. Read {_PROMPT_TEMPLATE_PATH}"
+        " and follow all the instructions in it."
+    )
+
+
+def _anchor_audit_is_due(count: int, session_state: dict) -> bool:
+    return count - int(session_state.get("last_anchor_audit", 0)) >= ANCHOR_AUDIT_STOP_INTERVAL
+
+
+def _anchor_audit_reason(count: int) -> str:
+    return (
+        f"[yadgar] Anchor-audit maintenance due. Read {_ANCHOR_AUDIT_TEMPLATE_PATH}"
+        " and follow all the instructions in it."
+    )
+
+
+# Ordered by priority (ascending). FIRST DUE WINS.
+_MAINTENANCE_ITEMS: list[dict] = [
+    {
+        "name": "checkpoint",
+        "priority": 0,
+        "state_key": "last_save",
+        "is_due": _checkpoint_is_due,
+        "reason": _checkpoint_reason,
+    },
+    {
+        "name": "anchor_audit",
+        "priority": 1,
+        "state_key": "last_anchor_audit",
+        "is_due": _anchor_audit_is_due,
+        "reason": _anchor_audit_reason,
+    },
+]
+
+
 @observe(tier="boundary")
 def main() -> None:
     try:
@@ -162,6 +269,9 @@ def main() -> None:
             data = json.loads(sys.stdin.read() or "{}")
         except Exception:
             data = {}
+
+        # Car #87: capture subagent findings on EVERY stop, before any gate.
+        _run_subagent_sweep(data)
 
         session_id = data.get("session_id", "unknown")
         transcript_path = data.get("transcript_path", "")
@@ -171,7 +281,7 @@ def main() -> None:
             "yes",
         )
 
-        # Infinite-loop guard: Claude already ran a checkpoint this turn — allow stop
+        # Infinite-loop guard: Claude already ran maintenance this turn — allow stop
         if stop_hook_active:
             print("{}")
             return
@@ -183,24 +293,29 @@ def main() -> None:
 
         state = _load_state()
         session_state: dict = state.get(session_id, {})
-        last_save: int = session_state.get("last_save", 0)
 
         current_count = _count_human_messages(transcript_path)
 
-        if current_count - last_save < INTERVAL:
+        # Evaluate maintenance items by priority; FIRST DUE WINS. Compute the
+        # count once and hand the SAME value to every item's is_due so preemption
+        # is deterministic.
+        chosen: dict | None = None
+        for item in sorted(_MAINTENANCE_ITEMS, key=lambda it: it["priority"]):
+            if item["is_due"](current_count, session_state):
+                chosen = item
+                break
+
+        if chosen is None:
             print("{}")
             return
 
-        # Checkpoint time — update state atomically and block
-        session_state["last_save"] = current_count
+        # Advance ONLY the injected item's counter, then block. A preempted item
+        # keeps its old watermark and fires on the next eligible stop.
+        session_state[chosen["state_key"]] = current_count
         state[session_id] = session_state
         _save_state(state)
 
-        reason = (
-            f"[yadgar] Checkpoint due. Read {_PROMPT_TEMPLATE_PATH}"
-            " and follow all the instructions in it."
-        )
-        print(json.dumps({"decision": "block", "reason": reason}))
+        print(json.dumps({"decision": "block", "reason": chosen["reason"](current_count)}))
     finally:
         shutdown_tracing()
 

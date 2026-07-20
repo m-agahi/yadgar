@@ -1,4 +1,13 @@
-"""Tests for yadgar/scripts/hook_runner.py — hook dispatch + handler logic.
+"""Tests for the shared hook body — hook dispatch + handler logic.
+
+Car 0 moved the handler bodies + HTTP helpers + ``_HOOKS`` dispatch from
+``yadgar/core/scripts/hook_runner.py`` into ``yadgar.core.cli.hook`` (the
+``yadgar hook <event>`` CLI body); ``hook_runner.py`` is now a thin re-export
+shim. This IS the characterization suite for that logic — it was repointed at
+``yadgar.core.cli.hook`` because ``monkeypatch.setattr(hr, "_http_post", …)``
+must patch the module where the handlers RESOLVE the name (the impl module), not
+a re-export on the shim. Shim behaviour (re-exports + in-process delegation) is
+pinned separately in ``test_hook_runner_shim.py``.
 
 Coverage targets:
 - _auth_headers: with/without token
@@ -19,7 +28,7 @@ import io
 import json
 from unittest.mock import MagicMock, patch
 
-import yadgar.core.scripts.hook_runner as hr
+import yadgar.core.cli.hook as hr
 
 # ── _auth_headers ─────────────────────────────────────────────────────────────
 

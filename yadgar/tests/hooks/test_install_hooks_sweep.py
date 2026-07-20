@@ -145,6 +145,9 @@ _IMPORTED_ONLY = {
     "instructions_loaded.py",
     "subagent_start.py",
     "subagent_stop.py",
+    # car #87: shared findings-capture helpers imported by subagent_stop.py +
+    # stop-memory-checkpoint.py; never copied/installed as a standalone hook.
+    "findings_capture.py",
 }
 
 # #64: hook_runner-dispatched core hooks. These are executed via

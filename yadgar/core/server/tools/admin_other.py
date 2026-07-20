@@ -26,8 +26,15 @@ settings = get_settings()
 
 # ── Allowed update fields ──────────────────────────────────────────────
 
-# Allowed fields for MCP-level memory_update (subset of _MEMORY_UPDATABLE_FIELDS)
-_MEMORY_UPDATE_ALLOWED: frozenset[str] = frozenset({"content", "tags", "is_protected", "is_stale"})
+# Allowed fields for MCP-level memory_update (subset of _MEMORY_UPDATABLE_FIELDS).
+# v5.158 (Car #85): importance + tier widened in so de_anchor can retire an anchor
+# into the normal decay path (clearing is_protected alone is insufficient — the
+# decay RATE is keyed on importance: thermodynamics.py compute_decay uses the slow
+# IMPORTANCE_DECAY_FACTOR when importance>0.7, so an anchor left at importance=1.0
+# barely decays even after is_protected is cleared).
+_MEMORY_UPDATE_ALLOWED: frozenset[str] = frozenset(
+    {"content", "tags", "is_protected", "is_stale", "importance", "tier"}
+)
 
 # Allowed fields for MCP-level wiki_update
 _WIKI_UPDATE_ALLOWED: frozenset[str] = frozenset({"content", "tags", "category", "confidence"})
@@ -514,6 +521,65 @@ def memory_update(memory_id: int, fields: dict) -> dict:
     # the DB write (update_memory_fields) forwards to backend /admin. The empty-
     # fields read short-circuit is handled by the backend impl too.
     return _forward_admin("memory_update", {"memory_id": int(memory_id), "fields": fields})
+
+
+# Server-side de-anchor defaults so callers never hardcode the magic numbers.
+_DE_ANCHOR_IMPORTANCE: float = 0.5
+_DE_ANCHOR_TIER: str = "ephemeral"
+
+
+@_tool(power=True)
+def de_anchor(memory_id: int) -> dict:
+    """Retire an anchor so it re-enters the normal heat-decay path (Car #85).
+
+    De-anchoring undoes what ``anchor()`` / ``memorize(is_protected=True)`` did,
+    so a fact that is no longer worth surfacing forever ages out naturally:
+
+      is_protected → False   re-enables decay — the decay query excludes protected
+                             rows, so a protected anchor never decays at all.
+      importance   → 0.5     re-enables the FAST decay factor — ``compute_decay``
+                             uses the slow ``IMPORTANCE_DECAY_FACTOR`` only when
+                             importance>0.7, so an anchor left at importance=1.0
+                             barely decays even after is_protected is cleared.
+      tags         → strip ``_anchor`` and any ``anchor:*`` tag.
+      tier         → demoted to ``ephemeral`` (cosmetic — tier does NOT affect
+                     decay; ``ephemeral`` is the least-permanent valid tier and
+                     the ``memory.tier`` field is ``option<string>`` so it cannot
+                     be set to JSON null).
+
+    This is the RETIRE path (gentle: the memory keeps living and decays over
+    months). To hard-delete a memory outright, use ``forget(memory_id)`` instead.
+
+    Args:
+        memory_id: Integer ID of the memory to de-anchor.
+
+    Returns:
+        The updated memory dict on success, or ``{"ok": False, "error": ...}``
+        when the memory does not exist.
+    """
+    mid = int(memory_id)
+    mem = _st._storage.get_memory(mid)
+    if mem is None:
+        return {"ok": False, "error": f"Memory {mid} not found"}
+
+    existing_tags = mem.get("tags") or []
+    stripped_tags = [
+        t for t in existing_tags if t != "_anchor" and not str(t).startswith("anchor:")
+    ]
+
+    fields: dict = {
+        "is_protected": False,
+        "importance": _DE_ANCHOR_IMPORTANCE,
+        "tags": stripped_tags,
+        # Demote the anchor tier to the least-permanent valid tier (cosmetic —
+        # decay is driven by is_protected + importance, not tier). The schema
+        # field is option<string>, so a JSON null is rejected; "ephemeral" is
+        # the deterministic demote target.
+        "tier": _DE_ANCHOR_TIER,
+    }
+    # Route through the same forward path as memory_update so the DB write lands
+    # backend-side and the fields are filtered by _MEMORY_UPDATABLE_FIELDS.
+    return _forward_admin("memory_update", {"memory_id": mid, "fields": fields})
 
 
 @_tool(power=True)

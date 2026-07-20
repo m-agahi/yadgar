@@ -18,13 +18,20 @@ from pathlib import Path
 from yadgar.core.install.clients.descriptor import (
     CapabilityTier,
     ClientDescriptor,
+    HookCapability,
     McpAuth,
     McpEntrySchema,
     McpFormat,
     PathSpec,
     RulesBridge,
+    StopMechanism,
 )
 from yadgar.core.install.platform_paths import get_claude_config_dir
+
+# ADR-0143 snapshot date — every hook_capability row below is a primary-source
+# verification snapshot as of this date (#59 / ADR-0145, 2026-07-18). Every
+# client car re-verifies before its build (the gate is per-car, not retired).
+_VERIFIED = "2026-07-18"
 
 
 def _home() -> Path:
@@ -58,6 +65,16 @@ _CLAUDE_CODE = ClientDescriptor(
     hooks_kind="claude_json",
     task_mirror=None,
     capability_tier=CapabilityTier.FULL,
+    # Claude Code is the reference: all 5 hooks + blocking Stop (the checkpoint
+    # self-report loop). This is the LIVE, verified surface (not a snapshot claim).
+    hook_capability=HookCapability(
+        session_start=True,
+        user_prompt_submit=True,
+        post_tool_use=True,
+        pre_compact=True,
+        stop=StopMechanism.BLOCK,
+        verified_date=_VERIFIED,
+    ),
 )
 
 _CODEX = ClientDescriptor(
@@ -78,6 +95,16 @@ _CODEX = ClientDescriptor(
     hooks_kind="codex_hooks_json",
     task_mirror=None,
     capability_tier=CapabilityTier.FULL,
+    # #59: 10 events, only 3 block. Stop does NOT block AND no transcript hook →
+    # checkpoint degrades to opportunistic capture (R5). The other 4 map cleanly.
+    hook_capability=HookCapability(
+        session_start=True,
+        user_prompt_submit=True,
+        post_tool_use=True,
+        pre_compact=True,
+        stop=StopMechanism.NONE,
+        verified_date=_VERIFIED,
+    ),
 )
 
 _GEMINI = ClientDescriptor(
@@ -121,6 +148,27 @@ _CURSOR = ClientDescriptor(
     hooks_kind="cursor_hooks",
     task_mirror=None,
     capability_tier=CapabilityTier.FULL,
+    # Car B re-verify (2026-07-20, primary source — corrects the ADR-0145
+    # 2026-07-18 snapshot's "22 events, 8 blocking, Stop blocks / 5-of-5"):
+    #   * Config: `.cursor/hooks.json` (`{"version":1,"hooks":{event:[...]}}`);
+    #     sessionStart/preCompact/postToolUse/stop ARE documented events (≥v2.4;
+    #     sessionStart was rejected pre-2.4, forum #149566, fixed v2.4).
+    #   * INJECT IS BROKEN upstream: `additional_context` on sessionStart /
+    #     postToolUse is accepted+merged but never surfaced to the model, and
+    #     beforeSubmitPrompt output is not respected at all (open forum bugs,
+    #     mid-2026). → session_start + user_prompt_submit are NON-FUNCTIONAL.
+    #   * `stop` is observation-only (`followup_message` auto-continues; it does
+    #     NOT block) → StopMechanism.NONE (NOT BLOCK).
+    #   * postToolUse (capture) + preCompact (drain) are fire-and-POST and DO
+    #     work — the only two the Cursor emitter wires.
+    hook_capability=HookCapability(
+        session_start=False,
+        user_prompt_submit=False,
+        post_tool_use=True,
+        pre_compact=True,
+        stop=StopMechanism.NONE,
+        verified_date="2026-07-20",
+    ),
 )
 
 _CLINE = ClientDescriptor(
@@ -153,6 +201,17 @@ _CLINE = ClientDescriptor(
     hooks_kind="cline_hooks",
     task_mirror="cline_kanban",
     capability_tier=CapabilityTier.FULL,
+    # #59: 6 hooks + Kanban store. TaskStart≈SessionStart, UserPromptSubmit,
+    # PostToolUse present; NO PreCompact (drain rides PostToolUse/TaskCancel);
+    # Stop blocking-tbd → conservatively NONE until Car D re-verifies.
+    hook_capability=HookCapability(
+        session_start=True,
+        user_prompt_submit=True,
+        post_tool_use=True,
+        pre_compact=False,
+        stop=StopMechanism.NONE,
+        verified_date=_VERIFIED,
+    ),
 )
 
 _WINDSURF = ClientDescriptor(
@@ -174,6 +233,17 @@ _WINDSURF = ClientDescriptor(
     hooks_kind="windsurf_hooks",
     task_mirror=None,
     capability_tier=CapabilityTier.FULL,
+    # #59: 12 hooks. NO SessionStart (inject rides pre_user_prompt first-fire);
+    # pre_user_prompt≈UserPromptSubmit; post_mcp_tool_use≈PostToolUse; NO
+    # PreCompact; Stop via transcript (post_cascade_response_with_transcript).
+    hook_capability=HookCapability(
+        session_start=False,
+        user_prompt_submit=True,
+        post_tool_use=True,
+        pre_compact=False,
+        stop=StopMechanism.TRANSCRIPT,
+        verified_date=_VERIFIED,
+    ),
 )
 
 _KIRO = ClientDescriptor(
@@ -196,6 +266,17 @@ _KIRO = ClientDescriptor(
     hooks_kind="kiro_hooks_json",
     task_mirror="kiro_specs",
     capability_tier=CapabilityTier.FULL,
+    # #59: 10 events — HAS SessionStart (ADR-0145 corrects the survey's "no
+    # SessionStart"). UserPromptSubmit blocks; PostToolUse present; NO PreCompact;
+    # Stop blocking-tbd → NONE until Car E re-verifies empirically.
+    hook_capability=HookCapability(
+        session_start=True,
+        user_prompt_submit=True,
+        post_tool_use=True,
+        pre_compact=False,
+        stop=StopMechanism.NONE,
+        verified_date=_VERIFIED,
+    ),
 )
 
 _AMP = ClientDescriptor(
@@ -218,6 +299,16 @@ _AMP = ClientDescriptor(
     hooks_kind="amp_hooks",
     task_mirror=None,
     capability_tier=CapabilityTier.FULL,
+    # #59: 5 hooks. session.start; NO UserPromptSubmit; tool.result≈PostToolUse;
+    # NO PreCompact; agent.end (transcript)≈Stop. Thinnest port.
+    hook_capability=HookCapability(
+        session_start=True,
+        user_prompt_submit=False,
+        post_tool_use=True,
+        pre_compact=False,
+        stop=StopMechanism.TRANSCRIPT,
+        verified_date=_VERIFIED,
+    ),
 )
 
 _OPENCODE = ClientDescriptor(
@@ -240,6 +331,21 @@ _OPENCODE = ClientDescriptor(
     hooks_kind="opencode_plugin",
     task_mirror=None,
     capability_tier=CapabilityTier.FULL,
+    # UNVERIFIED — #59 left OpenCode's hook event names + payload schema "TBC".
+    # Car A's payload spike resolves this before its emitter is built; these
+    # values are provisional (assume-supported, block-TBD) and MUST be
+    # re-confirmed in Car A. The opencode_plugin emitter is a Car-0 stub.
+    hook_capability=HookCapability(
+        session_start=True,
+        user_prompt_submit=True,
+        post_tool_use=True,
+        pre_compact=True,
+        # OpenCode cannot block turn-end (no blocking Stop surface) → NONE, not
+        # BLOCK. Registry fix folded in by Car B (flagged during the OpenCode
+        # survey); Car A re-confirms empirically when it builds the emitter.
+        stop=StopMechanism.NONE,
+        verified_date=_VERIFIED,
+    ),
 )
 
 

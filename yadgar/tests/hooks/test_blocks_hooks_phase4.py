@@ -211,7 +211,10 @@ class TestHookBlockReflect:
 
     def test_matching_tool_calls_endpoint(self, capsys, monkeypatch) -> None:
         """mcp__yadgar__block_update causes hook to call /hooks/block-reflect."""
-        from yadgar.core.scripts import hook_runner
+        # Car 0 moved the handler body to yadgar.core.cli.hook; the handler
+        # resolves _http_get THERE, so patch the impl module (not the shim
+        # re-export). hook_runner._HOOKS[...] is the same object either way.
+        from yadgar.core.cli import hook as hook_runner
 
         calls = []
 
