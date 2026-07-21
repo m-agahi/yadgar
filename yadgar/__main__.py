@@ -83,6 +83,7 @@ def cli():
         install_hooks,
         install_mcp,
         install_subagents,
+        pending_findings,
         repo_wiki,
         restore,
         rules,
@@ -96,6 +97,7 @@ def cli():
 
     drain.register(subparsers)
     hook.register(subparsers)
+    pending_findings.register(subparsers)
     export.register(subparsers)
     restore.register(subparsers)
     capture.register(subparsers)

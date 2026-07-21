@@ -7,14 +7,12 @@ via project_brief() and take action (wiki regen, active_work refresh, etc.).
 This hook is a DUMB PIPE for signal-evaluation — no Python signal detection.
 All evaluation happens in the Claude session via tool calls.
 
-Car #87 exception: on EVERY stop it ALSO runs the subagent findings-capture
-sweep (``_run_subagent_sweep``) — one HTTP POST per newly-completed subagent
-whose transcript carries a ``## Yadgar findings`` footer. This is the LIVE
-trigger for subagent capture: the ``SubagentStop`` hook never fires for
-Agent-tool / ``run_in_background`` dispatches (upstream #33049 / #25147), so the
-footer is harvested here from the on-disk subagent ``.output`` transcripts
-instead. The sweep runs unconditionally, before the checkpoint-interval gate,
-so it is not throttled to 1/25 stops.
+ADR-0156: subagent findings are NOT auto-stored here. The checkpoint prompt
+(step 4, SUBAGENT FINDINGS CURATION) has the main instance LIST pending
+subagent findings via the ``yadgar pending-findings`` CLI, CURATE them with
+judgment through its own MCP tools, then CLEANUP the consumed on-disk
+transcripts. No script writes raw findings to the DB — the old
+``_run_subagent_sweep`` auto-store path was ripped.
 
 State: ~/.local/state/yadgar/stop-hook-state.json (keyed by session_id, atomic writes).
 
@@ -170,38 +168,14 @@ def _save_state(state: dict) -> None:
 
 
 def _subagent_sweep_state_path() -> Path:
-    """Return path to subagent-capture sweep state (path -> captured mtime)."""
-    return _paths.STOP_HOOK_STATE_PATH.parent / "subagent-capture-state.json"
+    """Return path to subagent-capture dedup state (path -> consumed mtime).
 
-
-@observe(tier="stage")
-def _run_subagent_sweep(data: dict) -> None:
-    """Car #87 — capture completed-subagent findings footers on every stop.
-
-    Sweeps the session's on-disk subagent ``.output`` transcripts and POSTs any
-    ``## Yadgar findings`` footers to the unchanged ``/hooks/subagent-stop``
-    endpoint. Runs on EVERY stop (not gated on the checkpoint interval) and
-    never raises — capture must never block a session stop.
-
-    The session-uuid is derived from the transcript_path stem (guaranteed
-    present when this hook fires; ``session_id`` can be "unknown").
+    ADR-0156: the auto-store sweep was ripped; this path is now the dedup state
+    reused by the ``yadgar pending-findings`` CLI (via
+    ``findings_capture._default_sweep_state_path``) so LIST/CLEANUP across
+    checkpoints stays idempotent.
     """
-    try:
-        from yadgar.core.hooks.findings_capture import (  # noqa: PLC0415
-            sweep_subagent_transcripts,
-        )
-
-        transcript_path = data.get("transcript_path", "")
-        if not transcript_path:
-            return
-        cwd = data.get("cwd", "") or os.getcwd()
-        sweep_subagent_transcripts(
-            transcript_path,
-            cwd,
-            str(_subagent_sweep_state_path()),
-        )
-    except Exception:
-        pass  # never block the stop hook on capture failure
+    return _paths.STOP_HOOK_STATE_PATH.parent / "subagent-capture-state.json"
 
 
 # ── Maintenance scheduler (Car #85) ────────────────────────────────────────
@@ -269,9 +243,6 @@ def main() -> None:
             data = json.loads(sys.stdin.read() or "{}")
         except Exception:
             data = {}
-
-        # Car #87: capture subagent findings on EVERY stop, before any gate.
-        _run_subagent_sweep(data)
 
         session_id = data.get("session_id", "unknown")
         transcript_path = data.get("transcript_path", "")

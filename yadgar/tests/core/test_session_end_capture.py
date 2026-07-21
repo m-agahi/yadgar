@@ -325,6 +325,7 @@ def test_hook_sentinel_schema(tmp_path):
         "message_count",
         "last_human_turns",
         "last_touched_files",
+        "pending_findings",
     }
     missing = required_fields - record.keys()
     assert not missing, f"Missing sentinel fields: {missing}"
@@ -334,6 +335,7 @@ def test_hook_sentinel_schema(tmp_path):
     assert record["session_id"] == "schema-test"
     assert isinstance(record["last_human_turns"], list)
     assert isinstance(record["last_touched_files"], list)
+    assert isinstance(record["pending_findings"], list)
     assert record["message_count"] == 5
 
 
@@ -402,6 +404,66 @@ def test_hook_extracts_last_touched_files(tmp_path):
     # Should have the two files we edited
     paths_flat = " ".join(touched)
     assert "http.py" in paths_flat or "project.py" in paths_flat
+
+
+def test_hook_sentinel_records_pending_findings(tmp_path):
+    """ADR-0156 §4 straggler net: a session exiting with a completed subagent
+    whose transcript carries a '## Yadgar findings' footer records those findings
+    in the sentinel's ``pending_findings`` list (mechanical file write; no DB).
+
+    The collector globs /tmp/claude-*/<slug>/<session-uuid>/tasks/*.output where
+    session-uuid == the exiting transcript's filename stem. We build that tree
+    under an isolated tasks-root and point the collector at it via
+    YADGAR_TASKS_ROOT + an isolated dedup-state dir (XDG_STATE_HOME).
+    """
+    sentinel_dir = tmp_path / "session-ends"
+    session_uuid = "straggler-sess-uuid"
+
+    # Main session transcript — its stem is the session-uuid the collector scopes to.
+    transcript = tmp_path / f"{session_uuid}.jsonl"
+    lines = [json.dumps({"message": {"role": "user", "content": f"msg {i}"}}) for i in range(3)]
+    transcript.write_text("\n".join(lines), encoding="utf-8")
+
+    # Subagent .output sidechain with a findings footer, at the globbed layout.
+    tasks_root = tmp_path / "tasks-root"
+    tasks = tasks_root / "claude-1000" / "-proj-slug" / session_uuid / "tasks"
+    tasks.mkdir(parents=True, exist_ok=True)
+    report = "Work done.\n\n## Yadgar findings\n\n- fact: straggler net records this on exit\n"
+    out = tasks / "agentA.output"
+    out.write_text(
+        "\n".join(
+            json.dumps(x)
+            for x in [
+                {"type": "user", "message": {"role": "user", "content": "task"}},
+                {"type": "assistant", "message": {"role": "assistant", "content": report}},
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc, _out, _err = _run_hook(
+        {
+            "end_reason": "logout",
+            "session_id": "straggler-test",
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+        },
+        tmp_path,
+        env_overrides={
+            "YADGAR_TASKS_ROOT": str(tasks_root),
+            "XDG_STATE_HOME": str(tmp_path / "xdg-state"),
+        },
+        sentinel_dir=sentinel_dir,
+    )
+    assert rc == 0, _err
+    files = list(sentinel_dir.glob("*.json"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text())
+    pf = record["pending_findings"]
+    assert isinstance(pf, list) and len(pf) == 1, f"expected one straggler entry, got {pf}"
+    assert any("straggler net records this" in f for f in pf[0]["findings"])
+    assert pf[0]["transcript_path"] == str(out)
 
 
 def test_hook_atomic_write_no_tmp_file_left(tmp_path):

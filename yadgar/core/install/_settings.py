@@ -204,8 +204,10 @@ def _install_append_hooks(
     python: str | None = None,
 ) -> None:
     """Install and register the append-if-absent hook scripts."""
+    # ADR-0156: the SubagentStop append hook was removed with the auto-store path
+    # (the legacy subagent-stop.py script is gone). Subagent findings are now
+    # curated via the Stop-hook checkpoint prompt, not a SubagentStop endpoint POST.
     _append_specs = [
-        ("subagent-stop.py", "yadgar-subagent-stop.py", "SubagentStop", ""),
         ("instructions-loaded.py", "yadgar-instructions-loaded.py", "InstructionsLoaded", ""),
         ("subagent-start.py", "yadgar-subagent-start.py", "SubagentStart", ""),
         ("file-changed.py", "yadgar-file-changed.py", "FileChanged", ""),

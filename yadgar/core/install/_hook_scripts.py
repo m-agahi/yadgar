@@ -44,14 +44,15 @@ def _copy_hook(src: Path, dst: Path, dry_run: bool, shebang_python: str | None =
     dst.chmod(0o755)
 
 
-# The 9 non-prefixed hook basenames that PRE-#64 installs copied verbatim into
+# The non-prefixed hook basenames that PRE-#64 installs copied verbatim into
 # hooks_dir via the old ``_copy_scope_scripts._files`` dict. Nothing dispatches
 # to these on disk — the 5 runner-dispatched ones (post-tool-capture,
 # session-start-context, prompt-recall, pre-compact-drain, post-compact-rehydrate)
 # are executed via ``hook_runner.py <type>``'s internal ``_HOOKS`` dict, and the
-# 4 append hooks (subagent-{start,stop}, instructions-loaded, file-changed) are
+# 3 append hooks (subagent-start, instructions-loaded, file-changed) are
 # installed under ``yadgar-`` names by ``_install_append_hooks``. The non-prefixed
 # copies are pure vestige. #64 stops emitting them AND sweeps existing orphans.
+# ADR-0156 removed the subagent-stop.py entry with the auto-store path.
 _MANAGED_NONPREFIXED: frozenset[str] = frozenset(
     {
         "pre-compact-drain.sh",
@@ -59,7 +60,6 @@ _MANAGED_NONPREFIXED: frozenset[str] = frozenset(
         "post-tool-capture.py",
         "session-start-context.py",
         "prompt-recall.py",
-        "subagent-stop.py",
         "instructions-loaded.py",
         "subagent-start.py",
         "file-changed.py",
