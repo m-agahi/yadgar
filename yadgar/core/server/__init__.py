@@ -128,7 +128,6 @@ from yadgar.core.server.http import (  # noqa: F401
     hook_pre_compact,
     hook_post_compact,
     hook_auto_capture,
-    hook_subagent_stop,
     hook_file_changed,
     hook_session_context,
     hook_prompt_recall,

@@ -47,13 +47,13 @@ _EXPECTED_TEMPLATE = """<!-- YADGAR CHECKPOINT PROTOCOL
                           fall back to "master" for non-git projects or on any git error.
 -->
 
-Yadgar checkpoint. CAPTURE FIRST (steps 1-4), THEN maintenance (steps 5-6).
-This is an ORDERING, not a licence to skip: run ALL six steps. Capture goes
+Yadgar checkpoint. CAPTURE FIRST (steps 1-5), THEN maintenance (steps 6-7).
+This is an ORDERING, not a licence to skip: run ALL seven steps. Capture goes
 first only because decisions and findings scroll out of context and are lost
 forever, while maintenance signals re-fire next checkpoint. Ordering is NOT
-permission to drop maintenance — you may not skip steps 5-6 to save length,
+permission to drop maintenance — you may not skip steps 6-7 to save length,
 time, or effort. The ONLY legitimate skips are the closed allowed-skip list
-spelled out in step 6, each of which means maintenance is INAPPLICABLE this
+spelled out in step 7, each of which means maintenance is INAPPLICABLE this
 checkpoint (nothing to do), never that you chose to defer real work.
 
 WHEN A STEP SAYS "READ" — read for real. Every "read the ADR log / wiki page /
@@ -127,19 +127,37 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      content=<the prompt>, purpose=<one line>) — same slug to extend a match,
      a new slug only when genuinely new.
 
-4. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to the
+4. SUBAGENT FINDINGS CURATION (always run; findings sit in on-disk
+   transcripts until you curate — nothing is auto-stored).
+   - LIST (Bash): yadgar pending-findings --transcript-path "<session transcript_path>" --cwd "{directory}"
+     Returns per completed subagent: agent_type + "## Yadgar findings" bullets + transcript_path.
+     Empty output → nothing pending; skip the rest.
+   - JUDGE each bullet (precision over recall, same bar as ADR/wiki capture). Exactly one of:
+       durable decision            → adr_add (step 1 rules)
+       repo structure/convention   → wiki_add / update owning page (step 2)
+       reusable dispatch prompt     → agent_prompt_save (step 3)
+       useful working fact          → memorize(content=REWRITTEN in your words,
+                                        context="{directory}", tags=[...], branch_hint="{default_branch}")
+                                        — never store the raw bullet verbatim
+       noise/status/one-off/dup     → DISCARD (do nothing)
+     Dedup vs what you wrote this checkpoint + existing ADRs/wiki. Storing nothing is valid + common.
+   - CLEANUP: for EACH listed transcript_path:  rm -f -- "<transcript_path>"   (the /tmp .output SYMLINK
+     only — never rm under ~/.claude/projects). Then: yadgar pending-findings --advance-state
+     --transcript-path "<session transcript_path>" (batch-advance all just-listed).
+
+5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to the
    wiki so it survives session exit / /clear. Page: slug "{project}-task-list",
    tag "task-list", scoped to this directory. Page format = the SCHEMA block at
    the bottom of this step; each task is a UNIQUE "## task:<id>" section.
-   - Step 4a — RECONCILE YOUR OWN LIST FIRST. Call TaskList. TaskUpdate anything
+   - Step 5a — RECONCILE YOUR OWN LIST FIRST. Call TaskList. TaskUpdate anything
      completed or blocked this session; TaskCreate any follow-ups you discovered.
      This is the every-checkpoint "update your task list" pass — do it before you
      mirror, so the page reflects reality.
-   - Step 4b — READ THE PAGE FOR REAL: CALL wiki_read("{project}-task-list",
+   - Step 5b — READ THE PAGE FOR REAL: CALL wiki_read("{project}-task-list",
      directory="{directory}") NOW and reconcile against the tasks + updated_at it
      RETURNS — never against a remembered copy of the page. Absent = no saved list
      yet.
-   - Step 4c — BRANCH on {have open tasks after reconcile?} × {page exists?}:
+   - Step 5c — BRANCH on {have open tasks after reconcile?} × {page exists?}:
      (The task-list page is CANONICAL — one call lands it on the project-canonical
      / branch-NULL slot via the sanctioned wiki_write_task_list writer, so the
      session-start restore-nudge resolves it from ANY branch and from a non-git
@@ -206,12 +224,12 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      {pending, in_progress, completed} — there is NO "blocked" status (blocking
      is the blockedBy array).
 
-5. Call project_brief("{directory}", mode="signals"). UNCONDITIONAL — this call
+6. Call project_brief("{directory}", mode="signals"). UNCONDITIONAL — this call
    is how you LEARN whether maintenance applies; it is cheap and you may never
-   skip it. Its recommended_actions list drives step 6.
+   skip it. Its recommended_actions list drives step 7.
 
-6. MAINTENANCE — MANDATORY. You MUST work the recommended_actions list from
-   step 5 to completion. It is NOT optional and NOT droppable under length, time,
+7. MAINTENANCE — MANDATORY. You MUST work the recommended_actions list from
+   step 6 to completion. It is NOT optional and NOT droppable under length, time,
    or effort pressure. Skip the maintenance pass ONLY IF one of the following
    allowed-skip conditions holds — this is the complete, closed list:
      (a) project_brief returned recommended_actions EMPTY (nothing to do);
@@ -390,6 +408,32 @@ def test_task_list_mirror_step_present():
     assert 'wiki_write_task_list(project="{project}", content=<merged full page>' in content
 
 
+def test_subagent_findings_curation_step_present():
+    """Step 4 (SUBAGENT FINDINGS CURATION, ADR-0156) folds subagent-findings
+    curation into the checkpoint: LIST via the `yadgar pending-findings` CLI,
+    JUDGE each bullet with the same precision bar as ADR/wiki capture, then
+    CLEANUP the consumed /tmp .output symlink + batch-advance state. No script
+    auto-stores; the main instance curates with judgment."""
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    normalized = " ".join(content.split())
+    # Named step + the read-surface CLI (LIST).
+    assert "SUBAGENT FINDINGS CURATION" in content
+    assert "yadgar pending-findings --transcript-path" in content
+    # Nothing is auto-stored — findings sit in on-disk transcripts until curated.
+    assert "nothing is auto-stored" in normalized
+    # JUDGE routes each bullet to exactly one destination; rewrite, never verbatim.
+    assert "JUDGE each bullet" in content
+    assert "REWRITTEN in your words" in content
+    assert "never store the raw bullet verbatim" in content
+    assert "DISCARD" in content
+    # CLEANUP: rm the /tmp .output SYMLINK only (never under ~/.claude/projects),
+    # then batch-advance dedup state.
+    assert "CLEANUP" in content
+    assert "rm -f --" in content
+    assert "never rm under ~/.claude/projects" in normalized
+    assert "yadgar pending-findings --advance-state" in content
+
+
 def test_maintenance_step_is_mandatory_with_closed_allowed_skip_list():
     """Issue 2 (Car 3): the maintenance pass (steps 5-6) is MANDATORY. The
     header no longer pre-authorizes dropping maintenance under length pressure,
@@ -401,7 +445,7 @@ def test_maintenance_step_is_mandatory_with_closed_allowed_skip_list():
     assert "drop maintenance, NEVER capture" not in content, (
         "header must not pre-authorize dropping the maintenance pass"
     )
-    assert "run ALL six steps" in normalized
+    assert "run ALL seven steps" in normalized
 
     # Step 5 (project_brief signals) is explicitly unconditional.
     assert "UNCONDITIONAL" in content

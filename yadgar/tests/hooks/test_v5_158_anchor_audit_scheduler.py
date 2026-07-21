@@ -67,8 +67,6 @@ def hook(tmp_path, monkeypatch):
     mod = _load_hook_module("stop_hook_sched_" + tmp_path.name)
     state_file = tmp_path / "stop-hook-state.json"
     monkeypatch.setattr(mod, "_state_file_path", lambda: state_file)
-    # Never touch the real sweep endpoint during scheduler tests.
-    monkeypatch.setattr(mod, "_run_subagent_sweep", lambda data: None)
     return mod
 
 
@@ -148,24 +146,6 @@ class TestSchedulerPreemption:
             {"session_id": "s1", "transcript_path": transcript, "stop_hook_active": False},
         )
         assert out == {}
-
-
-class TestSweepPreserved:
-    def test_sweep_runs_on_every_stop(self, tmp_path, monkeypatch):
-        """#87 regression guard — the sweep runs unconditionally, before any gate."""
-        mod = _load_hook_module("stop_hook_sweep_guard_" + tmp_path.name)
-        state_file = tmp_path / "stop-hook-state.json"
-        monkeypatch.setattr(mod, "_state_file_path", lambda: state_file)
-        called = {"n": 0}
-        monkeypatch.setattr(
-            mod, "_run_subagent_sweep", lambda data: called.__setitem__("n", called["n"] + 1)
-        )
-        transcript = _write_transcript(tmp_path, 1)  # below interval → early return
-        _run_main(
-            mod,
-            {"session_id": "s1", "transcript_path": transcript, "stop_hook_active": False},
-        )
-        assert called["n"] == 1, "sweep must run even when no maintenance item is due"
 
 
 class TestAnchorAuditTemplate:

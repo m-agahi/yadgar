@@ -22,14 +22,14 @@ import yadgar.core.install.install_hooks_lib as lib
 
 _PACKAGE_HOOKS = Path(lib.__file__).parents[1] / "hooks"
 
-# The 9 non-prefixed names prior installs emitted (the sweep's target set).
+# The non-prefixed names prior installs emitted (the sweep's target set).
+# ADR-0156 removed subagent-stop.py with the auto-store path.
 _MANAGED_NONPREFIXED = {
     "pre-compact-drain.sh",
     "post-compact-rehydrate.sh",
     "post-tool-capture.py",
     "session-start-context.py",
     "prompt-recall.py",
-    "subagent-stop.py",
     "instructions-loaded.py",
     "subagent-start.py",
     "file-changed.py",
@@ -72,10 +72,10 @@ def test_clean_install_emits_no_nonprefixed_names(tmp_path, monkeypatch):
 # ── sweep removes ALL 9 real orphans incl. the 5 runner-dispatched (accept #3) ──
 
 
-def test_sweep_removes_all_nine_real_orphans(tmp_path, monkeypatch):
-    """Seed the 9 non-prefixed names as BYTE-IDENTICAL copies of the packaged
+def test_sweep_removes_all_real_orphans(tmp_path, monkeypatch):
+    """Seed every non-prefixed name as a BYTE-IDENTICAL copy of the packaged
     source (exactly what a prior install produced — NO fabricated `yadgar-`
-    siblings for the 5 core names). A global install must sweep all 9,
+    siblings for the 5 core names). A global install must sweep them all,
     including the 5 runner-dispatched names a sibling-existence predicate misses."""
     claude_dir = tmp_path / ".claude"
     hooks_dir = claude_dir / "hooks"

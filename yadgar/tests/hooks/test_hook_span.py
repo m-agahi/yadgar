@@ -170,35 +170,6 @@ class TestSubagentStartHookSpan:
 
 
 # ---------------------------------------------------------------------------
-# subagent_stop — empty stdin → early return (no transcript)
-# ---------------------------------------------------------------------------
-
-
-class TestSubagentStopHookSpan:
-    """subagent_stop.main() emits span on empty-input early-return."""
-
-    def test_main_has_observe_sentinel(self):
-        from yadgar.core.hooks.subagent_stop import main
-
-        assert _has_observe_sentinel(main), (
-            "subagent_stop.main must have _yadgar_observe_has_span=True"
-        )
-
-    def test_main_emits_span_on_empty_input(self, in_memory_tracer, monkeypatch):
-        """main() emits span even when stdin is empty (early return, no transcript)."""
-        _tracer, exporter = in_memory_tracer
-
-        monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
-        with patch("yadgar.core.hooks.subagent_stop.shutdown_tracing"):
-            from yadgar.core.hooks.subagent_stop import main as subagent_stop_main
-
-            subagent_stop_main()
-
-        spans = exporter.get_finished_spans()
-        assert len(spans) >= 1, f"Expected >=1 span from subagent_stop.main, got {len(spans)}"
-
-
-# ---------------------------------------------------------------------------
 # shutdown_tracing integration — verify flush called in finally block
 # ---------------------------------------------------------------------------
 
@@ -239,21 +210,4 @@ class TestShutdownTracingFlush:
 
         assert flush_called, (
             "shutdown_tracing() must be called in finally block of file_changed.main."
-        )
-
-    def test_subagent_stop_flushes_on_exit(self, monkeypatch):
-        """shutdown_tracing called on empty-input early return from subagent_stop.main."""
-        flush_called = []
-
-        monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
-        with patch(
-            "yadgar.core.hooks.subagent_stop.shutdown_tracing",
-            side_effect=lambda *a, **kw: flush_called.append(True),
-        ):
-            from yadgar.core.hooks.subagent_stop import main as subagent_stop_main
-
-            subagent_stop_main()
-
-        assert flush_called, (
-            "shutdown_tracing() must be called in finally block of subagent_stop.main."
         )

@@ -21,8 +21,8 @@ import yadgar.core.install.install_hooks_lib as lib
 
 _HOOKS_DIR = Path(lib.__file__).parents[1] / "hooks"
 
+# ADR-0156 removed the SubagentStop append hook; the sweep now manages three.
 _MANAGED_BASENAMES = {
-    "yadgar-subagent-stop.py",
     "yadgar-instructions-loaded.py",
     "yadgar-subagent-start.py",
     "yadgar-file-changed.py",
@@ -50,18 +50,18 @@ def _yadgar_entries(hooks_config: dict, event: str, basename: str) -> list:
 
 
 def test_full_install_drift_collapses_and_refreshes_interpreter(tmp_path, monkeypatch):
-    """Seed a SubagentStop yadgar entry with a bare ``python3`` interpreter,
+    """Seed a SubagentStart yadgar entry with a bare ``python3`` interpreter,
     then install: exactly one managed entry, carrying the freshly-resolved
     (durable ``sys.executable``) interpreter, must remain."""
     claude_dir = tmp_path / ".claude"
     hooks_dir = claude_dir / "hooks"
     hooks_dir.mkdir(parents=True)
-    stale_cmd = f"python3 {hooks_dir}/yadgar-subagent-stop.py"
+    stale_cmd = f"python3 {hooks_dir}/yadgar-subagent-start.py"
     claude_dir.joinpath("settings.json").write_text(
         json.dumps(
             {
                 "hooks": {
-                    "SubagentStop": [
+                    "SubagentStart": [
                         {"matcher": "", "hooks": [{"type": "command", "command": stale_cmd}]}
                     ]
                 }
@@ -70,8 +70,8 @@ def test_full_install_drift_collapses_and_refreshes_interpreter(tmp_path, monkey
     )
 
     settings = _install_global(tmp_path, monkeypatch)
-    entries = _yadgar_entries(settings["hooks"], "SubagentStop", "yadgar-subagent-stop.py")
-    assert len(entries) == 1, f"expected 1 managed SubagentStop entry, got {entries}"
+    entries = _yadgar_entries(settings["hooks"], "SubagentStart", "yadgar-subagent-start.py")
+    assert len(entries) == 1, f"expected 1 managed SubagentStart entry, got {entries}"
     cmd = entries[0]["hooks"][0]["command"]
     assert cmd != stale_cmd, "stale bare-python3 entry was not refreshed"
     assert sys.executable in cmd, f"surviving command lacks the durable interpreter: {cmd!r}"
@@ -84,12 +84,12 @@ def test_sweep_collapses_preexisting_duplicates(tmp_path, monkeypatch):
     claude_dir = tmp_path / ".claude"
     hooks_dir = claude_dir / "hooks"
     hooks_dir.mkdir(parents=True)
-    dup_cmd = f"python3 {hooks_dir}/yadgar-subagent-stop.py"
+    dup_cmd = f"python3 {hooks_dir}/yadgar-subagent-start.py"
     claude_dir.joinpath("settings.json").write_text(
         json.dumps(
             {
                 "hooks": {
-                    "SubagentStop": [
+                    "SubagentStart": [
                         {"matcher": "", "hooks": [{"type": "command", "command": dup_cmd}]},
                         {"matcher": "", "hooks": [{"type": "command", "command": dup_cmd}]},
                     ]
@@ -98,7 +98,7 @@ def test_sweep_collapses_preexisting_duplicates(tmp_path, monkeypatch):
         )
     )
     settings = _install_global(tmp_path, monkeypatch)
-    entries = _yadgar_entries(settings["hooks"], "SubagentStop", "yadgar-subagent-stop.py")
+    entries = _yadgar_entries(settings["hooks"], "SubagentStart", "yadgar-subagent-start.py")
     assert len(entries) == 1
 
 
@@ -118,7 +118,7 @@ def test_sweep_preserves_foreign_yadgar_substring_hook(tmp_path, monkeypatch):
         json.dumps(
             {
                 "hooks": {
-                    "SubagentStop": [
+                    "SubagentStart": [
                         {"matcher": "", "hooks": [{"type": "command", "command": foreign_cmd}]}
                     ]
                 }
@@ -128,11 +128,11 @@ def test_sweep_preserves_foreign_yadgar_substring_hook(tmp_path, monkeypatch):
     settings = _install_global(tmp_path, monkeypatch)
     all_cmds = [
         e["hooks"][0]["command"]
-        for e in settings["hooks"].get("SubagentStop", [])
+        for e in settings["hooks"].get("SubagentStart", [])
         if isinstance(e, dict) and e.get("hooks")
     ]
     assert foreign_cmd in all_cmds, f"foreign hook was destroyed by the sweep: {all_cmds}"
-    managed = _yadgar_entries(settings["hooks"], "SubagentStop", "yadgar-subagent-stop.py")
+    managed = _yadgar_entries(settings["hooks"], "SubagentStart", "yadgar-subagent-start.py")
     assert len(managed) == 1, "expected exactly one managed entry alongside the foreign one"
 
 
@@ -144,9 +144,10 @@ _IMPORTED_ONLY = {
     "file_changed.py",
     "instructions_loaded.py",
     "subagent_start.py",
-    "subagent_stop.py",
-    # car #87: shared findings-capture helpers imported by subagent_stop.py +
-    # stop-memory-checkpoint.py; never copied/installed as a standalone hook.
+    # ADR-0156: subagent_stop.py + subagent-stop.py were removed with the
+    # auto-store path (only subagent_start.py remains as an imported-only module).
+    # findings_capture.py: shared collector imported by the pending-findings CLI +
+    # session-end-capture.py; never copied/installed as a standalone hook.
     "findings_capture.py",
 }
 

@@ -6,7 +6,7 @@ TDD — all tests must fail before implementation. After wiring:
 3. Exception in handler increments yadgar_hook_failure_total{hook=<x>,reason="ValueError"} by 1.
 4. A 500 response (without raise) increments failure counter with reason="500".
 5. PR-B's yadgar_requests_total still increments on hook requests (no regression).
-6. Representative handlers covered: health_check, hook_subagent_stop,
+6. Representative handlers covered: health_check,
    hook_instructions_loaded, api_graph, api_viz_search.
 """
 
@@ -109,35 +109,7 @@ def test_health_check_emits_span():
 
 
 # ---------------------------------------------------------------------------
-# 2. Duration histogram incremented for hook_subagent_stop
-# ---------------------------------------------------------------------------
-
-
-def test_hook_subagent_stop_increments_duration_histogram():
-    """Calling hook_subagent_stop → yadgar_hook_execution_duration_ms{hook=subagent_stop} count +1."""
-    from yadgar._shared.observability.metrics import yadgar_hook_execution_duration_ms
-
-    before = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="subagent_stop")
-
-    import yadgar.core.server.http as _http
-
-    mock_request = MagicMock()
-    mock_request.json = AsyncMock(
-        return_value={"agent_type": "general-purpose", "cwd": "/tmp", "findings": []}
-    )
-
-    asyncio.run(_http.hook_subagent_stop(mock_request))
-
-    after = _labeled_hist_count(yadgar_hook_execution_duration_ms, hook="subagent_stop")
-    assert after == before + 1, (
-        f"yadgar_hook_execution_duration_ms{{hook=subagent_stop}} count did not increase. "
-        f"before={before}, after={after}. "
-        "hook_subagent_stop must record hook execution duration."
-    )
-
-
-# ---------------------------------------------------------------------------
-# 3. Failure counter incremented on exception — hook_instructions_loaded
+# 2. Failure counter incremented on exception — hook_instructions_loaded
 # ---------------------------------------------------------------------------
 
 

@@ -87,8 +87,8 @@ def _seed_anchors(anchors: list[dict], db_path: str | None, dry_run: bool) -> di
     similarity gate, and branch resolution — CLI is a thin client.
 
     Architecture note: uses /hooks/seed-anchor REST route (same pattern as
-    /hooks/subagent-stop) rather than JSON-RPC POST /mcp. This avoids SSE
-    framing complexity and is consistent with all existing hook callers.
+    the other /hooks/* REST routes) rather than JSON-RPC POST /mcp. This avoids
+    SSE framing complexity and is consistent with all existing hook callers.
     """
     results = {"loaded": len(anchors), "created": 0, "skipped": 0, "dry_run": dry_run}
 

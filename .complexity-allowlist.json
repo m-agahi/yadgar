@@ -70,17 +70,6 @@
  },
  {
   "path": "yadgar/core/server/http.py",
-  "function": "hook_subagent_stop",
-  "lineno": 689,
-  "metrics": {
-   "cyclomatic": 17
-  },
-  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
-  "added": "2026-06-13",
-  "added_by": "complexity-governance-agent"
- },
- {
-  "path": "yadgar/core/server/http.py",
   "function": "_handle_team_inbox",
   "lineno": 954,
   "metrics": {

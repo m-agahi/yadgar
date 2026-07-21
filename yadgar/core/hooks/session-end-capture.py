@@ -261,6 +261,39 @@ last_human_turns = (
 )
 last_touched_files = _extract_last_touched_files(transcript_path, n=3) if transcript_path else []
 
+
+# ---------------------------------------------------------------------------
+# Straggler safety-net (ADR-0156 §4): a session that exits before a checkpoint
+# leaves its subagent findings orphaned — the next session's uuid differs, so the
+# collector (scoped to the current session-uuid) never re-surfaces them. Record
+# any pending findings into the sentinel so a future consumer (#97) can adopt
+# them. This is a MECHANICAL raw write to the sentinel FILE (not the DB) —
+# ADR-0156 permits it for the exit hook (no LLM turn available here). Consumption
+# is deferred to #97; this hook only records.
+# ---------------------------------------------------------------------------
+
+
+@observe(tier="stage")
+def _collect_straggler_findings(tp: str, project_cwd: str) -> list[dict]:
+    """Return pending subagent findings for the exiting transcript. [] on error."""
+    if not tp:
+        return []
+    try:
+        from yadgar.core.hooks.findings_capture import (
+            _default_sweep_state_path,
+            collect_pending_findings,
+        )
+
+        tasks_root = os.environ.get("YADGAR_TASKS_ROOT") or None
+        return collect_pending_findings(
+            tp, project_cwd, _default_sweep_state_path(), tasks_root=tasks_root
+        )
+    except Exception:
+        return []
+
+
+pending_findings = _collect_straggler_findings(transcript_path, cwd)
+
 # ---------------------------------------------------------------------------
 # Write sentinel atomically
 # ---------------------------------------------------------------------------
@@ -281,6 +314,7 @@ record: dict = {
     "message_count": message_count,
     "last_human_turns": last_human_turns,
     "last_touched_files": last_touched_files,
+    "pending_findings": pending_findings,
 }
 
 marker_path = sentinel_dir / f"{session_id}.json"

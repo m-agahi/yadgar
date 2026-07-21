@@ -1,42 +1,34 @@
-"""Shared Yadgar findings-capture helpers (car #87).
+"""Shared Yadgar findings-capture helpers (car #87 → ADR-0156 redesign).
 
-The extract-footer + POST-to-endpoint logic used by BOTH subagent-capture paths:
+The extract-footer + on-disk collector logic behind LLM-curated subagent
+findings capture (ADR-0156). The main-thread ``Stop`` hook checkpoint cadence
+injects a prompt that has the MAIN INSTANCE curate pending subagent findings
+via its own MCP tools — NO script auto-stores raw bullets to the DB.
 
-- ``yadgar/core/hooks/subagent_stop.py`` — the legacy ``SubagentStop`` hook body
-  (kept for back-compat; ``SubagentStop`` never fires for Agent-tool /
-  ``run_in_background`` dispatches — upstream #33049 / #25147 — so it is inert).
-- ``yadgar/core/hooks/stop-memory-checkpoint.py`` — the LIVE trigger (car #87):
-  the main-thread ``Stop`` hook sweeps completed-subagent transcript files on
-  disk and posts their ``## Yadgar findings`` footers.
+Read surface: ``collect_pending_findings`` globs the session's completed
+subagent ``.output`` transcripts (``/tmp/claude-*/<slug>/<session-uuid>/tasks/
+<agentId>.output`` — a JSONL sidechain whose last assistant message holds the
+``## Yadgar findings`` footer), extracts the footer bullets, and returns them
+WITHOUT writing anything. ``advance_pending_state`` marks listed transcripts
+consumed AFTER the caller has curated + cleaned them up, so a crash between LIST
+and CLEANUP re-surfaces pending findings on the next cadence. The
+``yadgar pending-findings`` CLI (``yadgar/core/cli/pending_findings.py``) is the
+host-side wrapper the checkpoint prompt calls.
 
-Car #87 PROBE result (why the trigger moved): for ``run_in_background=true``
-Agent-tool dispatches — the orchestrator-mode default and the exact broken case
-— the ``PostToolUse`` ``tool_response`` carries ONLY the "Async agent launched"
-stub, never the footer. The footer lands later in the subagent's on-disk
-transcript (``/tmp/claude-*/<slug>/<session-uuid>/tasks/<agentId>.output`` — a
-JSONL sidechain whose last assistant message holds the footer). Option A (this
-module's ``sweep_subagent_transcripts``) reads those files on the main-thread
-Stop hook. The ``/hooks/subagent-stop`` endpoint + #30 capture counters are
-UNCHANGED — this car makes them finally fire.
-
-All functions are pure / side-effect-free except ``post_findings`` (HTTP POST)
-and ``sweep_subagent_transcripts`` (reads disk + posts). Every path degrades to
-a no-op on error — subagent capture must never block a session.
+ADR-0156 ripped the auto-store path: ``post_findings`` (HTTP POST to
+``/hooks/subagent-stop``), ``sweep_subagent_transcripts`` (disk-read + POST),
+and the legacy ``SubagentStop`` scripts are GONE. All functions here are pure /
+side-effect-free; every path degrades to a no-op on error — subagent capture
+must never block a session.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 
 from yadgar._shared.observability.observe import observe
-
-_PORT = os.environ.get("YADGAR_PORT", "8765")
-_AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
-
-logger = logging.getLogger(__name__)
 
 # ── findings-footer extraction ────────────────────────────────────────────────
 #
@@ -48,13 +40,6 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+([^\n]+)$", re.MULTILINE)
 _NEXT_HEADING_RE = re.compile(r"\n#{1,6}\s+")
 # A bullet line: starts with optional whitespace + "- "
 _BULLET_RE = re.compile(r"^\s*-\s+(.+)$", re.MULTILINE)
-
-
-@observe(tier="hot")
-def _auth_headers() -> dict:
-    if _AUTH_TOKEN:
-        return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
-    return {}
 
 
 @observe(tier="stage")
@@ -152,75 +137,13 @@ def last_assistant_text(transcript_path: str) -> str:
         return ""
 
 
-@observe(tier="stage")
-def detect_branch_from_cwd(cwd: str) -> str | None:
-    """Detect the git branch from a directory. Returns branch name or None. Never raises."""
-    import subprocess  # noqa: PLC0415
-
-    if not cwd:
-        return None
-    try:
-        result = subprocess.run(
-            ["git", "-C", cwd, "symbolic-ref", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=3.0,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip() or None
-    except Exception:
-        pass
-    return None
-
-
-@observe(tier="stage")
-def post_findings(
-    agent_type: str,
-    cwd: str,
-    findings: list[str],
-    branch_hint: str | None = None,
-    timeout: float = 3.0,
-) -> bool:
-    """POST findings to /hooks/subagent-stop endpoint. Returns True on a 2xx-ish POST.
-
-    Same wire shape the legacy SubagentStop path built: findings bullets +
-    agent_type + cwd + branch_hint + the ``_subagent_writeback`` signal tag.
-
-    Silently swallows all errors — must never block session completion. Returns
-    False on empty findings or any transport error so callers can decide whether
-    to mark a transcript captured (car #87 dedup: only mark on a real post).
-    """
-    import urllib.request  # noqa: PLC0415
-
-    if not findings:
-        return False
-
-    payload_dict: dict = {
-        "agent_type": agent_type,
-        "cwd": cwd,
-        "findings": findings,
-        "_subagent_writeback": True,
-    }
-    if branch_hint:
-        payload_dict["branch_hint"] = branch_hint
-
-    payload = json.dumps(payload_dict).encode()
-    url = f"http://127.0.0.1:{_PORT}/hooks/subagent-stop"
-    headers = {"Content-Type": "application/json", **_auth_headers()}
-    try:
-        req = urllib.request.Request(url, data=payload, headers=headers)
-        urllib.request.urlopen(req, timeout=timeout)
-        return True
-    except Exception:
-        return False  # Daemon down or error — fail silently, never block
-
-
-# ── car #87 — Stop-hook transcript sweep (Option A) ────────────────────────────
+# ── ADR-0156 — Stop-hook transcript collector (read surface) ───────────────────
 #
-# The LIVE trigger. On every main-thread Stop, enumerate the session's completed
-# subagent transcript files and post any ``## Yadgar findings`` footers not yet
-# captured. Dedup keyed on (path → captured mtime) so a still-partial file is
+# On every main-thread Stop checkpoint cadence, enumerate the session's completed
+# subagent transcript files and return any ``## Yadgar findings`` footers not yet
+# consumed. Dedup keyed on (path → consumed mtime) so a still-partial file is
 # re-read once it grows (a background agent's footer lands after it finishes).
+# NOTHING is written to the DB here — the main instance curates via its MCP tools.
 
 
 @observe(tier="stage")
@@ -230,7 +153,7 @@ def _tasks_root_default(uid: int | None = None) -> str:
     Claude Code writes each async subagent's transcript to
     ``/tmp/claude-<uid>/<project-slug>/<session-uuid>/tasks/<agentId>.output``.
     We return the ``/tmp/claude-*`` prefix; the session-uuid is globbed in
-    ``sweep_subagent_transcripts`` so we do not depend on the slug encoding.
+    ``collect_pending_findings`` so we do not depend on the slug encoding.
     """
     return "/tmp"  # noqa: S108 — Claude Code's own transcript root, not our write
 
@@ -279,82 +202,59 @@ def _session_uuid_from_transcript(transcript_path: str) -> str:
 
 
 @observe(tier="stage")
-def _sidechain_git_branch(transcript_path: str) -> str | None:
-    """Read the ``gitBranch`` field from a subagent .output sidechain. None on error."""
+def _default_sweep_state_path() -> str:
+    """Return the default dedup state path used by both the stop hook and the CLI.
+
+    Mirrors ``_subagent_sweep_state_path()`` in stop-memory-checkpoint.py:
+    ``<XDG_STATE_HOME>/yadgar/subagent-capture-state.json``.  Kept importable
+    here so Car B can retire the duplication in the stop hook.
+    """
     import pathlib  # noqa: PLC0415
 
-    try:
-        p = pathlib.Path(transcript_path)
-        if not p.exists():
-            return None
-        for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                entry = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            branch = entry.get("gitBranch")
-            if branch:
-                return str(branch)
-    except Exception:
-        pass
-    return None
+    state_home = os.environ.get("XDG_STATE_HOME") or str(
+        pathlib.Path("~/.local/state").expanduser()
+    )
+    return str(pathlib.Path(state_home) / "yadgar" / "subagent-capture-state.json")
 
 
-@observe(tier="boundary")
-def sweep_subagent_transcripts(
+@observe(tier="stage")
+def _scan_pending(
     transcript_path: str,
-    cwd: str,
     state_path: str,
     tasks_root: str | None = None,
-) -> int:
-    """Sweep completed-subagent transcript files and post their findings footers.
+) -> list[tuple[str, float, list[str]]]:
+    """Scan for pending subagent .output transcripts with unread findings footers.
 
-    Car #87 — the LIVE capture trigger. Called from the main-thread Stop hook on
-    EVERY stop (unconditional — NOT gated on the checkpoint interval).
+    Returns a list of ``(output_path, mtime, findings_bullets)`` for each
+    transcript that has a footer AND has not been recorded in the dedup state.
 
-    - ``transcript_path``: the main session transcript (its stem is the session-uuid).
-    - ``cwd``: project directory (used as the memory context + branch fallback).
-    - ``state_path``: dedup state file (path -> last-captured mtime).
-    - ``tasks_root``: override for the ``/tmp/claude-*`` glob root (tests).
-
-    Dedup semantics (advisor #2): re-read a file when never-captured OR its mtime
-    advanced (a still-running agent's ``.output`` has no footer yet — retry once
-    it grows). Only mark captured after a real post, so a daemon-down sweep
-    retries next stop.
-
-    Returns the number of transcript files whose findings were posted this sweep.
-    Never raises — every error path degrades to a no-op.
+    READ-ONLY — never writes the state.  Both ``collect_pending_findings`` and
+    ``advance_pending_state`` derive their results from this helper so the
+    mtime used for dedup is exactly the same value seen at scan time.
     """
     import glob as _glob  # noqa: PLC0415
-    import pathlib  # noqa: PLC0415
 
     try:
         session_uuid = _session_uuid_from_transcript(transcript_path)
         if not session_uuid:
-            return 0
+            return []
 
         root = tasks_root if tasks_root is not None else _tasks_root_default()
-        # /tmp/claude-*/<slug>/<session-uuid>/tasks/*.output
         pattern = os.path.join(root, "claude-*", "*", session_uuid, "tasks", "*.output")
         candidates = _glob.glob(pattern)
         if not candidates:
-            return 0
+            return []
 
         state = _load_sweep_state(state_path)
-        posted_files = 0
-        changed = False
+        pending: list[tuple[str, float, list[str]]] = []
 
         for path in candidates:
             try:
-                mtime = os.stat(path).st_mtime  # cheap — stat all, read only new/changed
+                mtime = os.stat(path).st_mtime
             except OSError:
                 continue
 
             prev = state.get(path)
-            # Re-read when never captured OR mtime advanced (partial-file retry).
             if prev is not None and isinstance(prev, (int, float)) and mtime <= prev:
                 continue
 
@@ -363,25 +263,79 @@ def sweep_subagent_transcripts(
                 continue
             findings = extract_findings(report_text)
             if not findings:
-                # No footer yet (or none). Do NOT mark captured — a growing file
-                # may add the footer later; mtime-advance will re-trigger the read.
                 continue
 
-            branch_hint = _sidechain_git_branch(path) or detect_branch_from_cwd(cwd)
-            # agent_type is not reliably present in the sidechain; endpoint
-            # defaults it. Per-file post preserves per-agent memory granularity.
-            if post_findings("general-purpose", cwd, findings, branch_hint=branch_hint):
-                state[path] = mtime
-                posted_files += 1
-                changed = True
-                logger.debug(
-                    "subagent sweep captured file=%s bullets=%d",
-                    pathlib.Path(path).name,
-                    len(findings),
-                )
+            pending.append((path, mtime, findings))
 
-        if changed:
-            _save_sweep_state(state_path, state)
-        return posted_files
+        return pending
     except Exception:
-        return 0
+        return []
+
+
+@observe(tier="boundary")
+def collect_pending_findings(
+    transcript_path: str,
+    cwd: str,
+    state_path: str,
+    tasks_root: str | None = None,
+) -> list[dict]:
+    """Return pending subagent findings without advancing the dedup state.
+
+    Car A (ADR-0156) — read surface.  Repurposes ``sweep_subagent_transcripts``
+    logic but returns data instead of POSTing.  Caller decides when to consume
+    (via ``advance_pending_state``), so a crash between LIST and CLEANUP
+    re-surfaces pending findings on the next cadence.
+
+    Args:
+        transcript_path: Main session transcript (stem = session-uuid).
+        cwd:             Project directory (currently unused; kept for symmetry
+                         with ``sweep_subagent_transcripts`` and future use).
+        state_path:      Dedup state file (path -> last-captured mtime).
+        tasks_root:      Override for ``/tmp/claude-*`` glob root (tests only).
+
+    Returns:
+        ``[{"agent_type": str, "findings": [str, ...], "transcript_path": str}]``
+        — one entry per new/changed transcript that carries a footer.  Empty
+        when there are no pending findings or on any error.
+    """
+    try:
+        pending = _scan_pending(transcript_path, state_path, tasks_root=tasks_root)
+        return [
+            {
+                "agent_type": "general-purpose",
+                "findings": findings,
+                "transcript_path": path,
+            }
+            for path, _mtime, findings in pending
+        ]
+    except Exception:
+        return []
+
+
+@observe(tier="stage")
+def advance_pending_state(pending: list[dict], state_path: str) -> None:
+    """Mark all entries returned by collect_pending_findings as consumed.
+
+    Batch-writes the current on-disk mtime for each ``transcript_path`` in
+    ``pending`` into the dedup state so a subsequent ``collect_pending_findings``
+    call skips them.  Best-effort; never raises.
+
+    Designed to be called AFTER the caller has curated and optionally deleted
+    the listed transcripts.
+    """
+    if not pending:
+        return
+    try:
+        state = _load_sweep_state(state_path)
+        for entry in pending:
+            path = entry.get("transcript_path", "")
+            if not path:
+                continue
+            try:
+                mtime = os.stat(path).st_mtime
+            except OSError:
+                continue
+            state[path] = mtime
+        _save_sweep_state(state_path, state)
+    except Exception:
+        pass
