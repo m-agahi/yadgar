@@ -45,3 +45,8 @@ class WikiAddOptions:
     branch: str | None = None
     directory_context: str | None = None
     page_type: str | None = None
+    # Car B0 (#83): SHA256 of the source file bytes + the absolute source path,
+    # for repo-wiki module pages (page_type='module'). Persisted so the host-side
+    # `--stale-only` check can diff stored hash vs live file without a disk scan.
+    hash: str | None = None
+    source_file: str | None = None

@@ -12,8 +12,11 @@ Option B (tree-sitter + leidenalg community detection) is a follow-on; not built
 from __future__ import annotations
 
 import ast
+import fnmatch
 import logging
 import os
+import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 # Max file size for AST parsing (256KB — larger than seed's 64KB since we need full AST)
 _MAX_PARSE_SIZE = 256 * 1024
+
+# repo_wiki-local extra ignores, LAYERED on top of seed._should_skip_dir.
+# NOT added to seed._SKIP_DIRS (that frozenset is shared with the seed scanner).
+_EXTRA_SKIP_DIRS = frozenset({"migrations"})
+# Path suffixes (relative-path fragments) to skip.
+_EXTRA_SKIP_PATH_SUFFIXES = ("alembic/versions",)
+# Filename globs to skip (generated code, stubs).
+_EXTRA_SKIP_FILE_GLOBS = ("*_pb2.py", "*_pb2_grpc.py", "*.pyi")
 
 
 @dataclass
@@ -64,7 +75,13 @@ class ModuleRecord:
     functions: list[FunctionRecord] = field(default_factory=list)
     classes: list[ClassRecord] = field(default_factory=list)
     imports: list[str] = field(default_factory=list)  # top-level import names
+    all_exports: list[str] = field(default_factory=list)  # __all__ entries (API re-exports)
     parse_error: str | None = None
+    # False only when a successfully-parsed module has NO functions, NO classes,
+    # NO docstring, and NO __all__ (a content-less stub → no page).  Parse-error
+    # and too-large records keep the default True; their inclusion is governed by
+    # skip_parse_errors, not by emptiness.
+    has_content: bool = True
 
 
 @observe(tier="stage")
@@ -175,6 +192,45 @@ def _extract_imports(tree: ast.Module) -> list[str]:
 
 
 @observe(tier="stage")
+def _assign_targets(node: ast.AST) -> tuple[list[ast.expr], ast.expr | None]:
+    """Return (targets, value) for an Assign/AnnAssign node, else ([], None)."""
+    if isinstance(node, ast.Assign):
+        return node.targets, node.value
+    if isinstance(node, ast.AnnAssign):
+        return [node.target], node.value
+    return [], None
+
+
+@observe(tier="stage")
+def _string_literals(value: ast.expr | None) -> list[str]:
+    """Return string-constant entries from a list/tuple literal, else []."""
+    if not isinstance(value, (ast.List, ast.Tuple)):
+        return []
+    return [
+        elt.value
+        for elt in value.elts
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+    ]
+
+
+@observe(tier="stage")
+def _extract_all_exports(tree: ast.Module) -> list[str]:
+    """Extract string entries from a top-level ``__all__ = [...]`` assignment.
+
+    Handles list/tuple literals of string constants.  Non-literal or dynamically
+    built ``__all__`` (e.g. concatenation) yields an empty list — acceptable, the
+    only consumer is the emptiness check (a re-export module still has functions
+    or the literal here in the common case).
+    """
+    for node in ast.iter_child_nodes(tree):
+        targets, value = _assign_targets(node)
+        is_all = any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets)
+        if is_all:
+            return _string_literals(value)
+    return []
+
+
+@observe(tier="stage")
 def _visit_class(cls_node: ast.ClassDef) -> ClassRecord:
     """Extract a ClassRecord from a ClassDef AST node."""
     bases = []
@@ -279,57 +335,160 @@ def scan_python_module(path: Path, repo_root: Path) -> ModuleRecord:
         elif isinstance(node, ast.ClassDef):
             classes.append(_visit_class(node))
 
+    module_docstring = _extract_docstring(tree)
+    all_exports = _extract_all_exports(tree)
+    has_content = bool(functions or classes or module_docstring or all_exports)
+
     return ModuleRecord(
         module_path=rel_path,
         module_name=module_name,
-        docstring=_extract_docstring(tree),
+        docstring=module_docstring,
         functions=functions,
         classes=classes,
         imports=_extract_imports(tree),
+        all_exports=all_exports,
         parse_error=None,
+        has_content=has_content,
     )
+
+
+# Extension → extractor REGISTRY (multi-language seam).  ModuleRecord is
+# language-neutral; adding a language later = one dict entry + one function.
+# Only .py is wired now (Go/TS deferred — #101).
+_EXTRACTOR_REGISTRY: dict[str, Callable[[Path, Path], ModuleRecord]] = {
+    ".py": scan_python_module,
+}
+
+
+@observe(tier="stage")
+def _skip_by_extra_dir(rel_dir: str) -> bool:
+    """True if rel_dir lies under a repo_wiki-local extra-skip dir or path suffix."""
+    norm = rel_dir.replace("\\", "/")
+    parts = norm.split("/") if norm else []
+    if any(p in _EXTRA_SKIP_DIRS for p in parts):
+        return True
+    return any(suffix in norm for suffix in _EXTRA_SKIP_PATH_SUFFIXES)
+
+
+@observe(tier="stage")
+def _is_test_dir(rel_dir: str) -> bool:
+    """True if any path segment of rel_dir looks like a test directory."""
+    parts = rel_dir.replace("\\", "/").split("/") if rel_dir else []
+    return any(p.startswith("test") or p == "tests" for p in parts)
+
+
+@observe(tier="stage")
+def _is_scannable_file(fname: str) -> bool:
+    """True if fname has a registered extractor, is not glob-skipped, and is importable."""
+    suffix = Path(fname).suffix
+    if suffix not in _EXTRACTOR_REGISTRY:
+        return False
+    if any(fnmatch.fnmatch(fname, pat) for pat in _EXTRA_SKIP_FILE_GLOBS):
+        return False
+    # Only page IMPORTABLE files — a non-identifier stem is a hook SCRIPT
+    # (hyphenated), never importable; paging it collides with its underscore
+    # twin's slug (data loss on wiki_add).
+    stem = fname[: -len(suffix)] if suffix else fname
+    return stem.isidentifier()
+
+
+@observe(tier="stage")
+def _collect_candidates(root: Path, include_tests: bool) -> list[Path]:
+    """Walk root, applying dir/name/identifier/registry filters, return candidate files."""
+    candidates: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(str(root), followlinks=False):
+        dirnames[:] = sorted(
+            d for d in dirnames if not _should_skip_dir(d) and d not in _EXTRA_SKIP_DIRS
+        )
+        rel_dir = os.path.relpath(dirpath, root)
+        if rel_dir == ".":
+            rel_dir = ""
+        if (not include_tests and _is_test_dir(rel_dir)) or _skip_by_extra_dir(rel_dir):
+            dirnames[:] = []
+            continue
+        for fname in sorted(filenames):
+            if _is_scannable_file(fname):
+                candidates.append(Path(dirpath) / fname)
+    return candidates
+
+
+@observe(tier="stage")
+def _gitignored_paths(root: Path, candidates: list[Path]) -> set[str]:
+    """Return the subset of candidate paths that git considers ignored.
+
+    Batched via a single ``git check-ignore --stdin`` call.  Outside a git repo
+    (exit 128) or on any error, returns an empty set (no filtering) — scanning a
+    non-git directory must still work.
+    """
+    if not candidates:
+        return set()
+    try:
+        stdin = "\n".join(str(p) for p in candidates)
+        proc = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "--stdin"],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, ValueError) as exc:
+        logger.debug("scan_repo: git check-ignore unavailable (%s) — no gitignore filter", exc)
+        return set()
+    # Exit 0 = some paths ignored; exit 1 = none ignored (normal); 128 = not a git repo.
+    if proc.returncode not in (0, 1):
+        return set()
+    return {line for line in proc.stdout.splitlines() if line}
+
+
+@observe(tier="stage")
+def _extract_record(filepath: Path, root: Path) -> ModuleRecord | None:
+    """Run the registered extractor for filepath; drop content-less stubs."""
+    extractor = _EXTRACTOR_REGISTRY[filepath.suffix]
+    try:
+        rec = extractor(filepath, root)
+    except Exception as exc:
+        logger.warning("scan_repo: failed to scan %s: %s", filepath, exc)
+        return None
+    # Empty-page skip: content-less stub (successful parse, nothing to show).
+    if not rec.has_content:
+        return None
+    return rec
 
 
 @observe(tier="boundary")
 def scan_repo(repo_root: str | Path, include_tests: bool = False) -> list[ModuleRecord]:
-    """Walk a repository and return ModuleRecords for every Python file.
+    """Walk a repository and return ModuleRecords for every scannable source file.
 
     Reuses _should_skip_dir from yadgar.seed._scan to stay consistent with
-    the existing project scanner.  Test directories are excluded unless
-    include_tests=True.
+    the existing project scanner, then layers repo_wiki-local ignores on top:
+      - extra skip dirs (migrations/) + path suffixes (alembic/versions) + file
+        globs (*_pb2.py, *.pyi);
+      - gitignore-aware exclusion (batched ``git check-ignore --stdin``);
+      - importable-only: files whose stem is not a valid Python identifier
+        (hyphenated hook SCRIPTS) are skipped — kills slug collisions at source;
+      - empty-page skip: a successfully-parsed module with no functions, classes,
+        docstring, or __all__ emits no record (has_content=False).
 
+    Dispatch is per-suffix through _EXTRACTOR_REGISTRY (multi-language seam); a
+    file whose suffix has no registered extractor yields no record.
+
+    Test directories are excluded unless include_tests=True.
     Returns records sorted by module_path (deterministic, diffable).
     """
     root = Path(repo_root).resolve()
     if not root.is_dir():
         raise ValueError(f"Not a directory: {repo_root}")
 
+    candidates = _collect_candidates(root, include_tests)
+    ignored = _gitignored_paths(root, candidates)
+
     records: list[ModuleRecord] = []
-
-    for dirpath, dirnames, filenames in os.walk(str(root), followlinks=False):
-        # Prune directories in-place so os.walk won't descend into them
-        dirnames[:] = sorted(d for d in dirnames if not _should_skip_dir(d))
-
-        rel_dir = os.path.relpath(dirpath, root)
-        if rel_dir == ".":
-            rel_dir = ""
-
-        # Optionally skip test directories
-        if not include_tests:
-            parts = rel_dir.replace("\\", "/").split("/") if rel_dir else []
-            if any(p.startswith("test") or p == "tests" for p in parts):
-                dirnames[:] = []
-                continue
-
-        for fname in sorted(filenames):
-            if not fname.endswith(".py"):
-                continue
-            filepath = Path(dirpath) / fname
-            try:
-                rec = scan_python_module(filepath, root)
-                records.append(rec)
-            except Exception as exc:
-                logger.warning("scan_repo: failed to scan %s: %s", filepath, exc)
+    for filepath in candidates:
+        if str(filepath) in ignored:
+            continue
+        rec = _extract_record(filepath, root)
+        if rec is not None:
+            records.append(rec)
 
     records.sort(key=lambda r: r.module_path)
     return records

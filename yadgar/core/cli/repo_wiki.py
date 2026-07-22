@@ -1,119 +1,107 @@
 """repo-wiki subcommand — generate native code-structure wiki pages for a repo.
 
-Walks the target repo with yadgar's native Python AST scanner, emits one
-wiki page per module (per-module granularity; not per-function), and
-submits each page to the yadgar daemon via the /hooks/wiki-generate REST
-endpoint.
+Walks the target repo with yadgar's native Python AST scanner and emits one
+wiki page per module (per-module granularity; not per-function).
 
 Unlike the external /repo-wiki:repo-wiki skill, this scanner:
 - always stamps directory_context = repo root (fixes the 364-page 'global' leak)
 - is deterministic + repeatable (no LLM pass for signature/docstring extraction)
 - runs entirely offline / in-process
+- NEVER contacts the daemon — this is a host-side generate-and-emit-only CLI
 
 Usage:
-  yadgar repo-wiki [REPO_PATH]           # scan + submit to daemon
-  yadgar repo-wiki [REPO_PATH] --dry-run # scan + print, don't submit
+  yadgar repo-wiki [REPO_PATH]           # scan + print summary; pages on stderr
+  yadgar repo-wiki [REPO_PATH] --dry-run # same (alias)
   yadgar repo-wiki [REPO_PATH] --json    # machine-readable page list on stdout
+
+Stale-only refresh (host-side hash diff — never reaches the daemon):
+  <caller builds {slug: hash} via wiki_list(directory) MCP> \\
+    | yadgar repo-wiki [REPO_PATH] --stale-only --stored-hashes - --json
+
+  ``--stale-only`` generates every page host-side (hashes included) and emits, as
+  ``--json``, ONLY the module pages whose SHA256 differs from the stored baseline
+  (drifted) or that have no stored entry (new), plus a ``deleted`` list of stored
+  slugs with no matching source module (source file removed).  The stored baseline
+  is supplied by the CALLER via ``--stored-hashes <path|->`` (JSON ``{slug: hash}``,
+  read from a file or, with ``-``, from stdin).  Omitting ``--stored-hashes`` uses an
+  empty baseline → every module page counts as new (correct first-run behaviour).
+
+Regen write policy (the CALLER writes; this CLI only generates/diffs):
+  For each drifted/new page returned in ``pages``, the caller writes it back through
+  the validated MCP path, forwarding the stamped hash + source_file so --stale-only
+  can diff again next time.  To survive the 0.80 HARD wiki similarity gate (near-
+  identical thin code pages hard-reject each other):
+    - EXISTING slug → wiki_add(replace_slug=<slug>, hash=…, source_file=…, wait=True)
+    - NEW slug      → wiki_add(force=True, hash=…, source_file=…, wait=True)
+  For each slug in ``deleted`` → wiki_delete(<slug>) (its source file is gone).
+  When ``toc_stale`` is True (module set changed), also re-write the
+  ``<project>-repo-wiki-index`` TOC page from the full ``--json`` (non-stale) output.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-import yadgar._shared.paths as _paths
 
-_DAEMON_PORT = os.environ.get("YADGAR_PORT", "8765")
-_DAEMON_BASE = f"http://127.0.0.1:{_DAEMON_PORT}"
+def _load_stored_hashes(spec: str | None) -> dict:
+    """Load the caller-supplied stored-hashes baseline (JSON ``{slug: hash}``).
 
-
-def _read_auth_token() -> str:
-    """Read YADGAR_MCP_AUTH_TOKEN from env or secrets.env (same as cli/seed.py)."""
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
-    if token:
-        return token
-    secrets_env = _paths.SECRETS_ENV_PATH
-    if not secrets_env.exists():
-        return ""
-    try:
-        for line in secrets_env.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                key, _, val = line.partition("=")
-                if key.strip() == "YADGAR_MCP_AUTH_TOKEN":
-                    return val.strip().strip('"').strip("'")
-    except Exception:
-        pass
-    return ""
+    spec is a file path, ``-`` for stdin, or None (→ empty baseline).  An empty /
+    blank stdin or file yields ``{}`` rather than crashing so a first run (no stored
+    pages) treats everything as new.
+    """
+    if not spec:
+        return {}
+    if spec == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = Path(spec).read_text()
+    raw = raw.strip()
+    if not raw:
+        return {}
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("--stored-hashes must be a JSON object of {slug: hash}")
+    return data
 
 
-def _daemon_health_ok() -> bool:
-    """Probe /health endpoint. Returns True if daemon responds 200."""
-    url = f"{_DAEMON_BASE}/health"
-    token = _read_auth_token()
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        urllib.request.urlopen(req, timeout=3.0)  # noqa: S310
-        return True
-    except Exception:
-        return False
+def _emit_stale_only(pages: list, stored: dict, directory_context: str) -> None:
+    """Diff generated pages against a stored {slug: hash} baseline; print JSON.
 
+    Emits ONLY hash-bearing module pages that drifted (hash differs) or are new (no
+    stored entry).  The hashless TOC index page is never in ``pages`` (nothing to
+    diff); its staleness is surfaced via the ``toc_stale`` flag (True when the module
+    SET changed — new or deleted modules).  ``deleted`` = stored slugs with no matching
+    generated module (source file removed).  NEVER contacts the daemon.
+    """
+    # Hash-bearing pages are exactly the module pages; the TOC has no hash key.
+    module_pages = [p for p in pages if "hash" in p]
+    generated_slugs = {p["slug"] for p in module_pages}
 
-def _submit_page(page: dict, base_headers: dict) -> tuple[bool, str]:
-    """POST one page to /hooks/wiki-generate.  Returns (ok, reason)."""
-    url = f"{_DAEMON_BASE}/hooks/wiki-generate"
-    payload = json.dumps(page).encode()
-    try:
-        req = urllib.request.Request(url, data=payload, headers=base_headers)
-        resp = urllib.request.urlopen(req, timeout=15.0)  # noqa: S310
-        resp_data = json.loads(resp.read().decode())
-        # Daemon returns {"status": "ok"} or {"status": "skipped"} etc.
-        return True, resp_data.get("status", "ok")
-    except urllib.error.HTTPError as e:
-        if e.code == 409:
-            return True, "skipped (duplicate)"
-        body = ""
-        try:
-            body = e.read().decode()[:200]
-        except Exception:
-            pass
-        return False, f"HTTP {e.code}: {body}"
-    except Exception as exc:
-        return False, str(exc)
+    drifted_or_new = [p for p in module_pages if p["hash"] != stored.get(p["slug"])]
+    new_slugs = [p["slug"] for p in module_pages if p["slug"] not in stored]
+    deleted = sorted(slug for slug in stored if slug not in generated_slugs)
 
+    # TOC is stale only when the module set changed (new or removed modules); a
+    # content-only drift leaves the tree identical, so regenerating it is pointless.
+    toc_stale = bool(new_slugs) or bool(deleted)
 
-def _submit_all_pages(pages: list, output_json: bool) -> tuple[int, int, int, list]:
-    """Submit all pages to daemon. Returns (submitted, skipped, failed, results)."""
-    token = _read_auth_token()
-    base_headers = {"Content-Type": "application/json"}
-    if token:
-        base_headers["Authorization"] = f"Bearer {token}"
-
-    submitted = 0
-    skipped = 0
-    failed = 0
-    results = []
-    for page in pages:
-        ok, reason = _submit_page(page, base_headers)
-        if ok:
-            if "skipped" in reason:
-                skipped += 1
-            else:
-                submitted += 1
-        else:
-            failed += 1
-            print(f"  WARN: failed to submit [{page['slug']}]: {reason}", file=sys.stderr)
-        results.append({"slug": page["slug"], "status": reason if ok else f"error: {reason}"})
-    return submitted, skipped, failed, results
+    result = {
+        "stale_only": True,
+        "pages": drifted_or_new,
+        "deleted": deleted,
+        "toc_stale": toc_stale,
+        "total": len(drifted_or_new),
+        "directory_context": directory_context,
+    }
+    print(
+        f"  Stale-only: {len(drifted_or_new)} drifted/new, "
+        f"{len(deleted)} deleted, toc_stale={toc_stale}",
+        file=sys.stderr,
+    )
+    print(json.dumps(result))
 
 
 def cmd_repo_wiki(args) -> None:
@@ -131,10 +119,17 @@ def cmd_repo_wiki(args) -> None:
     skip_errors = not getattr(args, "include_errors", False)
     output_json = getattr(args, "json", False)
     dry_run = getattr(args, "dry_run", False)
+    stale_only = getattr(args, "stale_only", False)
 
     print(f"Scanning: {repo_path}", file=sys.stderr)
     records = scan_repo(repo_path, include_tests=include_tests)
-    pages = generate_wiki_pages(records, directory_context, skip_parse_errors=skip_errors)
+    # Car B0 (#83): pass project=<repo basename> so the navigable TOC index page
+    # (<project>-repo-wiki-index) is emitted alongside the module pages. Each page
+    # already carries hash/source_file, which the ingest agent forwards to
+    # wiki_add(hash=..., source_file=...) so they persist for --stale-only.
+    pages = generate_wiki_pages(
+        records, directory_context, skip_parse_errors=skip_errors, project=repo_path.name
+    )
 
     total = len(pages)
     errors = sum(1 for r in records if r.parse_error)
@@ -145,8 +140,18 @@ def cmd_repo_wiki(args) -> None:
         file=sys.stderr,
     )
 
+    if stale_only:
+        # Host-side hash diff — the daemon is container-blind, so the CLI never
+        # contacts it here.  The caller feeds the stored baseline in via
+        # --stored-hashes and writes the drifted/new pages back itself.
+        stored = _load_stored_hashes(getattr(args, "stored_hashes", None))
+        _emit_stale_only(pages, stored, directory_context)
+        return
+
     if dry_run:
-        print(f"\n[DRY RUN] Would submit {total} pages to daemon.", file=sys.stderr)
+        print(
+            f"\n[DRY RUN] Would emit {total} pages (caller writes via wiki_add).", file=sys.stderr
+        )
         for page in pages:
             print(
                 f"  [{page['slug']}] {page['title']} (dir={page['directory_context'][:40]}...)",
@@ -156,29 +161,18 @@ def cmd_repo_wiki(args) -> None:
             print(json.dumps({"pages": pages, "dry_run": True, "total": total}))
         return
 
-    if not _daemon_health_ok():
-        print("  WARN: daemon not reachable. Cannot submit pages.", file=sys.stderr)
-        print("  Start daemon: systemctl --user start yadgar.target", file=sys.stderr)
-        print("  Then retry: yadgar repo-wiki", file=sys.stderr)
-        if output_json:
-            print(json.dumps({"error": "daemon_unreachable", "total": total, "submitted": 0}))
-        sys.exit(1)
-
-    submitted, skipped, failed, results = _submit_all_pages(pages, output_json)
+    # Default: generate-and-emit-only (no daemon contact).
+    # Caller is responsible for writing pages back via wiki_add (see module docstring).
     print(
-        f"\nSubmitted {submitted} pages ({skipped} skipped/deduped, {failed} failed)",
-        file=sys.stderr,
+        f"\nGenerated {total} pages — write via wiki_add (see regen write policy).", file=sys.stderr
     )
-    result: dict = {
-        "total": total,
-        "submitted": submitted,
-        "skipped": skipped,
-        "failed": failed,
-        "directory_context": directory_context,
-    }
+    for page in pages:
+        print(
+            f"  [{page['slug']}] {page['title']} (dir={page['directory_context'][:40]}...)",
+            file=sys.stderr,
+        )
     if output_json:
-        result["results"] = results
-        print(json.dumps(result))
+        print(json.dumps({"pages": pages, "total": total, "directory_context": directory_context}))
 
 
 def register(subparsers) -> None:
@@ -212,5 +206,25 @@ def register(subparsers) -> None:
         "--include-errors",
         action="store_true",
         help="Include modules with parse errors in output (excluded by default)",
+    )
+    p.add_argument(
+        "--stale-only",
+        action="store_true",
+        help=(
+            "Emit only drifted/new module pages (host-side SHA256 diff vs the "
+            "--stored-hashes baseline) as --json {pages, deleted, toc_stale, ...}. "
+            "Never contacts the daemon; the caller supplies the baseline and writes "
+            "the pages back via wiki_add(replace_slug=/force=, hash=, source_file=, wait=True)."
+        ),
+    )
+    p.add_argument(
+        "--stored-hashes",
+        metavar="PATH|-",
+        default=None,
+        help=(
+            "Path to a JSON {slug: hash} baseline (or '-' for stdin) that --stale-only "
+            "diffs current host hashes against. Build it from wiki_list(directory)/"
+            "list_wiki_hashes via MCP. Omit → empty baseline (every module page is new)."
+        ),
     )
     p.set_defaults(func=cmd_repo_wiki)

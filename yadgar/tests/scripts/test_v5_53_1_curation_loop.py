@@ -3,10 +3,9 @@
 Covers:
 1. stale_wiki_count reflects real hash-drift (mock drifted page → count rises;
    no drift → 0); signals call stays cheap (TTL cache, no full rescan per call).
-2. wiki_refresh_stale returns stale slugs in its result (stale_count + suggested_calls).
-3. Dedup gate: near-duplicate wiki_add (no force) returns suggested_update_slug
+2. Dedup gate: near-duplicate wiki_add (no force) returns suggested_update_slug
    pointing at the match; force=True still bypasses; non-duplicate stores normally.
-4. Write-back nudge: stop hook prompt includes consolidate-onto-existing step.
+3. Write-back nudge: stop hook prompt includes consolidate-onto-existing step.
 """
 
 from __future__ import annotations
@@ -199,85 +198,6 @@ class TestStaleWikiCount:
         assert result.get("stale_wiki_count") == 3, (
             f"signals stale_wiki_count should be 3, got {result.get('stale_wiki_count')}"
         )
-
-
-# ---------------------------------------------------------------------------
-# 2. wiki_refresh_stale returns stale slugs prominently
-# ---------------------------------------------------------------------------
-
-
-class TestWikiRefreshStaleReturn:
-    """wiki_refresh_stale returns stale_count + suggested_calls."""
-
-    def _write_wiki_page(
-        self, wiki_dir: Path, slug: str, source_files: list[str], source_hash: str
-    ) -> None:
-        content = (
-            "---\n"
-            f"hash: {source_hash}\n"
-            f"source_files:\n" + "".join(f"  - {f}\n" for f in source_files) + "---\n\n# Page\n"
-        )
-        (wiki_dir / f"{slug}.md").write_text(content)
-
-    def test_stale_slugs_in_return(self, tmp_path):
-        """Stale page → stale list contains its slug, stale_count == 1."""
-        from yadgar.core.server.tools.project import _wiki_refresh_stale_impl
-
-        wiki_dir = tmp_path / ".local-review" / "wiki"
-        wiki_dir.mkdir(parents=True)
-
-        src = tmp_path / "service.py"
-        src.write_text("original")
-        h = hashlib.sha256(src.read_bytes()).hexdigest()
-        self._write_wiki_page(wiki_dir, "mod-service", [str(src)], h)
-
-        # Drift
-        src.write_text("changed")
-
-        result = _wiki_refresh_stale_impl(str(tmp_path), slugs=None, force_branch=True)
-
-        assert "stale" in result
-        assert "mod-service" in result["stale"], f"Expected mod-service in stale: {result['stale']}"
-        assert result.get("stale_count") == 1
-        assert "suggested_calls" in result
-        assert len(result["suggested_calls"]) == 1
-
-    def test_no_stale_returns_empty_lists(self, tmp_path):
-        """No drift → stale=[], stale_count=0, suggested_calls=[]."""
-        from yadgar.core.server.tools.project import _wiki_refresh_stale_impl
-
-        wiki_dir = tmp_path / ".local-review" / "wiki"
-        wiki_dir.mkdir(parents=True)
-
-        src = tmp_path / "utils.py"
-        src.write_text("stable content")
-        h = hashlib.sha256(src.read_bytes()).hexdigest()
-        self._write_wiki_page(wiki_dir, "mod-utils", [str(src)], h)
-
-        result = _wiki_refresh_stale_impl(str(tmp_path), slugs=None, force_branch=True)
-
-        assert result["stale"] == []
-        assert result.get("stale_count") == 0
-        assert result.get("suggested_calls") == []
-
-    def test_suggested_calls_mention_repo_wiki(self, tmp_path):
-        """suggested_calls contain repo-wiki reference for each stale slug."""
-        from yadgar.core.server.tools.project import _wiki_refresh_stale_impl
-
-        wiki_dir = tmp_path / ".local-review" / "wiki"
-        wiki_dir.mkdir(parents=True)
-
-        src = tmp_path / "core.py"
-        src.write_text("v1")
-        h = hashlib.sha256(src.read_bytes()).hexdigest()
-        self._write_wiki_page(wiki_dir, "core-module", [str(src)], h)
-        src.write_text("v2")
-
-        result = _wiki_refresh_stale_impl(str(tmp_path), slugs=None, force_branch=True)
-
-        calls = result.get("suggested_calls", [])
-        assert len(calls) == 1
-        assert "repo-wiki" in calls[0]
 
 
 # ---------------------------------------------------------------------------

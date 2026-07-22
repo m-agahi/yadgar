@@ -55,6 +55,9 @@ def run_wiki_add_replay(payload: dict) -> dict:
     replace_slug = payload.get("replace_slug")
     directory_context = payload.get("directory_context")
     page_type = payload.get("page_type")
+    # Car B0 (#83): repo-wiki module pages carry SHA256 + source path.
+    src_hash = payload.get("hash")
+    source_file = payload.get("source_file")
 
     # replace_slug: overwrite a named existing page (gate already bypassed)
     if replace_slug is not None:
@@ -71,6 +74,8 @@ def run_wiki_add_replay(payload: dict) -> dict:
                     branch=branch,
                     directory_context=directory_context,
                     page_type=page_type,
+                    hash=src_hash,
+                    source_file=source_file,
                 ),
             )
             result.pop("embedding", None)
@@ -102,6 +107,8 @@ def run_wiki_add_replay(payload: dict) -> dict:
                 branch=branch,
                 directory_context=directory_context,
                 page_type=page_type,
+                hash=src_hash,
+                source_file=source_file,
             ),
         )
     result.pop("embedding", None)

@@ -663,6 +663,12 @@ class WikiStore:
         branch = o.branch
         directory_context = o.directory_context
         page_type = o.page_type
+        # Car B0 (#83): repo-wiki module pages carry source hash + path. Only the
+        # provided (non-None) fields are stored so a hashless upsert never clobbers
+        # a stored hash. Built once, merged into both the update and insert dicts.
+        repo_wiki_fields = {
+            k: v for k, v in (("hash", o.hash), ("source_file", o.source_file)) if v is not None
+        }
 
         slug = self._slugify(title)
         if category not in self.CATEGORIES:
@@ -710,6 +716,7 @@ class WikiStore:
 
                 updates["page_type"] = page_type
                 updates["wiki_schema_version"] = WIKI_SCHEMA_VERSION
+            updates.update(repo_wiki_fields)  # Car B0 (#83): re-persist hash if provided
             self._storage.update_wiki_page(existing["id"], updates)
             self._sync_crossrefs(slug, links)
             self._link_memories(slug, source_memory_ids)
@@ -737,6 +744,7 @@ class WikiStore:
 
             page["page_type"] = page_type
             page["wiki_schema_version"] = WIKI_SCHEMA_VERSION
+        page.update(repo_wiki_fields)  # Car B0 (#83): stamp hash/source_file if provided
         page_id = self._storage.insert_wiki_page(page, branch=branch)
         page["id"] = page_id
         # v5.43.0 (DP-2): include branch in returned dict so callers (e.g. wiki_approve)
@@ -995,6 +1003,15 @@ class WikiStore:
         return self._storage.list_wiki_pages(
             category=category, slug_prefix=slug_prefix, limit=limit, directory=directory
         )
+
+    def repo_wiki_hashes(self, directory: str | None = None) -> dict[str, str]:
+        """Return {slug: hash} for repo-wiki module pages (Car B0, #83).
+
+        Cheap bulk read backing the host-side ``--stale-only`` diff: one DB call
+        returns every staleness-checkable page's stored source hash, scoped to
+        ``directory`` + 'global'. Pages without a source hash are excluded.
+        """
+        return self._storage.list_wiki_hashes(directory=directory)
 
     @observe(tier="stage")
     def find_similar_wiki_pages(

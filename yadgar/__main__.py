@@ -29,7 +29,7 @@ Power tools: add_rule, get_rules, wiki_read, wiki_list, wiki_delete,
              consolidate_now, reembed_all, validate_memory, seed_project,
              install_hooks, sync_instructions
 v5 tools:   memory_get, wiki_get, memory_update, wiki_update,
-             bootstrap_project, update_active_work, wiki_refresh_stale,
+             bootstrap_project, update_active_work,
              wiki_cleanup_merged_branches
 
 MCP Resources: memory://stats, memory://hot, memory://stale,

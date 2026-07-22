@@ -14,12 +14,10 @@ import yadgar.core.server.tools.admin  # noqa: F401 — side-effects: tool regis
 import yadgar.core.server.tools.wiki  # noqa: F401 — side-effects: tool registration
 import yadgar.core.server.tools.misc  # noqa: F401 — side-effects: tool registration
 import yadgar.core.server.tools.agent_prompts  # noqa: F401 — side-effects: tool registration (S8)
-import yadgar.core.server.tools.wiki_coverage  # noqa: F401 — side-effects: tool registration
 import yadgar.core.server.tools.dispatch_helper  # noqa: F401 — side-effects: tool registration
 import yadgar.core.server.tools.audit  # noqa: F401 — side-effects: tool registration
 import yadgar.core.server.tools.bookmarks  # noqa: F401 — side-effects: tool registration
 import yadgar.core.server.tools.blocks  # noqa: F401 — side-effects: tool registration (v5.33.0)
-import yadgar.core.server.tools.repo_wiki  # noqa: F401 — side-effects: tool registration (T8)
 import yadgar.core.server.tools.adr  # noqa: F401 — side-effects: tool registration (car #12)
 import yadgar.core.server.tools.db_inspect  # noqa: F401 — side-effects: tool registration (db-inspect, ADR-0078)
 
@@ -35,7 +33,6 @@ from yadgar.core.server.tools.project import (
     project_brief,
     bootstrap_project,
     update_active_work,
-    wiki_refresh_stale,
     wiki_cleanup_merged_branches,
     _detect_branch,
     _detect_branch_cached,
@@ -46,7 +43,6 @@ from yadgar.core.server.tools.project import (
     _git_safe_env,
     _GIT_SAFE_ARGS,
     _render_project_brief,
-    _wiki_refresh_stale_impl,
     _parse_frontmatter,
     _compute_source_hash,
 )
@@ -112,7 +108,6 @@ from yadgar.core.server.tools.agent_prompts import (
     seed_agent_prompts,
 )
 from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
-from yadgar.core.server.tools.wiki_coverage import wiki_coverage
 from yadgar.core.server.tools.audit import audit_anchors
 from yadgar.core.server.tools.bookmarks import (
     bookmark_add,
@@ -129,7 +124,6 @@ from yadgar.core.server.tools.blocks import (
     block_replace,
     block_update,
 )
-from yadgar.core.server.tools.repo_wiki import repo_wiki_generate
 from yadgar.core.server.tools.adr import adr_add, adr_get, adr_list
 from yadgar.core.server.tools.db_inspect import db_inspect
 
@@ -140,7 +134,6 @@ __all__ = [
     "project_brief",
     "bootstrap_project",
     "update_active_work",
-    "wiki_refresh_stale",
     "wiki_cleanup_merged_branches",
     "forget",
     "validate_memory",
@@ -191,7 +184,6 @@ __all__ = [
     "agent_prompt_save",
     "seed_agent_prompts",
     "agent_dispatch_prelude",
-    "wiki_coverage",
     "audit_anchors",
     "bookmark_add",
     "bookmark_remove",
@@ -205,7 +197,6 @@ __all__ = [
     "block_replace",
     "block_update",
     "archive_purge",
-    "repo_wiki_generate",
     "adr_add",
     "adr_get",
     "adr_list",
@@ -219,7 +210,6 @@ __all__ = [
     "_git_safe_env",
     "_GIT_SAFE_ARGS",
     "_render_project_brief",
-    "_wiki_refresh_stale_impl",
     "_parse_frontmatter",
     "_compute_source_hash",
 ]

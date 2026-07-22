@@ -572,6 +572,32 @@ class _WikiMixin:
         return self._rows_to_dicts(rows)
 
     @trace_span()
+    def list_wiki_hashes(self, directory: str | None = None) -> dict[str, str]:
+        """Return {slug: hash} for pages that carry a source hash (Car B0, #83).
+
+        Only repo-wiki module pages set ``hash`` (SHA256 of source bytes), so
+        ``WHERE hash IS NOT NULL`` selects exactly the staleness-checkable pages.
+        Scoped to ``directory`` + 'global' when a directory is supplied so a
+        --stale-only check for one repo does not diff against another repo's
+        hashes. One DB round-trip → the host diffs live vs stored host-side.
+        """
+        conditions: list[str] = ["hash IS NOT NULL"]
+        params: dict = {}
+        if directory is not None:
+            params["dir"] = directory.rstrip("/")
+            conditions.append("(directory_context = $dir OR directory_context = 'global')")
+        where_clause = "WHERE " + " AND ".join(conditions)
+        sql = f"SELECT slug, hash FROM wiki_page {where_clause}"
+        rows = self._q(sql, params) if params else self._q(sql)
+        out: dict[str, str] = {}
+        for row in self._rows_to_dicts(rows):
+            slug = row.get("slug")
+            h = row.get("hash")
+            if slug and h:
+                out[slug] = h
+        return out
+
+    @trace_span()
     def list_wiki_catalog(
         self,
         directory: str | None = None,

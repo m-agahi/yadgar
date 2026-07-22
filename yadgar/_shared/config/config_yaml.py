@@ -593,6 +593,11 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Human messages between anchor-audit maintenance injections in the Stop hook (default 100)",
         "section": "anchor_hygiene",
     },
+    # Car D (#83): stop-hook repo-wiki-refresh maintenance cadence
+    "repo_wiki_refresh_stop_interval": {
+        "desc": "Human messages between repo-wiki-refresh maintenance injections in the Stop hook (default 200)",
+        "section": "anchor_hygiene",
+    },
     # v5.9.0: anchor audit pass knobs
     "anchor_audit_consolidation_enabled": {
         "desc": "Toggle anchor audit pass inside consolidate_now() (default true)",

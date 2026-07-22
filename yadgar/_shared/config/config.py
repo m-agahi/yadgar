@@ -672,6 +672,12 @@ class Settings(BaseSettings):
     # checkpoint (INTERVAL=25); a due checkpoint preempts the audit, which then
     # fires on the next eligible stop.
     ANCHOR_AUDIT_STOP_INTERVAL: int = 100
+    # Car D (#83): stop-hook maintenance cadence — human messages between
+    # repo-wiki-refresh maintenance injections in the Stop hook. Slowest of the
+    # three items (checkpoint=25, anchor-audit=100); code-structure drift is rare
+    # unless an active refactor is underway. A due checkpoint or anchor-audit
+    # preempts it (lower priority), and it then fires on the next eligible stop.
+    REPO_WIKI_REFRESH_STOP_INTERVAL: int = 200
     # v5.9.0: anchor audit pass in consolidate_now() (anchor_audit section)
     # Toggle anchor pass inside consolidate_now().
     ANCHOR_AUDIT_CONSOLIDATION_ENABLED: bool = True
