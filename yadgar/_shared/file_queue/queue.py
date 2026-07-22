@@ -156,6 +156,15 @@ class FileQueue:
                 "reason": "duplicate_detected",
                 "candidates": fm.get("candidates", []),
             }
+        # Car C (#83): slug_exists — upsert=False collision surfaces synchronously.
+        if reason == "slug_exists":
+            fm = meta.get("failure_metadata") or {}
+            return {
+                "stored": False,
+                "reason": "slug_exists",
+                "slug": fm.get("slug", ""),
+                "hint": fm.get("hint", ""),
+            }
         return None
 
     def pending(self) -> list[Path]:

@@ -76,8 +76,12 @@ def _classify_error(err_str: str) -> str:
     """Classify an error string as 'permanent' (HTTP 4xx) or 'transient' (everything else).
 
     v5.10.2: SecretLeakBlocked is always permanent — retrying will never help.
+    Car C (#83): slug_exists is permanent — the slug already exists and retrying
+    a upsert=False write will always fail.
     """
     if "SecretLeakBlocked" in err_str:
+        return "permanent"
+    if "slug_exists:" in err_str:
         return "permanent"
     if _re.search(r"\b4\d\d\b", err_str):
         return "permanent"
@@ -373,6 +377,16 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         if reject_reason.startswith("missing_directory"):
             # v5.42.5: directory_context missing → DLQ with missing_directory
             return "missing_directory", self._build_missing_directory_metadata(data, op_type)
+        # Car C (#83): slug_exists — upsert=False collision, keep the slug in metadata.
+        if reject_reason == "slug_exists":
+            p = data.get("payload", {})
+            return "slug_exists", {
+                "slug": p.get("slug", ""),
+                "hint": (
+                    f"Page already exists at slug {p.get('slug', '')!r}. "
+                    "Pass upsert=True to overwrite or use a different slug."
+                ),
+            }
         # memory-op branch failures always come as missing_branch (never hit the above two)
         if op_type in self._MEMORY_OP_TYPES:
             return "missing_branch", self._build_missing_branch_metadata(data, op_type)
@@ -416,6 +430,15 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             return 1
         except Exception as exc:
             err_str = str(exc)
+            # Car C (#83): slug_exists is an immediate-permanent rejection — no retry.
+            # wiki_add(upsert=False) on an existing slug always fails; retrying wastes
+            # drain cycles. Bypass the attempt counter and DLQ directly so wait=True
+            # callers see the rejection without waiting for retry exhaustion.
+            if "slug_exists:" in err_str and op_type == "wiki_add":
+                self._reject_permanent_to_dlq(
+                    path, fname, attempt, op_type, "slug_exists", data, now
+                )
+                return 0
             classification = _classify_error(err_str)
             max_attempts = (
                 self._max_permanent if classification == "permanent" else self._max_transient
@@ -536,14 +559,20 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             _threshold = getattr(_get_settings(), "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
         except Exception:
             _threshold = 0.80
+        # Car B (#83): the rejection may be a similarity duplicate OR a repo_wiki
+        # schema-validity failure — carry the reason through instead of hardcoding
+        # duplicate_detected, so the DLQ taxonomy classifies it correctly.
+        _reason = rejection.get("reason", "duplicate_detected")
         failure_metadata = {
             "candidates": rejection.get("candidates", []),
             "rejection_threshold_used": _threshold,
             "caller_context": {"directory": _cwd},
         }
+        if rejection.get("errors"):
+            failure_metadata["errors"] = rejection.get("errors")
         _rej_attempt = _Attempt(
             count=1,
-            last_error="duplicate_detected",
+            last_error=_reason,
             classification="permanent",
             first_failed_at=time.time(),
         )
@@ -551,7 +580,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             path,
             _rej_attempt,
             "wiki_add",
-            failure_reason="duplicate_detected",
+            failure_reason=_reason,
             failure_metadata=failure_metadata,
         )
         # R3 Car 1 (write-half): the DLQ .error.json sidecar (failure_metadata.candidates)

@@ -166,9 +166,9 @@
   "lineno": 351,
   "metrics": {
    "cyclomatic": 25,
-   "params": 14
+   "params": 18
   },
-  "rationale": "PERMANENT. Public MCP tool: 14 params are the LLM-facing schema and cannot be bundled without breaking the API. R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
+  "rationale": "PERMANENT. Public MCP tool: 18 params are the LLM-facing schema and cannot be bundled without breaking the API. Car C (#83) adds slug+upsert (2 params), Car B0 added hash+source_file (2 params). R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -259,6 +259,17 @@
   "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.157.0 #76: recorded 1153 had drifted to ~1369 from migrations accumulated since 2026-06-13 (this touch only adds migration 026_drop_wiki_draft, ~+18 LoC net after removing the wiki_draft _init_schema entry); resyncing the recorded value. Each migration is an append-only single-responsibility fn — the module is a migration ledger by design; wave N split remains deferred.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
+ },
+ {
+  "path": "yadgar/_shared/wiki/store.py",
+  "function": "add",
+  "lineno": 667,
+  "metrics": {
+   "cyclomatic": 16
+  },
+  "rationale": "C2 (#83): storage_scope enforcement adds one if-branch (policy.storage_scope == 'global' → override effective_dir). Pre-existing cyclomatic was 15 (at the HARD cap). The branch is a single policy-lookup guard at the effective_dir normalisation seam — extracting it would require a new helper taking page_type + directory_context, which scatters a 2-line guard without reducing branching. Scheduled for the wave N WikiStore.add complexity split (#18).",
+  "added": "2026-07-22",
+  "added_by": "feat/repo-wiki-page-type-c2"
  },
  {
   "path": "yadgar/_shared/wiki/store.py",

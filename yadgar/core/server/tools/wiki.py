@@ -376,6 +376,8 @@ def wiki_add(
     page_type: str | None = None,
     hash: str | None = None,  # noqa: A002 — wire key; matches storage/generator "hash" column
     source_file: str | None = None,
+    slug: str | None = None,
+    upsert: bool = True,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
@@ -398,6 +400,18 @@ def wiki_add(
 
     Use force=True to bypass the gate. Use replace_slug=<existing-slug> to overwrite
     an existing page by a different slug (gate is skipped for both).
+
+    slug: optional — store at EXACTLY this slug (create-or-overwrite when upsert=True).
+      When None (default), slug is derived from title (backward-compat).
+      Required for structural pages (repo_wiki) whose crossrefs and stale-diff key on
+      a caller-computed slug, not the title.
+    upsert: controls collision behaviour when an explicit slug is given (default True).
+      upsert=True  — create-or-overwrite at the slug (idempotent; use for repo_wiki
+                     regeneration where same slug is rewritten each cadence).
+      upsert=False — reject if the slug already exists, returning
+                     {"stored": False, "reason": "slug_exists"}.
+      Only meaningful with an explicit slug; the legacy title-derived path always
+      upserts by slug regardless.
 
     Categories: architecture, decision, pattern, debugging, reference, convention, fact, analysis.
     Confidence: high, medium, low.
@@ -465,7 +479,12 @@ def wiki_add(
     # v5.39.0 slug generation (O(1), needed for enqueue payload and wait path).
     import re as _re_slug  # noqa: PLC0415
 
-    _new_slug = (_re_slug.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
+    _title_slug = (_re_slug.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
+    # Car C (#83): explicit slug overrides title derivation. The drainer
+    # (wiki_add_impl.run_wiki_add_replay) reads payload["slug"] as explicit_slug
+    # and passes it to WikiAddOptions.slug → WikiStore.add() stores at that slug.
+    # When slug=None, fall back to the title-derived slug (unchanged backward compat).
+    _effective_slug = slug if slug is not None else _title_slug
 
     # v5.41.5: similarity gate REMOVED from request path (I9 fix).
     # Gate now runs in the drainer pre-apply stage (_sim_gate_for_drainer).
@@ -476,7 +495,7 @@ def wiki_add(
 
     _payload = {
         "wiki_schema_version": 2,
-        "slug": _new_slug,
+        "slug": _effective_slug,
         "title": title,
         "content": content,
         "category": category or "reference",
@@ -492,6 +511,8 @@ def wiki_add(
         "page_type": page_type,
         "hash": hash,  # Car B0 (#83): repo-wiki module source hash + path
         "source_file": source_file,
+        # Car C (#83): upsert semantics — drainer reads upsert from payload.
+        "upsert": upsert,
         # Car 0 flow 3 canonical token (server-set); drainer honors + strips it.
         **({"_internal": True} if _internal else {}),
     }
@@ -500,7 +521,7 @@ def wiki_add(
     # The drainer runs the similarity gate; rejection surfaces synchronously via the
     # DLQ terminal-file poll inside _wiki_add_wait_path.
     if wait:
-        return _wiki_add_wait_path(_payload, _new_slug, title)
+        return _wiki_add_wait_path(_payload, _effective_slug, title)
 
     # Async path (wait=False default): enqueue and return immediately.
     # v5.41.5: similarity gate is deferred to drainer — caller gets
@@ -510,7 +531,7 @@ def wiki_add(
         "stored": True,
         "queued": True,
         "similarity_check": "deferred",
-        "slug": _new_slug,
+        "slug": _effective_slug,
         "title": title,
     }
 

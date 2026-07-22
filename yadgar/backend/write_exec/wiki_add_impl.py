@@ -22,6 +22,20 @@ from yadgar._shared.wiki.contract import WikiAddOptions
 logger = logging.getLogger(__name__)
 
 
+class _SlugExistsRejection(Exception):
+    """Raised by run_wiki_add_replay when upsert=False and slug already exists.
+
+    Propagates to _apply_pending via _apply_inner, which classifies it as
+    "permanent" and routes it to DLQ via _reject_permanent_to_dlq. The DLQ
+    sidecar is then read by _read_dlq_rejection to surface the rejection
+    synchronously to wait=True callers.
+    """
+
+    def __init__(self, slug: str) -> None:
+        self.slug = slug
+        super().__init__(f"slug_exists: page already exists at slug {slug!r}")
+
+
 def _mirror_wiki(slug: str, content: str) -> None:
     """Mirror the wiki page to a date-stamped .md via the FileQueue (non-fatal)."""
     fq = _st._file_queue
@@ -58,6 +72,9 @@ def run_wiki_add_replay(payload: dict) -> dict:
     # Car B0 (#83): repo-wiki module pages carry SHA256 + source path.
     src_hash = payload.get("hash")
     source_file = payload.get("source_file")
+    # Car B (#83): explicit-slug + upsert. slug=None → title-derived (legacy).
+    explicit_slug = payload.get("slug")
+    upsert = payload.get("upsert", True)
 
     # replace_slug: overwrite a named existing page (gate already bypassed)
     if replace_slug is not None:
@@ -109,8 +126,19 @@ def run_wiki_add_replay(payload: dict) -> dict:
                 page_type=page_type,
                 hash=src_hash,
                 source_file=source_file,
+                slug=explicit_slug,  # Car B (#83): store at caller slug, no title fallback
+                upsert=upsert,
             ),
         )
+    # Car C (#83): upsert=False collision → surface synchronously.
+    # WikiStore.add returns {stored: False, reason: "slug_exists"} when upsert=False
+    # and the slug already exists. _apply_inner ignores the return value, so the
+    # rejection would be silently swallowed and the job archived as "committed".
+    # Raising SlugExistsRejection makes _apply_pending classify it as "permanent"
+    # and route it to DLQ via _reject_permanent_to_dlq, where _read_dlq_rejection
+    # surfaces it synchronously to wait=True callers.
+    if result.get("stored") is False and result.get("reason") == "slug_exists":
+        raise _SlugExistsRejection(explicit_slug or "")
     result.pop("embedding", None)
     event_type = "wiki_updated" if result.get("_merged") else "wiki_added"
     _push_event(

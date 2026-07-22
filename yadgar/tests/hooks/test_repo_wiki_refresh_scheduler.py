@@ -207,14 +207,25 @@ class TestRepoWikiRefreshTemplate:
         assert "wiki_read(" in content
 
     def test_template_has_enabled_refresh_branch(self):
-        """ENABLED → run the host CLI stale-diff + write drifted pages back."""
+        """ENABLED → run the host CLI stale-diff + write drifted pages back.
+
+        Car D (#83): prompt uses single upsert form (upsert=True + slug=) instead
+        of the old EXISTING/NEW branching (replace_slug= / force=True).
+        """
         content = _TEMPLATE_PATH.read_text(encoding="utf-8")
         normalized = " ".join(content.split())
         assert "--stale-only" in content
         assert "--stored-hashes" in content
         assert "wiki_list(" in content
-        assert "replace_slug" in content
-        assert "force=True" in content
+        # Car D: single upsert form — no replace_slug / force=True branching
+        assert "upsert=True" in content
+        assert "slug=<page.slug>" in content or "slug=" in content
+        assert "replace_slug" not in content, (
+            "Car D prompt must not use replace_slug — use upsert=True instead"
+        )
+        assert "force=True" not in content, (
+            "Car D prompt must not use force=True — use upsert=True instead"
+        )
         assert "wiki_delete(" in content
         assert "toc_stale" in content
         # Silent no-op when nothing drifted.

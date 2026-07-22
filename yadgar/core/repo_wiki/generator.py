@@ -3,16 +3,25 @@
 Each module gets one wiki page (per-module granularity; the 364-fn-page era is
 over — per-function is too granular and produces noisy, low-signal corpus).
 
-Output dict shape:
+Output dict shape (module page):
   {
-    "slug": "mod-yadgar-retrieval-core",
+    "slug": "{project}-mod-yadgar-retrieval-core",
     "title": "yadgar.retrieval.core",
     "content": "<markdown>",
     "tags": ["code-structure", "module", ...],
-    "category": "code",
-    "page_type": "code",
-    "directory_context": "/abs/path/to/repo",   # correct stamp (fixes the 364-page leak)
+    "category": "reference",
+    "page_type": "repo_wiki",
+    "directory_context": "/abs/path/to/repo",
+    "hash": "<sha256-hex>",
+    "source_file": "/abs/path/to/module.py",
   }
+
+Slug scheme: ``{project}-mod-{slugify(module_name)}`` — project-namespaced to
+avoid cross-project collisions.  Built via ``repo_wiki_slug(project, module_name)``
+from ``yadgar._shared.wiki.repo_wiki_schema``.  The TOC page uses a separate
+slug ``{project}-repo-wiki-index`` and carries ``page_type="module"`` (not
+``repo_wiki``) because it has no source_file/hash and its slug contains no
+``-mod-``.
 
 The caller (CLI or MCP tool) submits these dicts via wiki_add / wiki_update.
 directory_context is always the repo root absolute path, never 'global'.
@@ -24,26 +33,14 @@ import hashlib as _hashlib
 from pathlib import Path as _Path
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.wiki.repo_wiki_schema import REPO_WIKI_PAGE_TYPE, repo_wiki_slug
 from yadgar.core.repo_wiki.scanner import ClassRecord, FunctionRecord, ModuleRecord
-
-# Slug prefix for module pages.  Choose "mod-" to match existing wiki conventions.
-_MOD_SLUG_PREFIX = "mod-"
 
 # Max docstring length shown in a page (avoid bloating pages with huge module-docs)
 _MAX_DOCSTRING = 800
 
 # Max signature length before truncation
 _MAX_SIG = 160
-
-
-@observe(tier="stage")
-def _slugify(module_name: str) -> str:
-    """Convert dotted module name to a slug: yadgar.retrieval.core → mod-yadgar-retrieval-core."""
-    slug = module_name.replace(".", "-").replace("_", "-")
-    # Collapse repeated hyphens
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return f"{_MOD_SLUG_PREFIX}{slug}".lower()
 
 
 @observe(tier="stage")
@@ -65,12 +62,12 @@ def _resolve_import(import_name: str, first_party: set[str]) -> str | None:
 
 
 @observe(tier="stage")
-def _render_import(import_name: str, first_party: set[str] | None) -> str:
-    """Render one import: [[mod-slug]] if it resolves in-repo, else plain backtick."""
+def _render_import(import_name: str, first_party: set[str] | None, project: str) -> str:
+    """Render one import: [[{project}-mod-slug]] if it resolves in-repo, else plain backtick."""
     if first_party:
         matched = _resolve_import(import_name, first_party)
         if matched is not None:
-            return f"[[{_slugify(matched)}]]"
+            return f"[[{repo_wiki_slug(project, matched)}]]"
     return f"`{import_name}`"
 
 
@@ -79,11 +76,11 @@ _MAX_PLAIN_IMPORTS = 10
 
 
 @observe(tier="stage")
-def _render_imports_section(imports: list[str], first_party: set[str] | None) -> str:
+def _render_imports_section(imports: list[str], first_party: set[str] | None, project: str) -> str:
     """Render the **Imports:** section.
 
-    First-party imports (crossref edges) are ALWAYS shown as [[mod-<slug>]] links,
-    deduped, order-preserving — never truncated.  The plain-backtick remainder
+    First-party imports (crossref edges) are ALWAYS shown as [[{project}-mod-<slug>]]
+    links, deduped, order-preserving — never truncated.  The plain-backtick remainder
     (stdlib/third-party) is capped at _MAX_PLAIN_IMPORTS to bound page noise.
     """
     links: list[str] = []
@@ -92,7 +89,7 @@ def _render_imports_section(imports: list[str], first_party: set[str] | None) ->
     for imp in imports:
         matched = _resolve_import(imp, first_party) if first_party else None
         if matched is not None:
-            slug = _slugify(matched)
+            slug = repo_wiki_slug(project, matched)
             if slug not in seen_links:
                 seen_links.add(slug)
                 links.append(f"[[{slug}]]")
@@ -159,6 +156,7 @@ def generate_module_page(
     rec: ModuleRecord,
     directory_context: str,
     first_party: set[str] | None = None,
+    project: str | None = None,
 ) -> dict:
     """Generate a wiki page dict for one ModuleRecord.
 
@@ -167,17 +165,25 @@ def generate_module_page(
     This is the key fix vs. the external skill which defaulted to 'global'.
 
     first_party: the scanned in-repo module-name SET.  When supplied, imports
-    resolving to one of these modules render as ``[[mod-<slug>]]`` crossref links
-    (wiki_add's crossref-sync then builds the import graph as wiki edges).
-    stdlib/third-party imports stay plain backtick.  Default None → all imports
-    stay plain backtick (back-compat).
+    resolving to one of these modules render as ``[[{project}-mod-<slug>]]``
+    crossref links (wiki_add's crossref-sync then builds the import graph as wiki
+    edges).  stdlib/third-party imports stay plain backtick.  Default None → all
+    imports stay plain backtick (back-compat).
+
+    project: project identifier (e.g. ``"yadgar"``), used to namespace slugs so
+    two projects with a module of the same name don't collide.  When None,
+    falls back to ``Path(directory_context).name``.
 
     v5.85.0 (car #36): each page dict now carries ``hash`` = SHA256(file bytes)
     and ``source_file`` = absolute path to the module file.  These fields allow
     the staleness checker to compare against live file contents via DB lookup
     instead of only scanning .local-review/wiki/*.md on disk.
+
+    Car D (#83): slug is ``repo_wiki_slug(project, module_name)`` =
+    ``{project}-mod-{slugify(module_name)}``.  page_type = REPO_WIKI_PAGE_TYPE.
     """
-    slug = _slugify(rec.module_name)
+    resolved_project = project or _Path(directory_context).name
+    slug = repo_wiki_slug(resolved_project, rec.module_name)
     title = rec.module_name
 
     # Compute source hash — same bytes path as checker's _compute_source_hash file branch.
@@ -204,7 +210,7 @@ def generate_module_page(
             "content": content,
             "tags": ["code-structure", "module", "parse-error"],
             "category": "reference",
-            "page_type": "module",
+            "page_type": REPO_WIKI_PAGE_TYPE,
             "directory_context": directory_context,
             "hash": file_hash,
             "source_file": abs_path,
@@ -215,14 +221,14 @@ def generate_module_page(
         sections.append("")
         sections.append(_truncate(rec.docstring, _MAX_DOCSTRING))
 
-    # Imports.  In-repo imports render as [[mod-<slug>]] crossref links and are
-    # NEVER truncated — they are the graph edges (the whole point of the crossref
-    # car).  isort orders first-party imports LAST, so a naive head-slice would
-    # drop exactly the edges we want.  Partition: all first-party links always
+    # Imports.  In-repo imports render as [[{project}-mod-<slug>]] crossref links
+    # and are NEVER truncated — they are the graph edges (the whole point of the
+    # crossref car).  isort orders first-party imports LAST, so a naive head-slice
+    # would drop exactly the edges we want.  Partition: all first-party links always
     # shown; the 10-cap applies only to the plain-backtick (stdlib/third-party)
     # remainder to bound noise.
     if rec.imports:
-        sections.append(_render_imports_section(rec.imports, first_party))
+        sections.append(_render_imports_section(rec.imports, first_party, resolved_project))
 
     # Module-level functions
     if rec.functions:
@@ -257,7 +263,7 @@ def generate_module_page(
         "content": content,
         "tags": tags,
         "category": "reference",
-        "page_type": "module",
+        "page_type": REPO_WIKI_PAGE_TYPE,
         "directory_context": directory_context,
         "hash": file_hash,
         "source_file": abs_path,
@@ -273,8 +279,13 @@ def generate_toc_page(
     """Build the single navigable repo-wiki index page (the code map).
 
     slug = ``<project>-repo-wiki-index``.  Content is the package/module tree with
-    ``[[mod-<slug>]]`` links — one wiki_read → the whole code map → drill via
-    crossrefs.  No source_file/hash (it is not a source module).
+    ``[[{project}-mod-<slug>]]`` links — one wiki_read → the whole code map → drill
+    via crossrefs.  No source_file/hash (it is not a source module).
+
+    page_type is ``"module"`` (not ``REPO_WIKI_PAGE_TYPE``) because the TOC has no
+    ``-mod-`` in its slug and carries no source_file/hash — it would fail the
+    ``validate_repo_wiki_page`` schema check.  The TOC is structural metadata, not
+    a module documentation page.
     """
     slug = f"{project}-repo-wiki-index"
     title = f"{project} — repo-wiki index"
@@ -297,7 +308,9 @@ def generate_toc_page(
         sections.append(f"## {pkg}")
         sections.append("")
         for rec in sorted(by_pkg[pkg], key=lambda r: r.module_name):
-            sections.append(f"- [[{_slugify(rec.module_name)}]] — `{rec.module_path}`")
+            sections.append(
+                f"- [[{repo_wiki_slug(project, rec.module_name)}]] — `{rec.module_path}`"
+            )
 
     content = "\n".join(sections)
     return {
@@ -322,22 +335,28 @@ def generate_wiki_pages(
 
     directory_context: absolute path to repo root (directory stamp, not 'global').
     skip_parse_errors: if True, omit records with parse_error from output.
-    project: when supplied, also emit the ``<project>-repo-wiki-index`` TOC page
-        (the navigable entry point) and include it in the sorted output.
+    project: project identifier (repo basename).  When supplied, also emit the
+        ``<project>-repo-wiki-index`` TOC page (the navigable entry point) and
+        include it in the sorted output.  When None, falls back to
+        ``Path(directory_context).name`` so module page slugs are still namespaced.
 
     The first-party module-name SET is built from ``records`` automatically so
-    in-repo imports resolve to ``[[mod-<slug>]]`` crossref links.
+    in-repo imports resolve to ``[[{project}-mod-<slug>]]`` crossref links.
 
     Returns sorted by slug for deterministic output.
     """
+    # Resolve project once; thread it into all slug/crossref builders.
+    resolved_project = project or _Path(directory_context).name
     first_party = {rec.module_name for rec in records}
     pages: list[dict] = []
     for rec in records:
         if skip_parse_errors and rec.parse_error:
             continue
-        page = generate_module_page(rec, directory_context, first_party=first_party)
+        page = generate_module_page(
+            rec, directory_context, first_party=first_party, project=resolved_project
+        )
         pages.append(page)
     if project is not None:
-        pages.append(generate_toc_page(records, directory_context, project))
+        pages.append(generate_toc_page(records, directory_context, resolved_project))
     pages.sort(key=lambda p: p["slug"])
     return pages

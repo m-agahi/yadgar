@@ -23,6 +23,7 @@ _REJECTION_TAXONOMY: frozenset[str] = frozenset(
         "policy_rejected",
         "missing_branch",  # v5.42.3: queue entry lacks branch context
         "missing_directory",  # v5.42.5: queue entry lacks directory_context
+        "repo_wiki_schema_invalid",  # Car B (#83): repo_wiki page failed schema validation
     }
 )
 

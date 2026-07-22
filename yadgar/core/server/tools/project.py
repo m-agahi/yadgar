@@ -1289,7 +1289,9 @@ def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
 # ── v5.42.0: DLQ rejection signal ───────────────────────────────────────────
 
 #: failure_reason values treated as "rejections" (must match admin_dlq._REJECTION_TAXONOMY).
-_REJECTION_REASONS: frozenset[str] = frozenset({"duplicate_detected", "policy_rejected"})
+_REJECTION_REASONS: frozenset[str] = frozenset(
+    {"duplicate_detected", "policy_rejected", "repo_wiki_schema_invalid"}
+)
 
 
 @observe(tier="stage", metric="tools.project._compute_pending_rejections")
