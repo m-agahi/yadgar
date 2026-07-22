@@ -14,9 +14,14 @@ from pathlib import Path
 
 import pytest
 
+from yadgar._shared.wiki.repo_wiki_schema import (
+    REPO_WIKI_PAGE_TYPE,
+    repo_wiki_slug,
+    validate_repo_wiki_page,
+)
 from yadgar.core.repo_wiki.generator import (
-    _slugify,
     generate_module_page,
+    generate_toc_page,
     generate_wiki_pages,
 )
 from yadgar.core.repo_wiki.scanner import (
@@ -88,6 +93,10 @@ ASYNC_MODULE = textwrap.dedent('''\
 ''')
 
 SYNTAX_ERROR_MODULE = "def broken(\n"
+
+# Canonical project name used in tests that call generate_module_page directly.
+# This avoids nondeterministic tmp_path basenames in slug assertions.
+_PROJECT = "mypkg"
 
 
 @pytest.fixture
@@ -227,97 +236,154 @@ class TestScanRepo:
 
 
 # ---------------------------------------------------------------------------
-# Generator tests
+# Generator tests — Car D (#83): new slug scheme + page_type
 # ---------------------------------------------------------------------------
 
 
-class TestSlugify:
-    def test_dotted_to_slug(self) -> None:
-        assert _slugify("yadgar.retrieval.core") == "mod-yadgar-retrieval-core"
+class TestRepoWikiSlug:
+    """Car D: generator uses repo_wiki_slug, not the old _slugify."""
 
-    def test_single_name(self) -> None:
-        assert _slugify("mypkg") == "mod-mypkg"
+    def test_slug_uses_project_prefix(self) -> None:
+        slug = repo_wiki_slug("mypkg", "mypkg.core")
+        assert slug == "mypkg-mod-mypkg-core"
 
-    def test_underscores_to_hyphens(self) -> None:
-        assert _slugify("my_pkg.sub_mod") == "mod-my-pkg-sub-mod"
+    def test_slug_cross_project_distinct(self) -> None:
+        """Same module name in two projects → distinct slugs (no cross-project collision)."""
+        slug_a = repo_wiki_slug("proj-a", "logging")
+        slug_b = repo_wiki_slug("proj-b", "logging")
+        assert slug_a != slug_b
+        assert slug_a.startswith("proj-a-mod-")
+        assert slug_b.startswith("proj-b-mod-")
+
+    def test_slug_contains_mod_marker(self) -> None:
+        slug = repo_wiki_slug("mypkg", "mypkg.async_mod")
+        assert "-mod-" in slug
+
+    def test_slug_underscores_collapsed(self) -> None:
+        slug = repo_wiki_slug("mypkg", "my_pkg.sub_mod")
+        assert slug == "mypkg-mod-my-pkg-sub-mod"
 
 
 class TestGenerateModulePage:
-    def test_slug_format(self, fixture_repo: Path) -> None:
+    def test_slug_uses_repo_wiki_slug(self, fixture_repo: Path) -> None:
+        """Car D: module page slug == repo_wiki_slug(project, module_name)."""
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
-        assert page["slug"] == "mod-mypkg-core"
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
+        expected = repo_wiki_slug(_PROJECT, "mypkg.core")
+        assert page["slug"] == expected
+
+    def test_slug_fallback_uses_dir_basename(self, fixture_repo: Path) -> None:
+        """When project= is not supplied, basename(directory_context) is used."""
+        # fixture_repo is tmp_path; we scan the mypkg subdir as directory_context
+        # so the project resolves to "mypkg" (basename of the directory)
+        pkg_dir = fixture_repo / "mypkg"
+        rec = scan_python_module(pkg_dir / "core.py", pkg_dir)
+        page = generate_module_page(rec, str(pkg_dir))
+        # basename = "mypkg" → slug starts with "mypkg-mod-"
+        assert page["slug"].startswith("mypkg-mod-")
+
+    def test_page_type_is_repo_wiki(self, fixture_repo: Path) -> None:
+        """Car D: module pages must carry page_type=REPO_WIKI_PAGE_TYPE."""
+        rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
+        assert page["page_type"] == REPO_WIKI_PAGE_TYPE
+        assert page["page_type"] == "repo_wiki"
+
+    def test_category_is_reference(self, fixture_repo: Path) -> None:
+        rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
+        assert page["category"] == "reference"
+
+    def test_validate_repo_wiki_page_passes(self, fixture_repo: Path) -> None:
+        """Car D: every generated module page passes validate_repo_wiki_page."""
+        rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
+        errors = validate_repo_wiki_page(
+            slug=page["slug"],
+            source_file=page["source_file"],
+            hash=page["hash"],
+        )
+        assert errors == [], f"validate_repo_wiki_page failed: {errors}"
+
+    def test_validate_repo_wiki_page_passes_on_parse_error(self, fixture_repo: Path) -> None:
+        """Even parse-error pages pass validation (they carry hash+source_file+-mod-)."""
+        rec = scan_python_module(fixture_repo / "mypkg" / "broken.py", fixture_repo)
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
+        errors = validate_repo_wiki_page(
+            slug=page["slug"],
+            source_file=page["source_file"],
+            hash=page["hash"],
+        )
+        assert errors == [], f"parse-error page failed validation: {errors}"
 
     def test_directory_context_is_repo_root(self, fixture_repo: Path) -> None:
         """The directory_context stamp must be the repo root — never 'global'."""
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert page["directory_context"] == str(fixture_repo)
         assert page["directory_context"] != "global"
 
     def test_title_is_module_name(self, fixture_repo: Path) -> None:
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert page["title"] == "mypkg.core"
 
     def test_content_contains_public_function(self, fixture_repo: Path) -> None:
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "greet" in page["content"]
 
     def test_content_contains_class(self, fixture_repo: Path) -> None:
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "Greeter" in page["content"]
 
     def test_content_contains_module_docstring(self, fixture_repo: Path) -> None:
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "A simple fixture module for testing" in page["content"]
-
-    def test_page_type_and_category_on_enum(self, fixture_repo: Path) -> None:
-        """category/page_type must be valid wiki enum values (reference/module),
-        not the off-enum 'code' that wiki_add rejects."""
-        rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
-        assert page["page_type"] == "module"
-        assert page["category"] == "reference"
 
     def test_tags_include_code_structure(self, fixture_repo: Path) -> None:
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "code-structure" in page["tags"]
         assert "module" in page["tags"]
 
     def test_tags_include_package(self, fixture_repo: Path) -> None:
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "pkg-mypkg" in page["tags"]
 
     def test_parse_error_produces_page(self, fixture_repo: Path) -> None:
         """Even modules with syntax errors get a page (error noted in content)."""
         rec = scan_python_module(fixture_repo / "mypkg" / "broken.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "parse-error" in page["tags"]
         assert "Parse error" in page["content"] or "parse error" in page["content"].lower()
+
+    def test_parse_error_page_type_is_repo_wiki(self, fixture_repo: Path) -> None:
+        """Parse-error module pages also carry page_type=repo_wiki."""
+        rec = scan_python_module(fixture_repo / "mypkg" / "broken.py", fixture_repo)
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
+        assert page["page_type"] == REPO_WIKI_PAGE_TYPE
 
     def test_content_has_signature_code_block(self, fixture_repo: Path) -> None:
         """Function signatures must appear in fenced code blocks."""
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "```python" in page["content"]
 
     def test_private_methods_excluded_from_class_render(self, fixture_repo: Path) -> None:
         """Private methods (not __init__/__call__) should not appear in rendered class section."""
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         # _internal should NOT appear in the rendered page
         assert "_internal" not in page["content"]
 
     def test_generator_stamps_hash(self, fixture_repo: Path) -> None:
         """generate_module_page must include hash = SHA256(file bytes) + source_file."""
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "hash" in page, "page must carry a 'hash' field"
         assert "source_file" in page, "page must carry a 'source_file' field"
         # hash must be non-empty hex
@@ -334,7 +400,7 @@ class TestGenerateModulePage:
         from yadgar.core.server.tools.project import _compute_source_hash
 
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         checker_hash = _compute_source_hash([page["source_file"]], hashlib)
         assert page["hash"] == checker_hash, (
             f"generator hash {page['hash']!r} != checker hash {checker_hash!r}"
@@ -343,7 +409,7 @@ class TestGenerateModulePage:
     def test_generator_stamps_hash_on_parse_error(self, fixture_repo: Path) -> None:
         """Even parse-error pages should get hash + source_file (file is readable even if unparseable)."""
         rec = scan_python_module(fixture_repo / "mypkg" / "broken.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "hash" in page
         assert "source_file" in page
         assert len(page["hash"]) == 64
@@ -352,20 +418,20 @@ class TestGenerateModulePage:
 class TestGenerateWikiPages:
     def test_returns_list_of_dicts(self, fixture_repo: Path) -> None:
         records = scan_repo(fixture_repo)
-        pages = generate_wiki_pages(records, str(fixture_repo))
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
         assert isinstance(pages, list)
         assert all(isinstance(p, dict) for p in pages)
 
     def test_sorted_by_slug(self, fixture_repo: Path) -> None:
         records = scan_repo(fixture_repo)
-        pages = generate_wiki_pages(records, str(fixture_repo))
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
         slugs = [p["slug"] for p in pages]
         assert slugs == sorted(slugs)
 
     def test_all_pages_have_correct_directory_context(self, fixture_repo: Path) -> None:
         """Every page must be stamped with the repo root, never 'global'."""
         records = scan_repo(fixture_repo)
-        pages = generate_wiki_pages(records, str(fixture_repo))
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
         for page in pages:
             assert page["directory_context"] == str(fixture_repo)
             assert page["directory_context"] != "global"
@@ -373,8 +439,12 @@ class TestGenerateWikiPages:
     def test_skip_parse_errors(self, fixture_repo: Path) -> None:
         records = scan_repo(fixture_repo)
         # With skip_parse_errors=True, broken.py should be absent
-        pages_with = generate_wiki_pages(records, str(fixture_repo), skip_parse_errors=False)
-        pages_without = generate_wiki_pages(records, str(fixture_repo), skip_parse_errors=True)
+        pages_with = generate_wiki_pages(
+            records, str(fixture_repo), skip_parse_errors=False, project=_PROJECT
+        )
+        pages_without = generate_wiki_pages(
+            records, str(fixture_repo), skip_parse_errors=True, project=_PROJECT
+        )
         broken_in_with = any("broken" in p["slug"] for p in pages_with)
         broken_in_without = any("broken" in p["slug"] for p in pages_without)
         assert broken_in_with
@@ -382,9 +452,47 @@ class TestGenerateWikiPages:
 
     def test_unique_slugs(self, fixture_repo: Path) -> None:
         records = scan_repo(fixture_repo)
-        pages = generate_wiki_pages(records, str(fixture_repo))
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
         slugs = [p["slug"] for p in pages]
         assert len(slugs) == len(set(slugs)), "Duplicate slugs detected"
+
+    def test_module_pages_pass_schema_validation(self, fixture_repo: Path) -> None:
+        """Car D: every module page (page_type=repo_wiki) passes validate_repo_wiki_page."""
+        records = scan_repo(fixture_repo)
+        pages = generate_wiki_pages(
+            records, str(fixture_repo), skip_parse_errors=False, project=_PROJECT
+        )
+        module_pages = [p for p in pages if p.get("page_type") == REPO_WIKI_PAGE_TYPE]
+        assert module_pages, "no repo_wiki pages found"
+        for page in module_pages:
+            errors = validate_repo_wiki_page(
+                slug=page["slug"],
+                source_file=page.get("source_file"),
+                hash=page.get("hash"),
+            )
+            assert errors == [], f"page {page['slug']!r} failed validation: {errors}"
+
+    def test_crossref_targets_resolve_to_emitted_slugs(self, fixture_repo: Path) -> None:
+        """Car D: every [[…]] crossref in generated content resolves to an emitted slug."""
+        import re
+
+        (fixture_repo / "mypkg" / "consumer.py").write_text(
+            textwrap.dedent('''\
+                """Consumer module."""
+                from mypkg.core import Greeter
+                def use(): pass
+            ''')
+        )
+        records = scan_repo(fixture_repo)
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
+        emitted_slugs = {p["slug"] for p in pages}
+        crossref_re = re.compile(r"\[\[([^\]]+)\]\]")
+        dangling = []
+        for page in pages:
+            for ref in crossref_re.findall(page.get("content", "")):
+                if ref not in emitted_slugs:
+                    dangling.append((page["slug"], ref))
+        assert dangling == [], f"Dangling crossref targets found: {dangling}"
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +584,7 @@ class TestImportableFilesOnly:
         (fixture_repo / "mypkg" / "file-changed.py").write_text("def a(): pass\n")
         (fixture_repo / "mypkg" / "file_changed.py").write_text("def b(): pass\n")
         records = scan_repo(fixture_repo)
-        pages = generate_wiki_pages(records, str(fixture_repo))
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
         slugs = [p["slug"] for p in pages]
         assert len(slugs) == len(set(slugs)), "slug collision — data loss on wiki_add"
 
@@ -524,13 +632,14 @@ class TestIgnoreLayers:
 
 
 # ---------------------------------------------------------------------------
-# Car A — first-party module set + crossref [[mod-]] links (items 4b, 5)
+# Car A — first-party module set + crossref [[{project}-mod-]] links (items 4b, 5)
+# Car D (#83): crossref targets use repo_wiki_slug(project, module), not old mod-
 # ---------------------------------------------------------------------------
 
 
 class TestCrossrefLinks:
     def test_in_repo_import_becomes_link(self, fixture_repo: Path) -> None:
-        """An import resolving to a scanned in-repo module renders [[mod-...]]."""
+        """An import resolving to a scanned in-repo module renders [[{project}-mod-...]]."""
         (fixture_repo / "mypkg" / "consumer.py").write_text(
             textwrap.dedent('''\
                 """Consumer module."""
@@ -545,11 +654,16 @@ class TestCrossrefLinks:
         records = scan_repo(fixture_repo)
         first_party = {r.module_name for r in records}
         rec = next(r for r in records if r.module_name == "mypkg.consumer")
-        page = generate_module_page(rec, str(fixture_repo), first_party=first_party)
-        # mypkg.core is in-repo → linked
-        assert "[[mod-mypkg-core]]" in page["content"]
+        page = generate_module_page(
+            rec, str(fixture_repo), first_party=first_party, project=_PROJECT
+        )
+        # mypkg.core is in-repo → linked with new namespaced slug
+        expected_link = f"[[{repo_wiki_slug(_PROJECT, 'mypkg.core')}]]"
+        assert expected_link in page["content"], (
+            f"{expected_link!r} not in content; content snippet: {page['content'][:400]}"
+        )
         # os is stdlib → stays plain backtick, never linked
-        assert "[[mod-os]]" not in page["content"]
+        assert "[[" + repo_wiki_slug(_PROJECT, "os") + "]]" not in page["content"]
         assert "`os`" in page["content"]
 
     def test_external_import_stays_backtick(self, fixture_repo: Path) -> None:
@@ -564,7 +678,9 @@ class TestCrossrefLinks:
         records = scan_repo(fixture_repo)
         first_party = {r.module_name for r in records}
         rec = next(r for r in records if r.module_name == "mypkg.ext")
-        page = generate_module_page(rec, str(fixture_repo), first_party=first_party)
+        page = generate_module_page(
+            rec, str(fixture_repo), first_party=first_party, project=_PROJECT
+        )
         assert "[[" not in page["content"], "external import must not be linked"
 
     def test_from_import_links_module_not_symbol(self, fixture_repo: Path) -> None:
@@ -580,10 +696,13 @@ class TestCrossrefLinks:
         records = scan_repo(fixture_repo)
         first_party = {r.module_name for r in records}
         rec = next(r for r in records if r.module_name == "mypkg.sym")
-        page = generate_module_page(rec, str(fixture_repo), first_party=first_party)
-        assert "[[mod-mypkg-core]]" in page["content"]
+        page = generate_module_page(
+            rec, str(fixture_repo), first_party=first_party, project=_PROJECT
+        )
+        expected_link = f"[[{repo_wiki_slug(_PROJECT, 'mypkg.core')}]]"
+        assert expected_link in page["content"]
         # must NOT try to link the symbol greet as a module
-        assert "[[mod-mypkg-core-greet]]" not in page["content"]
+        assert repo_wiki_slug(_PROJECT, "mypkg.core.greet") not in page["content"]
 
     def test_generate_wiki_pages_autobuilds_first_party(self, fixture_repo: Path) -> None:
         """generate_wiki_pages builds the first-party set from records automatically."""
@@ -595,19 +714,21 @@ class TestCrossrefLinks:
             ''')
         )
         records = scan_repo(fixture_repo)
-        pages = generate_wiki_pages(records, str(fixture_repo))
-        consumer = next(p for p in pages if p["slug"] == "mod-mypkg-consumer")
-        assert "[[mod-mypkg-core]]" in consumer["content"]
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
+        consumer_slug = repo_wiki_slug(_PROJECT, "mypkg.consumer")
+        consumer = next(p for p in pages if p["slug"] == consumer_slug)
+        expected_link = f"[[{repo_wiki_slug(_PROJECT, 'mypkg.core')}]]"
+        assert expected_link in consumer["content"]
 
     def test_no_first_party_means_plain_backticks(self, fixture_repo: Path) -> None:
         """Default first_party=None → all imports stay plain backticks (back-compat)."""
         rec = scan_python_module(fixture_repo / "mypkg" / "core.py", fixture_repo)
-        page = generate_module_page(rec, str(fixture_repo))
+        page = generate_module_page(rec, str(fixture_repo), project=_PROJECT)
         assert "[[" not in page["content"]
 
     def test_first_party_edges_never_truncated(self, fixture_repo: Path) -> None:
         """isort orders first-party imports LAST; the 10-import cap must not drop
-        crossref edges. All in-repo imports render as [[mod-]] regardless of count."""
+        crossref edges. All in-repo imports render as [[{project}-mod-]] regardless of count."""
         # 12 stdlib imports (fill the display cap) THEN one in-repo import last.
         stdlib_lines = "\n".join(
             f"import {m}"
@@ -632,44 +753,88 @@ class TestCrossrefLinks:
         records = scan_repo(fixture_repo)
         first_party = {r.module_name for r in records}
         rec = next(r for r in records if r.module_name == "mypkg.heavy")
-        page = generate_module_page(rec, str(fixture_repo), first_party=first_party)
+        page = generate_module_page(
+            rec, str(fixture_repo), first_party=first_party, project=_PROJECT
+        )
         # the in-repo edge must survive even though it is the 13th import.
-        assert "[[mod-mypkg-core]]" in page["content"], "first-party edge truncated by import cap"
+        expected_link = f"[[{repo_wiki_slug(_PROJECT, 'mypkg.core')}]]"
+        assert expected_link in page["content"], "first-party edge truncated by import cap"
+
+    def test_no_dangling_mod_prefix_in_crossrefs(self, fixture_repo: Path) -> None:
+        """Car D: no crossref should reference an old-style mod-<name> slug (without project prefix)."""
+        import re
+
+        (fixture_repo / "mypkg" / "consumer.py").write_text(
+            textwrap.dedent('''\
+                """Consumer."""
+                from mypkg.core import Greeter
+                def use(): pass
+            ''')
+        )
+        records = scan_repo(fixture_repo)
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
+        crossref_re = re.compile(r"\[\[([^\]]+)\]\]")
+        old_style = []
+        for page in pages:
+            for ref in crossref_re.findall(page.get("content", "")):
+                # Old-style slugs started with "mod-" without a project prefix segment
+                if ref.startswith("mod-"):
+                    old_style.append((page["slug"], ref))
+        assert old_style == [], (
+            f"Old-style mod- crossrefs found (missing project prefix): {old_style}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Car A — root TOC/index page (item 6)
+# Car D (#83): TOC links use repo_wiki_slug; TOC page_type stays "module"
 # ---------------------------------------------------------------------------
 
 
 class TestTocPage:
     def test_toc_page_emitted(self, fixture_repo: Path) -> None:
-        from yadgar.core.repo_wiki.generator import generate_toc_page
-
         records = scan_repo(fixture_repo)
-        toc = generate_toc_page(records, str(fixture_repo), project="mypkg")
-        assert toc["slug"] == "mypkg-repo-wiki-index"
+        toc = generate_toc_page(records, str(fixture_repo), project=_PROJECT)
+        assert toc["slug"] == f"{_PROJECT}-repo-wiki-index"
         assert toc["directory_context"] == str(fixture_repo)
         assert toc["category"] == "reference"
+        # TOC is NOT page_type=repo_wiki — it has no -mod- in slug, no hash/source_file
         assert toc["page_type"] == "module"
 
-    def test_toc_links_modules(self, fixture_repo: Path) -> None:
-        from yadgar.core.repo_wiki.generator import generate_toc_page
-
+    def test_toc_links_use_namespaced_slugs(self, fixture_repo: Path) -> None:
+        """Car D: TOC links use repo_wiki_slug(project, module), not old mod-<name>."""
         records = scan_repo(fixture_repo)
-        toc = generate_toc_page(records, str(fixture_repo), project="mypkg")
-        assert "[[mod-mypkg-core]]" in toc["content"]
+        toc = generate_toc_page(records, str(fixture_repo), project=_PROJECT)
+        expected_link = f"[[{repo_wiki_slug(_PROJECT, 'mypkg.core')}]]"
+        assert expected_link in toc["content"], (
+            f"TOC must link {expected_link!r}; content: {toc['content'][:400]}"
+        )
+        # Old-style mod-mypkg-core must not appear
+        assert "[[mod-mypkg-core]]" not in toc["content"]
 
     def test_generate_wiki_pages_includes_toc(self, fixture_repo: Path) -> None:
         """generate_wiki_pages(..., project=...) appends the TOC index page, sorted."""
         records = scan_repo(fixture_repo)
-        pages = generate_wiki_pages(records, str(fixture_repo), project="mypkg")
+        pages = generate_wiki_pages(records, str(fixture_repo), project=_PROJECT)
         slugs = [p["slug"] for p in pages]
-        assert "mypkg-repo-wiki-index" in slugs
+        assert f"{_PROJECT}-repo-wiki-index" in slugs
         assert slugs == sorted(slugs), "TOC must be inserted with sort preserved"
         # every page still stamped with repo root
         for p in pages:
             assert p["directory_context"] == str(fixture_repo)
+
+    def test_toc_has_no_hash_or_source_file(self, fixture_repo: Path) -> None:
+        """TOC is not a source module — no hash/source_file."""
+        records = scan_repo(fixture_repo)
+        toc = generate_toc_page(records, str(fixture_repo), project=_PROJECT)
+        assert "hash" not in toc
+        assert "source_file" not in toc
+
+    def test_cross_project_slug_distinct(self) -> None:
+        """Car D: same module name under two projects → distinct slugs."""
+        slug_a = repo_wiki_slug("proj-a", "logging")
+        slug_b = repo_wiki_slug("proj-b", "logging")
+        assert slug_a != slug_b
 
 
 # ---------------------------------------------------------------------------
@@ -704,10 +869,36 @@ class TestCliTocWiring:
         assert f"{pkg.name}-repo-wiki-index" in slugs, (
             f"CLI did not emit the TOC index page; slugs={slugs}"
         )
-        # module pages still carry hash/source_file for the wiki_add(hash=...) bridge.
-        mod_pages = [p for p in payload["pages"] if p.get("page_type") == "module" and "hash" in p]
-        assert mod_pages, "module pages must carry a hash for --stale-only"
+        # module pages carry page_type=repo_wiki (Car D) and hash/source_file
+        mod_pages = [p for p in payload["pages"] if p.get("page_type") == REPO_WIKI_PAGE_TYPE]
+        assert mod_pages, "module pages must carry page_type=repo_wiki"
+        assert all("hash" in p for p in mod_pages), "module pages must carry hash"
         assert all("source_file" in p for p in mod_pages)
+
+    def test_cmd_repo_wiki_module_slugs_namespaced(self, fixture_repo: Path, capsys) -> None:
+        """Car D: CLI-emitted module slugs must start with {project}-mod-."""
+        import json as _json
+        from types import SimpleNamespace
+
+        from yadgar.core.cli.repo_wiki import cmd_repo_wiki
+
+        pkg = fixture_repo / "mypkg"
+        args = SimpleNamespace(
+            repo=str(pkg),
+            include_tests=False,
+            include_errors=False,
+            json=True,
+            dry_run=False,
+            stale_only=False,
+        )
+        cmd_repo_wiki(args)
+        out = capsys.readouterr().out
+        payload = _json.loads(out)
+        mod_pages = [p for p in payload["pages"] if p.get("page_type") == REPO_WIKI_PAGE_TYPE]
+        for page in mod_pages:
+            assert page["slug"].startswith(f"{pkg.name}-mod-"), (
+                f"Slug {page['slug']!r} not namespaced with project {pkg.name!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -757,7 +948,10 @@ def _run_stale_only(fixture_repo, capsys, stored, *, from_stdin=False, monkeypat
 
 
 def _current_hashes(fixture_repo):
-    """Generate current host-side {slug: hash} for hash-bearing module pages."""
+    """Generate current host-side {slug: hash} for hash-bearing module pages.
+
+    Car D: uses project=pkg.name so slugs are namespaced (mypkg-mod-*).
+    """
     from yadgar.core.repo_wiki.generator import generate_wiki_pages
     from yadgar.core.repo_wiki.scanner import scan_repo
 
@@ -767,6 +961,19 @@ def _current_hashes(fixture_repo):
     # exactly the hash-bearing pages the ingest agent would have written.
     pages = generate_wiki_pages(records, str(pkg), skip_parse_errors=True, project=pkg.name)
     return {p["slug"]: p["hash"] for p in pages if "hash" in p}
+
+
+def _core_slug(fixture_repo: Path) -> str:
+    """Return the namespaced slug for the 'core' module when the scan root is fixture_repo/mypkg.
+
+    The CLI scans `fixture_repo / "mypkg"` as the repo root, so module names are
+    "core", "async_mod", etc. (not "mypkg.core").  Project = pkg.name = "mypkg".
+    """
+    return repo_wiki_slug((fixture_repo / "mypkg").name, "core")
+
+
+def _async_mod_slug(fixture_repo: Path) -> str:
+    return repo_wiki_slug((fixture_repo / "mypkg").name, "async_mod")
 
 
 class TestStaleOnly:
@@ -781,38 +988,41 @@ class TestStaleOnly:
     def test_one_changed_hash_emits_only_that_page(self, fixture_repo: Path, capsys) -> None:
         """One source file's stored hash differs → only that page emitted."""
         baseline = _current_hashes(fixture_repo)
-        # Corrupt the stored hash for mod-core → it must be reported drifted.
-        assert "mod-core" in baseline
-        baseline["mod-core"] = "0" * 64
+        core_slug = _core_slug(fixture_repo)
+        assert core_slug in baseline, f"expected {core_slug!r} in baseline; got: {list(baseline)}"
+        baseline[core_slug] = "0" * 64
         payload = _run_stale_only(fixture_repo, capsys, baseline)
         slugs = [p["slug"] for p in payload["pages"]]
-        assert slugs == ["mod-core"], f"expected only the drifted page, got {slugs}"
+        assert slugs == [core_slug], f"expected only the drifted page, got {slugs}"
         assert payload["deleted"] == []
 
     def test_new_module_emitted(self, fixture_repo: Path, capsys) -> None:
         """A module absent from the baseline is emitted as new."""
         baseline = _current_hashes(fixture_repo)
-        # Drop core from baseline → it becomes 'new' (no stored entry).
-        del baseline["mod-core"]
+        core_slug = _core_slug(fixture_repo)
+        del baseline[core_slug]
         payload = _run_stale_only(fixture_repo, capsys, baseline)
         slugs = [p["slug"] for p in payload["pages"]]
-        assert "mod-core" in slugs
+        assert core_slug in slugs
         # unchanged modules (still in baseline) must NOT be emitted
-        assert "mod-async-mod" not in slugs
+        assert _async_mod_slug(fixture_repo) not in slugs
 
     def test_deleted_slug_reported(self, fixture_repo: Path, capsys) -> None:
         """A baseline slug with no corresponding source module → listed under deleted."""
         baseline = _current_hashes(fixture_repo)
-        baseline["mod-gone"] = "a" * 64  # no source module named mypkg.gone
+        # Use module name "gone" (no package prefix, since scan root = mypkg/).
+        gone_slug = repo_wiki_slug((fixture_repo / "mypkg").name, "gone")
+        baseline[gone_slug] = "a" * 64  # no source module named "gone"
         payload = _run_stale_only(fixture_repo, capsys, baseline)
-        assert "mod-gone" in payload["deleted"]
+        assert gone_slug in payload["deleted"]
         # a real, unchanged module must not appear in deleted
-        assert "mod-core" not in payload["deleted"]
+        assert _core_slug(fixture_repo) not in payload["deleted"]
 
     def test_toc_never_in_pages(self, fixture_repo: Path, capsys) -> None:
         """The hashless TOC index page is never emitted in `pages` (no hash to diff)."""
         baseline = _current_hashes(fixture_repo)
-        baseline["mod-core"] = "0" * 64  # force one drift
+        core_slug = _core_slug(fixture_repo)
+        baseline[core_slug] = "0" * 64  # force one drift
         payload = _run_stale_only(fixture_repo, capsys, baseline)
         slugs = [p["slug"] for p in payload["pages"]]
         assert f"{(fixture_repo / 'mypkg').name}-repo-wiki-index" not in slugs
@@ -820,14 +1030,15 @@ class TestStaleOnly:
     def test_toc_stale_flag_on_new(self, fixture_repo: Path, capsys) -> None:
         """toc_stale True when the module set changed (new module), else the TOC is current."""
         baseline = _current_hashes(fixture_repo)
+        core_slug = _core_slug(fixture_repo)
         # content drift only (set unchanged) → toc not stale
         drift = dict(baseline)
-        drift["mod-core"] = "0" * 64
+        drift[core_slug] = "0" * 64
         payload = _run_stale_only(fixture_repo, capsys, drift)
         assert payload["toc_stale"] is False
         # new module (set changed) → toc stale
         missing = dict(baseline)
-        del missing["mod-core"]
+        del missing[core_slug]
         payload2 = _run_stale_only(fixture_repo, capsys, missing)
         assert payload2["toc_stale"] is True
 
@@ -835,7 +1046,8 @@ class TestStaleOnly:
         """Omitting --stored-hashes → empty baseline → every module page is new."""
         payload = _run_stale_only(fixture_repo, capsys, None)
         slugs = [p["slug"] for p in payload["pages"]]
-        assert "mod-core" in slugs
+        core_slug = _core_slug(fixture_repo)
+        assert core_slug in slugs
         assert payload["deleted"] == []
 
     def test_stdin_baseline(self, fixture_repo: Path, capsys, monkeypatch) -> None:
@@ -868,3 +1080,115 @@ class TestExtractorRegistry:
     def test_registered_py_still_scanned(self, fixture_repo: Path) -> None:
         records = scan_repo(fixture_repo)
         assert any(r.module_path.endswith(".py") for r in records)
+
+
+# ---------------------------------------------------------------------------
+# Car E (#83) — no-churn integration proof (headline test for bug #83)
+# ---------------------------------------------------------------------------
+#
+# Belt-and-suspenders assertions that COULD duplicate existing tests are
+# intentionally omitted here — they already exist:
+#   • slug prefix:    TestRepoWikiSlug::test_slug_cross_project_distinct (L250)
+#   • crossref targets: TestGenerateWikiPages::test_crossref_targets_resolve_to_emitted_slugs (L475)
+# This class covers the INTEGRATION PROOF: generate → feed own output back as
+# baseline → zero drift.  The bug (#83) was: generator mod-* slugs never
+# reconciled with stored title-slugs → churn on every cadence.
+
+
+class TestNoChurnIntegrationProof:
+    """Car E integration proof: generate then stale-diff own output ⇒ zero drift.
+
+    This is the headline regression test for bug #83.  Before the fix, the
+    generator emitted ``{project}-mod-*`` slugs but wiki_add stored pages at
+    title-slugs.  Feeding the just-generated slug→hash map back as the baseline
+    would always produce non-empty pages (slug mismatch) and non-empty deleted
+    lists — i.e., churn on every cadence.
+
+    With Cars A–D in place the slug scheme is unified end-to-end: generate →
+    stale-diff → zero drift.
+    """
+
+    def test_generate_then_stale_diff_own_output_is_zero(self, fixture_repo: Path, capsys) -> None:
+        """Generate via --json, build baseline from that output, diff back → zero.
+
+        Steps:
+        1. Run cmd_repo_wiki --json to get the full page list (non-stale path).
+        2. Parse the emitted JSON and build {slug: hash} from module pages only
+           (skip the TOC which has no hash).
+        3. Feed that map back as the stored baseline via --stale-only --stored-hashes.
+        4. Assert pages==[], deleted==[], toc_stale==False.
+
+        This proves:
+        - The generator's slug scheme matches what the stale-diff expects.
+        - No phantom "new" pages from slug mismatch (pre-#83 churn mode).
+        - No phantom "deleted" entries from unresolvable stored keys.
+        - The TOC is not mis-flagged as stale when the module set is unchanged.
+        """
+        import json as _json
+        from types import SimpleNamespace
+
+        from yadgar.core.cli.repo_wiki import cmd_repo_wiki
+
+        pkg = fixture_repo / "mypkg"
+
+        # ── Step 1: full generate (non-stale --json) ──────────────────────
+        args_gen = SimpleNamespace(
+            repo=str(pkg),
+            include_tests=False,
+            include_errors=False,
+            json=True,
+            dry_run=False,
+            stale_only=False,
+        )
+        cmd_repo_wiki(args_gen)
+        gen_out = capsys.readouterr().out  # capture + clear buffer
+
+        gen_payload = _json.loads(gen_out)
+        assert "pages" in gen_payload, "generator must emit a 'pages' key"
+
+        # ── Step 2: build baseline from generated module pages (skip hashless TOC) ──
+        baseline = {
+            p["slug"]: p["hash"]
+            for p in gen_payload["pages"]
+            if "hash" in p  # TOC page has no hash — skip it
+        }
+        assert baseline, "baseline must be non-empty (generator produced module pages)"
+
+        # Assert every module-page slug uses the {project}-mod- prefix.
+        project = pkg.name  # "mypkg" for the fixture
+        for slug in baseline:
+            assert slug.startswith(f"{project}-mod-"), (
+                f"module-page slug {slug!r} lacks {{project}}-mod- prefix "
+                f"(expected {project!r} namespace)"
+            )
+
+        # ── Step 3: stale-diff against own output ──────────────────────────
+        baseline_path = fixture_repo / "no_churn_baseline.json"
+        baseline_path.write_text(_json.dumps(baseline))
+
+        args_stale = SimpleNamespace(
+            repo=str(pkg),
+            include_tests=False,
+            include_errors=False,
+            json=True,
+            dry_run=False,
+            stale_only=True,
+            stored_hashes=str(baseline_path),
+        )
+        cmd_repo_wiki(args_stale)
+        stale_out = capsys.readouterr().out
+
+        stale_payload = _json.loads(stale_out)
+
+        # ── Step 4: assert zero drift ──────────────────────────────────────
+        assert stale_payload["pages"] == [], (
+            f"Expected zero drifted/new pages when diffing own output; "
+            f"got: {[p['slug'] for p in stale_payload['pages']]}"
+        )
+        assert stale_payload["deleted"] == [], (
+            f"Expected zero deleted slugs when diffing own output; got: {stale_payload['deleted']}"
+        )
+        assert stale_payload["toc_stale"] is False, (
+            "Expected toc_stale=False when module set is unchanged; "
+            f"got: {stale_payload['toc_stale']}"
+        )

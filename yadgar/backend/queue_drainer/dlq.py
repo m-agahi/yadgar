@@ -283,6 +283,38 @@ class _DLQMixin:
         if payload.get("append"):
             return None
 
+        # Car C (#83): upsert=False slug-collision check.
+        # Runs before policy dispatch so it applies to both identity and similarity
+        # gate modes. When an explicit slug is present and upsert=False, a collision
+        # must be rejected synchronously (wait=True) or routed to DLQ (wait=False)
+        # rather than being silently swallowed inside _apply() → WikiStore.add().
+        # Car B (#83): type-aware gate. Resolve the policy for this page_type.
+        # identity mode (e.g. repo_wiki) → skip content-similarity entirely and
+        # enforce schema-validity instead (slug-uniqueness + upsert handle identity).
+        page_type = payload.get("page_type")
+        try:
+            from yadgar._shared.wiki.policy import get_policy  # noqa: PLC0415
+
+            _policy = get_policy(page_type)
+        except Exception as exc:
+            logger.debug("_sim_gate_for_drainer: policy resolve error (non-fatal): %s", exc)
+            _policy = None
+
+        if _policy is not None and _policy.gate_mode == "identity":
+            return self._identity_gate_for_drainer(payload)
+
+        # Similarity mode (default) — content-similarity gate (now dir-scoped).
+        return self._similarity_gate_for_drainer(payload)
+
+    @observe(tier="stage", metric="drainer.dlq.similarity_gate_for_drainer")
+    def _similarity_gate_for_drainer(self, payload: dict) -> dict | None:
+        """Content-similarity half of the drainer gate (Car B, #83 extraction).
+
+        Split out of ``_sim_gate_for_drainer`` (which now owns only the bypass +
+        policy dispatch) to keep cyclomatic complexity under the I13 hard cap.
+        Behaviour is unchanged: config read → find_similar (dir-scoped) →
+        soft/hard disposition.
+        """
         try:
             from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
 
@@ -294,7 +326,7 @@ class _DLQMixin:
             sim_threshold = getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
             sim_top_k = getattr(cfg, "WIKI_SIM_TOP_K", 5)
         except Exception as exc:
-            logger.debug("_sim_gate_for_drainer: config error (non-fatal): %s", exc)
+            logger.debug("_similarity_gate_for_drainer: config error (non-fatal): %s", exc)
             return None
 
         try:
@@ -304,24 +336,21 @@ class _DLQMixin:
                 return None
 
             title = payload.get("title", "")
-            content = payload.get("content", "")
-            branch = payload.get("branch")
-            slug = payload.get("slug", "")
-
             candidates = _st._wiki.find_similar_wiki_pages(
                 title=title,
-                content=content,
-                branch=branch,
+                content=payload.get("content", ""),
+                branch=payload.get("branch"),
                 threshold=sim_threshold,
                 top_k=sim_top_k,
-                exclude_slug=slug,
+                exclude_slug=payload.get("slug", ""),
+                directory_context=payload.get("directory_context"),
             )
             if not candidates:
                 return None
 
             if sim_mode == "soft":
                 logger.warning(
-                    "_sim_gate_for_drainer (soft): near-duplicate for '%s', "
+                    "_similarity_gate_for_drainer (soft): near-duplicate for '%s', "
                     "candidates=%s — allowing",
                     title,
                     [c["slug"] for c in candidates],
@@ -330,7 +359,7 @@ class _DLQMixin:
 
             # hard mode: reject
             logger.info(
-                "_sim_gate_for_drainer: rejecting '%s' as duplicate (candidates=%s)",
+                "_similarity_gate_for_drainer: rejecting '%s' as duplicate (candidates=%s)",
                 title,
                 [c["slug"] for c in candidates],
             )
@@ -358,5 +387,62 @@ class _DLQMixin:
                 ),
             }
         except Exception as exc:
-            logger.debug("_sim_gate_for_drainer: gate error (non-fatal): %s", exc)
+            logger.debug("_similarity_gate_for_drainer: gate error (non-fatal): %s", exc)
             return None
+
+    @observe(tier="stage", metric="drainer.dlq.identity_gate_for_drainer")
+    def _identity_gate_for_drainer(self, payload: dict) -> dict | None:
+        """Identity-mode gate for structural page types (Car B, #83).
+
+        Used when ``get_policy(page_type).gate_mode == "identity"`` (e.g.
+        ``repo_wiki``). Content-similarity is the WRONG guard for structural
+        pages — two projects' thin ``logging.py`` share high cosine similarity
+        yet are not duplicates. Instead we enforce SCHEMA validity here; the
+        slug+upsert write path handles identity (create-or-overwrite at the
+        caller-supplied slug — a revision, which bypasses the similarity gate the
+        same way replace_slug/append do).
+
+        Returns a rejection dict (reason ``repo_wiki_schema_invalid``) when the
+        page fails schema validation, else None (allow the write).
+        """
+        try:
+            from yadgar._shared.wiki.repo_wiki_schema import (  # noqa: PLC0415
+                validate_repo_wiki_page,
+            )
+
+            errors = validate_repo_wiki_page(
+                slug=payload.get("slug"),
+                source_file=payload.get("source_file"),
+                hash=payload.get("hash"),
+            )
+        except Exception as exc:
+            logger.debug("_identity_gate_for_drainer: validation error (non-fatal): %s", exc)
+            return None
+
+        if not errors:
+            return None  # valid → allow; slug-uniqueness + upsert handle identity
+
+        logger.info(
+            "_identity_gate_for_drainer: rejecting repo_wiki page '%s' — schema errors: %s",
+            payload.get("slug", ""),
+            errors,
+        )
+        try:
+            from yadgar._shared.observability.metrics import (
+                yadgar_wiki_add_rejected_total,  # noqa: PLC0415
+            )
+
+            yadgar_wiki_add_rejected_total.labels(reason="repo_wiki_schema_invalid").inc()
+        except Exception:
+            pass
+        return {
+            "stored": False,
+            "reason": "repo_wiki_schema_invalid",
+            "errors": errors,
+            "hint": (
+                "repo_wiki page failed schema validation: "
+                + "; ".join(errors)
+                + ". Fix source_file (absolute path), hash (64 hex chars), and "
+                "slug ('{project}-mod-...') then retry."
+            ),
+        }

@@ -9,7 +9,6 @@ law. Internal I13 splitting of this module is task #18, not this car.
 """
 
 import difflib
-import html
 import logging
 import re
 import time as _time
@@ -17,6 +16,7 @@ from datetime import UTC, datetime
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage.directory import is_directory_eligible
 from yadgar._shared.wiki.contract import (
     CATEGORIES as _CONTRACT_CATEGORIES,
 )
@@ -26,6 +26,8 @@ from yadgar._shared.wiki.contract import (
 from yadgar._shared.wiki.contract import (
     WikiAddOptions,
 )
+from yadgar._shared.wiki.policy import get_policy as _get_wiki_policy
+from yadgar._shared.wiki.slug import slugify as _slugify_fn
 
 logger = logging.getLogger(__name__)
 
@@ -634,6 +636,33 @@ class WikiStore:
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    @observe(tier="stage")
+    def _reject_if_slug_locked(
+        self,
+        slug: str,
+        explicit_slug: str | None,
+        upsert: bool,
+        existing: dict | None,
+    ) -> dict | None:
+        """Return a rejection dict when an explicit slug collides under upsert=False.
+
+        Car B (#83) extraction (keeps ``add`` under the I13 cyclomatic cap). The
+        guard only engages when the caller supplied an EXPLICIT slug AND opted out
+        of overwrite AND a page already occupies that slug. The legacy
+        title-derived path always upserts by slug, so it never trips this.
+        """
+        if existing and explicit_slug is not None and not upsert:
+            return {
+                "stored": False,
+                "reason": "slug_exists",
+                "slug": slug,
+                "hint": (
+                    f"slug {slug!r} already exists and upsert=False. "
+                    "Pass upsert=True to overwrite, or choose a different slug."
+                ),
+            }
+        return None
+
     @trace_span()
     def add(
         self,
@@ -670,7 +699,12 @@ class WikiStore:
             k: v for k, v in (("hash", o.hash), ("source_file", o.source_file)) if v is not None
         }
 
-        slug = self._slugify(title)
+        # Car B (#83): explicit caller-supplied slug bypasses title derivation.
+        # Structural pages (repo_wiki) MUST land at a caller-computed slug so their
+        # crossrefs + stale-diff keys stay stable across regens. slug=None keeps the
+        # legacy title-derived behaviour byte-for-byte.
+        explicit_slug = o.slug
+        slug = explicit_slug if explicit_slug is not None else self._slugify(title)
         if category not in self.CATEGORIES:
             category = "reference"
         if confidence not in self.CONFIDENCE_LEVELS:
@@ -679,9 +713,21 @@ class WikiStore:
         source_memory_ids = source_memory_ids or []
         # v5.42.5: normalise directory (DP-3 — strip trailing slash only)
         effective_dir = (directory_context or "global").rstrip("/") or "global"
+        # C2 (#83): storage_scope enforcement — when the page_type policy declares
+        # storage_scope="global", override the caller-supplied directory_context to
+        # "global". The TYPE, not the caller, decides the scope. This is the single
+        # enforcement point for both agent_prompt_save and raw wiki_add replay
+        # (run_wiki_add_replay also calls WikiStore.add). See ADR-0158 (wiki_policy).
+        if _get_wiki_policy(page_type).storage_scope == "global":
+            effective_dir = "global"
 
         existing = self._storage.get_wiki_page_by_slug(slug)
         now = datetime.now(UTC).isoformat()
+
+        # Car B (#83): upsert=False + explicit slug already present → reject.
+        _locked = self._reject_if_slug_locked(slug, explicit_slug, o.upsert, existing)
+        if _locked is not None:
+            return _locked
 
         if existing:
             merged_tags = list(dict.fromkeys(existing.get("tags", []) + tags))
@@ -1022,6 +1068,7 @@ class WikiStore:
         threshold: float = 0.80,
         top_k: int = 5,
         exclude_slug: str | None = None,
+        directory_context: str | None = None,
     ) -> list[dict]:
         """Return wiki pages with combined embedding similarity >= threshold.
 
@@ -1035,6 +1082,14 @@ class WikiStore:
         Scope: branch-aware. Candidates must have branch == branch OR branch IS NULL
         (canonical). Pages on unrelated branches are excluded.
 
+        Directory scope (Car B, #83): when ``directory_context`` (the caller's
+        project dir) is supplied, candidates are additionally filtered via
+        ``is_directory_eligible`` — a page in an UNRELATED project directory is
+        NOT a duplicate of the incoming page (fixes the cross-project gate block:
+        two projects' thin ``logging.py`` no longer collide). Sentinel rows
+        (``global`` / ``''`` / ``None``) stay always-eligible. When
+        ``directory_context`` is None the filter is a no-op (legacy behaviour).
+
         Args:
             title: Title of the candidate new page.
             content: Content of the candidate new page.
@@ -1042,6 +1097,8 @@ class WikiStore:
             threshold: Minimum cosine similarity to include a page. Default 0.80.
             top_k: Maximum number of candidates to return.
             exclude_slug: Exclude this slug (used to skip self-comparison on upsert).
+            directory_context: Caller project dir for directory-scoped candidate
+                filtering (None = no directory filter, legacy behaviour).
 
         Returns:
             List of dicts with keys: slug, title, similarity, branch.
@@ -1076,7 +1133,41 @@ class WikiStore:
         if branch is not None:
             allowed_branches.add(branch)
 
-        candidates = []
+        # Car B (#83): directory scope. Normalise caller dir the same way add()
+        # stamps directory_context (strip trailing slash, keep 'global' sentinel).
+        caller_dir = directory_context
+        if caller_dir and caller_dir != "global":
+            caller_dir = caller_dir.rstrip("/") or caller_dir
+
+        candidates = self._collect_similar_candidates(
+            vec_results,
+            threshold=threshold,
+            top_k=top_k,
+            allowed_branches=allowed_branches,
+            caller_dir=caller_dir,
+            exclude_slug=exclude_slug,
+        )
+        return sorted(candidates, key=lambda c: c["similarity"], reverse=True)
+
+    @observe(tier="stage")
+    def _collect_similar_candidates(
+        self,
+        vec_results: list[tuple[int, float]],
+        *,
+        threshold: float,
+        top_k: int,
+        allowed_branches: set[str | None],
+        caller_dir: str | None,
+        exclude_slug: str | None,
+    ) -> list[dict]:
+        """Filter KNN vector hits into gate candidates (Car B, #83 extraction).
+
+        Split out of ``find_similar_wiki_pages`` to keep the parent under the I13
+        cyclomatic cap. Applies, in order: threshold, page-exists, branch scope,
+        directory scope (``is_directory_eligible``), self-slug exclusion. Caps at
+        ``top_k`` hits. Behaviour is unchanged from the inline loop.
+        """
+        candidates: list[dict] = []
         for page_id, distance in vec_results:
             similarity = 1.0 - distance  # cosine similarity from cosine distance
             if similarity < threshold:
@@ -1089,6 +1180,11 @@ class WikiStore:
             # Branch scope filter
             page_branch = page.get("branch")
             if page_branch not in allowed_branches:
+                continue
+
+            # Car B (#83): directory scope filter — a page in an unrelated project
+            # directory is not a duplicate. No-op when caller_dir is None (legacy).
+            if not is_directory_eligible(page.get("directory_context"), caller_dir):
                 continue
 
             # Exclude self-slug (used for upsert path)
@@ -1105,8 +1201,7 @@ class WikiStore:
             )
             if len(candidates) >= top_k:
                 break
-
-        return sorted(candidates, key=lambda c: c["similarity"], reverse=True)
+        return candidates
 
     @observe(tier="boundary")
     def ingest(
@@ -2189,9 +2284,11 @@ class WikiStore:
         HTML entities (&amp;, &lt;, etc.) are unescaped before slug generation
         so titles created via different code paths (direct API vs repo_wiki)
         always produce identical slugs. v5.24.1: fixes &amp; → 'amp' drift.
+
+        Delegates to ``yadgar._shared.wiki.slug.slugify`` (Car A #83) —
+        single source of truth for slug generation.
         """
-        slug = re.sub(r"[^a-z0-9]+", "-", html.unescape(title).lower()).strip("-")
-        return slug[:64] if slug else "untitled"
+        return _slugify_fn(title)
 
     def _extract_wikilinks(self, content: str) -> list[str]:
         """Extract [[slug]] references from markdown content."""

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage.directory import is_directory_eligible
+from yadgar._shared.wiki.policy import get_policy
 from yadgar.backend.retrieval.providers.base import Candidate, Scope, SourceProvider
 
 if TYPE_CHECKING:
@@ -86,6 +87,18 @@ class WikiProvider(SourceProvider):
                 continue
             dc = page.get("directory_context")
             if not is_directory_eligible(dc, caller_dir):
+                continue
+            # Car C (#83): policy-driven recall exclusion.
+            # Pages whose page_type resolves to recall_disposition="exclude" are
+            # dropped from fanout recall. This keeps repo_wiki (structural code
+            # inventory) and agent_prompt pages out of everyday recall while
+            # wiki_query/wiki_read/wiki_list (which call WikiStore.query directly,
+            # not via this provider) remain fully unaffected.
+            # OVERRIDE: when the caller passed an explicit include_tag (self._tags),
+            # they opted in to this page type — skip the exclusion so
+            # recall(tags=["agent-prompt"]) can still reach agent_prompt pages.
+            # Disposition is switchable: one-field flip in policy.py.
+            if not self._tags and get_policy(page.get("page_type")).recall_disposition == "exclude":
                 continue
             native_score = float(page.get("_retrieval_score", 0.0))
             # Tag raw dict so orchestrator can set _source="wiki" downstream

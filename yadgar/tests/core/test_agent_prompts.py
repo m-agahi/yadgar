@@ -98,6 +98,115 @@ class TestAgentPromptSave:
         assert page is not None
         assert page.get("page_type") == "agent_prompt"
 
+    def test_storage_scope_override_global_when_project_dir_supplied(self, storage):
+        """C2 (#83): agent_prompt_save with a project directory must store global scope.
+
+        storage_scope="global" enforcement in WikiStore.add overrides the caller's
+        directory_context when page_type == "agent_prompt" — the type, not the
+        caller, decides the scope.
+        """
+        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
+
+        agent_prompt_save(
+            "zz-probe-scope",
+            "Probe prompt for storage_scope enforcement.",
+            directory="/tmp/some-project",
+            storage=storage,
+        )
+        page = storage.get_wiki_page_by_slug("agent-prompt-zz-probe-scope")
+        assert page is not None, "page must be stored"
+        assert page.get("directory_context") == "global", (
+            f"expected 'global', got {page.get('directory_context')!r} — "
+            "storage_scope enforcement did not fire"
+        )
+
+
+class TestWikiAddStorageScopeEnforcement:
+    """C2 (#83): raw wiki_add with page_type='agent_prompt' also stores global scope.
+
+    The enforcement lives in WikiStore.add (the shared write chokepoint used by
+    both agent_prompt_save and wiki_add's replay path), so the type — not the
+    caller — decides directory_context.
+    """
+
+    def test_wiki_add_agent_prompt_page_type_stored_global(self, storage):
+        """wiki_add(page_type='agent_prompt', directory='/tmp/some-project') → global."""
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.wiki import WikiStore
+        from yadgar._shared.wiki.contract import WikiAddOptions
+
+        # Use the module-scoped storage already wired into _st by the fixture.
+        wiki = WikiStore(storage, _st._embeddings)
+        result = wiki.add(
+            title="Storage Scope Probe",
+            content="Probe content for storage_scope test.",
+            category="reference",
+            tags=["agent-prompt", "task:storage-scope-probe"],
+            opts=WikiAddOptions(
+                directory_context="/tmp/some-project",
+                page_type="agent_prompt",
+            ),
+        )
+        slug = result.get("slug")
+        assert slug is not None
+        page = storage.get_wiki_page_by_slug(slug)
+        assert page is not None
+        assert page.get("directory_context") == "global", (
+            f"expected 'global', got {page.get('directory_context')!r}"
+        )
+
+    def test_wiki_add_plain_page_type_stays_project_scoped(self, storage):
+        """wiki_add with page_type=None keeps caller's directory_context (control case)."""
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.wiki import WikiStore
+        from yadgar._shared.wiki.contract import WikiAddOptions
+
+        wiki = WikiStore(storage, _st._embeddings)
+        project_dir = "/tmp/control-project"
+        result = wiki.add(
+            title="Storage Scope Control Plain",
+            content="Control content — no page_type.",
+            category="reference",
+            tags=["plain-page"],
+            opts=WikiAddOptions(
+                directory_context=project_dir,
+                page_type=None,
+            ),
+        )
+        slug = result.get("slug")
+        assert slug is not None
+        page = storage.get_wiki_page_by_slug(slug)
+        assert page is not None
+        assert page.get("directory_context") == project_dir, (
+            f"expected {project_dir!r}, got {page.get('directory_context')!r}"
+        )
+
+    def test_wiki_add_repo_wiki_page_type_stays_project_scoped(self, storage):
+        """wiki_add with page_type='repo_wiki' keeps caller's directory_context (project storage_scope)."""
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.wiki import WikiStore
+        from yadgar._shared.wiki.contract import WikiAddOptions
+
+        wiki = WikiStore(storage, _st._embeddings)
+        project_dir = "/tmp/repo-wiki-project"
+        result = wiki.add(
+            title="Storage Scope Control Repo Wiki",
+            content="repo_wiki control — should stay project scoped.",
+            category="reference",
+            tags=["repo-wiki-control"],
+            opts=WikiAddOptions(
+                directory_context=project_dir,
+                page_type="repo_wiki",
+            ),
+        )
+        slug = result.get("slug")
+        assert slug is not None
+        page = storage.get_wiki_page_by_slug(slug)
+        assert page is not None
+        assert page.get("directory_context") == project_dir, (
+            f"expected {project_dir!r}, got {page.get('directory_context')!r}"
+        )
+
 
 class TestReadAgentPrompt:
     """_read_agent_prompt (internal slug-read) returns the page by deterministic slug.

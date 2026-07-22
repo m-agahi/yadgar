@@ -50,3 +50,14 @@ class WikiAddOptions:
     # `--stale-only` check can diff stored hash vs live file without a disk scan.
     hash: str | None = None
     source_file: str | None = None
+    # Car B (#83): explicit-slug + upsert write contract.
+    #   slug=None  → store at the title-derived slug (unchanged backward compat).
+    #   slug="..." → store at EXACTLY that slug, no title derivation. Required for
+    #                structural pages (repo_wiki) whose crossrefs/stale-diff key on
+    #                a caller-computed slug, not the title.
+    #   upsert=True  → create-or-overwrite at the (explicit or derived) slug.
+    #   upsert=False + explicit slug that already exists → reject (slug_exists),
+    #                do not overwrite. Only meaningful with an explicit slug; the
+    #                legacy title-derived path always upserts by slug regardless.
+    slug: str | None = None
+    upsert: bool = True
