@@ -122,8 +122,11 @@ Claude writes the block via `block_update`), same shape as repo_wiki's `wiki_add
   Subcommands `index|query|refresh`. Runner: subprocess (flags/`--args-file`/stdin, strip stderr;
   mock for unit tests, live smoke guarded by `shutil.which` — cite the test-suite conftest guard
   pattern). **Default-branch temp-worktree flow** (the HARD CONSTRAINT above). Always export
-  `CBM_ALLOWED_ROOT`. `config.py`: enable, digest char budget, per-repo scope, cache dir, cadence
-  interval. Binary-absent → friendly error, not stacktrace.
+  `CBM_ALLOWED_ROOT`. `config.py`: global enable flag, digest char budget, per-repo scope, cache
+  dir, cadence interval. Binary-absent → friendly error, not stacktrace.
+  **Opt-out (user req):** global config toggle (`CODE_GRAPH_ENABLED`, default off until proven) +
+  per-repo marker (a `.code-graph-disable` file at repo root, honored by refresh + suggest). When
+  opted out: no index, no digest, no nudge.
 - **Car C — digest renderer + block write** (opus, TDD). `get_architecture(all)` → ≤~2000-char
   digest markdown (layers/hotspots/entry-points/endpoints, keyed canonical_root+subdir). Write via
   `block_update` (gated). Golden-file tests from pilot JSON. **Verify no secret-gate FP on
@@ -133,7 +136,12 @@ Claude writes the block via `block_update`), same shape as repo_wiki's `wiki_add
   slot: new template `templates/code_graph_refresh_prompt.md` (parallel to repo_wiki's) instructing
   Claude to run `yadgar code-graph refresh` + write the block; point the reason/template at it,
   **behind an enable flag** so repo_wiki keeps running until code_graph is proven, then flip
-  (transition, not hard cutover). Add the availability nudge to project_brief/SessionStart output.
+  (transition, not hard cutover). Cadence = same as repo_wiki (`REPO_WIKI_REFRESH_STOP_INTERVAL`
+  200 msgs; add a `CODE_GRAPH_REFRESH_STOP_INTERVAL`).
+  **SessionStart soft-suggest (user req, NOTHING forced):** if the session looks like coding work
+  AND the current repo has NO digest block yet AND not opted-out → project_brief adds a one-line
+  *suggestion* ("no code_graph digest for this repo — `yadgar code-graph refresh` to build one").
+  Never auto-runs, never blocks. If a digest block exists it's already injected (no suggestion).
 - **Car E — agent-prompt nudges** (sonnet). `agent_prompt_save` on the planning/coding patterns
   (no skill file). Rides #15/#16.
 - **Car F — integration + versions + docs** (opus). e2e (guarded live smoke on a real repo) +
