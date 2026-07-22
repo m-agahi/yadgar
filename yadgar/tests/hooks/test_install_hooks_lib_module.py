@@ -83,6 +83,24 @@ def test_make_hook_entry_empty_env_block_omitted():
     assert "env" not in entry["hooks"][0]
 
 
+def test_make_hook_entry_async_true_sets_key():
+    """async_=True must set entry["hooks"][0]["async"] = True."""
+    entry = _make_hook_entry("drain.py", "", {}, async_=True)
+    assert entry["hooks"][0].get("async") is True
+
+
+def test_make_hook_entry_async_default_key_absent():
+    """Default call (async_=False) must NOT add an "async" key at all."""
+    entry = _make_hook_entry("drain.py", "", {})
+    assert "async" not in entry["hooks"][0]
+
+
+def test_make_hook_entry_async_false_explicit_key_absent():
+    """Explicit async_=False must also NOT add an "async" key."""
+    entry = _make_hook_entry("drain.py", "", {}, async_=False)
+    assert "async" not in entry["hooks"][0]
+
+
 # ── _append_if_absent ────────────────────────────────────────────────────────
 
 
@@ -254,6 +272,34 @@ def test_build_core_hooks_runner_in_commands(tmp_path):
         if isinstance(entry, dict) and entry.get("hooks")
     ]
     assert any("hook_runner.py" in cmd for cmd in all_commands)
+
+
+def test_build_core_hooks_precompact_hook_is_async(tmp_path):
+    """PreCompact inner hook must have async=True (fire-and-forget drain)."""
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert cfg["PreCompact"][0]["hooks"][0].get("async") is True
+
+
+def test_build_core_hooks_blocking_hooks_have_no_async_key(tmp_path):
+    """SessionStart, PostToolUse, UserPromptSubmit, PreToolUse must NOT have async key.
+
+    These events inject stdout (prompt-recall, session-start-context) or gate
+    execution (PreToolUse deny). Making them async would break injection/deny.
+    """
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    blocking_events = ("SessionStart", "PostToolUse", "UserPromptSubmit", "PreToolUse")
+    for event in blocking_events:
+        for entry in cfg.get(event, []):
+            inner = entry.get("hooks", [{}])[0]
+            assert "async" not in inner, (
+                f"{event} hook must be blocking (no async key); found async={inner['async']!r}"
+            )
 
 
 # ── _copy_hook (via tmp_path) ─────────────────────────────────────────────────
