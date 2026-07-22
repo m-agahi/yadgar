@@ -37,6 +37,10 @@ INTERVAL = 25  # human messages between checkpoints
 # Config-driven so operators can retune without editing the hook.
 ANCHOR_AUDIT_STOP_INTERVAL = get_settings().ANCHOR_AUDIT_STOP_INTERVAL
 
+# Car D (#83): human messages between repo-wiki-refresh maintenance injections.
+# Slowest cadence (code-structure drift is rare); config-driven like the above.
+REPO_WIKI_REFRESH_STOP_INTERVAL = get_settings().REPO_WIKI_REFRESH_STOP_INTERVAL
+
 
 @observe(tier="stage")
 def _resolve_prompt_template_path(filename: str = "stop_checkpoint_prompt.md") -> str:
@@ -88,6 +92,7 @@ def _resolve_prompt_template_path(filename: str = "stop_checkpoint_prompt.md") -
 # the full protocol lives in the file at each path.
 _PROMPT_TEMPLATE_PATH = _resolve_prompt_template_path("stop_checkpoint_prompt.md")
 _ANCHOR_AUDIT_TEMPLATE_PATH = _resolve_prompt_template_path("anchor_audit_prompt.md")
+_REPO_WIKI_REFRESH_TEMPLATE_PATH = _resolve_prompt_template_path("repo_wiki_refresh_prompt.md")
 
 
 @observe(tier="hot")
@@ -217,6 +222,20 @@ def _anchor_audit_reason(count: int) -> str:
     )
 
 
+def _repo_wiki_refresh_is_due(count: int, session_state: dict) -> bool:
+    return (
+        count - int(session_state.get("last_repo_wiki_refresh", 0))
+        >= REPO_WIKI_REFRESH_STOP_INTERVAL
+    )
+
+
+def _repo_wiki_refresh_reason(count: int) -> str:
+    return (
+        f"[yadgar] Repo-wiki-refresh maintenance due. Read {_REPO_WIKI_REFRESH_TEMPLATE_PATH}"
+        " and follow all the instructions in it."
+    )
+
+
 # Ordered by priority (ascending). FIRST DUE WINS.
 _MAINTENANCE_ITEMS: list[dict] = [
     {
@@ -232,6 +251,13 @@ _MAINTENANCE_ITEMS: list[dict] = [
         "state_key": "last_anchor_audit",
         "is_due": _anchor_audit_is_due,
         "reason": _anchor_audit_reason,
+    },
+    {
+        "name": "repo_wiki_refresh",
+        "priority": 2,
+        "state_key": "last_repo_wiki_refresh",
+        "is_due": _repo_wiki_refresh_is_due,
+        "reason": _repo_wiki_refresh_reason,
     },
 ]
 

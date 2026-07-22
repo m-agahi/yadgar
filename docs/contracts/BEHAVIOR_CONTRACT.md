@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**244 SHALLs / 39 subsystems.** Today: **56 ✅ · 185 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76) Of the 185 ⏳:
-**59 `[r]` (real-path coverage exists) · 94 `[u]` (unit-only) · 32 none.**
+**244 SHALLs / 39 subsystems.** Today: **56 ✅ · 183 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83) Of the 183 ⏳:
+**59 `[r]` (real-path coverage exists) · 92 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -336,9 +336,9 @@ Goal: every SHALL → ✅ or ❌.
 | BC-T53 | wiki_delete | ⏳[u] | delete a page |
 | BC-T54 | wiki_delete_at | ⏳[u] | =G9 |
 | BC-T55 | wiki_delete_text | ⏳[u] | =G9 |
-| BC-T56 | wiki_coverage | ⏳[u] | coverage report |
+| BC-T56 | ~~wiki_coverage~~ | removed | removed #83 Car C (ADR-0157) |
 | BC-T57 | wiki_cleanup_merged_branches | ⏳[u] | =G8 |
-| BC-T58 | wiki_refresh_stale | ⏳[u] | stale-page refresh |
+| BC-T58 | ~~wiki_refresh_stale~~ | removed | removed #83 Car C (ADR-0157) |
 | BC-T59 | consolidate_now | ⏳[r] | =C1 |
 | BC-T60 | reembed_all | ⏳[u] | =ADM1 |
 | BC-T61 | vacuum_now | ⏳[r] | =E1..E3 |

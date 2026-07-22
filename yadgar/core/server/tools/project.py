@@ -1,4 +1,4 @@
-"""Project context tools: git helpers, branch detection, project_brief, wiki_refresh_stale.
+"""Project context tools: git helpers, branch detection, project_brief, wiki_cleanup_merged_branches.
 
 # Module size justified: single cohesive domain — project/git/wiki-staleness context tools.
 # All functions share _resolve_project_root, _detect_branch, and _git_safe_env helpers.
@@ -2365,9 +2365,9 @@ def _scan_stale_wiki_slugs(directory: str) -> list[str]:
     classified 'external-sourced, not tracked' and excluded from stale results.
 
     Returns list of stale slugs.  Does NOT write a queue file, does NOT detect
-    branch — callers that need those concerns use _wiki_refresh_stale_impl.
-    Called from _compute_stale_wiki_count (signals path, TTL-cached) and
-    re-used by _wiki_refresh_stale_impl.
+    branch — see _compute_stale_wiki_count and the signals path for callers that
+    need those concerns.
+    Called from _compute_stale_wiki_count (signals path, TTL-cached).
     """
     try:
         import yaml as _yaml  # type: ignore[import]  # noqa: PLC0415
@@ -2450,7 +2450,7 @@ def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
             if isinstance(data, dict):
                 return data
         except Exception as _e:
-            logger.debug("wiki_refresh_stale: YAML parse error: %s", _e)
+            logger.debug("_parse_frontmatter: YAML parse error: %s", _e)
             return None
     # v5.53.1: try ruamel.yaml as second YAML backend (available in yadgar deps).
     try:
@@ -2590,161 +2590,6 @@ def _scan_stale_wiki_slugs_db(directory: str) -> list[str]:
         if (current_hash or stored_hash) and current_hash != stored_hash:
             stale.append(slug)
     return stale
-
-
-@observe(tier="stage", metric="tools.project._wiki_refresh_stale_impl")
-def _wiki_refresh_stale_impl(
-    directory: str,
-    slugs: list[str] | None,
-    force_branch: bool,
-) -> dict:
-    """Inner implementation — may raise; caller wraps in try/except."""
-    import hashlib as _hashlib
-
-    try:
-        import yaml as _yaml  # type: ignore[import]
-    except ImportError:
-        _yaml = None
-
-    # Use directory directly for file I/O so tests can control it easily.
-    # Branch detection still runs git from the same directory.
-    # Look up via yadgar.server so monkeypatches on
-    # "yadgar.server._get_current_branch" / "yadgar.server._get_default_branch"
-    # take effect (v4.x patching contract preserved after server split).
-    import sys as _sys  # noqa: PLC0415
-
-    dir_path = Path(directory)
-    _srv = _sys.modules.get("yadgar.core.server")
-    _gcb = (
-        getattr(_srv, "_get_current_branch", _get_current_branch) if _srv else _get_current_branch
-    )
-    _gdb = (
-        getattr(_srv, "_get_default_branch", _get_default_branch) if _srv else _get_default_branch
-    )
-    branch = _gcb(directory)
-    default = _gdb(directory)
-
-    # Master-only enforcement
-    if not force_branch and branch not in (default, "master", "main"):
-        return {
-            "stale": [],
-            "dispatched_agent_id": None,
-            "branch": branch,
-            "skipped_reason": "not_default_branch",
-        }
-
-    wiki_dir = dir_path / ".local-review" / "wiki"
-    if not wiki_dir.exists():
-        return {
-            "stale": [],
-            "stale_count": 0,
-            "dispatched_agent_id": None,
-            "branch": branch,
-            "skipped_reason": None,
-            "suggested_calls": [],
-        }
-
-    # v5.53.1: full-scan path reuses _scan_stale_wiki_slugs (side-effect-free helper,
-    # also used by the TTL-cached signals path).  Slug-filtered path keeps its own loop
-    # so callers can check specific pages without a full directory scan.
-    if not slugs:
-        stale = _scan_stale_wiki_slugs(directory)
-    else:
-        # Slug-filtered scan (explicit subset)
-        stale = []
-        for slug in slugs:
-            md_path = wiki_dir / f"{slug}.md"
-            if not md_path.exists():
-                continue
-            try:
-                raw = md_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            fm = _parse_frontmatter(raw, _yaml)
-            if fm is None:
-                continue
-            stored_hash = fm.get("hash") or fm.get("sha256") or ""
-            # Singular `source_file` is the real-page form (file or directory).
-            source_files = (
-                fm.get("source_files") or fm.get("sources") or fm.get("source_file") or []
-            )
-            if isinstance(source_files, str):
-                source_files = [source_files]
-            if not source_files:
-                continue
-            current_hash = _compute_source_hash(source_files, _hashlib)
-            if (current_hash or stored_hash) and current_hash != stored_hash:
-                stale.append(slug)
-
-    if stale:
-        import json as _json
-        import time as _time
-
-        queue_dir = wiki_dir / "refresh-queue"
-        queue_dir.mkdir(parents=True, exist_ok=True)
-        ts = _time.strftime("%Y%m%dT%H%M%S")
-        queue_file = queue_dir / f"{ts}.json"
-        queue_file.write_text(_json.dumps({"stale": stale, "branch": branch, "requested_at": ts}))
-        # Invalidate the TTL cache so next signals call reflects the freshly detected list.
-        with _stale_count_cache_lock:
-            _stale_count_cache.pop(directory, None)
-
-    # v5.53.1: surface stale slugs prominently so the stop-hook can dispatch regen.
-    suggested_calls = (
-        [
-            f"Agent(subagent_type='general-purpose', prompt='/repo-wiki:repo-wiki update {s}')"
-            for s in stale
-        ]
-        if stale
-        else []
-    )
-
-    return {
-        "stale": stale,
-        "stale_count": len(stale),
-        "dispatched_agent_id": None,
-        "branch": branch,
-        "skipped_reason": None,
-        "suggested_calls": suggested_calls,
-    }
-
-
-@_tool(power=True)
-def wiki_refresh_stale(
-    directory: str,
-    slugs: list[str] | None = None,
-    force_branch: bool = False,
-) -> dict:
-    """Detect stale repo-wiki pages and signal for regeneration (§26).
-
-    Stale = .local-review/wiki/*.md frontmatter `hash` ≠ SHA256(source_files).
-    Writes a JSON file under .local-review/wiki/refresh-queue/<timestamp>.json
-    listing the stale slugs; actual regen is done by the operator or a
-    background Agent.
-
-    Master-only: refuses on non-default branch unless force_branch=True.
-
-    Returns:
-        {
-            "stale": [<slug>, ...],
-            "dispatched_agent_id": None,
-            "branch": <current branch>,
-            "skipped_reason": null | "not_default_branch",
-        }
-
-    NEVER raises — all errors are caught and reported in the return dict.
-    """
-    try:
-        return _wiki_refresh_stale_impl(directory, slugs=slugs, force_branch=force_branch)
-    except Exception as _e:
-        logger.warning("wiki_refresh_stale internal error (best-effort): %s", _e)
-        return {
-            "stale": [],
-            "dispatched_agent_id": None,
-            "branch": None,
-            "skipped_reason": None,
-            "error": str(_e),
-        }
 
 
 @_tool(power=True)

@@ -374,6 +374,8 @@ def wiki_add(
     wait: bool = False,
     directory: str | None = None,
     page_type: str | None = None,
+    hash: str | None = None,  # noqa: A002 — wire key; matches storage/generator "hash" column
+    source_file: str | None = None,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
@@ -403,6 +405,8 @@ def wiki_add(
       When provided, stored with wiki_schema_version=1. Omit to leave page untyped (backward-compat).
       Typed pages are format-checked by wiki_lint (missing required sections reported as warnings).
       wiki_add never rejects a write due to page_type/template mismatch — lint is advisory only.
+    hash / source_file: optional repo-wiki module fields (SHA256 + path) for
+      host-side staleness diffs; omitted on upsert preserves the stored hash.
 
     Branch resolution (evaluated in priority order):
     1. branch (non-empty string) — caller knows the branch explicitly; used as-is.
@@ -486,6 +490,8 @@ def wiki_add(
         "replace_slug": replace_slug,
         "directory_context": _effective_dir,
         "page_type": page_type,
+        "hash": hash,  # Car B0 (#83): repo-wiki module source hash + path
+        "source_file": source_file,
         # Car 0 flow 3 canonical token (server-set); drainer honors + strips it.
         **({"_internal": True} if _internal else {}),
     }
@@ -867,6 +873,10 @@ def wiki_list(
                 "created_at": p.get("created_at"),
                 "updated_at": p.get("updated_at"),
                 "source_count": len(p.get("source_memory_ids") or []),
+                # Car B0 (#83): expose hash for repo-wiki module pages so a single
+                # wiki_list call gives the host {slug: hash} for --stale-only diff.
+                # None for pages that carry no source hash.
+                "hash": p.get("hash"),
             }
         )
     return out

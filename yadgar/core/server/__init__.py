@@ -153,7 +153,6 @@ from yadgar.core.server.tools import (  # noqa: F401
     project_brief,
     bootstrap_project,
     update_active_work,
-    wiki_refresh_stale,
     wiki_cleanup_merged_branches,
     forget,
     validate_memory,
@@ -197,7 +196,6 @@ from yadgar.core.server.tools import (  # noqa: F401
     resource_hot,
     resource_stale,
     agent_prompt_save,
-    wiki_coverage,
     agent_dispatch_prelude,
     wiki_history,
     wiki_read_version,
@@ -226,7 +224,6 @@ from yadgar.core.server.tools.project import (  # noqa: F401
     _git_safe_env,
     _GIT_SAFE_ARGS,
     _render_project_brief,
-    _wiki_refresh_stale_impl,
     _parse_frontmatter,
     _compute_source_hash,
 )
