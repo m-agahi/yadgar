@@ -49,14 +49,22 @@ def is_running_in_container() -> bool:
 
 
 @observe(tier="hot")
-def _make_hook_entry(cmd: str, matcher: str, env_block: dict) -> dict:
-    """Build a single hook entry dict."""
+def _make_hook_entry(cmd: str, matcher: str, env_block: dict, async_: bool = False) -> dict:
+    """Build a single hook entry dict.
+
+    When *async_* is True, sets ``entry["hooks"][0]["async"] = True`` — the
+    Claude Code fire-and-forget flag (non-blocking, harness does not wait for
+    the hook).  When False (default), the ``"async"`` key is omitted entirely
+    so blocking hooks carry no spurious field.
+    """
     entry: dict = {
         "matcher": matcher,
         "hooks": [{"type": "command", "command": cmd}],
     }
     if env_block:
         entry["hooks"][0]["env"] = env_block
+    if async_:
+        entry["hooks"][0]["async"] = True
     return entry
 
 
@@ -170,11 +178,11 @@ def _build_core_hooks(
     # `_stable_python()` for direct callers.
     _python = shlex.quote(python or _stable_python())
 
-    def _runner_entry(hook_type: str, matcher: str = "") -> dict:
+    def _runner_entry(hook_type: str, matcher: str = "", async_: bool = False) -> dict:
         cmd = f"{_python} {shlex.quote(runner)} {hook_type}"
-        return _make_hook_entry(cmd, matcher, env_block)
+        return _make_hook_entry(cmd, matcher, env_block, async_=async_)
 
-    hooks_config["PreCompact"] = [_runner_entry("pre-compact-drain")]
+    hooks_config["PreCompact"] = [_runner_entry("pre-compact-drain", async_=True)]
     hooks_config["SessionStart"] = [
         _runner_entry("session-start-context"),
         _runner_entry("post-compact-rehydrate", matcher="compact"),
