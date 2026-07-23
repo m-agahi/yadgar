@@ -16,7 +16,7 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**253 SHALLs / 41 subsystems.** Today: **56 ✅ · 192 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83) Of the 192 ⏳:
+**254 SHALLs / 41 subsystems.** Today: **57 ✅ · 192 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83) Of the 192 ⏳:
 **59 `[r]` (real-path coverage exists) · 101 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
@@ -44,6 +44,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-B3 recall/wiki_query raise on absent/empty directory. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB3_DirectoryRequired::test_recall_raises_without_directory` P1
 - BC-B4 'system' not eligible. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB4_SystemTagExcluded::test_system_memory_not_returned` P1
 - BC-B5 profile-sourced results surface when a profile exists. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB5_ProfileRecallSurfaces::test_profile_appears_in_recall` P1
+- BC-B6 belief-sourced results surface when a belief exists. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB6_BeliefRecallSurfaces::test_belief_appears_in_recall` P1
 
 ### C. Consolidation / decay / archive / purge
 - BC-C1 a cycle completes, check_invariants 0 violations (seeded real DB). ✅ `tests/e2e/test_phase1_db_layer.py::TestBCC1_ConsolidationRuns::test_consolidation_completes_no_violations` P1
