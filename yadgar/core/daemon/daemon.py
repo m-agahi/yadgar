@@ -219,6 +219,13 @@ class YadgarDaemon:
         name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
         image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
         volume = os.environ.get("YADGAR_BACKEND_VOLUME", _BACKEND_VOLUME)
+        # R3: the backend runs the queue drainer, which reads the shared file
+        # queue. Core writes it to {YADGAR_DATA_DIR}/queue on its OWN volume
+        # (YADGAR_VOLUME, default "yadgar-data" — see _prod_profile). The backend
+        # must mount that SAME volume and point YADGAR_QUEUE_BASE at it, or
+        # _queue_base_path() returns None → drainer disabled → queued
+        # memorize/wiki_add writes never commit. Mirrors docker-compose.yml.
+        core_vol = os.environ.get("YADGAR_VOLUME", "yadgar-data")
 
         if self._container_running(name):
             return {"status": "already_running", "container": name}
@@ -256,6 +263,13 @@ class YadgarDaemon:
             "root",
             "-v",
             f"{volume}:/data",
+            # R3: shared file-queue volume (same volume core mounts at /data) so
+            # the drainer can see queued writes. YADGAR_QUEUE_BASE has no fallback
+            # backend-side, so both the mount and the env var are required.
+            "-v",
+            f"{core_vol}:/queue-data",
+            "-e",
+            "YADGAR_QUEUE_BASE=/queue-data",
             "-p",
             f"{DEFAULT_BACKEND_EMBED_PORT}:8001",  # embed service only
         ]
