@@ -278,11 +278,17 @@ async def _require_admin_token(
 
     Token read from YADGAR_MCP_AUTH_TOKEN. If the env var is unset,
     /admin routes are locked out entirely (fail-secure).
+
+    YADGAR_ALLOW_ROOT is a TEST-ONLY auth bypass. It is honoured only when the
+    process is running under pytest (``PYTEST_CURRENT_TEST`` present in the env);
+    in any other environment the flag is ignored. This prevents a real
+    deployment — or a leaked/shared env file — from silently disabling admin
+    auth on the backend, which is loopback-reachable by any local process.
     """
     expected = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
     allow_root = os.environ.get("YADGAR_ALLOW_ROOT", "0").lower() in ("1", "true", "yes")
-    if allow_root:
-        return  # test escape hatch
+    if allow_root and "PYTEST_CURRENT_TEST" in os.environ:
+        return  # test-only escape hatch (see docstring)
     if not expected:
         raise HTTPException(status_code=503, detail="Admin token not configured")
     # Constant-time compare (mirrors the core BearerAuthMiddleware) to avoid a
