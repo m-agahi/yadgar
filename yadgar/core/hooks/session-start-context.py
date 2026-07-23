@@ -65,6 +65,15 @@ def _compute_git_facts(cwd):
     return True, default_branch
 
 
+@observe(tier="stage")
+def _close_http_error(http_exc) -> None:
+    """Close a urllib HTTPError's file wrapper; never re-raise (py3.14 leak guard)."""
+    try:
+        http_exc.close()
+    except Exception:  # noqa: BLE001 — close must never re-raise
+        pass
+
+
 @observe(tier="boundary")
 def main():
     try:
@@ -96,6 +105,7 @@ def main():
         # HTTP endpoint — works in daemon mode where DB lock is always held
         _port = os.environ.get("YADGAR_PORT", "8765")
         try:
+            import urllib.error as _err
             import urllib.parse as _parse
             import urllib.request as _req
 
@@ -116,6 +126,14 @@ def main():
             _text = json.loads(_resp.read().decode()).get("text", "")
             if _text:
                 print(_text)
+        except _err.HTTPError as _http_exc:
+            # A non-200 response IS an HTTPError holding a file wrapper (a
+            # tempfile._TemporaryFileWrapper via addbase on py3.14). Unclosed, its
+            # deallocator fires a spurious ResourceWarning at a later GC that
+            # pytest-xdist mis-attributes to an unrelated test. Close it here (via a
+            # module helper to keep main() under the I13 nesting cap), then degrade
+            # silently (same daemon-down contract as the broad except below).
+            _close_http_error(_http_exc)
         except Exception:
             pass  # Daemon down — skip; never use surrealkv directly from host
     finally:

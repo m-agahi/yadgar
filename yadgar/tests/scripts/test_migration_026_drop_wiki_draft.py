@@ -30,10 +30,16 @@ class TestMigration026Registration:
         assert callable(entry["fn"])
         assert entry["fn"] is _migration_026_drop_wiki_draft
 
-    def test_migration_026_is_last(self):
-        """026 is the final migration in the list (highest number)."""
-        nums = [int(m["version"].split("_")[0]) for m in _MIGRATIONS]
-        assert max(nums) == 26
+    def test_migration_026_registered_after_025(self):
+        """026 is registered after 025 (append order preserved).
+
+        (026 is no longer the tail — migration 027 (runtime_config) followed it;
+        the 'latest is at the tail' guard now lives in the 027 test.)
+        """
+        versions = [m["version"] for m in _MIGRATIONS]
+        assert versions.index("026_drop_wiki_draft") > versions.index(
+            "025_agent_prompt_slug_collapse"
+        )
 
 
 class TestMigration026Drop:

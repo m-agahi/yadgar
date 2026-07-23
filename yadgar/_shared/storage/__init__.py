@@ -10,6 +10,7 @@ StorageEngine is assembled from topic-specific mixin classes:
   _ClusterMixin (cluster.py)     — memory_cluster + memory_similarity_link CRUD
   _WikiMixin (wiki.py)           — wiki page CRUD and search
   _BlocksMixin (blocks.py)       — memory_block CRUD (v5.33.0)
+  _RuntimeConfigMixin (runtime_config.py) — runtime_config CRUD (ADR-0163)
   _BookmarksMixin (bookmarks.py) — wiki_bookmark CRUD (v5.23.0)
   _QueueMixin (queue.py)         — file hashes and action log
   _DbSizeMixin (dbsize.py)       — database size reporting
@@ -74,6 +75,7 @@ from yadgar._shared.storage.narrative import _NarrativeMixin
 from yadgar._shared.storage.ops import _OpsMixin
 from yadgar._shared.storage.queue import _QueueMixin
 from yadgar._shared.storage.rules import _RulesMixin
+from yadgar._shared.storage.runtime_config import _RuntimeConfigMixin
 from yadgar._shared.storage.scope import ScopeFilter as ScopeFilter
 from yadgar._shared.storage.user import _UserMixin
 from yadgar._shared.storage.vector import _VectorMixin
@@ -223,6 +225,7 @@ class StorageEngine(
     _ClusterMixin,
     _WikiMixin,
     _BlocksMixin,
+    _RuntimeConfigMixin,
     _BookmarksMixin,
     _QueueMixin,
     _DbSizeMixin,

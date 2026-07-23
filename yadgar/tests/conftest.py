@@ -935,6 +935,7 @@ _WIPE_TABLES = (
     "memory_archive",
     "memory_similarity_link",
     "memory_block",
+    "runtime_config",
     "prospective_memory",
     "narrative_entry",
     "consolidation_log",

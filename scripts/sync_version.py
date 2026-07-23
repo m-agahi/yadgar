@@ -49,12 +49,18 @@ flake_nix_path = root / "flake.nix"
 if flake_nix_path.exists():
     flake_text = flake_nix_path.read_text()
 
-    # 1. package version field (existing)
+    # 1. package version field (existing).
+    # Line-anchored (^\s*version) so it targets ONLY the bare `version = "X.Y.Z";`
+    # yadgar-pkg field — NOT `_cbm_version = "0.9.0";` (the codebase-memory-mcp
+    # binary pin, #83 Car A), whose suffix `version = "` the un-anchored regex
+    # would otherwise match first under count=1, corrupting the CBM release tag
+    # AND leaving the real yadgar version unsynced.
     new_flake_text, n_subs = re.subn(
-        r'(version\s*=\s*")[^"]+(";)',
+        r'(^\s*version\s*=\s*")[^"]+(";)',
         rf"\g<1>{version}\g<2>",
         flake_text,
         count=1,
+        flags=re.MULTILINE,
     )
     if n_subs == 0:
         print("ERROR: could not find version field in flake.nix", file=sys.stderr)

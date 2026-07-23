@@ -211,6 +211,10 @@ from yadgar.core.server.tools import (  # noqa: F401
     wiki_delete_at,
     wiki_insert_at,
     wiki_replace_markdown_block,
+    config_get,
+    config_list,
+    config_set,
+    config_delete,
 )
 
 # ── 7. Project helpers (tests import _detect_branch etc. indirectly) ──

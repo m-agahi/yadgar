@@ -1,0 +1,251 @@
+"""TDD tests for the code_graph digest renderer (Car C, ADR-0162).
+
+``render_digest`` is a PURE function: architecture dict + endpoint rows + identity
+→ compact markdown digest, hard-capped at DIGEST_CHAR_BUDGET, deterministic
+(sorted, no timestamps) so golden output is stable.
+
+Coverage
+--------
+1. Header / layers / hotspots present + ordered (priority: header > layers >
+   hotspots > endpoints).
+2. ``routes[]`` (URL-literal noise) NEVER leaks into the digest.
+3. Endpoints rendered from route_method rows; ``(none extracted)`` on empty.
+4. Deterministic: same input → identical bytes (tie-broken sort).
+5. Budget: output ≤ DIGEST_CHAR_BUDGET; a huge input truncates + stays ≤ budget
+   with the ellipsis marker counted.
+6. Stale line rendered from identity when present.
+7. Endpoint-row extraction is tolerant of the (unverified) key shape.
+"""
+
+from __future__ import annotations
+
+
+def _java_arch() -> dict:
+    """A realistic Java/Spring get_architecture(all) dict (documented shape).
+
+    Includes a NOISE ``routes[]`` of URL literals that MUST be ignored, and an
+    ``entry`` layer so entry-points can be derived from ``layers`` (there is no
+    ``entry_points`` key in the measured shape).
+    """
+    return {
+        "project": "manage-validation",
+        "total_nodes": 744,
+        "total_edges": 1930,
+        "node_labels": [{"label": "Method", "count": 420}, {"label": "Class", "count": 180}],
+        "edge_types": [{"type": "CALLS", "count": 1200}, {"type": "IMPORTS", "count": 730}],
+        "languages": [
+            {"language": "Java", "file_count": 88},
+            {"language": "XML", "file_count": 6},
+        ],
+        "packages": ["com.quinyx.validation", "com.quinyx.validation.api"],
+        "hotspots": [
+            {"name": "validate", "qualified_name": "ValidationService.validate", "fan_in": 42},
+            {"name": "resolve", "qualified_name": "GroupResolver.resolve", "fan_in": 18},
+            {"name": "check", "qualified_name": "RuleChecker.check", "fan_in": 18},
+        ],
+        "boundaries": [],
+        "layers": [
+            {
+                "name": "ValidationController",
+                "layer": "api",
+                "reason": "has HTTP route definitions",
+            },
+            {
+                "name": "ValidationService",
+                "layer": "service",
+                "reason": "orchestrates domain logic",
+            },
+            {"name": "Main", "layer": "entry", "reason": "application entry point"},
+        ],
+        "clusters": [],
+        "file_tree": [],
+        # NOISE — URL literals; the renderer must IGNORE this entirely.
+        "routes": ["/validate", "/by-group/{id}", "/internal/v1/health"],
+    }
+
+
+def _endpoint_rows() -> list:
+    """Rows as returned by the route_method Cypher (key shape unverified → tolerant)."""
+    return [
+        {"m.route_method": "POST", "m.route_path": "/validate", "m.name": "validate"},
+        {"m.route_method": "GET", "m.route_path": "/by-group/{id}", "m.name": "byGroup"},
+    ]
+
+
+class TestStructure:
+    def test_header_layers_hotspots_present_and_ordered(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(
+            _java_arch(),
+            _endpoint_rows(),
+            {"canonical_root": "/repo", "subdir": ""},
+        )
+
+        # header first
+        assert out.startswith("── code_graph:")
+        assert "Java" in out  # language in header
+
+        # priority order: header < layers < hotspots < endpoints (by index)
+        i_layers = out.index("layers:")
+        i_hot = out.index("hotspots:")
+        i_end = out.index("endpoints:")
+        assert i_layers < i_hot < i_end
+
+        # layer reason surfaces
+        assert "api" in out
+        assert "has HTTP route definitions" in out
+        # top hotspot by fan_in
+        assert "ValidationService.validate" in out
+        assert "42" in out
+
+    def test_entry_points_derived_from_layers(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(_java_arch(), [], {"canonical_root": "/repo", "subdir": ""})
+        # entry-point derived from layers[layer==entry], not a fictional key
+        assert "Main" in out
+
+
+class TestRoutesNoise:
+    def test_routes_array_never_leaks(self):
+        from yadgar.core.code_graph import digest
+
+        arch = _java_arch()
+        # populated URL-literal routes that must NOT appear
+        arch["routes"] = ["/secret-noise-route", "/another/{noise}"]
+        out = digest.render_digest(arch, [], {"canonical_root": "/repo", "subdir": ""})
+
+        assert "/secret-noise-route" not in out
+        assert "/another/{noise}" not in out
+
+
+class TestEndpoints:
+    def test_endpoints_rendered_from_route_method_rows(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(
+            _java_arch(), _endpoint_rows(), {"canonical_root": "/repo", "subdir": ""}
+        )
+        assert "POST /validate" in out
+        assert "GET /by-group/{id}" in out
+
+    def test_endpoints_none_extracted_on_empty(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(_java_arch(), [], {"canonical_root": "/repo", "subdir": ""})
+        assert "endpoints: (none extracted)" in out
+
+    def test_endpoint_row_extraction_tolerant(self):
+        """Bare-key rows (no ``m.`` prefix) must also extract — key shape unverified."""
+        from yadgar.core.code_graph import digest
+
+        rows = [{"route_method": "PUT", "route_path": "/x", "name": "putX"}]
+        out = digest.render_digest(_java_arch(), rows, {"canonical_root": "/repo", "subdir": ""})
+        assert "PUT /x" in out
+
+
+class TestDeterminism:
+    def test_same_input_same_bytes(self):
+        from yadgar.core.code_graph import digest
+
+        a = digest.render_digest(
+            _java_arch(), _endpoint_rows(), {"canonical_root": "/repo", "subdir": ""}
+        )
+        b = digest.render_digest(
+            _java_arch(), _endpoint_rows(), {"canonical_root": "/repo", "subdir": ""}
+        )
+        assert a == b
+
+    def test_equal_fan_in_hotspots_stable_order(self):
+        """Two hotspots with equal fan_in must sort by qualified_name (tie-break)."""
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(_java_arch(), [], {"canonical_root": "/repo", "subdir": ""})
+        # GroupResolver.resolve (fan_in 18) sorts before RuleChecker.check (fan_in 18)
+        assert out.index("GroupResolver.resolve") < out.index("RuleChecker.check")
+
+
+class TestBudget:
+    def test_under_budget(self):
+        from yadgar.core.code_graph import config, digest
+
+        out = digest.render_digest(
+            _java_arch(), _endpoint_rows(), {"canonical_root": "/repo", "subdir": ""}
+        )
+        assert len(out) <= config.DIGEST_CHAR_BUDGET
+
+    def test_huge_input_truncates_within_budget(self):
+        from yadgar.core.code_graph import digest
+
+        arch = _java_arch()
+        # blow up hotspots + layers so the raw render far exceeds a small budget
+        arch["hotspots"] = [
+            {"name": f"fn{i}", "qualified_name": f"pkg.Class{i}.method{i}", "fan_in": 1000 - i}
+            for i in range(500)
+        ]
+        arch["layers"] = [
+            {"name": f"Comp{i}", "layer": "service", "reason": "x" * 40} for i in range(500)
+        ]
+        budget = 500
+        out = digest.render_digest(
+            arch, [], {"canonical_root": "/repo", "subdir": ""}, budget=budget
+        )
+        assert len(out) <= budget
+        # ellipsis marker present when truncated, and it is COUNTED in the budget
+        assert "…" in out
+
+    def test_default_budget_from_config(self):
+        from yadgar.core.code_graph import config, digest
+
+        arch = _java_arch()
+        arch["hotspots"] = [
+            {"name": f"fn{i}", "qualified_name": f"pkg.C{i}.m{i}", "fan_in": 9000 - i}
+            for i in range(2000)
+        ]
+        out = digest.render_digest(arch, [], {"canonical_root": "/repo", "subdir": ""})
+        assert len(out) <= config.DIGEST_CHAR_BUDGET
+
+
+class TestStale:
+    def test_stale_line_rendered_when_present(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(
+            _java_arch(),
+            [],
+            {"canonical_root": "/repo", "subdir": "", "stale": True, "head_sha": "abc1234"},
+        )
+        assert "stale @ abc1234" in out
+
+    def test_no_stale_line_when_fresh(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(_java_arch(), [], {"canonical_root": "/repo", "subdir": ""})
+        assert "stale @" not in out
+
+
+class TestBlockPayload:
+    def test_build_block_payload_shape(self):
+        """The C→D seam: refresh emits a block payload dict, not a block write."""
+        from yadgar.core.code_graph import digest
+
+        payload = digest.build_block_payload(
+            _java_arch(),
+            _endpoint_rows(),
+            {"canonical_root": "/repo", "subdir": "svc"},
+        )
+        assert payload["block_name"] == "code_graph"
+        # directory = canonical_root joined with subdir (exact-match injection scope)
+        assert payload["directory"] == "/repo/svc"
+        assert payload["skipped"] is False
+        assert payload["chars"] == len(payload["content"])
+        assert "── code_graph:" in payload["content"]
+
+    def test_build_block_payload_root_no_subdir(self):
+        from yadgar.core.code_graph import digest
+
+        payload = digest.build_block_payload(
+            _java_arch(), [], {"canonical_root": "/repo", "subdir": ""}
+        )
+        assert payload["directory"] == "/repo"

@@ -41,6 +41,11 @@ ANCHOR_AUDIT_STOP_INTERVAL = get_settings().ANCHOR_AUDIT_STOP_INTERVAL
 # Slowest cadence (code-structure drift is rare); config-driven like the above.
 REPO_WIKI_REFRESH_STOP_INTERVAL = get_settings().REPO_WIKI_REFRESH_STOP_INTERVAL
 
+# Car D (#83, ADR-0162): human messages between code_graph-refresh injections.
+# Shares the priority-2 slot with repo-wiki (mutually exclusive, gated by
+# CODE_GRAPH_ENABLED); same slowest cadence. config-driven like the above.
+CODE_GRAPH_REFRESH_STOP_INTERVAL = get_settings().CODE_GRAPH_REFRESH_STOP_INTERVAL
+
 
 @observe(tier="stage")
 def _resolve_prompt_template_path(filename: str = "stop_checkpoint_prompt.md") -> str:
@@ -93,6 +98,7 @@ def _resolve_prompt_template_path(filename: str = "stop_checkpoint_prompt.md") -
 _PROMPT_TEMPLATE_PATH = _resolve_prompt_template_path("stop_checkpoint_prompt.md")
 _ANCHOR_AUDIT_TEMPLATE_PATH = _resolve_prompt_template_path("anchor_audit_prompt.md")
 _REPO_WIKI_REFRESH_TEMPLATE_PATH = _resolve_prompt_template_path("repo_wiki_refresh_prompt.md")
+_CODE_GRAPH_REFRESH_TEMPLATE_PATH = _resolve_prompt_template_path("code_graph_refresh_prompt.md")
 
 
 @observe(tier="hot")
@@ -196,11 +202,13 @@ def _subagent_sweep_state_path() -> Path:
 #   name        — stable key; also the session_state counter key via `state_key`.
 #   priority    — lower wins ties (0 = checkpoint, 1 = anchor-audit).
 #   state_key   — session_state field holding the last-injected count watermark.
-#   is_due      — (count, session_state) -> bool.
+#   is_due      — (count, session_state, cwd) -> bool. ``cwd`` is the session's
+#                 working directory (from the stop payload); only the dir-aware
+#                 code_graph predicate uses it — the others ignore it.
 #   reason      — (count) -> str; the {decision: block} reason string.
 
 
-def _checkpoint_is_due(count: int, session_state: dict) -> bool:
+def _checkpoint_is_due(count: int, session_state: dict, cwd: str | None = None) -> bool:
     return count - int(session_state.get("last_save", 0)) >= INTERVAL
 
 
@@ -211,7 +219,7 @@ def _checkpoint_reason(count: int) -> str:
     )
 
 
-def _anchor_audit_is_due(count: int, session_state: dict) -> bool:
+def _anchor_audit_is_due(count: int, session_state: dict, cwd: str | None = None) -> bool:
     return count - int(session_state.get("last_anchor_audit", 0)) >= ANCHOR_AUDIT_STOP_INTERVAL
 
 
@@ -222,7 +230,33 @@ def _anchor_audit_reason(count: int) -> str:
     )
 
 
-def _repo_wiki_refresh_is_due(count: int, session_state: dict) -> bool:
+def _code_graph_enabled(cwd: str | None = None) -> bool:
+    """Dir-aware read of ``code_graph.enabled`` from the runtime config store.
+
+    ADR-0163: resolves the flag via ``config.is_enabled(cwd)`` (host client →
+    runtime config store, per-dir override → global → False). A per-repo opt-out
+    (``code_graph.enabled=false`` at ``cwd``) makes this False THERE even when the
+    global flag is on — so the code_graph refresh nudge is not wasted on an
+    opted-out repo. Fail-open: daemon down / any error → False (code_graph inert,
+    repo-wiki keeps running). Imported lazily so the hook still loads if the
+    code_graph package is absent. Car D gating.
+    """
+    try:
+        from yadgar.core.code_graph import config as _cg_config
+
+        return bool(_cg_config.is_enabled(cwd))
+    except Exception:
+        return False
+
+
+def _repo_wiki_refresh_is_due(count: int, session_state: dict, cwd: str | None = None) -> bool:
+    # Car D gated swap: when code_graph is ENABLED it takes the priority-2 slot,
+    # so repo-wiki goes inert (mutually exclusive — no double-fire). repo-wiki is
+    # NOT deleted (decommission is #33); it simply yields while the flag is on.
+    # repo_wiki stays GLOBAL-scoped (no cwd) — it is being retired (#33), so its
+    # gate keeps the pre-ADR-0163 behavior; only code_graph's is_due is dir-aware.
+    if _code_graph_enabled():
+        return False
     return (
         count - int(session_state.get("last_repo_wiki_refresh", 0))
         >= REPO_WIKI_REFRESH_STOP_INTERVAL
@@ -232,6 +266,26 @@ def _repo_wiki_refresh_is_due(count: int, session_state: dict) -> bool:
 def _repo_wiki_refresh_reason(count: int) -> str:
     return (
         f"[yadgar] Repo-wiki-refresh maintenance due. Read {_REPO_WIKI_REFRESH_TEMPLATE_PATH}"
+        " and follow all the instructions in it."
+    )
+
+
+def _code_graph_refresh_is_due(count: int, session_state: dict, cwd: str | None = None) -> bool:
+    # Car D gated swap: only due when code_graph is ENABLED for THIS repo (else
+    # repo-wiki owns the priority-2 slot). ADR-0163: dir-aware via ``cwd`` so an
+    # opted-out repo (per-dir code_graph.enabled=false) is not due here — no wasted
+    # nudge. The two priority-2 items are mutually exclusive.
+    if not _code_graph_enabled(cwd):
+        return False
+    return (
+        count - int(session_state.get("last_code_graph_refresh", 0))
+        >= CODE_GRAPH_REFRESH_STOP_INTERVAL
+    )
+
+
+def _code_graph_refresh_reason(count: int) -> str:
+    return (
+        f"[yadgar] code_graph-refresh maintenance due. Read {_CODE_GRAPH_REFRESH_TEMPLATE_PATH}"
         " and follow all the instructions in it."
     )
 
@@ -252,12 +306,23 @@ _MAINTENANCE_ITEMS: list[dict] = [
         "is_due": _anchor_audit_is_due,
         "reason": _anchor_audit_reason,
     },
+    # Priority-2 slot is a GATED swap (Car D, #83): repo_wiki and code_graph are
+    # mutually exclusive via CODE_GRAPH_ENABLED — exactly one is ever due, so their
+    # shared priority never double-fires. repo_wiki stays registered (decommission
+    # is #33); code_graph goes here so the flag flips the active item.
     {
         "name": "repo_wiki_refresh",
         "priority": 2,
         "state_key": "last_repo_wiki_refresh",
         "is_due": _repo_wiki_refresh_is_due,
         "reason": _repo_wiki_refresh_reason,
+    },
+    {
+        "name": "code_graph_refresh",
+        "priority": 2,
+        "state_key": "last_code_graph_refresh",
+        "is_due": _code_graph_refresh_is_due,
+        "reason": _code_graph_refresh_reason,
     },
 ]
 
@@ -272,6 +337,9 @@ def main() -> None:
 
         session_id = data.get("session_id", "unknown")
         transcript_path = data.get("transcript_path", "")
+        # Session working directory (Claude Code stop payload). Threaded into the
+        # dir-aware code_graph gate so a per-repo opt-out is honored (ADR-0163).
+        cwd = data.get("cwd") or None
         stop_hook_active = str(data.get("stop_hook_active", "false")).lower() in (
             "true",
             "1",
@@ -298,7 +366,7 @@ def main() -> None:
         # is deterministic.
         chosen: dict | None = None
         for item in sorted(_MAINTENANCE_ITEMS, key=lambda it: it["priority"]):
-            if item["is_due"](current_count, session_state):
+            if item["is_due"](current_count, session_state, cwd):
                 chosen = item
                 break
 

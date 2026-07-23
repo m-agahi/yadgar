@@ -117,6 +117,14 @@ def core_init_engines(
 
     _init_file_queue()
 
+    # Car G2 (ADR-0163): warm the runtime_config read-through cache from all stored
+    # rows now that storage is live (built by _shared_init_engines above) and before
+    # daemon threads / request serving. Best-effort — warmup swallows its own errors
+    # so a warmup failure never blocks daemon start.
+    from yadgar.core.server.tools._runtime_config import warmup_runtime_config_cache
+
+    warmup_runtime_config_cache(_st._storage)
+
     # R2a Car D1: start daemon threads after the core-only engines exist.
     if start_daemons:
         from yadgar.core.daemon.daemons import _start_daemon_threads
