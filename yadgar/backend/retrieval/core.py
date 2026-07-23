@@ -579,11 +579,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         # Determine active retrieval profile.
         # Caller-supplied `profile` kwarg overrides RETRIEVAL_PROFILE setting.
         # Hook handlers pass profile="fast" to skip CE/NLI/MP for lightweight context injection.
-        profile_name = (
-            profile
-            if profile is not None
-            else self._settings.RETRIEVAL_PROFILE
-        )
+        profile_name = profile if profile is not None else self._settings.RETRIEVAL_PROFILE
         profile = PROFILES.get(profile_name, PROFILES["balanced"])
         profile_signals = set(profile["signals"])
 

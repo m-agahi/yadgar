@@ -130,9 +130,7 @@ class _RerankingMixin:
     ) -> list[dict]:
         """Merge extra candidates for comparison queries ("A or B?")."""
         comparison_options = ctx.query_analysis.get("comparison_options", [])
-        if not (
-            self._settings.COMPARISON_DUAL_SEARCH_ENABLED and comparison_options
-        ):
+        if not (self._settings.COMPARISON_DUAL_SEARCH_ENABLED and comparison_options):
             return result_memories
         subject = (
             ctx.query_analysis.get("named_entities", [None])[0]
