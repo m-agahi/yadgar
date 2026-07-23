@@ -247,6 +247,32 @@ def _normalize_rows(raw) -> list:
     return []
 
 
+# A valid SurrealQL bind-parameter name. The HTTP `/sql` query paths interpolate
+# the param NAME directly into the query text (`LET $<name> = <json-value>`)
+# because SurrealDB's `/sql` endpoint exposes no JSON bind-var facility — only
+# string-typed URL query params (see `_q_server`). Param VALUES are JSON-escaped
+# and cannot break out of their literal, but an unvalidated NAME would be a
+# SurrealQL-injection vector. Any legitimate bind name already matches this shape.
+_PARAM_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_param_keys(params: dict | None) -> None:
+    """Reject param names that are not valid SurrealQL identifiers.
+
+    Called on every param dict before it is interpolated into a `LET $name = …`
+    statement. This makes name-injection structurally impossible rather than
+    relying on every current and future caller to pass only internal, trusted
+    keys. A rejected name raises ``ValueError`` (a caller/programming error, or —
+    on the `db_inspect` read path — hostile input, which now fails cleanly
+    instead of producing a confusing DB error).
+    """
+    if not params:
+        return
+    for k in params:
+        if not isinstance(k, str) or not _PARAM_KEY_RE.match(k):
+            raise ValueError(f"Invalid SurrealQL parameter name: {k!r}")
+
+
 @observe(tier="hot")
 def _prefix_param_tokens(sql: str, params: dict, i: int) -> str:
     """Rewrite ``$k`` parameter tokens in *sql* to ``$p{i}_{k}``.
@@ -553,6 +579,7 @@ class _ClientMixin:
 
         client = self._get_ro_http()
         if params:
+            _validate_param_keys(params)
             lets = [f"LET ${k} = {_json.dumps(v, ensure_ascii=False)};" for k, v in params.items()]
             body = "\n".join(lets) + "\n" + surql
         else:
@@ -596,13 +623,19 @@ class _ClientMixin:
         ensure_ascii=False so emoji and other non-ASCII pass as UTF-8; SurrealDB v3
         rejects \\uD800–\\uDFFF surrogate pairs that json.dumps emits with ensure_ascii=True.
 
-        TODO(review-20260516, H-4): roll-your-own JSON escaping via LET $k = json.dumps
-        bypasses SurrealDB's native {"sql": ..., "vars": ...} bind facility. Migrate all
-        _q callers to POST {"sql": stmt, "vars": params} to eliminate this pattern.
+        Params are bound via ``LET $k = <json-value>`` prepended to the query.
+        SurrealDB's HTTP ``/sql`` endpoint has NO JSON bind-var body (only
+        string-typed URL query params — https://surrealdb.com/docs/surrealdb/integration/http),
+        so this LET form is the only way to bind typed/complex values over HTTP.
+        Values are JSON-escaped (breakout-safe); names are validated as
+        identifiers by ``_validate_param_keys`` so the name cannot inject either.
+        A true native-bind migration would mean moving off ``/sql`` to the RPC
+        ``query(sql, vars)`` endpoint — a larger change tracked separately.
         """
         import json as _json
 
         if params:
+            _validate_param_keys(params)
             lets = [f"LET ${k} = {_json.dumps(v, ensure_ascii=False)};" for k, v in params.items()]
             body = "\n".join(lets) + "\n" + surql
         else:
@@ -706,6 +739,7 @@ class _ClientMixin:
         for i, (sql, params) in enumerate(statements):
             n_lets = 0
             if params:
+                _validate_param_keys(params)
                 for k, v in params.items():
                     body_parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)};")
                     n_lets += 1
@@ -743,6 +777,7 @@ class _ClientMixin:
         body_parts: list[str] = []
         for i, (sql, params) in enumerate(statements):
             if params:
+                _validate_param_keys(params)
                 for k, v in params.items():
                     body_parts.append(f"LET $p{i}_{k} = {_json.dumps(v, ensure_ascii=False)};")
                 sql = _prefix_param_tokens(sql, params, i)
@@ -790,6 +825,7 @@ class _ClientMixin:
         parts = ["BEGIN TRANSACTION"]
         for i, (sql, params) in enumerate(chunk):
             if params:
+                _validate_param_keys(params)
                 for k, v in params.items():
                     parts.append(f"LET $p{i}_{k} = {json_mod.dumps(v, ensure_ascii=False)}")
                 sql = _prefix_param_tokens(sql, params, i)
