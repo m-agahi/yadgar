@@ -310,7 +310,7 @@ class _ScoringMixin:
     ) -> float:
         """Collect temporal retrieval scores into scores. Returns w_temporal weight (0.0 if unused)."""
         w_temporal = 0.0
-        if not getattr(self._settings, "TEMPORAL_RETRIEVAL_ENABLED", False):
+        if not self._settings.TEMPORAL_RETRIEVAL_ENABLED:
             return w_temporal
         temporal_info = parse_temporal_expression(query)
         if not temporal_info["has_temporal"]:

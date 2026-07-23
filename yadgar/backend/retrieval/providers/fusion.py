@@ -225,10 +225,10 @@ def fuse_candidates(
         List of Candidates with memories in native order + wiki interleaved by
         relevance, trimmed to max_results.
     """
-    mem_quota = int(getattr(settings, "RECALL_MEMORY_QUOTA", 5))
-    wiki_quota = int(getattr(settings, "RECALL_WIKI_QUOTA", 5))
-    mem_prior_weight = float(getattr(settings, "RECALL_MEMORY_PRIOR_WEIGHT", 0.1))
-    wiki_prior_weight = float(getattr(settings, "RECALL_WIKI_PRIOR_WEIGHT", 0.1))
+    mem_quota = int(settings.RECALL_MEMORY_QUOTA)
+    wiki_quota = int(settings.RECALL_WIKI_QUOTA)
+    mem_prior_weight = float(settings.RECALL_MEMORY_PRIOR_WEIGHT)
+    wiki_prior_weight = float(settings.RECALL_WIKI_PRIOR_WEIGHT)
 
     # Step 1: apply per-type quotas
     mem_pool = memory_candidates[:mem_quota]

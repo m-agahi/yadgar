@@ -261,12 +261,12 @@ def _apply_fanout_boosts(
     Returns:
         The pooled list with boosts applied (same list, possibly re-sorted).
     """
-    scope = getattr(settings, "FANOUT_BOOST_SCOPE", "scoped")
+    scope = settings.FANOUT_BOOST_SCOPE
     if scope == "off" or (scope == "scoped" and profile is None):
         return pooled
 
     if current_branch is not None:
-        _boost_weight = getattr(settings, "BRANCH_BOOST_WEIGHT", 0.2)
+        _boost_weight = settings.BRANCH_BOOST_WEIGHT
         _branch_boosted = False
         for m in pooled:
             if m.get("branch") == current_branch:
@@ -276,8 +276,8 @@ def _apply_fanout_boosts(
         if _branch_boosted:
             pooled.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
 
-    _pm_boost_factor = getattr(settings, "POSTMORTEM_BOOST_FACTOR", 0.3)
-    _pm_keywords = getattr(settings, "POSTMORTEM_BOOST_KEYWORDS", ())
+    _pm_boost_factor = settings.POSTMORTEM_BOOST_FACTOR
+    _pm_keywords = settings.POSTMORTEM_BOOST_KEYWORDS
     if _pm_boost_factor > 0.0 and _pm_keywords:
         _query_lower = query.lower()
         _has_action_verb = any(kw in _query_lower for kw in _pm_keywords)

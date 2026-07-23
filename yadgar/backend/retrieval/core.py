@@ -86,7 +86,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         Reformulates the query as an event and generates xWant/xAttr inferences
         to bridge the cue-trigger semantic disconnect at query time.
         """
-        if not getattr(self._settings, "COMET_QUERY_EXPANSION_ENABLED", False):
+        if not self._settings.COMET_QUERY_EXPANSION_ENABLED:
             return []
         try:
             if self._comet_expander is None:
@@ -582,7 +582,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         profile_name = (
             profile
             if profile is not None
-            else getattr(self._settings, "RETRIEVAL_PROFILE", "balanced")
+            else self._settings.RETRIEVAL_PROFILE
         )
         profile = PROFILES.get(profile_name, PROFILES["balanced"])
         profile_signals = set(profile["signals"])
