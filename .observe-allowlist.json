@@ -697,6 +697,10 @@
     "category": "hot-loop",
     "rationale": "re.sub callback invoked once per type::record(\u2026) token match inside _inline_int_record_ids; not independently reachable and covered by the parent function's hot span. Decorating a per-match regex callback adds per-token cardinality with zero dashboard value."
   },
+  "client:_validate_param_keys": {
+    "category": "trivial",
+    "rationale": "Pure SurrealQL bind-param-name validator (regex match per key, raise ValueError on a bad name); no I/O and no ops decision. Called from the already-@observe'd _q_server/query execution paths, so a per-call span/metric double-instruments the hot query path with zero dashboard value (mirrors the cache:Cache._is_expired trivial-predicate exemption)."
+  },
   "tracing:_install_span_log_queue": {
     "category": "framework-instrumented",
     "rationale": "Observability framework primitive: sets up the background span-log queue thread. observe.py imports yadgar.tracing; adding @observe to tracing.py would create a circular import. These functions are the span infrastructure itself \u2014 wrapping them in @observe is recursive self-instrumentation noise."
