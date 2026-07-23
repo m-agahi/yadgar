@@ -130,9 +130,7 @@ class _RerankingMixin:
     ) -> list[dict]:
         """Merge extra candidates for comparison queries ("A or B?")."""
         comparison_options = ctx.query_analysis.get("comparison_options", [])
-        if not (
-            getattr(self._settings, "COMPARISON_DUAL_SEARCH_ENABLED", False) and comparison_options
-        ):
+        if not (self._settings.COMPARISON_DUAL_SEARCH_ENABLED and comparison_options):
             return result_memories
         subject = (
             ctx.query_analysis.get("named_entities", [None])[0]
@@ -171,7 +169,7 @@ class _RerankingMixin:
         v5.6.6: profile["nli"] is the "this tier allows it" gate; setting is
         "globally enabled". AND semantics so fast/hook profile never triggers NLI.
         """
-        use_nli = ctx.profile["nli"] and getattr(self._settings, "NLI_RERANKING_ENABLED", False)
+        use_nli = ctx.profile["nli"] and self._settings.NLI_RERANKING_ENABLED
         if not (use_nli and (not self._settings.NLI_ONLY_FOR_OPEN_DOMAIN or ctx.open_domain_mode)):
             return result_memories
         _nli_t0 = _time.perf_counter()
@@ -192,7 +190,7 @@ class _RerankingMixin:
         Profile gate: "multi_passage" key added v5.6.6 — default True for backward compat.
         """
         _mp_allowed = ctx.profile.get("multi_passage", True)
-        if not (_mp_allowed and getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False)):
+        if not (_mp_allowed and self._settings.MULTI_PASSAGE_RERANKING_ENABLED):
             return result_memories
         return self._reranker.multi_passage_rerank(ctx.query, result_memories, ctx.max_results)
 
@@ -223,7 +221,7 @@ class _RerankingMixin:
     @observe(tier="stage", metric="retrieval.rerank.mmr")
     def _rerank_mmr(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
         """Apply MMR diversity reranking."""
-        if not getattr(self._settings, "ADVERSARIAL_DIVERSITY_ENFORCEMENT", False):
+        if not self._settings.ADVERSARIAL_DIVERSITY_ENFORCEMENT:
             return result_memories
         return self._reranker.mmr_rerank(
             result_memories,
@@ -302,7 +300,7 @@ class _RerankingMixin:
 
         # v5.6.6 E: HEAVY_RERANK_ENABLED=False kill switch — bypass CE/NLI/MP entirely.
         # Useful for CPU-only hosts where every rerank call causes 8-46s saturation.
-        if not getattr(self._settings, "HEAVY_RERANK_ENABLED", True):
+        if not self._settings.HEAVY_RERANK_ENABLED:
             _observe_recall_stage("rerank_final", (_time.perf_counter() - _rerank_t0) * 1000)
             # v5.97.0: fusion now keeps `embedding` on rows so MMR can read it in-place
             # (avoids the per-candidate re-fetch). Strip it here so the retriever's

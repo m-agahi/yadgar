@@ -639,6 +639,62 @@ class TestBCB5_ProfileRecallSurfaces:
         )
 
 
+class TestBCB6_BeliefRecallSurfaces:
+    """BC-B6: belief-sourced results SHALL surface in recall when a matching belief exists.
+
+    Bug (#230): the belief branch in retrieval/fusion.py caught a blanket
+    ``except Exception: pass`` around ``search_beliefs_fts`` + config reads, so a
+    missing config key (AttributeError) or any storage hiccup silently dropped
+    ALL beliefs from recall. Fix: narrow the except to
+    ``(KeyError, TypeError, ValueError)`` so AttributeError surfaces instead of
+    swallowing every belief (mirrors the profile branch / BC-B5 fix #38).
+
+    After the fix, a belief inserted for the test subject MUST appear in the
+    recall results as a result with _source='belief' when DERIVED_BELIEFS_ENABLED=True.
+    """
+
+    def test_belief_appears_in_recall(self, e2e_engines, recall_backend_bypass):
+        from yadgar._shared.storage.narrative import BeliefRecord
+        from yadgar.core.server.tools.recall import recall
+
+        yadgar_dir = e2e_engines["yadgar_dir"]
+        storage = e2e_engines["storage"]
+
+        # Insert a derived_belief row directly (mimicking what belief derivation would do)
+        bid = storage.insert_belief(
+            BeliefRecord(
+                belief_type="preference",
+                subject="TestUserBC_B6_xb6belief77701",
+                content="TestUserBC_B6_xb6belief77701 prefers Python (xb6belief77701 sentinel value)",
+                confidence=0.9,
+                directory_context=yadgar_dir,
+            )
+        )
+        assert isinstance(bid, int), f"insert_belief must return int id, got {bid!r}"
+
+        # Also seed a real memory so recall has at least one vector result
+        _insert_mem(
+            e2e_engines,
+            "BC-B6 TestUserBC_B6_xb6belief77701 belief preference Python",
+            yadgar_dir,
+            heat=0.9,
+        )
+
+        results = recall(
+            "TestUserBC_B6_xb6belief77701 preference Python",
+            directory=yadgar_dir,
+            max_results=20,
+        )
+        belief_sources = [r for r in results if r.get("_source") == "belief"]
+        assert len(belief_sources) > 0, (
+            "BC-B6: belief result MUST appear in recall when a matching belief exists. "
+            "Got 0 belief-sourced results. "
+            "Check fix #230: the belief branch except in fusion.py must NOT catch "
+            "AttributeError (narrowed to (KeyError, TypeError, ValueError)) so a "
+            "config/storage error does not silently drop every belief."
+        )
+
+
 # ---------------------------------------------------------------------------
 # C. Consolidation / decay / archive / purge
 # ---------------------------------------------------------------------------
