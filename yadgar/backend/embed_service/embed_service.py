@@ -17,6 +17,7 @@ GET /metrics exposes Prometheus metrics (unauthenticated — V1a, v5.5.0).
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import threading
@@ -277,14 +278,24 @@ async def _require_admin_token(
 
     Token read from YADGAR_MCP_AUTH_TOKEN. If the env var is unset,
     /admin routes are locked out entirely (fail-secure).
+
+    YADGAR_ALLOW_ROOT is a TEST-ONLY auth bypass. It is honoured only when the
+    process is running under pytest (``PYTEST_CURRENT_TEST`` present in the env);
+    in any other environment the flag is ignored. This prevents a real
+    deployment — or a leaked/shared env file — from silently disabling admin
+    auth on the backend, which is loopback-reachable by any local process.
     """
     expected = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
     allow_root = os.environ.get("YADGAR_ALLOW_ROOT", "0").lower() in ("1", "true", "yes")
-    if allow_root:
-        return  # test escape hatch
+    if allow_root and "PYTEST_CURRENT_TEST" in os.environ:
+        return  # test-only escape hatch (see docstring)
     if not expected:
         raise HTTPException(status_code=503, detail="Admin token not configured")
-    if credentials is None or credentials.credentials != expected:
+    # Constant-time compare (mirrors the core BearerAuthMiddleware) to avoid a
+    # timing side-channel on the shared bearer token.
+    if credentials is None or not hmac.compare_digest(
+        credentials.credentials.encode(), expected.encode()
+    ):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 

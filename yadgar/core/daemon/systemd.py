@@ -82,6 +82,7 @@ ExecStart=docker run --rm \\
     --health-cmd curl -f http://localhost:8001/health || exit 1 \\
     --health-start-period=60s \\
     -v {backend_data_dir}:/data \\
+    -v {profile.volume_name}:/queue-data \\
     -p {DEFAULT_BACKEND_EMBED_PORT}:8001 \\
     -e SURREAL_USER=${{SURREAL_USER}} \\
     -e SURREAL_PASS=${{SURREAL_PASS}} \\
@@ -89,6 +90,7 @@ ExecStart=docker run --rm \\
     -e YADGAR_RW_PASS=${{YADGAR_RW_PASS:-}} \\
     -e YADGAR_RO_USER=${{YADGAR_RO_USER:-}} \\
     -e YADGAR_RO_PASS=${{YADGAR_RO_PASS:-}} \\
+    -e YADGAR_QUEUE_BASE=/queue-data \\
 {hf_mount}    {backend_image_tagged}
 ExecStop=docker stop {backend_name}
 Restart=on-failure

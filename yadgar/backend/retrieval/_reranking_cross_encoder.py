@@ -108,7 +108,7 @@ class _CrossEncoderMixin:
             top_k = self._settings.CROSS_ENCODER_TOP_K
 
         # §13 skip: gate behind enabled flag — ML model is optional
-        if not getattr(self._settings, "CROSS_ENCODER_ENABLED", True):
+        if not self._settings.CROSS_ENCODER_ENABLED:
             return memories[:top_k] if memories else []
 
         if not memories or not query:
@@ -146,7 +146,7 @@ class _CrossEncoderMixin:
         if not raw_scores or all(s == 0.0 for s in raw_scores):
             return memories_to_score[:top_k]
 
-        ce_weight = getattr(self._settings, "CROSS_ENCODER_WEIGHT", 0.6)
+        ce_weight = self._settings.CROSS_ENCODER_WEIGHT
         _apply_ce_weights(memories_to_score, raw_scores, ce_weight)
 
         memories_to_score.sort(key=lambda m: m["_retrieval_score"], reverse=True)
@@ -260,8 +260,8 @@ class _CrossEncoderMixin:
     @observe(tier="stage", metric="retrieval.ce.cluster_memories")
     def cluster_memories(self, memories: list[dict]) -> list[list[dict]]:
         """Cluster memories by entity/topic overlap using Jaccard similarity."""
-        threshold = getattr(self._settings, "MULTI_PASSAGE_CLUSTER_OVERLAP_THRESHOLD", 0.3)
-        max_size = getattr(self._settings, "MULTI_PASSAGE_MAX_CLUSTER_SIZE", 3)
+        threshold = self._settings.MULTI_PASSAGE_CLUSTER_OVERLAP_THRESHOLD
+        max_size = self._settings.MULTI_PASSAGE_MAX_CLUSTER_SIZE
 
         # Tokenize each memory
         tokenized = []

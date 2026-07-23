@@ -182,7 +182,7 @@ class _FusionMixin:
             {sig for mid, sigs in scores.items() for sig, v in sigs.items() if v > 0}
         )
         normalized: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        fusion_norm = getattr(self._settings, "FUSION_NORM", "zscore")
+        fusion_norm = self._settings.FUSION_NORM
 
         for sig in signal_names:
             sig_vals = [(mid, s[sig]) for mid, s in scores.items() if s[sig] > 0]
@@ -190,7 +190,7 @@ class _FusionMixin:
                 continue
             self._normalize_signal(sig, sig_vals, [v for _, v in sig_vals], fusion_norm, normalized)
 
-        combmnz = getattr(self._settings, "COMBMNZ_ENABLED", False)
+        combmnz = self._settings.COMBMNZ_ENABLED
 
         fused_scores: dict = {}
         for mid, norm_sigs in normalized.items():
@@ -239,7 +239,7 @@ class _FusionMixin:
         if open_domain_mode:
             signal_weights["fts"] *= getattr(self._settings, "OPEN_DOMAIN_FTS_BOOST", 1.6)
 
-        fusion_method = getattr(self._settings, "FUSION_METHOD", "wrrf")
+        fusion_method = self._settings.FUSION_METHOD
 
         if fusion_method == "convex":
             signal_scores_for_convex: dict[str, dict[int, float]] = {}
@@ -256,7 +256,7 @@ class _FusionMixin:
         # Prior is stored on each memory row during consolidation — NO graph traversal.
         # Confidence gating intentionally bypassed (prior is additive, not a signal).
         try:
-            gp_weight = float(getattr(self._settings, "WRRF_GRAPH_PRIOR_WEIGHT", 0.0))
+            gp_weight = float(self._settings.WRRF_GRAPH_PRIOR_WEIGHT)
         except TypeError:
             gp_weight = 0.0
         if gp_weight > 0 and fused_scores:
@@ -267,7 +267,7 @@ class _FusionMixin:
         # Co-recall (transition-edge) prior — NO transition/graph traversal.
         # Confidence gating intentionally bypassed (additive, not a signal weight).
         try:
-            cf_weight = float(getattr(self._settings, "WRRF_COFIRE_PRIOR_WEIGHT", 0.0))
+            cf_weight = float(self._settings.WRRF_COFIRE_PRIOR_WEIGHT)
         except (TypeError, ValueError):  # fmt: skip
             cf_weight = 0.0
         if cf_weight > 0 and fused_scores:
@@ -328,7 +328,7 @@ class _FusionMixin:
         rerank_pool = max(
             max_results,
             self._settings.RERANKER_TOP_K,
-            getattr(self._settings, "CROSS_ENCODER_TOP_K", 0),
+            self._settings.CROSS_ENCODER_TOP_K,
         )
         result_memories: list[dict] = []
         seen_ids: set[int] = set()
@@ -427,7 +427,7 @@ class _FusionMixin:
         extra_results: list[dict] = []
 
         # Search profiles
-        if getattr(self._settings, "PROFILE_EXTRACTION_ENABLED", False):
+        if self._settings.PROFILE_EXTRACTION_ENABLED:
             try:
                 profiles = self._storage.search_profiles_fts(query, limit=max_results)
                 for p in profiles:
@@ -445,7 +445,7 @@ class _FusionMixin:
                 pass
 
         # Search beliefs
-        if getattr(self._settings, "DERIVED_BELIEFS_ENABLED", False):
+        if self._settings.DERIVED_BELIEFS_ENABLED:
             try:
                 beliefs = self._storage.search_beliefs_fts(query, limit=max_results)
                 boost = self._settings.BELIEF_HIGH_CONFIDENCE_BOOST
@@ -463,7 +463,11 @@ class _FusionMixin:
                             "_retrieval_score": score,
                         }
                     )
-            except Exception:
+            except (KeyError, TypeError, ValueError):  # fmt: skip
+                # Tolerate malformed belief rows; do NOT catch AttributeError —
+                # that signals a missing config key (mirrors the profile branch
+                # above; v5.68 fix #38). A blanket ``except Exception`` here
+                # silently dropped ALL beliefs on any storage/config error.
                 pass
 
         return extra_results
