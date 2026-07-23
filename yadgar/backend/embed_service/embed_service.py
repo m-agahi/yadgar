@@ -17,6 +17,7 @@ GET /metrics exposes Prometheus metrics (unauthenticated — V1a, v5.5.0).
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import threading
@@ -284,7 +285,11 @@ async def _require_admin_token(
         return  # test escape hatch
     if not expected:
         raise HTTPException(status_code=503, detail="Admin token not configured")
-    if credentials is None or credentials.credentials != expected:
+    # Constant-time compare (mirrors the core BearerAuthMiddleware) to avoid a
+    # timing side-channel on the shared bearer token.
+    if credentials is None or not hmac.compare_digest(
+        credentials.credentials.encode(), expected.encode()
+    ):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
