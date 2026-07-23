@@ -24,7 +24,7 @@ class _MultiPassageMixin:
         instead of per-cluster mode=pair RPCs (uncached). Score-identical; the
         only change is where/whether the identical scores are cached.
         """
-        if not getattr(self._settings, "MULTI_PASSAGE_RERANKING_ENABLED", False):
+        if not self._settings.MULTI_PASSAGE_RERANKING_ENABLED:
             return memories[:top_k]
 
         # Cluster top-20 candidates
