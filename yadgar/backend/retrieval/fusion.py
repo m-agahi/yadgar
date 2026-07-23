@@ -463,7 +463,11 @@ class _FusionMixin:
                             "_retrieval_score": score,
                         }
                     )
-            except Exception:
+            except (KeyError, TypeError, ValueError):  # fmt: skip
+                # Tolerate malformed belief rows; do NOT catch AttributeError —
+                # that signals a missing config key (mirrors the profile branch
+                # above; v5.68 fix #38). A blanket ``except Exception`` here
+                # silently dropped ALL beliefs on any storage/config error.
                 pass
 
         return extra_results
