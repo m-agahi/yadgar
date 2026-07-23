@@ -103,6 +103,20 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "real-model load smoke — opt-in via YADGAR_MODEL_LOAD_SMOKE=1",
       "note": "Deps-train gates b/c/d: downloads real model weights (Ettin/GTE/MiniLM/doc2query) and runs real inference — opt-in local pre-merge gate, never runs in CE-mocked CI legs. Covers the module-level skipif plus the flashrank importorskip (flashrank is not a locked dep; prod treats its absence as silent fall-through)."
+    },
+    {
+      "id": "code-graph-live-smoke-01",
+      "file": "yadgar/tests/core/test_code_graph_cli.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "codebase-memory-mcp binary not installed (live smoke; mirrors conftest.py:491 surreal guard)",
+      "note": "code_graph Car B (ADR-0162) live smoke: the codebase-memory-mcp static binary is a 259MB host-side external dep installed opt-in via `yadgar setup --code-graph`, never present in CI. Unit coverage fully mocks subprocess/git; this class asserts the real binary resolves when installed. Mirrors the conftest.py surreal shutil.which guard pattern."
+    },
+    {
+      "id": "code-graph-e2e-smoke-01",
+      "file": "yadgar/tests/core/test_code_graph_e2e.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "codebase-memory-mcp binary not installed (Car F live e2e; mirrors conftest.py:491 surreal guard)",
+      "note": "code_graph Car F (ADR-0162) end-to-end smoke: builds a hermetic throwaway git repo with a local bare origin, drives the real `yadgar code-graph refresh --json` seam against the real 259MB codebase-memory-mcp binary, and asserts a bounded non-empty digest + emit-payload shape. The binary is an opt-in host-side dep (`yadgar setup --code-graph`), never in CI — module-level skipif covers both e2e classes. Mirrors the conftest.py surreal shutil.which guard pattern."
     }
   ]
 }

@@ -325,6 +325,25 @@ def _migration_012_memory_block_table(storage) -> None:
     """)
 
 
+def _migration_027_runtime_config_table(storage) -> None:
+    """Add runtime_config table for the DB-backed runtime config store (ADR-0163, G1).
+
+    Directory-scoped, typed key/value config (mirrors the memory_block table
+    shape). Separate table for clean isolation from memory/wiki/blocks.
+
+    Schema is SCHEMALESS. Non-unique index on (key, directory) — uniqueness is
+    enforced application-side (like blocks); a UNIQUE index over a nullable
+    `directory` is deliberately avoided.
+
+    Additive only — no impact on existing data.
+    """
+    storage._q("DEFINE TABLE IF NOT EXISTS runtime_config SCHEMALESS;")
+    storage._q("""
+        DEFINE INDEX IF NOT EXISTS runtime_config_key_dir_idx
+            ON runtime_config FIELDS key, directory;
+    """)
+
+
 def _migration_013_wiki_page_version(storage) -> None:
     """Add wiki_page_version table for per-write version history (v5.41.0).
 
@@ -1140,6 +1159,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "026_drop_wiki_draft",
         "fn": _migration_026_drop_wiki_draft,
+    },
+    {
+        "version": "027_runtime_config_table",
+        "fn": _migration_027_runtime_config_table,
     },
 ]
 

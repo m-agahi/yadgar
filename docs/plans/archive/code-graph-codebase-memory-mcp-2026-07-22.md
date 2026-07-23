@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-23 — executed on feat/code-graph, ships with this PR
+
 # Plan — `code_graph`: multi-language code-structure via codebase-memory-mcp
 
 **Date:** 2026-07-22 (**v3** — usage-model pivot: injected digest, no recall pages)

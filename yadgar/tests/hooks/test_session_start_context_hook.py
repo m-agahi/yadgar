@@ -135,3 +135,49 @@ def test_no_branch_param_when_git_raises(tmp_path, capsys):
     parsed = urllib.parse.urlparse(url)
     params = urllib.parse.parse_qs(parsed.query)
     assert "branch" not in params, f"Expected no branch= in URL, got: {url}"
+
+
+# ── G5 hardening: HTTPError from a non-200 must be closed (py3.14 leak guard) ──
+
+
+def test_http_error_from_daemon_is_closed(tmp_path):
+    """A non-200 daemon response (urllib HTTPError) is closed, not leaked, and swallowed.
+
+    HTTPError subclasses tempfile._TemporaryFileWrapper (via addbase) on py3.14; an
+    unclosed instance fires a spurious ResourceWarning at GC that pytest-xdist
+    mis-attributes to an unrelated test. The hook must close it deterministically
+    and still degrade silently (daemon issue → skip, never crash the session).
+    """
+    import urllib.error
+
+    hook_mod = _load_hook()
+    fake_stdin = json.dumps({"cwd": str(tmp_path)})
+
+    def _fake_run_fail(cmd, **kw):
+        result = MagicMock()
+        result.returncode = 128
+        result.stdout = ""
+        return result
+
+    err = urllib.error.HTTPError("url", 401, "Unauthorized", hdrs=None, fp=None)
+    closed = {"n": 0}
+    _orig_close = err.close
+
+    def _tracking_close():
+        closed["n"] += 1
+        _orig_close()
+
+    err.close = _tracking_close  # type: ignore[method-assign]
+
+    import io
+
+    with patch.object(hook_mod.subprocess, "run", side_effect=_fake_run_fail):
+        with patch("urllib.request.urlopen", side_effect=err):
+            old_stdin = hook_mod.sys.stdin
+            hook_mod.sys.stdin = io.StringIO(fake_stdin)
+            try:
+                hook_mod.main()  # must not raise
+            finally:
+                hook_mod.sys.stdin = old_stdin
+
+    assert closed["n"] >= 1, "the hook must close the caught HTTPError"

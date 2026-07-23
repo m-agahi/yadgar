@@ -73,6 +73,7 @@ def cli():
     # Register all subcommands in original order
     from yadgar.core.cli import (  # noqa: E402
         capture,
+        code_graph,
         config,
         context,
         daemon,
@@ -108,6 +109,7 @@ def cli():
     config.register(subparsers)
     rules.register(subparsers)
     repo_wiki.register(subparsers)
+    code_graph.register(subparsers)
     viz.register(subparsers)
     setup.register(subparsers)
     daemon.register(subparsers)

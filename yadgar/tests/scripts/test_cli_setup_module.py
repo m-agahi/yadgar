@@ -10,7 +10,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from yadgar.core.cli.setup import _render_secrets_env, cmd_setup, register
+import pytest
+
+from yadgar.core.cli.setup import (
+    _render_secrets_env,
+    _resolve_code_graph_action,
+    cmd_setup,
+    register,
+)
 
 # ---------------------------------------------------------------------------
 # _render_secrets_env
@@ -62,6 +69,86 @@ class TestRegister:
         register(subs)
         args = root.parse_args(["setup"])
         assert hasattr(args, "func")
+
+    def test_register_accepts_no_code_graph(self):
+        import argparse
+
+        root = argparse.ArgumentParser()
+        subs = root.add_subparsers()
+        register(subs)
+        args = root.parse_args(["setup", "--no-code-graph"])
+        assert getattr(args, "no_code_graph", False) is True
+
+    def test_code_graph_and_no_code_graph_are_mutually_exclusive(self):
+        import argparse
+
+        root = argparse.ArgumentParser()
+        subs = root.add_subparsers()
+        register(subs)
+        with pytest.raises(SystemExit):
+            root.parse_args(["setup", "--code-graph", "--no-code-graph"])
+
+
+# ---------------------------------------------------------------------------
+# _resolve_code_graph_action — the pure decision tree (Car G5)
+# ---------------------------------------------------------------------------
+
+
+def _args(**kw):
+    base = {"code_graph": False, "no_code_graph": False}
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+class TestResolveCodeGraphAction:
+    def test_no_code_graph_flag_skips(self):
+        # --no-code-graph wins even over a TTY / env / --code-graph.
+        action = _resolve_code_graph_action(
+            _args(no_code_graph=True, code_graph=True),
+            isatty=True,
+            env_enabled=True,
+            prompt_fn=lambda: True,
+        )
+        assert action == "skip"
+
+    def test_code_graph_flag_installs_and_persists(self):
+        action = _resolve_code_graph_action(
+            _args(code_graph=True), isatty=False, env_enabled=False, prompt_fn=lambda: False
+        )
+        assert action == "install_persist"
+
+    def test_env_flag_installs_only_no_persist(self):
+        # CODE_GRAPH_ENABLED is an INSTALL trigger, not a runtime-enable persist.
+        action = _resolve_code_graph_action(
+            _args(), isatty=True, env_enabled=True, prompt_fn=lambda: True
+        )
+        assert action == "install_only"
+
+    def test_interactive_yes_installs_and_persists(self):
+        action = _resolve_code_graph_action(
+            _args(), isatty=True, env_enabled=False, prompt_fn=lambda: True
+        )
+        assert action == "install_persist"
+
+    def test_interactive_no_skips(self):
+        action = _resolve_code_graph_action(
+            _args(), isatty=True, env_enabled=False, prompt_fn=lambda: False
+        )
+        assert action == "skip"
+
+    def test_non_interactive_no_flag_no_env_skips_without_prompting(self):
+        # THE no-hang guarantee: no TTY + no flag + no env → skip, prompt NEVER called.
+        called = {"n": 0}
+
+        def _prompt():
+            called["n"] += 1
+            return True
+
+        action = _resolve_code_graph_action(
+            _args(), isatty=False, env_enabled=False, prompt_fn=_prompt
+        )
+        assert action == "skip"
+        assert called["n"] == 0, "must not prompt when stdin is not a TTY"
 
 
 # ---------------------------------------------------------------------------
@@ -198,3 +285,71 @@ class TestCmdSetupDockerUnavailable:
         # Phase 2b: no longer "command": "yadgar" (stdio); must emit streamable-http config
         assert "streamable-http" in out
         assert '"command"' not in out
+
+
+# ---------------------------------------------------------------------------
+# _maybe_install_code_graph — install + on-enable persist (Car G5)
+# ---------------------------------------------------------------------------
+
+
+class TestMaybeInstallCodeGraph:
+    def _run(self, args, *, set_return=True, install_ok=True, capsys):
+        from yadgar.core.cli import setup as _setup
+
+        install_calls: list = []
+        set_calls: list = []
+
+        def _fake_install(skip_if_exists=False):
+            install_calls.append(skip_if_exists)
+            if not install_ok:
+                raise RuntimeError("install boom")
+            return "/home/x/.local/bin/codebase-memory-mcp"
+
+        def _fake_set(key, value, *, scope="global", directory=None):
+            set_calls.append((key, value, scope, directory))
+            return set_return
+
+        with (
+            patch(
+                "yadgar.core.install.codebase_memory_mcp.install_codebase_memory_mcp",
+                side_effect=_fake_install,
+            ),
+            patch("yadgar.core.install.codebase_memory_mcp.BINARY_NAME", "codebase-memory-mcp"),
+            patch("yadgar.core.install.codebase_memory_mcp.VERSION", "v0.9.0"),
+            patch("yadgar.core.runtime_config_client.set", side_effect=_fake_set),
+        ):
+            _setup._maybe_install_code_graph(args)
+
+        return capsys.readouterr().out, install_calls, set_calls
+
+    def test_flag_installs_and_persists_when_daemon_up(self, capsys):
+        out, installs, sets = self._run(_args(code_graph=True), set_return=True, capsys=capsys)
+        assert installs, "binary must be installed"
+        assert sets == [("code_graph.enabled", True, "global", None)]
+        assert "enabled" in out.lower()
+
+    def test_daemon_down_installs_and_prints_manual_step(self, capsys):
+        out, installs, sets = self._run(_args(code_graph=True), set_return=False, capsys=capsys)
+        assert installs, "binary must be installed even when daemon is down"
+        assert sets == [("code_graph.enabled", True, "global", None)]
+        # set() returned False (daemon down) → tell the user how to enable manually.
+        assert "config set code_graph.enabled true" in out or "config_set" in out
+
+    def test_no_code_graph_flag_installs_nothing(self, capsys):
+        out, installs, sets = self._run(_args(no_code_graph=True), set_return=True, capsys=capsys)
+        assert installs == []
+        assert sets == []
+
+    def test_env_only_installs_without_persist(self, capsys, monkeypatch):
+        monkeypatch.setenv("CODE_GRAPH_ENABLED", "1")
+        out, installs, sets = self._run(_args(), set_return=True, capsys=capsys)
+        assert installs, "env trigger must install the binary"
+        assert sets == [], "env trigger must NOT persist the runtime-enable"
+
+    def test_non_interactive_no_flag_no_env_does_nothing(self, capsys, monkeypatch):
+        monkeypatch.delenv("CODE_GRAPH_ENABLED", raising=False)
+        # Force a non-TTY stdin.
+        with patch("sys.stdin.isatty", return_value=False):
+            out, installs, sets = self._run(_args(), capsys=capsys)
+        assert installs == []
+        assert sets == []

@@ -463,6 +463,15 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     # the just-written yaml — correct hot-reload, correct source attribution.
     clear_config_caches()
 
+    # Car G2 (ADR-0163): defensively flush the runtime_config read-through cache on
+    # a Settings hot-reload too (harmless — writes are rare). Wired at THIS core call
+    # site, NOT inside _shared's clear_config_caches(), to avoid a _shared → core
+    # import edge (lint-imports). The PRIMARY write-path bust is G3's config_set /
+    # config_delete calling invalidate_config_cache() directly.
+    from yadgar.core.server.tools._runtime_config import invalidate_config_cache
+
+    invalidate_config_cache()
+
     # Serialise the coerced value. Python ``str(True)`` is capitalized ``"True"``,
     # which diverged from the GET path (lowercase env strings) and the YAML/JSON
     # convention — the config editor then showed booleans inconsistently. Render

@@ -678,6 +678,13 @@ class Settings(BaseSettings):
     # unless an active refactor is underway. A due checkpoint or anchor-audit
     # preempts it (lower priority), and it then fires on the next eligible stop.
     REPO_WIKI_REFRESH_STOP_INTERVAL: int = 200
+    # Car D (#83, ADR-0162): stop-hook maintenance cadence — human messages between
+    # code_graph-refresh maintenance injections. Parallel to the repo-wiki cadence
+    # (same 200-msg default, same priority-2 slot). Gated by the code_graph.enabled
+    # runtime-config row (ADR-0163, dir-aware): when enabled the code_graph item runs
+    # INSTEAD OF repo-wiki (mutually exclusive, no double-fire); when disabled
+    # code_graph is inert and repo-wiki runs as today.
+    CODE_GRAPH_REFRESH_STOP_INTERVAL: int = 200
     # v5.9.0: anchor audit pass in consolidate_now() (anchor_audit section)
     # Toggle anchor pass inside consolidate_now().
     ANCHOR_AUDIT_CONSOLIDATION_ENABLED: bool = True

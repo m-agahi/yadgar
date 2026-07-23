@@ -41,9 +41,89 @@
         pkgs = nixpkgs.legacyPackages.${system};
         python = pkgs.python314 or pkgs.python313;
 
+        # ── codebase-memory-mcp static binary (Car A, ADR-0162) ─────────────
+        # HOST-SIDE ONLY — never added to the docker image.
+        # Pinned to v0.9.0.  SHA-256 values taken from the upstream checksums.txt
+        # published at the same release URL.  Using SRI (sha256-<base64>) as
+        # required by fetchurl.  The per-system table selects the -portable
+        # tarballs for Linux (static ELF, no glibc dep; runs on NixOS without
+        # patchelf because the binary is statically linked).  Darwin tarballs
+        # are the plain ones (system-linked against macOS libs).
+        #
+        # Binary install: add codebase-memory-mcp to home.packages via the
+        # homeManagerModules.default option programs.yadgar.codeGraph.enable.
+        # See the MIGRATION_NOTES.md stanza for modules/home/yadgar.nix.
+        #
+        # Expose as: packages.codebase-memory-mcp (always built on demand)
+        # Gate home.packages inclusion behind programs.yadgar.codeGraph.enable
+        # (default false) — avoids a 259MB fetch for users who haven't opted in.
+        _cbm_assets = {
+          "x86_64-linux" = {
+            asset   = "codebase-memory-mcp-linux-amd64-portable.tar.gz";
+            sha256  = "sha256-hFnVydFFfyyC3j3jB//HZB7Lui3eiTQnvh5i7KjvmyU=";
+          };
+          "aarch64-linux" = {
+            asset   = "codebase-memory-mcp-linux-arm64-portable.tar.gz";
+            sha256  = "sha256-sKQ/2vU0BzwWcH1ycmtzsUnUwSEgNLKB7ot7Lax1UQc=";
+          };
+          "x86_64-darwin" = {
+            asset   = "codebase-memory-mcp-darwin-amd64.tar.gz";
+            sha256  = "sha256-avPQKif1iZAfp2PTlxCJM3vIyYOLvtXQz1Q8qfGp5UM=";
+          };
+          "aarch64-darwin" = {
+            asset   = "codebase-memory-mcp-darwin-arm64.tar.gz";
+            sha256  = "sha256-+qAvBAQjDEUamBIjA5RIGUj4AYOAH6W/ZwRLQcLyXtQ=";
+          };
+        };
+
+        _cbm_info = _cbm_assets.${system} or (throw
+          "codebase-memory-mcp: unsupported system ${system}. "
+          + "Supported: x86_64-linux, aarch64-linux, x86_64-darwin, aarch64-darwin."
+        );
+
+        # Pin string — kept separate from the yadgar `version = "X.Y.Z"` field
+        # so that scripts/sync_version.py (count=1 regex) only touches the
+        # yadgar package version below, not this unrelated pin.
+        _cbm_version = "0.9.0";
+
+        codebase-memory-mcp-pkg = pkgs.stdenv.mkDerivation {
+          pname   = "codebase-memory-mcp";
+          version = _cbm_version;
+
+          src = pkgs.fetchurl {
+            url    = "https://github.com/DeusData/codebase-memory-mcp/releases/download/v${_cbm_version}/${_cbm_info.asset}";
+            sha256 = _cbm_info.sha256;
+          };
+
+          # The tarball is a .tar.gz but fetchurl downloads it as a flat file.
+          # stdenv.mkDerivation unpacks it automatically via unpackPhase.
+          sourceRoot = ".";
+
+          # Static ELF on Linux — no patchelf, no strip (binary is pre-built).
+          # dontPatchELF prevents nixpkgs fixup from trying to rewrite the ELF
+          # interpreter (which doesn't exist in a static binary).
+          dontPatchELF = true;
+          dontStrip    = true;
+
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 codebase-memory-mcp $out/bin/codebase-memory-mcp
+            runHook postInstall
+          '';
+
+          meta = with pkgs.lib; {
+            description = "Multi-language codebase graph indexer (tree-sitter + Louvain, offline)";
+            homepage    = "https://github.com/DeusData/codebase-memory-mcp";
+            license     = licenses.mit;
+            # Host-side only: runs against user repos; never inside docker image.
+            platforms   = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+          };
+        };
+        # ──────────────────────────────────────────────────────────────────────
+
         yadgar-pkg = python.pkgs.buildPythonApplication {
           pname = "yadgar";
-          version = "5.162.0";
+          version = "5.164.0";
           format = "pyproject";
 
           src = ./.;
@@ -88,6 +168,9 @@
         packages = {
           yadgar = yadgar-pkg;
           default = yadgar-pkg;
+          # codebase-memory-mcp: always buildable on demand; gated from
+          # home.packages by programs.yadgar.codeGraph.enable (default false).
+          codebase-memory-mcp = codebase-memory-mcp-pkg;
         };
 
         apps = {
@@ -175,13 +258,13 @@
 
             coreVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.162.0";
+              default = "5.164.0";
               description = "Container image tag for the yadgar core service.";
             };
 
             backendVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.58.4";
+              default = "5.58.5";
               description = "Container image tag for the yadgar-backend service.";
             };
 
@@ -232,10 +315,32 @@
               default = 8001;
               description = "Loopback port for the embedding service inside the backend container.";
             };
+
+            # code_graph feature gate (ADR-0162 Car A).
+            # Default false — the binary is ~259 MB; do not force a fetch on
+            # all yadgar users until code_graph is proven (Car F pilot-gate).
+            # Set true after Car F validates the feature, or to opt-in early.
+            codeGraph = {
+              enable = lib.mkOption {
+                type    = lib.types.bool;
+                default = false;
+                description = ''
+                  Install the codebase-memory-mcp static binary HOST-SIDE
+                  (code_graph feature, ADR-0162).  The binary is ~259 MB and
+                  is never added to the docker image.  Default false until the
+                  Car F pilot-gate confirms the feature is production-ready.
+                  Flip to true to opt in early.
+                '';
+              };
+            };
           };
 
           config = lib.mkIf cfg.enable {
-            home.packages = [ self.packages.${pkgs.stdenv.system}.yadgar ];
+            home.packages =
+              [ self.packages.${pkgs.stdenv.system}.yadgar ]
+              ++ lib.optionals cfg.codeGraph.enable [
+                self.packages.${pkgs.stdenv.system}.codebase-memory-mcp
+              ];
 
             # ── yadgar-backend.service ──────────────────────────────────────
             systemd.user.services.yadgar-backend = {

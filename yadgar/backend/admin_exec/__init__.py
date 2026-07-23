@@ -25,6 +25,7 @@ from yadgar.backend.admin_exec import (
     memory,
     project,
     restoration,
+    runtime_config,
     seed,
     staleness,
     wiki,
@@ -44,6 +45,9 @@ _ADMIN_OPS: dict[str, Callable[[dict], dict]] = {
     "block_delete": blocks.block_delete,
     "block_replace": blocks.block_replace,
     "block_append": blocks.block_append,
+    # runtime config store (ADR-0163, G1) — write ops only; reads stay core.
+    "runtime_config_set": runtime_config.runtime_config_set,
+    "runtime_config_delete": runtime_config.runtime_config_delete,
     # memory / rules writes (R3 Car 3b / R5 group 2)
     "forget": memory.forget,
     "memory_update": memory.memory_update,

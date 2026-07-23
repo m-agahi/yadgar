@@ -973,6 +973,32 @@ async def _task_list_restore_nudge(directory: str, branch_hint: str | None) -> s
         return ""
 
 
+@observe(tier="stage")
+def _code_graph_suggest_line(directory: str, blocks: list[dict]) -> str:
+    """Return the code_graph SessionStart soft-suggest tail, or "" (Car D, #83).
+
+    A ONE-LINE nudge appended when code_graph is enabled for ``directory``, not
+    opted out, AND no ``code_graph`` digest block exists yet in ``blocks``. When a
+    digest block already exists it is already injected (render_blocks_section) →
+    "". Never forces or auto-runs anything.
+
+    ``blocks`` is the list_blocks result the caller already fetched (no extra I/O).
+    Fail-open: any error returns "" so session-start is never blocked. Default-safe
+    in the read-only container (no host repos, flag absent → "").
+    """
+    try:
+        from yadgar.core.code_graph.config import session_suggest_line  # noqa: PLC0415
+        from yadgar.core.server.tools._runtime_config import config_get  # noqa: PLC0415
+
+        # DAEMON-side: inject the in-process resolver so the daemon reads the
+        # code_graph.enabled flag from its OWN DB (ADR-0163 container-blindness fix).
+        line = session_suggest_line(directory, blocks, resolver=config_get)
+        return f"\n{line}\n" if line else ""
+    except Exception as _cge:
+        logger.debug("session-context code_graph suggest error: %s", _cge)
+        return ""
+
+
 @observe(tier="stage", metric="http._persist_dir_branch_context_from_request")
 def _persist_dir_branch_context_from_request(request: Request, directory: str) -> None:
     """Extract the Car 0 trusted git facts from the request + persist them.
@@ -1119,6 +1145,11 @@ async def hook_session_context(request: Request) -> JSONResponse:
                     _bsection = _rbs(_blocks, directory)
                     if _bsection:
                         render = _bsection + "\n" + render
+
+                    # Car D (#83, ADR-0162): code_graph SessionStart soft-suggest.
+                    # Reuses the _blocks list just fetched; the helper is fail-open and
+                    # returns "" when the digest block already exists / opted out / off.
+                    render = render + _code_graph_suggest_line(directory, _blocks)
             except Exception as _be:
                 logger.debug("session-context blocks inject error: %s", _be)
 
@@ -2114,6 +2145,86 @@ async def api_info(request: Request) -> JSONResponse:
         {"version": __version__, "python_version": _sys.version.split()[0]},
         headers=_CORS,
     )
+
+
+@mcp_server.custom_route("/api/runtime-config/{key}", methods=["GET"])
+@trace_span()
+async def api_runtime_config(request: Request) -> JSONResponse:
+    """Resolve a runtime_config value (ADR-0163, Car G3).
+
+    The host-side fail-open client (``yadgar.core.runtime_config_client``) hits
+    this route. Resolution (per-dir → global → default) runs core-side via the G2
+    resolver, which is itself fail-safe (storage down → default), so this returns
+    ``{"value": null}`` rather than a 5xx when the DB is unavailable — that IS the
+    fail-open contract end-to-end.
+
+    Path param:
+        key: the config key.
+    Query param:
+        directory: absolute project path for a per-dir lookup (optional; omitted =
+            global).
+    Returns: ``{"key": ..., "directory": ..., "value": <resolved>}``.
+    """
+    from yadgar.core.server.tools._runtime_config import config_get  # noqa: PLC0415
+
+    key = request.path_params.get("key", "")
+    directory = request.query_params.get("directory", None) or None
+    value = await asyncio.to_thread(config_get, key, directory, None)
+    return JSONResponse({"key": key, "directory": directory, "value": value})
+
+
+@mcp_server.custom_route("/api/runtime-config/{key}", methods=["POST"])
+@trace_span()
+async def api_runtime_config_set(request: Request) -> JSONResponse:
+    """Persist a runtime_config value — host WRITE path (ADR-0163, Car G5).
+
+    The host-side write client (``runtime_config_client.set``) hits this route.
+    It mirrors the ``config_set`` MCP tool by calling the SHARED
+    ``_apply_config_set`` helper (validate scope + value → ``_forward_admin`` →
+    ``invalidate_config_cache``), so tool and route cannot drift. A validation
+    failure (bad scope / missing project directory / non-serializable value)
+    returns 400; a successful write returns 200 with the written row.
+
+    Auth: same bearer middleware as every ``/api/`` route (protected prefix).
+
+    Path param:
+        key: the config key.
+    JSON body:
+        ``{value, scope="global"|"project", directory}``.
+    """
+    from yadgar.core.server.tools.runtime_config import _apply_config_set  # noqa: PLC0415
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
+
+    key = request.path_params.get("key", "")
+    value = body.get("value")
+    scope = body.get("scope", "global")
+    directory = body.get("directory")
+    result = await asyncio.to_thread(_apply_config_set, key, value, scope, directory)
+    status = 400 if isinstance(result, dict) and result.get("ok") is False else 200
+    return JSONResponse(result, status_code=status)
+
+
+@mcp_server.custom_route("/api/runtime-config/{key}", methods=["DELETE"])
+@trace_span()
+async def api_runtime_config_delete(request: Request) -> JSONResponse:
+    """Delete a runtime_config row — host WRITE path (ADR-0163, Car G5).
+
+    Mirrors the ``config_delete`` MCP tool via the shared ``_apply_config_delete``
+    helper. Scope + directory come from the query string (``?scope=…&directory=…``)
+    so a body-less DELETE works. A validation failure returns 400; success 200.
+    """
+    from yadgar.core.server.tools.runtime_config import _apply_config_delete  # noqa: PLC0415
+
+    key = request.path_params.get("key", "")
+    scope = request.query_params.get("scope", "global")
+    directory = request.query_params.get("directory", None) or None
+    result = await asyncio.to_thread(_apply_config_delete, key, scope, directory)
+    status = 400 if isinstance(result, dict) and result.get("ok") is False else 200
+    return JSONResponse(result, status_code=status)
 
 
 @mcp_server.custom_route("/api/metrics/heat-histogram", methods=["GET"])

@@ -101,9 +101,17 @@ _NORMAL_TITLE = "yadgar-indexing-architecture-overview-car-c"
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(autouse=True)
 def _seed_pages(_engines):
-    """Seed one repo_wiki page and one normal page."""
+    """Seed one repo_wiki page and one normal page.
+
+    Function-scoped (re-seeds per test) NOT module-scoped: the conftest
+    per-test data-wipe (_WIPE_TABLES includes wiki_page) runs on each test's
+    teardown, so a module-scoped single seed is stranded for every test after
+    the first — deterministically under single-process, flakily under xdist
+    worker distribution (pre-existing; surfaced by full-suite runs). Re-seeding
+    per test makes the page present for whichever test runs, in any order.
+    """
     _add_page(_REPO_WIKI_TITLE, _REPO_WIKI_CONTENT, page_type="repo_wiki")
     _add_page(_NORMAL_TITLE, _NORMAL_CONTENT, page_type=None)
     yield

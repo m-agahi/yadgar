@@ -168,6 +168,71 @@ def test_sync_version_exits_0_when_no_changes(tmp_path):
     )
 
 
+def test_sync_version_leaves_cbm_version_pin_untouched(tmp_path):
+    """The `_cbm_version` pin (codebase-memory-mcp, #83 Car A) must NOT be synced.
+
+    Regression for the v5.163.0 bug: the un-anchored ``(version\\s*=\\s*")`` regex
+    matched the suffix of ``_cbm_version = "0.9.0";`` FIRST under ``count=1`` — it
+    corrupted the CBM release tag AND left the yadgar-pkg ``version`` unsynced. The
+    line-anchored regex must skip ``_cbm_version`` and hit the bare ``version`` field.
+    """
+    import json
+
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    shutil.copy(SYNC_SCRIPT, scripts_dir / "sync_version.py")
+
+    (tmp_path / "pyproject.toml").write_text(
+        textwrap.dedent("""\
+            [project]
+            name = "yadgar"
+            version = "5.163.0"
+        """)
+    )
+    (tmp_path / "server.json").write_text(
+        json.dumps({"version": "5.162.0", "packages": [{"version": "5.162.0"}]}, indent=2) + "\n"
+    )
+    # flake.nix with a _cbm_version pin BEFORE the yadgar-pkg version (mirrors the
+    # real file: the pin's suffix is `version = "` which the old regex matched first).
+    (tmp_path / "flake.nix").write_text(
+        textwrap.dedent("""\
+            {
+              outputs = { self, nixpkgs, lib }: {
+                _cbm = {
+                  _cbm_version = "0.9.0";
+                };
+                packages.x86_64-linux.default = {
+                  pname = "yadgar";
+                  version = "5.162.0";
+                };
+                options.programs.yadgar = {
+                  coreVersion = lib.mkOption {
+                    type = lib.types.str;
+                    default = "5.162.0";
+                    description = "Container image tag for the yadgar core service.";
+                  };
+                };
+              };
+            }
+        """)
+    )
+
+    r = subprocess.run(
+        [sys.executable, str(scripts_dir / "sync_version.py")],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+    )
+    assert r.returncode in (0, 1), f"sync_version.py error: {r.stderr}"
+
+    flake = (tmp_path / "flake.nix").read_text()
+    # The CBM binary pin survives (it tracks the binary release, not yadgar).
+    assert '_cbm_version = "0.9.0";' in flake, f"_cbm_version pin corrupted: {flake}"
+    # The yadgar-pkg version IS synced.
+    assert 'version = "5.163.0";' in flake, f"yadgar version not synced: {flake}"
+    assert 'version = "5.162.0";' not in flake, f"stale yadgar version remains: {flake}"
+
+
 def test_real_repo_flake_nix_has_version_field():
     """Sanity: real repo flake.nix has a version = "..."; line (sync target exists)."""
     flake_path = REPO_ROOT / "flake.nix"
