@@ -244,6 +244,104 @@ class TestPlistlibParseability:
         assert ".local/state/yadgar/triggers" in paths[0]
 
 
+# ── Vacuum-trigger path consistency (fix/vacuum-trigger-path) ──────────────────
+#
+# THE INVARIANT: for a launcher that ships a host-side vacuum-trigger watcher,
+# the host directory the daemon's trigger write maps to MUST equal the host
+# directory the watcher watches. Otherwise vacuum_now() is a silent no-op — the
+# daemon writes the trigger file where nothing is looking.
+#
+# On launchd, the core daemon runs in a container. It writes the trigger to the
+# path in YADGAR_VACUUM_TRIGGER_PATH (container-absolute). For that write to land
+# on the host dir the watcher watches, the core plist MUST (A):
+#   1. mount the host XDG-state dir into the container, and
+#   2. set YADGAR_VACUUM_TRIGGER_PATH to a path UNDER that container mount point,
+#      whose host projection == the watcher's WatchPaths dir.
+
+
+class TestVacuumTriggerPathConsistency:
+    """End-to-end: core-plist trigger write dir == watcher WatchPaths dir."""
+
+    CORE_TEMPLATE = "com.openfantasy.yadgar.plist.in"
+    TRIGGER_TEMPLATE = "com.openfantasy.yadgar-vacuum-trigger.plist.in"
+
+    def _core_run_command(self) -> str:
+        """Return the substituted `podman/docker run ...` line from the core plist."""
+        data = plistlib.loads(_substitute(_load_template(self.CORE_TEMPLATE)).encode())
+        args = data["ProgramArguments"]
+        # ProgramArguments = ["/bin/sh", "-c", "<runtime> run ... <image>"]
+        run_cmd = next((a for a in args if " run " in a and "-v " in a), None)
+        assert run_cmd is not None, "core plist ProgramArguments has no container run command"
+        return run_cmd
+
+    def _parse_mounts(self, run_cmd: str) -> dict[str, str]:
+        """Return {container_path: host_path} for every `-v host:container` bind."""
+        mounts: dict[str, str] = {}
+        for m in re.findall(r"-v\s+(\S+)", run_cmd):
+            host, _, container = m.partition(":")
+            # strip trailing :ro / :rw option
+            container = container.split(":")[0]
+            if host and container:
+                mounts[container] = host
+        return mounts
+
+    def test_core_plist_mounts_xdg_state_dir(self) -> None:
+        """Core container must bind-mount the host XDG-state dir (fix A step 1)."""
+        run_cmd = self._core_run_command()
+        mounts = self._parse_mounts(run_cmd)
+        state_mount = mounts.get("/root/.local/state/yadgar")
+        assert state_mount is not None, (
+            "core plist must mount host ~/.local/state/yadgar → "
+            "/root/.local/state/yadgar so the daemon's trigger write lands where "
+            "the watcher looks"
+        )
+        assert state_mount.endswith("/.local/state/yadgar"), (
+            f"state mount host path unexpected: {state_mount}"
+        )
+
+    def test_core_plist_sets_vacuum_trigger_env(self) -> None:
+        """Core container must set YADGAR_VACUUM_TRIGGER_PATH under the state mount (fix A step 2)."""
+        run_cmd = self._core_run_command()
+        m = re.search(r"-e\s+YADGAR_VACUUM_TRIGGER_PATH=(\S+)", run_cmd)
+        assert m is not None, (
+            "core plist must set -e YADGAR_VACUUM_TRIGGER_PATH — without it the "
+            "daemon writes to the /data default and the trigger watcher never fires"
+        )
+        assert m.group(1).startswith("/root/.local/state/yadgar/triggers/"), (
+            f"trigger env must point under the state mount, got: {m.group(1)}"
+        )
+
+    def test_trigger_write_dir_equals_watcher_dir(self) -> None:
+        """THE INVARIANT: host dir the daemon writes the trigger to == watcher WatchPaths dir."""
+        # 1. Watcher: host dir it watches.
+        trigger_data = plistlib.loads(_substitute(_load_template(self.TRIGGER_TEMPLATE)).encode())
+        watch_dir = trigger_data["WatchPaths"][0]
+
+        # 2. Daemon: container trigger path → project through the state mount to host.
+        run_cmd = self._core_run_command()
+        mounts = self._parse_mounts(run_cmd)
+        m = re.search(r"-e\s+YADGAR_VACUUM_TRIGGER_PATH=(\S+)", run_cmd)
+        assert m is not None, "core plist missing YADGAR_VACUUM_TRIGGER_PATH"
+        container_trigger = m.group(1)
+
+        host_trigger = None
+        for container_mount, host_mount in mounts.items():
+            if container_trigger.startswith(container_mount + "/"):
+                host_trigger = host_mount + container_trigger[len(container_mount) :]
+                break
+        assert host_trigger is not None, (
+            f"container trigger path {container_trigger} is not under any bind mount "
+            f"{list(mounts)} — the daemon's write would stay inside the container"
+        )
+
+        # host trigger file dir must equal the dir the watcher watches.
+        host_trigger_dir = host_trigger.rsplit("/", 1)[0]
+        assert host_trigger_dir == watch_dir, (
+            f"vacuum-trigger MISMATCH: daemon writes to host {host_trigger_dir!r} "
+            f"but watcher watches {watch_dir!r} — vacuum_now() would be a silent no-op"
+        )
+
+
 # ── generate_launchd.sh integration ───────────────────────────────────────────
 
 
