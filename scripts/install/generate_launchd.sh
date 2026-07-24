@@ -38,6 +38,12 @@ BACKEND_IMAGE="${YADGAR_BACKEND_IMAGE:-openfantasy/yadgar-backend:latest}"
 CORE_IMAGE="${YADGAR_CORE_IMAGE:-openfantasy/yadgar:latest}"
 LOG_DIR="${HOME}/.local/share/yadgar/logs"
 SCRIPTS_INSTALL_DIR="${HOME}/.local/share/yadgar/scripts"
+# XDG-state trigger dir: the core container writes vacuum_requested here (via the
+# state-dir bind mount + YADGAR_VACUUM_TRIGGER_PATH in com.openfantasy.yadgar.plist)
+# and the vacuum-trigger plist watches it via WatchPaths. Pre-create it so the
+# WatchPaths registration is reliable at launchd load (watching a missing dir may
+# not fire on first creation).
+TRIGGERS_DIR="${HOME}/.local/state/yadgar/triggers"
 
 # ── Runtime detection (if not set) ───────────────────────────────────────────
 
@@ -82,6 +88,7 @@ render_template() {
 mkdir -p "${OUTPUT_DIR}"
 mkdir -p "${LOG_DIR}"
 mkdir -p "${SCRIPTS_INSTALL_DIR}"
+mkdir -p "${TRIGGERS_DIR}"
 
 # ── Render daemon plists (RunAtLoad + KeepAlive) ─────────────────────────────
 

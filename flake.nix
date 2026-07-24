@@ -445,6 +445,14 @@
                   "-e YADGAR_DB_URL=http://yadgar-backend:8000"
                   "-e YADGAR_EMBED_URL=http://yadgar-backend:8001"
                   "-e YADGAR_DATA_DIR=/data"
+                  # vacuum_now() writes its trigger here; the stateDir bind mount
+                  # above projects it to host ${stateDir}/triggers/vacuum_requested.
+                  # This flake drives vacuum via the weekly yadgar-vacuum.timer, not
+                  # a .path watcher, so the trigger file is currently inert here —
+                  # but pinning the write into the state mount keeps the daemon's
+                  # trigger path consistent with the documented XDG-state design
+                  # (and makes the stateDir mount meaningful rather than dead weight).
+                  "-e YADGAR_VACUUM_TRIGGER_PATH=/root/.local/state/yadgar/triggers/vacuum_requested"
                   "-e YADGAR_CONFIG_FILE=/data/config.yaml"
                   "-e YADGAR_DB_USER -e YADGAR_DB_PASS -e YADGAR_MCP_AUTH_TOKEN"
                   "-e YADGAR_IN_CONTAINER=1"
