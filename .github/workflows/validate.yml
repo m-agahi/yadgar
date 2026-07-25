@@ -46,4 +46,9 @@ jobs:
           pip install -e . --no-deps
 
       - name: Run pre-commit
-        run: pre-commit run --all-files
+        run: |
+          # GHA checks out as a different UID than the container's root user →
+          # git refuses with "dubious ownership"; pre-commit surfaces it as
+          # "git failed. Is it installed…". Mark the workspace safe.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          pre-commit run --all-files
