@@ -56,13 +56,13 @@ jobs:
       HF_HOME: ${{ vars.HF_HOME }}
       YADGAR_OTLP_ENDPOINT: ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: /root/.cache/pip
           key: pip-${{ hashFiles('pyproject.toml') }}
@@ -94,7 +94,7 @@ jobs:
             2>&1 | tee pytest-rs-fast.txt
 
       - name: Upload -rs output for skip gate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: pytest-rs-fast
           path: pytest-rs-fast.txt
@@ -110,13 +110,13 @@ jobs:
       HF_HOME: ${{ vars.HF_HOME }}
       YADGAR_OTLP_ENDPOINT: ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: /root/.cache/pip
           key: pip-${{ hashFiles('pyproject.toml') }}
@@ -142,7 +142,7 @@ jobs:
             2>&1 | tee pytest-rs-shared.txt
 
       - name: Upload -rs output for skip gate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: pytest-rs-shared
           path: pytest-rs-shared.txt
@@ -165,13 +165,13 @@ jobs:
       HF_HOME: ${{ vars.HF_HOME }}
       YADGAR_OTLP_ENDPOINT: ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: /root/.cache/pip
           key: pip-${{ hashFiles('pyproject.toml') }}
@@ -197,7 +197,7 @@ jobs:
             2>&1 | tee pytest-rs-backend.txt
 
       - name: Upload -rs output for skip gate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: pytest-rs-backend
           path: pytest-rs-backend.txt
@@ -240,13 +240,13 @@ jobs:
       matrix:
         group: [1, 2]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: /root/.cache/pip
           key: pip-${{ hashFiles('pyproject.toml') }}
@@ -281,7 +281,7 @@ jobs:
             2>&1 | tee pytest-rs-core-${{ matrix.group }}.txt
 
       - name: Upload -rs output for skip gate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: pytest-rs-core-${{ matrix.group }}
           path: pytest-rs-core-${{ matrix.group }}.txt
@@ -303,13 +303,13 @@ jobs:
       HF_HOME: ${{ vars.HF_HOME }}
       YADGAR_OTLP_ENDPOINT: ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: /root/.cache/pip
           key: pip-${{ hashFiles('pyproject.toml') }}
@@ -344,33 +344,33 @@ jobs:
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
       - name: Download leg -rs output (fast)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: pytest-rs-fast
           path: rs-logs/
       - name: Download leg -rs output (shared)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: pytest-rs-shared
           path: rs-logs/
       - name: Download leg -rs output (backend)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: pytest-rs-backend
           path: rs-logs/
       - name: Download leg -rs output (core-1)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: pytest-rs-core-1
           path: rs-logs/
       - name: Download leg -rs output (core-2)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: pytest-rs-core-2
           path: rs-logs/
@@ -397,13 +397,13 @@ jobs:
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: /root/.cache/pip
           key: pip-${{ hashFiles('pyproject.toml') }}
@@ -481,20 +481,20 @@ jobs:
       # Playwright + Chromium + SurrealDB + HF model pre-baked in yadgar-ci-viz.
       # No apt-get install or binary download steps needed.
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: /root/.cache/pip
           key: pip-viz-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-viz-
 
       - name: Cache npm (viz-tests)
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: viz-tests/node_modules
           key: npm-viz-${{ hashFiles('viz-tests/package-lock.json') }}
@@ -556,7 +556,7 @@ jobs:
     steps:
       - name: Install runtime deps (nodejs for actions, git, ca-certs)
         run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git ca-certificates
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
       - name: Trust workspace (container runs as a different UID than checkout)

@@ -50,7 +50,7 @@ jobs:
       version:  ${{ steps.detect.outputs.version }}
     steps:
       - name: Checkout (full history for tag detection)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
 
@@ -180,7 +180,7 @@ jobs:
         # version extraction, nodejs+git for JS actions, curl for runtime.
         run: apk add --no-cache bash python3 nodejs git curl
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
@@ -189,13 +189,13 @@ jobs:
       # token to reach the remote builder (openfantasy/builder), so credentials
       # must already be present.
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7  # v4.5.1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx (Build Cloud)
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
         with:
           driver: cloud
           endpoint: openfantasy/builder
@@ -213,7 +213,7 @@ jobs:
       # Generate tags for core image: latest + exact version on master, semver on tags
       - name: Docker metadata (core)
         id: meta-core
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
           images: openfantasy/yadgar
           tags: |
@@ -226,7 +226,7 @@ jobs:
       # so core and backend can be bumped independently.
       - name: Docker metadata (backend)
         id: meta-backend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
           images: openfantasy/yadgar-backend
           tags: |
@@ -237,7 +237,7 @@ jobs:
 
       - name: Build and push core image
         if: needs.changes.outputs.core == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
         with:
           context: .
           file: Dockerfile
@@ -253,7 +253,7 @@ jobs:
 
       - name: Build and push backend image
         if: needs.changes.outputs.backend == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
         with:
           context: .
           file: Dockerfile.backend
@@ -274,7 +274,7 @@ jobs:
     steps:
       # make, git, curl, ca-certificates, nodejs are pre-installed in yadgar-ci image.
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
@@ -291,7 +291,7 @@ jobs:
         run: python -m build
 
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: dist-${{ steps.get-version.outputs.version }}
           path: dist/
@@ -308,7 +308,7 @@ jobs:
     steps:
       # make, git, nodejs are pre-installed in yadgar-ci image.
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
@@ -319,7 +319,7 @@ jobs:
           echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
 
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: dist-${{ steps.get-version.outputs.version }}
           path: dist/
@@ -346,7 +346,7 @@ jobs:
           cat CHECKSUMS.txt
 
       - name: Upload dist + sbom + checksums
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: release-assets-${{ steps.get-version.outputs.version }}
           path: dist/
@@ -365,7 +365,7 @@ jobs:
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
@@ -376,7 +376,7 @@ jobs:
           echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
 
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: dist-${{ steps.get-version.outputs.version }}
           path: dist/
@@ -402,7 +402,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Get version
         id: get-version
@@ -422,13 +422,13 @@ jobs:
 
       - name: Download release assets
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: release-assets-${{ steps.get-version.outputs.version }}
           path: dist/
 
       - name: Create GitHub Release (tags HEAD + uploads assets)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
         with:
           tag_name: v${{ steps.get-version.outputs.version }}
           name: yadgar ${{ steps.get-version.outputs.version }}
