@@ -1,0 +1,70 @@
+name: Mutation sweep (weekly health signal — non-blocking)
+
+# NON-GATING: scheduled health signal only. Does NOT run on pull_request.
+# Adds ZERO jobs to PR CI. Reports surviving mutants for triage only.
+#
+# Runs mutmut over a high-value core module subset time-boxed to ~10 minutes.
+# Surviving mutants surface test gaps; they do NOT fail the build.
+# Triage findings manually after each weekly run.
+#
+# Target: yadgar/backend/retrieval/ + yadgar/_shared/cognitive_map.py —
+# high-value fusion/retrieval logic, small enough to fit the time-box.
+#
+# How to run manually:
+#   GitHub UI → Actions → "Mutation sweep (...)" → Run workflow
+#   OR: gh workflow run mutation-sweep.yml --repo <org>/<repo>
+#
+# NOTE: scheduled (`schedule:`) workflows only trigger from the workflow file
+# committed on the repo's DEFAULT branch on GitHub Actions.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"   # Weekly Monday ~04:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  YADGAR_CI_BRANCH: master
+  YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
+  OTEL_SDK_DISABLED: "true"
+
+jobs:
+  mutation-sweep:
+    # TODO: consider a self-hosted/larger runner — this is a heavy, time-boxed job.
+    runs-on: [self-hosted, linux, x64, yadgar]
+    container:
+      image: docker.io/library/python:3.14-slim
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Trust workspace (container runs as a different UID than checkout)
+        run: git config --global --add safe.directory '*'
+
+      - name: Cache pip
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: /root/.cache/pip
+          key: pip-mutation-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-mutation-
+
+      - name: Install dependencies
+        run: pip install -e ".[test]" mutmut
+
+      - name: Run mutation sweep (time-boxed ~10 min)
+        continue-on-error: true
+        run: |
+          timeout 600 mutmut run \
+            --paths-to-mutate yadgar/backend/retrieval/,yadgar/_shared/cognitive_map.py \
+            --runner "python -m pytest yadgar/tests/ -x -q --timeout=30 2>/dev/null" \
+            || true
+
+      - name: Print surviving mutants summary
+        if: always()
+        run: |
+          echo "=== Mutation sweep results ==="
+          mutmut results || true
+          echo ""
+          echo "=== Surviving mutants (bugs your tests may miss) ==="
+          mutmut show || true

@@ -1,0 +1,73 @@
+name: sdk-js
+
+on:
+  push:
+    paths: ['sdk-js/**']
+  pull_request:
+    paths: ['sdk-js/**']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test @yadgar/sdk
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk-js
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: sdk-js/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Verify tool coverage
+        run: npm run verify-tool-coverage
+
+  publish:
+    name: Publish to GitHub Packages
+    # Only runs on tag push matching sdk-js/v*
+    if: startsWith(github.ref, 'refs/tags/sdk-js/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: sdk-js
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@yadgar'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to GitHub Packages
+        run: npm publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
