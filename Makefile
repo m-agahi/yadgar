@@ -78,7 +78,7 @@ pre-setup:
 	  if [ "$$OS" = "linux-nixos" ]; then \
 	    echo ""; \
 	    echo "ERROR: NixOS detected. Use the nix flake install (v5.46+) instead of make setup."; \
-	    echo "       See: https://codeberg.org/maxagahi/yadgar#nixos-install"; \
+	    echo "       See: https://github.com/m-agahi/yadgar#nixos-install"; \
 	    exit 1; \
 	  fi
 

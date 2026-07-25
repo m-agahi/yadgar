@@ -8,7 +8,7 @@
 # Pin via flake.lock at lock time: `nix flake lock`.
 #
 # Usage (pipx equivalent via nix profile):
-#   nix profile install codeberg:maxagahi/yadgar
+#   nix profile install github:m-agahi/yadgar
 #   yadgar-setup
 #
 # home-manager users (recommended): import homeManagerModules.default and set
@@ -158,7 +158,7 @@
 
           meta = with pkgs.lib; {
             description = "Persistent memory engine for Claude Code";
-            homepage = "https://codeberg.org/maxagahi/yadgar";
+            homepage = "https://github.com/m-agahi/yadgar";
             license = licenses.asl20;
             maintainers = [ ];
           };

@@ -1,6 +1,6 @@
 [Unit]
 Description=Reap stale/runaway yadgar test processes (>90min)
-Documentation=https://codeberg.org/maxagahi/yadgar
+Documentation=https://github.com/m-agahi/yadgar
 
 [Service]
 Type=oneshot

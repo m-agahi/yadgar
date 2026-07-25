@@ -1,6 +1,6 @@
 # @yadgar/sdk
 
-TypeScript client for [Yadgar](https://codeberg.org/maxagahi/yadgar) — persistent memory engine for Claude Code (MCP). Lets JS/TS apps store, recall, and curate memories + wiki pages programmatically via Yadgar's MCP endpoint.
+TypeScript client for [Yadgar](https://github.com/m-agahi/yadgar) — persistent memory engine for Claude Code (MCP). Lets JS/TS apps store, recall, and curate memories + wiki pages programmatically via Yadgar's MCP endpoint.
 
 ## Install
 

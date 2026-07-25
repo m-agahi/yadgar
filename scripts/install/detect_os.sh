@@ -45,7 +45,7 @@ ERROR: yadgar appears to be running on NixOS.
   'make setup' does not support NixOS (home-manager / nix flake is the correct path).
 
   For NixOS installation, use the nix flake (v5.46+):
-    https://codeberg.org/maxagahi/yadgar#nixos-install
+    https://github.com/m-agahi/yadgar#nixos-install
 
   Your existing NixOS-managed install (via home-manager activation) continues
   to work unchanged. This installer is for non-NixOS Linux only.
