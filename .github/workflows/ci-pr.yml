@@ -1,0 +1,554 @@
+name: CI (PR)
+
+on:
+  pull_request:
+    branches: [master]
+    # Docs-only changes skip CI (docs go direct to master, no PR). Workflow-only
+    # changes skip too — the test suite doesn't validate workflow YAML; validate.yml
+    # (yaml/actionlint) still runs on .github edits as the safety net. Skips a run
+    # only when EVERY changed path matches — mixed code+docs/ci PRs still run.
+    paths-ignore:
+      - 'benchmarks/**'
+      - 'docs/**'
+      - '.forgejo/**'
+      - '.github/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'MIGRATION_NOTES.md'
+      - '.gitignore'
+
+# Cancel superseded test runs on a fresh push to the same PR branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# YADGAR_CI_BRANCH tells the yadgar daemon which branch context to use in the
+# CI runner (B2 fix — CI runner paths are anonymised so git branch detection
+# fails without this hint). See docs/reference/decisions.md PD-42.
+# YADGAR_TEST_SKIP_RUNTIME_CHECK: skip container-runtime detection in Makefile
+# pre-setup target when podman/docker is absent in CI runner (P8 fix v5.46.7).
+env:
+  YADGAR_CI_BRANCH: master
+  YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
+
+jobs:
+  # ── Subsystem test jobs (R3: CI regroup — subsystem split + least_duration) ──
+  # Four jobs replace the old 5-way matrix over yadgar/tests/ to give per-subsystem
+  # failure isolation and duration-aware splitting on the heaviest leg (core).
+  # All jobs share the same container image, cache, install, and marker flags as
+  # the old `test` job.  .test_durations is committed at repo root — pytest-split
+  # reads it for --splitting-algorithm least_duration.
+
+  test-fast:
+    runs-on: [self-hosted, linux, x64, yadgar]
+    # TODO: candidate for dropping ml extra after import-graph proof — scripts/,
+    # server/, hooks/ tests may not need heavy ML deps.
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      HF_HOME: ${{ vars.HF_HOME }}
+      YADGAR_OTLP_ENDPOINT: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
+        run: |
+          uv pip install --system --no-deps -e .
+
+      - name: Run tests (scripts, server, hooks, _meta)
+        # -rs + tee: the skip-summary output feeds the wave-3 check-skip-inventory
+        # gate as an artifact — the gate parses this text instead of re-running
+        # the suite a 5th time. pipefail keeps pytest's exit code through the tee.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            yadgar/tests/scripts/ \
+            yadgar/tests/server/ \
+            yadgar/tests/hooks/ \
+            yadgar/tests/_meta/ \
+            -q -rs --tb=short \
+            -n 4 --dist loadgroup \
+            --reruns 2 --reruns-delay 2 \
+            -m 'not integration and not e2e and not perf' \
+            2>&1 | tee pytest-rs-fast.txt
+
+      - name: Upload -rs output for skip gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-rs-fast
+          path: pytest-rs-fast.txt
+          retention-days: 1
+
+  test-shared:
+    runs-on: [self-hosted, linux, x64, yadgar]
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      HF_HOME: ${{ vars.HF_HOME }}
+      YADGAR_OTLP_ENDPOINT: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
+        run: |
+          uv pip install --system --no-deps -e .
+
+      - name: Run tests (_shared)
+        run: |
+          set -o pipefail
+          python -m pytest \
+            yadgar/tests/_shared/ \
+            -q -rs --tb=short \
+            -n 4 --dist loadgroup \
+            --reruns 2 --reruns-delay 2 \
+            -m 'not integration and not e2e and not perf' \
+            2>&1 | tee pytest-rs-shared.txt
+
+      - name: Upload -rs output for skip gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-rs-shared
+          path: pytest-rs-shared.txt
+          retention-days: 1
+
+  test-backend:
+    runs-on: [self-hosted, linux, x64, yadgar]
+    # Round-4 stagger: even at -n 4/leg, 3 concurrent heavy legs (12 surreal+model
+    # workers) still spiked host RAM — backend leg saw 8 setup ERRORS (httpx
+    # ConnectError, surreal child died mid-leg). Chain backend behind test-fast
+    # (the shortest leg) so peak wave-1 concurrency drops to 2 heavy legs
+    # (shared + backend-after-fast).
+    needs: [test-fast]  # scheduling throttle only (RAM waves, ADR-0073/0079)
+    if: ${{ always() }}  # run regardless of earlier-leg verdicts — full visibility per round (user 2026-07-11)
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      HF_HOME: ${{ vars.HF_HOME }}
+      YADGAR_OTLP_ENDPOINT: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
+        run: |
+          uv pip install --system --no-deps -e .
+
+      - name: Run tests (backend)
+        run: |
+          set -o pipefail
+          python -m pytest \
+            yadgar/tests/backend/ \
+            -q -rs --tb=short \
+            -n 4 --dist loadgroup \
+            --reruns 2 --reruns-delay 2 \
+            -m 'not integration and not e2e and not perf' \
+            2>&1 | tee pytest-rs-backend.txt
+
+      - name: Upload -rs output for skip gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-rs-backend
+          path: pytest-rs-backend.txt
+          retention-days: 1
+
+  test-core:
+    runs-on: [self-hosted, linux, x64, yadgar]
+    # Wave-2 stagger: run AFTER the three lighter jobs (test-fast, test-shared,
+    # test-backend) finish so all six legs + viz don't race for host RAM at once.
+    # Host OOM observed 2026-07-09 (three rounds): (1) test-core group 3 (a surreal
+    # child killed 137 mid-leg) + viz Playwright Layer 2 (845 Killed);
+    # (2) wave-1 legs at -n auto — surreal-OOM cascade ("namespace 'yadgar' does
+    # not exist" + httpx ConnectError, mid-leg surreal death);
+    # (3) even at -n 4/leg, 3 concurrent heavy legs (12 surreal+model workers)
+    # still spiked — backend leg got 8 setup ERRORS (httpx ConnectError), so
+    # test-backend is now chained behind test-fast (see its needs: above);
+    # (4) wave 2 hit the SAME peak: 3 core matrix legs concurrent = 12 workers →
+    # 30 setup ERRORS (httpx ConnectError, surreal child death). The ceiling is
+    # per-WAVE: max 2 heavy legs / 8 workers concurrent — so the core matrix is
+    # reduced 3→2 splits (least_duration rebalances, ~equal to the shared leg).
+    # The runner host OOMs with concurrent legs at -n auto: each auto leg spawns
+    # workers = ALL runner cores (/proc/meminfo reports host RAM, not the cgroup
+    # limit), each worker carrying surreal + model RAM. Fix: 4 workers/leg cap on
+    # ALL test legs + wave staggering + ≤2 legs per wave. Group packing is
+    # duration-based (--splitting-algorithm least_duration) and memory-blind —
+    # the cap, the waves, and the per-wave leg count are the only levers.
+    needs: [test-fast, test-shared, test-backend]  # scheduling throttle only
+    if: ${{ always() }}
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      HF_HOME: ${{ vars.HF_HOME }}
+      YADGAR_OTLP_ENDPOINT: ''
+    # fail-fast: false — each chunk runs independently; one failure does NOT
+    # abort the others.  Aggregation happens in the `test-gate` job below.
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess)
+        # and pre-commit check-config-three-way-sync hook.
+        # pytest-split: parallel chunk partitioning via --splits/--group flags.
+        # .test_durations committed at repo root; least_duration reads it.
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
+        run: |
+          uv pip install --system --no-deps -e .
+
+      # NOTE: this literal step `name:` avoids relying on expression expansion
+      # inside name fields (kept from the Forgejo source — harmless on GHA too).
+      # -n 4: capped — CI runner OOMs at auto worker count because /proc/meminfo
+      # reports host RAM, not the cgroup limit; 4 chosen conservatively — tune upward later
+      - name: Run tests (core, pytest-split chunk, 2-way, least_duration)
+        run: |
+          set -o pipefail
+          python -m pytest yadgar/tests/core/ \
+            -q -rs --tb=short \
+            -n 4 --dist loadgroup \
+            --reruns 2 --reruns-delay 2 \
+            -m 'not integration and not e2e and not perf' \
+            --splits 2 --group ${{ matrix.group }} \
+            --splitting-algorithm least_duration \
+            2>&1 | tee pytest-rs-core-${{ matrix.group }}.txt
+
+      - name: Upload -rs output for skip gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-rs-core-${{ matrix.group }}
+          path: pytest-rs-core-${{ matrix.group }}.txt
+          retention-days: 1
+
+  test-perf:
+    runs-on: [self-hosted, linux, x64, yadgar]
+    # Serial perf-guard job: runs only @pytest.mark.perf tests without xdist
+    # (-n 0 overrides addopts -n 4 while keeping the plugin loaded — avoids
+    # "unrecognized arguments: -n" that -p no:xdist triggers against addopts).
+    # ~3 tests, lightweight; dedicated wave so timing is trustworthy.
+    needs: [test-fast, test-shared, test-backend, test-core]  # scheduling throttle only
+    if: ${{ always() }}
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    env:
+      HF_HUB_OFFLINE: '1'
+      HF_HUB_DISABLE_XET: '1'
+      HF_HOME: ${{ vars.HF_HOME }}
+      YADGAR_OTLP_ENDPOINT: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
+        run: |
+          uv pip install --system --no-deps -e .
+
+      - name: Run perf guards (serial)
+        run: |
+          python -m pytest yadgar/tests/ \
+            -m perf \
+            -n 0 \
+            -q --tb=short
+
+  check-skip-inventory:
+    runs-on: ubuntu-latest
+    # Wave 3 — validates the four legs' pytest -rs skip summaries WITHOUT
+    # re-running any test.  The original Car 1 gate re-ran all four leg paths
+    # as a 5th full-suite run: doubled CI wall time, added another OOM-class
+    # load to the co-hosted runner (ADR-0079), and its pipe buffered so the
+    # job looked hung for 20+ minutes.  Now the legs tee their own -rs output
+    # to artifacts and this job just parses the text — runtime is seconds.
+    # No pip install: check_skip_inventory.py is stdlib-only.
+    needs: [test-fast, test-shared, test-backend, test-core]  # scheduling throttle only
+    if: ${{ always() }}
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download leg -rs output (fast)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytest-rs-fast
+          path: rs-logs/
+      - name: Download leg -rs output (shared)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytest-rs-shared
+          path: rs-logs/
+      - name: Download leg -rs output (backend)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytest-rs-backend
+          path: rs-logs/
+      - name: Download leg -rs output (core-1)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytest-rs-core-1
+          path: rs-logs/
+      - name: Download leg -rs output (core-2)
+        uses: actions/download-artifact@v4
+        with:
+          name: pytest-rs-core-2
+          path: rs-logs/
+
+      - name: Gate skip inventory (parse leg artifacts — no test execution)
+        # All five leg outputs must be present (missing artifact = fail loudly,
+        # never a silently-narrower gate), then the concatenated text is piped
+        # through check_skip_inventory.py's stdin mode.
+        run: |
+          set -o pipefail
+          count=$(ls rs-logs/pytest-rs-*.txt | wc -l)
+          if [ "$count" -ne 5 ]; then
+            echo "expected 5 leg -rs artifacts, found $count:" >&2
+            ls -la rs-logs/ >&2
+            exit 1
+          fi
+          cat rs-logs/pytest-rs-*.txt | python scripts/check_skip_inventory.py
+
+      - name: Validate inventory governance (ADR-0087 — stale entries, note length, wildcards)
+        run: python scripts/check_skip_inventory.py --validate-inventory
+
+  invariant-checks:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-
+
+      - name: Install dependencies
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
+        run: |
+          uv pip install --system --no-deps -e .
+
+      - name: Check I23 — declared metrics must have writers
+        run: python scripts/check_metric_writers.py
+
+      - name: Check I24 — public HTTP handlers must have @trace_span
+        run: python scripts/check_trace_spans.py
+
+      - name: Check I33 — tri-signal observe-coverage (HARD; MISSING=0 enforced, closes #8)
+        run: python scripts/check_observe_coverage.py
+
+      - name: Check I25 — config three-way-sync (Settings + yaml + registry)
+        run: python -m pytest yadgar/tests/server/test_config_three_way_sync.py -q --tb=short
+
+      - name: Check I29 — edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
+        run: python scripts/check_dead_capability.py
+
+      - name: Check I32 — capability-registry coverage (every setting/tool/migration/BC catalogued)
+        run: python scripts/check_capability_coverage.py
+
+  # Gateway: aggregates all four subsystem test jobs.
+  # if: always() is required — without it this job is SKIPPED (not failed)
+  # when any subsystem job fails, which would leave the PR green incorrectly.
+  test-gate:
+    runs-on: ubuntu-latest
+    needs: [test-fast, test-shared, test-backend, test-core, test-perf, check-skip-inventory]
+    if: ${{ always() }}
+    steps:
+      - name: Assert all subsystem test jobs passed
+        run: |
+          if [ "${{ needs.test-fast.result }}" != "success" ]; then
+            echo "test-fast failed (result: ${{ needs.test-fast.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-shared.result }}" != "success" ]; then
+            echo "test-shared failed (result: ${{ needs.test-shared.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-backend.result }}" != "success" ]; then
+            echo "test-backend failed (result: ${{ needs.test-backend.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-core.result }}" != "success" ]; then
+            echo "test-core failed (result: ${{ needs.test-core.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-perf.result }}" != "success" ]; then
+            echo "test-perf failed (result: ${{ needs.test-perf.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.check-skip-inventory.result }}" != "success" ]; then
+            echo "check-skip-inventory failed (result: ${{ needs.check-skip-inventory.result }})"
+            exit 1
+          fi
+          echo "All subsystem test jobs passed."
+
+  viz-tests:
+    runs-on: [self-hosted, linux, x64, yadgar]
+    # Use yadgar-ci-viz which extends yadgar-ci with Playwright + Chromium pre-baked.
+    # Saves ~75s vs inline apt-get install on every run (v5.46.9 CI speedup).
+    container:
+      image: docker.io/openfantasy/yadgar-ci-viz:${{ vars.YADGAR_VERSION }}
+    steps:
+      # Playwright + Chromium + SurrealDB + HF model pre-baked in yadgar-ci-viz.
+      # No apt-get install or binary download steps needed.
+
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-viz-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-viz-
+
+      - name: Cache npm (viz-tests)
+        uses: actions/cache@v4
+        with:
+          path: viz-tests/node_modules
+          key: npm-viz-${{ hashFiles('viz-tests/package-lock.json') }}
+          restore-keys: npm-viz-
+
+      - name: Install Python dependencies
+        # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess).
+        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
+        # --no-deps installs only the yadgar package itself; nothing re-resolves
+        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
+        # the image (fail-loud by design).
+        run: |
+          uv pip install --system --no-deps -e .
+
+      - name: Layer 1 — API contract integrity (Python)
+        run: |
+          python -m pytest yadgar/tests/server/test_graph_api_contract.py \
+            -v --tb=short -q --reruns 1
+
+      - name: Layer 2 — Playwright headless smoke
+        # System chromium path pre-set via PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        # env in yadgar-ci-viz image. No extra env needed here.
+        run: |
+          python -m pytest yadgar/tests/integration/viz/ \
+            -m integration -v --tb=short -q --reruns 1
+
+      - name: Install Node.js deps (Layer 3)
+        working-directory: viz-tests
+        # Resilient install: npm registry socket timeouts are a recurring CI flake.
+        # Bump fetch retries/timeouts and retry the whole `npm ci` up to 3x.
+        run: |
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+          npm config set fetch-timeout 300000
+          ok=0
+          for attempt in 1 2 3; do
+            if npm ci; then ok=1; break; fi
+            echo "npm ci attempt ${attempt} failed; retrying in 10s..." >&2
+            sleep 10
+          done
+          [ "$ok" = 1 ] || { echo "npm ci failed after 3 attempts" >&2; exit 1; }
+
+      - name: Layer 3 — JS unit tests (Vitest)
+        working-directory: viz-tests
+        run: npx vitest run
+
+  verify-version-bump:
+    # Skip the version-bump gate when the PR carries the 'no-release' label
+    # (docs/chore PRs that touch yadgar/** — e.g. contract-doc path pins — but
+    # intentionally ship no version bump). Absent/empty label list → contains()
+    # is false → !false = true → the gate RUNS (safe default; never silently
+    # skips an unlabeled PR). Referenced by the error string below since v?; the
+    # label + this guard were wired 2026-07-14.
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.14-slim
+    steps:
+      - name: Install runtime deps (nodejs for actions, git, ca-certs)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git ca-certificates
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify version bump vs latest tag
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          PYPROJECT_VER=$(grep -E '^version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [ "v${PYPROJECT_VER}" = "${LATEST_TAG}" ]; then
+            if git diff --name-only origin/master...HEAD | grep -qE '^yadgar/'; then
+              echo "::error::pyproject.toml version (${PYPROJECT_VER}) matches latest tag (${LATEST_TAG}). Bump or add 'no-release' label."
+              exit 1
+            fi
+          fi
+
+      - name: Verify backend_version bump when backend changed (#83)
+        # Uses --ci --base origin/master to diff the PR branch vs the merge-base
+        # so backend build input changes (yadgar/backend/**, Dockerfile.backend,
+        # entrypoint-backend.sh) that lack a server.json backend_version bump
+        # fail the PR — closes the gap that let PR #144 slip through pre-commit.
+        run: python scripts/check_backend_bump.py --ci --base origin/master

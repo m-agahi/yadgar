@@ -1,0 +1,80 @@
+name: Eval (v6 Phase 0 — quality harness)
+
+# NON-GATING: this workflow is manual/on-demand only.
+# It does NOT block PRs or merges.
+# Run it to get an informational quality report (recall@k, MRR, nDCG, latency).
+#
+# The golden set is a BOOTSTRAP (auto-drafted, REQUIRES HUMAN CURATION).
+# Results are informational only until benchmarks/golden/golden_set.jsonl is curated.
+#
+# Why not a PR trigger?
+#   The eval harness spawns SurrealDB and requires the embedding model to be loaded.
+#   The yadgar-ci image has both baked in, but a full eval run (~2–5 min for 40 pairs)
+#   on every PR would add significant CI time for a non-gating step. Once the golden
+#   set is curated and the harness is trusted, graduate to a PR trigger with a
+#   regression gate (recall@10 must not drop below baseline).
+#
+# How to run:
+#   GitHub UI → Actions → "Eval (v6 Phase 0 — quality harness)" → Run workflow
+#   OR via GitHub CLI:
+#   gh workflow run eval.yml --repo <org>/<repo>
+
+on:
+  workflow_dispatch:
+    inputs:
+      golden_set:
+        description: "Path to golden set JSONL (relative to repo root)"
+        required: false
+        default: "benchmarks/golden/golden_set.jsonl"
+      report_name:
+        description: "Output report filename (placed in benchmarks/reports/)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  YADGAR_CI_BRANCH: master
+  YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
+  OTEL_SDK_DISABLED: "true"
+
+jobs:
+  eval:
+    runs-on: [self-hosted, linux, x64, yadgar]
+    container:
+      # yadgar-ci:5.73.0 has SurrealDB + all-MiniLM-L6-v2 baked in — no downloads needed.
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-eval-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-eval-
+
+      - name: Install dependencies
+        run: uv pip install --system --no-deps -e .  # deps baked in yadgar-ci from uv.lock
+
+      - name: Run eval harness
+        # continue-on-error: true ensures this step never fails the job.
+        # The job itself is non-gating (not in test-gate needs), but an extra
+        # safety net for any unexpected harness crash.
+        continue-on-error: true
+        env:
+          GOLDEN_SET_INPUT: ${{ github.event.inputs.golden_set }}
+        run: |
+          GOLDEN="${GOLDEN_SET_INPUT:-benchmarks/golden/golden_set.jsonl}"
+          echo "==> Running eval harness on golden set: $GOLDEN"
+          echo "==> WARNING: golden set is BOOTSTRAP — results are informational only."
+          python benchmarks/run_eval.py --golden "$GOLDEN"
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ github.run_number }}
+          path: benchmarks/reports/
+          retention-days: 30

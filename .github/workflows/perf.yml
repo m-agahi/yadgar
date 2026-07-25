@@ -1,0 +1,72 @@
+name: Perf load-test (#79 — recall-latency contract, record-only)
+
+# NON-GATING: manual/on-demand only. Does NOT block PRs or merges.
+# Mirrors eval.yml (workflow_dispatch, non-gating). The PR-gating ci-pr.yml is
+# NOT touched. See docs/plans/perf-loadtest-contract-2026-06-30.md (2.6 CI wiring)
+# and docs/plans/obs-velocity-completion-2026-07-04.md PART B 3.2 (#79).
+#
+# WHAT RUNS HERE (CI has no live prod daemon / snapshot pin):
+#   1. The pure CONTRACT CHECKER unit test (delta_pct + tolerance + the
+#      incomparability guard) — the one piece that IS meaningfully CI-runnable
+#      against a committed baseline, no daemon required.
+#   2. `make perf`, which auto-SKIPS (exit 0) when YADGAR_DAEMON_URL is unset —
+#      proving the harness is invocable and record-only.
+#
+# The daemon-driven latency + CE-span capture is a LOCAL run: point at a running
+# daemon (YADGAR_DAEMON_URL + YADGAR_BACKEND_METRICS_URL) over a snapshot pin and
+# commit the resulting docs/benchmark-results report. RECORD-ONLY until a stable
+# baseline + noise band exist (Phase 1); Phase 2 flips the checker to gating.
+#
+# How to run:
+#   GitHub UI -> Actions -> "Perf load-test (#79 ...)" -> Run workflow
+#   OR: gh workflow run perf.yml --repo <org>/<repo>
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Free-form note recorded in the run log"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  YADGAR_CI_BRANCH: master
+  YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
+  OTEL_SDK_DISABLED: "true"
+
+jobs:
+  perf:
+    # TODO: consider a self-hosted/larger runner — this is a heavy load-test job.
+    runs-on: [self-hosted, linux, x64, yadgar]
+    container:
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/pip
+          key: pip-perf-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-perf-
+
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+
+      - name: Contract checker unit test (CI-runnable, no daemon)
+        run: python -m pytest yadgar/tests/server/test_perf_contract.py -q -p no:randomly
+
+      - name: Invoke harness (auto-skips without a live daemon)
+        continue-on-error: true
+        run: make perf
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report-${{ github.run_number }}
+          path: benchmarks/reports/
+          retention-days: 30
