@@ -56,7 +56,7 @@ for unit in yadgar.service yadgar-backend.service; do
         if echo "${target}" | grep -q "/nix/store"; then
             echo "ERROR: ${unit} is managed by Nix (symlink → ${target})." >&2
             echo "  Do not use 'make setup' on NixOS — use the nix flake (v5.46+)." >&2
-            echo "  See: https://codeberg.org/maxagahi/yadgar#nixos-install" >&2
+            echo "  See: https://github.com/m-agahi/yadgar#nixos-install" >&2
             exit 1
         fi
     fi
