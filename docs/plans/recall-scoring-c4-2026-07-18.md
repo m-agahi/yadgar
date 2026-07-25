@@ -23,7 +23,7 @@ Two things in the C4 assignment do not survive contact with the tree. Fix them b
    scrape 2s→5s* item; ADR-0035 uses #34 for a *recall re-measure* task; the C4 brief uses #34 for
    the fusion tie-break. Task **#62** (this car) is absent from `improvement-train.md` entirely — so
    that file is *not* the authoritative tracker for these numbers (the real tracker is likely the
-   Codeberg issue list, `codeberg.org/maxagahi/yadgar`, not local plan docs). **This doc does not
+   GitHub issue list, `github.com/m-agahi/yadgar`, not local plan docs). **This doc does not
    stake a claim on the number.** The substantive foundation is the **fusion-tiebreak plan
    (ADR-0108 Option A)**, captured in `docs/plans/fusion-tiebreak-determinism-2026-07-14.md` — referred
    to by name throughout, never by number. Whatever #34 resolves to in the user's tracker, the

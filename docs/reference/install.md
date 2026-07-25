@@ -24,13 +24,13 @@ yadgar-setup --noninteractive
 ## 2. Nix flake
 
 ```bash
-nix profile install codeberg:maxagahi/yadgar
+nix profile install github:m-agahi/yadgar
 yadgar-setup
 ```
 
 Or pin to a specific version:
 ```bash
-nix profile install codeberg:maxagahi/yadgar/v5.132.0
+nix profile install github:m-agahi/yadgar/v5.132.0
 yadgar-setup
 ```
 
@@ -39,7 +39,7 @@ Add the module to your NixOS configuration:
 
 ```nix
 # flake.nix inputs
-inputs.yadgar.url = "codeberg:maxagahi/yadgar";
+inputs.yadgar.url = "github:m-agahi/yadgar";
 
 # system configuration
 imports = [ inputs.yadgar.nixosModules.default ];
@@ -53,7 +53,7 @@ Then run `yadgar-setup` manually to configure Claude Code hooks and seed anchors
 ## 3. Repo checkout (make-canonical)
 
 ```bash
-git clone https://codeberg.org/maxagahi/yadgar.git
+git clone https://github.com/m-agahi/yadgar.git
 cd yadgar
 make setup
 ```
@@ -197,7 +197,7 @@ Yadgar requires Python 3.14+.
 
 ## SBOM
 
-Each release includes a CycloneDX 1.5 SBOM attached to the Codeberg release:
+Each release includes a CycloneDX 1.5 SBOM attached to the GitHub release:
 `yadgar-<version>-sbom.cdx.json`.
 
 Generate locally:
@@ -212,9 +212,9 @@ Output: `dist/yadgar-<version>-sbom.cdx.json`.
 
 ## Source tarball and checksums
 
-Available on each Codeberg release page:
+Available on each GitHub release page:
 ```
-https://codeberg.org/maxagahi/yadgar/releases/tag/v<version>
+https://github.com/m-agahi/yadgar/releases/tag/v<version>
 ```
 
 Verify:

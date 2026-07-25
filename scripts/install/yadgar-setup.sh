@@ -57,8 +57,8 @@ if [[ "$_IS_HELP_MODE" -eq 0 ]]; then
             echo "  This is a yadgar packaging bug (affects pipx installs before v5.46.10)." >&2
             echo "  Workarounds:" >&2
             echo "    1. Upgrade:       pipx upgrade yadgar   (requires yadgar >= v5.46.10)" >&2
-            echo "    2. Repo checkout: git clone https://codeberg.org/maxagahi/yadgar && cd yadgar && make setup" >&2
-            echo "    3. Report at:     https://codeberg.org/maxagahi/yadgar/issues" >&2
+            echo "    2. Repo checkout: git clone https://github.com/m-agahi/yadgar && cd yadgar && make setup" >&2
+            echo "    3. Report at:     https://github.com/m-agahi/yadgar/issues" >&2
             exit 2
         fi
     done
@@ -107,7 +107,7 @@ Building blocks (in order):
   10. seed-anchors
   11. seed-agent-prompts
 
-See https://codeberg.org/maxagahi/yadgar for full documentation.
+See https://github.com/m-agahi/yadgar for full documentation.
 EOF
             exit 0
             ;;
@@ -377,7 +377,7 @@ _step_detect() {
     info "OS: $OS"
 
     if [ "$OS" = "linux-nixos" ]; then
-        die "NixOS detected. Use the nix flake install instead: nix profile install codeberg:maxagahi/yadgar && yadgar-setup"
+        die "NixOS detected. Use the nix flake install instead: nix profile install github:m-agahi/yadgar && yadgar-setup"
     fi
 }
 

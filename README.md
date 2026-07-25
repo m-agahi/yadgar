@@ -1,9 +1,7 @@
 <div align="center">
 
-<img src="yadgar/static/yadgar.png" alt="yadgar logo" width="320">
+<img src="docs/assets/yadgar.svg" alt="yadgar logo" width="320">
 
-[![CI](https://codeberg.org/maxagahi/yadgar/actions/workflows/ci.yaml/badge.svg?branch=master)](https://codeberg.org/maxagahi/yadgar/actions?workflow=ci.yaml)
-[![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fmaxagahi%2Fyadgar%2Ftags&query=%24%5B0%5D.name&label=version&color=blue)](https://codeberg.org/maxagahi/yadgar/tags)
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
@@ -12,6 +10,8 @@
 [Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Architecture](#architecture) · [Roadmap](#roadmap) · [JS/TS SDK](docs/reference/sdk-js.md) · [Agents guide](AGENTS.md)
 
 > **AI coding agents:** the operational guide lives in [`AGENTS.md`](AGENTS.md) — setup commands, dev environment, test runner, code style, PR rules, security gates. This README is the human overview.
+
+> **Why this repo lives on GitHub (moved from Codeberg, 2026):** Codeberg's [updated Terms of Use](https://codeberg.org/Codeberg/org/commit/71149c7fc95ccfeae36109b5cddca339e4aa1473) — § 2 (1) 7, added in *"Proposal Assembly 2026: prohibit LLM-extrusions"* (2026-06-29) — now ask that people **not** host projects that *"mostly consist of code written by 'generative AI'-tools."* Yadgar is built with heavy AI-agent assistance and is candid about it, so it no longer fits Codeberg's hosting policy and has moved here. No hard feelings — Codeberg is an excellent home for human-authored free software; this is a policy-fit decision, nothing more.
 
 **A persistent memory engine for MCP clients.** Tell it what matters and it survives across sessions — decaying what you stop touching, promoting what repeats, filtering recall to the git branch you're on, and pairing every memory with a curated wiki that searches through the same ranking pipeline.
 
@@ -163,7 +163,7 @@ yadgar setup
 
 **Nix flake:**
 ```bash
-nix profile install codeberg:maxagahi/yadgar
+nix profile install github:m-agahi/yadgar
 yadgar setup
 ```
 
@@ -175,7 +175,7 @@ yadgar setup
 
 **Repo checkout (development):**
 ```bash
-git clone https://codeberg.org/maxagahi/yadgar.git
+git clone https://github.com/m-agahi/yadgar.git
 cd yadgar
 make setup            # install + hooks + agents + units + seed anchors
 ```

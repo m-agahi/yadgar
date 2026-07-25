@@ -52,7 +52,7 @@ yadgar install --client <name>
 ### Dev path — repo checkout
 
 ```bash
-git clone https://codeberg.org/maxagahi/yadgar.git
+git clone https://github.com/m-agahi/yadgar.git
 cd yadgar
 make setup                   # canonical for repo work; runs everything in one shot
 ```
@@ -260,7 +260,7 @@ curl -s http://127.0.0.1:8765/metrics | head
 - **Every change to `yadgar/**` must update `README.md` and `docs/` in the same PR** when behaviour or interface changes.
 - **Version bumps:** edit `pyproject.toml:version` for core, `server.json:backend_version` for backend. `check-versions` will fail the commit if the cross-file mirrors drift.
 - Run before push: `ruff check . && ruff format --check . && pytest && pre-commit run --all-files`.
-- PRs are opened against `codeberg.org/maxagahi/yadgar` via the Forgejo REST API (not `gh` — Codeberg is not GitHub). See `README.md § Contributing` for the curl recipe.
+- PRs are opened against `github.com/m-agahi/yadgar` with the GitHub CLI (`gh pr create --repo m-agahi/yadgar`).
 - Pre-commit will fail loudly on: large file (>2 MB), gitleaks hit, complexity over 15, missing metric writer, missing trace span, secret-gate drift, config three-way-sync drift, allowlist drift.
 
 ## Subagent contract
