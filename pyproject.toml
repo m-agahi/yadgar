@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.14"
 authors = [
-    { name = "maxagahi" },
+    { name = "m-agahi" },
 ]
 keywords = [
     "mcp",
@@ -80,9 +80,9 @@ yadgar-nightly-cycle = "yadgar.core.scripts.nightly_cycle:main"
 yadgar-setup = "yadgar.core.scripts.yadgar_setup:main"
 
 [project.urls]
-Homepage = "https://codeberg.org/maxagahi/yadgar"
-Repository = "https://codeberg.org/maxagahi/yadgar"
-Issues = "https://codeberg.org/maxagahi/yadgar/issues"
+Homepage = "https://github.com/m-agahi/yadgar"
+Repository = "https://github.com/m-agahi/yadgar"
+Issues = "https://github.com/m-agahi/yadgar/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["yadgar"]

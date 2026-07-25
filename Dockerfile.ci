@@ -10,7 +10,7 @@
 # Version: updated each CI infrastructure release (v5.46.9+).
 FROM python:3.14-slim
 
-LABEL org.opencontainers.image.source="https://codeberg.org/maxagahi/yadgar"
+LABEL org.opencontainers.image.source="https://github.com/m-agahi/yadgar"
 LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model"
 # Version LABEL is build-arg-wired (T4 Car 0 drift fix — was hardcoded 5.121.1
 # while pyproject sat at 5.129.0; yadgar-ci has NO auto-sync pipeline, it is

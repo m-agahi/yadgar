@@ -284,7 +284,7 @@ Security observations:
 
 **Decision:** v5.46.2 cross-repo nix PR auto-open RETIRED. Replaced with pre-commit hook approach.
 
-**Rationale:** User assessment 2026-06-05 — "leave the nix repo out of scope, instead add precommit to check the versions and also update nix flake version before we commit. much easier." Cross-repo PAT (NIX_BUMP_TOKEN) + workflow job + auto-PR machinery was speculative-infrastructure for a problem better solved at commit-time: when pyproject.toml version bumps, `scripts/sync_version.py` auto-updates flake.nix line 41 + `scripts/check_versions.py` verifies consistency on commit. No cross-repo write needed; yadgar repo's flake.nix IS the public nix distribution surface (nix users install via `nix profile install git+https://codeberg.org/maxagahi/yadgar`).
+**Rationale:** User assessment 2026-06-05 — "leave the nix repo out of scope, instead add precommit to check the versions and also update nix flake version before we commit. much easier." Cross-repo PAT (NIX_BUMP_TOKEN) + workflow job + auto-PR machinery was speculative-infrastructure for a problem better solved at commit-time: when pyproject.toml version bumps, `scripts/sync_version.py` auto-updates flake.nix line 41 + `scripts/check_versions.py` verifies consistency on commit. No cross-repo write needed; yadgar repo's flake.nix IS the public nix distribution surface (nix users install via `nix profile install git+https://github.com/m-agahi/yadgar`).
 
 **User's personal `~/git/nix` (home-manager config):** remains a separate concern outside yadgar v5.46.x cycle. Manual bump + home-manager switch per existing workflow (anchor 490140 + 491179).
 
