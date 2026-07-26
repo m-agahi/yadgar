@@ -76,7 +76,7 @@ jobs:
         run: |
           uv pip install --system --no-deps -e .
 
-      - name: Run tests (scripts, server, hooks, _meta)
+      - name: Run tests (scripts, server, hooks, _meta, clients)
         # -rs + tee: the skip-summary output feeds the wave-3 check-skip-inventory
         # gate as an artifact — the gate parses this text instead of re-running
         # the suite a 5th time. pipefail keeps pytest's exit code through the tee.
@@ -87,6 +87,7 @@ jobs:
             yadgar/tests/server/ \
             yadgar/tests/hooks/ \
             yadgar/tests/_meta/ \
+            yadgar/tests/clients/ \
             -q -rs --tb=short \
             -n 4 --dist loadgroup \
             --reruns 2 --reruns-delay 2 \

@@ -36,7 +36,16 @@ ENV HF_HOME=/root/.cache/huggingface
 #   curl             — SurrealDB binary download + health checks
 #   ca-certificates  — TLS for curl + pip installs
 #   build-essential  — C extension builds (scipy, numpy, etc.)
-#   nodejs           — JS actions runtime used by Forgejo actions checkout
+#   gpg              — NodeSource apt-key verification for the Node.js 22.x repo
+#   nodejs           — JS actions runtime (Forgejo checkout) + opencode plugin
+#                      smoke (yadgar/tests/clients/test_hooks_render_opencode_smoke.py:
+#                      loads the emitted yadgar-hooks.ts via
+#                      `node --experimental-strip-types`, which requires Node
+#                      20.19+ for the flag and is stable in 22.6+. Debian 12
+#                      bookworm's stock nodejs is 18.20.4 (verified live at
+#                      https://packages.debian.org/bookworm/nodejs) — too old.
+#                      We install Node 22 from NodeSource so the smoke can run
+#                      in CI without an image rebuild on every Node release.
 #   bsdmainutils     — provides `column` binary used by `make help` (F5 fix, v5.46.9)
 #   graphviz         — `dot` binary so test_diagram_generator render tests RUN
 #                      instead of skipping (hardening Car 3, ADR-0087)
@@ -47,9 +56,14 @@ RUN apt-get update -qq && \
         curl \
         ca-certificates \
         build-essential \
-        nodejs \
-        bsdmainutils \
-        graphviz && \
+        gpg && \
+    # Install Node.js 22 from NodeSource so the opencode plugin smoke
+    # (node --experimental-strip-types) can run in CI. SHA256 of the
+    # setup script is checked; the GPG key is verified against
+    # NodeSource's published keyring. Pinned to the current LTS line
+    # (22.x); bump in a follow-up train if needed.
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Bake SurrealDB v3.1.5 into image (saves 15-30s CI per run — no download step).
