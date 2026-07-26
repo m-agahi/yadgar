@@ -2,7 +2,7 @@
   "_meta": {
     "version": "1",
     "description": "Sanctioned skips for yadgar test suite. Every skip must appear here or CI gate fails.",
-    "updated": "2026-07-12",
+    "updated": "2026-07-26",
     "adr": "Car 1 of test-suite hardening train (fix/test-hardening-car1-skips)"
   },
   "entries": [
@@ -117,6 +117,13 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "codebase-memory-mcp binary not installed (Car F live e2e; mirrors conftest.py:491 surreal guard)",
       "note": "code_graph Car F (ADR-0162) end-to-end smoke: builds a hermetic throwaway git repo with a local bare origin, drives the real `yadgar code-graph refresh --json` seam against the real 259MB codebase-memory-mcp binary, and asserts a bounded non-empty digest + emit-payload shape. The binary is an opt-in host-side dep (`yadgar setup --code-graph`), never in CI — module-level skipif covers both e2e classes. Mirrors the conftest.py surreal shutil.which guard pattern."
+    },
+    {
+      "id": "opencode-plugin-smoke-01",
+      "file": "yadgar/tests/clients/test_hooks_render_opencode_smoke.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
+      "note": "Car A opencode hook port: the smoke catches template drift that the unit tests don't (e.g. accidental runtime import of @opencode-ai/plugin, missing event handler, fabricated ctx.client MCP RPC). CI image (Python 3.14 + build chain) doesn't ship node; local dev / pre-merge runs the smoke. The real headless `opencode run` test (Bun + opencode runtime) stays deferred per docs/plans/port-opencode-re-audit-2026-07-26.md §4.5 — covers all 9 tests in this file via the module-level skipif(not shutil.which('node')) gate."
     }
   ]
 }
