@@ -12,6 +12,7 @@ the regression pins for that redirect, plus the sentinel tripwire.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -35,7 +36,16 @@ def test_unpatched_mcp_wrapper_install_lands_under_tmp_home(monkeypatch):
     """Call the REAL (unmocked) MCP-server install wrapper with NO per-test HOME
     patch. Without the conftest guard this would write to real ~/.claude; with
     it, the write is redirected to the guard's tmp HOME. This is the latent-leak
-    regression pin (plan acceptance #1)."""
+    regression pin (plan acceptance #1).
+
+    Car 7 (2026-07-26): the MCP `install_hooks` tool now delegates to
+    `install_client("claude-code", mcp=False, rules=False, hooks=True, ...)`
+    (see yadgar/core/server/tools/misc.py::install_hooks). The return shape
+    changed from the legacy `{status, settings_file}` to the orchestrator's
+    `{status, scope, result: {client, mcp, rules, hooks, dry_run}}`. The
+    test still pins the regression we care about (write lands under guard
+    HOME, not real ~/.claude) via the per-kind emitter's write path.
+    """
     monkeypatch.delenv("YADGAR_IN_CONTAINER", raising=False)
     import yadgar.core.install.install_hooks_lib as lib
 
@@ -49,15 +59,27 @@ def test_unpatched_mcp_wrapper_install_lands_under_tmp_home(monkeypatch):
 
     result = misc.install_hooks(project_directory=str(proj), scope="global")
 
+    # New return shape: {status, scope, result: {client, mcp, rules, hooks, dry_run}}
     assert result["status"] == "installed", result
-    settings_file = Path(result["settings_file"])
-    # The settings file MUST be under the guard's tmp HOME, not real ~/.claude.
-    assert str(settings_file).startswith(str(guard_home)), (
-        f"install wrote to {settings_file}, outside the guard HOME {guard_home}"
+    inner = result["result"]
+    assert inner["client"] == "claude-code"
+    hooks_block = inner["hooks"]
+    assert hooks_block is not None, (
+        f"MCP wrapper returned hooks=None under guard HOME; full={inner}"
     )
-    assert settings_file.exists()
-    router = guard_home / ".claude" / "hooks" / "yadgar-pretooluse-router.py"
-    assert router.exists(), "router script not installed under tmp HOME"
+    settings_path = Path(hooks_block["path"])
+    # The settings file MUST be under the guard's tmp HOME, not real ~/.claude.
+    assert str(settings_path).startswith(str(guard_home)), (
+        f"MCP wrapper wrote to {settings_path}, outside the guard HOME {guard_home}"
+    )
+    assert settings_path.exists()
+    # The legacy test asserted the router script; the new path delegates
+    # to the per-kind emitter `_emit_claude_json` which writes settings.json
+    # only (router is installed by `install_hooks_impl` which is no longer
+    # called from this MCP path). Pin the new artifact: settings.json exists
+    # at the expected path with the expected hooks block.
+    settings = json.loads(settings_path.read_text())
+    assert "hooks" in settings, f"No 'hooks' key in {settings_path}"
 
 
 def test_sentinel_snapshot_detects_child_mutation(tmp_path):

@@ -190,9 +190,13 @@ def _render_hooks_fragment(
     # package_json — no secrets). Surface it under the standard {path, content}
     # shape that the MCP and rules fragments use, where "content" is the
     # JSON-serialized emitter payload (machine-readable for nix).
+    # Different emitters use different keys for the artifact path:
+    # claude_code returns "settings_file", cursor + opencode return "path".
+    # Normalize.
     inner = result.get("result") or {}
+    hook_path = inner.get("path") or inner.get("settings_file")
     return {
-        "path": inner.get("path"),
+        "path": hook_path,
         "content": json.dumps(inner, indent=2),
     }
 
@@ -302,7 +306,14 @@ def install_client(
                 project_dir=opts.project_dir,
             )
             inner = reg.get("result") or {}
-            hooks_result = {"path": inner.get("path"), "content": None}
+            # Different emitters return different shape for the artifact path:
+            # - claude_code's _emit_claude_json returns {"settings_file": str(path), ...}
+            # - cursor's _emit_cursor_hooks returns {"path": str(path), ...}
+            # - opencode's _emit_opencode_plugin returns {"path": str(path), ...}
+            # Normalize to {"path": ..., "content": None} for the orchestrator's
+            # return shape.
+            hook_path = inner.get("path") or inner.get("settings_file")
+            hooks_result = {"path": hook_path, "content": None}
 
     return {
         "client": name,
