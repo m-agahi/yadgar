@@ -147,15 +147,22 @@ def _pick(row: dict[str, Any], keys: tuple[str, ...]) -> str:
 
 
 @observe(tier="stage")
-def _extract_endpoint(row: dict[str, Any]) -> tuple[str, str, str]:
+def _extract_endpoint(row: dict[str, Any] | list[Any]) -> tuple[str, str, str]:
     """Extract ``(method, path, name)`` from ONE route_method Cypher row.
 
     THE single endpoint-row shape site — the binary is mocked in Car B/C, so
     whether the keys come back prefixed (``m.route_method``) or bare
-    (``route_method``) is UNVERIFIED.  Both forms are accepted here; Car F
-    live-smoke corrects this ONE function if the real shape differs (mirrors
-    ``runner._run_tool``'s single-correction-site philosophy).
+    (``route_method``) was UNVERIFIED. Car F live-smoke (2026-07-26) found the
+    real binary returns rows as bare positional lists, not dicts — matching
+    ``_ENDPOINT_CYPHER``'s ``RETURN m.route_method, m.route_path, m.name``
+    column order. Both shapes are accepted here (mirrors ``runner._run_tool``'s
+    single-correction-site philosophy).
     """
+    if isinstance(row, list):
+        method = str(row[0]) if len(row) > 0 and row[0] else ""
+        path = str(row[1]) if len(row) > 1 and row[1] else ""
+        name = str(row[2]) if len(row) > 2 and row[2] else ""
+        return method, path, name
     method = _pick(row, ("m.route_method", "route_method"))
     path = _pick(row, ("m.route_path", "route_path"))
     name = _pick(row, ("m.name", "name"))
