@@ -26,11 +26,12 @@ yadgar install --client <name>           # register one client (e.g. --client op
 yadgar install --auto-detect             # detect + register all installed clients
 yadgar install --client <name> --mcp     # MCP registration config only
 yadgar install --client <name> --rules   # rules file only (AGENTS.md-equivalent)
+yadgar install --client <name> --no-hooks  # skip the hooks surface (MCP + rules only)
 yadgar install --client <name> --print   # dry-run: emit JSON to stdout, no file writes
 yadgar install --client <name> --scope project --project-directory /path/to/repo
 ```
 
-`--print` is the nix/home-manager integration path: it outputs the full config JSON without touching the filesystem. Full flag reference: [`docs/reference/install.md`](docs/reference/install.md).
+`--hooks` is the default for clients with a registered `hooks_kind` (claude-code, cursor, opencode, etc.); `--no-hooks` opts out. Advisory-only clients (Gemini, `hooks_kind=None`) are no-op for hooks regardless of the flag. `--print` is the nix/home-manager integration path: it outputs the full config JSON without touching the filesystem. Full flag reference: [`docs/reference/install.md`](docs/reference/install.md).
 
 ### Fast path — user install (pipx)
 
@@ -228,7 +229,8 @@ yadgar export duckdb --output snap.duckdb   # analytics snapshot (needs [analyti
 yadgar seed <directory>               # bootstrap memory from README + docs
 yadgar rules add|export|import        # retrieval / write policy rules
 yadgar config init|list|get|set|edit  # ~/.config/yadgar/config.yaml
-yadgar install-hooks --scope global   # wire Claude Code hooks; injects bearer token
+yadgar install --client <name> [--hooks | --no-hooks] [--scope ...]   # wires MCP + rules + hooks (default-on hooks for claude-code / cursor / opencode)
+yadgar install-hooks --scope global   # legacy: Claude Code hooks only — superseded by `yadgar install --client claude-code --hooks`
 yadgar update --check                 # PyPI version probe (v5.48.0+)
 yadgar update --install               # multi-step coordinated upgrade (gated; opt-in)
 yadgar update --rollback              # restore prior image from latest snapshot
