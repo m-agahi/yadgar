@@ -53,8 +53,36 @@ _DRIVER = _SMOKE_DIR / "opencode_plugin_smoke.ts"
 
 
 def _node_available() -> bool:
-    """Skip the test if Node 24+ is not available in this env."""
-    return shutil.which("node") is not None
+    """Skip the test if Node 22.6+ is not available in this env.
+
+    The smoke driver uses ``node --experimental-strip-types`` (Node 22.6+).
+    Older Node releases (18.20.4 on Debian 12 bookworm, 20.18 before
+    backport) don't support the flag and produce ``node: bad option:
+    --experimental-strip-types``. We check both presence AND the node
+    major version to skip on a node too old to have the flag, even
+    though `node` is on PATH.
+    """
+    node_path = shutil.which("node")
+    if not node_path:
+        return False
+    try:
+        import subprocess as _sp
+
+        out = _sp.run([node_path, "--version"], capture_output=True, text=True, timeout=5)
+        # "v22.6.0", "v24.0.0", "v20.19.0" — strip leading 'v' and parse major
+        ver = out.stdout.strip().lstrip("v").split(".")
+        if not ver or not ver[0].isdigit():
+            return False
+        major = int(ver[0])
+        if major < 22:
+            return False
+        if major == 22:
+            # Within 22.x, --experimental-strip-types was added in 22.6.
+            minor = int(ver[1]) if len(ver) > 1 and ver[1].isdigit() else 0
+            return minor >= 6
+        return True  # 23+
+    except Exception:
+        return False
 
 
 def _emit_plugin(tmp_path: Path) -> Path:

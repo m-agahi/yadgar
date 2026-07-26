@@ -100,4 +100,3 @@ This plan catalogues the work that **remains** after v5.166.0 — items deferred
 - The biggest open question is F1: how to actually exercise the plugin under opencode at runtime. The current path is local-dev smoke + CI auto-skip; the proper gate is a headless test that proves parts[] mutates in the same-turn context. The infra (Bun + opencode binary) is missing — addressing that requires a dedicated effort.
 - Car 7's hard-removal of `yadgar install-hooks` is **NOT** in this follow-up — it landed in v5.166.0 itself and was an explicit user choice (not deferred).
 - The Docker image upgrade in Car 8 (Node 22 via NodeSource) is the only follow-up that affects future CI behavior; the smoke auto-skips cleanly on older images (skip-inventory entry `opencode-plugin-smoke-01`), so the upgrade is optional.
-
