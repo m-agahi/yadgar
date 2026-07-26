@@ -332,7 +332,7 @@ jobs:
             -q --tb=short
 
   check-skip-inventory:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     # Wave 3 — validates the four legs' pytest -rs skip summaries WITHOUT
     # re-running any test.  The original Car 1 gate re-ran all four leg paths
     # as a 5th full-suite run: doubled CI wall time, added another OOM-class
@@ -394,7 +394,7 @@ jobs:
         run: python scripts/check_skip_inventory.py --validate-inventory
 
   invariant-checks:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
@@ -440,7 +440,7 @@ jobs:
   # if: always() is required — without it this job is SKIPPED (not failed)
   # when any subsystem job fails, which would leave the PR green incorrectly.
   test-gate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     needs:
       [
         test-fast,
@@ -574,12 +574,10 @@ jobs:
     # skips an unlabeled PR). Referenced by the error string below since v?; the
     # label + this guard were wired 2026-07-14.
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     container:
-      image: python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
-      - name: Install runtime deps (nodejs for actions, git, ca-certs)
-        run: apt-get update -qq && apt-get install -y --no-install-recommends nodejs git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
