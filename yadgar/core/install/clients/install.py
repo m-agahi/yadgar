@@ -57,8 +57,18 @@ class InstallOptions:
         version:     ``yadgar.__version__`` for rules template rendering.
         mcp:         install MCP registration surface.
         rules:       install rules file surface.
+        hooks:       install hooks surface (plugin / settings.json / cursor_hooks.json
+                     depending on the client's ``hooks_kind``). When True (the default)
+                     AND the client's ``hooks_kind`` is not None, the per-client
+                     hook emitter from ``hooks_render`` runs. Gemini (``hooks_kind=None``)
+                     is always a no-op for hooks regardless of this flag.
         scope:       ``"global"`` (default) or ``"project"``.
         project_dir: required when scope=``"project"``.
+        home_dir:    user home for the install paths (used by hook emitters that
+                     resolve ~/.config/... directly). Tests pass ``tmp_path`` here
+                     for isolation. When None, defaults to ``Path.home()`` (per-client
+                     descriptors resolve MCP/rules paths via their own PathSpec
+                     factories so they don't need this — hooks emitters do).
         dry_run:     when True render fragments but write no files (``--print`` mode).
     """
 
@@ -67,8 +77,10 @@ class InstallOptions:
     version: str = ""
     mcp: bool = True
     rules: bool = True
+    hooks: bool = True
     scope: str = "global"
     project_dir: Path | None = None
+    home_dir: Path | None = None
     dry_run: bool = False
 
 
@@ -147,6 +159,44 @@ def _render_rules_fragment(
     }
 
 
+@observe(tier="stage")
+def _render_hooks_fragment(
+    descriptor: Any,
+    scope: str = "global",
+    project_dir: Path | None = None,
+    home_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Render the hooks-install fragment for *descriptor* without writing.
+
+    Used in dry_run (``--print``) mode so nix home-manager activation can
+    see what would be written. Returns None for clients with no hook
+    surface (``hooks_kind is None`` — Gemini advisory-only).
+
+    Returns:
+        ``{"path": str, "content": str}`` for clients that have a hook
+        surface, or ``None`` for advisory-only clients.
+    """
+    if descriptor.hooks_kind is None:
+        return None
+
+    from yadgar.core.install.clients.hooks_render import (  # noqa: PLC0415
+        register_hooks,
+    )
+
+    result = register_hooks(
+        descriptor, home_dir=home_dir, scope=scope, project_dir=project_dir, dry_run=True
+    )
+    # In dry_run, the inner result is the emitter's return (path + events /
+    # package_json — no secrets). Surface it under the standard {path, content}
+    # shape that the MCP and rules fragments use, where "content" is the
+    # JSON-serialized emitter payload (machine-readable for nix).
+    inner = result.get("result") or {}
+    return {
+        "path": inner.get("path"),
+        "content": json.dumps(inner, indent=2),
+    }
+
+
 # ── Public install entry point ────────────────────────────────────────────────
 
 
@@ -190,6 +240,7 @@ def install_client(
     descriptor = registry[name]
     mcp_result: dict[str, Any] | None = None
     rules_result: dict[str, Any] | None = None
+    hooks_result: dict[str, Any] | None = None
 
     if opts.mcp:
         if opts.dry_run:
@@ -226,10 +277,38 @@ def install_client(
             )
             rules_result = {"path": wr["written"], "content": None}
 
+    # Hooks: opt-in via opts.hooks (default True). For advisory-only clients
+    # (Gemini, hooks_kind=None) this is a no-op regardless of the flag. For
+    # clients with a hooks_kind (claude-code, cursor, opencode, etc.) the
+    # per-kind emitter from hooks_render dispatches to the client's native
+    # hook-registration file (TS plugin, settings.json, hooks.json, ...).
+    if opts.hooks and descriptor.hooks_kind is not None:
+        if opts.dry_run:
+            hooks_result = _render_hooks_fragment(
+                descriptor,
+                scope=opts.scope,
+                project_dir=opts.project_dir,
+                home_dir=opts.home_dir,
+            )
+        else:
+            from yadgar.core.install.clients.hooks_render import (  # noqa: PLC0415
+                register_hooks,
+            )
+
+            reg = register_hooks(
+                descriptor,
+                home_dir=opts.home_dir,
+                scope=opts.scope,
+                project_dir=opts.project_dir,
+            )
+            inner = reg.get("result") or {}
+            hooks_result = {"path": inner.get("path"), "content": None}
+
     return {
         "client": name,
         "mcp": mcp_result,
         "rules": rules_result,
+        "hooks": hooks_result,
         "dry_run": opts.dry_run,
     }
 
