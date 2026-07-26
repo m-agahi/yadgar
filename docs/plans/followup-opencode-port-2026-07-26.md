@@ -1,9 +1,24 @@
 # OpenCode port — follow-ups (post-v5.166.0)
 
-**Date:** 2026-07-26
+**Date:** 2026-07-26 (initial); updated 2026-07-26 (train closeout)
 **Task:** #0057 — Track follow-up work from the opencode port train (v5.166.0).
-**Status:** PROPOSED (queued; no commit yet — pick up in a later train).
-**Builds on:** `docs/plans/port-opencode-re-audit-2026-07-26.md` (active), `docs/plans/surrealmigrate-fork-2026-07-26.md` (parent investigation), `docs/plans/investigation-migration-script-system-2026-07-26.md` (multi-user migration work), `docs/plans/port-opencode-2026-07-20.md` (archived).
+**Status:** IN-PROGRESS — F4-F7 done (in v5.166.1); F1-F3 still deferred (gated).
+**Builds on:** `docs/plans/opencode-hook-port-train-2026-07-26.md` (the train summary; the re-audit is now archived at `archive/port-opencode-re-audit-2026-07-26.md`), `docs/plans/surrealmigrate-fork-2026-07-26.md` (parent investigation), `docs/plans/investigation-migration-script-system-2026-07-26.md` (multi-user migration work), `docs/plans/port-opencode-2026-07-20.md` (archived in CAR 0 of the train).
+
+## Train closeout status (2026-07-26)
+
+The opencode port train (v5.166.0 + v5.166.1, 14 commits on `feat/opencode-hook-port-train-2026-07-26`) shipped a working 4-of-5 functional + 1-of-5 non-blocking opencode hook layer. The 7 follow-ups in this plan split into two groups:
+
+**DONE in the train (4):**
+- **F4** ADR-0168 captures 6 design decisions (D1-D6) — locked, see `yadgar-adr-0168`
+- **F5** Catalog pre-existing claude_code + cursor emitters — CAP-INFRA-035 + CAP-INFRA-036 added
+- **F6** Per-row `verified_date` on the `_OPENCODE` ClientDescriptor (overrides shared `_VERIFIED` constant)
+- **F7** package.json `@opencode-ai/plugin` pin (documentary; type-only import)
+
+**DEFERRED (3) — per-item plans filed in this train:**
+- **F1** Real headless `opencode run` test → see `docs/plans/followup-f1-headless-e2e.md`. Gated on: Bun + opencode binary in dev env.
+- **F2** Promote `session.idle` → `session.stopping` → see `docs/plans/followup-f2-stop-blocking.md`. Gated on: sst/opencode#16626 ships.
+- **F3** Wire `chat.message parts[] mutation` → see `docs/plans/followup-f3-chat-message-wiring.md`. Gated on: F1 (env infra).
 
 ## Context
 
@@ -12,6 +27,8 @@ The opencode port train (v5.166.0, 6 cars + 4 follow-up cars = 10 commits total 
 This plan catalogues the work that **remains** after v5.166.0 — items deferred during the train because (a) they need a separate container/runtime that's not in this train's env (Bun + opencode runtime), (b) they need cleanup that touches registries/snapshots outside this PR's scope, or (c) they are deliberately follow-up per the re-audit plan's design.
 
 ## Follow-up items
+
+(See the "Train closeout status" block above for which items are done vs. deferred. The detailed sections below describe each item's source, what-it-needs, why-a-follow-up, and effort-estimate — kept here as historical context. For the 3 deferred items, the dedicated per-item plans linked above are the active design docs.)
 
 ### F1 — Real headless `opencode run` test (sst/opencode#16626 + #34321 gates)
 - **Source:** Re-audit plan §4.5 + §4.6. The `chat.message parts[] mutation` event handler is intentionally absent from the canonical plugin template, gated on a real headless test that proves the parts[] mutation appears in the same-turn context for an LLM provider.

@@ -127,10 +127,18 @@ def test_dry_run_writes_nothing(tmp_path):
 
 
 def test_ensure_opencode_package_json_dep_creates_file(tmp_path):
-    """If package.json doesn't exist, emitter creates it with the execa dep."""
+    """If package.json doesn't exist, emitter creates it with execa + @opencode-ai/plugin deps.
+
+    F7 (2026-07-26 followup): the @opencode-ai/plugin dep is DOCUMENTARY —
+    the plugin template uses a type-only import that gets erased at
+    strip-types, so there's no runtime dep. Adding it to package.json
+    makes the contract explicit: anyone reading package.json sees the
+    dep, even though it's resolved at type-check time only.
+    """
     hooks_render.register_hooks(_OPENCODE, home_dir=tmp_path, scope="global")
     pkg = _read_package_json(tmp_path)
     assert "execa" in pkg["dependencies"]
+    assert "@opencode-ai/plugin" in pkg["dependencies"]
 
 
 def test_ensure_opencode_package_json_dep_preserves_existing(tmp_path):
@@ -150,8 +158,9 @@ def test_ensure_opencode_package_json_dep_preserves_existing(tmp_path):
     pkg = _read_package_json(tmp_path)
     # Existing dep preserved.
     assert pkg["dependencies"]["some-user-dep"] == "^1.0.0"
-    # execa added.
+    # Yadgar deps added.
     assert pkg["dependencies"]["execa"] == "^9.0.0"
+    assert pkg["dependencies"]["@opencode-ai/plugin"] == "^1.0.0"
     # Other top-level keys (scripts, name) preserved.
     assert pkg["name"] == "opencode"
     assert pkg["scripts"]["dev"] == "echo dev"
@@ -211,3 +220,10 @@ def test_opencode_capability_row_reflects_re_audit():
     # userPromptSubmit is True in the registry (the surface exists) but
     # NOT wired in the emitter (gated on headless test)
     assert cap.user_prompt_submit is True
+    # F6 (2026-07-26 followup): per-row override of verified_date. The
+    # shared _VERIFIED constant (2026-07-18) covers the other 8 clients;
+    # the opencode row was re-verified during the re-audit
+    # (docs/plans/port-opencode-re-audit-2026-07-26.md, 2026-07-26) so
+    # it gets its own date. Bumping the shared constant would falsely
+    # re-stamp 8 unrelated rows.
+    assert cap.verified_date == "2026-07-26"

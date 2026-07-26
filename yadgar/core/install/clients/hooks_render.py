@@ -311,9 +311,22 @@ export default YadgarHooksPlugin
 """
 
 
-# `execa` dep snippet merged into `~/.config/opencode/package.json`. Keeps
-# any pre-existing dependencies intact; adds `execa` if absent.
-_EXECA_DEP_BLOCK = {"execa": "^9.0.0"}
+# `execa` + `@opencode-ai/plugin` deps merged into `~/.config/opencode/package.json`.
+# Keeps any pre-existing dependencies intact; adds each entry if absent.
+# F7 (2026-07-26 followup): `@opencode-ai/plugin` is added for DOCUMENTATION
+# only — the opencode plugin template uses
+#   `import type { Plugin } from "@opencode-ai/plugin"`
+# which is a TYPE-ONLY import (erased at strip-types via Node 22's
+# --experimental-strip-types), so there's no runtime dep on the package.
+# Adding it to package.json makes the contract explicit: anyone reading
+# package.json sees the @opencode-ai/plugin dep, even though it's
+# resolved at type-check time only. Version pinned to ^1.0.0 (the
+# minor range covers the 1.14.x→1.18.x span verified during the
+# re-audit; the typed `Hooks` interface is stable across these).
+_EXECA_DEP_BLOCK = {
+    "execa": "^9.0.0",
+    "@opencode-ai/plugin": "^1.0.0",
+}
 
 
 @observe(tier="stage")

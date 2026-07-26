@@ -1,7 +1,26 @@
-# OpenCode hook port — re-audit (2026-07-26)
+# OpenCode hook port — re-audit (2026-07-26) (ARCHIVED 2026-07-26)
+
+> **⚠️ ARCHIVED 2026-07-26 — TRAIN LANDED v5.166.0 + v5.166.1.**
+> This re-audit's design contract was fully implemented and shipped in the
+> opencode port train. The 10-car train (CARs 0-8 + CAR 9 follow-up +
+> CAR 10 version bump + 4 follow-up polish commits) is on branch
+> `feat/opencode-hook-port-train-2026-07-26` (one PR queued).
+>
+> **This plan is SUPERSEDED by** `docs/plans/opencode-hook-port-train-2026-07-26.md`
+> (the train summary + shipped-state record) and is kept in `archive/`
+> for the historical design rationale only. **The active follow-up work
+> is tracked in** `docs/plans/followup-opencode-port-2026-07-26.md`
+> (F1-F3 deferred + F4-F7 done) and the per-item F1/F2/F3 plans in
+> `docs/plans/followup-{f1,f2,f3}-*.md`.
+>
+> **Cross-references that cite this plan** (still valid — DO NOT break):
+> - `docs/contracts/CAPABILITY_REGISTRY.md` CAP-INFRA-034 (opencode hook emitter)
+> - `docs/contracts/CAPABILITY_REGISTRY.md` CAP-OPS-010 (install_hooks MCP tool)
+> - `yadgar-adr-0168` (the 6 design decisions D1-D6 extracted from §3.1 + §6 of this plan)
+> - `docs/plans/followup-opencode-port-2026-07-26.md` (the 7 F1-F7 follow-ups)
 
 **Task:** #56 (harness #0056) — port yadgar hook layer to opencode via a TS/JS plugin.
-**Status:** RECON COMPLETE — re-audit against current primary sources (opencode.ai/docs/plugins, `@opencode-ai/plugin@1.18.5` type defs, two open sst/opencode issues, locally-installed 1.14.31 plugin in `~/.config/opencode/node_modules`).
+**Status:** DESIGN LANDED v5.166.0 + v5.166.1; train summary at the SUPERSEDED plan above; active follow-up at the followup plan.
 **Builds on:** `docs/plans/port-opencode-2026-07-20.md` (the 2026-07-20 plan, now **partially outdated**).
 **Supersedes:** nothing — this is a re-audit; the 2026-07-20 plan stays as historical record.
 

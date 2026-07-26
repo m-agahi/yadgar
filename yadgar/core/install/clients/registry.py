@@ -343,8 +343,13 @@ _OPENCODE = ClientDescriptor(
         # OpenCode cannot block turn-end (no blocking Stop surface) → NONE, not
         # BLOCK. Registry fix folded in by Car B (flagged during the OpenCode
         # survey); Car A re-confirms empirically when it builds the emitter.
+        # F6 (2026-07-26): per-row verified_date override — the shared
+        # _VERIFIED constant (2026-07-18) covers the other 8 clients, but the
+        # opencode row was re-verified 2026-07-26 during the re-audit
+        # (docs/plans/port-opencode-re-audit-2026-07-26.md). Bumping the
+        # shared constant would falsely re-stamp 8 unrelated rows.
         stop=StopMechanism.NONE,
-        verified_date=_VERIFIED,
+        verified_date="2026-07-26",
     ),
 )
 
