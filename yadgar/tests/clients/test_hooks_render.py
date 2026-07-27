@@ -16,14 +16,14 @@ import pytest
 from yadgar.core.install.clients import hooks_render
 from yadgar.core.install.clients.registry import CLIENT_REGISTRY
 
-# The kinds later cars still leave as stubs (Car B implements ``cursor_hooks``).
+# The kinds later cars still leave as stubs (Car A implemented
+# ``opencode_plugin``; Car B implemented ``cursor_hooks``).
 _STUB_KINDS = [
     "codex_hooks_json",
     "cline_hooks",
     "windsurf_hooks",
     "kiro_hooks_json",
     "amp_hooks",
-    "opencode_plugin",
 ]
 
 
@@ -35,15 +35,14 @@ def test_dispatch_table_covers_every_registry_hooks_kind():
     )
 
 
-def test_real_emitters_are_claude_json_and_cursor():
-    """Car 0 implemented claude_json; Car B adds cursor_hooks. The rest are stubs."""
-    assert set(hooks_render._EMITTERS) == {"claude_json", "cursor_hooks"}
+def test_real_emitters_are_claude_json_cursor_and_opencode():
+    """Car 0: claude_json. Car A (2026-07-26): opencode_plugin. Car B: cursor_hooks. Rest stubs."""
+    assert set(hooks_render._EMITTERS) == {"claude_json", "cursor_hooks", "opencode_plugin"}
     assert set(hooks_render._STUB_CARS) == {
-        "opencode_plugin",
         "codex_hooks_json",
         "cline_hooks",
-        "kiro_hooks_json",
         "windsurf_hooks",
+        "kiro_hooks_json",
         "amp_hooks",
     }
 
@@ -58,7 +57,7 @@ def test_none_hooks_kind_emits_nothing():
 
 @pytest.mark.parametrize("kind", _STUB_KINDS)
 def test_stub_kinds_raise_not_implemented(kind, tmp_path):
-    """The 7 later-car kinds are explicit NotImplementedError stubs (not silent)."""
+    """The 5 later-car kinds are explicit NotImplementedError stubs (not silent)."""
     # Find a descriptor carrying this kind.
     desc = next(d for d in CLIENT_REGISTRY.values() if d.hooks_kind == kind)
     with pytest.raises(NotImplementedError):

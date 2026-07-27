@@ -551,7 +551,12 @@ _step_enable_units() {
 
 _step_install_hooks() {
     log "Step 6/11: Installing Claude Code git hooks..."
-    run yadgar install-hooks --scope global
+    # Car 7 (2026-07-26): the legacy `yadgar install-hooks` CLI was hard-removed.
+    # The unified `yadgar install --client claude-code --hooks --scope global`
+    # is now the single canonical path; --hooks is default-on so this single
+    # invocation wires MCP + rules + hooks in one shot. Use --no-hooks if you
+    # want to skip the hooks surface.
+    run yadgar install --client claude-code --hooks --scope global
 }
 
 _step_install_agents() {

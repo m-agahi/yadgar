@@ -247,11 +247,11 @@ For `pipx` the suggested command is `pipx upgrade yadgar`; then re-run `yadgar s
 
 ### Setup / install
 ```bash
-yadgar setup                          # first-run: config, secrets, hooks, units
-yadgar install-hooks                  # (re-)wire Claude Code hooks + bearer token
-yadgar install-subagents              # install subagent templates
-yadgar daemon configure-mcp           # write ~/.claude.json with streamable-HTTP + bearer header
-yadgar seed <directory>               # bootstrap memory for an existing project
+yadgar setup                                  # first-run: config, secrets, hooks, units
+yadgar install --client claude-code --hooks    # (re-)wire Claude Code hooks + bearer token (replaces yadgar install-hooks)
+yadgar install-subagents                      # install subagent templates
+yadgar daemon configure-mcp                   # write ~/.claude.json with streamable-HTTP + bearer header
+yadgar seed <directory>                       # bootstrap memory for an existing project
 ```
 
 ### Daily use
@@ -301,7 +301,8 @@ yadgar rules export|import          # policy rules
 yadgar config init|list|get|set     # configuration
 yadgar update --check|--install|--rollback
 yadgar export duckdb --output snap.duckdb   # analytics snapshot (pip install yadgar[analytics])
-yadgar install-hooks|install-subagents      # wire Claude Code hooks + agent templates
+yadgar install --client <name> [--hooks] [--scope ...]   # wire MCP + rules + hooks (default-on) per client; --hooks explicit when scope is set
+yadgar install-subagents                # install subagent templates (claude-code only)
 yadgar restore <directory>          # (hook-internal) restore context post-compaction
 yadgar capture                      # (hook-internal) lightweight action capture
 yadgar drain                        # (hook-internal) flush file queue
@@ -362,7 +363,7 @@ Blocks (Letta-style core memory, all ⚡): `block_create` · `block_get` · `blo
 | `bootstrap_project(directory, content)` | ⚡ | Set `_project_init` |
 | `update_active_work(directory, content)` | ⚡ | Atomic replace of `_active_work` |
 | `seed_project(directory)` | ⚡ | Bootstrap memory from README + top-level docs |
-| `install_hooks(scope)` | ⚡ | Wire Claude Code hooks; inject bearer token |
+| `install_hooks(project_directory, scope)` | ⚡ | Wire Claude Code hooks (Car 7: now delegates to `yadgar install --client claude-code --hooks`); inject bearer token |
 
 `get_project_context()` is a deprecated alias of `project_brief(mode="catalog")`.
 
@@ -443,7 +444,7 @@ Priority: env vars (`YADGAR_*`) > `~/.config/yadgar/config.yaml` > defaults. Kno
 
 Yadgar ships a `SubagentStop` hook that captures memory findings from Claude Code subagents: when a subagent completes, its final report is scanned for a `## Yadgar findings` section and each bullet is persisted with `provenance_agent` set to the agent type.
 
-To opt your subagents into the protocol, paste [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) into your `~/.claude/CLAUDE.md`, then run `yadgar install-hooks --scope global`. The contract is opt-in — Yadgar works without it.
+To opt your subagents into the protocol, paste [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) into your `~/.claude/CLAUDE.md`, then run `yadgar install --client claude-code --hooks --scope global`. The contract is opt-in — Yadgar works without it.
 
 The **agent-prompt library** (`agent_prompt_save` / `agent_dispatch_prelude`) gives subagent dispatch prompts a versioned home: save a good prompt once, improve it over time, and every dispatch pulls the latest version automatically. `agent_dispatch_prelude(pattern, task_topic)` builds a compliant prelude (recall-first contract + `## Yadgar findings` footer) from the stored pattern.
 

@@ -1,18 +1,27 @@
-"""v5.1.2 H1 — install_hooks host-vs-container tests.
+"""v5.1.2 H1 + Car 7 (2026-07-26) — install_hooks host-vs-container tests.
 
-Tests:
-1. CLI subcommand writes to host settings.json (monkeypatched HOME).
-2. MCP tool refuses when running inside container (YADGAR_IN_CONTAINER=1).
-3. MCP tool writes to host settings.json when NOT in container.
-4. CLI --dry-run prints diff/preview without writing any file.
+The legacy `yadgar install-hooks` CLI was hard-removed in Car 7; the
+single canonical path is now `yadgar install --client claude-code --hooks`.
+Two of the original tests in this file (`test_cli_subcommand_writes_to_host_settings`,
+`test_cli_dry_run_prints_diff_no_write`) tested the legacy CLI and have
+been DELETED — the CLI no longer exists. The remaining tests cover the
+MCP `install_hooks` tool (which still exists; Car 7 made it delegate
+to `install_client("claude-code", hooks=True, ...)`):
+
+1. MCP tool refuses when running inside container (YADGAR_IN_CONTAINER=1).
+2. The container-refusal detail must NOT cite the dead /hooks/install-bootstrap
+   endpoint, must NOT have a dead host_command_fallback key, and MUST
+   expose a runnable host_command pointing at the new canonical command.
+3. MCP tool writes hooks to monkeypatched HOME when NOT in container.
+
+The host_command string in the container-refusal now points at
+`yadgar install --client claude-code --hooks --scope=global` (was
+`yadgar install-hooks --scope=global`).
 """
 
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
 
 # ── helper: locate install_hooks MCP tool function ──────────────────────────
 
@@ -25,53 +34,7 @@ def _get_mcp_install_hooks():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. CLI subcommand writes to host settings.json
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test_cli_subcommand_writes_to_host_settings(tmp_path, monkeypatch):
-    """python -m yadgar install-hooks --scope=global writes to $HOME/.claude/settings.json."""
-    proj_dir = tmp_path / "proj"
-    proj_dir.mkdir()
-
-    env = {**os.environ, "HOME": str(tmp_path)}
-    # Ensure NOT in container env for this test
-    env.pop("YADGAR_IN_CONTAINER", None)
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "yadgar",
-            "install-hooks",
-            "--scope",
-            "global",
-            "--project-directory",
-            str(proj_dir),
-        ],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert result.returncode == 0, (
-        f"install-hooks CLI exited non-zero.\nstdout: {result.stdout}\nstderr: {result.stderr}"
-    )
-
-    settings_file = tmp_path / ".claude" / "settings.json"
-    assert settings_file.exists(), (
-        f"Expected {settings_file} to exist after CLI install-hooks --scope=global"
-    )
-
-    settings = json.loads(settings_file.read_text())
-    hooks = settings.get("hooks", {})
-    assert hooks, "No hooks written to settings.json"
-    # At minimum SessionStart, PostToolUse, PreCompact must be present
-    for expected_event in ("SessionStart", "PostToolUse", "PreCompact"):
-        assert expected_event in hooks, f"Hook event {expected_event!r} missing from settings.json"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. MCP tool refuses when running inside container
+# 1. MCP tool refuses when running inside container
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -97,21 +60,28 @@ def test_mcp_tool_refuses_in_container(tmp_path, monkeypatch):
     )
 
 
-def test_container_refusal_has_no_dead_install_bootstrap_ref(tmp_path, monkeypatch):
-    """BUG D: the refusal must not cite the non-existent /hooks/install-bootstrap
-    endpoint, and the dead host_command_fallback key must be gone. A runnable
-    host_command must still be exposed."""
+def test_container_refusal_uses_new_canonical_host_command(tmp_path, monkeypatch):
+    """BUG D + Car 7: refusal must cite the new canonical command, not the legacy one."""
     monkeypatch.setenv("YADGAR_IN_CONTAINER", "1")
     monkeypatch.setenv("HOME", str(tmp_path))
 
     install_hooks = _get_mcp_install_hooks()
     result = install_hooks(project_directory=str(tmp_path / "proj"), scope="global")
 
+    # The host_command MUST point at the new canonical command.
+    assert "install --client claude-code --hooks" in result.get("host_command", ""), (
+        f"host_command must use the new canonical path; got {result.get('host_command')!r}"
+    )
+    # The legacy command MUST NOT appear (it's hard-removed).
+    assert "install-hooks" not in result.get("host_command", ""), (
+        f"host_command must NOT reference the legacy install-hooks (hard-removed in Car 7); "
+        f"got {result.get('host_command')!r}"
+    )
+    # BUG D guards still hold.
     assert "install-bootstrap" not in result.get("detail", ""), (
         "container-refusal detail still cites the dead /hooks/install-bootstrap endpoint"
     )
     assert "host_command_fallback" not in result, "dead host_command_fallback key must be dropped"
-    assert result.get("host_command", "").strip(), "a runnable host_command must remain"
     assert "install-bootstrap" not in json.dumps(result), (
         "no install-bootstrap substring may remain anywhere in the refusal payload"
     )
@@ -123,7 +93,15 @@ def test_container_refusal_has_no_dead_install_bootstrap_ref(tmp_path, monkeypat
 
 
 def test_mcp_tool_works_on_host(tmp_path, monkeypatch):
-    """install_hooks MCP tool writes hooks to monkeypatched HOME when NOT in container."""
+    """install_hooks MCP tool (Car 7: delegates to install_client) writes hooks
+    to monkeypatched HOME when NOT in container.
+
+    Coverage is the same shape as before — the MCP tool still writes
+    ~/.claude/settings.json with the five hook types — but the code
+    path now goes through `install_client(..., hooks=True, ...)` →
+    `register_hooks` → `_emit_claude_json` rather than the legacy
+    `install_hooks_impl`. This test pins the new path.
+    """
     # Ensure neither container marker is set
     monkeypatch.delenv("YADGAR_IN_CONTAINER", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -147,45 +125,3 @@ def test_mcp_tool_works_on_host(tmp_path, monkeypatch):
     assert settings_file.exists(), "settings.json must be written when running on host"
     settings = json.loads(settings_file.read_text())
     assert "hooks" in settings, "No hooks key in written settings.json"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. CLI --dry-run prints preview without writing
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test_cli_dry_run_prints_diff_no_write(tmp_path):
-    """install-hooks --dry-run prints a settings.json preview but writes nothing."""
-    proj_dir = tmp_path / "proj"
-    proj_dir.mkdir()
-
-    env = {**os.environ, "HOME": str(tmp_path)}
-    env.pop("YADGAR_IN_CONTAINER", None)
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "yadgar",
-            "install-hooks",
-            "--scope",
-            "global",
-            "--project-directory",
-            str(proj_dir),
-            "--dry-run",
-        ],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert result.returncode == 0, (
-        f"--dry-run exited non-zero.\nstdout: {result.stdout}\nstderr: {result.stderr}"
-    )
-
-    # Must print something (diff or preview)
-    output = result.stdout + result.stderr
-    assert output.strip(), "--dry-run produced no output"
-
-    # Must NOT write settings.json
-    settings_file = tmp_path / ".claude" / "settings.json"
-    assert not settings_file.exists(), f"--dry-run must not write {settings_file}; file was created"
