@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-27 — executing on chore/decommission-repo-wiki, ships with this PR
+
 # repo-wiki page-type + policy resolver — 2026-07-22
 
 **Task:** #83 rework (write-seam bug found live in v5.160.0).
