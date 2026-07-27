@@ -117,13 +117,6 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "codebase-memory-mcp binary not installed (Car F live e2e; mirrors conftest.py:491 surreal guard)",
       "note": "code_graph Car F (ADR-0162) end-to-end smoke: builds a hermetic throwaway git repo with a local bare origin, drives the real `yadgar code-graph refresh --json` seam against the real 259MB codebase-memory-mcp binary, and asserts a bounded non-empty digest + emit-payload shape. The binary is an opt-in host-side dep (`yadgar setup --code-graph`), never in CI \u2014 module-level skipif covers both e2e classes. Mirrors the conftest.py surreal shutil.which guard pattern."
-    },
-    {
-      "id": "opencode-plugin-smoke-node-01",
-      "file": "yadgar/tests/clients/test_hooks_render_opencode_smoke.py",
-      "verdict": "LEGIT-CONDITIONAL",
-      "reason_pattern": "node not in PATH (opencode plugin smoke",
-      "note": "Car A opencode hook emitter smoke: loads the emitted yadgar-hooks.ts plugin via Node 24's --experimental-strip-types to catch template drift without needing Bun or a real opencode runtime. The yadgar-ci image bakes Node 22 (Dockerfile.ci), so this runs in CI; the skip only fires for local dev shells without Node. Covers all skipif markers in this file, including the CONTRACT-FIX 2026-07-27 positional-event+stdin regression guard."
     }
   ]
 }

@@ -36,12 +36,18 @@ test fires.
 It does NOT catch: runtime behavior of opencode actually firing the
 handlers. That gate is a real headless test, deferred to a follow-up
 train per the plan.
+
+Unconditional — no skip guard. Node is a hard dependency of this test
+class, not an environment gap: the yadgar-ci image bakes Node 22
+(Dockerfile.ci) so CI always has it, and per the project's skip-inventory
+rule (ADR-0087) the skip mechanism is reserved for tests genuinely
+impossible to run in CI — this isn't one of them. If Node is ever missing,
+the test should fail loud (missing CI/dev-env dependency), not skip quietly.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -53,19 +59,6 @@ from yadgar.core.install.clients.registry import CLIENT_REGISTRY
 _OPENCODE = CLIENT_REGISTRY["opencode"]
 _SMOKE_DIR = Path(__file__).parent / "_smoke"
 _DRIVER = _SMOKE_DIR / "opencode_plugin_smoke.ts"
-
-
-def _node_available() -> bool:
-    """Quick check that `node` is on PATH.
-
-    The smoke driver uses `node --experimental-strip-types`, which requires
-    Node 22.6+. The yadgar-ci image (Car 8 of the opencode port train)
-    installs Node 22 from NodeSource apt repo, so this is satisfied in CI.
-    The Node version itself is the image's responsibility, not the test's —
-    per the project rule, the skip check is for tests impossible to run
-    in CI; the smoke is not one of them.
-    """
-    return shutil.which("node") is not None
 
 
 def _emit_plugin(tmp_path: Path) -> Path:
@@ -102,10 +95,6 @@ def _run_driver(plugin_path: Path) -> dict:
     return json.loads(proc.stdout.strip())
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_has_all_required_typed_handlers(tmp_path):
     plugin = _emit_plugin(tmp_path)
     report = _run_driver(plugin)
@@ -114,10 +103,6 @@ def test_emitted_plugin_has_all_required_typed_handlers(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_dispatches_both_wired_lifecycle_events(tmp_path):
     plugin = _emit_plugin(tmp_path)
     report = _run_driver(plugin)
@@ -131,10 +116,6 @@ def test_emitted_plugin_dispatches_both_wired_lifecycle_events(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_uses_positional_event_and_stdin_contract(tmp_path):
     """CONTRACT-FIX regression guard (Node-side): the emitted execa call must
     use the real CLI contract (positional event + stdin payload), never the
@@ -148,10 +129,6 @@ def test_emitted_plugin_uses_positional_event_and_stdin_contract(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_uses_execa_not_fabricated_mcp_rpc(tmp_path):
     plugin = _emit_plugin(tmp_path)
     report = _run_driver(plugin)
@@ -162,10 +139,6 @@ def test_emitted_plugin_uses_execa_not_fabricated_mcp_rpc(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_has_default_export(tmp_path):
     plugin = _emit_plugin(tmp_path)
     report = _run_driver(plugin)
@@ -174,10 +147,6 @@ def test_emitted_plugin_has_default_export(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_uses_output_context_push_for_precompact(tmp_path):
     plugin = _emit_plugin(tmp_path)
     report = _run_driver(plugin)
@@ -187,10 +156,6 @@ def test_emitted_plugin_uses_output_context_push_for_precompact(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_does_not_wire_chat_message(tmp_path):
     """chat.message is gated on a real headless test per the re-audit plan §4.5."""
     plugin = _emit_plugin(tmp_path)
@@ -198,10 +163,6 @@ def test_emitted_plugin_does_not_wire_chat_message(tmp_path):
     assert report["hasNoChatMessage"], "chat.message is intentionally NOT in the template yet"
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_does_not_fake_tui_or_system_transform(tmp_path):
     plugin = _emit_plugin(tmp_path)
     report = _run_driver(plugin)
@@ -211,10 +172,6 @@ def test_emitted_plugin_does_not_fake_tui_or_system_transform(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_marker_on_first_line(tmp_path):
     plugin = _emit_plugin(tmp_path)
     report = _run_driver(plugin)
@@ -223,10 +180,6 @@ def test_emitted_plugin_marker_on_first_line(tmp_path):
     )
 
 
-@pytest.mark.skipif(
-    not _node_available(),
-    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-)
 def test_emitted_plugin_does_not_emit_runtime_plugin_import(tmp_path):
     """The @opencode-ai/plugin import is type-only — strip-types erases it.
 
