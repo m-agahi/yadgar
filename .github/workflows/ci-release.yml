@@ -60,10 +60,17 @@ jobs:
         # On workflow_dispatch, force release=true (manual override).
         # Per-image rebuild detection uses file globs + server.json version fields
         # (same logic as the old ci.yaml changes job).
+        #
+        # This job runs bare on the self-hosted runner host (no container:), so
+        # its python3 isn't guaranteed to be the yadgar-ci image's pinned 3.14 —
+        # `tomllib` is stdlib-only from 3.11+. `tomli` is the same API as a pip
+        # package that works on any python3, so install it and alias it in.
         run: |
           set -euo pipefail
 
-          PYPROJECT_VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          python3 -m pip install --quiet --disable-pip-version-check tomli
+
+          PYPROJECT_VER=$(python3 -c "import tomli as tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           echo "version=${PYPROJECT_VER}" >> "$GITHUB_OUTPUT"
 
           # Latest v* git tag (empty string if none exist yet → first release)
@@ -124,7 +131,7 @@ jobs:
           # NOT for a version-only bump (avoids wasteful rebuild on CORE-only releases).
           # Mirrors the server.json field-compare pattern at lines 126-131.
           if echo "$changed" | grep -q '^pyproject\.toml$'; then
-            BE_DEPS='import tomllib,sys,json; p=tomllib.load(sys.stdin.buffer)["project"]; print(json.dumps([p.get("dependencies"), p.get("optional-dependencies",{}).get("ml")], sort_keys=True))'
+            BE_DEPS='import tomli as tomllib,sys,json; p=tomllib.load(sys.stdin.buffer)["project"]; print(json.dumps([p.get("dependencies"), p.get("optional-dependencies",{}).get("ml")], sort_keys=True))'
             old_be_deps=$(git show HEAD~1:pyproject.toml | python3 -c "$BE_DEPS")
             new_be_deps=$(python3 -c "$BE_DEPS" < pyproject.toml)
             [ "$old_be_deps" != "$new_be_deps" ] && backend_changed=true
@@ -405,8 +412,12 @@ jobs:
 
       - name: Get version
         id: get-version
+        # Bare on the self-hosted runner host (no container:) — python3 here
+        # isn't guaranteed to be 3.11+ (tomllib is stdlib-only from 3.11).
+        # tomli is the same API as a pip package that works on any python3.
         run: |
-          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+          python3 -m pip install --quiet --disable-pip-version-check tomli
+          echo "version=$(python3 -c "import tomli as tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
 
       - name: Determine prerelease flag
         id: prerelease
