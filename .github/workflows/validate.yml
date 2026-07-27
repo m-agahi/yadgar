@@ -3,14 +3,20 @@ name: Validate
 on:
   pull_request:
     branches: [master]
-    # synchronize-only: `opened`/`reopened`/`edited` caused duplicate runs when
-    # a push (synchronize) landed close to a PR body/title edit — two
-    # pull_request events for the same commit, both matching this workflow.
-    # ci-pr.yml doesn't have this problem (its `on:` omits `types:`, defaulting
-    # to {opened, synchronize, reopened} — no `edited`). Cost of narrowing to
-    # synchronize-only: a bad PR title/body isn't re-validated if fixed after
-    # the last push with no new commit; that's an accepted tradeoff.
-    types: [synchronize]
+    # opened+synchronize: `reopened`/`edited` caused duplicate runs when a push
+    # (synchronize) landed close to a PR body/title edit — two pull_request
+    # events for the same commit, both matching this workflow. Narrowing to
+    # synchronize-only (2026-07-27) over-corrected: it silently gave brand-new
+    # PRs ZERO Validate coverage until their first follow-up push (confirmed
+    # live on PR #8 — opened event never matched, no run ever queued). The
+    # concurrency group below already cancels a superseded run on the same
+    # ref, which is what actually prevents the near-simultaneous duplicate —
+    # dropping `opened` was not the fix. ci-pr.yml has no `types:` override
+    # (defaults to {opened, synchronize, reopened}, no `edited`) and never had
+    # this problem. Cost of still dropping `edited`: a bad PR title/body isn't
+    # re-validated if fixed after the last push with no new commit; accepted
+    # tradeoff.
+    types: [opened, synchronize]
 
 # Cancel superseded runs on the same PR branch (rapid push storms).
 concurrency:
