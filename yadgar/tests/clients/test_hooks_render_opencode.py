@@ -1,8 +1,8 @@
 """Car A — OpenCode hook emitter (``_emit_opencode_plugin``).
 
 OpenCode's hook contract was primary-source re-verified 2026-07-26
-(docs/plans/port-opencode-re-audit-2026-07-26.md; supersedes the 2026-07-20
-plan). The load-bearing findings:
+(docs/plans/archive/port-opencode-re-audit-2026-07-26.md; supersedes the
+2026-07-20 plan). The load-bearing findings:
 
 * OpenCode has NO Claude-Code-style hooks; it has a PLUGINS system
   (JavaScript/TypeScript modules in `~/.config/opencode/plugins/`).
@@ -10,13 +10,17 @@ plan). The load-bearing findings:
   `tool.execute.after` (typed) + `experimental.session.compacting` (typed)
   + a generic `event` callback that dispatches `EventSessionCreated` /
   `EventSessionCompacted` / `EventSessionIdle` / etc. per the SDK.
-* Coverage (3/5 functional, 1/5 non-blocking, 1/5 deferred):
-    - session.created       → SessionStart          (FUNCTIONAL)
-    - session.compacted     → SessionStart restore  (FUNCTIONAL)
-    - tool.execute.after    → PostToolUse           (FUNCTIONAL)
-    - experimental.session.compacting → PreCompact  (FUNCTIONAL)
-    - session.idle          → Stop                  (NON-BLOCKING observer)
-    - chat.message          → UserPromptSubmit      (DEFERRED, headless test)
+* Coverage (4/5 functional, 1/5 dropped, 1/5 deferred) — CONTRACT-FIX
+  2026-07-27: the first version of this emitter shipped a broken
+  `execa`->CLI contract (flags instead of positional-event+stdin, plus
+  invalid event names `session-start`/`stop`) that made every wired event
+  exit 2 silently; see the CONTRACT-FIX note in `hooks_render.py`:
+    - session.created       → SessionStart          → yadgar hook session-start-context   (FUNCTIONAL)
+    - session.compacted     → SessionStart restore   → yadgar hook post-compact-rehydrate  (FUNCTIONAL)
+    - tool.execute.after    → PostToolUse            → yadgar hook post-tool-capture       (FUNCTIONAL)
+    - experimental.session.compacting → PreCompact   → yadgar hook pre-compact-drain       (FUNCTIONAL)
+    - session.idle          → Stop                   NOT WIRED (no yadgar hook event exists yet, task F2)
+    - chat.message          → UserPromptSubmit       DEFERRED (headless test, task F1/F3)
 
 The emitter writes `yadgar-hooks.ts` (a thin TS shim) to
 `~/.config/opencode/plugins/` (global) or `.opencode/plugins/` (project).
@@ -27,14 +31,22 @@ It also ensures the `execa` dep is in `~/.config/opencode/package.json`
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
+from yadgar.core.cli import hook as hook_cli
 from yadgar.core.install.clients import hooks_render
 from yadgar.core.install.clients.registry import CLIENT_REGISTRY
 
 _OPENCODE = CLIENT_REGISTRY["opencode"]
 
-# Events the emitter wires (4 of 5; chat.message deferred to a headless test).
-_WIRED_EVENTS = {"session-start", "post-tool-capture", "pre-compact-drain", "stop"}
+# Events the emitter wires (4; session.idle dropped, chat.message deferred).
+_WIRED_EVENTS = {
+    "session-start-context",
+    "post-compact-rehydrate",
+    "post-tool-capture",
+    "pre-compact-drain",
+}
 # The event deliberately NOT wired (gated on a headless `opencode run` test).
 _UNWIRED_EVENT = "user-prompt-submit"
 
@@ -78,25 +90,102 @@ def test_plugin_imports_from_opencode_plugin_sdk(tmp_path):
     assert 'import { execa } from "execa"' in body or 'import {execa} from "execa"' in body
 
 
-def test_plugin_wires_4_of_5_working_events(tmp_path):
+def test_plugin_wires_4_functional_events(tmp_path):
     """The 4 functional events are wired: session.created, session.compacted,
-    tool.execute.after, experimental.session.compacting."""
+    tool.execute.after, experimental.session.compacting. session.idle is
+    deliberately NOT dispatched (no yadgar hook event exists for Stop yet)."""
     hooks_render.register_hooks(_OPENCODE, home_dir=tmp_path, scope="global")
     body = _read_plugin(tmp_path)
-    # sessionStart (signals + restore modes) — both come through session.created + session.compacted
+    # sessionStart + restore — via session.created + session.compacted
     assert 'event.type === "session.created"' in body
     assert 'event.type === "session.compacted"' in body
+    assert '"session-start-context"' in body
+    assert '"post-compact-rehydrate"' in body
     # PostToolUse — typed hook
     assert '"tool.execute.after"' in body
     assert '"post-tool-capture"' in body
     # PreCompact — typed hook
     assert '"experimental.session.compacting"' in body
     assert '"pre-compact-drain"' in body
-    # Stop — non-blocking observer (chat.message still NOT in template)
-    assert 'event.type === "session.idle"' in body
+    # Stop (session.idle) is NOT dispatched — no yadgar hook event exists for
+    # it yet (task F2, gated on sst/opencode#16626). chat.message still deferred.
+    assert 'event.type === "session.idle"' not in body
     assert '"chat.message"' not in body, (
         "chat.message is gated on a headless opencode run test per the re-audit plan §4.5"
     )
+
+
+def test_execa_call_uses_positional_event_and_stdin_payload(tmp_path):
+    """CONTRACT-FIX regression guard: the emitted execa call must pass the
+    event name as a positional CLI argument and the payload via stdin
+    (`input:`), never as `--event`/`--directory`/`--json` flags. The original
+    flag-based shape made every wired event exit 2 (argparse rejects unknown
+    flags) and never delivered a payload — silently swallowed by
+    `{ reject: false }`. See the CONTRACT-FIX note in hooks_render.py."""
+    hooks_render.register_hooks(_OPENCODE, home_dir=tmp_path, scope="global")
+    body = _read_plugin(tmp_path)
+    assert "--event" not in body
+    assert "--directory" not in body
+    assert "--json" not in body
+    assert "input: JSON.stringify(payload)" in body
+    assert 'execa("yadgar", ["hook", event, directory]' in body
+
+
+def test_every_wired_event_is_a_real_hook_cli_event(tmp_path):
+    """Mechanical guard: every event name the template emits must be a real
+    `yadgar.core.cli.hook._HOOKS` dispatch key. Catches the class of bug where
+    the emitter invents an event name (`session-start`, `stop`) that the CLI's
+    argparse `choices=` immediately rejects."""
+    hooks_render.register_hooks(_OPENCODE, home_dir=tmp_path, scope="global")
+    body = _read_plugin(tmp_path)
+    for event in _WIRED_EVENTS:
+        assert f'"{event}"' in body, f"expected event {event!r} to appear in the emitted plugin"
+        assert event in hook_cli._HOOKS, f"{event!r} is not a real yadgar hook CLI event"
+    # session-start / stop are NOT valid _HOOKS keys and must never reappear.
+    assert "session-start" not in hook_cli._HOOKS
+    assert "stop" not in hook_cli._HOOKS
+
+
+def test_yadgar_hook_cli_accepts_the_emitted_argv_shape(tmp_path):
+    """End-to-end regression guard for the exact bug this PR review found:
+    run the REAL installed `yadgar hook <event> <directory>` CLI with a
+    stdin payload shaped exactly like the plugin's `YADGAR()` helper sends,
+    and assert it does NOT exit 2 (argparse rejection). This is the check
+    the original PR's test suite lacked entirely — every prior test only
+    string-matched the emitted TypeScript source, so a 100%-non-functional
+    emitter (verified: all 4 events exited 2 against the real CLI) still
+    passed the full suite. Runs the real subprocess; each handler
+    gracefully degrades to a no-op when the yadgar daemon isn't reachable
+    (best-effort HTTP calls swallow connection errors), so this is safe to
+    run without a live daemon and still proves the CLI CONTRACT is honored.
+    """
+    directory = str(tmp_path)
+    payloads = {
+        "session-start-context": {"cwd": directory, "source": "startup"},
+        "post-compact-rehydrate": {"cwd": directory},
+        "post-tool-capture": {
+            "cwd": directory,
+            "tool_name": "Bash",
+            "session_id": "test-session",
+            "tool_input": {"command": "ls"},
+        },
+        "pre-compact-drain": {"cwd": directory},
+    }
+    assert set(payloads) == _WIRED_EVENTS, "payload fixture must cover every wired event"
+    for event, payload in payloads.items():
+        proc = subprocess.run(
+            [sys.executable, "-m", "yadgar", "hook", event, directory],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert proc.returncode == 0, (
+            f"yadgar hook {event!r} exited {proc.returncode} (expected 0) — "
+            f"stderr: {proc.stderr!r}. This is the exact argparse-rejection "
+            f"failure mode the emitter's original --event/--directory/--json "
+            f"flag contract produced."
+        )
 
 
 def test_plugin_does_not_fake_broken_inject(tmp_path):

@@ -6,10 +6,12 @@
 //   2. Exports a default function (the Plugin)
 //   3. The default function returns an object with the expected event keys
 //
-// This is the smoke test for the 3 functional events (per the re-audit
-// plan §4.5/§4.6): it catches template drift without needing Bun or a
+// This is the smoke test for the 4 functional events (per the CONTRACT-FIX
+// 2026-07-27 re-audit): it catches template drift without needing Bun or a
 // real opencode runtime. The real headless `opencode run` test (the
 // gate for chat.message parts[] mutation) is deferred per the plan.
+// session.idle (Stop) is deliberately NOT dispatched — no yadgar hook event
+// exists for it yet (task F2, gated on sst/opencode#16626).
 //
 // Usage: <this-driver> <plugin-file>
 
@@ -40,9 +42,23 @@ const requiredHandlers = [
 ];
 const hasAllRequiredHandlers = requiredHandlers.every((h) => source.includes(h));
 
-// Check: the generic event callback dispatches on the 3 lifecycle types.
-const lifecycleTypes = ['event.type === "session.created"', 'event.type === "session.compacted"', 'event.type === "session.idle"'];
+// Check: the generic event callback dispatches on the 2 wired lifecycle types.
+const lifecycleTypes = ['event.type === "session.created"', 'event.type === "session.compacted"'];
 const hasAllLifecycleDispatches = lifecycleTypes.every((t) => source.includes(t));
+
+// Check: session.idle (Stop) is NOT dispatched — no yadgar hook event exists
+// for it yet (task F2). A regression here would reintroduce the exit-2 bug
+// this contract-fix removed.
+const doesNotDispatchSessionIdle = !source.includes('event.type === "session.idle"');
+
+// Check: the emitted execa call uses a POSITIONAL event arg + stdin payload,
+// never the broken --event/--directory/--json flag contract.
+const usesPositionalEventAndStdin =
+  source.includes('execa("yadgar", ["hook", event, directory]') &&
+  source.includes("input: JSON.stringify(payload)") &&
+  !source.includes("--event") &&
+  !source.includes("--directory") &&
+  !source.includes("--json");
 
 // Check: the plugin uses execa, not a fabricated ctx.client MCP RPC.
 const usesExeca = source.includes("execa");
@@ -72,6 +88,8 @@ console.log(
     hasRuntimePluginImport,
     hasAllRequiredHandlers,
     hasAllLifecycleDispatches,
+    doesNotDispatchSessionIdle,
+    usesPositionalEventAndStdin,
     usesExeca,
     doesNotFakeMcpRpc,
     hasDefaultExport,

@@ -154,7 +154,12 @@ def test_install_client_opencode_dry_run_hooks_fragment(tmp_path):
     parsed = json.loads(hooks["content"])
     assert parsed["written"] is False
     # The 4 functional events are listed in the fragment preview.
-    for event in ("session-start", "post-tool-capture", "pre-compact-drain", "stop"):
+    for event in (
+        "session-start-context",
+        "post-compact-rehydrate",
+        "post-tool-capture",
+        "pre-compact-drain",
+    ):
         assert event in parsed["events"]
 
 

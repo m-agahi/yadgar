@@ -181,7 +181,22 @@ def _emit_cursor_hooks(
 # ── OpenCode (Car A) ──────────────────────────────────────────────────────────
 #
 # OpenCode's hook contract, primary-source re-verified 2026-07-26
-# (docs/plans/port-opencode-re-audit-2026-07-26.md; supersedes 2026-07-20 plan):
+# (docs/plans/archive/port-opencode-re-audit-2026-07-26.md; supersedes 2026-07-20 plan).
+#
+# CONTRACT-FIX 2026-07-27 (PR #4 review): the FIRST version of this emitter
+# shelled out to `yadgar hook` with the wrong CLI contract — `--event`/
+# `--directory`/`--json` FLAGS plus no stdin — but `yadgar.core.cli.hook`
+# takes a POSITIONAL `event` (one of the `_HOOKS` keys) and reads the JSON
+# payload from STDIN. It also used invalid event names (`session-start`,
+# `stop` — neither is a `_HOOKS` key; see `yadgar/core/cli/hook.py`'s
+# docstring: Stop lives in `stop-memory-checkpoint.py`, not this dispatcher)
+# and wrong payload field names (`directory` instead of `cwd`; never sent
+# `input.args`, so `post-tool-capture`'s `tool_input` was always empty). Every
+# wired event exited 2 (argparse "unrecognized arguments"/"invalid choice"),
+# swallowed silently by `{ reject: false }` — the whole integration was a
+# no-op. Fixed below; see `## Yadgar findings` on this PR's review agents for
+# the full empirical trace (ran the emitted argv against the real CLI).
+#
 #   * Plugin file: `~/.config/opencode/plugins/yadgar-hooks.ts` (global) or
 #     `.opencode/plugins/yadgar-hooks.ts` (project). Bun discovers these on
 #     startup; npm plugins are also supported but the Yadgar use-case is a
@@ -190,7 +205,9 @@ def _emit_cursor_hooks(
 #     plugin functions. Each function receives a `PluginInput` context and
 #     returns a `Hooks` object. The typed `Hooks` interface in
 #     `@opencode-ai/plugin@1.18.5/dist/index.d.ts` exposes:
-#       - `tool.execute.after` → typed hook (PostToolUse)
+#       - `tool.execute.after` → typed hook (PostToolUse). Signature:
+#         `(input: {tool, sessionID, callID, args}, output: {title, output, metadata})`
+#         — `input.args` IS the tool's actual arguments (yadgar's `tool_input`).
 #       - `experimental.session.compacting` → typed hook (PreCompact)
 #         with `{ context: string[]; prompt?: string }` output (mutate
 #         `output.context` to append drain context; do NOT clobber
@@ -199,24 +216,33 @@ def _emit_cursor_hooks(
 #         dispatches typed `Event` objects (EventSessionCreated,
 #         EventSessionCompacted, EventSessionIdle, etc.) per the SDK's
 #         `gen/types.gen.d.ts`.
-#   * Coverage (3/5 functional, 1/5 non-blocking, 1/5 gated on headless test):
-#       - sessionStart         → event.type === "session.created"  (FUNCTIONAL)
-#       - sessionStart-restore → event.type === "session.compacted" (FUNCTIONAL)
-#       - postToolUse          → tool.execute.after                (FUNCTIONAL)
-#       - preCompact           → experimental.session.compacting    (FUNCTIONAL)
-#       - stop                 → event.type === "session.idle"     (NON-BLOCKING
-#                                  observer; promote to blocking on sst/opencode#16626)
+#   * Coverage (3/5 functional, 1/5 dropped pending upstream, 1/5 gated on headless test):
+#       - sessionStart         → event.type === "session.created"  → `yadgar hook session-start-context`  (FUNCTIONAL)
+#       - sessionStart-restore → event.type === "session.compacted" → `yadgar hook post-compact-rehydrate` (FUNCTIONAL — dedicated restore handler, NOT session-start-context)
+#       - postToolUse          → tool.execute.after → `yadgar hook post-tool-capture`                      (FUNCTIONAL)
+#       - preCompact           → experimental.session.compacting → `yadgar hook pre-compact-drain`         (FUNCTIONAL)
+#       - stop                 → event.type === "session.idle"     (DROPPED — no `yadgar hook` event exists
+#                                  for Stop today; it lives in `stop-memory-checkpoint.py`, a separate
+#                                  mechanism this CLI does not dispatch. Wiring a real equivalent is F2
+#                                  (task #53), gated on sst/opencode#16626. Calling `yadgar hook stop` here
+#                                  would just exit 2 — dropped rather than shipping a call known to fail.)
 #       - userPromptSubmit     → chat.message.parts[] mutation     (DEFERRED to
-#                                  headless `opencode run` test, see plan §4.5)
-#   * IPC: thin TS shim that `execa`s the `yadgar hook <event>` CLI. The
-#     typed `ctx.client` is opencode's own SDK (no generic MCP invoker),
-#     so HTTP-to-MCP is NOT a working pattern here.
+#                                  headless `opencode run` test, see plan §4.5, task F1/F3)
+#   * IPC: thin TS shim that `execa`s the `yadgar hook <event>` CLI — POSITIONAL
+#     event name, JSON payload on STDIN (`{ input: JSON.stringify(payload) }`),
+#     never flags. The typed `ctx.client` is opencode's own SDK (no generic
+#     MCP invoker), so HTTP-to-MCP is NOT a working pattern here.
+#   * Payload field names MUST match what each Python handler reads from stdin
+#     (see `yadgar/core/cli/hook.py`): `cwd` (not `directory`), `tool_name`
+#     (not `tool`), `session_id` (not `sessionID`), `tool_input` (not `tool`/
+#     `args` bare — this is `input.args` from the typed hook, the actual tool
+#     arguments dict), `source` (optional, `session-start-context` only).
 #   * Idempotency: replace-in-place, marker-detected (see `_OPENCODE_MANAGED_MARKER`).
 #     Plugin files have no foreign-preserve concern (single-file, no shared
 #     hooks.json) — overwriting on re-run is fine.
 #   * Car A wires the 4 OUT-of-the-box functional events. chat.message is
 #     intentionally NOT in the template (gated on a headless test per the
-#     plan); session.idle IS in (non-blocking observer only).
+#     plan); session.idle is NOT in (no working target to call yet — see above).
 
 
 # Marker comment that identifies a yadgar-managed opencode plugin file. Re-runs
@@ -228,45 +254,58 @@ _OPENCODE_MANAGED_MARKER = "// @yadgar-managed: opencode hook plugin (do not edi
 # The template subscribes to:
 #   1. experimental.session.compacting  → PreCompact drain (yadgar hook pre-compact-drain)
 #   2. tool.execute.after               → PostToolUse capture (yadgar hook post-tool-capture)
-#   3. event callback                   → session.created → sessionStart signal
-#                                       → session.compacted → sessionStart restore
-#                                       → session.idle → stop observer (non-blocking)
-# chat.message (UserPromptSubmit) is NOT in the template — gated on a headless test
-# per the plan. The comment in the template explains this for future maintainers.
+#   3. event callback                   → session.created → yadgar hook session-start-context
+#                                       → session.compacted → yadgar hook post-compact-rehydrate
+# session.idle (Stop) is NOT wired — no `yadgar hook` event exists for it yet (see
+# task F2 / sst/opencode#16626). chat.message (UserPromptSubmit) is NOT in the
+# template — gated on a headless test per the plan. Both are explained inline below.
 _OPENCODE_PLUGIN_TEMPLATE = """{marker}
-// Auto-generated by `yadgar install-hooks --client opencode` (Car A, 2026-07-26).
-// Supersedes the 2026-07-20 plan. See docs/plans/port-opencode-re-audit-2026-07-26.md
-// for the primary-source re-audit that this template reflects.
+// Auto-generated by `yadgar install-hooks --client opencode` (Car A, 2026-07-26;
+// contract fixed 2026-07-27 — see CONTRACT-FIX note in hooks_render.py).
+// See docs/plans/archive/port-opencode-re-audit-2026-07-26.md for the
+// primary-source re-audit that this template reflects.
 //
-// Yadgar hook plugin for OpenCode. Five yadgar hook needs are wired:
-//   1. SessionStart       → event callback (session.created)    → `yadgar hook session-start`
-//   2. SessionStart-resume → event callback (session.compacted)  → `yadgar hook session-start --mode restore`
-//   3. PostToolUse        → tool.execute.after (typed hook)    → `yadgar hook post-tool-capture`
-//   4. PreCompact         → experimental.session.compacting     → `yadgar hook pre-compact-drain`
-//   5. Stop (observer)    → event callback (session.idle)       → `yadgar hook stop` (non-blocking)
+// Yadgar hook plugin for OpenCode. Four yadgar hook events are wired:
+//   1. SessionStart        → event callback (session.created)     → `yadgar hook session-start-context`
+//   2. SessionStart-resume → event callback (session.compacted)   → `yadgar hook post-compact-rehydrate`
+//   3. PostToolUse         → tool.execute.after (typed hook)      → `yadgar hook post-tool-capture`
+//   4. PreCompact          → experimental.session.compacting      → `yadgar hook pre-compact-drain`
+//
+// Stop (session.idle) is intentionally NOT wired: there is no `yadgar hook`
+// event for it today (Stop's checkpoint logic lives in the separate
+// stop-memory-checkpoint.py script, not this CLI's dispatch table). Wiring a
+// real equivalent is deferred to when sst/opencode#16626 ships a blocking
+// session.stopping event (see the re-audit plan §4.5 / task F2).
 //
 // UserPromptSubmit (chat.message parts[] mutation) is NOT in this template —
 // that path is gated on a headless `opencode run` test per the re-audit plan
-// §4.5. When that test passes, add the chat.message handler in the same shape
-// as the tool.execute.after block below (mutate output.parts).
+// §4.5 (task F1/F3). When that test passes, add the chat.message handler in
+// the same shape as the tool.execute.after block below (mutate output.parts).
 //
 // IPC: this plugin is a thin shim. It does NOT call Yadgar MCP directly — the
 // `ctx.client` typed SDK is opencode's own (no generic MCP invoker). Instead it
 // shells out to the `yadgar` CLI via `execa`, which routes through MCP.
+//
+// CLI contract: `yadgar hook <event>` takes the event name as a POSITIONAL
+// argument (one of a fixed choice set) and reads the JSON payload from STDIN
+// — never flags. Payload keys must match what the Python handler reads:
+// `cwd` (not `directory`), `tool_name`/`session_id`/`tool_input` for
+// post-tool-capture (from the typed hook's `input.tool`/`input.sessionID`/
+// `input.args` — `input.args` IS the tool's actual arguments).
 
 import type {{ Plugin }} from "@opencode-ai/plugin"
 import {{ execa }} from "execa"
 
-const YADGAR = (args: Record<string, unknown>) =>
-  execa("yadgar", ["hook", "--event", String(args.event), "--directory", String(args.directory), "--json", JSON.stringify(args)], {{ reject: false }}).catch((e: unknown) => {{
+const YADGAR = (event: string, directory: string, payload: Record<string, unknown>) =>
+  execa("yadgar", ["hook", event, directory], {{ input: JSON.stringify(payload), reject: false }}).catch((e: unknown) => {{
     // Never throw — opencode plugin errors can disable subsequent hooks. Log + continue.
-    console.warn(`[yadgar] ${{String(args.event)}} failed:`, e instanceof Error ? e.message : String(e))
+    console.warn(`[yadgar] ${{event}} failed:`, e instanceof Error ? e.message : String(e))
   }})
 
 const YadgarHooksPlugin: Plugin = async ({{ directory }}) => ({{
   // PreCompact — typed hook with `output.context` array mutation.
   "experimental.session.compacting": async (_input, output) => {{
-    const r = await YADGAR({{ event: "pre-compact-drain", directory }})
+    const r = await YADGAR("pre-compact-drain", directory, {{ cwd: directory }})
     if (r && typeof r.stdout === "string" && r.stdout.length > 0) {{
       output.context.push(r.stdout)
     }}
@@ -275,36 +314,34 @@ const YadgarHooksPlugin: Plugin = async ({{ directory }}) => ({{
   // PostToolUse — typed hook; capture every tool call into yadgar action_log.
   // Best-effort, never throw. Note: opencode fires this for INTERNAL MCP calls
   // too — the yadgar drain side filters server-side by tool name.
+  // `input.args` is the tool's actual arguments (yadgar's `tool_input`) —
+  // without it the handler has nothing to summarize.
   "tool.execute.after": async (input, output) => {{
-    await YADGAR({{
-      event: "post-tool-capture",
-      directory,
-      tool: input.tool,
-      callID: input.callID,
-      sessionID: input.sessionID,
-      title: output.title,
+    await YADGAR("post-tool-capture", directory, {{
+      cwd: directory,
+      tool_name: input.tool,
+      session_id: input.sessionID,
+      tool_input: input.args,
     }})
   }},
 
   // Generic event dispatch for session lifecycle.
-  // - session.created   → SessionStart (signals-mode inject)
-  // - session.compacted → SessionStart restore (restore-mode inject)
-  // - session.idle      → Stop observer (non-blocking; promote when sst/opencode#16626 ships)
+  // - session.created   → SessionStart inject (session-start-context handler)
+  // - session.compacted → SessionStart restore — the DEDICATED restore handler
+  //                       (post-compact-rehydrate), NOT session-start-context.
+  // - session.idle (Stop) is deliberately not dispatched here — see the header
+  //   comment above.
   event: async ({{ event }}) => {{
     if (event.type === "session.created") {{
-      await YADGAR({{ event: "session-start", directory, mode: "signals" }})
+      await YADGAR("session-start-context", directory, {{ cwd: directory, source: "startup" }})
     }} else if (event.type === "session.compacted") {{
-      await YADGAR({{ event: "session-start", directory, mode: "restore" }})
-    }} else if (event.type === "session.idle") {{
-      // Non-blocking observer only. The blocking equivalent (`session.stopping`)
-      // is gated on sst/opencode#16626; see the re-audit plan §4.5.
-      await YADGAR({{ event: "stop", directory }})
+      await YADGAR("post-compact-rehydrate", directory, {{ cwd: directory }})
     }}
   }},
 
   // UserPromptSubmit (chat.message parts[] mutation) — DEFERRED. Add here when
   // a headless `opencode run` test confirms parts[] mutation appears in the
-  // same-turn context. See docs/plans/port-opencode-re-audit-2026-07-26.md §4.5.
+  // same-turn context. See docs/plans/archive/port-opencode-re-audit-2026-07-26.md §4.5.
 }})
 
 export default YadgarHooksPlugin
@@ -414,13 +451,15 @@ def _emit_opencode_plugin(
     The package.json ``execa`` dep is added only if missing — pre-existing
     user deps are preserved.
 
-    Coverage (4 events wired, 1 deferred per the re-audit plan):
-      - session.created       (SessionStart)         FUNCTIONAL
-      - session.compacted     (SessionStart restore) FUNCTIONAL
-      - tool.execute.after    (PostToolUse)          FUNCTIONAL
-      - experimental.session.compacting (PreCompact) FUNCTIONAL
-      - session.idle          (Stop)                 NON-BLOCKING observer
-      - chat.message          (UserPromptSubmit)     DEFERRED (headless test gate)
+    Coverage (4 events wired, 2 deferred/dropped — see the CONTRACT-FIX note
+    above ``_OPENCODE_PLUGIN_TEMPLATE`` for why the first version of this
+    emitter shipped non-functional):
+      - session.created       (SessionStart)          -> yadgar hook session-start-context   FUNCTIONAL
+      - session.compacted     (SessionStart restore)  -> yadgar hook post-compact-rehydrate   FUNCTIONAL
+      - tool.execute.after    (PostToolUse)            -> yadgar hook post-tool-capture         FUNCTIONAL
+      - experimental.session.compacting (PreCompact)   -> yadgar hook pre-compact-drain         FUNCTIONAL
+      - session.idle          (Stop)                  NOT WIRED — no yadgar hook event exists yet (task F2)
+      - chat.message          (UserPromptSubmit)       DEFERRED (headless test gate, task F1/F3)
     """
     plugin_path = _opencode_plugin_path(home_dir, scope, project_dir)
     package_json_path = _opencode_package_json_path(home_dir, scope, project_dir)
@@ -430,7 +469,12 @@ def _emit_opencode_plugin(
             "path": str(plugin_path),
             "package_json": str(package_json_path),
             "written": False,
-            "events": ["session-start", "post-tool-capture", "pre-compact-drain", "stop"],
+            "events": [
+                "session-start-context",
+                "post-compact-rehydrate",
+                "post-tool-capture",
+                "pre-compact-drain",
+            ],
         }
 
     # 1) Ensure the plugins dir exists.
@@ -452,7 +496,12 @@ def _emit_opencode_plugin(
         "package_json": str(package_json_path),
         "package_json_changed": package_json_changed,
         "written": True,
-        "events": ["session-start", "post-tool-capture", "pre-compact-drain", "stop"],
+        "events": [
+            "session-start-context",
+            "post-compact-rehydrate",
+            "post-tool-capture",
+            "pre-compact-drain",
+        ],
     }
 
 

@@ -6,23 +6,26 @@ opencode runtime, neither of which are available in this train's env
 (no Bun installed; opencode is the consumer of the plugin, not the
 producer).
 
-For the 3 functional events (sessionStart, postToolUse, preCompact)
-the unit tests in ``test_hooks_render_opencode.py`` already cover the
-structural contract: marker, event names, execa invocation, idempotency,
-package.json merge, scope/project, dry_run. The deeper value of a
-"smoke" — confirming the emitted TS file is syntactically valid and
-the template's event handlers are wired to the right OpenCode plugin
-events — comes from actually loading the file in a Node runtime that
-can strip types. Node 24 has that built in.
+For the 4 functional events (sessionStart, sessionStart-restore,
+postToolUse, preCompact) the unit tests in ``test_hooks_render_opencode.py``
+already cover the structural contract: marker, event names, execa
+invocation (positional event + stdin payload — see the CONTRACT-FIX note
+in ``hooks_render.py``), idempotency, package.json merge, scope/project,
+dry_run. The deeper value of a "smoke" — confirming the emitted TS file is
+syntactically valid and the template's event handlers are wired to the
+right OpenCode plugin events — comes from actually loading the file in a
+Node runtime that can strip types. Node 24 has that built in.
 
 This test:
   1. Emits the opencode plugin via the real emitter to a tmp path.
   2. Loads the emitted file through Node 24's ``--experimental-strip-types``
      mode via a small driver script (``_smoke/opencode_plugin_smoke.ts``).
   3. The driver reports a JSON shape covering: has the right handlers,
-     dispatches the 3 lifecycle types, uses execa (not fabricated MCP
-     RPC), has the yadgar-managed marker, has a default export, does
-     NOT include chat.message / tui.prompt.append / system.transform.
+     dispatches the 2 wired lifecycle types (and does NOT dispatch
+     session.idle), uses the positional-event+stdin execa contract, uses
+     execa (not fabricated MCP RPC), has the yadgar-managed marker, has a
+     default export, does NOT include chat.message / tui.prompt.append /
+     system.transform.
   4. The Python test asserts on the JSON.
 
 This catches template drift that the unit tests don't: if a future
@@ -115,12 +118,33 @@ def test_emitted_plugin_has_all_required_typed_handlers(tmp_path):
     not _node_available(),
     reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
 )
-def test_emitted_plugin_dispatches_all_three_lifecycle_events(tmp_path):
+def test_emitted_plugin_dispatches_both_wired_lifecycle_events(tmp_path):
     plugin = _emit_plugin(tmp_path)
     report = _run_driver(plugin)
     assert report["hasAllLifecycleDispatches"], (
-        "plugin's event callback must dispatch on session.created, session.compacted, "
-        "and session.idle per the re-audit plan §3.1"
+        "plugin's event callback must dispatch on session.created and session.compacted"
+    )
+    assert report["doesNotDispatchSessionIdle"], (
+        "session.idle (Stop) must NOT be dispatched — no yadgar hook event exists for it "
+        "yet (task F2, gated on sst/opencode#16626); dispatching it reintroduces the "
+        "exit-2 CONTRACT-FIX 2026-07-27 bug"
+    )
+
+
+@pytest.mark.skipif(
+    not _node_available(),
+    reason="node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
+)
+def test_emitted_plugin_uses_positional_event_and_stdin_contract(tmp_path):
+    """CONTRACT-FIX regression guard (Node-side): the emitted execa call must
+    use the real CLI contract (positional event + stdin payload), never the
+    original broken --event/--directory/--json flags that made every wired
+    event exit 2."""
+    plugin = _emit_plugin(tmp_path)
+    report = _run_driver(plugin)
+    assert report["usesPositionalEventAndStdin"], (
+        'execa call must be `execa("yadgar", ["hook", event, directory], '
+        "{ input: JSON.stringify(payload) })` — never --event/--directory/--json flags"
     )
 
 
