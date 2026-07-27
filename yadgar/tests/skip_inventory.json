@@ -18,28 +18,28 @@
       "file": "yadgar/tests/scripts/test_v5_45_1_launchd_install.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "requires macOS host",
-      "note": "launchd install — macOS-only feature; covers all 3 macOS skips in this file"
+      "note": "launchd install \u2014 macOS-only feature; covers all 3 macOS skips in this file"
     },
     {
       "id": "v5-45-1-uninstall-macos-01",
       "file": "yadgar/tests/scripts/test_v5_45_1_uninstall_macos.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "requires macOS host",
-      "note": "uninstall launchd cleanup path — macOS-only feature, cannot run on Linux CI"
+      "note": "uninstall launchd cleanup path \u2014 macOS-only feature, cannot run on Linux CI"
     },
     {
       "id": "v5-45-1-podman-machine-socket-01",
       "file": "yadgar/tests/scripts/test_v5_45_1_podman_machine_socket.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "requires macOS host",
-      "note": "podman machine socket resolution — macOS-only feature, cannot run on Linux CI"
+      "note": "podman machine socket resolution \u2014 macOS-only feature, cannot run on Linux CI"
     },
     {
       "id": "v5-46-0-sbom-generation-01",
       "file": "yadgar/tests/scripts/test_v5_46_0_sbom_generation.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "cyclonedx-bom not installed",
-      "note": "cyclonedx-bom is in [dist]/[sbom] optional extras, not [test] — CI does not install it"
+      "note": "cyclonedx-bom is in [dist]/[sbom] optional extras, not [test] \u2014 CI does not install it"
     },
     {
       "id": "v5-46-0-yadgar-setup-render-01",
@@ -53,7 +53,7 @@
       "file": "yadgar/tests/scripts/test_v5_49_2_hotfix.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "entrypoint-backend.sh uses SURREAL_USER/PASS",
-      "note": "T7 — investigation showed backend does not require YADGAR_DB_USER; test body is pass by design"
+      "note": "T7 \u2014 investigation showed backend does not require YADGAR_DB_USER; test body is pass by design"
     },
     {
       "id": "v5-46-9-branch-fallback-ci-env",
@@ -67,7 +67,7 @@
       "file": "yadgar/tests/backend/test_causal_discovery_characterization.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "Set YADGAR_REGEN_FIXTURES=1 to regenerate",
-      "note": "Regen-on-demand skip by design. Fixture committed at yadgar/tests/backend/fixtures/causal_discovery_expected.json (Car 2: generated INSIDE the yadgar-ci container — scipy FP sensitivity across BLAS builds). Regenerate only inside the CI container; command in the test module docstring."
+      "note": "Regen-on-demand skip by design. Fixture committed at yadgar/tests/backend/fixtures/causal_discovery_expected.json (Car 2: generated INSIDE the yadgar-ci container \u2014 scipy FP sensitivity across BLAS builds). Regenerate only inside the CI container; command in the test module docstring."
     },
     {
       "id": "export-duckdb-01",
@@ -81,7 +81,7 @@
       "file": "yadgar/tests/scripts/test_v5_46_0_nix_flake_eval.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "nix not in PATH",
-      "note": "nix binary absent in CI container; flake checks run on dev machines (NixOS). Stays a skip — nix-in-container is unreasonable weight."
+      "note": "nix binary absent in CI container; flake checks run on dev machines (NixOS). Stays a skip \u2014 nix-in-container is unreasonable weight."
     },
     {
       "id": "retrieval-core-char-regen",
@@ -95,14 +95,14 @@
       "file": "yadgar/tests/hooks/test_install_hooks_stable_python.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "git not on PATH",
-      "note": "Linked-worktree detection tests build a real git repo + worktree fixture; skipped only where git is absent (never in CI — checkout requires git)"
+      "note": "Linked-worktree detection tests build a real git repo + worktree fixture; skipped only where git is absent (never in CI \u2014 checkout requires git)"
     },
     {
       "id": "deps-train-model-load-smoke-01",
       "file": "yadgar/tests/backend/test_model_load_smoke.py",
       "verdict": "LEGIT-CONDITIONAL",
-      "reason_pattern": "real-model load smoke — opt-in via YADGAR_MODEL_LOAD_SMOKE=1",
-      "note": "Deps-train gates b/c/d: downloads real model weights (Ettin/GTE/MiniLM/doc2query) and runs real inference — opt-in local pre-merge gate, never runs in CE-mocked CI legs. Covers the module-level skipif plus the flashrank importorskip (flashrank is not a locked dep; prod treats its absence as silent fall-through)."
+      "reason_pattern": "real-model load smoke \u2014 opt-in via YADGAR_MODEL_LOAD_SMOKE=1",
+      "note": "Deps-train gates b/c/d: downloads real model weights (Ettin/GTE/MiniLM/doc2query) and runs real inference \u2014 opt-in local pre-merge gate, never runs in CE-mocked CI legs. Covers the module-level skipif plus the flashrank importorskip (flashrank is not a locked dep; prod treats its absence as silent fall-through)."
     },
     {
       "id": "code-graph-live-smoke-01",
@@ -116,14 +116,7 @@
       "file": "yadgar/tests/core/test_code_graph_e2e.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "codebase-memory-mcp binary not installed (Car F live e2e; mirrors conftest.py:491 surreal guard)",
-      "note": "code_graph Car F (ADR-0162) end-to-end smoke: builds a hermetic throwaway git repo with a local bare origin, drives the real `yadgar code-graph refresh --json` seam against the real 259MB codebase-memory-mcp binary, and asserts a bounded non-empty digest + emit-payload shape. The binary is an opt-in host-side dep (`yadgar setup --code-graph`), never in CI — module-level skipif covers both e2e classes. Mirrors the conftest.py surreal shutil.which guard pattern."
-    },
-    {
-      "id": "opencode-plugin-smoke-01",
-      "file": "yadgar/tests/clients/test_hooks_render_opencode_smoke.py",
-      "verdict": "LEGIT-CONDITIONAL",
-      "reason_pattern": "node not in PATH (opencode plugin smoke; loads the emitted yadgar-hooks.ts via Node 24 --experimental-strip-types)",
-      "note": "Car A opencode hook port: the smoke catches template drift that the unit tests don't (e.g. accidental runtime import of @opencode-ai/plugin, missing event handler, fabricated ctx.client MCP RPC). CI image (Python 3.14 + build chain) doesn't ship node; local dev / pre-merge runs the smoke. The real headless `opencode run` test (Bun + opencode runtime) stays deferred per docs/plans/port-opencode-re-audit-2026-07-26.md §4.5 — covers all 9 tests in this file via the module-level skipif(not shutil.which('node')) gate."
+      "note": "code_graph Car F (ADR-0162) end-to-end smoke: builds a hermetic throwaway git repo with a local bare origin, drives the real `yadgar code-graph refresh --json` seam against the real 259MB codebase-memory-mcp binary, and asserts a bounded non-empty digest + emit-payload shape. The binary is an opt-in host-side dep (`yadgar setup --code-graph`), never in CI \u2014 module-level skipif covers both e2e classes. Mirrors the conftest.py surreal shutil.which guard pattern."
     }
   ]
 }
