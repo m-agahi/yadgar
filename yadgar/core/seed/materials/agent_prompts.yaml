@@ -133,6 +133,7 @@ prompts:
 
     Reproduce the bug first — confirm failure before touching code.
     Isolate via bisection, logging, or binary-search; identify the true root cause, not the symptom.
+    If a `code_graph` memory block exists for this repo, its hotspots/fan-in data can help localize which module the bug likely lives in before you bisect blind.
     Apply the minimal fix — surgical edit, no opportunistic cleanups.
     Add a regression test that fails before the fix and passes after.
     Run the full suite; loop until green.
@@ -145,6 +146,7 @@ prompts:
     DISPATCH: model=sonnet (haiku for pure listing) — canonical: model-tier-dispatch
 
     READ-ONLY investigation — make zero edits.
+    If the repo has code_graph enabled, check the per-dir `code_graph` memory block (auto-injected digest: layers/hotspots/entry-points/endpoints) or run `yadgar code-graph query <repo> <cypher>` FIRST — real indexed structure beats cold grep on a large/unfamiliar tree. Fall back to grep/glob when it doesn't have the answer, or the repo has no digest.
     Locate where X lives or how Y works; start broad (grep/glob) then narrow.
     Return a file:line table with one row per relevant symbol or entry-point.
     Quote function signatures exactly as they appear in source.
@@ -238,6 +240,7 @@ prompts:
 
     ### Hard evidence already gathered (verify if cheap, don't re-derive)
     <bullet list of the observed facts + what's already ruled out (queue-lag / DLQ / etc.)>
+    If a `code_graph` memory block / `yadgar code-graph query` is available for this repo, check it — fan-in/hotspot data can shortcut which module to trace first.
 
     ### Your job
     1. Trace the exact code path (find entry point + the write/effect site + guards that could skip or throw before it). file:line the site where the expected effect WOULD happen.
@@ -308,6 +311,7 @@ prompts:
 
     ### Investigate FIRST (verify against real code — cite file:line)
     <numbered list of the exact subsystems to map: storage, pipelines, write-paths/gates, retention, surfacing points, migration feasibility>
+    If a `code_graph` memory block exists for this repo, skim it first (layers/hotspots/entry-points) — real indexed structure signal, not a substitute for reading the actual code you cite.
 
     ### Deliverable — write a plan doc
     Write `docs/plans/<slug>-<fixed-date-string>.md` (coordinator supplies the date — NEVER call Date.now/new Date). Follow repo plan conventions (slug-named, status header, cars/phases, acceptance criteria tagged [unit]/[e2e]/[manual], risks, an explicit "open decisions for the user" section). Recommend ONE option per fork with rationale (brutal honesty — flag weak ideas).
@@ -332,6 +336,7 @@ prompts:
 
     ## Yadgar contract
     recall("<car topic + subsystems>") first. Observed code ALWAYS wins over plan/recall — verify every cited path/line before editing. Do NOT memorize directly; report findings. END with `## Yadgar findings`.
+    Also check for a `code_graph` memory block for this repo (`block_get(name="code_graph", directory=<repo>)`) if present — a per-dir digest of layers/hotspots/endpoints, useful before cold-grepping the target subsystem.
 
     ## WORK LOCATION
     `cd <worktree-path>` — branch <car/branch> off master <sha>. Verify `git branch --show-current` = the car branch and clean status. ALL edits + commits here (never the main worktree). Worktree isolation lets cars build in parallel without collision.
