@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          python3 -m pip install --quiet --disable-pip-version-check tomli
+          python3 -m pip install --quiet --disable-pip-version-check tomli==2.4.1
 
           PYPROJECT_VER=$(python3 -c "import tomli as tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           echo "version=${PYPROJECT_VER}" >> "$GITHUB_OUTPUT"
@@ -416,7 +416,7 @@ jobs:
         # isn't guaranteed to be 3.11+ (tomllib is stdlib-only from 3.11).
         # tomli is the same API as a pip package that works on any python3.
         run: |
-          python3 -m pip install --quiet --disable-pip-version-check tomli
+          python3 -m pip install --quiet --disable-pip-version-check tomli==2.4.1
           echo "version=$(python3 -c "import tomli as tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
 
       - name: Determine prerelease flag
