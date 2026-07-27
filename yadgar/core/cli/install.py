@@ -1,9 +1,10 @@
 """``yadgar install`` CLI subcommand — Car 3.
 
 Unified entry point that installs (or dry-run prints) MCP registration +
-rules for one or more agentic clients.  Ties together the MCP-registration
-generator (Car 1, ``install_mcp``) and the rules-file generator (Car 2,
-``rules``) behind a single idempotent command.
+rules + hooks for one or more agentic clients. Ties together the
+MCP-registration generator (Car 1, ``install_mcp``), the rules-file generator
+(Car 2, ``rules``), and the hook-emitter dispatch (Car 0/A/B, ``hooks_render``)
+behind a single idempotent command.
 
 Usage::
 
@@ -25,6 +26,7 @@ fragment::
       "client": "claude-code",
       "mcp": {"path": "/home/…/.claude.json", "content": "…"},
       "rules": {"path": "/home/…/AGENTS.md", "content": "…"},
+      "hooks": {"path": "/home/…/.claude/settings.json", "content": "…"},
       "dry_run": true
     }
 
@@ -37,6 +39,19 @@ Key guarantees:
     ``${YADGAR_MCP_AUTH_TOKEN}`` rather than the raw token.  Nix
     home-manager activation writes the file; the actual token is resolved
     from the environment at daemon start.
+
+Hook install behavior:
+  * ``--hooks`` is on by default for clients with a registered ``hooks_kind``
+    in the registry (claude-code, cursor, opencode, etc.). For advisory-only
+    clients (Gemini, ``hooks_kind=None``) hooks is a no-op regardless.
+  * ``--no-hooks`` opts out. Useful for nix provisioning where the
+    home-manager activation only needs the MCP + rules fragments, or for
+    debugging where the user wants to test the other surfaces in isolation.
+  * On the write path, the per-kind emitter from ``hooks_render`` dispatches
+    to the client's native hook-registration file: TS plugin (opencode),
+    settings.json (claude-code), or hooks.json (cursor). On the dry-run
+    path, the fragment surfaces ``path`` + a JSON-serialized preview of
+    the emitter's return.
 
 Back-compat aliases
 -------------------
@@ -88,6 +103,15 @@ def cmd_install(args) -> None:
     # Determine which surfaces to install.
     want_mcp = bool(getattr(args, "mcp", False))
     want_rules = bool(getattr(args, "rules", False))
+    # Hooks: defaults to True (wired for clients with a hooks_kind). The
+    # ``--no-hooks`` flag opts out; ``--hooks`` explicitly opts in (same as
+    # the default, kept for symmetry with ``--mcp`` / ``--rules``).
+    if getattr(args, "no_hooks", False):
+        want_hooks = False
+    elif getattr(args, "hooks", False):
+        want_hooks = True
+    else:
+        want_hooks = True  # default-on
     # Default: all surfaces when neither flag given explicitly.
     if not want_mcp and not want_rules:
         want_mcp = True
@@ -105,6 +129,7 @@ def cmd_install(args) -> None:
             version=version,
             mcp=want_mcp,
             rules=want_rules,
+            hooks=want_hooks,
             scope=scope,
             project_dir=project_dir,
             dry_run=dry_run,
@@ -133,6 +158,7 @@ def cmd_install(args) -> None:
         version=version,
         mcp=want_mcp,
         rules=want_rules,
+        hooks=want_hooks,
         scope=scope,
         project_dir=project_dir,
         dry_run=dry_run,
@@ -162,6 +188,10 @@ def _print_result(result: dict) -> None:
     if rules and isinstance(rules, dict):
         path = rules.get("path", "?")
         print(f"  Rules file:  {path}")
+    hooks = result.get("hooks")
+    if hooks and isinstance(hooks, dict):
+        path = hooks.get("path", "?")
+        print(f"  Hooks:       {path}")
 
 
 def register(subparsers) -> None:
@@ -203,6 +233,25 @@ def register(subparsers) -> None:
         action="store_true",
         default=False,
         help="Install rules file (writes AGENTS.md / CLAUDE.md / client-native)",
+    )
+    p.add_argument(
+        "--hooks",
+        dest="hooks",
+        action="store_true",
+        default=False,
+        help=(
+            "Install hooks surface (default ON for clients with a hooks_kind: "
+            "claude-code, cursor, opencode, etc.; no-op for Gemini). Writes the "
+            "client's native hook-registration file: TS plugin (opencode), "
+            "settings.json (claude-code), or hooks.json (cursor)."
+        ),
+    )
+    p.add_argument(
+        "--no-hooks",
+        dest="no_hooks",
+        action="store_true",
+        default=False,
+        help="Skip the hooks surface. Useful for nix provisioning where only MCP + rules are needed.",
     )
     p.add_argument(
         "--print",

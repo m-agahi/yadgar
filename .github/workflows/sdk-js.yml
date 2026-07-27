@@ -12,7 +12,12 @@ permissions:
 jobs:
   test:
     name: Test @yadgar/sdk
-    runs-on: ubuntu-latest
+    # Self-hosted runner + yadgar-ci image (matches the rest of the
+    # GitHub workflows; avoids GitHub-hosted runner minutes). The
+    # yadgar-ci image has Node 22 baked (CAR 8 of the opencode port
+    # train) — setup-node@v7 still pins to Node 20 for sdk-js's own
+    # version-management contract; node 22 is on PATH via the image.
+    runs-on: [self-hosted, linux, x64, yadgar]
     defaults:
       run:
         working-directory: sdk-js
@@ -45,7 +50,7 @@ jobs:
     # Only runs on tag push matching sdk-js/v*
     if: startsWith(github.ref, 'refs/tags/sdk-js/v')
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     permissions:
       contents: read
       packages: write

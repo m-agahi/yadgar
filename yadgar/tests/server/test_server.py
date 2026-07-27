@@ -417,79 +417,25 @@ def test_check_invariants_nonfixable_stays_in_violations():
         assert result["ok"] is False
 
 
-# ── install_hooks (global scope) ───────────────────────────────────────
-
-
-def test_install_hooks_default_scope_is_project(tmp_path):
-    """install_hooks with no scope writes to project directory."""
-    result = server.install_hooks(str(tmp_path))
-    assert result["status"] == "installed"
-    assert result.get("scope", "project") == "project"
-    # Settings written to project .claude/settings.json
-    settings_file = tmp_path / ".claude" / "settings.json"
-    assert settings_file.exists()
-    data = json.loads(settings_file.read_text())
-    assert "hooks" in data
-
-
-def test_install_hooks_global_scope_writes_to_home(tmp_path, monkeypatch):
-    """install_hooks(scope='global') writes SessionStart+PreCompact+PostToolUse hooks to ~/.claude/settings.json."""
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    monkeypatch.setenv("HOME", str(fake_home))
-
-    # Also monkeypatch Path.home() used inside install_hooks
-    from pathlib import Path as _Path
-
-    monkeypatch.setattr(_Path, "home", staticmethod(lambda: fake_home))
-
-    result = server.install_hooks(str(tmp_path), scope="global")
-    assert result["status"] == "installed"
-    assert result["scope"] == "global"
-
-    # Global settings.json must contain the hook entries
-    global_settings = fake_home / ".claude" / "settings.json"
-    assert global_settings.exists()
-    data = json.loads(global_settings.read_text())
-    hooks = data.get("hooks", {})
-    assert "SessionStart" in hooks
-    assert "PreCompact" in hooks
-
-    # Project .claude/settings.json should NOT have the project hooks
-    project_settings = tmp_path / ".claude" / "settings.json"
-    if project_settings.exists():
-        proj_data = json.loads(project_settings.read_text())
-        proj_hooks = proj_data.get("hooks", {})
-        # SessionStart and PreCompact should NOT be in project settings when scope=global
-        assert "SessionStart" not in proj_hooks
-        assert "PreCompact" not in proj_hooks
-
-
-def test_install_hooks_global_scope_hooks_dir_is_home(tmp_path, monkeypatch):
-    """install_hooks(scope='global') writes hook scripts to ~/.claude/hooks/."""
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    from pathlib import Path as _Path
-
-    monkeypatch.setattr(_Path, "home", staticmethod(lambda: fake_home))
-
-    result = server.install_hooks(str(tmp_path), scope="global")
-    global_hooks_dir = fake_home / ".claude" / "hooks"
-    assert global_hooks_dir.exists()
-    # Hook scripts should be in the global dir
-    assert result["hooks_directory"] == str(global_hooks_dir)
-
-
-def test_install_hooks_global_scope_returns_scope(tmp_path, monkeypatch):
-    """install_hooks(scope='global') return value includes scope='global'."""
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    from pathlib import Path as _Path
-
-    monkeypatch.setattr(_Path, "home", staticmethod(lambda: fake_home))
-
-    result = server.install_hooks(str(tmp_path), scope="global")
-    assert result["scope"] == "global"
+# ── install_hooks (MCP tool, Car 7: delegates to install_client) ──────────
+#
+# Car 7 (2026-07-26) of the opencode port train hard-removed the parallel
+# `yadgar install-hooks` CLI. The MCP `install_hooks` tool now delegates
+# to `install_client("claude-code", mcp=False, rules=False, hooks=True,
+# scope=scope, project_dir=project_directory, home_dir=Path.home(),
+# dry_run=False)`. The end-to-end behaviour is unchanged: settings.json
+# is written to the right path for the scope, the 5 hook types are
+# present, the PreToolUse routing goes through the standalone
+# yadgar-pretooluse-router.py (not the legacy hook_runner.py dispatcher).
+#
+# The 4 tests in this section that asserted the LEGACY return shape
+# (result["hooks_directory"], result["files"], result["status"] == "ok")
+# are now obsolete: the new MCP return is
+#   {status: "installed", scope, result: {client, mcp, rules, hooks: {path, content: None}, dry_run}}
+# The same behaviour (settings.json written with 5 hook types) is now
+# tested by the retained test below. The pre-existing `pretooluse_direct_command_not_dispatcher`
+# test is the load-bearing behavioural test — it checks the actual
+# written settings.json file (not the return shape) and is unchanged.
 
 
 def test_install_hooks_pretooluse_direct_command_not_dispatcher(tmp_path, monkeypatch):

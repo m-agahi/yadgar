@@ -417,7 +417,20 @@ def anchor(
 def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
     """Install Claude Code hooks for automatic memory capture and replay.
 
-    Installs five hook types:
+    Car 7 (2026-07-26): this MCP tool now delegates to the unified
+    ``install_client`` orchestrator (`yadgar install --client claude-code --hooks`).
+    The legacy `yadgar install-hooks` CLI command has been hard-removed
+    (Car 7 of the opencode port train); see the migration message in
+    yadgar/core/cli/install_hooks.py.
+
+    Behaviour: container-refuse still applies (the container's
+    filesystem is throwaway); when allowed, the tool delegates to
+    install_client with mcp=False, rules=False, hooks=True, scope,
+    project_directory — i.e. ONLY the hooks surface, no MCP/rules
+    re-write (matches the legacy install_hooks surface exactly).
+
+    Installs five hook types via the per-kind emitter in
+    hooks_render.register_hooks -> _emit_claude_json:
       - PreCompact: drain context before compaction
       - SessionStart (compact): restore context after compaction
       - SessionStart (all): inject project context on every new session
@@ -432,7 +445,7 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
            and PreToolUse hooks to ~/.claude/settings.json and scripts to ~/.claude/hooks/.
            Stop hook is always global regardless of scope.
     """
-    from yadgar.core.install.install_hooks_lib import install_hooks_impl, is_running_in_container
+    from yadgar.core.install.install_hooks_lib import is_running_in_container
 
     # Refuse when running inside a container: the container's filesystem is
     # throwaway and $HOME resolves to /root, not the host user's home dir.
@@ -442,17 +455,37 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
             "reason": "running_in_container",
             "detail": (
                 "install_hooks must run on the host (the container's filesystem is throwaway). "
-                "Run `yadgar install-hooks --scope=global` on the host machine."
+                "Run `yadgar install --client claude-code --hooks --scope=global` on the host machine."
             ),
-            "host_command": "yadgar install-hooks --scope=global",
+            "host_command": "yadgar install --client claude-code --hooks --scope=global",
         }
 
-    return install_hooks_impl(
-        home_dir=Path.home(),
-        scope=scope,
-        project_directory=project_directory or None,
-        dry_run=False,
+    # Delegate to the unified orchestrator. Surface = hooks ONLY (matches
+    # the legacy install_hooks contract); MCP and rules are explicitly off
+    # so this tool doesn't accidentally re-write those configs when a caller
+    # only wanted hooks.
+    from yadgar.core.install.clients.install import InstallOptions, install_client
+
+    result = install_client(
+        "claude-code",
+        opts=InstallOptions(
+            mcp=False,
+            rules=False,
+            hooks=True,
+            scope=scope,
+            project_dir=Path(project_directory) if project_directory else None,
+            # home_dir=Path.home() so the per-kind emitter resolves
+            # ~/.claude/ from the host user's home (NOT the container's
+            # /root). Matches the legacy install_hooks contract exactly.
+            home_dir=Path.home(),
+            dry_run=False,
+        ),
     )
+    return {
+        "status": "installed",
+        "scope": scope,
+        "result": result,
+    }
 
 
 @_tool(power=True)

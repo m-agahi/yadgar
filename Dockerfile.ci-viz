@@ -21,7 +21,6 @@ LABEL org.opencontainers.image.version="5.136.0"
 # The lib packages are Chromium runtime requirements on Debian slim.
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
-        npm \
         chromium \
         chromium-driver \
         libnss3 \
@@ -36,6 +35,10 @@ RUN apt-get update -qq && \
         libcairo2 \
         libasound2 && \
     rm -rf /var/lib/apt/lists/*
+
+# NodeSource Node 22 (baked in yadgar-ci per Car 8 of the opencode port
+# train) ships with npm 10.x — no need to install a separate npm package
+# that would conflict with the NodeSource repo.
 
 # Pre-install Playwright Python + pytest-playwright.
 # playwright install-deps is skipped (system chromium used via env var).

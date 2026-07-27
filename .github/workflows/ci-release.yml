@@ -42,7 +42,7 @@ env:
 jobs:
   # ── Detect whether a release is needed ───────────────────────────────────
   changes:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     outputs:
       release:  ${{ steps.detect.outputs.release }}
       core:     ${{ steps.detect.outputs.core }}
@@ -166,12 +166,11 @@ jobs:
   build-images:
     needs: changes
     if: needs.changes.outputs.release == 'true'
-    runs-on: ubuntu-latest
-    # ubuntu-latest ships Docker + buildx natively — the docker:cli container
-    # wrapper below is kept from the Forgejo self-hosted-runner source (whose
-    # HOST had no docker binary) for a faithful translation.
-    # TODO(migration): consider dropping the docker:cli container job-wrapper
-    # entirely and running these steps directly on the ubuntu-latest runner.
+    runs-on: [self-hosted, linux, x64, yadgar]
+    # Self-hosted runner hosts the docker:cli container which has the docker CLI
+    # + buildx. The yadgar-ci image is NOT used here (buildx + build-cloud
+    # driver, not Python tooling). TODO(migration): if the self-hosted runner
+    # gets docker installed directly, drop the docker:cli container entirely.
     container:
       image: docker:cli
     steps:
@@ -268,7 +267,7 @@ jobs:
   build-wheel:
     needs: changes
     if: needs.changes.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
@@ -302,7 +301,7 @@ jobs:
     needs: [changes, build-wheel]
     if: needs.changes.outputs.release == 'true'
     continue-on-error: true
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
@@ -361,7 +360,7 @@ jobs:
   publish-pypi:
     needs: [changes, build-wheel]
     if: needs.changes.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
@@ -398,7 +397,7 @@ jobs:
   tag-and-release:
     needs: [changes, publish-pypi, build-images]
     if: needs.changes.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, yadgar]
     permissions:
       contents: write
     steps:

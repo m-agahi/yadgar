@@ -1,8 +1,21 @@
-# OpenCode hook port — plan
+# OpenCode hook port — plan (ARCHIVED 2026-07-26)
 
-- status: PLANNED (deferred)
+> **⚠️ ARCHIVED 2026-07-26 — SUPERSEDED by `port-opencode-re-audit-2026-07-26.md`.**
+> This plan was primary-source-verified against `@opencode-ai/plugin@1.18.4` and the
+> opencode.ai/docs/plugins page on 2026-07-20. A 6-day re-audit (2026-07-26) against
+> `@opencode-ai/plugin@1.18.5`, the locally-installed 1.14.31, and two open sst/opencode
+> issues found several drifted claims — most notably:
+> (1) session-start inject is `event.type === "session.created"` via the generic `event`
+> callback, NOT `experimental.chat.system.transform` (per the docs + 1.18.5 type defs);
+> (2) issue #34321 is about `system.transform`'s collapse guard, NOT about `chat.message`
+> parts[] mutation; (3) `tui.prompt.append` is real but TUI-internal, wrong tool for
+> user-prompt inject. **All 5/5 need rewiring per the re-audit before any build.**
+> Kept as historical record.
+
+- status: ARCHIVED 2026-07-26 (was PLANNED deferred)
+- verified: 2026-07-20 primary-source (superseded by re-audit 2026-07-26)
 - verified: 2026-07-20 primary-source (supersedes ADR-0145 + port-opencode-2026-07-18.md)
-- task: #56
+- task: #56 (active) / #0056 (re-audit) / #0020 (the actual BUILD work, in_progress)
 - emitter: `yadgar/core/install/clients/hooks_render.py` — replace `_emit_stub` for OpenCode
 
 ---
