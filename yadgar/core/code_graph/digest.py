@@ -18,7 +18,11 @@ input yields identical bytes, so golden tests are stable.
 NOISE the renderer must IGNORE: the architecture dict carries a ``routes[]`` of
 URL literals — that is not endpoint data.  Endpoints come ONLY from the
 ``Method.route_method`` Cypher rows (fetched I/O-side in ``runner``), never from
-``routes[]`` and never from ``Route`` nodes.
+``routes[]`` and never from ``Route`` nodes.  The SAME URL-literal noise class
+has also been observed leaking through ``layers`` rows (a route-path fragment,
+sometimes containing PII such as an email, standing in for a real
+package/component name) — ``_filter_layer_noise``/``_looks_like_url_literal``
+guard that path before ``_layers_section``/``_entry_points_section`` render it.
 
 Secret-gate note (#30): the LIVE block write (Car D / Claude → ``block_update``)
 passes ``gate_or_reject`` — the SAME secret gate as ``wiki_add``.  This digest is
@@ -46,6 +50,15 @@ _MAX_ENDPOINTS = 20
 #: the budget (reserve its length before cutting) so ``len(out) <= budget`` holds.
 _ELLIPSIS = "\n…"
 
+#: TLD-like final segments that mark a dotted string as domain-shaped noise
+#: rather than a real (dotted) qualified name.  Deliberately narrow — this is
+#: only consulted by ``_looks_like_url_literal``, which is only ever applied to
+#: ``layers`` rows (component/package names), never to hotspot qualified names
+#: (those legitimately look like ``pkg.Class.method``).
+_URL_LITERAL_TLD_SUFFIXES = frozenset(
+    {"com", "org", "net", "io", "co", "dev", "app", "gov", "edu", "info", "biz"}
+)
+
 
 @observe(tier="stage")
 def _header_line(architecture: dict[str, Any], identity: dict[str, Any]) -> str:
@@ -69,6 +82,64 @@ def _sorted_languages(architecture: dict[str, Any]) -> list[tuple[str, int]]:
             langs.append((name, count))
     langs.sort(key=lambda lc: (-lc[1], lc[0]))
     return langs
+
+
+@observe(tier="stage")
+def _looks_like_url_literal(name: str) -> bool:
+    """True when ``name`` looks like a leaked URL/route-path fragment.
+
+    ADR-0162 says "Route nodes = URL-literal noise, ignore" for endpoints —
+    but the upstream indexer has ALSO been observed emitting ``layers`` rows
+    whose ``name`` is a URL-path fragment (e.g. a hardcoded test-fixture email
+    used as a route path segment, like
+    ``/gr/v1/shard/email/test.user@example.com/9``) rather than a real
+    package/module/component name. Those fragments can carry PII (emails) when
+    the indexed repo's test fixtures embed them in route strings, so they must
+    never reach the rendered digest.
+
+    Heuristics (conservative — a false positive here just drops one layer
+    row, never crashes; only ever applied to ``layers`` names, NOT hotspot
+    qualified names, which legitimately use dotted paths like
+    ``pkg.Class.method``):
+
+      - contains ``@``       → email-shaped fragment.
+      - contains ``/``       → path-shaped fragment; a real layer/component
+                                name is never a slash-joined fragment.
+      - starts with a digit  → path segments / ids (e.g. ``9``), never a real
+                                class/package/component name.
+      - dot-separated with a TLD-like final segment (e.g. ``quinyx.com``) →
+                                domain-shaped fragment.
+    """
+    if not name:
+        return False
+    if "@" in name:
+        return True
+    if "/" in name:
+        return True
+    if name[0].isdigit():
+        return True
+    if "." in name:
+        suffix = name.rsplit(".", 1)[-1].lower()
+        if suffix in _URL_LITERAL_TLD_SUFFIXES:
+            return True
+    return False
+
+
+@observe(tier="stage")
+def _filter_layer_noise(architecture: dict[str, Any]) -> dict[str, Any]:
+    """Return ``architecture`` with URL-literal-looking ``layers`` rows dropped.
+
+    Single choke point: both ``_layers_section`` and ``_entry_points_section``
+    read ``architecture["layers"]``, so filtering once here (rather than
+    duplicating the check in each section) closes both leak paths in one place.
+    """
+    layers = architecture.get("layers") or []
+    clean = [row for row in layers if not _looks_like_url_literal(str(row.get("name", "")))]
+    if len(clean) == len(layers):
+        return architecture
+    filtered = dict(architecture)
+    filtered["layers"] = clean
+    return filtered
 
 
 @observe(tier="stage")
@@ -237,6 +308,11 @@ def render_digest(
     ellipsis marker counted in the budget, so ``len(result) <= budget``.
     """
     limit = config.DIGEST_CHAR_BUDGET if budget is None else budget
+
+    # URL-literal noise guard: drop leaked route-path fragments (can carry PII)
+    # from `layers` BEFORE either reader (_layers_section, _entry_points_section)
+    # sees them — single choke point, see _filter_layer_noise.
+    architecture = _filter_layer_noise(architecture)
 
     sections: list[list[str]] = [
         [_header_line(architecture, identity)],

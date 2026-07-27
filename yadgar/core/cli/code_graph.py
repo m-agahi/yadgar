@@ -12,8 +12,9 @@ in a temp worktree, NEVER the working tree (see ``core.code_graph.default_branch
 endpoints, renders a digest, and EMITS the block payload
 ``{"block_name","directory","content","chars","skipped"}`` as JSON.  It does NOT
 write the memory block — that is Claude-in-the-loop via Car D's stop-hook prompt
-(Claude calls ``block_update`` with the emitted payload), mirroring repo_wiki's
-``wiki_add`` flow.
+(Claude calls ``block_update``, falling back to ``block_create`` on a
+not-found error — there is no block yet on a repo's FIRST-EVER refresh) with
+the emitted payload, mirroring repo_wiki's ``wiki_add`` flow.
 
 The binary is HOST-SIDE only; nothing here contacts the MCP daemon.
 """
@@ -71,7 +72,8 @@ def _cmd_refresh(repo: str, project: str | None, output_json: bool) -> None:
     The block write (``block_update``, secret-gated) is Claude-in-the-loop via
     Car D's stop-hook prompt — mirrors repo_wiki's ``wiki_add`` flow.  Car D wires
     Claude to call ``block_update`` with the ``block_name`` / ``directory`` /
-    ``content`` emitted here.
+    ``content`` emitted here, falling back to ``block_create`` when
+    ``block_update`` 404s not-found (no existing block yet).
 
     Secret-gate note (#30): the live block write passes ``gate_or_reject`` (same
     gate as wiki_add).  The digest is a summary (layer/hotspot/endpoint names),
@@ -104,12 +106,17 @@ def _cmd_refresh(repo: str, project: str | None, output_json: bool) -> None:
 
     print(
         f"Refreshed {idx.get('canonical_root')} → digest rendered "
-        f"({payload['chars']} chars). Car D → Claude calls block_update.",
+        f"({payload['chars']} chars). Write the code_graph block "
+        f"(create-or-update): try block_update first; on a not-found error "
+        f"(no existing block — e.g. the FIRST refresh of this repo), fall "
+        f"back to block_create. Mirrors code_graph_refresh_prompt.md's "
+        f"stop-hook step.",
         file=sys.stderr,
     )
     if output_json:
         # C→D seam: emit the block payload; Car D's hook prompt → Claude calls
-        # block_update(name=block_name, content=content, directory=directory).
+        # block_update(name=block_name, content=content, directory=directory),
+        # falling back to block_create on a not-found error (first refresh).
         print(json.dumps(payload))
     else:
         print(payload["content"])
