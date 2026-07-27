@@ -11,7 +11,7 @@
 FROM python:3.14-slim
 
 LABEL org.opencontainers.image.source="https://github.com/m-agahi/yadgar"
-LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model + Node 22 + gitleaks"
+LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model + Node 22 + gitleaks + bsdmainutils"
 # Version LABEL is build-arg-wired (T4 Car 0 drift fix — was hardcoded 5.121.1
 # while pyproject sat at 5.129.0; yadgar-ci has NO auto-sync pipeline, it is
 # manually rebuilt/pushed). Pass the current pyproject version at build time:
@@ -49,6 +49,16 @@ ENV HF_HOME=/root/.cache/huggingface
 #   bsdmainutils     — provides `column` binary used by `make help` (F5 fix, v5.46.9)
 #   graphviz         — `dot` binary so test_diagram_generator render tests RUN
 #                      instead of skipping (hardening Car 3, ADR-0087)
+# Install Node.js 22 from NodeSource so the opencode plugin smoke
+# (node --experimental-strip-types) can run in CI. SHA256 of the
+# setup script is checked; the GPG key is verified against
+# NodeSource's published keyring. Pinned to the current LTS line
+# (22.x); bump in a follow-up train if needed.
+# bsdmainutils provides the `column` binary used by `make help`
+# (F5 fix, v5.46.9); without it `make help` errors with
+# `column: command not found`. Comments MUST live outside the
+# RUN block: backticks within `RUN` would be mis-parsed as nested
+# command substitutions in sh -c, triggering the EOF error.
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
         make \
@@ -56,12 +66,8 @@ RUN apt-get update -qq && \
         curl \
         ca-certificates \
         build-essential \
-        gpg && \
-    # Install Node.js 22 from NodeSource so the opencode plugin smoke
-    # (node --experimental-strip-types) can run in CI. SHA256 of the
-    # setup script is checked; the GPG key is verified against
-    # NodeSource's published keyring. Pinned to the current LTS line
-    # (22.x); bump in a follow-up train if needed.
+        gpg \
+        bsdmainutils && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
@@ -92,7 +98,6 @@ RUN curl -fsSL \
     tar -xzf /tmp/surreal.tgz -C /usr/local/bin surreal && \
     chmod +x /usr/local/bin/surreal && \
     rm /tmp/surreal.tgz
-
 # Pre-install test + ml extras to speed CI pip installs.
 # Copies pyproject.toml only so this layer caches across source changes.
 WORKDIR /app
@@ -140,12 +145,16 @@ print('CE rerankers baked: ettin-32m + ettin-68m + gte-modernbert')"
 # (yadgar/enrichment/_seq2seq.py) load them offline.
 # NOTE: ConceptNet (BC-EN1a) is NOT baked — conceptnet_lite's local DB is ~9GB
 # (impractical for a CI image); EN1a uses the HTTP API path or stays deferred.
-RUN python -c "\
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; \
-AutoTokenizer.from_pretrained('mismayil/comet-bart-ai2'); \
-AutoModelForSeq2SeqLM.from_pretrained('mismayil/comet-bart-ai2'); \
-AutoTokenizer.from_pretrained('doc2query/msmarco-t5-small-v1'); \
-AutoModelForSeq2SeqLM.from_pretrained('doc2query/msmarco-t5-small-v1'); \
-print('enrichment seq2seq models (comet-bart + doc2query) baked successfully')"
+RUN python -c "from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; AutoTokenizer.from_pretrained('mismayil/comet-bart-ai2'); AutoModelForSeq2SeqLM.from_pretrained('mismayil/comet-bart-ai2'); AutoTokenizer.from_pretrained('doc2query/msmarco-t5-small-v1'); AutoModelForSeq2SeqLM.from_pretrained('doc2query/msmarco-t5-small-v1'); print('enrichment seq2seq models (comet-bart + doc2query) baked successfully')"
+
+# Bake ruff into the image so the pre-commit hooks (which call `ruff`
+# as `language: system` entries) find it on PATH. Pinned to 0.15.10
+# (same version validate.yml used historically; bump in a follow-up
+# if the repo's pre-commit config moves). Placed LAST so the heavy
+# model-bake layers above are cache-reusable when only ruff changes
+# (a 1-line ARG bump doesn't invalidate the 1GB+ HF model layers).
+ARG RUFF_VERSION=0.15.10
+RUN pip install --no-cache-dir "ruff==${RUFF_VERSION}" && \
+    rm -rf /root/.cache/pip
 
 ENV PYTHONUNBUFFERED=1
