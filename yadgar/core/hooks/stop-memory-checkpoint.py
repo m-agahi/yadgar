@@ -234,12 +234,13 @@ def _code_graph_enabled(cwd: str | None = None) -> bool:
     """Dir-aware read of ``code_graph.enabled`` from the runtime config store.
 
     ADR-0163: resolves the flag via ``config.is_enabled(cwd)`` (host client →
-    runtime config store, per-dir override → global → False). A per-repo opt-out
-    (``code_graph.enabled=false`` at ``cwd``) makes this False THERE even when the
-    global flag is on — so the code_graph refresh nudge is not wasted on an
-    opted-out repo. Fail-open: daemon down / any error → False (code_graph inert,
-    repo-wiki keeps running). Imported lazily so the hook still loads if the
-    code_graph package is absent. Car D gating.
+    runtime config store, per-dir override → global → True). code_graph is ON
+    by default (opt-out, flipped 2026-07-27): a per-repo opt-out
+    (``code_graph.enabled=false`` at ``cwd``) makes this False THERE even when
+    global is on/unset — so the code_graph refresh nudge is not wasted on an
+    opted-out repo. Fail-open: daemon down / any error → True (code_graph active
+    by default; repo-wiki yields the priority-2 slot to it). Imported lazily so
+    the hook still loads if the code_graph package is absent. Car D gating.
     """
     try:
         from yadgar.core.code_graph import config as _cg_config

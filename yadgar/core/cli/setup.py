@@ -39,7 +39,10 @@ def _render_secrets_env(token: str, db_pass: str, rw_pass: str, ro_pass: str) ->
 _CODE_GRAPH_ENV_TRUE = ("1", "true", "yes")
 
 #: Prompt shown when neither flag nor env is set and stdin is a TTY.
-_CODE_GRAPH_PROMPT = "Enable code_graph multi-language code indexing? [y/N]: "
+#: code_graph.enabled now defaults to True in the runtime-config store
+#: (ADR-0163) — this prompt is about installing the HOST BINARY, not "enabling"
+#: an off-by-default feature.
+_CODE_GRAPH_PROMPT = "Install code_graph multi-language code indexing? [y/N]: "
 
 #: Answers counted as "yes" to the interactive prompt.
 _CODE_GRAPH_YES = ("y", "yes")
@@ -143,8 +146,12 @@ def _maybe_install_code_graph(args) -> None:
         host binary — NOT the runtime enable, which is the store row).
       - non-interactive with no flag / no env → skip, no prompt, no hang (CI-safe).
 
-    Default is off until code_graph is proven (pilot-gate, ADR-0162/0163). Binary is
-    installed HOST-SIDE only — it never enters the docker image.
+    Pilot-gate satisfied 2026-07-27 (ADR-0162/0163): ``code_graph.enabled`` now
+    defaults to True (opt-out) in the runtime-config store. This flow controls
+    ONLY the HOST BINARY install step (never auto-installed, never enters the
+    docker image) + an optional explicit persisted ``true`` row (redundant with
+    the default, but explicit). Disable per-repo or globally any time via
+    ``config_set("code_graph.enabled", false, scope=...)`` or ``--no-code-graph``.
     """
     import os as _os
     import sys as _sys
@@ -222,7 +229,8 @@ def cmd_setup(args):
     print("=== Yadgar v" + __version__ + " — setup complete ===")
     print()
 
-    # code_graph install (opt-in, default off — ADR-0162 Car A)
+    # code_graph HOST BINARY install (opt-in step); runtime code_graph.enabled
+    # now defaults to True — ADR-0162 Car A / ADR-0163 Car G6 flip.
     _maybe_install_code_graph(args)
 
     # Streamable-HTTP MCP config (the only supported transport — stdio dropped in Phase 2b).
@@ -274,7 +282,8 @@ def register(subparsers):
             "Install codebase-memory-mcp binary HOST-SIDE + persist code_graph.enabled=true "
             "in the runtime-config store when the daemon is reachable (code_graph feature, "
             "ADR-0162/0163). CODE_GRAPH_ENABLED=1 env installs the binary WITHOUT persisting "
-            "the runtime enable (INSTALL trigger only). Default off until pilot."
+            "the runtime enable (INSTALL trigger only). code_graph.enabled now defaults to "
+            "True (opt-out) regardless of this flag — this only controls the binary install."
         ),
     )
     _cg.add_argument(
@@ -282,6 +291,10 @@ def register(subparsers):
         action="store_true",
         dest="no_code_graph",
         default=False,
-        help="Skip the code_graph install/enable step entirely (suppresses the interactive prompt).",
+        help=(
+            "Skip the code_graph install step entirely (suppresses the interactive prompt). "
+            "code_graph.enabled still defaults to True in the store — to fully disable, also "
+            'run `config_set("code_graph.enabled", false, scope="global")` (or per-repo).'
+        ),
     )
     p.set_defaults(func=cmd_setup)

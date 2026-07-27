@@ -3,10 +3,12 @@
 Coverage
 --------
 1. is_enabled reads the ``code_graph.enabled`` runtime-config row via a resolver
-   (default: the fail-open host client). Global true + per-dir false → that dir
-   disabled; daemon down (resolver returns default) → False.
-2. is_opted_out follows is_enabled (per-dir false OR global off → opted out). The
-   old ``.code-graph-disable`` marker is GONE — never read.
+   (default: the fail-open host client). ON by default (opt-out, ADR-0163 flip
+   2026-07-27): no row / daemon down (resolver returns default) → True. Global
+   true + per-dir false → that dir disabled.
+2. is_opted_out follows is_enabled (per-dir false OR global false → opted out;
+   no row → NOT opted out, on by default). The old ``.code-graph-disable``
+   marker is GONE — never read.
 3. cache_dir lives under yadgar's CACHE_DIR (not the user tree).
 4. Car C / Car D constant keys defined (digest budget, refresh cadence).
 5. session_suggest_line reads the store via the injected resolver.
@@ -42,12 +44,13 @@ def _resolver(mapping: dict, default_key_value=False):
 
 
 class TestEnabledFlag:
-    def test_default_off_when_no_row(self):
+    def test_default_on_when_no_row(self):
+        """ADR-0163 flip (2026-07-27): on by default — opt-out, not opt-in."""
         from yadgar.core.code_graph import config
 
-        # Resolver returns the caller default (False) — nothing stored.
+        # Resolver returns the caller default (True) — nothing stored.
         r = _resolver({})
-        assert config.is_enabled("/repo/a", resolver=r) is False
+        assert config.is_enabled("/repo/a", resolver=r) is True
 
     def test_global_true(self):
         from yadgar.core.code_graph import config
@@ -55,6 +58,12 @@ class TestEnabledFlag:
         r = _resolver({None: True})
         assert config.is_enabled("/repo/a", resolver=r) is True
         assert config.is_enabled(None, resolver=r) is True
+
+    def test_global_false_disables(self):
+        from yadgar.core.code_graph import config
+
+        r = _resolver({None: False})
+        assert config.is_enabled("/repo/a", resolver=r) is False
 
     def test_per_dir_false_overrides_global_true(self):
         from yadgar.core.code_graph import config
@@ -64,14 +73,14 @@ class TestEnabledFlag:
         assert config.is_enabled("/repo/a", resolver=r) is True
         assert config.is_enabled("/repo/b", resolver=r) is False
 
-    def test_daemon_down_returns_false(self):
+    def test_daemon_down_returns_true(self):
+        """Fail-open resolver (any lookup yields the caller default) → on by default."""
         from yadgar.core.code_graph import config
 
-        # A fail-open resolver: any lookup yields the caller default (False).
         def _down(key, directory=None, default=None):
             return default
 
-        assert config.is_enabled("/repo/a", resolver=_down) is False
+        assert config.is_enabled("/repo/a", resolver=_down) is True
 
     def test_default_resolver_is_host_client(self):
         """No resolver → uses runtime_config_client.get with the right key/default."""
@@ -87,14 +96,21 @@ class TestEnabledFlag:
 
         with patch("yadgar.core.runtime_config_client.get", _fake_get):
             assert config.is_enabled("/repo/x") is True
-        assert seen == {"key": "code_graph.enabled", "directory": "/repo/x", "default": False}
+        assert seen == {"key": "code_graph.enabled", "directory": "/repo/x", "default": True}
 
 
 class TestOptOut:
-    def test_opted_out_when_disabled(self):
+    def test_not_opted_out_when_no_row(self):
+        """ADR-0163 flip: nothing stored → default True → NOT opted out."""
         from yadgar.core.code_graph import config
 
-        r = _resolver({})  # nothing stored → default False → opted out
+        r = _resolver({})
+        assert config.is_opted_out("/repo/a", resolver=r) is False
+
+    def test_opted_out_when_explicitly_disabled(self):
+        from yadgar.core.code_graph import config
+
+        r = _resolver({None: False})  # explicit global false → opted out
         assert config.is_opted_out("/repo/a", resolver=r) is True
 
     def test_not_opted_out_when_enabled(self):
@@ -177,10 +193,19 @@ class TestSessionSuggestPredicate:
         r = _resolver({None: True})
         assert config.session_suggest_line(tmp_path, blocks=blocks, resolver=r) is None
 
-    def test_no_suggest_when_disabled(self, tmp_path):
+    def test_suggest_when_no_row_defaults_enabled(self, tmp_path):
+        """ADR-0163 flip: nothing stored → on by default → suggestion present."""
         from yadgar.core.code_graph import config
 
-        r = _resolver({})  # nothing stored → disabled
+        r = _resolver({})
+        line = config.session_suggest_line(tmp_path, blocks=[], resolver=r)
+        assert line is not None
+        assert "code_graph" in line
+
+    def test_no_suggest_when_explicitly_disabled(self, tmp_path):
+        from yadgar.core.code_graph import config
+
+        r = _resolver({None: False})  # explicit global false → disabled
         assert config.session_suggest_line(tmp_path, blocks=[], resolver=r) is None
 
     def test_no_suggest_when_per_dir_opted_out(self, tmp_path):

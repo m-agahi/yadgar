@@ -104,9 +104,10 @@ def _cache_in_tmp(tmp_path, monkeypatch):
     subprocesses.
 
     ADR-0163: enable is a runtime-config-store read (host client → daemon), so the
-    old ``CODE_GRAPH_ENABLED`` env no longer enables the feature. With no daemon in
-    this test, the host client fail-opens to disabled; patch ``config.is_enabled``
-    True so the real refresh path runs instead of skipping ``opted_out``.
+    old ``CODE_GRAPH_ENABLED`` env no longer enables the feature (it now defaults
+    to True regardless). With no daemon in this test the host client would
+    fail-open to enabled anyway; ``config.is_enabled`` is still patched True here
+    to keep the e2e explicit and independent of the resolver default.
     """
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setattr("yadgar.core.code_graph.config.is_enabled", lambda *a, **k: True)

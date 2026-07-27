@@ -28,11 +28,14 @@ flag from its OWN DB rather than a host env var it never saw.
 
 Known limitations / follow-ups
 ------------------------------
-- **Digest-actually-used pilot-gate (ADR-0162 risk #1).** The core value bet is
-  that the injected digest gets read + acted on (repo-wiki's recall pages were
-  not). ``code_graph.enabled`` stays default-off (fail-open) until that is proven
-  live on ≥1 non-Python repo + on yadgar itself; flipping it on (Car G5's setup
-  prompt / ``config_set``) is a runtime pilot step.
+- **Digest-actually-used pilot-gate (ADR-0162 risk #1) — SATISFIED 2026-07-27.**
+  The core value bet was that the injected digest gets read + acted on
+  (repo-wiki's recall pages were not). The pilot proved out live on ≥1
+  non-Python repo (Java/Go/PHP) + on yadgar itself, and the digest-layers
+  PII/URL-literal leak was fixed first. ``code_graph.enabled`` now DEFAULTS TO
+  TRUE (opt-out, fail-open to enabled): absent any row, or with the daemon
+  down, ``is_enabled``/``is_opted_out`` resolve as ON. Opt out per-repo or
+  globally via ``config_set("code_graph.enabled", false, scope=...)``.
 """
 
 from __future__ import annotations
