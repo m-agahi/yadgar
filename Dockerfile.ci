@@ -11,7 +11,7 @@
 FROM python:3.14-slim
 
 LABEL org.opencontainers.image.source="https://github.com/m-agahi/yadgar"
-LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model + Node 22 + gitleaks + bsdmainutils"
+LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.14 + make + git + test deps + SurrealDB + HF model + Node 22 + gitleaks + bsdmainutils + graphviz"
 # Version LABEL is build-arg-wired (T4 Car 0 drift fix — was hardcoded 5.121.1
 # while pyproject sat at 5.129.0; yadgar-ci has NO auto-sync pipeline, it is
 # manually rebuilt/pushed). Pass the current pyproject version at build time:
@@ -67,7 +67,8 @@ RUN apt-get update -qq && \
         ca-certificates \
         build-essential \
         gpg \
-        bsdmainutils && \
+        bsdmainutils \
+        graphviz && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
