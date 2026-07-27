@@ -1,4 +1,4 @@
-"""I33 STEP 2 — @observe sentinel checks for causal_discovery/sleep_compute/repo_wiki/vacuum."""
+"""I33 STEP 2 — @observe sentinel checks for causal_discovery/sleep_compute/vacuum."""
 
 from __future__ import annotations
 
@@ -11,12 +11,6 @@ def test_causal_discover_instrumented():
     from yadgar.backend.causal_discovery import CausalDiscovery
 
     assert _has_span(CausalDiscovery.discover_dag)
-
-
-def test_repo_wiki_scanner_instrumented():
-    from yadgar.core.repo_wiki import scanner
-
-    assert _has_span(scanner.scan_repo)
 
 
 def test_vacuum_phases_instrumented():

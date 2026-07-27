@@ -1,16 +1,19 @@
-"""Car D (#83, ADR-0162) — stop-hook code_graph-refresh gated cadence swap.
+"""Car D (#83, ADR-0162) — stop-hook code_graph-refresh cadence.
 
-The priority-2 maintenance slot is a GATED swap (transition, not hard cutover):
+The priority-2 maintenance slot is owned outright by ``code_graph_refresh``,
+gated on ``CODE_GRAPH_ENABLED`` (dir-aware, ADR-0163):
 
-  CODE_GRAPH_ENABLED true  → priority-2 slot runs ``code_graph_refresh`` INSTEAD OF
-                             ``repo_wiki_refresh`` (mutually exclusive, no double-fire).
-  CODE_GRAPH_ENABLED false → ``repo_wiki_refresh`` runs as today; code_graph inert.
+  CODE_GRAPH_ENABLED true  (for this repo) → priority-2 slot fires ``code_graph_refresh``.
+  CODE_GRAPH_ENABLED false (for this repo) → nothing fires at priority 2.
 
-Both items stay registered in ``_MAINTENANCE_ITEMS`` (repo_wiki NOT deleted —
-decommission is task #33). The gate lives INSIDE each is_due function via
-``config.is_enabled()`` at RUNTIME (attribute lookup on the imported module, so it
-stays monkeypatchable). FIRST-DUE-WINS + only-injected-counter-advances still hold,
-so a due checkpoint / anchor-audit PREEMPTS the priority-2 item.
+The gate lives INSIDE ``_code_graph_refresh_is_due`` via ``config.is_enabled()`` at
+RUNTIME (attribute lookup on the imported module, so it stays monkeypatchable).
+FIRST-DUE-WINS + only-injected-counter-advances still hold, so a due checkpoint /
+anchor-audit PREEMPTS the priority-2 item.
+
+(This slot formerly ran a GATED SWAP against ``repo_wiki_refresh`` — mutually
+exclusive, no double-fire. repo_wiki was decommissioned #33/ADR-0162, so
+code_graph now owns the slot unconditionally.)
 
 The ``code_graph_refresh_prompt.md`` template is content-linted separately (a lint,
 not a byte pin).
@@ -98,27 +101,26 @@ class TestCodeGraphRefreshRegistration:
         assert item["priority"] == 2
         assert item["state_key"] == "last_code_graph_refresh"
 
-    def test_repo_wiki_item_still_registered(self, hook):
-        """Decommission is #33 — repo_wiki item MUST stay registered."""
+    def test_repo_wiki_item_not_registered(self, hook):
+        """repo_wiki was decommissioned (#33/ADR-0162) — must NOT be registered."""
         names = {it["name"] for it in hook._MAINTENANCE_ITEMS}
-        assert "repo_wiki_refresh" in names
+        assert "repo_wiki_refresh" not in names
         assert "code_graph_refresh" in names
 
 
-class TestGatedCadenceSwap:
+class TestCodeGraphCadence:
     def _due_state(self, count: int, recent: int) -> dict:
-        # checkpoint + anchor-audit just-saved (not due); both refresh watermarks at 0.
+        # checkpoint + anchor-audit just-saved (not due); refresh watermark at 0.
         return {
             "s1": {
                 "last_save": recent,
                 "last_anchor_audit": recent,
-                "last_repo_wiki_refresh": 0,
                 "last_code_graph_refresh": 0,
             }
         }
 
-    def test_enabled_fires_code_graph_not_repo_wiki(self, hook, tmp_path, monkeypatch):
-        """ENABLED → code_graph fires, repo_wiki inert. Only code_graph counter advances."""
+    def test_enabled_fires_code_graph(self, hook, tmp_path, monkeypatch):
+        """ENABLED → code_graph fires; its counter advances."""
         _set_enabled(monkeypatch, hook, True)
         interval = hook.CODE_GRAPH_REFRESH_STOP_INTERVAL
         count = interval + hook.INTERVAL
@@ -133,14 +135,12 @@ class TestGatedCadenceSwap:
         assert out.get("decision") == "block"
         assert "code_graph" in out["reason"].lower() or "code-graph" in out["reason"].lower()
         assert hook._CODE_GRAPH_REFRESH_TEMPLATE_PATH in out["reason"]
-        assert "repo-wiki" not in out["reason"].lower()
 
         saved = json.loads(state_file.read_text())["s1"]
         assert saved["last_code_graph_refresh"] == count
-        assert saved["last_repo_wiki_refresh"] == 0, "repo_wiki must stay inert when enabled"
 
-    def test_disabled_fires_repo_wiki_not_code_graph(self, hook, tmp_path, monkeypatch):
-        """DISABLED → repo_wiki fires (as today), code_graph inert."""
+    def test_disabled_nothing_fires_at_priority_2(self, hook, tmp_path, monkeypatch):
+        """DISABLED → priority-2 slot is inert (repo_wiki, its former co-tenant, is gone)."""
         _set_enabled(monkeypatch, hook, False)
         interval = hook.CODE_GRAPH_REFRESH_STOP_INTERVAL
         count = interval + hook.INTERVAL
@@ -152,21 +152,17 @@ class TestGatedCadenceSwap:
             hook,
             {"session_id": "s1", "transcript_path": transcript, "stop_hook_active": False},
         )
-        assert out.get("decision") == "block"
-        assert "repo-wiki" in out["reason"].lower()
-        assert hook._REPO_WIKI_REFRESH_TEMPLATE_PATH in out["reason"]
+        assert out == {}
 
         saved = json.loads(state_file.read_text())["s1"]
-        assert saved["last_repo_wiki_refresh"] == count
         assert saved["last_code_graph_refresh"] == 0, "code_graph must stay inert when disabled"
 
     def test_dir_aware_opt_out_not_due(self, hook, tmp_path, monkeypatch):
         """ADR-0163: cwd is threaded into is_due; a per-repo opt-out → NOT due there.
 
         Enable globally but return False for the specific opted-out cwd — the
-        code_graph refresh must not fire for that repo (no wasted nudge), and since
-        code_graph owns the priority-2 slot when globally enabled, repo_wiki stays
-        inert too (nothing due at priority 2).
+        code_graph refresh must not fire for that repo (no wasted nudge), so
+        nothing fires at priority 2.
         """
         from yadgar.core.code_graph import config as cg_config
 
@@ -190,13 +186,7 @@ class TestGatedCadenceSwap:
                 "cwd": opted_out,
             },
         )
-        # code_graph is dir-off here → not due; repo_wiki yields to code_graph
-        # (globally enabled) → nothing at priority 2 fires.
-        assert (
-            out == {}
-            or out.get("decision") != "block"
-            or "code" not in out.get("reason", "").lower()
-        )
+        assert out == {}
         saved = json.loads(state_file.read_text())["s1"]
         assert saved["last_code_graph_refresh"] == 0, "opted-out cwd must not fire code_graph"
 
@@ -222,24 +212,18 @@ class TestGatedCadenceSwap:
         assert out.get("decision") == "block"
         assert "code_graph" in out["reason"].lower() or "code-graph" in out["reason"].lower()
 
-    def test_no_double_fire_priority_2(self, hook, tmp_path, monkeypatch):
-        """Exactly one priority-2 item may be due at a time (mutual exclusion)."""
-        _set_enabled(monkeypatch, hook, True)
+    def test_is_due_toggles_with_enabled_flag(self, hook, monkeypatch):
+        """_code_graph_refresh_is_due tracks CODE_GRAPH_ENABLED directly."""
         count = hook.CODE_GRAPH_REFRESH_STOP_INTERVAL + hook.INTERVAL
         session_state = {
             "last_save": count - 1,
             "last_anchor_audit": count - 1,
-            "last_repo_wiki_refresh": 0,
             "last_code_graph_refresh": 0,
         }
-        cg_due = hook._code_graph_refresh_is_due(count, session_state)
-        rw_due = hook._repo_wiki_refresh_is_due(count, session_state)
-        assert cg_due is True
-        assert rw_due is False
-        # Flip the flag: repo_wiki due, code_graph not.
+        _set_enabled(monkeypatch, hook, True)
+        assert hook._code_graph_refresh_is_due(count, session_state) is True
         _set_enabled(monkeypatch, hook, False)
         assert hook._code_graph_refresh_is_due(count, session_state) is False
-        assert hook._repo_wiki_refresh_is_due(count, session_state) is True
 
 
 class TestCodeGraphRefreshPreemption:
@@ -254,7 +238,6 @@ class TestCodeGraphRefreshPreemption:
                     "s1": {
                         "last_save": 0,
                         "last_anchor_audit": 0,
-                        "last_repo_wiki_refresh": 0,
                         "last_code_graph_refresh": 0,
                     }
                 }

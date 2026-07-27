@@ -37,13 +37,8 @@ INTERVAL = 25  # human messages between checkpoints
 # Config-driven so operators can retune without editing the hook.
 ANCHOR_AUDIT_STOP_INTERVAL = get_settings().ANCHOR_AUDIT_STOP_INTERVAL
 
-# Car D (#83): human messages between repo-wiki-refresh maintenance injections.
-# Slowest cadence (code-structure drift is rare); config-driven like the above.
-REPO_WIKI_REFRESH_STOP_INTERVAL = get_settings().REPO_WIKI_REFRESH_STOP_INTERVAL
-
 # Car D (#83, ADR-0162): human messages between code_graph-refresh injections.
-# Shares the priority-2 slot with repo-wiki (mutually exclusive, gated by
-# CODE_GRAPH_ENABLED); same slowest cadence. config-driven like the above.
+# Slowest cadence (code-structure drift is rare); config-driven like the above.
 CODE_GRAPH_REFRESH_STOP_INTERVAL = get_settings().CODE_GRAPH_REFRESH_STOP_INTERVAL
 
 
@@ -97,7 +92,6 @@ def _resolve_prompt_template_path(filename: str = "stop_checkpoint_prompt.md") -
 # the full protocol lives in the file at each path.
 _PROMPT_TEMPLATE_PATH = _resolve_prompt_template_path("stop_checkpoint_prompt.md")
 _ANCHOR_AUDIT_TEMPLATE_PATH = _resolve_prompt_template_path("anchor_audit_prompt.md")
-_REPO_WIKI_REFRESH_TEMPLATE_PATH = _resolve_prompt_template_path("repo_wiki_refresh_prompt.md")
 _CODE_GRAPH_REFRESH_TEMPLATE_PATH = _resolve_prompt_template_path("code_graph_refresh_prompt.md")
 
 
@@ -239,8 +233,9 @@ def _code_graph_enabled(cwd: str | None = None) -> bool:
     (``code_graph.enabled=false`` at ``cwd``) makes this False THERE even when
     global is on/unset — so the code_graph refresh nudge is not wasted on an
     opted-out repo. Fail-open: daemon down / any error → True (code_graph active
-    by default; repo-wiki yields the priority-2 slot to it). Imported lazily so
-    the hook still loads if the code_graph package is absent. Car D gating.
+    by default; repo-wiki has been fully decommissioned, #33/ADR-0162 — this
+    slot is owned outright, not shared). Imported lazily so the hook still
+    loads if the code_graph package is absent. Car D gating.
     """
     try:
         from yadgar.core.code_graph import config as _cg_config
@@ -250,32 +245,11 @@ def _code_graph_enabled(cwd: str | None = None) -> bool:
         return False
 
 
-def _repo_wiki_refresh_is_due(count: int, session_state: dict, cwd: str | None = None) -> bool:
-    # Car D gated swap: when code_graph is ENABLED it takes the priority-2 slot,
-    # so repo-wiki goes inert (mutually exclusive — no double-fire). repo-wiki is
-    # NOT deleted (decommission is #33); it simply yields while the flag is on.
-    # repo_wiki stays GLOBAL-scoped (no cwd) — it is being retired (#33), so its
-    # gate keeps the pre-ADR-0163 behavior; only code_graph's is_due is dir-aware.
-    if _code_graph_enabled():
-        return False
-    return (
-        count - int(session_state.get("last_repo_wiki_refresh", 0))
-        >= REPO_WIKI_REFRESH_STOP_INTERVAL
-    )
-
-
-def _repo_wiki_refresh_reason(count: int) -> str:
-    return (
-        f"[yadgar] Repo-wiki-refresh maintenance due. Read {_REPO_WIKI_REFRESH_TEMPLATE_PATH}"
-        " and follow all the instructions in it."
-    )
-
-
 def _code_graph_refresh_is_due(count: int, session_state: dict, cwd: str | None = None) -> bool:
-    # Car D gated swap: only due when code_graph is ENABLED for THIS repo (else
-    # repo-wiki owns the priority-2 slot). ADR-0163: dir-aware via ``cwd`` so an
-    # opted-out repo (per-dir code_graph.enabled=false) is not due here — no wasted
-    # nudge. The two priority-2 items are mutually exclusive.
+    # Only due when code_graph is ENABLED for THIS repo. ADR-0163: dir-aware via
+    # ``cwd`` so an opted-out repo (per-dir code_graph.enabled=false) is not due
+    # here — no wasted nudge. (repo_wiki, which formerly shared this priority-2
+    # slot via a mutual-exclusion gate, was decommissioned — #33/ADR-0162.)
     if not _code_graph_enabled(cwd):
         return False
     return (
@@ -307,17 +281,9 @@ _MAINTENANCE_ITEMS: list[dict] = [
         "is_due": _anchor_audit_is_due,
         "reason": _anchor_audit_reason,
     },
-    # Priority-2 slot is a GATED swap (Car D, #83): repo_wiki and code_graph are
-    # mutually exclusive via CODE_GRAPH_ENABLED — exactly one is ever due, so their
-    # shared priority never double-fires. repo_wiki stays registered (decommission
-    # is #33); code_graph goes here so the flag flips the active item.
-    {
-        "name": "repo_wiki_refresh",
-        "priority": 2,
-        "state_key": "last_repo_wiki_refresh",
-        "is_due": _repo_wiki_refresh_is_due,
-        "reason": _repo_wiki_refresh_reason,
-    },
+    # Priority-2 slot (Car D, #83): gated on CODE_GRAPH_ENABLED. Formerly shared
+    # with repo_wiki_refresh via a mutual-exclusion gate; repo_wiki was
+    # decommissioned (#33/ADR-0162) so code_graph now owns this slot outright.
     {
         "name": "code_graph_refresh",
         "priority": 2,

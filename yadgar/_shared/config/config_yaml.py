@@ -593,14 +593,9 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Human messages between anchor-audit maintenance injections in the Stop hook (default 100)",
         "section": "anchor_hygiene",
     },
-    # Car D (#83): stop-hook repo-wiki-refresh maintenance cadence
-    "repo_wiki_refresh_stop_interval": {
-        "desc": "Human messages between repo-wiki-refresh maintenance injections in the Stop hook (default 200)",
-        "section": "anchor_hygiene",
-    },
     # Car D (#83, ADR-0162): stop-hook code_graph-refresh maintenance cadence
     "code_graph_refresh_stop_interval": {
-        "desc": "Human messages between code_graph-refresh maintenance injections in the Stop hook — shares the priority-2 slot with repo-wiki, gated by the code_graph.enabled runtime-config row (ADR-0163, dir-aware) (default 200)",
+        "desc": "Human messages between code_graph-refresh maintenance injections in the Stop hook, gated by the code_graph.enabled runtime-config row (ADR-0163, dir-aware) (default 200)",
         "section": "anchor_hygiene",
     },
     # v5.9.0: anchor audit pass knobs

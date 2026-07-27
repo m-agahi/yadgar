@@ -1289,9 +1289,7 @@ def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
 # ── v5.42.0: DLQ rejection signal ───────────────────────────────────────────
 
 #: failure_reason values treated as "rejections" (must match admin_dlq._REJECTION_TAXONOMY).
-_REJECTION_REASONS: frozenset[str] = frozenset(
-    {"duplicate_detected", "policy_rejected", "repo_wiki_schema_invalid"}
-)
+_REJECTION_REASONS: frozenset[str] = frozenset({"duplicate_detected", "policy_rejected"})
 
 
 @observe(tier="stage", metric="tools.project._compute_pending_rejections")
@@ -2359,46 +2357,37 @@ def _is_wiki_page_stale(md_path: Path, yaml_mod) -> bool:
 def _scan_stale_wiki_slugs(directory: str) -> list[str]:
     """Pure side-effect-free scan of wiki pages for hash-drift.
 
-    Checks both:
-    1. DB-stored built-in code pages (page_type='code') via _scan_stale_wiki_slugs_db.
-    2. Disk .local-review/wiki/*.md files (for externally-authored pages) via disk scan.
+    Scans disk .local-review/wiki/*.md files (externally-authored pages, e.g.
+    the /repo-wiki:repo-wiki skill) for hash drift against their frontmatter-
+    declared source file(s).
 
-    For disk-scanned pages, external fn/index pages (entity_id: fn:* or api:*) are
-    classified 'external-sourced, not tracked' and excluded from stale results.
+    External fn/index pages (entity_id: fn:* or api:*) are classified
+    'external-sourced, not tracked' and excluded from stale results.
 
     Returns list of stale slugs.  Does NOT write a queue file, does NOT detect
     branch — see _compute_stale_wiki_count and the signals path for callers that
     need those concerns.
     Called from _compute_stale_wiki_count (signals path, TTL-cached).
+
+    (Formerly also scanned DB-stored page_type='code' pages — the
+    repo_wiki-generator store bridge, car #36 — removed with repo_wiki's
+    decommission, #33/ADR-0162; that path always returned [] in practice since
+    the generator stamped page_type='repo_wiki', not 'code'.)
     """
     try:
         import yaml as _yaml  # type: ignore[import]  # noqa: PLC0415
     except ImportError:
         _yaml = None
 
-    # DB path: built-in code pages (car #36 store bridge)
-    db_stale = _scan_stale_wiki_slugs_db(directory)
-
-    # Disk path: externally-authored pages (keep as fallback)
     wiki_dir = Path(directory) / ".local-review" / "wiki"
     if not wiki_dir.exists():
-        return db_stale
+        return []
 
-    disk_stale = [
+    return [
         md_path.stem
         for md_path in wiki_dir.glob("*.md")
         if md_path.exists() and _is_wiki_page_stale(md_path, _yaml)
     ]
-
-    # Merge, dedup (DB slugs take precedence — disk scan may overlap on module pages
-    # that have BOTH a DB entry and a .local-review file from an older skill run)
-    seen: set[str] = set(db_stale)
-    result = list(db_stale)
-    for slug in disk_stale:
-        if slug not in seen:
-            seen.add(slug)
-            result.append(slug)
-    return result
 
 
 @observe(tier="stage", metric="tools.project._compute_stale_wiki_count")
@@ -2547,51 +2536,6 @@ def _hash_directory_manifest(directory: Path, h, hashlib_mod) -> bool:
         h.update(b"\0")
         any_file = True
     return any_file
-
-
-@observe(tier="stage", metric="tools.project._scan_stale_wiki_slugs_db")
-def _scan_stale_wiki_slugs_db(directory: str) -> list[str]:
-    """Scan DB-stored wiki pages with page_type='code' for hash drift.
-
-    For each built-in code page in the DB scoped to ``directory``:
-      - Read stored ``hash`` + ``source_file`` fields.
-      - Compute live SHA256(source file bytes) via _compute_source_hash.
-      - If stored hash != live hash, mark page stale.
-
-    Returns list of stale slugs. Never raises.
-    This is the store bridge (car #36): checker reads DB pages (not disk) for
-    built-in code pages (page_type='code').
-    """
-    import hashlib as _hl  # noqa: PLC0415
-
-    try:
-        from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
-
-        storage = _get_storage()
-    except Exception:
-        return []
-
-    try:
-        # Query pages with page_type='code' scoped to this directory
-        rows = storage._q(
-            "SELECT slug, hash, source_file FROM wiki_page "
-            "WHERE page_type = 'code' AND directory_context = $dir",
-            {"dir": directory},
-        )
-    except Exception:
-        return []
-
-    stale = []
-    for row in rows:
-        stored_hash = row.get("hash") or ""
-        source_file = row.get("source_file") or ""
-        slug = row.get("slug") or ""
-        if not stored_hash or not source_file or not slug:
-            continue
-        current_hash = _compute_source_hash([source_file], _hl)
-        if (current_hash or stored_hash) and current_hash != stored_hash:
-            stale.append(slug)
-    return stale
 
 
 @_tool(power=True)

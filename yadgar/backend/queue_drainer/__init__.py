@@ -559,8 +559,8 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             _threshold = getattr(_get_settings(), "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
         except Exception:
             _threshold = 0.80
-        # Car B (#83): the rejection may be a similarity duplicate OR a repo_wiki
-        # schema-validity failure — carry the reason through instead of hardcoding
+        # Car B (#83): the rejection may carry any gate-supplied reason (e.g. a
+        # similarity duplicate) — carry it through instead of hardcoding
         # duplicate_detected, so the DLQ taxonomy classifies it correctly.
         _reason = rejection.get("reason", "duplicate_detected")
         failure_metadata = {

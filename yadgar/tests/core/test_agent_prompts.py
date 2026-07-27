@@ -181,22 +181,23 @@ class TestWikiAddStorageScopeEnforcement:
             f"expected {project_dir!r}, got {page.get('directory_context')!r}"
         )
 
-    def test_wiki_add_repo_wiki_page_type_stays_project_scoped(self, storage):
-        """wiki_add with page_type='repo_wiki' keeps caller's directory_context (project storage_scope)."""
+    def test_wiki_add_unregistered_page_type_stays_project_scoped(self, storage):
+        """wiki_add with a page_type absent from POLICY_BY_TYPE (→ DEFAULT_POLICY)
+        keeps caller's directory_context (project storage_scope)."""
         import yadgar._shared.runtime.state as _st
         from yadgar._shared.wiki import WikiStore
         from yadgar._shared.wiki.contract import WikiAddOptions
 
         wiki = WikiStore(storage, _st._embeddings)
-        project_dir = "/tmp/repo-wiki-project"
+        project_dir = "/tmp/control-project"
         result = wiki.add(
-            title="Storage Scope Control Repo Wiki",
-            content="repo_wiki control — should stay project scoped.",
+            title="Storage Scope Control",
+            content="control page — should stay project scoped.",
             category="reference",
-            tags=["repo-wiki-control"],
+            tags=["storage-scope-control"],
             opts=WikiAddOptions(
                 directory_context=project_dir,
-                page_type="repo_wiki",
+                page_type="some_unregistered_type",
             ),
         )
         slug = result.get("slug")

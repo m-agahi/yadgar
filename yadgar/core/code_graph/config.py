@@ -120,10 +120,10 @@ DIGEST_CHAR_BUDGET = 2000
 # ── Stop-hook cadence (Car D) ─────────────────────────────────────────────────
 
 #: Backward-compat module constant mirroring the shared-config knob
-#: ``CODE_GRAPH_REFRESH_STOP_INTERVAL`` (default 200, parallel to
-#: ``REPO_WIKI_REFRESH_STOP_INTERVAL``).  The stop-hook reads the SHARED-config
-#: value via ``get_settings()`` — this constant exists only so the Car-B forward
-#: key stays importable and there is ONE default (200) across the codebase.
+#: ``CODE_GRAPH_REFRESH_STOP_INTERVAL`` (default 200). The stop-hook reads the
+#: SHARED-config value via ``get_settings()`` — this constant exists only so
+#: the Car-B forward key stays importable and there is ONE default (200)
+#: across the codebase.
 CODE_GRAPH_REFRESH_STOP_INTERVAL = 200
 
 

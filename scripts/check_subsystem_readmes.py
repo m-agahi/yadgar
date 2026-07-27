@@ -3,7 +3,7 @@
 
 T2 Car D doc scaffold (layer-boundary train, user-agreed 2026-07-09):
 README.md per SUBSYSTEM (layer roots + major packages), AGENTS.md per LAYER
-root, leaf docs stay in docstrings (they feed the repo-wiki generator).
+root, leaf docs stay in docstrings.
 
 This lint checks EXISTENCE only — content quality is a review concern, not a
 hook concern. Add a directory here when a new subsystem package is created.

@@ -1,6 +1,8 @@
 """Wiki policy resolver — maps page_type to routing behaviour.
 
-Car A of #83 (repo-wiki page-type).
+Car A of #83 (repo-wiki page-type). The repo_wiki page_type itself was
+decommissioned (#33/ADR-0162, superseded by code_graph); this resolver
+mechanism remains in use by other page types (e.g. agent_prompt).
 
 Design rationale
 ----------------
@@ -20,9 +22,10 @@ Knob axes
 gate_mode
     ``"similarity"`` — default content-similarity gate (cosine threshold).
     ``"identity"``   — slug+schema gate; skip content-similarity entirely.
-                        Used for structural pages (e.g. repo_wiki) where two
-                        thin ``logging.py`` modules from different projects
-                        are NOT duplicates despite high cosine similarity.
+                        Was used for structural pages (repo_wiki, decommissioned
+                        #33) where two thin ``logging.py`` modules from
+                        different projects are NOT duplicates despite high
+                        cosine similarity.
 
 recall_disposition
     ``"include"``    — pages appear in normal fanout recall (default).
@@ -92,13 +95,6 @@ DEFAULT_POLICY = WikiPolicy(
 """Fallback policy for all page types not explicitly listed."""
 
 POLICY_BY_TYPE: dict[str, WikiPolicy] = {
-    "repo_wiki": WikiPolicy(
-        gate_mode="identity",
-        recall_disposition="exclude",
-        dir_scope="strict",
-        merge="never",
-        storage_scope="project",
-    ),
     "agent_prompt": WikiPolicy(
         gate_mode="similarity",
         recall_disposition="exclude",
@@ -109,15 +105,9 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
 }
 """Explicit overrides keyed by page_type string.
 
-repo_wiki rationale:
-  - ``identity`` — two projects' thin ``logging.py`` pages share high cosine
-    similarity but are NOT duplicates; slug+schema uniqueness is the correct
-    gate.
-  - ``exclude`` — repo_wiki pages are structural code inventory; polluting
-    everyday recall with them reduces signal.  ``wiki_query``/``wiki_read``
-    remain unaffected.
-  - ``never`` — pages are auto-generated from source; LLM merge is unsafe.
-    Upsert (overwrite at caller-supplied slug) is the correct write semantic.
+(repo_wiki's ``identity``/``exclude``/``never`` override was removed when the
+repo_wiki generator was decommissioned — #33/ADR-0162, superseded by
+code_graph's injected-memory-block model which stores no wiki pages at all.)
 """
 
 

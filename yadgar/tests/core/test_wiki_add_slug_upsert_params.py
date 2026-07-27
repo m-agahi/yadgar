@@ -98,11 +98,8 @@ class TestSlugParamAsync:
             category="reference",
             slug=caller_slug,
             upsert=True,
-            page_type="repo_wiki",
-            hash="a" * 64,
-            source_file="/abs/mod.py",
             directory=_TEST_DIR,
-            branch_hint="feat/repo-wiki-page-type",
+            branch_hint="test-branch",
             wait=False,
         )
         assert result.get("stored") is True
@@ -127,11 +124,8 @@ class TestSlugParamWait:
             category="reference",
             slug=caller_slug,
             upsert=True,
-            page_type="repo_wiki",
-            hash="b" * 64,
-            source_file="/abs/mod2.py",
             directory=_TEST_DIR,
-            branch_hint="feat/repo-wiki-page-type",
+            branch_hint="test-branch",
             wait=True,
         )
         assert result.get("stored") is not False, f"Write failed: {result}"
@@ -154,11 +148,8 @@ class TestSlugParamWait:
             category="reference",
             slug=caller_slug,
             upsert=True,
-            page_type="repo_wiki",
-            hash="c" * 64,
-            source_file="/abs/mod3.py",
             directory=_TEST_DIR,
-            branch_hint="feat/repo-wiki-page-type",
+            branch_hint="test-branch",
             wait=True,
         )
         # Title-derived slug must not exist.
@@ -184,11 +175,8 @@ class TestUpsertOverwrite:
             category="reference",
             slug=caller_slug,
             upsert=True,
-            page_type="repo_wiki",
-            hash="d" * 64,
-            source_file="/abs/gen.py",
             directory=_TEST_DIR,
-            branch_hint="feat/repo-wiki-page-type",
+            branch_hint="test-branch",
             wait=True,
         )
         server.wiki_add(
@@ -197,11 +185,8 @@ class TestUpsertOverwrite:
             category="reference",
             slug=caller_slug,
             upsert=True,
-            page_type="repo_wiki",
-            hash="e" * 64,
-            source_file="/abs/gen.py",
             directory=_TEST_DIR,
-            branch_hint="feat/repo-wiki-page-type",
+            branch_hint="test-branch",
             wait=True,
         )
         page = _storage().get_wiki_page_by_slug(caller_slug)
@@ -232,11 +217,8 @@ class TestUpsertFalseRejects:
             category="reference",
             slug=caller_slug,
             upsert=True,
-            page_type="repo_wiki",
-            hash="a1" * 32,
-            source_file="/abs/original.py",
             directory=_TEST_DIR,
-            branch_hint="feat/repo-wiki-page-type",
+            branch_hint="test-branch",
             wait=True,
         )
         assert first.get("stored") is not False, f"Setup write failed: {first}"
@@ -248,11 +230,8 @@ class TestUpsertFalseRejects:
             category="reference",
             slug=caller_slug,
             upsert=False,
-            page_type="repo_wiki",
-            hash="b2" * 32,
-            source_file="/abs/collision.py",
             directory=_TEST_DIR,
-            branch_hint="feat/repo-wiki-page-type",
+            branch_hint="test-branch",
             wait=True,
         )
         assert result.get("stored") is False, f"Expected rejection, got: {result}"
@@ -285,7 +264,7 @@ class TestUpsertFalseRejects:
                 slug=f"proj-mod-c4b-{_uid()}",
                 upsert=False,
                 directory=_TEST_DIR,
-                branch_hint="feat/repo-wiki-page-type",
+                branch_hint="test-branch",
                 wait=False,  # async; just check payload
             )
         finally:
@@ -316,7 +295,7 @@ class TestBackwardCompat:
             content="plain content",
             category="reference",
             directory=_TEST_DIR,
-            branch_hint="feat/repo-wiki-page-type",
+            branch_hint="test-branch",
             wait=True,
         )
         import re

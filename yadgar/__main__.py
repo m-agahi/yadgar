@@ -85,7 +85,6 @@ def cli():
         install_mcp,
         install_subagents,
         pending_findings,
-        repo_wiki,
         restore,
         rules,
         seed,
@@ -108,7 +107,6 @@ def cli():
     seed.register(subparsers)
     config.register(subparsers)
     rules.register(subparsers)
-    repo_wiki.register(subparsers)
     code_graph.register(subparsers)
     viz.register(subparsers)
     setup.register(subparsers)

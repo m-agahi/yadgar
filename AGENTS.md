@@ -159,7 +159,7 @@ Three-layer split (ADR-0056/0060/0062/0063; import-linter enforced). Each layer 
 | `yadgar/core/server/` | FastAPI app, MCP tool handlers, auth middleware, transport |
 | `yadgar/core/hooks/` | Claude Code hook runner scripts (SessionStart, SubagentStop, PreCompact) |
 | `yadgar/core/daemon/` | systemd-style daemon start/stop/status, MCP transport switching |
-| `yadgar/core/repo_wiki/` | `repo_wiki_generate` — AST-scan Python repo → wiki store |
+| `yadgar/core/code_graph/` | multi-language code-structure digest via codebase-memory-mcp shell-out (successor to the retired repo_wiki AST scanner, ADR-0162) |
 | `yadgar/core/export/` | DuckDB exporter for offline analytics |
 | `yadgar/core/viz/` | Viz server entry point (reverse-proxies `/api/*` to backend at :8765) |
 

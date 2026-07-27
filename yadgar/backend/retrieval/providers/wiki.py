@@ -90,10 +90,11 @@ class WikiProvider(SourceProvider):
                 continue
             # Car C (#83): policy-driven recall exclusion.
             # Pages whose page_type resolves to recall_disposition="exclude" are
-            # dropped from fanout recall. This keeps repo_wiki (structural code
-            # inventory) and agent_prompt pages out of everyday recall while
-            # wiki_query/wiki_read/wiki_list (which call WikiStore.query directly,
-            # not via this provider) remain fully unaffected.
+            # dropped from fanout recall. This keeps agent_prompt pages (and
+            # formerly repo_wiki's structural code inventory, decommissioned
+            # #33/ADR-0162) out of everyday recall while wiki_query/wiki_read/
+            # wiki_list (which call WikiStore.query directly, not via this
+            # provider) remain fully unaffected.
             # OVERRIDE: when the caller passed an explicit include_tag (self._tags),
             # they opted in to this page type — skip the exclusion so
             # recall(tags=["agent-prompt"]) can still reach agent_prompt pages.

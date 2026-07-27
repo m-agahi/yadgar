@@ -692,17 +692,11 @@ class WikiStore:
         branch = o.branch
         directory_context = o.directory_context
         page_type = o.page_type
-        # Car B0 (#83): repo-wiki module pages carry source hash + path. Only the
-        # provided (non-None) fields are stored so a hashless upsert never clobbers
-        # a stored hash. Built once, merged into both the update and insert dicts.
-        repo_wiki_fields = {
-            k: v for k, v in (("hash", o.hash), ("source_file", o.source_file)) if v is not None
-        }
 
         # Car B (#83): explicit caller-supplied slug bypasses title derivation.
-        # Structural pages (repo_wiki) MUST land at a caller-computed slug so their
-        # crossrefs + stale-diff keys stay stable across regens. slug=None keeps the
-        # legacy title-derived behaviour byte-for-byte.
+        # Structural pages MUST land at a caller-computed slug so their crossrefs +
+        # stale-diff keys stay stable across regens. slug=None keeps the legacy
+        # title-derived behaviour byte-for-byte.
         explicit_slug = o.slug
         slug = explicit_slug if explicit_slug is not None else self._slugify(title)
         if category not in self.CATEGORIES:
@@ -773,7 +767,6 @@ class WikiStore:
 
                 updates["page_type"] = page_type
                 updates["wiki_schema_version"] = WIKI_SCHEMA_VERSION
-            updates.update(repo_wiki_fields)  # Car B0 (#83): re-persist hash if provided
             self._storage.update_wiki_page(existing["id"], updates)
             self._sync_crossrefs(slug, links)
             self._link_memories(slug, source_memory_ids)
@@ -801,7 +794,6 @@ class WikiStore:
 
             page["page_type"] = page_type
             page["wiki_schema_version"] = WIKI_SCHEMA_VERSION
-        page.update(repo_wiki_fields)  # Car B0 (#83): stamp hash/source_file if provided
         page_id = self._storage.insert_wiki_page(page, branch=branch)
         page["id"] = page_id
         # v5.43.0 (DP-2): include branch in returned dict so callers (e.g. wiki_approve)
@@ -1060,15 +1052,6 @@ class WikiStore:
         return self._storage.list_wiki_pages(
             category=category, slug_prefix=slug_prefix, limit=limit, directory=directory
         )
-
-    def repo_wiki_hashes(self, directory: str | None = None) -> dict[str, str]:
-        """Return {slug: hash} for repo-wiki module pages (Car B0, #83).
-
-        Cheap bulk read backing the host-side ``--stale-only`` diff: one DB call
-        returns every staleness-checkable page's stored source hash, scoped to
-        ``directory`` + 'global'. Pages without a source hash are excluded.
-        """
-        return self._storage.list_wiki_hashes(directory=directory)
 
     @observe(tier="stage")
     def find_similar_wiki_pages(
@@ -2293,8 +2276,8 @@ class WikiStore:
         """Convert title to URL-safe slug. Max 64 chars.
 
         HTML entities (&amp;, &lt;, etc.) are unescaped before slug generation
-        so titles created via different code paths (direct API vs repo_wiki)
-        always produce identical slugs. v5.24.1: fixes &amp; → 'amp' drift.
+        so titles created via different code paths always produce identical
+        slugs. v5.24.1: fixes &amp; → 'amp' drift.
 
         Delegates to ``yadgar._shared.wiki.slug.slugify`` (Car A #83) —
         single source of truth for slug generation.

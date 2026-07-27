@@ -348,8 +348,6 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_ANCHOR_AUDIT_THRESHOLD", "15", "int"),
     # ── anchor-audit stop-hook cadence (v5.158.0 Car #85) ────────────────────
     ConfigEntry("YADGAR_ANCHOR_AUDIT_STOP_INTERVAL", "100", "int"),
-    # ── repo-wiki-refresh stop-hook cadence (Car D #83) ──────────────────────
-    ConfigEntry("YADGAR_REPO_WIKI_REFRESH_STOP_INTERVAL", "200", "int"),
     # ── code_graph-refresh stop-hook cadence (Car D #83, ADR-0162) ───────────
     ConfigEntry("YADGAR_CODE_GRAPH_REFRESH_STOP_INTERVAL", "200", "int"),
     # ── anchor audit pass knobs (v5.9.0) ─────────────────────────────────────

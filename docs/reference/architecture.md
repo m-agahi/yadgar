@@ -127,7 +127,7 @@ Full end-to-end nightly lifecycle (in-process; no MCP reconnect required):
 | `daemon/` | systemd-style daemon start/stop/status, MCP transport switching |
 | `lifecycle/` | Daemon lifecycle management |
 | `auth_middleware/` | Bearer-token auth + default-deny CORS for HTTP routes |
-| `repo_wiki/` | `repo_wiki_generate` — AST-scan Python repo → wiki store |
+| `code_graph/` | multi-language code-structure digest via codebase-memory-mcp shell-out (successor to the retired repo_wiki AST scanner, ADR-0162) |
 | `bootstrap/` | `seed_project`, `bootstrap_project` |
 | `restoration/` | checkpoint / restore / anchor logic (core-side; compute forwarded to backend) |
 | `export/` | DuckDB exporter for offline analytics (v5.27.0) |

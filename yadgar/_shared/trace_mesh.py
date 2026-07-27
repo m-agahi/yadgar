@@ -124,7 +124,7 @@ ALIASES: dict[str, str] = {
     "_build_wiki_pages": "build wiki-pages section",
     "_build_hot_memories": "build hot-memories section",
     "_build_anchor_rows_catalog": "build anchor catalog",
-    "_scan_stale_wiki_slugs_db": "scan stale wiki slugs",
+    "_scan_stale_wiki_slugs": "scan stale wiki slugs",
     "_slug_prefix": "compute slug prefix",
     "_current_epoch": "epoch cache hit",
     # ── branch / identity helpers ────────────────────────────────────────────

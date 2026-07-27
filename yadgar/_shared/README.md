@@ -31,5 +31,4 @@ layer-boundary moves — do not add new ones.
 
 `core` and `backend` both import this layer; this layer imports NEITHER
 (import-linter contract 1; sole waivers: the composition-root edges in
-`runtime/lifecycle.py`). Docs per module live in docstrings (they feed the
-repo-wiki generator).
+`runtime/lifecycle.py`). Docs per module live in docstrings.

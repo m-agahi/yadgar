@@ -45,16 +45,12 @@ class WikiAddOptions:
     branch: str | None = None
     directory_context: str | None = None
     page_type: str | None = None
-    # Car B0 (#83): SHA256 of the source file bytes + the absolute source path,
-    # for repo-wiki module pages (page_type='module'). Persisted so the host-side
-    # `--stale-only` check can diff stored hash vs live file without a disk scan.
-    hash: str | None = None
-    source_file: str | None = None
     # Car B (#83): explicit-slug + upsert write contract.
     #   slug=None  → store at the title-derived slug (unchanged backward compat).
     #   slug="..." → store at EXACTLY that slug, no title derivation. Required for
-    #                structural pages (repo_wiki) whose crossrefs/stale-diff key on
-    #                a caller-computed slug, not the title.
+    #                structural pages whose crossrefs/stale-diff key on a
+    #                caller-computed slug, not the title (originally built for the
+    #                repo_wiki generator, since decommissioned — #33/ADR-0162).
     #   upsert=True  → create-or-overwrite at the (explicit or derived) slug.
     #   upsert=False + explicit slug that already exists → reject (slug_exists),
     #                do not overwrite. Only meaningful with an explicit slug; the
