@@ -719,7 +719,18 @@ class WikiStore:
         # enforcement point for both agent_prompt_save and raw wiki_add replay
         # (run_wiki_add_replay also calls WikiStore.add). See ADR-0158 (wiki_policy).
         if _get_wiki_policy(page_type).storage_scope == "global":
+            # A global-scoped page is cross-project canonical: it must also live in
+            # the canonical branch slot. §25 read reaches it ONLY via step 3
+            # (directory='global' AND branch IS NONE), so a global page inserted with
+            # a caller branch_hint (SessionStart passes "master" here) strands at
+            # global+branch=<x> — unreachable via wiki_read, still found via the
+            # plain-slug prelude path (the agent-prompt 404 drift). Couple branch=None
+            # with the dir override on INSERT (insert_wiki_page omits the column on
+            # None → SurrealDB NONE, matched by IS NONE). UPDATE keeps branch untouched
+            # (its generic setter would store explicit null — the branch-null trap);
+            # drifted rows are healed via wiki_set_metadata(field="branch", value=None).
             effective_dir = "global"
+            branch = None
 
         existing = self._storage.get_wiki_page_by_slug(slug)
         now = datetime.now(UTC).isoformat()
