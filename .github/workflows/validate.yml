@@ -15,17 +15,18 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # Self-hosted runner + yadgar-ci image (matches the rest of the
+    # GitHub workflows; avoids GitHub-hosted runner minutes). The
+    # yadgar-ci image already has: python 3.14 + apt deps (make, git,
+    # curl, ca-certificates, build-essential, gpg, nodejs 22 from
+    # NodeSource, bsdmainutils, graphviz) + SurrealDB binary + HF model
+    # weights + gitleaks v8.30.1 baked in. So this job only needs to
+    # pip install the Python tooling (pre-commit + uv + import-linter)
+    # and editable-install yadgar itself.
+    runs-on: [self-hosted, linux, x64, yadgar]
     container:
-      image: python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
-      - name: Install Node.js, git, gitleaks, and ruff
-        run: |
-          apt-get update -qq && apt-get install -y --no-install-recommends nodejs git curl ca-certificates
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
-          pip install --no-cache-dir ruff==0.15.10
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Validate PR title and body
@@ -41,6 +42,11 @@ jobs:
         # entry: lint-imports) needs the executable on PATH AND the yadgar package
         # locatable — grimp parses the AST, so --no-deps is enough (no runtime deps).
         # (folder-split #17: without this the hook aborts "Executable lint-imports not found".)
+        # NOTE: ruff is pre-baked in the yadgar-ci image (system dep from the
+        # apt install line). gitleaks is pre-baked too (CAR-of-self-hosted-runner
+        # migration). nodejs 22 from NodeSource is pre-baked. So this pip install
+        # is only for the Python-side tools the pre-commit hooks call as
+        # `language: system` entries.
         run: |
           pip install pre-commit uv import-linter
           pip install -e . --no-deps

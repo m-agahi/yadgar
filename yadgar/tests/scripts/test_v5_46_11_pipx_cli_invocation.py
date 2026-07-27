@@ -54,9 +54,13 @@ _SHIM_CALL_PATTERN = re.compile(
     r"(?:install-hooks|install-subagents|config\s+sync|seed)\b"
 )
 
-# The four CLI subcommands that must be present as shim calls.
+# The CLI subcommands that must be present as shim calls. After the
+# opencode port train (v5.166.0) hard-removed the parallel `install-hooks`
+# subcommand (Car 7), the canonical install path is
+# `yadgar install --client <name> --hooks` — so step 6 of setup.sh
+# now uses `install` (with the --client + --hooks flags), not install-hooks.
 _EXPECTED_SUBCOMMANDS = [
-    "install-hooks",
+    "install",
     "install-subagents",
     "config sync",
     "seed",

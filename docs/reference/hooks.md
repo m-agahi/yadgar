@@ -4,8 +4,11 @@ Yadgar ships hook scripts for every major Claude Code lifecycle event. The
 easiest way to register them is:
 
 ```sh
-yadgar install-hooks --scope global
+yadgar install --client claude-code --hooks --scope global
 ```
+
+(Migrated from the legacy `yadgar install-hooks --scope global` command,
+which was hard-removed in v5.166.0 — Car 7 of the opencode port train.)
 
 This copies scripts to `~/.claude/hooks/` and writes the settings below into
 `~/.claude/settings.json`.

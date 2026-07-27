@@ -115,7 +115,9 @@ yadgar install --client <name> --print
 | `--auto-detect` | — | Probe and register all detected clients |
 | `--mcp` | — | Write MCP registration config only |
 | `--rules` | — | Write rules file only (AGENTS.md-equivalent) |
-| (neither) | — | Write both MCP config and rules file |
+| `--hooks` | on for clients with a `hooks_kind` | Wire the hooks surface (TS plugin for opencode, settings.json for claude-code, hooks.json for cursor). No-op for advisory-only clients (Gemini). |
+| `--no-hooks` | — | Skip the hooks surface. Useful for nix provisioning where only MCP + rules are needed. |
+| (neither) | — | Write MCP config, rules file, AND hooks (for clients that have a hook surface) |
 | `--print` | — | Dry-run: emit JSON to stdout, no file writes; auth uses env-ref (never literal tokens) |
 | `--port PORT` | `8765` | Daemon port for the MCP endpoint URL |
 | `--scope {global,project}` | `global` | Global home-dir config or per-project config |
@@ -123,10 +125,16 @@ yadgar install --client <name> --print
 
 `--print` JSON shape:
 ```json
-{"client": "opencode", "mcp": {"path": "...", "content": "..."}, "rules": {"path": "...", "content": "..."}, "dry_run": true}
+{
+  "client": "opencode",
+  "mcp":    {"path": "...", "content": "..."},
+  "rules":  {"path": "...", "content": "..."},
+  "hooks":  {"path": "...", "content": "..."},
+  "dry_run": true
+}
 ```
 
-`mcp` or `rules` is `null` when the corresponding `--mcp` / `--rules` flag was omitted.
+`mcp`, `rules`, or `hooks` is `null` when the corresponding `--mcp` / `--rules` / `--no-hooks` flag was omitted (or when the client has no hook surface, e.g. Gemini).
 
 ### Per-client config paths
 
@@ -134,15 +142,30 @@ yadgar install --client <name> --print
 |---|---|---|
 | `claude-code` | `~/.claude.json` | Full harness (hooks, task-list mirror, CLAUDE.md sync) |
 | `codex` | `~/.codex/config.toml` | MCP + rules |
-| `gemini` | `~/.gemini/settings.json` | MCP + rules |
-| `cursor` | `~/.cursor/mcp.json` | MCP + rules |
+| `gemini` | `~/.gemini/settings.json` | MCP + rules (no hook surface) |
+| `cursor` | `~/.cursor/mcp.json` | MCP + rules + hooks (`~/.cursor/hooks.json`) |
 | `cline` | VS Code globalStorage `cline_mcp_settings.json` | MCP + rules |
 | `windsurf` | `~/.codeium/windsurf/mcp_config.json` | MCP + rules |
 | `kiro` | `~/.kiro/settings/mcp.json` | MCP + rules |
 | `amp` | `~/.config/amp/settings.json` | MCP + rules |
-| `opencode` | `~/.config/opencode/opencode.json` | MCP + rules |
+| `opencode` | `~/.config/opencode/opencode.json` | MCP + rules + hooks (`~/.config/opencode/plugins/yadgar-hooks.ts`, a thin TS shim that execa-shells out to the shared `yadgar hook <event>` CLI) |
 
 Rules files (AGENTS.md-equivalent) follow each client's native convention. Claude Code bridges via `@AGENTS.md` import; Gemini uses a `context.fileName` alias. All clients share the same daemon endpoint — no per-client server binary is needed.
+
+### OpenCode hook surface (5/5 wired, 4/5 functional)
+
+OpenCode has no Claude-Code-style hooks; the install path is a JavaScript/TypeScript plugin that the opencode runtime discovers on startup. The per-kind emitter (`_emit_opencode_plugin` in `yadgar/core/install/clients/hooks_render.py`) writes a thin shim that subscribes to 4 OUT-of-the-box functional events plus 1 non-blocking observer (5/5 wired total, 4/5 functional):
+
+| Yadgar hook need | opencode event | Status |
+|---|---|---|
+| SessionStart (signals) | `event.type === "session.created"` (generic event callback) | FUNCTIONAL |
+| SessionStart (restore) | `event.type === "session.compacted"` | FUNCTIONAL |
+| PostToolUse | `tool.execute.after` (typed hook) | FUNCTIONAL |
+| PreCompact | `experimental.session.compacting` → `output.context.push(...)` | FUNCTIONAL |
+| Stop (blocking) | `event.type === "session.idle"` | NON-BLOCKING observer (promote to blocking on sst/opencode#16626) |
+| UserPromptSubmit | `chat.message` → `output.parts` mutation | DEFERRED (gated on a headless `opencode run` test per the re-audit plan §4.5) |
+
+The plugin does NOT call the Yadgar MCP directly — `ctx.client` is opencode's own typed SDK (no generic MCP invoker). Instead it `execa("yadgar", ["hook", "--event", <event>, ...])` which routes through MCP server-side. Re-audit verified 2026-07-26: see `docs/plans/port-opencode-re-audit-2026-07-26.md`.
 
 ### Nix / home-manager
 
