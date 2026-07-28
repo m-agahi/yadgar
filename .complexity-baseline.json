@@ -12571,45 +12571,6 @@
     "nesting": 0,
     "params": 1
   },
-  "yadgar/core/cli/repo_wiki.py::__file__": {
-    "loc": 216
-  },
-  "yadgar/core/cli/repo_wiki.py::_daemon_health_ok@56": {
-    "cyclo": 3,
-    "loc": 13,
-    "nesting": 2,
-    "params": 0
-  },
-  "yadgar/core/cli/repo_wiki.py::_read_auth_token@34": {
-    "cyclo": 9,
-    "loc": 20,
-    "nesting": 4,
-    "params": 0
-  },
-  "yadgar/core/cli/repo_wiki.py::_submit_all_pages@94": {
-    "cyclo": 6,
-    "loc": 23,
-    "nesting": 3,
-    "params": 2
-  },
-  "yadgar/core/cli/repo_wiki.py::_submit_page@71": {
-    "cyclo": 5,
-    "loc": 21,
-    "nesting": 4,
-    "params": 2
-  },
-  "yadgar/core/cli/repo_wiki.py::cmd_repo_wiki@119": {
-    "cyclo": 11,
-    "loc": 63,
-    "nesting": 2,
-    "params": 1
-  },
-  "yadgar/core/cli/repo_wiki.py::register@184": {
-    "cyclo": 1,
-    "loc": 33,
-    "nesting": 0,
-    "params": 1
-  },
   "yadgar/core/cli/restore.py::__file__": {
     "loc": 26
   },
@@ -14742,138 +14703,6 @@
     "loc": 8,
     "nesting": 2,
     "params": 1
-  },
-  "yadgar/core/repo_wiki/__init__.py::__file__": {
-    "loc": 18
-  },
-  "yadgar/core/repo_wiki/generator.py::__file__": {
-    "loc": 214
-  },
-  "yadgar/core/repo_wiki/generator.py::_render_class@75": {
-    "cyclo": 8,
-    "loc": 18,
-    "nesting": 2,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/generator.py::_render_function@61": {
-    "cyclo": 3,
-    "loc": 11,
-    "nesting": 1,
-    "params": 2
-  },
-  "yadgar/core/repo_wiki/generator.py::_render_signature@56": {
-    "cyclo": 1,
-    "loc": 2,
-    "nesting": 0,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/generator.py::_slugify@40": {
-    "cyclo": 2,
-    "loc": 7,
-    "nesting": 1,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/generator.py::_truncate@50": {
-    "cyclo": 2,
-    "loc": 4,
-    "nesting": 1,
-    "params": 2
-  },
-  "yadgar/core/repo_wiki/generator.py::generate_module_page@96": {
-    "cyclo": 14,
-    "loc": 96,
-    "nesting": 3,
-    "params": 2
-  },
-  "yadgar/core/repo_wiki/generator.py::generate_wiki_pages@195": {
-    "cyclo": 4,
-    "loc": 20,
-    "nesting": 2,
-    "params": 3
-  },
-  "yadgar/core/repo_wiki/scanner.py::ClassRecord@47": {
-    "attrs": 0,
-    "inh_depth": 0,
-    "methods": 0
-  },
-  "yadgar/core/repo_wiki/scanner.py::FunctionRecord@32": {
-    "attrs": 0,
-    "inh_depth": 0,
-    "methods": 0
-  },
-  "yadgar/core/repo_wiki/scanner.py::ModuleRecord@58": {
-    "attrs": 0,
-    "inh_depth": 0,
-    "methods": 0
-  },
-  "yadgar/core/repo_wiki/scanner.py::__file__": {
-    "loc": 335
-  },
-  "yadgar/core/repo_wiki/scanner.py::_arg_str@71": {
-    "cyclo": 3,
-    "loc": 8,
-    "nesting": 1,
-    "params": 2
-  },
-  "yadgar/core/repo_wiki/scanner.py::_build_kwonly_parts@99": {
-    "cyclo": 7,
-    "loc": 19,
-    "nesting": 2,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/scanner.py::_build_positional_parts@82": {
-    "cyclo": 5,
-    "loc": 14,
-    "nesting": 1,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/scanner.py::_build_signature@121": {
-    "cyclo": 3,
-    "loc": 6,
-    "nesting": 0,
-    "params": 2
-  },
-  "yadgar/core/repo_wiki/scanner.py::_decorator_name_from@145": {
-    "cyclo": 4,
-    "loc": 9,
-    "nesting": 1,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/scanner.py::_decorator_names@156": {
-    "cyclo": 2,
-    "loc": 4,
-    "nesting": 0,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/scanner.py::_extract_docstring@130": {
-    "cyclo": 5,
-    "loc": 12,
-    "nesting": 1,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/scanner.py::_extract_imports@163": {
-    "cyclo": 9,
-    "loc": 12,
-    "nesting": 4,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/scanner.py::_visit_class@178": {
-    "cyclo": 5,
-    "loc": 34,
-    "nesting": 3,
-    "params": 1
-  },
-  "yadgar/core/repo_wiki/scanner.py::scan_python_module@215": {
-    "cyclo": 10,
-    "loc": 76,
-    "nesting": 3,
-    "params": 2
-  },
-  "yadgar/core/repo_wiki/scanner.py::scan_repo@294": {
-    "cyclo": 13,
-    "loc": 42,
-    "nesting": 4,
-    "params": 2
   },
   "yadgar/core/sanitize/__init__.py::__dir__@35": {
     "cyclo": 1,
@@ -17618,15 +17447,6 @@
     "loc": 160,
     "nesting": 3,
     "params": 9
-  },
-  "yadgar/core/server/tools/repo_wiki.py::__file__": {
-    "loc": 110
-  },
-  "yadgar/core/server/tools/repo_wiki.py::repo_wiki_generate@32": {
-    "cyclo": 6,
-    "loc": 79,
-    "nesting": 2,
-    "params": 4
   },
   "yadgar/core/server/tools/wiki.py::__file__": {
     "loc": 1723

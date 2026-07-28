@@ -20,8 +20,16 @@ ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect her
 4. **Agent-Prompt Library** — before any dispatch, call
    `agent_dispatch_prelude(pattern, task_topic)` and build the dispatch on the
    returned contract; register a good reusable prompt with `agent_prompt_save(...)`.
+   A guessed pattern that misses returns an EMPTY fallback, not an error — that
+   is NOT proof no pattern exists. Check `wiki_read("agent-prompt-toc")` before
+   concluding none fits and writing a dispatch bespoke.
 5. **Yadgar findings footer**: every subagent's final message MUST end with a
    `## Yadgar findings` section (facts/insights, or "none").
+6. **code_graph** (repos with it enabled) — a per-directory `code_graph` memory
+   block (auto-injected) holds an indexed digest (layers/hotspots/entry-points/
+   endpoints); `yadgar code-graph query <repo> <cypher>` runs a live capped
+   structural query. Check it before/alongside cold grep when planning,
+   exploring, or root-causing in such a repo.
 
 ### Tool reference
 

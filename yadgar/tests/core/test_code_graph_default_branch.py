@@ -205,7 +205,9 @@ class TestSkipGuards:
     def test_disabled_flag_skips(self, tmp_path):
         from yadgar.core.code_graph import default_branch
 
-        # No stored row / daemon down → resolver returns default False → disabled.
+        # Explicit is_enabled=False (e.g. an opted-out row) → skip. NOTE: since
+        # ADR-0163's flip (2026-07-27) an absent row / daemon-down instead
+        # defaults to enabled (True) — this test exercises the explicit-off path.
         with (
             patch("yadgar.core.code_graph.config.is_enabled", return_value=False),
             patch("yadgar.core.code_graph.runner.index_repository") as mock_idx,

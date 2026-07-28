@@ -1,6 +1,8 @@
 """Tests for yadgar._shared.wiki.policy — WikiPolicy + get_policy().
 
-Car A of #83 (repo-wiki page-type).
+Car A of #83 (repo-wiki page-type). The repo_wiki page_type itself was
+decommissioned (#33/ADR-0162); this resolver mechanism remains in use by
+other page types (e.g. agent_prompt).
 
 Policy resolver maps page_type → {gate_mode, recall_disposition, dir_scope, merge}.
 Unknown type (including None) returns DEFAULT_POLICY.
@@ -75,22 +77,13 @@ class TestDefaultPolicy:
 
 
 class TestPolicyByType:
-    """POLICY_BY_TYPE has the expected repo_wiki entry."""
+    """POLICY_BY_TYPE has the expected agent_prompt entry."""
 
-    def test_repo_wiki_present(self):
-        assert "repo_wiki" in POLICY_BY_TYPE
+    def test_agent_prompt_present(self):
+        assert "agent_prompt" in POLICY_BY_TYPE
 
-    def test_repo_wiki_gate_mode_identity(self):
-        assert POLICY_BY_TYPE["repo_wiki"].gate_mode == "identity"
-
-    def test_repo_wiki_recall_exclude(self):
-        assert POLICY_BY_TYPE["repo_wiki"].recall_disposition == "exclude"
-
-    def test_repo_wiki_dir_scope_strict(self):
-        assert POLICY_BY_TYPE["repo_wiki"].dir_scope == "strict"
-
-    def test_repo_wiki_merge_never(self):
-        assert POLICY_BY_TYPE["repo_wiki"].merge == "never"
+    def test_agent_prompt_storage_scope_global(self):
+        assert POLICY_BY_TYPE["agent_prompt"].storage_scope == "global"
 
 
 # ── D. get_policy() resolver ──────────────────────────────────────────────────
@@ -98,13 +91,6 @@ class TestPolicyByType:
 
 class TestGetPolicy:
     """get_policy routes to the correct WikiPolicy instance."""
-
-    def test_repo_wiki_returns_identity_policy(self):
-        p = get_policy("repo_wiki")
-        assert p.gate_mode == "identity"
-        assert p.recall_disposition == "exclude"
-        assert p.dir_scope == "strict"
-        assert p.merge == "never"
 
     def test_adr_returns_default(self):
         """'adr' has no override entry → DEFAULT_POLICY."""
@@ -145,11 +131,6 @@ class TestGetPolicy:
         p = get_policy(None)
         assert p.storage_scope == "project"
 
-    def test_repo_wiki_storage_scope_project(self):
-        """'repo_wiki' → storage_scope='project' (project-scoped structural pages)."""
-        p = get_policy("repo_wiki")
-        assert p.storage_scope == "project"
-
-    def test_repo_wiki_is_not_default(self):
-        """repo_wiki must differ from DEFAULT (single source assertion)."""
-        assert get_policy("repo_wiki") != DEFAULT_POLICY
+    def test_agent_prompt_is_not_default(self):
+        """agent_prompt must differ from DEFAULT (single source assertion)."""
+        assert get_policy("agent_prompt") != DEFAULT_POLICY

@@ -17,13 +17,15 @@ logger = logging.getLogger(__name__)
 # (i.e. similarity gate, policy rejected). "permanent_error" is the legacy/default.
 # v5.42.3: added "missing_branch" — queue entry lacks branch context.
 # v5.42.5: added "missing_directory" — queue entry lacks directory_context.
+# ("repo_wiki_schema_invalid" — the repo_wiki identity-gate rejection reason —
+# was removed with repo_wiki's decommission, #33/ADR-0162; the gate that
+# produced it no longer exists.)
 _REJECTION_TAXONOMY: frozenset[str] = frozenset(
     {
         "duplicate_detected",
         "policy_rejected",
         "missing_branch",  # v5.42.3: queue entry lacks branch context
         "missing_directory",  # v5.42.5: queue entry lacks directory_context
-        "repo_wiki_schema_invalid",  # Car B (#83): repo_wiki page failed schema validation
     }
 )
 

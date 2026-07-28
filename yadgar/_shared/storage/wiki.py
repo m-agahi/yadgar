@@ -192,15 +192,6 @@ class _WikiMixin:
             page_set += ", page_type = $page_type, wiki_schema_version = $wiki_schema_version"
             params["page_type"] = page["page_type"]
             params["wiki_schema_version"] = page.get("wiki_schema_version", 1)
-        # v5.85.0 (car #36): hash + source_file for built-in module pages (page_type='code').
-        # These fields allow the staleness checker to compare stored hash vs live file contents
-        # via DB query instead of disk scan only.
-        if page.get("hash") is not None:
-            page_set += ", hash = $hash"
-            params["hash"] = page["hash"]
-        if page.get("source_file") is not None:
-            page_set += ", source_file = $source_file"
-            params["source_file"] = page["source_file"]
 
         # Single compound transaction: wiki_page + wiki_page_version version=1.
         # I1: no LLM/embed inside txn — pure DB writes only.
@@ -570,32 +561,6 @@ class _WikiMixin:
         sql = f"SELECT * FROM wiki_page {where_clause} ORDER BY updated_at DESC {limit_clause}".strip()
         rows = self._q(sql, params) if params else self._q(sql)
         return self._rows_to_dicts(rows)
-
-    @trace_span()
-    def list_wiki_hashes(self, directory: str | None = None) -> dict[str, str]:
-        """Return {slug: hash} for pages that carry a source hash (Car B0, #83).
-
-        Only repo-wiki module pages set ``hash`` (SHA256 of source bytes), so
-        ``WHERE hash IS NOT NULL`` selects exactly the staleness-checkable pages.
-        Scoped to ``directory`` + 'global' when a directory is supplied so a
-        --stale-only check for one repo does not diff against another repo's
-        hashes. One DB round-trip → the host diffs live vs stored host-side.
-        """
-        conditions: list[str] = ["hash IS NOT NULL"]
-        params: dict = {}
-        if directory is not None:
-            params["dir"] = directory.rstrip("/")
-            conditions.append("(directory_context = $dir OR directory_context = 'global')")
-        where_clause = "WHERE " + " AND ".join(conditions)
-        sql = f"SELECT slug, hash FROM wiki_page {where_clause}"
-        rows = self._q(sql, params) if params else self._q(sql)
-        out: dict[str, str] = {}
-        for row in self._rows_to_dicts(rows):
-            slug = row.get("slug")
-            h = row.get("hash")
-            if slug and h:
-                out[slug] = h
-        return out
 
     @trace_span()
     def list_wiki_catalog(

@@ -6,12 +6,15 @@ the DB-backed runtime config store in Car G4 (ADR-0163).
 ENABLE/OPT-OUT (ADR-0163 — SUPERSEDES ADR-0162's env-flag + repo-marker):
 ``code_graph.enabled`` is a directory-scoped row in the ``runtime_config`` store,
 read via a fail-open resolver (default: the stdlib-urllib host client
-``runtime_config_client.get``). The store's per-dir → global → default resolution
-folds the two opt-out layers into ONE key:
+``runtime_config_client.get``). code_graph is ON BY DEFAULT (opt-out, flipped
+2026-07-27 once the digest-renderer PII leak was fixed and the pilot proved out
+on a non-Python repo): with no row at all — or the daemon down (fail-open) —
+``is_enabled`` resolves ``True``. The store's per-dir → global → default
+resolution folds the two opt-out layers into ONE key:
 
-  - global OFF: ``code_graph.enabled`` unset/false at the global scope, OR
+  - global OFF: ``code_graph.enabled=false`` at the global scope, OR
   - per-repo OFF: ``code_graph.enabled=false`` at the repo directory (overrides a
-    global ``true``).
+    global ``true``, and overrides the default too).
 
 The old ``CODE_GRAPH_ENABLED`` env var (runtime enable) and the ``.code-graph-disable``
 marker FILE are GONE. (``CODE_GRAPH_ENABLED`` survives ONLY in ``cli/setup.py`` as an
@@ -66,13 +69,14 @@ def is_enabled(directory: str | None = None, resolver: Resolver | None = None) -
     """Return True when ``code_graph.enabled`` resolves truthy for ``directory``.
 
     Reads the runtime config store (ADR-0163) via ``resolver`` (default: the
-    fail-open host client). Per-dir override → global fallback → ``False`` default
-    is handled by the resolver, so a global ``true`` + per-repo ``false`` = that
-    repo disabled. Fail-open: daemon down / any error → the ``False`` default →
-    code_graph inert (safe).
+    fail-open host client). Per-dir override → global fallback → ``True`` default
+    is handled by the resolver, so a global ``false`` (or a per-repo ``false``
+    override) is required to disable — ON by default (opt-out). Fail-open:
+    daemon down / any error → the ``True`` default → code_graph active (same as
+    "nothing configured" — a downed daemon is not a signal to opt out).
     """
     r = resolver or _default_resolver()
-    return bool(r(ENABLED_KEY, directory, False))
+    return bool(r(ENABLED_KEY, directory, True))
 
 
 @observe(tier="stage")
@@ -80,8 +84,10 @@ def is_opted_out(repo_path: str | Path, resolver: Resolver | None = None) -> boo
     """Return True when code_graph must skip for ``repo_path``.
 
     Opted out when ``code_graph.enabled`` does NOT resolve truthy for the repo dir
-    — which already folds in the global-off case AND a per-repo ``false`` override
-    (the store's per-dir resolution replaces the old ``.code-graph-disable`` marker).
+    — i.e. an explicit ``false`` at the global scope, or a per-repo ``false``
+    override (the store's per-dir resolution replaces the old
+    ``.code-graph-disable`` marker). Absent any row, code_graph is NOT opted out
+    (on by default).
     """
     return not is_enabled(str(repo_path), resolver=resolver)
 
@@ -114,10 +120,10 @@ DIGEST_CHAR_BUDGET = 2000
 # ── Stop-hook cadence (Car D) ─────────────────────────────────────────────────
 
 #: Backward-compat module constant mirroring the shared-config knob
-#: ``CODE_GRAPH_REFRESH_STOP_INTERVAL`` (default 200, parallel to
-#: ``REPO_WIKI_REFRESH_STOP_INTERVAL``).  The stop-hook reads the SHARED-config
-#: value via ``get_settings()`` — this constant exists only so the Car-B forward
-#: key stays importable and there is ONE default (200) across the codebase.
+#: ``CODE_GRAPH_REFRESH_STOP_INTERVAL`` (default 200). The stop-hook reads the
+#: SHARED-config value via ``get_settings()`` — this constant exists only so
+#: the Car-B forward key stays importable and there is ONE default (200)
+#: across the codebase.
 CODE_GRAPH_REFRESH_STOP_INTERVAL = 200
 
 
@@ -149,7 +155,8 @@ def session_suggest_line(
     caller injects the in-process resolver (``config_get``) so the daemon reads the
     flag from its OWN DB — the container-blindness of the old env-var mechanism (the
     container never saw the host ``CODE_GRAPH_ENABLED``) is fixed. With no injected
-    resolver it falls back to the host client, which fail-opens to disabled.
+    resolver it falls back to the host client, which fail-opens to enabled (the
+    same on-by-default behavior as ``is_enabled``).
     """
     if is_opted_out(directory, resolver=resolver):
         return None

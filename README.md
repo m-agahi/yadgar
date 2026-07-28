@@ -65,8 +65,8 @@ A single `recall()` query searches **both stores at once**, fuses and re-ranks t
 - **Branch-scoped resolution** — `wiki_read(slug)` resolves current branch → default branch → unscoped.
 - **Surgical editing** — anchor-text and positional edit tools (`wiki_replace_text`, `wiki_insert_before/after`, `wiki_append_section`, `wiki_replace_markdown_block`, positional `wiki_*_at`) so pages mutate in place instead of full rewrites.
 - **Auto-linking** — `wiki_autolink` inserts `[[slug]]` cross-references by matching page titles; validated so it never manufactures broken refs.
-- **Repo wiki** — `repo_wiki_generate` builds code-structure pages from a Python repo via AST scanning (no LLM), writing directly into the wiki store with SHA256-parity staleness detection. Sync helpers: `wiki_refresh_stale`, `wiki_cleanup_merged_branches`, `wiki_coverage`, `wiki_lint`.
-- **Code graph** (opt-in, default-off) — `yadgar code-graph` shells out host-side to the [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) static binary (158-language tree-sitter, offline) to index the latest `origin/<default-branch>` and render a bounded architecture *digest* into an always-injected memory block (recall-free). Enable via the DB-backed runtime-config store: `yadgar setup --code-graph` (interactive `[y/N]` when neither `--code-graph`/`--no-code-graph` is passed) installs the binary and persists `code_graph.enabled=true`, or set it any time via the MCP tool `config_set("code_graph.enabled", true, scope="global")`; opt a single repo out with `config_set("code_graph.enabled", false, scope="project", directory=<repo>)` — a per-dir `false` overrides a global `true`. See ADR-0162/0163.
+- **Sync helpers** — `wiki_refresh_stale`, `wiki_cleanup_merged_branches`, `wiki_coverage`, `wiki_lint`.
+- **Code graph** (on by default, opt-out; successor to the retired repo-wiki generator) — `yadgar code-graph` shells out host-side to the [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) static binary (158-language tree-sitter, offline) to index the latest `origin/<default-branch>` and render a bounded architecture *digest* into an always-injected memory block (recall-free). `code_graph.enabled` defaults to `true` in the DB-backed runtime-config store (no row needed); install the host binary with `yadgar setup --code-graph` (interactive `[y/N]` when neither `--code-graph`/`--no-code-graph` is passed) or `CODE_GRAPH_ENABLED=1 yadgar setup`. Opt a single repo out with `config_set("code_graph.enabled", false, scope="project", directory=<repo>)`, or disable globally with `config_set("code_graph.enabled", false, scope="global")` — a per-dir override always wins over global. See ADR-0162/0163.
 - **Bookmarks** — pin wiki pages in the viz UI (`bookmark_*`); drag-to-reorder, dense-integer positions.
 
 ### Unified recall
@@ -295,8 +295,7 @@ yadgar stats [--project /path]      # memory statistics
 yadgar viz                          # knowledge graph at http://localhost:42069
 yadgar vacuum                       # compact the SurrealKV store
 yadgar seed <directory>             # bootstrap memory for an existing project
-yadgar repo-wiki <directory>        # generate code-structure wiki pages
-yadgar code-graph index|query|refresh <repo>  # host-side multi-lang code-structure (opt-in; MCP config_set code_graph.enabled=true)
+yadgar code-graph index|query|refresh <repo>  # host-side multi-lang code-structure (on by default; MCP config_set code_graph.enabled=false to opt out)
 yadgar rules export|import          # policy rules
 yadgar config init|list|get|set     # configuration
 yadgar update --check|--install|--rollback
@@ -339,7 +338,7 @@ Core: `wiki_add` · `wiki_read` ⚡ · `wiki_query` · `wiki_list` ⚡ · `wiki_
 
 Editing: `wiki_append_section` ⚡ · `wiki_replace_text` ⚡ · `wiki_delete_text` ⚡ · `wiki_insert_before/after` ⚡ · `wiki_replace_at` / `wiki_delete_at` / `wiki_insert_at` ⚡ · `wiki_replace_markdown_block` ⚡ · `wiki_autolink` ⚡ · `wiki_set_metadata` ⚡
 
-Maintenance: `wiki_coverage` · `wiki_refresh_stale` ⚡ · `wiki_cleanup_merged_branches` ⚡ · `repo_wiki_generate`
+Maintenance: `wiki_coverage` · `wiki_refresh_stale` ⚡ · `wiki_cleanup_merged_branches` ⚡
 
 **Task-list mirror:** `wiki_write_task_list(project, content, directory)` — canonical write bounded to `{project}-task-list` slug; used by stop-hook checkpoint (step 4).
 

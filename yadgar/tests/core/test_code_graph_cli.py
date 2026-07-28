@@ -121,6 +121,44 @@ class TestDispatch:
         assert payload["chars"] == len(payload["content"])
         assert "── code_graph:" in payload["content"]
 
+    def test_refresh_prints_create_or_update_hint(self, tmp_path, capsys):
+        """Bug: the FIRST-EVER refresh of a repo has no existing ``code_graph``
+        block, so ``block_update`` 404s not-found. The printed stderr hint
+        used to say only "Claude calls block_update" — no mention of the
+        ``block_create`` fallback — so an agent following just the CLI output
+        (not the stop-hook template) had no guidance on the 404 path. The hint
+        must name both tools plus the not-found fallback condition, mirroring
+        ``code_graph_refresh_prompt.md``'s create-or-update step.
+        """
+        from yadgar.core.cli import code_graph
+
+        args = SimpleNamespace(cg_command="refresh", repo=str(tmp_path), project=None, json=True)
+        arch = {
+            "project": "proj",
+            "languages": [{"language": "Java", "file_count": 10}],
+            "layers": [],
+            "hotspots": [],
+        }
+        with (
+            patch(
+                "yadgar.core.code_graph.default_branch.refresh_index",
+                return_value={
+                    "indexed": True,
+                    "canonical_root": str(tmp_path),
+                    "subdir": "",
+                    "project": "proj",
+                },
+            ),
+            patch("yadgar.core.code_graph.runner.get_architecture", return_value=arch),
+            patch("yadgar.core.code_graph.runner.fetch_endpoints", return_value=[]),
+        ):
+            code_graph.cmd_code_graph(args)
+
+        err = capsys.readouterr().err
+        assert "block_update" in err
+        assert "block_create" in err
+        assert "not-found" in err or "not found" in err
+
     def test_refresh_emits_skip_signal_when_index_skipped(self, tmp_path, capsys):
         from yadgar.core.cli import code_graph
 

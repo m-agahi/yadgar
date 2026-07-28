@@ -17,7 +17,7 @@ See `AGENTS.md` here for the placement rules.
 | `cache/` | core-side response caches with container-aware budgets |
 | `consolidation/` | core-side consolidation scheduler (compute runs in backend) |
 | `install/`, `update/`, `bootstrap/`, `hooks/` | install/bootstrap + Claude Code hook scripts |
-| `seed/`, `export/`, `repo_wiki/` | project seeding, DB export, repo-wiki generation |
+| `seed/`, `export/`, `code_graph/` | project seeding, DB export, multi-language code-structure digest (successor to the retired repo-wiki generator, ADR-0162) |
 | `backup/`, `vacuum/`, `_surreal_runner/`, `ops/` | host-ops: quiesced snapshots, SurrealKV vacuum, local surreal processes, service control |
 | `staleness/` | file-watch staleness detector (writes relocate to backend, Car E1) |
 | `auth_middleware/`, `sanitize/`, `sensitive_lock/`, `lifecycle/` | bearer auth, log sanitation, sensitive-op lock, process lifecycle |

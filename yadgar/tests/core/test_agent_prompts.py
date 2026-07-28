@@ -181,22 +181,23 @@ class TestWikiAddStorageScopeEnforcement:
             f"expected {project_dir!r}, got {page.get('directory_context')!r}"
         )
 
-    def test_wiki_add_repo_wiki_page_type_stays_project_scoped(self, storage):
-        """wiki_add with page_type='repo_wiki' keeps caller's directory_context (project storage_scope)."""
+    def test_wiki_add_unregistered_page_type_stays_project_scoped(self, storage):
+        """wiki_add with a page_type absent from POLICY_BY_TYPE (→ DEFAULT_POLICY)
+        keeps caller's directory_context (project storage_scope)."""
         import yadgar._shared.runtime.state as _st
         from yadgar._shared.wiki import WikiStore
         from yadgar._shared.wiki.contract import WikiAddOptions
 
         wiki = WikiStore(storage, _st._embeddings)
-        project_dir = "/tmp/repo-wiki-project"
+        project_dir = "/tmp/control-project"
         result = wiki.add(
-            title="Storage Scope Control Repo Wiki",
-            content="repo_wiki control — should stay project scoped.",
+            title="Storage Scope Control",
+            content="control page — should stay project scoped.",
             category="reference",
-            tags=["repo-wiki-control"],
+            tags=["storage-scope-control"],
             opts=WikiAddOptions(
                 directory_context=project_dir,
-                page_type="repo_wiki",
+                page_type="some_unregistered_type",
             ),
         )
         slug = result.get("slug")
@@ -206,6 +207,71 @@ class TestWikiAddStorageScopeEnforcement:
         assert page.get("directory_context") == project_dir, (
             f"expected {project_dir!r}, got {page.get('directory_context')!r}"
         )
+
+
+class TestGlobalScopeBranchCanonicalization:
+    """A global-scoped page must land in the canonical branch slot (branch IS NULL).
+
+    Regression for the agent-prompt wiki_read 404 drift: storage_scope='global'
+    pages inserted with a caller branch_hint (e.g. the SessionStart hook passing
+    branch_hint='master') were stamped global+branch='master'. §25 read resolution
+    reaches a global page ONLY via step 3 (directory='global' AND branch IS NONE),
+    so those rows 404'd through wiki_read while still resolving via the plain-slug
+    prelude path. WikiStore.add now forces branch=None alongside the
+    directory_context='global' override so global pages are always canonical.
+    """
+
+    def _add_agent_prompt_with_branch(self, storage, slug_suffix, branch):
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.wiki import WikiStore
+        from yadgar._shared.wiki.contract import WikiAddOptions
+
+        wiki = WikiStore(storage, _st._embeddings)
+        return wiki.add(
+            title=f"Branch Canonicalization Probe {slug_suffix}",
+            content="Probe content for global-scope branch canonicalization.",
+            category="reference",
+            tags=["agent-prompt", f"task:{slug_suffix}"],
+            opts=WikiAddOptions(
+                directory_context="global",
+                page_type="agent_prompt",
+                branch=branch,
+            ),
+        )
+
+    def test_global_page_inserted_with_branch_is_stored_canonical(self, storage):
+        """add(page_type='agent_prompt', branch='feature-x') stores branch=None."""
+        result = self._add_agent_prompt_with_branch(storage, "branch-canon-probe", "feature-x")
+        slug = result.get("slug")
+        assert slug is not None
+        page = storage.get_wiki_page_by_slug(slug)
+        assert page is not None
+        assert page.get("branch") is None, (
+            f"expected canonical branch=None, got {page.get('branch')!r} — "
+            "global-scope branch canonicalization did not fire"
+        )
+
+    def test_global_page_resolves_via_directory_branch_from_project_caller(self, storage):
+        """The user-visible bug: resolve a global agent_prompt page from a PROJECT dir.
+
+        caller_directory MUST be a project path (not 'global'), so resolution falls
+        through step 1/2 to step 3 (directory='global' AND branch IS NONE) — the only
+        step that discriminates a stranded branch='master' row (unresolvable) from a
+        canonical branch=None row (found). Reading with caller_dir='global' would
+        false-pass via step 1 and NOT encode the bug.
+        """
+        result = self._add_agent_prompt_with_branch(storage, "branch-resolve-probe", "master")
+        slug = result.get("slug")
+        assert slug is not None
+
+        page = storage.get_wiki_page_by_slug_directory_branch(
+            slug, "/home/some/project", "some-feature-branch"
+        )
+        assert page is not None, (
+            "global agent_prompt page must resolve via §25 step-3 (global + branch IS NONE) "
+            "from an arbitrary project caller; a stranded global+branch='master' row 404s here"
+        )
+        assert page.get("slug") == slug
 
 
 class TestReadAgentPrompt:

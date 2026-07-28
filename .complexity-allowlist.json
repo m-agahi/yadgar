@@ -262,17 +262,6 @@
  },
  {
   "path": "yadgar/_shared/wiki/store.py",
-  "function": "add",
-  "lineno": 667,
-  "metrics": {
-   "cyclomatic": 16
-  },
-  "rationale": "C2 (#83): storage_scope enforcement adds one if-branch (policy.storage_scope == 'global' → override effective_dir). Pre-existing cyclomatic was 15 (at the HARD cap). The branch is a single policy-lookup guard at the effective_dir normalisation seam — extracting it would require a new helper taking page_type + directory_context, which scatters a 2-line guard without reducing branching. Scheduled for the wave N WikiStore.add complexity split (#18).",
-  "added": "2026-07-22",
-  "added_by": "feat/repo-wiki-page-type-c2"
- },
- {
-  "path": "yadgar/_shared/wiki/store.py",
   "function": "<file>",
   "lineno": 1,
   "metrics": {

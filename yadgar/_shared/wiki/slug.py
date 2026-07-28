@@ -5,8 +5,8 @@ Car A of #83 (repo-wiki page-type).
 ``slugify`` is the single source of truth for converting a title string into
 a URL-safe wiki slug.  It was hoisted from ``WikiStore._slugify`` in
 ``yadgar/_shared/wiki/store.py``; the method now delegates here so all
-producers (WikiStore, repo_wiki generator, schema builders) produce identical
-slugs from the same input.
+producers (WikiStore, schema builders, and formerly the now-decommissioned
+repo_wiki generator, #33/ADR-0162) produce identical slugs from the same input.
 
 Behaviour (byte-for-byte identical to the old inline):
   1. HTML entities are decoded first (``html.unescape``), so ``&amp;`` → ``&``.

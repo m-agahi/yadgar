@@ -225,6 +225,83 @@ class TestStale:
         assert "stale @" not in out
 
 
+class TestURLLiteralLayerNoise:
+    """Bug: the digest's ``layers:`` (and ``entry-points:``) sections are built
+    from the raw ``get_architecture()`` ``layers`` list, which — on at least
+    one real repo — carried rows whose ``name`` was a URL-path fragment (e.g. a
+    hardcoded test-fixture email used as a route path segment) rather than a
+    real package/module/component name. ADR-0162 says "Route nodes =
+    URL-literal noise, ignore" for endpoints; this is the SAME noise class
+    leaking through a different aspect (``layers``), and it can carry PII
+    (emails) when the indexed repo's test fixtures embed them in route
+    strings. Neither the ``name`` nor the fragment must ever reach the
+    rendered digest.
+    """
+
+    def _arch_with_url_literal_layers(self) -> dict:
+        return {
+            "project": "svc",
+            "languages": [{"language": "Go", "file_count": 20}],
+            "hotspots": [],
+            "layers": [
+                # real layer/component names — must survive filtering.
+                {"name": "Handler", "layer": "api", "reason": "has HTTP route definitions"},
+                {"name": "Main", "layer": "entry", "reason": "application entry point"},
+                # URL-literal noise mirroring the real leak shape (fake
+                # placeholder, not the real coworker's email):
+                # e.g. from a route string like
+                # "/gr/v1/shard/email/test.user@example.com/9".
+                {
+                    "name": "test.user@example.com",
+                    "layer": "api",
+                    "reason": "has HTTP route definitions",
+                },
+                {
+                    "name": "9/shard/automaticlogin",
+                    "layer": "api",
+                    "reason": "has HTTP route definitions",
+                },
+                # same leak shape but landing in the entry layer instead —
+                # entry-points is a SECOND read of the same layers list.
+                {
+                    "name": "test.user@example.com",
+                    "layer": "entry",
+                    "reason": "application entry point",
+                },
+            ],
+            "routes": [],
+        }
+
+    def test_url_literal_layer_names_never_leak(self):
+        from yadgar.core.code_graph import digest
+
+        arch = self._arch_with_url_literal_layers()
+        out = digest.render_digest(arch, [], {"canonical_root": "/repo", "subdir": ""})
+
+        # neither leaked fragment appears anywhere in the rendered digest.
+        assert "example.com" not in out
+        assert "test.user@" not in out
+        assert "9/shard/automaticlogin" not in out
+
+        # real layer/component names are unaffected.
+        assert "Handler" in out
+        assert "Main" in out
+
+    def test_url_literal_entry_point_never_leaks(self):
+        """The URL-literal ``layer=='entry'`` row must not surface as an
+        entry-point either — entry-points is a second read of ``layers``.
+        """
+        from yadgar.core.code_graph import digest
+
+        arch = self._arch_with_url_literal_layers()
+        out = digest.render_digest(arch, [], {"canonical_root": "/repo", "subdir": ""})
+
+        i_entry = out.index("entry-points:")
+        entry_line = out[i_entry : out.index("\n", i_entry) if "\n" in out[i_entry:] else len(out)]
+        assert "example.com" not in entry_line
+        assert "Main" in entry_line
+
+
 class TestBlockPayload:
     def test_build_block_payload_shape(self):
         """The C→D seam: refresh emits a block payload dict, not a block write."""

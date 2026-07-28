@@ -8,9 +8,8 @@ Yadgar code-graph-refresh maintenance. This keeps the project's `code_graph`
 architecture digest (an always-injected memory BLOCK: layers, hotspots,
 entry-points, endpoints) in sync with the default-branch source. It is a DUMB
 PIPE — the host CLI `yadgar code-graph` does the indexing/rendering; YOU wire its
-output into the `block_*` write path. This is NOT the checkpoint, NOT the
-anchor-audit, and NOT the repo-wiki refresh; do NOT run capture or anchor steps
-here.
+output into the `block_*` write path. This is NOT the checkpoint and NOT the
+anchor-audit; do NOT run capture or anchor steps here.
 
 READ FOR REAL: every "run X" / "call X" below means DO it THIS turn and act on
 the OUTPUT IT RETURNS. Do not reconstruct state from an earlier turn.
