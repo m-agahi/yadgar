@@ -474,9 +474,17 @@ async def _build_health_payload() -> dict:
     """
     import httpx  # noqa: PLC0415
 
+    # mcp 2.0.0: the private ``_session_manager`` attr became the ``session_manager``
+    # property, which raises RuntimeError until ``streamable_http_app()`` has been
+    # called (lazy init). For stdio/sse transports — or any pre-serve probe — that
+    # means "no streamable sessions", so treat it as zero rather than 500-ing.
     session_count = 0
-    if mcp_server._session_manager is not None:
-        session_count = len(mcp_server._session_manager._server_instances)
+    try:
+        _session_manager = mcp_server.session_manager
+    except RuntimeError:
+        _session_manager = None
+    if _session_manager is not None:
+        session_count = len(_session_manager._server_instances)
 
     db_url = os.environ.get("YADGAR_DB_URL")
     embed_url = os.environ.get("YADGAR_EMBED_URL")

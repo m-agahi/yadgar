@@ -48,7 +48,7 @@ def main(
     db_path: str | None = None,
     transport: str = "streamable-http",
 ):
-    from yadgar.core.server._app import mcp_server
+    from yadgar.core.server._app import _transport_runtime, mcp_server
 
     _st._active_transport = transport
     _st._start_time = time.time()
@@ -125,16 +125,20 @@ def main(
     # v5.48.0: opt-in auto-check for updates on daemon start (default OFF)
     _maybe_auto_check_for_update()
 
+    # mcp 2.0.0: host/port/stateless_http moved off mcp_server.settings onto
+    # per-call transport kwargs. yadgar threads them through the module-level
+    # _transport_runtime holder that _app.py's middleware wrappers + uvicorn patch
+    # read at app-build / serve time (see yadgar.core.server._app).
     if port is not None:
-        mcp_server.settings.port = port
+        _transport_runtime["port"] = port
 
     if transport == "streamable-http":
         # Enable stateless mode: each POST /mcp is handled independently with no
         # session ID required. This makes daemon restarts transparent — Claude Code
         # reconnects and tool calls work immediately without a stale-session failure.
-        # Must be set on settings BEFORE streamable_http_app() is first called (lazy
-        # init reads this flag to construct the StreamableHTTPSessionManager).
-        mcp_server.settings.stateless_http = True
+        # Must be set BEFORE streamable_http_app() is first called — the CORS wrapper
+        # in _app.py reads _transport_runtime["stateless_http"] when it builds the app.
+        _transport_runtime["stateless_http"] = True
 
     try:
         mcp_server.run(transport=transport)

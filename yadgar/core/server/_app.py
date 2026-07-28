@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import os
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from yadgar._shared.config import get_settings, resolve_knob
 from yadgar._shared.observability.observe import observe
@@ -47,7 +48,11 @@ setup_tracing("yadgar-core")
 # YADGAR_PROFILE=full     →  all tools including power tier (default)
 _PROFILE = os.environ.get("YADGAR_PROFILE", "full")
 
-mcp_server = FastMCP(
+# mcp 2.0.0: FastMCP → MCPServer (moved from mcp.server.fastmcp to mcp.server).
+# The constructor no longer accepts transport knobs (host/port/stateless_http/… were
+# removed from the server Settings model and relocated to per-call kwargs of
+# run()/streamable_http_app()/sse_app()). See _transport_runtime below.
+mcp_server = MCPServer(
     name="yadgar",
     instructions=(
         "Yadgar holds two stores for this repo: (1) episodic + semantic memories"
@@ -63,9 +68,28 @@ mcp_server = FastMCP(
         " wiki_list and wiki_read are the primary read-first tools; wiki_query is"
         " the fallback for unknown-slug topic search."
     ),
-    host=settings.HOST,
-    port=settings.PORT,
 )
+
+# ── Transport runtime knobs (mcp 2.0.0 migration) ─────────────────────────────
+# mcp 2.0.0 removed host/port/stateless_http from the server Settings model and
+# made them per-call kwargs of run_*_async()/streamable_http_app(). yadgar's
+# middleware wrappers, the uvicorn-shutdown-timeout patch, and _startup.main()
+# read/write these here instead of the (now-absent) mcp_server.settings.{host,
+# port,stateless_http}. Mutated by _startup.main() before mcp_server.run().
+_transport_runtime: dict[str, object] = {
+    "host": settings.HOST,
+    "port": settings.PORT,
+    "stateless_http": False,
+}
+
+# mcp 2.0.0 auto-enables DNS-rebinding protection whenever host is a loopback
+# address and no transport_security is passed — that rejects any request whose
+# Host header isn't 127.0.0.1/localhost (HTTP 421), which breaks yadgar's
+# container deployment (Host = container addr) and the Starlette TestClient
+# (Host: testserver). yadgar guards the surface with BearerAuth + default-deny
+# CORS instead, matching mcp 1.x behaviour (protection was off there), so pass an
+# explicit off setting to preserve prior behaviour on both transports.
+_NO_DNS_REBIND = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
 
 # ── CORS: default-deny; configurable via YADGAR_ALLOWED_ORIGINS ───────────────
@@ -196,7 +220,15 @@ def _cors_wrapped_http_app(self):
     # counts all in-flight HTTP flows before graceful shutdown.
     # v5.7.8 Bug 4 residual: MCPTraceSpanMiddleware opens a span before
     # RequestLoggingMiddleware so trace_id is present in the log line.
-    inner = _orig_streamable_http_app(self)
+    # mcp 2.0.0: stateless_http + transport_security are call-time kwargs now
+    # (were mcp_server.settings.* in 1.x). stateless_http is set by _startup.main()
+    # for streamable-http transport; default False keeps test-time app builds
+    # session-based, exactly as before.
+    inner = _orig_streamable_http_app(
+        self,
+        stateless_http=bool(_transport_runtime["stateless_http"]),
+        transport_security=_NO_DNS_REBIND,
+    )
     # v5.6.4 Bug 2: instrument the inner MCP app so HTTP requests produce server spans.
     _instrument_starlette_app(inner)
     cors_app = CORSMiddleware(
@@ -221,7 +253,10 @@ def _auth_wrapped_sse_app(self, mount_path=None):
     from yadgar._shared.observability.log_config import RequestLoggingMiddleware
     from yadgar.core.auth_middleware import BearerAuthMiddleware
 
-    inner = _orig_sse_app(self, mount_path)
+    # mcp 2.0.0: sse_app() is keyword-only and dropped the positional mount_path
+    # arg. mount_path was always None in practice; pass explicit transport_security
+    # to keep DNS-rebinding protection off (see _NO_DNS_REBIND).
+    inner = _orig_sse_app(self, transport_security=_NO_DNS_REBIND)
     # v5.6.4 Bug 2: instrument the inner SSE app for server spans.
     _instrument_starlette_app(inner)
     logged_app = RequestLoggingMiddleware(inner)
@@ -296,8 +331,8 @@ def _patch_uvicorn_shutdown_timeout() -> None:
         starlette_app = self.sse_app(mount_path)
         config = _uvicorn.Config(
             starlette_app,
-            host=self.settings.host,
-            port=self.settings.port,
+            host=_transport_runtime["host"],
+            port=_transport_runtime["port"],
             log_level=self.settings.log_level.lower(),
             timeout_graceful_shutdown=_timeout,
             timeout_keep_alive=2,
@@ -318,8 +353,8 @@ def _patch_uvicorn_shutdown_timeout() -> None:
         starlette_app = self.streamable_http_app()
         config = _uvicorn.Config(
             starlette_app,
-            host=self.settings.host,
-            port=self.settings.port,
+            host=_transport_runtime["host"],
+            port=_transport_runtime["port"],
             log_level=self.settings.log_level.lower(),
             timeout_graceful_shutdown=_timeout,
             timeout_keep_alive=2,

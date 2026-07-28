@@ -406,7 +406,7 @@ def test_signals_mode_required_keys_still_present():
 def test_mcp_instructions_contains_read_first_contract():
     from yadgar.core.server._app import mcp_server
 
-    instructions = mcp_server._mcp_server.instructions or ""
+    instructions = mcp_server.instructions or ""
     # Must contain the key contract phrases
     assert "wiki" in instructions.lower()
     assert "wiki_list" in instructions
@@ -417,7 +417,7 @@ def test_mcp_instructions_contains_read_first_contract():
 def test_mcp_instructions_mentions_wiki_index():
     from yadgar.core.server._app import mcp_server
 
-    instructions = mcp_server._mcp_server.instructions or ""
+    instructions = mcp_server.instructions or ""
     # The read-first contract should mention wiki index / catalog concept
     assert "wiki_list" in instructions or "wiki index" in instructions.lower()
 
@@ -425,7 +425,7 @@ def test_mcp_instructions_mentions_wiki_index():
 def test_mcp_instructions_mentions_wiki_query_caveat():
     from yadgar.core.server._app import mcp_server
 
-    instructions = mcp_server._mcp_server.instructions or ""
+    instructions = mcp_server.instructions or ""
     # Should warn that wiki_query is for fuzzy search only (~0.34)
     assert "wiki_query" in instructions
     assert "0.34" in instructions or "fuzzy" in instructions.lower()

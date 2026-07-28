@@ -256,12 +256,12 @@ class TestSessionManagement:
     def test_streamable_http_app_has_session_manager(self):
         """Streamable HTTP transport creates a session manager."""
         server.mcp_server.streamable_http_app()
-        assert server.mcp_server._session_manager is not None
+        assert server.mcp_server.session_manager is not None
 
     def test_session_manager_tracks_instances(self):
         """Session manager has _server_instances dict for tracking."""
         server.mcp_server.streamable_http_app()
-        mgr = server.mcp_server._session_manager
+        mgr = server.mcp_server.session_manager
         assert hasattr(mgr, "_server_instances")
         assert isinstance(mgr._server_instances, dict)
 
@@ -272,7 +272,7 @@ class TestSessionManagement:
         server._start_time = 1000000.0
 
         # Inject a fake session to verify counting
-        mgr = server.mcp_server._session_manager
+        mgr = server.mcp_server.session_manager
         mgr._server_instances["fake-session-1"] = object()
         mgr._server_instances["fake-session-2"] = object()
 
