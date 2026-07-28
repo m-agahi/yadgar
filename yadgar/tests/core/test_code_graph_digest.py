@@ -402,3 +402,125 @@ class TestBlockPayload:
             _java_arch(), [], {"canonical_root": "/repo", "subdir": ""}
         )
         assert payload["directory"] == "/repo"
+
+
+# --- Secret-gate interaction (#30, ADR-0121 + ADR-0162) ---------------------
+#
+# The LIVE code_graph block write is Claude calling the generic ``block_update``
+# MCP tool, which runs the SAME ``gate_or_reject`` secret gate as ``wiki_add``.
+# The gate's broad AWS-secret heuristic matches an EXACTLY-40-char
+# ``[A-Za-z0-9/+]`` run when an ``aws/secret/access/key/token/credential``
+# keyword co-occurs — and a full git SHA (exactly 40 hex) or a coincidental
+# 40-char identifier/path segment in a benign digest trips it.
+#
+# The fix is Option B: the digest RENDERER breaks secret-shaped long runs so the
+# exactly-40 shape can never form. The gate itself is UNTOUCHED — no other caller
+# (memorize / wiki_add / other block writers) is weakened, and a genuine
+# high-precision secret planted in digest content is STILL rejected.
+
+
+def _arch_with_keyword(hotspot_qname: str) -> dict:
+    """Arch whose layer name carries an ``access/token/key`` keyword (arming the
+    keyword-gated AWS-40 rule) plus one hotspot whose qualified name is ``run``.
+    """
+    return {
+        "project": "svc",
+        "languages": [{"language": "Java", "file_count": 1}],
+        "layers": [{"name": "AccessTokenKeyService", "layer": "service", "reason": "auth"}],
+        "hotspots": [{"qualified_name": hotspot_qname, "fan_in": 7}],
+    }
+
+
+def _arch_with_hotspot(name: str) -> dict:
+    """Minimal arch with a single hotspot whose qualified name is ``name``.
+
+    Hotspot qualified names are NOT url-literal-filtered, so an arbitrary planted
+    string reaches the rendered digest verbatim.
+    """
+    return {
+        "project": "svc",
+        "languages": [{"language": "Java", "file_count": 1}],
+        "hotspots": [{"qualified_name": name, "fan_in": 3}],
+    }
+
+
+def _render_and_gate(arch: dict, identity: dict | None = None):
+    from yadgar._shared.security.secrets import gate_or_reject
+    from yadgar.core.code_graph import digest
+
+    out = digest.render_digest(arch, [], identity or {"canonical_root": "/r", "subdir": ""})
+    return gate_or_reject(out), out
+
+
+class TestSecretGateFalsePositive:
+    """RED before the fix, GREEN after: benign digest content that coincidentally
+    forms the broad AWS-40 shape must PASS the gate the live block write uses.
+    """
+
+    def test_forty_char_identifier_run_passes_gate(self):
+        # A bare 40-char identifier segment IS the AWS-40 shape (exactly 40
+        # [A-Za-z0-9/+] between the leading space and the following space).
+        res, _out = _render_and_gate(_arch_with_keyword("A" * 40))
+        assert res is None, f"benign 40-char run must not trip the gate: {res}"
+
+    def test_git_sha_stale_line_passes_gate(self):
+        # A real 40-hex git SHA in the stale line + an auth keyword elsewhere.
+        sha = "3f5c177a1b2c3d4e5f60718293a4b5c6d7e8f900"
+        assert len(sha) == 40
+        res, _out = _render_and_gate(
+            _arch_with_keyword("Svc.method"),
+            {"canonical_root": "/r", "subdir": "", "stale": True, "head_sha": sha},
+        )
+        assert res is None, f"git SHA in stale line must not trip the gate: {res}"
+
+    def test_defang_actually_breaks_long_runs(self):
+        # Structural proof the fix is active: no >=40 pure run survives rendering.
+        _res, out = _render_and_gate(_arch_with_keyword("A" * 48))
+        assert "A" * 40 not in out, "renderer must break >=40-char secret-shaped runs"
+
+    def test_aiza_length_39_run_untouched(self):
+        # AIza keys are exactly 39 chars — below the 40 threshold. A benign 39-run
+        # must be left byte-for-byte intact (regression guard on the threshold).
+        run39 = "B" * 39
+        _res, out = _render_and_gate(_arch_with_hotspot(run39))
+        assert run39 in out, "39-char run must be left intact (threshold is >=40)"
+
+
+class TestSecretGateAdversarialStillRejected:
+    """SECURITY-CRITICAL: the FP fix must NOT open a hole. A genuine high-precision
+    secret planted in digest content — including one whose pure body is >= the
+    defang threshold so the renderer actually transforms it — must STILL be
+    rejected. These assertions hold BOTH before and after the fix.
+    """
+
+    def test_planted_akia_still_rejected(self):
+        # Canonical AWS example key (20 chars, below threshold -> untouched).
+        res, _out = _render_and_gate(_arch_with_hotspot("AKIAIOSFODNN7EXAMPLE"))
+        assert res is not None and "AWS access key" in res["reason"], res
+
+    def test_planted_ghp_body_over_threshold_still_rejected(self):
+        # ghp_ body 44 chars (>= 40) -> renderer chunks it. The ghp_ rule (20-char
+        # min body) must still fire on the first chunk.
+        token = "ghp_" + "A" * 44
+        res, out = _render_and_gate(_arch_with_hotspot(token))
+        assert res is not None and "GitHub token" in res["reason"], res
+        assert out is not None  # rendered path exercised
+
+    def test_planted_stripe_live_body_over_threshold_still_rejected(self):
+        # sk_live_ body 40 chars (>= 40) -> chunked. sk_live_ needs a 24-char min
+        # body, so this pins the defang chunk floor at >= 24 (a floor of 20 would
+        # silently defang this secret).
+        token = "sk_live_" + "A" * 40
+        res, _out = _render_and_gate(_arch_with_hotspot(token))
+        assert res is not None and "Stripe secret key" in res["reason"], res
+
+    def test_planted_openai_body_over_threshold_still_rejected(self):
+        # sk- body 40 chars (>= 40) -> chunked. OpenAI rule needs 20-char min body.
+        token = "sk-" + "A" * 40
+        res, _out = _render_and_gate(_arch_with_hotspot(token))
+        assert res is not None and "OpenAI API key" in res["reason"], res
+
+    def test_planted_pem_still_rejected(self):
+        header = "-----BEGIN RSA " + "PRIVATE KEY-----"  # gitleaks:allow
+        res, _out = _render_and_gate(_arch_with_hotspot(header))
+        assert res is not None and "Private key" in res["reason"], res
