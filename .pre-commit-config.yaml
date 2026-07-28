@@ -227,6 +227,26 @@ repos:
 
   - repo: local
     hooks:
+      - id: verify-version-bump-local
+        name: Verify version bump vs latest tag (local mirror of CI)
+        language: system
+        entry: python scripts/check_version_bump.py
+        pass_filenames: false
+        stages: [pre-push]
+        # Mirrors .github/workflows/ci-pr.yml's verify-version-bump job: fails
+        # when pyproject.toml's version still matches the latest git tag AND
+        # the push touches yadgar/**. Runs first among the pre-push hooks —
+        # near-instant, so it fails fast before the ~7min `make e2e` run below
+        # instead of only surfacing after push as a CI failure on an open PR.
+        # No `files:` filter: the script itself decides via `git diff
+        # origin/master...HEAD`, which is the authoritative CI-parity
+        # comparison — a pre-commit-side files: filter would duplicate that
+        # decision with a different (push-local) diff and could disagree with
+        # it. Fail-open (exit 0 + stderr warning) when origin/master is
+        # unreachable locally; use `SKIP=verify-version-bump-local git push`
+        # for the rare deliberate no-bump push (no local equivalent of CI's
+        # 'no-release' PR label).
+
       - id: e2e-behavior-contract
         name: Behavior-contract e2e safety net (make e2e)
         language: system
