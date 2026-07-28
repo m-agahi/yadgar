@@ -50,10 +50,20 @@ def test_not_in_container_other_values(monkeypatch):
 # ── _resolve_python_shebang ──────────────────────────────────────────────────
 
 
-def test_resolve_python_shebang_contains_sys_executable():
+def test_resolve_python_shebang_contains_sys_executable(monkeypatch):
+    # _resolve_python_shebang -> _stable_python() only trusts sys.executable
+    # when it's a DURABLE path (not under .claude/worktrees/, /tmp, or any
+    # linked git worktree — see _interpreter.py::_is_durable_interpreter).
+    # Running this suite itself from inside an agent worktree makes the
+    # real sys.executable non-durable, which would make this test assert
+    # against whatever substitute path _stable_python() picks instead of
+    # testing the pass-through behavior it's meant to cover. Pin a fake
+    # durable path so the test is independent of where it happens to run.
+    fake_durable = "/opt/durable-test-python/bin/python3"
+    monkeypatch.setattr(sys, "executable", fake_durable)
     shebang = _resolve_python_shebang()
     assert shebang.startswith("#!")
-    assert sys.executable in shebang
+    assert fake_durable in shebang
     assert shebang.endswith("\n")
 
 
@@ -425,15 +435,21 @@ def test_copy_hook_copies_file(tmp_path):
     assert dst.stat().st_mode & 0o111  # executable
 
 
-def test_copy_hook_rewrites_shebang(tmp_path):
+def test_copy_hook_rewrites_shebang(tmp_path, monkeypatch):
     from yadgar.core.install.install_hooks_lib import _copy_hook
+
+    # Same durability concern as test_resolve_python_shebang_contains_sys_executable
+    # above — pin a fake durable sys.executable so this test doesn't depend on
+    # whether it's run from inside an agent worktree.
+    fake_durable = "/opt/durable-test-python/bin/python3"
+    monkeypatch.setattr(sys, "executable", fake_durable)
 
     src = tmp_path / "src.py"
     src.write_text("#!/usr/bin/env python3\nprint('hello')\n")
     dst = tmp_path / "dst.py"
     _copy_hook(src, dst, dry_run=False)
     first_line = dst.read_text().splitlines()[0]
-    assert first_line == f"#!{sys.executable}"
+    assert first_line == f"#!{fake_durable}"
 
 
 def test_copy_hook_nonpython_shebang_preserved(tmp_path):
