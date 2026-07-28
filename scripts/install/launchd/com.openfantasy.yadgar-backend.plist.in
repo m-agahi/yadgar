@@ -46,7 +46,7 @@
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>@YADGAR_RUNTIME@ network create yadgar-net 2&gt;/dev/null; @YADGAR_RUNTIME@ run --name yadgar-backend --rm --user root --network yadgar-net --env-file @YADGAR_SECRETS_ENV_FILE@ -p 127.0.0.1:8001:8001 -v @YADGAR_INSTALL_PREFIX@:/data --memory 4g --cpus 2 --stop-timeout 30 @YADGAR_BACKEND_IMAGE@</string>
+        <string>@YADGAR_RUNTIME@ network create yadgar-net 2&gt;/dev/null; @YADGAR_RUNTIME@ run --name yadgar-backend --rm --user root --network yadgar-net --env-file @YADGAR_SECRETS_ENV_FILE@ -p 127.0.0.1:8001:8001 -v @YADGAR_INSTALL_PREFIX@:/data -e YADGAR_QUEUE_BASE=/data --memory 4g --cpus 2 --stop-timeout 30 @YADGAR_BACKEND_IMAGE@</string>
     </array>
 </dict>
 </plist>

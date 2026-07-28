@@ -125,3 +125,34 @@ class TestV5_45GenerateSystemd:
         assert "yadgar.service" in content
         assert "yadgar-backend.service" in content
         assert "Wants" in content
+
+    def test_generate_systemd_backend_sets_queue_base(self, tmp_path):
+        """Regression (fix-systemd-generate-missing-queue-base-2026-07-28): the
+        rendered yadgar-backend.service must set YADGAR_QUEUE_BASE, and its value
+        must also appear as the `-v <host>:<value>` mount target in the SAME unit.
+
+        Prior to this fix, `yadgar-backend.service.in` set NO YADGAR_QUEUE_BASE at
+        all — `_queue_base_path()` (embed_service_lifecycle.py) has no fallback, so
+        the backend drainer silently never started and queued writes never
+        committed. The mount-target assertion also guards against a WRONG-value fix
+        (e.g. copy-pasting `/queue-data` from the unrelated systemd.py/daemon.py/
+        docker-compose.yml convention, which mounts a separate named volume, not the
+        shared `/data` bind mount these two `.in`/launchd surfaces use).
+        """
+        result = _run_generate_systemd(tmp_path)
+        assert result.returncode == 0, f"generate_systemd.sh failed\nstderr: {result.stderr}"
+        content = (tmp_path / "yadgar-backend.service").read_text()
+
+        assert "YADGAR_QUEUE_BASE=" in content, (
+            "yadgar-backend.service missing YADGAR_QUEUE_BASE — backend drainer "
+            "will be disabled (no fallback in _queue_base_path())."
+        )
+        assert "YADGAR_QUEUE_BASE=/data" in content, (
+            "YADGAR_QUEUE_BASE must be /data on this surface — the .in template "
+            "bind-mounts the same host dir into both core and backend at /data; "
+            "there is no /queue-data mount here."
+        )
+        assert "-v /home/testuser/.yadgar:/data" in content, (
+            "yadgar-backend.service missing the -v <DATA_DIR>:/data mount — "
+            "YADGAR_QUEUE_BASE=/data would point at an unmounted path."
+        )
