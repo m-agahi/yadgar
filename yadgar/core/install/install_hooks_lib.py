@@ -255,7 +255,6 @@ def install_hooks_impl(
             "PreToolUse (router-guard)",
             "Stop (memory checkpoint — global)",
             "SessionEnd (sentinel capture — global)",
-            "SubagentStop (findings capture — append-if-absent)",
             "InstructionsLoaded (recall on CLAUDE.md load — append-if-absent)",
             "SubagentStart (context injection at dispatch — append-if-absent)",
             "FileChanged (team_inbox + PLAN_*.md — append-if-absent)",

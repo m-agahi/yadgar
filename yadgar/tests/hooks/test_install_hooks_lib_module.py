@@ -20,6 +20,7 @@ from pathlib import Path
 from yadgar.core.install.install_hooks_lib import (
     _append_if_absent,
     _build_core_hooks,
+    _entry_command,
     _load_settings,
     _make_hook_entry,
     _resolve_python_shebang,
@@ -300,6 +301,104 @@ def test_build_core_hooks_blocking_hooks_have_no_async_key(tmp_path):
             assert "async" not in inner, (
                 f"{event} hook must be blocking (no async key); found async={inner['async']!r}"
             )
+
+
+# ── _build_core_hooks foreign-preservation (ADR-0161) ─────────────────────────
+#
+# ADR-0161 converts the 5 core events from replace-always to foreign-preserving:
+# a hook entry written by a DIFFERENT tool under one of these event keys (e.g.
+# nix's "caveman" SessionStart plugin hook, keyed on plugins/cache/caveman) must
+# SURVIVE a yadgar install. These tests seed a foreign entry per event and assert
+# it is still present alongside the fresh yadgar entries.
+
+_FOREIGN_CMD = "/home/u/.claude/plugins/cache/caveman/session-start.sh"
+
+
+def _foreign_entry(matcher: str = "") -> dict:
+    return {"matcher": matcher, "hooks": [{"type": "command", "command": _FOREIGN_CMD}]}
+
+
+def _has_foreign(entries: list) -> bool:
+    return any("caveman" in _entry_command(e) for e in entries)
+
+
+def _yadgar_marker_present(entries: list, marker: str) -> bool:
+    return any(marker in _entry_command(e) for e in entries)
+
+
+def test_build_core_hooks_preserves_foreign_precompact(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"PreCompact": [_foreign_entry()]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["PreCompact"]), "foreign PreCompact hook was clobbered"
+    assert _yadgar_marker_present(cfg["PreCompact"], "pre-compact-drain")
+
+
+def test_build_core_hooks_preserves_foreign_session_start(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"SessionStart": [_foreign_entry()]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["SessionStart"]), "foreign SessionStart (caveman) hook was clobbered"
+    assert _yadgar_marker_present(cfg["SessionStart"], "session-start-context")
+    assert _yadgar_marker_present(cfg["SessionStart"], "post-compact-rehydrate")
+
+
+def test_build_core_hooks_preserves_foreign_post_tool_use(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"PostToolUse": [_foreign_entry()]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["PostToolUse"]), "foreign PostToolUse hook was clobbered"
+    assert _yadgar_marker_present(cfg["PostToolUse"], "post-tool-capture")
+    assert _yadgar_marker_present(cfg["PostToolUse"], "block-reflect")
+
+
+def test_build_core_hooks_preserves_foreign_user_prompt_submit(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"UserPromptSubmit": [_foreign_entry()]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["UserPromptSubmit"]), "foreign UserPromptSubmit hook was clobbered"
+    assert _yadgar_marker_present(cfg["UserPromptSubmit"], "prompt-recall")
+
+
+def test_build_core_hooks_preserves_foreign_pre_tool_use(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"PreToolUse": [_foreign_entry(matcher="Bash")]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["PreToolUse"]), "foreign PreToolUse hook was clobbered"
+    # router marker = router_dst basename (db-lockdown.py in tests).
+    assert _yadgar_marker_present(cfg["PreToolUse"], "db-lockdown.py")
+
+
+def test_build_core_hooks_foreign_preserved_is_idempotent(tmp_path):
+    """Second install must not duplicate yadgar entries and must keep the foreign one.
+
+    Regression guard (green on both old and new code for the yadgar-entry counts,
+    but proves the strip-then-append marker round-trips with a foreign entry present).
+    """
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {
+        "PreCompact": [_foreign_entry()],
+        "SessionStart": [_foreign_entry()],
+        "PostToolUse": [_foreign_entry()],
+        "UserPromptSubmit": [_foreign_entry()],
+        "PreToolUse": [_foreign_entry(matcher="Bash")],
+    }
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    # 1 foreign + N yadgar per event; no yadgar duplication on the second run.
+    assert len(cfg["PreCompact"]) == 2
+    assert len(cfg["SessionStart"]) == 3
+    assert len(cfg["PostToolUse"]) == 3
+    assert len(cfg["UserPromptSubmit"]) == 2
+    assert len(cfg["PreToolUse"]) == 2
+    for event in ("PreCompact", "SessionStart", "PostToolUse", "UserPromptSubmit", "PreToolUse"):
+        assert _has_foreign(cfg[event]), f"foreign {event} hook lost after two installs"
 
 
 # ── _copy_hook (via tmp_path) ─────────────────────────────────────────────────
