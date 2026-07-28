@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.166.6"
+version = "5.167.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -39,7 +39,7 @@ dependencies = [
     "fastapi>=0.109.1",
     "sse-starlette>=1.6.0",
     "uvicorn>=0.24.0",
-    "mcp>=1.23.0",
+    "mcp>=2.0.0",
     "watchdog>=3.0.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.0.0",
