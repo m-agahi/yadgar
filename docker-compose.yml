@@ -36,7 +36,7 @@ volumes:
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.58.7}
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.58.8}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -73,7 +73,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: openfantasy/yadgar:${CORE_VERSION:-5.167.0}
+    image: openfantasy/yadgar:${CORE_VERSION:-5.167.1}
     build:
       context: .
       dockerfile: Dockerfile

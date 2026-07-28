@@ -295,3 +295,31 @@ class TestV5_45_1GenerateLaunchdScript:
         assert "/home/testuser/.yadgar" in content, (
             "YADGAR_INSTALL_PREFIX not substituted in core plist"
         )
+
+    def test_generate_launchd_backend_sets_queue_base(self, tmp_path):
+        """Regression (fix-systemd-generate-missing-queue-base-2026-07-28): the
+        rendered backend plist must set YADGAR_QUEUE_BASE, and its value must also
+        appear as the `-v <host>:<value>` mount target in the SAME ProgramArguments
+        string.
+
+        Prior to this fix, com.openfantasy.yadgar-backend.plist.in set NO
+        YADGAR_QUEUE_BASE at all — same root cause + same mount-coherence guard as
+        the systemd .in surface (see test_generate_systemd_backend_sets_queue_base).
+        """
+        result = _run_generate_launchd(tmp_path)
+        assert result.returncode == 0, f"generate_launchd.sh failed: {result.stderr}"
+        content = (tmp_path / "com.openfantasy.yadgar-backend.plist").read_text()
+
+        assert "YADGAR_QUEUE_BASE=" in content, (
+            "backend plist missing YADGAR_QUEUE_BASE — backend drainer will be "
+            "disabled (no fallback in _queue_base_path())."
+        )
+        assert "YADGAR_QUEUE_BASE=/data" in content, (
+            "YADGAR_QUEUE_BASE must be /data on this surface — the plist "
+            "bind-mounts the same host dir into both core and backend at /data; "
+            "there is no /queue-data mount here."
+        )
+        assert "-v /home/testuser/.yadgar:/data" in content, (
+            "backend plist missing the -v <YADGAR_INSTALL_PREFIX>:/data mount — "
+            "YADGAR_QUEUE_BASE=/data would point at an unmounted path."
+        )

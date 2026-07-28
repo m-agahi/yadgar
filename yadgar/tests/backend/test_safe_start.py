@@ -16,6 +16,8 @@ RCA: docs/plans/surrealkv-safe-stop-2026-07-10.md §4–6. Key invariants under 
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -272,3 +274,24 @@ class TestCli:
             ["recover", "--data-dir", str(tmp_path), "--startup-log", str(tmp_path / "nope.log")]
         )
         assert rc == 2
+
+    def test_module_invocation_help_exits_0(self):
+        """Regression (ADR-0084 packaging gap): ADR-0084 converted safe_start
+        from a flat module to a package (yadgar/backend/safe_start/{__init__,
+        safe_start}.py) but shipped no __main__.py — `python -m
+        yadgar.backend.safe_start` requires one and failed with `No module named
+        yadgar.backend.safe_start.__main__`. entrypoint-backend.sh invokes
+        `python3 -m yadgar.backend.safe_start preflight|recover`, so this silently
+        killed both the split-brain preflight guard and the auto-restore recover
+        path in the packaged image. This exercises the REAL `-m` invocation (not
+        safe_start.main() directly, which doesn't exercise __main__.py at all).
+        """
+        result = subprocess.run(
+            [sys.executable, "-m", "yadgar.backend.safe_start", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"python -m yadgar.backend.safe_start --help failed\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
