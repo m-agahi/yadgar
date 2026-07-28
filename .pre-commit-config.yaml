@@ -233,6 +233,11 @@ repos:
         entry: python scripts/check_version_bump.py
         pass_filenames: false
         stages: [pre-push]
+        # fail_fast: a failure here must abort the push immediately, before
+        # the ~7min e2e-behavior-contract hook below runs — without this,
+        # `pre-commit run --hook-stage pre-push` executes every hook
+        # regardless of earlier failures.
+        fail_fast: true
         # Mirrors .github/workflows/ci-pr.yml's verify-version-bump job: fails
         # when pyproject.toml's version still matches the latest git tag AND
         # the push touches yadgar/**. Runs first among the pre-push hooks —
