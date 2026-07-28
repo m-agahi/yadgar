@@ -20,6 +20,7 @@ from pathlib import Path
 from yadgar.core.install.install_hooks_lib import (
     _append_if_absent,
     _build_core_hooks,
+    _entry_command,
     _load_settings,
     _make_hook_entry,
     _resolve_python_shebang,
@@ -49,10 +50,20 @@ def test_not_in_container_other_values(monkeypatch):
 # ── _resolve_python_shebang ──────────────────────────────────────────────────
 
 
-def test_resolve_python_shebang_contains_sys_executable():
+def test_resolve_python_shebang_contains_sys_executable(monkeypatch):
+    # _resolve_python_shebang -> _stable_python() only trusts sys.executable
+    # when it's a DURABLE path (not under .claude/worktrees/, /tmp, or any
+    # linked git worktree — see _interpreter.py::_is_durable_interpreter).
+    # Running this suite itself from inside an agent worktree makes the
+    # real sys.executable non-durable, which would make this test assert
+    # against whatever substitute path _stable_python() picks instead of
+    # testing the pass-through behavior it's meant to cover. Pin a fake
+    # durable path so the test is independent of where it happens to run.
+    fake_durable = "/opt/durable-test-python/bin/python3"
+    monkeypatch.setattr(sys, "executable", fake_durable)
     shebang = _resolve_python_shebang()
     assert shebang.startswith("#!")
-    assert sys.executable in shebang
+    assert fake_durable in shebang
     assert shebang.endswith("\n")
 
 
@@ -302,6 +313,104 @@ def test_build_core_hooks_blocking_hooks_have_no_async_key(tmp_path):
             )
 
 
+# ── _build_core_hooks foreign-preservation (ADR-0161) ─────────────────────────
+#
+# ADR-0161 converts the 5 core events from replace-always to foreign-preserving:
+# a hook entry written by a DIFFERENT tool under one of these event keys (e.g.
+# nix's "caveman" SessionStart plugin hook, keyed on plugins/cache/caveman) must
+# SURVIVE a yadgar install. These tests seed a foreign entry per event and assert
+# it is still present alongside the fresh yadgar entries.
+
+_FOREIGN_CMD = "/home/u/.claude/plugins/cache/caveman/session-start.sh"
+
+
+def _foreign_entry(matcher: str = "") -> dict:
+    return {"matcher": matcher, "hooks": [{"type": "command", "command": _FOREIGN_CMD}]}
+
+
+def _has_foreign(entries: list) -> bool:
+    return any("caveman" in _entry_command(e) for e in entries)
+
+
+def _yadgar_marker_present(entries: list, marker: str) -> bool:
+    return any(marker in _entry_command(e) for e in entries)
+
+
+def test_build_core_hooks_preserves_foreign_precompact(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"PreCompact": [_foreign_entry()]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["PreCompact"]), "foreign PreCompact hook was clobbered"
+    assert _yadgar_marker_present(cfg["PreCompact"], "pre-compact-drain")
+
+
+def test_build_core_hooks_preserves_foreign_session_start(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"SessionStart": [_foreign_entry()]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["SessionStart"]), "foreign SessionStart (caveman) hook was clobbered"
+    assert _yadgar_marker_present(cfg["SessionStart"], "session-start-context")
+    assert _yadgar_marker_present(cfg["SessionStart"], "post-compact-rehydrate")
+
+
+def test_build_core_hooks_preserves_foreign_post_tool_use(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"PostToolUse": [_foreign_entry()]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["PostToolUse"]), "foreign PostToolUse hook was clobbered"
+    assert _yadgar_marker_present(cfg["PostToolUse"], "post-tool-capture")
+    assert _yadgar_marker_present(cfg["PostToolUse"], "block-reflect")
+
+
+def test_build_core_hooks_preserves_foreign_user_prompt_submit(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"UserPromptSubmit": [_foreign_entry()]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["UserPromptSubmit"]), "foreign UserPromptSubmit hook was clobbered"
+    assert _yadgar_marker_present(cfg["UserPromptSubmit"], "prompt-recall")
+
+
+def test_build_core_hooks_preserves_foreign_pre_tool_use(tmp_path):
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {"PreToolUse": [_foreign_entry(matcher="Bash")]}
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    assert _has_foreign(cfg["PreToolUse"]), "foreign PreToolUse hook was clobbered"
+    # router marker = router_dst basename (db-lockdown.py in tests).
+    assert _yadgar_marker_present(cfg["PreToolUse"], "db-lockdown.py")
+
+
+def test_build_core_hooks_foreign_preserved_is_idempotent(tmp_path):
+    """Second install must not duplicate yadgar entries and must keep the foreign one.
+
+    Regression guard (green on both old and new code for the yadgar-entry counts,
+    but proves the strip-then-append marker round-trips with a foreign entry present).
+    """
+    runner = str(tmp_path / "hook_runner.py")
+    db_lockdown_dst = tmp_path / "db-lockdown.py"
+    cfg: dict = {
+        "PreCompact": [_foreign_entry()],
+        "SessionStart": [_foreign_entry()],
+        "PostToolUse": [_foreign_entry()],
+        "UserPromptSubmit": [_foreign_entry()],
+        "PreToolUse": [_foreign_entry(matcher="Bash")],
+    }
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    # 1 foreign + N yadgar per event; no yadgar duplication on the second run.
+    assert len(cfg["PreCompact"]) == 2
+    assert len(cfg["SessionStart"]) == 3
+    assert len(cfg["PostToolUse"]) == 3
+    assert len(cfg["UserPromptSubmit"]) == 2
+    assert len(cfg["PreToolUse"]) == 2
+    for event in ("PreCompact", "SessionStart", "PostToolUse", "UserPromptSubmit", "PreToolUse"):
+        assert _has_foreign(cfg[event]), f"foreign {event} hook lost after two installs"
+
+
 # ── _copy_hook (via tmp_path) ─────────────────────────────────────────────────
 
 
@@ -326,15 +435,21 @@ def test_copy_hook_copies_file(tmp_path):
     assert dst.stat().st_mode & 0o111  # executable
 
 
-def test_copy_hook_rewrites_shebang(tmp_path):
+def test_copy_hook_rewrites_shebang(tmp_path, monkeypatch):
     from yadgar.core.install.install_hooks_lib import _copy_hook
+
+    # Same durability concern as test_resolve_python_shebang_contains_sys_executable
+    # above — pin a fake durable sys.executable so this test doesn't depend on
+    # whether it's run from inside an agent worktree.
+    fake_durable = "/opt/durable-test-python/bin/python3"
+    monkeypatch.setattr(sys, "executable", fake_durable)
 
     src = tmp_path / "src.py"
     src.write_text("#!/usr/bin/env python3\nprint('hello')\n")
     dst = tmp_path / "dst.py"
     _copy_hook(src, dst, dry_run=False)
     first_line = dst.read_text().splitlines()[0]
-    assert first_line == f"#!{sys.executable}"
+    assert first_line == f"#!{fake_durable}"
 
 
 def test_copy_hook_nonpython_shebang_preserved(tmp_path):
@@ -446,6 +561,72 @@ def test_sweep_stale_hook_scripts_dry_run_noop(tmp_path):
     orphan.write_text("# stale\n")
     _sweep_stale_hook_scripts(package_hooks, hooks_dir, dry_run=True)
     assert orphan.exists()
+
+
+# ── install_hooks_impl dry_run must not leak real settings.json content ───────
+#
+# 2026-07-28 bug: install_hooks_impl(dry_run=True) unconditionally loaded the
+# REAL on-disk settings.json (_load_settings(settings_path)) and returned/printed
+# it verbatim as the "preview" — directly contradicting cli/install.py's own
+# documented --print contract ("rendered from an empty base, not merged into
+# any existing file... deterministic... no secrets in stdout"). A live run
+# leaked a real YADGAR_MCP_AUTH_TOKEN + CODEBERG_TOKEN that another tool (nix)
+# had injected into the top-level "env" block of the real settings.json.
+
+
+def test_install_hooks_impl_dry_run_does_not_leak_existing_settings(tmp_path, capsys):
+    import yadgar.core.install.install_hooks_lib as ihl
+
+    home = tmp_path / "home"
+    home.mkdir()
+    claude_dir = home / ".claude"
+    claude_dir.mkdir()
+    real_secret = "sk-live-totally-real-secret-do-not-leak-1234567890"
+    (claude_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "env": {"YADGAR_MCP_AUTH_TOKEN": real_secret},
+                "voice": {"enabled": True},
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                {"type": "command", "command": "/plugins/cache/caveman/hook.sh"}
+                            ],
+                        }
+                    ]
+                },
+            }
+        )
+    )
+
+    result = ihl.install_hooks_impl(home, "global", None, dry_run=True)
+
+    printed = capsys.readouterr().out
+    assert real_secret not in printed, (
+        "dry_run printed a real secret from the on-disk settings.json"
+    )
+    assert real_secret not in json.dumps(result), "dry_run returned a real secret in its preview"
+    # The documented contract: rendered from an EMPTY base, so unrelated
+    # pre-existing top-level keys (voice, etc.) must not survive into preview.
+    assert "voice" not in result.get("preview", {})
+
+
+def test_install_hooks_impl_dry_run_does_not_write_settings_file(tmp_path):
+    import yadgar.core.install.install_hooks_lib as ihl
+
+    home = tmp_path / "home"
+    home.mkdir()
+    claude_dir = home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    original = json.dumps({"env": {"SOMETHING": "untouched"}})
+    settings_path.write_text(original)
+
+    ihl.install_hooks_impl(home, "global", None, dry_run=True)
+
+    assert settings_path.read_text() == original, "dry_run must never write the settings file"
 
 
 # ── import-surface characterization (Car C5 module split) ─────────────────────

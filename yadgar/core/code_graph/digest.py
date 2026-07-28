@@ -23,16 +23,29 @@ has also been observed leaking through ``layers`` rows (a route-path fragment,
 sometimes containing PII such as an email, standing in for a real
 package/component name) — ``_filter_layer_noise``/``_looks_like_url_literal``
 guard that path before ``_layers_section``/``_entry_points_section`` render it.
+A SECOND, distinct noise class (task #58) — Python builtins and generic short
+route-path fragments mislabelled as layers — is caught by
+``_looks_like_builtin_layer``/``_looks_like_generic_route_fragment``; all three
+heuristics are unioned in ``_is_layer_noise``, the single choke point
+``_filter_layer_noise`` consults.
 
 Secret-gate note (#30): the LIVE block write (Car D / Claude → ``block_update``)
 passes ``gate_or_reject`` — the SAME secret gate as ``wiki_add``.  This digest is
 a SUMMARY (layer / hotspot / endpoint NAMES), never raw code or long
 base64/token-like strings, so path/identifier false-positive risk is reduced.
-No gate code lives here (Car C is the renderer only).
+The one residual risk is a benign EXACTLY-40-char ``[A-Za-z0-9/+]`` run (a full
+git SHA, or a coincidental 40-char identifier/path segment) tripping the gate's
+keyword-gated AWS-40 heuristic — ``_defang_secret_shaped_runs`` breaks such runs
+here so that shape can never form.  That is FP-PREVENTION, not a gate: the gate
+itself is UNCHANGED and remains the authoritative last line of defence (Car C is
+the renderer only).
 """
 
 from __future__ import annotations
 
+import builtins
+import keyword
+import re
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +71,71 @@ _ELLIPSIS = "\n…"
 _URL_LITERAL_TLD_SUFFIXES = frozenset(
     {"com", "org", "net", "io", "co", "dev", "app", "gov", "edu", "info", "biz"}
 )
+
+#: Python builtins + keywords that the indexer misclassifies as ``core:`` "high
+#: fan-in" layers (task #58). ``len``/``dict``/``str``/``range``/``list``/… are
+#: never real modules/packages in ANY indexed repo — the indexer counts every
+#: reference to the builtin *name* as fan-in and mislabels it a layer. Built from
+#: ``dir(builtins)`` + keywords (NOT a hardcoded five-name list) so ``int``,
+#: ``set``, ``tuple``, ``type``, ``object``, … surfacing in a different repo are
+#: covered too. Consulted only by ``_looks_like_builtin_layer`` (layer names).
+_BUILTIN_LAYER_NAMES = frozenset(dir(builtins)) | frozenset(keyword.kwlist)
+
+#: Substring (case-insensitive) marking a layer's ``reason`` as route-derived —
+#: the noise vector for ``_looks_like_generic_route_fragment``.
+_ROUTE_LAYER_REASON_MARKER = "http route"
+
+#: Max length of a bare route-fragment layer name (``db``=2, ``test``=4,
+#: ``jsonl``=5). A route-derived layer whose name is a plain lowercase token this
+#: short is a URL-path SEGMENT the indexer mislabelled, not a real controller /
+#: package (those are CamelCase, dotted, pathed, or underscored —
+#: ``UserController``, ``api.v1``, ``internal/http`` — all spared).
+_GENERIC_ROUTE_NAME_MAXLEN = 5
+
+#: Secret-gate false-positive guard (#30, ADR-0121 + ADR-0162).
+#:
+#: The LIVE code_graph block write (Claude → ``block_update``) runs the SAME
+#: ``gate_or_reject`` secret gate as ``wiki_add``. That gate's BROAD AWS-secret
+#: heuristic — ``(?<![A-Za-z0-9/+])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+])`` — matches
+#: an EXACTLY-40-char run when a keyword (``aws``/``secret``/``access``/``key``/
+#: ``token``/``credential``) co-occurs. A benign digest routinely carries such a
+#: keyword (any auth/token/key component name), and a full git SHA (exactly 40
+#: hex) or a coincidental 40-char identifier/path segment then trips the gate and
+#: the block write is REJECTED.
+#:
+#: Fix = Option B (renderer-side, gate UNCHANGED): break every ``[A-Za-z0-9/+]``
+#: run of length >= _SECRET_RUN_MIN into <= _SECRET_RUN_CHUNK-char pieces so the
+#: exactly-40 shape can never form. The gate stays the last line of defence:
+#: because we INSERT a break (never drop chars) and the first piece is always
+#: _SECRET_RUN_CHUNK long, every self-anchored high-precision rule still fires on
+#: it — the longest such body minimum is Stripe ``sk_live_`` at 24 chars, so the
+#: chunk size MUST sit in [24, 39]. The threshold is >= 40 so a Google ``AIza``
+#: key (exactly 39 chars) is left byte-for-byte intact. Nothing here weakens the
+#: gate for any other caller (memorize / wiki_add / other block writers).
+_SECRET_RUN_MIN = 40
+_SECRET_RUN_CHUNK = 30
+_SECRET_SHAPED_RUN_RE = re.compile(rf"[A-Za-z0-9/+]{{{_SECRET_RUN_MIN},}}")
+
+
+@observe(tier="stage")
+def _defang_secret_shaped_runs(text: str) -> str:
+    """Break long ``[A-Za-z0-9/+]`` runs so no exactly-40 AWS-secret shape forms.
+
+    Each maximal run of length >= ``_SECRET_RUN_MIN`` is split into
+    ``_SECRET_RUN_CHUNK``-char pieces joined by a single space. Chars are never
+    dropped, so a genuine high-precision secret planted in digest content is
+    still fully detectable by the downstream ``gate_or_reject`` block-write gate
+    (its self-anchored rules match the first, >= 24-char piece). Deterministic
+    (pure function of ``text``) — golden digests stay stable.
+    """
+
+    def _chunk(match: re.Match[str]) -> str:
+        run = match.group(0)
+        return " ".join(
+            run[i : i + _SECRET_RUN_CHUNK] for i in range(0, len(run), _SECRET_RUN_CHUNK)
+        )
+
+    return _SECRET_SHAPED_RUN_RE.sub(_chunk, text)
 
 
 @observe(tier="stage")
@@ -126,15 +204,70 @@ def _looks_like_url_literal(name: str) -> bool:
 
 
 @observe(tier="stage")
+def _looks_like_builtin_layer(name: str) -> bool:
+    """True when ``name`` is a Python builtin/keyword misclassified as a layer.
+
+    Task #58: builtins (``len``, ``dict``, ``str``, ``range``, ``list``, ``int``,
+    ``type``, ``object`` …) surface as ``core:`` layers with a ``high fan-in``
+    reason. They are never real modules — see ``_BUILTIN_LAYER_NAMES``. Shape
+    rules (``_looks_like_url_literal``) can't catch them (no ``@``/``/``/digit/
+    TLD), so this is a DIFFERENT, membership-based heuristic added alongside.
+    """
+    return name in _BUILTIN_LAYER_NAMES
+
+
+@observe(tier="stage")
+def _looks_like_generic_route_fragment(name: str, reason: str) -> bool:
+    """True when a route-derived layer name is a bare short URL-path segment.
+
+    Task #58: ``db``/``jsonl``/``test`` surface as ``api:`` layers with a
+    ``has HTTP route definitions`` reason — the same route-noise class as the
+    URL-literal leak, but a fragment too short/plain to trip
+    ``_looks_like_url_literal``'s shape rules. Gated on the route reason (NOT
+    name-shape alone) so a short lowercase name that is NOT route-derived (e.g. a
+    ``core`` package) is spared; credible route layers (CamelCase / dotted /
+    pathed / underscored, or longer than ``_GENERIC_ROUTE_NAME_MAXLEN``) survive
+    because ``str.isalnum`` excludes separators. Tradeoff: a hypothetical REAL
+    controller literally named e.g. ``auth`` with a route reason is also dropped
+    — acceptable for a lossy summary, and the gate never touches fan-in /
+    package-boundary layers.
+    """
+    if _ROUTE_LAYER_REASON_MARKER not in reason.lower():
+        return False
+    if not name or len(name) > _GENERIC_ROUTE_NAME_MAXLEN:
+        return False
+    return name.isascii() and name.isalnum() and name.islower()
+
+
+@observe(tier="stage")
+def _is_layer_noise(row: dict[str, Any]) -> bool:
+    """True when a ``layers`` row is any known noise class (task #58 + URL leak).
+
+    Union of three heuristics — URL-literal shape, Python-builtin membership,
+    and generic route-fragment (reason-gated). Real layer/component names match
+    none and survive.
+    """
+    name = str(row.get("name", ""))
+    reason = str(row.get("reason", ""))
+    return (
+        _looks_like_url_literal(name)
+        or _looks_like_builtin_layer(name)
+        or _looks_like_generic_route_fragment(name, reason)
+    )
+
+
+@observe(tier="stage")
 def _filter_layer_noise(architecture: dict[str, Any]) -> dict[str, Any]:
-    """Return ``architecture`` with URL-literal-looking ``layers`` rows dropped.
+    """Return ``architecture`` with noise ``layers`` rows dropped.
 
     Single choke point: both ``_layers_section`` and ``_entry_points_section``
     read ``architecture["layers"]``, so filtering once here (rather than
     duplicating the check in each section) closes both leak paths in one place.
+    Noise = URL-literal fragments OR Python builtins OR generic route fragments
+    (see ``_is_layer_noise``).
     """
     layers = architecture.get("layers") or []
-    clean = [row for row in layers if not _looks_like_url_literal(str(row.get("name", "")))]
+    clean = [row for row in layers if not _is_layer_noise(row)]
     if len(clean) == len(layers):
         return architecture
     filtered = dict(architecture)
@@ -271,7 +404,12 @@ def _stale_line(identity: dict[str, Any]) -> list[str]:
     authority).
     """
     if identity.get("stale") and identity.get("head_sha"):
-        return [f"stale @ {identity.get('head_sha')}"]
+        # Short SHA (12 chars): human-readable AND < 40 chars, so a full 40-hex
+        # SHA never forms the gate's exactly-40 AWS-secret shape (#30). The
+        # renderer-wide _defang_secret_shaped_runs pass is the general net; this
+        # keeps the stale line clean rather than splitting a hash mid-string.
+        short_sha = str(identity.get("head_sha"))[:12]
+        return [f"stale @ {short_sha}"]
     return []
 
 
@@ -309,9 +447,10 @@ def render_digest(
     """
     limit = config.DIGEST_CHAR_BUDGET if budget is None else budget
 
-    # URL-literal noise guard: drop leaked route-path fragments (can carry PII)
-    # from `layers` BEFORE either reader (_layers_section, _entry_points_section)
-    # sees them — single choke point, see _filter_layer_noise.
+    # Layer-noise guard: drop leaked route-path fragments (can carry PII),
+    # builtins, and generic route fragments (task #58) BEFORE either reader
+    # (_layers_section, _entry_points_section) sees them — single choke point,
+    # see _filter_layer_noise / _is_layer_noise.
     architecture = _filter_layer_noise(architecture)
 
     sections: list[list[str]] = [
@@ -328,6 +467,11 @@ def render_digest(
         lines.extend(section)
 
     text = "\n".join(line for line in lines if line)
+    # Secret-gate FP guard (#30): break long [A-Za-z0-9/+] runs (git SHAs, 40-char
+    # identifier/path segments) so the digest can never coincidentally form the
+    # gate's exactly-40 AWS-secret shape. Applied BEFORE truncation so the budget
+    # ceiling still holds. See _defang_secret_shaped_runs — the gate is unchanged.
+    text = _defang_secret_shaped_runs(text)
     return _truncate(text, limit)
 
 

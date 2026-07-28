@@ -16,7 +16,14 @@ from pathlib import Path
 from yadgar.core.install.install_hooks_lib import _copy_hook
 
 
-def test_copy_hook_rewrites_env_python3_shebang(tmp_path: Path) -> None:
+def test_copy_hook_rewrites_env_python3_shebang(tmp_path: Path, monkeypatch) -> None:
+    # _copy_hook -> _stable_python() only trusts sys.executable when it's a
+    # DURABLE path (not under .claude/worktrees/, /tmp, or a linked git
+    # worktree). Running this suite from inside an agent worktree makes the
+    # real sys.executable non-durable, so pin a fake durable one.
+    fake_durable = "/opt/durable-test-python/bin/python3"
+    monkeypatch.setattr(sys, "executable", fake_durable)
+
     src = tmp_path / "hook.py"
     src.write_text("#!/usr/bin/env python3\nimport yadgar.paths\n")
     dst = tmp_path / "out.py"
@@ -25,21 +32,24 @@ def test_copy_hook_rewrites_env_python3_shebang(tmp_path: Path) -> None:
 
     assert dst.exists()
     first_line = dst.read_text().splitlines()[0]
-    assert first_line == f"#!{sys.executable}", (
+    assert first_line == f"#!{fake_durable}", (
         f"shebang not rewritten to sys.executable: got {first_line!r}"
     )
     # File should be executable
     assert dst.stat().st_mode & stat.S_IXUSR
 
 
-def test_copy_hook_rewrites_env_python_shebang_no_3(tmp_path: Path) -> None:
+def test_copy_hook_rewrites_env_python_shebang_no_3(tmp_path: Path, monkeypatch) -> None:
+    fake_durable = "/opt/durable-test-python/bin/python3"
+    monkeypatch.setattr(sys, "executable", fake_durable)
+
     src = tmp_path / "hook.py"
     src.write_text("#!/usr/bin/env python\nprint('hi')\n")
     dst = tmp_path / "out.py"
 
     _copy_hook(src, dst, dry_run=False)
 
-    assert dst.read_text().splitlines()[0] == f"#!{sys.executable}"
+    assert dst.read_text().splitlines()[0] == f"#!{fake_durable}"
 
 
 def test_copy_hook_preserves_non_env_python_shebang(tmp_path: Path) -> None:
@@ -64,8 +74,11 @@ def test_copy_hook_preserves_non_python_shebang(tmp_path: Path) -> None:
     assert dst.read_text().splitlines()[0] == "#!/usr/bin/env bash"
 
 
-def test_copy_hook_preserves_body_content(tmp_path: Path) -> None:
+def test_copy_hook_preserves_body_content(tmp_path: Path, monkeypatch) -> None:
     """Only the first line changes; rest of file is byte-for-byte identical."""
+    fake_durable = "/opt/durable-test-python/bin/python3"
+    monkeypatch.setattr(sys, "executable", fake_durable)
+
     src = tmp_path / "hook.py"
     body = "import yadgar.paths\n\nprint('body 🦣 line')\nprint('utf-8 ok')\n"
     src.write_text("#!/usr/bin/env python3\n" + body)
@@ -73,7 +86,7 @@ def test_copy_hook_preserves_body_content(tmp_path: Path) -> None:
 
     _copy_hook(src, dst, dry_run=False)
 
-    assert dst.read_text() == f"#!{sys.executable}\n{body}"
+    assert dst.read_text() == f"#!{fake_durable}\n{body}"
 
 
 def test_copy_hook_dry_run_writes_nothing(tmp_path: Path) -> None:

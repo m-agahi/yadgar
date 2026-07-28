@@ -117,6 +117,36 @@ def _append_if_absent(
 
 
 @observe(tier="stage")
+def _replace_managed_entries(
+    hooks_config: dict,
+    event: str,
+    managed_basename: str,
+    entries: list[dict],
+) -> None:
+    """Foreign-preserving replace of yadgar's own entries under *event*.
+
+    ADR-0161: the core hook events used to be hard-replaced
+    (``hooks_config[event] = [...]``), which silently discarded ANY pre-existing
+    entry — including a foreign hook another tool wrote under the same key (e.g.
+    nix's ``plugins/cache/caveman`` SessionStart hook). This strips ONLY the
+    yadgar-managed entries (identity = *managed_basename* substring in the
+    command, mirroring ``_append_if_absent``'s script-basename identity — drift
+    resilient across interpreter changes) and appends the fresh *entries*,
+    leaving every foreign entry in place.
+
+    Handles MULTIPLE yadgar entries under one key (e.g. SessionStart's
+    context + rehydrate pair): every stale yadgar entry shares the same managed
+    basename, so one strip predicate collapses them and the full fresh list is
+    re-appended. Idempotent: a second install strips the entries this one added
+    (same basename) and re-appends them — no duplication, foreign survives.
+    """
+    existing = hooks_config.get(event, [])
+    existing = [entry for entry in existing if managed_basename not in _entry_command(entry)]
+    existing.extend(entries)
+    hooks_config[event] = existing
+
+
+@observe(tier="stage")
 def _install_global_scripts(
     package_hooks: Path,
     global_hooks_dir: Path,
@@ -168,7 +198,17 @@ def _build_core_hooks(
     router_dst: Path,
     python: str | None = None,
 ) -> None:
-    """Populate the four core (replace-always) hook event entries."""
+    """Register the five core hook events, foreign-preserving (ADR-0161).
+
+    The five events (PreCompact, SessionStart, PostToolUse, UserPromptSubmit,
+    PreToolUse) used to be hard-replaced (``hooks_config[event] = [...]``), which
+    discarded any foreign entry a different tool had written under the same key.
+    This now strips ONLY yadgar's own entries per event (via
+    ``_replace_managed_entries``, keyed on the managed script basename) and
+    appends the fresh yadgar entries, so foreign hooks (e.g. nix's
+    ``plugins/cache/caveman`` SessionStart hook) survive. Idempotent across
+    reinstalls.
+    """
 
     # Pin the python interpreter to a DURABLE path — settings.json carries
     # literal command strings, so `python3` would resolve on Claude Code's
@@ -182,24 +222,58 @@ def _build_core_hooks(
         cmd = f"{_python} {shlex.quote(runner)} {hook_type}"
         return _make_hook_entry(cmd, matcher, env_block, async_=async_)
 
-    hooks_config["PreCompact"] = [_runner_entry("pre-compact-drain", async_=True)]
-    hooks_config["SessionStart"] = [
-        _runner_entry("session-start-context"),
-        _runner_entry("post-compact-rehydrate", matcher="compact"),
-    ]
+    # yadgar-managed identity for the 4 runner-dispatched events is the runner
+    # script basename (e.g. hook_runner.py) — present in every runner command,
+    # so one strip predicate collapses all yadgar entries under a key (including
+    # SessionStart / PostToolUse's two-entry pairs) while foreign entries, which
+    # never contain it, are preserved.
+    _runner_basename = Path(runner).name
+
+    _replace_managed_entries(
+        hooks_config,
+        "PreCompact",
+        _runner_basename,
+        [_runner_entry("pre-compact-drain", async_=True)],
+    )
+    _replace_managed_entries(
+        hooks_config,
+        "SessionStart",
+        _runner_basename,
+        [
+            _runner_entry("session-start-context"),
+            _runner_entry("post-compact-rehydrate", matcher="compact"),
+        ],
+    )
     # PostToolUse: two entries — (1) generic capture, (2) block-reflect on block_* writes.
     # block-reflect matcher: any of the five block write tools (v5.35.1).
     _block_reflect_matcher = "mcp__yadgar__block_(create|update|delete|replace|append)"
-    hooks_config["PostToolUse"] = [
-        _runner_entry("post-tool-capture"),
-        _runner_entry("block-reflect", matcher=_block_reflect_matcher),
-    ]
-    hooks_config["UserPromptSubmit"] = [_runner_entry("prompt-recall")]
+    _replace_managed_entries(
+        hooks_config,
+        "PostToolUse",
+        _runner_basename,
+        [
+            _runner_entry("post-tool-capture"),
+            _runner_entry("block-reflect", matcher=_block_reflect_matcher),
+        ],
+    )
+    _replace_managed_entries(
+        hooks_config,
+        "UserPromptSubmit",
+        _runner_basename,
+        [_runner_entry("prompt-recall")],
+    )
 
     # HOOKS train Car 1: direct-command entry (router-guard) so hookEventName is
     # always emitted. Matcher stays "Bash" — all four guards are Bash-string guards.
+    # yadgar-managed identity here is the router script basename (NOT the runner),
+    # since PreToolUse dispatches the standalone router, not hook_runner.py.
     router_cmd = f"{_python} {shlex.quote(str(router_dst))}"
-    hooks_config["PreToolUse"] = [_make_hook_entry(router_cmd, "Bash", env_block)]
+    _replace_managed_entries(
+        hooks_config,
+        "PreToolUse",
+        router_dst.name,
+        [_make_hook_entry(router_cmd, "Bash", env_block)],
+    )
 
 
 @observe(tier="stage")

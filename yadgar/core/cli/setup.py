@@ -2,6 +2,10 @@
 
 import yadgar._shared.paths as _paths
 
+#: Line prefix used to locate the bearer token inside an existing secrets.env
+#: (v5.49.3 format — see ``_render_secrets_env``).
+_MCP_TOKEN_ENV_LINE_PREFIX = "YADGAR_MCP_AUTH_TOKEN="
+
 
 def _render_secrets_env(token: str, db_pass: str, rw_pass: str, ro_pass: str) -> str:
     """Return the secrets.env file content as a string.
@@ -171,6 +175,79 @@ def _maybe_install_code_graph(args) -> None:
         _persist_code_graph_enable()
 
 
+def _existing_secrets_token(secrets_path) -> str:
+    """Best-effort parse of ``YADGAR_MCP_AUTH_TOKEN=`` from an existing secrets.env.
+
+    Returns ``""`` if the file is missing, unreadable, or predates the token
+    line (legacy secrets.env) — never raises. Setup must not crash over a
+    malformed/legacy secrets file; an empty return just means MCP
+    registration is skipped (see :func:`_register_claude_code_mcp`).
+    """
+    try:
+        text = secrets_path.read_text()
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        if line.startswith(_MCP_TOKEN_ENV_LINE_PREFIX):
+            return line[len(_MCP_TOKEN_ENV_LINE_PREFIX) :].strip()
+    return ""
+
+
+def _register_claude_code_mcp(token: str, *, port: int = 8765) -> dict | None:
+    """Write yadgar's MCP entry into Claude Code's ``~/.claude.json`` (ADR-0161, #37).
+
+    Calls the SAME registration primitive as ``yadgar daemon configure-mcp`` /
+    ``yadgar install --client claude-code --mcp``
+    (``mcp_register.register_mcp``, for which ``register_mcp_for_claude_code``
+    is a thin default-port/env-token wrapper) so a fresh ``yadgar setup`` run
+    leaves Claude Code configured without a separate manual step.
+
+    This is a pure local config-file merge — no daemon HTTP call — so it is
+    safe to run here even before the daemon has ever been started. The only
+    real dependency is the auth *token value*, which ``cmd_setup`` already
+    holds (freshly generated, or read back from an existing secrets.env) and
+    passes explicitly here rather than round-tripping through
+    ``YADGAR_MCP_AUTH_TOKEN`` in the process environment.
+
+    If *token* is empty (e.g. a legacy/hand-edited secrets.env with no token
+    line) registration is SKIPPED rather than writing a headerless MCP entry
+    — against the v5 default (``YADGAR_REQUIRE_AUTH=1``) a headerless entry
+    would silently 401, which is worse than not writing at all.
+
+    Returns the ``register_mcp`` result dict on success, ``None`` when
+    skipped or failed — either way the caller's own printed JSON snippet
+    remains the manual fallback, and setup itself never aborts over this.
+    """
+    if not token:
+        print(
+            "  MCP registration skipped — no bearer token available "
+            f"(secrets.env has no {_MCP_TOKEN_ENV_LINE_PREFIX}line). "
+            "Merge the JSON snippet below into ~/.claude.json manually once you "
+            "have a token, or re-run `yadgar daemon configure-mcp`."
+        )
+        return None
+
+    from yadgar.core.install.clients.mcp_register import register_mcp
+    from yadgar.core.install.clients.registry import CLIENT_REGISTRY
+
+    try:
+        result = register_mcp(
+            CLIENT_REGISTRY["claude-code"],
+            url=f"http://127.0.0.1:{port}/mcp",
+            token=token,
+        )
+    except Exception as exc:  # noqa: BLE001 — registration must never abort setup
+        print(f"  ✗ MCP registration failed: {exc}")
+        print(
+            "  Merge the JSON snippet below into ~/.claude.json manually, or re-run "
+            "`yadgar daemon configure-mcp` once resolved."
+        )
+        return None
+
+    print(f"  ✓ MCP registered for Claude Code: {result['updated']}")
+    return result
+
+
 def cmd_setup(args):
     """First-run setup: check Docker, create config dirs, generate credentials,
     print MCP snippet + secrets.env template."""
@@ -213,6 +290,7 @@ def cmd_setup(args):
     secrets_path = _paths.SECRETS_ENV_PATH
     if secrets_path.exists():
         print(f"Secrets:        {secrets_path} (exists — keeping)")
+        mcp_token = _existing_secrets_token(secrets_path)
     else:
         token = _secrets.token_urlsafe(32)
         db_pass = _secrets.token_urlsafe(24)
@@ -224,6 +302,7 @@ def cmd_setup(args):
         except OSError:
             pass
         print(f"Secrets written: {secrets_path} (chmod 600)")
+        mcp_token = token
 
     print()
     print("=== Yadgar v" + __version__ + " — setup complete ===")
@@ -245,12 +324,21 @@ def cmd_setup(args):
         }
     }
 
+    # Actually WRITE the Claude Code MCP registration (ADR-0161, #37) instead of
+    # only printing instructions — same registration primitive `yadgar daemon
+    # configure-mcp` / `yadgar install --client claude-code --mcp` use. Pure
+    # local file merge, so it runs here regardless of Docker/daemon state.
+    mcp_registered = _register_claude_code_mcp(mcp_token) is not None
+
     if check["ok"]:
         print("Next steps:")
         print(f"  1. set -a && . {secrets_path} && set +a")
         print("  2. yadgar daemon start")
-        print("  3. yadgar daemon configure-mcp   # writes ~/.claude.json with bearer header")
-        print("  4. Restart Claude Code.")
+        if mcp_registered:
+            print("  3. Restart Claude Code.")
+        else:
+            print("  3. yadgar daemon configure-mcp   # writes ~/.claude.json with bearer header")
+            print("  4. Restart Claude Code.")
         print()
         print("Or merge manually into ~/.claude.json:")
         print()
@@ -261,7 +349,12 @@ def cmd_setup(args):
         print("Docker unavailable — Yadgar requires Docker for the streamable-HTTP deployment.")
         print("Install Docker Desktop or Docker Engine, then re-run `yadgar setup`.")
         print()
-        print("Once Docker is available, configure your MCP client with:")
+        if mcp_registered:
+            print("Claude Code's MCP client config has already been written (see above).")
+            print("Once Docker is available and the daemon is started, it will connect.")
+            print("Other MCP clients can use the same config:")
+        else:
+            print("Once Docker is available, configure your MCP client with:")
         print()
         print(json.dumps(mcp_config, indent=2))
         print()

@@ -113,6 +113,40 @@ __all__ = [
 # ── Shared install logic ───────────────────────────────────────────────────
 
 
+@observe(tier="stage")
+def _resolve_settings_and_python(
+    settings_path: Path,
+    global_claude_dir: Path,
+    scope: str,
+    home_dir: Path,
+    dry_run: bool,
+) -> tuple[dict, str]:
+    """Load the base settings dict + resolve the durable hook interpreter.
+
+    Resolve the durable interpreter ONCE, before any copy, so hook commands
+    and script shebangs all agree. The existing registration (target settings
+    first, then global) is the preferred substitute when the running
+    interpreter is non-durable (agent worktree / tmp venv).
+
+    dry_run NEVER reads the real on-disk settings.json: cli/install.py's own
+    --print contract promises output "rendered from an empty base, not merged
+    into any existing file" and "no secrets in stdout" — loading the real file
+    unconditionally (as this used to do) broke both promises by echoing back
+    whatever another tool (e.g. nix) had already written there, including
+    literal secrets in a top-level "env" block (2026-07-28 bug, confirmed live:
+    a real YADGAR_MCP_AUTH_TOKEN + CODEBERG_TOKEN leaked to stdout via
+    `yadgar install --print`). Starting from an empty dict keeps dry_run
+    deterministic and secret-free regardless of local state.
+    """
+    if dry_run:
+        return {}, _stable_python(existing=None, home_dir=home_dir)
+    settings_data = _load_settings(settings_path)
+    _existing_python = _registered_python(settings_data)
+    if _existing_python is None and scope == "project":
+        _existing_python = _registered_python(_load_settings(global_claude_dir / "settings.json"))
+    return settings_data, _stable_python(existing=_existing_python, home_dir=home_dir)
+
+
 @observe(tier="boundary")
 def install_hooks_impl(
     home_dir: Path,
@@ -148,16 +182,12 @@ def install_hooks_impl(
         home_dir, scope, project_dir
     )
 
-    # Resolve the durable interpreter ONCE, before any copy, so hook commands
-    # and script shebangs all agree. The existing registration (target
-    # settings first, then global) is the preferred substitute when the
-    # running interpreter is non-durable (agent worktree / tmp venv).
+    # Base settings + durable interpreter — dry_run starts from an empty base
+    # (secret-free, per cli/install.py's --print contract). See helper.
     settings_path = settings_target_dir / "settings.json"
-    settings_data = _load_settings(settings_path)
-    _existing_python = _registered_python(settings_data)
-    if _existing_python is None and scope == "project":
-        _existing_python = _registered_python(_load_settings(global_claude_dir / "settings.json"))
-    _python_path = _stable_python(existing=_existing_python, home_dir=home_dir)
+    settings_data, _python_path = _resolve_settings_and_python(
+        settings_path, global_claude_dir, scope, home_dir, dry_run
+    )
 
     if not dry_run:
         global_hooks_dir.mkdir(parents=True, exist_ok=True)
@@ -255,7 +285,6 @@ def install_hooks_impl(
             "PreToolUse (router-guard)",
             "Stop (memory checkpoint — global)",
             "SessionEnd (sentinel capture — global)",
-            "SubagentStop (findings capture — append-if-absent)",
             "InstructionsLoaded (recall on CLAUDE.md load — append-if-absent)",
             "SubagentStart (context injection at dispatch — append-if-absent)",
             "FileChanged (team_inbox + PLAN_*.md — append-if-absent)",

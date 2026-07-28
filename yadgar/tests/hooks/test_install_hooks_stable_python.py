@@ -125,8 +125,21 @@ def test_stable_python_never_returns_tmp_interpreter(monkeypatch, tmp_path):
 
 
 def test_stable_python_prefers_healthy_durable_existing(monkeypatch, tmp_path):
-    system_python = shutil.which("python3")
-    assert system_python, "test requires python3 on PATH"
+    # Same class of fragility as the sys.executable-durability tests elsewhere
+    # in this branch: `shutil.which("python3")` resolves whatever's FIRST on
+    # the ambient PATH, which is the agent worktree's own (non-durable) venv
+    # bin when this suite runs from inside one — and a real system PATH entry
+    # to pin against isn't portable across dev machines / CI containers.
+    # Fabricate a durable-shaped absolute path instead and monkeypatch
+    # os.path.exists for exactly that path (delegating to the real exists
+    # otherwise) so the test needs no real filesystem/environment dependency.
+    import yadgar.core.install._interpreter as interp
+
+    system_python = "/opt/durable-existing-python/bin/python3"
+    _real_exists = os.path.exists
+    monkeypatch.setattr(
+        interp.os.path, "exists", lambda p: True if p == system_python else _real_exists(p)
+    )
     monkeypatch.setattr(ihl.sys, "executable", "/tmp/claude-doomed-wt/.venv/bin/python3")
     home = tmp_path / "home"
     _make_pipx_python(home)  # present, but existing registration must win
