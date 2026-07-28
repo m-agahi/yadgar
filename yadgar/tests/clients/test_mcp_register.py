@@ -424,8 +424,10 @@ def test_configure_mcp_delegates_to_register_mcp(tmp_path, monkeypatch):
 
     # Patch Path.home() so register_mcp_for_claude_code writes to tmp.
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    # Ensure no stale token from the environment.
+    # Ensure no stale token from the environment or from this machine's real
+    # secrets.env (resolve_mcp_auth_token() now falls back to it — isolate).
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(tmp_path / "no-secrets.env"))
 
     from yadgar.core.install.clients.mcp_register import register_mcp_for_claude_code
 
@@ -465,6 +467,7 @@ def test_configure_mcp_preserves_foreign_servers(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(tmp_path / "no-secrets.env"))
 
     from yadgar.core.install.clients.mcp_register import register_mcp_for_claude_code
 
@@ -479,6 +482,7 @@ def test_configure_mcp_idempotent(tmp_path, monkeypatch):
     """Two configure_mcp calls produce byte-identical ~/.claude.json."""
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(tmp_path / "no-secrets.env"))
 
     from yadgar.core.install.clients.mcp_register import register_mcp_for_claude_code
 
@@ -486,6 +490,72 @@ def test_configure_mcp_idempotent(tmp_path, monkeypatch):
     first = (tmp_path / ".claude.json").read_text()
     register_mcp_for_claude_code(port=8765)
     assert (tmp_path / ".claude.json").read_text() == first
+
+
+# ── 8. resolve_mcp_auth_token() — token-resolution seam (2026-07-28 fix) ─────
+#
+# AC-1 (docs/plans/fix-claude-code-mcp-auth-token-missing-2026-07-28.md):
+# env set -> env value; env empty + secrets.env has the line -> file value;
+# both absent -> ""; respects $YADGAR_SECRETS_ENV_FILE override; never raises
+# on missing/malformed file.
+
+
+def test_resolve_mcp_auth_token_env_set_wins(tmp_path, monkeypatch):
+    """Env var, when non-empty, wins over any secrets.env content."""
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text("YADGAR_MCP_AUTH_TOKEN=file-token\n")
+    monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "  env-token  ")
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(secrets_path))
+
+    assert mr.resolve_mcp_auth_token() == "env-token"
+
+
+def test_resolve_mcp_auth_token_falls_back_to_secrets_env(tmp_path, monkeypatch):
+    """Env empty + secrets.env has the line -> file value (the fresh-VM fix)."""
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text("SOME_OTHER=1\nYADGAR_MCP_AUTH_TOKEN=file-token-abc\nTRAILING=x\n")
+    monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(secrets_path))
+
+    assert mr.resolve_mcp_auth_token() == "file-token-abc"
+
+
+def test_resolve_mcp_auth_token_both_absent_returns_empty(tmp_path, monkeypatch):
+    """No env, no secrets.env line -> "" (never raises)."""
+    missing = tmp_path / "does-not-exist.env"
+    monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(missing))
+
+    assert mr.resolve_mcp_auth_token() == ""
+
+
+def test_resolve_mcp_auth_token_empty_env_falls_back(tmp_path, monkeypatch):
+    """Env var present but empty string is treated as absent."""
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text("YADGAR_MCP_AUTH_TOKEN=file-token-2\n")
+    monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "")
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(secrets_path))
+
+    assert mr.resolve_mcp_auth_token() == "file-token-2"
+
+
+def test_resolve_mcp_auth_token_malformed_secrets_file_no_raise(tmp_path, monkeypatch):
+    """secrets.env with no matching line -> "" (never raises)."""
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text("LEGACY=yes\nNO_TOKEN_HERE=1\n")
+    monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(secrets_path))
+
+    assert mr.resolve_mcp_auth_token() == ""
+
+
+def test_resolve_mcp_auth_token_missing_secrets_dir_no_raise(tmp_path, monkeypatch):
+    """secrets.env living in a directory that doesn't exist at all -> "" (never raises)."""
+    missing = tmp_path / "nonexistent-subdir" / "secrets.env"
+    monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(missing))
+
+    assert mr.resolve_mcp_auth_token() == ""
 
 
 def test_register_mcp_toml_codex_envref_idempotent(tmp_path, monkeypatch):

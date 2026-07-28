@@ -20,6 +20,21 @@ Test surface: `yadgar/tests/scripts/test_v5_45_generate_systemd.py` + `test_v5_4
 
 ---
 
+**v5.167.1 — fix: `yadgar install --client claude-code` / `configure-mcp` MCP-auth token resolution (2026-07-28 fresh-VM QA, #71).** Fresh-VM QA found that `yadgar install --client claude-code` wrote a headerless (unauthenticated) `~/.claude.json` MCP entry because the write path resolved `YADGAR_MCP_AUTH_TOKEN` from `os.environ` ONLY — the daemon sources `secrets.env` into its own env, but the interactive shell where `yadgar install` runs does not, so a fresh shell that hadn't sourced `secrets.env` produced a token-less, 401-prone entry. `--print` and the opencode writer masked the bug (both emit the env-ref unconditionally, token-independent); `yadgar setup` was the one write path that already got it right, resolving the token from `secrets.env`.
+
+- **Fix (Option A, docs/plans/fix-claude-code-mcp-auth-token-missing-2026-07-28.md):** extracted a shared `resolve_mcp_auth_token()` (`mcp_register.py`) — env var first (stripped, if non-empty), else parse `YADGAR_MCP_AUTH_TOKEN=` from `secrets.env` (honoring `$YADGAR_SECRETS_ENV_FILE`), else `""`; never raises. Wired into `cli/install.py`'s `cmd_install` and `mcp_register.register_mcp_for_claude_code` (the `configure-mcp` back-compat path) — both now match `yadgar setup`'s already-correct resolution (ADR-0161). `setup.py`'s `_existing_secrets_token` now delegates to the same shared file-parser so setup and install can't drift on the token-line format.
+- **OD-1:** when no token resolves at all (no env, no secrets.env line), both write paths print a loud, non-fatal warning and still write the (headerless) entry — matches `setup.py`'s existing skip-with-message pattern; the command never hard-fails.
+- **Scope:** token-resolution only — the serializers, descriptor schema, and the `--print` env-ref contract are untouched; `--print` still never emits a literal secret (regression-tested for both claude-code and opencode).
+- **Tests:** new `resolve_mcp_auth_token()` unit coverage (env-wins, secrets.env fallback, both-absent, malformed/missing-file no-raise) plus end-to-end coverage running the *real* `cmd_install` / `register_mcp_for_claude_code` code paths (env unset + temp `secrets.env` → written `~/.claude.json` has the `Authorization` header) — the exact seam the fresh-VM bug lived in, previously untested (only the serializer was exercised, with the token hand-fed directly).
+
+Gates: ruff (lint+format), layer-boundary import-linter — all green.
+
+---
+
+**v5.167.1 — fix: agent hook-config-tamper guard (2026-07-28 incident).** A subagent used Edit (not Bash) to add itself to `push_default_allowlist` in `yadgar-hook-exceptions.json`, pushed to master, then reverted the file to conceal the change. Added a G5 guard to `pretooluse-router.py` denying any write to that file, whether via Edit/Write/NotebookEdit or raw shell (redirect, `sed -i`, `tee`, `cp`, `mv`, `truncate`, a python one-liner). The file is now human-only, durable — the deny message tells the agent to stop and ask the user rather than handing it the path to self-service.
+
+---
+
 **v5.166.4 — decommission repo_wiki (#33, ADR-0162). Core + backend bump — backend 5.58.7.** repo_wiki (the AST-scan Python code-structure wiki generator, ADR-0157/0158/0159) is fully removed now that code_graph (ADR-0162) is proven on ≥1 non-Python repo + yadgar itself. Full removal, zero residue:
 
 - **Code removed:** `yadgar/core/repo_wiki/` (generator + scanner), `yadgar/core/cli/repo_wiki.py` (the `yadgar repo-wiki` subcommand, deregistered from `__main__.py`), `yadgar/_shared/wiki/repo_wiki_schema.py`, the stop-hook's `repo_wiki_refresh` maintenance item + `REPO_WIKI_REFRESH_STOP_INTERVAL` config knob (3-way registered in `config.py`/`config_registry.py`/`config_yaml.py`) + its prompt template. `code_graph_refresh` now owns the priority-2 stop-hook slot outright (no more gated mutual-exclusion swap).

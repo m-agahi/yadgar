@@ -182,15 +182,20 @@ def _existing_secrets_token(secrets_path) -> str:
     line (legacy secrets.env) — never raises. Setup must not crash over a
     malformed/legacy secrets file; an empty return just means MCP
     registration is skipped (see :func:`_register_claude_code_mcp`).
+
+    Delegates the actual file parse to
+    ``mcp_register._parse_secrets_env_token`` — the same routine
+    ``resolve_mcp_auth_token()`` uses for the ``yadgar install`` /
+    ``yadgar daemon configure-mcp`` write paths (2026-07-28 fresh-VM QA fix),
+    so setup and install can't drift on the ``YADGAR_MCP_AUTH_TOKEN=`` line
+    format. Behavior-preserving: this function is file-only (no env check) —
+    callers only reach it once they've confirmed *secrets_path* exists.
     """
-    try:
-        text = secrets_path.read_text()
-    except OSError:
-        return ""
-    for line in text.splitlines():
-        if line.startswith(_MCP_TOKEN_ENV_LINE_PREFIX):
-            return line[len(_MCP_TOKEN_ENV_LINE_PREFIX) :].strip()
-    return ""
+    from yadgar.core.install.clients.mcp_register import (  # noqa: PLC0415
+        _parse_secrets_env_token,
+    )
+
+    return _parse_secrets_env_token(secrets_path)
 
 
 def _register_claude_code_mcp(token: str, *, port: int = 8765) -> dict | None:
