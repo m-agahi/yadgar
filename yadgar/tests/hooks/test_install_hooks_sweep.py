@@ -53,6 +53,18 @@ def test_full_install_drift_collapses_and_refreshes_interpreter(tmp_path, monkey
     """Seed a SubagentStart yadgar entry with a bare ``python3`` interpreter,
     then install: exactly one managed entry, carrying the freshly-resolved
     (durable ``sys.executable``) interpreter, must remain."""
+    # _stable_python() only returns sys.executable when it is DURABLE (not under
+    # .claude/worktrees/, /tmp, or a linked git worktree). Running this suite
+    # from inside an agent worktree makes the real sys.executable non-durable —
+    # _stable_python then substitutes it away, and here it KEEPS the seeded bare
+    # ``python3`` existing registration (non-absolute → durable, resolves on
+    # PATH), yielding a command byte-identical to the stale seed. Pin a fake
+    # durable interpreter so the refresh path (durable sys.executable wins) runs,
+    # exactly as the shebang tests do (ADR-0092: sys.executable is non-durable in
+    # worktree venvs by design).
+    fake_durable = "/opt/durable-test-python/bin/python3"
+    monkeypatch.setattr(sys, "executable", fake_durable)
+
     claude_dir = tmp_path / ".claude"
     hooks_dir = claude_dir / "hooks"
     hooks_dir.mkdir(parents=True)
@@ -74,7 +86,7 @@ def test_full_install_drift_collapses_and_refreshes_interpreter(tmp_path, monkey
     assert len(entries) == 1, f"expected 1 managed SubagentStart entry, got {entries}"
     cmd = entries[0]["hooks"][0]["command"]
     assert cmd != stale_cmd, "stale bare-python3 entry was not refreshed"
-    assert sys.executable in cmd, f"surviving command lacks the durable interpreter: {cmd!r}"
+    assert fake_durable in cmd, f"surviving command lacks the durable interpreter: {cmd!r}"
 
 
 # ── sweep heals dupes (acceptance #2) ────────────────────────────────────────
