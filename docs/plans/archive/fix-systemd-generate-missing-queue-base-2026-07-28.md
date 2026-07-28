@@ -1,7 +1,9 @@
+> ARCHIVED 2026-07-29 — executing on fix/systemd-generate-queue-base, ships with this PR
+
 # Fix: real-install systemd/launchd backend units omit `YADGAR_QUEUE_BASE` → queue drainer dead
 
 **Task:** harness #72 — fresh-VM QA (2026-07-28) found the end-user install path generates a backend unit with **zero** `YADGAR_QUEUE_BASE` → drainer disabled → queued writes never commit.
-**Status:** DESIGN — root cause confirmed against code, fix scoped, regression test proposed, one open decision (consolidate vs patch). No implementation.
+**Status:** DONE (v5.167.1 / backend 5.58.8) — Car 1 (the two `.in`/plist template fixes) + Car 2 (regression tests, incl. the cross-generator anti-drift test) + Car 3 (CHANGELOG + MIGRATION_NOTES.md) all shipped in one PR, per §6 option (A). Bundled the ADR-0084 `safe_start/__main__.py` fix per §5/§7. The `/admin` 503 / `StorageEngine not initialized` symptom (§5) and the consolidate-vs-patch follow-up (§6 option B) remain open, tracked separately.
 **Builds on:** [[yadgar-adr-0075]] (backend queue via shared `/data`, `YADGAR_QUEUE_BASE` semantics pin), ADR-0078 (DB-isolation: drainer lives ONLY in the backend process), ADR-0084 (no-lone-files packaging — relevant to the *separate* safe_start bug below).
 **Related:** `docs/plans/hook-install-hygiene-2026-07-13.md` (sister install-hygiene train, #64).
 
