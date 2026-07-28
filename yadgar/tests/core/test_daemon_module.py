@@ -527,6 +527,10 @@ def test_configure_mcp_creates_entry(tmp_path, monkeypatch):
     from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    # resolve_mcp_auth_token() falls back to secrets.env — point it at a
+    # nonexistent file so these tests stay isolated from any real secrets.env
+    # on the machine running them (2026-07-28 auth-token fix).
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(tmp_path / "no-secrets.env"))
     config_path = tmp_path / ".claude.json"
     config_path.write_text("{}")
 
@@ -562,6 +566,10 @@ def test_configure_mcp_missing_config_file(tmp_path, monkeypatch):
     from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    # resolve_mcp_auth_token() falls back to secrets.env — point it at a
+    # nonexistent file so these tests stay isolated from any real secrets.env
+    # on the machine running them (2026-07-28 auth-token fix).
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(tmp_path / "no-secrets.env"))
     config_path = tmp_path / ".claude.json"
     assert not config_path.exists()
 
@@ -577,6 +585,10 @@ def test_configure_mcp_preserves_other_keys(tmp_path, monkeypatch):
     from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    # resolve_mcp_auth_token() falls back to secrets.env — point it at a
+    # nonexistent file so these tests stay isolated from any real secrets.env
+    # on the machine running them (2026-07-28 auth-token fix).
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(tmp_path / "no-secrets.env"))
     config_path = tmp_path / ".claude.json"
     config_path.write_text(json.dumps({"theme": "dark", "mcpServers": {"other": {"type": "x"}}}))
 
@@ -594,6 +606,10 @@ def test_configure_mcp_returns_old_new(tmp_path, monkeypatch):
     from yadgar.core.daemon import YadgarDaemon
 
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+    # resolve_mcp_auth_token() falls back to secrets.env — point it at a
+    # nonexistent file so these tests stay isolated from any real secrets.env
+    # on the machine running them (2026-07-28 auth-token fix).
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(tmp_path / "no-secrets.env"))
     old_entry = {"type": "stdio", "command": "yadgar"}
     config_path = tmp_path / ".claude.json"
     config_path.write_text(json.dumps({"mcpServers": {"yadgar": old_entry}}))
