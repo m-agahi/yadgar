@@ -32,7 +32,7 @@ def test_pretooluse_entry_points_at_router(tmp_path, monkeypatch):
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     pre = settings["hooks"]["PreToolUse"]
     assert len(pre) == 1
-    assert pre[0]["matcher"] == "Bash"
+    assert pre[0]["matcher"] == "Bash|Edit|Write|NotebookEdit"
     assert "yadgar-pretooluse-router.py" in pre[0]["hooks"][0]["command"]
     assert "db-lockdown" not in pre[0]["hooks"][0]["command"]
 

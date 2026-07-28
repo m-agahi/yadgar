@@ -264,15 +264,19 @@ def _build_core_hooks(
     )
 
     # HOOKS train Car 1: direct-command entry (router-guard) so hookEventName is
-    # always emitted. Matcher stays "Bash" — all four guards are Bash-string guards.
-    # yadgar-managed identity here is the router script basename (NOT the runner),
-    # since PreToolUse dispatches the standalone router, not hook_runner.py.
+    # always emitted. Matcher covers Bash (G1-G4, all Bash-string guards) plus
+    # Edit/Write/NotebookEdit (G5: 2026-07-28 incident — an agent used Edit, not
+    # Bash, to add itself to push_default_allowlist in yadgar-hook-exceptions.json,
+    # pushed to master, then reverted the file to conceal it; the Bash-only
+    # matcher never even routed that Edit call to the guard). yadgar-managed
+    # identity here is the router script basename (NOT the runner), since
+    # PreToolUse dispatches the standalone router, not hook_runner.py.
     router_cmd = f"{_python} {shlex.quote(str(router_dst))}"
     _replace_managed_entries(
         hooks_config,
         "PreToolUse",
         router_dst.name,
-        [_make_hook_entry(router_cmd, "Bash", env_block)],
+        [_make_hook_entry(router_cmd, "Bash|Edit|Write|NotebookEdit", env_block)],
     )
 
 
