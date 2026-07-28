@@ -33,6 +33,8 @@ No gate code lives here (Car C is the renderer only).
 
 from __future__ import annotations
 
+import builtins
+import keyword
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +60,26 @@ _ELLIPSIS = "\n…"
 _URL_LITERAL_TLD_SUFFIXES = frozenset(
     {"com", "org", "net", "io", "co", "dev", "app", "gov", "edu", "info", "biz"}
 )
+
+#: Python builtins + keywords that the indexer misclassifies as ``core:`` "high
+#: fan-in" layers (task #58). ``len``/``dict``/``str``/``range``/``list``/… are
+#: never real modules/packages in ANY indexed repo — the indexer counts every
+#: reference to the builtin *name* as fan-in and mislabels it a layer. Built from
+#: ``dir(builtins)`` + keywords (NOT a hardcoded five-name list) so ``int``,
+#: ``set``, ``tuple``, ``type``, ``object``, … surfacing in a different repo are
+#: covered too. Consulted only by ``_looks_like_builtin_layer`` (layer names).
+_BUILTIN_LAYER_NAMES = frozenset(dir(builtins)) | frozenset(keyword.kwlist)
+
+#: Substring (case-insensitive) marking a layer's ``reason`` as route-derived —
+#: the noise vector for ``_looks_like_generic_route_fragment``.
+_ROUTE_LAYER_REASON_MARKER = "http route"
+
+#: Max length of a bare route-fragment layer name (``db``=2, ``test``=4,
+#: ``jsonl``=5). A route-derived layer whose name is a plain lowercase token this
+#: short is a URL-path SEGMENT the indexer mislabelled, not a real controller /
+#: package (those are CamelCase, dotted, pathed, or underscored —
+#: ``UserController``, ``api.v1``, ``internal/http`` — all spared).
+_GENERIC_ROUTE_NAME_MAXLEN = 5
 
 
 @observe(tier="stage")
@@ -126,15 +148,70 @@ def _looks_like_url_literal(name: str) -> bool:
 
 
 @observe(tier="stage")
+def _looks_like_builtin_layer(name: str) -> bool:
+    """True when ``name`` is a Python builtin/keyword misclassified as a layer.
+
+    Task #58: builtins (``len``, ``dict``, ``str``, ``range``, ``list``, ``int``,
+    ``type``, ``object`` …) surface as ``core:`` layers with a ``high fan-in``
+    reason. They are never real modules — see ``_BUILTIN_LAYER_NAMES``. Shape
+    rules (``_looks_like_url_literal``) can't catch them (no ``@``/``/``/digit/
+    TLD), so this is a DIFFERENT, membership-based heuristic added alongside.
+    """
+    return name in _BUILTIN_LAYER_NAMES
+
+
+@observe(tier="stage")
+def _looks_like_generic_route_fragment(name: str, reason: str) -> bool:
+    """True when a route-derived layer name is a bare short URL-path segment.
+
+    Task #58: ``db``/``jsonl``/``test`` surface as ``api:`` layers with a
+    ``has HTTP route definitions`` reason — the same route-noise class as the
+    URL-literal leak, but a fragment too short/plain to trip
+    ``_looks_like_url_literal``'s shape rules. Gated on the route reason (NOT
+    name-shape alone) so a short lowercase name that is NOT route-derived (e.g. a
+    ``core`` package) is spared; credible route layers (CamelCase / dotted /
+    pathed / underscored, or longer than ``_GENERIC_ROUTE_NAME_MAXLEN``) survive
+    because ``str.isalnum`` excludes separators. Tradeoff: a hypothetical REAL
+    controller literally named e.g. ``auth`` with a route reason is also dropped
+    — acceptable for a lossy summary, and the gate never touches fan-in /
+    package-boundary layers.
+    """
+    if _ROUTE_LAYER_REASON_MARKER not in reason.lower():
+        return False
+    if not name or len(name) > _GENERIC_ROUTE_NAME_MAXLEN:
+        return False
+    return name.isascii() and name.isalnum() and name.islower()
+
+
+@observe(tier="stage")
+def _is_layer_noise(row: dict[str, Any]) -> bool:
+    """True when a ``layers`` row is any known noise class (task #58 + URL leak).
+
+    Union of three heuristics — URL-literal shape, Python-builtin membership,
+    and generic route-fragment (reason-gated). Real layer/component names match
+    none and survive.
+    """
+    name = str(row.get("name", ""))
+    reason = str(row.get("reason", ""))
+    return (
+        _looks_like_url_literal(name)
+        or _looks_like_builtin_layer(name)
+        or _looks_like_generic_route_fragment(name, reason)
+    )
+
+
+@observe(tier="stage")
 def _filter_layer_noise(architecture: dict[str, Any]) -> dict[str, Any]:
-    """Return ``architecture`` with URL-literal-looking ``layers`` rows dropped.
+    """Return ``architecture`` with noise ``layers`` rows dropped.
 
     Single choke point: both ``_layers_section`` and ``_entry_points_section``
     read ``architecture["layers"]``, so filtering once here (rather than
     duplicating the check in each section) closes both leak paths in one place.
+    Noise = URL-literal fragments OR Python builtins OR generic route fragments
+    (see ``_is_layer_noise``).
     """
     layers = architecture.get("layers") or []
-    clean = [row for row in layers if not _looks_like_url_literal(str(row.get("name", "")))]
+    clean = [row for row in layers if not _is_layer_noise(row)]
     if len(clean) == len(layers):
         return architecture
     filtered = dict(architecture)

@@ -302,6 +302,82 @@ class TestURLLiteralLayerNoise:
         assert "Main" in entry_line
 
 
+class TestBuiltinAndGenericLayerNoise:
+    """Second layer-noise class (task #58), distinct from the URL-literal leak
+    and NOT caught by ``_looks_like_url_literal``'s shape rules (no ``@``,
+    embedded ``/``, leading digit, or dotted TLD):
+
+      1. Python BUILTINS (``len``, ``dict``, ``str``, ``range``, ``list``,
+         ``int``, ``type``, ``object`` …) surface as ``core:`` layers with a
+         ``high fan-in (N in, 0 out)`` reason — the indexer counts every
+         reference to the builtin *name* as fan-in and mislabels it a module.
+      2. GENERIC short route-path fragments (``db``, ``jsonl``, ``test``)
+         surface as ``api:`` layers with a ``has HTTP route definitions``
+         reason — the same route-noise class as the URL-literal leak, but a
+         fragment too short/plain to trip the shape rules.
+
+    Both must be filtered while real names — ``Handler``, ``api.v1.handlers``
+    (route-reason but credible), and ``core`` (short lowercase but NOT
+    route-derived) — survive.
+    """
+
+    def _arch(self) -> dict:
+        return {
+            "project": "svc",
+            "languages": [{"language": "Python", "file_count": 30}],
+            "hotspots": [],
+            "layers": [
+                # real names — must survive filtering.
+                {"name": "Handler", "layer": "api", "reason": "has HTTP route definitions"},
+                {"name": "api.v1.handlers", "layer": "api", "reason": "has HTTP route definitions"},
+                # short lowercase name but NOT route-derived → the reason gate
+                # must spare it (discriminates name-shape from reason-gated).
+                {"name": "core", "layer": "core", "reason": "orchestrates domain logic"},
+                {"name": "Main", "layer": "entry", "reason": "application entry point"},
+                # Python builtins mislabelled as high-fan-in layers — noise.
+                # Minimal synthetic fan-in numbers (never the real repo's).
+                {"name": "len", "layer": "core", "reason": "high fan-in (11 in, 0 out)"},
+                {"name": "dict", "layer": "core", "reason": "high fan-in (7 in, 0 out)"},
+                {"name": "str", "layer": "core", "reason": "high fan-in (17 in, 0 out)"},
+                {"name": "range", "layer": "core", "reason": "high fan-in (3 in, 0 out)"},
+                {"name": "list", "layer": "core", "reason": "high fan-in (5 in, 0 out)"},
+                # builtins beyond the obvious five — dir(builtins), not a 5-name list.
+                {"name": "int", "layer": "core", "reason": "high fan-in (4 in, 0 out)"},
+                {"name": "type", "layer": "core", "reason": "high fan-in (2 in, 0 out)"},
+                {"name": "object", "layer": "core", "reason": "high fan-in (2 in, 0 out)"},
+                # generic short route-path fragments mislabelled as api layers — noise.
+                {"name": "db", "layer": "api", "reason": "has HTTP route definitions"},
+                {"name": "jsonl", "layer": "api", "reason": "has HTTP route definitions"},
+                {"name": "test", "layer": "api", "reason": "has HTTP route definitions"},
+            ],
+            "routes": [],
+        }
+
+    def test_builtin_named_layers_never_leak(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(self._arch(), [], {"canonical_root": "/repo", "subdir": ""})
+        for builtin in ("len", "dict", "str", "range", "list", "int", "type", "object"):
+            assert f"core: {builtin}" not in out, f"builtin {builtin!r} leaked as a layer"
+
+    def test_generic_route_fragment_layers_never_leak(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(self._arch(), [], {"canonical_root": "/repo", "subdir": ""})
+        for frag in ("db", "jsonl", "test"):
+            assert f": {frag} —" not in out, f"generic route fragment {frag!r} leaked as a layer"
+
+    def test_real_layer_names_survive_filtering(self):
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(self._arch(), [], {"canonical_root": "/repo", "subdir": ""})
+        assert "Handler" in out
+        assert "api.v1.handlers" in out
+        # short lowercase, but its reason is not route-derived → spared.
+        assert "core: core" in out
+        assert "Main" in out
+
+
 class TestBlockPayload:
     def test_build_block_payload_shape(self):
         """The C→D seam: refresh emits a block payload dict, not a block write."""
