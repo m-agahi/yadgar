@@ -776,6 +776,21 @@ External plugins installed in the Claude Code harness that affect how yadgar wor
 
 **No carve-out for orchestrator mode:** hook fires on main thread AND subagents (PreToolUse is per-tool, not per-context). Subagents must respect it identically.
 
+### W-CI. yadgar-ci image freshness — pre-authorized, proactive
+
+**What:** the `yadgar-ci` (and `yadgar-ci-viz`) Docker image bakes test-time dependencies FROM `uv.lock` at build time (lock parity, ADR-0089) — see `Dockerfile.ci`'s own header comment: *"yadgar-ci has NO auto-sync pipeline, it is manually rebuilt/pushed."* `.github/workflows/ci-pr.yml` pins the exact tag CI pulls via the repo variable `YADGAR_VERSION` — that variable is NOT bumped automatically on release, so any dependency-floor change (e.g. a `pyproject.toml` bump like `mcp>=2.0.0`) is invisible to CI until the image is rebuilt AND the variable is bumped. Confirmed live 2026-07-28 (task #66/ADR-0173): PR #11's CI failed with `ImportError: cannot import name 'MCPServer' from 'mcp.server'` purely because `YADGAR_VERSION` still pointed at a pre-bump image — the migration code itself was already independently verified correct (prod Docker build + real MCP round-trip).
+
+**Operational rule — pre-authorized, no confirmation needed:** whenever a dependency/version bump makes the CI image's baked deps stale relative to the branch's `uv.lock`, rebuild + push `yadgar-ci` (and `yadgar-ci-viz` if it also needs the bump) and update the `YADGAR_VERSION` repo variable proactively. User's exact words (2026-07-28): *"this is also part of the workflow. you should keep the ci images up to date as need arises. no need for my intervention. just a confirmation."*
+
+**How:** use **podman**, not docker (explicit instruction). Per `Dockerfile.ci`'s own documented build command:
+```
+podman build -f Dockerfile.ci --build-arg YADGAR_VERSION=<ver> -t docker.io/openfantasy/yadgar-ci:<ver> .
+podman push docker.io/openfantasy/yadgar-ci:<ver>
+gh api -X PATCH repos/m-agahi/yadgar/actions/variables/YADGAR_VERSION -f value=<ver>
+```
+
+**Not the same rule as the core-image "skip push" workflow (2026-05-19):** that rule (local-only `podman build`, no push, because the local systemd service resolves the exact ref from local podman storage) applies to the `yadgar`/`yadgar-backend` deploy images pulled by the user's own machine. `yadgar-ci` is pulled by the GitHub Actions self-hosted runner (`container:` job image) — a different consumer that pulls from the real registry — so it DOES need an actual push. Don't conflate the two.
+
 ---
 
 ## Current violations (snapshot v5.3.7, 2026-05-20 evening)
