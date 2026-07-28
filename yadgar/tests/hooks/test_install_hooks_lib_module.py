@@ -563,6 +563,72 @@ def test_sweep_stale_hook_scripts_dry_run_noop(tmp_path):
     assert orphan.exists()
 
 
+# ── install_hooks_impl dry_run must not leak real settings.json content ───────
+#
+# 2026-07-28 bug: install_hooks_impl(dry_run=True) unconditionally loaded the
+# REAL on-disk settings.json (_load_settings(settings_path)) and returned/printed
+# it verbatim as the "preview" — directly contradicting cli/install.py's own
+# documented --print contract ("rendered from an empty base, not merged into
+# any existing file... deterministic... no secrets in stdout"). A live run
+# leaked a real YADGAR_MCP_AUTH_TOKEN + CODEBERG_TOKEN that another tool (nix)
+# had injected into the top-level "env" block of the real settings.json.
+
+
+def test_install_hooks_impl_dry_run_does_not_leak_existing_settings(tmp_path, capsys):
+    import yadgar.core.install.install_hooks_lib as ihl
+
+    home = tmp_path / "home"
+    home.mkdir()
+    claude_dir = home / ".claude"
+    claude_dir.mkdir()
+    real_secret = "sk-live-totally-real-secret-do-not-leak-1234567890"
+    (claude_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "env": {"YADGAR_MCP_AUTH_TOKEN": real_secret},
+                "voice": {"enabled": True},
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                {"type": "command", "command": "/plugins/cache/caveman/hook.sh"}
+                            ],
+                        }
+                    ]
+                },
+            }
+        )
+    )
+
+    result = ihl.install_hooks_impl(home, "global", None, dry_run=True)
+
+    printed = capsys.readouterr().out
+    assert real_secret not in printed, (
+        "dry_run printed a real secret from the on-disk settings.json"
+    )
+    assert real_secret not in json.dumps(result), "dry_run returned a real secret in its preview"
+    # The documented contract: rendered from an EMPTY base, so unrelated
+    # pre-existing top-level keys (voice, etc.) must not survive into preview.
+    assert "voice" not in result.get("preview", {})
+
+
+def test_install_hooks_impl_dry_run_does_not_write_settings_file(tmp_path):
+    import yadgar.core.install.install_hooks_lib as ihl
+
+    home = tmp_path / "home"
+    home.mkdir()
+    claude_dir = home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    original = json.dumps({"env": {"SOMETHING": "untouched"}})
+    settings_path.write_text(original)
+
+    ihl.install_hooks_impl(home, "global", None, dry_run=True)
+
+    assert settings_path.read_text() == original, "dry_run must never write the settings file"
+
+
 # ── import-surface characterization (Car C5 module split) ─────────────────────
 
 # Every symbol external code + tests import from the canonical module path.
