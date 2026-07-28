@@ -262,12 +262,12 @@ def test_build_core_hooks_post_tool_use_has_two_entries(tmp_path):
     assert len(cfg["PostToolUse"]) == 2
 
 
-def test_build_core_hooks_pre_tool_use_matcher_is_bash(tmp_path):
+def test_build_core_hooks_pre_tool_use_matcher_covers_bash_and_edit_family(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
     db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {}
     _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
-    assert cfg["PreToolUse"][0]["matcher"] == "Bash"
+    assert cfg["PreToolUse"][0]["matcher"] == "Bash|Edit|Write|NotebookEdit"
 
 
 def test_build_core_hooks_runner_in_commands(tmp_path):
