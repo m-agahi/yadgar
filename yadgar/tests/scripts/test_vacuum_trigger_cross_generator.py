@@ -108,31 +108,44 @@ def _render_launchd(tmp_path: Path) -> tuple[str, str]:
     return run_cmd, watcher["WatchPaths"][0]
 
 
+# flake.nix declares each unit as a top-level `systemd.user.<kind>.<name> = {`
+# attribute at a fixed indent. Anchoring the block slicer on newline+indent (not
+# the bare substring) keeps prose in a comment from truncating a block.
+_ATTR_ANCHOR = "\n            systemd.user."
+
+
+def _flake_attr_block(attr: str) -> str | None:
+    """Return the flake.nix source of `systemd.user.<attr> = { ... }`, or None."""
+    text = FLAKE_NIX.read_text()
+    marker = f"{_ATTR_ANCHOR}{attr} = {{"
+    if marker not in text:
+        return None
+    start = text.index(marker) + len(_ATTR_ANCHOR)
+    rest = text[start:]
+    end = rest.find(_ATTR_ANCHOR)
+    return rest[:end] if end != -1 else rest
+
+
 def _flake_core_block() -> str:
     """Return the `systemd.user.services.yadgar` block of flake.nix.
 
     Sliced so backend mounts (`systemd.user.services.yadgar-backend`) cannot
     contaminate the mount table of the core unit under test.
     """
-    text = FLAKE_NIX.read_text()
-    start = text.index("systemd.user.services.yadgar = {")
-    rest = text[start + 1 :]
-    end = rest.find("systemd.user.")
-    return rest[:end] if end != -1 else rest
+    block = _flake_attr_block("services.yadgar")
+    assert block is not None, "flake.nix has no systemd.user.services.yadgar unit"
+    return block
 
 
 def _flake_watcher_block() -> str:
-    text = FLAKE_NIX.read_text()
-    marker = "systemd.user.paths.yadgar-vacuum-trigger"
-    assert marker in text, (
+    block = _flake_attr_block("paths.yadgar-vacuum-trigger")
+    assert block is not None, (
         "flake.nix ships a vacuum runner + weekly timer but NO trigger watcher — "
         "vacuum_now() writes a trigger file nothing reads. Add "
-        f"{marker} watching the host projection of its own -e {TRIGGER_ENV}."
+        "systemd.user.paths.yadgar-vacuum-trigger watching the host projection "
+        f"of its own -e {TRIGGER_ENV}."
     )
-    start = text.index(marker)
-    rest = text[start + 1 :]
-    end = rest.find("systemd.user.")
-    return rest[:end] if end != -1 else rest
+    return block
 
 
 def _render_flake() -> tuple[str, str]:
@@ -148,7 +161,9 @@ def _render_flake() -> tuple[str, str]:
     m = re.search(r'PathExists\s*=\s*"([^"]+)"', watcher_block)
     assert m, "flake.nix vacuum-trigger .path unit has no PathExists"
     watched_dir = m.group(1).rsplit("/", 1)[0]
-    return _flake_core_block(), watched_dir
+    # The core ExecStart is a Nix list of quoted strings; blank the quotes so
+    # `-v`/`-e` tokens parse the same way a rendered shell command line does.
+    return _flake_core_block().replace('"', " "), watched_dir
 
 
 def _render_systemd_sh(tmp_path: Path) -> tuple[str, list[Path]]:
@@ -232,11 +247,13 @@ def test_flake_watcher_is_activated_not_merely_rendered():
 def test_flake_watcher_handler_removes_trigger_before_starting_vacuum():
     """Handler must remove the trigger file BEFORE starting the runner, so a
     failed vacuum does not pin the .path unit active (R4)."""
-    text = FLAKE_NIX.read_text()
-    marker = "systemd.user.services.yadgar-vacuum-trigger"
-    assert marker in text, f"flake.nix has no {marker} handler service"
-    start = text.index(marker)
-    block = text[start : start + 1500]
+    block = _flake_attr_block("services.yadgar-vacuum-trigger")
+    assert block is not None, (
+        "flake.nix has no systemd.user.services.yadgar-vacuum-trigger handler service"
+    )
+    exec_at = block.find("ExecStart")
+    assert exec_at != -1, "handler service has no ExecStart"
+    block = block[exec_at:]  # skip Unit.Description prose
     rm_at = block.find("rm -f")
     start_at = block.find("start yadgar-vacuum")
     assert rm_at != -1, "handler does not remove the trigger file"
