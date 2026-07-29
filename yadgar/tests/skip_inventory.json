@@ -7,6 +7,13 @@
   },
   "entries": [
     {
+      "id": "v5-169-setup-linger-timeout-01",
+      "file": "yadgar/tests/scripts/test_v5_169_setup_linger.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "coreutils timeout unavailable",
+      "note": "R6 bounded-wall-clock test needs coreutils `timeout`; absent on macOS hosts, where the linger helper is a no-op anyway (no logind)"
+    },
+    {
       "id": "scan-script-live-db-01",
       "file": "yadgar/tests/scripts/test_scan_script.py",
       "verdict": "LEGIT-CONDITIONAL",

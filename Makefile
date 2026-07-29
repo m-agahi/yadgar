@@ -27,6 +27,18 @@ YADGAR_TEST_OS_MARKER ?=
 YADGAR_TEST_OS_RELEASE ?=
 YADGAR_TEST_INSTALL_DRYRUN ?=
 YADGAR_TEST_TTY ?=
+# Enable systemd lingering so the user units survive logout and start at boot.
+# Default matches yadgar-setup.sh (opt-out only) — divergent defaults between the
+# two install surfaces is the bug class this train is cleaning up.
+# Opt out with: make setup YADGAR_ENABLE_LINGER=0
+YADGAR_ENABLE_LINGER ?= 1
+
+# Resolved at parse time (not runtime) so `make -n` shows the real plan.
+ifeq ($(YADGAR_ENABLE_LINGER),0)
+LINGER_STEP := @echo "    Skipping systemd lingering (YADGAR_ENABLE_LINGER=0)"
+else
+LINGER_STEP := @bash $(SCRIPTS_DIR)/enable_linger.sh || true
+endif
 
 # Version — read once from server.json at parse time
 YADGAR_VERSION := $(shell grep -m1 '"version"' $(REPO_ROOT)server.json | cut -d'"' -f4)
@@ -134,6 +146,7 @@ bootstrap-secrets:
 
 ## enable-units: systemctl daemon-reload + enable --now yadgar.target (Linux)
 enable-units:
+	$(LINGER_STEP)
 	systemctl --user daemon-reload
 	systemctl --user enable --now yadgar.target
 	@echo "==> Verifying services..."
@@ -164,6 +177,7 @@ enable-units-macos:
 
 ## _enable-units-auto: Internal — routes enable-units to systemd or launchd based on OS (used by setup)
 _enable-units-auto:
+	$(LINGER_STEP)
 	@OS=$$(YADGAR_TEST_OS_MARKER="$(YADGAR_TEST_OS_MARKER)" bash $(SCRIPTS_DIR)/detect_os.sh); \
 	  case "$$OS" in \
 	    linux|linux-other) \

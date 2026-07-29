@@ -10,6 +10,7 @@
 #   --noninteractive   Use defaults; no interactive prompts.
 #   --dryrun           Print commands without executing them.
 #   --doctor           Run verification probes (macOS launchd + metrics endpoint).
+#   --no-enable-linger Skip systemd lingering (units then die at logout).
 #
 # Exit codes:
 #   0  success
@@ -71,6 +72,12 @@ NONINTERACTIVE=0
 DRYRUN=0
 DOCTOR=0
 INSTALL_RUNTIME_FLAG=0    # 0=default, 1=--install-runtime, 2=--no-install-runtime
+# Systemd lingering is attempted by default (see scripts/install/enable_linger.sh
+# for why that is safe: self-linger is polkit allow_any=yes, so no sudo/TTY).
+# Opt-out only — there is deliberately NO --enable-linger opt-IN flag: an opt-in
+# flag for default-on behaviour is a no-op and pushes scripted installs onto the
+# negative form (the --code-graph defect removed one car earlier in this train).
+ENABLE_LINGER=1
 
 for arg in "$@"; do
     case "$arg" in
@@ -79,16 +86,20 @@ for arg in "$@"; do
         --doctor)              DOCTOR=1 ;;
         --install-runtime)     INSTALL_RUNTIME_FLAG=1 ;;
         --no-install-runtime)  INSTALL_RUNTIME_FLAG=2 ;;
+        --no-enable-linger)    ENABLE_LINGER=0 ;;
         --help|-h)
             cat <<'EOF'
 Usage: yadgar-setup [--noninteractive] [--dryrun] [--doctor]
                     [--install-runtime] [--no-install-runtime]
+                    [--no-enable-linger]
 
   --noninteractive       Use defaults; skip interactive prompts.
   --dryrun               Print commands without executing them.
   --doctor               Run verification probes (metrics, launchd, etc.).
   --install-runtime      Auto-install podman without prompting (yes-mode).
   --no-install-runtime   Skip podman install; print hint and exit 1 if not found.
+  --no-enable-linger     Do not enable systemd lingering. Yadgar's user units
+                         will then stop at logout and not start at boot.
   --help                 Show this message.
 
 yadgar-setup configures Yadgar for users installed via pipx, Homebrew, or nix profile.
@@ -508,10 +519,44 @@ _step_pre_create_dirs() {
     run chmod 700 "${yadgar_state}"
 }
 
+# Systemd lingering — delegate to the shared helper the Makefile also calls, so
+# the two install surfaces cannot drift apart (R5). Full rationale lives in
+# scripts/install/enable_linger.sh; the short version is that all yadgar units
+# are systemd *user* units, so without lingering they die at logout and never
+# come back at boot.
+#
+# $1: optional mode passed through to the helper ("--check" = read-only probe).
+_run_enable_linger() {
+    local mode="${1:-}"
+
+    if [ -z "$mode" ] && [ "$ENABLE_LINGER" -eq 0 ]; then
+        info "Skipping systemd lingering (--no-enable-linger)."
+        return 0
+    fi
+
+    local scripts_dir linger_sh
+    scripts_dir="$(_locate_setup_scripts)"
+    [ -n "$scripts_dir" ] || scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    linger_sh="${scripts_dir}/enable_linger.sh"
+
+    if [ ! -f "$linger_sh" ]; then
+        # Do not fail silently: a missing helper is exactly the silent
+        # non-persistence this car exists to fix.
+        warn "enable_linger.sh helper not found — systemd lingering was NOT enabled."
+        warn "  Fix with:  sudo loginctl enable-linger $(id -un)"
+        return 0
+    fi
+
+    # `|| true` is load-bearing: this script runs under `set -euo pipefail`, and
+    # a linger failure must never abort an otherwise-successful install.
+    YADGAR_LINGER_DRYRUN="$DRYRUN" bash "$linger_sh" ${mode:+"$mode"} || true
+}
+
 _step_enable_units() {
     log "Step 5/11: Enabling daemon units..."
     case "$OS" in
         linux|linux-other)
+            _run_enable_linger
             run systemctl --user daemon-reload
             run systemctl --user enable yadgar.target
             # Reinstall scenario: if target already active, restart so regenerated
@@ -719,6 +764,8 @@ _run_doctor() {
             ;;
         linux|linux-other)
             run systemctl --user --no-pager status yadgar.target 2>&1 | head -5 || warn "yadgar.target not active"
+            # Read-only linger probe: reports state, never mutates it.
+            _run_enable_linger --check
             ;;
     esac
 
