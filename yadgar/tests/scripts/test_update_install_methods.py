@@ -245,10 +245,12 @@ class TestUpgradeCommand:
 
         assert "nix" in upgrade_command("nix-flake").lower()
 
-    def test_container_contains_docker_pull(self):
+    def test_container_names_image_runtime_neutral(self):
         from yadgar.core.update.install_methods import upgrade_command
 
-        assert "docker pull" in upgrade_command("container")
+        cmd = upgrade_command("container")
+        assert "docker.io/openfantasy/yadgar:latest" in cmd
+        assert "docker pull" not in cmd
 
     def test_source_contains_git_pull_or_pip(self):
         from yadgar.core.update.install_methods import upgrade_command

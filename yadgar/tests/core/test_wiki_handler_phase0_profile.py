@@ -1,9 +1,10 @@
 """Phase 0 profiling for v5.41.5 — per-substep timing of wiki_add handler.
 
 NOT a regular test — run standalone to generate profiling report.
+Marked @pytest.mark.perf: runs in the serial test-perf CI job, not test-core.
 
 Run:
-    .venv-test/bin/python -m pytest yadgar/tests/test_wiki_handler_phase0_profile.py -v -s -o addopts=
+    .venv-test/bin/python -m pytest yadgar/tests/core/test_wiki_handler_phase0_profile.py -v -s -o addopts=
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from __future__ import annotations
 import statistics
 import time
 import uuid
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -231,10 +231,11 @@ def _build_report(timings: dict[str, list[float]], e2e_p50: float) -> str:
     return "\n".join(lines) + "\n"
 
 
+@pytest.mark.perf
 def test_wiki_add_phase0_profiling(_profile_env, tmp_path):
     """Phase 0: measure per-substep latency of wiki_add(wait=False).
 
-    Generates docs/reports/releases/v5-41-5-profiling-report.md.
+    Generates a profiling report under tmp_path (not a repo-tracked file).
     Run with -s to see console output.
     """
     real_fq = _profile_env
@@ -271,13 +272,7 @@ def test_wiki_add_phase0_profiling(_profile_env, tmp_path):
         print(f"  {label:<33} {p50:7.3f}  {p90:7.3f}  {p99:7.3f}")
 
     report = _build_report(timings, e2e_p50)
-    report_path = (
-        Path(__file__).parent.parent.parent.parent
-        / "docs"
-        / "reports"
-        / "releases"
-        / "v5-41-5-profiling-report.md"
-    )
+    report_path = tmp_path / "v5-41-5-profiling-report.md"
     report_path.write_text(report, encoding="utf-8")
     print(f"\nReport: {report_path}")
 
