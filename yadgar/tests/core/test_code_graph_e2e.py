@@ -14,8 +14,8 @@ this test verifies the wiring end-to-end, not a re-implemented copy of it.
 
 GUARD (mirrors ``conftest.py`` surreal ``shutil.which`` guard + the existing
 ``TestLiveSmoke`` in ``test_code_graph_cli.py``): the codebase-memory-mcp static
-binary is a ~259 MB host-side external dep installed opt-in via
-``yadgar setup --code-graph`` — it is NEVER present in CI. When absent the whole
+binary is a ~259 MB host-side external dep installed by default by
+``yadgar setup`` — it is NEVER present in CI. When absent the whole
 module skips cleanly (skip_inventory entry ``code-graph-e2e-smoke-01``, ADR-0087).
 
 Hermetic: a temp dir, a local bare repo as ``origin`` (no network), and

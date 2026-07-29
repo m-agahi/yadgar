@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**254 SHALLs / 41 subsystems.** Today: **57 ✅ · 192 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83) Of the 192 ⏳:
-**59 `[r]` (real-path coverage exists) · 101 `[u]` (unit-only) · 32 none.**
+**255 SHALLs / 41 subsystems.** Today: **57 ✅ · 193 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83) Of the 193 ⏳:
+**59 `[r]` (real-path coverage exists) · 102 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -370,6 +370,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-CODEGRAPH-3 `code-graph refresh` SHALL emit a bounded (≤ `DIGEST_CHAR_BUDGET`) architecture digest as a block payload `{block_name:"code_graph", directory, content, chars, skipped}` for a Claude-in-the-loop `block_update` — NEVER a recall page. ⏳ [u] `tests/core/test_code_graph_digest.py::TestBlockPayload::test_build_block_payload_shape` P2
 - BC-CODEGRAPH-4 refresh SHALL index ONLY the latest `origin/<default-branch>` in a temp worktree (never the WIP tree); no remote / offline / fetch-fail → SKIP with a reason, never fall back to the working tree. ⏳ [u] `tests/core/test_code_graph_default_branch.py::TestSkipGuards::test_fetch_failure_skips_not_fallback` P2
 - BC-CODEGRAPH-5 opt-out SHALL be directory-scoped via the `code_graph.enabled` runtime-config row (ADR-0163 — SUPERSEDES ADR-0162's env-flag + `.code-graph-disable` marker): a per-repo `false` overrides a global `true` (per-dir → global → default). When it resolves falsey for a repo, `is_opted_out(dir)` is True and refresh skips with reason `opted_out`. ⏳ [u] `tests/core/test_code_graph_config.py::TestOptOut::test_opted_out_when_per_dir_false_even_if_global_true` P2
+- BC-CODEGRAPH-6 `yadgar setup` SHALL provision code_graph unattended — no prompt, no stdin read — installing the codebase-memory-mcp host binary and persisting `code_graph.enabled=true` by DEFAULT; `--no-code-graph` (the sole opt-out) SHALL skip the binary AND persist `code_graph.enabled=false`, and a binary install that cannot succeed (offline / unsupported platform) SHALL persist `false` and let setup complete rather than abort — so setup never writes a `true` flag while the binary is absent. ⏳ [u] `tests/scripts/test_cli_setup_module.py::TestCodeGraphStoreBinaryCoherence::test_states_never_diverge` P2
 
 ### CFG. Runtime config store (DB-backed, dir-aware, cached — ADR-0163)
 - BC-CONFIG-1 config resolution SHALL be directory-scoped: `config_get(key, directory)` returns a per-dir row's value when present, ELSE the global (`directory IS NONE`) row's value, ELSE the caller's `default` (per-dir override → global → default). ⏳ [u] `tests/core/test_runtime_config_resolver.py::TestResolution::test_per_dir_overrides_global_same_key` P2
