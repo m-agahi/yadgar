@@ -292,7 +292,11 @@ class TestUpgradeCommand:
         from yadgar.core.update.install_methods import upgrade_command
 
         cmd = upgrade_command("container")
-        assert "docker pull" in cmd
+        # Runtime-neutral: names the image, doesn't hardcode a runtime-specific
+        # pull verb (the in-container consumer has neither docker nor podman
+        # on PATH, so a resolved verb would be wrong there anyway).
+        assert "docker.io/openfantasy/yadgar:latest" in cmd
+        assert "docker pull" not in cmd
 
     def test_source_upgrade_command(self):
         from yadgar.core.update.install_methods import upgrade_command
