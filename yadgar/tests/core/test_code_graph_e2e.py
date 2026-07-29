@@ -152,6 +152,43 @@ class TestCodeGraphEndToEnd:
         # The header marker proves render_digest ran over real architecture data.
         assert "code_graph:" in content
 
+    def test_fetch_failure_reemits_stale_marked_digest(self, tmp_path, capsys, _cache_in_tmp):
+        """AC-5 (task:0067) — real-binary confirmation of the stale re-render.
+
+        Index once successfully, then point ``origin`` at a non-existent path so
+        ``git fetch`` fails while ``refs/remotes/origin/HEAD`` (already local)
+        still resolves.  Ordering matters: ``resolve_default_branch`` runs BEFORE
+        the fetch, so a broken remote PATH lands on ``fetch_failed`` — if it
+        instead tripped default-branch resolution the run would take the
+        ``no_remote_or_default_branch`` hard-skip branch and this test would pass
+        for the wrong reason.  The reason is pinned on stderr so that cannot hide.
+
+        Belt-and-braces on top of the CI-visible
+        ``test_code_graph_cli.py::TestDispatch::test_refresh_reemits_stale_marked_digest_on_fetch_failure``
+        — this module is ``shutil.which``-skipped and NEVER runs in CI.
+        """
+        from yadgar.core.cli import code_graph
+
+        work = _make_repo_with_origin(tmp_path)
+
+        # 1. A real, successful index populates the binary's cache for this project.
+        args = SimpleNamespace(repo=str(work), cg_command="refresh", project=None, json=True)
+        code_graph.cmd_code_graph(args)
+        first = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert first["skipped"] is False, f"setup index unexpectedly skipped: {first!r}"
+        assert "stale @" not in first["content"], "a fresh index must not be marked stale"
+
+        # 2. Break the remote PATH only — refs/remotes/origin/HEAD stays local.
+        _git(["remote", "set-url", "origin", str(tmp_path / "gone.git")], cwd=work)
+
+        code_graph.cmd_code_graph(args)
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out.strip().splitlines()[-1])
+
+        assert "fetch_failed" in captured.err, f"wrong skip reason; stderr={captured.err!r}"
+        assert payload["skipped"] is False, f"expected a re-emitted digest, got {payload!r}"
+        assert "stale @ " in payload["content"]
+
     def test_index_then_get_architecture_nonempty(self, tmp_path, _cache_in_tmp):
         """Lower-level path: refresh_index → get_architecture returns real data."""
         from yadgar.core.code_graph import default_branch, runner
