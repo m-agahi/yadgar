@@ -65,6 +65,15 @@ class TestLoadAnchorsYaml:
 
 
 class TestReadAuthToken:
+    """2026-07-29: the body now delegates to the single ``core.install.auth_token``
+    resolver (three hand-rolled copies collapsed to one). The ASSERTIONS below are
+    unchanged; only the injection seam moved — these used to patch
+    ``seed._paths``, a module attribute the shared resolver never reads, so they
+    now use the sanctioned ``$YADGAR_SECRETS_ENV_FILE`` override that
+    ``paths.SECRETS_ENV_PATH`` honors at access time (the same seam
+    ``test_mcp_register.py``'s token tests already use).
+    """
+
     def test_env_var_wins(self):
         with patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": "env-token"}):
             assert _read_auth_token() == "env-token"
@@ -72,42 +81,41 @@ class TestReadAuthToken:
     def test_empty_env_falls_back_to_file(self, tmp_path):
         secrets = tmp_path / "secrets.env"
         secrets.write_text("YADGAR_MCP_AUTH_TOKEN=file-token\n")
-        with (
-            patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
-            patch("yadgar.core.cli.seed._paths") as mock_paths,
+        with patch.dict(
+            os.environ,
+            {"YADGAR_MCP_AUTH_TOKEN": "", "YADGAR_SECRETS_ENV_FILE": str(secrets)},
         ):
-            mock_paths.SECRETS_ENV_PATH = secrets
             result = _read_auth_token()
         assert result == "file-token"
 
     def test_no_env_no_file_returns_empty(self, tmp_path):
-        with (
-            patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
-            patch("yadgar.core.cli.seed._paths") as mock_paths,
+        with patch.dict(
+            os.environ,
+            {
+                "YADGAR_MCP_AUTH_TOKEN": "",
+                "YADGAR_SECRETS_ENV_FILE": str(tmp_path / "missing.env"),
+            },
         ):
-            mock_paths.SECRETS_ENV_PATH = tmp_path / "missing.env"
             result = _read_auth_token()
         assert result == ""
 
     def test_file_with_quoted_token(self, tmp_path):
         secrets = tmp_path / "s.env"
         secrets.write_text('YADGAR_MCP_AUTH_TOKEN="quoted-token"\n')
-        with (
-            patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
-            patch("yadgar.core.cli.seed._paths") as mock_paths,
+        with patch.dict(
+            os.environ,
+            {"YADGAR_MCP_AUTH_TOKEN": "", "YADGAR_SECRETS_ENV_FILE": str(secrets)},
         ):
-            mock_paths.SECRETS_ENV_PATH = secrets
             result = _read_auth_token()
         assert result == "quoted-token"
 
     def test_file_skips_comments(self, tmp_path):
         secrets = tmp_path / "s.env"
         secrets.write_text("# comment\nYADGAR_MCP_AUTH_TOKEN=tok\n")
-        with (
-            patch.dict(os.environ, {"YADGAR_MCP_AUTH_TOKEN": ""}),
-            patch("yadgar.core.cli.seed._paths") as mock_paths,
+        with patch.dict(
+            os.environ,
+            {"YADGAR_MCP_AUTH_TOKEN": "", "YADGAR_SECRETS_ENV_FILE": str(secrets)},
         ):
-            mock_paths.SECRETS_ENV_PATH = secrets
             result = _read_auth_token()
         assert result == "tok"
 

@@ -2,7 +2,11 @@
 
 Importable by hook scripts and the host ``yadgar`` CLI — it runs ON THE HOST,
 outside the daemon container, so it uses ONLY the stdlib (``urllib``): no httpx,
-no ``yadgar.*`` runtime deps beyond observability.
+and at IMPORT time no ``yadgar.*`` runtime deps beyond observability.
+
+The one non-stdlib dependency, ``core.install.auth_token``, is imported LAZILY
+inside :func:`_apply_auth` — module-import cost (what a stop-hook actually pays)
+is unchanged, and the resolver itself is stdlib + observability only.
 
 ``get(key, directory=None, default=None)`` hits the core daemon's
 ``GET /api/runtime-config/{key}?directory=...`` route and returns the resolved
@@ -44,19 +48,17 @@ def get(key: str, directory: str | None = None, default: Any = None) -> Any:
     Returns:
         The resolved value, or ``default``.
     """
-    port = os.environ.get("YADGAR_PORT", "8765")
     try:
         params = {}
         if directory:
             params["directory"] = directory
-        query = f"?{_parse.urlencode(params)}" if params else ""
-        # quote the key into the path (a key may contain '.' or '/'-like chars).
-        url = f"http://127.0.0.1:{port}/api/runtime-config/{_parse.quote(key, safe='')}{query}"
-
-        req_obj = _req.Request(url)
-        token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
-        if token:
-            req_obj.add_header("Authorization", f"Bearer {token}")
+        # 2026-07-29: this used to inline its own URL build and its own env-ONLY
+        # token read. ``/api/`` is auth-gated, so an unsourced caller (every
+        # stop-hook, every installer) 401'd and fail-opened to *default* — a
+        # stored per-repo opt-out was unreadable. Route both through the shared
+        # helpers so ``get`` and ``set`` cannot drift again.
+        req_obj = _req.Request(_base_url(key, params))
+        _apply_auth(req_obj)
 
         with _req.urlopen(req_obj, timeout=_TIMEOUT_S) as resp:
             body = json.loads(resp.read().decode())
@@ -97,8 +99,23 @@ def _base_url(key: str, params: dict) -> str:
 
 @observe(tier="stage")
 def _apply_auth(req_obj: _req.Request) -> None:
-    """Attach the Bearer header when ``YADGAR_MCP_AUTH_TOKEN`` is set."""
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    """Attach the Bearer header, resolving env → ``secrets.env`` (2026-07-29 fix).
+
+    This read ``os.environ`` ONLY. ``/api/`` is auth-gated
+    (``auth_middleware._PROTECTED_PREFIXES``) and NO installer sources
+    ``secrets.env`` — the README tells the user to do that *after* install — so
+    every host-side write silently 401'd and :func:`set` returned ``False``.
+    Benign on the default code_graph path (the flag already defaults true with
+    no row) but it made ``--no-code-graph`` a no-op: the ``false`` row never
+    landed. Delegates to the single resolver the ``yadgar install`` and
+    ``yadgar seed`` paths already use.
+
+    Import is LAZY so importing this module (hook scripts do, on every turn)
+    stays stdlib-only.
+    """
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     if token:
         req_obj.add_header("Authorization", f"Bearer {token}")
 

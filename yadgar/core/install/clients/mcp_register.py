@@ -28,13 +28,13 @@ here. Return shape preserved: ``{"updated": str, "old": dict, "new": dict}``.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from yadgar._shared import paths as _paths
 from yadgar._shared.observability.observe import observe
+from yadgar.core.install.auth_token import parse_secrets_env_token, resolve_auth_token
 from yadgar.core.install.clients.descriptor import (
     ClientDescriptor,
     McpAuth,
@@ -57,58 +57,21 @@ _MCP_TOKEN_ENV_LINE_PREFIX = f"{_TOKEN_ENV_VAR}="
 
 
 # ── Token resolution (2026-07-28 fresh-VM QA fix) ────────────────────────────
+#
+# 2026-07-29: the implementation MOVED to ``core.install.auth_token`` — it was
+# being re-typed in three places (here, ``cli/seed.py``, and
+# ``runtime_config_client``, whose env-only copy was the bug that made
+# ``--no-code-graph`` a silent no-op). These are aliases, not wrappers, so
+# ``mcp_register.resolve_mcp_auth_token is auth_token.resolve_auth_token``
+# holds and there is exactly ONE resolver to audit. The names stay exported
+# here for the existing importers (``cli/install.py``, ``cli/setup.py``,
+# ``yadgar/tests/clients/test_mcp_register.py``).
 
+#: Alias — see :func:`yadgar.core.install.auth_token.parse_secrets_env_token`.
+_parse_secrets_env_token = parse_secrets_env_token
 
-@observe(tier="stage")
-def _parse_secrets_env_token(secrets_path: Path) -> str:
-    """Best-effort parse of ``YADGAR_MCP_AUTH_TOKEN=`` from *secrets_path*.
-
-    Returns ``""`` if the file is missing, unreadable, or has no matching
-    line — never raises. Shared by :func:`resolve_mcp_auth_token` (env +
-    secrets.env resolution) and ``setup.py``'s ``_existing_secrets_token``
-    (file-only lookup, used once the caller has already confirmed the file
-    exists).
-    """
-    try:
-        text = secrets_path.read_text()
-    except OSError:
-        return ""
-    for line in text.splitlines():
-        if line.startswith(_MCP_TOKEN_ENV_LINE_PREFIX):
-            return line[len(_MCP_TOKEN_ENV_LINE_PREFIX) :].strip()
-    return ""
-
-
-@observe(tier="stage")
-def resolve_mcp_auth_token() -> str:
-    """Resolve the yadgar MCP bearer token for write-path client registration.
-
-    Fixes the 2026-07-28 fresh-VM QA bug: ``yadgar install --client
-    claude-code`` (``cli/install.py``) and ``yadgar daemon configure-mcp``
-    (:func:`register_mcp_for_claude_code`) previously read ``os.environ``
-    ONLY, so an interactive shell that had not sourced ``secrets.env``
-    produced a headerless, unauthenticated MCP entry — even though the
-    daemon itself sources ``secrets.env`` into its own env and was already
-    enforcing auth. This makes both write paths resolve the token the same
-    way ``yadgar setup`` already does (ADR-0161).
-
-    Resolution order (never raises; empty return means "no token
-    available"):
-
-      1. ``$YADGAR_MCP_AUTH_TOKEN`` (stripped), if non-empty.
-      2. Else parse ``YADGAR_MCP_AUTH_TOKEN=`` from
-         ``paths.SECRETS_ENV_PATH`` (itself honors the
-         ``$YADGAR_SECRETS_ENV_FILE`` override).
-      3. Else ``""``.
-
-    An explicitly-exported env var always wins over secrets.env — this is
-    intentional (a user who deliberately exports a different token should
-    have that override respected), not merely today's incidental behavior.
-    """
-    env_token = os.environ.get(_TOKEN_ENV_VAR, "").strip()
-    if env_token:
-        return env_token
-    return _parse_secrets_env_token(_paths.SECRETS_ENV_PATH)
+#: Alias — see :func:`yadgar.core.install.auth_token.resolve_auth_token`.
+resolve_mcp_auth_token = resolve_auth_token
 
 
 # ── Serializers (one per McpEntrySchema variant) ─────────────────────────────
