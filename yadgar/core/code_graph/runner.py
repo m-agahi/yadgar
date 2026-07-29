@@ -63,7 +63,7 @@ class CodeGraphBinaryMissing(CodeGraphError):
     """The codebase-memory-mcp binary could not be located.
 
     Raised (not a stacktrace) so callers can surface a friendly install hint:
-    ``CODE_GRAPH_ENABLED=1 yadgar setup --code-graph``.
+    ``yadgar setup`` (which installs the binary by default — task:0082).
     """
 
 
@@ -92,7 +92,7 @@ def _require_binary() -> str:
     if binary is None:
         raise CodeGraphBinaryMissing(
             f"{BINARY_NAME} not found. Install it host-side with "
-            f"`CODE_GRAPH_ENABLED=1 yadgar setup --code-graph` "
+            f"`yadgar setup` (installs it by default) "
             f"(or ensure ~/.local/bin is on PATH)."
         )
     return binary

@@ -318,57 +318,72 @@ class TestInstallSkipIfExists:
         assert result.exists()
 
 
-# ── 9. CODE_GRAPH_ENABLED opt-out ─────────────────────────────────────────────
+# ── 9. code_graph install dispatch (task:0082 — default-on, single opt-out) ───
 
 
-class TestCodeGraphEnabledFlag:
-    """_maybe_install_code_graph gate: env flag and CLI flag control install dispatch."""
+class TestCodeGraphInstallDispatch:
+    """``_maybe_install_code_graph`` dispatch: the binary install is DEFAULT-ON and
+    the single ``--no-code-graph`` opt-out turns the store flag off with it.
 
-    def _make_args(self, *, code_graph: bool = False):
+    Rewritten by task:0082. The old shape gated the install on a
+    ``CODE_GRAPH_ENABLED`` env trigger + a ``--code-graph`` opt-IN flag; both are
+    gone (the env var no longer influences setup, and the opt-in flag was removed
+    once ``code_graph.enabled`` defaulted to True). ``runtime_config_client.set``
+    is stubbed in every case — an unstubbed call POSTs to a developer's LIVE
+    daemon and would mutate its real runtime-config store.
+    """
+
+    def _make_args(self, *, no_code_graph: bool = False):
         import types
 
-        return types.SimpleNamespace(code_graph=code_graph)
+        return types.SimpleNamespace(no_code_graph=no_code_graph)
 
-    def test_env_flag_false_skips_install(self, tmp_path: Path) -> None:
-        """When CODE_GRAPH_ENABLED=0 and --code-graph not set, install not called."""
+    def test_default_triggers_install_and_enables(self, tmp_path: Path) -> None:
         from yadgar.core.cli.setup import _maybe_install_code_graph
 
-        args = self._make_args(code_graph=False)
+        sets: list = []
         with (
-            patch.dict(os.environ, {"CODE_GRAPH_ENABLED": "0"}),
             patch(
                 "yadgar.core.install.codebase_memory_mcp.install_codebase_memory_mcp"
             ) as mock_install,
-        ):
-            _maybe_install_code_graph(args)
-            mock_install.assert_not_called()
-
-    def test_cli_flag_true_triggers_install(self, tmp_path: Path) -> None:
-        """When --code-graph flag is set, install is called once."""
-        from yadgar.core.cli.setup import _maybe_install_code_graph
-
-        args = self._make_args(code_graph=True)
-        with (
-            patch.dict(os.environ, {"CODE_GRAPH_ENABLED": "0"}),
             patch(
-                "yadgar.core.install.codebase_memory_mcp.install_codebase_memory_mcp"
-            ) as mock_install,
+                "yadgar.core.runtime_config_client.set",
+                side_effect=lambda k, v, **kw: sets.append((k, v)) or True,
+            ),
         ):
             mock_install.return_value = tmp_path / BINARY_NAME
-            _maybe_install_code_graph(args)
+            _maybe_install_code_graph(self._make_args())
             mock_install.assert_called_once()
+        assert sets == [("code_graph.enabled", True)]
 
-    def test_env_flag_true_triggers_install(self, tmp_path: Path) -> None:
-        """When CODE_GRAPH_ENABLED=1, install is called even without --code-graph."""
+    def test_opt_out_skips_install_and_disables(self, tmp_path: Path) -> None:
         from yadgar.core.cli.setup import _maybe_install_code_graph
 
-        args = self._make_args(code_graph=False)
+        sets: list = []
         with (
-            patch.dict(os.environ, {"CODE_GRAPH_ENABLED": "1"}),
             patch(
                 "yadgar.core.install.codebase_memory_mcp.install_codebase_memory_mcp"
             ) as mock_install,
+            patch(
+                "yadgar.core.runtime_config_client.set",
+                side_effect=lambda k, v, **kw: sets.append((k, v)) or True,
+            ),
+        ):
+            _maybe_install_code_graph(self._make_args(no_code_graph=True))
+            mock_install.assert_not_called()
+        assert sets == [("code_graph.enabled", False)]
+
+    def test_legacy_env_trigger_no_longer_gates_the_install(self, tmp_path: Path) -> None:
+        """``CODE_GRAPH_ENABLED=0`` used to suppress the install; it is now inert."""
+        from yadgar.core.cli.setup import _maybe_install_code_graph
+
+        with (
+            patch.dict(os.environ, {"CODE_GRAPH_ENABLED": "0"}),
+            patch(
+                "yadgar.core.install.codebase_memory_mcp.install_codebase_memory_mcp"
+            ) as mock_install,
+            patch("yadgar.core.runtime_config_client.set", return_value=True),
         ):
             mock_install.return_value = tmp_path / BINARY_NAME
-            _maybe_install_code_graph(args)
+            _maybe_install_code_graph(self._make_args())
             mock_install.assert_called_once()
