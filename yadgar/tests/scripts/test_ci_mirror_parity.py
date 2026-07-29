@@ -298,11 +298,24 @@ class TestEntryPointSurfaceEnumerated:
         """
         pattern = re.compile(r"python3?\s+-m\s+(yadgar(?:\.[A-Za-z_][A-Za-z0-9_.]*)*)\b")
         skip_dirs = {".git", "docs", "tests", ".venv", ".claude", "node_modules"}
+        # Suffixes deliberately include .py/.j2/.tmpl/.yaml/.yml, not just shell
+        # and unit files: the plan for this car warned that a path set scoped to
+        # entrypoint*.sh / scripts/install/ would miss invocations embedded in
+        # templates that live INSIDE the package (e.g. hook scripts the installer
+        # renders into ~/.claude/hooks/). No such invocation exists today —
+        # verified by grep — but the enumeration must fail closed if one appears.
+        # A docstring mentioning `-m yadgar.X` is treated as a requirement rather
+        # than a false positive: it almost certainly names a real entry point.
+        suffixes = {".sh", ".service", ".timer", ".py", ".j2", ".tmpl", ".yaml", ".yml", ""}
         found: set[str] = set()
         for path in REPO_ROOT.rglob("*"):
-            if not path.is_file() or path.suffix not in {".sh", ".service", ".timer", ""}:
+            if not path.is_file() or path.suffix not in suffixes:
                 continue
             if skip_dirs & set(path.relative_to(REPO_ROOT).parts):
+                continue
+            # The workflow mirrors carry the gate itself — self-reference would
+            # make this assertion vacuously true.
+            if path.parent.name == "workflows":
                 continue
             # errors="ignore" so binary/undecodable files need no second
             # exception type here — the repo forbids bare except-tuples

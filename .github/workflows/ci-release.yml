@@ -368,6 +368,9 @@ jobs:
           /tmp/cleanvenv/bin/pip install --upgrade pip
           /tmp/cleanvenv/bin/pip install "dist/yadgar-${{ steps.get-version.outputs.version }}-py3-none-any.whl"
 
+          # Resolved dependency set must be internally consistent.
+          /tmp/cleanvenv/bin/pip check
+
           # Console script + `-m` targets verified safe to execute (exit 0).
           /tmp/cleanvenv/bin/yadgar --version
           /tmp/cleanvenv/bin/python -m yadgar --version
