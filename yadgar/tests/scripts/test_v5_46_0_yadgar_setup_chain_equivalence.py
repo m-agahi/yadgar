@@ -67,6 +67,41 @@ def test_setup_sh_unit_generation_step_present():
     )
 
 
+def test_setup_sh_and_make_agree_on_linger_step():
+    """v5.169 drift guard (R5): both install surfaces must carry the linger step.
+
+    Fails if either `yadgar-setup.sh` or the Makefile gains or loses systemd
+    lingering alone — divergent install paths are the bug class this train is
+    cleaning up. Asserts the shared ``linger`` token, not either surface's exact
+    wording (the shell path prints ``loginctl enable-linger <user>``; make -n
+    prints ``enable_linger.sh``).
+    """
+    env = os.environ.copy()
+    env["YADGAR_CONTAINER_RUNTIME"] = "echo"
+    env["YADGAR_TEST_OS_MARKER"] = "linux"
+    sh_result = subprocess.run(
+        ["bash", str(SETUP_SH), "--dryrun"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    sh_out = (sh_result.stdout + sh_result.stderr).lower()
+
+    make_env = os.environ.copy()
+    make_env["INSTALL_NONINTERACTIVE"] = "1"
+    make_result = subprocess.run(
+        ["make", "-n", "_enable-units-auto"],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=make_env,
+    )
+    make_out = (make_result.stdout + make_result.stderr).lower()
+
+    assert "linger" in sh_out, f"yadgar-setup.sh lost the linger step:\n{sh_out[-2000:]}"
+    assert "linger" in make_out, f"Makefile lost the linger step:\n{make_out[-2000:]}"
+
+
 @pytest.mark.skipif(not SETUP_SH.exists(), reason="yadgar-setup.sh not yet created")
 def test_setup_sh_dryrun_exits_clean():
     """yadgar-setup --dryrun must exit 0."""

@@ -80,6 +80,14 @@ fi
 
 # ── Linux: systemd path ───────────────────────────────────────────────────────
 
+# DELIBERATE ASYMMETRY (v5.169): install enables systemd lingering
+# (scripts/install/enable_linger.sh) but uninstall does NOT disable it.
+# Lingering is user-session policy, not yadgar-owned state — it may well be
+# keeping somebody's unrelated user services alive, so turning it off here could
+# silently break something yadgar never installed. Users who want it gone run
+# `loginctl disable-linger $USER` themselves. Asymmetric on purpose, not an
+# oversight.
+
 # Stop and disable systemd units (skip in test mode)
 if [[ "$TEST_MODE" != "1" ]]; then
     if command -v systemctl &>/dev/null; then

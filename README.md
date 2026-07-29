@@ -182,6 +182,8 @@ make setup            # install + hooks + agents + units + seed anchors
 
 `yadgar setup` writes `~/.config/yadgar/config.yaml`, generates `~/.config/yadgar/secrets.env` (chmod 600) with random `YADGAR_MCP_AUTH_TOKEN` + `SURREAL_PASS` + `YADGAR_RW_PASS` + `YADGAR_RO_PASS`, installs Claude Code hooks + subagent templates + rules, seeds anchors, and prepares systemd (Linux) or launchd (macOS) user units. Idempotent — re-run after upgrades.
 
+**systemd lingering (Linux).** Yadgar's units are systemd *user* units, so the installer also enables lingering for your user (`loginctl enable-linger`) — without it the daemon stops when you log out and never starts at boot. Enabling your own lingering needs no `sudo`. Note the consequence on a shared host: your yadgar containers keep running (and holding memory) while you are logged out. Opt out with `yadgar-setup --no-enable-linger` or `make setup YADGAR_ENABLE_LINGER=0`; uninstalling does not disable lingering again, since it may serve your other user services.
+
 Then start the daemon and register it with Claude Code:
 
 ```bash
