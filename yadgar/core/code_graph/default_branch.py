@@ -17,7 +17,11 @@ Flow (``refresh_index``):
      fall back to indexing the working tree.
   5. materialize ``origin/<default>`` in a TEMP worktree
      (``git worktree add --detach <tmp> origin/<default>``).
-  6. index the temp with ``CBM_ALLOWED_ROOT=<tmp>``.
+  6. index the temp with ``CBM_ALLOWED_ROOT=<tmp>``, naming the project after
+     the REAL identity (``_project_name`` — canonical_root + subdir, ADR-0162's
+     stated key) rather than letting the indexer derive it from the random temp
+     path.  Deterministic naming is what makes a cached index addressable by a
+     later run (task:0067).
   7. ALWAYS clean up the temp worktree (``git worktree remove --force``) in a
      ``finally`` — on success AND on every error path.
 
@@ -27,6 +31,8 @@ so it stays stable while the user branch-switches.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -81,6 +87,40 @@ def resolve_default_branch(repo_path: str) -> str | None:
         pass
 
     return None
+
+
+#: Anything outside this class is replaced with '-' before the name reaches the
+#: indexer, whose ``--name`` "normalizes unsafe path characters" — sanitising on
+#: OUR side is what makes the round-trip an identity, which is load-bearing: the
+#: skip path RECOMPUTES the name and must match what a past index stored.
+_UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+
+
+@observe(tier="stage")
+def _project_name(canonical_root: str, subdir: str) -> str:
+    """Return a DETERMINISTIC indexer project name for this repo identity.
+
+    ``<leaf-basename>-<12-hex of sha256(canonical_root\\0subdir)>``.
+
+    ADR-0162 already specifies "Project/page key = canonical_root + relative
+    subdir (avoid monorepo leaf/worktree collisions)"; the code never
+    implemented it, so the indexer fell back to deriving the name from the
+    indexed PATH — a random ``tempfile.mkdtemp`` worktree.  That made the name
+    different on EVERY refresh: the cached index was unaddressable by any later
+    run (so the stale re-render could never find one, task:0067) and each
+    refresh leaked a fresh orphan project into the indexer's SQLite.
+
+    Shape rationale: the hash carries the identity (collision-safe across
+    monorepo leaves, bounded length regardless of path depth) while the readable
+    basename prefix keeps ``list_projects`` output and the digest header
+    human-legible.  The ``-`` separator is outside the sanitised char class, so
+    the name can never form one long alphanumeric run.
+    """
+    key = f"{canonical_root}\0{subdir}"
+    short_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    leaf = Path(subdir).name if subdir else Path(canonical_root).name
+    safe_leaf = _UNSAFE_NAME_CHARS.sub("-", leaf).strip("-") or "repo"
+    return f"{safe_leaf}-{short_hash}"
 
 
 @observe(tier="stage")
@@ -148,6 +188,9 @@ def refresh_index(repo_path: str) -> dict[str, Any]:
         precisely because no ``<default>`` resolved, so no sha exists by
         construction.  The CLI stamps it into the digest's ``stale @ <sha>``
         marker (task:0067).
+      - project (``_project_name``) on the success AND ``fetch_failed`` paths.
+        Deterministic, so the skip path names the project a PAST successful run
+        indexed — which is what lets the CLI re-render that cached digest.
 
     The temp worktree is ALWAYS removed (success and error) via ``finally``.
     """
@@ -182,6 +225,10 @@ def refresh_index(repo_path: str) -> dict[str, Any]:
             "canonical_root": canonical_root,
             "subdir": subdir,
             "default_branch": default,
+            # Deterministic ⇒ computable WITHOUT an index, which is the whole
+            # point: it addresses the project a PAST successful run indexed, so
+            # the CLI can re-render that cached digest marked stale.
+            "project": _project_name(canonical_root, subdir),
         }
         if stale_sha:
             result["head_sha"] = stale_sha
@@ -204,7 +251,13 @@ def refresh_index(repo_path: str) -> dict[str, Any]:
         # The indexed subdir = the temp worktree + the same relative subdir, so a
         # monorepo-leaf index stays confined to the leaf (CBM_ALLOWED_ROOT = that path).
         index_path = str(Path(wt) / subdir) if subdir else wt
-        idx = runner.index_repository(index_path, allowed_root=index_path)
+        # Name it after the REAL identity, not the throwaway temp path — see
+        # _project_name (ADR-0162's stated project key, task:0067).
+        idx = runner.index_repository(
+            index_path,
+            allowed_root=index_path,
+            name=_project_name(canonical_root, subdir),
+        )
 
         success: dict[str, Any] = {
             "indexed": True,

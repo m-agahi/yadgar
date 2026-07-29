@@ -148,6 +148,112 @@ class TestRefreshFlow:
         assert "/tmp" not in result["canonical_root"]
 
 
+class TestDeterministicProjectName:
+    """task:0067 — the indexer project name is keyed to the REAL repo identity.
+
+    Found by the real-binary e2e (AC-5), invisible to any mocked test: without
+    an explicit ``--name`` the indexer derives the project from the indexed
+    PATH, which on this flow is a random ``tempfile.mkdtemp`` worktree.  So the
+    name differed on EVERY refresh — the cached index was unaddressable by any
+    later run (the stale re-render could never find one, i.e. the marker would
+    have shipped dead a second time) and each refresh leaked a fresh orphan
+    project into the indexer's SQLite.  ADR-0162 already specified
+    canonical_root + subdir as the project key; this pins it.
+    """
+
+    def test_name_is_stable_across_calls(self):
+        from yadgar.core.code_graph import default_branch
+
+        first = default_branch._project_name("/real/repo", "svc/api")
+        second = default_branch._project_name("/real/repo", "svc/api")
+        assert first == second, "a later offline run must recompute the SAME name"
+
+    def test_monorepo_leaves_get_distinct_names(self):
+        from yadgar.core.code_graph import default_branch
+
+        root = "/real/monorepo"
+        assert default_branch._project_name(root, "svc/a") != default_branch._project_name(
+            root, "svc/b"
+        )
+        # …and the bare root is distinct from any leaf.
+        assert default_branch._project_name(root, "") != default_branch._project_name(root, "svc/a")
+
+    def test_name_is_indexer_safe(self):
+        """Sanitise on OUR side so the indexer's ``--name`` normalisation is a no-op.
+
+        The round-trip must be an identity: the skip path RECOMPUTES the name
+        and has to match what a past index stored.
+        """
+        import re
+
+        from yadgar.core.code_graph import default_branch
+
+        name = default_branch._project_name("/real/repo", "svc/wei rd:name!")
+        assert re.fullmatch(r"[A-Za-z0-9._-]+", name), name
+        # The '-' separator sits outside the defang char class, so the name can
+        # never form one long alphanumeric run in the digest header.
+        assert "-" in name
+
+    def test_index_is_named_after_real_identity_not_temp_path(self, tmp_path):
+        from yadgar.core.code_graph import default_branch
+
+        captured = {}
+
+        def _fake_index(path, **kw):
+            captured["name"] = kw.get("name")
+            captured["path"] = path
+            return {"project": kw.get("name")}
+
+        with (
+            patch("yadgar.core.code_graph.config.is_enabled", return_value=True),
+            patch(
+                "yadgar.core.code_graph.default_branch.resolve_default_branch",
+                return_value="master",
+            ),
+            patch(
+                "yadgar.core.code_graph.default_branch._canonical_identity",
+                return_value=("/real/repo", ""),
+            ),
+            patch("yadgar.core.code_graph.default_branch._git", return_value=_git_ok()),
+            patch("yadgar.core.code_graph.runner.index_repository", _fake_index),
+        ):
+            result = default_branch.refresh_index("/real/repo")
+
+        expected = default_branch._project_name("/real/repo", "")
+        assert captured["name"] == expected
+        assert result["project"] == expected
+        # The indexed PATH is still the temp worktree — only the NAME is real.
+        assert captured["path"] != "/real/repo"
+
+    def test_fetch_failure_skip_carries_the_project_name(self):
+        """The skip path computes it with no index — that is what makes it usable."""
+        from yadgar.core.code_graph import default_branch
+
+        def _side(argv, **kw):
+            if argv[:1] == ["fetch"]:
+                raise subprocess.CalledProcessError(1, "git fetch")
+            return _git_ok("deadbeefcafe0000deadbeefcafe0000deadbeef\n")
+
+        with (
+            patch("yadgar.core.code_graph.config.is_enabled", return_value=True),
+            patch(
+                "yadgar.core.code_graph.default_branch.resolve_default_branch",
+                return_value="master",
+            ),
+            patch(
+                "yadgar.core.code_graph.default_branch._canonical_identity",
+                return_value=("/real/repo", "svc"),
+            ),
+            patch("yadgar.core.code_graph.default_branch._git", side_effect=_side),
+            patch("yadgar.core.code_graph.runner.index_repository") as mock_idx,
+        ):
+            result = default_branch.refresh_index("/real/repo/svc")
+
+        assert result["reason"] == "fetch_failed"
+        assert result["project"] == default_branch._project_name("/real/repo", "svc")
+        mock_idx.assert_not_called()
+
+
 class TestHeadShaCapture:
     """task:0067 — ``refresh_index`` reports the sha of ``origin/<default>``.
 
