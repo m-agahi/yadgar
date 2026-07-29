@@ -84,7 +84,9 @@ def _cmd_refresh(repo: str, project: str | None, output_json: bool) -> None:
     keys.  A successful index is never stale.  When the index is SKIPPED for
     ``fetch_failed`` and BOTH guards hold — a cached architecture exists and a
     sha resolved — the cached digest is re-emitted with ``skipped: false`` and a
-    trailing ``stale @ <12-char sha>``; otherwise the skip stays bit-for-bit as
+    ``stale @ <12-char sha>`` marker on line 2, immediately under the header (a
+    budget-reserved preamble, so it survives truncation on a digest that fills
+    ``DIGEST_CHAR_BUDGET``); otherwise the skip stays bit-for-bit as
     before.  Rationale: a silent skip leaves the previously-written block
     serving an aged digest with no marker at all.
     """

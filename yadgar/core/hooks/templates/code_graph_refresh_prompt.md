@@ -31,7 +31,9 @@ the OUTPUT IT RETURNS. Do not reconstruct state from an earlier turn.
 
    NOTE: offline / fetch-failure does NOT always land here. When the fetch fails
    but a cached index and a resolvable sha exist, the CLI re-emits the CACHED
-   digest with `skipped:false` and a trailing `stale @ <sha>` marker — so step 3
+   digest with `skipped:false` and a `stale @ <sha>` marker on line 2, directly
+   under the header (a budget-reserved preamble, so it survives truncation on a
+   digest that fills `DIGEST_CHAR_BUDGET`) — so step 3
    runs and the block IS written. That is deliberate: a silent skip would leave
    the previously-written block serving an aged digest with no marker at all.
    Nothing changes for you mechanically — branch on `skipped` exactly as below.

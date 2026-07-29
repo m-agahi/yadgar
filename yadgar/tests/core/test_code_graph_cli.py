@@ -26,10 +26,9 @@ import pytest
 #: to 12 chars BEFORE ``_defang_secret_shaped_runs`` ever sees it.
 _STALE_SHA = "0123456789abcdef0123456789abcdef01234567"
 
-#: Minimal architecture fixture.  Load-bearing constraints: (a) no
-#: ``[A-Za-z0-9/+]`` run of ≥40 chars, or ``_defang_secret_shaped_runs`` would
-#: split it and confuse an exact-sha assertion; (b) small enough that the
-#: LAST-priority stale line is never truncated away by ``DIGEST_CHAR_BUDGET``.
+#: Minimal architecture fixture.  Load-bearing constraint: no ``[A-Za-z0-9/+]``
+#: run of ≥40 chars, or ``_defang_secret_shaped_runs`` would split it and confuse
+#: an exact-sha assertion.
 _ARCH_FIXTURE = {
     "project": "proj",
     "languages": [{"language": "Java", "file_count": 10}],
