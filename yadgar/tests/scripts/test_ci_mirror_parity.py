@@ -304,9 +304,13 @@ class TestEntryPointSurfaceEnumerated:
                 continue
             if skip_dirs & set(path.relative_to(REPO_ROOT).parts):
                 continue
+            # errors="ignore" so binary/undecodable files need no second
+            # exception type here — the repo forbids bare except-tuples
+            # (test_v5_46_16_except_tuple_sweep) and ruff rewrites the
+            # parenthesised form to the PEP 758 bare form on py3.14.
             try:
-                text = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError, OSError:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
                 continue
             found.update(pattern.findall(text))
 
