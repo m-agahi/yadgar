@@ -207,22 +207,36 @@ class TestCleanVenvWheelGate:
         ("forgejo", FORGEJO_DIR / "ci-release.yaml"),
     ]
 
-    @pytest.mark.parametrize("mirror,path", MIRRORS)
-    def test_creates_isolated_venv(self, mirror, path):
-        text = path.read_text(encoding="utf-8")
-        assert "-m venv /tmp/cleanvenv" in text, (
-            f"{mirror} ci-release must create a clean venv for the wheel smoke test."
-        )
-        assert "--system-site-packages" not in text, (
-            f"{mirror} ci-release: the smoke venv must NOT use "
-            "--system-site-packages — that re-exposes the yadgar-ci image's "
-            "pre-baked deps and defeats the dependency-resolution check."
+    @staticmethod
+    def _smoke_run(path) -> str:
+        """The smoke step's `run:` script, with comment lines stripped.
+
+        Comments are dropped so the assertions below match on the *executed*
+        command rather than on prose that happens to quote a flag name.
+        """
+        steps = _load(path)["jobs"]["build-sbom"]["steps"]
+        matches = [s for s in steps if s.get("name", "").startswith("Clean-venv")]
+        assert matches, f"{path.name}: no 'Clean-venv ...' step in build-sbom"
+        return "\n".join(
+            ln for ln in matches[0]["run"].splitlines() if not ln.lstrip().startswith("#")
         )
 
     @pytest.mark.parametrize("mirror,path", MIRRORS)
+    def test_creates_isolated_venv(self, mirror, path):
+        script = self._smoke_run(path)
+        venv_lines = [ln for ln in script.splitlines() if "-m venv" in ln]
+        assert venv_lines, f"{mirror} ci-release must create a clean venv for the wheel smoke test."
+        for ln in venv_lines:
+            assert "--system-site-packages" not in ln, (
+                f"{mirror} ci-release: the smoke venv must NOT use "
+                "--system-site-packages — that re-exposes the yadgar-ci image's "
+                f"pre-baked deps and defeats the dependency-resolution check.\n  {ln.strip()}"
+            )
+
+    @pytest.mark.parametrize("mirror,path", MIRRORS)
     def test_installs_wheel_into_that_venv(self, mirror, path):
-        text = path.read_text(encoding="utf-8")
-        assert re.search(r"/tmp/cleanvenv/bin/pip install .*dist/yadgar-.*\.whl", text), (
+        script = self._smoke_run(path)
+        assert re.search(r"/tmp/cleanvenv/bin/pip install .*dist/yadgar-.*\.whl", script), (
             f"{mirror} ci-release must pip-install the built wheel into the clean venv."
         )
 
@@ -266,7 +280,7 @@ class TestEntryPointSurfaceEnumerated:
     def test_every_console_script_target_is_asserted(self):
         """Each `name = "module:func"` target must appear in both mirrors' smoke step."""
         for path in self.MIRRORS:
-            text = path.read_text(encoding="utf-8")
+            text = TestCleanVenvWheelGate._smoke_run(path)
             for name, target in self._console_scripts().items():
                 module, _, func = target.partition(":")
                 assert f'"{module}", "{func}"' in text or f"'{module}', '{func}'" in text, (
@@ -304,7 +318,7 @@ class TestEntryPointSurfaceEnumerated:
             "enumeration regex or the skip list is probably wrong."
         )
         for path in self.MIRRORS:
-            text = path.read_text(encoding="utf-8")
+            text = TestCleanVenvWheelGate._smoke_run(path)
             for mod in sorted(submodules):
                 assert f"{mod}.__main__" in text, (
                     f"{path.name}: module target `python -m {mod}` is invoked by a "
