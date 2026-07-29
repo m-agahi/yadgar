@@ -27,6 +27,7 @@ REQUIRED_BUILDING_BLOCKS = [
     "config",  # config-sync
     "rules",  # install-rules / append_claude_rules
     "anchor",  # seed-anchors
+    "code-graph",  # code-graph-install (codebase-memory-mcp binary + enabled flag)
 ]
 
 
@@ -100,6 +101,48 @@ def test_setup_sh_and_make_agree_on_linger_step():
 
     assert "linger" in sh_out, f"yadgar-setup.sh lost the linger step:\n{sh_out[-2000:]}"
     assert "linger" in make_out, f"Makefile lost the linger step:\n{make_out[-2000:]}"
+
+
+def test_setup_sh_and_make_agree_on_code_graph_step():
+    """v5.169 drift guard: both install surfaces must provision code_graph.
+
+    The twin of the linger guard above, and the mechanism that stops this exact
+    divergence recurring: `7cd74ea0` made the Python `yadgar setup` provision
+    code_graph by default, but neither shell surface invokes `yadgar setup`, so
+    both shipped machines with `code_graph.enabled` resolving true (ADR-0163: no
+    row -> true) and no `codebase-memory-mcp` binary on disk. Nothing asserted
+    the two surfaces agreed, so nothing noticed.
+
+    Pinned on the hyphenated CLI token `code-graph` — the invocation both
+    surfaces literally contain. NOT on prose and NOT on `code_graph`
+    (underscore): the shell step's log line uses the underscore form, so that
+    pick would be satisfied by the log line alone even if the invocation were
+    deleted.
+    """
+    env = os.environ.copy()
+    env["YADGAR_CONTAINER_RUNTIME"] = "echo"
+    env["YADGAR_TEST_OS_MARKER"] = "linux"
+    sh_result = subprocess.run(
+        ["bash", str(SETUP_SH), "--dryrun"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    sh_out = (sh_result.stdout + sh_result.stderr).lower()
+
+    make_env = os.environ.copy()
+    make_env["INSTALL_NONINTERACTIVE"] = "1"
+    make_result = subprocess.run(
+        ["make", "-n", "setup"],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=make_env,
+    )
+    make_out = (make_result.stdout + make_result.stderr).lower()
+
+    assert "code-graph" in sh_out, f"yadgar-setup.sh lost the code_graph step:\n{sh_out[-2000:]}"
+    assert "code-graph" in make_out, f"Makefile lost the code_graph step:\n{make_out[-2000:]}"
 
 
 @pytest.mark.skipif(not SETUP_SH.exists(), reason="yadgar-setup.sh not yet created")

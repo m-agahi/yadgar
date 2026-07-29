@@ -39,6 +39,29 @@ from yadgar.core.install.codebase_memory_mcp import (
     verify_sha256,
 )
 
+# ── Real-machine guard ─────────────────────────────────────────────────────────
+#
+# Mirrors the fixture `test_cli_setup_module.py` already carries, which this
+# module lacked. Two reasons it is now mandatory rather than merely tidy:
+#
+#   * read-before-write (2026-07-29) added a `runtime_config_client.get` to the
+#     enable path. `TestCodeGraphInstallDispatch` stubs `set` but not `get`, so
+#     on a developer box the assertion below would read the REAL global
+#     `code_graph.enabled` row — green in CI, red on a machine carrying a
+#     deliberate opt-out.
+#   * the client now resolves its bearer token from `secrets.env`, so a stray
+#     unstubbed call no longer bounces off a 401 — it lands.
+#
+# Port 1 is refused, so every unstubbed call fails closed instead of reaching
+# 127.0.0.1:$YADGAR_PORT. Tests needing specific behaviour re-patch on top.
+
+
+@pytest.fixture(autouse=True)
+def _no_live_store_access(monkeypatch):
+    monkeypatch.setenv("YADGAR_PORT", "1")
+    monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 

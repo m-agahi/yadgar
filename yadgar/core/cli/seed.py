@@ -7,8 +7,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-import yadgar._shared.paths as _paths
-
 _DAEMON_PORT = os.environ.get("YADGAR_PORT", "8765")
 _DAEMON_BASE = f"http://127.0.0.1:{_DAEMON_PORT}"
 
@@ -41,27 +39,17 @@ def _read_auth_token() -> str:
     """Read YADGAR_MCP_AUTH_TOKEN from environment, falling back to secrets.env file.
 
     Environment variable wins over file (allows CI/systemd override).
+
+    2026-07-29: this was one of three hand-rolled copies of the same resolution.
+    The body now delegates to the single ``core.install.auth_token`` resolver
+    (whose parser is the superset of the two it replaced, so nothing this
+    function used to find is lost). Kept as a named function rather than an
+    alias because three call sites in this module and several tests patch
+    ``yadgar.core.cli.seed._read_auth_token`` by name.
     """
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
-    if token:
-        return token
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
 
-    secrets_env = _paths.SECRETS_ENV_PATH
-    if not secrets_env.exists():
-        return ""
-
-    try:
-        for line in secrets_env.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                key, _, val = line.partition("=")
-                if key.strip() == "YADGAR_MCP_AUTH_TOKEN":
-                    return val.strip().strip('"').strip("'")
-    except Exception:
-        pass
-    return ""
+    return resolve_auth_token()
 
 
 def _daemon_health_ok() -> bool:
