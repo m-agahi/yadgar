@@ -307,7 +307,9 @@ jobs:
   build-sbom:
     needs: [changes, build-wheel]
     if: needs.changes.outputs.release == 'true'
-    continue-on-error: true
+    # NOT continue-on-error: this job now carries the clean-venv wheel-install
+    # gate (below), the only CI surface that resolves [project.dependencies].
+    # A non-blocking gate is not a gate.
     runs-on: [self-hosted, linux, x64, yadgar]
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
@@ -337,6 +339,60 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install "dist/yadgar-${{ steps.get-version.outputs.version }}-py3-none-any.whl[sbom]"
+
+      - name: Clean-venv wheel install + entry-point smoke
+        # The ONLY CI surface that resolves [project.dependencies].
+        #
+        # Every test job installs `uv pip install --system --no-deps -e .`
+        # against deps baked into the yadgar-ci image from uv.lock (ADR-0089),
+        # so a dep present in the image but missing from [project.dependencies]
+        # is invisible to all of them. The sbom install above does not close
+        # that gap either — it runs in the same pre-baked image against system
+        # site-packages, so pip finds everything already satisfied and resolves
+        # nothing. Only an ISOLATED venv (no --system-site-packages) forces a
+        # real resolve: the `ModuleNotFoundError: No module named 'surrealdb'`
+        # class that reached a real install.
+        #
+        # The sbom install is deliberately left in the ambient environment:
+        # generate_sbom.sh runs `cyclonedx-py environment`, which introspects
+        # the ACTIVE env.
+        #
+        # Executed targets are read-only BY DESIGN. `yadgar-nightly-cycle` and
+        # `yadgar-setup` are import-probed, never executed: nightly-cycle has
+        # no --help handling and immediately starts a real backup and kills
+        # spawned surreal processes; yadgar-setup execv's setup.sh. Probing the
+        # `module:func` target is what actually catches a packaging break.
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/cleanvenv
+          /tmp/cleanvenv/bin/pip install --upgrade pip
+          /tmp/cleanvenv/bin/pip install "dist/yadgar-${{ steps.get-version.outputs.version }}-py3-none-any.whl"
+
+          # Resolved dependency set must be internally consistent.
+          /tmp/cleanvenv/bin/pip check
+
+          # Console script + `-m` targets verified safe to execute (exit 0).
+          /tmp/cleanvenv/bin/yadgar --version
+          /tmp/cleanvenv/bin/python -m yadgar --version
+          /tmp/cleanvenv/bin/python -m yadgar.backend.safe_start --help
+
+          # Resolve-only probes for the surface that must not be executed.
+          # find_spec does NOT execute the module — it is exactly the check
+          # that catches a missing __main__.py (the ADR-0084 safe_start
+          # regression: `python -m yadgar.backend.safe_start` broke because the
+          # package had no __main__.py, and no console-script test saw it).
+          /tmp/cleanvenv/bin/python -c "
+          import importlib, importlib.util
+          for mod, fn in [
+              ('yadgar.__main__', 'cli'),
+              ('yadgar.core.scripts.nightly_cycle', 'main'),
+              ('yadgar.core.scripts.yadgar_setup', 'main'),
+          ]:
+              assert callable(getattr(importlib.import_module(mod), fn)), mod
+          for mod in ('yadgar.__main__', 'yadgar.backend.safe_start.__main__'):
+              assert importlib.util.find_spec(mod) is not None, mod
+          print('entry-point surface OK')
+          "
 
       - name: Generate CycloneDX SBOM
         env:
