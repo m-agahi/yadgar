@@ -1,6 +1,16 @@
 # code_graph follow-ups: the stale marker is truncated away, and the index cache has orphans — 2026-07-29
 
-**Status:** PLAN — ready to build (Car 1). Car 2 is doc-only.
+**Status:** PARTIALLY SHIPPED (v5.169.0, m-agahi/yadgar#15) — NOT archived, per ADR-0081.
+- **Car 1 (digest budget reserve): SHIPPED.** The `stale @ <sha>` marker is now a budget-reserved
+  preamble on line 2 and survives truncation — verified absent-before / present-after on a
+  budget-filling render, and again at `budget=200`, with `len(out) <= budget` intact.
+- **Car 2 (orphan index cache): NOT BUILT.** Deliberately doc-only; no prune subcommand was written.
+  The residual — 746 MB across 37 files in `~/.cache/yadgar/code_graph`, plus the wrong path recorded
+  at `CAPABILITY_REGISTRY.md:1935` (it names `~/.cache/codebase-memory-mcp`, which has never existed) —
+  is tracked as **task:0087**, together with the section-starvation finding below.
+- **Known limit, restated so a green Car 1 is not misread:** this fixes the MARKER, not digest
+  completeness. `endpoints:` is still entirely absent on large-repo digests because `layers:` +
+  `hotspots:` alone exceed `DIGEST_CHAR_BUDGET = 2000`.
 **Verdict: TWO cars.** They share the `code_graph` subsystem and nothing else — disjoint files,
 disjoint mechanisms, disjoint acceptance shapes. Car 1 is a renderer correctness bug with unit ACs;
 Car 2 is a paragraph in `MIGRATION_NOTES.md` plus a tracked follow-up. Fusing them would produce one
