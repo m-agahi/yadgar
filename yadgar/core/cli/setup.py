@@ -39,145 +39,50 @@ def _render_secrets_env(token: str, db_pass: str, rw_pass: str, ro_pass: str) ->
     )
 
 
-#: Runtime-config store key holding the code_graph enable flag (ADR-0163).
-_CODE_GRAPH_KEY = "code_graph.enabled"
+# ── code_graph provisioning ──────────────────────────────────────────────────
+#
+# 2026-07-29: the implementation MOVED to ``core.install.code_graph_provision``.
+# `yadgar setup` is not the installer most users run — the pipx/brew/nix path
+# (``scripts/install/yadgar-setup.sh``) and the repo path (``make setup``) never
+# invoke it, so they shipped machines with code_graph ON and no binary. Both now
+# call ``yadgar code-graph install``, which needs the logic outside this module.
+# These re-exports keep every existing importer (and its tests) working; the move
+# itself is behavior-preserving.
+from yadgar.core.install.code_graph_provision import (  # noqa: E402
+    _CODE_GRAPH_KEY,
+    _do_install_code_graph,
+    _persist_code_graph_disable,
+    _persist_code_graph_enable,
+    _resolve_code_graph_action,
+    provision_code_graph,
+)
 
-
-def _resolve_code_graph_action(args) -> str:
-    """Decide the code_graph setup action. Pure — no TTY, no env, no prompt.
-
-    Returns one of:
-      * ``"install"`` — the DEFAULT: install the host binary AND persist
-        ``code_graph.enabled=true``.
-      * ``"opt_out"`` — ``--no-code-graph``: install nothing AND persist
-        ``code_graph.enabled=false``.
-
-    task:0082 — the decision tree used to branch on ``sys.stdin.isatty()``, an
-    interactive ``[y/N]`` prompt, and a ``CODE_GRAPH_ENABLED`` env trigger. That
-    made the ONLY scriptable path ``--no-code-graph``, which skipped the binary
-    while ``code_graph.enabled`` still defaulted to True (ADR-0163) — an install
-    whose runtime flag disagreed with its own filesystem. code_graph is on by
-    default, so the DEFAULT install now provisions it; the single opt-out turns
-    BOTH halves off together. No branch reads stdin, so setup can never block on
-    a closed/absent stdin.
-    """
-    return "opt_out" if getattr(args, "no_code_graph", False) else "install"
-
-
-def _do_install_code_graph() -> bool:
-    """Install the codebase-memory-mcp binary host-side. Returns success.
-
-    ``skip_if_exists=True``: a setup re-run with the binary already present must
-    not need the network (offline re-provisioning, nix-provided binary). Never
-    raises — a genuinely impossible install (offline, unsupported platform) is
-    reported and the caller degrades by disabling the feature.
-    """
-    from yadgar.core.install.codebase_memory_mcp import (
-        BINARY_NAME,
-        VERSION,
-        install_codebase_memory_mcp,
-    )
-
-    print(f"Installing codebase-memory-mcp {VERSION}...", end="  ", flush=True)
-    try:
-        binary_path = install_codebase_memory_mcp(skip_if_exists=True)
-    except Exception as exc:  # noqa: BLE001 — a failed optional install never aborts setup
-        print(f"✗ {exc}")
-        print(
-            "  The code_graph binary could not be installed (offline, or an "
-            "unsupported platform). Setup CONTINUES — code_graph will be turned "
-            "off so the runtime flag matches the missing binary.\n"
-            "  Re-run `yadgar setup` once the problem is resolved to install it "
-            "and turn code_graph back on."
-        )
-        return False
-
-    print(f"✓ {binary_path}")
-    print(f"  Binary: {binary_path}\n  Ensure ~/.local/bin is on PATH to use '{BINARY_NAME}'.")
-    return True
-
-
-def _persist_code_graph_enable() -> bool:
-    """Persist ``code_graph.enabled=true`` in the runtime config store (ADR-0163).
-
-    Uses the host WRITE client (``runtime_config_client.set``) which is NOT
-    fail-open: daemon-down / non-2xx returns False. A failure here is BENIGN on a
-    fresh machine — ``code_graph.enabled`` already defaults to True with no row —
-    so the message says so rather than alarming the user; it only matters when a
-    previous run (or a manual ``config_set``) left an explicit ``false`` behind.
-    """
-    from yadgar.core import runtime_config_client
-
-    if runtime_config_client.set(_CODE_GRAPH_KEY, True, scope="global"):
-        print("  code_graph enabled globally (runtime_config store).")
-        return True
-    print(
-        "  code_graph binary installed — the daemon is not reachable, so the enable "
-        "was NOT persisted. code_graph.enabled already defaults to true, so no action "
-        "is needed unless you previously disabled it; in that case run the MCP tool "
-        f'`config_set("{_CODE_GRAPH_KEY}", true, scope="global")` or re-run '
-        "`yadgar setup` once `yadgar daemon start` is up."
-    )
-    return False
-
-
-def _persist_code_graph_disable(why: str) -> bool:
-    """Persist ``code_graph.enabled=false`` so the store matches an absent binary.
-
-    This is the half the old flow was missing: ``--no-code-graph`` skipped the
-    binary but left ``code_graph.enabled`` at its True default, producing a
-    machine where the feature was ON with nothing to run. A failed write IS
-    consequential here (the default is True), so the message spells out the one
-    manual step.
-    """
-    from yadgar.core import runtime_config_client
-
-    if runtime_config_client.set(_CODE_GRAPH_KEY, False, scope="global"):
-        print(f"  code_graph disabled globally (runtime_config store) — {why}.")
-        return True
-    print(
-        f"  code_graph was NOT disabled ({why}) — the daemon is not reachable and the "
-        "flag defaults to true, so the feature would stay ON with no binary installed. "
-        f'Run the MCP tool `config_set("{_CODE_GRAPH_KEY}", false, scope="global")` '
-        "or re-run `yadgar setup --no-code-graph` once `yadgar daemon start` is up."
-    )
-    return False
+__all__ = [
+    "_CODE_GRAPH_KEY",
+    "_do_install_code_graph",
+    "_persist_code_graph_disable",
+    "_persist_code_graph_enable",
+    "_resolve_code_graph_action",
+    "cmd_setup",
+    "register",
+]
 
 
 def _maybe_install_code_graph(args) -> None:
     """Provision code_graph so the store flag and the host binary always AGREE.
 
-    code_graph is ON by default (ADR-0162/0163: no row → ``is_enabled`` True), so
-    setup installs the host binary by DEFAULT — unattended, with no prompt and no
-    stdin read, which is what makes a scripted/QA install work without flags
-    (task:0082).
+    Thin arg-shaped adapter over
+    :func:`~yadgar.core.install.code_graph_provision.provision_code_graph` —
+    ``cmd_setup`` holds an argparse namespace, the shared function takes a bool
+    so the ``yadgar code-graph install`` entry point can call it directly.
 
-    The two outcomes are coherent by construction:
-
-    ==========================  ===============  =========================
-    invocation                  host binary      ``code_graph.enabled``
-    ==========================  ===============  =========================
-    ``yadgar setup``            installed        ``true``
-    ``… --no-code-graph``       not installed    ``false``
-    install failed (offline)    not installed    ``false``
-    ==========================  ===============  =========================
-
-    Best-effort caveat: the persist needs a running daemon, and ``yadgar setup``
-    normally runs BEFORE ``yadgar daemon start``. When the write cannot land, the
-    printed remediation names the one manual step. On a virgin machine the True
-    default already matches a successful install, so only the disable paths carry
-    a real residual risk — and they say so.
+    Best-effort caveat that is specific to THIS caller: the persist needs a
+    running daemon, and ``yadgar setup`` normally runs BEFORE
+    ``yadgar daemon start``, so the write frequently cannot land here. The shell
+    installer places its equivalent step after unit-enablement precisely so the
+    persist can succeed there.
     """
-    action = _resolve_code_graph_action(args)
-
-    if action == "opt_out":
-        _persist_code_graph_disable("--no-code-graph")
-        return
-
-    if _do_install_code_graph():
-        _persist_code_graph_enable()
-    else:
-        _persist_code_graph_disable("binary install failed")
+    provision_code_graph(opt_out=_resolve_code_graph_action(args) == "opt_out")
 
 
 def _existing_secrets_token(secrets_path) -> str:
