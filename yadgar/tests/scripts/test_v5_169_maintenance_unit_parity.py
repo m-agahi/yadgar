@@ -483,24 +483,36 @@ def test_doctor_probes_timer_and_path_activation():
 
 
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="systemd-analyze not available")
-def test_systemd_analyze_verify_accepts_the_rendered_units(tmp_path):
-    """Real validation, not a string match: catches OnCalendar typos and bad
-    directives that every render assertion above would happily pass."""
+def test_rendered_oncalendar_expressions_actually_parse(tmp_path):
+    """systemd's own opinion of the schedules — the one thing in this file a
+    string assertion genuinely cannot check.
+
+    Deliberately NOT `systemd-analyze verify`. On a unit set that references a
+    container runtime and PATH-resolved helpers, verify's output is dominated by
+    'Command <x> is not executable' lines that say nothing about correctness
+    (observed on the dev host: podman, /bin/true, rm), and any filter loose
+    enough to ignore those is loose enough to ignore real defects — a
+    renders-but-validates-nothing test, i.e. this car's own bug class moved into
+    the test layer. `systemd-analyze calendar` has no such noise: a malformed
+    expression exits non-zero, and one that parses but can never elapse (typo'd
+    weekday, impossible date) prints no 'Next elapse'.
+    """
     render_systemd(tmp_path)
-    units = sorted(
-        p for p in (tmp_path / "units").iterdir() if p.suffix in {".timer", ".path", ".target"}
-    )
-    result = subprocess.run(
-        ["systemd-analyze", "verify", "--user", *[str(p) for p in units]],
-        capture_output=True,
-        text=True,
-    )
-    # Unresolvable cross-unit references are expected (the .service files are in
-    # the same dir but systemd-analyze does not add it to the search path); only
-    # syntax/directive complaints are fatal here.
-    fatal = [
-        line
-        for line in result.stderr.splitlines()
-        if ("Unknown" in line or "Failed to parse" in line or "Invalid" in line)
+    expressions = [
+        (unit.name, line.split("=", 1)[1].strip())
+        for unit in sorted((tmp_path / "units").glob("*.timer"))
+        for line in unit.read_text().splitlines()
+        if line.startswith("OnCalendar=")
     ]
-    assert not fatal, "systemd-analyze verify rejected the rendered units:\n" + "\n".join(fatal)
+    assert expressions, "no OnCalendar= found in any rendered timer"
+
+    for unit_name, expr in expressions:
+        result = subprocess.run(
+            ["systemd-analyze", "calendar", expr], capture_output=True, text=True
+        )
+        assert result.returncode == 0, (
+            f"{unit_name}: systemd rejects OnCalendar={expr!r}\n{result.stderr}"
+        )
+        assert "Next elapse" in result.stdout, (
+            f"{unit_name}: OnCalendar={expr!r} parses but never elapses\n{result.stdout}"
+        )

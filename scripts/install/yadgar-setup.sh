@@ -758,6 +758,17 @@ _probe_host_cli() {
         set -- ${exec_line}
         if [ -z "${1:-}" ]; then
             warn "${unit}: no ExecStart program"
+        elif [ "$1" = "python3" ] || [ "$1" = "python" ]; then
+            # `python3 -m <module>` branch: field one ALWAYS resolves, so testing
+            # it proves nothing — the failure mode here is the package going
+            # away, not the interpreter. Re-run the same isolated import the
+            # generator used. $3 is the module ("$1 -m $3 ...").
+            if "$1" -I -c "import ${3:-yadgar}" > /dev/null 2>&1; then
+                info "OK: ${unit} host CLI resolves ($1 -m ${3:-yadgar})"
+            else
+                warn "${unit}: '${3:-yadgar}' is no longer importable by $1 —"
+                warn "  this unit fails on its next fire. Fix: pipx install yadgar, then re-run setup."
+            fi
         elif command -v "$1" > /dev/null 2>&1 || [ -x "$1" ]; then
             info "OK: ${unit} host CLI resolves ($1)"
         else

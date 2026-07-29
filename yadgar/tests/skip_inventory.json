@@ -130,7 +130,7 @@
       "file": "yadgar/tests/scripts/test_v5_169_maintenance_unit_parity.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "systemd-analyze not available",
-      "note": "systemd-analyze verify is the only real (non-string-match) validation of the rendered timer/path units; the binary is absent on macOS hosts and on minimal CI images, where the render assertions still run"
+      "note": "systemd-analyze calendar is the only real (non-string-match) validation that the rendered OnCalendar expressions parse and elapse; the binary is absent on macOS hosts and minimal CI images, where the render assertions still run"
     }
   ]
 }

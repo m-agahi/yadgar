@@ -18,12 +18,15 @@
     <false/>
 
     <!--
-        StartCalendarInterval fires in LOCAL TIME, not UTC.
-        The systemd surfaces use 'OnCalendar=Sun *-*-* 04:00:00' — also LOCAL
-        (flake.nix, scripts/install/yadgar-vacuum.timer.in). So the weekly vacuum
-        agrees across all three surfaces without any timezone caveat.
-        (A previous revision of this comment claimed the nix side was UTC. It was
-        never UTC — only the NIGHTLY schedule is; see the nightly-cycle plist.)
+        NOTE: StartCalendarInterval fires in LOCAL TIME, not UTC.
+        For the WEEKLY VACUUM that is the correct behaviour, not a compromise:
+        the systemd surfaces use 'OnCalendar=Sun *-*-* 04:00:00', which is also
+        LOCAL (flake.nix, scripts/install/yadgar-vacuum.timer.in). So all three
+        surfaces agree and no timezone workaround is needed here.
+        (A previous revision of this comment claimed the nix side was UTC and
+        advised setting the Mac's TZ to UTC to match. That was wrong — only the
+        NIGHTLY schedule is UTC; see com.openfantasy.yadgar-nightly-cycle.plist.in,
+        where the local-time caveat is real.)
     -->
     <key>StartCalendarInterval</key>
     <dict>

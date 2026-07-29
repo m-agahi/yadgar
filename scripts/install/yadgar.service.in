@@ -18,6 +18,14 @@ EnvironmentFile=@SECRETS_ENV_FILE@
 EnvironmentFile=-%h/.local/state/yadgar/upgrade.env
 ExecStartPre=-@RUNTIME@ stop yadgar
 ExecStartPre=-@RUNTIME@ rm yadgar
+# Pre-create the state dir HERE, not only at render time in generate_systemd.sh.
+# podman does NOT auto-create a missing `-v` host source — it fails the run with
+# `statfs <path>: no such file or directory`. So if the dir is gone at start
+# (user cleaned ~/.local/state, or a purge ran between install and boot) the CORE
+# daemon would fail to start, not just the vacuum trigger. Mirrors the flake,
+# which pre-creates it in this same unit's ExecStartPre for the same reason.
+# `mkdir` is resolved from the unit's $PATH, like @RUNTIME@ above.
+ExecStartPre=mkdir -p @STATE_DIR@/triggers
 ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user root \
     --network yadgar-net \
     -p 127.0.0.1:8765:8765 \
