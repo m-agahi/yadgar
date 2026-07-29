@@ -458,12 +458,14 @@ def test_install_hooks_pretooluse_direct_command_not_dispatcher(tmp_path, monkey
     data = json.loads(global_settings.read_text())
     hooks = data.get("hooks", {})
 
-    # PreToolUse must exist and have Bash matcher
+    # PreToolUse must exist. ADR-0175 (guard G5) widened the matcher from "Bash"
+    # to also cover the file-write tools — an Edit call bypassed the router
+    # entirely while the matcher was Bash-only.
     assert "PreToolUse" in hooks
     pre_tool_entries = hooks["PreToolUse"]
     assert len(pre_tool_entries) >= 1
     entry = pre_tool_entries[0]
-    assert entry.get("matcher") == "Bash"
+    assert entry.get("matcher") == "Bash|Edit|Write|NotebookEdit"
     cmd = entry["hooks"][0]["command"]
 
     # Must NOT route through hook_runner.py dispatcher

@@ -68,7 +68,6 @@ to ``yadgar install --client claude-code --rules`` by Car 3 (see
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -83,18 +82,56 @@ def _get_version() -> str:
         return "unknown"
 
 
+def _warn_if_no_token_for_literal_client(
+    client_names: list[str], token: str, *, want_mcp: bool, dry_run: bool
+) -> None:
+    """OD-1: loud-warn (non-fatal) when a BEARER_LITERAL client will get a
+    headerless MCP entry because no token resolved at all.
+
+    ``--print`` (dry_run) always emits the env-ref regardless of *token*
+    (see ``install.py``'s ``_render_mcp_fragment``), so there is nothing to
+    warn about in that mode — the warning only applies to real writes.
+    """
+    if dry_run or not want_mcp or token:
+        return
+
+    from yadgar.core.install.clients.descriptor import McpAuth  # noqa: PLC0415
+    from yadgar.core.install.clients.registry import CLIENT_REGISTRY  # noqa: PLC0415
+
+    literal_clients = [
+        name
+        for name in client_names
+        if name in CLIENT_REGISTRY and CLIENT_REGISTRY[name].mcp_auth is McpAuth.BEARER_LITERAL
+    ]
+    if literal_clients:
+        print(
+            "Warning: no YADGAR_MCP_AUTH_TOKEN resolved (checked the environment "
+            f"and secrets.env) — the MCP entry for {', '.join(literal_clients)} will be "
+            "written WITHOUT an Authorization header and may 401 against a daemon "
+            "running with YADGAR_REQUIRE_AUTH=1. Run `yadgar setup` to mint a token, "
+            "or set YADGAR_MCP_AUTH_TOKEN and re-run.",
+            file=sys.stderr,
+        )
+
+
 def cmd_install(args) -> None:
     """Dispatch to install_client or install_auto_detect based on args."""
     from yadgar.core.install.clients.install import (  # noqa: PLC0415
         install_auto_detect,
         install_client,
     )
+    from yadgar.core.install.clients.mcp_register import (  # noqa: PLC0415
+        resolve_mcp_auth_token,
+    )
     from yadgar.core.install.clients.registry import CLIENT_REGISTRY  # noqa: PLC0415
 
     version = _get_version()
     url_base = getattr(args, "port", None) or 8765
     url = f"http://127.0.0.1:{int(url_base)}/mcp"
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "").strip()
+    # 2026-07-28 fresh-VM QA fix: env var first, then fall back to parsing
+    # secrets.env (the daemon's own token source — sourced by the daemon
+    # process but not by the interactive shell running `yadgar install`).
+    token = resolve_mcp_auth_token()
     scope = getattr(args, "scope", "global") or "global"
     project_dir_raw = getattr(args, "project_directory", None)
     project_dir = Path(project_dir_raw).resolve() if project_dir_raw else None
@@ -135,6 +172,9 @@ def cmd_install(args) -> None:
             dry_run=dry_run,
         )
         results = install_auto_detect(opts=auto_opts)
+        _warn_if_no_token_for_literal_client(
+            [r.get("client", "") for r in results], token, want_mcp=want_mcp, dry_run=dry_run
+        )
         if dry_run:
             print(json.dumps(results, indent=2))
         else:
@@ -151,6 +191,8 @@ def cmd_install(args) -> None:
         sys.exit(1)
 
     from yadgar.core.install.clients.install import InstallOptions  # noqa: PLC0415
+
+    _warn_if_no_token_for_literal_client([client_name], token, want_mcp=want_mcp, dry_run=dry_run)
 
     install_opts = InstallOptions(
         url=url,

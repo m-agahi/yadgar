@@ -1,3 +1,10 @@
+> ARCHIVED 2026-07-29 — executing on fix/claude-code-mcp-auth-token, ships with this PR.
+> Implemented: Option A (§4.1) in full — A1 (`resolve_mcp_auth_token()`), A2 (wired into
+> `cli/install.py:cmd_install` + `mcp_register.register_mcp_for_claude_code`; `setup.py`'s
+> `_existing_secrets_token` refactored to delegate), A3 (OD-1 resolved: loud-warn, non-fatal).
+> AC-1..AC-4 regression tests added (AC-5 is the manual fresh-VM check, tracked separately).
+> CHANGELOG `[Unreleased]` entry added. OD-2/OD-3 remain open (tracked, not blocking).
+
 # Fix: `yadgar install --client claude-code` writes a headerless (unauthenticated) MCP entry
 
 **Task:** #71 (harness) — fresh-VM QA bug, 2026-07-28.

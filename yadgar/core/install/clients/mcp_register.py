@@ -29,9 +29,11 @@ here. Return shape preserved: ``{"updated": str, "old": dict, "new": dict}``.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
+from yadgar._shared import paths as _paths
 from yadgar._shared.observability.observe import observe
 from yadgar.core.install.clients.descriptor import (
     ClientDescriptor,
@@ -49,6 +51,64 @@ _TOKEN_ENV_VAR = "YADGAR_MCP_AUTH_TOKEN"
 
 # The env-ref literal emitted for BEARER_ENVREF clients.
 _TOKEN_ENVREF = f"${{{_TOKEN_ENV_VAR}}}"
+
+# The line prefix used to find the token inside secrets.env.
+_MCP_TOKEN_ENV_LINE_PREFIX = f"{_TOKEN_ENV_VAR}="
+
+
+# ── Token resolution (2026-07-28 fresh-VM QA fix) ────────────────────────────
+
+
+@observe(tier="stage")
+def _parse_secrets_env_token(secrets_path: Path) -> str:
+    """Best-effort parse of ``YADGAR_MCP_AUTH_TOKEN=`` from *secrets_path*.
+
+    Returns ``""`` if the file is missing, unreadable, or has no matching
+    line — never raises. Shared by :func:`resolve_mcp_auth_token` (env +
+    secrets.env resolution) and ``setup.py``'s ``_existing_secrets_token``
+    (file-only lookup, used once the caller has already confirmed the file
+    exists).
+    """
+    try:
+        text = secrets_path.read_text()
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        if line.startswith(_MCP_TOKEN_ENV_LINE_PREFIX):
+            return line[len(_MCP_TOKEN_ENV_LINE_PREFIX) :].strip()
+    return ""
+
+
+@observe(tier="stage")
+def resolve_mcp_auth_token() -> str:
+    """Resolve the yadgar MCP bearer token for write-path client registration.
+
+    Fixes the 2026-07-28 fresh-VM QA bug: ``yadgar install --client
+    claude-code`` (``cli/install.py``) and ``yadgar daemon configure-mcp``
+    (:func:`register_mcp_for_claude_code`) previously read ``os.environ``
+    ONLY, so an interactive shell that had not sourced ``secrets.env``
+    produced a headerless, unauthenticated MCP entry — even though the
+    daemon itself sources ``secrets.env`` into its own env and was already
+    enforcing auth. This makes both write paths resolve the token the same
+    way ``yadgar setup`` already does (ADR-0161).
+
+    Resolution order (never raises; empty return means "no token
+    available"):
+
+      1. ``$YADGAR_MCP_AUTH_TOKEN`` (stripped), if non-empty.
+      2. Else parse ``YADGAR_MCP_AUTH_TOKEN=`` from
+         ``paths.SECRETS_ENV_PATH`` (itself honors the
+         ``$YADGAR_SECRETS_ENV_FILE`` override).
+      3. Else ``""``.
+
+    An explicitly-exported env var always wins over secrets.env — this is
+    intentional (a user who deliberately exports a different token should
+    have that override respected), not merely today's incidental behavior.
+    """
+    env_token = os.environ.get(_TOKEN_ENV_VAR, "").strip()
+    if env_token:
+        return env_token
+    return _parse_secrets_env_token(_paths.SECRETS_ENV_PATH)
 
 
 # ── Serializers (one per McpEntrySchema variant) ─────────────────────────────
@@ -253,9 +313,10 @@ def register_mcp_for_claude_code(port: int = 8765, dev: bool = False) -> dict[st
     """Convenience wrapper — write the yadgar MCP entry for Claude Code.
 
     Replaces the ``configure_mcp`` body in ``daemon.py``; that method now
-    delegates here. Token is read from ``YADGAR_MCP_AUTH_TOKEN`` at call time
-    (literal, per the CC descriptor's ``BEARER_LITERAL`` auth — D5 TODO:
-    flip to envref once CC's ${...} expansion is confirmed).
+    delegates here. Token is resolved via :func:`resolve_mcp_auth_token`
+    (env first, then ``secrets.env`` — 2026-07-28 fresh-VM QA fix; literal,
+    per the CC descriptor's ``BEARER_LITERAL`` auth — D5 TODO: flip to envref
+    once CC's ${...} expansion is confirmed).
 
     Args:
         port: daemon port (default 8765).
@@ -271,7 +332,20 @@ def register_mcp_for_claude_code(port: int = 8765, dev: bool = False) -> dict[st
 
         port = DEFAULT_DEV_PORT
 
-    token = os.environ.get(_TOKEN_ENV_VAR, "").strip()
+    token = resolve_mcp_auth_token()
+    if not token:
+        # OD-1: loud-warn, non-fatal — matches setup.py's
+        # _register_claude_code_mcp skip-with-message pattern. A headerless
+        # entry will 401 against a daemon running with YADGAR_REQUIRE_AUTH=1.
+        print(
+            "Warning: no YADGAR_MCP_AUTH_TOKEN resolved (checked the "
+            f"environment and {_paths.SECRETS_ENV_PATH}) — the yadgar MCP "
+            "entry for Claude Code will be written WITHOUT an Authorization "
+            "header and may 401 against a daemon running with "
+            "YADGAR_REQUIRE_AUTH=1. Run `yadgar setup` to mint a token, or "
+            "set YADGAR_MCP_AUTH_TOKEN and re-run.",
+            file=sys.stderr,
+        )
     url = f"http://127.0.0.1:{port}/mcp"
     descriptor = CLIENT_REGISTRY["claude-code"]
     return register_mcp(descriptor, url=url, token=token)

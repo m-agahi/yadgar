@@ -18,6 +18,7 @@ ExecStart=@RUNTIME@ run --name yadgar-backend --rm --security-opt label=disable 
     -e YADGAR_RW_PASS=${YADGAR_RW_PASS} \
     -e YADGAR_RO_USER=${YADGAR_RO_USER} \
     -e YADGAR_RO_PASS=${YADGAR_RO_PASS} \
+    -e YADGAR_QUEUE_BASE=/data \
     --memory 4g --cpus 2 --stop-timeout 30 \
     @BACKEND_IMAGE@
 ExecStop=@RUNTIME@ stop yadgar-backend

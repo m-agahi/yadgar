@@ -397,3 +397,129 @@ class TestConfig:
         with patch.object(mod, "_config_path", return_value=p):
             out = _run_main(mod, _payload("terraform apply"))
         assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+# ---------------------------------------------------------------------------
+# G5 — writes to the hook-exceptions config itself (2026-07-28 incident fix)
+# ---------------------------------------------------------------------------
+
+
+def _edit_payload(file_path: str, *, tool_name: str = "Edit") -> str:
+    key = "notebook_path" if tool_name == "NotebookEdit" else "file_path"
+    return json.dumps(
+        {"tool_name": tool_name, "tool_input": {key: file_path}, "cwd": "/home/x/repo"}
+    )
+
+
+class TestG5HookConfigTamper:
+    def test_bash_echo_redirect_into_config_deny(self):
+        mod = _load_hook()
+        out = _run_main(mod, _payload("echo x > ~/.claude/yadgar-hook-exceptions.json"))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_bash_sed_i_on_config_deny(self):
+        mod = _load_hook()
+        cmd = "sed -i s/nix/yadgar/ ~/.claude/yadgar-hook-exceptions.json"
+        assert _run_main(mod, _payload(cmd))["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_bash_tee_into_config_deny(self):
+        mod = _load_hook()
+        cmd = "echo x | tee ~/.claude/yadgar-hook-exceptions.json"
+        assert _run_main(mod, _payload(cmd))["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_bash_plain_read_of_config_allow(self):
+        mod = _load_hook()
+        cmd = "cat ~/.claude/yadgar-hook-exceptions.json"
+        assert _run_main(mod, _payload(cmd))["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    def test_bash_unrelated_redirect_allow(self):
+        mod = _load_hook()
+        assert (
+            _run_main(mod, _payload("echo x > /tmp/out.txt"))["hookSpecificOutput"][
+                "permissionDecision"
+            ]
+            == "allow"
+        )
+
+    def test_edit_tool_targeting_config_deny(self, tmp_path):
+        mod = _load_hook()
+        cfg = tmp_path / "yadgar-hook-exceptions.json"
+        cfg.write_text("{}")
+        with patch.object(mod, "_config_path", return_value=cfg):
+            out = _run_main(mod, _edit_payload(str(cfg)))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_write_tool_targeting_config_deny(self, tmp_path):
+        mod = _load_hook()
+        cfg = tmp_path / "yadgar-hook-exceptions.json"
+        with patch.object(mod, "_config_path", return_value=cfg):
+            out = _run_main(mod, _edit_payload(str(cfg), tool_name="Write"))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_notebook_edit_targeting_config_deny(self, tmp_path):
+        mod = _load_hook()
+        cfg = tmp_path / "yadgar-hook-exceptions.json"
+        with patch.object(mod, "_config_path", return_value=cfg):
+            out = _run_main(mod, _edit_payload(str(cfg), tool_name="NotebookEdit"))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_edit_tool_unrelated_file_allow(self):
+        mod = _load_hook()
+        out = _run_main(mod, _edit_payload("/home/x/repo/README.md"))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    def test_edit_tool_expands_user_tilde(self, tmp_path, monkeypatch):
+        mod = _load_hook()
+        cfg = tmp_path / ".claude" / "yadgar-hook-exceptions.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text("{}")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        out = _run_main(mod, _edit_payload("~/.claude/yadgar-hook-exceptions.json"))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_disabled_guard_skips_edit_path(self, tmp_path):
+        mod = _load_hook()
+        cfg = tmp_path / "yadgar-hook-exceptions.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "push_default_allowlist": [],
+                    "disabled_guards": ["hook_config_tamper"],
+                }
+            )
+        )
+        with patch.object(mod, "_config_path", return_value=cfg):
+            out = _run_main(mod, _edit_payload(str(cfg)))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    def test_commit_message_mentioning_filename_allow(self):
+        """Regression: prose describing this guard must not self-trigger it.
+
+        2026-07-28: a whole-command substring scan (basename anywhere + any
+        write marker anywhere) blocked a real `git commit -m "..."` whose
+        message merely *described* the incident and mentioned both
+        `yadgar-hook-exceptions.json` and `sed -i` in prose, while the actual
+        command wrote nothing. Must be allowed — the write target (or lack of
+        one) is what matters, not co-occurring words.
+        """
+        mod = _load_hook()
+        msg = (
+            "fix(hooks): close bypass of push-default guard\n\n"
+            "A subagent added itself to push_default_allowlist in "
+            "yadgar-hook-exceptions.json, pushed to master, then reverted it. "
+            "Adds a guard against writes via redirect, sed -i, tee, cp, mv, "
+            "truncate, or a python one-liner that writes the file directly."
+        )
+        cmd = f'git commit -m "{msg}"'
+        out = _run_main(mod, _payload(cmd))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    def test_unrelated_write_plus_prose_mention_allow(self):
+        """A command that both mentions the filename AND writes some OTHER
+        file (e.g. a heredoc to a scratch file) must not be denied — only a
+        write actually TARGETING the config file should deny."""
+        mod = _load_hook()
+        cmd = 'echo "note: see yadgar-hook-exceptions.json and sed -i usage" > /tmp/notes.txt'
+        out = _run_main(mod, _payload(cmd))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"

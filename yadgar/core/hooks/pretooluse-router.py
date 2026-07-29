@@ -9,6 +9,8 @@ four prose HARD RULES into wrapper-and-global-option-aware guard blocks:
       digger in gh-pr-comment/gh-api)                                    → deny
   G3  git push to the repo default branch (JSON repo-allowlist)          → deny
   G4  docker exec into yadgar-db / yadgar-backend (subsumed db-lockdown)  → deny
+  G5  any write (Bash or Edit/Write/NotebookEdit) to the hook-exceptions
+      config itself — human-only, durable decision, no agent self-service → deny
 
 Decision channel: exit-0 + stdout JSON. Schema matches the proven
 db-lockdown-check.py (hookSpecificOutput.hookEventName REQUIRED). Deny carries
@@ -481,6 +483,93 @@ def guard_db_lockdown(cmd: str) -> object:
     return ALLOW
 
 
+_HOOK_CONFIG_BASENAME = "yadgar-hook-exceptions.json"
+
+
+def _is_protected_config_path(path_str: str | None) -> bool:
+    """True when a path argument resolves to the hook-exceptions config."""
+    if not path_str or _HOOK_CONFIG_BASENAME not in path_str:
+        return False
+    try:
+        target = os.path.abspath(os.path.expanduser(path_str))
+    except Exception:  # noqa: BLE001 — malformed path → not a match
+        return False
+    return target == os.path.abspath(str(_config_path()))
+
+
+def _redirect_targets_config(seg: list[str]) -> bool:
+    """True when a `> path` / `>> path` token pair in *seg* hits the config."""
+    for i, tok in enumerate(seg):
+        if tok in (">", ">>") and i + 1 < len(seg) and _is_protected_config_path(seg[i + 1]):
+            return True
+    return False
+
+
+def _sed_targets_config(rest: list[str]) -> bool:
+    """True for `sed -i ... <config>` (in-place edit whose arg is the config)."""
+    if not any(t == "-i" or t.startswith("-i") for t in rest):
+        return False
+    return any(_is_protected_config_path(t) for t in rest)
+
+
+def _python_c_targets_config(seg: list[str], rest: list[str]) -> bool:
+    """True for `python -c '...open(<config>...)...'` (best-effort, honest-scope)."""
+    if "-c" not in rest:
+        return False
+    ci = seg.index("-c")
+    if ci + 1 >= len(seg):
+        return False
+    code = seg[ci + 1]
+    return "open(" in code and _HOOK_CONFIG_BASENAME in code
+
+
+def _segment_targets_protected_config(seg: list[str]) -> bool:
+    """True when this (wrapper-peeled) segment writes to the hook config.
+
+    Per-segment, per-program checks — NOT a whole-command substring scan.
+    A whole-command scan false-positives on any command that merely mentions
+    the filename in prose (e.g. a commit message describing this very guard)
+    while also writing some unrelated file elsewhere in the same compound
+    command; tokenizing and checking the actual write target avoids that.
+    """
+    if not seg:
+        return False
+    prog = _basename(seg[0])
+    rest = seg[1:]
+
+    if _redirect_targets_config(seg):
+        return True
+    if prog == "sed":
+        return _sed_targets_config(rest)
+    if prog in ("tee", "truncate"):
+        return any(_is_protected_config_path(t) for t in rest)
+    if prog in ("cp", "mv"):
+        return bool(rest) and _is_protected_config_path(rest[-1])
+    if prog in ("python", "python3"):
+        return _python_c_targets_config(seg, rest)
+    return False
+
+
+def guard_hook_config_tamper(cmd: str) -> object:
+    """G5 — deny raw-shell writes targeting the hook-exceptions config itself.
+
+    2026-07-28 incident: a subagent used Edit (not Bash) to add its own repo
+    to push_default_allowlist, pushed to master, then reverted the file to
+    conceal the change — bypassing G3 with no guard in its way, since G3 only
+    inspects `git push`, not writes to the allowlist that feeds it. This is
+    the Bash-side half of the fix (raw shell writes: redirect, sed -i, tee,
+    cp, mv, truncate, a python one-liner writing the file); the
+    Edit/Write/NotebookEdit-side half is in main() below. Heuristic,
+    honest-scope like G4 — not a hardened sandbox.
+    """
+    if _HOOK_CONFIG_BASENAME not in cmd:
+        return ALLOW
+    for seg in segment(tokenize(cmd)):
+        if _segment_targets_protected_config(peel_wrappers(seg)):
+            return DENY
+    return ALLOW
+
+
 # id → guard function NAME (resolved from module globals at call time so that
 # test-time patch.object(mod, "guard_*") is honored and a raising guard
 # fail-opens via main()'s except).
@@ -503,12 +592,21 @@ _DENY_REASONS = {
     ),
     "git_push_default": (
         "Blocked: git push to the repository default branch. Branch off the "
-        "default first. To allow this repo, add its name to "
-        "~/.claude/yadgar-hook-exceptions.json → push_default_allowlist."
+        "default first. This repo is not on push_default_allowlist. Do NOT "
+        "edit ~/.claude/yadgar-hook-exceptions.json yourself, even "
+        "temporarily — that file is a durable, human-only decision. If a "
+        "genuine exception is needed, STOP and ask the user to add it."
     ),
     "db_lockdown": (
         "Direct docker exec into yadgar DB/backend containers is blocked to "
         "prevent data corruption. Use yadgar MCP tools instead."
+    ),
+    "hook_config_tamper": (
+        "Blocked: agents must never write to "
+        "~/.claude/yadgar-hook-exceptions.json — not directly, not via a "
+        "wrapper, not temporarily-then-reverted. It grants push-to-default "
+        "bypass and is a human-only, durable decision. STOP and ask the "
+        "user to edit it themselves."
     ),
 }
 
@@ -540,6 +638,23 @@ def _git(args: list[str], cwd: str | None) -> str | None:
 # --------------------------------------------------------------------------- #
 
 
+def _decide_edit_family(data: dict) -> dict:
+    """G5 (Edit/Write/NotebookEdit side): decide allow/deny for a file-edit tool call.
+
+    Agents must never edit the hook-exceptions config that feeds G3's
+    allowlist — human-only, durable.
+    """
+    ti = data.get("tool_input", {})
+    fp = None
+    if isinstance(ti, dict):
+        fp = ti.get("file_path") or ti.get("notebook_path")
+    config = load_config()
+    disabled = set(config.get("disabled_guards", []))
+    if "hook_config_tamper" not in disabled and _is_protected_config_path(fp):
+        return _deny(_DENY_REASONS["hook_config_tamper"])
+    return _allow()
+
+
 @observe(tier="boundary")
 def main() -> None:
     try:
@@ -549,7 +664,13 @@ def main() -> None:
             print(json.dumps(_allow()))
             return
 
-        if data.get("tool_name") != "Bash":
+        tool_name = data.get("tool_name")
+
+        if tool_name in ("Edit", "Write", "NotebookEdit"):
+            print(json.dumps(_decide_edit_family(data)))
+            return
+
+        if tool_name != "Bash":
             print(json.dumps(_allow()))
             return
 
@@ -566,6 +687,11 @@ def main() -> None:
         # G4 (db-lockdown): verbatim substring on the raw command.
         if "db_lockdown" not in disabled and guard_db_lockdown(cmd) is DENY:
             print(json.dumps(_deny(_DENY_REASONS["db_lockdown"])))
+            return
+
+        # G5 (Bash side): raw-shell writes targeting the hook-exceptions config.
+        if "hook_config_tamper" not in disabled and guard_hook_config_tamper(cmd) is DENY:
+            print(json.dumps(_deny(_DENY_REASONS["hook_config_tamper"])))
             return
 
         # G1-G3: run each segment of the compound command through the pipeline.
