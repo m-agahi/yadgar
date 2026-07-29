@@ -429,10 +429,13 @@
                 ExecStartPre = [
                   "-${cfg.runtime} stop yadgar"
                   "-${cfg.runtime} rm yadgar"
-                  # ${stateDir}/triggers must exist on the HOST before the
-                  # container starts: the daemon mkdir's it container-side, but
-                  # creating it under a bind mount as root can leave a
-                  # root-owned dir the user-session .path unit cannot traverse.
+                  # Pre-create ${stateDir}/triggers so the trigger dir exists
+                  # before the first vacuum request. Not strictly required — a
+                  # systemd .path unit watches the nearest existing ancestor and
+                  # picks the descendant up on creation, and the daemon mkdir's
+                  # the parent itself — but it removes the first-boot race and
+                  # matches generate_launchd.sh, where launchd's WatchPaths DOES
+                  # need the dir present at load.
                   "-${pkgs.bash}/bin/bash -c 'mkdir -p ${dataDir} ${configDir} ${stateDir}/triggers && chmod 700 ${configDir} ${stateDir}'"
                 ];
                 ExecStart = lib.concatStringsSep " " [
@@ -622,9 +625,20 @@
                 # transient vacuum failure does not pin the .path unit in the
                 # active state (which would stop it firing again). If the
                 # vacuum itself fails, MCP can write the trigger again.
+                #
+                # `systemctl` is deliberately BARE (resolved from the unit's
+                # $PATH — systemd searches $PATH for a slash-free ExecStart
+                # command since v239) rather than a `pkgs.systemd`-store path.
+                # It must be the systemctl belonging to the init system actually
+                # running the user bus; a nix-store build of systemd is a
+                # different binary, and on a non-NixOS home-manager host it need
+                # not match the running init at all. The systemd user manager's
+                # compiled default $PATH resolves it on both NixOS
+                # (/run/current-system/sw/bin) and ordinary distros (/usr/bin).
+                # `rm` has no such coupling, so it stays pinned to the store.
                 ExecStart = [
                   "${pkgs.coreutils}/bin/rm -f ${stateDir}/triggers/vacuum_requested"
-                  "${pkgs.systemd}/bin/systemctl --user start yadgar-vacuum.service"
+                  "systemctl --user start yadgar-vacuum.service"
                 ];
               };
             };
