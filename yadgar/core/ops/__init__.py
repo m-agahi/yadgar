@@ -15,6 +15,7 @@ _EXPORTS: Final = {
     "ManualModeError": "yadgar.core.ops.ops",
     "Path": "yadgar.core.ops.ops",
     "ServiceController": "yadgar.core.ops.ops",
+    "VacuumTriggerNotConfiguredError": "yadgar.core.ops.ops",
     "_DEFAULT_VACUUM_TRIGGER_PATH": "yadgar.core.ops.ops",
     "_fire_vacuum_service": "yadgar.core.ops.ops",
     "annotations": "yadgar.core.ops.ops",

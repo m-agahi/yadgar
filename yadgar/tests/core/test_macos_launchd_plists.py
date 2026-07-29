@@ -43,6 +43,7 @@ except ImportError:  # pragma: no cover
 
 from pathlib import Path
 
+from yadgar.tests._mount_projection import parse_mounts
 from yadgar.tests._paths import REPO_ROOT
 
 LAUNCHD_DIR = REPO_ROOT / "scripts" / "install" / "launchd"
@@ -275,15 +276,13 @@ class TestVacuumTriggerPathConsistency:
         return run_cmd
 
     def _parse_mounts(self, run_cmd: str) -> dict[str, str]:
-        """Return {container_path: host_path} for every `-v host:container` bind."""
-        mounts: dict[str, str] = {}
-        for m in re.findall(r"-v\s+(\S+)", run_cmd):
-            host, _, container = m.partition(":")
-            # strip trailing :ro / :rw option
-            container = container.split(":")[0]
-            if host and container:
-                mounts[container] = host
-        return mounts
+        """Return {container_path: host_path} for every `-v host:container` bind.
+
+        Delegates to the shared helper — the same projection now backs the
+        cross-generator invariant in
+        yadgar/tests/scripts/test_vacuum_trigger_cross_generator.py.
+        """
+        return parse_mounts(run_cmd)
 
     def test_core_plist_mounts_xdg_state_dir(self) -> None:
         """Core container must bind-mount the host XDG-state dir (fix A step 1)."""

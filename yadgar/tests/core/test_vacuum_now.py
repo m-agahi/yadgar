@@ -101,6 +101,48 @@ class TestFireVacuumService:
 
         assert trigger.exists()
 
+    def test_unset_env_raises_not_configured(self, tmp_path):
+        """D1 fail-loud: no YADGAR_VACUUM_TRIGGER_PATH → refuse, don't write.
+
+        There is no code default: the old '/data/triggers/vacuum_requested'
+        fallback wrote into the container data volume on surfaces that ship no
+        watcher, so the write succeeded and vacuum_now() reported started=True
+        into a void (task:0044).
+        """
+        import pytest
+
+        from yadgar.core.ops import VacuumTriggerNotConfiguredError, _fire_vacuum_service
+
+        env = {k: v for k, v in os.environ.items() if k != "YADGAR_VACUUM_TRIGGER_PATH"}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(VacuumTriggerNotConfiguredError):
+                _fire_vacuum_service()
+
+    def test_blank_env_raises_not_configured(self, tmp_path):
+        """An empty/whitespace value is 'unconfigured', not a path named ''."""
+        import pytest
+
+        from yadgar.core.ops import VacuumTriggerNotConfiguredError, _fire_vacuum_service
+
+        with patch.dict(os.environ, {"YADGAR_VACUUM_TRIGGER_PATH": "   "}):
+            with pytest.raises(VacuumTriggerNotConfiguredError):
+                _fire_vacuum_service()
+
+    def test_no_load_bearing_code_default(self):
+        """Acceptance criterion 7: the code default and the registry default are
+        the same value, and that value is 'unset'."""
+        from yadgar._shared.config.config_registry import _REGISTRY
+        from yadgar.core.ops import _DEFAULT_VACUUM_TRIGGER_PATH
+
+        assert _DEFAULT_VACUUM_TRIGGER_PATH == "", (
+            "a non-empty code default silently re-enables the write-into-a-void path"
+        )
+        entry = next(e for e in _REGISTRY if e.name == "YADGAR_VACUUM_TRIGGER_PATH")
+        assert entry.default == _DEFAULT_VACUUM_TRIGGER_PATH, (
+            "config_registry default disagrees with the runtime default — "
+            "/admin/config would report a value the daemon never uses"
+        )
+
     def test_io_error_raises_runtime_error(self, tmp_path):
         """I/O failure writing trigger file must raise RuntimeError."""
         import pytest
@@ -219,3 +261,25 @@ class TestVacuumNowRefusals:
 
         assert result["started"] is True
         assert trigger.exists()
+
+    def test_no_trigger_path_configured_returns_started_false(self):
+        """D1: on a surface with no watcher (no env), vacuum_now() must say so.
+
+        Previously the /data code default made the write succeed and the tool
+        returned started=True while nothing was watching — the silent no-op.
+        """
+        from yadgar.core import server as srv
+
+        storage = _make_storage(db_size_bytes=500 * 1024 * 1024)
+        env = {k: v for k, v in os.environ.items() if k != "YADGAR_VACUUM_TRIGGER_PATH"}
+
+        with (
+            patch.object(srv, "_get_storage", return_value=storage),
+            patch.dict(os.environ, env, clear=True),
+        ):
+            result = srv.vacuum_now(force=True)
+
+        assert result["started"] is False
+        assert result["skipped_reason"] == "no_trigger_path_configured"
+        assert result["trigger_path"] is None
+        assert result["before_bytes"] == 500 * 1024 * 1024

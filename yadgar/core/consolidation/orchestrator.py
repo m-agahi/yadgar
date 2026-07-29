@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
-from yadgar.core.ops import _fire_vacuum_service
+from yadgar.core.ops import VacuumTriggerNotConfiguredError, _fire_vacuum_service
 
 logger = logging.getLogger("yadgar.consolidation")
 
@@ -129,7 +129,20 @@ def _maybe_auto_vacuum(storage, settings) -> None:
 
     now_local = datetime.now()
     if _in_window(now_local, settings.VACUUM_AUTO_WINDOW_START, settings.VACUUM_AUTO_WINDOW_END):
-        _fire_vacuum_service()
+        try:
+            _fire_vacuum_service()
+        except VacuumTriggerNotConfiguredError:
+            # No watcher on this surface (task:0044 D1). Do NOT stamp the
+            # cooldown — the DB is genuinely over threshold and the operator
+            # needs to see this every cycle until they configure a watcher.
+            logger.error(
+                "Auto-vacuum wanted (db=%d MiB > %d MiB threshold) but "
+                "YADGAR_VACUUM_TRIGGER_PATH is unset — this install surface ships "
+                "no vacuum trigger watcher, so no vacuum will run",
+                size >> 20,
+                threshold >> 20,
+            )
+            return
         _last_vacuum_at = datetime.now(UTC)
         logger.warning(
             "Auto-vacuum triggered: db=%d MiB > %d MiB threshold",

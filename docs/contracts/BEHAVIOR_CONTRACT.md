@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**255 SHALLs / 41 subsystems.** Today: **57 ✅ · 193 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83) Of the 193 ⏳:
-**59 `[r]` (real-path coverage exists) · 102 `[u]` (unit-only) · 32 none.**
+**256 SHALLs / 41 subsystems.** Today: **57 ✅ · 194 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83) Of the 194 ⏳:
+**59 `[r]` (real-path coverage exists) · 103 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -64,6 +64,7 @@ Goal: every SHALL → ✅ or ❌.
 - BC-E1 post-vacuum row counts == pre-vacuum, per table. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE1_RowCountsPreserved::test_memory_count_unchanged` P1
 - BC-E2 atomic: any mid-vacuum failure leaves live DB intact+populated (never empty). ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE2_VacuumAtomicity` (test_a_import_failure_leaves_canonical_untouched, test_b_verification_failure_blocks_swap, test_c_happy_path_swapped_dir_opens_complete, test_d_crash_mid_swap_recovery, test_e_recovery_runs_before_preflight_in_cmd_vacuum_impl) P1
 - BC-E3 sensitive job in progress blocks external restart/shutdown. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE3_SensitiveJobLock::test_external_shutdown_refused_while_locked` P1
+- BC-E4 vacuum_now() on a surface with no trigger watcher reports `started=False, skipped_reason="no_trigger_path_configured"` — never `started=True` into a void. ⏳[u] `yadgar/tests/core/test_vacuum_now.py::TestVacuumNowRefusals::test_no_trigger_path_configured_returns_started_false` (task:0044)
 
 ### F. Backup / restore
 - BC-F1 a backup is a COMPLETE restorable copy (restore == source row counts). ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCF1_BackupRoundTrip::test_snapshot_restore_same_count` P1
