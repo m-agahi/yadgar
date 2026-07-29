@@ -228,6 +228,34 @@ def test_c7_make_opt_out_removes_linger(target):
     )
 
 
+def test_c7_make_setup_reaches_linger_step():
+    """`make setup` — the README's repo-checkout path — must reach the step.
+
+    `setup` delegates via `$(MAKE) _enable-units-auto`; asserting the leaf
+    targets alone would not prove the primary install path fires.
+    """
+    result = _make_dry_run("setup")
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined[-2000:]
+    assert "enable_linger.sh" in combined, (
+        f"make setup must reach the linger step\n{combined[-3000:]}"
+    )
+
+
+def test_c7_make_setup_opt_out_propagates_to_submake():
+    """`make setup YADGAR_ENABLE_LINGER=0` is documented in the README.
+
+    Guards env propagation across the `$(MAKE) _enable-units-auto` boundary —
+    this Makefile otherwise passes such vars explicitly to sub-makes.
+    """
+    result = _make_dry_run("setup", extra_env={"YADGAR_ENABLE_LINGER": "0"})
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined[-2000:]
+    assert "enable_linger.sh" not in combined, (
+        f"opt-out must survive the sub-make hop\n{combined[-3000:]}"
+    )
+
+
 # ── criterion 8 — regression: linger must not displace unit enablement ───────
 
 
