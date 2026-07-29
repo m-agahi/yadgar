@@ -19,9 +19,14 @@
 
     <!--
         NOTE: StartCalendarInterval fires in LOCAL TIME, not UTC.
-        Nix systemd uses 'OnCalendar=Sun *-*-* 04:00:00 UTC'.
-        On a Mac in non-UTC timezone, this fires at a different wall-clock hour.
-        Document mitigation: user should set Mac TZ to UTC for headless use.
+        For the WEEKLY VACUUM that is the correct behaviour, not a compromise:
+        the systemd surfaces use 'OnCalendar=Sun *-*-* 04:00:00', which is also
+        LOCAL (flake.nix, scripts/install/yadgar-vacuum.timer.in). So all three
+        surfaces agree and no timezone workaround is needed here.
+        (A previous revision of this comment claimed the nix side was UTC and
+        advised setting the Mac's TZ to UTC to match. That was wrong — only the
+        NIGHTLY schedule is UTC; see com.openfantasy.yadgar-nightly-cycle.plist.in,
+        where the local-time caveat is real.)
     -->
     <key>StartCalendarInterval</key>
     <dict>
@@ -56,6 +61,10 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:@YADGAR_HOME@/.local/bin</string>
         <key>YADGAR_SECRETS_ENV_FILE</key>
         <string>@YADGAR_SECRETS_ENV_FILE@</string>
+        <!-- Host port the backend plist publishes SurrealDB on. The wrapper builds
+             YADGAR_DB_URL from it, so a re-pointed publish is followed here. -->
+        <key>YADGAR_BACKEND_SURREAL_PORT</key>
+        <string>@YADGAR_BACKEND_SURREAL_PORT@</string>
     </dict>
 
     <key>StandardOutPath</key>

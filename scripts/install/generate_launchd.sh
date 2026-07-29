@@ -36,6 +36,11 @@ DATA_DIR="${YADGAR_INSTALL_PREFIX:-${HOME}/.local/share/yadgar}"
 SECRETS_ENV_FILE="${YADGAR_SECRETS_ENV_FILE:-${HOME}/.config/yadgar/secrets.env}"
 BACKEND_IMAGE="${YADGAR_BACKEND_IMAGE:-openfantasy/yadgar-backend:latest}"
 CORE_IMAGE="${YADGAR_CORE_IMAGE:-openfantasy/yadgar:latest}"
+# Host port the backend's SurrealDB (:8000) is published on, loopback-only. The
+# nightly-cycle and vacuum LaunchAgents run on the HOST and reach SurrealDB over
+# HTTP, so this must be published or they connection-refuse on every fire.
+# Overridable because :8000 is commonly occupied by a dev server.
+BACKEND_SURREAL_PORT="${YADGAR_BACKEND_SURREAL_PORT:-8000}"
 LOG_DIR="${HOME}/.local/share/yadgar/logs"
 SCRIPTS_INSTALL_DIR="${HOME}/.local/share/yadgar/scripts"
 # XDG-state trigger dir: the core container writes vacuum_requested here (via the
@@ -82,6 +87,7 @@ render_template() {
         -e "s|@YADGAR_SECRETS_ENV_FILE@|${SECRETS_ENV_FILE}|g" \
         -e "s|@YADGAR_HOME@|${HOME}|g" \
         -e "s|@YADGAR_SCRIPTS_DIR@|${SCRIPTS_INSTALL_DIR}|g" \
+        -e "s|@YADGAR_BACKEND_SURREAL_PORT@|${BACKEND_SURREAL_PORT}|g" \
         "${template}" > "${output}"
 }
 

@@ -39,6 +39,18 @@ YADGAR_ENABLE_LINGER ?= 1
 # surfaces is the bug class this train is cleaning up.
 # Opt out with: make setup YADGAR_CODE_GRAPH=0
 YADGAR_CODE_GRAPH ?= 1
+# Every plist generate_launchd.sh renders. Both macOS enable paths below iterate
+# this ONE list. They previously carried an inline two-plist list while
+# yadgar-setup.sh::_step_enable_units bootstrapped all six — so `make setup` on
+# macOS rendered six maintenance jobs and loaded two, and `--doctor` linted all
+# six without asserting any were loaded. Guarded by
+# test_setup_sh_and_make_agree_on_activated_macos_plists.
+MACOS_PLISTS := com.openfantasy.yadgar.plist \
+                com.openfantasy.yadgar-backend.plist \
+                com.openfantasy.yadgar-vacuum.plist \
+                com.openfantasy.yadgar-nightly-cycle.plist \
+                com.openfantasy.yadgar-vacuum-trigger.plist \
+                com.openfantasy.yadgar-worktree-sweep.plist
 
 # Resolved at parse time (not runtime) so `make -n` shows the real plan.
 ifeq ($(YADGAR_ENABLE_LINGER),0)
@@ -188,8 +200,7 @@ enable-units-macos:
 	@echo "==> Loading launchd agents..."
 	@LAUNCHD_DIR="$(HOME)/Library/LaunchAgents"; \
 	  MACOS_MAJOR=$$(sw_vers -productVersion 2>/dev/null | cut -d. -f1 || echo "11"); \
-	  for plist in "$${LAUNCHD_DIR}/com.openfantasy.yadgar.plist" \
-	               "$${LAUNCHD_DIR}/com.openfantasy.yadgar-backend.plist"; do \
+	  for plist in $(MACOS_PLISTS:%=$${LAUNCHD_DIR}/%); do \
 	    [ -f "$$plist" ] || { echo "ERROR: $$plist not found. Run 'make setup' first." >&2; exit 1; }; \
 	    launchctl unload "$$plist" 2>/dev/null || true; \
 	    if [ "$${MACOS_MAJOR}" -ge 11 ] 2>/dev/null; then \
@@ -214,8 +225,8 @@ _enable-units-auto:
 	    macos) \
 	      LAUNCHD_DIR="$(HOME)/Library/LaunchAgents"; \
 	      MACOS_MAJOR=$$(sw_vers -productVersion 2>/dev/null | cut -d. -f1 || echo "11"); \
-	      for plist in "$${LAUNCHD_DIR}/com.openfantasy.yadgar.plist" \
-	                   "$${LAUNCHD_DIR}/com.openfantasy.yadgar-backend.plist"; do \
+	      for plist in $(MACOS_PLISTS:%=$${LAUNCHD_DIR}/%); do \
+	        [ -f "$$plist" ] || { echo "WARNING: $$plist not found — did generate_launchd.sh fail?" >&2; continue; }; \
 	        launchctl unload "$$plist" 2>/dev/null || true; \
 	        if [ "$${MACOS_MAJOR}" -ge 11 ] 2>/dev/null; then \
 	          launchctl bootstrap "gui/$$(id -u)" "$$plist"; \

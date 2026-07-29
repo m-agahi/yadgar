@@ -1,6 +1,22 @@
 [Unit]
 Description=Yadgar Memory Engine — full stack
 Wants=yadgar.service yadgar-backend.service
+# ACTIVATION MECHANISM for the maintenance units (task:0077 D2). Every install
+# entry point runs `systemctl --user enable [--now] yadgar.target` and nothing
+# else — which installs ONLY yadgar.target's own WantedBy=default.target symlink.
+# A .timer/.path carrying just `[Install] WantedBy=timers.target` therefore
+# renders correctly, passes every render assertion, and NEVER ACTIVATES.
+#
+# Listing them here is one site that cannot drift. The alternative (an explicit
+# `enable --now` per unit at each install entry point) is three sites, and those
+# three have already diverged once — on macOS, where the Makefile bootstrapped
+# two of six plists while yadgar-setup.sh bootstrapped all six.
+#
+# The units keep their own [Install] stanzas too, so `systemctl --user enable
+# yadgar-vacuum.timer` still works for anyone who wants it. Note that
+# `systemctl is-enabled` reports `disabled` for units pulled in this way — probe
+# `is-active` / `list-timers` instead (yadgar-setup --doctor does).
+Wants=yadgar-vacuum.timer yadgar-nightly-cycle.timer yadgar-vacuum-trigger.path
 After=yadgar.service yadgar-backend.service
 
 [Install]

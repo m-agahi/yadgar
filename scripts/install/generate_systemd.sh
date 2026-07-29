@@ -8,12 +8,19 @@
 #   YADGAR_SECRETS_ENV_FILE     Path to secrets.env (default: ~/.config/yadgar/secrets.env)
 #   YADGAR_BACKEND_IMAGE        Backend image tag (default: openfantasy/yadgar-backend:latest)
 #   YADGAR_CORE_IMAGE           Core image tag (default: openfantasy/yadgar:latest)
+#   YADGAR_STATE_DIR            XDG state dir bound into the core container for the
+#                               vacuum trigger (default: ~/.local/state/yadgar)
+#   YADGAR_BACKEND_SURREAL_PORT Host port SurrealDB is published on, loopback-only
+#                               (default: 8000). Override when :8000 is occupied.
+#   YADGAR_HOST_CLI             Explicit path to the `yadgar` host CLI (escape hatch)
+#   YADGAR_HOST_NIGHTLY_CLI     Explicit path to the `yadgar-nightly-cycle` host CLI
 #   YADGAR_TEST_SIMULATE_NIX_SYMLINK  Set to 1 in tests to trigger nix guard via symlink check
 #
 # Exits non-zero if:
 #   - existing units are nix-managed symlinks (defense-in-depth per DP5)
 #   - template files are missing
 #   - YADGAR_RUNTIME not detected
+#   - no host yadgar CLI resolves (the maintenance units would fail at 4am)
 
 set -euo pipefail
 
@@ -25,6 +32,16 @@ DATA_DIR="${YADGAR_INSTALL_PREFIX:-${HOME}/.local/share/yadgar}"
 SECRETS_ENV_FILE="${YADGAR_SECRETS_ENV_FILE:-${HOME}/.config/yadgar/secrets.env}"
 BACKEND_IMAGE="${YADGAR_BACKEND_IMAGE:-openfantasy/yadgar-backend:latest}"
 CORE_IMAGE="${YADGAR_CORE_IMAGE:-openfantasy/yadgar:latest}"
+# XDG state dir. Bound into the core container so vacuum_now()'s trigger file
+# lands on the host, where yadgar-vacuum-trigger.path watches for it. The SAME
+# token is used on the left of the `-v` bind and in PathExists= — the
+# cross-generator test compares those two as exact strings (R7).
+STATE_DIR="${YADGAR_STATE_DIR:-${HOME}/.local/state/yadgar}"
+# Host port for the backend's SurrealDB (:8000), loopback-only. The nightly and
+# vacuum units run on the HOST and reach SurrealDB over HTTP, so without the
+# publish they render, activate, fire and connection-refuse. Overridable because
+# :8000 is commonly occupied by a dev server (R2).
+BACKEND_SURREAL_PORT="${YADGAR_BACKEND_SURREAL_PORT:-8000}"
 
 # ── Runtime detection (if not set) ───────────────────────────────────────────
 
@@ -62,6 +79,72 @@ for unit in yadgar.service yadgar-backend.service; do
     fi
 done
 
+# ── Host CLI resolution (@VACUUM_EXEC@ / @NIGHTLY_EXEC@) ─────────────────────
+#
+# The vacuum and nightly-cycle units execute on the HOST, not in a container:
+# the vacuum flow interleaves phases requiring different daemon states
+# (export → backend DOWN → reimport → backend UP) and the image ships no
+# systemctl. So both need a host entry point resolved AT RENDER TIME.
+#
+# Resolution is deliberately fail-loud: an unresolvable CLI aborts the install
+# with an actionable message, rather than baking a broken ExecStart into a unit
+# that starts, fails, and is never looked at until consolidation has silently
+# stopped for weeks.
+#
+# NOTE the two entry points are DIFFERENT binaries. `yadgar-nightly-cycle` is a
+# console script (pyproject [project.scripts]); there is NO `yadgar
+# nightly-cycle` subcommand, and nightly_cycle.main() has no argparse at all —
+# it is configured entirely through the environment and invoked bare.
+
+_resolve_host_exec() {
+    local script="$1" module="$2" override="$3" found
+
+    if [[ -n "${override}" ]]; then
+        printf '%s' "${override}"
+        return 0
+    fi
+    # The pipx shape (flake.nix installs the CLI this way).
+    if [[ -x "${HOME}/.local/bin/${script}" ]]; then
+        printf '%s' "${HOME}/.local/bin/${script}"
+        return 0
+    fi
+    # brew, /usr/local, other prefixes.
+    if found="$(command -v "${script}" 2>/dev/null)"; then
+        printf '%s' "${found}"
+        return 0
+    fi
+    # `python3 -I`: isolated mode drops cwd from sys.path. WITHOUT -I this probe
+    # succeeds from inside a repo checkout even with nothing installed, and the
+    # unit — which runs from a different working directory — then fails at 4am.
+    # Probe what the unit will actually experience (R6).
+    if command -v python3 > /dev/null 2>&1 && python3 -I -c "import ${module}" > /dev/null 2>&1; then
+        printf 'python3 -m %s' "${module}"
+        return 0
+    fi
+    return 1
+}
+
+_fail_no_host_cli() {
+    echo "ERROR: no host yadgar CLI found for the $1 maintenance unit." >&2
+    echo "  Tried: \$$2, ~/.local/bin/$3, 'command -v $3', 'python3 -m $4'." >&2
+    echo "  Background maintenance (consolidation, heat decay, vacuum) runs on the" >&2
+    echo "  HOST, so a host CLI is required. Install one with:" >&2
+    echo "      pipx install yadgar" >&2
+    echo "  ...then re-run setup. Or point \$$2 at an existing install." >&2
+    exit 1
+}
+
+if ! VACUUM_EXEC="$(_resolve_host_exec yadgar yadgar "${YADGAR_HOST_CLI:-}")"; then
+    _fail_no_host_cli vacuum YADGAR_HOST_CLI yadgar yadgar
+fi
+if ! NIGHTLY_EXEC="$(
+    _resolve_host_exec yadgar-nightly-cycle yadgar.core.scripts.nightly_cycle \
+        "${YADGAR_HOST_NIGHTLY_CLI:-}"
+)"; then
+    _fail_no_host_cli nightly-cycle YADGAR_HOST_NIGHTLY_CLI \
+        yadgar-nightly-cycle yadgar.core.scripts.nightly_cycle
+fi
+
 # ── Template rendering ────────────────────────────────────────────────────────
 
 render_template() {
@@ -77,14 +160,39 @@ render_template() {
         -e "s|@BACKEND_IMAGE@|${BACKEND_IMAGE}|g" \
         -e "s|@DATA_DIR@|${DATA_DIR}|g" \
         -e "s|@SECRETS_ENV_FILE@|${SECRETS_ENV_FILE}|g" \
+        -e "s|@STATE_DIR@|${STATE_DIR}|g" \
+        -e "s|@BACKEND_SURREAL_PORT@|${BACKEND_SURREAL_PORT}|g" \
+        -e "s|@VACUUM_EXEC@|${VACUUM_EXEC}|g" \
+        -e "s|@NIGHTLY_EXEC@|${NIGHTLY_EXEC}|g" \
         "${template}" > "${output}"
 }
 
 mkdir -p "${OUTPUT_DIR}"
 
-render_template "${SCRIPT_DIR}/yadgar.service.in"         "${OUTPUT_DIR}/yadgar.service"
-render_template "${SCRIPT_DIR}/yadgar-backend.service.in" "${OUTPUT_DIR}/yadgar-backend.service"
-render_template "${SCRIPT_DIR}/yadgar.target.in"          "${OUTPUT_DIR}/yadgar.target"
+# Pre-create the trigger dir so the .path unit has an existing parent at first
+# activation. Mirrors generate_launchd.sh (where launchd's WatchPaths genuinely
+# needs the dir present at load); on systemd it removes the first-boot race.
+mkdir -p "${STATE_DIR}/triggers"
+
+# Single source of truth for the unit set: the render loop, the closing summary,
+# and (via the generator-derived uninstall test) uninstall.sh all read from here.
+# A unit added to the array but forgotten in the summary is the drift class this
+# array exists to make impossible.
+UNITS=(
+    yadgar.service
+    yadgar-backend.service
+    yadgar.target
+    yadgar-vacuum.service
+    yadgar-vacuum.timer
+    yadgar-vacuum-trigger.path
+    yadgar-vacuum-trigger.service
+    yadgar-nightly-cycle.service
+    yadgar-nightly-cycle.timer
+)
+
+for unit_name in "${UNITS[@]}"; do
+    render_template "${SCRIPT_DIR}/${unit_name}.in" "${OUTPUT_DIR}/${unit_name}"
+done
 
 # ── Seed ~/.local/state/yadgar/upgrade.env with initial image tag ─────────────
 # yadgar.service uses EnvironmentFile=-%h/.local/state/yadgar/upgrade.env to read
@@ -103,6 +211,11 @@ else
 fi
 
 echo "Systemd units written to ${OUTPUT_DIR}/"
-echo "  yadgar.service"
-echo "  yadgar-backend.service"
-echo "  yadgar.target"
+for unit_name in "${UNITS[@]}"; do
+    echo "  ${unit_name}"
+done
+echo "Maintenance entry points resolved at render time:"
+echo "  vacuum:        ${VACUUM_EXEC}"
+echo "  nightly-cycle: ${NIGHTLY_EXEC}"
+echo "SurrealDB published on 127.0.0.1:${BACKEND_SURREAL_PORT} (loopback only)."
+echo "Vacuum trigger dir: ${STATE_DIR}/triggers"

@@ -182,6 +182,14 @@ make setup            # install + hooks + agents + units + seed anchors
 
 `yadgar setup` writes `~/.config/yadgar/config.yaml`, generates `~/.config/yadgar/secrets.env` (chmod 600) with random `YADGAR_MCP_AUTH_TOKEN` + `SURREAL_PASS` + `YADGAR_RW_PASS` + `YADGAR_RO_PASS`, registers the MCP server with Claude Code, and provisions code_graph. The hooks, subagent templates, rules, anchor seeds, container images and systemd (Linux) / launchd (macOS) user units come from the full installers — `yadgar-setup` (pipx/brew/nix-profile) or `make setup` (repo checkout), which run their own building-block chains rather than calling `yadgar setup`. All are idempotent — re-run after upgrades.
 
+**Background maintenance (v5.169+).** The installer now ships the maintenance units on every surface, not just NixOS: a **nightly cycle at 19:00 UTC** (backup → consolidate → vacuum → backup) and a **weekly vacuum on Sunday 04:00 local** (±30 min jitter), plus a watcher that services MCP `vacuum_now()`. Before this, a `make setup` install on Linux rendered no maintenance units at all — consolidation, heat decay, episode formation and dream replay silently never ran, and on macOS the jobs fired and failed. Both timers are `Persistent=true`, so a run missed while the machine was off is caught up at next start; the first catch-up on a large never-consolidated DB can take a while (bounded at 1h). Check with `systemctl --user list-timers 'yadgar-*'`, or `yadgar-setup --doctor`. Mask what you do not want:
+
+```bash
+systemctl --user mask yadgar-nightly-cycle.timer   # or yadgar-vacuum.timer
+```
+
+These jobs run **on the host** (the vacuum flow stops and restarts the backend mid-run, which cannot work from inside the container), so they need SurrealDB reachable over HTTP. The backend therefore publishes it on **`127.0.0.1:8000`, loopback only** — a posture change for existing non-nix installs, matching what the nix flake has shipped since v5.46. If port 8000 is already taken, re-point it: `make setup YADGAR_BACKEND_SURREAL_PORT=18000`. The vacuum will also stop the daemon briefly, so a live MCP session at 04:00 Sunday loses its connection.
+
 **systemd lingering (Linux).** Yadgar's units are systemd *user* units, so the installer also enables lingering for your user (`loginctl enable-linger`) — without it the daemon stops when you log out and never starts at boot. Enabling your own lingering needs no `sudo`. Note the consequence on a shared host: your yadgar containers keep running (and holding memory) while you are logged out. Opt out with `yadgar-setup --no-enable-linger` or `make setup YADGAR_ENABLE_LINGER=0`; uninstalling does not disable lingering again, since it may serve your other user services.
 
 Then start the daemon and register it with Claude Code:

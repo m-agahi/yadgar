@@ -799,6 +799,43 @@ _step_code_graph() {
 
 # ── doctor probes ─────────────────────────────────────────────────────────────
 
+# R6: generate_systemd.sh resolves the host CLI at RENDER time and bakes the
+# result into ExecStart. That path can go stale afterwards (venv deleted, pipx
+# reinstall relocating the shim), and the unit then fails on its next scheduled
+# fire with nobody watching. Execute what the units actually reference.
+_probe_host_cli() {
+    local unit_dir="${YADGAR_SYSTEMD_OUTPUT_DIR:-${HOME}/.config/systemd/user}"
+    local unit exec_line
+    for unit in yadgar-vacuum.service yadgar-nightly-cycle.service; do
+        [ -f "${unit_dir}/${unit}" ] || continue
+        # `|| true` is load-bearing under `set -euo pipefail`: a unit with no
+        # ExecStart makes grep exit 1, which would abort the whole doctor run.
+        exec_line=$(grep -m1 '^ExecStart=' "${unit_dir}/${unit}" 2>/dev/null | cut -d= -f2- || true)
+        # First field only: `yadgar vacuum --service-mode=...` → `yadgar`.
+        # shellcheck disable=SC2086
+        set -- ${exec_line}
+        if [ -z "${1:-}" ]; then
+            warn "${unit}: no ExecStart program"
+        elif [ "$1" = "python3" ] || [ "$1" = "python" ]; then
+            # `python3 -m <module>` branch: field one ALWAYS resolves, so testing
+            # it proves nothing — the failure mode here is the package going
+            # away, not the interpreter. Re-run the same isolated import the
+            # generator used. $3 is the module ("$1 -m $3 ...").
+            if "$1" -I -c "import ${3:-yadgar}" > /dev/null 2>&1; then
+                info "OK: ${unit} host CLI resolves ($1 -m ${3:-yadgar})"
+            else
+                warn "${unit}: '${3:-yadgar}' is no longer importable by $1 —"
+                warn "  this unit fails on its next fire. Fix: pipx install yadgar, then re-run setup."
+            fi
+        elif command -v "$1" > /dev/null 2>&1 || [ -x "$1" ]; then
+            info "OK: ${unit} host CLI resolves ($1)"
+        else
+            warn "${unit}: host CLI '$1' is GONE — this unit fails on its next fire."
+            warn "  Fix with 'pipx install yadgar' then re-run setup to re-render."
+        fi
+    done
+}
+
 _run_doctor() {
     log "Doctor: Running verification probes..."
 
@@ -819,9 +856,38 @@ _run_doctor() {
                 fi
             done
             run launchctl list | grep com.openfantasy.yadgar && info "OK: launchd agents listed" || warn "launchd agents not found"
+            # Lint-only is not enough: a rendered-but-never-loaded maintenance
+            # job is exactly the drift this train is closing. Assert each one is
+            # actually registered with launchd.
+            for label in \
+                com.openfantasy.yadgar-vacuum \
+                com.openfantasy.yadgar-nightly-cycle \
+                com.openfantasy.yadgar-vacuum-trigger \
+                com.openfantasy.yadgar-worktree-sweep; do
+                if launchctl print "gui/$(id -u)/${label}" > /dev/null 2>&1; then
+                    info "OK: ${label} loaded"
+                else
+                    warn "${label} is NOT loaded — it will never fire. Run: make enable-units-macos"
+                fi
+            done
             ;;
         linux|linux-other)
             run systemctl --user --no-pager status yadgar.target 2>&1 | head -5 || warn "yadgar.target not active"
+            # Timers are pulled in by yadgar.target's Wants=, so `is-enabled`
+            # reports "disabled" for them by design — probe list-timers/is-active
+            # instead. A never-activated timer is otherwise completely invisible.
+            info "Maintenance timers:"
+            run systemctl --user --no-pager list-timers 'yadgar-*' 2>&1 | head -6 \
+                || warn "no yadgar timers scheduled — background maintenance will never run"
+            if systemctl --user is-active --quiet yadgar-vacuum-trigger.path 2>/dev/null; then
+                info "OK: yadgar-vacuum-trigger.path active"
+            else
+                warn "yadgar-vacuum-trigger.path is NOT active — MCP vacuum_now() would be a no-op"
+            fi
+            # R6: the maintenance units bake in a host CLI path resolved at
+            # render time. A pipx reinstall or deleted venv breaks it silently
+            # until the unit fires at 4am; surface it here instead.
+            _probe_host_cli
             # Read-only linger probe: reports state, never mutates it.
             _run_enable_linger --check
             ;;
