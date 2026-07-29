@@ -8,6 +8,7 @@ RED phase: fails until yadgar-setup.sh is implemented.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -100,6 +101,35 @@ def test_setup_sh_and_make_agree_on_linger_step():
 
     assert "linger" in sh_out, f"yadgar-setup.sh lost the linger step:\n{sh_out[-2000:]}"
     assert "linger" in make_out, f"Makefile lost the linger step:\n{make_out[-2000:]}"
+
+
+def test_setup_sh_and_make_agree_on_activated_macos_plists():
+    """v5.169 drift guard (task:0077 §1.3): the three enable sites must activate
+    the SAME set of macOS plists.
+
+    They had already diverged — ``yadgar-setup.sh::_step_enable_units`` bootstrapped
+    all six plists while both Makefile sites bootstrapped two, so ``make setup`` on
+    macOS rendered six maintenance jobs and loaded two of them. ``--doctor`` lints
+    all six but only greps ``launchctl list``, so the gap was invisible.
+
+    Compares the plist LABELS each surface names, read straight out of the two
+    files — not a third hardcoded list, which would just be another drift site.
+    """
+    plist_re = re.compile(r"com\.openfantasy\.yadgar[a-z\-]*\.plist")
+
+    setup_labels = set(plist_re.findall(SETUP_SH.read_text()))
+    makefile_text = (REPO_ROOT / "Makefile").read_text()
+    make_labels = set(plist_re.findall(makefile_text))
+
+    assert setup_labels, "yadgar-setup.sh names no plists at all"
+    assert make_labels, "Makefile names no plists at all"
+    assert setup_labels == make_labels, (
+        "macOS activation drift between install surfaces.\n"
+        f"  only in yadgar-setup.sh: {sorted(setup_labels - make_labels)}\n"
+        f"  only in Makefile:        {sorted(make_labels - setup_labels)}\n"
+        "Both `make setup` and `yadgar-setup` must load every plist "
+        "generate_launchd.sh renders, or the unloaded ones never fire."
+    )
 
 
 @pytest.mark.skipif(not SETUP_SH.exists(), reason="yadgar-setup.sh not yet created")

@@ -48,10 +48,10 @@ from yadgar.core.daemon import systemd as systemd_mod
 from yadgar.core.daemon.profiles import _prod_profile
 from yadgar.tests._mount_projection import extract_env, parse_mounts, project_to_host
 from yadgar.tests._paths import REPO_ROOT
+from yadgar.tests._unit_render import render_systemd
 
 BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 INSTALL_DIR = REPO_ROOT / "scripts" / "install"
-GENERATE_SYSTEMD_SH = INSTALL_DIR / "generate_systemd.sh"
 GENERATE_LAUNCHD_SH = INSTALL_DIR / "generate_launchd.sh"
 FLAKE_NIX = REPO_ROOT / "flake.nix"
 
@@ -60,11 +60,18 @@ TRIGGER_ENV = "YADGAR_VACUUM_TRIGGER_PATH"
 # Surfaces that deliberately ship NO trigger watcher. The reason is cited so a
 # future reader knows the absence is a decision, not an oversight.
 _NO_WATCHER_SURFACES: dict[str, str] = {
-    "generate_systemd.sh": (
-        "Non-nix systemd ships no vacuum runner and no watcher (task:0044 D4 — a "
-        "runner+timer there is new scheduling behaviour on an existing install "
-        "base, filed as a follow-up). With the fail-loud default, vacuum_now() "
-        "reports started=False there instead of writing into a void."
+    "docker-compose.yml": (
+        "task:0077 F3 — compose is the dev/CI surface. It ships no maintenance "
+        "units at all (no vacuum runner, no timer, no watcher) and deliberately "
+        "does NOT publish the SurrealDB port, so there is nothing host-side to "
+        "trigger. vacuum_now() refuses there, which is the honest answer."
+    ),
+    "daemon.py docker-run": (
+        "task:0077 F3 — the `yadgar daemon start` dev path (DaemonManager in "
+        "yadgar/core/daemon/daemon.py) runs plain `docker run` with "
+        "`-v {volume_name}:/data`, the same NAMED volume as the Python systemd "
+        "generator (yadgar/core/daemon/profiles.py). No host path exists for a "
+        "watcher to watch, and it installs no units to watch with."
     ),
     "install_systemd_service (Python)": (
         "task:0044 D3 — the core container mounts `-v {profile.volume_name}:/data` "
@@ -166,24 +173,39 @@ def _render_flake() -> tuple[str, str]:
     return _flake_core_block().replace('"', " "), watched_dir
 
 
-def _render_systemd_sh(tmp_path: Path) -> tuple[str, list[Path]]:
-    env = dict(os.environ)
-    env.update(
-        {
-            "YADGAR_SYSTEMD_OUTPUT_DIR": str(tmp_path),
-            "YADGAR_RUNTIME": "podman",
-            "YADGAR_INSTALL_PREFIX": "/home/testuser/.yadgar",
-            "YADGAR_SECRETS_ENV_FILE": "/home/testuser/.yadgar/secrets.env",
-            "YADGAR_BACKEND_IMAGE": "openfantasy/yadgar-backend:test",
-            "YADGAR_CORE_IMAGE": "openfantasy/yadgar:test",
-        }
-    )
-    result = subprocess.run(
-        [BASH, str(GENERATE_SYSTEMD_SH)], capture_output=True, text=True, env=env
-    )
-    assert result.returncode == 0, f"generate_systemd.sh failed\n{result.stderr}"
-    written = sorted(p for p in tmp_path.iterdir() if p.is_file())
-    return "\n".join(p.read_text() for p in written), written
+def _render_systemd_sh_watcher(tmp_path: Path) -> tuple[str, str]:
+    """Return (core run command, watched dir) for the non-nix systemd surface.
+
+    Deliberately NOT the concatenate-every-rendered-file shape used by the
+    declared-no-watcher parametrization: the invariant compares the CORE unit's
+    own mount table against the `.path` unit's watched dir, and concatenating
+    the backend unit's mounts into the same string would let a bind that only
+    the backend has satisfy the projection.
+    """
+    render_systemd(tmp_path)
+    run_cmd = (tmp_path / "units" / "yadgar.service").read_text()
+
+    watcher = (tmp_path / "units" / "yadgar-vacuum-trigger.path").read_text()
+    m = re.search(r"^PathExists=(.+)$", watcher, re.MULTILINE)
+    assert m, "yadgar-vacuum-trigger.path has no PathExists"
+    return run_cmd, m.group(1).strip().rsplit("/", 1)[0]
+
+
+def _read_compose(_tmp_path: Path) -> tuple[str, list[Path]]:
+    """docker-compose.yml is static YAML — read it, render nothing (F3)."""
+    return (REPO_ROOT / "docker-compose.yml").read_text(), []
+
+
+def _read_daemon_docker_run(_tmp_path: Path) -> tuple[str, list[Path]]:
+    """The `yadgar daemon start` docker-run dev path (F3).
+
+    Asserted as source text rather than by executing DaemonManager.start():
+    the `docker run` argv is built inline inside the start methods, not by an
+    extractable command-builder function, and driving the real method needs an
+    image-exists probe plus a live backend. Source text is the honest cheap
+    check here — it fails if this surface grows either half of the pair.
+    """
+    return (REPO_ROOT / "yadgar" / "core" / "daemon" / "daemon.py").read_text(), []
 
 
 def _render_python_systemd(
@@ -201,11 +223,13 @@ def _render_python_systemd(
 # ── The invariant ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("label", ["generate_launchd.sh", "flake.nix"])
+@pytest.mark.parametrize("label", ["generate_launchd.sh", "generate_systemd.sh", "flake.nix"])
 def test_watcher_bearing_generator_trigger_dir_equals_watched_dir(label, tmp_path):
     """THE INVARIANT: host dir the daemon writes the trigger to == watched dir."""
     if label == "generate_launchd.sh":
         run_cmd, watched_dir = _render_launchd(tmp_path)
+    elif label == "generate_systemd.sh":
+        run_cmd, watched_dir = _render_systemd_sh_watcher(tmp_path)
     else:
         run_cmd, watched_dir = _render_flake()
 
@@ -264,6 +288,70 @@ def test_flake_watcher_handler_removes_trigger_before_starting_vacuum():
     )
 
 
+def test_systemd_watcher_is_activated_not_merely_rendered(tmp_path):
+    """A watcher nothing pulls in renders fine and never fires.
+
+    `[Install] WantedBy=paths.target` alone does NOT activate the unit here:
+    every install entry point only ever runs `systemctl --user enable yadgar.target`,
+    which installs yadgar.target's own symlink and nothing else. The ACTUAL
+    activation mechanism is yadgar.target's `Wants=` (task:0077 D2), so that is
+    what this asserts — asserting the `[Install]` stanza would be a false green.
+    """
+    render_systemd(tmp_path)
+    target = (tmp_path / "units" / "yadgar.target").read_text()
+    wants = " ".join(
+        line.split("=", 1)[1] for line in target.splitlines() if line.startswith("Wants=")
+    ).split()
+
+    for unit in (
+        "yadgar-vacuum-trigger.path",
+        "yadgar-vacuum.timer",
+        "yadgar-nightly-cycle.timer",
+    ):
+        assert unit in wants, (
+            f"yadgar.target does not Wants={unit} — setup only ever enables "
+            f"yadgar.target, so this unit would render on disk, pass every render "
+            f"assertion, and never activate.\nTarget Wants: {wants}"
+        )
+
+
+def test_systemd_trigger_handler_removes_trigger_before_starting_vacuum(tmp_path):
+    """Systemd twin of the flake assertion: remove the trigger BEFORE starting the
+    runner, so a failed vacuum does not pin the .path unit active."""
+    render_systemd(tmp_path)
+    handler = (tmp_path / "units" / "yadgar-vacuum-trigger.service").read_text()
+    exec_at = handler.find("ExecStart")
+    assert exec_at != -1, "handler service has no ExecStart"
+    handler = handler[exec_at:]
+    rm_at = handler.find("rm -f")
+    start_at = handler.find("start yadgar-vacuum")
+    assert rm_at != -1, "handler does not remove the trigger file"
+    assert start_at != -1, "handler does not start yadgar-vacuum.service"
+    assert rm_at < start_at, (
+        "handler starts the vacuum before removing the trigger file — a failed "
+        "vacuum would pin the .path unit active and never re-fire"
+    )
+
+
+# Explicit label → renderer map. An if/else chain with a bare `else` silently
+# routes every NEW label to the last renderer (three labels, one surface actually
+# rendered, all green) — the exact false-green this suite exists to prevent.
+_NO_WATCHER_RENDERERS = {
+    "docker-compose.yml": lambda tmp, _mp: _read_compose(tmp),
+    "daemon.py docker-run": lambda tmp, _mp: _read_daemon_docker_run(tmp),
+    "install_systemd_service (Python)": _render_python_systemd,
+}
+
+
+def test_no_watcher_renderer_map_covers_every_declared_surface():
+    """Guard the guard: a surface declared in _NO_WATCHER_SURFACES with no
+    renderer would be silently untested."""
+    assert set(_NO_WATCHER_RENDERERS) == set(_NO_WATCHER_SURFACES), (
+        f"renderer map and declared-surface map disagree: "
+        f"{set(_NO_WATCHER_RENDERERS) ^ set(_NO_WATCHER_SURFACES)}"
+    )
+
+
 @pytest.mark.parametrize("label", sorted(_NO_WATCHER_SURFACES))
 def test_declared_no_watcher_surface_ships_neither_watcher_nor_env(label, tmp_path, monkeypatch):
     """Declared-no-watcher surfaces must ship NEITHER half of the pair.
@@ -272,10 +360,7 @@ def test_declared_no_watcher_surface_ships_neither_watcher_nor_env(label, tmp_pa
     adds a watcher without the env, or the env without a host mount, fails here
     instead of shipping another silent no-op.
     """
-    if label == "generate_systemd.sh":
-        rendered, written = _render_systemd_sh(tmp_path)
-    else:
-        rendered, written = _render_python_systemd(tmp_path, monkeypatch)
+    rendered, written = _NO_WATCHER_RENDERERS[label](tmp_path, monkeypatch)
 
     vacuum_units = [p.name for p in written if "vacuum" in p.name]
     assert not vacuum_units, (
