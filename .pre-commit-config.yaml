@@ -128,7 +128,23 @@ repos:
         language: system
         entry: python scripts/check_capability_coverage.py
         pass_filenames: false
-        files: ^(yadgar/_shared/config/config\.py|yadgar/_shared/storage/migrations\.py|yadgar/core/server/tools/.*\.py|docs/contracts/BEHAVIOR_CONTRACT\.md|docs/contracts/CAPABILITY_REGISTRY\.md)$
+        # always_run is a local/CI PARITY nit, NOT a fix: CI already runs this
+        # unconditionally, so the `files:` filter only ever produced the
+        # "quiet locally, loud in CI" surprise ADR-0080 names. The I32 hole that
+        # let CAP-CODEGRAPH-001 rot was never the trigger — this checker RAN and
+        # PASSED on that PR. See check-registry-prose-liveness below for the fix.
+        always_run: true
+
+      - id: check-registry-prose-liveness
+        name: Check I32 prose-token liveness (registry cites no dead identifiers)
+        language: system
+        entry: python scripts/check_registry_prose_liveness.py
+        pass_filenames: false
+        # always_run: the read set is the registry PLUS all of non-test yadgar/,
+        # so any narrower files: filter is blind by construction — a pure code
+        # change with zero contract files staged is exactly the input that must
+        # make this fail. Measured ~1.2s on this tree.
+        always_run: true
 
       - id: check-complexity-allowlist
         name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
