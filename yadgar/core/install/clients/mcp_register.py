@@ -52,8 +52,8 @@ _TOKEN_ENV_VAR = "YADGAR_MCP_AUTH_TOKEN"
 # The env-ref literal emitted for BEARER_ENVREF clients.
 _TOKEN_ENVREF = f"${{{_TOKEN_ENV_VAR}}}"
 
-# The line prefix used to find the token inside secrets.env.
-_MCP_TOKEN_ENV_LINE_PREFIX = f"{_TOKEN_ENV_VAR}="
+# (The secrets.env line prefix moved with the parser to core.install.auth_token,
+# where it is exported as TOKEN_ENV_LINE_PREFIX.)
 
 
 # ── Token resolution (2026-07-28 fresh-VM QA fix) ────────────────────────────

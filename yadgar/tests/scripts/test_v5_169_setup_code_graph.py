@@ -212,6 +212,20 @@ def test_c7_makefile_declares_default_on():
     assert "YADGAR_CODE_GRAPH ?= 1" in MAKEFILE.read_text()
 
 
+def test_c7_make_uses_the_module_form_not_a_path_shim():
+    """`python3 -m yadgar`, like every sibling target in this Makefile.
+
+    The repo-checkout path (`git clone && cd yadgar && make setup`) has no
+    console shim on PATH. Combined with the `|| true` guard, a bare `yadgar`
+    would turn a missing shim into a SILENT no-op — the very divergence this
+    step removes. (`yadgar-setup.sh` correctly keeps the bare form: it ships
+    inside the installed wheel, where the shim exists.)
+    """
+    result = _make_dry_run("code-graph-install")
+    combined = result.stdout + result.stderr
+    assert "python3 -m yadgar code-graph install" in combined, combined[-2000:]
+
+
 def test_c7_make_setup_reaches_the_step():
     """`make setup` — the README's repo-checkout path — must reach the step.
 

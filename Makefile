@@ -52,10 +52,19 @@ endif
 # leave code_graph.enabled at its true default (ADR-0163: no row -> true) with
 # no binary installed — the exact incoherence this step exists to remove, only
 # inverted. Lingering has no such paired runtime flag, so a skip is correct there.
+#
+# `python3 -m yadgar`, NOT a bare `yadgar`: this Makefile serves the
+# repo-checkout path (`git clone && cd yadgar && make setup`), where no console
+# shim is on PATH — every sibling target (install-hooks, install-agents,
+# config-sync, seed-anchors) uses the module form for that reason. With `|| true`
+# swallowing the failure, a bare `yadgar` would turn a missing shim into a SILENT
+# no-op, i.e. exactly the divergence this step exists to remove. The shell
+# installer deliberately keeps the bare form: it ships inside the installed
+# wheel, where the shim exists, and its steps 6-11 all invoke it that way.
 ifeq ($(YADGAR_CODE_GRAPH),0)
-CODE_GRAPH_STEP := @yadgar code-graph install --no-code-graph || true
+CODE_GRAPH_STEP := @python3 -m yadgar code-graph install --no-code-graph || true
 else
-CODE_GRAPH_STEP := @yadgar code-graph install || true
+CODE_GRAPH_STEP := @python3 -m yadgar code-graph install || true
 endif
 
 # Version — read once from server.json at parse time
