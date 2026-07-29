@@ -37,6 +37,203 @@ _VALID_RECALL_MODES: frozenset[str] = frozenset({"landscape"})
 
 
 # ---------------------------------------------------------------------------
+# task:0085 — output-size shaping (presentation-only, runs AFTER retrieval)
+# ---------------------------------------------------------------------------
+# recall() used to return the backend rows raw, with `max_results` as the only
+# lever — a ROW-COUNT proxy for a BYTE problem, so a 3-row recall can be larger
+# than a 10-row one. On an unlucky topic a single call emitted ~78 KB, exceeded
+# the harness tool-output cap and came back unusable, pushing agents off the
+# memory system and back to grep.
+#
+# Shaping is strictly presentational: it runs after retrieval, rerank and
+# fusion, so ranking is untouched.
+
+# Scoring / thermodynamic / write-side internals no caller reads.
+#
+# DENYLIST, not allowlist — deliberate. An allowlist silently deletes any field
+# the retrieval pipeline adds later, and this pipeline adds fields often. The
+# live trap: mode="landscape" stamps `consensus_score` / `voting_domains` per row
+# (_shared/astrocyte_pool/astrocyte_pool.py:330-331), a documented part of this
+# tool's return contract. With a denylist new fields default to VISIBLE, and the
+# hard size guarantee comes from the byte budget below rather than from the
+# projection — making the projection a pure constant-factor win at zero
+# correctness risk.
+#
+# `contextual_prefix` is write-side-only: generated at ingest and concatenated to
+# build the embedding text (backend/write_exec/_memorize_phases/_phase_embed.py:70-75,
+# backend/curation/ingestion.py:105). Nothing on the retrieval or hook-render
+# path reads it back, and its [Project:]/[Tags:] segments merely restate
+# `directory_context` and `tags`, which are already structured fields on the row.
+#
+# `original_content` is denylisted deliberately: on a compressed memory it holds
+# the full pre-compression text and would roughly DOUBLE the row.
+_RECALL_PROJECTION_DENYLIST: frozenset[str] = frozenset(
+    {
+        "contextual_prefix",
+        "vector_clock",
+        "sr_x",
+        "sr_y",
+        "plasticity",
+        "stability",
+        "excitability",
+        "last_excitability_update",
+        "cofire_prior",
+        "graph_prior",
+        "surprise_score",
+        "emotional_valence",
+        "reconsolidation_count",
+        "last_reconsolidated",
+        "slot_index",
+        "source_episode_id",
+        "file_hash",
+        "embedding_model",
+        "compression_level",
+        "access_count_since_decay",
+        "original_content",
+        "valid_until",
+        "_rerank_score",
+        "_cross_encoder_score",
+        "_retrieval_confidence",
+        "_chunk_id",
+        "_position_reason",
+        "wiki_schema_version",
+    }
+)
+
+
+@observe(exempt="trivial dict-lookup string builder; no I/O — and called per-row inside a loop")
+def _fetch_hint(row: dict) -> str | None:
+    """Exact-ID recovery path for a truncated row.
+
+    Branches on ``_source``, NOT on key presence: wiki rows carry BOTH ``slug``
+    and ``id``, so a ``"slug" in row`` test would mislabel memory rows that ever
+    gain a slug and vice versa. Returns None when the row carries no usable
+    identifier — the marker then omits `fetch` rather than lying about it.
+    """
+    if row.get("_source") == "wiki":
+        slug = row.get("slug")
+        if slug:
+            return f'wiki_read("{slug}")'
+        page_id = row.get("id")
+        return f"wiki_get({page_id})" if page_id is not None else None
+    mem_id = row.get("id")
+    return f"memory_get({mem_id})" if mem_id is not None else None
+
+
+@observe(exempt="single json.dumps len; no I/O — and called per-row inside a loop")
+def _row_bytes(row: dict) -> int:
+    """Compact-JSON size of one row, used for the total-byte budget."""
+    import json  # noqa: PLC0415
+
+    return len(json.dumps(row, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+@observe(tier="stage", metric="tools.recall._shape_recall_results")
+def _shape_recall_results(rows: list[dict], *, max_chars: int, max_bytes: int) -> list[dict]:
+    """Bound the serialised size of a recall result set.
+
+    Three mechanisms, because memory rows and wiki rows fail differently:
+    memory rows are METADATA-heavy (a measured real row spent 38.8% of its
+    4132 B on internals), wiki rows are CONTENT-heavy (full page bodies). Only
+    projection touches the first; only a content cap touches the second.
+
+    1. Denylist projection — drops `_RECALL_PROJECTION_DENYLIST` fields.
+    2. Per-row content cap — over-cap `content` is cut to `max_chars` and the row
+       gains ONE visible `_truncated` marker: ``{"kept": N, "total": M,
+       "fetch": "memory_get(<id>)"}``. Visibility is the point. The status quo is
+       the harness cutting mid-JSON, opaquely, with no recovery path; the marker
+       instead tells the model that the row is partial, HOW MUCH is missing, and
+       how to pull the rest by exact ID — and the JSON stays well-formed. This
+       improves on `recent_memories` (admin_other.py:220-221), which sets a bare
+       "..." with neither count nor fetch hint.
+    3. Total-byte backstop — per-row capping is not a hard bound (max_results=50
+       x 1.9 KB still overflows). Rows are walked in RANK ORDER accumulating
+       serialised size; once the budget is exhausted the remaining low-ranked
+       rows are dropped behind one trailing ``_dropped`` marker. Dropping whole
+       low-ranked rows beats truncating everything further — the top-ranked hits
+       are what the caller came for, and CE rank order already says which rows
+       are worth least. Same shape as the existing Cowan overflow behaviour
+       (_shared/metacognition/cognitive_load.py:142).
+
+    Never mutates `rows` or the dicts inside it: the deferred session-side-effect
+    closure holds those same objects and needs them UNTRIMMED. Every returned row
+    is a fresh shallow copy.
+
+    Args:
+        rows: Backend result rows, in rank order.
+        max_chars: Per-row content cap. <= 0 disables content capping.
+        max_bytes: Total serialised budget. <= 0 disables the backstop.
+
+    Returns:
+        A new list of new dicts. Rows under the cap are byte-identical to their
+        input modulo the denylist — no `_truncated` key, so small results stay
+        fully transparent.
+    """
+    shaped: list[dict] = []
+    for row in rows:
+        new_row = {k: v for k, v in row.items() if k not in _RECALL_PROJECTION_DENYLIST}
+        content = new_row.get("content")
+        if max_chars > 0 and isinstance(content, str) and len(content) > max_chars:
+            new_row["content"] = content[:max_chars]
+            marker: dict = {"kept": max_chars, "total": len(content)}
+            hint = _fetch_hint(row)
+            if hint is not None:
+                marker["fetch"] = hint
+            new_row["_truncated"] = marker
+        shaped.append(new_row)
+
+    if max_bytes <= 0 or not shaped:
+        return shaped
+
+    kept: list[dict] = []
+    used = 0
+    for idx, row in enumerate(shaped):
+        size = _row_bytes(row)
+        # `and kept` — the top hit always survives, however large. Returning an
+        # empty list under a tiny budget would be strictly worse than one big row.
+        if kept and used + size > max_bytes:
+            kept.append(
+                {
+                    "_dropped": {
+                        "rows": len(shaped) - idx,
+                        "reason": "total_byte_budget",
+                        "budget": max_bytes,
+                    }
+                }
+            )
+            return kept
+        used += size
+        kept.append(row)
+    return kept
+
+
+@observe(tier="stage", metric="tools.recall._resolve_shape_limit")
+def _resolve_shape_limit(config_key: str, settings_field: str, directory: str) -> int:
+    """Resolve a shaping knob: per-directory ADR-0163 row → global Settings default.
+
+    `get_settings()` is called here rather than read off the module-level
+    `settings` binding (line 29) — that binding is frozen at import, so an env
+    override applied later would never reach it.
+
+    Reads the runtime-config store via the plain resolver (`_runtime_config`),
+    NOT the `@_tool`-decorated `config_get`, so no MCP tool dispatches inside a
+    tool. Never raises: a bad row or a dead store falls back to the default.
+    """
+    from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
+
+    default = int(getattr(_get_settings(), settings_field))
+    try:
+        from yadgar.core.server.tools._runtime_config import (
+            config_get as _resolver_get,  # noqa: PLC0415
+        )
+
+        value = _resolver_get(config_key, directory=directory, default=default)
+        return int(value)
+    except Exception:
+        return default
+
+
+# ---------------------------------------------------------------------------
 # Train 1 / Phase 2a: core-side forwarder to backend /recall endpoint
 # ---------------------------------------------------------------------------
 
@@ -136,6 +333,7 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
     type: str = "all",  # noqa: A002 — shadows built-in but matches MCP schema convention
     mode: str | None = None,
     tags: list[str] | None = None,
+    max_chars: int | None = None,
 ) -> list[dict]:
     """Primary semantic + keyword retrieval tool. Use for discovery and context loading.
 
@@ -172,13 +370,27 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
             in WikiStore.query() — brute-force cosine over pages tagged with tags[0].
             Also suppresses the default agent-prompt exclude.
             None (default) = general recall with agent-prompt pages excluded.
+        max_chars: Per-row content cap, overriding the configured default for
+            this call only. None (default) resolves per-directory config, then
+            the RECALL_MAX_CONTENT_CHARS setting (1200). Raise it for a
+            deliberate deep-dive that wants full row bodies. Must be > 0.
 
     Returns:
         List of memory/wiki dicts ranked by relevance + heat. landscape mode adds
         consensus_score (float) and voting_domains (list[str]) per row.
 
+        Output is size-bounded (task:0085). Scoring/thermodynamic internals are
+        projected away. A row whose content exceeded the cap carries
+        `_truncated: {kept, total, fetch}` — `fetch` is the exact call
+        (`memory_get(<id>)` / `wiki_read("<slug>")`) that returns the full row,
+        so a truncated hit is recoverable rather than silently lossy. Rows under
+        the cap carry no marker. If the whole result set exceeds the total-byte
+        budget, the lowest-ranked rows are dropped and a single trailing
+        `{"_dropped": {rows, reason, budget}}` object is appended.
+
     Raises:
-        ValueError: if directory is empty, or profile/type/mode is unrecognised.
+        ValueError: if directory is empty, profile/type/mode is unrecognised, or
+            max_chars is <= 0.
         RuntimeError: if the backend is unreachable (YADGAR_EMBED_URL unset or HTTP error).
     """
     import time as _time  # noqa: PLC0415
@@ -202,6 +414,10 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         raise ValueError(
             f"recall: mode={mode!r} is not valid. Valid values: {sorted(_VALID_RECALL_MODES)} or None"
         )
+
+    # Validate max_chars early — alongside the other guards, before any I/O.
+    if max_chars is not None and max_chars <= 0:
+        raise ValueError(f"recall: max_chars={max_chars!r} must be > 0 (or None for the default)")
 
     # Validate profile BEFORE any expensive setup or DB access.
     if profile is not None:
@@ -261,16 +477,39 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
             mode=mode,
             profile=profile,
         )
+        # task:0085 — bound the RETURNED payload. Shaping is presentation-only:
+        # it runs after retrieval/rerank/fusion, so ranking is untouched.
+        #
+        # `merged` MUST NOT be rebound here. The deferred closure below closes
+        # over the NAME (Python closures capture variables, not values — the
+        # pre-existing "captured by value" comment was wrong), so rebinding would
+        # silently feed the session side-effects the shaped rows, which are
+        # missing exactly the fields SR transitions and the action buffer read.
+        # Rebinding would also make the `finally` block count the `_dropped`
+        # marker as a result row. Hence a separate name.
+        _shaped = _shape_recall_results(
+            merged,
+            max_chars=(
+                max_chars
+                if max_chars is not None
+                else _resolve_shape_limit(
+                    "recall.max_content_chars", "RECALL_MAX_CONTENT_CHARS", _dir_stripped
+                )
+            ),
+            max_bytes=_resolve_shape_limit(
+                "recall.max_total_bytes", "RECALL_MAX_TOTAL_BYTES", _dir_stripped
+            ),
+        )
+
         # Session-side bookkeeping runs in core (SR transitions, buffer, replay).
         # DB-side bookkeeping (heat boost, thermo) already ran in the backend.
         # T3 Car 2: defer the session half off the response critical path — the
         # SR transition storage writes are I/O on the 1-CPU core and were
         # blocking the tool response. The single-FIFO worker preserves the
-        # per-session SR from→to chain ordering. `merged` is captured by value
-        # (the closure holds the same list the caller returns — pure side-state,
-        # no mutation of the response payload).
+        # per-session SR from→to chain ordering. The closure gets the UNTRIMMED
+        # `merged` rows; the caller gets the shaped copies.
         _submit_session_side_effect(lambda: _apply_recall_session_side_effects(merged, query))
-        return merged
+        return _shaped
 
     finally:
         # P11 Bug A fix: observe duration in finally — fires on success AND exception.

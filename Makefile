@@ -27,6 +27,57 @@ YADGAR_TEST_OS_MARKER ?=
 YADGAR_TEST_OS_RELEASE ?=
 YADGAR_TEST_INSTALL_DRYRUN ?=
 YADGAR_TEST_TTY ?=
+# Enable systemd lingering so the user units survive logout and start at boot.
+# Default matches yadgar-setup.sh (opt-out only) — divergent defaults between the
+# two install surfaces is the bug class this train is cleaning up.
+# Opt out with: make setup YADGAR_ENABLE_LINGER=0
+YADGAR_ENABLE_LINGER ?= 1
+
+# Provision code_graph: the codebase-memory-mcp host binary AND the
+# code_graph.enabled runtime-config row, together. Default matches
+# yadgar-setup.sh (opt-out only) — divergent defaults between the two install
+# surfaces is the bug class this train is cleaning up.
+# Opt out with: make setup YADGAR_CODE_GRAPH=0
+YADGAR_CODE_GRAPH ?= 1
+# Every plist generate_launchd.sh renders. Both macOS enable paths below iterate
+# this ONE list. They previously carried an inline two-plist list while
+# yadgar-setup.sh::_step_enable_units bootstrapped all six — so `make setup` on
+# macOS rendered six maintenance jobs and loaded two, and `--doctor` linted all
+# six without asserting any were loaded. Guarded by
+# test_setup_sh_and_make_agree_on_activated_macos_plists.
+MACOS_PLISTS := com.openfantasy.yadgar.plist \
+                com.openfantasy.yadgar-backend.plist \
+                com.openfantasy.yadgar-vacuum.plist \
+                com.openfantasy.yadgar-nightly-cycle.plist \
+                com.openfantasy.yadgar-vacuum-trigger.plist \
+                com.openfantasy.yadgar-worktree-sweep.plist
+
+# Resolved at parse time (not runtime) so `make -n` shows the real plan.
+ifeq ($(YADGAR_ENABLE_LINGER),0)
+LINGER_STEP := @echo "    Skipping systemd lingering (YADGAR_ENABLE_LINGER=0)"
+else
+LINGER_STEP := @bash $(SCRIPTS_DIR)/enable_linger.sh || true
+endif
+
+# NOTE the asymmetry with LINGER_STEP: the code_graph opt-out RUNS the
+# subcommand with --no-code-graph rather than echo-skipping it. A skip would
+# leave code_graph.enabled at its true default (ADR-0163: no row -> true) with
+# no binary installed — the exact incoherence this step exists to remove, only
+# inverted. Lingering has no such paired runtime flag, so a skip is correct there.
+#
+# `python3 -m yadgar`, NOT a bare `yadgar`: this Makefile serves the
+# repo-checkout path (`git clone && cd yadgar && make setup`), where no console
+# shim is on PATH — every sibling target (install-hooks, install-agents,
+# config-sync, seed-anchors) uses the module form for that reason. With `|| true`
+# swallowing the failure, a bare `yadgar` would turn a missing shim into a SILENT
+# no-op, i.e. exactly the divergence this step exists to remove. The shell
+# installer deliberately keeps the bare form: it ships inside the installed
+# wheel, where the shim exists, and its steps 6-11 all invoke it that way.
+ifeq ($(YADGAR_CODE_GRAPH),0)
+CODE_GRAPH_STEP := @python3 -m yadgar code-graph install --no-code-graph || true
+else
+CODE_GRAPH_STEP := @python3 -m yadgar code-graph install || true
+endif
 
 # Version — read once from server.json at parse time
 YADGAR_VERSION := $(shell grep -m1 '"version"' $(REPO_ROOT)server.json | cut -d'"' -f4)
@@ -35,7 +86,7 @@ YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar
 
 .PHONY: all help pre-setup setup uninstall uninstall-purge \
         install-hooks install-agents config-sync install-rules \
-        seed-anchors detect-runtime detect-os install-runtime clean check \
+        seed-anchors code-graph-install detect-runtime detect-os install-runtime clean check \
         pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
         _enable-units-auto restore upgrade-test eval longmemeval perf
 
@@ -134,6 +185,7 @@ bootstrap-secrets:
 
 ## enable-units: systemctl daemon-reload + enable --now yadgar.target (Linux)
 enable-units:
+	$(LINGER_STEP)
 	systemctl --user daemon-reload
 	systemctl --user enable --now yadgar.target
 	@echo "==> Verifying services..."
@@ -148,8 +200,7 @@ enable-units-macos:
 	@echo "==> Loading launchd agents..."
 	@LAUNCHD_DIR="$(HOME)/Library/LaunchAgents"; \
 	  MACOS_MAJOR=$$(sw_vers -productVersion 2>/dev/null | cut -d. -f1 || echo "11"); \
-	  for plist in "$${LAUNCHD_DIR}/com.openfantasy.yadgar.plist" \
-	               "$${LAUNCHD_DIR}/com.openfantasy.yadgar-backend.plist"; do \
+	  for plist in $(MACOS_PLISTS:%=$${LAUNCHD_DIR}/%); do \
 	    [ -f "$$plist" ] || { echo "ERROR: $$plist not found. Run 'make setup' first." >&2; exit 1; }; \
 	    launchctl unload "$$plist" 2>/dev/null || true; \
 	    if [ "$${MACOS_MAJOR}" -ge 11 ] 2>/dev/null; then \
@@ -164,6 +215,7 @@ enable-units-macos:
 
 ## _enable-units-auto: Internal — routes enable-units to systemd or launchd based on OS (used by setup)
 _enable-units-auto:
+	$(LINGER_STEP)
 	@OS=$$(YADGAR_TEST_OS_MARKER="$(YADGAR_TEST_OS_MARKER)" bash $(SCRIPTS_DIR)/detect_os.sh); \
 	  case "$$OS" in \
 	    linux|linux-other) \
@@ -173,8 +225,8 @@ _enable-units-auto:
 	    macos) \
 	      LAUNCHD_DIR="$(HOME)/Library/LaunchAgents"; \
 	      MACOS_MAJOR=$$(sw_vers -productVersion 2>/dev/null | cut -d. -f1 || echo "11"); \
-	      for plist in "$${LAUNCHD_DIR}/com.openfantasy.yadgar.plist" \
-	                   "$${LAUNCHD_DIR}/com.openfantasy.yadgar-backend.plist"; do \
+	      for plist in $(MACOS_PLISTS:%=$${LAUNCHD_DIR}/%); do \
+	        [ -f "$$plist" ] || { echo "WARNING: $$plist not found — did generate_launchd.sh fail?" >&2; continue; }; \
 	        launchctl unload "$$plist" 2>/dev/null || true; \
 	        if [ "$${MACOS_MAJOR}" -ge 11 ] 2>/dev/null; then \
 	          launchctl bootstrap "gui/$$(id -u)" "$$plist"; \
@@ -186,6 +238,11 @@ _enable-units-auto:
 	    linux-nixos) echo "NixOS: use nix flake." >&2; exit 1 ;; \
 	    *) echo "Unsupported OS: $$OS" >&2; exit 1 ;; \
 	  esac
+
+## code-graph-install: Provision code_graph (codebase-memory-mcp binary + enabled flag); opt out with YADGAR_CODE_GRAPH=0
+code-graph-install:
+	@echo "==> Provisioning code_graph (codebase-memory-mcp)..."
+	$(CODE_GRAPH_STEP)
 
 ## restore: Restore from .surql backup + archive (advanced; set YADGAR_RESTORE_DB=... env var)
 restore:
@@ -228,6 +285,7 @@ setup: pre-setup
 	@$(MAKE) config-sync
 	@$(MAKE) install-rules
 	@$(MAKE) seed-anchors
+	@$(MAKE) code-graph-install
 	@echo ""
 	@echo "==> Yadgar setup complete!"
 

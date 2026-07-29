@@ -128,7 +128,35 @@ repos:
         language: system
         entry: python scripts/check_capability_coverage.py
         pass_filenames: false
-        files: ^(yadgar/_shared/config/config\.py|yadgar/_shared/storage/migrations\.py|yadgar/core/server/tools/.*\.py|docs/contracts/BEHAVIOR_CONTRACT\.md|docs/contracts/CAPABILITY_REGISTRY\.md)$
+        # always_run is a local/CI PARITY nit, NOT a fix: CI already runs this
+        # unconditionally, so the `files:` filter only ever produced the
+        # "quiet locally, loud in CI" surprise ADR-0080 names. The I32 hole that
+        # let CAP-CODEGRAPH-001 rot was never the trigger — this checker RAN and
+        # PASSED on that PR. See check-registry-prose-liveness below for the fix.
+        always_run: true
+
+      - id: check-route-literals
+        name: Check every internal route literal resolves to a registered route
+        language: system
+        entry: python scripts/check_route_literals.py
+        pass_filenames: false
+        # always_run: the route table and the call sites are collected from ALL of
+        # non-test yadgar/, and a call site can be added in a file that declares no
+        # route (which is exactly how /api/check_invariants was requested for months
+        # with nothing registered behind it). Any files: filter is narrower than the
+        # read set. Measured ~1.7s on this tree.
+        always_run: true
+
+      - id: check-registry-prose-liveness
+        name: Check I32 prose-token liveness (registry cites no dead identifiers)
+        language: system
+        entry: python scripts/check_registry_prose_liveness.py
+        pass_filenames: false
+        # always_run: the read set is the registry PLUS all of non-test yadgar/,
+        # so any narrower files: filter is blind by construction — a pure code
+        # change with zero contract files staged is exactly the input that must
+        # make this fail. Measured ~1.2s on this tree.
+        always_run: true
 
       - id: check-complexity-allowlist
         name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
@@ -142,14 +170,24 @@ repos:
         language: system
         entry: python scripts/check_test_weakening.py
         pass_filenames: false
-        files: ^(yadgar/tests/e2e/.*\.py|docs/contracts/BEHAVIOR_CONTRACT\.md)$
+        # always_run (2026-07-29, same reason as check-backend-bump/ADR-0080):
+        # the script now evaluates the cumulative BRANCH diff vs
+        # merge-base(origin/master), not just the index — so a `files:` filter
+        # keyed on staged paths would skip the hook on the very commits where an
+        # earlier commit's weakening is the thing to catch.
+        always_run: true
 
       - id: check-e2e-assertions
         name: Assert every e2e test_* fn has ≥1 real assertion (#52)
         language: system
         entry: python scripts/check_e2e_assertions.py
         pass_filenames: false
-        files: ^yadgar/tests/e2e/.*\.py$
+        # always_run (2026-07-29 gate-blindness fix): the script's scan set is
+        # yadgar/tests/e2e/**/*.py ∪ yadgar/tests/**/*e2e*.py — it reads the whole
+        # set regardless of what is staged, so ANY `files:` filter is narrower
+        # than the read set by construction (the defect this widening fixed).
+        # Whole-tree AST over ~40 modules; measured well under the per-commit budget.
+        always_run: true
 
       - id: check-skip-inventory
         name: Validate skip_inventory.json (ADR-0087 governance — note >=40, stale hard-fail, no wildcards)

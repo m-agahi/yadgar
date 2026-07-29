@@ -399,6 +399,11 @@ jobs:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # fetch-depth: 0 — check_test_weakening --ci needs the merge-base with
+          # origin/master. A shallow checkout cannot reach it and the guard
+          # fail-opens (the exact CI-inertness this job now closes).
+          fetch-depth: 0
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
@@ -435,6 +440,26 @@ jobs:
 
       - name: Check I32 — capability-registry coverage (every setting/tool/migration/BC catalogued)
         run: python scripts/check_capability_coverage.py
+
+      - name: Check I32 prose-liveness — registry must not cite dead identifiers
+        # Companion to the I32 coverage lint above, NOT a replacement. That lint
+        # covers four enumerable identifier surfaces and never reads explanation:/
+        # wiring: prose — which is why it ran green on the PR that made
+        # CAP-CODEGRAPH-001's prose false. This one gates the prose tokens.
+        run: python scripts/check_registry_prose_liveness.py
+
+      - name: Check internal route literals resolve to registered routes
+        # core/vacuum POSTed /api/check_invariants for months with no route behind
+        # it, and six tests mocked that URL to 200 — the mocks agreed with the
+        # caller and nothing compared either against the route table.
+        run: python scripts/check_route_literals.py
+
+      - name: Layer 4 — block silent test weakening across the branch (#52)
+        # --ci --base origin/master: the pre-commit path reads `git diff --cached`,
+        # which is ALWAYS empty in a CI checkout — so the guard ran, printed OK and
+        # could never fail. This step evaluates the cumulative branch diff vs the
+        # merge-base instead, which is the question a PR actually poses.
+        run: python scripts/check_test_weakening.py --ci --base origin/master
 
   # Gateway: aggregates all four subsystem test jobs.
   # if: always() is required — without it this job is SKIPPED (not failed)

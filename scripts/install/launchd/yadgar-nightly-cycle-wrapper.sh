@@ -35,7 +35,12 @@ if [ -f "$SECRETS_ENV" ]; then
     done
 fi
 
-export YADGAR_DB_URL="${YADGAR_DB_URL:-http://127.0.0.1:8000}"
+# SurrealDB host port. The backend plist publishes 127.0.0.1:<port>:8000 and
+# exports the same YADGAR_BACKEND_SURREAL_PORT into this job's environment, so a
+# re-pointed publish (port 8000 already occupied) is followed here rather than
+# silently connection-refusing. Wrappers are copied verbatim by
+# generate_launchd.sh (not sed-rendered), so the port has to arrive via env.
+export YADGAR_DB_URL="${YADGAR_DB_URL:-http://127.0.0.1:${YADGAR_BACKEND_SURREAL_PORT:-8000}}"
 export YADGAR_DATA_DIR="${YADGAR_DATA_DIR:-${HOME}/.local/share/yadgar}"
 
 # Gap 6: DYLD_LIBRARY_PATH for numpy/scipy .so on macOS.
@@ -43,4 +48,12 @@ export YADGAR_DATA_DIR="${YADGAR_DATA_DIR:-${HOME}/.local/share/yadgar}"
 # If yadgar is installed via Homebrew Python, this may be a no-op (already on linker path).
 export DYLD_LIBRARY_PATH="/opt/homebrew/lib${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}"
 
-exec "$TIMEOUT_BIN" 3600 "${HOME}/.local/bin/yadgar" nightly-cycle --service-mode=manual --yes
+# `yadgar-nightly-cycle` is a CONSOLE SCRIPT (pyproject [project.scripts] →
+# yadgar.core.scripts.nightly_cycle:main), NOT a `yadgar` subcommand — the main
+# parser has no `nightly-cycle` entry, so the previous
+# `yadgar nightly-cycle --service-mode=manual --yes` exited 2 on argparse and
+# this job had never once run. nightly_cycle.main() also takes no argparse at
+# all (it getattr's off an optional namespace and ignores sys.argv), so the
+# flags were doubly meaningless: everything is configured via the environment
+# exported above. Invoke it bare, exactly as flake.nix does.
+exec "$TIMEOUT_BIN" 3600 "${HOME}/.local/bin/yadgar-nightly-cycle"

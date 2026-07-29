@@ -16,6 +16,7 @@ from yadgar.core.daemon.runtime import (
     DEFAULT_DEV_PORT,
     DEFAULT_PORT,
     DOCKERHUB_IMAGE,
+    _get_runtime,
 )
 
 
@@ -61,14 +62,15 @@ def _dev_profile(port: int = DEFAULT_DEV_PORT) -> ContainerProfile:
 
 @observe(tier="stage")
 def _ensure_network() -> None:
-    """Create the yadgar Docker network if it doesn't exist."""
+    """Create the yadgar container network if it doesn't exist."""
+    rt = _get_runtime()
     result = subprocess.run(
-        ["docker", "network", "inspect", _NETWORK_NAME],
+        [rt, "network", "inspect", _NETWORK_NAME],
         capture_output=True,
     )
     if result.returncode != 0:
         subprocess.run(
-            ["docker", "network", "create", "--driver", "bridge", _NETWORK_NAME],
+            [rt, "network", "create", "--driver", "bridge", _NETWORK_NAME],
             check=True,
             capture_output=True,
         )

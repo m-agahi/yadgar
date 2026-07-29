@@ -66,7 +66,7 @@ A single `recall()` query searches **both stores at once**, fuses and re-ranks t
 - **Surgical editing** — anchor-text and positional edit tools (`wiki_replace_text`, `wiki_insert_before/after`, `wiki_append_section`, `wiki_replace_markdown_block`, positional `wiki_*_at`) so pages mutate in place instead of full rewrites.
 - **Auto-linking** — `wiki_autolink` inserts `[[slug]]` cross-references by matching page titles; validated so it never manufactures broken refs.
 - **Sync helpers** — `wiki_refresh_stale`, `wiki_cleanup_merged_branches`, `wiki_coverage`, `wiki_lint`.
-- **Code graph** (on by default, opt-out; successor to the retired repo-wiki generator) — `yadgar code-graph` shells out host-side to the [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) static binary (158-language tree-sitter, offline) to index the latest `origin/<default-branch>` and render a bounded architecture *digest* into an always-injected memory block (recall-free). `code_graph.enabled` defaults to `true` in the DB-backed runtime-config store (no row needed); install the host binary with `yadgar setup --code-graph` (interactive `[y/N]` when neither `--code-graph`/`--no-code-graph` is passed) or `CODE_GRAPH_ENABLED=1 yadgar setup`. Opt a single repo out with `config_set("code_graph.enabled", false, scope="project", directory=<repo>)`, or disable globally with `config_set("code_graph.enabled", false, scope="global")` — a per-dir override always wins over global. See ADR-0162/0163.
+- **Code graph** (on by default, opt-out; successor to the retired repo-wiki generator) — `yadgar code-graph` shells out host-side to the [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) static binary (158-language tree-sitter, offline) to index the latest `origin/<default-branch>` and render a bounded architecture *digest* into an always-injected memory block (recall-free). `code_graph.enabled` defaults to `true` in the DB-backed runtime-config store (no row needed) and every installer surface installs the host binary automatically — unattended, no prompt, so a scripted/QA install needs no flags. `yadgar setup`, `yadgar-setup`, and `make setup` all route through `yadgar code-graph install`. Each has one opt-out — `yadgar setup --no-code-graph`, `yadgar-setup --no-code-graph`, `make setup YADGAR_CODE_GRAPH=0` — which skips the binary **and** persists `code_graph.enabled=false`, so the flag and the binary can never disagree (a failed download, e.g. offline, does the same rather than aborting the install). Opt a single repo out with `config_set("code_graph.enabled", false, scope="project", directory=<repo>)`, or disable globally with `config_set("code_graph.enabled", false, scope="global")` — a per-dir override always wins over global. See ADR-0162/0163.
 - **Bookmarks** — pin wiki pages in the viz UI (`bookmark_*`); drag-to-reorder, dense-integer positions.
 
 ### Unified recall
@@ -153,7 +153,7 @@ Deeper detail: [docs/reference/architecture.md](docs/reference/architecture.md) 
 
 ## Install
 
-Python 3.14+ on the host (or use the Docker / Compose path for zero host Python). All paths reach the same `yadgar setup` post-install step.
+Python 3.14+ on the host (or use the Docker / Compose path for zero host Python). There are three post-install surfaces and they are NOT the same command: `yadgar setup` (the minimal bootstrap: config, secrets, MCP registration, code_graph), `yadgar-setup` (the full installer for pipx/brew/nix-profile: everything `yadgar setup` does plus images, units, hooks, agents, rules, seeds), and `make setup` (the repo-checkout equivalent of `yadgar-setup`). All three provision code_graph.
 
 **pipx (recommended for isolated install):**
 ```bash
@@ -180,7 +180,17 @@ cd yadgar
 make setup            # install + hooks + agents + units + seed anchors
 ```
 
-`yadgar setup` writes `~/.config/yadgar/config.yaml`, generates `~/.config/yadgar/secrets.env` (chmod 600) with random `YADGAR_MCP_AUTH_TOKEN` + `SURREAL_PASS` + `YADGAR_RW_PASS` + `YADGAR_RO_PASS`, installs Claude Code hooks + subagent templates + rules, seeds anchors, and prepares systemd (Linux) or launchd (macOS) user units. Idempotent — re-run after upgrades.
+`yadgar setup` writes `~/.config/yadgar/config.yaml`, generates `~/.config/yadgar/secrets.env` (chmod 600) with random `YADGAR_MCP_AUTH_TOKEN` + `SURREAL_PASS` + `YADGAR_RW_PASS` + `YADGAR_RO_PASS`, registers the MCP server with Claude Code, and provisions code_graph. The hooks, subagent templates, rules, anchor seeds, container images and systemd (Linux) / launchd (macOS) user units come from the full installers — `yadgar-setup` (pipx/brew/nix-profile) or `make setup` (repo checkout), which run their own building-block chains rather than calling `yadgar setup`. All are idempotent — re-run after upgrades.
+
+**Background maintenance (v5.169+).** The installer now ships the maintenance units on every surface, not just NixOS: a **nightly cycle at 19:00 UTC** (backup → consolidate → vacuum → backup) and a **weekly vacuum on Sunday 04:00 local** (±30 min jitter), plus a watcher that services MCP `vacuum_now()`. Before this, a `make setup` install on Linux rendered no maintenance units at all — consolidation, heat decay, episode formation and dream replay silently never ran, and on macOS the jobs fired and failed. Both timers are `Persistent=true`, so a run missed while the machine was off is caught up at next start; the first catch-up on a large never-consolidated DB can take a while (bounded at 1h). Check with `systemctl --user list-timers 'yadgar-*'`, or `yadgar-setup --doctor`. Mask what you do not want:
+
+```bash
+systemctl --user mask yadgar-nightly-cycle.timer   # or yadgar-vacuum.timer
+```
+
+These jobs run **on the host** (the vacuum flow stops and restarts the backend mid-run, which cannot work from inside the container), so they need SurrealDB reachable over HTTP. The backend therefore publishes it on **`127.0.0.1:8000`, loopback only** — a posture change for existing non-nix installs, matching what the nix flake has shipped since v5.46. If port 8000 is already taken, re-point it: `make setup YADGAR_BACKEND_SURREAL_PORT=18000`. The vacuum will also stop the daemon briefly, so a live MCP session at 04:00 Sunday loses its connection.
+
+**systemd lingering (Linux).** Yadgar's units are systemd *user* units, so the installer also enables lingering for your user (`loginctl enable-linger`) — without it the daemon stops when you log out and never starts at boot. Enabling your own lingering needs no `sudo`. Note the consequence on a shared host: your yadgar containers keep running (and holding memory) while you are logged out. Opt out with `yadgar-setup --no-enable-linger` or `make setup YADGAR_ENABLE_LINGER=0`; uninstalling does not disable lingering again, since it may serve your other user services.
 
 Then start the daemon and register it with Claude Code:
 

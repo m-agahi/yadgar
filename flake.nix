@@ -123,7 +123,7 @@
 
         yadgar-pkg = python.pkgs.buildPythonApplication {
           pname = "yadgar";
-          version = "5.168.0";
+          version = "5.169.0";
           format = "pyproject";
 
           src = ./.;
@@ -258,7 +258,7 @@
 
             coreVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.168.0";
+              default = "5.169.0";
               description = "Container image tag for the yadgar core service.";
             };
 
@@ -429,12 +429,19 @@
                 ExecStartPre = [
                   "-${cfg.runtime} stop yadgar"
                   "-${cfg.runtime} rm yadgar"
-                  "-${pkgs.bash}/bin/bash -c 'mkdir -p ${dataDir} ${configDir} ${stateDir} && chmod 700 ${configDir} ${stateDir}'"
+                  # Pre-create ${stateDir}/triggers so the trigger dir exists
+                  # before the first vacuum request. Not strictly required — a
+                  # systemd .path unit watches the nearest existing ancestor and
+                  # picks the descendant up on creation, and the daemon mkdir's
+                  # the parent itself — but it removes the first-boot race and
+                  # matches generate_launchd.sh, where launchd's WatchPaths DOES
+                  # need the dir present at load.
+                  "-${pkgs.bash}/bin/bash -c 'mkdir -p ${dataDir} ${configDir} ${stateDir}/triggers && chmod 700 ${configDir} ${stateDir}'"
                 ];
                 ExecStart = lib.concatStringsSep " " [
                   cfg.runtime "run --name yadgar --rm --user root"
                   "--network ${cfg.network} --sdnotify=healthy"
-                  "--health-cmd 'curl -f http://localhost:8765/health || exit 1'"
+                  "--health-cmd 'curl -f http://localhost:8765/health/live || exit 1'"
                   "--health-interval 30s --health-timeout 5s --health-start-period 10s"
                   "--add-host=host.containers.internal:host-gateway"
                   "-p 127.0.0.1:${toString cfg.corePort}:8765"
@@ -446,12 +453,10 @@
                   "-e YADGAR_EMBED_URL=http://yadgar-backend:8001"
                   "-e YADGAR_DATA_DIR=/data"
                   # vacuum_now() writes its trigger here; the stateDir bind mount
-                  # above projects it to host ${stateDir}/triggers/vacuum_requested.
-                  # This flake drives vacuum via the weekly yadgar-vacuum.timer, not
-                  # a .path watcher, so the trigger file is currently inert here —
-                  # but pinning the write into the state mount keeps the daemon's
-                  # trigger path consistent with the documented XDG-state design
-                  # (and makes the stateDir mount meaningful rather than dead weight).
+                  # above projects it to host ${stateDir}/triggers/vacuum_requested,
+                  # which systemd.user.paths.yadgar-vacuum-trigger (below) watches.
+                  # The env var has no code default — unset means "no watcher on
+                  # this surface" and vacuum_now() then refuses (task:0044).
                   "-e YADGAR_VACUUM_TRIGGER_PATH=/root/.local/state/yadgar/triggers/vacuum_requested"
                   "-e YADGAR_CONFIG_FILE=/data/config.yaml"
                   "-e YADGAR_DB_USER -e YADGAR_DB_PASS -e YADGAR_MCP_AUTH_TOKEN"
@@ -588,6 +593,54 @@
                 Persistent = true;
               };
               Install.WantedBy = [ "timers.target" ];
+            };
+
+            # ── vacuum trigger watcher (.path + handler) ─────────────────────
+            # vacuum_now() / the auto-vacuum backstop write a trigger file at
+            # YADGAR_VACUUM_TRIGGER_PATH inside the core container; the
+            # `-v ${stateDir}:/root/.local/state/yadgar` bind above projects
+            # that write to ${stateDir}/triggers/vacuum_requested on the host.
+            # WITHOUT this .path unit the trigger file is written and never
+            # read, and vacuum_now() reports started=true into a void — the
+            # task:0044 silent no-op.  The weekly timer above is a schedule,
+            # not a response to an explicit request.
+            #
+            # The PathExists value deliberately uses the same `${stateDir}`
+            # token that appears on the LEFT of the core unit's `-v` bind (not
+            # a re-spelled `${homeDir}/.local/state/yadgar/...`), so
+            # yadgar/tests/scripts/test_vacuum_trigger_cross_generator.py can
+            # compare the projected trigger dir to the watched dir as an exact
+            # string rather than a post-evaluation heuristic.  Keep it that way.
+            systemd.user.paths.yadgar-vacuum-trigger = {
+              Unit.Description = "Watch for vacuum trigger file from MCP vacuum_now()";
+              Path.PathExists = "${stateDir}/triggers/vacuum_requested";
+              Install.WantedBy = [ "paths.target" ];
+            };
+
+            systemd.user.services.yadgar-vacuum-trigger = {
+              Unit.Description = "Handle vacuum trigger file (remove + start yadgar-vacuum)";
+              Service = {
+                Type = "oneshot";
+                # Remove the trigger file BEFORE starting the vacuum, so a
+                # transient vacuum failure does not pin the .path unit in the
+                # active state (which would stop it firing again). If the
+                # vacuum itself fails, MCP can write the trigger again.
+                #
+                # `systemctl` is deliberately BARE (resolved from the unit's
+                # $PATH — systemd searches $PATH for a slash-free ExecStart
+                # command since v239) rather than a `pkgs.systemd`-store path.
+                # It must be the systemctl belonging to the init system actually
+                # running the user bus; a nix-store build of systemd is a
+                # different binary, and on a non-NixOS home-manager host it need
+                # not match the running init at all. The systemd user manager's
+                # compiled default $PATH resolves it on both NixOS
+                # (/run/current-system/sw/bin) and ordinary distros (/usr/bin).
+                # `rm` has no such coupling, so it stays pinned to the store.
+                ExecStart = [
+                  "${pkgs.coreutils}/bin/rm -f ${stateDir}/triggers/vacuum_requested"
+                  "systemctl --user start yadgar-vacuum.service"
+                ];
+              };
             };
 
             # ── yadgar-nightly-cycle.service + timer ─────────────────────────

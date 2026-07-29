@@ -8,8 +8,21 @@ compact, deterministic markdown digest bounded by ``DIGEST_CHAR_BUDGET``.  The
 digest is what Car D injects into a yadgar memory BLOCK (always-injected at
 SessionStart, recall-free).
 
-Priority order (kept when truncating to budget):
-    header > layers > hotspots > entry-points > endpoints > stale-line.
+Layout: a budget-RESERVED preamble (``header`` + the optional ``stale @ <sha>``
+marker) followed by the body, whose sections are kept in priority order when
+truncating to the remaining budget:
+
+    preamble: header > stale-line
+    body:     layers > hotspots > entry-points > endpoints
+
+The marker is a qualifier on the WHOLE digest ("everything below describes
+commit X and may be out of date"), so it belongs at the top on its own merits —
+and reserving it inside the budget (rather than exempting it) keeps the single
+``len(result) <= budget`` invariant that ``build_block_payload``'s ``chars`` and
+the memory-block ``char_limit`` both lean on.  It used to be rendered LAST, so
+the naive tail cut threw it away on any repo with package-qualified names
+(measured: 3268 chars untruncated vs a 2000 budget → both ``endpoints:`` and the
+marker absent).  See BC-CODEGRAPH-8.
 
 Determinism: every collection is sorted with an explicit tie-break (this repo's
 own ADR-0108/0147 flake was exactly an un-tie-broken sort), no timestamps → same
@@ -414,6 +427,20 @@ def _stale_line(identity: dict[str, Any]) -> list[str]:
 
 
 @observe(tier="stage")
+def _join_sections(sections: list[list[str]]) -> str:
+    """Flatten sections into one newline-joined string, dropping empty entries.
+
+    The ``if line`` filter is load-bearing: an absent section (``_stale_line``
+    returning ``[]`` on a fresh digest) must not leave a blank line behind, which
+    would shift every following line by one.
+    """
+    lines: list[str] = []
+    for section in sections:
+        lines.extend(section)
+    return "\n".join(line for line in lines if line)
+
+
+@observe(tier="stage")
 def _truncate(text: str, budget: int) -> str:
     """Return ``text`` bounded by ``budget``, appending ``_ELLIPSIS`` if cut.
 
@@ -441,9 +468,12 @@ def render_digest(
     nodes).  ``identity`` carries ``canonical_root`` / ``subdir`` and optional
     ``stale`` / ``head_sha``.
 
-    Sections in priority order: header > layers > hotspots > entry-points >
-    endpoints > stale.  When over ``budget`` the tail is truncated with an
-    ellipsis marker counted in the budget, so ``len(result) <= budget``.
+    The header and the optional ``stale @ <sha>`` marker form a budget-RESERVED
+    preamble; the body sections follow in priority order (layers > hotspots >
+    entry-points > endpoints) and are truncated against the budget that remains
+    after the preamble.  The ellipsis marker is counted in the budget, so
+    ``len(result) <= budget`` holds — the marker's survival is structural, not a
+    side effect of the digest happening to be short.
     """
     limit = config.DIGEST_CHAR_BUDGET if budget is None else budget
 
@@ -453,26 +483,36 @@ def render_digest(
     # see _filter_layer_noise / _is_layer_noise.
     architecture = _filter_layer_noise(architecture)
 
-    sections: list[list[str]] = [
+    preamble_sections: list[list[str]] = [
         [_header_line(architecture, identity)],
+        _stale_line(identity),
+    ]
+    body_sections: list[list[str]] = [
         _layers_section(architecture),
         _hotspots_section(architecture),
         _entry_points_section(architecture),
         _endpoints_section(endpoints),
-        _stale_line(identity),
     ]
 
-    lines: list[str] = []
-    for section in sections:
-        lines.extend(section)
-
-    text = "\n".join(line for line in lines if line)
     # Secret-gate FP guard (#30): break long [A-Za-z0-9/+] runs (git SHAs, 40-char
     # identifier/path segments) so the digest can never coincidentally form the
-    # gate's exactly-40 AWS-secret shape. Applied BEFORE truncation so the budget
-    # ceiling still holds. See _defang_secret_shaped_runs — the gate is unchanged.
-    text = _defang_secret_shaped_runs(text)
-    return _truncate(text, limit)
+    # gate's exactly-40 AWS-secret shape. Applied to BOTH halves — equivalent to
+    # defanging the joined text, because "\n" is not in [A-Za-z0-9/+] so no run can
+    # ever span the join. Applied BEFORE the budget arithmetic (defanging INSERTS
+    # spaces, so it grows the text) and before truncation, so the ceiling holds.
+    # See _defang_secret_shaped_runs — the gate itself is unchanged.
+    preamble = _defang_secret_shaped_runs(_join_sections(preamble_sections))
+    body = _defang_secret_shaped_runs(_join_sections(body_sections))
+
+    body_budget = limit - len(preamble) - 1  # -1 for the joining newline
+    if body_budget <= len(_ELLIPSIS):
+        # Degenerate: the budget cannot hold the preamble plus a meaningful cut of
+        # the body (pathological budget, or an absurd repo_id / language list).
+        # Fall back to truncating the whole assembled text exactly as before —
+        # never slice with a negative or sub-ellipsis body budget.
+        return _truncate(_join_sections([[preamble], [body]]), limit)
+
+    return preamble + "\n" + _truncate(body, body_budget)
 
 
 @observe(tier="stage")

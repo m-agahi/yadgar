@@ -387,6 +387,19 @@ class Settings(BaseSettings):
     RECALL_MEMORY_PRIOR_WEIGHT: float = 0.1
     RECALL_WIKI_PRIOR_WEIGHT: float = 0.1
 
+    # task:0085: recall() output-size bounds (presentation-only, applied in
+    # core/server/tools/recall.py AFTER retrieval — ranking is untouched).
+    # Per-row content cap. 1200 measured at -54.8% row bytes combined with the
+    # denylist projection (~18 KB per 10 rows) while still carrying a full
+    # anchor-sized memory, and ~2x the CE passage window (GTE_RERANKER_MAX_LENGTH).
+    RECALL_MAX_CONTENT_CHARS: int = 1200
+    # Total serialised budget; rows past it are dropped behind a _dropped marker.
+    # UNCALIBRATED: nobody has measured where the harness tool-output cap actually
+    # sits. 65536 is "comfortably under the observed 78 KB failure with headroom",
+    # not a derived figure — it is a knob precisely so it can be retuned without
+    # a code change once the real cap is known.
+    RECALL_MAX_TOTAL_BYTES: int = 65536
+
     # v5.51.0: Hook recall latency budget (I25 three-way registered).
     # Maximum seconds asyncio.wait_for may wait for retriever.recall in hook handlers.
     # On timeout: WARN log + yadgar_hook_recall_timeout_total incremented + empty returned.

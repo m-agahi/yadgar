@@ -1198,6 +1198,25 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "unified_recall",
     },
+    # task:0085 — recall output-size bounds
+    "recall_max_content_chars": {
+        "desc": (
+            "task:0085: Per-row content cap on recall() output (default 1200). "
+            "Over-cap rows are cut and carry a _truncated marker with kept/total and an "
+            "exact-ID fetch hint. Presentation-only — applied after retrieval, so recall "
+            "ranking and quality are unaffected. Per-call override: recall(max_chars=N)."
+        ),
+        "section": "unified_recall",
+    },
+    "recall_max_total_bytes": {
+        "desc": (
+            "task:0085: Total serialised byte budget for recall() output (default 65536). "
+            "Lowest-ranked rows past the budget are dropped behind one _dropped marker. "
+            "UNCALIBRATED: chosen as comfortably under the observed 78 KB tool-output "
+            "failure, not measured against the real harness cap — retune here if known."
+        ),
+        "section": "unified_recall",
+    },
     "recall_wiki_prior_weight": {
         "desc": (
             "v6 T6 Step 4: Additive prior weight for wiki native_score in CE fusion (default 0.1). "

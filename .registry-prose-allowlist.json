@@ -1,0 +1,45 @@
+{
+  "_comment": "Allowlist for scripts/check_registry_prose_liveness.py (I32 companion). Governance mirrors .complexity-allowlist.json (I30) and .observe-allowlist.json (I33): every entry needs a rationale >= 40 chars, and a STALE entry hard-fails — a token that becomes referenced by executable code again, or that the registry stops citing, MUST be removed from this file. That stale rule is what stops this becoming a write-only dumping ground. LEGITIMATE use is ARCHAEOLOGY ONLY: the registry deliberately records that a knob was deleted/superseded, so the prose names an identifier that correctly no longer exists. It is NOT a way to silence a stale claim — if the prose is wrong, fix the prose. NOTE THE CEILING: an allowlisted token is permanently outside the guard, so a LATER false claim about it is invisible (see the script docstring).",
+  "CODE_GRAPH_ENABLED": {
+    "rationale": "Archaeology. ADR-0163 replaced the env-only CODE_GRAPH_ENABLED flag with the DB-backed `code_graph.enabled` runtime-config row; CAP-CODEGRAPH-001 names the old flag precisely to record that it is superseded. This is the very token whose rot motivated this lint — and allowlisting it is exactly the ceiling documented in the script docstring: from here on a later false claim about THIS token is invisible to the guard."
+  },
+  "COMPRESSION_GIST_AGE_HOURS": {
+    "rationale": "Archaeology. CAP-CONSOL-005 records that this knob was CONFIG-ONLY and never read by compress_old_memories() (which uses a hard-coded days_threshold=30), and that it was deleted in v6 T3 (#41). The prose names it to explain the removal."
+  },
+  "COMPRESSION_TAG_AGE_HOURS": {
+    "rationale": "Archaeology. Same removal as COMPRESSION_GIST_AGE_HOURS: CONFIG-ONLY, never read by compress_old_memories(), deleted in v6 T3 (#41). The registry names it to record why the compression pass has no age knobs."
+  },
+  "CONFIDENCE_GATING_ENABLED": {
+    "rationale": "Archaeology. The registry's wiring: line records that _apply_confidence_gating() and its call site in backend/retrieval/fusion.py were removed in v6 T3, and that this setting was removed from config.py alongside them."
+  },
+  "CONSOLIDATION_COOLDOWN_SECONDS": {
+    "rationale": "Archaeology. CAP-CONSOL-001 records this as CONFIG-ONLY after the daemon was removed in v5.7.0, and deleted in v6 T3. The prose names it to explain that the consolidation cycle has no cooldown knob."
+  },
+  "DAEMON_CHECK_INTERVAL": {
+    "rationale": "Archaeology. The daemon-lifecycle entry states outright that DAEMON_CHECK_INTERVAL was removed in v5.139; the citation exists to document the removal, not a live knob."
+  },
+  "DUAL_VECTORS_ENABLED": {
+    "rationale": "Archaeology. The registry records that _dual_vector_search() and DUAL_VECTORS_ENABLED were deleted from backend/retrieval/core.py and config.py in v6 T3 (#41), leaving IMPLICIT_EMBEDDING_MODEL as the only surviving placeholder."
+  },
+  "EMBEDDING_CACHE_SIZE": {
+    "rationale": "Archaeology. Registry states it was one of two dead configuration knobs removed in v6 T3 (#41), superseded by the env-var-driven LRU cache. Named to record the supersession."
+  },
+  "FRACTAL_LEVELS": {
+    "rationale": "Archaeology. Registry records this as CONFIG-ONLY and deleted in v6 T3: only two levels (community + root) are ever built regardless of the setting, so deeper fractal clustering stayed future work."
+  },
+  "IDLE_THRESHOLD_SECONDS": {
+    "rationale": "Archaeology. Same removal as CONSOLIDATION_COOLDOWN_SECONDS — CONFIG-ONLY once the daemon went away in v5.7.0, then deleted in v6 T3. Cited to explain the absence of an idle gate."
+  },
+  "QUERY_PREFIX": {
+    "rationale": "Archaeology. Registry records that QUERY_PREFIX was never wired into encode_query() and was removed in v6 T3 (#41). Distinct from the LIVE module constant MODEL_QUERY_PREFIX in _shared/embeddings, which the guard resolves normally."
+  },
+  "REPO_WIKI_REFRESH_STOP_INTERVAL": {
+    "rationale": "Archaeology. repo_wiki was decommissioned in #33/ADR-0162 after its pages proved a recall-noise anti-pattern; the registry explicitly records that this setting was removed along with the code it configured."
+  },
+  "VIZ_PRECOMPUTED_LAYOUT_ENABLED": {
+    "rationale": "Archaeology. The viz-render-perf Car A made layout precompute UNCONDITIONAL and removed this knob, superseding ADR-0010's default-OFF stance; the registry names it to record that supersession."
+  },
+  "WRRF_K": {
+    "rationale": "Archaeology. Registry records WRRF_K as the rank-based RRF constant k with no production caller, deleted from config.py in the v6 T3 dead-config cleanup; CANDIDATE_POOL_MULTIPLIER is the live setting."
+  }
+}

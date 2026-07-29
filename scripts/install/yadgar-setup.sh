@@ -10,6 +10,9 @@
 #   --noninteractive   Use defaults; no interactive prompts.
 #   --dryrun           Print commands without executing them.
 #   --doctor           Run verification probes (macOS launchd + metrics endpoint).
+#   --no-enable-linger Skip systemd lingering (units then die at logout).
+#   --no-code-graph    Skip the codebase-memory-mcp install AND persist
+#                      code_graph.enabled=false (both halves, coherently).
 #
 # Exit codes:
 #   0  success
@@ -71,6 +74,19 @@ NONINTERACTIVE=0
 DRYRUN=0
 DOCTOR=0
 INSTALL_RUNTIME_FLAG=0    # 0=default, 1=--install-runtime, 2=--no-install-runtime
+# Systemd lingering is attempted by default (see scripts/install/enable_linger.sh
+# for why that is safe: self-linger is polkit allow_any=yes, so no sudo/TTY).
+# Opt-out only — there is deliberately NO --enable-linger opt-IN flag: an opt-in
+# flag for default-on behaviour is a no-op and pushes scripted installs onto the
+# negative form (the --code-graph defect removed one car earlier in this train).
+ENABLE_LINGER=1
+# code_graph (codebase-memory-mcp) is provisioned by default, matching
+# `yadgar setup` and the Makefile's YADGAR_CODE_GRAPH=1. Opt-out only, for the
+# same reason as ENABLE_LINGER above. Note the opt-out does NOT merely skip the
+# step: it runs `yadgar code-graph install --no-code-graph`, which persists
+# code_graph.enabled=false — a plain skip would leave the feature ON with no
+# binary, which is the bug this step exists to fix, inverted.
+CODE_GRAPH=1
 
 for arg in "$@"; do
     case "$arg" in
@@ -79,16 +95,24 @@ for arg in "$@"; do
         --doctor)              DOCTOR=1 ;;
         --install-runtime)     INSTALL_RUNTIME_FLAG=1 ;;
         --no-install-runtime)  INSTALL_RUNTIME_FLAG=2 ;;
+        --no-enable-linger)    ENABLE_LINGER=0 ;;
+        --no-code-graph)       CODE_GRAPH=0 ;;
         --help|-h)
             cat <<'EOF'
 Usage: yadgar-setup [--noninteractive] [--dryrun] [--doctor]
                     [--install-runtime] [--no-install-runtime]
+                    [--no-enable-linger] [--no-code-graph]
 
   --noninteractive       Use defaults; skip interactive prompts.
   --dryrun               Print commands without executing them.
   --doctor               Run verification probes (metrics, launchd, etc.).
   --install-runtime      Auto-install podman without prompting (yes-mode).
   --no-install-runtime   Skip podman install; print hint and exit 1 if not found.
+  --no-enable-linger     Do not enable systemd lingering. Yadgar's user units
+                         will then stop at logout and not start at boot.
+  --no-code-graph        Opt out of code_graph: skip the codebase-memory-mcp
+                         host-binary install AND persist code_graph.enabled=false,
+                         so the flag and the binary stay coherent.
   --help                 Show this message.
 
 yadgar-setup configures Yadgar for users installed via pipx, Homebrew, or nix profile.
@@ -106,6 +130,7 @@ Building blocks (in order):
   9. install-rules (append CLAUDE.md fragment)
   10. seed-anchors
   11. seed-agent-prompts
+  12. code-graph install (codebase-memory-mcp binary + code_graph.enabled)
 
 See https://github.com/m-agahi/yadgar for full documentation.
 EOF
@@ -363,7 +388,7 @@ _detect_os() {
 # ── setup steps ───────────────────────────────────────────────────────────────
 
 _step_detect() {
-    log "Step 1/11: Detecting runtime + OS..."
+    log "Step 1/12: Detecting runtime + OS..."
 
     # Try to detect runtime; on failure offer to install
     if ! RUNTIME=$(_detect_runtime 2>/dev/null); then
@@ -382,7 +407,7 @@ _step_detect() {
 }
 
 _step_pull_images() {
-    log "Step 2/11: Pulling container images..."
+    log "Step 2/12: Pulling container images..."
     local version backend_version
     version=$(_resolve_yadgar_version)
     backend_version=$(_resolve_backend_version)
@@ -399,7 +424,7 @@ _step_pull_images() {
 }
 
 _step_bootstrap_secrets() {
-    log "Step 3/11: Bootstrapping secrets..."
+    log "Step 3/12: Bootstrapping secrets..."
     local scripts_dir
     scripts_dir="$(_locate_setup_scripts)"
 
@@ -439,7 +464,7 @@ _step_inject_secrets() {
 }
 
 _step_generate_units() {
-    log "Step 4/11: Generating daemon units (${OS})..."
+    log "Step 4/12: Generating daemon units (${OS})..."
     local scripts_dir
     scripts_dir="$(_locate_setup_scripts)"
     local yadgar_dir="${YADGAR_DIR:-${HOME}/.local/share/yadgar}"
@@ -508,10 +533,44 @@ _step_pre_create_dirs() {
     run chmod 700 "${yadgar_state}"
 }
 
+# Systemd lingering — delegate to the shared helper the Makefile also calls, so
+# the two install surfaces cannot drift apart (R5). Full rationale lives in
+# scripts/install/enable_linger.sh; the short version is that all yadgar units
+# are systemd *user* units, so without lingering they die at logout and never
+# come back at boot.
+#
+# $1: optional mode passed through to the helper ("--check" = read-only probe).
+_run_enable_linger() {
+    local mode="${1:-}"
+
+    if [ -z "$mode" ] && [ "$ENABLE_LINGER" -eq 0 ]; then
+        info "Skipping systemd lingering (--no-enable-linger)."
+        return 0
+    fi
+
+    local scripts_dir linger_sh
+    scripts_dir="$(_locate_setup_scripts)"
+    [ -n "$scripts_dir" ] || scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    linger_sh="${scripts_dir}/enable_linger.sh"
+
+    if [ ! -f "$linger_sh" ]; then
+        # Do not fail silently: a missing helper is exactly the silent
+        # non-persistence this car exists to fix.
+        warn "enable_linger.sh helper not found — systemd lingering was NOT enabled."
+        warn "  Fix with:  sudo loginctl enable-linger $(id -un)"
+        return 0
+    fi
+
+    # `|| true` is load-bearing: this script runs under `set -euo pipefail`, and
+    # a linger failure must never abort an otherwise-successful install.
+    YADGAR_LINGER_DRYRUN="$DRYRUN" bash "$linger_sh" ${mode:+"$mode"} || true
+}
+
 _step_enable_units() {
-    log "Step 5/11: Enabling daemon units..."
+    log "Step 5/12: Enabling daemon units..."
     case "$OS" in
         linux|linux-other)
+            _run_enable_linger
             run systemctl --user daemon-reload
             run systemctl --user enable yadgar.target
             # Reinstall scenario: if target already active, restart so regenerated
@@ -550,7 +609,7 @@ _step_enable_units() {
 }
 
 _step_install_hooks() {
-    log "Step 6/11: Installing Claude Code git hooks..."
+    log "Step 6/12: Installing Claude Code git hooks..."
     # Car 7 (2026-07-26): the legacy `yadgar install-hooks` CLI was hard-removed.
     # The unified `yadgar install --client claude-code --hooks --scope global`
     # is now the single canonical path; --hooks is default-on so this single
@@ -560,12 +619,12 @@ _step_install_hooks() {
 }
 
 _step_install_agents() {
-    log "Step 7/11: Installing subagent templates..."
+    log "Step 7/12: Installing subagent templates..."
     run yadgar install-subagents
 }
 
 _step_config_sync() {
-    log "Step 8/11: Syncing config..."
+    log "Step 8/12: Syncing config..."
     local yadgar_dir="${YADGAR_DIR:-${HOME}/.local/share/yadgar}"
     local config_file="${YADGAR_CONFIG_FILE:-${HOME}/.config/yadgar/config.yaml}"
     if [ ! -f "$config_file" ]; then
@@ -582,7 +641,7 @@ _step_install_rules() {
     # session-time rules agree.  Back-compat: if `yadgar install` is unavailable
     # (e.g. very old install running setup before upgrade) we fall back to the
     # legacy fragment path and warn.
-    log "Step 9/11: Installing Claude Code rules via yadgar install..."
+    log "Step 9/12: Installing Claude Code rules via yadgar install..."
     if command -v yadgar > /dev/null 2>&1 && yadgar install --help 2>&1 | grep -q -- '--rules'; then
         run yadgar install --client claude-code --rules
     else
@@ -657,7 +716,7 @@ _wait_for_daemon() {
 }
 
 _step_seed_anchors() {
-    log "Step 10/11: Seeding canonical anchors..."
+    log "Step 10/12: Seeding canonical anchors..."
     local assets_dir
     assets_dir="$(_locate_install_assets)"
     local anchors_yaml="${assets_dir}/seeds/anchors.yaml"
@@ -682,7 +741,7 @@ _step_seed_anchors() {
 }
 
 _step_seed_agent_prompts() {
-    log "Step 11/11: Seeding built-in starter agent-prompts..."
+    log "Step 11/12: Seeding built-in starter agent-prompts..."
     if [ "$DRYRUN" -eq 0 ]; then
         if ! _wait_for_daemon 120; then
             warn "Daemon failed to start in 120s. Skipping agent-prompt seed."
@@ -694,7 +753,88 @@ _step_seed_agent_prompts() {
     run yadgar seed --agent-prompts
 }
 
+# Provision code_graph: the codebase-memory-mcp host binary AND the
+# code_graph.enabled runtime-config row, together, via the shared
+# `yadgar code-graph install` seam the Makefile also calls.
+#
+# Why this step exists: `yadgar setup` (the Python subcommand) has provisioned
+# code_graph by default since 7cd74ea0, but THIS script never invokes it — it
+# runs its own building-block chain. Since code_graph.enabled defaults to true
+# with no row (ADR-0163), a pipx/brew/nix-profile install produced a machine
+# with code_graph ON and ~/.local/bin/codebase-memory-mcp absent.
+#
+# Deliberately LAST: the daemon is already warm from steps 10/11, so unlike
+# `yadgar setup` (which runs before `yadgar daemon start`) the runtime-config
+# persist can actually land here. No existing step body moves.
+_step_code_graph() {
+    log "Step 12/12: Provisioning code_graph via 'yadgar code-graph install'..."
+
+    # Feature-probe before calling, mirroring _step_install_rules: a staged
+    # upgrade can pair a NEW yadgar-setup.sh with an OLDER installed yadgar that
+    # has no `code-graph install` subcommand. Warn and skip, never abort.
+    if ! command -v yadgar > /dev/null 2>&1 || ! yadgar code-graph install --help > /dev/null 2>&1; then
+        warn "'yadgar code-graph install' unavailable — code_graph was NOT provisioned."
+        info "  Upgrade yadgar, then run:  yadgar code-graph install"
+        return 0
+    fi
+
+    # NO _wait_for_daemon gate, deliberately. Steps 10/11 skip themselves on a
+    # daemon timeout; copying that here would mean daemon-down -> no binary ->
+    # the exact divergence this step exists to remove survives. The BINARY
+    # install needs no daemon; only the persist does, and that already fails
+    # soft with a printed remediation. Side benefit: no third 120s stall on a
+    # machine whose daemon is broken.
+    #
+    # `|| true` is load-bearing: this script runs under `set -euo pipefail` and a
+    # failed optional provision must never abort an otherwise-successful install.
+    if [ "$CODE_GRAPH" -eq 0 ]; then
+        # NOT a plain skip: skipping would leave code_graph.enabled at its true
+        # default with no binary — the original bug, inverted. The opt-out has to
+        # RUN so the `false` row lands.
+        run yadgar code-graph install --no-code-graph || true
+    else
+        run yadgar code-graph install || true
+    fi
+}
+
 # ── doctor probes ─────────────────────────────────────────────────────────────
+
+# R6: generate_systemd.sh resolves the host CLI at RENDER time and bakes the
+# result into ExecStart. That path can go stale afterwards (venv deleted, pipx
+# reinstall relocating the shim), and the unit then fails on its next scheduled
+# fire with nobody watching. Execute what the units actually reference.
+_probe_host_cli() {
+    local unit_dir="${YADGAR_SYSTEMD_OUTPUT_DIR:-${HOME}/.config/systemd/user}"
+    local unit exec_line
+    for unit in yadgar-vacuum.service yadgar-nightly-cycle.service; do
+        [ -f "${unit_dir}/${unit}" ] || continue
+        # `|| true` is load-bearing under `set -euo pipefail`: a unit with no
+        # ExecStart makes grep exit 1, which would abort the whole doctor run.
+        exec_line=$(grep -m1 '^ExecStart=' "${unit_dir}/${unit}" 2>/dev/null | cut -d= -f2- || true)
+        # First field only: `yadgar vacuum --service-mode=...` → `yadgar`.
+        # shellcheck disable=SC2086
+        set -- ${exec_line}
+        if [ -z "${1:-}" ]; then
+            warn "${unit}: no ExecStart program"
+        elif [ "$1" = "python3" ] || [ "$1" = "python" ]; then
+            # `python3 -m <module>` branch: field one ALWAYS resolves, so testing
+            # it proves nothing — the failure mode here is the package going
+            # away, not the interpreter. Re-run the same isolated import the
+            # generator used. $3 is the module ("$1 -m $3 ...").
+            if "$1" -I -c "import ${3:-yadgar}" > /dev/null 2>&1; then
+                info "OK: ${unit} host CLI resolves ($1 -m ${3:-yadgar})"
+            else
+                warn "${unit}: '${3:-yadgar}' is no longer importable by $1 —"
+                warn "  this unit fails on its next fire. Fix: pipx install yadgar, then re-run setup."
+            fi
+        elif command -v "$1" > /dev/null 2>&1 || [ -x "$1" ]; then
+            info "OK: ${unit} host CLI resolves ($1)"
+        else
+            warn "${unit}: host CLI '$1' is GONE — this unit fails on its next fire."
+            warn "  Fix with 'pipx install yadgar' then re-run setup to re-render."
+        fi
+    done
+}
 
 _run_doctor() {
     log "Doctor: Running verification probes..."
@@ -716,9 +856,40 @@ _run_doctor() {
                 fi
             done
             run launchctl list | grep com.openfantasy.yadgar && info "OK: launchd agents listed" || warn "launchd agents not found"
+            # Lint-only is not enough: a rendered-but-never-loaded maintenance
+            # job is exactly the drift this train is closing. Assert each one is
+            # actually registered with launchd.
+            for label in \
+                com.openfantasy.yadgar-vacuum \
+                com.openfantasy.yadgar-nightly-cycle \
+                com.openfantasy.yadgar-vacuum-trigger \
+                com.openfantasy.yadgar-worktree-sweep; do
+                if launchctl print "gui/$(id -u)/${label}" > /dev/null 2>&1; then
+                    info "OK: ${label} loaded"
+                else
+                    warn "${label} is NOT loaded — it will never fire. Run: make enable-units-macos"
+                fi
+            done
             ;;
         linux|linux-other)
             run systemctl --user --no-pager status yadgar.target 2>&1 | head -5 || warn "yadgar.target not active"
+            # Timers are pulled in by yadgar.target's Wants=, so `is-enabled`
+            # reports "disabled" for them by design — probe list-timers/is-active
+            # instead. A never-activated timer is otherwise completely invisible.
+            info "Maintenance timers:"
+            run systemctl --user --no-pager list-timers 'yadgar-*' 2>&1 | head -6 \
+                || warn "no yadgar timers scheduled — background maintenance will never run"
+            if systemctl --user is-active --quiet yadgar-vacuum-trigger.path 2>/dev/null; then
+                info "OK: yadgar-vacuum-trigger.path active"
+            else
+                warn "yadgar-vacuum-trigger.path is NOT active — MCP vacuum_now() would be a no-op"
+            fi
+            # R6: the maintenance units bake in a host CLI path resolved at
+            # render time. A pipx reinstall or deleted venv breaks it silently
+            # until the unit fires at 4am; surface it here instead.
+            _probe_host_cli
+            # Read-only linger probe: reports state, never mutates it.
+            _run_enable_linger --check
             ;;
     esac
 
@@ -775,6 +946,7 @@ main() {
     _step_install_rules
     _step_seed_anchors
     _step_seed_agent_prompts
+    _step_code_graph
 
     echo ""
     if [ "$DRYRUN" -eq 1 ]; then

@@ -109,7 +109,7 @@ def upgrade_command(method: str) -> str:
         )
     if method == "container":
         return (
-            "docker pull docker.io/openfantasy/yadgar:latest && "
+            "docker/podman pull docker.io/openfantasy/yadgar:latest && "
             "systemctl --user restart yadgar  "
             "# macOS: launchctl kickstart -k gui/$UID/com.openfantasy.yadgar"
         )

@@ -1,0 +1,17 @@
+[Unit]
+Description=Handle vacuum trigger file (remove + start yadgar-vacuum)
+
+[Service]
+Type=oneshot
+# Remove the trigger file BEFORE starting the vacuum, so a transient vacuum
+# failure does not pin the .path unit in the active state (which would stop it
+# firing again). If the vacuum itself fails, MCP can write the trigger again.
+#
+# Both commands are slash-free and resolved from the unit's $PATH — systemd has
+# searched $PATH for a bare ExecStart command since v239. `systemctl` in
+# particular MUST be the one belonging to the init system actually running the
+# user bus, so pinning an absolute path would be wrong on some distros.
+ExecStart=rm -f @STATE_DIR@/triggers/vacuum_requested
+ExecStart=systemctl --user start yadgar-vacuum.service
+
+# No [Install]: started by yadgar-vacuum-trigger.path.

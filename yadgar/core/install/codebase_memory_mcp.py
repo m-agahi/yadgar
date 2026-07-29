@@ -27,7 +27,9 @@ Usage
     install_codebase_memory_mcp()   # installs to ~/.local/bin/codebase-memory-mcp
 
 Or from the CLI:
-    yadgar setup --code-graph   # enables CODE_GRAPH_ENABLED download step
+    yadgar setup                # installs the binary by default (task:0082);
+                                # `yadgar setup --no-code-graph` opts out of both
+                                # the binary AND the code_graph.enabled flag.
 """
 
 from __future__ import annotations

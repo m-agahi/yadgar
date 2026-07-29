@@ -232,7 +232,11 @@ _REGISTRY: list[ConfigEntry] = [
     # ── Backup retention ─────────────────────────────────────────────────────
     ConfigEntry("YADGAR_BACKUP_RETENTION", "3", "int"),
     # ── Vacuum trigger file ──────────────────────────────────────────────────
-    ConfigEntry("YADGAR_VACUUM_TRIGGER_PATH", "/data/triggers/vacuum_requested", "string"),
+    # No default by design (task:0044 D1) — kept in lockstep with
+    # yadgar.core.ops.ops._DEFAULT_VACUUM_TRIGGER_PATH, asserted by
+    # yadgar/tests/core/test_vacuum_now.py::test_no_load_bearing_code_default.
+    # Unset means "this install surface ships no vacuum trigger watcher".
+    ConfigEntry("YADGAR_VACUUM_TRIGGER_PATH", "", "string"),
     # ── Sensitive-job lock + signal drain (v5.69 P3) ─────────────────────────
     ConfigEntry("YADGAR_SENSITIVE_LOCK_TTL_SEC", "7200", "int"),
     ConfigEntry("YADGAR_SENSITIVE_DRAIN_TIMEOUT_SEC", "300.0", "float"),
@@ -432,6 +436,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_RECALL_WIKI_QUOTA", "5", "int"),
     ConfigEntry("YADGAR_RECALL_MEMORY_PRIOR_WEIGHT", "0.1", "float"),
     ConfigEntry("YADGAR_RECALL_WIKI_PRIOR_WEIGHT", "0.1", "float"),
+    # ── task:0085 recall output-size bounds ──────────────────────────────────
+    ConfigEntry("YADGAR_RECALL_MAX_CONTENT_CHARS", "1200", "int"),
+    ConfigEntry("YADGAR_RECALL_MAX_TOTAL_BYTES", "65536", "int"),
     # ── v5.62.0 recall quality floor ─────────────────────────────────────────
     ConfigEntry("YADGAR_RECALL_QUALITY_FLOOR", "0.0", "float"),
     ConfigEntry("YADGAR_ASTROCYTE_POOL_ENABLED", "true", "bool"),

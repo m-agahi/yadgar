@@ -63,7 +63,7 @@ class CodeGraphBinaryMissing(CodeGraphError):
     """The codebase-memory-mcp binary could not be located.
 
     Raised (not a stacktrace) so callers can surface a friendly install hint:
-    ``CODE_GRAPH_ENABLED=1 yadgar setup --code-graph``.
+    ``yadgar setup`` (which installs the binary by default — task:0082).
     """
 
 
@@ -92,7 +92,7 @@ def _require_binary() -> str:
     if binary is None:
         raise CodeGraphBinaryMissing(
             f"{BINARY_NAME} not found. Install it host-side with "
-            f"`CODE_GRAPH_ENABLED=1 yadgar setup --code-graph` "
+            f"`yadgar setup` (installs it by default) "
             f"(or ensure ~/.local/bin is on PATH)."
         )
     return binary
@@ -157,14 +157,28 @@ def _run_tool(tool: str, args: dict[str, Any], allowed_root: str) -> dict[str, A
 
 
 @observe(tier="stage")
-def index_repository(repo_path: str, *, allowed_root: str | None = None) -> dict[str, Any]:
+def index_repository(
+    repo_path: str, *, allowed_root: str | None = None, name: str | None = None
+) -> dict[str, Any]:
     """Index ``repo_path``.  CBM_ALLOWED_ROOT defaults to the indexed path.
 
     ``allowed_root`` override lets the default-branch flow point the perimeter at
     a temp worktree while ``repo_path`` is that same temp path.
+
+    ``name`` maps to the indexer's ``--name`` ("override the derived project
+    name") and is echoed back verbatim in the result's ``project``.  Without it
+    the indexer derives the name from the indexed PATH — which, on the
+    default-branch flow, is a random ``tempfile.mkdtemp`` worktree, so every
+    refresh minted a fresh throwaway project and no later run could ever address
+    the cached index (task:0067).  Callers pass a deterministic name keyed to
+    canonical_root + subdir, which is ADR-0162's stated project key.  Omitted ⇒
+    the arg dict is byte-identical to before.
     """
     root = allowed_root or repo_path
-    return _run_tool("index_repository", {"repo_path": repo_path}, allowed_root=root)
+    args: dict[str, Any] = {"repo_path": repo_path}
+    if name:
+        args["name"] = name
+    return _run_tool("index_repository", args, allowed_root=root)
 
 
 @observe(tier="stage")
