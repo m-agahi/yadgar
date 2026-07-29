@@ -207,11 +207,24 @@ def _log_consolidation_row(row: dict) -> None:
     """Insert a consolidation_log row via the SurrealDB SQL API.
 
     Non-fatal: if this fails we just warn. The vacuum itself succeeded.
+
+    The statement enumerates its fields, so a key added to ``row`` and NOT added
+    here is silently dropped — the whole /sql call still returns 200.  That is a
+    quiet-failure trap: the tests that assert on the row dict all patch this
+    function, so they would never notice.  ``rolled_back`` / ``exit_code``
+    (task:0045) are therefore inlined as SurrealQL LITERALS rather than bound
+    params: ``params=`` values cross the wire as query strings, and
+    ``<bool> "false"`` is not reliably ``false`` across SurrealDB versions — a
+    rolled-back run recorded as ``rolled_back: true`` would be a new lie in the
+    place the old one lived.  Both values are code-controlled (a bool and a small
+    int, coerced here), so there is no injection surface.
     """
     backend_url = row.pop(
         "_backend_url",
         os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8080"),
     )
+    rolled_back = bool(row.pop("rolled_back", False))
+    exit_code = int(row.pop("exit_code", 0))
     try:
         client = _build_http_client(backend_url)
         stmt = (
@@ -223,7 +236,9 @@ def _log_consolidation_row(row: dict) -> None:
             "before_bytes: $before_bytes,"
             "after_bytes: $after_bytes,"
             "saved_bytes: $saved_bytes,"
-            "saved_pct: $saved_pct"
+            "saved_pct: $saved_pct,"
+            f"rolled_back: {'true' if rolled_back else 'false'},"
+            f"exit_code: {exit_code}"
             "}"
         )
         client.post(
@@ -599,14 +614,22 @@ def _restart_services_after_abort(svc: ServiceController, *, backend: bool = Tru
     idempotent under systemd/docker (starting a running unit is a no-op), so the
     finalize path's own ``start_yadgar()`` is unaffected.
 
+    ``ManualModeError`` is not a failure: ``--service-mode=manual`` prints the
+    commands and raises by contract, and it is the one mode where a human is
+    reading the output — a CRITICAL "core is DOWN" there would be a false alarm.
+
     Args:
         svc: the service controller.
         backend: start the backend too.  False when the caller already did it
             (``_restore_db`` starts the backend on the restored DB itself).
     """
+    from yadgar.core.ops import ManualModeError  # noqa: PLC0415
+
     if backend:
         try:
             svc.start_backend()
+        except ManualModeError:
+            pass  # instructions already printed by the controller
         except Exception as exc:
             print(
                 f"[vacuum] WARNING: could not restart yadgar-backend after abort: {exc}",
@@ -614,6 +637,8 @@ def _restart_services_after_abort(svc: ServiceController, *, backend: bool = Tru
             )
     try:
         svc.start_yadgar()
+    except ManualModeError:
+        pass  # instructions already printed by the controller
     except Exception as exc:
         print(
             f"[vacuum] CRITICAL: could not restart yadgar CORE after abort: {exc}\n"

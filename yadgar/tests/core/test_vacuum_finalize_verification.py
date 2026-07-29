@@ -26,6 +26,7 @@ Four defect classes are pinned here (task:0045 + task:0027a):
 
 from __future__ import annotations
 
+import json
 import re
 import tempfile
 import types as _types
@@ -434,3 +435,122 @@ class TestAbortPathsRestartCore:
             "a raising start_backend() must not prevent the core restart — the "
             "whole point of task:0027a is that core comes back"
         )
+
+
+# ---------------------------------------------------------------------------
+# 5. The new route actually answers, and the row actually carries the fields
+# ---------------------------------------------------------------------------
+
+
+class TestCheckInvariantsRouteHandler:
+    """The handler must ANSWER, not merely be in the route table.
+
+    A registered-but-broken endpoint replacing a never-registered one would
+    repeat the task:0045 pattern one layer down, and the route-table guard above
+    cannot see it.  These call the handler directly (which is why it is factored
+    out of the ``@custom_route`` wrapper).
+    """
+
+    def _request(self):
+        return MagicMock()
+
+    @pytest.mark.asyncio
+    async def test_handler_returns_the_tool_result(self) -> None:
+        from yadgar.core.server.routes.admin_ops import check_invariants_handler
+
+        payload = {"ok": True, "violations": [], "fixed": [], "counts": {}}
+        with patch(
+            "yadgar.core.server.tools.admin_invariants.check_invariants",
+            return_value=payload,
+        ):
+            resp = await check_invariants_handler(self._request())
+
+        assert resp.status_code == 200
+        assert json.loads(bytes(resp.body)) == payload
+
+    @pytest.mark.asyncio
+    async def test_handler_returns_503_when_the_forward_fails(self) -> None:
+        """YADGAR_EMBED_URL unset / backend down is an availability answer, not 500."""
+        from yadgar.core.server.routes.admin_ops import check_invariants_handler
+
+        with patch(
+            "yadgar.core.server.tools.admin_invariants.check_invariants",
+            side_effect=RuntimeError("YADGAR_EMBED_URL is not set"),
+        ):
+            resp = await check_invariants_handler(self._request())
+
+        assert resp.status_code == 503
+        body = json.loads(bytes(resp.body))
+        assert body["ok"] is False
+        assert "YADGAR_EMBED_URL" in body["error"]
+
+
+class TestConsolidationLogRowIsActuallyWritten:
+    """Exercise the REAL _log_consolidation_row — every other test patches it.
+
+    The insert statement enumerates its fields, so a key added to the row dict
+    and not to the statement is silently dropped while /sql still returns 200.
+    Asserting on the dict passed to a patched writer cannot catch that.
+    """
+
+    def _capture_stmt(self, row: dict) -> str:
+        from yadgar.core import vacuum as _vac
+
+        client = MagicMock()
+        with patch.object(_vac, "_build_http_client", return_value=client):
+            _vac._log_consolidation_row(row)
+        assert client.post.called, "the /sql insert was never issued"
+        return client.post.call_args.kwargs["content"]
+
+    def test_rolled_back_row_writes_the_literals(self) -> None:
+        stmt = self._capture_stmt(
+            {
+                "_backend_url": "http://127.0.0.1:8080",
+                "kind": "vacuum",
+                "saved_bytes": 0,
+                "saved_pct": 0,
+                "rolled_back": True,
+                "exit_code": 2,
+            }
+        )
+        assert "rolled_back: true" in stmt, (
+            "rolled_back never reaches the row — the field list drops any key the "
+            "statement does not name (task:0045)"
+        )
+        assert "exit_code: 2" in stmt
+
+    def test_retained_row_writes_false_not_a_truthy_string(self) -> None:
+        """`<bool> \"false\"` is not reliably false — hence SurrealQL literals."""
+        stmt = self._capture_stmt(
+            {
+                "_backend_url": "http://127.0.0.1:8080",
+                "kind": "vacuum",
+                "rolled_back": False,
+                "exit_code": 0,
+            }
+        )
+        assert "rolled_back: false" in stmt
+        assert "exit_code: 0" in stmt
+
+    def test_bound_params_carry_the_sizes(self) -> None:
+        from yadgar.core import vacuum as _vac
+
+        client = MagicMock()
+        with patch.object(_vac, "_build_http_client", return_value=client):
+            _vac._log_consolidation_row(
+                {
+                    "_backend_url": "http://127.0.0.1:8080",
+                    "kind": "vacuum",
+                    "before_bytes": 2_400_000_000,
+                    "after_bytes": 2_400_000_000,
+                    "saved_bytes": 0,
+                    "saved_pct": 0,
+                    "rolled_back": True,
+                    "exit_code": 2,
+                }
+            )
+        params = client.post.call_args.kwargs["params"]
+        assert params["saved_bytes"] == 0
+        # popped out of the bound params — they are statement literals now
+        assert "rolled_back" not in params
+        assert "exit_code" not in params
