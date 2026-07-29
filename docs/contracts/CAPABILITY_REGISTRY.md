@@ -1350,16 +1350,16 @@ config knobs.
 
 ---
 
-### CAP-ENR-010 — Vacuum/backup safety (BC-E1, BC-E2, BC-E3)
+### CAP-ENR-010 — Vacuum/backup safety (BC-E1, BC-E2, BC-E3, BC-E5, BC-E6, BC-E7)
 - **status:** LIVE
 - **category:** ops
 - **settings:** —
 - **tools:** —
 - **migrations:** —
-- **bc:** `BC-E1`, `BC-E2`, `BC-E3`
-- **refs:** `yadgar/core/server/tools/admin_vacuum.py`
-- **wiring:** The vacuum tool (`vacuum_now`, `vacuum_checkpoints`) implements the three safety contracts. `BC-E1` (row counts unchanged) is verified by comparing pre/post snapshot counts. `BC-E2` (atomic swap — mid-failure leaves DB intact) is enforced by a copy-then-swap pattern with verification before the rename. `BC-E3` (sensitive-job lock blocks restart) is enforced by checking the job-lock state before allowing external shutdown.
-- **explanation:** BC-E1/E2/E3 were flipped to ✅ in v5.69 with dedicated e2e tests in `tests/e2e/test_vacuum_backup_safety.py`. BC-E1 proves row counts are preserved across vacuum. BC-E2 proves the atomic swap is safe under failure injection (import failure, verification failure, crash mid-swap, recovery ordering). BC-E3 proves an external restart/shutdown request is refused while a sensitive vacuum job holds the lock.
+- **bc:** `BC-E1`, `BC-E2`, `BC-E3`, `BC-E5`, `BC-E6`, `BC-E7`
+- **refs:** `yadgar/core/server/tools/admin_vacuum.py`, `yadgar/core/vacuum/__init__.py`, `yadgar/core/server/routes/admin_ops.py`
+- **wiring:** The vacuum tool (`vacuum_now`, `vacuum_checkpoints`) implements the three safety contracts. `BC-E1` (row counts unchanged) is verified by comparing pre/post snapshot counts. `BC-E2` (atomic swap — mid-failure leaves DB intact) is enforced by a copy-then-swap pattern with verification before the rename. `BC-E3` (sensitive-job lock blocks restart) is enforced by checking the job-lock state before allowing external shutdown. `BC-E5` (a rolled-back run reports zero saving) is enforced in `_vacuum_report_and_log`, which derives the saving itself and hard-zeroes it on the rollback path so no caller can report a positive figure for a reverted run; `after_bytes` is measured after `_vacuum_finalize` returns. `BC-E6` (core running after every abort) is enforced by `_restart_services_after_abort`, wired into `_abort_restart`, the quiescence gate, the snapshot/drop failure path and `_restore_db`, with backend and core each in their own try/except. `BC-E7` (no core URL served nowhere) is enforced by a test that resolves the daemon's real `mcp_server._custom_starlette_routes` table; `POST /api/check_invariants` is served by `yadgar/core/server/routes/admin_ops.py`.
+- **explanation:** BC-E1/E2/E3 were flipped to ✅ in v5.69 with dedicated e2e tests in `tests/e2e/test_vacuum_backup_safety.py`. BC-E1 proves row counts are preserved across vacuum. BC-E2 proves the atomic swap is safe under failure injection (import failure, verification failure, crash mid-swap, recovery ordering). BC-E3 proves an external restart/shutdown request is refused while a sensitive vacuum job holds the lock. BC-E5/E6/E7 were added by task:0045 + task:0027a after seven consecutive vacuums swapped in a compacted DB, rolled it back one minute later because the verification endpoint did not exist, and each reported a ~2 GB saving. BC-E7 is the anti-recurrence contract for that class specifically: six tests mocked the missing URL to 200, so the defect was invisible to every mock-based check.
 
 ### CAP-CONS-001 — Heat Decay (thermodynamic memory decay)
 - **status:** LIVE

@@ -65,6 +65,19 @@ Goal: every SHALL → ✅ or ❌.
 - BC-E2 atomic: any mid-vacuum failure leaves live DB intact+populated (never empty). ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE2_VacuumAtomicity` (test_a_import_failure_leaves_canonical_untouched, test_b_verification_failure_blocks_swap, test_c_happy_path_swapped_dir_opens_complete, test_d_crash_mid_swap_recovery, test_e_recovery_runs_before_preflight_in_cmd_vacuum_impl) P1
 - BC-E3 sensitive job in progress blocks external restart/shutdown. ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCE3_SensitiveJobLock::test_external_shutdown_refused_while_locked` P1
 - BC-E4 vacuum_now() on a surface with no trigger watcher reports `started=False, skipped_reason="no_trigger_path_configured"` — never `started=True` into a void. ⏳[u] `yadgar/tests/core/test_vacuum_now.py::TestVacuumNowRefusals::test_no_trigger_path_configured_returns_started_false` (task:0044)
+- BC-E5 a rolled-back vacuum reports `saved_bytes == 0` / `saved_pct == 0` and a `consolidation_log` row with `rolled_back=true` + the non-zero `exit_code`. A run that reclaimed nothing can never report a positive saving. ⏳[u] `yadgar/tests/core/test_vacuum_finalize_verification.py::TestRolledBackReportsZeroSaving` (task:0045)
+- BC-E6 every vacuum abort path leaves `yadgar` CORE running. Phase 2 stops both units and an explicit `systemctl --user stop` is never undone by `Restart=`, so an abort that restarts only the backend takes the memory engine down silently. ⏳[u] `yadgar/tests/core/test_vacuum_finalize_verification.py::TestAbortPathsRestartCore` (task:0027a)
+- BC-E7 no core URL named in `yadgar/core/vacuum/` may be absent from the daemon's registered route table. `/api/check_invariants` was POSTed for a month against a route served nowhere, and six mocks of that exact URL kept the suite green. ⏳[u] `yadgar/tests/core/test_vacuum_finalize_verification.py::TestRouteExistenceGuard` (task:0045)
+
+**[manual] Reclaim-persistence protocol — completion is not persistence.** The task:0045 failure was invisible at T+0 and obvious at T+2 min, so a one-shot post-run check cannot detect it. After a vacuum:
+
+1. Record `check_invariants().db_size_bytes` and `du -sb ~/.local/share/yadgar/surreal_db` **before** the run.
+2. Re-record at **T+5 min** and **T+1 h**: `db_size_bytes` must stay within ~20 % of the immediate post-vacuum value. This is the rollback detector.
+3. At **T+24 h** (after the next nightly) assert only that the size is still **well below** the pre-vacuum figure and that `surreal_db`'s mtime is still from the vacuum run. **Do not apply a tight band here** — vlog grows continuously between vacuums by design (60 MB → 495 MB in 24 h observed), so a 20 % band at T+24 h manufactures a false failure that someone would then "fix" by widening it.
+4. `vlog_pct_of_total` must drop from its pre-vacuum level immediately post-vacuum.
+5. `systemctl --user show yadgar-vacuum.service -p ExecMainStatus` → `0`, and no new `vacuum_export_*.surql` scratch retained (scratch is kept only on the rollback paths).
+
+Telemetry caveat: `consolidation_log` vacuum rows written before task:0045 carry fabricated pre-rollback figures. Cut any baseline from post-fix rows only.
 
 ### F. Backup / restore
 - BC-F1 a backup is a COMPLETE restorable copy (restore == source row counts). ✅ `tests/e2e/test_vacuum_backup_safety.py::TestBCF1_BackupRoundTrip::test_snapshot_restore_same_count` P1
