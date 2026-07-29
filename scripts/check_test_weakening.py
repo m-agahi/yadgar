@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Layer 4 tamper-protection: branch-diff guard (task #52).
 
-Fails if the branch introduces a NET removal of ``assert`` statements in the e2e
-scan set (``_E2E_PATH_RE``) OR a decrease in the ✅ count in
-``docs/contracts/BEHAVIOR_CONTRACT.md``.
+Fails if the branch introduces a NET removal of ``assert`` statements in ANY
+SINGLE file of the e2e scan set (``_E2E_PATH_RE``) OR a decrease in the ✅ count
+in ``docs/contracts/BEHAVIOR_CONTRACT.md``.
+
+The per-file netting is load-bearing, not a detail — see
+``_per_file_assert_deltas``.  Summing globally lets an addition in one e2e module
+mask a removal in another, which over a branch-sized window is the common case
+rather than the exception.
 
 WHY BRANCH-DIFF AND NOT ``git diff --cached`` (fixed 2026-07-29)
 ---------------------------------------------------------------
@@ -89,28 +94,40 @@ def _git(args: list[str]) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
-def _diff_assert_delta(diff_text: str) -> int:
-    """Return (lines_added - lines_removed) for 'assert ' in *diff_text*.
+def _per_file_assert_deltas(diff_text: str) -> dict[str, int]:
+    """Return {e2e_path: lines_added - lines_removed} for 'assert' in *diff_text*.
 
-    A negative value means NET removal of assert statements.
-    Only counts lines in e2e test files (see ``_E2E_PATH_RE``).
+    PER FILE, not one global sum.  A removal in test A is NOT compensated by an
+    addition in test B — they are different tests.  This matters far more under
+    branch-diff mode than it did under the old staged-only mode: a commit window
+    is narrow so offsetting was rare, but over a whole branch it is the norm.
+    Measured while running this car's own mutation test: a `-1` in
+    ``test_consolidation_embedded_e2e.py`` was masked by a `+5` in
+    ``test_code_graph_e2e.py`` earlier on the branch, global net `+4`, guard
+    green.  Global-net over a branch window degrades the guard to "the branch's
+    total e2e assert count went down", which is weaker than what it replaced.
+
+    Only counts files in the e2e scan set (see ``_E2E_PATH_RE``).
     """
-    in_e2e_file = False
-    added = removed = 0
+    deltas: dict[str, int] = {}
+    current: str | None = None
     for line in diff_text.splitlines():
         if line.startswith("diff --git"):
             # Is this file in the e2e scan set? (widened 2026-07-29 — the old
             # `yadgar/tests/e2e/` pin missed six *e2e* modules living elsewhere)
-            in_e2e_file = bool(_E2E_PATH_RE.search(line))
-        if not in_e2e_file:
+            m = _E2E_PATH_RE.search(line)
+            current = m.group(0) if m else None
+            if current is not None:
+                deltas.setdefault(current, 0)
+        if current is None:
             continue
         if line.startswith("+") and not line.startswith("+++"):
             if re.search(r"\bassert\b", line):
-                added += 1
+                deltas[current] += 1
         elif line.startswith("-") and not line.startswith("---"):
             if re.search(r"\bassert\b", line):
-                removed += 1
-    return added - removed
+                deltas[current] -= 1
+    return deltas
 
 
 def _green_count_from_text(text: str) -> int | None:
@@ -160,13 +177,13 @@ def check_diff(diff_text: str, head_green: int | None, staged_green: int | None)
     """Pure function: return violation strings given a diff + green counts."""
     errors: list[str] = []
 
-    delta = _diff_assert_delta(diff_text)
-    if delta < 0:
-        errors.append(
-            f"layer 4 — NET removal of {abs(delta)} 'assert' statement(s) in the "
-            "e2e scan set (yadgar/tests/e2e/**/*.py, yadgar/tests/**/*e2e*.py). "
-            "If this is intentional, set ALLOW_TEST_WEAKEN=1 when committing."
-        )
+    for path, delta in sorted(_per_file_assert_deltas(diff_text).items()):
+        if delta < 0:
+            errors.append(
+                f"layer 4 — NET removal of {abs(delta)} 'assert' statement(s) in "
+                f"{path}. If this is intentional, set ALLOW_TEST_WEAKEN=1 when "
+                "committing."
+            )
 
     if head_green is not None and staged_green is not None:
         if staged_green < head_green:

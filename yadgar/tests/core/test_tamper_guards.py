@@ -668,3 +668,63 @@ class TestLayer4BranchDiffMode:
 
     def test_ci_mode_requires_base(self) -> None:
         assert ctw.main(["--ci"]) == 1, "--ci without --base must error, not silently pass"
+
+
+class TestLayer4PerFileDelta:
+    """Assert removals are netted PER FILE, not summed across the whole diff.
+
+    Discovered empirically while executing the branch-diff mutation test: with a
+    single global sum, removing an assert from one e2e module was masked by five
+    asserts ADDED to a different e2e module earlier on the same branch, and the
+    guard stayed green.  Global-net was tolerable while the window was one staged
+    commit (commits are narrow, so offsetting was rare); over a whole branch it
+    collapses the guard's sensitivity to "the branch's total e2e assert count went
+    down" — far weaker than the per-commit behaviour it replaced.  A removal in
+    test A is not compensated by an addition in test B: different tests.
+    """
+
+    _MULTI_FILE_OFFSETTING = (
+        "diff --git a/yadgar/tests/core/test_code_graph_e2e.py"
+        " b/yadgar/tests/core/test_code_graph_e2e.py\n"
+        + "+    assert ok\n"
+        * 5
+        + "diff --git a/yadgar/tests/core/test_consolidation_embedded_e2e.py"
+        " b/yadgar/tests/core/test_consolidation_embedded_e2e.py\n"
+        '-    assert rows, f"memory:{mid} not found"\n'
+        "+    pass\n"
+    )
+
+    def test_removal_is_not_masked_by_additions_in_another_file(self) -> None:
+        """THE regression shape: -1 in file B, +5 in file A → must still fire."""
+        errors = ctw.check_diff(self._MULTI_FILE_OFFSETTING, 5, 5)
+        assert errors, "a removal in one e2e module must not be offset by another module"
+
+    def test_violation_names_the_offending_file(self) -> None:
+        """Per-file semantics make the file the unit of violation — report it."""
+        errors = ctw.check_diff(self._MULTI_FILE_OFFSETTING, 5, 5)
+        joined = " ".join(errors)
+        assert "test_consolidation_embedded_e2e.py" in joined, errors
+        assert "test_code_graph_e2e.py" not in joined, (
+            "the file that ADDED asserts must not be blamed",
+            errors,
+        )
+
+    def test_net_positive_within_one_file_still_passes(self) -> None:
+        """Tightening the scope must not degrade into 'any removed assert line, ever'."""
+        diff = (
+            "diff --git a/yadgar/tests/e2e/test_fake.py b/yadgar/tests/e2e/test_fake.py\n"
+            "-    assert x == 1\n"
+            "+    assert x == 1\n"
+            "+    assert y > 0\n"
+        )
+        assert not ctw.check_diff(diff, 5, 5), "a refactor that nets +1 in one file is fine"
+
+    def test_multiple_offending_files_all_reported(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/e2e/test_a.py b/yadgar/tests/e2e/test_a.py\n"
+            "-    assert a\n"
+            "diff --git a/yadgar/tests/e2e/test_b.py b/yadgar/tests/e2e/test_b.py\n"
+            "-    assert b\n"
+        )
+        joined = " ".join(ctw.check_diff(diff, 5, 5))
+        assert "test_a.py" in joined and "test_b.py" in joined
