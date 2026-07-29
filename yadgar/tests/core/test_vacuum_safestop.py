@@ -179,22 +179,36 @@ class TestFinalizeRollback:
         svc.stop_backend.assert_called_once()
         svc.start_backend.assert_called_once()
 
-    def test_ci_ok_false_rolls_back(self, tmp_path, monkeypatch):
-        result, home, db, old, svc = self._finalize(tmp_path, monkeypatch, ci_ok=False)
-        self._assert_rolled_back(result, home, db, old, svc)
+    def _assert_swap_retained(self, result, home, db, old, svc):
+        """POLICY REVERSAL (task:0045 D2) — advisory check_invariants keeps the swap."""
+        assert result is True
+        assert (db / "compacted.marker").exists(), "the compacted DB stays canonical"
+        assert not (db / "original.marker").exists(), "the original must not be promoted back"
+        assert not old.exists(), ".old is retired so the space is reclaimed"
+        svc.stop_backend.assert_not_called()
 
-    def test_ci_404_rolls_back(self, tmp_path, monkeypatch):
-        """The 07-09 incident branch: 404 used to retain .old — now rolls back."""
+    # POLICY REVERSAL (task:0045 D2): the three check_invariants cases below
+    # asserted rollback until this change.  The call targeted a route registered
+    # nowhere, so the 404 branch fired on every production run; and even served
+    # correctly, ok=false is the steady state on a host with a standing
+    # data-model violation a vacuum neither causes nor fixes.  The gates that
+    # actually detect a bad swap (core health, inode coherence, and the pre-swap
+    # EXACT per-table count comparison) are untouched and asserted below.
+    def test_ci_ok_false_is_advisory(self, tmp_path, monkeypatch):
+        result, home, db, old, svc = self._finalize(tmp_path, monkeypatch, ci_ok=False)
+        self._assert_swap_retained(result, home, db, old, svc)
+
+    def test_ci_404_is_advisory(self, tmp_path, monkeypatch):
         result, home, db, old, svc = self._finalize(
             tmp_path, monkeypatch, ci_status=404, ci_ok=False
         )
-        self._assert_rolled_back(result, home, db, old, svc)
+        self._assert_swap_retained(result, home, db, old, svc)
 
-    def test_ci_connection_error_rolls_back(self, tmp_path, monkeypatch):
+    def test_ci_connection_error_is_advisory(self, tmp_path, monkeypatch):
         result, home, db, old, svc = self._finalize(
             tmp_path, monkeypatch, ci_raises=httpx.ConnectError("Connection refused")
         )
-        self._assert_rolled_back(result, home, db, old, svc)
+        self._assert_swap_retained(result, home, db, old, svc)
 
     def test_core_health_timeout_rolls_back(self, tmp_path, monkeypatch):
         result, home, db, old, svc = self._finalize(tmp_path, monkeypatch, health=False)
@@ -206,9 +220,15 @@ class TestFinalizeRollback:
         self._assert_rolled_back(result, home, db, old, svc)
 
     def test_rollback_is_loud(self, tmp_path, monkeypatch, capsys):
-        self._finalize(tmp_path, monkeypatch, ci_status=404, ci_ok=False)
+        self._finalize(tmp_path, monkeypatch, coherent=False)
         err = capsys.readouterr().err
         assert "CRITICAL" in err and "ROLLING BACK" in err
+
+    def test_advisory_ci_failure_is_loud(self, tmp_path, monkeypatch, capsys):
+        """Advisory is not silent — the operator must still see which check failed."""
+        self._finalize(tmp_path, monkeypatch, ci_status=404, ci_ok=False)
+        err = capsys.readouterr().err
+        assert "ADVISORY" in err and "check_invariants" in err
 
     def test_ci_ok_true_retires_old_no_rollback(self, tmp_path, monkeypatch):
         result, home, db, old, svc = self._finalize(tmp_path, monkeypatch)
@@ -333,10 +353,20 @@ class TestExitCodeOnRollback:
     def test_finalize_false_maps_to_exit_2(self):
         """cmd_vacuum_impl returns 2 when finalize rolled back — the nightly
         unit goes RED instead of silently 'complete' (07-09 lesson: silence
-        must be impossible)."""
+        must be impossible).
+
+        The old form of this test grepped for the literal ``0 if finalize_ok
+        else 2``.  task:0045 replaced that expression with an explicit
+        ``rolled_back`` flag (the report needs it too, to zero the saving), so
+        the assertion now reads the source for the mapping rather than one
+        spelling of it.  Behavioural coverage of the same mapping lives in
+        test_vacuum_finalize_verification.py::TestRolledBackReportsZeroSaving.
+        """
         import inspect
 
         from yadgar.core import vacuum
 
         src = inspect.getsource(vacuum._cmd_vacuum_body)
-        assert "0 if finalize_ok else 2" in src
+        assert "rolled_back = not finalize_ok" in src
+        assert "exit_code = 2 if rolled_back else 0" in src
+        assert "return exit_code" in src

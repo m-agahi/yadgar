@@ -1,20 +1,28 @@
-"""P0 #37 item 3 — check_invariants failure ROLLS BACK the swap and exits 2.
+"""Exit codes for the vacuum finalize gates — which failures roll the swap back.
 
-POLICY REVERSAL (deliberate). v5.7.0 PR-2 made check_invariants 404/non-2xx/
-exception warn-only (exit 0) after the 2026-05-23 incident where a fully
-successful vacuum was reported failed because core hadn't booted yet.
+POLICY HISTORY (three moves, this file records the third):
 
-The 2026-07-09 incident showed the warn-only path's true cost: check_invariants
-404 → `.old` RETAINED while the running backend kept writing the ORIGINAL inode
-(= `.old`) for 16 h — silent path/inode split-brain that turned the next deploy
-stop into a torn manifest (RCA docs/plans/surrealkv-safe-stop-2026-07-10.md §4).
+1. v5.7.0 PR-2 made a check_invariants 404/non-2xx/exception warn-only (exit 0)
+   after the 2026-05-23 incident where a successful vacuum was reported failed
+   because core had not finished booting.
+2. P0 #37 reversed that to a hard rollback after the 2026-07-09 split-brain
+   (`.old` RETAINED while the backend kept writing the ORIGINAL inode for 16 h —
+   RCA docs/plans/surrealkv-safe-stop-2026-07-10.md §4).
+3. task:0045 (this change) narrows move 2 back off check_invariants ALONE.  The
+   verification POSTed `{core}/api/check_invariants`, a route registered nowhere
+   — it 404'd on every run for a month, so every vacuum rolled back while
+   reporting a ~2 GB saving.  The route now exists
+   (`yadgar/core/server/routes/admin_ops.py`), and the call is ADVISORY in the
+   vacuum finalize path because it also returns ok=false on a healthy host with a
+   pre-existing data-model violation a vacuum neither causes nor fixes.
 
-New policy: an UNVERIFIED swap is a discarded swap. Any check_invariants
-non-verification (non-2xx, ok=false, connection error) ROLLS BACK the swap
-(`.old` promoted back to canonical, unverified compacted DB discarded) and the
-vacuum exits 2 so the nightly unit goes red — silence must be impossible. The
-cost (a good compaction discarded when core boots slowly) is bounded by the
-180s boot wait + 30s readiness wait; correctness beats compaction.
+What still rolls back and exits 2 (unchanged, asserted below): core does not
+become healthy on the swapped-in DB, and post-swap inode incoherence.  Those are
+the gates that detect a bad swap.  The EXACT per-table count comparison already
+runs PRE-swap, so a partial import can never be swapped in at all.
+
+check_invariants remains a HARD signal outside this path — the consolidation
+tail still logs CRITICAL on violations.
 """
 
 from __future__ import annotations
@@ -101,13 +109,18 @@ def _patch_stack(stack: ExitStack, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-class TestCheckInvariantsRollsBack:
-    """P0 #37 item 3: post-restart check_invariants failure = rollback + exit 2.
+class TestFinalizeGates:
+    """Which finalize outcome rolls the swap back, and which one merely warns.
 
-    Every non-verification outcome (404 while core boots, 503, connection
-    error, 200+ok=false) must (a) promote `.old` back to canonical so the
-    path and the live store re-converge, and (b) exit 2 so systemd reports
-    the nightly as failed instead of the 07-09 silent 'complete'.
+    HARD (rollback + exit 2): post-swap inode incoherence — a live surreal
+    holding open fds outside the canonical path is the 07-09 split-brain itself.
+    Core-health timeout is the other hard gate (covered in
+    test_vacuum_finalize_verification.py).
+
+    ADVISORY (keep the swap, exit 0): every check_invariants outcome.  The route
+    did not exist until task:0045, so this branch fired on every run for a month;
+    and served correctly it still returns ok=false on a host carrying a standing
+    data-model violation, which would make the gate permanently unsatisfiable.
     """
 
     def _run_with_ci(  # noqa: C901 - cohesive: single helper drives all CI variants
@@ -116,6 +129,7 @@ class TestCheckInvariantsRollsBack:
         ci_status: int | None = None,
         ci_raises: Exception | None = None,
         ci_ok: bool | None = None,
+        coherent: bool = True,
     ) -> tuple[int, Path]:
         """Drive cmd_vacuum_impl end-to-end; mock check_invariants per args."""
 
@@ -149,6 +163,13 @@ class TestCheckInvariantsRollsBack:
 
             with ExitStack() as stack:
                 _patch_stack(stack, monkeypatch)
+                if not coherent:
+                    stack.enter_context(
+                        patch(
+                            "yadgar.core.vacuum._verify_live_store_coherence",
+                            return_value=(False, {"surreal_db.old-20260709_190000"}),
+                        )
+                    )
                 result = cmd_vacuum_impl(_vacuum_args(db))
 
             # Snapshot rollback-relevant state BEFORE the tempdir vanishes.
@@ -162,9 +183,7 @@ class TestCheckInvariantsRollsBack:
         return result, db
 
     def _assert_rolled_back(self, result: int) -> None:
-        assert result == 2, (
-            f"an unverified vacuum must exit 2 (rolled back, nightly goes red); got {result}"
-        )
+        assert result == 2, f"a rolled-back vacuum must exit 2 (nightly goes red); got {result}"
         assert self._canonical_is_original, (
             "rollback must promote .old (the original DB) back to the canonical path"
         )
@@ -173,22 +192,38 @@ class TestCheckInvariantsRollsBack:
             f"no half-swapped .old may remain after finalize (07-09 guard); got {self._olds}"
         )
 
-    def test_check_invariants_404_rolls_back_exit_2(self, monkeypatch):
-        """The 07-09 incident branch: 404 used to warn+retain — now rollback."""
+    def _assert_swap_retained(self, result: int) -> None:
+        assert result == 0, (
+            f"an advisory check_invariants outcome must not fail the run; got {result}"
+        )
+        assert self._compacted_retained, "the compacted DB stays canonical"
+        assert not self._canonical_is_original, "the original must not be promoted back"
+        assert self._olds == [], ".old must be retired so the space is actually reclaimed"
+
+    def test_inode_split_brain_rolls_back_exit_2(self, monkeypatch):
+        """The HARD gate: a live store outside the canonical path is the 07-09 bug."""
+        result, _ = self._run_with_ci(monkeypatch, ci_status=200, ci_ok=True, coherent=False)
+        self._assert_rolled_back(result)
+
+    # POLICY REVERSAL (task:0045 D2): the four cases below asserted rollback+exit 2
+    # until this change.  The 404 case is the one that actually fired in
+    # production — against a route registered nowhere — discarding seven good
+    # compactions while reporting a ~2 GB saving each time.
+    def test_check_invariants_404_is_advisory(self, monkeypatch):
         result, _ = self._run_with_ci(monkeypatch, ci_status=404)
-        self._assert_rolled_back(result)
+        self._assert_swap_retained(result)
 
-    def test_check_invariants_non2xx_rolls_back_exit_2(self, monkeypatch):
+    def test_check_invariants_non2xx_is_advisory(self, monkeypatch):
         result, _ = self._run_with_ci(monkeypatch, ci_status=503)
-        self._assert_rolled_back(result)
+        self._assert_swap_retained(result)
 
-    def test_check_invariants_connection_error_rolls_back_exit_2(self, monkeypatch):
+    def test_check_invariants_connection_error_is_advisory(self, monkeypatch):
         result, _ = self._run_with_ci(monkeypatch, ci_raises=httpx.ConnectError("refused"))
-        self._assert_rolled_back(result)
+        self._assert_swap_retained(result)
 
-    def test_check_invariants_ok_false_rolls_back_exit_2(self, monkeypatch):
+    def test_check_invariants_ok_false_is_advisory(self, monkeypatch):
         result, _ = self._run_with_ci(monkeypatch, ci_status=200, ci_ok=False)
-        self._assert_rolled_back(result)
+        self._assert_swap_retained(result)
 
     def test_check_invariants_ok_true_exits_0_and_retires_old(self, monkeypatch):
         result, _ = self._run_with_ci(monkeypatch, ci_status=200, ci_ok=True)
@@ -197,8 +232,16 @@ class TestCheckInvariantsRollsBack:
         assert self._compacted_retained, "the verified compacted DB stays canonical"
 
     def test_rollback_is_loud(self, monkeypatch, capsys):
-        self._run_with_ci(monkeypatch, ci_status=404)
+        self._run_with_ci(monkeypatch, ci_status=200, ci_ok=True, coherent=False)
         err = capsys.readouterr().err
         assert "CRITICAL" in err and "ROLLING BACK" in err, (
             f"rollback must be loud (07-09 was silent); stderr={err!r}"
+        )
+
+    def test_advisory_failure_is_loud_too(self, monkeypatch, capsys):
+        """Advisory must not mean quiet — a non-ok result still needs an operator."""
+        self._run_with_ci(monkeypatch, ci_status=404)
+        err = capsys.readouterr().err
+        assert "ADVISORY" in err and "check_invariants" in err, (
+            f"an advisory check_invariants failure must still be logged; stderr={err!r}"
         )

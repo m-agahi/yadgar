@@ -205,23 +205,27 @@ class TestVacuumReadinessWait:
         )
 
     # ------------------------------------------------------------------
-    # Test 3: readiness timeout + check_invariants also fails — still exit 0 (PR-2 applies)
+    # Test 3: readiness timeout + check_invariants also fails — swap still kept
     # ------------------------------------------------------------------
 
-    def test_readiness_timeout_plus_ci_404_rolls_back_exit_2(self, monkeypatch):
-        """P0 #37 item 3 (policy reversal): readiness timeout + CI 404 → rollback + exit 2.
+    def test_readiness_timeout_plus_ci_404_keeps_the_swap(self, monkeypatch):
+        """POLICY REVERSAL (task:0045 D2): readiness timeout + CI 404 → exit 0.
 
-        Pre-#37 this asserted exit 0 (PR-2 warn-only). The 07-09 incident showed
-        that retaining the half-swapped state on a 404 is silent split-brain —
-        an unverified swap is now rolled back and the nightly goes red.
+        History: PR-2 asserted exit 0 (warn-only); P0 #37 reversed it to exit 2
+        (rollback); task:0045 narrows that reversal off check_invariants alone.
+        The readiness wait is only a WARN (the run proceeds past it either way),
+        and the check_invariants POST it precedes is now advisory — so neither
+        signal in this combination is a rollback trigger.  The gates that ARE
+        (core health at 180s, post-swap inode coherence) are unaffected: test 1
+        and test_vacuum_safestop.py cover them.
         """
         result, _ = self._run(
             monkeypatch,
             health_side_effects=[True, False],
             ci_status=404,
         )
-        assert result == 2, (
-            f"Readiness timeout + CI 404 must roll back the swap and exit 2; got {result}."
+        assert result == 0, (
+            f"Readiness timeout + CI 404 are both advisory — the swap is kept; got {result}."
         )
 
     # ------------------------------------------------------------------

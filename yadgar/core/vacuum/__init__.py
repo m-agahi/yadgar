@@ -27,8 +27,12 @@ Flow:
                Then ATOMIC SWAP (same-dir renames): surreal_db → .old-<ts>,
                .new-<ts> → surreal_db (rollback .old on rename-2 failure).
                Start the real backend on the swapped-in compacted DB.
-  6. Finalize: start yadgar, check_invariants, retire .old, prune snapshots.
-  7. Report: log before/after bytes, duration, insert consolidation_log row.
+  6. Finalize: start yadgar, verify core health + post-swap inode coherence
+               (both HARD gates → rollback), run check_invariants as an ADVISORY
+               signal, retire .old, prune snapshots.
+  7. Report: measure the canonical AFTER finalize, log before/after bytes,
+             duration, insert consolidation_log row.  A rolled-back run reports
+             saved_bytes=0 — never the pre-rollback figure (task:0045).
 
 _restore_db is now a THIN FALLBACK (only if the post-swap backend won't come up).
 
@@ -87,6 +91,13 @@ __all__ = [
 # when a partial restore (1484/3622) passed a "non-empty"/">=" check; the gate
 # below therefore requires EXACT per-table equality over the SURVIVING set only.
 _STRIPPED_TABLES = frozenset({"action_log"})
+
+# Core route this module POSTs during finalize.  Kept as a named constant so the
+# route-existence guard (yadgar/tests/core/test_vacuum_finalize_verification.py)
+# can assert it against the daemon's REAL registered route table.  This URL was
+# written here and served NOWHERE for months (task:0045) — it is now registered
+# in yadgar/core/server/routes/admin_ops.py.
+_CHECK_INVARIANTS_PATH = "/api/check_invariants"
 
 
 # ---------------------------------------------------------------------------
@@ -568,6 +579,50 @@ def _build_and_verify_side_db(
 
 
 @observe(tier="stage")
+def _restart_services_after_abort(svc: ServiceController, *, backend: bool = True) -> None:
+    """Bring BOTH units back after a vacuum abort — backend first, then core.
+
+    task:0027a.  Phase 2's ``svc.stop()`` stops ``yadgar`` AND ``yadgar-backend``
+    (``ops.ServiceController.SERVICES``), but every abort path between that stop
+    and finalize used to restart only the backend — and the quiescence-gate abort
+    restarted nothing at all.  ``systemctl --user stop`` is an EXPLICIT stop, so
+    ``Restart=on-failure``/``always`` will not bring core back: any of those paths
+    left the memory engine down until a human noticed.
+
+    Each start gets its OWN try/except deliberately.  Sharing one would mean a
+    raising ``start_backend()`` (masked unit, docker daemon gone, manual mode)
+    skips the core start — i.e. the exact failure this function exists to
+    prevent.  Both failures are logged and swallowed; the caller is already on an
+    error path and returns non-zero.
+
+    No health wait here: an abort must stay fast.  ``start_yadgar()`` is
+    idempotent under systemd/docker (starting a running unit is a no-op), so the
+    finalize path's own ``start_yadgar()`` is unaffected.
+
+    Args:
+        svc: the service controller.
+        backend: start the backend too.  False when the caller already did it
+            (``_restore_db`` starts the backend on the restored DB itself).
+    """
+    if backend:
+        try:
+            svc.start_backend()
+        except Exception as exc:
+            print(
+                f"[vacuum] WARNING: could not restart yadgar-backend after abort: {exc}",
+                file=sys.stderr,
+            )
+    try:
+        svc.start_yadgar()
+    except Exception as exc:
+        print(
+            f"[vacuum] CRITICAL: could not restart yadgar CORE after abort: {exc}\n"
+            "[vacuum] The memory engine is DOWN — run `systemctl --user start yadgar`.",
+            file=sys.stderr,
+        )
+
+
+@observe(tier="stage")
 def _restore_db(
     old_path: Path,
     db_path: Path,
@@ -600,6 +655,13 @@ def _restore_db(
             f"Manual recovery needed: rename {old_path} → {db_path}",
             file=sys.stderr,
         )
+    # task:0027a — core must be running whichever way the restore went.  One
+    # caller reaches here with core still stopped (the post-swap backend-health
+    # fallback, before finalize ever starts it); the other with core already up
+    # (the finalize rollback).  start_yadgar() is idempotent, so an unconditional
+    # call is correct for both and costs nothing.  Outside the try above on
+    # purpose: a failed rename must not also cost us the core restart.
+    _restart_services_after_abort(svc, backend=False)
 
 
 @observe(tier="stage")
@@ -633,12 +695,8 @@ def _side_build_swap_and_start(
         print(msg, file=sys.stderr)
         shutil.rmtree(str(building_path), ignore_errors=True)
         shutil.rmtree(str(side_path), ignore_errors=True)
-        try:
-            svc.start_backend()
-        except Exception as exc:
-            print(
-                f"[vacuum] WARNING: could not restart backend after abort: {exc}", file=sys.stderr
-            )
+        # Backend AND core — Phase 2 stopped both (task:0027a).
+        _restart_services_after_abort(svc)
 
     # 3a: build + EXACT-count verify under `.building-<ts>` (canonical untouched).
     if not _build_and_verify_side_db(backend_url, filtered_path, building_path, source_counts):
@@ -673,6 +731,11 @@ def _side_build_swap_and_start(
             "Canonical untouched; the running backend stays on the original DB.",
             file=sys.stderr,
         )
+        # task:0027a — this path used to restart NOTHING.  The gate can fire with
+        # the backend externally revived while CORE is still stopped from Phase 2,
+        # so both starts are needed (start_backend is a no-op when it is already
+        # up, which is exactly the case that trips this gate).
+        _restart_services_after_abort(svc)
         return None
 
     # 3b: atomic same-dir swap (canonical → .old, side → canonical).
@@ -828,14 +891,18 @@ def _rollback_swap_on_finalize_failure(
 ) -> None:
     """P0 #37 item 3: NEVER retain a half-swapped state — roll the swap back.
 
-    The 07-09 incident: check_invariants came back non-ok (HTTP 404) and the
-    ``.old`` was merely RETAINED while the running backend kept writing the
-    original inode (= ``.old``) for 16 h — path/inode split-brain. On ANY
-    finalize failure the swap is now ROLLED BACK so the path and the live
-    inode re-converge: the unverified compacted canonical is discarded (the
-    ``.pre-vacuum`` snapshot and the re-promoted original keep the data safe)
-    and ``.old`` is promoted back to canonical. Deliberately reverses the
-    v5.7.0 PR-2 warn-only policy: an UNVERIFIED vacuum is a discarded vacuum.
+    The 07-09 incident: the ``.old`` was merely RETAINED while the running
+    backend kept writing the original inode (= ``.old``) for 16 h — path/inode
+    split-brain.  On a HARD finalize-gate failure the swap is therefore ROLLED
+    BACK so the path and the live inode re-converge: the compacted canonical is
+    discarded (the ``.pre-vacuum`` snapshot and the re-promoted original keep the
+    data safe) and ``.old`` is promoted back to canonical.
+
+    Callers (task:0045 D2): core-health timeout and post-swap inode incoherence
+    ONLY.  A non-ok ``check_invariants`` no longer reaches here — that call was
+    404ing against a route that did not exist, and even served correctly it
+    answers a question about global data-model consistency rather than about
+    this swap.  See ``_vacuum_finalize`` for the full rationale.
     """
     print(
         f"[vacuum] CRITICAL: {reason}\n"
@@ -868,13 +935,18 @@ def _delete_export_scratch(raw_path: Path | None, filtered_path: Path | None) ->
 
 @observe(tier="stage")
 def _check_invariants_verified(yadgar_url: str) -> tuple[bool, str]:
-    """POST /api/check_invariants; return (verified, detail).
+    """POST the core check_invariants route; return (ok, detail).
 
-    ANY non-verification — non-2xx (e.g. 404 while core boots), 200 with
-    ok=false, or a connection error — counts as NOT verified.  The caller
-    ROLLS BACK the swap on not-verified (P0 #37 item 3); this deliberately
-    reverses the v5.7.0 PR-2 warn-only policy after the 07-09 incident showed
-    that retaining a half-swapped state on a mere 404 is silent split-brain.
+    ADVISORY ONLY, and only in the vacuum finalize path (task:0045 D2) — the
+    caller LOGS a non-ok result and proceeds; it no longer rolls the swap back.
+    ``check_invariants`` remains a HARD signal everywhere else: the nightly
+    consolidation tail still logs CRITICAL on violations
+    (``yadgar/core/consolidation/orchestrator.py``).
+
+    ANY non-ok outcome — non-2xx, 200 with ok=false, or a connection error —
+    returns False plus a detail string naming what came back, including the
+    ``violations`` list when the response carried one (the operator needs to
+    know WHICH invariant failed, not merely that one did).
     """
     _ci_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
     if not _ci_token:
@@ -886,16 +958,26 @@ def _check_invariants_verified(yadgar_url: str) -> tuple[bool, str]:
     _ci_headers = {"Authorization": f"Bearer {_ci_token}"} if _ci_token else {}
     try:
         ci_resp = httpx.post(
-            f"{yadgar_url}/api/check_invariants",
+            f"{yadgar_url}{_CHECK_INVARIANTS_PATH}",
             headers=_ci_headers,
             timeout=120.0,
         )
     except Exception as exc:
         return False, f"check_invariants request failed: {exc}"
-    if ci_resp.status_code == 200 and ci_resp.json().get("ok"):
+    if ci_resp.status_code != 200:
+        return False, (
+            f"check_invariants returned HTTP {ci_resp.status_code}: {ci_resp.text[:300]}"
+        )
+    try:
+        payload = ci_resp.json()
+    except Exception as exc:
+        return False, f"check_invariants returned unparseable body: {exc}"
+    if payload.get("ok"):
         return True, "ok"
-    body = ci_resp.text[:300] if ci_resp.status_code != 200 else str(ci_resp.json())
-    return False, f"check_invariants returned non-ok (HTTP {ci_resp.status_code}): {body}"
+    return False, (
+        f"check_invariants ok=false; violations={payload.get('violations')} "
+        f"timeouts={payload.get('timeouts')}"
+    )
 
 
 @observe(tier="stage")
@@ -910,21 +992,40 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     filtered_path: Path | None = None,
     db_path: Path | None = None,
 ) -> bool:
-    """Start yadgar, verify the swapped-in DB, retire the .old dir — or ROLL BACK.
+    """Start yadgar, gate the swapped-in DB, retire the .old dir — or ROLL BACK.
 
     ``old_path`` is the previous-canonical retained by the atomic swap
-    (``surreal_db.old-<ts>``).  It is removed only after check_invariants passes
-    on the swapped-in compacted DB.  P0 #37 item 3: on ANY failure to verify
-    (core health timeout, inode-coherence violation, check_invariants non-ok or
-    unreachable) the swap is ROLLED BACK — ``.old`` promoted back to canonical,
-    the unverified compacted DB discarded — instead of retaining a half-swapped
-    state (the 07-09 silent split-brain).  The vacuum then exits non-zero so the
-    nightly unit goes red (silence must be impossible).
+    (``surreal_db.old-<ts>``).
+
+    TWO HARD GATES roll the swap back (P0 #37, unchanged): core does not become
+    healthy on the swapped-in DB, or the post-swap inode-coherence check finds a
+    live surreal holding open fds outside the canonical path.  On either, ``.old``
+    is promoted back to canonical and the unverified compacted DB is discarded,
+    rather than retaining a half-swapped state (the 07-09 silent split-brain).
+    The vacuum then exits 2 so the nightly unit goes red.
+
+    ``check_invariants`` is ADVISORY here and ONLY here (task:0045 D2).  It ran
+    against a route that did not exist until this change, so it 404'd on every
+    run and rolled back every vacuum for a month — but making the call real is
+    not enough on its own: it legitimately returns ok=false on a healthy host
+    when the data model carries a pre-existing violation a vacuum neither causes
+    nor fixes, which would leave the gate permanently unsatisfiable.  The swap is
+    NOT unguarded without it: the EXACT per-table count comparison already ran
+    PRE-swap in ``_build_and_verify_side_db`` (a partial import can never be
+    swapped in), and inode coherence runs POST-swap above.  ``check_invariants``
+    was an additional — and never-functioning — third gate answering a different
+    question (global data-model self-consistency).  A non-ok result is logged
+    loudly, naming which invariants failed, and the run proceeds.
+
+    Scope note: this narrowing applies to the vacuum finalize path alone.
+    ``check_invariants`` stays a HARD signal elsewhere — the consolidation tail
+    (``yadgar/core/consolidation/orchestrator.py``) still logs CRITICAL on
+    violations, unchanged.
 
     ``raw_path`` / ``filtered_path``: the vacuum export scratch files written by
-    ``_vacuum_export`` (ADR-0076 D2).  Deleted on a successful check_invariants
-    pass (no diagnostic value once the vacuum is confirmed sound); kept on any
-    failure path so the operator has the full export for forensics.
+    ``_vacuum_export`` (ADR-0076 D2).  Deleted whenever the swap is RETAINED (no
+    diagnostic value once the compaction is kept); kept on the rollback paths so
+    the operator has the full export for forensics.
 
     ``db_path``: the canonical DB path (rollback target). Defaults to
     ``yadgar_home / "surreal_db"``.
@@ -934,8 +1035,8 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     outcome.  ``old_path`` (the current-run .old) is always exempted.
 
     Returns:
-        True if all checks pass and cleanup succeeded; False when the swap
-        was rolled back.
+        True when the swap was RETAINED (with or without an advisory
+        check_invariants failure); False when a hard gate rolled it back.
     """
     yadgar_url = f"http://127.0.0.1:{os.environ.get('YADGAR_PORT', '8765')}"
     if db_path is None:
@@ -958,9 +1059,10 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
         return False
 
     # Wait up to 30s for API layer readiness before check_invariants.
-    # The 180s wait above confirms /health=200 (process up), but API routes
-    # (/api/check_invariants) may not be registered yet — this short window
-    # closes that gap.
+    # The 180s wait above confirms /health=200 (process up); this short window
+    # gives the API layer a moment to settle before the advisory call.  The
+    # routes themselves ARE registered — they are import-time side effects in
+    # yadgar/core/server/__init__.py, so /health and /api/* come up together.
     print(f"[vacuum] waiting up to 30s for {yadgar_url}/health (API readiness) ...", flush=True)
     if not _wait_for_yadgar_health(yadgar_url, timeout_s=30.0):
         print(
@@ -984,31 +1086,43 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
         _reap_stale_old_dirs(yadgar_home, old_path)
         return False
 
-    verified, detail = _check_invariants_verified(yadgar_url)
-    if verified:
+    # ADVISORY gate (task:0045 D2) — logged, never a rollback trigger.  See the
+    # docstring for why the swap is still guarded without it.
+    ci_ok, detail = _check_invariants_verified(yadgar_url)
+    if ci_ok:
         print("[vacuum] check_invariants: ok", flush=True)
-        # Safe to retire the previous-canonical (.old) dir.
-        print(f"[vacuum] removing previous DB dir: {old_path}", flush=True)
-        shutil.rmtree(str(old_path), ignore_errors=True)
-        # D2: delete export scratch files — no diagnostic value once CI passes.
-        _delete_export_scratch(raw_path, filtered_path)
     else:
-        _rollback_swap_on_finalize_failure(
-            f"{detail} — an UNVERIFIED swap is never retained",
-            old_path,
-            db_path,
-            svc,
-            backend_url,
+        print(
+            f"[vacuum] ADVISORY: check_invariants did not pass on the swapped-in DB: "
+            f"{detail}\n[vacuum] The swap is KEPT anyway — check_invariants is advisory "
+            "in the vacuum finalize path: the EXACT per-table count verification ran "
+            "pre-swap and post-swap inode coherence passed above, so the compaction "
+            "itself is verified.  A standing data-model violation is a separate "
+            "problem that a vacuum neither causes nor fixes — investigate it, but do "
+            "not expect a vacuum to clear it.",
+            file=sys.stderr,
         )
 
+    # The swap is RETAINED — both hard gates passed.  Retire the previous
+    # canonical (this is the reclaim: .old holds the entire pre-vacuum DB) and
+    # drop the export scratch.  The .pre-vacuum snapshot remains the last-resort
+    # recovery anchor (pruned by keep_n below).
+    print(f"[vacuum] removing previous DB dir: {old_path}", flush=True)
+    shutil.rmtree(str(old_path), ignore_errors=True)
+    _delete_export_scratch(raw_path, filtered_path)
+
     # D1: Age-backstop — reap stale .old dirs older than VACUUM_OLD_MAX_AGE_DAYS.
-    # Runs unconditionally (verified OR rolled back).  current_old exempted.
+    # Runs unconditionally (retained OR rolled back).  current_old exempted.
     _reap_stale_old_dirs(yadgar_home, old_path)
 
     # Prune pre-vacuum snapshots
     _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", keep_n)
 
-    return verified
+    # The swap was RETAINED — the return tracks retention, NOT check_invariants.
+    # Returning ci_ok here would re-arm the exact bug this change removes: a
+    # sound, retained compaction reported as a failure (exit 2, saved_bytes=0)
+    # because of an unrelated standing data-model violation.
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1063,25 +1177,59 @@ def _has_free_space(yadgar_home: Path, before_bytes: int) -> bool:
     return True
 
 
-def _vacuum_report_and_log(
+@observe(tier="stage")
+def _vacuum_report_and_log(  # noqa: PLR0913 — one row of report fields, no cohesive sub-struct
     backend_url: str,
     started_ts: str,
     started_at: float,
     before_bytes: int,
     after_bytes: int,
-    saved_bytes: int,
-    saved_pct: int,
+    rolled_back: bool,
+    exit_code: int,
 ) -> None:
-    """Print the completion report and insert a consolidation_log row (best-effort)."""
+    """Print the completion report and insert a consolidation_log row (best-effort).
+
+    ``rolled_back`` is load-bearing, not decoration (task:0045).  This function
+    used to print "complete … Saved: N MB" unconditionally, from an
+    ``after_bytes`` measured BEFORE finalize — so a run that swapped in a
+    compacted DB and then rolled the whole thing back one minute later still
+    reported a ~2 GB saving, and wrote that number into ``consolidation_log``.
+    Seven consecutive rolled-back nightlies read as successes.  A rolled-back run
+    reclaimed nothing and must say so.
+
+    The saving is DERIVED here rather than passed in, so no caller can report a
+    positive saving for a rolled-back run: on rollback it is hard-zeroed, not
+    recomputed.  Re-measuring alone is not sufficient — the restored original is
+    reopened and written to, so ``before - after`` is a small non-zero number on
+    that path.
+
+    Telemetry note: every ``consolidation_log`` vacuum row written before this
+    change carries the fabricated pre-rollback figures.  Any baseline must be cut
+    from post-fix rows only.
+    """
+    if rolled_back:
+        saved_bytes = 0
+        saved_pct = 0
+    else:
+        saved_bytes = before_bytes - after_bytes
+        saved_pct = int(100 * saved_bytes / before_bytes) if before_bytes else 0
     duration_s = round(time.monotonic() - started_at, 1)
+    headline = "ROLLED BACK — nothing reclaimed." if rolled_back else "complete."
     print(
-        f"\n[vacuum] complete.\n"
+        f"\n[vacuum] {headline}\n"
         f"  Before:   {before_bytes / 1024 / 1024:.1f} MB\n"
         f"  After:    {after_bytes / 1024 / 1024:.1f} MB\n"
         f"  Saved:    {saved_bytes / 1024 / 1024:.1f} MB ({saved_pct}%)\n"
         f"  Duration: {duration_s} s",
         flush=True,
     )
+    if rolled_back:
+        print(
+            f"[vacuum] CRITICAL: the swap was rolled back — {before_bytes / 1024 / 1024:.1f} MB "
+            "was NOT reclaimed and the canonical is the original (pre-vacuum) DB. "
+            f"exit={exit_code}.",
+            file=sys.stderr,
+        )
     _log_consolidation_row(
         {
             "_backend_url": backend_url,
@@ -1093,6 +1241,8 @@ def _vacuum_report_and_log(
             "after_bytes": after_bytes,
             "saved_bytes": saved_bytes,
             "saved_pct": saved_pct,
+            "rolled_back": rolled_back,
+            "exit_code": exit_code,
         }
     )
 
@@ -1237,11 +1387,10 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         snapshot_path = _vacuum_snapshot_and_drop(db_path, yadgar_home, svc, before_bytes)
     except Exception as exc:
         print(f"[vacuum] ERROR in snapshot/drop phase: {exc}", file=sys.stderr)
-        # Best-effort: bring the real backend back on the untouched canonical.
-        try:
-            svc.start_backend()
-        except Exception:
-            pass
+        # Best-effort: bring BOTH units back on the untouched canonical.
+        # svc.stop() may already have run inside _vacuum_snapshot_and_drop, so
+        # core can be down here too (task:0027a).
+        _restart_services_after_abort(svc)
         return 1
 
     # -- Phase 3: side-build → verify → atomic swap → start on compacted DB. --
@@ -1255,10 +1404,6 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         return 1
 
     # -- Finalize --
-    after_bytes = _dir_bytes(db_path)
-    saved_bytes = before_bytes - after_bytes
-    saved_pct = int(100 * saved_bytes / before_bytes) if before_bytes else 0
-
     finalize_ok = _vacuum_finalize(
         backend_url,
         yadgar_home,
@@ -1272,9 +1417,23 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     )
 
     # -- Report + consolidation_log (best-effort) --
+    # Measure AFTER finalize (task:0045).  The old call site measured before it,
+    # so a rolled-back run reported the compacted size it had already discarded.
+    # The saving itself is derived inside _vacuum_report_and_log, which
+    # hard-zeroes it on the rollback path.
+    rolled_back = not finalize_ok
+    after_bytes = _dir_bytes(db_path)
+
+    # 2 = swap ROLLED BACK (a hard finalize gate failed) — data safe on the
+    # original DB, compaction discarded; the nightly unit goes red (#37).
+    exit_code = 2 if rolled_back else 0
     _vacuum_report_and_log(
-        backend_url, started_ts, started_at, before_bytes, after_bytes, saved_bytes, saved_pct
+        backend_url,
+        started_ts,
+        started_at,
+        before_bytes,
+        after_bytes,
+        rolled_back,
+        exit_code,
     )
-    # 2 = swap ROLLED BACK (could not verify) — data safe on the original DB,
-    # compaction discarded; the nightly unit goes red instead of silent (#37).
-    return 0 if finalize_ok else 2
+    return exit_code

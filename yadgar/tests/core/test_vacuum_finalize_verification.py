@@ -168,9 +168,12 @@ def _run_vacuum(monkeypatch, *, post=None, extra_patches=None) -> _VacuumRun:
 # 1. Route-existence guard — the class of bug no mock can catch
 # ---------------------------------------------------------------------------
 
-# Path fragments the vacuum POSTs at the CORE (not the backend).  Kept as a
-# module-level regex so the scan cannot silently stop matching.
-_CORE_URL_RE = re.compile(r'f"\{yadgar_url\}(?P<path>/[^"]*)"')
+# Any core API path mentioned anywhere in yadgar/core/vacuum — inline f-string,
+# module constant, or docstring.  Deliberately broader than "the exact call
+# site": the bug being pinned is "a path string exists in this package and is
+# served nowhere", and narrowing the pattern to one call shape is how the guard
+# would silently stop matching after a refactor.
+_CORE_API_RE = re.compile(r"/api/[a-z0-9_][a-z0-9_/{}-]*")
 
 
 def _registered_routes() -> set[tuple[str, str]]:
@@ -201,26 +204,25 @@ class TestRouteExistenceGuard:
             "vacuum finalize verification would 404 in production (task:0045)"
         )
 
-    def test_every_core_url_posted_by_vacuum_is_registered(self) -> None:
-        """Drift catcher: scan vacuum/ for f'{yadgar_url}/…' paths, check each."""
+    def test_every_core_api_path_named_by_vacuum_is_registered(self) -> None:
+        """Drift catcher: every /api/… path named anywhere in vacuum/ must be served."""
         from yadgar.core import vacuum as _vac
 
         vacuum_dir = Path(_vac.__file__).parent
         found: dict[str, str] = {}
         for src_file in sorted(vacuum_dir.glob("*.py")):
-            for match in _CORE_URL_RE.finditer(src_file.read_text()):
-                found[match.group("path")] = src_file.name
+            for match in _CORE_API_RE.finditer(src_file.read_text()):
+                found[match.group(0)] = src_file.name
 
         assert found, (
-            "the core-URL scan matched nothing — the regex has drifted away from "
-            f"the source in {vacuum_dir}; this guard would pass vacuously"
+            "the core-API-path scan matched nothing — the regex has drifted away "
+            f"from the source in {vacuum_dir}; this guard would pass vacuously"
         )
 
         registered_paths = {path for path, _ in _registered_routes()}
-        # /health is a custom_route too; anything else must be registered.
         missing = {p: f for p, f in found.items() if p not in registered_paths}
         assert not missing, (
-            f"vacuum POSTs/GETs core paths that are served nowhere: {missing}. "
+            f"vacuum names core API paths that are served nowhere: {missing}. "
             "A URL written in one module and registered in none is the task:0045 bug."
         )
 
