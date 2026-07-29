@@ -524,3 +524,163 @@ class TestSecretGateAdversarialStillRejected:
         header = "-----BEGIN RSA " + "PRIVATE KEY-----"  # gitleaks:allow
         res, _out = _render_and_gate(_arch_with_hotspot(header))
         assert res is not None and "Private key" in res["reason"], res
+
+
+# --- Budget reservation for the staleness marker ---------------------------
+#
+# The `stale @ <sha>` marker used to be the LAST section in the priority order,
+# so a naive tail-cut to DIGEST_CHAR_BUDGET threw it away on any realistic repo.
+# Measured before the fix, with the fixture below (a single Java service with
+# package-qualified names): untruncated 3268 chars, emitted 2000 — `endpoints:`
+# AND `stale @` both entirely absent. The marker is now rendered in a
+# budget-RESERVED preamble (line 2, right after the header) so its survival is
+# structural rather than positional. See BC-CODEGRAPH-8.
+
+
+def _budget_filling_arch() -> dict:
+    """A realistic single-Java-service arch whose untruncated render >> budget.
+
+    Package-qualified layer/hotspot names (``com.acme.…``) are what real Java /
+    Go / Python repos emit; each rendered row clears ~88 chars, which is the
+    measured per-row overflow threshold at ``DIGEST_CHAR_BUDGET = 2000``.
+    """
+    return {
+        "project": "globalrouter",
+        "languages": [{"language": "Java", "file_count": 214}],
+        "layers": [
+            {
+                "name": f"com.acme.globalrouter.component.Component{i:02d}",
+                "layer": ("api" if i % 3 == 0 else "service" if i % 3 == 1 else "core"),
+                "reason": "orchestrates domain logic across bounded contexts",
+            }
+            for i in range(20)
+        ]
+        + [
+            {
+                "name": "com.acme.globalrouter.GlobalRouterApplication",
+                "layer": "entry",
+                "reason": "application entry point",
+            }
+        ],
+        "hotspots": [
+            {
+                "qualified_name": f"com.acme.globalrouter.service.Service{i:02d}.handleRequest",
+                "fan_in": 200 - i,
+            }
+            for i in range(20)
+        ],
+    }
+
+
+def _budget_filling_endpoints() -> list:
+    return [
+        {
+            "m.route_method": ("GET" if i % 2 == 0 else "POST"),
+            "m.route_path": f"/api/v1/globalrouter/resource{i:02d}/{{resourceId}}/details",
+            "m.name": f"handler{i:02d}",
+        }
+        for i in range(40)
+    ]
+
+
+def _stale_identity() -> dict:
+    return {
+        "canonical_root": "/repo",
+        "subdir": "",
+        "stale": True,
+        "head_sha": "0123456789abcdef0123456789abcdef01234567",
+    }
+
+
+class TestStaleSurvivesBudget:
+    """AC-1/AC-2: the freshness marker reaches the reader on a digest that
+    actually fills the budget — the case every prior stale test dodged by using
+    a fixture small enough never to truncate.
+    """
+
+    def test_marker_survives_budget_filling_digest(self):
+        from yadgar.core.code_graph import config, digest
+
+        out = digest.render_digest(
+            _budget_filling_arch(), _budget_filling_endpoints(), _stale_identity()
+        )
+
+        # LOAD-BEARING: _truncate returns the text UNCHANGED when it fits, so the
+        # ellipsis appears iff truncation actually happened. Without this the test
+        # would pass on a digest that never truncated — the exact false-green the
+        # original TestStale gave. Do not relax this assertion.
+        assert "…" in out, "fixture must actually overflow the budget"
+        assert "stale @ " in out
+        assert out.splitlines()[1].startswith("stale @ "), out.splitlines()[:3]
+        assert len(out) <= config.DIGEST_CHAR_BUDGET
+
+    def test_marker_survives_tiny_budget(self):
+        """AC-2: the guarantee is computed, not 'the constant happens to be roomy'."""
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(
+            _budget_filling_arch(),
+            _budget_filling_endpoints(),
+            _stale_identity(),
+            budget=200,
+        )
+
+        assert "…" in out
+        assert "stale @ " in out
+        assert out.splitlines()[1].startswith("stale @ ")
+        assert len(out) <= 200
+
+    def test_fresh_digest_has_no_marker_and_no_blank_line(self):
+        """AC-3: an absent marker must not leave an empty preamble line behind."""
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(
+            _budget_filling_arch(),
+            _budget_filling_endpoints(),
+            {"canonical_root": "/repo", "subdir": ""},
+        )
+
+        assert "stale @" not in out
+        assert out.splitlines()[1].startswith("layers:"), out.splitlines()[:3]
+
+    def test_budget_invariant_across_fresh_stale_and_sizes(self):
+        """AC-4: len(out) <= budget across fresh/stale x under/over budget x tiny."""
+        from yadgar.core.code_graph import config, digest
+
+        fresh = {"canonical_root": "/repo", "subdir": ""}
+        small_arch = _java_arch()
+        big_arch = _budget_filling_arch()
+
+        for identity in (fresh, _stale_identity()):
+            for arch, rows in (
+                (small_arch, _endpoint_rows()),
+                (big_arch, _budget_filling_endpoints()),
+            ):
+                default_out = digest.render_digest(arch, rows, identity)
+                assert len(default_out) <= config.DIGEST_CHAR_BUDGET
+                for budget in (60, 200, 1000):
+                    out = digest.render_digest(arch, rows, identity, budget=budget)
+                    assert len(out) <= budget, (budget, len(out))
+
+    def test_payload_chars_bounded_when_stale_and_truncated(self):
+        """AC-4: build_block_payload's chars mirror the bounded content."""
+        from yadgar.core.code_graph import config, digest
+
+        payload = digest.build_block_payload(
+            _budget_filling_arch(), _budget_filling_endpoints(), _stale_identity()
+        )
+        assert payload["chars"] == len(payload["content"])
+        assert payload["chars"] <= config.DIGEST_CHAR_BUDGET
+        assert "stale @ " in payload["content"]
+
+    def test_defang_still_covers_body_when_stale_preamble_present(self):
+        """AC-5: splitting preamble/body must NOT narrow the #30 defang guard."""
+        from yadgar._shared.security.secrets import gate_or_reject
+        from yadgar.core.code_graph import digest
+
+        arch = _arch_with_keyword("A" * 40)
+        out = digest.render_digest(arch, [], _stale_identity())
+
+        assert "stale @ " in out
+        assert "A" * 40 not in out, "body runs must still be defanged"
+        assert gate_or_reject(out) is None
