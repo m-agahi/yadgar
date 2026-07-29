@@ -440,3 +440,323 @@ def test_real_e2e_dir_passes_layer3() -> None:
     """All current e2e tests have at least one real assertion."""
     violations = cea.lint_dir()
     assert not violations, f"Real e2e tests must all have assertions: {violations}"
+
+
+# ---------------------------------------------------------------------------
+# Scan-scope widening (gate-blindness class, 2026-07-29)
+#
+# The layer-3 lint pinned its scan root to yadgar/tests/e2e/ while six *e2e*
+# modules live outside it — scan-scope < artifact-scope, so those modules were
+# never assertion-linted.  Layer 4 carried the SAME pin independently in its own
+# regex.  These tests hold both scopes open and mechanically lock them together.
+# ---------------------------------------------------------------------------
+
+
+class TestScanScope:
+    """The layer-3 scan set covers every *e2e* module, not just tests/e2e/."""
+
+    def test_scan_paths_includes_out_of_root_e2e_modules(self) -> None:
+        """*e2e* modules outside yadgar/tests/e2e/ are in the scan set."""
+        scanned = {p.relative_to(_REPO_ROOT).as_posix() for p in cea.scan_paths()}
+        # Discovered independently of the script, so the test cannot inherit
+        # the script's own scoping bug.
+        expected = {
+            p.relative_to(_REPO_ROOT).as_posix()
+            for p in (_REPO_ROOT / "yadgar" / "tests").rglob("*e2e*.py")
+        }
+        assert expected, "fixture guard: repo must contain *e2e* test modules"
+        missing = expected - scanned
+        assert not missing, f"e2e-shaped modules outside the scan set: {sorted(missing)}"
+
+    def test_scan_paths_still_includes_the_e2e_dir(self) -> None:
+        """Widening must not drop the original yadgar/tests/e2e/ scan root."""
+        scanned = set(cea.scan_paths())
+        e2e_dir_files = set((_REPO_ROOT / "yadgar" / "tests" / "e2e").rglob("*.py"))
+        assert e2e_dir_files, "fixture guard: yadgar/tests/e2e/ must contain modules"
+        assert e2e_dir_files <= scanned, "widening dropped files from the original scan root"
+
+    def test_scan_paths_excludes_non_e2e_tests(self) -> None:
+        """A plain unit-test module is NOT pulled into the e2e assertion lint."""
+        scanned = {p.relative_to(_REPO_ROOT).as_posix() for p in cea.scan_paths()}
+        assert "yadgar/tests/core/test_tamper_guards.py" not in scanned
+
+    def test_real_scan_scope_passes_layer3(self) -> None:
+        """Every e2e-shaped module in the repo has assertions (CI enforcement hook).
+
+        This is what gives the layer-3 lint CI presence: tests/core/ runs in CI,
+        so a violation anywhere in the widened scan set fails a PR even though
+        the pre-commit hook is not what caught it.
+        """
+        violations = cea.lint_scope()
+        assert not violations, f"Widened e2e scan set must be clean: {violations}"
+
+
+class TestLayer3Layer4ScopeLockstep:
+    """Layer 4's internal path regex must track layer 3's scan set exactly.
+
+    The two scopes are declared independently (one is a path glob, the other a
+    regex over `diff --git` lines).  Drift between them re-creates the original
+    defect silently, so assert the agreement mechanically rather than by comment.
+    """
+
+    def test_every_scanned_path_matches_layer4_regex(self) -> None:
+        unmatched = [
+            p.relative_to(_REPO_ROOT).as_posix()
+            for p in cea.scan_paths()
+            if not ctw._E2E_PATH_RE.search(p.relative_to(_REPO_ROOT).as_posix())
+        ]
+        assert not unmatched, f"layer 4 regex does not cover layer 3 scan paths: {unmatched}"
+
+    def test_layer4_ignores_non_e2e_test_modules(self) -> None:
+        assert not ctw._E2E_PATH_RE.search("yadgar/tests/core/test_tamper_guards.py")
+
+    def test_layer4_fires_on_out_of_root_e2e_module(self) -> None:
+        """An assert removal in an out-of-root *e2e* module is now caught."""
+        diff = (
+            "diff --git a/yadgar/tests/core/test_backend_traceparent_e2e.py"
+            " b/yadgar/tests/core/test_backend_traceparent_e2e.py\n"
+            "-    assert resp.status_code == 200\n"
+            "+    pass\n"
+        )
+        errors = ctw.check_diff(diff, head_green=5, staged_green=5)
+        assert errors, "layer 4 must fire on assert removal outside yadgar/tests/e2e/"
+        assert any("assert" in e for e in errors), errors
+
+
+# ---------------------------------------------------------------------------
+# LAYER 4 — branch-diff mode (gate-blindness class, 2026-07-29)
+#
+# The guard sourced its entire input from `git diff --cached`.  A CI checkout
+# has an empty index, so `diff_text` was always "" there: the hook executed,
+# printed "test-weakening guard OK." and exited 0 regardless of what the PR
+# contained.  Correct trigger, correct scope, assertion structurally incapable
+# of firing where it matters.  Fixed by porting check_backend_bump's ADR-0080
+# merge-base contract: one pure check_diff() fed from the same inputs in both
+# modes, so local and CI return the same verdict for the same repo state.
+# ---------------------------------------------------------------------------
+
+
+class _FakeGit:
+    """Scriptable `git` stand-in: maps an argv tuple to canned stdout."""
+
+    def __init__(self, responses: dict[tuple[str, ...], str]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, args: list[str]) -> str:
+        key = tuple(args)
+        self.calls.append(key)
+        return self.responses.get(key, "")
+
+
+_BRANCH_DIFF_WEAKENED = (
+    "diff --git a/yadgar/tests/core/test_consolidation_embedded_e2e.py"
+    " b/yadgar/tests/core/test_consolidation_embedded_e2e.py\n"
+    "-    assert stored == 3\n"
+    "+    pass\n"
+)
+
+_CONTRACT_PATH = "docs/contracts/BEHAVIOR_CONTRACT.md"
+
+
+def _responses(
+    *,
+    merge_base: str = "abc123",
+    branch_diff: str = "",
+    staged_diff: str = "",
+    base_green: str = "**5 ✅",
+    head_green: str = "**5 ✅",
+    index_green: str | None = None,
+) -> dict[tuple[str, ...], str]:
+    out = {
+        ("merge-base", "origin/master", "HEAD"): merge_base,
+        ("diff", merge_base, "HEAD"): branch_diff,
+        ("diff", "--cached"): staged_diff,
+        ("show", f"{merge_base}:{_CONTRACT_PATH}"): base_green,
+        ("show", f"HEAD:{_CONTRACT_PATH}"): head_green,
+        ("show", f":{_CONTRACT_PATH}"): index_green if index_green is not None else "",
+    }
+    return out
+
+
+class TestLayer4BranchDiffMode:
+    """Layer 4 must see committed-but-not-staged weakening — the CI condition."""
+
+    def test_committed_weakening_is_caught_in_branch_mode(self) -> None:
+        """THE fix: an assert removal committed on the branch, nothing staged."""
+        git = _FakeGit(_responses(branch_diff=_BRANCH_DIFF_WEAKENED, staged_diff=""))
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert errors, "branch-diff mode must catch a committed assert removal"
+        assert any("assert" in e for e in errors), errors
+
+    def test_same_state_is_invisible_to_staged_only_mode(self) -> None:
+        """The contrast that proves the old guard was inert: nothing staged → nothing seen."""
+        staged_only_diff = ""  # exactly what `git diff --cached` returns in CI
+        errors = ctw.check_diff(staged_only_diff, 5, 5)
+        assert not errors, "staged-only mode is blind to committed weakening (the defect)"
+
+    def test_staged_changes_still_counted(self) -> None:
+        """Pre-commit still sees the about-to-exist commit, not just branch history."""
+        git = _FakeGit(_responses(branch_diff="", staged_diff=_BRANCH_DIFF_WEAKENED))
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert errors, "staged weakening must still fire (no regression on the old path)"
+
+    def test_branch_and_staged_diffs_are_unioned(self) -> None:
+        git = _FakeGit(_responses(branch_diff="BRANCH_MARKER\n", staged_diff="STAGED_MARKER\n"))
+        diff_text, _, _ = ctw.collect_inputs("origin/master", git)
+        assert "BRANCH_MARKER" in diff_text
+        assert "STAGED_MARKER" in diff_text
+
+    def test_green_count_baseline_is_merge_base_not_head(self) -> None:
+        """✅ regression across the whole branch is caught, not just this commit."""
+        git = _FakeGit(
+            _responses(base_green="**9 ✅", head_green="**7 ✅"),
+        )
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert base_green == 9
+        assert after_green == 7
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert any("✅" in e for e in errors), errors
+
+    def test_index_green_wins_over_head_when_staged(self) -> None:
+        """When the contract is staged, the index copy is the about-to-exist state."""
+        git = _FakeGit(_responses(base_green="**9 ✅", head_green="**9 ✅", index_green="**6 ✅"))
+        _, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert (base_green, after_green) == (9, 6)
+
+    def test_unreachable_base_falls_back_to_staged_only(self) -> None:
+        """No origin/master (fresh clone, no remote) → degrade, never raise."""
+        git = _FakeGit(
+            {
+                ("merge-base", "origin/master", "HEAD"): "",  # unreachable
+                ("diff", "--cached"): _BRANCH_DIFF_WEAKENED,
+                ("show", f"HEAD:{_CONTRACT_PATH}"): "**5 ✅",
+                ("show", f":{_CONTRACT_PATH}"): "**5 ✅",
+            }
+        )
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert "assert stored == 3" in diff_text, "fallback must still read the staged diff"
+        assert (base_green, after_green) == (5, 5)
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert errors, "fallback still catches staged weakening"
+
+    def test_unreachable_base_does_not_diff_against_a_literal_ref(self) -> None:
+        """Fallback must not ask git to diff against the empty string / a bogus ref."""
+        git = _FakeGit({("merge-base", "origin/master", "HEAD"): ""})
+        ctw.collect_inputs("origin/master", git)
+        assert ("diff", "", "HEAD") not in git.calls, git.calls
+
+    def test_missing_contract_at_base_skips_green_check(self) -> None:
+        """Contract absent at the merge-base (new file) → green check is skipped, not crashed."""
+        git = _FakeGit(_responses(base_green="", head_green="**5 ✅"))
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert base_green is None
+        assert not ctw.check_diff(diff_text, base_green, after_green)
+
+    def test_allow_env_still_bypasses(self, monkeypatch) -> None:
+        monkeypatch.setenv("ALLOW_TEST_WEAKEN", "1")
+        assert ctw.main() == 0, "documented one-time override must keep working"
+
+    def test_ci_mode_uses_branch_diff(self, monkeypatch) -> None:
+        """`--ci --base <ref>` runs the same collector — same inputs, same verdict."""
+        git = _FakeGit(_responses(branch_diff=_BRANCH_DIFF_WEAKENED))
+        monkeypatch.setattr(ctw, "_git", git)
+        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
+        assert ctw.main(["--ci", "--base", "origin/master"]) == 1
+
+    def test_ci_mode_requires_base(self) -> None:
+        assert ctw.main(["--ci"]) == 1, "--ci without --base must error, not silently pass"
+
+
+class TestLayer4PerFileDelta:
+    """Assert removals are netted PER FILE, not summed across the whole diff.
+
+    Discovered empirically while executing the branch-diff mutation test: with a
+    single global sum, removing an assert from one e2e module was masked by five
+    asserts ADDED to a different e2e module earlier on the same branch, and the
+    guard stayed green.  Global-net was tolerable while the window was one staged
+    commit (commits are narrow, so offsetting was rare); over a whole branch it
+    collapses the guard's sensitivity to "the branch's total e2e assert count went
+    down" — far weaker than the per-commit behaviour it replaced.  A removal in
+    test A is not compensated by an addition in test B: different tests.
+    """
+
+    _MULTI_FILE_OFFSETTING = (
+        "diff --git a/yadgar/tests/core/test_code_graph_e2e.py"
+        " b/yadgar/tests/core/test_code_graph_e2e.py\n"
+        + "+    assert ok\n"
+        * 5
+        + "diff --git a/yadgar/tests/core/test_consolidation_embedded_e2e.py"
+        " b/yadgar/tests/core/test_consolidation_embedded_e2e.py\n"
+        '-    assert rows, f"memory:{mid} not found"\n'
+        "+    pass\n"
+    )
+
+    def test_removal_is_not_masked_by_additions_in_another_file(self) -> None:
+        """THE regression shape: -1 in file B, +5 in file A → must still fire."""
+        errors = ctw.check_diff(self._MULTI_FILE_OFFSETTING, 5, 5)
+        assert errors, "a removal in one e2e module must not be offset by another module"
+
+    def test_violation_names_the_offending_file(self) -> None:
+        """Per-file semantics make the file the unit of violation — report it."""
+        errors = ctw.check_diff(self._MULTI_FILE_OFFSETTING, 5, 5)
+        joined = " ".join(errors)
+        assert "test_consolidation_embedded_e2e.py" in joined, errors
+        assert "test_code_graph_e2e.py" not in joined, (
+            "the file that ADDED asserts must not be blamed",
+            errors,
+        )
+
+    def test_net_positive_within_one_file_still_passes(self) -> None:
+        """Tightening the scope must not degrade into 'any removed assert line, ever'."""
+        diff = (
+            "diff --git a/yadgar/tests/e2e/test_fake.py b/yadgar/tests/e2e/test_fake.py\n"
+            "-    assert x == 1\n"
+            "+    assert x == 1\n"
+            "+    assert y > 0\n"
+        )
+        assert not ctw.check_diff(diff, 5, 5), "a refactor that nets +1 in one file is fine"
+
+    def test_multiple_offending_files_all_reported(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/e2e/test_a.py b/yadgar/tests/e2e/test_a.py\n"
+            "-    assert a\n"
+            "diff --git a/yadgar/tests/e2e/test_b.py b/yadgar/tests/e2e/test_b.py\n"
+            "-    assert b\n"
+        )
+        joined = " ".join(ctw.check_diff(diff, 5, 5))
+        assert "test_a.py" in joined and "test_b.py" in joined
+
+
+class TestLayer4CiModeRequiresRealBase:
+    """In --ci mode an unresolvable merge-base is a HARD ERROR, not a fail-open.
+
+    The fail-open is correct for pre-commit (a fresh clone with no remote is a
+    legitimate state). In CI it is the defect class this whole plan exists to
+    remove: if `git merge-base origin/master HEAD` cannot resolve — shallow
+    checkout, unfetched ref, dubious-ownership refusal — the branch diff collapses
+    to empty and the step prints "OK" exit 0, indistinguishable from a genuine
+    pass. Nothing in the CI log would reveal that the guard never engaged.
+
+    Passing --ci --base <ref> IS the caller asserting that base ref exists.
+    """
+
+    def test_ci_mode_hard_fails_when_base_unresolvable(self, monkeypatch) -> None:
+        monkeypatch.setattr(ctw, "_git", _FakeGit({}))  # merge-base returns ""
+        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
+        assert ctw.main(["--ci", "--base", "origin/master"]) == 1
+
+    def test_precommit_mode_still_fails_open_when_base_unresolvable(self, monkeypatch) -> None:
+        """Fresh clone / no remote must NOT block a local commit."""
+        monkeypatch.setattr(ctw, "_git", _FakeGit({}))
+        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
+        assert ctw.main([]) == 0
+
+    def test_resolve_merge_base_returns_empty_when_git_fails(self) -> None:
+        assert ctw.resolve_merge_base("origin/master", _FakeGit({})) == ""
+
+    def test_resolve_merge_base_returns_the_sha(self) -> None:
+        git = _FakeGit({("merge-base", "origin/master", "HEAD"): "abc123\n"})
+        assert ctw.resolve_merge_base("origin/master", git) == "abc123"
