@@ -1,215 +1,147 @@
-# AI
+# .gitignore — grouped by origin, not by upstream-template order.
+# Sections: project-local · tooling · Python · Node · Nix · generated artifacts.
+# Keep new entries in the section they belong to; do not append at the bottom.
+# NOTE: git only treats `#` as a comment at the START of a line — never put a
+# trailing comment after a pattern, it becomes part of the pattern.
+
+# ─────────────────────────── Project-local (never committed) ───────────────────────────
+# PLAN.md: local planning scratch. MIGRATION_NOTES.md: hand-off channel for
+# commands the user must run (CLAUDE.md rule). .mailmap: local identity-collapse
+# map from the attribution work (ADR-0169/0170).
+PLAN.md
+MIGRATION_NOTES.md
+.mailmap
+testfails.txt
+.local-review/
+
+# ─────────────────────────── Editor / AI tooling state ───────────────────────────
+# .omc/ = oh-my-claudecode local state.
 .claude/
 .omc/
+.idea/
+.spyderproject
+.spyproject
+.ropeproject
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
 
-# DuckDB analytics snapshots (output of yadgar export duckdb — not committed)
-*.duckdb
-
-# ---> Python
-# Byte-compiled / optimized / DLL files
+# ─────────────────────────── Python — bytecode & C extensions ───────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
+cython_debug/
+*.sage.py
 
-# Distribution / packaging
+# ─────────────────────────── Python — build & packaging artifacts ───────────────────────────
+# Root-scoped on purpose: an unanchored `lib/` also swallowed
+# yadgar/core/static/lib (vendored viz JS + fonts) and needed four `!`
+# negations to claw it back. /target/ is PyBuilder; *.manifest and *.spec are
+# PyInstaller; __pypackages__/ is PEP 582.
 .Python
-build/
+/build/
+/dist/
+/downloads/
+/eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
+/target/
 develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-# Vendored JS libs (v5.24.0) must not be excluded by the `lib/` rule above
-!yadgar/static/lib/
-!yadgar/static/lib/**
-# Post-Reorg path (viz-trace-replay train): vendored viz libs + fonts live under
-# yadgar/core/static/lib/ — same intent, the `lib/` rule above must not hide them.
-!yadgar/core/static/lib/
-!yadgar/core/static/lib/**
-parts/
-sdist/
-var/
-wheels/
 share/python-wheels/
+.eggs/
+*.egg
 *.egg-info/
 .installed.cfg
-*.egg
 MANIFEST
-
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
-
-# Installer logs
+__pypackages__/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Unit test / coverage reports
-htmlcov/
+# ─────────────────────────── Python — environments ───────────────────────────
+.env
+.envrc.local
+.direnv/
+.venv
+.venv-test/
+env/
+env.bak/
+venv/
+venv.bak/
+ENV/
+
+# ─────────────────────────── Python — lint, test, coverage & type-check caches ───────────────────────────
+# mutants/ + .mutmut-cache = mutmut sandbox (ad-hoc dev tool). .ruff_cache/ and
+# .import_linter_cache/ are written by the pre-commit hooks on every commit.
+.ruff_cache/
+.import_linter_cache/
+.pytest_cache/
+.cache
+.hypothesis/
 .tox/
 .nox/
 .coverage
 .coverage.*
-.cache
-nosetests.xml
 coverage.xml
+htmlcov/
+cover/
 *.cover
 *.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
+nosetests.xml
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+mutants/
+.mutmut-cache
 
-# Translations
-*.mo
-*.pot
+# ─────────────────────────── Python — tool config that stays local ───────────────────────────
+# Lockfiles (Pipfile.lock / poetry.lock / pdm.lock) are deliberately NOT ignored
+# — commit them.
+.pdm.toml
+.pdm-python
+.pdm-build/
+celerybeat-schedule
+celerybeat.pid
 
-# Django stuff:
+# ─────────────────────────── Web-framework leftovers (upstream template) ───────────────────────────
+# Kept from github/gitignore's Python template. Yadgar uses none of these
+# frameworks, but the patterns are harmless and *.log / db.sqlite3 are broadly
+# useful. instance/ + .webassets-cache are Flask; .scrapy is Scrapy.
 *.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
-
-# Flask stuff:
 instance/
 .webassets-cache
-
-# Scrapy stuff:
 .scrapy
 
-# Sphinx documentation
-docs/_build/
+# ─────────────────────────── Node / JS ───────────────────────────
+# Any node_modules (sdk-js/, viz-tests/, …) must never ship in the sdist.
+node_modules/
+sdk-js/dist/
 
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#pdm.lock
-#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
-#   in version control.
-#   https://pdm.fming.dev/latest/usage/project/#working-with-version-control
-.pdm.toml
-.pdm-python
-.pdm-build/
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-.venv-test/
-env/
-venv/
-ENV/
-env.bak/
-.direnv/
-.envrc.local
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
-
-
-# Project plan (local only)
-PLAN.md
-
-# oh-my-claudecode local state
-.omc/
-testfails.txt
-.local-review/
-
-# nix build artifact
+# ─────────────────────────── Nix ───────────────────────────
 result
 result-*
 
-# Benchmark datasets (large files, not committed to repo)
-# Download via: .venv/bin/python -m benchmarks.run_longmemeval --retrieval-only
+# ─────────────────────────── Generated artifacts & datasets ───────────────────────────
+# *.duckdb: `yadgar export duckdb` output. benchmarks/data/: download via
+# .venv/bin/python -m benchmarks.run_longmemeval --retrieval-only.
+# docs/diagrams/out/: regenerated by docs/diagrams/generate.py (see #68).
+# /site is mkdocs, docs/_build/ is Sphinx, *.mo/*.pot are compiled translations.
+*.duckdb
 benchmarks/data/
-
-# Node deps — any node_modules (sdk-js/, viz-tests/, …) must never ship in the sdist
-node_modules/
-# JS SDK — sdk-js/
-sdk-js/dist/
-
-# Perf load-test harness output (transient — regenerated per run, not committed)
 benchmarks/reports/perf_loadtest_*.json
-
-# Generated diagram artifacts (regenerated by docs/diagrams/generate.py; see #68)
 docs/diagrams/out/
-
-# Local hand-off channel (CLAUDE.md) — never committed
-MIGRATION_NOTES.md
-
-# mutmut mutation-testing sandbox (ad-hoc dev tool; never committed)
-mutants/
-.mutmut-cache
+docs/_build/
+/site
+*.mo
+*.pot
