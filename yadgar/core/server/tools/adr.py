@@ -316,16 +316,30 @@ def adr_get(directory: str, adr_id: str) -> dict:
 
 
 @_tool(power=True)
-def adr_list(directory: str, status: str | None = None) -> dict:
+def adr_list(directory: str, status: str | None = None, limit: int = 50, offset: int = 0) -> dict:
     """List ADRs from the canonical index; optional status filter.
 
     Args:
         directory: Absolute path to the project root.
         status: Optional filter (open/accepted/superseded/rejected/deprecated).
+        limit: Max ADRs returned per page (default 50). <= 0 means no limit.
+        offset: 0-based index of the first ADR returned (default 0). Page forward
+            with the `next_offset` value the response carries when truncated.
 
     Returns:
         {"adrs": [{adr_id, status, date, title, supersedes, superseded_by, slug}, ...],
-         "count": N}. Empty list when the index is absent.
+         "count": N} where `count` is the number of rows in `adrs`.
+        Empty list when the index is absent.
+
+        When the page does not cover the whole filtered set, three extra keys
+        appear: `total` (rows after the status filter), `truncated: True`, and
+        `next_offset` (omitted on the last page). They are ABSENT when nothing
+        was sliced, so existing callers see an unchanged shape.
+
+    Note (task:0085): this tool had no `limit` at all and a full listing measured
+    57 KB, large enough that the harness spilled it to a file. Unlike `recall`,
+    the rows here are already narrow (7 scalar fields) — the size is row COUNT,
+    so pagination is the fix rather than projection or content truncation.
     """
     try:
         resolved = _resolve_project_root(directory)
@@ -339,7 +353,18 @@ def adr_list(directory: str, status: str | None = None) -> dict:
     rows = parse_index_rows(page["content"])
     if status is not None:
         rows = [r for r in rows if r["status"] == status]
-    return {"adrs": rows, "count": len(rows)}
+
+    total = len(rows)
+    start = max(0, offset)
+    window = rows[start:] if limit <= 0 else rows[start : start + limit]
+
+    result: dict = {"adrs": window, "count": len(window)}
+    if len(window) != total:
+        result["total"] = total
+        result["truncated"] = True
+        if start + len(window) < total:
+            result["next_offset"] = start + len(window)
+    return result
 
 
 # ── Backward-compatible re-exports ────────────────────────────────────────────
