@@ -10,7 +10,7 @@ Coverage
 6. install_codebase_memory_mcp — extracts binary, sets chmod 755, returns path.
 7. install_codebase_memory_mcp — aborts on checksum mismatch (no file written).
 8. install_codebase_memory_mcp — skip_if_exists short-circuits download.
-9. CODE_GRAPH_ENABLED opt-out: setup --code-graph gated on env flag.
+9. Install dispatch: `yadgar setup` installs by default; --no-code-graph opts out.
 
 Network is fully mocked in all tests — no real downloads.
 """

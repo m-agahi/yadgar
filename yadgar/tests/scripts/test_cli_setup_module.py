@@ -567,10 +567,10 @@ class TestCodeGraphPersistSurvivesRealConnectionRefused:
 
         out = capsys.readouterr().out
         assert "not reachable" in out or "not persisted" in out
-        assert "config_set" in out or "yadgar setup --code-graph" in out
+        assert "config_set" in out or "yadgar setup" in out
 
     def test_cmd_setup_code_graph_survives_daemon_unreachable_end_to_end(self, tmp_path, capsys):
-        """Full `yadgar setup --code-graph` run with a real connection-refused
+        """Full default `yadgar setup` run with a real connection-refused
         error on the persist call: binary install still happens, setup still
         reaches 'setup complete', and no exception escapes cmd_setup."""
         import urllib.error
