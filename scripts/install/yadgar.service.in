@@ -2,6 +2,12 @@
 Description=Yadgar Memory Engine / MCP Server (Docker)
 After=network.target yadgar-backend.service
 Requires=yadgar-backend.service
+# The -v @STATE_DIR@ bind below projects the container's
+# YADGAR_VACUUM_TRIGGER_PATH write onto the host, where
+# yadgar-vacuum-trigger.path watches for it. Both halves are required: the env
+# var has no code default, so unset means "no watcher on this surface" and
+# vacuum_now() refuses rather than writing into a void.
+# @STATE_DIR@ must be spelled IDENTICALLY here and in that unit's PathExists=.
 
 [Service]
 Type=notify
@@ -17,7 +23,9 @@ ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user r
     -p 127.0.0.1:8765:8765 \
     -p 127.0.0.1:42069:42069 \
     -v @DATA_DIR@:/data \
+    -v @STATE_DIR@:/root/.local/state/yadgar \
     -e YADGAR_DB_URL=http://yadgar-backend:8000 \
+    -e YADGAR_VACUUM_TRIGGER_PATH=/root/.local/state/yadgar/triggers/vacuum_requested \
     -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
     -e YADGAR_HOST=0.0.0.0 \
     -e YADGAR_PORT=8765 \

@@ -41,12 +41,18 @@
         ProgramArguments: /bin/sh -c wrap — same pattern as systemd ExecStart.
         Backend starts first; core depends on it (no Requires= equivalent in launchd;
         KeepAlive + RunAtLoad ensures both start at agent load time).
+
+        SurrealDB (:8000) is published on LOOPBACK ONLY. yadgar-setup.sh bootstraps
+        the nightly-cycle and vacuum LaunchAgents, which run on the HOST and default
+        YADGAR_DB_URL to http://127.0.0.1:<port>. Without this publish they fire on
+        schedule and connection-refuse into ~/.local/share/yadgar/logs/. Port is
+        overridable via YADGAR_BACKEND_SURREAL_PORT at render time.
     -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>@YADGAR_RUNTIME@ network create yadgar-net 2&gt;/dev/null; @YADGAR_RUNTIME@ run --name yadgar-backend --rm --user root --network yadgar-net --env-file @YADGAR_SECRETS_ENV_FILE@ -p 127.0.0.1:8001:8001 -v @YADGAR_INSTALL_PREFIX@:/data -e YADGAR_QUEUE_BASE=/data --memory 4g --cpus 2 --stop-timeout 30 @YADGAR_BACKEND_IMAGE@</string>
+        <string>@YADGAR_RUNTIME@ network create yadgar-net 2&gt;/dev/null; @YADGAR_RUNTIME@ run --name yadgar-backend --rm --user root --network yadgar-net --env-file @YADGAR_SECRETS_ENV_FILE@ -p 127.0.0.1:@YADGAR_BACKEND_SURREAL_PORT@:8000 -p 127.0.0.1:8001:8001 -v @YADGAR_INSTALL_PREFIX@:/data -e YADGAR_QUEUE_BASE=/data --memory 4g --cpus 2 --stop-timeout 30 @YADGAR_BACKEND_IMAGE@</string>
     </array>
 </dict>
 </plist>

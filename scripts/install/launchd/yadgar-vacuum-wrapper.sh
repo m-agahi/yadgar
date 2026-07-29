@@ -33,7 +33,12 @@ if [ -f "$SECRETS_ENV" ]; then
     done
 fi
 
-export YADGAR_DB_URL="${YADGAR_DB_URL:-http://127.0.0.1:8000}"
+# SurrealDB host port. The backend plist publishes 127.0.0.1:<port>:8000 and
+# exports the same YADGAR_BACKEND_SURREAL_PORT into this job's environment, so a
+# re-pointed publish (port 8000 already occupied) is followed here rather than
+# silently connection-refusing. Wrappers are copied verbatim by
+# generate_launchd.sh (not sed-rendered), so the port has to arrive via env.
+export YADGAR_DB_URL="${YADGAR_DB_URL:-http://127.0.0.1:${YADGAR_BACKEND_SURREAL_PORT:-8000}}"
 export YADGAR_DATA_DIR="${YADGAR_DATA_DIR:-${HOME}/.local/share/yadgar}"
 
 # D6: --service-mode=manual (ops.py confirms 'manual' is supported)

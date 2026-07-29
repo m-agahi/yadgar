@@ -1,0 +1,18 @@
+[Unit]
+Description=Watch for vacuum trigger file from MCP vacuum_now()
+
+[Path]
+# MCP vacuum_now() (and the auto-vacuum backstop) write this file INSIDE the core
+# container at YADGAR_VACUUM_TRIGGER_PATH; the `-v @STATE_DIR@:/root/.local/state/yadgar`
+# bind in yadgar.service projects that write to here on the host. Without this
+# unit the file is written and never read, and vacuum_now() reports started=true
+# into a void.
+#
+# @STATE_DIR@ is deliberately the SAME token that appears on the left of that
+# `-v` bind, so the cross-generator test can compare the projected trigger dir
+# against this watched dir as an exact string. Keep it that way.
+PathExists=@STATE_DIR@/triggers/vacuum_requested
+
+[Install]
+# NOT the activation mechanism — see yadgar.target's Wants=. Kept for manual enable.
+WantedBy=paths.target

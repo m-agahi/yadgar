@@ -53,6 +53,10 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:@YADGAR_HOME@/.local/bin</string>
         <key>YADGAR_SECRETS_ENV_FILE</key>
         <string>@YADGAR_SECRETS_ENV_FILE@</string>
+        <!-- Host port the backend plist publishes SurrealDB on. The wrapper builds
+             YADGAR_DB_URL from it, so a re-pointed publish is followed here. -->
+        <key>YADGAR_BACKEND_SURREAL_PORT</key>
+        <string>@YADGAR_BACKEND_SURREAL_PORT@</string>
     </dict>
 
     <key>StandardOutPath</key>

@@ -1,6 +1,12 @@
 [Unit]
 Description=Yadgar Backend (SurrealDB + Embeddings)
 After=network.target
+# SurrealDB (:8000) is published on LOOPBACK ONLY. The nightly-cycle and vacuum
+# units execute on the HOST (the vacuum flow interleaves phases needing different
+# daemon states and the container image has no systemctl), and both default
+# YADGAR_DB_URL to http://127.0.0.1:<port>. Without this publish they render,
+# activate, fire, and connection-refuse. Mirrors flake.nix's shipped posture.
+# Port is overridable via YADGAR_BACKEND_SURREAL_PORT at render time.
 
 [Service]
 Environment=DOCKER_HOST=unix:///run/podman/podman.sock
@@ -10,6 +16,7 @@ ExecStartPre=-@RUNTIME@ rm yadgar-backend
 ExecStartPre=-@RUNTIME@ network create yadgar-net
 ExecStart=@RUNTIME@ run --name yadgar-backend --rm --security-opt label=disable --user root \
     --network yadgar-net \
+    -p 127.0.0.1:@BACKEND_SURREAL_PORT@:8000 \
     -p 127.0.0.1:8001:8001 \
     -v @DATA_DIR@:/data \
     -e SURREAL_USER=${SURREAL_USER} \
