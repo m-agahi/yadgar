@@ -86,24 +86,32 @@ def _handle_stop(daemon, dev: bool) -> None:
 def _handle_graceful_stop(args, daemon_cls, dev: bool, port: int) -> None:
     """Gracefully stop with SIGTERM + drain barriers.
 
-    Uses ``docker stop --time=<timeout>`` which sends SIGTERM to container
+    Uses ``<runtime> stop --time=<timeout>`` which sends SIGTERM to container
     PID 1 and waits up to <timeout> seconds before sending SIGKILL.
     The daemon's shutdown() handles the actual drain (sd_notify.stopping(),
     flush_barrier, drain_in_flight_requests) — this CLI just signals it
     and polls until stopped or timeout exceeded.
+
+    task:0083: the runtime binary is resolved via ``_get_runtime()``; a literal
+    ``"docker"`` here crashes on a podman-only host.
     """
     import subprocess as _sp  # noqa: PLC0415
 
-    from yadgar.core.daemon import _dev_profile, _prod_profile  # noqa: PLC0415
+    from yadgar.core.daemon import (  # noqa: PLC0415
+        _dev_profile,
+        _get_runtime,
+        _prod_profile,
+    )
 
     timeout = int(getattr(args, "timeout", 30) or 30)
     profile = _dev_profile() if dev else _prod_profile(port)
     container = profile.container_name
 
     _require_docker(daemon_cls)
+    rt = _get_runtime()
 
     result_running = _sp.run(
-        ["docker", "inspect", "--format", "{{.State.Running}}", container],
+        [rt, "inspect", "--format", "{{.State.Running}}", container],
         capture_output=True,
         text=True,
     )
@@ -113,7 +121,7 @@ def _handle_graceful_stop(args, daemon_cls, dev: bool, port: int) -> None:
 
     print(f"Gracefully stopping {container!r} (timeout={timeout}s)…")
     result_stop = _sp.run(
-        ["docker", "stop", f"--time={timeout}", container],
+        [rt, "stop", f"--time={timeout}", container],
         capture_output=True,
         text=True,
     )
