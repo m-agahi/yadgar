@@ -148,6 +148,124 @@ class TestRefreshFlow:
         assert "/tmp" not in result["canonical_root"]
 
 
+class TestHeadShaCapture:
+    """task:0067 — ``refresh_index`` reports the sha of ``origin/<default>``.
+
+    The sha is what ``cli/code_graph._cmd_refresh`` stamps into the digest's
+    ``stale @ <sha>`` marker.  Source is ``git rev-parse origin/<default>``
+    (cheap, local, needs no indexer binary) — deliberately NOT ADR-0162's
+    nominal ``list_projects``/``detect_changes`` signature, which would require
+    the 259 MB host-side binary and make the CI-visible seam test un-runnable.
+    """
+
+    _SHA = "0123456789abcdef0123456789abcdef01234567"
+
+    def _dispatch(self, *, fetch_fails=False, rev_parse_fails=False):
+        """Build a ``_git`` side-effect that discriminates on the git subcommand."""
+
+        def _side(argv, **kw):
+            if argv[:1] == ["fetch"] and fetch_fails:
+                raise subprocess.CalledProcessError(1, "git fetch")
+            if argv[:1] == ["rev-parse"]:
+                if rev_parse_fails:
+                    raise subprocess.CalledProcessError(128, "git rev-parse")
+                return _git_ok(self._SHA + "\n")
+            return _git_ok()
+
+        return _side
+
+    def _common(self, side):
+        return (
+            patch("yadgar.core.code_graph.config.is_enabled", return_value=True),
+            patch(
+                "yadgar.core.code_graph.default_branch.resolve_default_branch",
+                return_value="master",
+            ),
+            patch(
+                "yadgar.core.code_graph.default_branch._canonical_identity",
+                return_value=("/real/repo", ""),
+            ),
+            patch("yadgar.core.code_graph.default_branch._git", side_effect=side),
+        )
+
+    def test_head_sha_captured_on_success(self, tmp_path):
+        """AC-1: a successful index reports ``head_sha`` = rev-parse origin/<default>."""
+        from yadgar.core.code_graph import default_branch
+
+        enabled, resolve, ident, git = self._common(self._dispatch())
+        with (
+            enabled,
+            resolve,
+            ident,
+            git,
+            patch("yadgar.core.code_graph.runner.index_repository", return_value={"project": "p"}),
+        ):
+            result = default_branch.refresh_index("/real/repo")
+
+        assert result["indexed"] is True
+        assert result["head_sha"] == self._SHA
+
+    def test_head_sha_captured_on_fetch_failure(self, tmp_path):
+        """AC-2: the fetch-fail skip carries the STALE local remote-tracking sha.
+
+        That is the honest value — it is precisely the commit the cached index
+        describes.  We are offline; there is no fresher remote head to read.
+        """
+        from yadgar.core.code_graph import default_branch
+
+        enabled, resolve, ident, git = self._common(self._dispatch(fetch_fails=True))
+        with (
+            enabled,
+            resolve,
+            ident,
+            git,
+            patch("yadgar.core.code_graph.runner.index_repository") as mock_idx,
+        ):
+            result = default_branch.refresh_index("/real/repo")
+
+        assert result["skipped"] is True
+        assert result["reason"] == "fetch_failed"
+        assert result["head_sha"] == self._SHA
+        mock_idx.assert_not_called()
+
+    def test_no_head_sha_when_ref_missing(self, tmp_path):
+        """AC-2 (negative): no resolvable ref ⇒ no sha ⇒ the CLI hard-skips."""
+        from yadgar.core.code_graph import default_branch
+
+        enabled, resolve, ident, git = self._common(
+            self._dispatch(fetch_fails=True, rev_parse_fails=True)
+        )
+        with (
+            enabled,
+            resolve,
+            ident,
+            git,
+            patch("yadgar.core.code_graph.runner.index_repository"),
+        ):
+            result = default_branch.refresh_index("/real/repo")
+
+        assert result["skipped"] is True
+        assert result["reason"] == "fetch_failed"
+        assert not result.get("head_sha")
+
+    def test_no_remote_skip_carries_no_head_sha(self, tmp_path):
+        """``no_remote_or_default_branch`` has no ``<default>`` to interpolate."""
+        from yadgar.core.code_graph import default_branch
+
+        with (
+            patch("yadgar.core.code_graph.config.is_enabled", return_value=True),
+            patch(
+                "yadgar.core.code_graph.default_branch.resolve_default_branch",
+                return_value=None,
+            ),
+            patch("yadgar.core.code_graph.runner.index_repository"),
+        ):
+            result = default_branch.refresh_index("/real/repo")
+
+        assert result["reason"] == "no_remote_or_default_branch"
+        assert not result.get("head_sha")
+
+
 class TestSkipGuards:
     def test_no_remote_skips_not_fallback(self, tmp_path):
         from yadgar.core.code_graph import default_branch

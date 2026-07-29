@@ -84,6 +84,30 @@ def resolve_default_branch(repo_path: str) -> str | None:
 
 
 @observe(tier="stage")
+def _resolve_head_sha(repo_path: str, default: str) -> str | None:
+    """Return the sha of ``origin/<default>``, or None when unresolvable.
+
+    ``git rev-parse origin/<default>`` — cheap, local, and needs NO indexer
+    binary, which is what lets the CI-visible seam test exercise the whole
+    stale-marker path (ADR-0162 nominally specifies ``list_projects`` /
+    ``detect_changes`` as the staleness signature; both require the 259 MB
+    host-side binary — deviation declared in the ADR addendum).
+
+    On the success path this runs AFTER a successful fetch, so it IS the sha of
+    the snapshot materialised in the temp worktree.  On the fetch-fail path it
+    is the STALE local remote-tracking ref — precisely the commit the cached
+    index describes, which is the honest value to stamp.
+
+    NEVER raises: individually failure-tolerant, so a caller that cannot resolve
+    a sha simply gets None and hard-skips rather than stamping a bare marker.
+    """
+    try:
+        return _git(["rev-parse", f"origin/{default}"], cwd=repo_path).stdout.strip() or None
+    except _GIT_ERRORS:
+        return None
+
+
+@observe(tier="stage")
 def _canonical_identity(repo_path: str) -> tuple[str, str]:
     """Return (canonical_root, relative_subdir) for the REAL repo.
 
@@ -118,6 +142,12 @@ def refresh_index(repo_path: str) -> dict[str, Any]:
     Returns a result dict:
       - skipped=True + reason  when opted out / no remote / fetch failed.
       - indexed=True + canonical_root + subdir + project + default_branch  on success.
+      - head_sha (``git rev-parse origin/<default>``) on the success AND
+        ``fetch_failed`` paths, whenever the ref resolves.  ``opted_out`` and
+        ``no_remote_or_default_branch`` never carry one — the latter is reached
+        precisely because no ``<default>`` resolved, so no sha exists by
+        construction.  The CLI stamps it into the digest's ``stale @ <sha>``
+        marker (task:0067).
 
     The temp worktree is ALWAYS removed (success and error) via ``finally``.
     """
@@ -143,13 +173,22 @@ def refresh_index(repo_path: str) -> dict[str, Any]:
     try:
         _git(["fetch", "origin", default], cwd=repo_path)
     except subprocess.CalledProcessError:
-        return {
+        # The STALE local remote-tracking sha — i.e. the commit the cached index
+        # describes. The CLI stamps it as `stale @ <sha>`; None ⇒ hard skip.
+        stale_sha = _resolve_head_sha(repo_path, default)
+        result: dict[str, Any] = {
             "skipped": True,
             "reason": "fetch_failed",
             "canonical_root": canonical_root,
             "subdir": subdir,
             "default_branch": default,
         }
+        if stale_sha:
+            result["head_sha"] = stale_sha
+        return result
+
+    # The fetch succeeded, so this IS the sha of the snapshot materialized below.
+    head_sha = _resolve_head_sha(repo_path, default)
 
     # 5-7. materialize origin/<default> in a temp worktree, index, always clean up.
     parent = tempfile.mkdtemp(prefix="yadgar-code-graph-")
@@ -167,7 +206,7 @@ def refresh_index(repo_path: str) -> dict[str, Any]:
         index_path = str(Path(wt) / subdir) if subdir else wt
         idx = runner.index_repository(index_path, allowed_root=index_path)
 
-        return {
+        success: dict[str, Any] = {
             "indexed": True,
             "canonical_root": canonical_root,
             "subdir": subdir,
@@ -175,6 +214,9 @@ def refresh_index(repo_path: str) -> dict[str, Any]:
             "project": idx.get("project"),
             "index_result": idx,
         }
+        if head_sha:
+            success["head_sha"] = head_sha
+        return success
     finally:
         if worktree_added:
             try:

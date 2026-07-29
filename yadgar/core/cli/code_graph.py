@@ -78,35 +78,95 @@ def _cmd_refresh(repo: str, project: str | None, output_json: bool) -> None:
     Secret-gate note (#30): the live block write passes ``gate_or_reject`` (same
     gate as wiki_add).  The digest is a summary (layer/hotspot/endpoint names),
     never raw code — path/identifier FP risk is reduced but real.  No gate here.
+
+    Staleness (task:0067): this is the ONLY production producer of the identity
+    dict ``digest._stale_line`` reads, so it owns the ``stale`` / ``head_sha``
+    keys.  A successful index is never stale.  When the index is SKIPPED for
+    ``fetch_failed`` and BOTH guards hold — a cached architecture exists and a
+    sha resolved — the cached digest is re-emitted with ``skipped: false`` and a
+    trailing ``stale @ <12-char sha>``; otherwise the skip stays bit-for-bit as
+    before.  Rationale: a silent skip leaves the previously-written block
+    serving an aged digest with no marker at all.
     """
     from yadgar.core.code_graph import default_branch, digest, runner
+    from yadgar.core.code_graph.runner import CodeGraphError
 
     idx = default_branch.refresh_index(repo)
-    if idx.get("skipped"):
-        print(f"code-graph refresh skipped: {idx.get('reason')}", file=sys.stderr)
-        if output_json:
-            # skip signal — Car D branches on "skipped" and does not write a block.
-            print(
-                json.dumps(
-                    {"block_name": "code_graph", "skipped": True, "reason": idx.get("reason")}
-                )
-            )
-        return
-
     allowed_root = str(Path(repo).resolve())
     proj = project or idx.get("project") or Path(repo).resolve().name
-    arch = runner.get_architecture(proj, allowed_root=allowed_root)
-    endpoints = runner.fetch_endpoints(proj, allowed_root=allowed_root)
+
+    arch: dict | None = None
+    endpoints: list = []
+    stale = False
+
+    if idx.get("skipped"):
+        print(f"code-graph refresh skipped: {idx.get('reason')}", file=sys.stderr)
+
+        # task:0067 — a skip that writes NOTHING leaves the previously-written
+        # block serving an aged digest with no freshness marker at all, which is
+        # the exact failure `stale @ <sha>` exists to prevent. So on the ONE
+        # re-render-eligible reason, re-emit the CACHED digest marked stale.
+        #
+        # `fetch_failed` only, deliberately: `no_remote_or_default_branch` is
+        # reached precisely because no `<default>` resolved, so no sha is
+        # resolvable by construction and that row could never fire; `opted_out`
+        # means the user said no. Both stay bit-for-bit hard skips
+        # (BC-CODEGRAPH-7).
+        #
+        # Doubly guarded — a cached index AND a resolvable sha — so we never emit
+        # a payload we cannot honestly stamp. The guards are evaluated BEFORE any
+        # runner call, so a hard skip still costs zero subprocesses (that is what
+        # keeps the `opted_out` regression test green unmodified).
+        if idx.get("reason") == "fetch_failed" and idx.get("head_sha"):
+            try:
+                arch = runner.get_architecture(proj, allowed_root=allowed_root) or None
+                if arch:
+                    endpoints = runner.fetch_endpoints(proj, allowed_root=allowed_root)
+            except CodeGraphError:
+                # The binary is absent/broken. Today this path emits a clean skip
+                # JSON and exits 0; the added subprocess must not turn that into
+                # an exit-2 with no payload (the hook template's step 1 expects
+                # ONE JSON object on stdout). Degrade to the hard skip below.
+                arch = None
+
+        if not arch:
+            if output_json:
+                # skip signal — Car D branches on "skipped" and writes no block.
+                print(
+                    json.dumps(
+                        {"block_name": "code_graph", "skipped": True, "reason": idx.get("reason")}
+                    )
+                )
+            return
+        stale = True
+    else:
+        arch = runner.get_architecture(proj, allowed_root=allowed_root)
+        endpoints = runner.fetch_endpoints(proj, allowed_root=allowed_root)
 
     identity = {
         "canonical_root": idx.get("canonical_root"),
         "subdir": idx.get("subdir", ""),
+        # Both keys or neither: `digest._stale_line` AND-guards them, so a
+        # producer that sets only one silently renders nothing — that omission is
+        # exactly why the marker shipped dead (task:0067).
+        "stale": stale,
+        "head_sha": idx.get("head_sha"),
     }
     payload = digest.build_block_payload(arch, endpoints, identity)
 
+    if stale:
+        print(
+            f"code-graph refresh: could not re-index (reason: {idx.get('reason')}) — "
+            f"re-emitting the CACHED digest for {idx.get('canonical_root')} marked "
+            f"stale @ {str(idx.get('head_sha'))[:12]}, so a reader is never served "
+            f"an aged digest that looks fresh.",
+            file=sys.stderr,
+        )
+    else:
+        print(f"Refreshed {idx.get('canonical_root')} →", file=sys.stderr, end=" ")
+
     print(
-        f"Refreshed {idx.get('canonical_root')} → digest rendered "
-        f"({payload['chars']} chars). Write the code_graph block "
+        f"digest rendered ({payload['chars']} chars). Write the code_graph block "
         f"(create-or-update): try block_update first; on a not-found error "
         f"(no existing block — e.g. the FIRST refresh of this repo), fall "
         f"back to block_create. Mirrors code_graph_refresh_prompt.md's "
