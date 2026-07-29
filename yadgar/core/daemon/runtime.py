@@ -36,10 +36,10 @@ def _safe_urlopen(url: str, **kwargs):
 
 
 # Container runtime detected at first check_runtime() call.
-# v5.45.0: only check_runtime() + highest-traffic callsites migrated.
-# TODO(v5.46): propagate _RUNTIME through all ~20 remaining subprocess callsites:
-#   start_backend(), pull(), push(), build(), exec_in_container(), _image_exists(),
-#   _container_running(), _container_exists(), _ensure_network(), status(), logs()
+# v5.45.0 migrated check_runtime() + the highest-traffic callsites; task:0083
+# finished the job — EVERY subprocess callsite in this package now resolves the
+# binary through _get_runtime(). A literal "docker" argv head re-appearing here
+# is a regression, guarded by tests/core/test_daemon_runtime_binary.py.
 _RUNTIME: str | None = None
 
 
