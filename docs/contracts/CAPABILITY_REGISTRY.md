@@ -627,6 +627,20 @@ config knobs.
 
 ---
 
+### CAP-RETR-041 — Recall Output Size Cap (task:0085)
+
+- **status:** LIVE
+- **category:** retrieval
+- **settings:** `RECALL_MAX_CONTENT_CHARS`, `RECALL_MAX_TOTAL_BYTES`
+- **tools:** `recall`, `adr_list`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/recall.py::_shape_recall_results`, `yadgar/core/server/tools/recall.py::_RECALL_PROJECTION_DENYLIST`, `yadgar/core/server/tools/recall.py::_fetch_hint`, `yadgar/core/server/tools/recall.py::_resolve_shape_limit`, `yadgar/core/server/tools/adr.py::adr_list`
+- **wiring:** `recall()` calls `_shape_recall_results()` on the backend rows before returning, applying (1) `_RECALL_PROJECTION_DENYLIST` field projection, (2) a per-row content cap from `RECALL_MAX_CONTENT_CHARS` (default 1200) with a visible `_truncated` marker, and (3) a total-byte backstop from `RECALL_MAX_TOTAL_BYTES` (default 65536) that drops the lowest-ranked rows behind one `_dropped` marker. Resolution is three-layer: per-call `recall(max_chars=N)` → per-directory ADR-0163 runtime-config rows `recall.max_content_chars` / `recall.max_total_bytes` via `_resolve_shape_limit` → the `Settings` default. The seam is inside `recall()` only — the prompt-recall hook path (`http.py:1309-1323`) keeps its own `max_chars=3000` budget and is untouched, and the backend `/recall` wire contract is unchanged (no `BACKEND_VERSION` bump). `adr_list` gains `limit` (default 50) / `offset` pagination.
+- **explanation:** `recall()` was a pure forwarder with zero size bound, so `max_results` — a row-count proxy for a byte problem — was the only lever; an unlucky topic produced ~78 KB, exceeded the harness tool-output cap and returned unusable, pushing agents off the memory system and back to grep. Memory rows and wiki rows fail differently (memory rows spent 38.8% of a measured 4132 B row on scoring/thermodynamic internals; wiki rows carry full page bodies), so projection and content-capping are both required. The projection is a DENYLIST so fields the retrieval pipeline adds later default to visible — an allowlist would have silently deleted `consensus_score` / `voting_domains`, which `mode="landscape"` stamps as part of the documented return contract. Truncation is deliberately VISIBLE: the `_truncated` marker carries `kept` / `total` and an exact-ID `fetch` hint (`memory_get(<id>)` / `wiki_read("<slug>")`) so a trimmed row is recoverable, improving on `recent_memories`' bare `"..."`. Shaping runs strictly after retrieval, rerank and fusion — ranking and recall quality are untouched. The deferred session-side-effect closure keeps receiving the UNTRIMMED rows. `RECALL_MAX_TOTAL_BYTES=65536` is UNCALIBRATED — chosen as comfortably under the observed 78 KB failure, not measured against the real harness cap; it is a knob so it can be retuned without a code change. `adr_list` had no `limit` at all and a full listing measured 57 KB; its rows are already narrow, so the size is row COUNT and pagination is the fix.
+
+---
+
 ### CAP-RETR-039 — Unified Scoped Recall Fan-Out (v6 T6)
 
 - **status:** LIVE

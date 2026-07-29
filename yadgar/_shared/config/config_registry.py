@@ -436,6 +436,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_RECALL_WIKI_QUOTA", "5", "int"),
     ConfigEntry("YADGAR_RECALL_MEMORY_PRIOR_WEIGHT", "0.1", "float"),
     ConfigEntry("YADGAR_RECALL_WIKI_PRIOR_WEIGHT", "0.1", "float"),
+    # ── task:0085 recall output-size bounds ──────────────────────────────────
+    ConfigEntry("YADGAR_RECALL_MAX_CONTENT_CHARS", "1200", "int"),
+    ConfigEntry("YADGAR_RECALL_MAX_TOTAL_BYTES", "65536", "int"),
     # ── v5.62.0 recall quality floor ─────────────────────────────────────────
     ConfigEntry("YADGAR_RECALL_QUALITY_FLOOR", "0.0", "float"),
     ConfigEntry("YADGAR_ASTROCYTE_POOL_ENABLED", "true", "bool"),
