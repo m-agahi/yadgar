@@ -135,6 +135,18 @@ repos:
         # PASSED on that PR. See check-registry-prose-liveness below for the fix.
         always_run: true
 
+      - id: check-route-literals
+        name: Check every internal route literal resolves to a registered route
+        language: system
+        entry: python scripts/check_route_literals.py
+        pass_filenames: false
+        # always_run: the route table and the call sites are collected from ALL of
+        # non-test yadgar/, and a call site can be added in a file that declares no
+        # route (which is exactly how /api/check_invariants was requested for months
+        # with nothing registered behind it). Any files: filter is narrower than the
+        # read set. Measured ~1.7s on this tree.
+        always_run: true
+
       - id: check-registry-prose-liveness
         name: Check I32 prose-token liveness (registry cites no dead identifiers)
         language: system

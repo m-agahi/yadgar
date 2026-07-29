@@ -1,0 +1,16 @@
+{
+  "_comment": "Allowlist for scripts/check_route_literals.py. Governance mirrors .complexity-allowlist.json (I30): rationale >= 40 chars, target in {external, label, dynamic}, and a STALE entry — an allowlisted path that starts resolving against a registered route — hard-fails. DO NOT add an internal path here to silence the guard: the whole point of this lint is that /api/check_invariants was called for months with no route behind it, and allowlisting that path would have reintroduced exactly the antipattern the lint exists to catch. If the path is ours and unresolved, the route is MISSING — add the route.",
+  "/api/generate": {
+    "target": "external",
+    "rationale": "Ollama's own generate endpoint, not ours. Called as f\"{ollama_url}/api/generate\" from backend/conflict_resolver/conflict_resolver.py:188 against a user-configured external Ollama host.",
+    "note": "Union route table means external calls cannot be distinguished by base-URL variable name — see the script docstring's per-app-targeting limitation."
+  },
+  "/api/search": {
+    "target": "external",
+    "rationale": "Grafana Tempo's trace-search API, not ours. Called as f\"{base}/api/search\" from core/server/routes/traces.py:172 and :311, where base is the configured Tempo endpoint that our own trace-viewer proxies."
+  },
+  "/rerank/{}": {
+    "target": "label",
+    "rationale": "Not a URL. f\"/rerank/{mode}\" is the LABEL string passed to _CircuitBreaker in backend/ml_client/remote_ml_client.py:70 for per-mode breaker identity. The real request is self._client.post(\"/rerank\", ...) at :125, which resolves cleanly against the backend embed_service route."
+  }
+}

@@ -423,6 +423,12 @@ jobs:
         # CAP-CODEGRAPH-001's prose false. This one gates the prose tokens.
         run: python scripts/check_registry_prose_liveness.py
 
+      - name: Check internal route literals resolve to registered routes
+        # core/vacuum POSTed /api/check_invariants for months with no route behind
+        # it, and six tests mocked that URL to 200 — the mocks agreed with the
+        # caller and nothing compared either against the route table.
+        run: python scripts/check_route_literals.py
+
       - name: Layer 4 — block silent test weakening across the branch (#52)
         # --ci --base origin/master: the pre-commit path reads `git diff --cached`,
         # which is ALWAYS empty in a CI checkout — so the guard ran, printed OK and
