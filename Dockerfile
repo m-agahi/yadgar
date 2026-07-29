@@ -21,7 +21,7 @@ RUN useradd -r -m -u 1001 -s /sbin/nologin yadgar
 USER 1001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-    CMD curl -f http://localhost:8765/health || exit 1
+    CMD curl -f http://localhost:8765/health/live || exit 1
 CMD ["/entrypoint.sh"]
 LABEL version="5.0.0"
 

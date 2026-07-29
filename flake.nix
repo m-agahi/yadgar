@@ -441,7 +441,7 @@
                 ExecStart = lib.concatStringsSep " " [
                   cfg.runtime "run --name yadgar --rm --user root"
                   "--network ${cfg.network} --sdnotify=healthy"
-                  "--health-cmd 'curl -f http://localhost:8765/health || exit 1'"
+                  "--health-cmd 'curl -f http://localhost:8765/health/live || exit 1'"
                   "--health-interval 30s --health-timeout 5s --health-start-period 10s"
                   "--add-host=host.containers.internal:host-gateway"
                   "-p 127.0.0.1:${toString cfg.corePort}:8765"
