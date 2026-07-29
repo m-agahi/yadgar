@@ -440,3 +440,84 @@ def test_real_e2e_dir_passes_layer3() -> None:
     """All current e2e tests have at least one real assertion."""
     violations = cea.lint_dir()
     assert not violations, f"Real e2e tests must all have assertions: {violations}"
+
+
+# ---------------------------------------------------------------------------
+# Scan-scope widening (gate-blindness class, 2026-07-29)
+#
+# The layer-3 lint pinned its scan root to yadgar/tests/e2e/ while six *e2e*
+# modules live outside it — scan-scope < artifact-scope, so those modules were
+# never assertion-linted.  Layer 4 carried the SAME pin independently in its own
+# regex.  These tests hold both scopes open and mechanically lock them together.
+# ---------------------------------------------------------------------------
+
+
+class TestScanScope:
+    """The layer-3 scan set covers every *e2e* module, not just tests/e2e/."""
+
+    def test_scan_paths_includes_out_of_root_e2e_modules(self) -> None:
+        """*e2e* modules outside yadgar/tests/e2e/ are in the scan set."""
+        scanned = {p.relative_to(_REPO_ROOT).as_posix() for p in cea.scan_paths()}
+        # Discovered independently of the script, so the test cannot inherit
+        # the script's own scoping bug.
+        expected = {
+            p.relative_to(_REPO_ROOT).as_posix()
+            for p in (_REPO_ROOT / "yadgar" / "tests").rglob("*e2e*.py")
+        }
+        assert expected, "fixture guard: repo must contain *e2e* test modules"
+        missing = expected - scanned
+        assert not missing, f"e2e-shaped modules outside the scan set: {sorted(missing)}"
+
+    def test_scan_paths_still_includes_the_e2e_dir(self) -> None:
+        """Widening must not drop the original yadgar/tests/e2e/ scan root."""
+        scanned = set(cea.scan_paths())
+        e2e_dir_files = set((_REPO_ROOT / "yadgar" / "tests" / "e2e").rglob("*.py"))
+        assert e2e_dir_files, "fixture guard: yadgar/tests/e2e/ must contain modules"
+        assert e2e_dir_files <= scanned, "widening dropped files from the original scan root"
+
+    def test_scan_paths_excludes_non_e2e_tests(self) -> None:
+        """A plain unit-test module is NOT pulled into the e2e assertion lint."""
+        scanned = {p.relative_to(_REPO_ROOT).as_posix() for p in cea.scan_paths()}
+        assert "yadgar/tests/core/test_tamper_guards.py" not in scanned
+
+    def test_real_scan_scope_passes_layer3(self) -> None:
+        """Every e2e-shaped module in the repo has assertions (CI enforcement hook).
+
+        This is what gives the layer-3 lint CI presence: tests/core/ runs in CI,
+        so a violation anywhere in the widened scan set fails a PR even though
+        the pre-commit hook is not what caught it.
+        """
+        violations = cea.lint_scope()
+        assert not violations, f"Widened e2e scan set must be clean: {violations}"
+
+
+class TestLayer3Layer4ScopeLockstep:
+    """Layer 4's internal path regex must track layer 3's scan set exactly.
+
+    The two scopes are declared independently (one is a path glob, the other a
+    regex over `diff --git` lines).  Drift between them re-creates the original
+    defect silently, so assert the agreement mechanically rather than by comment.
+    """
+
+    def test_every_scanned_path_matches_layer4_regex(self) -> None:
+        unmatched = [
+            p.relative_to(_REPO_ROOT).as_posix()
+            for p in cea.scan_paths()
+            if not ctw._E2E_PATH_RE.search(p.relative_to(_REPO_ROOT).as_posix())
+        ]
+        assert not unmatched, f"layer 4 regex does not cover layer 3 scan paths: {unmatched}"
+
+    def test_layer4_ignores_non_e2e_test_modules(self) -> None:
+        assert not ctw._E2E_PATH_RE.search("yadgar/tests/core/test_tamper_guards.py")
+
+    def test_layer4_fires_on_out_of_root_e2e_module(self) -> None:
+        """An assert removal in an out-of-root *e2e* module is now caught."""
+        diff = (
+            "diff --git a/yadgar/tests/core/test_backend_traceparent_e2e.py"
+            " b/yadgar/tests/core/test_backend_traceparent_e2e.py\n"
+            "-    assert resp.status_code == 200\n"
+            "+    pass\n"
+        )
+        errors = ctw.check_diff(diff, head_green=5, staged_green=5)
+        assert errors, "layer 4 must fire on assert removal outside yadgar/tests/e2e/"
+        assert any("assert" in e for e in errors), errors

@@ -40,6 +40,14 @@ _STATUS_HDR_RE = re.compile(r"\*\*([0-9]+)\s*✅")
 
 _ALLOW_ENV = "ALLOW_TEST_WEAKEN"
 
+# Scan scope — MUST stay in lockstep with check_e2e_assertions.scan_paths()
+# (yadgar/tests/e2e/**/*.py ∪ yadgar/tests/**/*e2e*.py).  Declared here as a
+# regex because this guard reads `diff --git` header lines, not the filesystem;
+# that independence is exactly why the two drifted apart before 2026-07-29.
+# `yadgar/tests/core/test_tamper_guards.py::TestLayer3Layer4ScopeLockstep`
+# asserts the agreement mechanically.
+_E2E_PATH_RE = re.compile(r"yadgar/tests/(?:e2e/[^\s]*\.py|[^\s]*e2e[^\s]*\.py)")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,14 +69,15 @@ def _diff_assert_delta(diff_text: str) -> int:
     """Return (lines_added - lines_removed) for 'assert ' in *diff_text*.
 
     A negative value means NET removal of assert statements.
-    Only counts lines in e2e test files.
+    Only counts lines in e2e test files (see ``_E2E_PATH_RE``).
     """
     in_e2e_file = False
     added = removed = 0
     for line in diff_text.splitlines():
         if line.startswith("diff --git"):
-            # Check if this file is under yadgar/tests/e2e/
-            in_e2e_file = bool(re.search(r"yadgar/tests/e2e/.*\.py", line))
+            # Is this file in the e2e scan set? (widened 2026-07-29 — the old
+            # `yadgar/tests/e2e/` pin missed six *e2e* modules living elsewhere)
+            in_e2e_file = bool(_E2E_PATH_RE.search(line))
         if not in_e2e_file:
             continue
         if line.startswith("+") and not line.startswith("+++"):

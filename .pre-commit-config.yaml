@@ -142,14 +142,20 @@ repos:
         language: system
         entry: python scripts/check_test_weakening.py
         pass_filenames: false
-        files: ^(yadgar/tests/e2e/.*\.py|docs/contracts/BEHAVIOR_CONTRACT\.md)$
+        # Widened in lockstep with check_e2e_assertions' scan set (2026-07-29).
+        files: ^(yadgar/tests/(e2e/.*\.py|.*e2e.*\.py)|docs/contracts/BEHAVIOR_CONTRACT\.md)$
 
       - id: check-e2e-assertions
         name: Assert every e2e test_* fn has ≥1 real assertion (#52)
         language: system
         entry: python scripts/check_e2e_assertions.py
         pass_filenames: false
-        files: ^yadgar/tests/e2e/.*\.py$
+        # always_run (2026-07-29 gate-blindness fix): the script's scan set is
+        # yadgar/tests/e2e/**/*.py ∪ yadgar/tests/**/*e2e*.py — it reads the whole
+        # set regardless of what is staged, so ANY `files:` filter is narrower
+        # than the read set by construction (the defect this widening fixed).
+        # Whole-tree AST over ~40 modules; measured well under the per-commit budget.
+        always_run: true
 
       - id: check-skip-inventory
         name: Validate skip_inventory.json (ADR-0087 governance — note >=40, stale hard-fail, no wildcards)
