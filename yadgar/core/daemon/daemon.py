@@ -68,6 +68,7 @@ class YadgarDaemon:
     def start(self, dev: bool = False) -> dict:
         """Start the daemon container. No-op if already running."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
+        rt = _get_runtime()
 
         if self._container_running(profile.container_name):
             return {
@@ -76,9 +77,9 @@ class YadgarDaemon:
                 "port": profile.port,
             }
 
-        # Remove a stopped container with the same name so `docker run` doesn't fail
+        # Remove a stopped container with the same name so `<rt> run` doesn't fail
         subprocess.run(
-            ["docker", "rm", profile.container_name],
+            [rt, "rm", profile.container_name],
             capture_output=True,
         )
 
@@ -106,7 +107,7 @@ class YadgarDaemon:
         mem_mb = _container_memory_mb()
 
         cmd = [
-            _get_runtime(),
+            rt,
             "run",
             "-d",
             "--name",
@@ -180,7 +181,7 @@ class YadgarDaemon:
             time.sleep(1.0)
             if not self._container_running(profile.container_name):
                 logs = subprocess.run(
-                    ["docker", "logs", "--tail", "20", profile.container_name],
+                    [rt, "logs", "--tail", "20", profile.container_name],
                     capture_output=True,
                     text=True,
                 ).stdout
@@ -216,6 +217,7 @@ class YadgarDaemon:
     @observe(tier="boundary")
     def start_backend(self) -> dict:
         """Start the backend container (SurrealDB + embed service)."""
+        rt = _get_runtime()
         name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
         image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
         volume = os.environ.get("YADGAR_BACKEND_VOLUME", _BACKEND_VOLUME)
@@ -230,7 +232,7 @@ class YadgarDaemon:
         if self._container_running(name):
             return {"status": "already_running", "container": name}
 
-        subprocess.run(["docker", "rm", name], capture_output=True)
+        subprocess.run([rt, "rm", name], capture_output=True)
 
         if not self._image_exists(image):
             return {
@@ -244,7 +246,7 @@ class YadgarDaemon:
         from yadgar._shared import paths as _paths  # noqa: PLC0415
 
         cmd = [
-            _get_runtime(),
+            rt,
             "run",
             "-d",
             "--name",
@@ -310,7 +312,7 @@ class YadgarDaemon:
             time.sleep(2.0)
             if not self._container_running(name):
                 logs = subprocess.run(
-                    ["docker", "logs", "--tail", "20", name],
+                    [rt, "logs", "--tail", "20", name],
                     capture_output=True,
                     text=True,
                 ).stdout
@@ -334,12 +336,13 @@ class YadgarDaemon:
     def stop(self, dev: bool = False) -> dict:
         """Stop the core container (and optionally the backend)."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
+        rt = _get_runtime()
         results = {}
 
         # Stop core first
         if self._container_exists(profile.container_name):
             r = subprocess.run(
-                ["docker", "stop", profile.container_name],
+                [rt, "stop", profile.container_name],
                 capture_output=True,
                 text=True,
             )
@@ -351,7 +354,7 @@ class YadgarDaemon:
         backend_name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
         if self._container_exists(backend_name):
             r = subprocess.run(
-                ["docker", "stop", backend_name],
+                [rt, "stop", backend_name],
                 capture_output=True,
                 text=True,
             )
@@ -439,9 +442,10 @@ class YadgarDaemon:
     def pull(self) -> dict:
         """Pull the latest prod image from Docker Hub."""
         profile = _prod_profile(self.port)
-        result = subprocess.run(["docker", "pull", profile.image_name])
+        rt = _get_runtime()
+        result = subprocess.run([rt, "pull", profile.image_name])
         if result.returncode != 0:
-            return {"ok": False, "reason": f"docker pull {profile.image_name} failed"}
+            return {"ok": False, "reason": f"{rt} pull {profile.image_name} failed"}
         return {"ok": True, "image": profile.image_name}
 
     @observe(tier="boundary")
@@ -456,6 +460,7 @@ class YadgarDaemon:
             ver = "latest"
 
         profile = _prod_profile(self.port)
+        rt = _get_runtime()
         if not self._image_exists(profile.image_name):
             return {
                 "ok": False,
@@ -468,17 +473,17 @@ class YadgarDaemon:
 
         for remote_tag in (versioned, latest):
             r = subprocess.run(
-                ["docker", "tag", profile.image_name, remote_tag], capture_output=True, text=True
+                [rt, "tag", profile.image_name, remote_tag], capture_output=True, text=True
             )
             if r.returncode != 0:
-                return {"ok": False, "reason": f"docker tag failed: {r.stderr.strip()}"}
+                return {"ok": False, "reason": f"{rt} tag failed: {r.stderr.strip()}"}
 
         pushed = []
         for remote_tag in (versioned, latest):
             print(f"Pushing {remote_tag}...", file=sys.stderr)
-            r = subprocess.run(["docker", "push", remote_tag])
+            r = subprocess.run([rt, "push", remote_tag])
             if r.returncode != 0:
-                return {"ok": False, "reason": f"docker push {remote_tag} failed"}
+                return {"ok": False, "reason": f"{rt} push {remote_tag} failed"}
             pushed.append(remote_tag)
 
         return {"ok": True, "pushed": pushed}
@@ -487,18 +492,19 @@ class YadgarDaemon:
     def build(self, dev: bool = False, no_cache: bool = False, backend: bool = False) -> dict:
         """Build the Docker image for the given profile."""
         source = _source_root()
+        rt = _get_runtime()
         if backend:
             dockerfile = source / "Dockerfile.backend"
             if not dockerfile.exists():
                 return {"ok": False, "reason": f"No Dockerfile.backend found at {source}"}
             image_name = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
-            cmd = ["docker", "build", "-f", str(dockerfile), "-t", image_name, str(source)]
+            cmd = [rt, "build", "-f", str(dockerfile), "-t", image_name, str(source)]
             if no_cache:
                 cmd.insert(2, "--no-cache")
             print(f"Building {image_name!r} (backend)...", file=sys.stderr)
             result = subprocess.run(cmd)
             if result.returncode != 0:
-                return {"ok": False, "reason": f"docker build failed (exit {result.returncode})"}
+                return {"ok": False, "reason": f"{rt} build failed (exit {result.returncode})"}
             return {"ok": True, "image": image_name, "target": "backend"}
 
         profile = _dev_profile() if dev else _prod_profile(self.port)
@@ -508,20 +514,20 @@ class YadgarDaemon:
                 "reason": f"No Dockerfile found at {source}",
             }
         target = "dev" if dev else "prod"
-        cmd = ["docker", "build", "--target", target, "-t", profile.image_name, str(source)]
+        cmd = [rt, "build", "--target", target, "-t", profile.image_name, str(source)]
         if no_cache:
             cmd.insert(2, "--no-cache")
         print(f"Building {profile.image_name!r} (target={target})...", file=sys.stderr)
         result = subprocess.run(cmd)
         if result.returncode != 0:
-            return {"ok": False, "reason": f"docker build failed (exit {result.returncode})"}
+            return {"ok": False, "reason": f"{rt} build failed (exit {result.returncode})"}
         return {"ok": True, "image": profile.image_name, "target": target}
 
     @observe(tier="boundary")
     def exec_in_container(
         self, args: list[str], interactive: bool = False, dev: bool = True
     ) -> int:
-        """Run a command inside a container via docker exec. Returns the exit code."""
+        """Run a command inside a container via `<runtime> exec`. Returns the exit code."""
         profile = _dev_profile() if dev else _prod_profile(self.port)
         if not self._container_running(profile.container_name):
             print(
@@ -533,12 +539,12 @@ class YadgarDaemon:
                 file=sys.stderr,
             )
             return 1
-        docker_cmd = ["docker", "exec"]
+        exec_cmd = [_get_runtime(), "exec"]
         if interactive:
-            docker_cmd += ["-it"]
-        docker_cmd.append(profile.container_name)
-        docker_cmd.extend(args)
-        return subprocess.run(docker_cmd).returncode
+            exec_cmd += ["-it"]
+        exec_cmd.append(profile.container_name)
+        exec_cmd.extend(args)
+        return subprocess.run(exec_cmd).returncode
 
     # ── Docker availability ─────────────────────────────────────────────────
 
@@ -565,10 +571,10 @@ class YadgarDaemon:
 
     @observe(tier="stage")
     def _image_exists(self, image_name: str) -> bool:
-        """Return True if the image is present in the local Docker store."""
+        """Return True if the image is present in the local container-runtime store."""
         return (
             subprocess.run(
-                ["docker", "image", "inspect", image_name],
+                [_get_runtime(), "image", "inspect", image_name],
                 capture_output=True,
             ).returncode
             == 0
@@ -588,9 +594,6 @@ class YadgarDaemon:
         return (
             subprocess.run([_get_runtime(), "inspect", name], capture_output=True).returncode == 0
         )
-        # TODO(v5.46): propagate _get_runtime() through remaining ~16 callsites:
-        #   stop(), status(), pull(), push(), build(), exec_in_container(),
-        #   _image_exists(), _ensure_network(), start() rm/log lines, start_backend() rm/log lines
 
     @observe(tier="stage")
     def _health_ok(self, port: int) -> bool:
