@@ -136,6 +136,11 @@ def _green_count_from_text(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def resolve_merge_base(base_ref: str, run_git: GitRunner) -> str:
+    """Return merge-base(base_ref, HEAD), or "" when it cannot be resolved."""
+    return run_git(["merge-base", base_ref, "HEAD"]).strip()
+
+
 def collect_inputs(base_ref: str, run_git: GitRunner) -> tuple[str, int | None, int | None]:
     """Gather ``check_diff`` inputs from the branch, not just the index.
 
@@ -152,9 +157,7 @@ def collect_inputs(base_ref: str, run_git: GitRunner) -> tuple[str, int | None, 
     Returns:
         (diff_text, base_green, after_green)
     """
-    merge_base = run_git(["merge-base", base_ref, "HEAD"]).strip()
-    if not merge_base:
-        merge_base = "HEAD"  # legacy per-commit fallback
+    merge_base = resolve_merge_base(base_ref, run_git) or "HEAD"  # legacy fallback
 
     branch_diff = run_git(["diff", merge_base, "HEAD"])
     staged_diff = run_git(["diff", "--cached"])
@@ -208,7 +211,8 @@ def main(argv: list[str] | None = None) -> int:
     # parity contract: same inputs → same verdict.
     label = ""
     base_ref = "origin/master"
-    if "--ci" in args:
+    ci_mode = "--ci" in args
+    if ci_mode:
         label = " [CI]"
         try:
             base_ref = args[args.index("--base") + 1]
@@ -219,6 +223,26 @@ def main(argv: list[str] | None = None) -> int:
             print("test-weakening guard: ERROR: --ci requires --base <ref>", file=sys.stderr)
             return 1
 
+        # HARD ERROR, not a fail-open. Passing --ci --base <ref> IS the caller
+        # asserting that base ref is reachable. If it is not (shallow checkout,
+        # unfetched ref, dubious-ownership refusal), collect_inputs would silently
+        # degrade to an empty branch diff and this step would print OK / exit 0 —
+        # indistinguishable in the CI log from a genuine pass, and nothing would
+        # reveal that the guard never engaged. That is precisely the CI-inertness
+        # this script was rewritten to eliminate; do not reintroduce it one layer
+        # up. The pre-commit path keeps the fail-open, where a fresh clone with no
+        # remote is a legitimate state.
+        merge_base = resolve_merge_base(base_ref, _git)
+        if not merge_base:
+            print(
+                f"test-weakening guard{label} ERROR: cannot resolve "
+                f"merge-base({base_ref}, HEAD). The branch diff would be empty and this "
+                "check would pass vacuously. Ensure the job checks out with "
+                "fetch-depth: 0 and that the base ref is fetched.",
+                file=sys.stderr,
+            )
+            return 1
+
     diff_text, base_green, after_green = collect_inputs(base_ref, _git)
 
     errors = check_diff(diff_text, base_green, after_green)
@@ -227,7 +251,12 @@ def main(argv: list[str] | None = None) -> int:
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         return 1
-    print(f"test-weakening guard{label} OK.")
+    # Echo the baseline in CI so the log PROVES what was compared, rather than
+    # leaving "OK" ambiguous between "engaged and clean" and "never engaged".
+    if ci_mode:
+        print(f"test-weakening guard{label} OK — branch diff vs merge-base {merge_base[:12]}.")
+    else:
+        print("test-weakening guard OK.")
     return 0
 
 

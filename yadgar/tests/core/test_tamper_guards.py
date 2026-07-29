@@ -728,3 +728,35 @@ class TestLayer4PerFileDelta:
         )
         joined = " ".join(ctw.check_diff(diff, 5, 5))
         assert "test_a.py" in joined and "test_b.py" in joined
+
+
+class TestLayer4CiModeRequiresRealBase:
+    """In --ci mode an unresolvable merge-base is a HARD ERROR, not a fail-open.
+
+    The fail-open is correct for pre-commit (a fresh clone with no remote is a
+    legitimate state). In CI it is the defect class this whole plan exists to
+    remove: if `git merge-base origin/master HEAD` cannot resolve — shallow
+    checkout, unfetched ref, dubious-ownership refusal — the branch diff collapses
+    to empty and the step prints "OK" exit 0, indistinguishable from a genuine
+    pass. Nothing in the CI log would reveal that the guard never engaged.
+
+    Passing --ci --base <ref> IS the caller asserting that base ref exists.
+    """
+
+    def test_ci_mode_hard_fails_when_base_unresolvable(self, monkeypatch) -> None:
+        monkeypatch.setattr(ctw, "_git", _FakeGit({}))  # merge-base returns ""
+        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
+        assert ctw.main(["--ci", "--base", "origin/master"]) == 1
+
+    def test_precommit_mode_still_fails_open_when_base_unresolvable(self, monkeypatch) -> None:
+        """Fresh clone / no remote must NOT block a local commit."""
+        monkeypatch.setattr(ctw, "_git", _FakeGit({}))
+        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
+        assert ctw.main([]) == 0
+
+    def test_resolve_merge_base_returns_empty_when_git_fails(self) -> None:
+        assert ctw.resolve_merge_base("origin/master", _FakeGit({})) == ""
+
+    def test_resolve_merge_base_returns_the_sha(self) -> None:
+        git = _FakeGit({("merge-base", "origin/master", "HEAD"): "abc123\n"})
+        assert ctw.resolve_merge_base("origin/master", git) == "abc123"
