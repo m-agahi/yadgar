@@ -2,7 +2,22 @@
 
 **Date:** 2026-07-29
 **Tasks:** #0045 (vacuum reclaim does not persist) · #0027 (core cascade-dies during consolidation/vacuum)
-**Status:** PLANNED — awaiting decisions D1–D4 before implementation.
+**Status:** PARTIALLY SHIPPED (v5.169.0, m-agahi/yadgar#15) — NOT archived, per ADR-0081.
+- **Bug 1 (vacuum reclaim never persisted): SHIPPED.** `POST /api/check_invariants` now exists
+  (`yadgar/core/server/routes/admin_ops.py`); the gate is ADVISORY in the vacuum finalize path only
+  (D1 + D2 as decided by the user — it stays a hard signal on the consolidation path); the report no
+  longer prints a pre-rollback saving and hard-zeroes it on rollback.
+- **Bug 2a (aborts left core stopped): SHIPPED.** Every vacuum abort path now restarts core;
+  previously the quiescence-gate abort restarted nothing even though `svc.stop()` had stopped both.
+- **Bug 2b (core SIGKILL during consolidation): NOT BUILT — recommend closing.** It does not
+  reproduce: 61 core startups against 60 signal handlers, **0 unpaired**, across 15 days of
+  `yadgar.log`. SIGKILL is uncatchable and leaves no signal line, so zero unpaired means no kill, no
+  OOM, no crash. §6 holds a reproduction protocol rather than a speculative fix.
+- **Carries a contract change:** ADR-0076 D1/D2 are partially superseded — snapshot retention is
+  re-keyed from "check_invariants passed" to "the swap was retained". On a host where `ok=false` is
+  the steady state the old keying held the 2.4 GB `.old` for 7 days after every successful vacuum,
+  so disk went UP. The age backstop is untouched.
+- **Unverified:** acceptance criterion 6 (post-run inode differs) needs live containers (`-m integration`).
 **Target train:** `feat/v5.169-install-runtime-fixes` (ONE car, two independent defects).
 **Sibling plan (same seam family, different defect):** `docs/plans/fix-vacuum-trigger-path-and-watcher-2026-07-29.md` (task:0044).
 
