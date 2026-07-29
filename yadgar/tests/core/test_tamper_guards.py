@@ -521,3 +521,150 @@ class TestLayer3Layer4ScopeLockstep:
         errors = ctw.check_diff(diff, head_green=5, staged_green=5)
         assert errors, "layer 4 must fire on assert removal outside yadgar/tests/e2e/"
         assert any("assert" in e for e in errors), errors
+
+
+# ---------------------------------------------------------------------------
+# LAYER 4 — branch-diff mode (gate-blindness class, 2026-07-29)
+#
+# The guard sourced its entire input from `git diff --cached`.  A CI checkout
+# has an empty index, so `diff_text` was always "" there: the hook executed,
+# printed "test-weakening guard OK." and exited 0 regardless of what the PR
+# contained.  Correct trigger, correct scope, assertion structurally incapable
+# of firing where it matters.  Fixed by porting check_backend_bump's ADR-0080
+# merge-base contract: one pure check_diff() fed from the same inputs in both
+# modes, so local and CI return the same verdict for the same repo state.
+# ---------------------------------------------------------------------------
+
+
+class _FakeGit:
+    """Scriptable `git` stand-in: maps an argv tuple to canned stdout."""
+
+    def __init__(self, responses: dict[tuple[str, ...], str]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, args: list[str]) -> str:
+        key = tuple(args)
+        self.calls.append(key)
+        return self.responses.get(key, "")
+
+
+_BRANCH_DIFF_WEAKENED = (
+    "diff --git a/yadgar/tests/core/test_consolidation_embedded_e2e.py"
+    " b/yadgar/tests/core/test_consolidation_embedded_e2e.py\n"
+    "-    assert stored == 3\n"
+    "+    pass\n"
+)
+
+_CONTRACT_PATH = "docs/contracts/BEHAVIOR_CONTRACT.md"
+
+
+def _responses(
+    *,
+    merge_base: str = "abc123",
+    branch_diff: str = "",
+    staged_diff: str = "",
+    base_green: str = "**5 ✅",
+    head_green: str = "**5 ✅",
+    index_green: str | None = None,
+) -> dict[tuple[str, ...], str]:
+    out = {
+        ("merge-base", "origin/master", "HEAD"): merge_base,
+        ("diff", merge_base, "HEAD"): branch_diff,
+        ("diff", "--cached"): staged_diff,
+        ("show", f"{merge_base}:{_CONTRACT_PATH}"): base_green,
+        ("show", f"HEAD:{_CONTRACT_PATH}"): head_green,
+        ("show", f":{_CONTRACT_PATH}"): index_green if index_green is not None else "",
+    }
+    return out
+
+
+class TestLayer4BranchDiffMode:
+    """Layer 4 must see committed-but-not-staged weakening — the CI condition."""
+
+    def test_committed_weakening_is_caught_in_branch_mode(self) -> None:
+        """THE fix: an assert removal committed on the branch, nothing staged."""
+        git = _FakeGit(_responses(branch_diff=_BRANCH_DIFF_WEAKENED, staged_diff=""))
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert errors, "branch-diff mode must catch a committed assert removal"
+        assert any("assert" in e for e in errors), errors
+
+    def test_same_state_is_invisible_to_staged_only_mode(self) -> None:
+        """The contrast that proves the old guard was inert: nothing staged → nothing seen."""
+        staged_only_diff = ""  # exactly what `git diff --cached` returns in CI
+        errors = ctw.check_diff(staged_only_diff, 5, 5)
+        assert not errors, "staged-only mode is blind to committed weakening (the defect)"
+
+    def test_staged_changes_still_counted(self) -> None:
+        """Pre-commit still sees the about-to-exist commit, not just branch history."""
+        git = _FakeGit(_responses(branch_diff="", staged_diff=_BRANCH_DIFF_WEAKENED))
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert errors, "staged weakening must still fire (no regression on the old path)"
+
+    def test_branch_and_staged_diffs_are_unioned(self) -> None:
+        git = _FakeGit(_responses(branch_diff="BRANCH_MARKER\n", staged_diff="STAGED_MARKER\n"))
+        diff_text, _, _ = ctw.collect_inputs("origin/master", git)
+        assert "BRANCH_MARKER" in diff_text
+        assert "STAGED_MARKER" in diff_text
+
+    def test_green_count_baseline_is_merge_base_not_head(self) -> None:
+        """✅ regression across the whole branch is caught, not just this commit."""
+        git = _FakeGit(
+            _responses(base_green="**9 ✅", head_green="**7 ✅"),
+        )
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert base_green == 9
+        assert after_green == 7
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert any("✅" in e for e in errors), errors
+
+    def test_index_green_wins_over_head_when_staged(self) -> None:
+        """When the contract is staged, the index copy is the about-to-exist state."""
+        git = _FakeGit(_responses(base_green="**9 ✅", head_green="**9 ✅", index_green="**6 ✅"))
+        _, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert (base_green, after_green) == (9, 6)
+
+    def test_unreachable_base_falls_back_to_staged_only(self) -> None:
+        """No origin/master (fresh clone, no remote) → degrade, never raise."""
+        git = _FakeGit(
+            {
+                ("merge-base", "origin/master", "HEAD"): "",  # unreachable
+                ("diff", "--cached"): _BRANCH_DIFF_WEAKENED,
+                ("show", f"HEAD:{_CONTRACT_PATH}"): "**5 ✅",
+                ("show", f":{_CONTRACT_PATH}"): "**5 ✅",
+            }
+        )
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert "assert stored == 3" in diff_text, "fallback must still read the staged diff"
+        assert (base_green, after_green) == (5, 5)
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert errors, "fallback still catches staged weakening"
+
+    def test_unreachable_base_does_not_diff_against_a_literal_ref(self) -> None:
+        """Fallback must not ask git to diff against the empty string / a bogus ref."""
+        git = _FakeGit({("merge-base", "origin/master", "HEAD"): ""})
+        ctw.collect_inputs("origin/master", git)
+        assert ("diff", "", "HEAD") not in git.calls, git.calls
+
+    def test_missing_contract_at_base_skips_green_check(self) -> None:
+        """Contract absent at the merge-base (new file) → green check is skipped, not crashed."""
+        git = _FakeGit(_responses(base_green="", head_green="**5 ✅"))
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert base_green is None
+        assert not ctw.check_diff(diff_text, base_green, after_green)
+
+    def test_allow_env_still_bypasses(self, monkeypatch) -> None:
+        monkeypatch.setenv("ALLOW_TEST_WEAKEN", "1")
+        assert ctw.main() == 0, "documented one-time override must keep working"
+
+    def test_ci_mode_uses_branch_diff(self, monkeypatch) -> None:
+        """`--ci --base <ref>` runs the same collector — same inputs, same verdict."""
+        git = _FakeGit(_responses(branch_diff=_BRANCH_DIFF_WEAKENED))
+        monkeypatch.setattr(ctw, "_git", git)
+        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
+        assert ctw.main(["--ci", "--base", "origin/master"]) == 1
+
+    def test_ci_mode_requires_base(self) -> None:
+        assert ctw.main(["--ci"]) == 1, "--ci without --base must error, not silently pass"

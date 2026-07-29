@@ -17,6 +17,30 @@ Created because v5.1 module decomposition (commit `7c29a33`, 2026-05-17) silentl
 
 Later triggered by 2026-05-20 backend OOM cascade — surfaced systemd `BindsTo=` coupling as a hidden cascade-failure mode. v5.3.9 hotfix.
 
+### How the enforcement lints reach CI (two paths, not one)
+
+Recorded 2026-07-29 because an audit briefly concluded that 8 of 12 repo-local
+lints had **no CI presence at all** — by grepping only `ci-pr` for each lint's
+name. That conclusion was wrong, and the near-miss is itself an instance of the
+defect class it was hunting: *a check that looks at the wrong trigger surface
+reaches a confident false conclusion.*
+
+1. **`invariant-checks`** (`.forgejo/workflows/ci-pr.yaml` + `.github/workflows/ci-pr.yml`)
+   runs a named subset as explicit steps: I23, I24, I33, I25, I29, I32, and the
+   layer-4 test-weakening branch check. This job carries `fetch-depth: 0`, so
+   lints that need real git history (merge-base) belong **here**.
+2. **`validate`** (`.forgejo/workflows/validate.yaml` + `.github/workflows/validate.yml`)
+   runs `pre-commit run --all-files`, unfiltered, on every PR to `master` — so
+   **every** local hook executes in CI, just not from `invariant-checks`. Note
+   this job uses a shallow checkout: a hook that needs history fail-opens here.
+
+A lint being absent from `ci-pr` therefore does NOT mean it is unenforced. But
+"it executes in CI" does not mean "it can fail in CI" either — see
+`check_test_weakening`, which ran under `validate` for months and was
+structurally incapable of failing because its only input was `git diff --cached`
+and a CI checkout stages nothing. When adding a gate, name the input change that
+makes it fail, and confirm that input exists in the environment it runs in.
+
 ---
 
 ## Invariants

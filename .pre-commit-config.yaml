@@ -142,8 +142,12 @@ repos:
         language: system
         entry: python scripts/check_test_weakening.py
         pass_filenames: false
-        # Widened in lockstep with check_e2e_assertions' scan set (2026-07-29).
-        files: ^(yadgar/tests/(e2e/.*\.py|.*e2e.*\.py)|docs/contracts/BEHAVIOR_CONTRACT\.md)$
+        # always_run (2026-07-29, same reason as check-backend-bump/ADR-0080):
+        # the script now evaluates the cumulative BRANCH diff vs
+        # merge-base(origin/master), not just the index — so a `files:` filter
+        # keyed on staged paths would skip the hook on the very commits where an
+        # earlier commit's weakening is the thing to catch.
+        always_run: true
 
       - id: check-e2e-assertions
         name: Assert every e2e test_* fn has ≥1 real assertion (#52)
