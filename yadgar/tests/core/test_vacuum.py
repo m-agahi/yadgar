@@ -766,9 +766,16 @@ class TestFailureInjection:
             "a .new-* side dir leaked on the abort path"
         )
 
-        # yadgar (MCP layer) must NOT be started after import failure
-        assert "start_yadgar" not in started_services, (
-            "yadgar service must NOT be started after import failure"
+        # POLICY REVERSAL (task:0027a): yadgar core MUST be restarted on the abort
+        # path.  Phase 2's svc.stop() stopped BOTH units, and an explicit
+        # `systemctl --user stop` is never undone by Restart=on-failure — the old
+        # assertion below pinned the defect ("must NOT be started"), which left
+        # the memory engine down after every aborted vacuum until a human noticed.
+        assert "start_yadgar" in started_services, (
+            "yadgar core must be restarted after an aborted vacuum (task:0027a)"
+        )
+        assert started_services.index("start_backend") < started_services.index("start_yadgar"), (
+            "backend must come up before core"
         )
 
     def test_import_403_restores_original_db(
@@ -942,9 +949,11 @@ class TestFailureInjection:
             "surreal_db must still contain original data after the real abort"
         )
 
-        # (6) yadgar (MCP layer) must NOT be started after the abort.
-        assert "start_yadgar" not in started_services, (
-            "yadgar service must NOT be started after a side-build abort"
+        # (6) POLICY REVERSAL (task:0027a): yadgar core MUST be restarted after the
+        # abort — Phase 2 stopped both units and systemd will not undo an explicit
+        # stop.  The previous assertion ("must NOT be started") pinned the defect.
+        assert "start_yadgar" in started_services, (
+            "yadgar core must be restarted after a side-build abort (task:0027a)"
         )
 
     def test_import_success_leaves_no_surreal_db_at_bloated_path(
@@ -1990,8 +1999,17 @@ class TestVacuumExportCleanup:
             "filtered export file must be deleted after successful finalize"
         )
 
-    def test_finalize_keeps_export_files_on_check_invariants_fail(self, tmp_path, monkeypatch):
-        """D2: both vacuum_export_* files kept when check_invariants fails (diagnostic value)."""
+    def test_finalize_deletes_export_files_on_advisory_check_invariants_fail(
+        self, tmp_path, monkeypatch
+    ):
+        """POLICY REVERSAL (task:0045 D2): an ADVISORY check_invariants failure keeps the swap.
+
+        Export scratch is retained for forensics on FAILED runs.  A run whose two
+        hard gates passed is not a failed run — check_invariants is advisory in
+        the vacuum finalize path — so the scratch is dropped as on any retained
+        swap.  Keeping it here is what accumulated 1.2 GB of scratch over the
+        seven rolled-back nightlies.
+        """
         from yadgar.core.vacuum import _vacuum_finalize
 
         home = tmp_path / "yadgar"
@@ -2028,9 +2046,12 @@ class TestVacuumExportCleanup:
                 filtered_path=filtered,
             )
 
-        assert raw.exists(), "raw export file must be kept when finalize check_invariants fails"
-        assert filtered.exists(), (
-            "filtered export file must be kept when finalize check_invariants fails"
+        assert not raw.exists(), (
+            "raw export scratch must be dropped when the swap is retained, even "
+            "with an advisory check_invariants failure (task:0045 D2)"
+        )
+        assert not filtered.exists(), (
+            "filtered export scratch must be dropped when the swap is retained"
         )
 
     def test_finalize_keeps_export_files_when_yadgar_health_fails(self, tmp_path, monkeypatch):

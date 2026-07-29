@@ -119,6 +119,7 @@ import yadgar.core.server.routes.logs  # noqa: F401 — v5.52.0: GET /api/logs/_
 import yadgar.core.server.routes.traces  # noqa: F401 — viz-trace-replay: GET /api/traces/recent, /api/traces/{id}/mesh
 import yadgar.core.server.routes.debug_query  # noqa: F401 — db-inspect: POST /api/debug/read_query (ADR-0078 read path)
 import yadgar.core.server.routes.debug_dlq  # noqa: F401 — DLQ inspection: GET /api/debug/dlq (filesystem dlq_inspect wrapper)
+import yadgar.core.server.routes.admin_ops  # noqa: F401 — task:0045: POST /api/check_invariants (vacuum finalize verification)
 
 # Re-export HTTP route functions so 'import yadgar.server as srv; srv.hook_auto_capture'
 # resolves correctly (test_async_handlers_no_block.py, test_sse.py)
