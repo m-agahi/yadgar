@@ -33,11 +33,29 @@ YADGAR_TEST_TTY ?=
 # Opt out with: make setup YADGAR_ENABLE_LINGER=0
 YADGAR_ENABLE_LINGER ?= 1
 
+# Provision code_graph: the codebase-memory-mcp host binary AND the
+# code_graph.enabled runtime-config row, together. Default matches
+# yadgar-setup.sh (opt-out only) — divergent defaults between the two install
+# surfaces is the bug class this train is cleaning up.
+# Opt out with: make setup YADGAR_CODE_GRAPH=0
+YADGAR_CODE_GRAPH ?= 1
+
 # Resolved at parse time (not runtime) so `make -n` shows the real plan.
 ifeq ($(YADGAR_ENABLE_LINGER),0)
 LINGER_STEP := @echo "    Skipping systemd lingering (YADGAR_ENABLE_LINGER=0)"
 else
 LINGER_STEP := @bash $(SCRIPTS_DIR)/enable_linger.sh || true
+endif
+
+# NOTE the asymmetry with LINGER_STEP: the code_graph opt-out RUNS the
+# subcommand with --no-code-graph rather than echo-skipping it. A skip would
+# leave code_graph.enabled at its true default (ADR-0163: no row -> true) with
+# no binary installed — the exact incoherence this step exists to remove, only
+# inverted. Lingering has no such paired runtime flag, so a skip is correct there.
+ifeq ($(YADGAR_CODE_GRAPH),0)
+CODE_GRAPH_STEP := @yadgar code-graph install --no-code-graph || true
+else
+CODE_GRAPH_STEP := @yadgar code-graph install || true
 endif
 
 # Version — read once from server.json at parse time
@@ -47,7 +65,7 @@ YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar
 
 .PHONY: all help pre-setup setup uninstall uninstall-purge \
         install-hooks install-agents config-sync install-rules \
-        seed-anchors detect-runtime detect-os install-runtime clean check \
+        seed-anchors code-graph-install detect-runtime detect-os install-runtime clean check \
         pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
         _enable-units-auto restore upgrade-test eval longmemeval perf
 
@@ -201,6 +219,11 @@ _enable-units-auto:
 	    *) echo "Unsupported OS: $$OS" >&2; exit 1 ;; \
 	  esac
 
+## code-graph-install: Provision code_graph (codebase-memory-mcp binary + enabled flag); opt out with YADGAR_CODE_GRAPH=0
+code-graph-install:
+	@echo "==> Provisioning code_graph (codebase-memory-mcp)..."
+	$(CODE_GRAPH_STEP)
+
 ## restore: Restore from .surql backup + archive (advanced; set YADGAR_RESTORE_DB=... env var)
 restore:
 	@bash $(SCRIPTS_DIR)/restore.sh
@@ -242,6 +265,7 @@ setup: pre-setup
 	@$(MAKE) config-sync
 	@$(MAKE) install-rules
 	@$(MAKE) seed-anchors
+	@$(MAKE) code-graph-install
 	@echo ""
 	@echo "==> Yadgar setup complete!"
 
