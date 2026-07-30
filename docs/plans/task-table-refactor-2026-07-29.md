@@ -1,162 +1,296 @@
-# Plan: Task-table refactor — dedicated `task` table, reuse `recall`/`memorize`
+# Plan: `record` spine — dedicated tables for `task` and `adr`
 
-**Date:** 2026-07-29
-**Task:** #0047
-**Status:** design locked, not yet built
+**Date:** 2026-07-29 (rev 2026-07-30 — extended to cover ADR)
+**Tasks:** #0047 (task list), #0080 (context budget), ADR half is new
+**Status:** design locked, not started
 
-## Problem
+---
 
-The monolithic `{project}-task-list` wiki page (~14k chars / ~4k tokens) is read in
-full on every stop-hook checkpoint and every session start. Task 0080 measured the
-session-start rehydration cost at **~24k tokens** (wiki_read + 49 TaskCreate calls +
-harness re-injection). This is the single biggest per-session cost.
+## 0. TL;DR
 
-The old 0047 design (2-TOC wiki pages + per-task detail pages) cuts the cost but
-still routes structured data through the embedding/recall pipeline — the wrong
-abstraction for a task list.
+Two structured datasets — the task list and the ADR index — are stored as
+markdown wiki pages and re-parsed on every read. Move both onto a shared
+`record` table spine.
 
-## Design
+| | Today | After |
+|---|---|---|
+| Task list read | 68,870-char page, whole thing into context to filter | server-side filter, capped titles |
+| ADR index read | 29,612-char page, regex-parsed per `adr_list` **and** per `adr_add` | indexed query |
+| ADR bodies | 268 pages / 1.07 MB | **untouched** |
+| MCP surface | — | `adr_add`/`adr_list`/`adr_get` signatures **unchanged** |
 
-### Core idea
+One spine, two consumers, one train.
 
-A dedicated `task` table in SurrealDB. No new MCP tools — reuse `recall` and
-`memorize` with type-aware routing. The TOC is a query result, not a page that
-needs constant reconciliation.
+---
 
-### Schema
+## 1. Problem
+
+### 1.1 Task list
+
+The monolithic `{project}-task-list` wiki page is **68,870 chars** (~17k tokens)
+as of 2026-07-30 — the earlier revision of this plan said ~14k chars, understating
+it 5×. It is read in full on every stop-hook checkpoint and every session start.
+Task #0080 measured session-start rehydration at ~24k tokens; observed in
+practice as a context jump from 8% to 18% on a single restore.
+
+The decisive point: **a markdown page has no query surface.** Any filter — "show
+me pending tasks", "show me unblocked tasks" — requires loading all 68,870 chars
+into context and discarding most of it. There is no version of "return less" that
+works without a queryable store, short of building a markdown query engine, which
+is strictly worse than a table.
+
+### 1.2 ADR index
+
+`{project}-adr-index` is **29,612 chars** (~7.4k tokens). It is:
+
+- read + regex-parsed on every `adr_list`
+- read again on every `adr_add`, because it is the id source
+
+And it is *already a relational table*, serialized to markdown and parsed back:
+
+```python
+# adr_index.py:21
+_INDEX_ROW_RE = re.compile(
+    r"^\|\s*(ADR-\d{4})\s*\|\s*(?P<status>[^|]*?)\s*\|\s*(?P<date>[^|]*?)\s*\|"
+    r"\s*(?P<title>[^|]*?)\s*\|\s*(?P<supersedes>[^|]*?)\s*\|"
+    r"\s*(?P<superseded_by>[^|]*?)\s*\|\s*(?P<slug>[^|]*?)\s*\|\s*$", re.MULTILINE)
+```
+
+Seven columns out, seven columns back in via `_render_index_row`. **The ADR
+migration is not a redesign — it is deleting a serializer and a parser.**
+
+Because the index write can lag the page write, `_next_adr_id` cannot trust it and
+scans committed page slugs as a second id source (`_committed_page_max_id`), the
+whole sequence serialized under `_adr_log_lock`. All of that exists to compensate
+for the index not being a table.
+
+### 1.3 ADR lifecycle is dead
+
+Of ~181 yadgar ADRs, **10** carry `adr-status:superseded`. ~94% sit at `accepted`
+permanently. Every one carries a `revisit_trigger` field that nothing evaluates.
+
+The problem is *not* an accumulation of dead ADRs needing pruning. It is that
+**ADRs never leave `accepted`, so staleness is invisible and the log grows
+monotonically.** Consolidation must mean surfacing what is still binding, not
+deleting.
+
+---
+
+## 2. Decisions locked
+
+| # | Decision | Rationale |
+|---|---|---|
+| D1 | **Per-entity tools over a shared spine** (not generic `record_query`/`record_write`) | ADR migration becomes invisible at the MCP layer — `adr_add`/`adr_list`/`adr_get` keep their names and signatures. A generic filter param reinvents mini-SQL; a generic write tool to arbitrary tables collides with the standing "never directly access the DB" rule. The reuse wanted is *implementation* reuse, not interface reuse. |
+| D2 | **Hybrid body** — in-table `body` column + nullable-but-always-present `body_slug` | Task bodies pay no embedding cost; the rare task that earns a real wiki page gets one. ADR inverts it (see D3). |
+| D3 | **ADR bodies stay wiki pages** | ADR prose is meant to be found semantically. Index → table; the 268 body pages are untouched, embeddings intact, `recall()` on ADR prose unaffected. |
+| D4 | **Identity = integer `number`, per-project, `max+1` over ALL rows including archived, never reused** | External references (`docs/plans/*` filenames, PR titles, `(#93)` in commit messages) must not silently retarget. Stored as an integer; per-entity rendering formats it (`ADR-0094` vs `[0094]`) so `max+1` is not string arithmetic. |
+| D5 | **Archive, never delete** | Coupled to D4 — a hard delete makes `max+1` reuse numbers. `completed`/`superseded` → `archived`, excluded from the default filter, still readable. |
+| D6 | **Harness reconcile key = the `[NNNN]` title prefix**, orphan → warn | Harness task ids are *per-session handles*, regenerated by the SessionStart restore-nudge every session. They are not identity and must not be persisted. Silent-create on an unmatched title is the corruption path; it must warn instead. |
+| D7 | **Title capped at 200 chars, reject-on-write** | Longest current subject is ~148 chars, so 200 rejects nothing existing while blocking essays. Silent truncation destroys information exactly when someone is being sloppy. |
+| D8 | **Tasks leave `recall()`** — accepted loss | Today task content is semantically recallable because the task list is a wiki page with an embedding. Tasks are found by number or by listing; plans live in `docs/plans/`. Recorded as a deliberate loss, not a side effect. |
+| D9 | **`tier: binding \| historical` on ADR**, `adr_list` defaults to `binding` | Cheapest lever against §1.3. One field, reversible, historical stays readable but out of the default view. |
+| D10 | **`subsystem` field on ADR** | Enables D11; useful alone for filtering. Explicit, never inferred from the title. |
+| D11 | **Derived per-subsystem rollup pages** | "Decisions in force for `vacuum`" — generated on write, never authored. Same move as the task index: *the index is derived, not written.* Replaces the one big index write with one small rollup write. |
+| D12 | **`scope: project \| global` on both entities** | A genuinely cross-project decision currently has no home (`DEFAULT_POLICY storage_scope="project"`) and ends up as an anchor. Ties to task #0093's finding. |
+
+---
+
+## 3. Schema
+
+All tables SCHEMALESS (existing convention); fields via idempotent
+`DEFINE FIELD IF NOT EXISTS` migration.
+
+### 3.1 Spine fields (both entities)
+
+```
+id             record id
+project        directory_context, e.g. "/home/max/git/yadgar"
+scope          "project" | "global"                        (D12)
+number         INTEGER, per-project, max+1 incl archived    (D4)
+title          <= 200 chars, reject on overflow            (D7)
+status         per-entity enum
+body           text, NOT embedded                          (D2)
+body_slug      string | null — ALWAYS present in response  (D2)
+created_at
+modified_at
+```
+
+### 3.2 Per-entity
 
 ```
 task {
-  id,              // SurrealDB record ID
-  project,         // directory_context (e.g. "/home/max/git/yadgar")
-  number,          // task number (0047, 0080, ...) — server-assigned, atomic
-  subject,         // one-line title
-  status,          // pending | in_progress | completed
-  active_form,     // optional: what the task looks like when in_progress
-  description,     // full description (markdown)
-  context,         // cross-refs, related files, ADRs
-  blocked_by,      // list of task numbers this task is blocked by
-  blocks,          // list of task numbers this task blocks
-  wiki_page_slug,  // link to rich detail page ({project}-task-NNNN)
-  created_at,
-  modified_at
+  active_form
+  blocked_by[]   list of task numbers
+  blocks[]       list of task numbers
+  status         pending | in_progress | completed | archived
+}
+
+adr {
+  date
+  subsystem      explicit, never inferred                  (D10)
+  tier           binding | historical                      (D9)
+  supersedes[]   list of adr numbers
+  superseded_by[]
+  status         open | accepted | superseded | rejected | deprecated | archived
 }
 ```
 
-All tables are SCHEMALESS (existing convention). Fields added via idempotent
-`DEFINE FIELD IF NOT EXISTS` migration.
+### 3.3 The `body`/`body_slug` validation seam
 
-### API: `recall(type="task")`
+Same two fields, inverted per entity. This is the spine's first real test — if it
+cannot express this, the spine is wrong.
 
-```
-recall(type="task", query="", directory="/home/max/git/yadgar")
-```
-
-- `type="task"` routes to a new `TaskProvider` (or direct backend query) that
-  skips embedding entirely — plain SurrealQL `SELECT`.
-- `query` is a **filter string**, not semantic search. Syntax: `key:value`
-  pairs, space-separated. Supported keys: `status`, `blockedBy` (`empty`/`any`).
-- **Default filter:** `status != 'completed'` — all active tasks, blocked
-  included. The harness can gray out blocked tasks client-side using the
-  `blocked_by` field returned in every result.
-- **Override examples:** `query="status:pending"`, `query="blockedBy:empty"`,
-  `query="status:in_progress blockedBy:empty"`.
-- Result includes `blocked_by` and `blocks` fields so the harness can render
-  grayed-out blocked tasks without a second query.
-
-### API: `memorize(type="task")`
-
-```
-memorize(type="task", content=<structured>, context="/home/max/git/yadgar", tags=["task-list"])
-```
-
-- `type="task"` routes to a different drainer path: direct INSERT/UPDATE on the
-  `task` table, no embedding.
-- Task number assignment is **server-side, atomic** — mirroring `adr_add`'s
-  `max+1` pattern. The backend assigns the number in the same transaction as the
-  write, so two parallel sessions cannot collide.
-- On completion: status → `completed`, wiki detail page deleted (or kept as
-  archive — TBD).
-
-### Cache
-
-Core-side pull-through cache, piggybacking on the existing `Cache` class
-(`yadgar/backend/cache/cache.py`) with `ScopeVersions` invalidation.
-
-- **Key:** `(project_dir, "task")`
-- **Version:** task epoch — bumped on every write
-- **Flow:** `recall(type="task")` → cache check → miss → `_forward_admin("task_list", ...)` → backend `SELECT` → cache fill → return
-- **Write-through:** `memorize(type="task")` → optimistic cache update → file queue enqueue → backend drainer → INSERT/UPDATE → bump task epoch → all sessions' caches invalidate on next read
-
-### Nightly cleanup
-
-Consolidation cycle deletes completed task rows + their wiki detail pages.
-Keeps the table lean without manual intervention.
-
-### Client differences
-
-| | Claude Code | OpenCode |
+| | `body` (in-table) | `body_slug` (wiki page) |
 |---|---|---|
-| **Harness task store** | Persistent, per-session files on disk | None — `todowrite` is in-memory only |
-| **Yadgar → harness** | Mechanical: SessionStart hook writes via `TaskCreate` | Read-only context injection; model decides whether to call `todowrite` |
-| **Harness → yadgar** | Stop-hook reads harness list, writes to yadgar | No stop-hook task mirroring (no persistent store to read from) |
+| task | populated | usually **null** |
+| adr | **null** | **mandatory** |
 
-The design works for both — Claude Code keeps its bidirectional sync against the
-new table; OpenCode gets read-only context injection.
+Both fields are always present in every response. Per-entity validation asserts
+which one must be set.
 
-## Architecture fit
+ADR's 8 authored sections (context / decision / rationale / alternatives /
+consequences / revisit_trigger / status / date / supersedes) remain **write-time
+inputs** rendered into the page by `_build_adr_body`. They are not duplicated into
+the table — ADRs are near-immutable and only status/supersede mutate.
+
+---
+
+## 4. Tools (D1)
+
+### 4.1 Task — new
+
+```
+task_list(directory, status=None, blocked=None)   → capped metadata only
+task_get(directory, number)                       → full row incl body
+task_write(directory, ...)                        → create or update
+```
+
+`task_list` default filter: `status NOT IN (completed, archived)`. Returns
+`blocked_by`/`blocks` so the harness can gray out blocked tasks with no second
+query.
+
+### 4.2 ADR — signatures unchanged
+
+`adr_add`, `adr_list`, `adr_get` keep their exact current signatures. Storage is
+swapped underneath. `adr_list` gains `tier` defaulting to `binding` (D9) and
+`subsystem` as an optional filter (D10) — both additive.
+
+**No caller, prompt, doc, or ADR referencing these tools needs to change.** This
+is the entire reason D1 chose per-entity tools.
+
+### 4.3 Batch write primitive — spine-level
+
+`record_write_batch(new_row, updates[])`, atomic.
+
+Required because both entities mutate sibling rows in the same logical write:
+
+- **ADR supersede** — `_assemble_index_rows` currently flips each target's
+  `status` to `superseded` and appends to its `superseded_by` in the *same page
+  rewrite*. Under a table that is N+1 row updates. Without atomicity a supersede
+  can half-apply, leaving a row claiming `accepted` while its superseder claims to
+  have superseded it.
+- **Task** — `blocked_by`/`blocks` are bidirectional and need the same guarantee.
+
+**Consistency collapse:** today `_flip_superseded_target` also writes an
+`adr-status:superseded` *page tag*, deliberately best-effort with a bare
+`except: return` — two writers with two different consistency guarantees for one
+logical fact. After migration the **row is authoritative for status**; the page
+tag becomes derived-on-render or is dropped. Pick at build time; do not keep both.
+
+---
+
+## 5. Architecture fit
 
 All cross-layer communication via `_forward_admin` (HTTP) — no import-linter
 violations.
 
 | Layer | What | Files |
 |---|---|---|
-| `_shared/storage/` | DDL migration + `TaskStore` mixin (CRUD) | `migrations.py` (new migration entry), `task_store.py` (new) |
-| `backend/admin_exec/` | Backend impl: `task_list`, `task_write` ops | `tasks.py` (new) |
-| `backend/admin_exec/__init__.py` | Register ops in `_ADMIN_OPS` | edit existing |
-| `core/server/tools/` | Type-aware routing in `recall`/`memorize` handlers | `recall.py`, `memorize.py` (edit existing) |
-| `core/server/tools/_forward.py` | `_forward_admin("task_list", ...)` / `_forward_admin("task_write", ...)` | edit existing |
-| `backend/retrieval/` | `TaskProvider` (or direct backend query, no embedding) | `providers/task.py` (new) or inline in recall_pipeline |
-| `core/hooks/` | SessionStart nudge: read task table instead of wiki page | `session-start-context.py` (edit existing) |
-| `core/hooks/templates/` | Stop-hook step 5: reconcile against task table | `stop_checkpoint_prompt.md` (edit existing) |
-| `CAPABILITY_REGISTRY.md` | New entry (I32) | edit existing |
+| `_shared/storage/` | migration + `RecordStore` mixin (CRUD, atomic `max+1`, status filter, batch write) | `migrations.py`, `record_store.py` (new) |
+| `backend/admin_exec/` | `task_list`/`task_write`, `adr_list`/`adr_write` ops | `records.py` (new) |
+| `backend/admin_exec/__init__.py` | register in `_ADMIN_OPS` | edit |
+| `core/server/tools/` | task tools; ADR tools re-pointed at the spine | `tasks.py` (new), `adr.py`, `adr_index.py`, `adr_render.py` (edit) |
+| cache | `(project, entity)` key, epoch bump on write | existing `Cache` + `ScopeVersions` |
+| `core/hooks/` | SessionStart nudge reads the table | `session-start-context.py` |
+| `core/hooks/templates/` | stop-hook step 5 reconciles against the table | `stop_checkpoint_prompt.md` |
+| consolidation | nightly `completed`/`superseded` → `archived` sweep (D5) | consolidation cycle |
+| `CAPABILITY_REGISTRY.md` | new entries (I32) | edit |
 
-### What we avoid
+### 5.1 Deletions — named deliverables, not side effects
 
-- No new MCP tools (reuse `recall`/`memorize`)
-- No embedding cost on task reads
-- No TOC drift (the TOC *is* the query result)
-- No markdown parsing on read
-- No task-number collision (server-side atomic assignment)
+The migration is only worth it if the compensating machinery goes away:
 
-### What we add
+- `_index_max_id`, `_committed_page_max_id` — the **dual id authority**. The table
+  is the sole id source; keeping the page-slug scan as belt-and-braces would
+  preserve exactly the complexity this removes.
+- `_next_adr_id`'s dual scan, `_next_adr_id_from_index`
+- `_adr_log_lock` — atomic `max+1` replaces the per-project lock
+- `_INDEX_ROW_RE`, `parse_index_rows`, `_render_index_row`, `_build_index_content`,
+  `_assemble_index_rows`
+- the `{project}-adr-index` page itself
+- `_flip_superseded_target`'s page-tag write (§4.3)
 
-- 1 new table + migration (~20 lines)
-- 1 new `_ADMIN_OPS` entry (`task_list`, `task_write`)
-- 1 new drainer op type
-- Type-aware routing in `recall`/`memorize` core handlers
-- ~3 new files (`backend/admin_exec/tasks.py`, `_shared/storage/task_store.py`, migration entry)
-- Cache integration (piggyback on existing `Cache` class)
+---
 
-## Migration path
+## 6. Migration
 
-1. Add `task` table + migration (no data migration — the wiki page stays as
-   source of truth during transition).
-2. Add backend ops (`task_list`, `task_write`).
-3. Add type-aware routing in `recall`/`memorize`.
-4. Add cache integration.
-5. Rewire SessionStart nudge + stop-hook step 5 to use the new table.
-6. One-time seed: read the existing `{project}-task-list` wiki page, parse
-   markdown, INSERT into `task` table.
-7. Delete the old `{project}-task-list` wiki page (or mark it deprecated).
-8. Add nightly cleanup of completed rows.
+Task and ADR migrate independently; neither blocks the other.
 
-## Estimated impact
+1. `record` table + migration.
+2. Backend ops + cache.
+3. Task tools; seed from the existing `{project}-task-list` page (parse markdown → rows).
+4. Rewire SessionStart nudge + stop-hook step 5.
+5. ADR tools re-pointed at the spine, signatures unchanged.
+6. Seed ADR rows from `{project}-adr-index` (`parse_index_rows` is the parser — use it, then delete it).
+7. Generate initial rollups (D11).
+8. Nightly archive sweep (D5).
+9. **Verification gate** — old pages stay in place, unread, until row counts and
+   spot-checks match. Only then delete `{project}-task-list` and
+   `{project}-adr-index`.
 
-| Metric | Current (monolithic wiki) | Old 0047 (2-TOC wiki) | New (task table) |
-|---|---|---|---|
-| Session-start rehydration | ~24k tok | ~8-10k tok | ~2-4k tok |
-| Stop-hook checkpoint read | ~4k tok | ~1.6k tok | ~200-400 tok |
-| Embedding cost per read | Full pipeline | Full pipeline (on ~50 pages) | None |
-| TOC drift risk | None (single page) | High (separate TOC page) | None (query result) |
-| Task number collision | Implicit (single-page lock) | High (parallel sessions) | None (server-side atomic) |
+Rollback before step 9 is: stop reading the table. The old pages are still there.
+
+---
+
+## 7. Build order — one train, 8 cars
+
+| Car | Scope |
+|---|---|
+| A | `RecordStore` mixin + migration + atomic `max+1` + batch-write primitive |
+| B | backend ops + cache integration |
+| C | task tools (`task_list`/`task_get`/`task_write`) |
+| D | task seed + SessionStart/stop-hook rewire |
+| E | ADR tools re-pointed at spine — signatures unchanged |
+| F | ADR seed + delete the parser/serializer/lock (§5.1) |
+| G | `tier` + `subsystem` + `scope` + derived rollups (D9-D12) |
+| H | nightly archive sweep (D5) |
+
+Cars C/D and E/F are independent after B and can run in parallel. G depends on E.
+
+TDD throughout — RED-verified per car. Gates: ruff, import-linter, I32 capability
+coverage, I33 observe coverage, `check_versions`.
+
+---
+
+## 8. Expected impact
+
+| Metric | Today | After |
+|---|---|---|
+| Session-start task rehydration | ~24k tok | ~3k tok (44 × capped title + status + blocked_by) |
+| Stop-hook checkpoint read | ~4k tok | ~200-400 tok |
+| `adr_list` | 29,612-char read + regex parse | indexed query |
+| `adr_add` | index read + page-slug scan + lock | atomic `max+1` |
+| "what governs `vacuum`?" | scan ~181 entries | one rollup page |
+| ADR body pages | 268 / 1.07 MB | unchanged |
+| Embedding cost on task reads | full pipeline | none |
+| Index drift risk | present (ADR index is derived-but-authored) | none — index *is* the query |
+| Number collision | lock-dependent | none (atomic, per-project) |
+
+## 9. Open items
+
+- **§4.3 page-tag vs row authority** — decide at build time, do not keep both.
+- **Rollup regeneration trigger** — on every ADR write, or nightly? On-write keeps
+  it fresh and costs one small page write (cheaper than today's index write);
+  nightly is cheaper but stale between runs.
+- **`subsystem` vocabulary** — free-form string or a controlled list? Free-form
+  drifts (`vacuum` vs `Vacuum` vs `db-vacuum`); a controlled list needs a home.
