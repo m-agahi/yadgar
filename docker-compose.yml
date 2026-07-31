@@ -73,11 +73,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-<<<<<<< HEAD
     image: openfantasy/yadgar:${CORE_VERSION:-5.169.3}
-=======
-    image: openfantasy/yadgar:${CORE_VERSION:-5.169.3}
->>>>>>> car/0091-health-probe
     build:
       context: .
       dockerfile: Dockerfile
