@@ -85,7 +85,7 @@ read-modify-write is not atomic.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D6 | **Integer `number` from the engine's sequence facility. No application-level read-then-write.** Sequences are created with **`BATCH 1`**, exposed as a tunable knob — `ledger.sequence_batch`, default `1`, in the runtime config store (ADR-0163), falling back to `config.yaml` if the store is unreachable at migration time. | `INSERT` and let the engine assign — no race window to lock around. Kills `_adr_log_lock` *and* `_committed_page_max_id`. Expressed as a *capability* (see D30), not a literal. Batch size is an allocation preference on a `DEFINE SEQUENCE` statement yadgar issues anyway — the same category as `START` — not cluster coordination, which stays entirely the engine's business. `BATCH 1` is the right default for a single-node deployment (no consensus round-trip exists to amortise); the knob keeps a cluster escape hatch without yadgar pretending to manage one. **VERIFIED 2026-07-31 against a throwaway `surrealdb/surrealdb:v3.1.5` container** (the version the backend image ships; the host binary is 3.0.5 — see task #0092): `DEFINE SEQUENCE` executes; `sequence::nextval()` increments (`BATCH 1 START 1` → 1,2,3,4); the engine default is **`BATCH 1000 START 0`** (from `INFO FOR DB`, which the docs do not state); sequence state **persists across a full process restart**. One measured consequence, recorded because it is invisible otherwise: **a restart DISCARDS the unconsumed remainder of the reserved batch** — a `BATCH 1000` sequence at value 2 returned **1000** after restart, while a `BATCH 1` sequence at 4 returned 5. Under the engine default, ids therefore advance by up to 1000 per daemon restart regardless of writes. This is CORRECT per D9 (gaps are expected; a number is an identifier, not a count) and affects only readability, which D10's encoding absorbs. |
+| D6 | **Integer `number` from the engine's sequence facility. No application-level read-then-write.** **CREATE-ONCE.** Sequences are created by a single `DEFINE SEQUENCE <name> BATCH <knob> IF NOT EXISTS` at migration time. `<knob>` = `ledger.sequence_batch`, default `1`, read from the runtime config store (ADR-0163) at creation ONLY, falling back to `config.yaml` if the store is unreachable that early. | `INSERT` and let the engine assign — no race window to lock around. Kills `_adr_log_lock` *and* `_committed_page_max_id`. Expressed as a *capability* (see D30), not a literal. **Yadgar issues the CREATE and consumes `nextval()`. Nothing else.** Allocation, uniqueness, monotonicity, persistence and crash-safety are the engine's job and yadgar does not touch them. Specifically: yadgar **never** re-issues the DDL at runtime, **never** computes or injects a `START`, and **never** reasons about the sequence's current position. `BATCH` (allocation-chunk size) and `START` (a brand-new sequence's first value) are distinct and neither is a "resume here" control. If an operator ever needs a different `BATCH`, that is a deliberate migration they author — not a runtime effect of the knob. Burned ids stay burned; they are registration numbers, not a count (D9). **VERIFIED 2026-07-31 against a throwaway `surrealdb/surrealdb:v3.1.5` container** (the version the backend image ships; the host binary is 3.0.5 — see task #0092): `DEFINE SEQUENCE` executes; `sequence::nextval()` increments (`BATCH 1 START 1` → 1,2,3,4); the engine default is **`BATCH 1000 START 0`** (from `INFO FOR DB`, which the docs do not state); sequence state **persists across a full process restart**. One measured consequence, recorded because it is invisible otherwise: **a restart DISCARDS the unconsumed remainder of the reserved batch** — a `BATCH 1000` sequence at value 2 returned **1000** after restart, while a `BATCH 1` sequence at 4 returned 5. Under the engine default, ids therefore advance by up to 1000 per daemon restart regardless of writes. This is CORRECT per D9 (gaps are expected; a number is an identifier, not a count) and affects only readability, which D10's encoding absorbs. |
 | D7 | **Never reused. Archive, never hard-delete.** | External references (plan filenames, PR titles, `(#93)` in commits) must not silently retarget. Archive-never-delete is the precondition for permanence. |
 | D8 | **Composite id `(origin, number)`.** | Your task and mine are `(alice, 231)` and `(max, 231)` — distinct by construction. Works offline, sync is idempotent, **no id ever changes** (which upstream-assigns-on-sync would violate). Sequences stay per-origin. |
 | D9 | **Gaps are correct.** | A number is an identifier, not a count. SurrealDB docs explicitly do **not** claim gap-free — their own example shows a gap after a cancelled transaction, and `nextval` is not rolled back on failure. |
@@ -243,7 +243,7 @@ Rollback before step 10: stop reading the tables.
 
 | Car | Scope | Depends on |
 |---|---|---|
-| A | `_LedgerMixin` + migration + `DEFINE SEQUENCE … BATCH 1` behind the `ledger.sequence_batch` knob (**test `OVERWRITE` reset semantics FIRST — §10**) + explicit PERMISSIONS + **a no-op scope-filter hook** (not tenancy columns — D17) + **new AST guard `scripts/check_ledger_chokepoint.py` with an allowlist for pre-existing violations** | — |
+| A | `_LedgerMixin` + migration + `DEFINE SEQUENCE … BATCH <knob> IF NOT EXISTS` (create-once, D6) + explicit PERMISSIONS + **a no-op scope-filter hook** (not tenancy columns — D17) + **new AST guard `scripts/check_ledger_chokepoint.py` with an allowlist for pre-existing violations** | — |
 | B | backend ops + cache | A |
 | C1 | **3a** — tag-override matches the page type's own opt-in tag | — |
 | C2 | **3b** — implement `downweight` | — |
@@ -305,14 +305,11 @@ surrounding claim was never checked.
 
 - **Rollup regeneration trigger** — on write (fresh, one small page write) vs nightly (cheaper, stale between runs).
 - **`subsystem` vocabulary** — free-form drifts (`vacuum`/`Vacuum`/`db-vacuum`); a controlled list needs a home.
-- **⚠ Does `DEFINE SEQUENCE OVERWRITE` reset the counter?** The `ledger.sequence_batch` knob (D6) is
-  only meaningful if it can be re-applied to an existing sequence, and the syntax is
-  `DEFINE SEQUENCE [OVERWRITE | IF NOT EXISTS] …`. **If `OVERWRITE` resets to `START`, re-tuning the
-  knob would reuse ids and silently destroy D7's permanence invariant** — the worst failure this
-  design can have, since every external reference (`docs/plans/*` filenames, PR titles, `(#93)` in
-  commits) would retarget. Car A MUST test this before wiring the knob to anything that re-issues
-  the DDL. If `OVERWRITE` does reset, the knob applies at creation only and re-tuning requires an
-  explicit, guarded migration that preserves the current value via `START`.
-
-*(Resolved 2026-07-31: `DEFINE SEQUENCE` availability, the `BATCH 1000 START 0` engine default, and
-restart behaviour are all now measured facts — see D6.)*
+*(Resolved 2026-07-31, all measured against a throwaway `surrealdb/surrealdb:v3.1.5` container —
+see D6: `DEFINE SEQUENCE` availability, the `BATCH 1000 START 0` engine default, restart behaviour,
+and `OVERWRITE` semantics. `OVERWRITE` does **NOT** reset the counter — a sequence at 3 returned 4
+after `OVERWRITE` with identical params, and 5 after `OVERWRITE` changing `BATCH 1 → 100`;
+`IF NOT EXISTS` on an existing sequence is a clean no-op. An earlier revision flagged a
+build-blocking risk that re-tuning the knob could reset the counter and destroy D7's permanence
+invariant. That risk does not exist. The mitigation it proposed — preserving position via `START` —
+would itself have been yadgar managing the index, which D6 now forbids outright.)*
