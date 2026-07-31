@@ -9,6 +9,8 @@ dotted path — imports keep working through this PEP-562 re-export
   runtime.py   — container-runtime + host-env probing (Car C3 split)
   profiles.py  — ContainerProfile + prod/dev profiles + network (Car C3 split)
   systemd.py   — systemd user-unit rendering (Car C3 split)
+  db_migrate.py— one-time copy of the backend DB out of the legacy named volume
+                 onto the host bind mount (Bug 11 / task 0100)
   daemons.py   — background daemon-thread startup (auto-update checks, …)
   sd_notify.py — systemd sd_notify READY/RELOADING/STOPPING plumbing
   drain.py     — in-flight request draining + embed-cache snapshot on stop
