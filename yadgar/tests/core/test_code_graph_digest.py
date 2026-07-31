@@ -684,3 +684,85 @@ class TestStaleSurvivesBudget:
         assert "stale @ " in out
         assert "A" * 40 not in out, "body runs must still be defanged"
         assert gate_or_reject(out) is None
+
+
+# --- Section-budget fairness (Car 0087, ADR-0162) ---------------------------
+#
+# render_digest used to render all four body sections into ONE shared budget
+# and truncate the joined blob with a single tail-cut. Whichever section came
+# first (layers) ate the whole budget on any real repo with real content, and
+# `endpoints:` — LAST in priority order — was truncated away entirely, or
+# worse, cut MID-LINE: the live `code_graph` memory block for this very repo
+# shipped `endpoints:\n  PATCH /` — a truncated route fragment, not a real
+# one. Sections now each get an individually water-filled share of
+# body_budget, so a later section always gets SOME budget and a shown line is
+# never a mid-string cut.
+
+
+class TestSectionBudgetFairness:
+    def test_endpoints_not_starved_by_earlier_sections(self):
+        """RED before the fix: a concrete endpoint LINE must survive even
+        though layers/hotspots alone would consume the entire old shared
+        budget. Also proves the fixture actually overflows (an earlier
+        section shows its own truncation marker) so this isn't a false-green
+        on a digest that never truncated in the first place.
+        """
+        from yadgar.core.code_graph import digest
+
+        out = digest.render_digest(
+            _budget_filling_arch(),
+            _budget_filling_endpoints(),
+            {"canonical_root": "/repo", "subdir": ""},
+        )
+
+        # the FIRST (alphabetically lowest path) endpoint must be present — a
+        # whole rendered route LINE, not just the "endpoints:" header.
+        assert "GET /api/v1/globalrouter/resource00/{resourceId}/details" in out
+
+        # confirm the fixture really did overflow: an earlier, higher-priority
+        # section had to drop rows and show its own truncation marker —
+        # otherwise this test would pass even under the OLD starving
+        # implementation simply because nothing ever overflowed.
+        i_layers = out.index("layers:")
+        i_hot = out.index("hotspots:")
+        layers_region = out[i_layers:i_hot]
+        assert "… (" in layers_region, "fixture must overflow layers' soft cap/share"
+
+    def test_redistribution_frees_unused_share_for_endpoints(self):
+        """A section with a tiny demand (one short entry-point name, no
+        hotspots at all) must free its unused share for a hungrier section
+        (endpoints) rather than the share sitting reserved-but-idle.
+        """
+        from yadgar.core.code_graph import digest
+
+        arch = _budget_filling_arch()
+        # collapse layers to a single row and drop hotspots entirely so
+        # entry-points' tiny demand and endpoints' large demand are the only
+        # real competitors for the redistributed budget.
+        arch["layers"] = [{"name": "Main", "layer": "entry", "reason": "application entry point"}]
+        arch["hotspots"] = []
+
+        out = digest.render_digest(
+            arch,
+            _budget_filling_endpoints(),
+            {"canonical_root": "/repo", "subdir": ""},
+            budget=300,
+        )
+        assert len(out) <= 300
+        assert "GET /api/v1/globalrouter/resource00/{resourceId}/details" in out
+
+    def test_determinism_at_forced_truncation_budget(self):
+        """Every section is forced to truncate at this budget; output must
+        still be byte-identical across repeated calls (pure function — the
+        allocator iterates a list in fixed order and uses integer // and %
+        only, never a set or a float).
+        """
+        from yadgar.core.code_graph import digest
+
+        arch = _budget_filling_arch()
+        rows = _budget_filling_endpoints()
+        identity = {"canonical_root": "/repo", "subdir": ""}
+        a = digest.render_digest(arch, rows, identity, budget=250)
+        b = digest.render_digest(arch, rows, identity, budget=250)
+        assert a == b
+        assert len(a) <= 250
