@@ -379,7 +379,7 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | `metrics_enabled` | `YADGAR_METRICS_ENABLED` | bool | `true` | Expose the `/metrics` Prometheus endpoint. Set `false`/`0` to return 404. Always unauthenticated (exempt from bearer-auth) — bind to loopback so only local scrapers reach it. *(no FIELD_META)* |
 | `otlp_endpoint` | `YADGAR_OTLP_ENDPOINT` | str | `""` | OTLP/HTTP endpoint for Tempo trace export (e.g. `http://tempo:4318/v1/traces`). Empty = disabled. |
 | `otlp_headers` | `YADGAR_OTLP_HEADERS` | str | `""` | Comma-separated `k=v` auth/tenant headers for the OTLP exporter. |
-| `otlp_timeout_sec` | `YADGAR_OTLP_TIMEOUT_SEC` | int | `3` | OTLP exporter HTTP timeout in seconds. *(config.py default is `3`; FIELD_META desc says "default 10" — code wins)* |
+| `otlp_timeout_sec` | `YADGAR_OTLP_TIMEOUT_SEC` | int | `3` | OTLP exporter HTTP timeout in seconds. Short so a dead collector fails fast. |
 | `otlp_insecure` | `YADGAR_OTLP_INSECURE` | bool | `true` | Reserved/no-op for the HTTP OTLP exporter — transport security is decided by the endpoint URL scheme (`http://` vs `https://`), not by this flag. Kept to avoid churning the three-way config sync. |
 
 ---

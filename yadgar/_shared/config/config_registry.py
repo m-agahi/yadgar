@@ -213,7 +213,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_CONFLICT_RESOLVER", "off", "string"),
     ConfigEntry("YADGAR_PROFILE", "full", "string"),
     ConfigEntry("YADGAR_METRICS_ENABLED", "1", "bool"),
-    ConfigEntry("YADGAR_ALLOWED_ORIGINS", "", "string"),
+    # Lockstep with Settings.ALLOWED_ORIGINS (config.py) — declaring "" here
+    # misrepresented the CORS posture as "no origin allowed" (task:0103).
+    ConfigEntry("YADGAR_ALLOWED_ORIGINS", "http://127.0.0.1:8765,http://localhost:8765", "string"),
     # ── Daemon / container lifecycle ─────────────────────────────────────────
     ConfigEntry("YADGAR_CONTAINER", "yadgar", "string"),
     ConfigEntry("YADGAR_IMAGE", "docker.io/openfantasy/yadgar:latest", "string"),
@@ -223,7 +225,11 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_DEV_VOLUME", "yadgar-dev-data", "string"),
     ConfigEntry("YADGAR_BACKEND_CONTAINER", "yadgar-backend", "string"),
     ConfigEntry("YADGAR_BACKEND_IMAGE", "docker.io/openfantasy/yadgar-backend:latest", "string"),
-    ConfigEntry("YADGAR_BACKEND_VOLUME", "yadgar-backend-data", "string"),
+    # Kept in lockstep with yadgar.core.daemon.runtime._BACKEND_VOLUME — the
+    # volume real installs hold on disk.  It read "yadgar-backend-data" until
+    # task:0103, a name no install surface has ever created or mounted.  Asserted
+    # by yadgar/tests/server/test_config_default_values.py (I25b).
+    ConfigEntry("YADGAR_BACKEND_VOLUME", "yadgar-db-data", "string"),
     ConfigEntry("YADGAR_DOCKERHUB_USER", "looseking", "string"),
     ConfigEntry("YADGAR_IN_CONTAINER", "0", "bool"),
     # ── Backend URLs ─────────────────────────────────────────────────────────
@@ -311,7 +317,9 @@ _REGISTRY: list[ConfigEntry] = [
     # ── OTLP / Tempo exporter ────────────────────────────────────────────────
     ConfigEntry("YADGAR_OTLP_ENDPOINT", "", "string"),
     ConfigEntry("YADGAR_OTLP_HEADERS", "", "string"),
-    ConfigEntry("YADGAR_OTLP_TIMEOUT_SEC", "10", "int"),
+    # Lockstep with Settings.OTLP_TIMEOUT_SEC (config.py) — 3s is deliberate
+    # ("short so a dead collector fails fast"); "10" here was stale (task:0103).
+    ConfigEntry("YADGAR_OTLP_TIMEOUT_SEC", "3", "int"),
     ConfigEntry("YADGAR_OTLP_INSECURE", "1", "bool"),
     # ── Tempo query API (viz-trace-replay Car B) ─────────────────────────────
     ConfigEntry("YADGAR_TEMPO_QUERY_URL", "", "string"),
