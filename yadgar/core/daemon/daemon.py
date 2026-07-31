@@ -512,7 +512,17 @@ class YadgarDaemon:
 
     @observe(tier="boundary")
     def push(self, tag: str | None = None) -> dict:
-        """Tag the prod image and push it to Docker Hub."""
+        """Tag the prod CORE image and push it to Docker Hub.
+
+        NOT A BUG that this has no backend counterpart (task:0101 sweep): under
+        ADR-0176, CI is the sole builder and publisher of both
+        docker.io/openfantasy/yadgar and yadgar-backend. A locally pushed image
+        races CI's tags, and a locally built one shadows the CI artifact
+        (podman's default pull policy is `missing`). This local path survives as
+        a developer convenience for the core image only, so no backend publish
+        was ever written. Contrast pull(), which DOES need both images because
+        `daemon start` consumes both (task:0099).
+        """
         from importlib.metadata import PackageNotFoundError
         from importlib.metadata import version as pkg_version
 
