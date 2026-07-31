@@ -11,15 +11,18 @@ Flow:
 
   0. Startup recovery: complete/roll back any swap interrupted by a crash
      (canonical absent + .old/.new present) — BEFORE the preflight.
-  1. Preflight: confirm surreal_db/ exists, backend reachable, a host-side
-     `surreal` binary is resolvable (Phase 3 spawns one), free space (~2.5x).
-     The last two are SKIPs (exit 0, named reason) — never a destructive abort.
+  1. Preflight: confirm surreal_db/ exists, backend reachable, a side-build
+     SurrealDB is obtainable (a host `surreal` on PATH, else the backend image
+     for a one-shot container — see yadgar.core.vacuum.launcher), free space
+     (~2.5x).  The last two are SKIPs (exit 0, named reason) — never a
+     destructive abort.
   2. Capture EXACT per-table source counts (surviving set; action_log excluded).
   3. Phase 1 — Export: GET /export → strip_export_for_vacuum().
   4. Phase 2 — Stop the real backend, then snapshot a QUIESCED .pre-vacuum copy
                (belt-and-suspenders; canonical NOT renamed/emptied here).
-  5. Phase 3 — Side-build: spawn a throwaway surreal on surreal_db.building-<ts>
-               (alt port), /import, re-define users, then VERIFY by reopening
+  5. Phase 3 — Side-build: start a throwaway surreal on surreal_db.building-<ts>
+               (alt port, via the launcher seam), /import, re-define users,
+               then VERIFY by reopening
                and asserting per-table counts EXACTLY match source.  Stop the
                throwaway GRACEFULLY (assert clean exit) so the dir is flushed.
                On any failure → ABORT: canonical untouched, real backend back up.
@@ -54,8 +57,12 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:  # pragma: no cover — typing only
+    from yadgar.core.vacuum.launcher import SideBackendLauncher
 
 from yadgar._shared.observability.observe import observe
 from yadgar.core._surreal_runner import _resolve_db_creds
@@ -112,9 +119,12 @@ _CHECK_INVARIANTS_PATH = "/api/check_invariants"
 _VACUUM_EXPORT_KEEP_RUNS = 2
 
 # Car 0092: named SKIP reasons.  A skip is exit 0 and reclaims nothing, so the
-# reason is the only thing telling an operator what to do about it — a missing
-# binary is a broken install that will never self-heal, low disk is transient.
-# They must not look identical in stderr or in the consolidation_log row.
+# reason is the only thing telling an operator what to do about it — no usable
+# `surreal` at all is a broken install that will never self-heal, low disk is
+# transient.  They must not look identical in stderr or in the consolidation_log
+# row.  The reason STRING is kept as-is across Car 0092's full fix (which added
+# the container branch, narrowing when this fires) so historical rows stay
+# comparable.
 _SKIP_NO_SURREAL = "no_surreal_binary"
 _SKIP_LOW_DISK = "low_disk"
 
@@ -497,90 +507,71 @@ def _bootstrap_namespace(backend_url: str) -> None:
 
 
 @observe(tier="stage")
-def _stop_side_backend_clean(proc, side_url: str) -> None:
-    """Stop the throwaway side backend GRACEFULLY and assert it fully exited.
-
-    A SIGKILL'd surrealkv dir can be half-flushed; renaming such a dir into the
-    canonical path is the corrupt-on-reopen risk this design must avoid.  So we
-    SIGTERM and require a clean exit — if the process does not exit on its own
-    within the grace window (i.e. it would need SIGKILL), we RAISE so the caller
-    ABORTS the swap and leaves the canonical untouched.
-    """
-    if proc is None:
-        return
-    try:
-        proc.terminate()
-    except OSError:
-        pass
-    try:
-        proc.wait(timeout=15.0)
-    except Exception as exc:  # subprocess.TimeoutExpired or similar
-        # Escalate to kill so we don't leak the process, but ABORT the swap:
-        # a non-graceful stop means the segments may not be flushed.
-        try:
-            proc.kill()
-            proc.wait(timeout=5.0)
-        except Exception:
-            pass
-        raise RuntimeError(
-            f"side backend at {side_url} did not exit gracefully on SIGTERM "
-            f"({exc}); refusing to swap a possibly half-flushed surrealkv dir"
-        ) from exc
-    # Belt-and-suspenders: poll the URL until it stops answering (lock released).
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        try:
-            httpx.get(f"{side_url}/health", timeout=1.0)
-        except Exception:
-            break  # connection refused → port released → process gone
-        time.sleep(0.2)
-
-
-@observe(tier="stage")
 def _build_and_verify_side_db(
     backend_url: str,
     filtered_path: Path,
     side_path: Path,
     source_counts: dict[str, int],
+    launcher: SideBackendLauncher | None = None,
 ) -> bool:
     """Build the compacted DB on *side_path* and verify it EXACTLY matches source.
 
     *side_path* is the UNVERIFIED staging dir (``surreal_db.building-<ts>``); the
     caller promotes it to ``surreal_db.new-<ts>`` only AFTER this returns True.
-    Spawns a throwaway surreal on an ALT free port pointing at ``side_path``
+    Starts a throwaway SurrealDB on an ALT free port pointing at ``side_path``
     (NOT the canonical), bootstraps the namespace, POSTs /import, re-defines
     users, then REOPENS/queries the side DB and asserts per-table counts match
     ``source_counts`` EXACTLY.  Stops the throwaway gracefully (asserting a clean
     exit) so the dir is safe to rename in.
+
+    Args:
+        launcher: how to obtain the throwaway.  ``None`` (production) selects it
+            per host via :func:`~yadgar.core.vacuum.launcher.select_side_launcher`
+            — a host-side ``surreal`` when one is on PATH, else a one-shot backend
+            container (Car 0092: on a container install the binary exists only
+            inside the image, which used to make Phase 3 unreachable).
 
     Returns:
         True iff the side DB is built AND verified (safe to promote + swap in).
         False on ANY failure (import error, count mismatch, non-graceful stop) —
         the caller cleans up the staging path; the canonical is left untouched.
 
-    The throwaway is spawned directly via yadgar._surreal_runner.spawn_surreal
-    (production-importable), NOT via ServiceController — ServiceController governs
-    only the real backend lifecycle.
+    The throwaway is governed by the launcher seam, NOT by ServiceController —
+    ServiceController governs only the real backend lifecycle.
     """
-    from yadgar.core._surreal_runner import spawn_surreal, teardown_surreal_proc
+    from yadgar.core.vacuum.launcher import select_side_launcher
 
     side_path.mkdir(parents=True, exist_ok=True)
     side_port = _free_port()
     side_url = f"http://127.0.0.1:{side_port}"
-    proc = None
+    if launcher is None:
+        launcher = select_side_launcher()
+    if launcher is None:
+        # Unreachable in a normal run — the preflight SKIPs before any
+        # destructive step when neither launcher is available.  Kept as a
+        # fail-closed guard for a direct caller.
+        print(
+            "[vacuum] ERROR: no side-build launcher available (no host `surreal` "
+            "and no backend image).\n[vacuum] ABORT: canonical untouched.",
+            file=sys.stderr,
+        )
+        return False
+    started = False
     stopped_clean = False
     try:
         print(
-            f"[vacuum] side-build: spawning throwaway surreal on {side_url} → {side_path} ...",
+            f"[vacuum] side-build: starting throwaway {launcher.label} on "
+            f"{side_url} → {side_path} ...",
             flush=True,
         )
         _side_user, _side_pass = _resolve_db_creds()
-        proc = spawn_surreal(
+        launcher.start(
+            side_path=side_path,
             port=side_port,
-            data_dir=str(side_path),
-            surreal_user=_side_user,
-            surreal_pass=_side_pass,
+            user=_side_user,
+            password=_side_pass,
         )
+        started = True
         if not _wait_for_health(side_url, timeout_s=120.0):
             print(
                 f"[vacuum] ERROR: side backend at {side_url} did not become healthy.",
@@ -648,15 +639,17 @@ def _build_and_verify_side_db(
         )
         # Stop gracefully + assert fully exited (lock released, segments flushed)
         # BEFORE any rename — a half-flushed renamed-in dir is corrupt-on-reopen.
-        _stop_side_backend_clean(proc, side_url)
+        # ``stop_clean`` RAISES unless the exit was provably graceful; that raise
+        # lands in the ``except`` below and aborts the swap.  Do NOT soften it.
+        launcher.stop_clean(side_url)
         stopped_clean = True
         return True
     except Exception as exc:
         print(f"[vacuum] ERROR in side-build: {exc}", file=sys.stderr)
         return False
     finally:
-        if proc is not None and not stopped_clean:
-            teardown_surreal_proc(proc, wait_timeout=5)
+        if started and not stopped_clean:
+            launcher.abandon()
 
 
 @observe(tier="stage")
@@ -1303,30 +1296,62 @@ def _has_surreal_binary() -> bool:
 
     Asking the question BEFORE any destructive step turns that into a clean,
     loud, NAMED skip.  This is an EXISTENCE check only — a version-compatibility
-    gate belongs with the full fix (running the side build in a one-shot backend
-    container), not here.
+    gate is deliberately not made here.
 
-    On failure the caller SKIPs (exit 0, ``_SKIP_NO_SURREAL``) — modelled on the
-    ``_has_free_space`` skip path, but distinguishable from it: a missing binary
-    is a broken install that will never self-heal, low disk is transient.
+    Car 0092 (full fix) demoted this from "can this host vacuum at all?" to "does
+    this host take the HOST-BINARY branch?": a host without the binary can now run
+    the side build in a one-shot backend container instead.  The skip decision
+    therefore lives in :func:`_has_side_build_launcher`, which owns the SKIP
+    message; this function only answers about PATH and logs which binary a
+    host-binary run resolved.
     """
     binary = shutil.which("surreal")
     if binary is None:
-        print(
-            "[vacuum] SKIP: no `surreal` binary on PATH — the Phase 3 side-path "
-            "build spawns a throwaway `surreal start` HOST-side, and on a "
-            "container install that binary exists only inside the yadgar-backend "
-            "image. Skipping this run (no destructive op performed: no export, "
-            "no service stop, no snapshot). Install surreal on the host PATH, or "
-            "run vacuum where the binary is available.",
-            file=sys.stderr,
-        )
         return False
     print(
         f"[vacuum] preflight: side-build binary {binary} ({_surreal_version(binary)})",
         flush=True,
     )
     return True
+
+
+@observe(tier="stage")
+def _has_side_build_launcher() -> bool:
+    """Return True iff Phase 3 can obtain a SurrealDB to build the side DB with.
+
+    Car 0092 (full fix).  Two ways, tried in that order:
+
+    1. a host-side ``surreal`` on PATH (dev boxes, nix hosts) — unchanged;
+    2. a one-shot ``yadgar-backend`` container, which runs THE SAME binary that
+       will later open the built store, so builder/opener version skew is
+       structurally impossible rather than merely currently-absent.
+
+    Only when NEITHER exists does the run SKIP (exit 0, ``_SKIP_NO_SURREAL``) —
+    the v5.170.0 path, reason string unchanged for telemetry continuity.  Before
+    the launcher seam a container-only install took that skip on EVERY nightly:
+    honest, loud and permanent, reclaiming nothing forever.
+    """
+    if _has_surreal_binary():
+        return True
+    from yadgar.core.vacuum.launcher import backend_image, backend_image_present  # noqa: PLC0415
+
+    if backend_image_present():
+        print(
+            f"[vacuum] preflight: no host `surreal` — the side build will run in a "
+            f"one-shot {backend_image()} container",
+            flush=True,
+        )
+        return True
+    print(
+        "[vacuum] SKIP: no usable `surreal` — none on the host PATH, and the "
+        f"{backend_image()} image (which carries one) is not in the local "
+        "container-runtime store. The Phase 3 side-path build needs one or the "
+        "other. Skipping this run (no destructive op performed: no export, no "
+        "service stop, no snapshot). Install surreal on the host PATH, or pull "
+        "the backend image (`yadgar daemon pull`).",
+        file=sys.stderr,
+    )
+    return False
 
 
 @observe(tier="stage")
@@ -1389,10 +1414,11 @@ def _preflight_skip_reason(yadgar_home: Path, before_bytes: int) -> tuple[str, s
     reading either the log or the ``consolidation_log`` row has to be able to
     tell them apart.
     """
-    if not _has_surreal_binary():
+    if not _has_side_build_launcher():
         return (
             _SKIP_NO_SURREAL,
-            "no `surreal` binary on PATH — the Phase 3 side build cannot be spawned",
+            "no usable `surreal` — none on the host PATH and no backend image "
+            "locally, so the Phase 3 side build cannot be started either way",
         )
     if not _has_free_space(yadgar_home, before_bytes):
         return (
