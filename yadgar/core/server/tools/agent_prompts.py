@@ -180,22 +180,20 @@ def _load_genesis_yaml() -> dict:
 
     Read via importlib.resources so it works both from source and from an
     installed wheel (the yaml ships as package data under yadgar/core/seed/materials/).
-    ruamel.yaml is the hard dependency (see pyproject); PyYAML is optional. Mirror
-    _load_anchors_yaml: prefer PyYAML when present, fall back to ruamel otherwise.
+    Uses ruamel.yaml — yadgar's only declared YAML dependency (see pyproject).
+    PyYAML is NOT used here: it is not a declared dependency (present only
+    transitively via the optional `ml` extra), so preferring it would make
+    this loader's behavior depend on which packages happen to be installed
+    (v5.169.1 fix).
     """
     from importlib.resources import files  # noqa: PLC0415
+
+    from ruamel.yaml import YAML  # noqa: PLC0415
 
     text = (
         files("yadgar.core.seed").joinpath("materials").joinpath("agent_prompts.yaml").read_text()
     )
-    try:
-        import yaml  # noqa: PLC0415
-
-        return yaml.safe_load(text)
-    except ImportError:
-        from ruamel.yaml import YAML  # noqa: PLC0415
-
-        return YAML(typ="safe").load(text)
+    return YAML(typ="safe").load(text)
 
 
 @observe(tier="stage", metric="tools.agent_prompts._load_starter_prompts")
