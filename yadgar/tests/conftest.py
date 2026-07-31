@@ -1492,7 +1492,7 @@ def admin_backend_bypass(monkeypatch):
     """
     import sys
 
-    import yadgar.core.server.tools._forward as _forward_module
+    import yadgar.core.forward as _forward_module
     from yadgar.backend.admin_exec import run_admin_op
 
     def _bypass_admin(op, payload, timeout_s=30.0):

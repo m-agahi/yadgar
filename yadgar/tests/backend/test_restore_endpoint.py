@@ -65,7 +65,11 @@ def test_restore_route_rejects_unknown_fields(client):
 
 
 def test_restore_route_locked_without_token(monkeypatch):
-    """Fail-secure: no YADGAR_MCP_AUTH_TOKEN and no allow-root → 503."""
+    """Fail-secure: no YADGAR_MCP_AUTH_TOKEN and no allow-root → 500.
+
+    500, not 503, since ADR-0180 / task:0090 — an unconfigured admin token is a
+    permanent server misconfiguration, not a transient outage.
+    """
     monkeypatch.setenv("YADGAR_ALLOW_ROOT", "0")
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
 
@@ -73,4 +77,4 @@ def test_restore_route_locked_without_token(monkeypatch):
 
     with TestClient(es.app) as c:
         resp = c.post("/restore", json={"directory": "/p"})
-    assert resp.status_code == 503
+    assert resp.status_code == 500

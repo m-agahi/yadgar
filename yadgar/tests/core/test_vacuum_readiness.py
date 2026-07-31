@@ -85,6 +85,10 @@ def _patch_p2_side_build(stack: ExitStack) -> None:
     # P0 #37: backend quiesced at swap time (the httpx.get fake answers 200 for
     # everything, which the gate would read as LIVE) + hermetic inode coherence.
     stack.enter_context(patch("yadgar.core.vacuum._assert_backend_quiesced", return_value=True))
+    # Car 0092: the side-build binary preflight is stubbed for the same reason
+    # _build_and_verify_side_db is — no real surreal is in play here, so an
+    # un-stubbed preflight would make these tests depend on the host PATH.
+    stack.enter_context(patch("yadgar.core.vacuum._has_surreal_binary", return_value=True))
     stack.enter_context(
         patch("yadgar.core.vacuum._verify_live_store_coherence", return_value=(True, set()))
     )

@@ -24,7 +24,7 @@ import pytest
 # ---------------------------------------------------------------------------
 def test_forward_admin_payload_and_auth():
     """_forward_admin POSTs {op, payload} to /admin with Bearer auth; unwraps result."""
-    from yadgar.core.server.tools._forward import _forward_admin
+    from yadgar.core.forward import _forward_admin
 
     captured: dict = {}
 
@@ -59,7 +59,7 @@ def test_forward_admin_payload_and_auth():
 
 def test_forward_admin_no_url_raises():
     """_forward_admin raises RuntimeError when YADGAR_EMBED_URL is unset (forward-only)."""
-    from yadgar.core.server.tools._forward import _forward_admin
+    from yadgar.core.forward import _forward_admin
 
     with patch.dict("os.environ", {"YADGAR_EMBED_URL": ""}, clear=False):
         with pytest.raises(RuntimeError) as exc:

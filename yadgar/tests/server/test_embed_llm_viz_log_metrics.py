@@ -256,7 +256,7 @@ def test_viz_api_graph_duration_increments():
     # forwarder (lazily imported inside the handler) instead of GraphAPI.
     with patch.object(http_mod._st, "_storage", fake_storage):
         with patch(
-            "yadgar.core.server.tools._forward._forward_viz",
+            "yadgar.core.forward._forward_viz",
             return_value={"nodes": [], "edges": []},
         ):
 

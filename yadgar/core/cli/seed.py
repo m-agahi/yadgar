@@ -12,21 +12,22 @@ _DAEMON_BASE = f"http://127.0.0.1:{_DAEMON_PORT}"
 
 
 def _load_anchors_yaml(anchors_path: str) -> list[dict]:
-    """Load anchor entries from a YAML file. Returns list of dicts."""
+    """Load anchor entries from a YAML file. Returns list of dicts.
+
+    Uses ruamel.yaml — yadgar's only declared YAML dependency (see pyproject).
+    PyYAML is NOT used here: it is not a declared dependency (present only
+    transitively via the optional `ml` extra), so preferring it would make
+    this loader's behavior depend on which packages happen to be installed
+    (v5.169.1 fix).
+    """
     path = Path(anchors_path)
     if not path.exists():
         raise FileNotFoundError(f"Anchors file not found: {path}")
-    try:
-        import yaml
+    from ruamel.yaml import YAML
 
-        with open(path) as f:
-            data = yaml.safe_load(f)
-    except ImportError:
-        from ruamel.yaml import YAML
-
-        yaml_parser = YAML()
-        with open(path) as f:
-            data = yaml_parser.load(f)
+    yaml_parser = YAML()
+    with open(path) as f:
+        data = yaml_parser.load(f)
 
     if isinstance(data, list):
         return data

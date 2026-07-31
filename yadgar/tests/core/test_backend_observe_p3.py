@@ -15,7 +15,7 @@ Load-bearing assertions:
      — a span that emits as an orphan root passes a naive check but breaks the
      under-request view.  We hit the route via ASGITransport, never a direct call,
      because @observe placed ABOVE @app.post silently no-ops on real requests.
-  2. Admin auth still fires after wrapping (a no-token request must still 401/503)
+  2. Admin auth still fires after wrapping (a no-token request must still 401/500)
      — proves functools.wraps preserved the Depends() signature.
   3. LocalMLClient stage methods carry a span source (the observe sentinel).
 """
@@ -133,7 +133,10 @@ def test_admin_dbsize_boundary_span_and_nesting(span_provider, monkeypatch):
 
 
 def test_admin_auth_still_enforced_after_wrap(span_provider, monkeypatch):
-    """No token + no root-escape → 401/503, proving Depends() survived the wrap."""
+    """No token + no root-escape → 401/500, proving Depends() survived the wrap.
+
+    500 (not 503) is the unconfigured-token status since ADR-0180 / task:0090.
+    """
     pytest.importorskip("opentelemetry.instrumentation.fastapi")
     provider, _exporter = span_provider
     es = _reload_es(monkeypatch, allow_root=False)
@@ -141,7 +144,7 @@ def test_admin_auth_still_enforced_after_wrap(span_provider, monkeypatch):
     client = _client(es, provider)
 
     resp = client.get("/admin/dbsize")  # no Authorization header
-    assert resp.status_code in (401, 503), (
+    assert resp.status_code in (401, 500), (
         f"admin route not protected after @observe wrap: {resp.status_code}"
     )
 

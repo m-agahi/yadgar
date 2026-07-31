@@ -284,13 +284,33 @@ async def _require_admin_token(
     in any other environment the flag is ignored. This prevents a real
     deployment — or a leaked/shared env file — from silently disabling admin
     auth on the backend, which is loopback-reachable by any local process.
+
+    An unconfigured token is a **500**, not a 503 (ADR-0180). It was a 503 for
+    months and that single wrong digit cost weeks: 503 means "service
+    unavailable, retry later", so a fresh-VM install that answered every
+    /admin/* call with 503 while /health reported ``db:true`` was read as a
+    storage-init failure and chased as one. The real condition is a permanent
+    server-side misconfiguration that will never self-heal, and no retry or
+    client change can fix it — which is exactly 500. Not 401: the client's
+    credentials are irrelevant here (a correct bearer fails identically), and
+    401 invites a re-auth loop against a server that cannot ever accept one.
+    Not 424 either: Failed Dependency is WebDAV semantics for "a prior request
+    in this operation failed", and no prior request exists.
     """
     expected = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
     allow_root = os.environ.get("YADGAR_ALLOW_ROOT", "0").lower() in ("1", "true", "yes")
     if allow_root and "PYTEST_CURRENT_TEST" in os.environ:
         return  # test-only escape hatch (see docstring)
     if not expected:
-        raise HTTPException(status_code=503, detail="Admin token not configured")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Admin token not configured: YADGAR_MCP_AUTH_TOKEN is unset in "
+                "the backend process env. This is a server misconfiguration, not "
+                "a transient outage — retrying will not help. Check that the "
+                "generated backend unit forwards the token (ADR-0180)."
+            ),
+        )
     # Constant-time compare (mirrors the core BearerAuthMiddleware) to avoid a
     # timing side-channel on the shared bearer token.
     if credentials is None or not hmac.compare_digest(
@@ -336,6 +356,30 @@ def _get_reranker() -> LocalMLClient:
                 for _mode in ("ce", "nli", "pair"):
                     _model_loaded.labels(model=_mode).set(1)
     return _reranker
+
+
+@observe(
+    exempt="tears down the tracer provider itself; a span opened here would end "
+    "after its own exporter was shut down (same category as record_exception)"
+)
+async def _shutdown_tracing_bounded() -> None:
+    """Flush + tear down OTLP on backend shutdown, under a hard 3s bound.
+
+    Car 0031: ``setup_tracing`` now builds the provider with
+    ``shutdown_on_exit=False`` (the SDK's own atexit handler joins the final
+    OTLP flush with NO bound). The backend therefore has to flush explicitly,
+    under the same bound the core daemon uses — otherwise the last unexported
+    span batch is dropped. Extracted from ``lifespan`` to keep it under the I30
+    hard fn_loc cap. Never raises: shutdown must proceed.
+    """
+    try:
+        from yadgar._shared.observability.tracing import (  # noqa: PLC0415
+            shutdown_tracing as _shutdown_tracing,
+        )
+
+        await asyncio.to_thread(_shutdown_tracing, 3.0)
+    except Exception as _exc:  # noqa: BLE001 — shutdown must proceed
+        logger.warning("tracing shutdown failed: %s", _exc)
 
 
 @asynccontextmanager
@@ -484,6 +528,10 @@ async def lifespan(app: FastAPI):
         _marker_path_shutdown.write_text("1")
     except OSError as _exc:
         logger.warning("Failed to write shutdown marker: %s", _exc)
+
+    # Car 0031: bounded OTLP teardown (setup_tracing no longer registers the
+    # SDK's own unbounded atexit shutdown). See _shutdown_tracing_bounded.
+    await _shutdown_tracing_bounded()
 
 
 app = FastAPI(title="yadgar-embed", version="1.0", lifespan=lifespan)

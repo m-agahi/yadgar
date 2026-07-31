@@ -31,6 +31,7 @@ from yadgar._shared.config import resolve_knob
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.server_helpers import _push_event  # F2: re-stamp relayed backend events
+from yadgar.core.forward import _forward_viz  # F2: poll backend /viz events op
 from yadgar.core.sanitize import sanitize_log_field
 from yadgar.core.server._app import mcp_server
 
@@ -42,7 +43,6 @@ from yadgar.core.server._helpers import (  # noqa: F401
     _build_dlq_alert_text,
     _extract_record_id,
 )
-from yadgar.core.server.tools._forward import _forward_viz  # F2: poll backend /viz events op
 
 logger = logging.getLogger(__name__)
 
@@ -373,7 +373,7 @@ def _vacuum_stale_sentinels(retention_days: int | None = None) -> int:
     runs backend-side (``vacuum_stale_sentinels`` /admin op); this shell only
     forwards. Returns count of deleted rows. Never raises.
     """
-    from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
+    from yadgar.core.forward import _forward_admin  # noqa: PLC0415
 
     try:
         result = _forward_admin("vacuum_stale_sentinels", {"retention_days": retention_days})
@@ -683,7 +683,7 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
     # (epoch increment + auto-checkpoint upsert) run via the /admin forward.
     # Lazy import mirrors the tools.recall import at :181 (avoids the
     # http ⇄ tools package import cycle at module load).
-    from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
+    from yadgar.core.forward import _forward_admin  # noqa: PLC0415
 
     try:
         result = await asyncio.to_thread(
@@ -718,7 +718,7 @@ async def hook_post_compact(request: Request) -> JSONResponse:
     # T2 Car B: restore compute runs backend-side behind POST /restore.
     # Lazy import mirrors the tools.recall import at :181 (avoids the
     # http ⇄ tools package import cycle at module load).
-    from yadgar.core.server.tools._forward import _forward_restore  # noqa: PLC0415
+    from yadgar.core.forward import _forward_restore  # noqa: PLC0415
 
     try:
         result = await asyncio.to_thread(_forward_restore, directory)
@@ -1036,7 +1036,7 @@ def _persist_dir_branch_context(directory: str, gitness: bool, default_branch: s
     "require branch_hint" when the store is unreadable).
     """
     try:
-        from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
+        from yadgar.core.forward import _forward_admin  # noqa: PLC0415
 
         _forward_admin(
             "upsert_dir_branch_context",
@@ -1954,7 +1954,7 @@ async def api_graph(request: Request) -> JSONResponse:
         include_weak = _iw.lower() in ("1", "true", "yes", "on")
         _t0 = time.time()
         # T2 Car E3: the assembly (+ cached-layout attach) runs backend-side.
-        from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+        from yadgar.core.forward import _forward_viz  # noqa: PLC0415
 
         data = await asyncio.to_thread(
             _forward_viz,
@@ -2036,7 +2036,7 @@ async def api_graph_stats(request: Request) -> JSONResponse:
     if _st._storage is None:
         return JSONResponse({}, status_code=503)
     # T2 Car E3: assembly runs backend-side.
-    from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+    from yadgar.core.forward import _forward_viz  # noqa: PLC0415
 
     data = await asyncio.to_thread(_forward_viz, "graph_stats", {})
     return JSONResponse(data, headers=_CORS)
@@ -2073,7 +2073,7 @@ async def api_graph_edges_lazy(request: Request) -> JSONResponse:
     except (ValueError, TypeError):  # fmt: skip
         top_k = 8
     # T2 Car E3: assembly runs backend-side.
-    from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+    from yadgar.core.forward import _forward_viz  # noqa: PLC0415
 
     data = await asyncio.to_thread(
         _forward_viz,
@@ -2095,7 +2095,7 @@ async def api_graph_neighborhood(request: Request) -> JSONResponse:
     except (ValueError, TypeError) as _e:
         hops = 2
     # T2 Car E3: assembly runs backend-side.
-    from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+    from yadgar.core.forward import _forward_viz  # noqa: PLC0415
 
     data = await asyncio.to_thread(
         _forward_viz, "graph_neighborhood", {"node_id": node_id, "hops": hops}
@@ -2125,7 +2125,7 @@ async def api_graph_relayout(request: Request) -> JSONResponse:
         if isinstance(body, dict) and body.get(key) is not None:
             payload[key] = body[key]
     # T2 Car E3: layout compute runs backend-side.
-    from yadgar.core.server.tools._forward import _forward_viz  # noqa: PLC0415
+    from yadgar.core.forward import _forward_viz  # noqa: PLC0415
 
     data = await asyncio.to_thread(_forward_viz, "graph_relayout", payload)
     return JSONResponse(data, headers=_CORS)

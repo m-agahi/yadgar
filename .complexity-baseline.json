@@ -16164,22 +16164,22 @@
     "nesting": 2,
     "params": 1
   },
-  "yadgar/core/server/tools/_forward.py::__file__": {
+  "yadgar/core/forward.py::__file__": {
     "loc": 157
   },
-  "yadgar/core/server/tools/_forward.py::_forward_admin@31": {
+  "yadgar/core/forward.py::_forward_admin@31": {
     "cyclo": 3,
     "loc": 45,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/core/server/tools/_forward.py::_forward_restore@115": {
+  "yadgar/core/forward.py::_forward_restore@115": {
     "cyclo": 3,
     "loc": 43,
     "nesting": 1,
     "params": 2
   },
-  "yadgar/core/server/tools/_forward.py::_forward_viz@79": {
+  "yadgar/core/forward.py::_forward_viz@79": {
     "cyclo": 3,
     "loc": 33,
     "nesting": 1,

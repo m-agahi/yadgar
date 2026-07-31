@@ -58,6 +58,11 @@ def install_systemd_service(profile: ContainerProfile, dev: bool = False) -> dic
         f"    -v {hf_cache}:/home/yadgar/.cache/huggingface \\\n" if hf_cache.exists() else ""
     )
 
+    # ADR-0180: the backend ExecStart MUST forward YADGAR_MCP_AUTH_TOKEN into the
+    # CONTAINER. The backend serves /admin/* and compares the presented bearer
+    # against its own copy (_require_admin_token); EnvironmentFile puts it in the
+    # UNIT's env only, which the container never sees without an explicit -e.
+    # Guard: yadgar/tests/scripts/test_admin_token_cross_generator.py.
     backend_unit = f"""\
 [Unit]
 Description=Yadgar Backend — SurrealDB and Embedding Service
@@ -91,6 +96,7 @@ ExecStart=docker run --rm \\
     -e YADGAR_RO_USER=${{YADGAR_RO_USER:-}} \\
     -e YADGAR_RO_PASS=${{YADGAR_RO_PASS:-}} \\
     -e YADGAR_QUEUE_BASE=/queue-data \\
+    -e YADGAR_MCP_AUTH_TOKEN=${{YADGAR_MCP_AUTH_TOKEN}} \\
 {hf_mount}    {backend_image_tagged}
 ExecStop=docker stop {backend_name}
 Restart=on-failure

@@ -23,10 +23,18 @@ def _p0_37_hermetic_guards():
     are behaviour-tested in test_vacuum_safestop.py; here they are pinned to
     their happy-path values so the pre-existing orchestration assertions keep
     testing what they always tested.
+
+    Car 0092 adds a third seam: the side-build binary preflight.  This suite
+    stubs ``_build_and_verify_side_db`` precisely BECAUSE no real surreal is in
+    play, so leaving the preflight live would make these tests pass or skip on
+    whether the host happens to have the binary on PATH (and would spawn a real
+    ``surreal version`` subprocess).  Its behaviour is tested in
+    test_vacuum_preflight.py.
     """
     with (
         patch("yadgar.core.vacuum._assert_backend_quiesced", return_value=True),
         patch("yadgar.core.vacuum._verify_live_store_coherence", return_value=(True, set())),
+        patch("yadgar.core.vacuum._has_surreal_binary", return_value=True),
     ):
         yield
 
@@ -2254,3 +2262,181 @@ class TestOldAgeBackstop:
         import os as _os
 
         assert int(_os.getenv("VACUUM_OLD_MAX_AGE_DAYS", "7")) == 7
+
+
+# ---------------------------------------------------------------------------
+# Car 0046: vacuum_export_*.surql scratch must be BOUNDED on every finalize,
+# not just deleted-on-success / kept-forever-on-failure (ADR-0076 D2 leaked
+# unboundedly on the abort paths — 1.4 GB accumulated before a manual sweep).
+# ---------------------------------------------------------------------------
+
+
+class TestVacuumExportScratchBackstop:
+    """Car 0046: older vacuum_export_* pairs are reaped on EVERY finalize outcome.
+
+    The MOST RECENT run's own export pair is never touched by the backstop
+    (only the current-run deletion on success, or nothing on failure — same as
+    before); the backstop only bounds how many PRIOR runs' leaked pairs pile up.
+    """
+
+    def _make_export_pair(self, home, ts_suffix, age_days):
+        """Create a raw+filtered export pair with mtime age_days in the past."""
+        import os as _os
+        import time as _time
+
+        raw = home / f"vacuum_export_{ts_suffix}.surql"
+        filtered = home / f"vacuum_export_{ts_suffix}.filtered.surql"
+        raw.write_bytes(b"-- RAW EXPORT\nUPSERT memory:1 CONTENT {};")
+        filtered.write_bytes(b"-- FILTERED EXPORT\nUPSERT memory:1 CONTENT {};")
+        mtime = _time.time() - age_days * 86400
+        _os.utime(raw, (mtime, mtime))
+        _os.utime(filtered, (mtime, mtime))
+        return raw, filtered
+
+    def test_finalize_prunes_stale_export_pairs_on_health_failure(self, tmp_path, monkeypatch):
+        """Abort path (health check never comes up): old leaked pairs are bounded.
+
+        Four PRIOR aborted runs left export pairs on disk (the pre-fix bug: kept
+        forever). This run's own health check also fails. Assert only the
+        newest few prior pairs survive (bounded retention), plus the
+        current-run pair (kept for this run's own forensics, unchanged
+        behavior).
+        """
+        from yadgar.core.vacuum import _vacuum_finalize
+
+        home = tmp_path / "yadgar"
+        home.mkdir()
+        old = home / "surreal_db.old-20260709_190000"
+        old.mkdir()
+        snap = home / "surreal_db.pre-vacuum-20260709_185900"
+        snap.mkdir()
+
+        # 4 leaked pairs from prior aborted runs, oldest to newest.
+        stale_pairs = [
+            self._make_export_pair(home, f"2026070{n}_190000", age_days=10 - n) for n in range(1, 5)
+        ]
+
+        # Current run's own pair (freshly written, age 0).
+        cur_raw, cur_filtered = self._make_export_pair(home, "20260709_190000", age_days=0)
+
+        mock_svc = MagicMock()
+        monkeypatch.setenv("YADGAR_PORT", "8765")
+
+        with patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=False):
+            _vacuum_finalize(
+                "http://127.0.0.1:8080",
+                home,
+                old,
+                snap,
+                mock_svc,
+                keep_n=3,
+                raw_path=cur_raw,
+                filtered_path=cur_filtered,
+            )
+
+        assert cur_raw.exists(), "current run's own export must survive on its own abort"
+        assert cur_filtered.exists(), "current run's own export must survive on its own abort"
+
+        remaining = [p for pair in stale_pairs for p in pair if p.exists()]
+        total_remaining_files = len(remaining) + 2  # + current-run pair
+        assert total_remaining_files < 10, (
+            f"export scratch must be bounded, not accumulate unboundedly: "
+            f"{total_remaining_files} files remain out of 10 written"
+        )
+        # The oldest stale pair (age 9d) must be the first to go.
+        oldest_raw, oldest_filtered = stale_pairs[0]
+        assert not oldest_raw.exists(), "oldest leaked export pair must be reaped"
+        assert not oldest_filtered.exists(), "oldest leaked export pair must be reaped"
+
+    def test_finalize_prunes_stale_export_pairs_on_inode_incoherence(self, tmp_path, monkeypatch):
+        """Abort path (post-swap inode split-brain): old leaked pairs are bounded."""
+        from yadgar.core.vacuum import _vacuum_finalize
+
+        home = tmp_path / "yadgar"
+        home.mkdir()
+        old = home / "surreal_db.old-20260709_190000"
+        old.mkdir()
+        snap = home / "surreal_db.pre-vacuum-20260709_185900"
+        snap.mkdir()
+
+        stale_pairs = [
+            self._make_export_pair(home, f"2026070{n}_190000", age_days=10 - n) for n in range(1, 5)
+        ]
+        cur_raw, cur_filtered = self._make_export_pair(home, "20260709_190000", age_days=0)
+
+        mock_svc = MagicMock()
+        monkeypatch.setenv("YADGAR_PORT", "8765")
+
+        with (
+            patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
+            patch(
+                "yadgar.core.vacuum._verify_live_store_coherence",
+                return_value=(False, {"surreal_db.old-20260709_190000"}),
+            ),
+        ):
+            _vacuum_finalize(
+                "http://127.0.0.1:8080",
+                home,
+                old,
+                snap,
+                mock_svc,
+                keep_n=3,
+                raw_path=cur_raw,
+                filtered_path=cur_filtered,
+            )
+
+        assert cur_raw.exists(), "current run's own export must survive on its own abort"
+        oldest_raw, oldest_filtered = stale_pairs[0]
+        assert not oldest_raw.exists(), "oldest leaked export pair must be reaped"
+        assert not oldest_filtered.exists(), "oldest leaked export pair must be reaped"
+
+    def test_finalize_prunes_stale_export_pairs_on_success(self, tmp_path, monkeypatch):
+        """Success path: leaked pairs from PRIOR failed runs are also bounded.
+
+        The current run's own pair is deleted outright (existing D2 behavior,
+        unchanged); the backstop additionally catches any pre-existing leaked
+        pairs left over from earlier failed runs (e.g. before this fix shipped).
+        """
+        from yadgar.core.vacuum import _vacuum_finalize
+
+        home = tmp_path / "yadgar"
+        home.mkdir()
+        old = home / "surreal_db.old-20260709_190000"
+        old.mkdir()
+        snap = home / "surreal_db.pre-vacuum-20260709_185900"
+        snap.mkdir()
+
+        stale_pairs = [
+            self._make_export_pair(home, f"2026070{n}_190000", age_days=10 - n) for n in range(1, 5)
+        ]
+        cur_raw, cur_filtered = self._make_export_pair(home, "20260709_190000", age_days=0)
+
+        mock_svc = MagicMock()
+        monkeypatch.setenv("YADGAR_PORT", "8765")
+
+        with (
+            patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
+            patch(
+                "yadgar.core.vacuum.httpx.post",
+                return_value=MagicMock(status_code=200, json=lambda: {"ok": True}, text="ok"),
+            ),
+        ):
+            result = _vacuum_finalize(
+                "http://127.0.0.1:8080",
+                home,
+                old,
+                snap,
+                mock_svc,
+                keep_n=3,
+                raw_path=cur_raw,
+                filtered_path=cur_filtered,
+            )
+
+        assert result is True
+        assert not cur_raw.exists(), "current run's own export is always dropped on success"
+        assert not cur_filtered.exists(), "current run's own export is always dropped on success"
+        oldest_raw, oldest_filtered = stale_pairs[0]
+        assert not oldest_raw.exists(), "oldest leaked export pair must be reaped even on success"
+        assert not oldest_filtered.exists(), (
+            "oldest leaked export pair must be reaped even on success"
+        )

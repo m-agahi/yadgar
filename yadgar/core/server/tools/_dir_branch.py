@@ -117,7 +117,7 @@ def get_context(directory: str | None) -> dict:
 
     # Miss → ONE backend read (ADR-0078: core never reads the DB directly).
     try:
-        from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
+        from yadgar.core.forward import _forward_admin  # noqa: PLC0415
 
         result = _forward_admin("get_dir_branch_context", {"directory": _dir})
     except Exception as exc:  # noqa: BLE001 — surface as fail-safe error, do NOT cache

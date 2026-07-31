@@ -317,7 +317,7 @@ class YadgarDaemon:
                     text=True,
                 ).stdout
                 return {"status": "failed", "reason": f"container exited. Logs:\n{logs}"}
-            if self._health_ok(DEFAULT_BACKEND_EMBED_PORT):
+            if self._embed_health_ok(DEFAULT_BACKEND_EMBED_PORT):
                 return {
                     "status": "started",
                     "container": name,
@@ -597,12 +597,39 @@ class YadgarDaemon:
 
     @observe(tier="stage")
     def _health_ok(self, port: int) -> bool:
+        """LIVENESS gate for the CORE daemon (ADR-0019) — probes /health/live.
+
+        Used to decide when to fire sd_notify READY=1 (v5.49.0 Phase 6). Only
+        "is the process up and responding" matters here; the container's own
+        curl -f --health-on-failure=kill healthcheck (also pinned to
+        /health/live) is what continues to watch liveness post-startup, and
+        /health (readiness, db/embed-dependent) is a monitoring signal only —
+        gating startup on it would reintroduce the liveness/readiness
+        conflation ADR-0019 removed (a transiently-busy backend must not delay
+        or fail this gate).
+        """
         try:
-            _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            _safe_urlopen(f"http://127.0.0.1:{port}/health/live", timeout=1)
             return True
         except urllib.error.HTTPError:
             # liveness = server responding at all; full-health (503-on-degraded)
             # enforced by the container's curl -f healthcheck, not this gate.
+            return True
+        except Exception:
+            return False
+
+    @observe(tier="stage")
+    def _embed_health_ok(self, port: int) -> bool:
+        """READINESS gate for the backend embed service.
+
+        The embed service (port 8001) exposes no /health/live liveness
+        variant — ADR-0019's liveness split is scoped to the core daemon
+        only — so this stays on bare /health (db + model-loaded readiness).
+        """
+        try:
+            _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            return True
+        except urllib.error.HTTPError:
             return True
         except Exception:
             return False

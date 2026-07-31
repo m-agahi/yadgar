@@ -709,8 +709,8 @@ class TestCar0SetChannel:
         self, tmp_path, monkeypatch, admin_backend_bypass
     ):
         """A pre-Car-0 hook (no gitness param) must NOT clobber an existing row."""
+        from yadgar.core.forward import _forward_admin
         from yadgar.core.server.tools import _dir_branch
-        from yadgar.core.server.tools._forward import _forward_admin
 
         _dir_branch._get_cache().clear()
         _dir = str(tmp_path / "known")

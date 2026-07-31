@@ -110,7 +110,7 @@ def patch_admin_bypass(monkeypatch: Any) -> None:
     Args:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
-    import yadgar.core.server.tools._forward as _forward_module
+    import yadgar.core.forward as _forward_module
     from yadgar.backend.admin_exec import run_admin_op
 
     _orig_forward_admin = _forward_module._forward_admin
@@ -246,7 +246,7 @@ def patch_restore_bypass(monkeypatch: Any) -> None:
     Args:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
-    import yadgar.core.server.tools._forward as _forward_module
+    import yadgar.core.forward as _forward_module
     from yadgar.backend.restoration import run_restore
 
     _orig_forward_restore = _forward_module._forward_restore
@@ -283,7 +283,7 @@ def patch_viz_bypass(monkeypatch: Any) -> None:
     Args:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
-    import yadgar.core.server.tools._forward as _forward_module
+    import yadgar.core.forward as _forward_module
     from yadgar.backend.viz_exec import run_viz_op
 
     _orig_forward_viz = _forward_module._forward_viz

@@ -62,7 +62,7 @@ def test_parse_guard_allows_reads_and_avoids_false_positives():
 
 
 def test_forward_read_query_requires_embed_url(monkeypatch):
-    from yadgar.core.server.tools._forward import _forward_read_query
+    from yadgar.core.forward import _forward_read_query
 
     monkeypatch.delenv("YADGAR_EMBED_URL", raising=False)
     with pytest.raises(RuntimeError, match="YADGAR_EMBED_URL"):
@@ -70,7 +70,7 @@ def test_forward_read_query_requires_embed_url(monkeypatch):
 
 
 def test_forward_read_query_posts_to_backend(monkeypatch):
-    from yadgar.core.server.tools import _forward as fwd
+    from yadgar.core import forward as fwd
 
     monkeypatch.setenv("YADGAR_EMBED_URL", "http://backend:8001")
     monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "tok")

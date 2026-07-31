@@ -172,7 +172,7 @@ def _run_core_post_cycle_tasks(storage, settings) -> None:
     # forward via /admin. Non-fatal: unset YADGAR_EMBED_URL / transport error is
     # swallowed by the surrounding except.
     try:
-        from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
+        from yadgar.core.forward import _forward_admin  # noqa: PLC0415
 
         inv = _forward_admin("check_invariants", {})
         if not inv["ok"]:

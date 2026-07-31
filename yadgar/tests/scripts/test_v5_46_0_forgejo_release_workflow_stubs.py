@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 try:
-    import yaml
+    from ruamel.yaml import YAML as _YAML
 
     HAS_YAML = True
 except ImportError:
@@ -36,7 +36,7 @@ def test_release_yaml_exists():
 def test_release_yaml_is_valid_yaml():
     """ci-release.yaml must be valid YAML."""
     content = RELEASE_YAML.read_text()
-    parsed = yaml.safe_load(content)
+    parsed = _YAML(typ="safe").load(content)
     assert isinstance(parsed, dict), "ci-release.yaml must parse to a dict"
 
 
@@ -48,7 +48,7 @@ def test_release_yaml_triggers_on_push_master():
     Reason: v5.57 CI refactor removed tag-push trigger; release is now driven by
     version-bump detection in the 'changes' job on every push to master.
     """
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     on = parsed.get("on") or parsed.get(True)
     assert on is not None, "ci-release.yaml missing 'on' trigger"
     on_str = str(on)
@@ -58,7 +58,7 @@ def test_release_yaml_triggers_on_push_master():
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_release_yaml_has_build_wheel_job():
     """ci-release.yaml must have a build-wheel job (active, gated by changes.release)."""
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     jobs = parsed.get("jobs", {})
     assert "build-wheel" in jobs, f"Missing 'build-wheel' job; jobs: {list(jobs)}"
     job = jobs["build-wheel"]
@@ -70,7 +70,7 @@ def test_release_yaml_has_build_wheel_job():
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_release_yaml_has_build_sbom_job():
     """ci-release.yaml must have a build-sbom job (active, gated by changes.release)."""
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     jobs = parsed.get("jobs", {})
     assert "build-sbom" in jobs, f"Missing 'build-sbom' job; jobs: {list(jobs)}"
     job = jobs["build-sbom"]
@@ -81,7 +81,7 @@ def test_release_yaml_has_build_sbom_job():
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_release_yaml_open_brew_pr_absent():
     """ci-release.yaml must NOT have open-brew-pr job (brew lane retired per PD-39)."""
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     jobs = parsed.get("jobs", {})
     assert "open-brew-pr" not in jobs, (
         "open-brew-pr job must be removed (brew lane retired per PD-39 2026-06-05)"
@@ -91,7 +91,7 @@ def test_release_yaml_open_brew_pr_absent():
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_release_yaml_open_nix_pr_absent():
     """ci-release.yaml must NOT have open-nix-pr job (nix cross-repo PR retired per PD-40)."""
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     jobs = parsed.get("jobs", {})
     assert "open-nix-pr" not in jobs, (
         "open-nix-pr job must be removed (nix cross-repo PR retired per PD-40 2026-06-05; "
