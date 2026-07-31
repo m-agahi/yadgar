@@ -56,6 +56,7 @@ case "$1" in
   stop)    exit {stop_rc} ;;
   wait)    echo {exit_code}; exit 0 ;;
   inspect) echo {inspect_out}; exit {inspect_rc} ;;
+  logs)    echo 'surrealkv: failed to open store'; exit 0 ;;
   rm)      exit {rm_rc} ;;
   ps)      exit 0 ;;
   *)       exit 0 ;;
@@ -525,6 +526,50 @@ class TestContainerInvocationContract:
             from yadgar.core.vacuum.launcher import ContainerLauncher
 
             ContainerLauncher().start(side_path=side, port=1, user="u", password="p")
+
+    def test_abandoned_container_is_diagnosed_before_it_is_reaped(self, monkeypatch, capsys):
+        """`run -d` exits 0 as soon as the container exists — a SurrealDB that dies
+        INSIDE it surfaces only as a health-wait timeout, and the reap would then
+        destroy the one place the reason was written.  This car exists BECAUSE an
+        undiagnosable vacuum failure wedged the nightly.
+        """
+        from yadgar.core.vacuum.launcher import ContainerLauncher
+
+        with tempfile.TemporaryDirectory() as td:
+            binary, log = _write_fake_runtime(Path(td))
+            monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(binary))
+            side = Path(td) / "surreal_db.building-x"
+            side.mkdir()
+            launcher = ContainerLauncher()
+            launcher.start(side_path=side, port=1, user="u", password="p")
+            launcher.abandon()
+            argv = _argv_lines(log)
+
+        err = capsys.readouterr().err
+        assert "failed to open store" in err, (
+            f"the container's tail must reach the operator before the reap; stderr:\n{err}"
+        )
+        logs_idx = next(i for i, line in enumerate(argv) if line.startswith("logs "))
+        rm_idx = max(i for i, line in enumerate(argv) if line.startswith("rm "))
+        assert logs_idx < rm_idx, f"logs must be read BEFORE `rm -f`; argv:\n{argv}"
+
+    def test_clean_stop_reaps_without_dumping_logs(self, monkeypatch):
+        """A container that did its job is not noise — only failures get dumped."""
+        from yadgar.core.vacuum.launcher import ContainerLauncher
+
+        with tempfile.TemporaryDirectory() as td:
+            binary, log = _write_fake_runtime(Path(td), exit_code=0)
+            monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(binary))
+            side = Path(td) / "surreal_db.building-x"
+            side.mkdir()
+            launcher = ContainerLauncher()
+            launcher.start(side_path=side, port=1, user="u", password="p")
+            launcher.stop_clean("http://127.0.0.1:1")
+            argv = _argv_lines(log)
+
+        assert not any(line.startswith("logs ") for line in argv), (
+            f"a provably clean stop must not dump logs; argv:\n{argv}"
+        )
 
     def test_failed_run_raises(self, monkeypatch):
         import pytest

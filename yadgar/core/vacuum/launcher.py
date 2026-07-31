@@ -243,6 +243,11 @@ class ContainerLauncher(SideBackendLauncher):
 
     def __init__(self, name: str = SIDE_CONTAINER_NAME) -> None:
         self._name = name
+        #: True once THIS object started a container.  Gates the log dump in
+        #: ``abandon`` so the pre-start leftover reap stays silent (there is
+        #: nothing of ours to diagnose yet) while a failed build is not thrown
+        #: away undiagnosed.
+        self._started = False
 
     @observe(tier="stage")
     def start(self, *, side_path: Path, port: int, user: str, password: str) -> None:
@@ -296,6 +301,7 @@ class ContainerLauncher(SideBackendLauncher):
                 f"could not start the side-build container {self._name!r} from {image}: "
                 f"exit {result.returncode}\n{(result.stderr or '').strip()[:500]}"
             )
+        self._started = True
 
     @observe(tier="stage")
     def stop_clean(self, side_url: str) -> None:
@@ -346,10 +352,38 @@ class ContainerLauncher(SideBackendLauncher):
                 f"grace window); refusing to swap a possibly half-flushed "
                 f"surrealkv dir"
             )
+        # Provably clean exit — nothing left to diagnose, so the reap below stays
+        # silent rather than dumping the logs of a container that did its job.
+        self._started = False
         self.abandon()
 
     @observe(tier="stage")
+    def _dump_logs(self) -> None:
+        """Surface the side container's tail BEFORE reaping it.
+
+        This car exists because a vacuum failure that could not be diagnosed
+        wedged the nightly.  ``run -d`` returns 0 as soon as the container is
+        created, so a SurrealDB that fails to start INSIDE it shows up only as a
+        health-wait timeout — and the reap would then destroy the one place the
+        reason was written.  Best-effort and never raising: this runs on a path
+        that is already failing.
+        """
+        try:
+            logs = _run([_runtime(), "logs", "--tail", "50", self._name], _SHORT_TIMEOUT_SEC)
+        except Exception as exc:  # noqa: BLE001 — diagnostics only; never masks the real error
+            print(f"[vacuum] WARNING: could not read side container logs: {exc}", file=sys.stderr)
+            return
+        tail = ((logs.stdout or "") + (logs.stderr or "")).strip()
+        if tail:
+            print(
+                f"[vacuum] side container {self._name!r} last output before reap:\n{tail[-2000:]}",
+                file=sys.stderr,
+            )
+
+    @observe(tier="stage")
     def abandon(self) -> None:
+        if self._started:
+            self._dump_logs()
         try:
             _run([_runtime(), "rm", "-f", self._name], _SHORT_TIMEOUT_SEC)
         except Exception as exc:  # noqa: BLE001 — best-effort reap; never masks the real error
@@ -357,6 +391,7 @@ class ContainerLauncher(SideBackendLauncher):
                 f"[vacuum] WARNING: could not reap side container {self._name!r}: {exc}",
                 file=sys.stderr,
             )
+        self._started = False
 
 
 @observe(tier="stage")
