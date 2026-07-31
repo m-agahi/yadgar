@@ -35,6 +35,7 @@ import urllib.error
 from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
+from yadgar.core.daemon.db_migrate import migrate_named_volume_db
 from yadgar.core.daemon.profiles import (
     _dev_profile,
     _ensure_network,
@@ -220,6 +221,10 @@ class YadgarDaemon:
         rt = _get_runtime()
         name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
         image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+        # Bug 11 (finished by task 0100): `volume` is no longer MOUNTED — it is only
+        # the legacy source the one-time migration below copies OUT of. The backend's
+        # /data is now the host bind mount `_paths.DATA_DIR`, matching systemd.py and
+        # the install-tree templates.
         volume = os.environ.get("YADGAR_BACKEND_VOLUME", _BACKEND_VOLUME)
         # R3: the backend runs the queue drainer, which reads the shared file
         # queue. Core writes it to {YADGAR_DATA_DIR}/queue on its OWN volume
@@ -240,10 +245,24 @@ class YadgarDaemon:
                 "reason": f"Backend image {image!r} not found. Run: yadgar daemon pull",
             }
 
+        from yadgar._shared import paths as _paths  # noqa: PLC0415
+
+        # Bug 11 / task 0100: installs made before the backend's /data became a host
+        # bind mount hold their entire DB inside the named volume. Copy it across
+        # HERE — `daemon start` is the one moment nothing holds the store, and a
+        # surrealkv directory copied while live reopens corrupt (ADR-0090). Every
+        # guard lives in db_migrate; it skips (never raises) when it cannot prove the
+        # copy is safe, so the worst case is an install still on the named volume.
+        migrate_named_volume_db(
+            runtime=rt,
+            volume=volume,
+            data_dir=_paths.DATA_DIR,
+            image=image,
+            container_names=(name, os.environ.get("YADGAR_CONTAINER", "yadgar")),
+        )
+
         _ensure_network()
         mem_mb = _container_memory_mb()
-
-        from yadgar._shared import paths as _paths  # noqa: PLC0415
 
         cmd = [
             rt,
@@ -263,8 +282,20 @@ class YadgarDaemon:
             "on-failure:3",
             "--user",
             "root",
+            # Bug 11 (finished by task 0100): the backend's /data is the SurrealDB
+            # store and MUST be the host bind mount `_paths.DATA_DIR` — `yadgar
+            # vacuum` runs host-side and translates $DATA_DIR → /data as a plain
+            # prefix rewrite, which a named volume makes silently false. Matches
+            # systemd.py, yadgar-backend.service.in and the launchd plist.
+            #
+            # SCOPE FENCE — do NOT "make this consistent" with `start()` above.
+            # The two look identical at the call site but mount different things:
+            # CORE's /data is the QUEUE volume (`profile.volume_name`, a named
+            # volume by design, ADR-0075) which the backend takes at /queue-data.
+            # Only the BACKEND's /data is the DB. Guard:
+            # yadgar/tests/scripts/test_backend_db_mount_cross_generator.py.
             "-v",
-            f"{volume}:/data",
+            f"{_paths.DATA_DIR}:/data",
             # R3: shared file-queue volume (same volume core mounts at /data) so
             # the drainer can see queued writes. YADGAR_QUEUE_BASE has no fallback
             # backend-side, so both the mount and the env var are required.

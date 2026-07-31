@@ -9,10 +9,10 @@
   "yadgar/core/cli/version.py:31": {
     "rationale": "`yadgar version` CLI command displays db/embed/uptime fields from the readiness payload to the operator. /health/live's payload lacks those fields, so readiness is required here."
   },
-  "yadgar/core/daemon/daemon.py:383": {
+  "yadgar/core/daemon/daemon.py:414": {
     "rationale": "YadgarDaemon.status() CLI command reports full db/model/drainer detail to the operator (including the degraded-detail body on 503). This genuinely needs the readiness payload, not liveness."
   },
-  "yadgar/core/daemon/daemon.py:630": {
+  "yadgar/core/daemon/daemon.py:661": {
     "rationale": "_embed_health_ok probes the backend embed service (port 8001), which exposes no /health/live liveness variant at all — ADR-0019's liveness split is scoped to the core daemon only."
   },
   "yadgar/core/server/http.py:458": {
