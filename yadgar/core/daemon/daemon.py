@@ -440,13 +440,34 @@ class YadgarDaemon:
 
     @observe(tier="boundary")
     def pull(self) -> dict:
-        """Pull the latest prod image from Docker Hub."""
+        """Pull the latest prod core AND backend images from Docker Hub.
+
+        task:0099: `daemon start` requires BOTH images (core + backend) to be
+        present, but `pull()` used to fetch only the core image — leaving no
+        command able to fetch the backend one (`daemon start`'s own error
+        message pointed back at `daemon pull`, which just re-fetched core).
+        The backend tag is resolved exactly the way start_backend() and
+        build(backend=True) resolve it (YADGAR_BACKEND_IMAGE env override,
+        else DOCKERHUB_BACKEND_IMAGE) so pull and start can never disagree
+        about which tag they want.
+        """
         profile = _prod_profile(self.port)
         rt = _get_runtime()
+        backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+
         result = subprocess.run([rt, "pull", profile.image_name])
         if result.returncode != 0:
             return {"ok": False, "reason": f"{rt} pull {profile.image_name} failed"}
-        return {"ok": True, "image": profile.image_name}
+
+        backend_result = subprocess.run([rt, "pull", backend_image])
+        if backend_result.returncode != 0:
+            return {
+                "ok": False,
+                "reason": f"{rt} pull {backend_image} failed",
+                "image": profile.image_name,
+            }
+
+        return {"ok": True, "image": profile.image_name, "backend_image": backend_image}
 
     @observe(tier="boundary")
     def push(self, tag: str | None = None) -> dict:

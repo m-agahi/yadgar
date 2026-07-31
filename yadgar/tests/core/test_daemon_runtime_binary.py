@@ -130,6 +130,73 @@ def test_pull_uses_detected_runtime(podman_env):
     assert rec.calls[-1][:2] == ["podman", "pull"]
 
 
+# task:0099 — empirical bug on a fresh Debian 13 VM (2026-07-31, yadgar 5.170.0):
+# `daemon pull` fetched ONLY the core image. `daemon start` then required the
+# backend image too, printed "Run: yadgar daemon pull" as the fix, and running
+# that command again pulled the exact same (already-present) core image —
+# a dead end with no command able to fetch the backend image at all.
+def test_pull_pulls_both_core_and_backend_images(podman_env):
+    """`pull()` must request BOTH the core and backend images, resolving the
+    backend tag the same way start_backend()/build(backend=True) do — so
+    `pull` and `start` can never disagree about which tag they want."""
+    from yadgar.core.daemon import YadgarDaemon
+    from yadgar.core.daemon.profiles import _prod_profile
+    from yadgar.core.daemon.runtime import DOCKERHUB_BACKEND_IMAGE
+
+    rec = _RunRecorder(returncode=0)
+    with patch("subprocess.run", rec):
+        result = YadgarDaemon().pull()
+
+    assert result["ok"] is True
+    _no_docker(rec)
+    pull_calls = [c for c in rec.calls if len(c) > 1 and c[1] == "pull"]
+    pulled_images = {c[2] for c in pull_calls if len(c) > 2}
+    core_image = _prod_profile().image_name
+    assert core_image in pulled_images, f"core image not pulled: {pulled_images!r}"
+    assert DOCKERHUB_BACKEND_IMAGE in pulled_images, (
+        "backend image not pulled — reproduces task:0099 dead-end "
+        f"(`daemon pull` fetched only core, leaving `daemon start` with no "
+        f"command able to fetch the backend image): {pulled_images!r}"
+    )
+
+
+def test_pull_resolves_backend_image_via_env_override(podman_env, monkeypatch):
+    """pull() must honor YADGAR_BACKEND_IMAGE exactly like start_backend() does."""
+    from yadgar.core.daemon import YadgarDaemon
+
+    monkeypatch.setenv("YADGAR_BACKEND_IMAGE", "docker.io/openfantasy/yadgar-backend:custom-tag")
+    rec = _RunRecorder(returncode=0)
+    with patch("subprocess.run", rec):
+        result = YadgarDaemon().pull()
+
+    assert result["ok"] is True
+    pull_calls = [c for c in rec.calls if len(c) > 1 and c[1] == "pull"]
+    pulled_images = {c[2] for c in pull_calls if len(c) > 2}
+    assert "docker.io/openfantasy/yadgar-backend:custom-tag" in pulled_images
+
+
+def test_pull_reports_backend_pull_failure(podman_env):
+    """A failed backend pull must surface as ok=False, not a silent partial success."""
+    from yadgar.core.daemon import YadgarDaemon
+
+    calls: list[list[str]] = []
+
+    def fake_run(argv, *args, **kwargs):
+        argv = list(argv)
+        calls.append(argv)
+        if len(argv) > 2 and "yadgar-backend" in argv[2]:
+            return subprocess.CompletedProcess(argv, 1, "", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    with patch("subprocess.run", fake_run):
+        result = YadgarDaemon().pull()
+
+    assert result["ok"] is False
+    assert any(len(c) > 2 and "yadgar-backend" in c[2] for c in calls), (
+        "backend pull was never attempted"
+    )
+
+
 def test_push_uses_detected_runtime(podman_env):
     from yadgar.core.daemon import YadgarDaemon
 

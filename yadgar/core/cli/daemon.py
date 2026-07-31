@@ -23,6 +23,8 @@ def _handle_pull(daemon, daemon_cls) -> None:
     result = daemon.pull()
     if result["ok"]:
         print(f"Pulled {result['image']}")
+        if result.get("backend_image"):
+            print(f"Pulled {result['backend_image']}")
         return
     print(f"Pull failed: {result['reason']}", file=sys.stderr)
     sys.exit(1)
