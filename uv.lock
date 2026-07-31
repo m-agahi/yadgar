@@ -2630,6 +2630,7 @@ dev = [
     { name = "pytest-split" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 dist = [
@@ -2656,6 +2657,7 @@ test = [
     { name = "pytest-split" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -2699,6 +2701,7 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.3" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.0" },
     { name = "python-multipart", specifier = ">=0.0.27" },
+    { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "regex", specifier = ">=2024.1.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
