@@ -12,7 +12,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-import yadgar.core.server.tools._forward as fwd
+import yadgar.core.forward as fwd
 
 
 class _FakeResponse:

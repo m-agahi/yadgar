@@ -167,7 +167,19 @@ def cli():
 
         main(port=args.port, db_path=args.db_path, transport=args.transport)
     else:
-        args.func(args)
+        try:
+            args.func(args)
+        finally:
+            # Car 0031 — the SDK no longer registers its own unbounded atexit
+            # shutdown (setup_tracing passes shutdown_on_exit=False), so any
+            # subcommand that DID initialise tracing must flush explicitly and
+            # under a hard bound. No-op (early-out on the missing ``shutdown``
+            # attr of the API's proxy provider) for the subcommands that never
+            # called setup_tracing — which, since the CLI hook path stopped
+            # importing yadgar.core.server, is most of them.
+            from yadgar._shared.observability.tracing import shutdown_tracing
+
+            shutdown_tracing()
 
 
 if __name__ == "__main__":

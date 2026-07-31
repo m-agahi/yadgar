@@ -23,8 +23,8 @@ from datetime import UTC, datetime
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
+from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._forward import _forward_admin
 from yadgar.core.server.tools.project import (
     _ANCHOR_PROMOTE_TAGS,
     _cosine_similarity,

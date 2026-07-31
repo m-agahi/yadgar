@@ -26,7 +26,7 @@ import pytest
 
 def test_forward_restore_payload_and_auth():
     """_forward_restore POSTs {directory} to /restore with Bearer auth; unwraps result."""
-    from yadgar.core.server.tools._forward import _forward_restore
+    from yadgar.core.forward import _forward_restore
 
     captured: dict = {}
 
@@ -58,7 +58,7 @@ def test_forward_restore_payload_and_auth():
 
 def test_forward_restore_no_url_raises():
     """_forward_restore raises RuntimeError when YADGAR_EMBED_URL is unset (forward-only)."""
-    from yadgar.core.server.tools._forward import _forward_restore
+    from yadgar.core.forward import _forward_restore
 
     with patch.dict("os.environ", {"YADGAR_EMBED_URL": ""}, clear=False):
         with pytest.raises(RuntimeError) as exc:

@@ -12,11 +12,11 @@ from yadgar._shared.security.enforcement import _enforcement_on, _inc_relaxed
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.server_helpers import _has_unpaired_surrogate, _push_event
 from yadgar._shared.storage.directory import is_directory_eligible
+from yadgar.core.forward import _forward_admin
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 

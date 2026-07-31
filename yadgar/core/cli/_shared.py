@@ -18,7 +18,7 @@ def silence_logging() -> None:
 
 def forward_restore(directory: str) -> dict:
     """POST /restore on the backend and return the restore payload dict."""
-    from yadgar.core.server.tools._forward import _forward_restore
+    from yadgar.core.forward import _forward_restore
 
     return _forward_restore(directory)
 
@@ -36,7 +36,7 @@ def forward_pre_compact_drain(directory: str, transcript_path: str | None = None
     (the bug). We parse host-side and carry the result in the /admin payload; the
     backend persists it verbatim. ``capture_in_flight`` never raises.
     """
-    from yadgar.core.server.tools._forward import _forward_admin
+    from yadgar.core.forward import _forward_admin
 
     in_flight = None
     if transcript_path:

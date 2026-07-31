@@ -15,8 +15,8 @@ from __future__ import annotations
 import logging
 
 from yadgar._shared.runtime.lifecycle import _get_storage
+from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 

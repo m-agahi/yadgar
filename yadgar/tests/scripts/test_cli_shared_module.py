@@ -20,9 +20,7 @@ from yadgar.core.cli import _shared
 class TestForwardRestore:
     def test_delegates_to_forward_restore(self):
         payload = {"formatted": "# R", "epoch": 2}
-        with patch(
-            "yadgar.core.server.tools._forward._forward_restore", return_value=payload
-        ) as fwd:
+        with patch("yadgar.core.forward._forward_restore", return_value=payload) as fwd:
             result = _shared.forward_restore("/my/proj")
         fwd.assert_called_once_with("/my/proj")
         assert result is payload
@@ -31,7 +29,7 @@ class TestForwardRestore:
 class TestForwardPreCompactDrain:
     def test_delegates_to_forward_admin_with_op(self):
         payload = {"status": "drained", "epoch": 1, "auto_checkpoint_created": True}
-        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+        with patch("yadgar.core.forward._forward_admin", return_value=payload) as fwd:
             result = _shared.forward_pre_compact_drain("/my/proj")
         # HOOKS Car 2 + fix-drain-inflight: transcript_path (None when omitted) +
         # a host-parsed in_flight (None when no transcript_path).
@@ -49,7 +47,7 @@ class TestForwardPreCompactDrain:
             / "fixtures"
             / "transcript_in_flight.jsonl"
         )
-        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+        with patch("yadgar.core.forward._forward_admin", return_value=payload) as fwd:
             _shared.forward_pre_compact_drain("/my/proj", fixture)
         args, _ = fwd.call_args
         assert args[0] == "pre_compact_drain"
@@ -69,7 +67,7 @@ class TestForwardPreCompactDrain:
             / "fixtures"
             / "transcript_in_flight.jsonl"
         )
-        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+        with patch("yadgar.core.forward._forward_admin", return_value=payload) as fwd:
             _shared.forward_pre_compact_drain("/my/proj", fixture)
         sent = fwd.call_args[0][1]
         in_flight = sent["in_flight"]
@@ -80,7 +78,7 @@ class TestForwardPreCompactDrain:
     def test_no_transcript_no_in_flight(self):
         """No transcript_path → in_flight stays None (nothing to parse host-side)."""
         payload = {"status": "drained"}
-        with patch("yadgar.core.server.tools._forward._forward_admin", return_value=payload) as fwd:
+        with patch("yadgar.core.forward._forward_admin", return_value=payload) as fwd:
             _shared.forward_pre_compact_drain("/my/proj")
         sent = fwd.call_args[0][1]
         assert sent["in_flight"] is None

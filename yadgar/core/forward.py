@@ -8,6 +8,27 @@ and the consolidation orchestrator's forwarder: HTTP only, NO Python import of
 
 Forward-only: if ``YADGAR_EMBED_URL`` is unset, raises RuntimeError (no in-core
 storage fallback — core touches zero DB directly).
+
+**LEAF MODULE — keep it that way (Car 0031).** This used to live at
+``yadgar/core/server/tools/_forward.py``. Importing anything under
+``yadgar.core.server`` runs ``yadgar/core/server/__init__.py``, which eagerly
+imports ``_app``, which calls ``setup_tracing("yadgar-core")`` at module scope.
+So the two live Claude Code hook CLIs (``yadgar restore`` / ``yadgar drain``,
+via ``yadgar/core/cli/_shared.py``) dragged in the entire MCP server *plus* a
+live OTLP exporter to make a single HTTP POST — measured 8.2s vs 1.2s per
+invocation on the host. Moving it here breaks that edge; the daemon is
+unaffected (it imports the server anyway). ``yadgar seed``, the consolidation
+orchestrator and the staleness scanner ride along for free.
+
+Guarded by ``yadgar/tests/scripts/test_cli_import_isolation.py`` — do NOT move
+this back under ``yadgar.core.server`` and do NOT add imports here from any
+``yadgar.core.server.*`` module. Its only first-party dependency is
+``yadgar._shared.observability.observe``; ``httpx`` is imported lazily per call.
+
+NOTE: the ``@observe(metric=...)`` labels below deliberately keep their historic
+``tools._forward.*`` names — those are Prometheus metric labels, not module
+paths, and renaming them would break dashboard/alert continuity. Span names
+derive from ``__module__`` and follow the move automatically.
 """
 
 from __future__ import annotations

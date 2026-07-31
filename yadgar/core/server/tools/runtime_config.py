@@ -32,8 +32,8 @@ from typing import Any
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
+from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._forward import _forward_admin
 
 # Import the resolver module's public read + invalidation entry points. Aliased so
 # the tool-level ``config_get`` does not shadow the resolver's ``config_get``.

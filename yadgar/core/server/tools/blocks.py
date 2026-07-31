@@ -24,8 +24,8 @@ import logging
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.security.secrets import gate_or_reject
+from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 

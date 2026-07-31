@@ -123,7 +123,7 @@ class TestCoreSeedForwards:
         (tmp_path / "README.md").write_text("# demo\nA demo project.")
         (tmp_path / "main.py").write_text("print('hi')")
 
-        with patch("yadgar.core.server.tools._forward._forward_admin") as fwd:
+        with patch("yadgar.core.forward._forward_admin") as fwd:
             fwd.return_value = {"created": 3, "replaced": 0}
             result = seed_project(directory=str(tmp_path))
 
@@ -142,7 +142,7 @@ class TestCoreSeedForwards:
 
         (tmp_path / "README.md").write_text("# demo")
 
-        with patch("yadgar.core.server.tools._forward._forward_admin") as fwd:
+        with patch("yadgar.core.forward._forward_admin") as fwd:
             result = seed_project(directory=str(tmp_path), dry_run=True)
 
         fwd.assert_not_called()
