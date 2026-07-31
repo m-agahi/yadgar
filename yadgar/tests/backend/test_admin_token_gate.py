@@ -42,15 +42,23 @@ def test_allow_root_bypass_honoured_under_pytest(monkeypatch) -> None:
 def test_allow_root_bypass_ignored_without_pytest_env(monkeypatch) -> None:
     """SECURITY REGRESSION: outside pytest, ALLOW_ROOT=1 must NOT disable auth.
 
-    With no token configured the gate fails secure (503) even though ALLOW_ROOT
+    With no token configured the gate fails secure (500) even though ALLOW_ROOT
     is truthy — proving the escape hatch cannot open the door in production.
+
+    ADR-0180 / task:0090: this was a 503 for months and that one wrong digit
+    misled the fresh-VM diagnosis for weeks — 503 reads as "retry later" for what
+    is a permanent server misconfiguration. 500 is the operator-error signal; see
+    _require_admin_token's docstring for why not 401 and why not 424.
     """
     monkeypatch.setenv("YADGAR_ALLOW_ROOT", "1")
     monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     with pytest.raises(HTTPException) as exc:
         _call(_creds("anything"))
-    assert exc.value.status_code == 503
+    assert exc.value.status_code == 500, (
+        "an unconfigured admin token is a permanent server misconfiguration; "
+        "reporting it as 503 (transient unavailability) is the ADR-0180 defect"
+    )
 
 
 def test_allow_root_ignored_wrong_token_rejected(monkeypatch) -> None:
