@@ -2,8 +2,10 @@
 
 **Date:** 2026-08-01
 **Task:** #0092 (full fix; the preflight half shipped in v5.170.0)
-**Depends on:** #0100 (`converge-backend-db-mount-2026-08-01.md`) — **must land first**
-**Status:** design locked, not started
+**Depends on:** #0100 (`converge-backend-db-mount-2026-08-01.md`) — **landed** (`98097cf6`)
+**Status:** IMPLEMENTED on `car/0092-vacuum-container` (core 5.170.9) — awaiting the
+v5.171 train merge. §5 (out of scope) and §6 (the vacuum unit's PATH) deliberately
+untouched; §6 is now worth its own task, since this car defined the branch point.
 
 ---
 
