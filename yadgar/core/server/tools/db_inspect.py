@@ -24,8 +24,8 @@ import logging
 
 import httpx
 
+from yadgar.core.forward import _forward_read_query
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._forward import _forward_read_query
 
 logger = logging.getLogger(__name__)
 

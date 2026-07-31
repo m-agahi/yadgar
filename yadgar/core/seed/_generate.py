@@ -354,7 +354,7 @@ def seed_project(
         "init_content": init_content,
     }
 
-    from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
+    from yadgar.core.forward import _forward_admin  # noqa: PLC0415
 
     # Generous timeout: the backend embeds + scores every generated memory.
     result = _forward_admin("seed_store", payload, timeout_s=300.0)

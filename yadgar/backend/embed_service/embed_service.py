@@ -358,6 +358,30 @@ def _get_reranker() -> LocalMLClient:
     return _reranker
 
 
+@observe(
+    exempt="tears down the tracer provider itself; a span opened here would end "
+    "after its own exporter was shut down (same category as record_exception)"
+)
+async def _shutdown_tracing_bounded() -> None:
+    """Flush + tear down OTLP on backend shutdown, under a hard 3s bound.
+
+    Car 0031: ``setup_tracing`` now builds the provider with
+    ``shutdown_on_exit=False`` (the SDK's own atexit handler joins the final
+    OTLP flush with NO bound). The backend therefore has to flush explicitly,
+    under the same bound the core daemon uses — otherwise the last unexported
+    span batch is dropped. Extracted from ``lifespan`` to keep it under the I30
+    hard fn_loc cap. Never raises: shutdown must proceed.
+    """
+    try:
+        from yadgar._shared.observability.tracing import (  # noqa: PLC0415
+            shutdown_tracing as _shutdown_tracing,
+        )
+
+        await asyncio.to_thread(_shutdown_tracing, 3.0)
+    except Exception as _exc:  # noqa: BLE001 — shutdown must proceed
+        logger.warning("tracing shutdown failed: %s", _exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # I14: configure structured logging at backend boot.
@@ -504,6 +528,10 @@ async def lifespan(app: FastAPI):
         _marker_path_shutdown.write_text("1")
     except OSError as _exc:
         logger.warning("Failed to write shutdown marker: %s", _exc)
+
+    # Car 0031: bounded OTLP teardown (setup_tracing no longer registers the
+    # SDK's own unbounded atexit shutdown). See _shutdown_tracing_bounded.
+    await _shutdown_tracing_bounded()
 
 
 app = FastAPI(title="yadgar-embed", version="1.0", lifespan=lifespan)

@@ -53,7 +53,7 @@ def _enforce_on(monkeypatch):
 
 
 def _seed_dir(directory: str, gitness: bool, default_branch):
-    from yadgar.core.server.tools._forward import _forward_admin
+    from yadgar.core.forward import _forward_admin
 
     _forward_admin(
         "upsert_dir_branch_context",

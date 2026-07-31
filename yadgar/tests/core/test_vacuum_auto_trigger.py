@@ -155,7 +155,7 @@ class TestAutoTriggerWindow:
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch.object(consolidation_mod, "_last_vacuum_at", None),
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -174,7 +174,7 @@ class TestAutoTriggerWindow:
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch.object(consolidation_mod, "_last_vacuum_at", None),
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -192,7 +192,7 @@ class TestAutoTriggerWindow:
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch.object(consolidation_mod, "_last_vacuum_at", None),
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -210,7 +210,7 @@ class TestAutoTriggerWindow:
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch.object(consolidation_mod, "_last_vacuum_at", None),
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -238,7 +238,7 @@ class TestAutoTriggerCooldown:
                 consolidation_mod, "_last_vacuum_at", datetime.now(UTC) - timedelta(hours=1)
             ),
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -258,7 +258,7 @@ class TestAutoTriggerCooldown:
                 consolidation_mod, "_last_vacuum_at", datetime.now(UTC) - timedelta(hours=7)
             ),
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -276,7 +276,7 @@ class TestAutoTriggerCooldown:
             patch.object(consolidation_mod, "_fire_vacuum_service"),
             patch.object(consolidation_mod, "_last_vacuum_at", None),  # Never fired
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):
@@ -361,7 +361,7 @@ class TestIsActivePreCheck:
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch.object(consolidation_mod, "_last_vacuum_at", None),
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
             patch(
@@ -398,7 +398,7 @@ class TestContainerSafeAutoTrigger:
             patch.object(consolidation_mod, "_fire_vacuum_service") as mock_fire,
             patch.object(consolidation_mod, "_last_vacuum_at", None),
             patch(
-                "yadgar.core.server.tools._forward._forward_admin",
+                "yadgar.core.forward._forward_admin",
                 return_value={"ok": True, "violations": [], "fixed": [], "counts": {}},
             ),
         ):

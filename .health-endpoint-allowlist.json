@@ -1,6 +1,6 @@
 {
   "_comment": "Allowlist for scripts/check_health_endpoint_semantics.py (Car 0091). Governance mirrors .route-literal-allowlist.json: rationale >= 40 chars, and a STALE entry (a site that no longer probes bare /health) hard-fails. DO NOT add a site here just to silence the guard: only readiness that is GENUINELY required (a db/embed payload field is read, a DB write is gated, or the target service exposes no /health/live liveness variant at all) belongs here. A site whose caller only needs 'is the process up' is a bug — switch it to /health/live instead of allowlisting it.",
-  "yadgar/backend/embed_service/embed_service.py:759": {
+  "yadgar/backend/embed_service/embed_service.py:787": {
     "rationale": "The embed service's OWN /health handler probing its SurrealDB dependency to decide its own readiness. SurrealDB exposes no /health/live variant; this IS the readiness check being implemented, not a caller of one."
   },
   "yadgar/core/cli/seed.py:58": {

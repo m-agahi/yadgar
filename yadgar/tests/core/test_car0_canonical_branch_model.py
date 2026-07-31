@@ -54,7 +54,7 @@ def _enforce_on(monkeypatch):
 
 def _seed_dir(directory: str, gitness: bool, default_branch):
     """Simulate a SessionStart upsert of the trusted vars via the durable store."""
-    from yadgar.core.server.tools._forward import _forward_admin
+    from yadgar.core.forward import _forward_admin
 
     _forward_admin(
         "upsert_dir_branch_context",
@@ -277,7 +277,7 @@ class TestCache:
         cache = _dir_branch._get_cache()
 
         calls = {"n": 0}
-        import yadgar.core.server.tools._forward as _fwd
+        import yadgar.core.forward as _fwd
 
         real = _fwd._forward_admin
 
@@ -306,7 +306,7 @@ class TestCache:
     def test_backend_error_is_failsafe_not_canonical(self, monkeypatch):
         """A backend read error surfaces as error=True (→ require branch_hint),
         NEVER silently found/canonical."""
-        import yadgar.core.server.tools._forward as _fwd
+        import yadgar.core.forward as _fwd
         from yadgar.core.server.tools import _dir_branch
 
         def _boom(op, payload, timeout_s=30.0):

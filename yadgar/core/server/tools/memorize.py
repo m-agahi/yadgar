@@ -15,11 +15,11 @@ from yadgar._shared.write_exec import (
     MemorizeContext,
     phase_validate,
 )
+from yadgar.core.forward import _forward_admin
 
 # R2a Car D2: _get_file_queue lives in yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._forward import _forward_admin
 
 logger = logging.getLogger(__name__)
 

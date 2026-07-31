@@ -27,11 +27,11 @@ from yadgar._shared.runtime.lifecycle import (
 )
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.server_helpers import _has_unpaired_surrogate, normalize_write_context
+from yadgar.core.forward import _forward_restore
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool, mcp_server
-from yadgar.core.server.tools._forward import _forward_restore
 
 logger = logging.getLogger(__name__)
 

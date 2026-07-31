@@ -35,7 +35,7 @@ def _forward(op: str, payload: dict) -> dict:
     Call-time import so the test harness's ``_forward_admin`` bypass patch on
     the ``_forward`` module is picked up.
     """
-    from yadgar.core.server.tools._forward import _forward_admin  # noqa: PLC0415
+    from yadgar.core.forward import _forward_admin  # noqa: PLC0415
 
     return _forward_admin(op, payload)
 

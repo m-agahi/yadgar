@@ -553,7 +553,19 @@ def setup_tracing(service_name: str) -> None:
         return
 
     resource = Resource.create({"service.name": service_name})
-    provider = TracerProvider(resource=resource)
+    # Car 0031 — shutdown_on_exit=False: the SDK's default
+    # ``atexit.register(provider.shutdown)`` joins the BatchSpanProcessor's final
+    # flush with NO bound (30s default) against an unreachable collector, and it
+    # fires even after our own bounded ``shutdown_tracing(timeout_sec=3.0)`` gave
+    # up — the SDK only unregisters the handler *after* the inner shutdown
+    # returns, which is exactly the call that hangs. Teardown is therefore
+    # explicit + bounded everywhere: the daemon via
+    # ``yadgar/_shared/runtime/lifecycle.py``, the hook scripts via their own
+    # ``shutdown_tracing()`` call, and the CLI subcommands via
+    # ``yadgar/__main__.py:cli``.
+    # This does NOT violate ADR-0037: ``OTEL_SDK_DISABLED`` is never set, spans
+    # still RECORD, and LogSpanProcessor below is registered unconditionally.
+    provider = TracerProvider(resource=resource, shutdown_on_exit=False)
     provider.add_span_processor(LogSpanProcessor(service_name=service_name))
 
     # Optional OTLP/HTTP exporter — runs alongside LogSpanProcessor (not replacing it)
