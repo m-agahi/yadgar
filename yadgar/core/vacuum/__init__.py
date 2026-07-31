@@ -278,7 +278,7 @@ def _log_consolidation_row(row: dict) -> None:
     """
     backend_url = row.pop(
         "_backend_url",
-        os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8080"),
+        os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000"),
     )
     rolled_back = bool(row.pop("rolled_back", False))
     exit_code = int(row.pop("exit_code", 0))
@@ -1510,7 +1510,7 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
     """Implement the new vacuum flow. Returns exit code (0 = success).
 
     args attributes consumed:
-      - backend_url (str)     default: YADGAR_DB_URL env, else http://127.0.0.1:8080
+      - backend_url (str)     default: YADGAR_DB_URL env, else http://127.0.0.1:8000
       - service_mode (str)    "systemd" | "docker" | "manual" | None (auto-detect)
       - db_path (str | None)  override default ~/.local/share/yadgar/surreal_db
       - yes (bool)            skip confirmation prompt
@@ -1526,7 +1526,7 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
     # getattr(..., None) + env fallback matches the v5.10.2 pattern from
     # _log_consolidation_row and yadgar/cli/vacuum.py::_default_backend_url.
     backend_url: str = getattr(args, "backend_url", None) or os.environ.get(
-        "YADGAR_DB_URL", "http://127.0.0.1:8080"
+        "YADGAR_DB_URL", "http://127.0.0.1:8000"
     )
     db_path_arg: str | None = getattr(args, "db_path", None)
     db_path = Path(db_path_arg).expanduser() if db_path_arg else Path(settings.DB_PATH).expanduser()

@@ -17,10 +17,10 @@ def _default_db_path() -> str | None:
 
 
 def _default_backend_url() -> str:
-    """Default for --backend-url: $YADGAR_DB_URL if set, else loopback:8080.
+    """Default for --backend-url: $YADGAR_DB_URL if set, else loopback:8000.
     Containers set YADGAR_DB_URL=http://yadgar-backend:8000.
     """
-    return os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8080")
+    return os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000")
 
 
 def cmd_vacuum(args):
@@ -54,7 +54,7 @@ def register(subparsers):
         "--backend-url",
         type=str,
         default=_default_backend_url(),
-        help="yadgar-backend HTTP endpoint (default: $YADGAR_DB_URL, else http://127.0.0.1:8080)",
+        help="yadgar-backend HTTP endpoint (default: $YADGAR_DB_URL, else http://127.0.0.1:8000)",
     )
     p.add_argument(
         "--service-mode",

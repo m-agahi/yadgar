@@ -454,7 +454,7 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
       - db_path (str | None)   — override default from yadgar.paths.DB_PATH
                                  (respects YADGAR_DATA_DIR / XDG; do NOT use
                                   Settings.DB_PATH which reads stale config.yaml)
-      - backend_url (str)      — SurrealDB backend URL (default: YADGAR_DB_URL env, else http://127.0.0.1:8080)
+      - backend_url (str)      — SurrealDB backend URL (default: YADGAR_DB_URL env, else http://127.0.0.1:8000)
       - service_mode (str)     — "systemd" | "docker" | "manual" | None (auto-detect)
       - retention (int)        — snapshot retention count (default YADGAR_BACKUP_RETENTION)
     """
@@ -475,7 +475,7 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     backend_url: str = getattr(args, "backend_url", None) or os.environ.get(
-        "YADGAR_DB_URL", "http://127.0.0.1:8080"
+        "YADGAR_DB_URL", "http://127.0.0.1:8000"
     )
     service_mode: str | None = getattr(args, "service_mode", None)
     retention: int = getattr(args, "retention", None) or default_retention()

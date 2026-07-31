@@ -565,17 +565,22 @@ class Settings(BaseSettings):
     # v4.9: threshold-driven auto-trigger for vacuum (emergency backstop only from v5.7.0).
     #
     # Trigger precedence (v5.7.0+):
-    #   1. PRIMARY   — nightly cron at 19:00 UTC (yadgar-vacuum.timer, ships in PR-1a/1b).
-    #                  Runs vacuum unconditionally regardless of DB size.
+    #   1. PRIMARY   — the nightly cycle at 19:00 UTC (yadgar-nightly-cycle.timer, PR-1a/1b),
+    #                  whose script (yadgar-nightly-cycle) runs vacuum unconditionally as
+    #                  step 4 of backup → consolidation → vacuum → backup, regardless of DB
+    #                  size. task:0042 corrected this: an earlier version of this comment
+    #                  mislabeled yadgar-vacuum.timer as the nightly 19:00 UTC trigger —
+    #                  that unit is actually a SEPARATE weekly timer (Sundays 04:00 local)
+    #                  that also runs `yadgar vacuum` standalone (nix systemd timer, v4.8.0).
     #   2. BACKSTOP  — this threshold path (ConsolidationScheduler._maybe_auto_vacuum()).
     #                  Fires only when DB exceeds VACUUM_AUTO_THRESHOLD_BYTES AND the local
     #                  clock falls inside [VACUUM_AUTO_WINDOW_START, VACUUM_AUTO_WINDOW_END).
-    #                  Role: catch runaway DB growth between nightly cron cycles — not the
+    #                  Role: catch runaway DB growth between nightly cycles — not the
     #                  normal workhorse.
     #   3. MANUAL    — vacuum_now() MCP tool (writes trigger file, see PR-4 / YADGAR_VACUUM_TRIGGER_PATH).
     #
     # The cooldown logic in _maybe_auto_vacuum() prevents double-fires within the same day,
-    # so cron and backstop coexist safely.
+    # so the nightly cycle and the backstop coexist safely.
     #
     # Emergency backstop threshold: fire when DB exceeds this size (default 2 GiB).
     VACUUM_AUTO_THRESHOLD_BYTES: int = 2_147_483_648
