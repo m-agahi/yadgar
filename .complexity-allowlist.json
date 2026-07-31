@@ -26,9 +26,9 @@
   "function": "<file>",
   "lineno": 1,
   "metrics": {
-   "file_loc": 1280
+   "file_loc": 1713
   },
-  "rationale": "P0 #37 safe-stop train (2026-07-10): +~265 LOC for the swap quiescence gate, finalize rollback-on-unverified, and the /proc inode-coherence scan (all with incident-context docstrings — the 07-09 split-brain postmortem lives next to the code it guards). Prior entry: I33 obs rollout 1015. The honest fix is splitting finalize/guards out of __init__ — that restructure belongs to the parked T2 layer-boundary train (#5), not a P0 incident-fix branch.",
+  "rationale": "P0 #37 safe-stop train (2026-07-10): +~265 LOC for the swap quiescence gate, finalize rollback-on-unverified, and the /proc inode-coherence scan (all with incident-context docstrings — the 07-09 split-brain postmortem lives next to the code it guards). Prior entry: I33 obs rollout 1015. The honest fix is splitting finalize/guards out of __init__ — that restructure belongs to the parked T2 layer-boundary train (#5), not a P0 incident-fix branch. Car 0092 (2026-07-31): 1280 -> 1713. +~430 LOC for the side-build surreal-binary preflight, the named-skip-reason consolidation_log path, and the abort-path .pre-vacuum prune -- again incident-context docstrings carrying the wedge postmortem (export + stop-both-units + full copytree ran before a FileNotFoundError, and no abort path pruned the snapshot it had just made). The honest fix remains splitting finalize/guards/preflight out of __init__ into siblings of phases.py; that restructure still belongs to the parked T2 layer-boundary train (#5), not a bug-train car.",
   "added": "2026-07-10",
   "added_by": "safestop-car2"
  },
