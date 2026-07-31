@@ -85,7 +85,7 @@ read-modify-write is not atomic.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D6 | **Integer `number` from the engine's sequence facility. No application-level read-then-write.** Set `BATCH` explicitly and small. | `INSERT` and let the engine assign — no race window to lock around. Kills `_adr_log_lock` *and* `_committed_page_max_id`. `DEFINE SEQUENCE` **confirmed present and non-experimental in v3.1.5** (source at tag: `core/src/fnc/sequence.rs`; `ExperimentalTarget` = `{Files, Surrealism}` only). Syntax `DEFINE SEQUENCE name [BATCH n] [START n] [TIMEOUT d]`, consumed via `sequence::nextval()`. **BATCH exists to avoid a consensus round-trip per insert in a *cluster*; yadgar is single-node, so a large batch buys nothing and only spreads ids out.** Docs do not state a default — measure it and set explicitly. Expressed as a *capability* (see D30), not a literal. |
+| D6 | **Integer `number` from the engine's sequence facility. No application-level read-then-write.** **CREATE-ONCE.** Sequences are created by a single `DEFINE SEQUENCE <name> BATCH <knob> IF NOT EXISTS` at migration time. `<knob>` = `ledger.sequence_batch`, default `1`, read from the runtime config store (ADR-0163) at creation ONLY, falling back to `config.yaml` if the store is unreachable that early. | `INSERT` and let the engine assign — no race window to lock around. Kills `_adr_log_lock` *and* `_committed_page_max_id`. Expressed as a *capability* (see D30), not a literal. **Yadgar issues the CREATE and consumes `nextval()`. Nothing else.** Allocation, uniqueness, monotonicity, persistence and crash-safety are the engine's job and yadgar does not touch them. Specifically: yadgar **never** re-issues the DDL at runtime, **never** computes or injects a `START`, and **never** reasons about the sequence's current position. `BATCH` (allocation-chunk size) and `START` (a brand-new sequence's first value) are distinct and neither is a "resume here" control. If an operator ever needs a different `BATCH`, that is a deliberate migration they author — not a runtime effect of the knob. Burned ids stay burned; they are registration numbers, not a count (D9). **VERIFIED 2026-07-31 against a throwaway `surrealdb/surrealdb:v3.1.5` container** (the version the backend image ships; the host binary is 3.0.5 — see task #0092): `DEFINE SEQUENCE` executes; `sequence::nextval()` increments (`BATCH 1 START 1` → 1,2,3,4); the engine default is **`BATCH 1000 START 0`** (from `INFO FOR DB`, which the docs do not state); sequence state **persists across a full process restart**. One measured consequence, recorded because it is invisible otherwise: **a restart DISCARDS the unconsumed remainder of the reserved batch** — a `BATCH 1000` sequence at value 2 returned **1000** after restart, while a `BATCH 1` sequence at 4 returned 5. Under the engine default, ids therefore advance by up to 1000 per daemon restart regardless of writes. This is CORRECT per D9 (gaps are expected; a number is an identifier, not a count) and affects only readability, which D10's encoding absorbs. |
 | D7 | **Never reused. Archive, never hard-delete.** | External references (plan filenames, PR titles, `(#93)` in commits) must not silently retarget. Archive-never-delete is the precondition for permanence. |
 | D8 | **Composite id `(origin, number)`.** | Your task and mine are `(alice, 231)` and `(max, 231)` — distinct by construction. Works offline, sync is idempotent, **no id ever changes** (which upstream-assigns-on-sync would violate). Sequences stay per-origin. |
 | D9 | **Gaps are correct.** | A number is an identifier, not a count. SurrealDB docs explicitly do **not** claim gap-free — their own example shows a gap after a cancelled transaction, and `nextval` is not rolled back on failure. |
@@ -106,7 +106,7 @@ read-modify-write is not atomic.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D17 | **Two orthogonal axes** — `owner_kind` (user\|team\|org) · `owner_id` · `reach` (project\|global) · `project_id` | One enum cannot express six cells. Today is the top row with `owner_id=null`. Retrofitting onto populated tables is a migration on every row; adding now is free and inert. |
+| D17 | **Two orthogonal axes** — `owner_kind` (user\|team\|org) · `owner_id` · `reach` (project\|global) · `project_id`. **The COLUMNS are deferred to the tenancy task; Car A ships a scope-filter HOOK that is a no-op today.** | One enum cannot express six cells (user/team/org × project/global), so the shape is decided now even though nothing is built. **Revised 2026-07-31 after an independent audit challenged "free and inert" and the fact-check refuted BOTH positions.** Facts: the tables are SCHEMALESS (`migrations.py:71`) and the migration mechanism is idempotent `DEFINE FIELD IF NOT EXISTS` (`migrations.py:81`), so adding a field later is ONE line of DDL — there is no `ALTER TABLE`, no table rewrite, and rows lacking the field stay valid. Seed size is ~400 rows total, so even a backfill is milliseconds. So the earlier claim that retrofitting is "a migration on every row" was wrong, and the counter-claim that the columns cost anything at insert/select was also wrong. **The only real cost is code** — threading the columns through the mixin's signatures and query builders — and that cost is identical whenever it is paid. The genuine risk is narrower: a mixin written with no tenancy concept bakes single-tenant query SHAPES in, and rewriting query builders later is the expensive part, not the DDL. A no-op filter hook captures exactly that risk at lower cost than four unread columns. |
 | D18 | **Sync selectivity IS the owner axis.** `user` → nowhere · `team` → team · `org` → org | "Should this reach my team" and "who owns this" are the same question. Personal backup is a separate independent flag. |
 | D19 | **Explicit `PERMISSIONS` on every `DEFINE TABLE`.** | SurrealDB advisory GHSA-x5fr-7hhj-34j3: defaults were FULL. **Defense in depth only** — the daemon opens one connection with system credentials (`storage/__init__.py:263-273`), so table permissions do not constrain it and there is no per-user `$auth` today. Not "AAA need not be hand-rolled." |
 | D20 | **One choke point: every row access goes through `_LedgerMixin`. Lint-enforced.** | Highest-value item here, and the engine seam (D30). **Needs NEW tooling**: import-linter's 4 contracts are import-graph only and cannot see call sites or query literals; none of the 23 `scripts/check_*.py` target storage boundaries. Budgeted into Car A with an allowlist for pre-existing violations (`cli/stats.py:719` own connection, `hooks/prompt-recall.py:83,98`, `project.py:1381`, `audit.py` 10+ sites). |
@@ -243,7 +243,7 @@ Rollback before step 10: stop reading the tables.
 
 | Car | Scope | Depends on |
 |---|---|---|
-| A | `_LedgerMixin` + migration + sequences (BATCH measured + set) + explicit PERMISSIONS + tenancy columns + **new AST guard `scripts/check_ledger_chokepoint.py` with an allowlist for pre-existing violations** | — |
+| A | `_LedgerMixin` + migration + `DEFINE SEQUENCE … BATCH <knob> IF NOT EXISTS` (create-once, D6) + explicit PERMISSIONS + **a no-op scope-filter hook** (not tenancy columns — D17) + **new AST guard `scripts/check_ledger_chokepoint.py` with an allowlist for pre-existing violations** | — |
 | B | backend ops + cache | A |
 | C1 | **3a** — tag-override matches the page type's own opt-in tag | — |
 | C2 | **3b** — implement `downweight` | — |
@@ -277,11 +277,23 @@ TDD throughout, RED-verified per car. Gates: ruff, import-linter, I32, I33, `che
 | Index drift risk | present | none — the index *is* the query |
 | Cross-instance id collision | n/a | none (composite id) |
 
-**Not claimed:** a session-start saving. SessionStart posts without `mode`, so `http.py:1080`
-defaults to `catalog`; no `project_brief` mode inlines the task-list page, and the only task-list
-touch is `_task_list_restore_nudge` (`http.py:864-981`), which parses server-side and emits at most
-12 lines (`_CAP = 12`). An earlier draft claimed a ~24k session-start cost — that was the same
-stop-hook read, mislabelled.
+**The ~24k is paid TWICE per cycle — at session start AND at every stop-hook checkpoint.**
+
+*Corrected 2026-07-31.* A previous revision of this section claimed there was no session-start
+cost, on the grounds that the SessionStart hook POSTs without `mode` (so `http.py:1080` defaults to
+`catalog`, and no `project_brief` mode inlines the task-list page) and that the only task-list touch
+is `_task_list_restore_nudge` (`http.py:864-981`), which parses server-side and emits at most 12
+lines (`_CAP = 12`).
+
+Those facts are true but the conclusion drawn from them was wrong. **The nudge is an INSTRUCTION,
+and its execution is the cost.** It reads *"ACTION REQUIRED — restore your task list BEFORE any
+other work. N open task(s)… Call TaskCreate for EACH one now… Full descriptions:
+`wiki_read("{project}-task-list")`"*. Complying means a full-page read plus N `TaskCreate` calls plus
+the harness re-injecting every task as a system-reminder — which is exactly task #0080's
+itemisation, and matches the observed 8%→18% context jump on a single restore.
+
+Measuring the hook's output size and concluding the session start is cheap was the error; the
+surrounding claim was never checked.
 
 ## 9. Out of scope — filed separately
 
@@ -293,4 +305,11 @@ stop-hook read, mislabelled.
 
 - **Rollup regeneration trigger** — on write (fresh, one small page write) vs nightly (cheaper, stale between runs).
 - **`subsystem` vocabulary** — free-form drifts (`vacuum`/`Vacuum`/`db-vacuum`); a controlled list needs a home.
-- **Measured `BATCH` default** — docs do not state it; Car A must observe and pin it.
+*(Resolved 2026-07-31, all measured against a throwaway `surrealdb/surrealdb:v3.1.5` container —
+see D6: `DEFINE SEQUENCE` availability, the `BATCH 1000 START 0` engine default, restart behaviour,
+and `OVERWRITE` semantics. `OVERWRITE` does **NOT** reset the counter — a sequence at 3 returned 4
+after `OVERWRITE` with identical params, and 5 after `OVERWRITE` changing `BATCH 1 → 100`;
+`IF NOT EXISTS` on an existing sequence is a clean no-op. An earlier revision flagged a
+build-blocking risk that re-tuning the knob could reset the counter and destroy D7's permanence
+invariant. That risk does not exist. The mitigation it proposed — preserving position via `START` —
+would itself have been yadgar managing the index, which D6 now forbids outright.)*
