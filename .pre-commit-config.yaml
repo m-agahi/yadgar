@@ -147,6 +147,17 @@ repos:
         # read set. Measured ~1.7s on this tree.
         always_run: true
 
+      - id: check-health-endpoint-semantics
+        name: Check bare /health (readiness) probes are governed by an allowlist rationale (Car 0091)
+        language: system
+        entry: python scripts/check_health_endpoint_semantics.py
+        pass_filenames: false
+        # always_run: same rationale as check-route-literals above — the ADR-0019
+        # config-file-only pin let three Python call sites drift onto bare /health
+        # (readiness) where /health/live (liveness) was actually needed, with no
+        # files: filter narrow enough to have caught any of them.
+        always_run: true
+
       - id: check-registry-prose-liveness
         name: Check I32 prose-token liveness (registry cites no dead identifiers)
         language: system

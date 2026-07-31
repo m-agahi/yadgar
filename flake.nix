@@ -123,7 +123,11 @@
 
         yadgar-pkg = python.pkgs.buildPythonApplication {
           pname = "yadgar";
+<<<<<<< HEAD
           version = "5.169.3";
+=======
+          version = "5.169.2";
+>>>>>>> car/0091-health-probe
           format = "pyproject";
 
           src = ./.;
@@ -258,7 +262,11 @@
 
             coreVersion = lib.mkOption {
               type = lib.types.str;
+<<<<<<< HEAD
               default = "5.169.3";
+=======
+              default = "5.169.2";
+>>>>>>> car/0091-health-probe
               description = "Container image tag for the yadgar core service.";
             };
 
