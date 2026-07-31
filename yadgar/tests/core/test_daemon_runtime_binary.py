@@ -1,20 +1,33 @@
-"""task:0083 — the daemon must invoke the DETECTED container runtime, never literal "docker".
+"""Yadgar must invoke the DETECTED container runtime — never a literal binary name.
 
-Empirical bug (2026-07-29, fresh Debian 13 VM, yadgar 5.168.0, podman 5.4.2, no
-docker binary): ``yadgar daemon start`` died with
+task:0083 — empirical bug (2026-07-29, fresh Debian 13 VM, yadgar 5.168.0, podman
+5.4.2, no docker binary): ``yadgar daemon start`` died with
 ``FileNotFoundError: [Errno 2] No such file or directory: 'docker'`` because
 ``daemon.py`` templated ``["docker", "rm", ...]`` even though ``check_runtime()``
 had already resolved podman.
 
+task:0101 — the mirror image, on the ``yadgar upgrade`` path:
+``core/update/orchestrator.py::_default_image_pull`` templated
+``["podman", "pull", ...]``, which dies the same way on a docker-only host. It
+survived because this guard used to be SCOPED to ``yadgar/core/daemon/`` plus
+``core/cli/daemon.py`` — ``core/update/`` was never looked at — and because the
+detector only knew the name ``"docker"``, so a hardcoded ``"podman"`` read as
+clean. Both holes are closed here: the scope is now the whole repo (minus tests)
+and the detector knows both names. Deliberate sites live in
+``.container-runtime-allowlist.json`` with a written rationale; narrowing the
+scope back down is what a widened guard exists to prevent.
+
 These tests pin two things:
-  1. behaviour — every daemon subprocess invocation uses ``_get_runtime()``;
-  2. source shape — an AST guard that fails if a literal ``"docker"`` argv head
-     re-appears anywhere in ``yadgar/core/daemon/``.
+  1. behaviour — every subprocess invocation resolves the binary via
+     ``_get_runtime()`` (daemon, CLI graceful-stop, and the upgrade orchestrator);
+  2. source shape — an AST guard that fails if a literal ``"docker"`` / ``"podman"``
+     argv head appears anywhere in ``yadgar/`` or ``scripts/`` unallowlisted.
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -70,6 +83,18 @@ def podman_only(monkeypatch):
 def podman_env(monkeypatch):
     """Pin the runtime to podman via the documented env override."""
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "podman")
+
+
+@pytest.fixture
+def docker_env(monkeypatch):
+    """Pin the runtime to docker — the fixture that exposes a hardcoded "podman".
+
+    task:0101: a test run under ``podman_env`` cannot tell a resolved runtime
+    from a hardcoded ``"podman"`` literal, because both produce the same argv.
+    Anything asserting "the DETECTED runtime is used" against a podman literal
+    must pin docker instead.
+    """
+    monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", "docker")
 
 
 # ── headline reproduction ─────────────────────────────────────────────────────
@@ -195,6 +220,91 @@ def test_pull_reports_backend_pull_failure(podman_env):
     assert any(len(c) > 2 and "yadgar-backend" in c[2] for c in calls), (
         "backend pull was never attempted"
     )
+
+
+# ── `yadgar upgrade` image pull (yadgar/core/update/orchestrator.py) ──────────
+#
+# task:0101 — the SAME two defects as task:0099/task:0083, on the upgrade path.
+# ``_default_image_pull`` pulled ONLY the core image, and did so with a literal
+# ``"podman"`` argv head. So ``yadgar upgrade`` installed a fresh core image
+# against whatever backend image happened to already be on disk (core and
+# backend version independently — core 5.170.x / backend 5.60.x — and the daemon
+# needs both), and it crashed outright on a docker-only host.
+#
+# It survived because the source-shape guard below used to be scoped to
+# ``yadgar/core/daemon/`` + ``core/cli/daemon.py``; ``core/update/`` was never
+# looked at. That scoping gap is fixed in the same change.
+
+
+def test_upgrade_image_pull_uses_detected_runtime(docker_env):
+    """RED before the fix: hardcoded "podman" argv head — a docker-only host dies here.
+
+    The runtime is pinned to *docker* on purpose: pinning it to podman would let
+    the hardcoded literal pass by coincidence.
+    """
+    from yadgar.core.update.orchestrator import _default_image_pull
+
+    rec = _RunRecorder(returncode=0)
+    with patch("subprocess.run", rec):
+        _default_image_pull("9.9.9")
+
+    assert "podman" not in rec.binaries, (
+        f"literal 'podman' argv head — use the detected runtime: {rec.calls!r}"
+    )
+    assert rec.binaries and set(rec.binaries) == {"docker"}, (
+        f"upgrade pull did not use the detected runtime: {rec.calls!r}"
+    )
+
+
+def test_upgrade_image_pull_pulls_both_core_and_backend_images(podman_env):
+    """`yadgar upgrade` must fetch BOTH images, not just the core one.
+
+    The backend tag is resolved exactly the way ``YadgarDaemon.pull()`` /
+    ``start_backend()`` resolve it, so upgrade and start can never disagree.
+    """
+    from yadgar.core.daemon.runtime import DOCKERHUB_BACKEND_IMAGE
+    from yadgar.core.update.orchestrator import _default_image_pull
+
+    rec = _RunRecorder(returncode=0)
+    with patch("subprocess.run", rec):
+        _default_image_pull("9.9.9")
+
+    pulled = {c[2] for c in rec.calls if len(c) > 2 and c[1] == "pull"}
+    assert "docker.io/openfantasy/yadgar:9.9.9" in pulled, f"core image not pulled: {pulled!r}"
+    assert DOCKERHUB_BACKEND_IMAGE in pulled, (
+        "backend image not pulled — `yadgar upgrade` would install a fresh core "
+        f"image against a stale backend image with no warning: {pulled!r}"
+    )
+
+
+def test_upgrade_image_pull_resolves_backend_image_via_env_override(podman_env, monkeypatch):
+    """The upgrade path must honor YADGAR_BACKEND_IMAGE exactly like the daemon does."""
+    from yadgar.core.update.orchestrator import _default_image_pull
+
+    monkeypatch.setenv("YADGAR_BACKEND_IMAGE", "docker.io/openfantasy/yadgar-backend:custom-tag")
+    rec = _RunRecorder(returncode=0)
+    with patch("subprocess.run", rec):
+        _default_image_pull("9.9.9")
+
+    pulled = {c[2] for c in rec.calls if len(c) > 2 and c[1] == "pull"}
+    assert "docker.io/openfantasy/yadgar-backend:custom-tag" in pulled, (
+        f"YADGAR_BACKEND_IMAGE override ignored: {pulled!r}"
+    )
+
+
+def test_upgrade_image_pull_raises_when_backend_pull_fails(podman_env):
+    """A failed backend pull must abort the upgrade (→ rollback), not pass silently."""
+    from yadgar.core.update.orchestrator import _default_image_pull
+
+    def fake_run(argv, *args, **kwargs):
+        argv = list(argv)
+        rc = 1 if any("yadgar-backend" in tok for tok in argv) else 0
+        if kwargs.get("check") and rc != 0:
+            raise subprocess.CalledProcessError(rc, argv)
+        return subprocess.CompletedProcess(argv, rc, "", "")
+
+    with patch("subprocess.run", fake_run), pytest.raises(subprocess.CalledProcessError):
+        _default_image_pull("9.9.9")
 
 
 def test_push_uses_detected_runtime(podman_env):
@@ -362,70 +472,151 @@ def test_start_propagates_missing_runtime_instead_of_reporting_success(monkeypat
 # ── source-shape regression guard (acceptance criterion 4) ────────────────────
 
 
-def _runtime_guarded_sources() -> list[Path]:
-    """Every module that shells out to the container runtime on the daemon path.
+_ALLOWLIST_NAME = ".container-runtime-allowlist.json"
+_MIN_RATIONALE = 40
 
-    Deliberately narrow: the whole ``yadgar/core/daemon/`` package plus the single
-    file ``yadgar/core/cli/daemon.py``. It is NOT ``yadgar/core/cli/*.py`` —
-    sibling CLI modules (``setup.py``, ``update.py``, …) legitimately print
-    ``docker …`` hint strings that are never executed as argv, and globbing the
-    whole package would turn this guard into a false-positive generator.
-    ``core/cli/daemon.py`` is in scope because ``_handle_graceful_stop`` really
-    does ``subprocess.run`` the runtime binary.
+# Literal argv heads that mean "a container runtime binary". BOTH names, not just
+# "docker": task:0101's upgrade-path defect was a hardcoded ``"podman"``, which a
+# docker-head-only detector reads as clean.
+_RUNTIME_BINARIES = frozenset({"docker", "podman"})
+
+
+def _repo_root() -> Path:
+    """Repo root, derived from THIS file — the tests/_meta convention.
+
+    Deliberately not ``Path(yadgar.__file__).parent.parent``: under a
+    wheel-installed run that resolves to site-packages, where neither the
+    ``scripts/`` tree nor the allowlist exists. A source-shape guard must read
+    the source tree it lives in.
     """
-    from yadgar.core.daemon import runtime as runtime_mod
-
-    pkg_dir = Path(runtime_mod.__file__).resolve().parent
-    cli_daemon = pkg_dir.parent / "cli" / "daemon.py"
-    assert cli_daemon.exists(), f"guard target moved: {cli_daemon}"
-    return [*sorted(pkg_dir.glob("*.py")), cli_daemon]
+    return Path(__file__).resolve().parents[3]
 
 
-def _literal_docker_argv_heads(path: Path) -> list[str]:
-    """Return ``file:line`` for every argv list in *path* whose head is "docker"."""
+def _runtime_guarded_sources() -> list[Path]:
+    """Every non-test source module in the repo — the guard's scope.
+
+    task:0101 WIDENED this from "``yadgar/core/daemon/`` + ``core/cli/daemon.py``"
+    to the whole of ``yadgar/`` + ``scripts/``. The old narrow scope is exactly
+    why ``core/update/orchestrator.py`` could ship a hardcoded ``"podman"`` pull:
+    the guard had never looked at that file. A narrow scope on an anti-recurrence
+    guard only relocates the recurrence.
+
+    Breadth is affordable because the detector keys on an argv-list HEAD, not on
+    the substring "docker": the ``docker …`` hint strings that ``core/cli/setup.py``
+    and friends legitimately print are never argv heads, and image refs such as
+    ``"docker.io/openfantasy/yadgar"`` fail the exact-equality test. Deliberate
+    sites (runtime detection, the dual-probe in ``scripts/check_image_size.py``)
+    are governed by ``.container-runtime-allowlist.json`` rather than by narrowing
+    the scope back down.
+
+    Tests are excluded: a test asserting on ``["podman", "pull", …]`` argv is the
+    guard's own subject matter, not a violation.
+    """
+    root = _repo_root()
+    pkg_dir = root / "yadgar"
+    assert pkg_dir.is_dir(), f"guard target moved: {pkg_dir}"
+
+    paths = [p for p in pkg_dir.rglob("*.py") if "tests" not in p.relative_to(root).parts]
+    scripts_dir = root / "scripts"
+    if scripts_dir.is_dir():  # absent in a wheel-installed checkout
+        paths.extend(scripts_dir.rglob("*.py"))
+    return sorted(paths)
+
+
+def _literal_runtime_argv_heads(path: Path, *, root: Path | None = None) -> list[str]:
+    """Return ``path:line`` for every argv LIST in *path* headed by a runtime binary.
+
+    ``ast.List`` only — an ``ast.Tuple`` headed by "docker"/"podman" is never an
+    argv (``subprocess`` is always handed a list here); the two tuples in the repo
+    are a detection-candidate loop and a membership test in the PreToolUse router.
+    Keyed on every list node rather than only inline ``subprocess.run`` arguments,
+    because ``build()`` / ``exec_in_container()`` bind their argv to a local first.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    label = str(path.relative_to(root)) if root else path.name
     hits: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.List) or not node.elts:
             continue
         head = node.elts[0]
-        if isinstance(head, ast.Constant) and head.value == "docker":
-            hits.append(f"{path.name}:{node.lineno}")
+        if isinstance(head, ast.Constant) and head.value in _RUNTIME_BINARIES:
+            hits.append(f"{label}:{node.lineno}")
     return hits
 
 
-def test_no_literal_docker_argv_head_on_daemon_paths():
-    """Fail if any argv list on a daemon path starts with the literal "docker".
+def _load_runtime_allowlist() -> dict:
+    raw = json.loads((_repo_root() / _ALLOWLIST_NAME).read_text(encoding="utf-8"))
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
 
-    Keyed on every ``ast.List`` node — not just the ones passed inline to
-    ``subprocess.run`` — because ``build()`` / ``exec_in_container()`` bind the
-    argv to a local first. Exact equality on the first element means image refs
-    such as ``"docker.io/openfantasy/yadgar"`` and the ``["podman", "docker"]``
-    detection candidate list are unaffected.
-    """
+
+def _all_literal_runtime_sites() -> list[str]:
+    root = _repo_root()
     offenders: list[str] = []
     for path in _runtime_guarded_sources():
-        offenders.extend(_literal_docker_argv_heads(path))
+        offenders.extend(_literal_runtime_argv_heads(path, root=root))
+    return sorted(offenders)
+
+
+def test_no_literal_runtime_argv_head_outside_the_allowlist():
+    """Fail if any argv list anywhere starts with a literal "docker" / "podman".
+
+    Both binaries are checked. task:0083 was a hardcoded ``"docker"`` crashing
+    podman-only hosts; task:0101 was the mirror image — a hardcoded ``"podman"``
+    on the ``yadgar upgrade`` path, which crashes docker-only hosts. A detector
+    that knows only one of the two names is half a guard.
+    """
+    allowlist = _load_runtime_allowlist()
+    offenders = [s for s in _all_literal_runtime_sites() if s not in allowlist]
 
     assert offenders == [], (
-        "literal 'docker' argv head(s) found — use _get_runtime() instead: " + ", ".join(offenders)
+        "literal container-runtime argv head(s) found — resolve the binary via "
+        "_get_runtime() (or allowlist with a written rationale): " + ", ".join(offenders)
     )
 
 
-def test_guard_covers_the_cli_daemon_module():
-    """The guard's file set must include core/cli/daemon.py.
+def test_runtime_allowlist_entries_are_governed_and_not_stale():
+    """Every allowlist entry needs a real rationale and must still be a live site.
 
-    ``_handle_graceful_stop`` shipped two literal ``"docker"`` argv heads that the
-    original daemon-package-only glob could never see. This pins the file set so a
-    future narrowing of the glob is a test failure, not a silent coverage hole.
+    Mirrors ``.route-literal-allowlist.json`` governance: rationale >= 40 chars,
+    and a STALE entry (a site that no longer has a literal runtime head — moved,
+    deleted, or fixed) is a HARD FAILURE, so the allowlist cannot rot into a
+    permanent silence.
     """
-    names = {p.name: p for p in _runtime_guarded_sources()}
-    guarded = {str(p) for p in _runtime_guarded_sources()}
+    allowlist = _load_runtime_allowlist()
+    live = set(_all_literal_runtime_sites())
 
-    assert any(p.endswith("core/cli/daemon.py") for p in guarded), (
-        f"core/cli/daemon.py missing from guard set: {sorted(guarded)}"
-    )
-    assert "profiles.py" in names, "core/daemon package dropped out of the guard set"
+    problems: list[str] = []
+    for site, meta in sorted(allowlist.items()):
+        rationale = (meta or {}).get("rationale", "")
+        if len(rationale) < _MIN_RATIONALE:
+            problems.append(f"MALFORMED {site}: rationale must be >= {_MIN_RATIONALE} chars")
+        if site not in live:
+            problems.append(f"STALE {site}: no literal runtime argv head there any more — drop it")
+
+    assert problems == [], "; ".join(problems)
+
+
+def test_guard_scope_reaches_beyond_the_daemon_package():
+    """The guard's file set must include the modules the OLD narrow scope missed.
+
+    ``core/update/orchestrator.py`` shipped a hardcoded ``"podman"`` pull for
+    exactly as long as this guard was scoped to ``yadgar/core/daemon/``. Pinning
+    the widened set means a future re-narrowing is a test failure, not a silent
+    coverage hole.
+    """
+    root = _repo_root()
+    guarded = {str(p.relative_to(root)) for p in _runtime_guarded_sources()}
+
+    for required in (
+        "yadgar/core/daemon/profiles.py",  # the original narrow scope
+        "yadgar/core/cli/daemon.py",  # added by task:0083
+        "yadgar/core/update/orchestrator.py",  # missed until task:0101
+        "yadgar/core/ops/ops.py",
+        "scripts/check_image_size.py",
+    ):
+        assert required in guarded, f"{required} missing from guard set"
+
+    assert not any("/tests/" in p for p in guarded), "test modules must stay out of the guard set"
 
 
 def test_guard_detects_a_regression_at_the_graceful_stop_sites(tmp_path):
@@ -439,4 +630,30 @@ def test_guard_detects_a_regression_at_the_graceful_stop_sites(tmp_path):
         encoding="utf-8",
     )
 
-    assert _literal_docker_argv_heads(regressed) == ["daemon.py:3", "daemon.py:4"]
+    assert _literal_runtime_argv_heads(regressed) == ["daemon.py:3", "daemon.py:4"]
+
+
+def test_guard_detects_a_hardcoded_podman_argv_head(tmp_path):
+    """The exact shape that shipped in ``_default_image_pull`` (task:0101)."""
+    regressed = tmp_path / "orchestrator.py"
+    regressed.write_text(
+        "import subprocess\n"
+        "def _default_image_pull(version):\n"
+        '    subprocess.run(["podman", "pull", f"docker.io/openfantasy/yadgar:{version}"])\n',
+        encoding="utf-8",
+    )
+
+    assert _literal_runtime_argv_heads(regressed) == ["orchestrator.py:3"]
+
+
+def test_guard_ignores_image_refs_and_runtime_detection_tuples(tmp_path):
+    """Exact-equality on the head keeps image refs and candidate TUPLES out."""
+    benign = tmp_path / "benign.py"
+    benign.write_text(
+        'IMAGES = ["docker.io/openfantasy/yadgar", "docker.io/openfantasy/yadgar-backend"]\n'
+        'for rt in ("podman", "docker"):\n'
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    assert _literal_runtime_argv_heads(benign) == []
