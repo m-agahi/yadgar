@@ -123,7 +123,7 @@
 
         yadgar-pkg = python.pkgs.buildPythonApplication {
           pname = "yadgar";
-          version = "5.169.3";
+          version = "5.170.0";
           format = "pyproject";
 
           src = ./.;
@@ -258,13 +258,13 @@
 
             coreVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.169.3";
+              default = "5.170.0";
               description = "Container image tag for the yadgar core service.";
             };
 
             backendVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.59.0";
+              default = "5.60.0";
               description = "Container image tag for the yadgar-backend service.";
             };
 

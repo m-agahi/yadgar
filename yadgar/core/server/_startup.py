@@ -67,7 +67,8 @@ def main(
 
     # H-7: Fail fast if REQUIRE_AUTH=True but no token configured.
     # A server that requires auth but has no token is silently broken — every
-    # request would get 503 "Admin token not configured" rather than a useful error.
+    # request would get 500 "Admin token not configured" rather than a useful error.
+    # (500, not 503, since ADR-0180 / task:0090 — see _require_admin_token.)
     # Use Settings() directly (bypass lru_cache) so the check always reflects the
     # current environment — important for tests that reload yadgar.config.
     from yadgar._shared.config import Settings as _Settings  # noqa: PLC0415

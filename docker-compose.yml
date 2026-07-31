@@ -36,7 +36,7 @@ volumes:
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.59.0}
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.60.0}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -57,6 +57,11 @@ services:
       SURREAL_USER: ${SURREAL_USER:?must set SURREAL_USER}
       SURREAL_PASS: ${SURREAL_PASS:?must set SURREAL_PASS}
       YADGAR_BACKEND_LOG_LEVEL: ${YADGAR_BACKEND_LOG_LEVEL:-warn}
+      # ADR-0180: the backend serves /admin/* and compares the presented bearer
+      # against its own copy of this token. Unset → the gate fails closed and
+      # every admin call is rejected. Required (`:?`) like SURREAL_* above, so
+      # `compose up` fails loudly at start rather than 500-ing on first use.
+      YADGAR_MCP_AUTH_TOKEN: ${YADGAR_MCP_AUTH_TOKEN:?must set YADGAR_MCP_AUTH_TOKEN}
       # R3: queue root for the backend drainer. Core omits this → falls back to YADGAR_DATA_DIR
       # (/data). Both resolve to <shared yadgar-queue-data volume>/queue.
       YADGAR_QUEUE_BASE: /queue-data
@@ -73,7 +78,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: openfantasy/yadgar:${CORE_VERSION:-5.169.3}
+    image: openfantasy/yadgar:${CORE_VERSION:-5.170.0}
     build:
       context: .
       dockerfile: Dockerfile
@@ -92,6 +97,9 @@ services:
       YADGAR_HOST: "0.0.0.0"
       YADGAR_PORT: "8765"
       YADGAR_DATA_DIR: "/data"
+      # ADR-0180: core CALLS the backend's /admin/* routes and must send this
+      # bearer. Same token as the backend service above — one shared secret.
+      YADGAR_MCP_AUTH_TOKEN: ${YADGAR_MCP_AUTH_TOKEN:?must set YADGAR_MCP_AUTH_TOKEN}
     security_opt:
       - "no-new-privileges:true"
     read_only: true
