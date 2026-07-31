@@ -99,6 +99,25 @@ _STRIPPED_TABLES = frozenset({"action_log"})
 # in yadgar/core/server/routes/admin_ops.py.
 _CHECK_INVARIANTS_PATH = "/api/check_invariants"
 
+# Car 0046: number of PRIOR vacuum_export_* pairs (raw + filtered) to retain as
+# a backstop against unbounded accumulation.  ADR-0076 D2 deletes the CURRENT
+# run's own pair on a retained swap but intentionally KEEPS it on any abort
+# (forensics) — that retention had no ceiling, and 1.4 GB of scratch built up
+# on the workstation before a manual sweep.  2 prior pairs (4 files) is enough
+# to diagnose a fix-in-progress (this run's failure plus the one before it)
+# without keeping every historical failure forever; older pairs carry no
+# additional diagnostic value once the two most recent are on hand.
+_VACUUM_EXPORT_KEEP_RUNS = 2
+
+
+@observe(tier="stage")
+def _reap_stale_export_scratch(yadgar_home: Path) -> None:
+    """Car 0046: bound vacuum_export_* accumulation to _VACUUM_EXPORT_KEEP_RUNS
+    prior pairs.  Called on every ``_vacuum_finalize`` exit path — the previous
+    "kept forever on abort" retention (ADR-0076 D2) had no ceiling.
+    """
+    _run_cleanup_script(yadgar_home, "vacuum_export_*", _VACUUM_EXPORT_KEEP_RUNS * 2)
+
 
 # ---------------------------------------------------------------------------
 # HTTP helpers (patched by tests via yadgar.vacuum._wait_for_health etc.)
@@ -1048,9 +1067,10 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     violations, unchanged.
 
     ``raw_path`` / ``filtered_path``: the vacuum export scratch files written by
-    ``_vacuum_export`` (ADR-0076 D2).  Deleted whenever the swap is RETAINED (no
-    diagnostic value once the compaction is kept); kept on the rollback paths so
-    the operator has the full export for forensics.
+    ``_vacuum_export`` (ADR-0076 D2).  This run's own pair is deleted whenever
+    the swap is RETAINED; kept on the rollback paths for forensics, but bounded
+    to ``_VACUUM_EXPORT_KEEP_RUNS`` PRIOR pairs on every outcome (Car 0046) —
+    the old unbounded "kept on failure" retention accumulated 1.4 GB.
 
     ``db_path``: the canonical DB path (rollback target). Defaults to
     ``yadgar_home / "surreal_db"``.
@@ -1081,6 +1101,7 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
         )
         # Age-backstop still runs — failure does not exempt stale .old dirs.
         _reap_stale_old_dirs(yadgar_home, old_path)
+        _reap_stale_export_scratch(yadgar_home)
         return False
 
     # Wait up to 30s for API layer readiness before check_invariants.
@@ -1109,6 +1130,7 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
             backend_url,
         )
         _reap_stale_old_dirs(yadgar_home, old_path)
+        _reap_stale_export_scratch(yadgar_home)
         return False
 
     # ADVISORY gate (task:0045 D2) — logged, never a rollback trigger.  See the
@@ -1135,6 +1157,7 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     print(f"[vacuum] removing previous DB dir: {old_path}", flush=True)
     shutil.rmtree(str(old_path), ignore_errors=True)
     _delete_export_scratch(raw_path, filtered_path)
+    _reap_stale_export_scratch(yadgar_home)  # Car 0046: bound any older leaked pairs
 
     # D1: Age-backstop — reap stale .old dirs older than VACUUM_OLD_MAX_AGE_DAYS.
     # Runs unconditionally (retained OR rolled back).  current_old exempted.
