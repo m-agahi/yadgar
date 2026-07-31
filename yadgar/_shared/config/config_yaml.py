@@ -456,7 +456,7 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "observability",
     },
     "otlp_timeout_sec": {
-        "desc": "OTLP exporter HTTP timeout in seconds (default 10)",
+        "desc": "OTLP exporter HTTP timeout in seconds (default 3)",
         "section": "observability",
     },
     "otlp_insecure": {

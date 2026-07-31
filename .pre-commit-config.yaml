@@ -103,11 +103,25 @@ repos:
         files: ^yadgar/core/server/tools/.*\.py$
 
       - id: check-config-three-way-sync
-        name: Check config three-way-sync invariant (I25)
+        name: Check config three-way-sync + default-value invariants (I25 / I25b)
         language: system
-        entry: uv run python -m pytest yadgar/tests/server/test_config_three_way_sync.py -q --tb=short
+        entry: >-
+          uv run python -m pytest
+          yadgar/tests/server/test_config_three_way_sync.py
+          yadgar/tests/server/test_config_default_values.py
+          -q --tb=short
+        # always_run (task:0103): the old `files:` filter listed only the three
+        # config modules + the env-only allowlist.  I25b compares a DECLARED
+        # registry default against the CODE default it documents, and that code
+        # default lives anywhere — yadgar/core/daemon/runtime.py held the one
+        # that exposed this gap.  A commit touching ONLY the code side would
+        # have skipped the hook entirely, i.e. the hook would fire in exactly
+        # the one direction already visible in review.  Enumerating every module
+        # that can hold a code default is unbounded; always_run is the repo's
+        # established answer to this gate-blindness class (see check-versions
+        # and check-backend-bump above, and ADR-0080).
+        always_run: true
         pass_filenames: false
-        files: ^yadgar/(_shared/config/(config\.py|config_yaml\.py|config_registry\.py)|tests/config_env_only_allowlist\.txt)$
 
       - id: check-allowlist-audit
         name: Check I28 allowlist-audit invariant (every allowlist hit has audit entry)

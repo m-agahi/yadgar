@@ -1,0 +1,33 @@
+# I25b — declared-vs-code default mismatch allowlist.
+#
+# Every entry here is a ConfigEntry in yadgar/_shared/config/config_registry.py
+# whose DECLARED default deliberately disagrees with the CODE default it
+# documents.  Presence in this file is an explicit, reviewed exception — the
+# check is otherwise a hard failure (see
+# yadgar/tests/server/test_config_default_values.py).
+#
+# Format (one per line):
+#
+#     YADGAR_NAME reason=<category> <free-text rationale>
+#
+# Both the category AND the free-text rationale are mandatory —
+# test_exceptions_have_rationale fails on either missing.
+#
+# Valid categories:
+#   display-only        the registry value is documentation, not a fallback the
+#                       code uses; an unset var must NOT silently resolve to it
+#   container-local     the code default is correct only inside a container
+#                       (e.g. /data/...) and cannot be the host-side declared value
+#   dynamic-default     the code default is computed at runtime (version pin,
+#                       host lookup) and has no single static value to declare
+#   judgement-pending   a genuine disagreement whose correct resolution is a
+#                       judgement call; flagged rather than guessed.  Carry a
+#                       task/ADR reference where one exists.
+#
+# STALENESS: test_no_stale_exceptions asserts every line here is a LIVE
+# mismatch.  Fix the value and the exception must be deleted in the same commit,
+# or the suite turns red.  This file cannot accumulate lies.
+
+YADGAR_CORE_LOG_LEVEL reason=judgement-pending three defaults disagree — Settings 'warn', registry 'WARNING', _app.py:33 fallback 'WARNING'. Picking one requires deciding the canonical level vocabulary (logging accepts both WARN and WARNING) and re-checking every consumer; out of scope for task 0103.
+YADGAR_EMBED_URL reason=judgement-pending registry '' vs remote_embeddings.py:38 'http://127.0.0.1:8001'. '' is the "backend not wired" sentinel on some surfaces while the client hardcodes the loopback port; converging them changes which surface silently starts embedding locally.
+YADGAR_RW_PASS reason=judgement-pending registry '' (redact=True) vs _surreal_runner.py:55 / vacuum/phases.py:75 'root'. Sibling entries YADGAR_DB_PASS and SURREAL_PASS both declare 'root', which is evidence '' is an accident rather than policy — but declaring a real credential default is a security posture decision, not a mechanical fix.
