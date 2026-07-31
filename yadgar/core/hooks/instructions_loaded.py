@@ -26,9 +26,11 @@ Errors: swallowed silently — never block instructions load.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -80,9 +82,13 @@ def _call_daemon(file_path: str, load_reason: str) -> str:
     headers = _auth_headers()
     try:
         req = urllib.request.Request(url, headers=headers)
-        resp = urllib.request.urlopen(req, timeout=2.0)
-        data = json.loads(resp.read().decode())
+        with contextlib.closing(urllib.request.urlopen(req, timeout=2.0)) as resp:
+            data = json.loads(resp.read().decode())
         return data.get("text", "")
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        return ""
     except Exception:
         return ""
 

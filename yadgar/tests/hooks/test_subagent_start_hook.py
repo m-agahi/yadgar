@@ -82,6 +82,9 @@ class TestDaemonCall:
             def read(self):
                 return json.dumps({"text": "# Yadgar — Subagent Context\n- fact: foo"}).encode()
 
+            def close(self):
+                pass
+
         def _fake_urlopen(req, timeout=None):
             return _FakeResp()
 
@@ -108,6 +111,9 @@ class TestDaemonCall:
             def read(self):
                 return json.dumps({"text": ""}).encode()
 
+            def close(self):
+                pass
+
         def _fake_urlopen(req, timeout=None):
             captured["url"] = req.full_url
             captured["data"] = json.loads(req.data.decode())
@@ -132,6 +138,9 @@ class TestDaemonCall:
         class _FakeResp:
             def read(self):
                 return json.dumps({"text": ""}).encode()
+
+            def close(self):
+                pass
 
         def _fake_urlopen(req, timeout=None):
             called.append(True)

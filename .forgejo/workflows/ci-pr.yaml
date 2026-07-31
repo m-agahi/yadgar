@@ -429,6 +429,13 @@ jobs:
         # caller and nothing compared either against the route table.
         run: python scripts/check_route_literals.py
 
+      - name: Check urllib HTTPError/response call sites close the file wrapper (Car 0036)
+        # On py3.14 a caught urllib.error.HTTPError (or an unclosed successful
+        # urlopen() response) leaks a tempfile wrapper / socket and fires a
+        # spurious ResourceWarning at GC — fatal under the zero-warning gate
+        # (ADR-0087). Anti-recurrence guard for the Car 0036 sweep.
+        run: python scripts/check_urllib_httperror_close.py
+
       - name: Layer 4 — block silent test weakening across the branch (#52)
         # --ci --base origin/master: the pre-commit path reads `git diff --cached`,
         # which is ALWAYS empty in a CI checkout — so the guard ran, printed OK and

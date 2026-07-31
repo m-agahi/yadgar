@@ -2,6 +2,7 @@
 
 import json
 import sys
+import urllib.error
 import urllib.request
 
 import yadgar._shared.paths as _paths
@@ -43,6 +44,10 @@ def _probe_daemon() -> dict:
             "db": data.get("db") in (True, "ok"),
             "embed": data.get("embed") in (True, "ok"),
         }
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        return {"running": False}
     except Exception:
         return {"running": False}
 

@@ -381,7 +381,10 @@ class YadgarDaemon:
             }
         try:
             resp = _safe_urlopen(f"http://127.0.0.1:{profile.port}/health", timeout=2)
-            health = json.loads(resp.read().decode())
+            try:
+                health = json.loads(resp.read().decode())
+            finally:
+                resp.close()
             return {
                 "running": True,
                 "container": profile.container_name,
@@ -391,7 +394,14 @@ class YadgarDaemon:
                 **health,
             }
         except urllib.error.HTTPError as e:
-            health = json.loads(e.read().decode())
+            # An HTTPError IS a response object holding a file wrapper (a
+            # tempfile._TemporaryFileWrapper via addbase on py3.14). If left
+            # unclosed it fires a spurious ResourceWarning at an arbitrary later
+            # GC — close it deterministically here (py3.14 leak guard).
+            try:
+                health = json.loads(e.read().decode())
+            finally:
+                e.close()
             return {
                 "running": True,
                 "container": profile.container_name,
@@ -609,11 +619,14 @@ class YadgarDaemon:
         or fail this gate).
         """
         try:
-            _safe_urlopen(f"http://127.0.0.1:{port}/health/live", timeout=1)
+            resp = _safe_urlopen(f"http://127.0.0.1:{port}/health/live", timeout=1)
+            resp.close()
             return True
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as e:
             # liveness = server responding at all; full-health (503-on-degraded)
             # enforced by the container's curl -f healthcheck, not this gate.
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
             return True
         except Exception:
             return False
@@ -627,9 +640,12 @@ class YadgarDaemon:
         only — so this stays on bare /health (db + model-loaded readiness).
         """
         try:
-            _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            resp = _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            resp.close()
             return True
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as e:
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
             return True
         except Exception:
             return False

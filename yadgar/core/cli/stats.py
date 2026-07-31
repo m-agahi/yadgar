@@ -111,8 +111,10 @@ def _print_http_summary(data, project):
 
 def _try_http_path(args):
     """Try the daemon HTTP endpoint. Return True if handled, False to fall through."""
+    import contextlib
     import json
     import os as _os
+    import urllib.error
     import urllib.parse
     import urllib.request
 
@@ -125,13 +127,17 @@ def _try_http_path(args):
         _parsed = urllib.parse.urlparse(http_url)
         if _parsed.scheme not in {"http", "https"}:
             raise ValueError(f"Disallowed scheme in URL: {_parsed.scheme!r}")
-        resp = urllib.request.urlopen(http_url, timeout=2)  # noqa: S310
-        data = json.loads(resp.read().decode())
+        with contextlib.closing(urllib.request.urlopen(http_url, timeout=2)) as resp:  # noqa: S310
+            data = json.loads(resp.read().decode())
         if args.format == "json":
             print(json.dumps(data, indent=2))
         else:
             _print_http_summary(data, args.project)
         return True
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        return False  # daemon not running or unreachable — fall back to direct DB
     except Exception:
         return False  # daemon not running or unreachable — fall back to direct DB
 

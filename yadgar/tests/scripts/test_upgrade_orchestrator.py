@@ -558,3 +558,67 @@ def test_install_systemd_service_type_notify(tmp_path: Path) -> None:
 def _patched_path(service_dir: Path, *args, **kwargs) -> Path:
     """Helper — not used directly but documents the approach tried."""
     return Path(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# _default_health_check — py3.14 ResourceWarning leak guard (Car 0036)
+# ---------------------------------------------------------------------------
+#
+# HTTPError is itself a response object holding a file wrapper (a
+# tempfile._TemporaryFileWrapper via addbase on py3.14); the polling loop in
+# _default_health_check can hit this on every retry while the daemon is
+# coming up (e.g. transient 503s), leaking one wrapper per iteration if
+# unclosed. An unclosed instance fires a spurious ResourceWarning at GC that
+# pytest-xdist mis-attributes to an unrelated test.
+
+
+def test_default_health_check_closes_http_error(monkeypatch) -> None:
+    import urllib.error
+    from unittest.mock import patch
+
+    from yadgar.core.update.orchestrator import _default_health_check
+
+    http_err = urllib.error.HTTPError(url="", code=503, msg="Unavailable", hdrs={}, fp=None)
+    monkeypatch.setattr(time, "sleep", lambda *_a, **_kw: None)
+    # Patching the module-global time.time affects every time.time() caller in
+    # the process (observability instrumentation, prometheus_client, ...) — a
+    # finite side_effect list StopIterations on those unrelated calls. Use an
+    # unbounded callable instead: call 1 = deadline base (deadline=60), call 2 =
+    # first loop condition (10 < 60 -> True -> one iteration: HTTPError raised
+    # +closed), call 3+ = large value (>= deadline -> loop exits; harmless for
+    # any other unrelated time.time() caller since only a numeric type matters).
+    calls = {"n": 0}
+
+    def _fake_time():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0.0
+        if calls["n"] == 2:
+            return 10.0
+        return 1000.0
+
+    with (
+        patch("urllib.request.urlopen", side_effect=http_err),
+        patch("yadgar.core.update.orchestrator.time.time", side_effect=_fake_time),
+    ):
+        result = _default_health_check()
+
+    assert result is False
+    assert http_err.fp is None or http_err.fp.closed, "must close the caught HTTPError"
+
+
+def test_default_health_check_closes_response_on_success(monkeypatch) -> None:
+    from unittest.mock import MagicMock, patch
+
+    from yadgar.core.update.orchestrator import _default_health_check
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = _default_health_check()
+
+    assert result is True
+    mock_resp.__exit__.assert_called_once()

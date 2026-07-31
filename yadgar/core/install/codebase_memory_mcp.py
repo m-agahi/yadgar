@@ -38,6 +38,7 @@ import hashlib
 import platform
 import tarfile
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -214,8 +215,16 @@ def install_codebase_memory_mcp(
     url = get_download_url(asset_name)
 
     # Download
-    with urllib.request.urlopen(url) as resp:  # noqa: S310 — URL is pinned constant
-        data = resp.read()
+    try:
+        with urllib.request.urlopen(url) as resp:  # noqa: S310 — URL is pinned constant
+            data = resp.read()
+    except urllib.error.HTTPError as e:
+        # HTTPError raises before entering the `with` block, so it is never
+        # closed by the context manager above. Close the file wrapper (py3.14
+        # ResourceWarning leak guard) then re-raise — callers still see the
+        # documented HTTPError/URLError contract.
+        e.close()
+        raise
 
     # Verify before extraction
     verify_sha256(data, asset_name)

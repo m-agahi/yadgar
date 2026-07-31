@@ -629,6 +629,7 @@ def _default_health_check() -> bool:
     would let a transiently-busy backend fail this gate and trigger a rollback
     of a perfectly good restart/upgrade.
     """
+    import urllib.error  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
 
     from yadgar._shared.config import get_settings  # noqa: PLC0415
@@ -641,6 +642,9 @@ def _default_health_check() -> bool:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if resp.status == 200:
                     return True
+        except urllib.error.HTTPError as e:
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
         except Exception:  # noqa: BLE001
             pass
         time.sleep(1)

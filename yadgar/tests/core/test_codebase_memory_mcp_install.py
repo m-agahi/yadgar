@@ -303,6 +303,34 @@ class TestInstallChecksumRejection:
         assert not (tmp_path / BINARY_NAME).exists()
 
 
+class TestInstallHttpErrorClosed:
+    """py3.14 ResourceWarning leak guard (Car 0036).
+
+    HTTPError is itself a response object holding a file wrapper (a
+    tempfile._TemporaryFileWrapper via addbase); `with urlopen(...) as resp:`
+    never closes it (urlopen raises before entering the `with`). An unclosed
+    instance fires a spurious ResourceWarning at GC that pytest-xdist
+    mis-attributes to an unrelated test. install_codebase_memory_mcp must
+    close it before re-raising — it still documents raising HTTPError/
+    URLError, so callers keep seeing the same contract.
+    """
+
+    def test_http_error_is_closed_before_reraise(self, tmp_path: Path) -> None:
+        import urllib.error
+
+        http_err = urllib.error.HTTPError(url="", code=404, msg="Not Found", hdrs={}, fp=None)
+
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("platform.machine", return_value="x86_64"),
+            patch("urllib.request.urlopen", side_effect=http_err),
+            pytest.raises(urllib.error.HTTPError),
+        ):
+            install_codebase_memory_mcp(dest_dir=tmp_path)
+
+        assert http_err.fp is None or http_err.fp.closed, "must close the caught HTTPError"
+
+
 # ── 8. skip_if_exists ─────────────────────────────────────────────────────────
 
 

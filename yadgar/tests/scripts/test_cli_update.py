@@ -233,3 +233,37 @@ def test_cli_rollback_restores_prev_image_tag(tmp_path: Path) -> None:
 
     # Exit 0
     mock_exit.assert_called_once_with(0)
+
+
+# ---------------------------------------------------------------------------
+# 5. _probe_daemon_version — py3.14 ResourceWarning leak guard (Car 0036)
+# ---------------------------------------------------------------------------
+#
+# HTTPError is itself a response object holding a file wrapper (a
+# tempfile._TemporaryFileWrapper via addbase on py3.14); an unclosed instance
+# fires a spurious ResourceWarning at GC that pytest-xdist mis-attributes to
+# an unrelated test (fatal under the zero-warning gate, ADR-0087).
+
+
+def test_probe_daemon_version_closes_http_error() -> None:
+    import urllib.error
+
+    from yadgar.core.cli.update import _probe_daemon_version
+
+    http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
+    with patch("urllib.request.urlopen", side_effect=http_err):
+        result = _probe_daemon_version()
+    assert result == ""
+    assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
+
+
+def test_probe_daemon_version_closes_response_on_success() -> None:
+    from yadgar.core.cli.update import _probe_daemon_version
+
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps({"version": "5.170.4"}).encode()
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = _probe_daemon_version()
+    assert result == "5.170.4"

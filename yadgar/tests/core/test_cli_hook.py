@@ -10,7 +10,8 @@ from __future__ import annotations
 import argparse
 import io
 import json
-from unittest.mock import patch
+import urllib.error
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -91,3 +92,48 @@ def test_dispatch_unknown_returns_1():
 def test_dispatch_known_returns_0():
     with patch.object(hook, "_http_post"), patch("sys.stdin", io.StringIO("{}")):
         assert hook.dispatch("pre-compact-drain") == 0
+
+
+# ── _http_get / _http_post — py3.14 ResourceWarning leak guard ──────────────
+#
+# HTTPError is itself a response object holding a file wrapper (a
+# tempfile._TemporaryFileWrapper via addbase on py3.14). An unclosed instance
+# fires a spurious ResourceWarning at GC that pytest-xdist mis-attributes to
+# an unrelated test (fatal under the zero-warning gate, ADR-0087). 6 hook
+# events (post-tool-capture, session-start-context, post-compact-rehydrate,
+# pre-compact-drain, prompt-recall, block-reflect) all route through these two
+# helpers, so this is the highest-value close-guard in the sweep.
+
+
+def test_http_get_closes_response_on_success():
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps({"text": "ok"}).encode()
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = hook._http_get("/hooks/session-context", {"directory": "/proj"})
+    assert result == {"text": "ok"}
+    mock_resp.close.assert_called_once()
+
+
+def test_http_get_closes_http_error_and_returns_none():
+    http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
+    with patch("urllib.request.urlopen", side_effect=http_err):
+        result = hook._http_get("/hooks/session-context")
+    assert result is None
+    assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
+
+
+def test_http_post_closes_response_on_success():
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps({"ok": True}).encode()
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = hook._http_post("/hooks/auto-capture", {"a": 1})
+    assert result == {"ok": True}
+    mock_resp.close.assert_called_once()
+
+
+def test_http_post_closes_http_error_and_returns_none():
+    http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
+    with patch("urllib.request.urlopen", side_effect=http_err):
+        result = hook._http_post("/hooks/auto-capture", {"a": 1})
+    assert result is None
+    assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"

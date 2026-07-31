@@ -67,6 +67,25 @@ class TestSeedAgentPromptsHelper:
         ):
             result = _seed_agent_prompts(db_path=None, dry_run=False)
         assert result.get("created") is not None
+        mock_resp.close.assert_called_once()
+
+    def test_http_error_closes_response(self):
+        """HTTPError is a response object holding a file wrapper (a
+        tempfile._TemporaryFileWrapper via addbase on py3.14); an unclosed
+        instance fires a spurious ResourceWarning at GC. _seed_agent_prompts
+        must close it deterministically."""
+        import urllib.error
+
+        from yadgar.core.cli.seed import _seed_agent_prompts
+
+        http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
+        with (
+            patch("yadgar.core.cli.seed._daemon_health_ok", return_value=True),
+            patch("urllib.request.urlopen", side_effect=http_err),
+        ):
+            result = _seed_agent_prompts(db_path=None, dry_run=False)
+        assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
+        assert result.get("reason") == "request_failed"
 
 
 class TestCmdSeedAgentPromptsFlag:
