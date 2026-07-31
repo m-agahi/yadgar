@@ -17,17 +17,39 @@ and the detector knows both names. Deliberate sites live in
 ``.container-runtime-allowlist.json`` with a written rationale; narrowing the
 scope back down is what a widened guard exists to prevent.
 
-These tests pin two things:
+task:0104 — the THIRD instance of the same class, and the one the first two
+guards were structurally unable to see. ``yadgar/core/daemon/systemd.py``
+hardcoded ``docker`` 13 times inside the systemd USER UNITS it generates:
+``Requires=``/``After=docker.service``, ``ExecStartPre=-docker …``,
+``ExecStart=docker run …``, ``ExecStop=docker stop …`` — for BOTH the backend
+and the core unit. On a podman-only host the generated units name a service
+that does not exist and a binary that is not installed, so the whole
+``yadgar daemon install-systemd`` path is dead there.
+
+The argv-head detector below could never catch it: these are f-string
+TEMPLATES emitting unit text, not ``ast.List`` argv. So a second, differently
+shaped detector is added — one that reads generated/checked-in systemd unit
+DIRECTIVES (``Exec*=``, ``Requires=``/``After=``/…) and fails on a literal
+runtime binary or a runtime ``.service``/``.socket`` dependency. Its scope
+deliberately spans BOTH unit generators (the Python one in ``systemd.py`` and
+the ``scripts/install/*.in`` templates the shell installer renders), because
+the cross-generator tests prove both are live install paths.
+
+These tests pin three things:
   1. behaviour — every subprocess invocation resolves the binary via
-     ``_get_runtime()`` (daemon, CLI graceful-stop, and the upgrade orchestrator);
+     ``_get_runtime()`` (daemon, CLI graceful-stop, and the upgrade orchestrator),
+     and every GENERATED systemd unit names the resolved runtime, not a literal;
   2. source shape — an AST guard that fails if a literal ``"docker"`` / ``"podman"``
-     argv head appears anywhere in ``yadgar/`` or ``scripts/`` unallowlisted.
+     argv head appears anywhere in ``yadgar/`` or ``scripts/`` unallowlisted;
+  3. unit shape — a text guard that fails if a systemd unit directive in any
+     generator or checked-in unit names a runtime binary literally.
 """
 
 from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -455,6 +477,122 @@ def test_graceful_stop_on_podman_only_host_never_invokes_docker(podman_only):
     assert "podman" in rec.binaries
 
 
+# ── generated systemd units (yadgar/core/daemon/systemd.py) ───────────────────
+#
+# task:0104 — the same defect one layer out: not the argv Yadgar runs, but the
+# argv it WRITES INTO A UNIT FILE for systemd to run later. A hardcoded
+# ``ExecStart=docker run`` is exactly as fatal on a podman-only host as a
+# hardcoded ``["docker", …]``; it just fails at ``systemctl --user start``
+# instead of at ``yadgar daemon start``.
+
+# A systemd ``Exec*=`` directive whose command is a literal runtime binary.
+# The optional leading ``-`` is systemd's "failure is non-fatal" prefix.
+_UNIT_EXEC_RUNTIME = re.compile(r"^\s*Exec[A-Za-z]*\s*=\s*-?\s*(docker|podman)\b", re.IGNORECASE)
+
+# A systemd dependency directive naming a container-runtime unit.
+_UNIT_DEP_RUNTIME = re.compile(
+    r"^\s*(Requires|Requisite|Wants|BindsTo|PartOf|After|Before)\s*=.*"
+    r"\b(docker|podman)\.(service|socket|target)\b",
+    re.IGNORECASE,
+)
+
+
+def _offending_unit_lines(text: str) -> list[str]:
+    """Return every line of *text* that names a container runtime as a unit directive.
+
+    Deliberately NOT a substring search for "docker": a generated unit legitimately
+    contains ``docker.io/openfantasy/yadgar`` image refs on its ``ExecStart``
+    continuation lines, and those are registry hostnames, not the runtime binary.
+    """
+    return [
+        ln.strip()
+        for ln in text.splitlines()
+        if _UNIT_EXEC_RUNTIME.search(ln) or _UNIT_DEP_RUNTIME.search(ln)
+    ]
+
+
+def _render_units(tmp_path, monkeypatch) -> dict[str, str]:
+    """Render both user units into *tmp_path* and return their text.
+
+    HOME is redirected so nothing touches the real ``~/.config/systemd/user`` —
+    unit generation is a pure text-rendering concern here, no systemctl involved.
+    """
+    from yadgar.core.daemon import systemd as systemd_mod
+    from yadgar.core.daemon.profiles import _prod_profile
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("YADGAR_VOLUME", "yadgar-data")
+    result = systemd_mod.install_systemd_service(_prod_profile(8765), dev=False)
+    return {
+        "backend": Path(result["backend_service"]).read_text(),
+        "core": Path(result["core_service"]).read_text(),
+    }
+
+
+def test_generated_units_never_name_docker_on_a_podman_host(podman_env, tmp_path, monkeypatch):
+    """RED before the fix: 13 hardcoded ``docker`` sites across the two units.
+
+    This is the headline reproduction for task:0104 — the generated units are
+    the entire ``install-systemd`` deliverable, and on a podman-only host every
+    one of these lines names a binary that is not installed.
+    """
+    units = _render_units(tmp_path, monkeypatch)
+
+    for name, text in units.items():
+        offenders = [ln for ln in _offending_unit_lines(text) if "docker" in ln.lower()]
+        assert offenders == [], (
+            f"{name} unit names docker literally — a podman-only host cannot run it: {offenders}"
+        )
+        # The RENDERED unit must name podman — only the SOURCE template must not
+        # name any runtime literally, which is the unit-directive guard's job.
+        assert "podman run" in text, f"{name} unit does not invoke the resolved runtime"
+
+
+def test_generated_units_never_name_podman_on_a_docker_host(docker_env, tmp_path, monkeypatch):
+    """The inverse arm — a blind ``docker`` → ``podman`` swap must not pass.
+
+    Pinning podman alone cannot distinguish a resolved runtime from a hardcoded
+    ``podman`` literal (task:0101's lesson). Only this docker-pinned arm proves
+    the unit text is actually derived from ``_get_runtime()``.
+    """
+    units = _render_units(tmp_path, monkeypatch)
+
+    for name, text in units.items():
+        offenders = [ln for ln in _offending_unit_lines(text) if "podman" in ln.lower()]
+        assert offenders == [], (
+            f"{name} unit names podman literally — a docker-only host cannot run it: {offenders}"
+        )
+        assert "docker run" in text, f"{name} unit does not invoke the resolved runtime"
+
+
+def test_generated_units_declare_no_container_runtime_daemon_dependency(
+    podman_env, tmp_path, monkeypatch
+):
+    """``Requires=docker.service`` has no correct per-runtime substitute — drop it.
+
+    The shipped ``scripts/install/*.in`` templates — the generator that actually
+    installs on real hosts — carry NO runtime-daemon dependency: the core unit
+    depends only on ``yadgar-backend.service`` and the backend only on
+    ``network.target``. The Python generator diverging from that is the defect.
+    Rootless podman has no daemon to depend on at all, and ``podman.socket``
+    serves only the Docker-compat API these units never use, so there is nothing
+    to substitute. ``Restart=on-failure`` covers a not-yet-ready runtime either way.
+    """
+    units = _render_units(tmp_path, monkeypatch)
+
+    for name, text in units.items():
+        deps = [ln for ln in text.splitlines() if _UNIT_DEP_RUNTIME.search(ln)]
+        assert deps == [], f"{name} unit depends on a container-runtime unit: {deps}"
+
+    # The dependency that IS real must survive: core must not start before backend.
+    core = units["core"]
+    assert "Requires=yadgar-backend.service" in core, "core lost its backend dependency"
+    after = [ln for ln in core.splitlines() if ln.startswith("After=")]
+    assert any("yadgar-backend.service" in ln for ln in after), (
+        f"core lost its backend ordering: {after}"
+    )
+
+
 # ── crash is surfaced, not swallowed (acceptance criterion 5) ─────────────────
 
 
@@ -583,7 +721,7 @@ def test_runtime_allowlist_entries_are_governed_and_not_stale():
     permanent silence.
     """
     allowlist = _load_runtime_allowlist()
-    live = set(_all_literal_runtime_sites())
+    live = set(_all_literal_runtime_sites()) | set(_all_literal_runtime_unit_directives())
 
     problems: list[str] = []
     for site, meta in sorted(allowlist.items()):
@@ -644,6 +782,164 @@ def test_guard_detects_a_hardcoded_podman_argv_head(tmp_path):
     )
 
     assert _literal_runtime_argv_heads(regressed) == ["orchestrator.py:3"]
+
+
+# ── unit-directive regression guard (task:0104) ───────────────────────────────
+#
+# The argv-head detector above is ``ast.List``-shaped, so it is structurally
+# blind to a runtime binary baked into an f-string that RENDERS a unit file —
+# which is precisely how task:0104 shipped 13 hardcoded ``docker`` sites inside
+# ``systemd.py`` while that file was already inside the widened guard scope.
+# This second detector reads the emitted TEXT instead of the AST.
+
+# Every file in the repo that can carry a systemd/launchd unit directive:
+# both live unit generators plus the checked-in units and shell installers.
+# Scoping this to ``.py`` only would leave the ``.in`` templates — a second
+# real install path, proven live by the cross-generator tests — unguarded.
+_UNIT_TEXT_GLOBS = (
+    "scripts/install/*.in",
+    "scripts/install/launchd/*.in",
+    "scripts/systemd-user/*",
+    "deploy/systemd/*",
+    "yadgar/core/systemd/*",
+    "scripts/**/*.sh",
+)
+
+
+def _unit_directive_guarded_files() -> list[Path]:
+    """Python sources (the guard's existing scope) + every unit file/template."""
+    root = _repo_root()
+    paths = list(_runtime_guarded_sources())
+    for pattern in _UNIT_TEXT_GLOBS:
+        paths.extend(p for p in root.glob(pattern) if p.is_file())
+    return sorted(set(paths))
+
+
+def _literal_runtime_unit_directives(path: Path, *, root: Path | None = None) -> list[str]:
+    """Return ``path:line`` for every unit directive in *path* naming a runtime binary.
+
+    A raw line scan rather than an AST walk: systemd directives are line-anchored
+    in the source exactly as they are in the rendered unit, so the reported line
+    is the real one. Reading f-string chunks out of the AST instead yields the
+    lineno of the chunk's START, which lands one line early on every directive
+    that follows an interpolation — useless for an allowlist key.
+    """
+    label = str(path.relative_to(root)) if root else path.name
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        return []
+    return [
+        f"{label}:{i}"
+        for i, ln in enumerate(lines, 1)
+        if _UNIT_EXEC_RUNTIME.search(ln) or _UNIT_DEP_RUNTIME.search(ln)
+    ]
+
+
+def _all_literal_runtime_unit_directives() -> list[str]:
+    root = _repo_root()
+    offenders: list[str] = []
+    for path in _unit_directive_guarded_files():
+        offenders.extend(_literal_runtime_unit_directives(path, root=root))
+    return sorted(offenders)
+
+
+def test_no_literal_runtime_in_generated_unit_directives():
+    """Fail if any generated or checked-in unit directive names a runtime literally.
+
+    Covers both shapes that shipped in task:0104: an ``Exec*=`` command headed by
+    ``docker``/``podman``, and a ``Requires=``/``After=`` on ``docker.service``.
+    Unit generators must interpolate the resolved runtime (``_get_runtime()`` in
+    Python, ``@RUNTIME@`` / ``@YADGAR_RUNTIME@`` in the shell templates).
+    """
+    allowlist = _load_runtime_allowlist()
+    offenders = [s for s in _all_literal_runtime_unit_directives() if s not in allowlist]
+
+    assert offenders == [], (
+        "literal container-runtime name(s) in systemd unit directives — interpolate "
+        "the resolved runtime instead: " + ", ".join(offenders)
+    )
+
+
+def test_unit_directive_guard_scope_covers_both_unit_generators():
+    """Both live unit generators must be in the file set, not just the Python one.
+
+    task:0101's post-mortem was that a narrow guard scope only relocates the
+    recurrence. The ``.in`` templates render the units the shell installer
+    actually writes; leaving them out would guard half the install surface.
+    """
+    root = _repo_root()
+    guarded = {str(p.relative_to(root)) for p in _unit_directive_guarded_files()}
+
+    for required in (
+        "yadgar/core/daemon/systemd.py",  # the task:0104 site
+        "scripts/install/yadgar.service.in",  # shell-installer core unit
+        "scripts/install/yadgar-backend.service.in",  # shell-installer backend unit
+        "scripts/install/launchd/com.openfantasy.yadgar.plist.in",  # macOS core
+        "yadgar/core/systemd/yadgar.service",  # checked-in unit
+    ):
+        assert required in guarded, f"{required} missing from unit-directive guard set"
+
+
+def test_unit_directive_guard_detects_the_systemd_py_regression(tmp_path):
+    """The detector must flag the exact shape that shipped in ``install_systemd_service``."""
+    regressed = tmp_path / "systemd.py"
+    regressed.write_text(
+        "def render(name):\n"
+        '    return f"""\\\n'
+        "[Unit]\n"
+        "Requires=docker.service\n"
+        "After=docker.service\n"
+        "\n"
+        "[Service]\n"
+        "ExecStartPre=-docker rm {name}\n"
+        "ExecStart=docker run --rm docker.io/openfantasy/yadgar\n"
+        "ExecStop=docker stop {name}\n"
+        '"""\n',
+        encoding="utf-8",
+    )
+
+    assert _literal_runtime_unit_directives(regressed) == [
+        "systemd.py:4",
+        "systemd.py:5",
+        "systemd.py:8",
+        "systemd.py:9",
+        "systemd.py:10",
+    ]
+
+
+def test_unit_directive_guard_detects_a_hardcoded_podman_unit(tmp_path):
+    """Both names, not just docker — a podman-literal unit is dead on a docker host."""
+    regressed = tmp_path / "yadgar.service.in"
+    regressed.write_text(
+        "[Unit]\nAfter=podman.socket\n\n[Service]\nExecStart=podman run --rm @IMAGE@\n",
+        encoding="utf-8",
+    )
+
+    assert _literal_runtime_unit_directives(regressed) == [
+        "yadgar.service.in:2",
+        "yadgar.service.in:5",
+    ]
+
+
+def test_unit_directive_guard_ignores_placeholders_and_image_refs(tmp_path):
+    """A resolved-runtime unit is clean, image refs and prose notwithstanding."""
+    clean = tmp_path / "yadgar.service.in"
+    clean.write_text(
+        "[Unit]\n"
+        "Description=Yadgar (Docker)\n"
+        "After=network.target yadgar-backend.service\n"
+        "Requires=yadgar-backend.service\n"
+        "\n"
+        "[Service]\n"
+        "Environment=DOCKER_HOST=unix:///run/podman/podman.sock\n"
+        "ExecStartPre=-@RUNTIME@ rm yadgar\n"
+        "ExecStart=@RUNTIME@ run --rm docker.io/openfantasy/yadgar\n"
+        "ExecStop=@RUNTIME@ stop yadgar\n",
+        encoding="utf-8",
+    )
+
+    assert _literal_runtime_unit_directives(clean) == []
 
 
 def test_guard_ignores_image_refs_and_runtime_detection_tuples(tmp_path):
