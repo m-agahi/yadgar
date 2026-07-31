@@ -1575,7 +1575,8 @@ class TestCheckInvariantsBearer:
 
 class TestLogConsolidationRowURL:
     """v5.10.2 Bug 2: _log_consolidation_row used http://127.0.0.1:8080 literal.
-    It must use YADGAR_DB_URL env var (with :8080 as fallback only if env unset).
+    It must use YADGAR_DB_URL env var (with :8000 — the real backend port — as
+    fallback only if env unset; task:0042 corrected the stale :8080 fallback).
     """
 
     def test_uses_yadgar_db_url_when_set(self, monkeypatch):
@@ -1615,11 +1616,12 @@ class TestLogConsolidationRowURL:
         assert urls_used, "_build_http_client must be called"
         assert "9000" in urls_used[0], (
             f"Expected db.example.com:9000 URL but got {urls_used[0]!r}. "
-            "Fix: use os.environ.get('YADGAR_DB_URL', 'http://127.0.0.1:8080') as fallback."
+            "Fix: use os.environ.get('YADGAR_DB_URL', 'http://127.0.0.1:8000') as fallback."
         )
 
-    def test_falls_back_to_8080_when_env_unset(self, monkeypatch):
-        """When YADGAR_DB_URL is not set, fallback to http://127.0.0.1:8080."""
+    def test_falls_back_to_8000_when_env_unset(self, monkeypatch):
+        """When YADGAR_DB_URL is not set, fallback to http://127.0.0.1:8000 —
+        the real backend port (task:0042; was wrongly :8080)."""
         from unittest.mock import MagicMock, patch
 
         monkeypatch.delenv("YADGAR_DB_URL", raising=False)
@@ -1653,7 +1655,7 @@ class TestLogConsolidationRowURL:
             _log_consolidation_row(row)
 
         assert urls_used, "_build_http_client must be called"
-        assert "8080" in urls_used[0], f"Expected :8080 fallback URL but got {urls_used[0]!r}"
+        assert "8000" in urls_used[0], f"Expected :8000 fallback URL but got {urls_used[0]!r}"
 
 
 # ---------------------------------------------------------------------------
