@@ -24,7 +24,7 @@ class TestV5_45SeedAnchorsLoader:
     def test_v5_45_anchors_yaml_valid(self):
         """anchors.yaml must be valid YAML with at least 6 entries."""
         try:
-            import yaml
+            from ruamel.yaml import YAML as _YAML
         except ImportError:
             # Try ruamel.yaml
             from ruamel.yaml import YAML
@@ -38,17 +38,17 @@ class TestV5_45SeedAnchorsLoader:
             )
             return
         with open(ANCHORS_YAML) as f:
-            data = yaml.safe_load(f)
+            data = _YAML(typ="safe").load(f)
         entries = data if isinstance(data, list) else data.get("anchors", [])
         assert len(entries) >= 6, f"anchors.yaml must have at least 6 entries, got {len(entries)}"
 
     def test_v5_45_anchors_yaml_has_required_fields(self):
         """Each anchor entry must have at least 'content' and 'tags' fields."""
         try:
-            import yaml
+            from ruamel.yaml import YAML as _YAML
 
             with open(ANCHORS_YAML) as f:
-                data = yaml.safe_load(f)
+                data = _YAML(typ="safe").load(f)
         except ImportError:
             from ruamel.yaml import YAML
 

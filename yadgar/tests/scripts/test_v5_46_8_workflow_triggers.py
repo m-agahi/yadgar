@@ -28,7 +28,7 @@ Superseded by v5.57 design: always-on per-PR CI + version-bump-gated release.
 
 from pathlib import Path
 
-import yaml
+from ruamel.yaml import YAML as _YAML
 
 from yadgar.tests._paths import REPO_ROOT
 
@@ -49,7 +49,7 @@ EXPECTED_RELEASE_GATE = "needs.changes.outputs.release == 'true'"
 
 def _load_yaml(path: Path) -> dict:
     """Load YAML, handle pyyaml's on: -> True key quirk."""
-    return yaml.safe_load(path.read_text())
+    return _YAML(typ="safe").load(path.read_text())
 
 
 def _on_block(data: dict) -> dict:

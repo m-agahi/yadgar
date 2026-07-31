@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 try:
-    import yaml
+    from ruamel.yaml import YAML as _YAML
 
     HAS_YAML = True
 except ImportError:
@@ -34,7 +34,7 @@ RELEASE_YAML = REPO_ROOT / ".forgejo" / "workflows" / "ci-release.yaml"
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_publish_pypi_job_exists():
     """ci-release.yaml must have a publish-pypi job."""
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     jobs = parsed.get("jobs", {})
     assert "publish-pypi" in jobs, (
         f"Missing 'publish-pypi' job in ci-release.yaml; present jobs: {list(jobs)}"
@@ -44,7 +44,7 @@ def test_publish_pypi_job_exists():
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_publish_pypi_depends_on_build_wheel():
     """publish-pypi must depend on build-wheel (and changes)."""
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     job = parsed["jobs"]["publish-pypi"]
     needs = job.get("needs", [])
     if isinstance(needs, str):
@@ -60,7 +60,7 @@ def test_publish_pypi_gated_on_release_output():
     Reason: v5.57 removed the tag trigger entirely. The new gate uses the 'changes'
     job's version-bump detection output to decide whether to publish.
     """
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     job = parsed["jobs"]["publish-pypi"]
     if_condition = str(job.get("if", ""))
     assert "release" in if_condition, (
@@ -103,7 +103,7 @@ def test_publish_pypi_caveat_comment_present():
 @pytest.mark.skipif(not HAS_YAML, reason="PyYAML not installed")
 def test_workflow_dispatch_still_present():
     """workflow_dispatch trigger must remain (manual fallback forces release=true)."""
-    parsed = yaml.safe_load(RELEASE_YAML.read_text())
+    parsed = _YAML(typ="safe").load(RELEASE_YAML.read_text())
     on = parsed.get("on") or parsed.get(True)
     on_str = str(on)
     assert "workflow_dispatch" in on_str, "workflow_dispatch trigger must remain in ci-release.yaml"
