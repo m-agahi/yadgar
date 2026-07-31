@@ -4,6 +4,17 @@ Split out of ``daemon.py`` (Car C3, module-standardization train). Renders the
 two systemd user service units (``yadgar-backend.service`` + ``yadgar.service``)
 and writes them under ``~/.config/systemd/user``. ``YadgarDaemon.install_systemd_service``
 is a thin wrapper that resolves the profile then delegates here.
+
+RESIDUAL GAP (task:0104), stated rather than laundered: the units below now name
+the RESOLVED runtime, so a podman-only host gets working units. They are still
+not runtime-agnostic end to end. Both units are ``Type=notify``, and the backend
+``ExecStart`` passes ``--sdnotify=healthy`` — a podman flag with no docker
+equivalent (docker has no ``--sdnotify`` and no sd_notify proxy at all), so on a
+docker host the backend unit fails on an unknown flag and the core unit would
+sit until its notify timeout. Making the docker path work means designing docker
+notify semantics (``Type=exec`` plus a health gate), not swapping a literal; the
+shipped ``scripts/install/*.in`` templates do not solve it either — they hardcode
+``Environment=DOCKER_HOST=unix:///run/podman/podman.sock``. Out of scope here.
 """
 
 import os
@@ -18,6 +29,7 @@ from yadgar.core.daemon.runtime import (
     DOCKERHUB_BACKEND_IMAGE,
     _backend_version,
     _container_memory_mb,
+    _get_runtime,
 )
 
 
@@ -29,6 +41,13 @@ def install_systemd_service(profile: ContainerProfile, dev: bool = False) -> dic
 
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True, exist_ok=True)
+
+    # task:0104: the units are rendered for the runtime that is actually installed.
+    # A literal ``docker`` here made every generated unit dead on a podman-only
+    # host — the third instance of the class after task:0083 (`daemon start`) and
+    # task:0101 (`upgrade`). Guarded by the unit-directive detector in
+    # yadgar/tests/core/test_daemon_runtime_binary.py.
+    runtime = _get_runtime()
 
     backend_name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
     backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
@@ -66,17 +85,16 @@ def install_systemd_service(profile: ContainerProfile, dev: bool = False) -> dic
     backend_unit = f"""\
 [Unit]
 Description=Yadgar Backend — SurrealDB and Embedding Service
-Requires=docker.service
-After=docker.service
+After=network.target
 
 [Service]
 Type=notify
 NotifyAccess=all
 EnvironmentFile={secrets_env_path}
-ExecStartPre=-docker network create --driver bridge {_NETWORK_NAME}
-ExecStartPre=-docker stop {backend_name}
-ExecStartPre=-docker rm {backend_name}
-ExecStart=docker run --rm \\
+ExecStartPre=-{runtime} network create --driver bridge {_NETWORK_NAME}
+ExecStartPre=-{runtime} stop {backend_name}
+ExecStartPre=-{runtime} rm {backend_name}
+ExecStart={runtime} run --rm \\
     --name {backend_name} \\
     --network {_NETWORK_NAME} \\
     --cpus 1.0 \\
@@ -98,7 +116,7 @@ ExecStart=docker run --rm \\
     -e YADGAR_QUEUE_BASE=/queue-data \\
     -e YADGAR_MCP_AUTH_TOKEN=${{YADGAR_MCP_AUTH_TOKEN}} \\
 {hf_mount}    {backend_image_tagged}
-ExecStop=docker stop {backend_name}
+ExecStop={runtime} stop {backend_name}
 Restart=on-failure
 RestartSec=10
 
@@ -116,17 +134,17 @@ WantedBy=default.target
     core_unit = f"""\
 [Unit]
 Description=Yadgar Memory Engine — MCP Core Server
-Requires=docker.service yadgar-backend{suffix}.service
-After=docker.service yadgar-backend{suffix}.service
+Requires=yadgar-backend{suffix}.service
+After=network.target yadgar-backend{suffix}.service
 
 [Service]
 Type=notify
 NotifyAccess=all
 EnvironmentFile={secrets_env_path}
 EnvironmentFile=-{upgrade_env_path}
-ExecStartPre=-docker stop {profile.container_name}
-ExecStartPre=-docker rm {profile.container_name}
-ExecStart=docker run --rm \\
+ExecStartPre=-{runtime} stop {profile.container_name}
+ExecStartPre=-{runtime} rm {profile.container_name}
+ExecStart={runtime} run --rm \\
     --name {profile.container_name} \\
     --network {_NETWORK_NAME} \\
     --cpus {profile.cpus} \\
@@ -142,7 +160,7 @@ ExecStart=docker run --rm \\
     -e YADGAR_DB_USER=${{YADGAR_RW_USER:-${{YADGAR_DB_USER:-${{SURREAL_USER}}}}}} \\
     -e YADGAR_DB_PASS=${{YADGAR_RW_PASS:-${{YADGAR_DB_PASS:-${{SURREAL_PASS}}}}}} \\
     {profile.image_name}
-ExecStop=docker stop {profile.container_name}
+ExecStop={runtime} stop {profile.container_name}
 Restart=on-failure
 RestartSec=5
 
