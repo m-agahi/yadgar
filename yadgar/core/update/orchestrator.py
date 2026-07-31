@@ -622,12 +622,19 @@ def _default_service_restart() -> None:
 
 @observe(tier="stage")
 def _default_health_check() -> bool:
+    """Post-restart gate — did the daemon process come back up at all?
+
+    Liveness (ADR-0019), not readiness: only "is the process responding"
+    matters for this HEALTH_CHECKING step. Probing readiness (/health) here
+    would let a transiently-busy backend fail this gate and trigger a rollback
+    of a perfectly good restart/upgrade.
+    """
     import urllib.request  # noqa: PLC0415
 
     from yadgar._shared.config import get_settings  # noqa: PLC0415
 
     settings = get_settings()
-    url = f"http://{settings.HOST}:{settings.PORT}/health"
+    url = f"http://{settings.HOST}:{settings.PORT}/health/live"
     deadline = time.time() + 60
     while time.time() < deadline:
         try:

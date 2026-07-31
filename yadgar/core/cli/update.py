@@ -359,14 +359,20 @@ def _get_cli_version() -> str:
 
 
 def _probe_daemon_version() -> str:
-    """Probe /health and return daemon version string, or '' on failure."""
+    """Probe /health/live and return daemon version string, or '' on failure.
+
+    Liveness (ADR-0019), not readiness: this only needs "did the (new) process
+    come up and report its version" — /health/live carries the version field
+    too — decoupled from db/embed dependency state so a transiently-busy
+    backend can't fail an otherwise-successful upgrade/rollback verification.
+    """
     try:
         from yadgar._shared.config import get_settings  # noqa: PLC0415
 
         settings = get_settings()
-        url = f"http://{settings.HOST}:{settings.PORT}/health"
+        url = f"http://{settings.HOST}:{settings.PORT}/health/live"
     except Exception:  # noqa: BLE001
-        url = "http://localhost:8765/health"
+        url = "http://localhost:8765/health/live"
 
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
