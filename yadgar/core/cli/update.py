@@ -24,6 +24,7 @@ import argparse
 import json
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -378,6 +379,10 @@ def _probe_daemon_version() -> str:
         with urllib.request.urlopen(url, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return data.get("version", "")
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        return ""
     except Exception:  # noqa: BLE001
         return ""
 

@@ -1,0 +1,6 @@
+{
+  "_comment": "Allowlist for scripts/check_urllib_httperror_close.py (Car 0036, py3.14 ResourceWarning). Scope is the shipped yadgar/ package only (same boundary as check_dead_capability.py / check_health_endpoint_semantics.py) — benchmarks/, scripts/, and docs/ are out-of-process one-shot dev/ops tooling, never scanned. Governance mirrors .health-endpoint-allowlist.json: rationale >= 40 chars, and a STALE entry (a site that no longer violates the rule) hard-fails. DO NOT add a site here just to silence the guard: only a genuine pass-through wrapper (the caller owns closing) belongs here.",
+  "yadgar/core/daemon/runtime.py:35": {
+    "rationale": "_safe_urlopen is a scheme-guarded pass-through wrapper by design (docstring: '§8: urlopen wrapper that rejects non-http/https schemes'); it returns the raw response to the caller, who owns closing it. Every caller (daemon.py's status/_health_ok/_embed_health_ok) was fixed in Car 0036 to close both the success response and any caught HTTPError."
+  }
+}

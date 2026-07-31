@@ -343,6 +343,7 @@ def test_health_ok_true():
     mock_resp = MagicMock()
     with patch("urllib.request.urlopen", return_value=mock_resp):
         assert d._health_ok(8765) is True
+    mock_resp.close.assert_called_once()
 
 
 def test_health_ok_false_on_error():
@@ -357,6 +358,11 @@ def test_health_ok_false_on_error():
 
 
 def test_health_ok_true_on_503_degraded():
+    """HTTPError is a response object holding a file wrapper (a
+    tempfile._TemporaryFileWrapper via addbase on py3.14); an unclosed instance
+    fires a spurious ResourceWarning at GC that pytest-xdist mis-attributes to
+    an unrelated test. _health_ok must close it deterministically, not leave it
+    for the caller/test to clean up."""
     from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
@@ -369,7 +375,7 @@ def test_health_ok_true_on_503_degraded():
     )
     with patch("urllib.request.urlopen", side_effect=err):
         assert d._health_ok(8765) is True
-    err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
+    assert err.fp is None or err.fp.closed, "the hook must close the caught HTTPError"
 
 
 def test_health_ok_false_on_urlerror():
@@ -384,6 +390,9 @@ def test_health_ok_false_on_urlerror():
 
 
 def test_status_shows_degraded_detail_on_503():
+    """Same py3.14 leak guard as test_health_ok_true_on_503_degraded above,
+    for the status() code path (which additionally reads e.read() before
+    closing)."""
     from yadgar.core.daemon import YadgarDaemon
 
     d = YadgarDaemon()
@@ -398,8 +407,8 @@ def test_status_shows_degraded_detail_on_503():
     with patch.object(d, "_container_running", return_value=True):
         with patch("urllib.request.urlopen", side_effect=err):
             result = d.status()
-    err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
 
+    assert err.fp is None or err.fp.closed, "the hook must close the caught HTTPError"
     assert result["running"] is True
     assert result["status"] == "degraded"
     assert result["db"] == "ok"
@@ -417,6 +426,60 @@ def test_status_unreachable_on_urlerror():
 
     assert result["running"] is True
     assert result["health"] == "unreachable"
+
+
+def test_status_success_closes_response():
+    """The success (200) path must also close the response — an unclosed
+    urlopen() result leaks the underlying socket (py3.14 ResourceWarning),
+    independent of the HTTPError leak guarded above."""
+    from yadgar.core.daemon import YadgarDaemon
+
+    d = YadgarDaemon()
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps({"status": "ok"}).encode()
+    with patch.object(d, "_container_running", return_value=True):
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = d.status()
+
+    mock_resp.close.assert_called_once()
+    assert result["running"] is True
+
+
+# ── YadgarDaemon._embed_health_ok ────────────────────────────────────────────
+
+
+def test_embed_health_ok_true_closes_response():
+    from yadgar.core.daemon import YadgarDaemon
+
+    d = YadgarDaemon()
+    mock_resp = MagicMock()
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        assert d._embed_health_ok(8001) is True
+    mock_resp.close.assert_called_once()
+
+
+def test_embed_health_ok_true_on_503_degraded():
+    from yadgar.core.daemon import YadgarDaemon
+
+    d = YadgarDaemon()
+    err = urllib.error.HTTPError(
+        "http://127.0.0.1:8001/health",
+        503,
+        "degraded",
+        {},
+        io.BytesIO(b'{"status":"degraded"}'),
+    )
+    with patch("urllib.request.urlopen", side_effect=err):
+        assert d._embed_health_ok(8001) is True
+    assert err.fp is None or err.fp.closed, "the hook must close the caught HTTPError"
+
+
+def test_embed_health_ok_false_on_error():
+    from yadgar.core.daemon import YadgarDaemon
+
+    d = YadgarDaemon()
+    with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+        assert d._embed_health_ok(8001) is False
 
 
 # ── YadgarDaemon.start — already_running ─────────────────────────────────────

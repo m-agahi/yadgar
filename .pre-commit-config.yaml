@@ -172,6 +172,16 @@ repos:
         # files: filter narrow enough to have caught any of them.
         always_run: true
 
+      - id: check-urllib-httperror-close
+        name: Check urllib HTTPError/response call sites close the file wrapper (Car 0036)
+        language: system
+        entry: python scripts/check_urllib_httperror_close.py
+        pass_filenames: false
+        # always_run: same rationale as check-route-literals above — a urllib
+        # HTTPError/urlopen() call site can appear in any file, so any files:
+        # filter is narrower than the read set.
+        always_run: true
+
       - id: check-registry-prose-liveness
         name: Check I32 prose-token liveness (registry cites no dead identifiers)
         language: system

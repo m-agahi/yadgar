@@ -31,10 +31,12 @@ PreToolUse guard is the standalone router, and Stop lives in
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -85,8 +87,12 @@ def _http_get(path: str, params: dict | None = None, timeout: float = 2.0) -> di
         url += "?" + urllib.parse.urlencode(params)
     try:
         req = urllib.request.Request(url, headers=_auth_headers())
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        return json.loads(resp.read().decode())
+        with contextlib.closing(urllib.request.urlopen(req, timeout=timeout)) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        return None
     except Exception:
         return None
 
@@ -97,8 +103,12 @@ def _http_post(path: str, payload: dict, timeout: float = 1.0) -> dict | None:
     headers = {"Content-Type": "application/json", **_auth_headers()}
     try:
         req = urllib.request.Request(url, data=data, headers=headers)
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        return json.loads(resp.read().decode())
+        with contextlib.closing(urllib.request.urlopen(req, timeout=timeout)) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        return None
     except Exception:
         return None
 

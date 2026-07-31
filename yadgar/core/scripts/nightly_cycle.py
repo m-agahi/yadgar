@@ -117,6 +117,10 @@ def _maintenance_http(action: str, core_url: str = _CORE_URL) -> None:
                 body = resp.read(256).decode(errors="replace")
                 raise RuntimeError(f"maintenance {action} returned HTTP {resp.status}: {body}")
     except urllib.error.HTTPError as exc:
+        # Close the file wrapper before re-raising (py3.14 ResourceWarning leak
+        # guard) — chaining via `from exc` keeps the traceback but does not
+        # close the underlying response.
+        exc.close()
         raise RuntimeError(f"maintenance {action} HTTP error {exc.code}: {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise ConnectionError(

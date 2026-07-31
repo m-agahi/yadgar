@@ -50,6 +50,23 @@ def test_cmd_stats_http_table_format(capsys):
     captured = capsys.readouterr()
     assert "42" in captured.out
     assert "Yadgar Stats" in captured.out
+    mock_resp.close.assert_called_once()
+
+
+def test_try_http_path_closes_http_error():
+    """HTTPError is a response object holding a file wrapper (a
+    tempfile._TemporaryFileWrapper via addbase on py3.14); an unclosed instance
+    fires a spurious ResourceWarning at GC that pytest-xdist mis-attributes to
+    an unrelated test. _try_http_path must close it deterministically."""
+    import urllib.error
+
+    from yadgar.core.cli.stats import _try_http_path
+
+    http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
+    with patch("urllib.request.urlopen", side_effect=http_err):
+        result = _try_http_path(_make_args())
+    assert result is False
+    assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
 
 
 def test_cmd_stats_http_json_format(capsys):

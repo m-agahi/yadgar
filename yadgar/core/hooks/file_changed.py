@@ -7,10 +7,12 @@ implementation when the yadgar package is not on sys.path.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -49,7 +51,11 @@ def _post_file_changed(file_path: str, file_action: str) -> None:
     url = f"http://127.0.0.1:{_PORT}/hooks/file-changed?path={encoded_path}"
     try:
         req = urllib.request.Request(url, data=payload, headers=headers)
-        urllib.request.urlopen(req, timeout=3.0)
+        with contextlib.closing(urllib.request.urlopen(req, timeout=3.0)):
+            pass
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
     except Exception:
         pass
 
