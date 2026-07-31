@@ -180,6 +180,19 @@ repos:
         # never) is exactly the drift this guard exists to catch. Sub-second.
         always_run: true
 
+      - id: check-changelog-unreleased-versions
+        name: Check docs/CHANGELOG.md [Unreleased] carries no shipped-version markers (Car 0102)
+        language: system
+        entry: python scripts/check_changelog_unreleased_versions.py
+        pass_filenames: false
+        # always_run: the read set is a single fixed file (docs/CHANGELOG.md)
+        # regardless of which files are staged — a release shipping (version
+        # bump landing in one commit) while its CHANGELOG entry keeps an
+        # inline **vX.Y.Z marker instead of being cut into its own section is
+        # exactly the drift this guard exists to catch (55 entries across 40
+        # versions accumulated this way before Car 0102). Sub-second.
+        always_run: true
+
       - id: check-complexity-allowlist
         name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
         language: system
