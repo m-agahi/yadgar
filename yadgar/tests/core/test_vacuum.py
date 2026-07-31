@@ -23,10 +23,18 @@ def _p0_37_hermetic_guards():
     are behaviour-tested in test_vacuum_safestop.py; here they are pinned to
     their happy-path values so the pre-existing orchestration assertions keep
     testing what they always tested.
+
+    Car 0092 adds a third seam: the side-build binary preflight.  This suite
+    stubs ``_build_and_verify_side_db`` precisely BECAUSE no real surreal is in
+    play, so leaving the preflight live would make these tests pass or skip on
+    whether the host happens to have the binary on PATH (and would spawn a real
+    ``surreal version`` subprocess).  Its behaviour is tested in
+    test_vacuum_preflight.py.
     """
     with (
         patch("yadgar.core.vacuum._assert_backend_quiesced", return_value=True),
         patch("yadgar.core.vacuum._verify_live_store_coherence", return_value=(True, set())),
+        patch("yadgar.core.vacuum._has_surreal_binary", return_value=True),
     ):
         yield
 

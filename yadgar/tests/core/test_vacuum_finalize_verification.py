@@ -89,6 +89,10 @@ def _patch_stack(stack: ExitStack) -> MagicMock:
     stack.enter_context(patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True))
     stack.enter_context(patch("yadgar.core.vacuum._redefine_users_post_import"))
     stack.enter_context(patch("yadgar.core.vacuum._assert_backend_quiesced", return_value=True))
+    # Car 0092: the side-build binary preflight is stubbed for the same reason
+    # _build_and_verify_side_db is — no real surreal is in play here, so an
+    # un-stubbed preflight would make these tests depend on the host PATH.
+    stack.enter_context(patch("yadgar.core.vacuum._has_surreal_binary", return_value=True))
     stack.enter_context(
         patch("yadgar.core.vacuum._verify_live_store_coherence", return_value=(True, set()))
     )

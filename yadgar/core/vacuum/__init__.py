@@ -11,7 +11,9 @@ Flow:
 
   0. Startup recovery: complete/roll back any swap interrupted by a crash
      (canonical absent + .old/.new present) — BEFORE the preflight.
-  1. Preflight: confirm surreal_db/ exists, backend reachable, free space (~2.5x).
+  1. Preflight: confirm surreal_db/ exists, backend reachable, a host-side
+     `surreal` binary is resolvable (Phase 3 spawns one), free space (~2.5x).
+     The last two are SKIPs (exit 0, named reason) — never a destructive abort.
   2. Capture EXACT per-table source counts (surviving set; action_log excluded).
   3. Phase 1 — Export: GET /export → strip_export_for_vacuum().
   4. Phase 2 — Stop the real backend, then snapshot a QUIESCED .pre-vacuum copy
@@ -108,6 +110,37 @@ _CHECK_INVARIANTS_PATH = "/api/check_invariants"
 # without keeping every historical failure forever; older pairs carry no
 # additional diagnostic value once the two most recent are on hand.
 _VACUUM_EXPORT_KEEP_RUNS = 2
+
+# Car 0092: named SKIP reasons.  A skip is exit 0 and reclaims nothing, so the
+# reason is the only thing telling an operator what to do about it — a missing
+# binary is a broken install that will never self-heal, low disk is transient.
+# They must not look identical in stderr or in the consolidation_log row.
+_SKIP_NO_SURREAL = "no_surreal_binary"
+_SKIP_LOW_DISK = "low_disk"
+
+# Hard bound on the advisory `surreal version` probe — this runs inside the
+# nightly unit and must never be able to hang it.
+_SURREAL_VERSION_TIMEOUT_SEC = 10.0
+
+# Resolved-binary -> version string.  The probe is a subprocess spawn; a vacuum
+# run only ever resolves one binary, and caching keeps repeated in-process runs
+# (the test suite) from re-spawning it.
+_SURREAL_VERSION_CACHE: dict[str, str] = {}
+
+
+@observe(tier="stage")
+def _reap_stale_pre_vacuum_snapshots(yadgar_home: Path, keep_n: int) -> None:
+    """Car 0092: bound ``surreal_db.pre-vacuum-*`` accumulation on EVERY exit path.
+
+    This prune used to live ONLY in ``_vacuum_finalize`` — which no abort path
+    reaches (``_cmd_vacuum_body`` returns 1 first).  So each failed night left
+    one full-size DB copy on disk forever, until ``_has_free_space`` started
+    returning False, and that is a ``return 0`` SKIP rather than a failure: the
+    accumulated snapshots silently converted vacuum into a permanent no-op with
+    a green timer.  Pruning keeps the ``keep_n`` MOST RECENT, so the aborting
+    run's own snapshot always survives for forensics.
+    """
+    _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", keep_n)
 
 
 @observe(tier="stage")
@@ -237,6 +270,11 @@ def _log_consolidation_row(row: dict) -> None:
     rolled-back run recorded as ``rolled_back: true`` would be a new lie in the
     place the old one lived.  Both values are code-controlled (a bool and a small
     int, coerced here), so there is no injection surface.
+
+    ``skip_reason`` (Car 0092) IS a bound param — it is a string, so the
+    ``params=``-crosses-as-string caveat above does not apply to it.  It and its
+    companion ``skipped: true`` literal are appended to the statement only when
+    the row describes a SKIP, so every non-skip row is unchanged.
     """
     backend_url = row.pop(
         "_backend_url",
@@ -244,6 +282,14 @@ def _log_consolidation_row(row: dict) -> None:
     )
     rolled_back = bool(row.pop("rolled_back", False))
     exit_code = int(row.pop("exit_code", 0))
+    # Car 0092: a SKIPped run reclaims nothing and must say WHY.  ``skip_reason``
+    # is a string, so unlike ``rolled_back``/``exit_code`` it crosses the wire
+    # safely as a bound param.  The fields are emitted ONLY on a skip, so a
+    # normal vacuum row is byte-identical to what it was before this change.
+    skip_reason = row.get("skip_reason")
+    skip_fields = ",skipped: true,skip_reason: $skip_reason" if skip_reason else ""
+    if not skip_reason:
+        row.pop("skip_reason", None)
     try:
         client = _build_http_client(backend_url)
         stmt = (
@@ -258,6 +304,7 @@ def _log_consolidation_row(row: dict) -> None:
             "saved_pct: $saved_pct,"
             f"rolled_back: {'true' if rolled_back else 'false'},"
             f"exit_code: {exit_code}"
+            f"{skip_fields}"
             "}"
         )
         client.post(
@@ -1163,8 +1210,8 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     # Runs unconditionally (retained OR rolled back).  current_old exempted.
     _reap_stale_old_dirs(yadgar_home, old_path)
 
-    # Prune pre-vacuum snapshots
-    _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", keep_n)
+    # Prune pre-vacuum snapshots (Car 0092: the abort paths now do this too).
+    _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
 
     # The swap was RETAINED — the return tracks retention, NOT check_invariants.
     # Returning ci_ok here would re-arm the exact bug this change removes: a
@@ -1196,6 +1243,164 @@ def _check_backend_reachable(backend_url: str, http_timeout: float) -> bool:
         )
         return False
     return True
+
+
+@observe(tier="stage")
+def _surreal_version(binary: str) -> str:
+    """Best-effort ``<binary> version`` string.  Never raises, never gates.
+
+    Recorded in the preflight log line only.  Two ``surreal`` binaries commonly
+    coexist on one host (a nix profile one that wins PATH and a shadowed
+    ``~/.local/bin`` one), and the side build must use a version that can write a
+    store the real backend can then open — so a run needs to say WHICH binary and
+    WHICH version it used.  Enforcing a version match against the backend image
+    is a separate design decision and is deliberately NOT made here.
+
+    Bounded by a hard subprocess timeout: this runs inside the nightly unit, and
+    a ``surreal version`` that hangs must not hang the vacuum.
+    """
+    cached = _SURREAL_VERSION_CACHE.get(binary)
+    if cached is not None:
+        return cached
+    version = "unknown"
+    try:
+        import subprocess  # noqa: PLC0415 — version probe only; not a runtime dep
+
+        proc = subprocess.run(  # noqa: S603 — binary resolved by shutil.which, no shell
+            [binary, "version"],
+            capture_output=True,
+            text=True,
+            timeout=_SURREAL_VERSION_TIMEOUT_SEC,
+            check=False,
+        )
+        lines = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()
+        if lines and lines[0].strip():
+            version = lines[0].strip()
+    except Exception as exc:  # noqa: BLE001 — advisory log field; never gates
+        print(f"[vacuum] WARNING: could not read `surreal version`: {exc}", file=sys.stderr)
+    _SURREAL_VERSION_CACHE[binary] = version
+    return version
+
+
+@observe(tier="stage")
+def _has_surreal_binary() -> bool:
+    """Return True iff a host-side ``surreal`` binary is resolvable on PATH.
+
+    Car 0092.  Phase 3's side build spawns a THROWAWAY ``surreal start``
+    host-side (``yadgar.core._surreal_runner.spawn_surreal`` — a bare
+    PATH-resolved ``subprocess.Popen(["surreal", ...])``).  On a container
+    install that binary exists only inside the ``yadgar-backend`` image, so the
+    spawn raises ``FileNotFoundError`` — which ``_build_and_verify_side_db``
+    swallows in its broad ``except Exception`` and turns into a plain abort.
+
+    Without this preflight that abort landed at the WORST possible moment: after
+    the full ``/export``, after BOTH units were stopped, and after the full-size
+    ``.pre-vacuum`` ``copytree``.  Worse, it WEDGED: the abort path never reached
+    ``_vacuum_finalize``, so nothing pruned the snapshot it had just made, and
+    each failed night parked another full-size DB copy on disk until
+    ``_has_free_space`` began returning False — a ``return 0`` SKIP.  End state:
+    a permanent silent no-op reporting exit 0 with a green timer.
+
+    Asking the question BEFORE any destructive step turns that into a clean,
+    loud, NAMED skip.  This is an EXISTENCE check only — a version-compatibility
+    gate belongs with the full fix (running the side build in a one-shot backend
+    container), not here.
+
+    On failure the caller SKIPs (exit 0, ``_SKIP_NO_SURREAL``) — modelled on the
+    ``_has_free_space`` skip path, but distinguishable from it: a missing binary
+    is a broken install that will never self-heal, low disk is transient.
+    """
+    binary = shutil.which("surreal")
+    if binary is None:
+        print(
+            "[vacuum] SKIP: no `surreal` binary on PATH — the Phase 3 side-path "
+            "build spawns a throwaway `surreal start` HOST-side, and on a "
+            "container install that binary exists only inside the yadgar-backend "
+            "image. Skipping this run (no destructive op performed: no export, "
+            "no service stop, no snapshot). Install surreal on the host PATH, or "
+            "run vacuum where the binary is available.",
+            file=sys.stderr,
+        )
+        return False
+    print(
+        f"[vacuum] preflight: side-build binary {binary} ({_surreal_version(binary)})",
+        flush=True,
+    )
+    return True
+
+
+@observe(tier="stage")
+def _log_vacuum_skip(  # noqa: PLR0913 — mirrors _vacuum_report_and_log's field row
+    backend_url: str,
+    started_ts: str,
+    started_at: float,
+    before_bytes: int,
+    skip_reason: str,
+    detail: str,
+) -> None:
+    """Report a SKIPped run loudly and record it with a NAMED reason.
+
+    Car 0092.  A skip is exit 0 and reclaims nothing.  Before this, the only skip
+    (low disk) wrote NO ``consolidation_log`` row at all, so a skipped night was
+    indistinguishable in telemetry from a night the unit never ran — and once a
+    second skip reason existed, the two would have been indistinguishable from
+    each other.  "cannot vacuum, no surreal binary" (broken install, will never
+    self-heal) and "cannot vacuum, low disk" (transient) demand different
+    operator responses, so they get different named reasons in both places an
+    operator looks: stderr and the row.
+    """
+    duration_s = round(time.monotonic() - started_at, 1)
+    print(
+        f"\n[vacuum] SKIPPED ({skip_reason}) — nothing reclaimed, canonical untouched.\n"
+        f"  Reason:   {detail}\n"
+        f"  DB size:  {before_bytes / 1024 / 1024:.1f} MB (unchanged)\n"
+        f"  Duration: {duration_s} s",
+        flush=True,
+    )
+    _log_consolidation_row(
+        {
+            "_backend_url": backend_url,
+            "kind": "vacuum",
+            "started_at": started_ts,
+            "finished_at": datetime.now(UTC).isoformat(),
+            "duration_seconds": duration_s,
+            "before_bytes": before_bytes,
+            "after_bytes": before_bytes,
+            "saved_bytes": 0,
+            "saved_pct": 0,
+            "rolled_back": False,
+            "exit_code": 0,
+            "skip_reason": skip_reason,
+        }
+    )
+
+
+@observe(tier="stage")
+def _preflight_skip_reason(yadgar_home: Path, before_bytes: int) -> tuple[str, str] | None:
+    """Return ``(skip_reason, detail)`` when a NON-destructive preflight says do
+    not vacuum this run, else ``None``.
+
+    Car 0092.  Both checks answer "is a side-path vacuum possible AT ALL",
+    neither touches the canonical, and both are SKIPs (exit 0) rather than
+    failures — so they belong together, and they must run BEFORE the export /
+    service stop / full-size copytree.  Grouping them here also keeps the two
+    named reasons adjacent, which is the point: a missing binary is a broken
+    install that will never self-heal, low disk is transient, and an operator
+    reading either the log or the ``consolidation_log`` row has to be able to
+    tell them apart.
+    """
+    if not _has_surreal_binary():
+        return (
+            _SKIP_NO_SURREAL,
+            "no `surreal` binary on PATH — the Phase 3 side build cannot be spawned",
+        )
+    if not _has_free_space(yadgar_home, before_bytes):
+        return (
+            _SKIP_LOW_DISK,
+            f"insufficient free space — need ~{int(before_bytes * 2.5) / 1024 / 1024:.0f} MB "
+            "(2.5x the DB) for an atomic side-path vacuum",
+        )
+    return None
 
 
 @observe(tier="stage")
@@ -1400,11 +1605,24 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     before_bytes = _dir_bytes(db_path)
     print(f"[vacuum] DB size before: {before_bytes / 1024 / 1024:.1f} MB ({db_path})", flush=True)
 
-    # -- Free-space preflight: skip (NOT fail) if disk can't hold ~2.5x the DB. --
-    if not _has_free_space(yadgar_home, before_bytes):
-        return 0  # skip is not a failure — canonical untouched
-
     keep_n: int = getattr(settings, "VACUUM_SNAPSHOT_RETENTION", 3)
+
+    # -- Non-destructive preflights (Car 0092): surreal binary, then free space. --
+    # MUST run BEFORE the export / service stop / full-size copytree below.
+    # Phase 3 spawns a throwaway `surreal start` host-side, and on a container
+    # install that binary lives only inside the backend image; asked late (i.e.
+    # not at all, pre-Car-0092) the FileNotFoundError surfaced only after both
+    # units were stopped and a full DB copy had been made — and the abort path
+    # never pruned that copy, wedging vacuum permanently.  Placed AFTER the
+    # reachability check on purpose: the skip row goes to the backend over HTTP,
+    # so a skip logged with the backend down would be half-silent.
+    skip = _preflight_skip_reason(yadgar_home, before_bytes)
+    if skip is not None:
+        # A wedged host reaches the low-disk branch BECAUSE stale .pre-vacuum-*
+        # dirs ate the headroom; prune before skipping so a later run can proceed.
+        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
+        _log_vacuum_skip(backend_url, started_ts, started_at, before_bytes, *skip)
+        return 0  # skip is not a failure — canonical untouched
 
     # -- Service controller --
     mode = getattr(args, "service_mode", None) or detect_service_mode()
@@ -1439,6 +1657,9 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         # svc.stop() may already have run inside _vacuum_snapshot_and_drop, so
         # core can be down here too (task:0027a).
         _restart_services_after_abort(svc)
+        # Car 0092: a partial copytree may have left a .pre-vacuum dir behind;
+        # finalize (the only pre-0092 prune site) is unreachable from here.
+        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
         return 1
 
     # -- Phase 3: side-build → verify → atomic swap → start on compacted DB. --
@@ -1449,6 +1670,11 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         backend_url, filtered_path, db_path, yadgar_home, source_counts, svc
     )
     if old_path is None:
+        # Car 0092: the ONLY .pre-vacuum prune used to live in _vacuum_finalize,
+        # which this return never reaches — so every aborted night parked another
+        # full-size DB copy on disk.  This run's own snapshot is the newest and
+        # survives the keep_n prune (forensics); older ones go.
+        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
         return 1
 
     # -- Finalize --
