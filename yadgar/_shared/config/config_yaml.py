@@ -1496,6 +1496,21 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "backend_timeouts",
     },
+    "backend_ready_wait_sec": {
+        "desc": (
+            "Seconds the CORE waits at startup for the backend /health to return 200 before failing "
+            "(default 60). Stops the crashloop when the core starts while the backend is down. MUST "
+            "stay strictly below the core unit's TimeoutStartSec. 0 disables the gate."
+        ),
+        "section": "backend_timeouts",
+    },
+    "backend_ready_poll_sec": {
+        "desc": (
+            "Interval (seconds) between backend /health probes in the core startup readiness gate "
+            "(default 2.0). Fixed interval, not exponential backoff."
+        ),
+        "section": "backend_timeouts",
+    },
     # circuit breaker + rerank concurrency
     "circuit_breaker_enabled": {
         "desc": (

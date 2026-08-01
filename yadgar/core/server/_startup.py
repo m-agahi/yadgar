@@ -30,6 +30,7 @@ from yadgar._shared.runtime.lifecycle import _emit_startup_diagnostics
 # composition root (shared engines + 9 core-only), not the shared-only lifecycle
 # entry.
 from yadgar.core.bootstrap import core_init_engines as init_engines
+from yadgar.core.bootstrap.backend_ready import BackendNotReadyError
 from yadgar.core.daemon.daemons import _maybe_auto_check_for_update  # R2a Car D1
 
 # R2a Car D2: the signal handler + graceful-shutdown wrapper moved to
@@ -83,11 +84,21 @@ def main(
     # Don't auto-watch cwd — in daemon/systemd mode cwd is $HOME, which would
     # recursively watch everything including the DB files, causing a watchdog storm.
     # Staleness watching is triggered per-project via MCP tools instead.
-    init_engines(
-        db_path=db_path,
-        start_daemons=True,
-        watch_directory=None,
-    )
+    # Task 0027c: core_init_engines opens with a bounded wait for the backend
+    # /health. On exhaustion it raises BackendNotReadyError — do NOT swallow it
+    # (a core that reports active with no storage is worse than one that exits),
+    # but turn it into a one-line non-zero exit instead of a traceback: this is an
+    # operational condition, not a bug, and the journal has to stay readable
+    # across the Restart=on-failure cycles.
+    try:
+        init_engines(
+            db_path=db_path,
+            start_daemons=True,
+            watch_directory=None,
+        )
+    except BackendNotReadyError as exc:
+        logger.error("core startup aborted: %s", exc)
+        raise SystemExit(str(exc)) from exc
 
     # v5.6.7 PR-J: emit startup config-dump log + seed config gauges.
     # BC-EN2b: warn_comet_dormant gets its OWN try/except so a failure in

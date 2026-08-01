@@ -3,6 +3,9 @@
   "yadgar/backend/embed_service/embed_service.py:787": {
     "rationale": "The embed service's OWN /health handler probing its SurrealDB dependency to decide its own readiness. SurrealDB exposes no /health/live variant; this IS the readiness check being implemented, not a caller of one."
   },
+  "yadgar/core/bootstrap/backend_ready.py:90": {
+    "rationale": "Car 0027c's core startup gate probes the BACKEND embed service, which exposes no /health/live liveness variant at all — ADR-0019's liveness split is scoped to the core daemon only. Readiness is also what is genuinely required here: the very next thing the core does is StorageEngine.__init__ -> _init_schema(), which issues DDL over HTTP, so the gate must know db_ok and engine_loaded, not merely that a process bound a port."
+  },
   "yadgar/core/cli/seed.py:59": {
     "rationale": "Gates a POST to /hooks/seed-anchor, which writes to the DB. Genuinely needs readiness (db actually connected and usable), not just process-up liveness, before attempting the write."
   },
