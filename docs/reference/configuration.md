@@ -609,6 +609,7 @@ Rows older than these thresholds are pruned each consolidation cycle. Set to `0`
 | `vacuum_auto_threshold_bytes` | `YADGAR_VACUUM_AUTO_THRESHOLD_BYTES` | int | `2147483648` | Backstop fires when the DB exceeds this size (default 2 GiB). |
 | `vacuum_auto_window_start` | `YADGAR_VACUUM_AUTO_WINDOW_START` | str (HH:MM) | `19:00` | Local-time start of the backstop trigger window (24-hour, validated `HH:MM`). |
 | `vacuum_auto_window_end` | `YADGAR_VACUUM_AUTO_WINDOW_END` | str (HH:MM) | `23:00` | Local-time end of the backstop trigger window (exclusive, validated `HH:MM`). |
+| `vacuum_side_launcher` | `YADGAR_VACUUM_SIDE_LAUNCHER` | str | `auto` | Which side-build launcher Phase 3 uses for its throwaway SurrealDB (task 0107): `auto` (host binary first, container second, SKIP third), `host` (host binary only, fails loud rather than falling through), or `container` (container only, ignoring any resolvable host binary). |
 
 ---
 

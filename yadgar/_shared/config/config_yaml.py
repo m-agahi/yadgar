@@ -1789,6 +1789,10 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Local-time window end (HH:MM, 24-hour, exclusive) for the backstop auto-vacuum trigger (default 23:00).",
         "section": "vacuum",
     },
+    "vacuum_side_launcher": {
+        "desc": "Which side-build launcher Phase 3 uses for its throwaway SurrealDB (task 0107): 'auto' (host binary first, container second, SKIP third — default), 'host' (host binary only, fails loud rather than falling through), or 'container' (container only, ignoring any resolvable host binary).",
+        "section": "vacuum",
+    },
 }
 
 

@@ -1277,14 +1277,13 @@ def _surreal_version(binary: str) -> str:
 
 @observe(tier="stage")
 def _has_surreal_binary() -> bool:
-    """Return True iff a host-side ``surreal`` binary is resolvable on PATH.
+    """Return True iff a host-side ``surreal`` binary is resolvable.
 
     Car 0092.  Phase 3's side build spawns a THROWAWAY ``surreal start``
-    host-side (``yadgar.core._surreal_runner.spawn_surreal`` — a bare
-    PATH-resolved ``subprocess.Popen(["surreal", ...])``).  On a container
-    install that binary exists only inside the ``yadgar-backend`` image, so the
-    spawn raises ``FileNotFoundError`` — which ``_build_and_verify_side_db``
-    swallows in its broad ``except Exception`` and turns into a plain abort.
+    host-side (``yadgar.core._surreal_runner.spawn_surreal``).  On a container
+    install that binary is nowhere resolvable, so the spawn raises
+    ``FileNotFoundError`` — which ``_build_and_verify_side_db`` swallows in its
+    broad ``except Exception`` and turns into a plain abort.
 
     Without this preflight that abort landed at the WORST possible moment: after
     the full ``/export``, after BOTH units were stopped, and after the full-size
@@ -1302,14 +1301,29 @@ def _has_surreal_binary() -> bool:
     this host take the HOST-BINARY branch?": a host without the binary can now run
     the side build in a one-shot backend container instead.  The skip decision
     therefore lives in :func:`_has_side_build_launcher`, which owns the SKIP
-    message; this function only answers about PATH and logs which binary a
-    host-binary run resolved.
+    message; this function only answers about resolution and logs which binary
+    a host-binary run resolved.
+
+    Task 0107: resolution goes through
+    ``yadgar.core.vacuum.launcher._resolve_surreal_binary_and_source`` — the
+    same env-independent resolver ``select_side_launcher`` and the actual spawn
+    use — rather than a second, independent ``shutil.which("surreal")``.  The
+    preflight log line now names the chosen binary AND how it was resolved
+    (``env override`` / ``PATH`` / ``candidate dir``), so a run is
+    self-documenting about which of the (previously) three PATH-dependent
+    resolution points fired.
     """
-    binary = shutil.which("surreal")
-    if binary is None:
+    from yadgar.core.vacuum.launcher import (  # noqa: PLC0415 — avoid import cycle
+        _resolve_surreal_binary_and_source,
+    )
+
+    resolved = _resolve_surreal_binary_and_source()
+    if resolved is None:
         return False
+    binary, source = resolved
     print(
-        f"[vacuum] preflight: side-build binary {binary} ({_surreal_version(binary)})",
+        f"[vacuum] preflight: side-build binary {binary} ({_surreal_version(binary)}), "
+        f"resolved via {source}",
         flush=True,
     )
     return True
@@ -1319,9 +1333,10 @@ def _has_surreal_binary() -> bool:
 def _has_side_build_launcher() -> bool:
     """Return True iff Phase 3 can obtain a SurrealDB to build the side DB with.
 
-    Car 0092 (full fix).  Two ways, tried in that order:
+    Car 0092 (full fix).  Two ways, tried in that order when
+    ``VACUUM_SIDE_LAUNCHER=auto`` (the default):
 
-    1. a host-side ``surreal`` on PATH (dev boxes, nix hosts) — unchanged;
+    1. a host-side ``surreal`` (dev boxes, nix hosts) — unchanged;
     2. a one-shot ``yadgar-backend`` container, which runs THE SAME binary that
        will later open the built store, so builder/opener version skew is
        structurally impossible rather than merely currently-absent.
@@ -1330,11 +1345,56 @@ def _has_side_build_launcher() -> bool:
     the v5.170.0 path, reason string unchanged for telemetry continuity.  Before
     the launcher seam a container-only install took that skip on EVERY nightly:
     honest, loud and permanent, reclaiming nothing forever.
+
+    Task 0107: honours ``VACUUM_SIDE_LAUNCHER`` ∈ ``{auto, host, container}``
+    (:func:`~yadgar.core.vacuum.launcher._launcher_mode`).  ``host`` and
+    ``container`` do NOT fall through to the other branch when their pin is
+    unresolvable — an operator who read ADR-0186 and pinned a branch
+    explicitly needs the log to say the PIN is what's blocking the run, not
+    have it silently swapped for the other branch.
     """
+    from yadgar.core.vacuum.launcher import (  # noqa: PLC0415 — avoid import cycle
+        _launcher_mode,
+        backend_image,
+        backend_image_present,
+    )
+
+    mode = _launcher_mode()
+
+    if mode == "host":
+        if _has_surreal_binary():
+            return True
+        print(
+            "[vacuum] SKIP: VACUUM_SIDE_LAUNCHER=host is pinned but no usable "
+            "`surreal` binary resolved (checked YADGAR_SURREAL_BIN, PATH, and "
+            "the known install-layout candidate dirs) — refusing to silently "
+            "fall through to the container branch. Fix the pin, or unset it to "
+            "use auto.",
+            file=sys.stderr,
+        )
+        return False
+
+    if mode == "container":
+        if backend_image_present():
+            print(
+                f"[vacuum] preflight: VACUUM_SIDE_LAUNCHER=container is pinned "
+                f"— the side build will run in a one-shot {backend_image()} "
+                "container",
+                flush=True,
+            )
+            return True
+        print(
+            "[vacuum] SKIP: VACUUM_SIDE_LAUNCHER=container is pinned but the "
+            f"{backend_image()} image is not in the local container-runtime "
+            "store — refusing to silently fall through to a host binary. Pull "
+            "the image (`yadgar daemon pull`), or unset the pin to use auto.",
+            file=sys.stderr,
+        )
+        return False
+
+    # auto (default)
     if _has_surreal_binary():
         return True
-    from yadgar.core.vacuum.launcher import backend_image, backend_image_present  # noqa: PLC0415
-
     if backend_image_present():
         print(
             f"[vacuum] preflight: no host `surreal` — the side build will run in a "
@@ -1343,12 +1403,13 @@ def _has_side_build_launcher() -> bool:
         )
         return True
     print(
-        "[vacuum] SKIP: no usable `surreal` — none on the host PATH, and the "
+        "[vacuum] SKIP: no usable `surreal` — none on the host PATH (or the "
+        "known install-layout candidate dirs), and the "
         f"{backend_image()} image (which carries one) is not in the local "
         "container-runtime store. The Phase 3 side-path build needs one or the "
         "other. Skipping this run (no destructive op performed: no export, no "
-        "service stop, no snapshot). Install surreal on the host PATH, or pull "
-        "the backend image (`yadgar daemon pull`).",
+        "service stop, no snapshot). Install surreal on the host PATH, set "
+        "YADGAR_SURREAL_BIN, or pull the backend image (`yadgar daemon pull`).",
         file=sys.stderr,
     )
     return False

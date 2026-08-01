@@ -562,6 +562,14 @@ class Settings(BaseSettings):
     # scripts/cleanup-backups.sh after a successful vacuum.
     VACUUM_SNAPSHOT_RETENTION: int = 3
 
+    # Task 0107: which side-build launcher Phase 3 uses to obtain its throwaway
+    # SurrealDB — "auto" (host binary first, container second, SKIP third,
+    # today's behaviour), "host" (host binary only, fails loud rather than
+    # falling through when unresolvable), or "container" (container only,
+    # ignoring any resolvable host binary — ADR-0186's structurally
+    # skew-proof branch). See yadgar/core/vacuum/launcher.py::_launcher_mode.
+    VACUUM_SIDE_LAUNCHER: str = "auto"
+
     # v4.9: threshold-driven auto-trigger for vacuum (emergency backstop only from v5.7.0).
     #
     # Trigger precedence (v5.7.0+):

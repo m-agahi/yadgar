@@ -168,10 +168,19 @@ def _no_side_build_launcher(monkeypatch, td: str) -> None:
     tests below must also deny the container path, or they assert the skip on a
     host that can in fact vacuum (and pass or fail depending on whether the box
     running them happens to have the image pulled).
+
+    Task 0107: an empty PATH alone is *also* no longer a guarantee of "no
+    binary" — ``_resolve_surreal_binary`` falls back to fixed candidate dirs
+    including ``~/.local/bin/surreal`` (the exact pipx layout this car exists
+    for), so on a real workstation with a pipx-installed ``surreal`` this would
+    silently resolve from the developer's actual home. HOME must be patched to
+    an empty dir too, or this helper's name is a lie on such a box.
     """
     empty_bin = Path(td) / "empty-bin"
     empty_bin.mkdir(exist_ok=True)
     monkeypatch.setenv("PATH", str(empty_bin))
+    monkeypatch.setenv("HOME", td)
+    monkeypatch.delenv("YADGAR_SURREAL_BIN", raising=False)
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(Path(td) / "no-such-runtime"))
 
 

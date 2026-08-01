@@ -205,10 +205,19 @@ def _skip_reason_of(row_log: MagicMock) -> str | None:
 
 
 def _container_only_host(monkeypatch, td: str, **runtime_kwargs) -> Path:
-    """No host `surreal` on PATH; a container runtime that answers.  Returns the log."""
+    """No host `surreal` resolvable at all; a container runtime that answers.
+
+    Returns the log.  Task 0107: PATH alone no longer proves "no binary" —
+    ``_resolve_surreal_binary`` also checks fixed candidate dirs including
+    ``~/.local/bin/surreal``, so HOME must be pinned to the empty tmp dir too,
+    or this helper silently stops being container-only on a workstation with a
+    pipx-installed ``surreal`` (exactly the layout task 0107 is about).
+    """
     empty_bin = Path(td) / "empty-bin"
     empty_bin.mkdir(exist_ok=True)
     monkeypatch.setenv("PATH", str(empty_bin))
+    monkeypatch.setenv("HOME", td)
+    monkeypatch.delenv("YADGAR_SURREAL_BIN", raising=False)
     binary, log = _write_fake_runtime(Path(td), **runtime_kwargs)
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(binary))
     monkeypatch.setenv("YADGAR_BACKEND_IMAGE", "docker.io/openfantasy/yadgar-backend:test")
