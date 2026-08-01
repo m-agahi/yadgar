@@ -14,7 +14,11 @@ Run locally as the pre-merge gate:
 Gate map (plan §Acceptance gates):
   (b) Ettin-32m / Ettin-68m load + score  — THE gate this train exists for
   (c) GTE prod reranker still loads + scores
-  (d) MiniLM embed + flashrank + doc2query load smoke
+  (d) MiniLM embed + doc2query load smoke
+
+ADR-0192 dropped this file's flashrank case: it was `importorskip`-gated on a
+package that is not in pyproject/uv.lock, so it never executed in any gate and
+only pinned a dead constant.
 """
 
 from __future__ import annotations
@@ -72,26 +76,6 @@ def test_minilm_embed_loads_and_encodes() -> None:
     vec = model.encode("the quick brown fox")
     assert len(vec) == 384
     assert all(math.isfinite(float(x)) for x in vec)
-
-
-def test_flashrank_loads_and_scores() -> None:
-    """Gate (d): flashrank fallback ranker (separate ONNX path, own cache).
-
-    flashrank is NOT a locked dependency — `_try_flashrank` treats ImportError
-    as a silent fall-through in prod (`ml_client.py`). Skip when absent to
-    mirror that: the gate only applies to environments that opted in.
-    """
-    flashrank = pytest.importorskip("flashrank")
-    Ranker, RerankRequest = flashrank.Ranker, flashrank.RerankRequest
-
-    ranker = Ranker(
-        model_name="ms-marco-MiniLM-L-12-v2",
-        cache_dir=os.path.expanduser("~/.cache/flashrank"),
-    )
-    results = ranker.rerank(
-        RerankRequest(query="greeting", passages=[{"id": 0, "text": "hello world"}])
-    )
-    assert math.isfinite(float(results[0]["score"]))
 
 
 def test_doc2query_loads_and_generates() -> None:

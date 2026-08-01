@@ -315,7 +315,7 @@ class TestLocalMLClientNoModuleLevelImport:
 
     def test_gte_torch_load_failure_still_falls_back_silently(self):
         """A GTE load failure is transient/generic and DOES fall back
-        (returns None -> caller tries FlashRank)."""
+        (returns None -> caller tries the degraded ST CrossEncoder tier)."""
         from yadgar.backend.ml_client import LocalMLClient
 
         client = LocalMLClient(self._gte_settings())
@@ -351,3 +351,67 @@ class TestLocalMLClientNoModuleLevelImport:
         # sentence_transformers (and torch) must NOT be imported at module level
         assert "sentence_transformers" not in new_modules
         assert "torch" not in new_modules
+
+
+class TestCrossEncoderChainOrder:
+    """Regression net for ADR-0192's two-tier CE chain (task 0121 §6.3).
+
+    The car deleted the middle `_try_flashrank` tier, so the primary and the
+    surviving fallback must both be re-proved rather than assumed. None of
+    these three branches was pinned before — which is why deleting an
+    "obviously unreachable" branch was riskier than it looked.
+    """
+
+    def _settings(self, *, gte_enabled: bool, fallback: bool = True):
+        s = MagicMock()
+        s.GTE_RERANKER_ENABLED = gte_enabled
+        s.GTE_RERANKER_MODEL = "cross-encoder/ettin-reranker-32m-v1"
+        s.GTE_RERANKER_MAX_LENGTH = 512
+        s.GTE_RERANKER_FALLBACK_TO_FLASHRANK = fallback
+        s.CROSS_ENCODER_ENABLED = True
+        s.CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        return s
+
+    def test_primary_wins_and_never_touches_the_fallback(self):
+        from yadgar.backend.ml_client import LocalMLClient
+
+        client = LocalMLClient(self._settings(gte_enabled=True))
+        gte = MagicMock()
+        gte.predict.return_value = [0.9, 0.1]
+        client._gte_reranker = gte
+
+        with patch("sentence_transformers.CrossEncoder") as ctor:
+            scores = client.score_cross_encoder("q", ["a", "b"])
+
+        assert scores == [0.9, 0.1]
+        assert ctor.call_count == 0, "the ST fallback must not load when Ettin answers"
+        assert client._cross_encoder is None
+
+    def test_disabled_primary_lands_on_the_st_fallback(self):
+        from yadgar.backend.ml_client import LocalMLClient
+
+        client = LocalMLClient(self._settings(gte_enabled=False))
+        fake_ce = MagicMock()
+        fake_ce.predict.return_value = [0.25, 0.75]
+
+        with patch("sentence_transformers.CrossEncoder", return_value=fake_ce) as ctor:
+            scores = client.score_cross_encoder("q", ["a", "b"])
+
+        assert scores == [0.25, 0.75]
+        ctor.assert_called_once_with("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+    def test_primary_failure_with_fallback_disabled_is_terminal_zeros(self):
+        from yadgar.backend.ml_client import LocalMLClient
+
+        client = LocalMLClient(self._settings(gte_enabled=True, fallback=False))
+
+        def _boom(*a, **k):
+            raise RuntimeError("ettin load failed")
+
+        with patch("sentence_transformers.CrossEncoder", side_effect=_boom) as ctor:
+            scores = client.score_cross_encoder("q", ["a", "b"])
+
+        assert scores == [0.0, 0.0]
+        # One call only: the primary loader. The flag is a failure-mode selector,
+        # so a False value stops the chain instead of reaching the ST tier.
+        assert ctor.call_count == 1

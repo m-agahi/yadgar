@@ -44,11 +44,14 @@ USER yadgar
 # swapped Ettin reranker; enrichment = doc2query t5-small. GTE-ModernBERT is baked
 # for ONE release cycle so an offline config-revert to GTE works from the image
 # alone (drop in T5 once Ettin is proven). NLI / COMET are default-OFF — not baked.
-# FlashRank (the nominal CE fallback) is NOT baked because it is NOT a project
-# dependency — `flashrank` is absent from pyproject/uv.lock and unimportable in
-# prod, so `_try_flashrank` (ml_client.py) is a lazy no-op; /rerank is Ettin-only.
-# Baking it would require adding the package and would ship a NEW live fallback —
-# out of scope for a CE-swap train. (Matches the plan's flashrank hedge.)
+# The FlashRank CE tier was REMOVED in ADR-0192: `flashrank` is absent from
+# pyproject/uv.lock, so its import could never succeed and the "hedge" was
+# unreachable in every shipped configuration. /rerank is Ettin-only.
+# CROSS_ENCODER_MODEL (cross-encoder/ms-marco-MiniLM-L-6-v2) — the surviving
+# degraded sentence-transformers tier — is also NOT baked, deliberately: it is
+# reached only when the Ettin primary is off or has failed, and in this offline
+# image that tier scores zeros. Baking it is a behaviour change on a failure
+# path and needs a quality gate (ADR-0192 revisit_trigger).
 RUN python -c "\
 from sentence_transformers import SentenceTransformer, CrossEncoder; \
 SentenceTransformer('all-MiniLM-L6-v2'); \

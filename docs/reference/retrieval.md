@@ -131,7 +131,7 @@ The reranker backend (config field name kept `GTE_*` for env/back-compat):
 | Ettin-32m | `cross-encoder/ettin-reranker-32m-v1` | **Primary** (Train 4). ModernBERT-lineage, Apache-2.0, ~4.7× faster per-pass than GTE. |
 | GTE-ModernBERT | `Alibaba-NLP/gte-reranker-modernbert-base` | Rollback only — config-revert lever, baked into `Dockerfile.backend` one cycle. |
 
-FlashRank is **not** a dependency (`flashrank` absent from `pyproject`/`uv.lock`; `_try_flashrank` is a lazy no-op). ONNX/onnx-int8 backends were removed in the 5.131.0 deps train.
+The chain has one fallback tier below the primary: `CROSS_ENCODER_MODEL` (`cross-encoder/ms-marco-MiniLM-L-6-v2`) via sentence-transformers, reached when `GTE_RERANKER_ENABLED=False` or the primary fails. It is deliberately **not** baked into `Dockerfile.backend`, so in the offline container it scores zeros; in host stdio/daemon mode it works. A third FlashRank tier was removed in ADR-0192 — `flashrank` was never a dependency (absent from `pyproject`/`uv.lock`), so its import could not succeed. ONNX/onnx-int8 backends were removed in the 5.131.0 deps train.
 
 Final score: `CE_WEIGHT * cross_encoder_score + (1 - CE_WEIGHT) * fusion_score`
 

@@ -3,6 +3,9 @@
 **Date:** 2026-08-01
 **Task:** #0121
 **ADR:** ADR-0191 (new, small). Touches ADR-0043, ADR-0067, ADR-0104. Supersedes nothing.
+**AS BUILT:** the ADR index assigned **ADR-0192**, not 0191 — 0191 was taken by the
+time this car ran. Every "ADR-0191" below means ADR-0192; the shipped code and docs
+all cite 0192.
 **Status:** design proposed, not started. Small-to-medium car; two independent work items plus one guard.
 
 ---

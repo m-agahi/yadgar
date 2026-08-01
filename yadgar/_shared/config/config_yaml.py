@@ -208,10 +208,13 @@ FIELD_META: dict[str, dict[str, object]] = {
     "reranker_enabled": {"desc": "Enable cross-encoder reranking stage", "section": "reranking"},
     "reranker_top_k": {"desc": "Number of candidates passed to reranker", "section": "reranking"},
     "cross_encoder_enabled": {
-        "desc": "Enable FlashRank ONNX cross-encoder reranking",
+        "desc": "Enable the cross-encoder rerank stage (also gates the fallback model load)",
         "section": "reranking",
     },
-    "cross_encoder_model": {"desc": "Cross-encoder model name", "section": "reranking"},
+    "cross_encoder_model": {
+        "desc": "Degraded-mode fallback CE model. The live reranker is gte_reranker_model",
+        "section": "reranking",
+    },
     "cross_encoder_top_k": {"desc": "Top-k passed to cross-encoder", "section": "reranking"},
     "cross_encoder_weight": {
         "desc": "Cross-encoder score weight in blend (retrieval gets 1-this)",
@@ -227,7 +230,7 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "reranking",
     },
     "gte_reranker_fallback_to_flashrank": {
-        "desc": "Fall back to FlashRank if GTE reranker fails",
+        "desc": "On reranker failure: true = use the fallback CE, false = score zeros",
         "section": "reranking",
     },
     "nli_reranking_enabled": {
