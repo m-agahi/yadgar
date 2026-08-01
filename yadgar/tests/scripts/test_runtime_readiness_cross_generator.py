@@ -92,9 +92,21 @@ _GATE_RE = re.compile(r"^\s*ExecStartPost\s*=.*\bcurl\b.*--retry\b.*/health", re
 # task:0106 — a unit whose START is gated on readiness, and the two numbers whose
 # relation that gating depends on. Type=simple is deliberately absent: such a
 # unit is "started" the instant the fork succeeds, so TimeoutStartSec never binds.
-_READINESS_TYPE_RE = re.compile(r"^\s*Type\s*=\s*(notify|exec)\s*$", re.MULTILINE)
-_TIMEOUT_RE = re.compile(r"^\s*TimeoutStartSec\s*=\s*(\S+)\s*$", re.MULTILINE)
+_READINESS_TYPE_RE = re.compile(
+    r"^[^\S\n]*Type[^\S\n]*=[^\S\n]*(notify|exec)[^\S\n]*$", re.MULTILINE
+)
+# Horizontal whitespace only ([^\S\n], not \s) on both sides of the `=`: plain
+# ``\s*`` would let ``TimeoutStartSec=`` with an EMPTY value — which systemd reads
+# as "reset to the default", i.e. the exact 90s this car is escaping — swallow the
+# newline and capture the NEXT directive as its value.
+_TIMEOUT_RE = re.compile(r"^[^\S\n]*TimeoutStartSec[^\S\n]*=[^\S\n]*(\S+)[^\S\n]*$", re.MULTILINE)
 _GATE_BUDGET_RE = re.compile(r"--retry\s+(\d+)\s+--retry-delay\s+(\d+)")
+
+# The default a readiness-gated unit inherits when it declares nothing (``man
+# systemd.service``: DefaultTimeoutStartSec, 90s). The floor, not the value: this
+# guard pins the RELATION and the escape from the default, deliberately NOT the
+# literal 180/120, so a future retune with evidence does not have to fight a test.
+_SYSTEMD_DEFAULT_START_SEC = 90
 
 
 # ── Renderers: (label) -> {unit-name: rendered text} for a given runtime ──────
@@ -234,6 +246,13 @@ def test_readiness_gated_units_declare_a_start_budget_above_their_gate(
     engine_loaded`` (``embed_service.py``), so model load really is on the
     readiness path for both arms.
 
+    What is asserted is the FLOOR and the RELATION, deliberately not the literal
+    180/120 — pinning the values would make a future evidence-backed retune fight
+    a test. The floor exists because the relation alone is vacuous on podman
+    (no gate to compare against), so without it this guard would still pass on a
+    unit regressed to ``TimeoutStartSec=90``: the very bug being fixed, re-opened
+    silently. Both halves are mutation-proven, not assumed.
+
     The second half is the relation car 0105 sized by hand: a gate that can
     outlive ``TimeoutStartSec`` stops being the binding constraint — the unit
     dies on timeout and ``Restart=on-failure`` loops it instead of the gate
@@ -259,6 +278,13 @@ def test_readiness_gated_units_declare_a_start_budget_above_their_gate(
             f"time span. Express it in seconds or teach this test the unit suffix."
         )
         timeout = int(budget.group(1))
+        assert timeout > _SYSTEMD_DEFAULT_START_SEC, (
+            f"{label}/{name} rendered for {runtime}: TimeoutStartSec={timeout} is "
+            f"at or below systemd's {_SYSTEMD_DEFAULT_START_SEC}s default, so "
+            f"declaring it buys nothing. Without this floor the podman arm — which "
+            f"has no gate, making the gate comparison below vacuous — could be "
+            f"regressed back to the default while this guard still passed."
+        )
 
         gate = _GATE_BUDGET_RE.search(text)
         if gate is None:
