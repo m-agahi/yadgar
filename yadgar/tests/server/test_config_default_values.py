@@ -139,7 +139,7 @@ def _normalise(kind: str, value: object) -> object:
     if kind in ("int", "float"):
         try:
             return float(str(value))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):  # fmt: skip
             return ("unparsed", str(value))
     return str(value)
 
@@ -239,7 +239,7 @@ def _scan_env_defaults(names: set[str]) -> tuple[list[tuple], list[tuple]]:
             continue
         try:
             tree = ast.parse(path.read_text())
-        except SyntaxError, UnicodeDecodeError:  # pragma: no cover - defensive
+        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive  # fmt: skip
             continue
         sources[path] = tree
         module_consts[".".join(path.relative_to(_REPO_ROOT).with_suffix("").parts)] = (
