@@ -108,6 +108,11 @@ _STRIPPED_TABLES = frozenset({"action_log"})
 # in yadgar/core/server/routes/admin_ops.py.
 _CHECK_INVARIANTS_PATH = "/api/check_invariants"
 
+# task:0113 — the core write-gate this module engages for the WHOLE run.  Same
+# named-constant discipline as above, for the same route-existence guard.
+_MAINTENANCE_ENTER_PATH = "/api/control/maintenance/enter"
+_MAINTENANCE_EXIT_PATH = "/api/control/maintenance/exit"
+
 # Car 0046: number of PRIOR vacuum_export_* pairs (raw + filtered) to retain as
 # a backstop against unbounded accumulation.  ADR-0076 D2 deletes the CURRENT
 # run's own pair on a retained swap but intentionally KEEPS it on any abort
@@ -1139,7 +1144,7 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
         True when the swap was RETAINED (with or without an advisory
         check_invariants failure); False when a hard gate rolled it back.
     """
-    yadgar_url = f"http://127.0.0.1:{os.environ.get('YADGAR_PORT', '8765')}"
+    yadgar_url = _core_url()
     if db_path is None:
         db_path = yadgar_home / "surreal_db"
 
@@ -1601,6 +1606,135 @@ def _vacuum_report_and_log(  # noqa: PLR0913 — one row of report fields, no co
 
 
 # ---------------------------------------------------------------------------
+# Write quiescence (task:0113)
+#
+# The exact-count gate compares source_counts (captured at T0) against a side DB
+# built from the export (T1).  A write landing in (T0, T1] makes the two
+# disagree and ABORTS the run spuriously; a write landing in (T1, backend-stop]
+# is in NEITHER number, so the gate PASSES, the swap is retained, and the row
+# leaves with the rmtree of .old.  The second case is silent write loss and no
+# comparison of two pre-stop snapshots can ever see it.
+#
+# The fix quiesces first: engage the core write-gate, drain the residual queue,
+# THEN capture + export.  Held through the swap, released after finalize.
+# ---------------------------------------------------------------------------
+
+
+@observe(tier="stage")
+def _core_url() -> str:
+    """Base URL of the local yadgar CORE (not SurrealDB, not the embed backend)."""
+    return f"http://127.0.0.1:{os.environ.get('YADGAR_PORT', '8765')}"
+
+
+def _maintenance_ttl_seconds(settings) -> float:  # type: ignore[no-untyped-def]
+    """Self-heal deadline for THIS vacuum's write-gate window.
+
+    Per-enter, because the callers' windows differ by an order of magnitude:
+    ``yadgar-vacuum.service`` has ``TimeoutStartSec=30min`` while nightly holds
+    the gate across backup + consolidation + vacuum + backup.  The default sits
+    comfortably above the unit timeout so a slow-but-alive vacuum is never
+    un-gated underneath itself.
+    """
+    return float(getattr(settings, "MAINTENANCE_TTL_SEC", 2400))
+
+
+@observe(tier="stage")
+def _maintenance_post(path: str, body: dict | None = None) -> dict:
+    """POST a core maintenance route; return the decoded body.  Raises on failure.
+
+    Mirrors ``_check_invariants_verified``'s bearer handling.  Callers convert a
+    raise into WARN-and-proceed — an unreachable gate must never fail a vacuum
+    (precedent: ``nightly_cycle.py`` step 1).
+    """
+    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    resp = httpx.post(f"{_core_url()}{path}", json=body or {}, headers=headers, timeout=15.0)
+    if resp.status_code not in (200, 202):
+        raise RuntimeError(f"{path} returned HTTP {resp.status_code}: {resp.text[:200]}")
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+@observe(tier="stage")
+def _maintenance_enter(ttl_seconds: float) -> bool:
+    """Engage the core write-gate; return the state it was in BEFORE this call.
+
+    ``previous=True`` means an outer window is already open (nightly_cycle holds
+    it across steps 1-7 and runs this vacuum at step 4).  The caller must then
+    NOT exit at the end of the run, or it un-gates the engine while the nightly
+    still has DB work to do.
+
+    ``ttl_seconds`` is the self-heal deadline for a vacuum that dies without
+    running its cleanup (SIGKILL / OOM).  A nested enter never shortens an outer
+    window — the handler widens rather than overwrites.
+    """
+    return bool(
+        _maintenance_post(_MAINTENANCE_ENTER_PATH, {"ttl_seconds": ttl_seconds}).get("previous")
+    )
+
+
+@observe(tier="stage")
+def _maintenance_exit() -> None:
+    """Release the core write-gate."""
+    _maintenance_post(_MAINTENANCE_EXIT_PATH)
+
+
+@observe(tier="stage")
+def _maintenance_release(entered: bool) -> None:
+    """Un-gate the engine, but only if THIS run engaged it.  NEVER raises.
+
+    ``entered`` is False when an outer window was already open (nightly step 4)
+    or when the enter itself failed — in both cases there is nothing of ours to
+    release.  A raise here would propagate out of the caller's ``finally`` and
+    skip ``sensitive_lock.release()``, wedging the host permanently; same
+    per-step-try/except discipline as ``_restart_services_after_abort``.
+    """
+    if not entered:
+        return
+    try:
+        _maintenance_exit()
+    except Exception as exc:
+        print(
+            f"[vacuum] CRITICAL: could not release the core write-gate: {exc}\n"
+            "[vacuum] Every MCP tool fast-fails until it clears. It self-clears after "
+            f"MAINTENANCE_TTL_SEC; to un-wedge now, POST {_MAINTENANCE_EXIT_PATH}.",
+            file=sys.stderr,
+        )
+
+
+@observe(tier="stage")
+def _drain_backend_queue() -> None:
+    """Flush the residual file queue before the count baseline.  Raises on failure.
+
+    The write-gate stops NEW MCP calls enqueuing; it does NOT stop the drainer
+    applying files already on disk.  ADR-0139: after the ADR-0078 core/backend
+    split the LIVE drainer exists only in the BACKEND process — an in-core
+    ``drain_now()`` is a production no-op — so this must be a cross-process POST
+    to the backend ``/admin`` surface, not a call against ``backend_url`` (which
+    is SurrealDB and serves no admin ops).
+    """
+    from yadgar.core.forward import _forward_admin  # noqa: PLC0415 — leaf module, lazy by design
+
+    result = _forward_admin("drain_now", {})
+    print(f"[vacuum] queue drain nudge: {result}", flush=True)
+
+
+@observe(tier="stage")
+def _drain_queue_best_effort() -> None:
+    """``_drain_backend_queue`` with WARN-and-proceed (plan 0113 §2.4 B).
+
+    The drain only NARROWS the (T0, T1] window; the exact-count comparison
+    remains the real gate, and a spurious abort is the bug being fixed here, not
+    a safety property worth preserving.  A backend without ``YADGAR_EMBED_URL``
+    (today's ``yadgar-vacuum.service``) lands here every run.
+    """
+    try:
+        _drain_backend_queue()
+    except Exception as exc:
+        print(f"[vacuum] WARNING: queue drain nudge failed — proceeding: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1654,10 +1788,37 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
             file=sys.stderr,
         )
         return 0  # skip — not a failure; canonical untouched
+    # -- Write-gate (task:0113) — engage BEFORE the count baseline, hold through
+    # the swap.  Every entry path (viz, MCP tool, timer, nightly step 4, manual)
+    # funnels here, so this one seam covers all of them.
+    #
+    # Each cleanup action gets its OWN try/except, per _restart_services_after_abort:
+    # a bare `finally` runs its statements in order and stops at the first raise,
+    # so an un-gating failure would skip sensitive_lock.release() and leave the
+    # host unable to vacuum again.  Order: un-gate the engine first, release the
+    # lock last.
+    entered = False
     try:
-        return _cmd_vacuum_body(
-            args, settings, backend_url, db_path, yadgar_home, started_at, started_ts
+        entered = not _maintenance_enter(_maintenance_ttl_seconds(settings))
+    except Exception as exc:
+        print(
+            f"[vacuum] WARNING: could not engage the core write-gate — "
+            f"proceeding without write-gate: {exc}",
+            file=sys.stderr,
         )
+    # Then flush what is already queued: the gate stops new enqueues, not the
+    # backend drainer.  Plan 0113 §2.3 order is enter → drain → capture → export;
+    # sitting here rather than inside the body means a run that later SKIPS
+    # (low disk, no surreal binary) also pays for it — a harmless drain the
+    # backend would have done within its 30s interval anyway.
+    _drain_queue_best_effort()
+    try:
+        try:
+            return _cmd_vacuum_body(
+                args, settings, backend_url, db_path, yadgar_home, started_at, started_ts
+            )
+        finally:
+            _maintenance_release(entered)
     finally:
         sensitive_lock.release()
 
@@ -1738,7 +1899,7 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         print(f"[vacuum] ERROR capturing source counts: {exc}", file=sys.stderr)
         return 1
 
-    # -- Phase 1: Export (real backend still UP — no lost writes vs. count capture) --
+    # -- Phase 1: Export (backend still UP, but WRITE-GATED since task:0113) --
     raw_path: Path | None = None
     filtered_path: Path | None = None
     try:

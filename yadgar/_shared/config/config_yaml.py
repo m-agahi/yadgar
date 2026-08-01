@@ -1783,6 +1783,10 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "table_retention",
     },
     # vacuum
+    "maintenance_ttl_sec": {
+        "desc": "Self-heal deadline (seconds) for the maintenance write-gate the vacuum engages around its count-capture/export/swap window (task:0113). A vacuum killed with SIGKILL cannot release the gate; after this many seconds the core clears it and logs a WARN. Default 2400 (above yadgar-vacuum.service's 30min start timeout).",
+        "section": "vacuum",
+    },
     "vacuum_old_max_age_days": {
         "desc": "Age backstop for surreal_db.old-* rollback dirs (ADR-0076 D1): reap any .old dir older than this many days on each vacuum finalize. Default 7. The current-run .old is always exempted.",
         "section": "vacuum",

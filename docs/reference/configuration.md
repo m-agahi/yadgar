@@ -603,6 +603,7 @@ Rows older than these thresholds are pruned each consolidation cycle. Set to `0`
 
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
+| `maintenance_ttl_sec` | `YADGAR_MAINTENANCE_TTL_SEC` | int | `2400` | Self-heal deadline (seconds) for the maintenance write-gate the vacuum engages around its count-capture/export/swap window (task:0113). A SIGKILLed vacuum cannot release the gate; after this many seconds the core clears it and logs a WARN. Default sits above `yadgar-vacuum.service`'s `TimeoutStartSec=30min`. |
 | `vacuum_old_max_age_days` | `VACUUM_OLD_MAX_AGE_DAYS` | int | `7` | Age backstop for surreal_db.old-* rollback dirs (ADR-0076 D1): reap any .old dir older than this many days on each vacuum finalize. The current-run .old is always exempted. |
 | `vacuum_snapshot_retention` | `YADGAR_VACUUM_SNAPSHOT_RETENTION` | int | `3` | Number of pre-vacuum DB snapshots to retain. |
 | `vacuum_auto_enabled` | `YADGAR_VACUUM_AUTO_ENABLED` | bool | `true` | Enable the backstop threshold trigger (emergency backstop only from v5.7.0; nightly cron is primary). |

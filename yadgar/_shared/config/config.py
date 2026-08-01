@@ -588,6 +588,16 @@ class Settings(BaseSettings):
     # after readiness. 2s matches daemon.py's existing health poll.
     BACKEND_READY_POLL_SEC: float = 2.0
 
+    # task:0113 — self-heal deadline (seconds) for the maintenance write-gate the
+    # vacuum engages around its count-capture → export → swap window.  The
+    # release runs in a finally, which covers returns/exceptions/sys.exit but not
+    # SIGKILL, OOM-kill or power loss; post-task:0111 the core no longer restarts
+    # during a vacuum, so a clear-on-start reset would never fire.  This TTL is
+    # the only backstop that does.  Default 2400s sits above
+    # yadgar-vacuum.service's TimeoutStartSec=30min so a slow-but-alive vacuum is
+    # never un-gated underneath itself.
+    MAINTENANCE_TTL_SEC: int = 2400
+
     # vacuum settings
     # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
     # scripts/cleanup-backups.sh after a successful vacuum.

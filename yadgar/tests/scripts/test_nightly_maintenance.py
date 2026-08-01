@@ -83,7 +83,7 @@ def _run_with_maintenance_mocks(
     base = dict(
         _run_systemctl=mock_ctl,
         _maintenance_http=MagicMock(
-            side_effect=lambda action, url: (
+            side_effect=lambda action, url, **_kw: (
                 mock_enter(action, url) if action == "enter" else mock_exit(action, url)
             )
         ),
@@ -132,7 +132,7 @@ class TestStepStopCoreUsesMaintenance:
         maintenance_calls = []
         systemctl_calls = []
 
-        def _fake_maintenance_http(action, url):
+        def _fake_maintenance_http(action, url, **_kw):
             maintenance_calls.append((action, url))
 
         def _fake_ctl(action, unit):
@@ -240,7 +240,7 @@ class TestStepStartCoreUsesMaintenance:
         maintenance_calls = []
         systemctl_calls = []
 
-        def _fake_maintenance_http(action, url):
+        def _fake_maintenance_http(action, url, **_kw):
             maintenance_calls.append((action, url))
 
         def _fake_ctl(action, unit):
@@ -345,7 +345,7 @@ class TestMaintenanceExitInFinally:
 
         maintenance_calls = []
 
-        def _fake_maintenance_http(action, url):
+        def _fake_maintenance_http(action, url, **_kw):
             maintenance_calls.append(action)
 
         def _failing_consolidation(db_path, settings):
@@ -393,7 +393,7 @@ class TestMaintenanceExitInFinally:
 
         maintenance_calls = []
 
-        def _fake_maintenance_http(action, url):
+        def _fake_maintenance_http(action, url, **_kw):
             maintenance_calls.append(action)
 
         db_dir = tmp_path / "surreal_db"
@@ -428,7 +428,7 @@ class TestMaintenanceExitInFinally:
 
         maintenance_calls = []
 
-        def _fake_maintenance_http(action, url):
+        def _fake_maintenance_http(action, url, **_kw):
             maintenance_calls.append(action)
 
         db_dir = tmp_path / "surreal_db"
@@ -472,7 +472,7 @@ class TestBackendSystemctlUnchanged:
         maintenance_calls = []
         systemctl_calls = []
 
-        def _fake_maintenance_http(action, url):
+        def _fake_maintenance_http(action, url, **_kw):
             maintenance_calls.append((action, url))
 
         def _fake_ctl(action, unit):
@@ -507,3 +507,129 @@ class TestBackendSystemctlUnchanged:
         # Core must NOT be in systemctl calls
         core_via_ctl = [c for c in systemctl_calls if c[1] == "yadgar"]
         assert not core_via_ctl, f"Core must NOT go through _run_systemctl. Got: {core_via_ctl}"
+
+
+# ---------------------------------------------------------------------------
+# 7 — task:0113: the step-4 vacuum must NOT un-wedge the nightly's own gate
+# ---------------------------------------------------------------------------
+
+
+def _maintenance_request(body: dict | None):
+    """Minimal stand-in for a starlette Request with an async .json()."""
+
+    async def _json():
+        if body is None:
+            raise ValueError("no body")
+        return body
+
+    return SimpleNamespace(json=_json)
+
+
+def _call_maintenance(action: str, body: dict | None = None):
+    """Invoke the REAL control-route handler; return (status, decoded JSON body)."""
+    import asyncio
+    import json as _json
+
+    from yadgar.core.server.routes.control import (
+        maintenance_enter_handler,
+        maintenance_exit_handler,
+    )
+
+    handler = maintenance_enter_handler if action == "enter" else maintenance_exit_handler
+    resp = asyncio.run(handler(_maintenance_request(body)))
+    return resp.status_code, _json.loads(bytes(resp.body))
+
+
+class TestNightlyVacuumNesting:
+    """task:0113 — the vacuum now engages the same flag the nightly holds.
+
+    nightly_cycle enters at step 1 and exits at step 7, AFTER step 5 (post-backup
+    snapshot) and step 6 (prune).  The naive implementation of the vacuum
+    write-gate exits unconditionally at the end of step 4 and un-gates the engine
+    while the nightly still has DB work to do.  This test runs the REAL
+    ``cmd_vacuum_impl`` against the REAL control handlers and a real in-process
+    flag, so a missing previous-state guard is RED here and nowhere else.
+    """
+
+    def test_nightly_vacuum_does_not_unwedge_the_nightly_gate(self, tmp_path, monkeypatch):
+        import httpx
+
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core import vacuum as _v
+
+        _st._maintenance_mode = False
+        _st._maintenance_deadline = None
+        mod = _import_module()
+
+        def _routed_post(url, **kwargs):
+            assert "/api/control/maintenance/" in url, f"unexpected POST during vacuum: {url}"
+            action = "enter" if url.endswith("/maintenance/enter") else "exit"
+            status, body = _call_maintenance(action, kwargs.get("json") or {})
+            m = MagicMock()
+            m.status_code = status
+            m.text = ""
+            m.json.return_value = body
+            return m
+
+        monkeypatch.setattr(httpx, "post", _routed_post)
+
+        def _nightly_maintenance(action, url, **kwargs):
+            _call_maintenance(action, {"ttl_seconds": kwargs.get("ttl_seconds")})
+
+        def _vacuum(vac_args):
+            with (
+                patch(
+                    "yadgar.core.sensitive_lock.sensitive_lock.acquire",
+                    MagicMock(return_value=True),
+                ),
+                patch("yadgar.core.sensitive_lock.sensitive_lock.release", MagicMock()),
+                patch.object(_v, "_cmd_vacuum_body", return_value=0),
+            ):
+                return _v.cmd_vacuum_impl(
+                    SimpleNamespace(
+                        backend_url="http://127.0.0.1:8080",
+                        service_mode="manual",
+                        db_path=str(tmp_path / "surreal_db"),
+                        yes=True,
+                    )
+                )
+
+        flag_at_snapshot: list[bool] = []
+
+        def _snapshot(*_a, **_kw):
+            flag_at_snapshot.append(bool(_st._maintenance_mode))
+            return tmp_path / "snap"
+
+        db_dir = tmp_path / "surreal_db"
+        db_dir.mkdir(exist_ok=True)
+        args = _make_args(db_path=str(db_dir))
+
+        try:
+            with patch.multiple(
+                _MODULE,
+                _run_systemctl=MagicMock(return_value=None),
+                _maintenance_http=_nightly_maintenance,
+                create_snapshot=_snapshot,
+                prune_snapshots=MagicMock(return_value=[]),
+                cmd_vacuum_impl=_vacuum,
+                StorageEngine=MagicMock(return_value=MagicMock()),
+                run_nightly_consolidation=MagicMock(return_value={"merged": 0}),
+                Settings=MagicMock(return_value=SimpleNamespace(DB_PATH=str(db_dir))),
+                configure_logging=MagicMock(),
+                default_retention=MagicMock(return_value=3),
+            ):
+                mod.main(args)
+
+            assert len(flag_at_snapshot) == 2, (
+                f"expected pre-backup (step 2) + post-backup (step 5) snapshots, "
+                f"got {len(flag_at_snapshot)}"
+            )
+            assert flag_at_snapshot[0] is True, "step 2 ran without the nightly's gate engaged"
+            assert flag_at_snapshot[1] is True, (
+                "step 5 (post-backup) ran with the gate OFF — the step-4 vacuum "
+                "exited a maintenance window it did not open"
+            )
+            assert _st._maintenance_mode is False, "step 7 did not clear the flag"
+        finally:
+            _st._maintenance_mode = False
+            _st._maintenance_deadline = None

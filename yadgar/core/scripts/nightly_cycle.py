@@ -3,19 +3,23 @@
 Runs once and exits. systemd timer (PR-1b) handles scheduling.
 
 Lifecycle (steps 1-7):
-  1. Stop yadgar CORE only. Backend stays up to serve HTTP consolidation + backup.
+  1. ENTER maintenance mode in core (v5.72 / #62 — core is no longer stopped; an
+     in-process flag gates every MCP tool so clients keep their connection).
+     Backend stays up to serve HTTP consolidation + backup.
   2. Pre-backup snapshot (label="nightly-pre") — logical HTTP export via backend_url
-     (GET /export), taken while core is down and backend is still up.
+     (GET /export), taken with core write-gated and the backend still up.
   3. Consolidation — StorageEngine opens in SERVER mode (YADGAR_DB_URL is set;
      backend is up). ConsolidationScheduler.run_nightly_consolidation() runs via
      the live HTTP connection — no embedded file lock, no surrealkv format skew.
      Fixes BC-D1: eliminates the embedded SDK 2.0.0 vs server 3.0.5 format error.
   4. Vacuum — cmd_vacuum_impl manages the backend within step 4 (export/swap/import),
-     restarts core, runs check_invariants.
+     runs check_invariants.  task:0113: it engages the SAME maintenance flag, sees
+     previous=True, and therefore does NOT release it here — steps 5-6 still need
+     the gate.
   5. Post-backup snapshot (label="nightly-post") — another logical HTTP export.
      Backend stays up; no second stop needed.
   6. Prune old snapshots.
-  7. Start yadgar CORE. Backend was never stopped, so only core needs starting.
+  7. EXIT maintenance mode. Core was never stopped, so only the flag is cleared.
 
 Exit codes:
   0  — full success
@@ -32,6 +36,7 @@ When multiple steps fail the FIRST failing step's exit code is returned.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -85,6 +90,14 @@ _SYSTEMCTL_BACKOFF_SEC = 0.5
 # Default URL for the running yadgar core process (port from settings.PORT = 8765).
 _CORE_URL = os.environ.get("YADGAR_CORE_URL", "http://127.0.0.1:8765")
 
+# task:0113 — self-heal deadline for the nightly's own maintenance window.
+# Steps 1-7 span backup + consolidation + vacuum + backup + prune, so this is
+# deliberately far larger than the vacuum's own MAINTENANCE_TTL_SEC.  It is a
+# backstop for a SIGKILLed cycle, not a schedule: 6h is long enough that a
+# healthy-but-slow night never trips it.  Not a knob — nothing sensible tunes
+# it, and a per-deploy value would just be another way to wedge the engine.
+_NIGHTLY_MAINTENANCE_TTL_SEC = 21600.0
+
 # ---------------------------------------------------------------------------
 # Maintenance mode HTTP helper (v5.50.3)
 #
@@ -94,10 +107,18 @@ _CORE_URL = os.environ.get("YADGAR_CORE_URL", "http://127.0.0.1:8765")
 # ---------------------------------------------------------------------------
 
 
-def _maintenance_http(action: str, core_url: str = _CORE_URL) -> None:
+def _maintenance_http(
+    action: str, core_url: str = _CORE_URL, ttl_seconds: float | None = None
+) -> None:
     """POST /api/control/maintenance/{action} to the running core.
 
     action: "enter" or "exit"
+
+    ``ttl_seconds`` (task:0113) is the self-heal deadline for the window this
+    enter opens.  The nightly's is deliberately LARGER than the vacuum's: it
+    holds the gate across backup + consolidation + vacuum + backup, and its
+    step-4 vacuum nests inside it (the enter handler widens rather than
+    overwrites, so the inner window can never shorten this one).
 
     Raises on HTTP error or connection failure — caller converts to exit codes.
     Auth token from YADGAR_MCP_AUTH_TOKEN if set (same as MCP clients use).
@@ -105,7 +126,7 @@ def _maintenance_http(action: str, core_url: str = _CORE_URL) -> None:
     Patch seam: tests replace this function via patch.multiple(_MODULE, ...).
     """
     url = f"{core_url}/api/control/maintenance/{action}"
-    data = b"{}"
+    data = json.dumps({"ttl_seconds": ttl_seconds} if ttl_seconds else {}).encode()
     headers: dict[str, str] = {"Content-Type": "application/json"}
     token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
     if token:
@@ -245,7 +266,7 @@ def _step_stop_core(core_url: str = _CORE_URL) -> int:
     _log_start("stop_core")
     t0 = time.monotonic()
     try:
-        _maintenance_http("enter", core_url)
+        _maintenance_http("enter", core_url, ttl_seconds=_NIGHTLY_MAINTENANCE_TTL_SEC)
         _log_step("stop_core", "ok", (time.monotonic() - t0) * 1000)
     except Exception as exc:
         record_exception("nightly_cycle.stop_core", exc)

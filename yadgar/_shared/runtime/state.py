@@ -170,3 +170,16 @@ _plan_file_hashes: dict[str, str] = {}
 # and /exit. Nightly cycle flips this instead of stop/starting the daemon so
 # connected MCP clients don't lose their connection.
 _maintenance_mode: bool = False
+
+# Monotonic deadline for the window above, or None = no expiry (task:0113).
+# ``cmd_vacuum_impl``'s finally covers returns, exceptions and sys.exit — not
+# SIGKILL / OOM-kill / power loss, and post-task:0111 the core no longer restarts
+# during a vacuum, so a clear-on-start reset would never fire.  This deadline is
+# the only backstop that fires unconditionally: ``_app.py::_maintenance()``
+# treats an expired one as "not in maintenance" and self-clears, loudly.
+_maintenance_deadline: float | None = None
+
+# Monotonic timestamp of the enter that opened the current window (task:0113).
+# Only used to say HOW LONG the gate was held in the TTL-expiry WARN — a fired
+# TTL means a vacuum died without cleanup and the operator needs that number.
+_maintenance_entered_at: float | None = None

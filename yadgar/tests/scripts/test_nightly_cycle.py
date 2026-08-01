@@ -152,7 +152,7 @@ class TestHappyPath:
             # v5.50.3: core no longer uses systemctl; backend still does
             call_order.append(f"systemctl_{action}_{unit}")
 
-        def _maint_http(action, url):
+        def _maint_http(action, url, **_kw):
             # v5.50.3: core stop/start replaced by maintenance HTTP
             call_order.append(f"maintenance_{action}")
 
@@ -297,7 +297,7 @@ class TestHappyPath:
 
         maint_calls = []
 
-        def _maint_http(action, url):
+        def _maint_http(action, url, **_kw):
             maint_calls.append(action)
 
         mock_sched = MagicMock()
@@ -340,7 +340,7 @@ class TestStopCoreFailure:
         """
         mod = _import_module()
 
-        def _maint_fail(action, url):
+        def _maint_fail(action, url, **_kw):
             if action == "enter":
                 raise ConnectionError("core unreachable")
 
@@ -716,7 +716,7 @@ class TestPostBackupQuiesced:
 
         call_order = []
 
-        def _maint_http(action, url):
+        def _maint_http(action, url, **_kw):
             call_order.append(("maintenance", action))
 
         snap_count = [0]
@@ -765,7 +765,7 @@ class TestPostBackupQuiesced:
 
         maint_calls = []
 
-        def _maint_http(action, url):
+        def _maint_http(action, url, **_kw):
             maint_calls.append(action)
 
         mock_sched = MagicMock()
