@@ -27,7 +27,7 @@ in-container ``sd_notify.ready()`` emitted LAST, after the full engine set
 so gating on it would mark the docker unit active EARLIER than podman does.
 
 Design + rejected alternatives:
-``docs/plans/runtime-agnostic-systemd-readiness-2026-08-01.md``.
+``docs/plans/archive/runtime-agnostic-systemd-readiness-2026-08-01.md``.
 Cross-generator guard: ``yadgar/tests/scripts/test_runtime_readiness_cross_generator.py``.
 """
 

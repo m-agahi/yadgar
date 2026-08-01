@@ -25,7 +25,7 @@ The docker answer is ``Type=exec`` plus a bounded ``ExecStartPost=`` health gate
 for the purpose of Before=/After= ordering constraints"* — which is the same
 ordering guarantee ``Type=notify`` buys on podman.
 
-Design: ``docs/plans/runtime-agnostic-systemd-readiness-2026-08-01.md``.
+Design: ``docs/plans/archive/runtime-agnostic-systemd-readiness-2026-08-01.md``.
 
 Same structural template as its siblings ``test_admin_token_cross_generator.py``
 (ADR-0180), ``test_backend_db_mount_cross_generator.py`` (Bug 11) and
