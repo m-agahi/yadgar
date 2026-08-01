@@ -115,6 +115,11 @@ def resolve_host_exec(script: str, module: str, override: str | None = None) -> 
     different binaries: ``yadgar-nightly-cycle`` is a console script and there
     is no ``yadgar nightly-cycle`` subcommand. Collapsing them into one code
     path is the tidy-up this signature exists to prevent.
+
+    ONE deliberate divergence from the shell: ``generate_systemd.sh:138`` tests
+    only ``[[ -x … ]]``, which a DIRECTORY named ``yadgar`` also satisfies — that
+    would render an ``ExecStart`` naming a directory. The ``is_file()`` here
+    rejects that. Behaviour is identical for every real install.
     """
     if override:
         return override

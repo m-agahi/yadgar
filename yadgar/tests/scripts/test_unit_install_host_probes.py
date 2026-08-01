@@ -74,7 +74,7 @@ def test_pipx_shape_is_preferred_over_path(monkeypatch, tmp_path):
     local = _executable(tmp_path / ".local" / "bin" / "yadgar")
     elsewhere = tmp_path / "usr-local-bin"
     _executable(elsewhere / "yadgar")
-    monkeypatch.setenv("PATH", str(elsewhere))
+    monkeypatch.setenv("PATH", _bin_dir_with_python3(elsewhere))
     assert resolve_host_exec("yadgar", "yadgar", None) == str(local)
 
 
