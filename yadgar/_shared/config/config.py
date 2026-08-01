@@ -573,6 +573,21 @@ class Settings(BaseSettings):
     # Migrations can be slower than operational reads (lock contention, backfill queries).
     MIGRATION_HTTP_TIMEOUT_SEC: int = 30
 
+    # Task 0027c: bounded wait-for-backend at CORE startup (core_init_engines).
+    # StorageEngine.__init__ runs _init_schema() inline and issues HTTP at once,
+    # so a core started while the backend is down used to crashloop on
+    # Restart=on-failure. The gate polls the backend /health for this many
+    # seconds before failing cleanly. MUST stay strictly below the core unit's
+    # TimeoutStartSec (asserted by test_retry_budget_is_inside_core_unit_timeout)
+    # — a gate that outlives the start timeout turns a slow start into a
+    # crashloop. 0 disables the gate entirely (escape hatch).
+    # NOT a cold-boot mechanism: After=yadgar-backend.service is.
+    BACKEND_READY_WAIT_SEC: int = 60
+    # Fixed interval between /health probes. Fixed, not exponential — the wait is
+    # for another process to finish loading a model, so backoff only adds latency
+    # after readiness. 2s matches daemon.py's existing health poll.
+    BACKEND_READY_POLL_SEC: float = 2.0
+
     # vacuum settings
     # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
     # scripts/cleanup-backups.sh after a successful vacuum.

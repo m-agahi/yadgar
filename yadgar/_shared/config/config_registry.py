@@ -512,6 +512,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_BACKEND_IMPORT_TIMEOUT_SEC", "300", "int"),
     ConfigEntry("YADGAR_MIGRATION_HTTP_TIMEOUT_SEC", "30", "int"),
     ConfigEntry("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "90", "int"),
+    # core startup readiness gate (task 0027c)
+    ConfigEntry("YADGAR_BACKEND_READY_WAIT_SEC", "60", "int"),
+    ConfigEntry("YADGAR_BACKEND_READY_POLL_SEC", "2.0", "float"),
     # circuit breaker + rerank concurrency
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3", "int"),
