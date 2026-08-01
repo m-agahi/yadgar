@@ -88,15 +88,17 @@ def profile_unit_spec(profile: ContainerProfile, dev: bool = False) -> UnitSpec:
         backend_image=f"{_base}:{_backend_version()}",
         backend_data_mount=str(_paths.DATA_DIR),
         backend_embed_port=DEFAULT_BACKEND_EMBED_PORT,
-        backend_surreal_port=8000,
+        # Same knob the shell generator has always honoured (generate_systemd.sh:40-44):
+        # :8000 is commonly occupied by a dev server, and this arm publishes SurrealDB
+        # for the first time in task:0110 — without the override it would be a NEW
+        # start failure on exactly those hosts.
+        backend_surreal_port=int(os.environ.get("YADGAR_BACKEND_SURREAL_PORT", "8000")),
         backend_cpus="1.0",
         backend_memory="4g",
         backend_memory_swap="4g",
         backend_queue_base="/queue-data",
         backend_queue_mount=profile.volume_name,
-        hf_cache_mount=(
-            f"    -v {hf_cache}:/home/yadgar/.cache/huggingface \\\n" if hf_cache.exists() else None
-        ),
+        hf_cache_dir=str(hf_cache) if hf_cache.exists() else None,
         core_container=profile.container_name,
         core_image=profile.image_name,
         core_data_mount=profile.volume_name,
@@ -104,6 +106,10 @@ def profile_unit_spec(profile: ContainerProfile, dev: bool = False) -> UnitSpec:
         core_cpus=str(profile.cpus),
         core_memory=memory,
         core_memory_swap=memory,
+        # §1.3 regression item: without it the container SIGKILL window is the
+        # runtime default, not the 30s the templates have always given the queue
+        # flush. Unconditional — it is a fix, not an arm-specific value.
+        stop_timeout=30,
         suffix="-dev" if dev else "",
     )
 

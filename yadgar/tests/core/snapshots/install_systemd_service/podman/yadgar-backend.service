@@ -1,41 +1,65 @@
 [Unit]
-Description=Yadgar Backend — SurrealDB and Embedding Service
+Description=Yadgar Backend (SurrealDB + Embeddings)
 After=network.target
+# SurrealDB (:8000) is published on LOOPBACK ONLY. The nightly-cycle and vacuum
+# units execute on the HOST (the vacuum flow interleaves phases needing different
+# daemon states and the container image has no systemctl), and both default
+# YADGAR_DB_URL to http://127.0.0.1:<port>. Without this publish they render,
+# activate, fire, and connection-refuse. Mirrors flake.nix's shipped posture.
+# Port is overridable via YADGAR_BACKEND_SURREAL_PORT at render time.
+#
+# ADR-0180: the ExecStart below MUST forward YADGAR_MCP_AUTH_TOKEN. The backend
+# SERVES /admin/* and compares the presented bearer against its own copy of that
+# variable (_require_admin_token in yadgar/backend/embed_service/embed_service.py);
+# with it unset the gate fails closed and every admin call — seed, consolidate,
+# dbsize, recall, restore, viz, read-query — is rejected before doing any work.
+# EnvironmentFile below loads it into the UNIT's env; that does not reach the
+# CONTAINER without an explicit -e. Cross-generator guard:
+# yadgar/tests/scripts/test_admin_token_cross_generator.py.
 
 [Service]
-Type=notify
-NotifyAccess=all
-TimeoutStartSec=180
+# task:0105 — podman-only. DOCKER_HOST names podman's rootful socket, which the
+# local podman CLI ignores (it reads CONTAINER_HOST) but the docker-compat shim
+# path may use. On docker it points the docker CLI at a socket that does not
+# exist, so every Exec* below fails; omitted there so docker uses its own
+# default socket / active context. The renderer emits the line on podman only.
+# task:0110 / ADR-0190: this unit now carries a readiness contract. The Type below
+# renders `notify` for podman, whose sd_notify proxy emits READY=1 on the first
+# HEALTHY healthcheck, and `exec` for docker, which gets a bounded /health gate
+# instead. It was `simple` on both until now — under which systemd called the unit
+# started the instant `podman run` FORKED, so the core's start budget had the
+# backend's cold model load inside it (ADR-0187's premise, false on this path).
+Environment=DOCKER_HOST=unix:///run/podman/podman.sock
 EnvironmentFile=/home/testuser/.config/yadgar/secrets.env
-ExecStartPre=-podman network create --driver bridge yadgar-net
 ExecStartPre=-podman stop yadgar-backend
 ExecStartPre=-podman rm yadgar-backend
-ExecStart=podman run --rm \
-    --name yadgar-backend \
+ExecStartPre=-podman network create yadgar-net
+ExecStart=podman run --name yadgar-backend --rm --security-opt label=disable --user root \
     --network yadgar-net \
-    --cpus 1.0 \
-    --memory 4g \
-    --memory-swap 4g \
-    --user root \
     --sdnotify=healthy \
     --health-cmd "curl -f http://localhost:8001/health || exit 1" \
     --health-start-period=60s \
+    -p 127.0.0.1:8000:8000 \
+    -p 127.0.0.1:8001:8001 \
     -v /home/testuser/.local/share/yadgar:/data \
     -v yadgar-data:/queue-data \
-    -p 8001:8001 \
+    -v /tmp/yadgar-fixture-home/.cache/huggingface:/home/yadgar/.cache/huggingface \
     -e SURREAL_USER=${SURREAL_USER} \
     -e SURREAL_PASS=${SURREAL_PASS} \
-    -e YADGAR_RW_USER=${YADGAR_RW_USER:-} \
-    -e YADGAR_RW_PASS=${YADGAR_RW_PASS:-} \
-    -e YADGAR_RO_USER=${YADGAR_RO_USER:-} \
-    -e YADGAR_RO_PASS=${YADGAR_RO_PASS:-} \
+    -e YADGAR_RW_USER=${YADGAR_RW_USER} \
+    -e YADGAR_RW_PASS=${YADGAR_RW_PASS} \
+    -e YADGAR_RO_USER=${YADGAR_RO_USER} \
+    -e YADGAR_RO_PASS=${YADGAR_RO_PASS} \
     -e YADGAR_QUEUE_BASE=/queue-data \
     -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} \
-    -v /tmp/yadgar-fixture-home/.cache/huggingface:/home/yadgar/.cache/huggingface \
+    --memory 4g --cpus 1.0 --memory-swap 4g --stop-timeout 30 \
     docker.io/openfantasy/yadgar-backend:9.9.9
 ExecStop=podman stop yadgar-backend
 Restart=on-failure
-RestartSec=10
+RestartSec=5
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=180
 
 [Install]
 WantedBy=default.target

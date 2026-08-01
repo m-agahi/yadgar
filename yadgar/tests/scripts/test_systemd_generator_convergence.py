@@ -72,11 +72,9 @@ ALL_UNITS = (
 # parity assertion run — and leaving it in PENDING once it converges fails
 # test_pending_units_still_diverge. Both directions are gated.
 
-PARITY_UNITS: frozenset[str] = frozenset()
+PARITY_UNITS: frozenset[str] = frozenset({"yadgar.service", "yadgar-backend.service"})
 
 PENDING_UNITS: dict[str, str] = {
-    "yadgar.service": "Stage B — the divergent two",
-    "yadgar-backend.service": "Stage B — the divergent two",
     "yadgar.target": "Stage C — greenfield (duplicate Wants=)",
     "yadgar-vacuum.service": "Stage C — greenfield (host CLI, 30min span)",
     "yadgar-vacuum.timer": "Stage C — greenfield ([Timer], local time)",
@@ -104,7 +102,75 @@ class Delta:
 # text elsewhere. A unit with no entry must match byte-for-byte. Exactly TWO
 # units may ever carry entries (see test_only_the_divergent_two_carry_deltas) —
 # a third is the tripwire that the port is drifting rather than converging.
-INTENTIONAL_DELTAS: dict[str, list[Delta]] = {}
+INTENTIONAL_DELTAS: dict[str, list[Delta]] = {
+    "yadgar-backend.service": [
+        Delta(
+            r"^(Type=(simple|notify|exec)|NotifyAccess=all|TimeoutStartSec=180)$",
+            "D4 of the plan: the converged backend takes the READINESS shape. The template "
+            "was Type=simple on both runtimes, under which systemd calls the unit started the "
+            "instant `podman run` forks — so the core's TimeoutStartSec=120 had the backend's "
+            "cold model load inside it, and ADR-0187's 'the backend is already HEALTHY' premise "
+            "was false on the documented install path. 180s is flake.nix's field-proven budget "
+            "for this identical unit shape.",
+        ),
+        Delta(
+            r"^    --sdnotify=healthy \\$",
+            "The podman half of the readiness shape: podman's sd_notify proxy emits READY=1 on "
+            "the first HEALTHY healthcheck, which is what makes Type=notify meaningful here.",
+        ),
+        Delta(
+            r"^    --health-(cmd|start-period)",
+            "The container healthcheck --sdnotify=healthy reports on. The 60s grace covers "
+            "cold model load; the backend's /health is 200 only when db_ok and engine_loaded.",
+        ),
+        Delta(
+            r"^    -v \S+huggingface:/home/yadgar/\.cache/huggingface \\$",
+            "Part of the UNION the Python generator carried and the templates lacked: binding "
+            "the host HuggingFace cache stops the backend re-downloading models on every "
+            "container replacement. Emitted only when the host cache directory exists.",
+        ),
+        Delta(
+            r"^ExecStartPost=curl .*127\.0\.0\.1:8001/health$",
+            "The docker half of the readiness shape (ADR-0185). Docker has no sd_notify proxy "
+            "at all, so a bounded /health poll is the only way to give After= the same ordering "
+            "guarantee Type=notify buys on podman. 75 x 2s = 150s, inside the 180s budget.",
+        ),
+        Delta(
+            r"^# (default socket / active context|This unit stays Type=simple|make conditional"
+            r"|task:0110 / ADR-0190|renders `notify` for podman|HEALTHY healthcheck, and `exec`"
+            r"|instead\. It was `simple`|started the instant `podman run` FORKED"
+            r"|backend's cold model load inside it)",
+            "Prose that the render itself contradicts. The template asserted 'This unit stays "
+            "Type=simple on BOTH runtimes'; after D4 that is false of the very unit carrying "
+            "the comment. Replaced with what the readiness shape is and why, plus the ADR-0187 "
+            "correction. A comment that lies about its own unit is worse than no comment.",
+        ),
+    ],
+    "yadgar.service": [
+        Delta(
+            r"^Description=Yadgar Memory Engine / MCP Server",
+            "Plan §1.4: the template's '(Docker)' suffix is unconditional, so every podman "
+            "install got a unit describing itself as Docker. The runtime is visible in the "
+            "Exec lines; the Description does not need to guess at it.",
+        ),
+        Delta(
+            r"^# (generate_systemd\.sh either STRIPS|The renderer emits each runtime-conditional)",
+            "The column-0 marker mechanism ADR-0185 introduced is retired by ADR-0190 — the "
+            "runtime conditional becomes a Python branch. The sentence describing sed markers "
+            "would be false of a unit this renderer produced.",
+        ),
+        Delta(
+            r"^# (Docker readiness gate\.|and podman above\.|applies; curl's --retry"
+            r"|listening yet\", --retry-all-errors|\(--fail makes a 5xx|45 \* 2s = 90s"
+            r"|start timeout would turn|/health \(readiness\) not|emitted last, after the full"
+            r"|unit active EARLIER)",
+            "Plan §1.4: only the ExecStartPost line carried the column-0 @DOCKER_ONLY@ marker, "
+            "so the ten-line block explaining it survived the podman render as an orphan — "
+            "documentation for a directive that arm does not have. The renderer emits the "
+            "rationale with the directive it explains, so it is still there on docker.",
+        ),
+    ],
+}
 
 
 def _snapshot(runtime: str, unit: str) -> str:
@@ -120,7 +186,7 @@ def _rendered(runtime: str) -> dict[str, str]:
         secrets_env_file=SNAPSHOT_ENV["YADGAR_SECRETS_ENV_FILE"],
         backend_image=SNAPSHOT_ENV["YADGAR_BACKEND_IMAGE"],
         surreal_port=int(SNAPSHOT_ENV["YADGAR_BACKEND_SURREAL_PORT"]),
-        hf_cache_mount="    -v /home/testuser/.cache/huggingface:/home/yadgar/.cache/huggingface \\\n",
+        hf_cache_dir="/home/testuser/.cache/huggingface",
     )
     return {name: render_unit(u) for name, u in build_units(spec).items()}
 
@@ -190,6 +256,28 @@ def test_converged_units_match_the_baseline_modulo_intentional_deltas(runtime):
             f"{runtime}/{unit}: {len(unmatched)} diff line(s) with no INTENTIONAL_DELTAS entry:\n"
             + "\n".join(f"  {line}" for line in unmatched)
         )
+
+
+@pytest.mark.parametrize(
+    ("runtime", "expected", "forbidden"),
+    [("podman", "Type=notify", "Type=exec"), ("docker", "Type=exec", "Type=notify")],
+)
+def test_setup_arm_backend_takes_the_right_readiness_type(runtime, expected, forbidden):
+    """D4's headline change, pinned per arm rather than left to a blanket delta.
+
+    The backend readiness delta's matcher approves any ``Type=`` value, so a
+    podman render that came out ``Type=exec`` (nothing can gate readiness there —
+    podman's sd_notify proxy is the whole mechanism) would satisfy it. Nothing
+    else covers this render: the readiness cross-generator suite's Python arm
+    exercises ``install_systemd_service``, not ``setup_unit_spec``.
+    """
+    text = _rendered(runtime)["yadgar-backend.service"]
+    assert f"\n{expected}\n" in text, f"setup-arm backend on {runtime} is not {expected}"
+    assert f"\n{forbidden}\n" not in text, f"setup-arm backend on {runtime} carries {forbidden}"
+    assert "\nType=simple\n" not in text, (
+        "the converged backend must never be Type=simple — systemd would call it "
+        "started the instant the container command forks (ADR-0190 D4)"
+    )
 
 
 def test_no_intentional_delta_entry_is_stale():

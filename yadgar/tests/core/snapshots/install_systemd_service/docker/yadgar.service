@@ -1,35 +1,70 @@
 [Unit]
-Description=Yadgar Memory Engine — MCP Core Server
-Wants=yadgar-backend.service
+Description=Yadgar Memory Engine / MCP Server
 After=network.target yadgar-backend.service
+# Wants=, NOT Requires= (task:0111 / ADR-0188). Requires= propagates STOP: a
+# `systemctl --user stop yadgar-backend` — which every vacuum does to quiesce
+# the surrealkv store — would take the core down with it and drop every
+# connected MCP session. Wants= keeps the pull-in (starting core still starts
+# the backend); After= above keeps the start ordering. Only the stop
+# propagation is dropped, which is the whole point.
+Wants=yadgar-backend.service
 
 [Service]
+# task:0105 — readiness is runtime-conditional. The Type below renders `notify`
+# for podman (its default sdnotify=container mode passes NOTIFY_SOCKET into the
+# container and forwards the daemon's own READY=1) and `exec` for docker, which
+# has no sd_notify proxy of any kind — nothing would ever send READY=1 there and
+# the unit would sit until TimeoutStartSec. The docker-only ExecStartPost below
+# replaces that signal with a bounded /health poll; per man systemd.service,
+# "the execution of ExecStartPost= is taken into account for the purpose of
+# Before=/After= ordering constraints", which is the guarantee notify buys.
+# The renderer emits each runtime-conditional line only on the arm that needs it.
 Type=exec
-TimeoutStartSec=120
+# DOCKER_HOST is a podman-only belt: it names podman's rootful socket, which the
+# local podman CLI ignores (it reads CONTAINER_HOST) but the docker-compat shim
+# path may use. On docker it is not merely useless, it points the docker CLI at a
+# socket that does not exist, so every Exec* in this unit fails — hence omitted
+# entirely there, letting docker use its own default socket / active context.
 EnvironmentFile=/home/testuser/.config/yadgar/secrets.env
+# upgrade.env carries YADGAR_IMAGE_TAG; leading '-' makes missing file non-fatal (first install).
 EnvironmentFile=-/home/testuser/.local/state/yadgar/upgrade.env
 ExecStartPre=-docker stop yadgar
 ExecStartPre=-docker rm yadgar
-ExecStart=docker run --rm \
-    --name yadgar \
+ExecStart=docker run --name yadgar --rm --security-opt label=disable --user root \
     --network yadgar-net \
-    --cpus 1.0 \
-    --memory 2048m \
-    --memory-swap 2048m \
-    --user root \
+    -p 127.0.0.1:8765:8765 \
+    -p 127.0.0.1:42069:42069 \
     -v yadgar-data:/data \
-    -p 8765:8765 \
     -e YADGAR_DB_URL=http://yadgar-backend:8000 \
     -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
+    -e YADGAR_HOST=0.0.0.0 \
+    -e YADGAR_PORT=8765 \
     -e YADGAR_DATA_DIR=/data \
+    -e YADGAR_DB_USER=${YADGAR_RW_USER} \
+    -e YADGAR_DB_PASS=${YADGAR_RW_PASS} \
+    -e YADGAR_RW_USER=${YADGAR_RW_USER} \
+    -e YADGAR_RW_PASS=${YADGAR_RW_PASS} \
     -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} \
-    -e YADGAR_DB_USER=${YADGAR_RW_USER:-${YADGAR_DB_USER:-${SURREAL_USER}}} \
-    -e YADGAR_DB_PASS=${YADGAR_RW_PASS:-${YADGAR_DB_PASS:-${SURREAL_PASS}}} \
-    docker.io/openfantasy/yadgar:5.170.15
+    --memory 2048m --cpus 1.0 --memory-swap 2048m --stop-timeout 30 \
+    docker.io/openfantasy/yadgar:9.9.9
+# Docker readiness gate. `curl` is resolved from the unit's $PATH, like `mkdir`
+# and docker above. No shell wrapper, so systemd's own `$` expansion never
+# applies; curl's --retry does the polling. --retry-connrefused covers "port not
+# listening yet", --retry-all-errors covers "listening but not healthy yet"
+# (--fail makes a 5xx an error, which plain --retry would not retry).
+# 45 * 2s = 90s, inside the TimeoutStartSec=120 below — a gate that outlives the
+# start timeout would turn a slow start into a Restart=on-failure crashloop.
+# /health (readiness) not /health/live (liveness, ADR-0019): podman's READY=1 is
+# emitted last, after the full engine set, so gating on liveness would mark this
+# unit active EARLIER than the podman arm does.
 ExecStartPost=curl --fail --silent --show-error --output /dev/null --retry 45 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:8765/health
 ExecStop=docker stop yadgar
+# ExecReload: reserved for future config-only reload; no-op until orchestrator wires it.
+ExecReload=/bin/true
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=45
 
 [Install]
 WantedBy=default.target

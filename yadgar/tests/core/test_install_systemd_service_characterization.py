@@ -48,18 +48,26 @@ def _written_units(monkeypatch, runtime: str) -> dict[str, str]:
     import yadgar.core.daemon.systemd as systemd_mod
     from yadgar.core.daemon.profiles import _prod_profile
 
-    for var in ("YADGAR_IMAGE", "YADGAR_CONTAINER", "YADGAR_VOLUME", "YADGAR_BACKEND_CONTAINER"):
+    for var in ("YADGAR_CONTAINER", "YADGAR_VOLUME", "YADGAR_BACKEND_CONTAINER"):
         monkeypatch.delenv(var, raising=False)
+    # Pinned, not deleted: the default core image embeds the CORE version, which
+    # the release cascade bumps — an unpinned fixture would break on every bump.
+    monkeypatch.setenv("YADGAR_IMAGE", "docker.io/openfantasy/yadgar:9.9.9")
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", runtime)
     monkeypatch.setenv("YADGAR_BACKEND_IMAGE", "docker.io/openfantasy/yadgar-backend:ignored")
     monkeypatch.setattr(systemd_mod, "_container_memory_mb", lambda: FIXTURE_MEMORY_MB)
     monkeypatch.setattr(systemd_mod, "_backend_version", lambda: FIXTURE_BACKEND_VERSION)
 
-    import yadgar._shared.paths.paths as _paths_mod
-
-    monkeypatch.setattr(_paths_mod, "DATA_DIR", FIXTURE_DATA, raising=False)
-    monkeypatch.setattr(_paths_mod, "STATE_DIR", FIXTURE_STATE, raising=False)
-    monkeypatch.setattr(_paths_mod, "SECRETS_ENV_PATH", FIXTURE_SECRETS, raising=False)
+    # Pin the XDG constants through the ENVIRONMENT, never by setattr on
+    # yadgar._shared.paths.paths: that module resolves its constants through a
+    # PEP-562 __getattr__, so monkeypatch records the RESOLVED value as the "old"
+    # one and undo() writes it back as a real attribute — permanently shadowing
+    # the resolver for every later test in the session. (Observed: it made
+    # test_daemon_cli_fixes_v5_49_1's --env-file assertion fail only when this
+    # file ran first.)
+    monkeypatch.setenv("YADGAR_DATA_DIR", str(FIXTURE_DATA))
+    monkeypatch.setenv("XDG_STATE_HOME", str(FIXTURE_STATE.parent))
+    monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(FIXTURE_SECRETS))
 
     # The hf-cache mount is conditional on the directory existing; create it so the
     # fixture always covers the mounted arm. The absent arm is covered by
@@ -103,11 +111,11 @@ def test_install_systemd_service_matches_characterization_fixture(monkeypatch, r
 
 
 def test_no_hf_cache_mount_when_absent():
-    """``hf_cache_mount=None`` must drop the mount line entirely, not render an empty one."""
+    """``hf_cache_dir=None`` must drop the mount line entirely, not render an empty one."""
     from yadgar.core.daemon.unit_model import render_unit
     from yadgar.core.daemon.units import build_backend_unit
     from yadgar.tests.core.test_unit_model import minimal_spec
 
-    text = render_unit(build_backend_unit(minimal_spec(hf_cache_mount=None)))
+    text = render_unit(build_backend_unit(minimal_spec(hf_cache_dir=None)))
     assert "huggingface" not in text
     assert "\\\n\n" not in text, "a dropped optional line must not leave a blank continuation"
