@@ -5,6 +5,7 @@ Leaf module — no imports from other yadgar.server.* modules.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from mcp.server import MCPServer
@@ -490,6 +491,8 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
     import functools  # noqa: PLC0415
     import time as _time  # noqa: PLC0415
 
+    _maint_logger = logging.getLogger(__name__)
+
     def _emit_metrics(_t0: float, _status: str, result) -> None:
         try:
             from yadgar._shared.observability.metrics import (  # noqa: PLC0415
@@ -524,15 +527,36 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
         endpoints are not behind ``_instrumented``, so they are NOT gated —
         they degrade visibly on their own.  Gating them is deliberately out of
         scope (plan 0111 §9).
+
+        task:0113 — TTL self-heal.  ``cmd_vacuum_impl`` releases the gate in a
+        ``finally``, which covers returns, exceptions and ``sys.exit`` but NOT
+        SIGKILL / OOM-kill / power loss.  With 0111 the core no longer restarts
+        during a vacuum, so a clear-on-start reset would never fire — an expired
+        deadline is the only backstop that does.  Expiry is LOUD: it means a
+        vacuum died without cleanup.
         """
         import yadgar._shared.runtime.state as _st_ref  # noqa: PLC0415 — read live attr
 
-        if _st_ref._maintenance_mode:
-            return {
-                "error": "maintenance",
-                "message": "yadgar maintenance in progress (vacuum); retry shortly",
-            }
-        return None
+        if not _st_ref._maintenance_mode:
+            return None
+        _deadline = _st_ref._maintenance_deadline
+        if _deadline is not None and _time.monotonic() >= _deadline:
+            _held = _time.monotonic() - (_st_ref._maintenance_entered_at or _deadline)
+            _st_ref._maintenance_mode = False
+            _st_ref._maintenance_deadline = None
+            _st_ref._maintenance_entered_at = None
+            _maint_logger.warning(
+                "maintenance TTL expired after %.0fs — clearing the write-gate. "
+                "The job that engaged it (vacuum or nightly) did not release it: "
+                "it was almost certainly SIGKILLed. Check the vacuum unit.",
+                _held,
+                extra={"component": "app", "action": "maintenance_ttl_expired"},
+            )
+            return None
+        return {
+            "error": "maintenance",
+            "message": "yadgar maintenance in progress (vacuum); retry shortly",
+        }
 
     @functools.wraps(func)
     def _instrumented(*args, **kwargs):

@@ -635,21 +635,76 @@ async def control_restart_handler(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
+@observe(tier="stage")
+async def _maintenance_ttl(request: Request) -> float | None:
+    """Read a positive ``ttl_seconds`` from the request body, else None.
+
+    Tolerant by design: a missing/empty/unparseable body means "no TTL", which
+    is the pre-task:0113 behaviour.  A malformed TTL must never 500 the one
+    endpoint an operator uses to un-wedge a read-only engine.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return None
+    if not isinstance(body, dict):
+        return None
+    # Single `except Exception` on purpose: ruff (target-version py314) rewrites a
+    # tuple except into PEP-758's parenthesis-free form, which older interpreters
+    # — including the one some pre-commit hooks resolve — cannot even AST-parse,
+    # and scripts/check_route_literals.py silently drops an unparseable file from
+    # its route table.  A malformed TTL is a no-TTL either way.
+    try:
+        ttl = float(body.get("ttl_seconds") or 0)
+    except Exception:
+        return None
+    return ttl if ttl > 0 else None
+
+
 @observe(tier="boundary")
 async def maintenance_enter_handler(request: Request) -> JSONResponse:
-    """POST /api/control/maintenance/enter — enter nightly maintenance mode.
+    """POST /api/control/maintenance/enter — enter maintenance mode.
 
     Sets _maintenance_mode=True so every MCP tool returns a fast structured error
     instead of touching the DB. Core stays UP — no MCP disconnect for clients.
+
+    Body (task:0113, both optional):
+      ``ttl_seconds`` — self-heal deadline; omitted/blank/<=0 keeps the historic
+      no-expiry behaviour so a caller that has not been updated cannot regress.
+
+    Returns ``previous`` — the state BEFORE this call.  Windows nest: nightly
+    enters at step 1 and exits at step 7, and its step-4 vacuum enters the same
+    flag.  Without ``previous`` the inner caller would un-gate the outer one
+    mid-cycle.  Reported on the enter response rather than via a separate GET:
+    one round trip, and no TOCTOU between a read and a write.
+
+    A nested enter NEVER shortens the outer window — the deadline is widened to
+    the later of the two (and stays None if either side asked for no expiry).
     """
     import yadgar._shared.runtime.state as _st  # noqa: PLC0415 — late import, write live attr
 
+    ttl = await _maintenance_ttl(request)
+    previous = bool(_st._maintenance_mode)
+    deadline = (time.monotonic() + ttl) if ttl else None
+    if previous and (_st._maintenance_deadline is None or deadline is None):
+        deadline = None
+    elif previous:
+        deadline = max(_st._maintenance_deadline, deadline)
+    else:
+        _st._maintenance_entered_at = time.monotonic()
     _st._maintenance_mode = True
+    _st._maintenance_deadline = deadline
     logger.info(
         "maintenance mode entered",
-        extra={"component": "control", "action": "maintenance_enter", "outcome": "ok"},
+        extra={
+            "component": "control",
+            "action": "maintenance_enter",
+            "outcome": "ok",
+            "previous": previous,
+            "ttl_seconds": ttl,
+        },
     )
-    return JSONResponse({"status": "maintenance", "maintenance_mode": True})
+    return JSONResponse({"status": "maintenance", "maintenance_mode": True, "previous": previous})
 
 
 @observe(tier="boundary")
@@ -658,10 +713,15 @@ async def maintenance_exit_handler(request: Request) -> JSONResponse:
 
     Sets _maintenance_mode=False, restoring normal MCP tool dispatch.
     The nightly cycle calls this in a finally block to guarantee un-wedge.
+
+    Clears the TTL deadline too (task:0113): a surviving deadline would make the
+    next no-TTL enter inherit an already-expired window and self-clear at once.
     """
     import yadgar._shared.runtime.state as _st  # noqa: PLC0415 — late import, write live attr
 
     _st._maintenance_mode = False
+    _st._maintenance_deadline = None
+    _st._maintenance_entered_at = None
     logger.info(
         "maintenance mode exited",
         extra={"component": "control", "action": "maintenance_exit", "outcome": "ok"},
