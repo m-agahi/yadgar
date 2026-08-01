@@ -1792,7 +1792,11 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "vacuum",
     },
     "vacuum_snapshot_retention": {
-        "desc": "Number of pre-vacuum DB snapshots to retain; older ones are pruned after a successful vacuum (default 3).",
+        "desc": "Number of pre-vacuum DB snapshots to retain; older ones are pruned on every vacuum exit path (default 2). Each snapshot is a full-size copy of the DB. Values below 1 are clamped to 1 — a vacuum never leaves the host without a rollback anchor.",
+        "section": "vacuum",
+    },
+    "vacuum_snapshot_max_age_days": {
+        "desc": "Age backstop for surreal_db.pre-vacuum-* snapshots (task:0046): reap any snapshot older than this many days. Default 14. The NEWEST snapshot is exempt unconditionally, so this can never take the host below one rollback anchor.",
         "section": "vacuum",
     },
     "vacuum_auto_enabled": {

@@ -70,6 +70,8 @@ from yadgar.core.ops import ServiceController, detect_service_mode
 from yadgar.core.vacuum.phases import (
     _atomic_swap,
     _dir_bytes,
+    _reap_export_pairs,
+    _reap_snapshots_by_age,
     _recover_interrupted_swap,
     _run_cleanup_script,
     _vacuum_export,
@@ -113,15 +115,20 @@ _CHECK_INVARIANTS_PATH = "/api/check_invariants"
 _MAINTENANCE_ENTER_PATH = "/api/control/maintenance/enter"
 _MAINTENANCE_EXIT_PATH = "/api/control/maintenance/exit"
 
-# Car 0046: number of PRIOR vacuum_export_* pairs (raw + filtered) to retain as
-# a backstop against unbounded accumulation.  ADR-0076 D2 deletes the CURRENT
+# Car 0046: number of vacuum_export_* RUNS (raw + filtered) to retain as a
+# backstop against unbounded accumulation.  ADR-0076 D2 deletes the CURRENT
 # run's own pair on a retained swap but intentionally KEEPS it on any abort
 # (forensics) — that retention had no ceiling, and 1.4 GB of scratch built up
-# on the workstation before a manual sweep.  2 prior pairs (4 files) is enough
-# to diagnose a fix-in-progress (this run's failure plus the one before it)
-# without keeping every historical failure forever; older pairs carry no
-# additional diagnostic value once the two most recent are on hand.
-_VACUUM_EXPORT_KEEP_RUNS = 2
+# on the workstation before a manual sweep.
+#
+# Lowered 2 -> 1 by task:0046: the scratch is DIAGNOSTIC, not recovery,
+# and one pair is ~206 MB against a 224 MB live DB.  Note the window means
+# different things per outcome, and the difference is correct: on a retained
+# swap `_delete_export_scratch` has already removed THIS run's pair, so the 1
+# retained run is the PREVIOUS one; on an abort this run's own pair is the
+# newest and is what the window holds — which is exactly what a debugging
+# session reads.
+_VACUUM_EXPORT_KEEP_RUNS = 1
 
 # Car 0092: named SKIP reasons.  A skip is exit 0 and reclaims nothing, so the
 # reason is the only thing telling an operator what to do about it — no usable
@@ -154,17 +161,78 @@ def _reap_stale_pre_vacuum_snapshots(yadgar_home: Path, keep_n: int) -> None:
     accumulated snapshots silently converted vacuum into a permanent no-op with
     a green timer.  Pruning keeps the ``keep_n`` MOST RECENT, so the aborting
     run's own snapshot always survives for forensics.
+
+    task:0046 — the ``max(1, keep_n)`` clamp is the NEVER-ZERO FLOOR, and it
+    lives HERE rather than in the settings resolver on purpose: a snapshot is the
+    last-resort rollback anchor for ADR-0090's chronic unclean close, so no
+    caller — a hostile ``YADGAR_VACUUM_SNAPSHOT_RETENTION=0``, a future in-repo
+    call site, a test — may reach the wipe-everything case.
     """
-    _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", keep_n)
+    _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", max(1, keep_n))
 
 
 @observe(tier="stage")
 def _reap_stale_export_scratch(yadgar_home: Path) -> None:
-    """Car 0046: bound vacuum_export_* accumulation to _VACUUM_EXPORT_KEEP_RUNS
-    prior pairs.  Called on every ``_vacuum_finalize`` exit path — the previous
-    "kept forever on abort" retention (ADR-0076 D2) had no ceiling.
+    """Car 0046: bound vacuum_export_* to _VACUUM_EXPORT_KEEP_RUNS whole RUNS.
+
+    Delegates to the pair-aware reaper: retention is expressed in runs, ordered
+    by the stamp in the filename, so a partial write can neither eat a slot nor
+    leave a half-pair behind.  See :func:`~yadgar.core.vacuum.phases._reap_export_pairs`.
     """
-    _run_cleanup_script(yadgar_home, "vacuum_export_*", _VACUUM_EXPORT_KEEP_RUNS * 2)
+    _reap_export_pairs(yadgar_home, _VACUUM_EXPORT_KEEP_RUNS)
+
+
+@observe(tier="stage")
+def _reap_vacuum_residue(yadgar_home: Path, settings) -> None:  # type: ignore[no-untyped-def]
+    """The ONE vacuum-residue reap site (task:0046 A).  NEVER raises.
+
+    ``_reap_stale_export_scratch`` was called from three sites, all inside
+    ``_vacuum_finalize``, which only a run that reaches Phase 3 success ever
+    sees; ``_reap_stale_pre_vacuum_snapshots`` was separately patched onto three
+    abort ``return``\\ s by Car 0092.  Eleven exit paths, two reapers, two
+    different subsets covered — and a host that keeps aborting (container-only,
+    low-disk) accumulated export pairs without bound.  Called from
+    ``cmd_vacuum_impl``'s ``finally``, this cannot be missed by a new ``return``
+    and — unlike any return-site patch — also covers exceptions.
+
+    It does not need to know whether the run succeeded: retention is keep-newest,
+    so the aborting run's own artefacts are the newest and survive for forensics
+    (ADR-0076 D2), while ``_vacuum_finalize`` has already dropped this run's own
+    pair on the success path.
+
+    Car 0092's low-disk call site carried the reasoning "a wedged host reaches
+    the low-disk branch BECAUSE stale .pre-vacuum-* dirs ate the headroom; prune
+    before skipping so a later run can proceed."  That intent is about the NEXT
+    run finding headroom, not this one recovering, so running it from the
+    ``finally`` — milliseconds later, after the skip row is logged — satisfies it
+    exactly.  Recorded here so the deletion of that call is not read as a
+    regression of the Car 0092 wedge fix.
+
+    Each step gets its OWN try/except, per ``_restart_services_after_abort``: a
+    bare sequence stops at the first raise, and a raising reap must not skip the
+    steps after it — nor propagate into the caller's ``finally`` and skip
+    ``sensitive_lock.release()``.
+    """
+    keep_n = _snapshot_keep_n(settings)
+    max_age = int(getattr(settings, "VACUUM_SNAPSHOT_MAX_AGE_DAYS", 14))
+    _reap_step("pre-vacuum snapshots", _reap_stale_pre_vacuum_snapshots, yadgar_home, keep_n)
+    _reap_step("snapshot age-backstop", _reap_snapshots_by_age, yadgar_home, max_age)
+    _reap_step("export scratch", _reap_stale_export_scratch, yadgar_home)
+
+
+@observe(tier="stage")
+def _reap_step(label: str, reap, *args) -> None:  # type: ignore[no-untyped-def]
+    """Run one reap, swallowing and naming any failure.  See _reap_vacuum_residue."""
+    try:
+        reap(*args)
+    except Exception as exc:
+        print(f"[vacuum] WARNING: residue reap ({label}) failed: {exc}", file=sys.stderr)
+
+
+def _snapshot_keep_n(settings) -> int:  # type: ignore[no-untyped-def]
+    """Configured ``.pre-vacuum`` window size.  The FLOOR is not applied here —
+    see :func:`_reap_stale_pre_vacuum_snapshots`."""
+    return int(getattr(settings, "VACUUM_SNAPSHOT_RETENTION", 2))
 
 
 # ---------------------------------------------------------------------------
@@ -1085,7 +1153,6 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     old_path: Path,
     snapshot_path: Path,
     svc: ServiceController,
-    keep_n: int = 3,
     raw_path: Path | None = None,
     filtered_path: Path | None = None,
     db_path: Path | None = None,
@@ -1128,10 +1195,12 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     violations, unchanged.
 
     ``raw_path`` / ``filtered_path``: the vacuum export scratch files written by
-    ``_vacuum_export`` (ADR-0076 D2).  This run's own pair is deleted whenever
-    the swap is RETAINED; kept on the rollback paths for forensics, but bounded
-    to ``_VACUUM_EXPORT_KEEP_RUNS`` PRIOR pairs on every outcome (Car 0046) —
-    the old unbounded "kept on failure" retention accumulated 1.4 GB.
+    ``_vacuum_export`` (ADR-0076 D2).  This run's own pair is deleted here
+    whenever the swap is RETAINED, and kept on the rollback paths for forensics.
+    Bounding the ACCUMULATION is no longer this function's job — task:0046 moved
+    every residue reap (export scratch and ``.pre-vacuum`` snapshots alike) to
+    the single ``finally`` in ``cmd_vacuum_impl``, because finalize is reachable
+    only after Phase 3 succeeds and eight other exit paths leaked past it.
 
     ``db_path``: the canonical DB path (rollback target). Defaults to
     ``yadgar_home / "surreal_db"``.
@@ -1159,7 +1228,6 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
         )
         # Age-backstop still runs — failure does not exempt stale .old dirs.
         _reap_stale_old_dirs(yadgar_home, old_path)
-        _reap_stale_export_scratch(yadgar_home)
         return False
 
     # Wait up to 30s for API layer readiness before check_invariants.
@@ -1188,7 +1256,6 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
             backend_url,
         )
         _reap_stale_old_dirs(yadgar_home, old_path)
-        _reap_stale_export_scratch(yadgar_home)
         return False
 
     # ADVISORY gate (task:0045 D2) — logged, never a rollback trigger.  See the
@@ -1211,18 +1278,14 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     # The swap is RETAINED — both hard gates passed.  Retire the previous
     # canonical (this is the reclaim: .old holds the entire pre-vacuum DB) and
     # drop the export scratch.  The .pre-vacuum snapshot remains the last-resort
-    # recovery anchor (pruned by keep_n below).
+    # recovery anchor (its window is pruned by the caller's residue reap).
     print(f"[vacuum] removing previous DB dir: {old_path}", flush=True)
     shutil.rmtree(str(old_path), ignore_errors=True)
     _delete_export_scratch(raw_path, filtered_path)
-    _reap_stale_export_scratch(yadgar_home)  # Car 0046: bound any older leaked pairs
 
     # D1: Age-backstop — reap stale .old dirs older than VACUUM_OLD_MAX_AGE_DAYS.
     # Runs unconditionally (retained OR rolled back).  current_old exempted.
     _reap_stale_old_dirs(yadgar_home, old_path)
-
-    # Prune pre-vacuum snapshots (Car 0092: the abort paths now do this too).
-    _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
 
     # The swap was RETAINED — the return tracks retention, NOT check_invariants.
     # Returning ci_ok here would re-arm the exact bug this change removes: a
@@ -1787,6 +1850,10 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
             f"(job={held.get('job')} pid={held.get('pid')}) — skipping this vacuum.",
             file=sys.stderr,
         )
+        # DELIBERATELY before the try below, so the residue reap does NOT run:
+        # a live vacuum owns the in-flight export scratch and .pre-vacuum
+        # snapshot, and reaping under its lock is precisely the race this lock
+        # exists to prevent (task:0046).
         return 0  # skip — not a failure; canonical untouched
     # -- Write-gate (task:0113) — engage BEFORE the count baseline, hold through
     # the swap.  Every entry path (viz, MCP tool, timer, nightly step 4, manual)
@@ -1818,7 +1885,14 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
                 args, settings, backend_url, db_path, yadgar_home, started_at, started_ts
             )
         finally:
+            # Both of these are non-raising BY CONSTRUCTION (each wraps its own
+            # steps in try/except), which is what makes it safe to run them as a
+            # plain sequence: a bare `finally` stops at the first raise.  Order
+            # is un-gate the engine, then reap, then release the lock last — a
+            # reap failure must not leave the engine gated, and the reap must
+            # still hold the lock so it cannot race an incoming vacuum.
             _maintenance_release(entered)
+            _reap_vacuum_residue(yadgar_home, settings)
     finally:
         sensitive_lock.release()
 
@@ -1866,8 +1940,6 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     before_bytes = _dir_bytes(db_path)
     print(f"[vacuum] DB size before: {before_bytes / 1024 / 1024:.1f} MB ({db_path})", flush=True)
 
-    keep_n: int = getattr(settings, "VACUUM_SNAPSHOT_RETENTION", 3)
-
     # -- Non-destructive preflights (Car 0092): surreal binary, then free space. --
     # MUST run BEFORE the export / service stop / full-size copytree below.
     # Phase 3 spawns a throwaway `surreal start` host-side, and on a container
@@ -1879,9 +1951,10 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     # so a skip logged with the backend down would be half-silent.
     skip = _preflight_skip_reason(yadgar_home, before_bytes)
     if skip is not None:
-        # A wedged host reaches the low-disk branch BECAUSE stale .pre-vacuum-*
-        # dirs ate the headroom; prune before skipping so a later run can proceed.
-        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
+        # The .pre-vacuum prune that used to sit here (a wedged host reaches the
+        # low-disk branch BECAUSE stale snapshots ate the headroom) now runs from
+        # cmd_vacuum_impl's finally — see _reap_vacuum_residue for why that still
+        # satisfies the Car 0092 wedge fix.
         _log_vacuum_skip(backend_url, started_ts, started_at, before_bytes, *skip)
         return 0  # skip is not a failure — canonical untouched
 
@@ -1920,9 +1993,8 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         # rendered before the Requires=→Wants= flip still cascades, and there
         # core IS down here (task:0027a).
         _restart_services_after_abort(svc)
-        # Car 0092: a partial copytree may have left a .pre-vacuum dir behind;
-        # finalize (the only pre-0092 prune site) is unreachable from here.
-        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
+        # A partial copytree may have left a .pre-vacuum dir behind; the reap in
+        # cmd_vacuum_impl's finally bounds it (task:0046).
         return 1
 
     # -- Phase 3: side-build → verify → atomic swap → start on compacted DB. --
@@ -1933,11 +2005,10 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         backend_url, filtered_path, db_path, yadgar_home, source_counts, svc
     )
     if old_path is None:
-        # Car 0092: the ONLY .pre-vacuum prune used to live in _vacuum_finalize,
-        # which this return never reaches — so every aborted night parked another
-        # full-size DB copy on disk.  This run's own snapshot is the newest and
-        # survives the keep_n prune (forensics); older ones go.
-        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
+        # This run's own snapshot AND its export pair are the newest, so both
+        # survive the keep-newest reap in cmd_vacuum_impl's finally (forensics);
+        # older ones go.  Pre-0046 that reap was reachable only from finalize, so
+        # every aborted night parked another full-size DB copy on disk.
         return 1
 
     # -- Finalize --
@@ -1947,7 +2018,6 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         old_path,
         snapshot_path,
         svc,
-        keep_n,
         raw_path=raw_path,
         filtered_path=filtered_path,
         db_path=db_path,

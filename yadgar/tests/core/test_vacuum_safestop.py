@@ -167,9 +167,7 @@ class TestFinalizeRollback:
                 return_value=(coherent, set() if coherent else {"surreal_db.old-20260709_191332"}),
             ),
         ):
-            result = _vacuum_finalize(
-                "http://127.0.0.1:8080", home, old, snap, svc, keep_n=3, db_path=db
-            )
+            result = _vacuum_finalize("http://127.0.0.1:8080", home, old, snap, svc, db_path=db)
         return result, home, db, old, svc
 
     def _assert_rolled_back(self, result, home, db, old, svc):
