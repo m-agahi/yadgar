@@ -1,0 +1,86 @@
+[Unit]
+Description=Yadgar Memory Engine / MCP Server (Docker)
+After=network.target yadgar-backend.service
+# Wants=, NOT Requires= (task:0111 / ADR-0188). Requires= propagates STOP: a
+# `systemctl --user stop yadgar-backend` — which every vacuum does to quiesce
+# the surrealkv store — would take the core down with it and drop every
+# connected MCP session. Wants= keeps the pull-in (starting core still starts
+# the backend); After= above keeps the start ordering. Only the stop
+# propagation is dropped, which is the whole point.
+Wants=yadgar-backend.service
+# The -v /tmp/yadgar-parity-fixture/state bind below projects the container's
+# YADGAR_VACUUM_TRIGGER_PATH write onto the host, where
+# yadgar-vacuum-trigger.path watches for it. Both halves are required: the env
+# var has no code default, so unset means "no watcher on this surface" and
+# vacuum_now() refuses rather than writing into a void.
+# /tmp/yadgar-parity-fixture/state must be spelled IDENTICALLY here and in that unit's PathExists=.
+
+[Service]
+# task:0105 — readiness is runtime-conditional. The Type below renders `notify`
+# for podman (its default sdnotify=container mode passes NOTIFY_SOCKET into the
+# container and forwards the daemon's own READY=1) and `exec` for docker, which
+# has no sd_notify proxy of any kind — nothing would ever send READY=1 there and
+# the unit would sit until TimeoutStartSec. The docker-only ExecStartPost below
+# replaces that signal with a bounded /health poll; per man systemd.service,
+# "the execution of ExecStartPost= is taken into account for the purpose of
+# Before=/After= ordering constraints", which is the guarantee notify buys.
+# generate_systemd.sh either STRIPS a column-0 marker prefix or DELETES the line.
+Type=exec
+# DOCKER_HOST is a podman-only belt: it names podman's rootful socket, which the
+# local podman CLI ignores (it reads CONTAINER_HOST) but the docker-compat shim
+# path may use. On docker it is not merely useless, it points the docker CLI at a
+# socket that does not exist, so every Exec* in this unit fails — hence omitted
+# entirely there, letting docker use its own default socket / active context.
+EnvironmentFile=/home/testuser/.config/yadgar/secrets.env
+# upgrade.env carries YADGAR_IMAGE_TAG; leading '-' makes missing file non-fatal (first install).
+EnvironmentFile=-%h/.local/state/yadgar/upgrade.env
+ExecStartPre=-docker stop yadgar
+ExecStartPre=-docker rm yadgar
+# Pre-create the state dir HERE, not only at render time in generate_systemd.sh.
+# podman does NOT auto-create a missing `-v` host source — it fails the run with
+# `statfs <path>: no such file or directory`. So if the dir is gone at start
+# (user cleaned ~/.local/state, or a purge ran between install and boot) the CORE
+# daemon would fail to start, not just the vacuum trigger. Mirrors the flake,
+# which pre-creates it in this same unit's ExecStartPre for the same reason.
+# `mkdir` is resolved from the unit's $PATH, like docker above.
+ExecStartPre=mkdir -p /tmp/yadgar-parity-fixture/state/triggers
+ExecStart=docker run --name yadgar --rm --security-opt label=disable --user root \
+    --network yadgar-net \
+    -p 127.0.0.1:8765:8765 \
+    -p 127.0.0.1:42069:42069 \
+    -v /home/testuser/.local/share/yadgar:/data \
+    -v /tmp/yadgar-parity-fixture/state:/root/.local/state/yadgar \
+    -e YADGAR_DB_URL=http://yadgar-backend:8000 \
+    -e YADGAR_VACUUM_TRIGGER_PATH=/root/.local/state/yadgar/triggers/vacuum_requested \
+    -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
+    -e YADGAR_HOST=0.0.0.0 \
+    -e YADGAR_PORT=8765 \
+    -e YADGAR_DATA_DIR=/data \
+    -e YADGAR_DB_USER=${YADGAR_RW_USER} \
+    -e YADGAR_DB_PASS=${YADGAR_RW_PASS} \
+    -e YADGAR_RW_USER=${YADGAR_RW_USER} \
+    -e YADGAR_RW_PASS=${YADGAR_RW_PASS} \
+    -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} \
+    --memory 1g --cpus 1 --stop-timeout 30 \
+    ${YADGAR_IMAGE_TAG}
+# Docker readiness gate. `curl` is resolved from the unit's $PATH, like `mkdir`
+# and docker above. No shell wrapper, so systemd's own `$` expansion never
+# applies; curl's --retry does the polling. --retry-connrefused covers "port not
+# listening yet", --retry-all-errors covers "listening but not healthy yet"
+# (--fail makes a 5xx an error, which plain --retry would not retry).
+# 45 * 2s = 90s, inside the TimeoutStartSec=120 below — a gate that outlives the
+# start timeout would turn a slow start into a Restart=on-failure crashloop.
+# /health (readiness) not /health/live (liveness, ADR-0019): podman's READY=1 is
+# emitted last, after the full engine set, so gating on liveness would mark this
+# unit active EARLIER than the podman arm does.
+ExecStartPost=curl --fail --silent --show-error --output /dev/null --retry 45 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:8765/health
+ExecStop=docker stop yadgar
+# ExecReload: reserved for future config-only reload; no-op until orchestrator wires it.
+ExecReload=/bin/true
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=Weekly Yadgar vacuum
+
+[Timer]
+# LOCAL time, matching flake.nix — the two systemd surfaces stay byte-comparable.
+# (The macOS plist is local too, since launchd's StartCalendarInterval has no UTC
+# option, so the weekly vacuum agrees on all three surfaces.)
+OnCalendar=Sun *-*-* 04:00:00
+RandomizedDelaySec=30min
+# A missed window (machine asleep/off) fires at next activation. The stamp lives
+# under ~/.local/share/systemd/timers/ and is timer machinery independent of the
+# enablement symlink, so it still applies when the timer is pulled in by
+# yadgar.target's Wants= rather than enabled. uninstall.sh clears it.
+Persistent=true
+
+[Install]
+# NOT the activation mechanism — see yadgar.target. Kept so a user who runs
+# `systemctl --user enable yadgar-vacuum.timer` is not told the unit has no
+# installation config.
+WantedBy=timers.target

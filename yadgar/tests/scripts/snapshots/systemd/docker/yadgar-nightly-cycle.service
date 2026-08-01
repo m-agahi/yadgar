@@ -1,0 +1,28 @@
+[Unit]
+Description=Yadgar nightly cycle (backup → consolidate → vacuum → backup)
+After=yadgar.service yadgar-backend.service
+
+[Service]
+# Runs on the HOST for the same reason yadgar-vacuum.service does — the cycle
+# includes a vacuum phase that stops and starts the backend.
+Type=oneshot
+# Leading '-' — a missing secrets file must not wedge the timer.
+EnvironmentFile=-/home/testuser/.config/yadgar/secrets.env
+# Consolidation opens StorageEngine in SERVER mode against this URL, reached via
+# yadgar-backend.service's loopback publish.
+Environment=YADGAR_DB_URL=http://127.0.0.1:8000
+# Route embeddings through the backend's embed service rather than an in-process
+# SentenceTransformer — a pipx-installed host yadgar has no [ml] extra.
+Environment=YADGAR_EMBED_URL=http://127.0.0.1:8001
+Environment=YADGAR_DATA_DIR=/home/testuser/.local/share/yadgar
+# Invoked BARE. `yadgar-nightly-cycle` is a console script, NOT a `yadgar`
+# subcommand — there is no `yadgar nightly-cycle`, and nightly_cycle.main()
+# has no argparse at all (it reads the environment above). Any flag added here
+# is either an argparse error or silently discarded.
+#
+# No LD_LIBRARY_PATH wrapper: numpy's .so problem is a nix-store artifact
+# (flake.nix), not something an ordinary distro's pipx/system python has.
+ExecStart=/home/testuser/.local/bin/yadgar-nightly-cycle
+TimeoutStartSec=1h
+
+# No [Install]: started by yadgar-nightly-cycle.timer.

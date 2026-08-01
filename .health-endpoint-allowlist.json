@@ -12,12 +12,6 @@
   "yadgar/core/cli/version.py:32": {
     "rationale": "`yadgar version` CLI command displays db/embed/uptime fields from the readiness payload to the operator. /health/live's payload lacks those fields, so readiness is required here."
   },
-  "yadgar/core/daemon/systemd.py:128": {
-    "rationale": "task:0105's docker readiness gate for the BACKEND embed service (port 8001), which exposes no /health/live liveness variant at all — ADR-0019's liveness split is scoped to the core daemon only. Identical reasoning to daemon.py:705's _embed_health_ok."
-  },
-  "yadgar/core/daemon/systemd.py:130": {
-    "rationale": "task:0105's docker readiness gate for the CORE unit, standing in for podman's sd_notify proxy, which docker does not have. It must approximate READY=1 — emitted LAST, after the full engine set (bootstrap.py). /health/live goes green as soon as the HTTP server binds, so gating on liveness would mark the docker unit active EARLIER than the podman arm does, a semantic regression. Readiness is genuinely required."
-  },
   "yadgar/core/daemon/daemon.py:414": {
     "rationale": "YadgarDaemon.status() CLI command reports full db/model/drainer detail to the operator (including the degraded-detail body on 503). This genuinely needs the readiness payload, not liveness."
   },
@@ -41,5 +35,11 @@
   },
   "yadgar/core/vacuum/__init__.py:1239": {
     "rationale": "_check_backend_reachable preflight-checks the SurrealDB backend is up before vacuum starts. Backend has no /health/live variant; readiness is the only probe available for this dependency."
+  },
+  "yadgar/core/daemon/units.py:283": {
+    "rationale": "task:0105's docker readiness gate for the BACKEND embed service (port 8001), which exposes no /health/live liveness variant at all — ADR-0019's liveness split is scoped to the core daemon only. Identical reasoning to daemon.py:705's _embed_health_ok."
+  },
+  "yadgar/core/daemon/units.py:410": {
+    "rationale": "task:0105's docker readiness gate for the CORE unit, standing in for podman's sd_notify proxy, which docker does not have. It must approximate READY=1 — emitted LAST, after the full engine set (bootstrap.py). /health/live goes green as soon as the HTTP server binds, so gating on liveness would mark the docker unit active EARLIER than the podman arm does, a semantic regression. Readiness is genuinely required."
   }
 }
