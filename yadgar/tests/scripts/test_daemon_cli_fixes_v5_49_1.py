@@ -16,6 +16,7 @@ Tests T1–T16 cover the 11 bugs fixed in this hotfix:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import types
 from pathlib import Path
@@ -412,12 +413,19 @@ def test_generated_unit_upgrade_env_path_is_xdg_state(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_generated_backend_unit_is_type_notify(tmp_path):
-    """Bug 8: backend unit must have Type=notify."""
+def _render_backend_unit(tmp_path, monkeypatch, runtime: str) -> str:
+    """The generated BACKEND unit text for *runtime*.
+
+    task:0105 pins the runtime explicitly. These tests used to inherit whatever
+    the developer's host happened to have installed, which made a podman-shaped
+    assertion pass or fail by accident of environment — a strengthening, not a
+    weakening: the podman arm below still runs every assertion it ever did.
+    """
     from yadgar.core.daemon import YadgarDaemon
 
+    monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", runtime)
     service_dir = tmp_path / ".config" / "systemd" / "user"
-    service_dir.mkdir(parents=True)
+    service_dir.mkdir(parents=True, exist_ok=True)
 
     daemon = YadgarDaemon()
     with patch("yadgar.core.daemon.daemon.Path.home", return_value=tmp_path):
@@ -425,7 +433,12 @@ def test_generated_backend_unit_is_type_notify(tmp_path):
 
     backend_path = Path(result.get("backend_service", result.get("db_service", "")))
     assert backend_path.exists(), "Backend service file not found"
-    content = backend_path.read_text()
+    return backend_path.read_text()
+
+
+def test_generated_backend_unit_is_type_notify(tmp_path, monkeypatch):
+    """Bug 8: backend unit must have Type=notify (on podman — task:0105)."""
+    content = _render_backend_unit(tmp_path, monkeypatch, "podman")
 
     assert "Type=notify" in content, (
         f"Type=notify not found in backend unit. Content:\n{content[:500]}"
@@ -435,24 +448,35 @@ def test_generated_backend_unit_is_type_notify(tmp_path):
     )
 
 
+def test_generated_backend_unit_on_docker_is_type_exec_with_a_health_gate(tmp_path, monkeypatch):
+    """task:0105: docker has no sd_notify proxy, so Bug 8's shape cannot apply there.
+
+    Type=simple stays forbidden on BOTH arms — Type=exec satisfies the original
+    assertion — but the READY=1 source has to be replaced, not just removed.
+    """
+    content = _render_backend_unit(tmp_path, monkeypatch, "docker")
+
+    assert "Type=exec" in content, f"docker backend unit is not Type=exec:\n{content[:500]}"
+    assert "Type=notify" not in content, (
+        "docker backend unit is Type=notify — docker sets no NOTIFY_SOCKET in the "
+        f"container, so nothing ever sends READY=1:\n{content[:500]}"
+    )
+    assert "Type=simple" not in content, (
+        f"Type=simple still present in backend unit. Content:\n{content[:500]}"
+    )
+    assert re.search(r"^ExecStartPost=curl .*--retry .*/health", content, re.MULTILINE), (
+        f"docker backend unit has no ExecStartPost= readiness gate:\n{content[:500]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # T13: generated backend unit has --sdnotify=healthy AND --health-cmd curl
 # ---------------------------------------------------------------------------
 
 
-def test_generated_backend_unit_has_sdnotify_healthy_and_health_cmd(tmp_path):
+def test_generated_backend_unit_has_sdnotify_healthy_and_health_cmd(tmp_path, monkeypatch):
     """Bug 8: backend unit ExecStart must include --sdnotify=healthy + --health-cmd curl."""
-    from yadgar.core.daemon import YadgarDaemon
-
-    service_dir = tmp_path / ".config" / "systemd" / "user"
-    service_dir.mkdir(parents=True)
-
-    daemon = YadgarDaemon()
-    with patch("yadgar.core.daemon.daemon.Path.home", return_value=tmp_path):
-        result = daemon.install_systemd_service()
-
-    backend_path = Path(result.get("backend_service", result.get("db_service", "")))
-    content = backend_path.read_text()
+    content = _render_backend_unit(tmp_path, monkeypatch, "podman")
 
     assert "--sdnotify=healthy" in content, (
         "--sdnotify=healthy not found in backend unit ExecStart."
@@ -461,6 +485,25 @@ def test_generated_backend_unit_has_sdnotify_healthy_and_health_cmd(tmp_path):
     assert "curl -f http://localhost:8001/health" in content, (
         "curl healthcheck command not found in backend unit ExecStart."
     )
+
+
+def test_generated_backend_health_cmd_is_a_single_quoted_argv_word(tmp_path, monkeypatch):
+    """task:0105: --health-cmd takes ONE argument, and systemd Exec= is not a shell.
+
+    Unquoted, ``--health-cmd curl -f http://localhost:8001/health || exit 1``
+    splits into six argv words, so the runtime receives ``--health-cmd=curl``
+    followed by a bare ``-f`` — not a ``run`` flag on either podman or docker, so
+    the unit could not start at all. flake.nix, the NixOS generator, has always
+    passed it quoted as one element; this generator was the deviation. Both arms,
+    because ``docker run`` supports ``--health-cmd`` too — only ``--sdnotify`` is
+    podman-exclusive.
+    """
+    for runtime in ("podman", "docker"):
+        content = _render_backend_unit(tmp_path / runtime, monkeypatch, runtime)
+        assert '--health-cmd "curl -f http://localhost:8001/health || exit 1"' in content, (
+            f"{runtime}: --health-cmd is not a single quoted argv word — systemd "
+            f"would split it and the runtime would reject the stray flags:\n{content[:800]}"
+        )
 
 
 # ---------------------------------------------------------------------------

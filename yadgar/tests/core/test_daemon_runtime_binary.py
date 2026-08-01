@@ -497,6 +497,25 @@ _UNIT_DEP_RUNTIME = re.compile(
 )
 
 
+# task:0105 — a runtime-conditional line-prefix marker in a ``.in`` template
+# (``@PODMAN_ONLY@ExecStart=…``, which ``generate_systemd.sh`` either strips or
+# uses to delete the whole line). The marker sits BEFORE the directive name, so
+# both detectors above — which are anchored with ``^\s*`` — read a marked-up
+# ``ExecStart=docker run`` as an ordinary text line and report clean. Stripping
+# it first keeps the new template syntax from becoming a channel for exactly the
+# literal this guard exists to catch.
+_UNIT_LINE_MARKER = re.compile(r"^\s*@[A-Z_]+@")
+
+
+def _strip_unit_markers(line: str) -> str:
+    return _UNIT_LINE_MARKER.sub("", line)
+
+
+def _is_offending_unit_line(line: str) -> bool:
+    stripped = _strip_unit_markers(line)
+    return bool(_UNIT_EXEC_RUNTIME.search(stripped) or _UNIT_DEP_RUNTIME.search(stripped))
+
+
 def _offending_unit_lines(text: str) -> list[str]:
     """Return every line of *text* that names a container runtime as a unit directive.
 
@@ -504,11 +523,7 @@ def _offending_unit_lines(text: str) -> list[str]:
     contains ``docker.io/openfantasy/yadgar`` image refs on its ``ExecStart``
     continuation lines, and those are registry hostnames, not the runtime binary.
     """
-    return [
-        ln.strip()
-        for ln in text.splitlines()
-        if _UNIT_EXEC_RUNTIME.search(ln) or _UNIT_DEP_RUNTIME.search(ln)
-    ]
+    return [ln.strip() for ln in text.splitlines() if _is_offending_unit_line(ln)]
 
 
 def _render_units(tmp_path, monkeypatch) -> dict[str, str]:
@@ -829,11 +844,7 @@ def _literal_runtime_unit_directives(path: Path, *, root: Path | None = None) ->
         lines = path.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
         return []
-    return [
-        f"{label}:{i}"
-        for i, ln in enumerate(lines, 1)
-        if _UNIT_EXEC_RUNTIME.search(ln) or _UNIT_DEP_RUNTIME.search(ln)
-    ]
+    return [f"{label}:{i}" for i, ln in enumerate(lines, 1) if _is_offending_unit_line(ln)]
 
 
 def _all_literal_runtime_unit_directives() -> list[str]:
@@ -919,6 +930,38 @@ def test_unit_directive_guard_detects_a_hardcoded_podman_unit(tmp_path):
     assert _literal_runtime_unit_directives(regressed) == [
         "yadgar.service.in:2",
         "yadgar.service.in:5",
+    ]
+
+
+def test_unit_directive_guard_sees_through_runtime_conditional_markers(tmp_path):
+    """task:0105 — a marker-prefixed directive must NOT become a guard blind spot.
+
+    The runtime-conditional readiness work introduces line-prefix markers in the
+    ``.in`` templates (``@PODMAN_ONLY@`` / ``@DOCKER_ONLY@``), which
+    ``generate_systemd.sh`` either strips or uses to delete the whole line. The
+    marker sits BEFORE the directive name, so ``@DOCKER_ONLY@ExecStart=docker …``
+    does not match ``^\\s*Exec[A-Za-z]*=`` and the task:0104 detector reads it as
+    clean — a fresh channel for exactly the literal this guard exists to catch.
+
+    RED before the detector strips markers: returns ``[]``.
+    """
+    regressed = tmp_path / "yadgar.service.in"
+    regressed.write_text(
+        "[Unit]\n"
+        "@DOCKER_ONLY@After=docker.service\n"
+        "\n"
+        "[Service]\n"
+        "Type=@SERVICE_TYPE@\n"
+        "@PODMAN_ONLY@ExecStartPre=-podman rm yadgar\n"
+        "@DOCKER_ONLY@ExecStart=docker run --rm @IMAGE@\n"
+        "ExecStop=@RUNTIME@ stop yadgar\n",
+        encoding="utf-8",
+    )
+
+    assert _literal_runtime_unit_directives(regressed) == [
+        "yadgar.service.in:2",
+        "yadgar.service.in:6",
+        "yadgar.service.in:7",
     ]
 
 
