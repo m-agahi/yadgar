@@ -1,7 +1,13 @@
 [Unit]
 Description=Yadgar Memory Engine / MCP Server (Docker)
 After=network.target yadgar-backend.service
-Requires=yadgar-backend.service
+# Wants=, NOT Requires= (task:0111 / ADR-0188). Requires= propagates STOP: a
+# `systemctl --user stop yadgar-backend` — which every vacuum does to quiesce
+# the surrealkv store — would take the core down with it and drop every
+# connected MCP session. Wants= keeps the pull-in (starting core still starts
+# the backend); After= above keeps the start ordering. Only the stop
+# propagation is dropped, which is the whole point.
+Wants=yadgar-backend.service
 # The -v @STATE_DIR@ bind below projects the container's
 # YADGAR_VACUUM_TRIGGER_PATH write onto the host, where
 # yadgar-vacuum-trigger.path watches for it. Both halves are required: the env

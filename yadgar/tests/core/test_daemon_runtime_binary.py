@@ -599,12 +599,50 @@ def test_generated_units_declare_no_container_runtime_daemon_dependency(
         deps = [ln for ln in text.splitlines() if _UNIT_DEP_RUNTIME.search(ln)]
         assert deps == [], f"{name} unit depends on a container-runtime unit: {deps}"
 
-    # The dependency that IS real must survive: core must not start before backend.
+    # The dependency that IS real must survive: core must not start before
+    # backend.  "Real" means ORDERING, not lifecycle coupling (task:0111 /
+    # ADR-0188) — see test_core_unit_wants_backend_not_requires below for why
+    # the pull-in is Wants= rather than Requires=.
     core = units["core"]
-    assert "Requires=yadgar-backend.service" in core, "core lost its backend dependency"
+    assert "Wants=yadgar-backend.service" in core, "core lost its backend dependency"
     after = [ln for ln in core.splitlines() if ln.startswith("After=")]
     assert any("yadgar-backend.service" in ln for ln in after), (
         f"core lost its backend ordering: {after}"
+    )
+
+
+def test_core_unit_wants_backend_not_requires(podman_env, tmp_path, monkeypatch):
+    """task:0111 / ADR-0188 — the core must not be STOPPED with the backend.
+
+    ``Requires=`` propagates stop: ``systemctl --user stop yadgar-backend``
+    takes ``yadgar`` down with it, whoever asked.  That is the entire reason a
+    vacuum (which must stop the backend to quiesce the store) took the whole
+    memory engine down for ~68 s and dropped every connected MCP session.
+
+    ``Wants=`` keeps the pull-in (starting core still starts the backend) and
+    ``After=`` keeps boot ordering; only the stop propagation is dropped, which
+    is exactly the behaviour wanted.  The private nix module was decoupled this
+    way in v5.3.9; the in-repo generators never were.
+
+    ``After=`` is asserted here too: flipping the dependency must NOT change
+    START ordering, which ``After=`` plus the ADR-0185 readiness shape provide.
+    """
+    core = _render_units(tmp_path, monkeypatch)["core"]
+
+    assert "yadgar-backend" in core, (
+        "core unit names no backend dependency at all — this test would pass "
+        "vacuously on a unit that lost the relationship entirely"
+    )
+    requires = [ln for ln in core.splitlines() if ln.startswith("Requires=")]
+    assert not [ln for ln in requires if "yadgar-backend" in ln], (
+        f"core still Requires= the backend — stopping the backend stops the core: {requires}"
+    )
+    assert "Wants=yadgar-backend.service" in core, (
+        f"core lost the backend pull-in; it must Wants= the backend:\n{core}"
+    )
+    after = [ln for ln in core.splitlines() if ln.startswith("After=")]
+    assert any("yadgar-backend.service" in ln for ln in after), (
+        f"core lost its backend START ordering — Wants= alone does not order: {after}"
     )
 
 

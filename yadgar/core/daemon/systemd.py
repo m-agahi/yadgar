@@ -96,8 +96,13 @@ def _readiness_directives(runtime: str, core_port: int) -> dict[str, str]:
     for this identical unit shape on this identical runtime ("covers cold model
     load"). The core takes 120, matching ``flake.nix:427`` and the unconditional
     value in ``scripts/install/yadgar.service.in``; safe on podman because the
-    core unit's ``After=``/``Requires=yadgar-backend.service`` means the backend
-    is already HEALTHY, so backend model load is not inside the core's budget.
+    core unit's ``Wants=``/``After=yadgar-backend.service`` means the backend is
+    already HEALTHY, so backend model load is not inside the core's budget.
+    ``After=`` is what provides that — the dependency is ``Wants=`` rather than
+    ``Requires=`` (task:0111 / ADR-0188, so a backend stop does not cascade), and
+    ``Wants=`` still pulls the backend into the same start transaction.  The one
+    case that changed: a backend that FAILS to start no longer blocks the core
+    start, so the core can now come up against a cold backend.
     The podman arm has no ``ExecStartPost`` gate at all (readiness is a signal),
     so the gate-vs-timeout relation above is vacuous there.
 
@@ -229,7 +234,7 @@ WantedBy=default.target
     core_unit = f"""\
 [Unit]
 Description=Yadgar Memory Engine — MCP Core Server
-Requires=yadgar-backend{suffix}.service
+Wants=yadgar-backend{suffix}.service
 After=network.target yadgar-backend{suffix}.service
 
 [Service]

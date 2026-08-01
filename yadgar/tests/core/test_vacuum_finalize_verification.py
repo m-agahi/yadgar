@@ -19,9 +19,14 @@ Four defect classes are pinned here (task:0045 + task:0027a):
    fully reverted vacuum printed "complete … Saved: 2100 MB".  A rolled-back run
    must report ``saved_bytes == 0``.  This single assertion would have caught the
    live bug.
-4. **Core restarted on every abort path (task:0027a).**  ``svc.stop()`` stops BOTH
-   units; every phase-3 abort used to restart only the backend (the quiescence gate
-   restarted nothing), leaving the memory engine down until a human noticed.
+4. **Core restarted on every abort path (task:0027a).**  Phase 2 used to call
+   ``svc.stop()``, which stops BOTH units; every phase-3 abort used to restart only
+   the backend (the quiescence gate restarted nothing), leaving the memory engine
+   down until a human noticed.  task:0111 narrowed Phase 2 to ``stop_backend()``,
+   which makes that core start a BELT rather than a repair — still load-bearing on
+   any host whose units were rendered before the ``Requires=``→``Wants=`` flip, since
+   a generator change does not rewrite units already installed.  See
+   ``test_vacuum_core_stays_up.py`` for the new scope's own pins.
 """
 
 from __future__ import annotations
@@ -380,11 +385,18 @@ _ABORT_PATHS = {
 
 
 class TestAbortPathsRestartCore:
-    """``svc.stop()`` stopped BOTH units; an explicit systemd stop never self-heals.
+    """The Phase 2 stop can still take core down; an explicit systemd stop never
+    self-heals.
 
     Every abort between that stop and finalize must therefore start core again —
     backend first, then core.  The quiescence gate previously restarted nothing
     at all.
+
+    Post-task:0111 Phase 2 stops the BACKEND only, so on a regenerated host these
+    starts are idempotent no-ops.  They are NOT dead code: a host whose
+    ``yadgar.service`` still carries ``Requires=yadgar-backend.service`` cascades
+    on the backend stop exactly as before, and this is the only thing that brings
+    its core back.  These assertions therefore stay as-is.
     """
 
     @pytest.mark.parametrize("abort_id", sorted(_ABORT_PATHS))
@@ -392,8 +404,9 @@ class TestAbortPathsRestartCore:
         run = _run_vacuum(monkeypatch, extra_patches=_ABORT_PATHS[abort_id])
         assert run.exit_code != 0, f"{abort_id} must not report success"
         assert run.svc.start_yadgar.called, (
-            f"abort path {abort_id!r} left yadgar CORE stopped — svc.stop() stopped "
-            "both units and systemd will not auto-recover an explicit stop (task:0027a)"
+            f"abort path {abort_id!r} left yadgar CORE stopped — a pre-Wants= host "
+            "cascades core down with the backend stop and systemd will not "
+            "auto-recover an explicit stop (task:0027a / task:0111)"
         )
 
     @pytest.mark.parametrize("abort_id", sorted(_ABORT_PATHS))

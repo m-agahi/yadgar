@@ -775,10 +775,14 @@ class TestFailureInjection:
         )
 
         # POLICY REVERSAL (task:0027a): yadgar core MUST be restarted on the abort
-        # path.  Phase 2's svc.stop() stopped BOTH units, and an explicit
-        # `systemctl --user stop` is never undone by Restart=on-failure — the old
-        # assertion below pinned the defect ("must NOT be started"), which left
-        # the memory engine down after every aborted vacuum until a human noticed.
+        # path.  Phase 2 used to call svc.stop(), which stopped BOTH units, and an
+        # explicit `systemctl --user stop` is never undone by Restart=on-failure —
+        # the old assertion below pinned the defect ("must NOT be started"), which
+        # left the memory engine down after every aborted vacuum until a human
+        # noticed.  task:0111 narrowed Phase 2 to stop_backend(), which keeps this
+        # start as a BELT for hosts whose units still carry
+        # Requires=yadgar-backend.service (a generator change does not rewrite
+        # already-installed units), so the assertions below are unchanged.
         assert "start_yadgar" in started_services, (
             "yadgar core must be restarted after an aborted vacuum (task:0027a)"
         )

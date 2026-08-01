@@ -196,18 +196,24 @@ def _signal_handler(signum, frame):
         REFUSE (return without shutting down).
       * lock held by a LIVE job whose ``pid != os.getpid()``  → the job runs in a
         SEPARATE process (the vacuum runs as ``yadgar-vacuum.service``, not inside
-        core).  That separate vacuum stops core via ``ServiceController.stop()``
-        (systemctl stop yadgar yadgar-backend), which delivers core THIS same
-        SIGTERM.  We must let that teardown proceed — blocking it would deadlock
-        the vacuum's own stop → SIGKILL.  So we PROCEED (immediate shutdown).
+        core).  That separate vacuum could deliver core THIS same SIGTERM, and we
+        must let such a teardown proceed — blocking it would deadlock the
+        vacuum's own stop → SIGKILL.  So we PROCEED (immediate shutdown).
+
+        task:0111 / ADR-0188 narrowed the source of that SIGTERM but did not
+        remove it: the vacuum now calls ``ServiceController.stop_backend()``, so
+        it no longer asks systemd to stop core — but a host whose
+        ``yadgar.service`` was rendered before the ``Requires=``→``Wants=`` flip
+        still cascades core down with the backend, which is the same SIGTERM by
+        a different route.
       * no lock, or a STALE lock (dead pid / TTL-expired)     → behave exactly as
         before P3: immediate shutdown.
 
     DOCUMENTED RESIDUAL RACE (narrow, accepted for 5.69):  an EXTERNAL operator
     ``systemctl stop yadgar`` arriving at core WHILE a separate-process vacuum
-    holds the lock is indistinguishable here from the vacuum's own
-    ``ServiceController.stop()`` — both are a SIGTERM to core with the lock pid !=
-    core's pid — so we proceed and core shuts down.  This is acceptable because
+    holds the lock is indistinguishable here from a vacuum-induced core stop —
+    both are a SIGTERM to core with the lock pid != core's pid — so we proceed
+    and core shuts down.  This is acceptable because
     the vacuum's atomic-swap design (P2) never leaves the canonical empty/partial
     even if core dies (the swap is gated behind a verified side-build; crash
     mid-swap is recovered at next start).  The clean fix is systemd

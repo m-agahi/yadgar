@@ -202,8 +202,8 @@ def _build_http_client(backend_url: str) -> httpx.Client:
 def _assert_backend_quiesced(backend_url: str) -> bool:
     """True iff NOTHING answers GET <backend_url>/health — the store is quiesced.
 
-    P0 #37 item 6 (the RCA §4 root defect): ``svc.stop()`` runs in Phase 2,
-    but the swap happens minutes later (export write-out, snapshot copytree,
+    P0 #37 item 6 (the RCA §4 root defect): the Phase 2 backend stop
+    (``svc.stop_backend()``) runs early, but the swap happens minutes later (export write-out, snapshot copytree,
     and the side-build /import all sit in between). Nothing re-verified the
     backend was still DOWN at swap time, so any external (re)start in that
     window — a nix deploy, a manual ``systemctl start``, systemd recovery —
@@ -656,12 +656,21 @@ def _build_and_verify_side_db(
 def _restart_services_after_abort(svc: ServiceController, *, backend: bool = True) -> None:
     """Bring BOTH units back after a vacuum abort — backend first, then core.
 
-    task:0027a.  Phase 2's ``svc.stop()`` stops ``yadgar`` AND ``yadgar-backend``
-    (``ops.ServiceController.SERVICES``), but every abort path between that stop
-    and finalize used to restart only the backend — and the quiescence-gate abort
-    restarted nothing at all.  ``systemctl --user stop`` is an EXPLICIT stop, so
-    ``Restart=on-failure``/``always`` will not bring core back: any of those paths
-    left the memory engine down until a human noticed.
+    task:0027a.  Phase 2 used to call ``svc.stop()``, which stops ``yadgar`` AND
+    ``yadgar-backend`` (``ops.ServiceController.SERVICES``), but every abort path
+    between that stop and finalize used to restart only the backend — and the
+    quiescence-gate abort restarted nothing at all.  ``systemctl --user stop`` is
+    an EXPLICIT stop, so ``Restart=on-failure``/``always`` will not bring core
+    back: any of those paths left the memory engine down until a human noticed.
+
+    task:0111 / ADR-0188 narrowed Phase 2 to ``stop_backend()``, which does NOT
+    retire the core start below — it turns it into a BELT.  A generator change
+    does not rewrite units already installed: on a host whose ``yadgar.service``
+    still carries ``Requires=yadgar-backend.service`` (rendered before the
+    ``Wants=`` flip), stopping the backend still cascades and the core IS down
+    here.  On a correctly-regenerated host the call is an idempotent no-op.
+    Keep BOTH starts, and keep the order — do not "simplify" this to backend-only
+    on the reasoning that the core is never stopped now.
 
     Each start gets its OWN try/except deliberately.  Sharing one would mean a
     raising ``start_backend()`` (masked unit, docker daemon gone, manual mode)
@@ -803,8 +812,8 @@ def _side_build_swap_and_start(
         )
         return None
 
-    # 3b-pre: QUIESCENCE GATE (P0 #37 item 6). svc.stop() ran minutes ago in
-    # Phase 2; an external restart in the side-build window would have
+    # 3b-pre: QUIESCENCE GATE (P0 #37 item 6). The backend stop ran minutes ago
+    # in Phase 2; an external restart in the side-build window would have
     # re-opened the ORIGINAL canonical. Renaming under a live store is exactly
     # the 07-09 path/inode split-brain — verify quiescence or ABORT.
     if not _assert_backend_quiesced(backend_url):
@@ -1076,7 +1085,7 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     filtered_path: Path | None = None,
     db_path: Path | None = None,
 ) -> bool:
-    """Start yadgar, gate the swapped-in DB, retire the .old dir — or ROLL BACK.
+    """Gate the swapped-in DB, retire the .old dir — or ROLL BACK.
 
     ``old_path`` is the previous-canonical retained by the atomic swap
     (``surreal_db.old-<ts>``).
@@ -1087,6 +1096,13 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     is promoted back to canonical and the unverified compacted DB is discarded,
     rather than retaining a half-swapped state (the 07-09 silent split-brain).
     The vacuum then exits 2 so the nightly unit goes red.
+
+    NO ``start_yadgar()`` here (task:0111 / ADR-0188): Phase 2 stops the BACKEND
+    only, so there is nothing to start — but the wait is deliberately KEPT and
+    what it MEANS changed.  Core ``/health`` is READINESS: it probes
+    ``YADGAR_DB_URL``'s own ``/health`` (``http.py::_build_health_payload`` →
+    ``_probe_dependency``), so it stopped meaning "the core booted" and now means
+    "the backend came back on the COMPACTED DB and the core can reach it".
 
     ``check_invariants`` is ADVISORY here and ONLY here (task:0045 D2).  It ran
     against a route that did not exist until this change, so it 404'd on every
@@ -1127,10 +1143,7 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     if db_path is None:
         db_path = yadgar_home / "surreal_db"
 
-    print("[vacuum] starting yadgar ...", flush=True)
-    svc.start_yadgar()
-
-    print(f"[vacuum] waiting for {yadgar_url}/health ...", flush=True)
+    print(f"[vacuum] waiting for {yadgar_url}/health (core readiness) ...", flush=True)
     if not _wait_for_yadgar_health(yadgar_url, timeout_s=180.0):
         _rollback_swap_on_finalize_failure(
             "yadgar core did not become healthy on the swapped-in DB (180s)",
@@ -1741,8 +1754,10 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     except Exception as exc:
         print(f"[vacuum] ERROR in snapshot/drop phase: {exc}", file=sys.stderr)
         # Best-effort: bring BOTH units back on the untouched canonical.
-        # svc.stop() may already have run inside _vacuum_snapshot_and_drop, so
-        # core can be down here too (task:0027a).
+        # Phase 2 stops the BACKEND only (task:0111), so the core start is
+        # normally an idempotent no-op — but a host whose yadgar.service was
+        # rendered before the Requires=→Wants= flip still cascades, and there
+        # core IS down here (task:0027a).
         _restart_services_after_abort(svc)
         # Car 0092: a partial copytree may have left a .pre-vacuum dir behind;
         # finalize (the only pre-0092 prune site) is unreachable from here.
