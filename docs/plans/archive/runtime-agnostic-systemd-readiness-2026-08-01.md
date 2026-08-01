@@ -1,3 +1,5 @@
+> ARCHIVED 2026-08-01 — SHIPPED: Car 0105 (`01bb4c11`) "fix(systemd): docker install path was dead — Type=notify with no READY=1 source". Core 5.170.12, v5.171 train. §6 stated residuals tracked separately (residual (1) discharged by Car 0106; residual (2) still open).
+
 # Plan: runtime-agnostic systemd readiness (close the docker half of the install path)
 
 **Date:** 2026-08-01

@@ -29,12 +29,14 @@ Single source of truth for **open** plans. Shipped/dead plans live in
 *(Curated highlights, not an exhaustive per-version log — see below for the
 gap. Full per-version detail lives in `docs/CHANGELOG.md`.)*
 
-- **v5.171 (in flight)** — bug-fix train off `feat/v5.171-bug-train`. Car 0
-  (backend DB-mount convergence + vacuum container side-build docs —
-  [converge-backend-db-mount-2026-08-01](converge-backend-db-mount-2026-08-01.md)
-  + [vacuum-container-side-build-2026-08-01](vacuum-container-side-build-2026-08-01.md))
-  landed directly on master 2026-08-01. Remaining cars queued in parallel
-  worktrees; not yet started as of this writing.
+- **v5.171 (in flight)** — bug-fix train off `feat/v5.171-bug-train`, not yet
+  merged to master. Backend DB-mount convergence (Car 0100, core 5.170.1) +
+  vacuum container side-build (Car 0092, core 5.170.9) + runtime-agnostic
+  systemd readiness (Car 0105, core 5.170.12) have shipped on the branch and
+  archived —
+  [converge-backend-db-mount-2026-08-01](archive/converge-backend-db-mount-2026-08-01.md),
+  [vacuum-container-side-build-2026-08-01](archive/vacuum-container-side-build-2026-08-01.md),
+  [runtime-agnostic-systemd-readiness-2026-08-01](archive/runtime-agnostic-systemd-readiness-2026-08-01.md).
 - **v5.170.0** (#20, 6 cars) — install-generated backend units now forward
   `YADGAR_MCP_AUTH_TOKEN` into the container (every `/admin/*` call 503'd on a
   fresh install otherwise, ADR-0180); vacuum wedge fixed — `surreal` binary
@@ -87,8 +89,9 @@ docs rather than from a clean per-version CHANGELOG cut.
 |------|-------|--------|-------|
 | [fix-vacuum-reclaim-and-core-stability-2026-07-29](fix-vacuum-reclaim-and-core-stability-2026-07-29.md) | vacuum / stability (#45, #27) | **PARTIALLY SHIPPED (v5.169.0, #15) — NOT archived, per ADR-0081** | Bug 1 (reclaim never persisted) + Bug 2a (aborts left core stopped): SHIPPED. Bug 2b (core SIGKILL during consolidation): NOT BUILT, recommend closing — 61 core startups vs 60 signal handlers, 0 unpaired across 15 days of `yadgar.log`; doesn't reproduce. |
 | [fix-code-graph-digest-budget-and-orphans-2026-07-29](fix-code-graph-digest-budget-and-orphans-2026-07-29.md) | code_graph (#87) | **PARTIALLY SHIPPED (v5.169.0, #15) — NOT archived, per ADR-0081** | Car 1 (stale-marker truncation): SHIPPED. Car 2 (orphan index-cache prune, 746 MB / 37 files at `~/.cache/yadgar/code_graph`, plus a wrong path recorded in `CAPABILITY_REGISTRY.md:1935`): NOT BUILT, tracked as task:0087. |
-| [converge-backend-db-mount-2026-08-01](converge-backend-db-mount-2026-08-01.md) | install / vacuum (#0100) | **design locked, not started** | Three install paths mount the backend DB three different ways; only one puts it where `yadgar vacuum` looks for it. Blocks #0092 (vacuum container side-build). |
-| [vacuum-container-side-build-2026-08-01](vacuum-container-side-build-2026-08-01.md) | vacuum (#0092) | **IMPLEMENTED on `car/0092-vacuum-container` (5.170.9) — awaiting v5.171 train merge** | Runs the vacuum side-build in a one-shot backend container so container installs stop skipping vacuum. Its dependency `converge-backend-db-mount-2026-08-01` has landed. Preflight half of #0092 already shipped v5.170.0. Plan §6 (neither `yadgar-vacuum.service.in` nor `flake.nix` sets PATH for the vacuum unit — which decides whether a host takes the host-binary or the container branch) is deliberately still open and wants its own task. |
+| [converge-backend-db-mount-2026-08-01](archive/converge-backend-db-mount-2026-08-01.md) | install / vacuum (#0100) | **SHIPPED (core 5.170.1, `98097cf6`, v5.171 train)** | Three install paths mounted the backend DB three different ways; converged on the host bind mount all three now use. Unblocked #0092 (vacuum container side-build). |
+| [vacuum-container-side-build-2026-08-01](archive/vacuum-container-side-build-2026-08-01.md) | vacuum (#0092) | **SHIPPED (core 5.170.9, `d2f93442`, v5.171 train)** | Runs the vacuum side-build in a one-shot backend container so container installs stop skipping vacuum. Plan §6 (neither `yadgar-vacuum.service.in` nor `flake.nix` sets PATH for the vacuum unit — which decides whether a host takes the host-binary or the container branch) deliberately left open, tracked as its own task. |
+| [runtime-agnostic-systemd-readiness-2026-08-01](archive/runtime-agnostic-systemd-readiness-2026-08-01.md) | install / systemd (#0105) | **SHIPPED (core 5.170.12, `01bb4c11`, v5.171 train)** | Closed the docker half of the install path: generated units used `Type=notify` with no `READY=1` source, and docker has no sd_notify proxy at all. Plan §6 stated residuals: residual (1) (podman arm's missing `TimeoutStartSec`) discharged by Car 0106 (core 5.170.13); residual (2) (`yadgar-backend.service.in` is `Type=simple`, so it gives no readiness guarantee) still open. |
 | [recall-scoring-c4-2026-07-18](recall-scoring-c4-2026-07-18.md) | recall / scoring (#62) | **DECISIONS LOCKED — C4.0/C4.1/C4.3 BUILT (v5.151.0); 1b-fix + S3 DEFERRED** | C4 recall-scoring scoping plan; tie-order + abbreviation-miss cars landed, corpus-side SNR (S3) and the 1b-fix remain deferred. |
 | [tdd-hardening-pipeline-2026-07-18](archive/tdd-hardening-pipeline-2026-07-18.md) | dev-process / quality | **codified v5.150.0 (#213)** | 5-phase pipeline (RED-VERIFY → adversarial critic → green → mutation+fuzz → gates) codified into `implement-tdd` agent-prompt + weekly mutation-sweep workflow. |
 | [db-audit-fix](db-audit-fix.md) | data-integrity | **DEFERRED INDEFINITELY** | Re-audited 2026-07-16: store healthy. Residuals: ~5 dangling edge rows + unverifiable `last_decay_at` — not worth work. |

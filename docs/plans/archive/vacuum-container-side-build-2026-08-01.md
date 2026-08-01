@@ -1,3 +1,5 @@
+> ARCHIVED 2026-08-01 — SHIPPED: Car 0092 (`d2f93442`) "fix(vacuum): run the side build in a one-shot backend container". Core 5.170.9, v5.171 train.
+
 # Plan: run the vacuum side-build in a one-shot backend container
 
 **Date:** 2026-08-01

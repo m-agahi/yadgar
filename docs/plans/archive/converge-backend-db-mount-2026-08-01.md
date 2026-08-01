@@ -1,3 +1,5 @@
+> ARCHIVED 2026-08-01 — SHIPPED: Car 0100 (`98097cf6`) "fix(daemon): converge the backend DB mount on the host bind mount (Bug 11)". Core 5.170.1, v5.171 train.
+
 # Plan: converge the backend DB mount on a host bind mount (finish Bug 11)
 
 **Date:** 2026-08-01
