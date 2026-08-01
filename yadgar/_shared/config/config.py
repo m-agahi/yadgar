@@ -599,9 +599,19 @@ class Settings(BaseSettings):
     MAINTENANCE_TTL_SEC: int = 2400
 
     # vacuum settings
-    # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
-    # scripts/cleanup-backups.sh after a successful vacuum.
-    VACUUM_SNAPSHOT_RETENTION: int = 3
+    # Number of pre-vacuum DB snapshots to retain; older ones are pruned on
+    # EVERY vacuum exit path.  Lowered 3 -> 2 by task:0046: each
+    # snapshot is a full-size DB copy, so three of them guarded a 224 MB live DB
+    # with ~800 MB of insurance.  The 2026-07-10 recovery used ONE quiesced copy;
+    # the second exists only for the case where the newest is itself torn, and
+    # past that ADR-0090's `.surql` export path is the fallback.  A never-zero
+    # floor is enforced in code (`max(1, keep_n)`), not by this default.
+    VACUUM_SNAPSHOT_RETENTION: int = 2
+
+    # Age backstop for those snapshots (task:0046), mirroring ADR-0076 D1's
+    # VACUUM_OLD_MAX_AGE_DAYS.  The NEWEST snapshot is exempt unconditionally, so
+    # this can never take the host below one rollback anchor.
+    VACUUM_SNAPSHOT_MAX_AGE_DAYS: int = 14
 
     # Task 0107: which side-build launcher Phase 3 uses to obtain its throwaway
     # SurrealDB — "auto" (host binary first, container second, SKIP third,

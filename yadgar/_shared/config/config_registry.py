@@ -569,7 +569,8 @@ _REGISTRY: list[ConfigEntry] = [
     # vacuum
     ConfigEntry("YADGAR_MAINTENANCE_TTL_SEC", "2400", "int"),
     ConfigEntry("VACUUM_OLD_MAX_AGE_DAYS", "7", "int"),
-    ConfigEntry("YADGAR_VACUUM_SNAPSHOT_RETENTION", "3", "int"),
+    ConfigEntry("YADGAR_VACUUM_SNAPSHOT_RETENTION", "2", "int"),
+    ConfigEntry("YADGAR_VACUUM_SNAPSHOT_MAX_AGE_DAYS", "14", "int"),
     ConfigEntry("YADGAR_VACUUM_AUTO_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_VACUUM_AUTO_THRESHOLD_BYTES", "2147483648", "int"),
     ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_START", "19:00", "string"),

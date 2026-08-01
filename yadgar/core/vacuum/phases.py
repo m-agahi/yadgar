@@ -8,9 +8,10 @@ are patched (those live in __init__.py so patches intercept calls).
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -52,6 +53,89 @@ def _run_cleanup_script(yadgar_home: Path, pattern: str, keep_n: int) -> None:
             print(f"[vacuum] pruned snapshot: {path}", file=sys.stderr)
         except OSError as exc:
             print(f"[vacuum] failed to prune {path}: {exc}", file=sys.stderr)
+
+
+#: The UTC ``%Y%m%d_%H%M%S`` stamp both vacuum writers embed in the artefact NAME
+#: (``vacuum_export_<TS>.surql`` here, ``surreal_db.pre-vacuum-<TS>`` below).
+#: Retention keys off the name rather than ``st_mtime`` so a ``touch``, an rsync,
+#: or a restore-from-backup cannot reshuffle the window — mtime is a property of
+#: the filesystem, the stamp is a property of the vacuum RUN.
+_ARTEFACT_STAMP_RE = re.compile(r"(\d{8}_\d{6})")
+
+
+def _artefact_stamp(name: str) -> str | None:
+    """The run stamp embedded in *name*, or None when it carries none."""
+    match = _ARTEFACT_STAMP_RE.search(name)
+    return match.group(1) if match else None
+
+
+@observe(tier="stage")
+def _reap_export_pairs(yadgar_home: Path, keep_runs: int) -> None:
+    """Keep the newest *keep_runs* export RUNS; delete every file of older runs.
+
+    task:0046 (C).  ``_run_cleanup_script`` counts FILES, and one run writes TWO
+    (``vacuum_export_<TS>.surql`` + ``.filtered.surql``), so "keep 2 runs" was
+    spelled ``2 * 2 = 4`` files.  A run that died between the two writes leaves
+    an odd file and the window silently degrades to one whole run plus a
+    half-pair — an unusable artefact still costing ~100 MB.  Grouping by the
+    stamp makes the ceiling mean what it says.
+
+    A file carrying no parseable stamp is its own OLDEST group and always goes.
+    That direction is deliberate and is the OPPOSITE of
+    :func:`_reap_snapshots_by_age`: export scratch is diagnostic, so an
+    unparseable name means partial-write debris; a snapshot is a rollback anchor,
+    so an unparseable name is kept.
+    """
+    groups: dict[str, list[Path]] = {}
+    doomed: list[Path] = []
+    for path in yadgar_home.glob("vacuum_export_*"):
+        stamp = _artefact_stamp(path.name)
+        if stamp is None:
+            doomed.append(path)
+        else:
+            groups.setdefault(stamp, []).append(path)
+    for stamp in sorted(groups, reverse=True)[max(0, keep_runs) :]:
+        doomed.extend(groups[stamp])
+    for path in doomed:
+        try:
+            path.unlink()
+            print(f"[vacuum] pruned export scratch: {path}", file=sys.stderr)
+        except OSError as exc:
+            print(f"[vacuum] failed to prune {path}: {exc}", file=sys.stderr)
+
+
+@observe(tier="stage")
+def _reap_snapshots_by_age(yadgar_home: Path, max_age_days: int) -> None:
+    """Age backstop for ``surreal_db.pre-vacuum-*``; the NEWEST is always exempt.
+
+    task:0046 (B), mirroring ADR-0076 D1's ``.old`` backstop: a host that vacuums
+    rarely should not carry a six-month-old copy of a DB the live one no longer
+    resembles.  Two deliberate asymmetries against :func:`_reap_export_pairs`,
+    both because a snapshot is the last-resort ROLLBACK anchor (ADR-0090) rather
+    than a diagnostic:
+
+    1. The newest is exempt UNCONDITIONALLY — not "unless older than X".  A host
+       that has not vacuumed in a year still ends the run with an anchor.
+    2. A dir whose name carries no parseable stamp is KEPT.  An unreadable name
+       is not evidence that a recovery artefact is stale, and deleting one on
+       that basis is the worst failure this backstop could have.
+    """
+    if max_age_days <= 0:
+        return
+    dated = sorted(
+        (stamp, path)
+        for path in yadgar_home.glob("surreal_db.pre-vacuum-*")
+        if (stamp := _artefact_stamp(path.name)) is not None
+    )
+    cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).strftime("%Y%m%d_%H%M%S")
+    for stamp, path in dated[:-1]:  # [:-1] IS the floor — the newest never enters
+        if stamp >= cutoff:
+            continue
+        print(
+            f"[vacuum] age-backstop: reaping snapshot {path.name} (>{max_age_days}d old)",
+            flush=True,
+        )
+        shutil.rmtree(str(path), ignore_errors=True)
 
 
 @observe(tier="stage")

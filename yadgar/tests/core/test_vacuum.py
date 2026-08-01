@@ -2002,7 +2002,6 @@ class TestVacuumExportCleanup:
                 old,
                 snap,
                 mock_svc,
-                keep_n=3,
                 raw_path=raw,
                 filtered_path=filtered,
             )
@@ -2055,7 +2054,6 @@ class TestVacuumExportCleanup:
                 old,
                 snap,
                 mock_svc,
-                keep_n=3,
                 raw_path=raw,
                 filtered_path=filtered,
             )
@@ -2091,7 +2089,6 @@ class TestVacuumExportCleanup:
                 old,
                 snap,
                 mock_svc,
-                keep_n=3,
                 raw_path=raw,
                 filtered_path=filtered,
             )
@@ -2160,7 +2157,6 @@ class TestOldAgeBackstop:
                 current_old,
                 snap,
                 mock_svc,
-                keep_n=3,
             )
 
         assert not old_8d.exists(), "8-day-old .old dir must be reaped"
@@ -2199,7 +2195,6 @@ class TestOldAgeBackstop:
                 current_old,
                 snap,
                 mock_svc,
-                keep_n=3,
             )
 
         # check_invariants passed → current-run old is reaped by the existing path
@@ -2250,7 +2245,6 @@ class TestOldAgeBackstop:
                 current_old,
                 snap,
                 mock_svc,
-                keep_n=3,
             )
 
         assert recent_old.exists(), "3-day-old .old dir must NOT be reaped (within max age)"
@@ -2271,18 +2265,25 @@ class TestOldAgeBackstop:
 
 
 # ---------------------------------------------------------------------------
-# Car 0046: vacuum_export_*.surql scratch must be BOUNDED on every finalize,
-# not just deleted-on-success / kept-forever-on-failure (ADR-0076 D2 leaked
-# unboundedly on the abort paths — 1.4 GB accumulated before a manual sweep).
+# Car 0046: vacuum_export_*.surql scratch must be BOUNDED, and — task:0046 (A)
+# — the bounding does NOT happen in _vacuum_finalize.  It used to: three call
+# sites, all inside finalize, which only a run reaching Phase 3 success ever
+# sees, so eight other exit paths leaked past it.  The reap now lives in the
+# single `finally` in cmd_vacuum_impl (see test_vacuum_residue_reap.py).
+#
+# What finalize still owns, and what this class pins, is the ADR-0076 D2
+# CURRENT-RUN rule: this run's own pair is dropped on a retained swap and kept
+# on a rollback for forensics.
 # ---------------------------------------------------------------------------
 
 
-class TestVacuumExportScratchBackstop:
-    """Car 0046: older vacuum_export_* pairs are reaped on EVERY finalize outcome.
+class TestVacuumFinalizeCurrentRunExportScratch:
+    """The current-run export pair: dropped on success, kept on rollback.
 
-    The MOST RECENT run's own export pair is never touched by the backstop
-    (only the current-run deletion on success, or nothing on failure — same as
-    before); the backstop only bounds how many PRIOR runs' leaked pairs pile up.
+    Also pins the NEGATIVE: finalize must not reap PRIOR runs' pairs.  Two sites
+    doing the same reap is how the export and snapshot reapers drifted onto
+    different subsets of the exit paths in the first place — re-adding one here
+    should fail loudly rather than silently restore the drift.
     """
 
     def _make_export_pair(self, home, ts_suffix, age_days):
@@ -2299,14 +2300,11 @@ class TestVacuumExportScratchBackstop:
         _os.utime(filtered, (mtime, mtime))
         return raw, filtered
 
-    def test_finalize_prunes_stale_export_pairs_on_health_failure(self, tmp_path, monkeypatch):
-        """Abort path (health check never comes up): old leaked pairs are bounded.
+    def test_finalize_keeps_current_run_export_on_health_failure(self, tmp_path, monkeypatch):
+        """Abort path (health check never comes up): this run's own pair survives.
 
-        Four PRIOR aborted runs left export pairs on disk (the pre-fix bug: kept
-        forever). This run's own health check also fails. Assert only the
-        newest few prior pairs survive (bounded retention), plus the
-        current-run pair (kept for this run's own forensics, unchanged
-        behavior).
+        Four PRIOR aborted runs also left pairs on disk.  Finalize leaves ALL of
+        them alone — bounding them is the caller's single reap site.
         """
         from yadgar.core.vacuum import _vacuum_finalize
 
@@ -2335,7 +2333,6 @@ class TestVacuumExportScratchBackstop:
                 old,
                 snap,
                 mock_svc,
-                keep_n=3,
                 raw_path=cur_raw,
                 filtered_path=cur_filtered,
             )
@@ -2343,19 +2340,14 @@ class TestVacuumExportScratchBackstop:
         assert cur_raw.exists(), "current run's own export must survive on its own abort"
         assert cur_filtered.exists(), "current run's own export must survive on its own abort"
 
-        remaining = [p for pair in stale_pairs for p in pair if p.exists()]
-        total_remaining_files = len(remaining) + 2  # + current-run pair
-        assert total_remaining_files < 10, (
-            f"export scratch must be bounded, not accumulate unboundedly: "
-            f"{total_remaining_files} files remain out of 10 written"
-        )
-        # The oldest stale pair (age 9d) must be the first to go.
-        oldest_raw, oldest_filtered = stale_pairs[0]
-        assert not oldest_raw.exists(), "oldest leaked export pair must be reaped"
-        assert not oldest_filtered.exists(), "oldest leaked export pair must be reaped"
+        for raw, filtered in stale_pairs:
+            assert raw.exists() and filtered.exists(), (
+                "finalize must NOT reap prior runs' pairs — task:0046 moved that to "
+                "the single reap site in cmd_vacuum_impl's finally"
+            )
 
-    def test_finalize_prunes_stale_export_pairs_on_inode_incoherence(self, tmp_path, monkeypatch):
-        """Abort path (post-swap inode split-brain): old leaked pairs are bounded."""
+    def test_finalize_keeps_current_run_export_on_inode_incoherence(self, tmp_path, monkeypatch):
+        """Abort path (post-swap inode split-brain): this run's own pair survives."""
         from yadgar.core.vacuum import _vacuum_finalize
 
         home = tmp_path / "yadgar"
@@ -2386,22 +2378,19 @@ class TestVacuumExportScratchBackstop:
                 old,
                 snap,
                 mock_svc,
-                keep_n=3,
                 raw_path=cur_raw,
                 filtered_path=cur_filtered,
             )
 
         assert cur_raw.exists(), "current run's own export must survive on its own abort"
-        oldest_raw, oldest_filtered = stale_pairs[0]
-        assert not oldest_raw.exists(), "oldest leaked export pair must be reaped"
-        assert not oldest_filtered.exists(), "oldest leaked export pair must be reaped"
+        for raw, filtered in stale_pairs:
+            assert raw.exists() and filtered.exists(), "finalize must NOT reap prior runs' pairs"
 
-    def test_finalize_prunes_stale_export_pairs_on_success(self, tmp_path, monkeypatch):
-        """Success path: leaked pairs from PRIOR failed runs are also bounded.
+    def test_finalize_drops_current_run_export_on_success(self, tmp_path, monkeypatch):
+        """Success path: the current run's own pair is deleted outright (ADR-0076 D2).
 
-        The current run's own pair is deleted outright (existing D2 behavior,
-        unchanged); the backstop additionally catches any pre-existing leaked
-        pairs left over from earlier failed runs (e.g. before this fix shipped).
+        Prior runs' pairs are untouched HERE — the caller's reap bounds them a
+        few frames later, on this and every other exit path.
         """
         from yadgar.core.vacuum import _vacuum_finalize
 
@@ -2433,7 +2422,6 @@ class TestVacuumExportScratchBackstop:
                 old,
                 snap,
                 mock_svc,
-                keep_n=3,
                 raw_path=cur_raw,
                 filtered_path=cur_filtered,
             )
@@ -2441,8 +2429,5 @@ class TestVacuumExportScratchBackstop:
         assert result is True
         assert not cur_raw.exists(), "current run's own export is always dropped on success"
         assert not cur_filtered.exists(), "current run's own export is always dropped on success"
-        oldest_raw, oldest_filtered = stale_pairs[0]
-        assert not oldest_raw.exists(), "oldest leaked export pair must be reaped even on success"
-        assert not oldest_filtered.exists(), (
-            "oldest leaked export pair must be reaped even on success"
-        )
+        for raw, filtered in stale_pairs:
+            assert raw.exists() and filtered.exists(), "finalize must NOT reap prior runs' pairs"
