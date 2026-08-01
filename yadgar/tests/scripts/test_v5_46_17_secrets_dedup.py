@@ -41,6 +41,7 @@ DAEMON_PY = REPO_ROOT / "yadgar" / "core" / "daemon" / "daemon.py"
 # Car C3 split: the systemd unit template (with the nested YADGAR_DB_USER
 # fallback) moved daemon.py → systemd.py.
 DAEMON_SYSTEMD_PY = REPO_ROOT / "yadgar" / "core" / "daemon" / "systemd.py"
+DAEMON_UNITS_PY = REPO_ROOT / "yadgar" / "core" / "daemon" / "units.py"
 VACUUM_INIT = REPO_ROOT / "yadgar" / "core" / "vacuum" / "__init__.py"
 VACUUM_PHASES = REPO_ROOT / "yadgar" / "core" / "vacuum" / "phases.py"
 
@@ -162,16 +163,23 @@ def test_t3_generated_mode_single_gen_for_rw() -> None:
 
 
 def test_t4_daemon_rw_user_before_db_user() -> None:
-    """The systemd unit template must pass YADGAR_DB_USER env var sourced
-    from YADGAR_RW_USER first (legacy fallback to YADGAR_DB_USER, then SURREAL_USER).
+    """The generated unit must source YADGAR_DB_USER from YADGAR_RW_USER.
 
-    The generated unit line should read:
+    Car C3 split: the unit template moved daemon.py -> systemd.py.
+    Car 0110 Stage A moved the unit BUILDERS again, systemd.py -> units.py, so
+    this test now reads units.py.
+
+    Car 0110 Stage B ALSO corrected the value's shape. This test used to demand
       -e YADGAR_DB_USER=${YADGAR_RW_USER:-${YADGAR_DB_USER:-${SURREAL_USER}}}
-    or equivalent nested fallback starting with YADGAR_RW_USER.
-
-    Car C3 split: the unit template moved daemon.py → systemd.py.
+    but `${VAR:-default}` is SHELL syntax that systemd does NOT expand — that
+    whole string was passed into the container verbatim, so the "fallback chain"
+    never fell back to anything. The correct form, matching the .in templates
+    (whose ${...} IS expanded, by the generator's sed at render time), is a plain
+      -e YADGAR_DB_USER=${YADGAR_RW_USER}
+    which is what the assertion below now pins: RW_USER is still the source of
+    DB_USER, expressed in a way that actually works.
     """
-    content = DAEMON_SYSTEMD_PY.read_text(encoding="utf-8")
+    content = DAEMON_UNITS_PY.read_text(encoding="utf-8")
 
     # Find the line that sets YADGAR_DB_USER in the docker run template
     db_user_lines = [
@@ -193,9 +201,14 @@ def test_t4_daemon_rw_user_before_db_user() -> None:
         f"Lines with YADGAR_DB_USER (no YADGAR_RW_USER): {db_user_lines}"
     )
 
-    # Verify RW_USER appears before DB_USER in the *value* side of the assignment.
-    # The line is:  -e YADGAR_DB_USER=${YADGAR_RW_USER:-${YADGAR_DB_USER:-...}}
-    # Skip past the first '=' to get the value, then check positional order.
+    # Verify RW_USER is the SOURCE of the value, not merely present in it.
+    # Two accepted shapes:
+    #   -e YADGAR_DB_USER=${YADGAR_RW_USER}                      <- current (Car 0110 B)
+    #   -e YADGAR_DB_USER=${YADGAR_RW_USER:-${YADGAR_DB_USER:-}} <- legacy chain
+    # The legacy chain was never functional in a systemd unit (`${VAR:-default}`
+    # is shell syntax systemd does not expand), so sole-sourcing from RW_USER is
+    # STRICTLY STRONGER than "RW appears first in the chain". db_pos == -1 means
+    # DB_USER is not on the value side at all, which is the desired end state.
     for line in db_user_with_rw:
         eq_pos = line.find("=")
         assert eq_pos != -1, f"No '=' found in line: {line}"
@@ -203,8 +216,8 @@ def test_t4_daemon_rw_user_before_db_user() -> None:
         rw_pos = value.find("YADGAR_RW_USER")
         db_pos = value.find("YADGAR_DB_USER")
         assert rw_pos != -1, f"YADGAR_RW_USER not found in value side: {value}"
-        assert rw_pos < db_pos, (
-            f"YADGAR_RW_USER must appear before YADGAR_DB_USER in value side of assignment.\n"
+        assert db_pos == -1 or rw_pos < db_pos, (
+            f"YADGAR_RW_USER must be the source of YADGAR_DB_USER's value.\n"
             f"  Full line: {line}\n"
             f"  Value:     {value}\n"
             f"  RW at {rw_pos}, DB at {db_pos}"
