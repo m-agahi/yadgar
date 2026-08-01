@@ -141,14 +141,37 @@ def _vacuum_snapshot_and_drop(
     path therefore leaves the canonical untouched; the ``.pre-vacuum-<ts>``
     snapshot below is belt-and-suspenders.
 
+    SCOPE (task:0111 / ADR-0188): ``stop_backend()``, NOT ``stop()``.  The CORE
+    stays up for the whole vacuum.  ``ServiceController.stop()`` is
+    ``("yadgar", "yadgar-backend")``, and stopping both was inherited from the
+    2026-05-12 manual DB-rebuild ritual (``docs/PLAN_V4_8.md``), where the
+    canonical was renamed out from under a live backend.  Every rationale that
+    survives the P2 redesign is BACKEND-scoped: the torn-segment hazard above is
+    about the process holding the store open, ``_assert_backend_quiesced`` polls
+    the SurrealDB port, ADR-0090's corrupt-on-reopen is the backend's stop, and
+    ``_verify_live_store_coherence`` only scans ``surreal … start`` processes.
+    The core holds no fd into the store at all — it reaches the DB over HTTP
+    (ADR-0078) — so a live core neither trips the quiescence gate nor strands an
+    inode across the swap.  Stopping it bought nothing and cost ~68 s of engine
+    downtime per run, dropping every connected MCP session.
+
+    NOTE this scope change is only half the fix on a systemd host: ``Requires=``
+    propagates stop, so a core unit rendered BEFORE the ``Requires=``→``Wants=``
+    flip (``scripts/install/yadgar.service.in``,
+    ``yadgar/core/daemon/systemd.py``) still goes down with the backend.  That is
+    why the abort-path/restore ``start_yadgar()`` belts are retained.
+
     Returns:
         snapshot_path — the quiesced pre-vacuum snapshot.
     """
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     snapshot_path = yadgar_home / f"surreal_db.pre-vacuum-{ts}"
 
-    print("[vacuum] phase 2: stopping daemons (quiesce before snapshot) ...", flush=True)
-    svc.stop()
+    print(
+        "[vacuum] phase 2: stopping the backend (quiesce before snapshot); core stays up ...",
+        flush=True,
+    )
+    svc.stop_backend()
 
     print(
         f"[vacuum] phase 2: snapshot {db_path} → {snapshot_path} "

@@ -512,12 +512,25 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
             pass
 
     def _maintenance():
+        """Short-circuit every MCP tool while a maintenance window is engaged.
+
+        task:0111 / ADR-0188 — the message no longer says "nightly": the core now
+        STAYS UP across a vacuum (only the backend is stopped), so a CLI- or
+        timer-triggered vacuum can engage this gate too, and a tool call landing
+        in the backend-down window should read as "maintenance", not as a raw
+        ``httpx.ConnectError`` from the core→backend forward.
+
+        COVERAGE CAVEAT: this wrapper is the MCP tool path only.  The HTTP viz
+        endpoints are not behind ``_instrumented``, so they are NOT gated —
+        they degrade visibly on their own.  Gating them is deliberately out of
+        scope (plan 0111 §9).
+        """
         import yadgar._shared.runtime.state as _st_ref  # noqa: PLC0415 — read live attr
 
         if _st_ref._maintenance_mode:
             return {
                 "error": "maintenance",
-                "message": "yadgar nightly maintenance in progress; retry shortly",
+                "message": "yadgar maintenance in progress (vacuum); retry shortly",
             }
         return None
 

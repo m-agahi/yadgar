@@ -26,10 +26,32 @@ _TOKEN = "test-maint-tok"
 # Helpers
 # ---------------------------------------------------------------------------
 
+# NOTE this is a HAND-COPY of the payload built in
+# ``yadgar/core/server/_app.py::_instrumented._maintenance`` — the real one is a
+# closure inside a decorator factory and cannot be imported.  The gate tests
+# below re-implement the wrapper, so nothing here would notice the real message
+# drifting; ``test_real_gate_payload_matches_this_copy`` is what keeps the copy
+# honest.  Message wording: task:0111 / ADR-0188 dropped "nightly" because a
+# CLI- or timer-triggered vacuum engages this gate too.
 _MAINTENANCE_RESPONSE = {
     "error": "maintenance",
-    "message": "yadgar nightly maintenance in progress; retry shortly",
+    "message": "yadgar maintenance in progress (vacuum); retry shortly",
 }
+
+
+def test_real_gate_payload_matches_this_copy():
+    """Guard the hand-copy: the real ``_app.py`` gate must build this payload."""
+    from pathlib import Path
+
+    import yadgar.core.server._app as _app_mod
+
+    src = Path(_app_mod.__file__).read_text(encoding="utf-8")
+    for value in _MAINTENANCE_RESPONSE.values():
+        assert f'"{value}"' in src, (
+            f"_app.py's maintenance gate no longer builds {value!r} — the "
+            f"_MAINTENANCE_RESPONSE copy in this file has drifted from the real "
+            f"payload, so every gate assertion below is testing a stale string."
+        )
 
 
 def _make_maintenance_app(monkeypatch):
