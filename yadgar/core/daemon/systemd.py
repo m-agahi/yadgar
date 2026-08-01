@@ -5,16 +5,30 @@ two systemd user service units (``yadgar-backend.service`` + ``yadgar.service``)
 and writes them under ``~/.config/systemd/user``. ``YadgarDaemon.install_systemd_service``
 is a thin wrapper that resolves the profile then delegates here.
 
-RESIDUAL GAP (task:0104), stated rather than laundered: the units below now name
-the RESOLVED runtime, so a podman-only host gets working units. They are still
-not runtime-agnostic end to end. Both units are ``Type=notify``, and the backend
-``ExecStart`` passes ``--sdnotify=healthy`` — a podman flag with no docker
-equivalent (docker has no ``--sdnotify`` and no sd_notify proxy at all), so on a
-docker host the backend unit fails on an unknown flag and the core unit would
-sit until its notify timeout. Making the docker path work means designing docker
-notify semantics (``Type=exec`` plus a health gate), not swapping a literal; the
-shipped ``scripts/install/*.in`` templates do not solve it either — they hardcode
-``Environment=DOCKER_HOST=unix:///run/podman/podman.sock``. Out of scope here.
+task:0104 made the units name the RESOLVED runtime binary. task:0105 closes the
+readiness half it left open: both units were ``Type=notify``, which needs
+something to send ``READY=1``. On podman that is the sd_notify proxy —
+``--sdnotify=healthy`` for the backend, and the default ``--sdnotify=container``
+mode forwarding the daemon's own emit for the core. **Docker has no sd_notify
+proxy at all**: it never sets ``NOTIFY_SOCKET`` in the container, so
+``sd_notify.py``'s emit is a silent no-op, and ``--sdnotify`` is not even a
+``docker run`` flag. So the units are now runtime-conditional:
+
+* podman — unchanged: ``Type=notify`` + ``--sdnotify=healthy`` + ``--health-cmd``.
+* docker — ``Type=exec`` plus a bounded ``ExecStartPost=`` poll of ``/health``.
+  Per ``man systemd.service``, "the execution of ExecStartPost= is taken into
+  account for the purpose of Before=/After= ordering constraints", which is the
+  same ordering guarantee ``Type=notify`` buys on podman.
+
+The gate polls ``/health`` (readiness) rather than the image HEALTHCHECK's
+``/health/live`` (liveness, ADR-0019) on purpose: podman's core readiness is the
+in-container ``sd_notify.ready()`` emitted LAST, after the full engine set
+(``bootstrap.py``). ``/health/live`` goes green as soon as the HTTP server binds,
+so gating on it would mark the docker unit active EARLIER than podman does.
+
+Design + rejected alternatives:
+``docs/plans/runtime-agnostic-systemd-readiness-2026-08-01.md``.
+Cross-generator guard: ``yadgar/tests/scripts/test_runtime_readiness_cross_generator.py``.
 """
 
 import os
@@ -33,6 +47,63 @@ from yadgar.core.daemon.runtime import (
 )
 
 
+def _health_gate(url: str, retries: int) -> str:
+    """An ``ExecStartPost=`` line that blocks until *url* answers 200 (task:0105).
+
+    ``curl`` is written bare and resolved from the unit's ``$PATH`` — the same
+    convention ``scripts/install/yadgar.service.in`` already uses for its
+    ``mkdir -p`` ExecStartPre. No shell wrapper, so systemd's own ``$`` expansion
+    never applies and there is nothing to escape as ``$$``; curl's ``--retry``
+    does the polling. ``--retry-connrefused`` covers "port not listening yet",
+    ``--retry-all-errors`` covers "listening but not healthy yet" (``--fail``
+    turns a 5xx into an error, which plain ``--retry`` would not retry).
+    """
+    return (
+        f"ExecStartPost=curl --fail --silent --show-error --output /dev/null "
+        f"--retry {retries} --retry-delay 2 --retry-connrefused "
+        f"--retry-all-errors {url}\n"
+    )
+
+
+@observe(tier="hot")
+def _readiness_directives(runtime: str, core_port: int) -> dict[str, str]:
+    """Per-runtime readiness fragments for the two generated units (task:0105).
+
+    Podman proxies sd_notify, so its units stay ``Type=notify``: the backend via
+    ``--sdnotify=healthy``, the core via podman's default ``sdnotify=container``
+    mode forwarding the daemon's own ``READY=1``. Docker has no sd_notify proxy
+    at all, so nothing would ever send ``READY=1`` there; it gets ``Type=exec``
+    plus a bounded ``ExecStartPost=`` health gate, which per ``man systemd.service``
+    is "taken into account for the purpose of Before=/After= ordering constraints".
+
+    A non-zero ``ExecStartPost`` FAILS the unit, and ``Restart=on-failure`` would
+    then loop it — so each budget is set from the slowest real path (a first
+    start, where ``docker run`` pulls the image inline) and ``TimeoutStartSec``
+    is set above it. Backend 180s matches ``flake.nix``, whose comment reads
+    "covers cold model load"; the podman arm keeps systemd's 90s default
+    untouched.
+
+    Compared on the BASENAME because the runtime may legitimately arrive as a
+    path (the ``YADGAR_CONTAINER_RUNTIME`` escape hatch, and ``flake.nix``'s
+    ``runtime`` option, both allow one).
+    """
+    if os.path.basename(runtime) == "podman":
+        return {
+            "backend_ready": "Type=notify\nNotifyAccess=all\n",
+            "backend_sdnotify": "    --sdnotify=healthy \\\n",
+            "backend_gate": "",
+            "core_ready": "Type=notify\nNotifyAccess=all\n",
+            "core_gate": "",
+        }
+    return {
+        "backend_ready": "Type=exec\nTimeoutStartSec=180\n",
+        "backend_sdnotify": "",
+        "backend_gate": _health_gate(f"http://127.0.0.1:{DEFAULT_BACKEND_EMBED_PORT}/health", 75),
+        "core_ready": "Type=exec\nTimeoutStartSec=120\n",
+        "core_gate": _health_gate(f"http://127.0.0.1:{core_port}/health", 45),
+    }
+
+
 @observe(tier="boundary")
 def install_systemd_service(profile: ContainerProfile, dev: bool = False) -> dict:
     """Write two systemd user service units: yadgar-backend.service and yadgar.service."""
@@ -48,6 +119,7 @@ def install_systemd_service(profile: ContainerProfile, dev: bool = False) -> dic
     # task:0101 (`upgrade`). Guarded by the unit-directive detector in
     # yadgar/tests/core/test_daemon_runtime_binary.py.
     runtime = _get_runtime()
+    ready = _readiness_directives(runtime, profile.port)  # task:0105
 
     backend_name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
     backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
@@ -88,9 +160,7 @@ Description=Yadgar Backend — SurrealDB and Embedding Service
 After=network.target
 
 [Service]
-Type=notify
-NotifyAccess=all
-EnvironmentFile={secrets_env_path}
+{ready["backend_ready"]}EnvironmentFile={secrets_env_path}
 ExecStartPre=-{runtime} network create --driver bridge {_NETWORK_NAME}
 ExecStartPre=-{runtime} stop {backend_name}
 ExecStartPre=-{runtime} rm {backend_name}
@@ -101,8 +171,7 @@ ExecStart={runtime} run --rm \\
     --memory 4g \\
     --memory-swap 4g \\
     --user root \\
-    --sdnotify=healthy \\
-    --health-cmd curl -f http://localhost:8001/health || exit 1 \\
+{ready["backend_sdnotify"]}    --health-cmd "curl -f http://localhost:8001/health || exit 1" \\
     --health-start-period=60s \\
     -v {backend_data_dir}:/data \\
     -v {profile.volume_name}:/queue-data \\
@@ -116,7 +185,7 @@ ExecStart={runtime} run --rm \\
     -e YADGAR_QUEUE_BASE=/queue-data \\
     -e YADGAR_MCP_AUTH_TOKEN=${{YADGAR_MCP_AUTH_TOKEN}} \\
 {hf_mount}    {backend_image_tagged}
-ExecStop={runtime} stop {backend_name}
+{ready["backend_gate"]}ExecStop={runtime} stop {backend_name}
 Restart=on-failure
 RestartSec=10
 
@@ -128,8 +197,12 @@ WantedBy=default.target
     suffix = "-dev" if dev else ""
     # Bug 7: use XDG state path for upgrade.env (not /root/.yadgar/upgrade.env)
     upgrade_env_path = _paths.STATE_DIR / "upgrade.env"
-    # Phase 7 follow-up: Type=notify + upgrade.env EnvironmentFile to match yadgar.service.in template.
-    # sd_notify signals (READY=1, STOPPING=1) require Type=notify.
+    # Phase 7 follow-up: readiness type + upgrade.env EnvironmentFile to match the
+    # yadgar.service.in template. On podman the core is Type=notify: podman's
+    # default --sdnotify=container mode passes NOTIFY_SOCKET into the container
+    # and forwards the daemon's own READY=1 / STOPPING=1 (ADR-0017 — that proxy
+    # forwards READY=1 and drops WATCHDOG=1, and only READY=1 is relied on here).
+    # Docker has no such proxy, so it gets the Type=exec + health-gate shape.
     # EnvironmentFile leading '-' makes missing file non-fatal (first install).
     core_unit = f"""\
 [Unit]
@@ -138,9 +211,7 @@ Requires=yadgar-backend{suffix}.service
 After=network.target yadgar-backend{suffix}.service
 
 [Service]
-Type=notify
-NotifyAccess=all
-EnvironmentFile={secrets_env_path}
+{ready["core_ready"]}EnvironmentFile={secrets_env_path}
 EnvironmentFile=-{upgrade_env_path}
 ExecStartPre=-{runtime} stop {profile.container_name}
 ExecStartPre=-{runtime} rm {profile.container_name}
@@ -160,7 +231,7 @@ ExecStart={runtime} run --rm \\
     -e YADGAR_DB_USER=${{YADGAR_RW_USER:-${{YADGAR_DB_USER:-${{SURREAL_USER}}}}}} \\
     -e YADGAR_DB_PASS=${{YADGAR_RW_PASS:-${{YADGAR_DB_PASS:-${{SURREAL_PASS}}}}}} \\
     {profile.image_name}
-ExecStop={runtime} stop {profile.container_name}
+{ready["core_gate"]}ExecStop={runtime} stop {profile.container_name}
 Restart=on-failure
 RestartSec=5
 

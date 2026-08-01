@@ -10,9 +10,23 @@ Requires=yadgar-backend.service
 # @STATE_DIR@ must be spelled IDENTICALLY here and in that unit's PathExists=.
 
 [Service]
-Type=notify
-NotifyAccess=all
-Environment=DOCKER_HOST=unix:///run/podman/podman.sock
+# task:0105 — readiness is runtime-conditional. The Type below renders `notify`
+# for podman (its default sdnotify=container mode passes NOTIFY_SOCKET into the
+# container and forwards the daemon's own READY=1) and `exec` for docker, which
+# has no sd_notify proxy of any kind — nothing would ever send READY=1 there and
+# the unit would sit until TimeoutStartSec. The docker-only ExecStartPost below
+# replaces that signal with a bounded /health poll; per man systemd.service,
+# "the execution of ExecStartPost= is taken into account for the purpose of
+# Before=/After= ordering constraints", which is the guarantee notify buys.
+# generate_systemd.sh either STRIPS a column-0 marker prefix or DELETES the line.
+Type=@SERVICE_TYPE@
+@PODMAN_ONLY@NotifyAccess=all
+# DOCKER_HOST is a podman-only belt: it names podman's rootful socket, which the
+# local podman CLI ignores (it reads CONTAINER_HOST) but the docker-compat shim
+# path may use. On docker it is not merely useless, it points the docker CLI at a
+# socket that does not exist, so every Exec* in this unit fails — hence omitted
+# entirely there, letting docker use its own default socket / active context.
+@PODMAN_ONLY@Environment=DOCKER_HOST=unix:///run/podman/podman.sock
 EnvironmentFile=@SECRETS_ENV_FILE@
 # upgrade.env carries YADGAR_IMAGE_TAG; leading '-' makes missing file non-fatal (first install).
 EnvironmentFile=-%h/.local/state/yadgar/upgrade.env
@@ -45,6 +59,17 @@ ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user r
     -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} \
     --memory 1g --cpus 1 --stop-timeout 30 \
     ${YADGAR_IMAGE_TAG}
+# Docker readiness gate. `curl` is resolved from the unit's $PATH, like `mkdir`
+# and @RUNTIME@ above. No shell wrapper, so systemd's own `$` expansion never
+# applies; curl's --retry does the polling. --retry-connrefused covers "port not
+# listening yet", --retry-all-errors covers "listening but not healthy yet"
+# (--fail makes a 5xx an error, which plain --retry would not retry).
+# 45 * 2s = 90s, inside the TimeoutStartSec=120 below — a gate that outlives the
+# start timeout would turn a slow start into a Restart=on-failure crashloop.
+# /health (readiness) not /health/live (liveness, ADR-0019): podman's READY=1 is
+# emitted last, after the full engine set, so gating on liveness would mark this
+# unit active EARLIER than the podman arm does.
+@DOCKER_ONLY@ExecStartPost=curl --fail --silent --show-error --output /dev/null --retry 45 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:8765/health
 ExecStop=@RUNTIME@ stop yadgar
 # ExecReload: reserved for future config-only reload; no-op until orchestrator wires it.
 ExecReload=/bin/true
