@@ -1,0 +1,35 @@
+[Unit]
+Description=Yadgar Memory Engine — MCP Core Server
+Wants=yadgar-backend.service
+After=network.target yadgar-backend.service
+
+[Service]
+Type=exec
+TimeoutStartSec=120
+EnvironmentFile=/home/testuser/.config/yadgar/secrets.env
+EnvironmentFile=-/home/testuser/.local/state/yadgar/upgrade.env
+ExecStartPre=-docker stop yadgar
+ExecStartPre=-docker rm yadgar
+ExecStart=docker run --rm \
+    --name yadgar \
+    --network yadgar-net \
+    --cpus 1.0 \
+    --memory 2048m \
+    --memory-swap 2048m \
+    --user root \
+    -v yadgar-data:/data \
+    -p 8765:8765 \
+    -e YADGAR_DB_URL=http://yadgar-backend:8000 \
+    -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
+    -e YADGAR_DATA_DIR=/data \
+    -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} \
+    -e YADGAR_DB_USER=${YADGAR_RW_USER:-${YADGAR_DB_USER:-${SURREAL_USER}}} \
+    -e YADGAR_DB_PASS=${YADGAR_RW_PASS:-${YADGAR_DB_PASS:-${SURREAL_PASS}}} \
+    docker.io/openfantasy/yadgar:5.170.15
+ExecStartPost=curl --fail --silent --show-error --output /dev/null --retry 45 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:8765/health
+ExecStop=docker stop yadgar
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

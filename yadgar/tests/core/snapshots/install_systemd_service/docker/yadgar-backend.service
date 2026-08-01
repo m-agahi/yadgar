@@ -1,0 +1,40 @@
+[Unit]
+Description=Yadgar Backend — SurrealDB and Embedding Service
+After=network.target
+
+[Service]
+Type=exec
+TimeoutStartSec=180
+EnvironmentFile=/home/testuser/.config/yadgar/secrets.env
+ExecStartPre=-docker network create --driver bridge yadgar-net
+ExecStartPre=-docker stop yadgar-backend
+ExecStartPre=-docker rm yadgar-backend
+ExecStart=docker run --rm \
+    --name yadgar-backend \
+    --network yadgar-net \
+    --cpus 1.0 \
+    --memory 4g \
+    --memory-swap 4g \
+    --user root \
+    --health-cmd "curl -f http://localhost:8001/health || exit 1" \
+    --health-start-period=60s \
+    -v /home/testuser/.local/share/yadgar:/data \
+    -v yadgar-data:/queue-data \
+    -p 8001:8001 \
+    -e SURREAL_USER=${SURREAL_USER} \
+    -e SURREAL_PASS=${SURREAL_PASS} \
+    -e YADGAR_RW_USER=${YADGAR_RW_USER:-} \
+    -e YADGAR_RW_PASS=${YADGAR_RW_PASS:-} \
+    -e YADGAR_RO_USER=${YADGAR_RO_USER:-} \
+    -e YADGAR_RO_PASS=${YADGAR_RO_PASS:-} \
+    -e YADGAR_QUEUE_BASE=/queue-data \
+    -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} \
+    -v /tmp/yadgar-fixture-home/.cache/huggingface:/home/yadgar/.cache/huggingface \
+    docker.io/openfantasy/yadgar-backend:9.9.9
+ExecStartPost=curl --fail --silent --show-error --output /dev/null --retry 75 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:8001/health
+ExecStop=docker stop yadgar-backend
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
