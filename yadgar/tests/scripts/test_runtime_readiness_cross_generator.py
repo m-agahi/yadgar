@@ -89,6 +89,25 @@ _PODMAN_ONLY = (
 # The docker readiness gate: an ExecStartPost= poll of a /health endpoint.
 _GATE_RE = re.compile(r"^\s*ExecStartPost\s*=.*\bcurl\b.*--retry\b.*/health", re.MULTILINE)
 
+# task:0106 — a unit whose START is gated on readiness, and the two numbers whose
+# relation that gating depends on. Type=simple is deliberately absent: such a
+# unit is "started" the instant the fork succeeds, so TimeoutStartSec never binds.
+_READINESS_TYPE_RE = re.compile(
+    r"^[^\S\n]*Type[^\S\n]*=[^\S\n]*(notify|exec)[^\S\n]*$", re.MULTILINE
+)
+# Horizontal whitespace only ([^\S\n], not \s) on both sides of the `=`: plain
+# ``\s*`` would let ``TimeoutStartSec=`` with an EMPTY value — which systemd reads
+# as "reset to the default", i.e. the exact 90s this car is escaping — swallow the
+# newline and capture the NEXT directive as its value.
+_TIMEOUT_RE = re.compile(r"^[^\S\n]*TimeoutStartSec[^\S\n]*=[^\S\n]*(\S+)[^\S\n]*$", re.MULTILINE)
+_GATE_BUDGET_RE = re.compile(r"--retry\s+(\d+)\s+--retry-delay\s+(\d+)")
+
+# The default a readiness-gated unit inherits when it declares nothing (``man
+# systemd.service``: DefaultTimeoutStartSec, 90s). The floor, not the value: this
+# guard pins the RELATION and the escape from the default, deliberately NOT the
+# literal 180/120, so a future retune with evidence does not have to fight a test.
+_SYSTEMD_DEFAULT_START_SEC = 90
+
 
 # ── Renderers: (label) -> {unit-name: rendered text} for a given runtime ──────
 
@@ -196,6 +215,87 @@ def test_docker_units_gate_readiness_on_a_health_poll(label, tmp_path, monkeypat
         )
         assert re.search(r"^\s*Type\s*=\s*exec", text, re.MULTILINE), (
             f"{label}/{name}: docker unit is not Type=exec"
+        )
+
+
+@pytest.mark.parametrize("runtime", ("podman", "docker"))
+@pytest.mark.parametrize("label", sorted(_SYSTEMD_RENDERERS))
+def test_readiness_gated_units_declare_a_start_budget_above_their_gate(
+    label, runtime, tmp_path, monkeypatch
+):
+    """task:0106 — a readiness-gated unit must set ``TimeoutStartSec`` explicitly.
+
+    Scoped by ``Type=``, not by unit name: ``TimeoutStartSec`` only *binds* when
+    the unit's start is gated on something the daemon has to reach. A
+    ``Type=notify`` unit is not "started" until ``READY=1`` arrives, and a
+    ``Type=exec`` unit here is not started until its ``ExecStartPost=`` gate
+    returns — both can outlive systemd's 90s default. A ``Type=simple`` unit
+    (``scripts/install/yadgar-backend.service.in``) is "started" the instant the
+    fork succeeds, so the directive is genuinely irrelevant there and that unit
+    is exempt by the ``Type`` filter rather than by name.
+
+    Why 90s is structurally too tight on the podman backend, independent of any
+    measurement: ``--sdnotify=healthy`` means ``READY=1`` is emitted on the first
+    *healthy* healthcheck, the unit passes ``--health-start-period=60s``, and it
+    pins no ``--health-interval`` so podman's 30s default applies. Health results
+    are therefore quantised to 30s ticks starting after the 60s grace — a model
+    load finishing at t=65s is not *observed* until t≈90s, exactly the default.
+    ``flake.nix:366`` supplies the value (180) as the field-proven budget for the
+    identical unit shape on the identical runtime, comment "covers cold model
+    load"; the backend's ``/health`` returns 200 only when ``db_ok and
+    engine_loaded`` (``embed_service.py``), so model load really is on the
+    readiness path for both arms.
+
+    What is asserted is the FLOOR and the RELATION, deliberately not the literal
+    180/120 — pinning the values would make a future evidence-backed retune fight
+    a test. The floor exists because the relation alone is vacuous on podman
+    (no gate to compare against), so without it this guard would still pass on a
+    unit regressed to ``TimeoutStartSec=90``: the very bug being fixed, re-opened
+    silently. Both halves are mutation-proven, not assumed.
+
+    The second half is the relation car 0105 sized by hand: a gate that can
+    outlive ``TimeoutStartSec`` stops being the binding constraint — the unit
+    dies on timeout and ``Restart=on-failure`` loops it instead of the gate
+    failing cleanly. Vacuous on podman (its readiness is a signal, and
+    ``test_podman_units_keep_their_sd_notify_readiness`` asserts no gate leaks
+    there), asserted wherever a gate exists.
+    """
+    for name, text in _RENDERERS[label](tmp_path, monkeypatch, runtime).items():
+        if not _READINESS_TYPE_RE.search(text):
+            continue  # Type=simple — "started" at fork; no budget to blow.
+
+        budget = _TIMEOUT_RE.search(text)
+        assert budget, (
+            f"{label}/{name} rendered for {runtime} is readiness-gated "
+            f"({_READINESS_TYPE_RE.search(text).group(1)}) but sets no explicit "
+            f"TimeoutStartSec, so it inherits systemd's 90s default. A cold model "
+            f"load that overruns it fails the unit, and Restart=on-failure then "
+            f"cycles it.\n{text}"
+        )
+        assert budget.group(1).isdigit(), (
+            f"{label}/{name}: TimeoutStartSec={budget.group(1)!r} is not plain "
+            f"seconds; this guard's gate comparison cannot interpret a systemd "
+            f"time span. Express it in seconds or teach this test the unit suffix."
+        )
+        timeout = int(budget.group(1))
+        assert timeout > _SYSTEMD_DEFAULT_START_SEC, (
+            f"{label}/{name} rendered for {runtime}: TimeoutStartSec={timeout} is "
+            f"at or below systemd's {_SYSTEMD_DEFAULT_START_SEC}s default, so "
+            f"declaring it buys nothing. Without this floor the podman arm — which "
+            f"has no gate, making the gate comparison below vacuous — could be "
+            f"regressed back to the default while this guard still passed."
+        )
+
+        gate = _GATE_BUDGET_RE.search(text)
+        if gate is None:
+            continue
+        spent = int(gate.group(1)) * int(gate.group(2))
+        assert spent < timeout, (
+            f"{label}/{name} rendered for {runtime}: the ExecStartPost health "
+            f"gate can spend {spent}s (--retry {gate.group(1)} x --retry-delay "
+            f"{gate.group(2)}s) but TimeoutStartSec={timeout}. The gate must stay "
+            f"strictly inside the start budget, otherwise systemd kills the unit "
+            f"before the gate can fail cleanly and the failure reads as a timeout."
         )
 
 

@@ -9,10 +9,10 @@
   "yadgar/core/cli/version.py:32": {
     "rationale": "`yadgar version` CLI command displays db/embed/uptime fields from the readiness payload to the operator. /health/live's payload lacks those fields, so readiness is required here."
   },
-  "yadgar/core/daemon/systemd.py:101": {
+  "yadgar/core/daemon/systemd.py:123": {
     "rationale": "task:0105's docker readiness gate for the BACKEND embed service (port 8001), which exposes no /health/live liveness variant at all — ADR-0019's liveness split is scoped to the core daemon only. Identical reasoning to daemon.py:705's _embed_health_ok."
   },
-  "yadgar/core/daemon/systemd.py:103": {
+  "yadgar/core/daemon/systemd.py:125": {
     "rationale": "task:0105's docker readiness gate for the CORE unit, standing in for podman's sd_notify proxy, which docker does not have. It must approximate READY=1 — emitted LAST, after the full engine set (bootstrap.py). /health/live goes green as soon as the HTTP server binds, so gating on liveness would mark the docker unit active EARLIER than the podman arm does, a semantic regression. Readiness is genuinely required."
   },
   "yadgar/core/daemon/daemon.py:414": {

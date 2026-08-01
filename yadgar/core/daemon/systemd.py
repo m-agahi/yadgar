@@ -79,9 +79,31 @@ def _readiness_directives(runtime: str, core_port: int) -> dict[str, str]:
     A non-zero ``ExecStartPost`` FAILS the unit, and ``Restart=on-failure`` would
     then loop it — so each budget is set from the slowest real path (a first
     start, where ``docker run`` pulls the image inline) and ``TimeoutStartSec``
-    is set above it. Backend 180s matches ``flake.nix``, whose comment reads
-    "covers cold model load"; the podman arm keeps systemd's 90s default
-    untouched.
+    is set strictly above it: backend gate 75 x 2s = 150s inside 180, core gate
+    45 x 2s = 90s inside 120. A gate that could outlive its own start budget
+    would make systemd's timeout the binding constraint instead of the gate.
+
+    task:0106 gives the PODMAN arm the same two budgets. It had none — task:0105
+    left it on systemd's 90s default to keep its own render byte-identical — and
+    90s is structurally too tight there, independent of any measurement:
+    ``--sdnotify=healthy`` emits ``READY=1`` on the first HEALTHY healthcheck,
+    the backend unit passes ``--health-start-period=60s``, and it pins no
+    ``--health-interval`` so podman's 30s default applies. Health results are
+    therefore quantised to 30s ticks after a 60s grace, so a model load finishing
+    at t=65s is not OBSERVED until t≈90s — the default, exactly. The backend's
+    ``/health`` returns 200 only when ``db_ok and engine_loaded``, so model load
+    genuinely sits on that path. 180 is ``flake.nix:366``'s field-proven budget
+    for this identical unit shape on this identical runtime ("covers cold model
+    load"). The core takes 120, matching ``flake.nix:427`` and the unconditional
+    value in ``scripts/install/yadgar.service.in``; safe on podman because the
+    core unit's ``After=``/``Requires=yadgar-backend.service`` means the backend
+    is already HEALTHY, so backend model load is not inside the core's budget.
+    The podman arm has no ``ExecStartPost`` gate at all (readiness is a signal),
+    so the gate-vs-timeout relation above is vacuous there.
+
+    Why this was newly reachable: before task:0105 the generated backend unit
+    could not start at all (``--health-cmd`` was emitted unquoted), so no start
+    budget was ever exercised.
 
     Compared on the BASENAME because the runtime may legitimately arrive as a
     path (the ``YADGAR_CONTAINER_RUNTIME`` escape hatch, and ``flake.nix``'s
@@ -89,10 +111,10 @@ def _readiness_directives(runtime: str, core_port: int) -> dict[str, str]:
     """
     if os.path.basename(runtime) == "podman":
         return {
-            "backend_ready": "Type=notify\nNotifyAccess=all\n",
+            "backend_ready": "Type=notify\nNotifyAccess=all\nTimeoutStartSec=180\n",
             "backend_sdnotify": "    --sdnotify=healthy \\\n",
             "backend_gate": "",
-            "core_ready": "Type=notify\nNotifyAccess=all\n",
+            "core_ready": "Type=notify\nNotifyAccess=all\nTimeoutStartSec=120\n",
             "core_gate": "",
         }
     return {
