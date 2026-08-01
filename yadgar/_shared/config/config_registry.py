@@ -570,6 +570,7 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_VACUUM_AUTO_THRESHOLD_BYTES", "2147483648", "int"),
     ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_START", "19:00", "string"),
     ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_END", "23:00", "string"),
+    ConfigEntry("YADGAR_VACUUM_SIDE_LAUNCHER", "auto", "string"),
 ]
 
 

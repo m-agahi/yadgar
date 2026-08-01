@@ -84,6 +84,7 @@ def spawn_surreal(
     data_dir: str,
     surreal_user: str = "root",
     surreal_pass: str = "root",
+    binary: str = "surreal",
     **popen_kwargs: Any,
 ) -> subprocess.Popen:
     """Start a SurrealDB subprocess bound to *port*, register its PID.
@@ -95,6 +96,14 @@ def spawn_surreal(
             Defaults to ``"root"`` (built-in SurrealDB default).
         surreal_pass: SurrealDB root password passed via ``--pass``.
             Defaults to ``"root"`` (built-in SurrealDB default).
+        binary: Path (or bare name) of the `surreal` executable to spawn.
+            Defaults to the bare string ``"surreal"`` — a plain PATH-resolved
+            lookup, preserving every existing caller.  Task 0107:
+            ``HostBinaryLauncher.start`` passes the ABSOLUTE path already
+            resolved by ``yadgar.core.vacuum.launcher._resolve_surreal_binary``
+            instead of relying on this Popen doing its own independent PATH
+            lookup — that independence was the third of three PATH-dependent
+            resolution points that could disagree with each other.
         **popen_kwargs: Extra kwargs forwarded to subprocess.Popen (e.g.
             stdout=subprocess.DEVNULL).  stdout/stderr default to DEVNULL.
 
@@ -102,7 +111,8 @@ def spawn_surreal(
         The running subprocess.Popen instance.
 
     Raises:
-        FileNotFoundError: If the `surreal` binary is not on PATH.
+        FileNotFoundError: If *binary* is not on PATH (or does not exist, if
+            an absolute path was passed).
     """
     defaults: dict[str, Any] = {
         "stdout": subprocess.DEVNULL,
@@ -112,7 +122,7 @@ def spawn_surreal(
 
     proc = subprocess.Popen(
         [
-            "surreal",
+            binary,
             "start",
             "--no-banner",
             "--bind",
