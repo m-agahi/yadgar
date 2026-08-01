@@ -131,6 +131,13 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "systemd-analyze not available",
       "note": "systemd-analyze calendar is the only real (non-string-match) validation that the rendered OnCalendar expressions parse and elapse; the binary is absent on macOS hosts and minimal CI images, where the render assertions still run"
+    },
+    {
+      "id": "car-0112-install-method-parity-nix-flake-01",
+      "file": "yadgar/tests/scripts/test_install_method_detector_parity.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "requires a real /nix/store filesystem",
+      "note": "nix-flake detection requires a real path literally prefixed /nix/store/, which cannot be synthesized under tmp_path — the check-in-store fixture (a symlink to the test host's own nix-built bash) only exists on real NixOS/nix-installed hosts. The CI test-fast job runs in a plain ubuntu-based container with no /nix/store, so this one parity case skips there; the other 7 (pipx legacy/modern/explicit-PIPX_HOME/false-positive, brew, source, unknown) are pure tmp_path fixtures and always run."
     }
   ]
 }

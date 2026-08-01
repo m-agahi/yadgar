@@ -1,8 +1,7 @@
 """v5.48.0 — Install-method detection and upgrade-command generation.
 
-Detection order (detect_install_method.sh mirrors this, but as of this
-writing still only matches the legacy */.local/pipx/venvs/yadgar/* layout —
-see Car 0109):
+Detection order (detect_install_method.sh mirrors this exactly — see
+Car 0112):
   1. which yadgar → real path
   2. Match against: /nix/store/* → nix-flake
                     */Cellar/yadgar/* → brew

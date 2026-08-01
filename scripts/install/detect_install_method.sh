@@ -31,8 +31,20 @@ if [[ "$REAL_PATH" == */Cellar/yadgar/* ]]; then
     exit 0
 fi
 
-# 4. pipx: resolves into .local/pipx/venvs/yadgar/
-if [[ "$REAL_PATH" == */.local/pipx/venvs/yadgar/* ]]; then
+# 4. pipx: resolves into <PIPX_HOME>/venvs/yadgar/. Legacy default is
+# ~/.local/pipx; pipx >=1.6 changed the default to the XDG data dir, i.e.
+# ~/.local/share/pipx, inserting a "share" segment. Respect an explicit
+# PIPX_HOME first (honors custom installs), then fall back to matching the
+# pipx/venvs/yadgar/ segment regardless of what precedes it so both known
+# defaults resolve without hardcoding either prefix.
+if [[ -n "${PIPX_HOME:-}" ]]; then
+    PIPX_HOME_REAL="$(realpath "$PIPX_HOME" 2>/dev/null || readlink -f "$PIPX_HOME" 2>/dev/null || echo "$PIPX_HOME")"
+    if [[ "$REAL_PATH" == "$PIPX_HOME_REAL/venvs/yadgar/"* ]]; then
+        echo "pipx"
+        exit 0
+    fi
+fi
+if [[ "$REAL_PATH" == */pipx/venvs/yadgar/* ]]; then
     echo "pipx"
     exit 0
 fi
