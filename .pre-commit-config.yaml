@@ -193,6 +193,18 @@ repos:
         # make this fail. Measured ~1.2s on this tree.
         always_run: true
 
+      - id: check-model-id-liveness
+        name: Check model-id liveness (config default ↔ image bake ↔ code literal)
+        language: system
+        entry: python scripts/check_model_id_liveness.py
+        pass_filenames: false
+        # always_run: the read set is config.py + Dockerfile.backend + every
+        # ML-loading module, so a change to any ONE of the three can invalidate
+        # the other two. A files: filter narrower than that is blind by
+        # construction — a Dockerfile bake-list edit with no config change is
+        # exactly the input that must fail. Measured ~0.3s on this tree.
+        always_run: true
+
       - id: check-roadmap-links
         name: Check every path docs/plans/ROADMAP.md references actually exists (Car 0026)
         language: system

@@ -1,14 +1,37 @@
 #!/bin/bash
 # Backend container entrypoint: SurrealDB + embedding service.
 #
-# NOTE: no in-container backup loop. The previous `GET /export` cron triggered
-# a stack overflow in a `surrealdb-worker` thread (the export's recursive value
-# serializer blows the default ~2 MiB tokio stack on this dataset), aborting the
-# whole process and putting the container in a restart loop. DB snapshots are
-# handled outside the container by the systemd ExecStartPre `cp -r` of the
-# surrealkv data dir. If a logical (.surql) backup is needed again, run
-# `surreal export` from a one-off client against a *quiesced* DB, not on a hot
-# server, and only after the upstream export-recursion issue is resolved.
+# HISTORY: the original in-container `GET /export` cron (dropped in 267a45c3,
+# #43) triggered a stack overflow in a `surrealdb-worker` thread — the export's
+# recursive value serializer blew the default ~2 MiB tokio stack on this dataset,
+# aborting the process and putting the container in a restart loop. The same
+# commit raised SURREAL_RUNTIME_STACK_SIZE to 32 MiB (see below), which is why
+# `/export` is used again today.
+#
+# The comment that stood here until task 0121 carried three false claims and is
+# recorded so nobody reinstates them: (1) "no in-container backup loop" — there
+# is one, `_wiki_backup_loop` below; (2) "DB snapshots are handled outside the
+# container by the systemd ExecStartPre `cp -r`" — NO generator has ever emitted
+# such a directive (`git log -S 'ExecStartPre=cp -r' --all` returns nothing), and
+# believing it is why task 0115 exists; (3) "do not run `surreal export` until
+# the upstream export-recursion issue is resolved" — the nightly cycle calls
+# `GET /export` against a live backend by design.
+#
+# What actually snapshots this DB, as of today:
+#   * pre-vacuum physical — yadgar/core/vacuum/phases.py: the host-side core
+#     process stops the service, then shutil.copytree()s the surrealkv data dir.
+#   * nightly logical — yadgar/core/backup/backup.py via
+#     yadgar/core/scripts/nightly_cycle.py: `GET /export` -> .surql, labelled
+#     nightly-pre / nightly-post, transactionally consistent against a live server.
+#   * in-container wiki — `_wiki_backup_loop` in THIS file: a targeted
+#     `SELECT * FROM wiki_page` via /sql every 24 h, 14-day retention (ADR-0076
+#     D3). Deliberately not `/export`.
+#   * pre-migration — NONE. That gap is task 0115. Do not add a forward
+#     reference to its mechanism here: 0115 is unlanded, so describing it would
+#     be false in exactly the way this rewrite is repairing. 0115's own commit
+#     adds its line.
+# Guard: yadgar/tests/scripts/test_no_cp_execstartpre_cross_generator.py pins
+# claim (2) against every unit generator.
 set -e
 
 # ---------------------------------------------------------------------------

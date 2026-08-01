@@ -7,7 +7,7 @@ Phase 1-3 optimizations:
 - nomic-embed-text-v1.5 (768d) with asymmetric query/document encoding
 - Context window enrichment (1-turn surrounding context)
 - Temporal metadata injection (session dates prepended)
-- FlashRank cross-encoder reranking
+- Cross-encoder reranking
 - MMR diversity enforcement
 - Z-score adversarial abstention
 """
@@ -337,7 +337,8 @@ def _make_settings(**overrides) -> Settings:
         "COMPARISON_DUAL_SEARCH_ENABLED": True,
         # v21: Keep WRRF (convex regressed)
         "FUSION_METHOD": "wrrf",
-        # v22: Disable GTE-Reranker (regressed), keep FlashRank
+        # v22: Disable the advanced reranker (regressed) — the CE rerank stage
+        # then runs on the CROSS_ENCODER_MODEL fallback tier.
         "GTE_RERANKER_ENABLED": False,
         "GTE_RERANKER_FALLBACK_TO_FLASHRANK": True,
         # v23: NLI entailment (only for open_domain queries)

@@ -90,7 +90,7 @@ PHASE1_CONFIGS = [
     ConfigSpec(
         "gte_reranker_only",
         "ablation",
-        "GTE reranker only (vs FlashRank)",
+        "Advanced reranker on (vs the CROSS_ENCODER_MODEL fallback tier)",
         {
             **BASELINE_OVERRIDES,
             "GTE_RERANKER_ENABLED": True,

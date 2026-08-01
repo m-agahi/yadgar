@@ -109,7 +109,7 @@
       "file": "yadgar/tests/backend/test_model_load_smoke.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "real-model load smoke — opt-in via YADGAR_MODEL_LOAD_SMOKE=1",
-      "note": "Deps-train gates b/c/d: downloads real model weights (Ettin/GTE/MiniLM/doc2query) and runs real inference — opt-in local pre-merge gate, never runs in CE-mocked CI legs. Covers the module-level skipif plus the flashrank importorskip (flashrank is not a locked dep; prod treats its absence as silent fall-through)."
+      "note": "Deps-train gates b/c/d: downloads real model weights (Ettin/GTE/MiniLM/doc2query) and runs real inference — opt-in local pre-merge gate, never runs in CE-mocked CI legs. Covers the module-level skipif. The flashrank importorskip this note used to sanction was removed with the flashrank CE tier (ADR-0191, task 0121): flashrank was never in pyproject/uv.lock, so that case never executed in any gate."
     },
     {
       "id": "code-graph-live-smoke-01",

@@ -9185,65 +9185,59 @@
     "nesting": 2,
     "params": 1
   },
-  "yadgar/backend/ml_client/local_ml_client.py::LocalMLClient@19": {
-    "attrs": 7,
+  "yadgar/backend/ml_client/local_ml_client.py::LocalMLClient@18": {
+    "attrs": 6,
     "inh_depth": 0,
-    "methods": 9
+    "methods": 8
   },
   "yadgar/backend/ml_client/local_ml_client.py::__file__": {
-    "loc": 306
+    "loc": 296
   },
-  "yadgar/backend/ml_client/local_ml_client.py::__init__@26": {
+  "yadgar/backend/ml_client/local_ml_client.py::__init__@31": {
     "cyclo": 1,
-    "loc": 8,
+    "loc": 7,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/backend/ml_client/local_ml_client.py::_load_gte_reranker@36": {
+  "yadgar/backend/ml_client/local_ml_client.py::_load_gte_reranker@40": {
     "cyclo": 1,
     "loc": 18,
     "nesting": 0,
     "params": 2
   },
-  "yadgar/backend/ml_client/local_ml_client.py::_try_flashrank@94": {
-    "cyclo": 7,
-    "loc": 24,
-    "nesting": 2,
-    "params": 3
-  },
-  "yadgar/backend/ml_client/local_ml_client.py::_try_gte_reranker@56": {
+  "yadgar/backend/ml_client/local_ml_client.py::_try_gte_reranker@60": {
     "cyclo": 10,
-    "loc": 36,
+    "loc": 40,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/backend/ml_client/local_ml_client.py::_try_st_cross_encoder@120": {
+  "yadgar/backend/ml_client/local_ml_client.py::_try_st_cross_encoder@102": {
     "cyclo": 10,
-    "loc": 44,
+    "loc": 56,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/backend/ml_client/local_ml_client.py::score_cross_encoder@166": {
-    "cyclo": 4,
-    "loc": 21,
+  "yadgar/backend/ml_client/local_ml_client.py::score_cross_encoder@160": {
+    "cyclo": 3,
+    "loc": 18,
     "nesting": 1,
     "params": 3
   },
-  "yadgar/backend/ml_client/local_ml_client.py::score_nli@189": {
+  "yadgar/backend/ml_client/local_ml_client.py::score_nli@180": {
     "cyclo": 9,
-    "loc": 52,
+    "loc": 55,
     "nesting": 3,
     "params": 3
   },
-  "yadgar/backend/ml_client/local_ml_client.py::score_pair@243": {
+  "yadgar/backend/ml_client/local_ml_client.py::score_pair@237": {
     "cyclo": 2,
     "loc": 4,
     "nesting": 0,
     "params": 3
   },
-  "yadgar/backend/ml_client/local_ml_client.py::unload_if_idle@249": {
-    "cyclo": 10,
-    "loc": 58,
+  "yadgar/backend/ml_client/local_ml_client.py::unload_if_idle@243": {
+    "cyclo": 9,
+    "loc": 54,
     "nesting": 2,
     "params": 2
   },
@@ -13719,6 +13713,27 @@
     "nesting": 0,
     "params": 0
   },
+  "yadgar/core/forward.py::__file__": {
+    "loc": 157
+  },
+  "yadgar/core/forward.py::_forward_admin@31": {
+    "cyclo": 3,
+    "loc": 45,
+    "nesting": 1,
+    "params": 3
+  },
+  "yadgar/core/forward.py::_forward_restore@115": {
+    "cyclo": 3,
+    "loc": 43,
+    "nesting": 1,
+    "params": 2
+  },
+  "yadgar/core/forward.py::_forward_viz@79": {
+    "cyclo": 3,
+    "loc": 33,
+    "nesting": 1,
+    "params": 3
+  },
   "yadgar/core/hooks/__init__.py::__file__": {
     "loc": 1
   },
@@ -16163,27 +16178,6 @@
     "loc": 6,
     "nesting": 2,
     "params": 1
-  },
-  "yadgar/core/forward.py::__file__": {
-    "loc": 157
-  },
-  "yadgar/core/forward.py::_forward_admin@31": {
-    "cyclo": 3,
-    "loc": 45,
-    "nesting": 1,
-    "params": 3
-  },
-  "yadgar/core/forward.py::_forward_restore@115": {
-    "cyclo": 3,
-    "loc": 43,
-    "nesting": 1,
-    "params": 2
-  },
-  "yadgar/core/forward.py::_forward_viz@79": {
-    "cyclo": 3,
-    "loc": 33,
-    "nesting": 1,
-    "params": 3
   },
   "yadgar/core/server/tools/_test_tools.py::__file__": {
     "loc": 59

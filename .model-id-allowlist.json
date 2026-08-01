@@ -1,0 +1,25 @@
+{
+  "_comment": "Allowlist for scripts/check_model_id_liveness.py (task 0121). Governance mirrors .registry-prose-allowlist.json (I32) and .complexity-allowlist.json (I30): every entry needs a rationale >= 40 chars, and a STALE entry hard-fails — a field that becomes baked or is deleted, and a literal that disappears from the ML-loading modules, MUST be removed from this file. That stale rule is what stops this becoming a write-only dumping ground. LEGITIMATE use is a model id that ships deliberately unbaked: a default-OFF feature, a degraded fallback, or operator-selectable reference data. It is NOT a way to silence a wrong default — if the field points at the wrong model, fix the field. NOTE THE CEILING: the stale rule fires on a FIELD's state, never on the rationale's premise, so an allowlisted default-OFF feature that later flips ON is invisible (see the script docstring).",
+  "fields": {
+    "CROSS_ENCODER_MODEL": {
+      "rationale": "Reachable ONLY as the degraded sentence-transformers fallback tier, when the Ettin primary is disabled (GTE_RERANKER_ENABLED=False) or fails. Deliberately not baked, so inside the offline backend container it yields zeros; in host stdio/daemon mode with network it works. The LIVE cross-encoder reranker is GTE_RERANKER_MODEL (cross-encoder/ettin-reranker-32m-v1, ADR-0104) — this field's name and position in config.py are what made two readers report ms-marco as the reranker, which is the incident task 0121 exists because of."
+    },
+    "NLI_MODEL": {
+      "rationale": "NLI entailment reranking is default-OFF (NLI_RERANKING_ENABLED=False since v5.6.6 — ~55s/call on CPU for marginal gain over CE alone), so nothing loads these weights in prod and baking ~450MB into the image would be dead payload. CAP-RETR-016 is DORMANT. If NLI_RERANKING_ENABLED ever flips True, this row must be re-argued: the guard will NOT re-fire on its own."
+    },
+    "COMET_MODEL": {
+      "rationale": "COMET commonsense enrichment and query expansion are both default-OFF (COMET_ENRICHMENT_ENABLED / COMET_QUERY_EXPANSION_ENABLED False), so the weights never load in prod and are deliberately not baked. Same ceiling as NLI_MODEL: flipping either flag True does not re-fire this guard, so the row must be re-argued at that point."
+    }
+  },
+  "literals": {
+    "BAAI/bge-small-en-v1.5": {
+      "rationale": "Operator-selectable embedding model; dimension/prefix reference data in _shared/embeddings/embeddings.py (MODEL_DIMENSIONS / MODEL_QUERY_PREFIX / MODEL_DOC_PREFIX), not a hardcoded default. An operator may point EMBEDDING_MODEL at it; the tables exist so encode() knows the vector width and the query/document prefixes that model expects."
+    },
+    "BAAI/bge-base-en-v1.5": {
+      "rationale": "Operator-selectable embedding model; dimension/prefix reference data in _shared/embeddings/embeddings.py (MODEL_DIMENSIONS / MODEL_QUERY_PREFIX / MODEL_DOC_PREFIX), not a hardcoded default. Same reference-table role as BAAI/bge-small-en-v1.5."
+    },
+    "nomic-ai/nomic-embed-text-v1.5": {
+      "rationale": "Operator-selectable embedding model; dimension/prefix reference data in _shared/embeddings/embeddings.py (MODEL_DIMENSIONS / MODEL_QUERY_PREFIX / MODEL_DOC_PREFIX), not a hardcoded default. Named here rather than by an org-prefix rule because a prefix allowlist would have silently missed nomic-ai/ and mismayil/ — measured on this tree."
+    }
+  }
+}

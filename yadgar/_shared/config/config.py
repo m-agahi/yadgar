@@ -185,9 +185,18 @@ class Settings(BaseSettings):
     # v9: Temporal retrieval settings
     TEMPORAL_RETRIEVAL_ENABLED: bool = True
 
-    # v10: Cross-encoder reranking settings
+    # v10: Cross-encoder reranking settings.
+    # NOT the live reranker — that is the GTE_RERANKER_* slot below (`GTE_*` kept
+    # for env back-compat; the model is Ettin-32m since T4/ADR-0104). These fields
+    # configure the CE rerank STAGE plus the degraded sentence-transformers
+    # fallback tier that runs only when the Ettin primary is off or has failed.
+    # CROSS_ENCODER_MODEL is deliberately not baked into Dockerfile.backend, so in
+    # the offline container that fallback scores zeros (ADR-0192).
     CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    CROSS_ENCODER_ENABLED: bool = True  # FlashRank ONNX is fast enough for CPU
+    # Two readers, two meanings (ADR-0192, flagged not fixed): gates the CE rerank
+    # stage in retrieval/_reranking_cross_encoder.py, and gates the ST fallback
+    # model load in ml_client/local_ml_client.py.
+    CROSS_ENCODER_ENABLED: bool = True
     CROSS_ENCODER_TOP_K: int = 10
     CROSS_ENCODER_WEIGHT: float = 0.6  # CE weight in blend (retrieval gets 1-this)
 
@@ -293,6 +302,13 @@ class Settings(BaseSettings):
     GTE_RERANKER_ENABLED: bool = True
     GTE_RERANKER_MODEL: str = "cross-encoder/ettin-reranker-32m-v1"
     GTE_RERANKER_MAX_LENGTH: int = 512
+    # Misleading name kept for env back-compat (YADGAR_GTE_RERANKER_FALLBACK_TO_
+    # FLASHRANK is documented and already written into every operator's config.yaml;
+    # renaming needs an alias + deprecation window — ADR-0192 revisit_trigger).
+    # It is a FAILURE-MODE SELECTOR, not a FlashRank switch: when the reranker
+    # fails, False => return zeros, True => fall through to the degraded
+    # sentence-transformers tier. It has never selected FlashRank, and it is not
+    # read at all when GTE_RERANKER_ENABLED=False.
     GTE_RERANKER_FALLBACK_TO_FLASHRANK: bool = True
 
     # v23 NLI. v5.6.6: default True→False (~55s/call CPU, marginal gain); YADGAR_NLI_RERANKING_ENABLED=true re-enables.
