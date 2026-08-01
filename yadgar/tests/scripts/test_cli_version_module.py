@@ -132,6 +132,23 @@ class TestProbeDaemon:
         assert result["db"] is True
         assert result["embed"] is True
 
+    def test_http_error_is_closed(self):
+        """HTTPError is a response object holding a file wrapper (a
+        tempfile._TemporaryFileWrapper via addbase on py3.14); an unclosed
+        instance fires a spurious ResourceWarning at GC that pytest-xdist
+        mis-attributes to an unrelated test. _probe_daemon must close it
+        deterministically (Car 0036)."""
+        import urllib.error
+
+        http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
+        with (
+            patch("yadgar.core.cli.version._read_auth_token", return_value=None),
+            patch("yadgar.core.cli.version.urllib.request.urlopen", side_effect=http_err),
+        ):
+            result = _probe_daemon()
+        assert result["running"] is False
+        assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
+
 
 # ---------------------------------------------------------------------------
 # print_version_summary

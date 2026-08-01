@@ -83,6 +83,8 @@ def main():
         # Try HTTP endpoint first — works in daemon mode where DB lock is always held
         _port = os.environ.get("YADGAR_PORT", "8765")
         try:
+            import contextlib as _contextlib
+            import urllib.error as _err
             import urllib.request as _req
 
             _payload = json.dumps(
@@ -102,8 +104,12 @@ def main():
                 data=_payload,
                 headers=_headers,
             )
-            _req.urlopen(_r, timeout=1)
+            with _contextlib.closing(_req.urlopen(_r, timeout=1)):
+                pass
             return
+        except _err.HTTPError as _http_exc:
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            _http_exc.close()
         except Exception:
             pass  # Daemon down — skip; never use surrealkv directly from host
     finally:

@@ -1,5 +1,6 @@
 """seed subcommand — bootstrap memory for an existing project."""
 
+import contextlib
 import json
 import os
 import sys
@@ -62,8 +63,13 @@ def _daemon_health_ok() -> bool:
         headers["Authorization"] = f"Bearer {token}"
     try:
         req = urllib.request.Request(url, headers=headers)
-        urllib.request.urlopen(req, timeout=3.0)  # noqa: S310
+        with contextlib.closing(urllib.request.urlopen(req, timeout=3.0)):  # noqa: S310
+            pass
         return True
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        return False
     except Exception:
         return False
 
@@ -144,13 +150,15 @@ def _seed_anchors(anchors: list[dict], db_path: str | None, dry_run: bool) -> di
 
         try:
             req = urllib.request.Request(url, data=payload, headers=base_headers)
-            resp = urllib.request.urlopen(req, timeout=10.0)  # noqa: S310
-            resp_data = json.loads(resp.read().decode())
+            with contextlib.closing(urllib.request.urlopen(req, timeout=10.0)) as resp:  # noqa: S310
+                resp_data = json.loads(resp.read().decode())
             if resp_data.get("created", 0):
                 results["created"] += 1
             else:
                 results["skipped"] += 1
         except urllib.error.HTTPError as e:
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
             # 409 Conflict = similarity gate deduped — count as skipped
             if e.code == 409:
                 results["skipped"] += 1
@@ -219,10 +227,16 @@ def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
     payload = json.dumps({}).encode()
     try:
         req = urllib.request.Request(url, data=payload, headers=headers)
-        resp = urllib.request.urlopen(req, timeout=30.0)  # noqa: S310
-        resp_data = json.loads(resp.read().decode())
+        with contextlib.closing(urllib.request.urlopen(req, timeout=30.0)) as resp:  # noqa: S310
+            resp_data = json.loads(resp.read().decode())
         results["created"] = resp_data.get("created", 0)
         results["skipped"] = resp_data.get("skipped", 0)
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        print(f"  WARN: seed-agent-prompts failed: {e}", file=sys.stderr)
+        results["skipped"] = len(_STARTER_PATTERNS)
+        results["reason"] = "request_failed"
     except Exception as e:
         print(f"  WARN: seed-agent-prompts failed: {e}", file=sys.stderr)
         results["skipped"] = len(_STARTER_PATTERNS)

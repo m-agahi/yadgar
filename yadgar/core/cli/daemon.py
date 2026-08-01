@@ -23,6 +23,8 @@ def _handle_pull(daemon, daemon_cls) -> None:
     result = daemon.pull()
     if result["ok"]:
         print(f"Pulled {result['image']}")
+        if result.get("backend_image"):
+            print(f"Pulled {result['backend_image']}")
         return
     print(f"Pull failed: {result['reason']}", file=sys.stderr)
     sys.exit(1)
@@ -250,6 +252,13 @@ def register(subparsers):
     daemon_sub.add_parser(
         "pull", help=f"Pull the latest prod image from Docker Hub ({DOCKERHUB_IMAGE})"
     )
+    # NOT A BUG that `build` exposes no --backend flag despite
+    # YadgarDaemon.build(backend=True) existing (task:0101 sweep): under ADR-0176
+    # CI is the sole builder/publisher of both images, and a locally built image
+    # SHADOWS the CI-built one carrying the same tag (podman's default pull
+    # policy is `missing`), so the machine silently runs an untested artifact.
+    # The core-only local build survives as a developer convenience; the
+    # backend=True keyword stays reachable in-process for tooling that needs it.
     build_p = daemon_sub.add_parser("build", help="Build the Docker image locally (prod or dev)")
     build_p.add_argument("--no-cache", action="store_true", help="Pass --no-cache to docker build")
     push_p = daemon_sub.add_parser("push", help="Tag and push the prod image to Docker Hub")

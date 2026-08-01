@@ -141,7 +141,7 @@ def _is_production_url(db_url: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# RAM-aware xdist worker cap (v5.54.5)
+# RAM- and CPU-aware xdist worker cap (v5.54.5, CPU half added by Car 0108)
 #
 # Each worker holds a Python process plus (lazily) ML models and a SurrealDB
 # subprocess — up to ~3-4 GB under load. An unguarded `-n auto` on a many-core
@@ -149,8 +149,17 @@ def _is_production_url(db_url: str) -> bool:
 # 64 GB machine). Clamp the worker count to floor(MemAvailable / 4 GB), both
 # for `-n auto` (via pytest_xdist_auto_num_workers) and for an explicit large
 # `-n N` (via the clamp in pytest_configure).
+#
+# The RAM clamp alone is not enough: on a box with plenty of free RAM it still
+# resolves `auto` to a worker count bounded only by memory, so every core (24
+# on the workstation) ends up contended and the machine becomes unusable while
+# the sweep runs. `-n auto` is therefore the MIN of the RAM clamp and a CPU
+# clamp of half the visible cores — leaving headroom for the production daemon
+# and each worker's SurrealDB child. Explicit `-n N` keeps the RAM-only clamp
+# it has always had (the operator asked for a specific number).
 # ---------------------------------------------------------------------------
 _PER_WORKER_GB = 4
+_CPU_WORKER_FRACTION = 0.5
 
 
 def _available_ram_gb() -> float:
@@ -168,9 +177,15 @@ def _ram_safe_workers() -> int:
     return max(1, int(_available_ram_gb() // _PER_WORKER_GB))
 
 
+def _cpu_safe_workers() -> int:
+    """Half the visible cores — never all of them (Car 0108)."""
+    cores = os.cpu_count() or 1
+    return max(1, int(cores * _CPU_WORKER_FRACTION))
+
+
 def pytest_xdist_auto_num_workers(config):
-    """Cap `-n auto` to a RAM-safe worker count (consulted by pytest-xdist)."""
-    return _ram_safe_workers()
+    """Cap `-n auto` to a RAM- AND CPU-safe worker count (consulted by pytest-xdist)."""
+    return max(1, min(_ram_safe_workers(), _cpu_safe_workers()))
 
 
 def _clamp_workers_to_ram(config):

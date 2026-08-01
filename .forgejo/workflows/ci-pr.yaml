@@ -407,8 +407,17 @@ jobs:
       - name: Check I33 — tri-signal observe-coverage (HARD; MISSING=0 enforced, closes #8)
         run: python scripts/check_observe_coverage.py
 
-      - name: Check I25 — config three-way-sync (Settings + yaml + registry)
-        run: python -m pytest yadgar/tests/server/test_config_three_way_sync.py -q --tb=short
+      - name: Check I25 / I25b — config three-way-sync + default-value agreement
+        # Both files, matching the check-config-three-way-sync pre-commit hook.
+        # I25 compares PRESENCE across Settings/yaml/registry; I25b compares the
+        # declared default against the code default it documents (task:0103).
+        # Naming only the I25 file here would leave I25b enforced locally and
+        # invisible in CI — the same gate-blindness class I25b exists to close.
+        run: >-
+          python -m pytest
+          yadgar/tests/server/test_config_three_way_sync.py
+          yadgar/tests/server/test_config_default_values.py
+          -q --tb=short
 
       - name: Check I29 — edge dead-capability lint (produced ≡ contracted, no drop-still-produced)
         run: python scripts/check_dead_capability.py
@@ -428,6 +437,13 @@ jobs:
         # it, and six tests mocked that URL to 200 — the mocks agreed with the
         # caller and nothing compared either against the route table.
         run: python scripts/check_route_literals.py
+
+      - name: Check urllib HTTPError/response call sites close the file wrapper (Car 0036)
+        # On py3.14 a caught urllib.error.HTTPError (or an unclosed successful
+        # urlopen() response) leaks a tempfile wrapper / socket and fires a
+        # spurious ResourceWarning at GC — fatal under the zero-warning gate
+        # (ADR-0087). Anti-recurrence guard for the Car 0036 sweep.
+        run: python scripts/check_urllib_httperror_close.py
 
       - name: Layer 4 — block silent test weakening across the branch (#52)
         # --ci --base origin/master: the pre-commit path reads `git diff --cached`,

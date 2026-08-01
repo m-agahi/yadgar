@@ -35,6 +35,7 @@ import urllib.error
 from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
+from yadgar.core.daemon.db_migrate import migrate_named_volume_db
 from yadgar.core.daemon.profiles import (
     _dev_profile,
     _ensure_network,
@@ -220,6 +221,10 @@ class YadgarDaemon:
         rt = _get_runtime()
         name = os.environ.get("YADGAR_BACKEND_CONTAINER", _BACKEND_CONTAINER)
         image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+        # Bug 11 (finished by task 0100): `volume` is no longer MOUNTED — it is only
+        # the legacy source the one-time migration below copies OUT of. The backend's
+        # /data is now the host bind mount `_paths.DATA_DIR`, matching systemd.py and
+        # the install-tree templates.
         volume = os.environ.get("YADGAR_BACKEND_VOLUME", _BACKEND_VOLUME)
         # R3: the backend runs the queue drainer, which reads the shared file
         # queue. Core writes it to {YADGAR_DATA_DIR}/queue on its OWN volume
@@ -240,10 +245,24 @@ class YadgarDaemon:
                 "reason": f"Backend image {image!r} not found. Run: yadgar daemon pull",
             }
 
+        from yadgar._shared import paths as _paths  # noqa: PLC0415
+
+        # Bug 11 / task 0100: installs made before the backend's /data became a host
+        # bind mount hold their entire DB inside the named volume. Copy it across
+        # HERE — `daemon start` is the one moment nothing holds the store, and a
+        # surrealkv directory copied while live reopens corrupt (ADR-0090). Every
+        # guard lives in db_migrate; it skips (never raises) when it cannot prove the
+        # copy is safe, so the worst case is an install still on the named volume.
+        migrate_named_volume_db(
+            runtime=rt,
+            volume=volume,
+            data_dir=_paths.DATA_DIR,
+            image=image,
+            container_names=(name, os.environ.get("YADGAR_CONTAINER", "yadgar")),
+        )
+
         _ensure_network()
         mem_mb = _container_memory_mb()
-
-        from yadgar._shared import paths as _paths  # noqa: PLC0415
 
         cmd = [
             rt,
@@ -263,8 +282,20 @@ class YadgarDaemon:
             "on-failure:3",
             "--user",
             "root",
+            # Bug 11 (finished by task 0100): the backend's /data is the SurrealDB
+            # store and MUST be the host bind mount `_paths.DATA_DIR` — `yadgar
+            # vacuum` runs host-side and translates $DATA_DIR → /data as a plain
+            # prefix rewrite, which a named volume makes silently false. Matches
+            # systemd.py, yadgar-backend.service.in and the launchd plist.
+            #
+            # SCOPE FENCE — do NOT "make this consistent" with `start()` above.
+            # The two look identical at the call site but mount different things:
+            # CORE's /data is the QUEUE volume (`profile.volume_name`, a named
+            # volume by design, ADR-0075) which the backend takes at /queue-data.
+            # Only the BACKEND's /data is the DB. Guard:
+            # yadgar/tests/scripts/test_backend_db_mount_cross_generator.py.
             "-v",
-            f"{volume}:/data",
+            f"{_paths.DATA_DIR}:/data",
             # R3: shared file-queue volume (same volume core mounts at /data) so
             # the drainer can see queued writes. YADGAR_QUEUE_BASE has no fallback
             # backend-side, so both the mount and the env var are required.
@@ -381,7 +412,10 @@ class YadgarDaemon:
             }
         try:
             resp = _safe_urlopen(f"http://127.0.0.1:{profile.port}/health", timeout=2)
-            health = json.loads(resp.read().decode())
+            try:
+                health = json.loads(resp.read().decode())
+            finally:
+                resp.close()
             return {
                 "running": True,
                 "container": profile.container_name,
@@ -391,7 +425,14 @@ class YadgarDaemon:
                 **health,
             }
         except urllib.error.HTTPError as e:
-            health = json.loads(e.read().decode())
+            # An HTTPError IS a response object holding a file wrapper (a
+            # tempfile._TemporaryFileWrapper via addbase on py3.14). If left
+            # unclosed it fires a spurious ResourceWarning at an arbitrary later
+            # GC — close it deterministically here (py3.14 leak guard).
+            try:
+                health = json.loads(e.read().decode())
+            finally:
+                e.close()
             return {
                 "running": True,
                 "container": profile.container_name,
@@ -440,17 +481,48 @@ class YadgarDaemon:
 
     @observe(tier="boundary")
     def pull(self) -> dict:
-        """Pull the latest prod image from Docker Hub."""
+        """Pull the latest prod core AND backend images from Docker Hub.
+
+        task:0099: `daemon start` requires BOTH images (core + backend) to be
+        present, but `pull()` used to fetch only the core image — leaving no
+        command able to fetch the backend one (`daemon start`'s own error
+        message pointed back at `daemon pull`, which just re-fetched core).
+        The backend tag is resolved exactly the way start_backend() and
+        build(backend=True) resolve it (YADGAR_BACKEND_IMAGE env override,
+        else DOCKERHUB_BACKEND_IMAGE) so pull and start can never disagree
+        about which tag they want.
+        """
         profile = _prod_profile(self.port)
         rt = _get_runtime()
+        backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+
         result = subprocess.run([rt, "pull", profile.image_name])
         if result.returncode != 0:
             return {"ok": False, "reason": f"{rt} pull {profile.image_name} failed"}
-        return {"ok": True, "image": profile.image_name}
+
+        backend_result = subprocess.run([rt, "pull", backend_image])
+        if backend_result.returncode != 0:
+            return {
+                "ok": False,
+                "reason": f"{rt} pull {backend_image} failed",
+                "image": profile.image_name,
+            }
+
+        return {"ok": True, "image": profile.image_name, "backend_image": backend_image}
 
     @observe(tier="boundary")
     def push(self, tag: str | None = None) -> dict:
-        """Tag the prod image and push it to Docker Hub."""
+        """Tag the prod CORE image and push it to Docker Hub.
+
+        NOT A BUG that this has no backend counterpart (task:0101 sweep): under
+        ADR-0176, CI is the sole builder and publisher of both
+        docker.io/openfantasy/yadgar and yadgar-backend. A locally pushed image
+        races CI's tags, and a locally built one shadows the CI artifact
+        (podman's default pull policy is `missing`). This local path survives as
+        a developer convenience for the core image only, so no backend publish
+        was ever written. Contrast pull(), which DOES need both images because
+        `daemon start` consumes both (task:0099).
+        """
         from importlib.metadata import PackageNotFoundError
         from importlib.metadata import version as pkg_version
 
@@ -609,11 +681,14 @@ class YadgarDaemon:
         or fail this gate).
         """
         try:
-            _safe_urlopen(f"http://127.0.0.1:{port}/health/live", timeout=1)
+            resp = _safe_urlopen(f"http://127.0.0.1:{port}/health/live", timeout=1)
+            resp.close()
             return True
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as e:
             # liveness = server responding at all; full-health (503-on-degraded)
             # enforced by the container's curl -f healthcheck, not this gate.
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
             return True
         except Exception:
             return False
@@ -627,9 +702,12 @@ class YadgarDaemon:
         only — so this stays on bare /health (db + model-loaded readiness).
         """
         try:
-            _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            resp = _safe_urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
+            resp.close()
             return True
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as e:
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
             return True
         except Exception:
             return False

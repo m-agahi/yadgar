@@ -601,10 +601,44 @@ def _rollback_final_state(rollback_log: list[dict]) -> OrchestratorState:
 
 @observe(tier="stage")
 def _default_image_pull(version: str) -> None:
-    subprocess.run(
-        ["podman", "pull", f"docker.io/openfantasy/yadgar:{version}"],
-        check=True,
+    """Pull BOTH images `yadgar upgrade` needs — core at *version*, plus the backend.
+
+    task:0101, two defects that shipped together:
+
+    1. CORE-ONLY PULL. This pulled the core image and nothing else, so an upgrade
+       installed a fresh core against whatever backend image happened to be on
+       disk. Core and backend version independently (core 5.170.x / backend
+       5.60.x) and `daemon start` needs both, so an upgraded install could run a
+       new core against a stale backend with no warning. Same class as task:0099
+       on `daemon pull`, but on the path users hit repeatedly.
+    2. HARDCODED RUNTIME. A literal "podman" argv head — the mirror image of
+       task:0083's hardcoded "docker" — crashing docker-only hosts.
+
+    The backend tag is resolved exactly the way `YadgarDaemon.pull()` and
+    `start_backend()` resolve it (YADGAR_BACKEND_IMAGE env override, else
+    DOCKERHUB_BACKEND_IMAGE), so pull and start can never disagree about which
+    tag they want. Note DOCKERHUB_BACKEND_IMAGE derives from the CURRENTLY
+    installed server.json, so an upgrade fetches the backend tag the running
+    install expects, not the one the new core will ship with. That is the
+    consistent choice: the systemd unit's baked backend tag is likewise the old
+    one until `install-service` reruns, so pull and start stay in agreement.
+
+    Both pulls use check=True: a failure at PULLING_IMAGE must abort into the
+    rollback path rather than pass silently.
+    """
+    # Local imports mirror _default_health_check: keep core/update importable
+    # without dragging the daemon package (and its import-time server.json read)
+    # into every consumer.
+    from yadgar.core.daemon.runtime import (  # noqa: PLC0415
+        DOCKERHUB_BACKEND_IMAGE,
+        _get_runtime,
     )
+
+    rt = _get_runtime()
+    backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+
+    subprocess.run([rt, "pull", f"docker.io/openfantasy/yadgar:{version}"], check=True)
+    subprocess.run([rt, "pull", backend_image], check=True)
 
 
 @observe(tier="stage")
@@ -629,6 +663,7 @@ def _default_health_check() -> bool:
     would let a transiently-busy backend fail this gate and trigger a rollback
     of a perfectly good restart/upgrade.
     """
+    import urllib.error  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
 
     from yadgar._shared.config import get_settings  # noqa: PLC0415
@@ -641,6 +676,9 @@ def _default_health_check() -> bool:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if resp.status == 200:
                     return True
+        except urllib.error.HTTPError as e:
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
         except Exception:  # noqa: BLE001
             pass
         time.sleep(1)

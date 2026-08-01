@@ -27,9 +27,11 @@ Errors: swallowed silently — never block subagent start.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -77,9 +79,13 @@ def _call_daemon(agent_type: str, cwd: str, description: str) -> str:
     headers = {"Content-Type": "application/json", **_auth_headers()}
     try:
         req = urllib.request.Request(url, data=payload, headers=headers)
-        resp = urllib.request.urlopen(req, timeout=2.0)
-        data = json.loads(resp.read().decode())
+        with contextlib.closing(urllib.request.urlopen(req, timeout=2.0)) as resp:
+            data = json.loads(resp.read().decode())
         return data.get("text", "")
+    except urllib.error.HTTPError as e:
+        # Close the file wrapper (py3.14 ResourceWarning leak guard).
+        e.close()
+        return ""
     except Exception:
         return ""
 

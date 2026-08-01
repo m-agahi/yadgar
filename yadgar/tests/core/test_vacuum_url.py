@@ -124,12 +124,16 @@ class TestVacuumImplEnvRead:
 
 
 class TestNoHardCodedPort8080InProductionSources:
-    """Structural check: production source files must not contain :8080 as a default URL.
+    """Structural check: production source files must not contain :8080 at all.
 
-    The ONLY allowed occurrence of '127.0.0.1:8080' in production code is inside
-    the env-fallback expression: os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8080")
-    which is itself the correct pattern (env-first). Any getattr fallback that
-    directly returns :8080 without consulting env is a bug.
+    v5.10.5 fixed the env-read bug (a bare ``getattr(..., "http://127.0.0.1:8080")``
+    default that never consulted ``YADGAR_DB_URL``), but left the literal
+    fallback-of-last-resort — used only when the env var is ALSO unset — at the
+    wrong port. The real backend binds :8000 (``entrypoint-backend.sh --bind
+    0.0.0.0:8000``, ``config_registry.py``'s ``YADGAR_DB_URL`` default, every
+    systemd/launchd unit's ``Environment=YADGAR_DB_URL=...:8000``). task:0042
+    corrected the literal to :8000, so no production vacuum/nightly-cycle
+    source file should contain '8080' in any form any more.
     """
 
     def test_nightly_cycle_no_bare_8080_literal_as_default(self) -> None:
@@ -159,3 +163,26 @@ class TestNoHardCodedPort8080InProductionSources:
             "yadgar/vacuum/__init__.py contains bare getattr-fallback to :8080 literal. "
             "Must read YADGAR_DB_URL from environment instead."
         )
+
+    def test_no_8080_literal_survives_anywhere_in_vacuum_sources(self) -> None:
+        """task:0042: the :8080 fallback-of-last-resort was itself the wrong port.
+
+        Neither ``nightly_cycle.py`` nor ``vacuum/__init__.py`` nor
+        ``cli/vacuum.py`` have a directly-testable helper for their fallback
+        literal the way ``cli.vacuum._default_backend_url`` does (see
+        ``test_vacuum_viz_env_defaults.py``), so this is the structural guard
+        that closes the loop for all three: no '8080' substring — in code,
+        comments, or docstrings — should remain in any of them.
+        """
+        import inspect
+
+        import yadgar.core.cli.vacuum as cli_vac
+        import yadgar.core.scripts.nightly_cycle as nc
+        import yadgar.core.vacuum as vac
+
+        for module in (nc, vac, cli_vac):
+            src = inspect.getsource(module)
+            assert "8080" not in src, (
+                f"{module.__name__} still contains an '8080' literal — the real "
+                "backend port is 8000 (entrypoint-backend.sh --bind 0.0.0.0:8000)."
+            )

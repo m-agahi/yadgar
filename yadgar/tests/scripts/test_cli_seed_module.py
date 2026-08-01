@@ -131,6 +131,7 @@ class TestDaemonHealthOk:
         mock_resp.read.return_value = b"{}"
         with patch("urllib.request.urlopen", return_value=mock_resp):
             assert _daemon_health_ok() is True
+        mock_resp.close.assert_called_once()
 
     def test_returns_false_on_exception(self):
         import urllib.error
@@ -141,6 +142,18 @@ class TestDaemonHealthOk:
     def test_returns_false_on_timeout(self):
         with patch("urllib.request.urlopen", side_effect=TimeoutError("timeout")):
             assert _daemon_health_ok() is False
+
+    def test_returns_false_on_http_error_and_closes_it(self):
+        """HTTPError is a response object holding a file wrapper (a
+        tempfile._TemporaryFileWrapper via addbase on py3.14); an unclosed
+        instance fires a spurious ResourceWarning at GC. _daemon_health_ok must
+        close it deterministically."""
+        import urllib.error
+
+        http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
+        with patch("urllib.request.urlopen", side_effect=http_err):
+            assert _daemon_health_ok() is False
+        assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +191,14 @@ class TestSeedAnchors:
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
         assert result["created"] == 1
         assert result["skipped"] == 0
+        mock_resp.close.assert_called_once()
 
     def test_409_counts_as_skipped(self):
+        """HTTPError is a response object holding a file wrapper (a
+        tempfile._TemporaryFileWrapper via addbase on py3.14); an unclosed
+        instance fires a spurious ResourceWarning at GC that pytest-xdist
+        mis-attributes to an unrelated test. _seed_anchors must close it
+        deterministically, not leave it for the caller/test to clean up."""
         import urllib.error
 
         anchors = [{"content": "duplicate", "tags": []}]
@@ -189,7 +208,7 @@ class TestSeedAnchors:
             patch("urllib.request.urlopen", side_effect=http_err),
         ):
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
-        http_err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
+        assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
         assert result["skipped"] == 1
         assert result["created"] == 0
 
@@ -203,7 +222,7 @@ class TestSeedAnchors:
             patch("urllib.request.urlopen", side_effect=http_err),
         ):
             result = _seed_anchors(anchors, db_path=None, dry_run=False)
-        http_err.close()  # HTTPError is file-like; unclosed → ResourceWarning at GC
+        assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
         assert result["skipped"] == 1
 
     def test_missing_content_skipped(self):

@@ -64,6 +64,37 @@ if [[ -z "${RUNTIME}" ]]; then
     fi
 fi
 
+# ── Runtime-conditional readiness (task:0105) ────────────────────────────────
+#
+# Readiness cannot be expressed the same way on both runtimes. Podman proxies
+# sd_notify (default --sdnotify=container passes NOTIFY_SOCKET into the container
+# and forwards the daemon's own READY=1), so its units are Type=notify. Docker
+# has no sd_notify proxy at all, so nothing would ever send READY=1 and the unit
+# would sit until TimeoutStartSec; it gets Type=exec plus a bounded ExecStartPost
+# /health poll instead.
+#
+# sed cannot branch, so the templates carry LINE-PREFIX markers and this decides,
+# once, whether each marker means "strip the prefix" or "delete the whole line".
+# Deleting rather than substituting an empty value keeps the rendered unit free
+# of stray blank lines — the podman render stays byte-identical to pre-0105.
+#
+# ONE template per unit, not one per runtime: this repo already carries four
+# cross-generator invariant tests because generator drift is its recurring defect
+# class, and forking the templates would recreate that drift inside a single
+# generator. Guarded by yadgar/tests/scripts/test_runtime_readiness_cross_generator.py.
+# Both expressions are ANCHORED to column 0 (`^`). These markers are LINE
+# PREFIXES by definition, and an unanchored `/@DOCKER_ONLY@/d` deletes any line
+# that so much as MENTIONS the marker — which silently ate a prose comment line
+# in this very template on the first render. Anchoring makes a mid-line mention
+# inert, so the templates can document their own mechanism.
+if [[ "${RUNTIME##*/}" == "podman" ]]; then
+    SERVICE_TYPE="notify"
+    RUNTIME_SED=(-e "s|^@PODMAN_ONLY@||" -e "/^@DOCKER_ONLY@/d")
+else
+    SERVICE_TYPE="exec"
+    RUNTIME_SED=(-e "/^@PODMAN_ONLY@/d" -e "s|^@DOCKER_ONLY@||")
+fi
+
 # ── Nix-symlink guard (DP5 defense-in-depth) ─────────────────────────────────
 
 for unit in yadgar.service yadgar-backend.service; do
@@ -155,6 +186,8 @@ render_template() {
         exit 1
     }
     sed \
+        "${RUNTIME_SED[@]}" \
+        -e "s|@SERVICE_TYPE@|${SERVICE_TYPE}|g" \
         -e "s|@RUNTIME@|${RUNTIME}|g" \
         -e "s|@IMAGE@|${CORE_IMAGE}|g" \
         -e "s|@BACKEND_IMAGE@|${BACKEND_IMAGE}|g" \

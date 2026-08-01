@@ -57,6 +57,14 @@ jobs:
 
       - name: Invoke harness (auto-skips without a live daemon)
         continue-on-error: true
+        # `make perf` routes through scripts/test-capped.sh, which fails CLOSED
+        # when `systemd-run --user --scope` is unavailable (Car 0108). This job
+        # runs inside a container that has no user-scope systemd, and the step
+        # is continue-on-error — so a refusal would silently stop measuring
+        # rather than redden. Opt out explicitly: the container runtime already
+        # provides the cgroup, and the timeout ceiling still applies.
+        env:
+          TEST_ALLOW_UNCAPPED: "1"
         run: make perf
 
       - name: Upload report artifacts

@@ -38,9 +38,11 @@ try:
 except ImportError:
     # Standalone fallback — duplicate of file_changed.py logic for portability.
     # Keeps this script functional even without the yadgar package on sys.path.
+    import contextlib
     import json
     import os
     import re
+    import urllib.error
     import urllib.parse
     import urllib.request
 
@@ -79,7 +81,11 @@ except ImportError:
         url = f"http://127.0.0.1:{_PORT}/hooks/file-changed?path={encoded_path}"
         try:
             req = urllib.request.Request(url, data=payload, headers=headers)
-            urllib.request.urlopen(req, timeout=3.0)
+            with contextlib.closing(urllib.request.urlopen(req, timeout=3.0)):
+                pass
+        except urllib.error.HTTPError as e:
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
         except Exception:
             pass
 

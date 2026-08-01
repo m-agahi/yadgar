@@ -33,9 +33,15 @@ class TestVacuumBackendUrlDefault:
         monkeypatch.setenv("YADGAR_DB_URL", "http://yadgar-backend:8000")
         assert _default_backend_url() == "http://yadgar-backend:8000"
 
-    def test_db_url_unset_yields_legacy_loopback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_db_url_unset_yields_backend_default_port(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """task:0042: fallback literal must match the real backend port (8000),
+        not the stale :8080 value (backend has never bound 8080 — see
+        entrypoint-backend.sh --bind 0.0.0.0:8000 and config_registry.py's
+        YADGAR_DB_URL default)."""
         monkeypatch.delenv("YADGAR_DB_URL", raising=False)
-        assert _default_backend_url() == "http://127.0.0.1:8080"
+        assert _default_backend_url() == "http://127.0.0.1:8000"
 
 
 class TestVizBindHost:

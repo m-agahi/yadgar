@@ -40,6 +40,40 @@ def test_otlp_endpoint_defaulted_to_empty_when_unset(monkeypatch):
     )
 
 
+# ── _maintenance_http — py3.14 ResourceWarning leak guard ───────────────────
+#
+# HTTPError is itself a response object holding a file wrapper (a
+# tempfile._TemporaryFileWrapper via addbase on py3.14). _maintenance_http
+# re-raises as RuntimeError (`from exc`), which preserves the traceback but
+# does NOT close the underlying HTTPError — an unclosed instance fires a
+# spurious ResourceWarning at GC that pytest-xdist mis-attributes to an
+# unrelated test (fatal under the zero-warning gate, ADR-0087).
+
+
+def test_maintenance_http_closes_http_error_before_raising():
+    import urllib.error
+
+    http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
+    with (
+        patch("urllib.request.urlopen", side_effect=http_err),
+        pytest.raises(RuntimeError, match="maintenance enter HTTP error 500"),
+    ):
+        nc._maintenance_http("enter")
+    assert http_err.fp is None or http_err.fp.closed, (
+        "must close the caught HTTPError before raising"
+    )
+
+
+def test_maintenance_http_success_closes_response():
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        nc._maintenance_http("enter")
+    mock_resp.__exit__.assert_called_once()
+
+
 # ── _run_systemctl ─────────────────────────────────────────────────────────────
 
 

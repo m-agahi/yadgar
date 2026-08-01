@@ -117,6 +117,10 @@ def _maintenance_http(action: str, core_url: str = _CORE_URL) -> None:
                 body = resp.read(256).decode(errors="replace")
                 raise RuntimeError(f"maintenance {action} returned HTTP {resp.status}: {body}")
     except urllib.error.HTTPError as exc:
+        # Close the file wrapper before re-raising (py3.14 ResourceWarning leak
+        # guard) — chaining via `from exc` keeps the traceback but does not
+        # close the underlying response.
+        exc.close()
         raise RuntimeError(f"maintenance {action} HTTP error {exc.code}: {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise ConnectionError(
@@ -454,7 +458,7 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
       - db_path (str | None)   — override default from yadgar.paths.DB_PATH
                                  (respects YADGAR_DATA_DIR / XDG; do NOT use
                                   Settings.DB_PATH which reads stale config.yaml)
-      - backend_url (str)      — SurrealDB backend URL (default: YADGAR_DB_URL env, else http://127.0.0.1:8080)
+      - backend_url (str)      — SurrealDB backend URL (default: YADGAR_DB_URL env, else http://127.0.0.1:8000)
       - service_mode (str)     — "systemd" | "docker" | "manual" | None (auto-detect)
       - retention (int)        — snapshot retention count (default YADGAR_BACKUP_RETENTION)
     """
@@ -475,7 +479,7 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     backend_url: str = getattr(args, "backend_url", None) or os.environ.get(
-        "YADGAR_DB_URL", "http://127.0.0.1:8080"
+        "YADGAR_DB_URL", "http://127.0.0.1:8000"
     )
     service_mode: str | None = getattr(args, "service_mode", None)
     retention: int = getattr(args, "retention", None) or default_retention()

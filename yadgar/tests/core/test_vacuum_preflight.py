@@ -160,6 +160,21 @@ def _skip_reason_of(row_log: MagicMock) -> str | None:
     return row_log.call_args_list[-1].args[0].get("skip_reason")
 
 
+def _no_side_build_launcher(monkeypatch, td: str) -> None:
+    """Neither of the two ways to obtain a side-build SurrealDB is available.
+
+    Car 0092 (full fix) added a SECOND way — a one-shot backend container running
+    the image's own ``surreal``.  So an empty PATH alone is no longer a skip; the
+    tests below must also deny the container path, or they assert the skip on a
+    host that can in fact vacuum (and pass or fail depending on whether the box
+    running them happens to have the image pulled).
+    """
+    empty_bin = Path(td) / "empty-bin"
+    empty_bin.mkdir(exist_ok=True)
+    monkeypatch.setenv("PATH", str(empty_bin))
+    monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(Path(td) / "no-such-runtime"))
+
+
 # ---------------------------------------------------------------------------
 # (a) skip BEFORE any destructive step
 # ---------------------------------------------------------------------------
@@ -167,17 +182,17 @@ def _skip_reason_of(row_log: MagicMock) -> str | None:
 
 class TestSurrealBinaryPreflight:
     def test_no_surreal_on_path_skips_before_export_stop_and_copytree(self, monkeypatch, capsys):
-        """No `surreal` resolvable → SKIP before /export, svc.stop() and copytree.
+        """No `surreal` obtainable AT ALL → SKIP before /export, svc.stop() and copytree.
 
-        This is the container-install case: the binary lives only inside the
-        backend image.  Before the preflight this ran the full export, stopped
-        BOTH units and made a full-size copy, and only THEN failed.
+        Before the preflight this ran the full export, stopped BOTH units and made
+        a full-size copy, and only THEN failed.  Car 0092 (full fix) narrowed WHEN
+        this fires: a container install with the backend image pulled now takes the
+        one-shot-container branch instead (covered in
+        ``test_vacuum_side_launcher.py``), so the skip needs both doors shut.
         """
         with tempfile.TemporaryDirectory() as td:
             db = _fake_db(td)
-            empty_bin = Path(td) / "empty-bin"
-            empty_bin.mkdir()
-            monkeypatch.setenv("PATH", str(empty_bin))
+            _no_side_build_launcher(monkeypatch, td)
 
             result, _row_log, spies = _run_vacuum(monkeypatch, td, db, lambda _s: None)
 
@@ -220,9 +235,7 @@ class TestSkipReasonsAreDistinct:
     def _run_missing_binary(self, monkeypatch) -> tuple[int, str | None, str]:
         with tempfile.TemporaryDirectory() as td:
             db = _fake_db(td)
-            empty_bin = Path(td) / "empty-bin"
-            empty_bin.mkdir()
-            monkeypatch.setenv("PATH", str(empty_bin))
+            _no_side_build_launcher(monkeypatch, td)
             result, row_log, _ = _run_vacuum(monkeypatch, td, db, lambda _s: None)
         return result, _skip_reason_of(row_log), ""
 
@@ -265,9 +278,7 @@ class TestSkipReasonsAreDistinct:
         """A skip reclaimed nothing — the row must not imply otherwise."""
         with tempfile.TemporaryDirectory() as td:
             db = _fake_db(td)
-            empty_bin = Path(td) / "empty-bin"
-            empty_bin.mkdir()
-            monkeypatch.setenv("PATH", str(empty_bin))
+            _no_side_build_launcher(monkeypatch, td)
             _result, row_log, _ = _run_vacuum(monkeypatch, td, db, lambda _s: None)
 
         row = row_log.call_args_list[-1].args[0]

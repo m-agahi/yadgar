@@ -1,0 +1,15 @@
+{
+  "_comment": "Allowlist for the container-runtime argv-head guard in yadgar/tests/core/test_daemon_runtime_binary.py (task:0083, task:0099, task:0101). Governance mirrors .route-literal-allowlist.json: rationale >= 40 chars, and a STALE entry (a site that no longer has a literal 'docker'/'podman' argv head) hard-fails. DO NOT add a site here to silence the guard: a site that shells out to THE container runtime must resolve the binary through _get_runtime(). Only two shapes belong here — runtime DETECTION itself (which must name the candidates literally, since that is what it is choosing between), and a deliberate probe of one specific named runtime. A site that merely assumes one runtime is installed is the task:0083 / task:0101 bug, not an allowlist candidate.",
+  "yadgar/core/daemon/runtime.py:87": {
+    "rationale": "check_runtime()'s own detection candidate list — the code that DECIDES which runtime is active must name both binaries literally. Resolving it through _get_runtime() would be circular: _get_runtime() reads the cache this function writes."
+  },
+  "scripts/check_image_size.py:117": {
+    "rationale": "Deliberate dual-probe: the image-size check tries `podman history` first and falls back to `docker history`, because it must work on whichever runtime the CI host happens to have. Naming both is the point of the call site, not an assumption about one."
+  },
+  "scripts/check_image_size.py:118": {
+    "rationale": "Docker half of the same deliberate dual-probe as line 117 — the fallback arm tried when `podman history` is unavailable or fails. Neither arm assumes its runtime exists; failure of one is expected and handled."
+  },
+  "yadgar/core/ops/ops.py:107": {
+    "rationale": "`docker compose` is a distinct orchestration provider, not the container runtime: substituting _get_runtime() would emit `podman compose`, which requires the separately-installed podman-compose package. This site cannot reproduce the task:0083 crash — ServiceController mode 'docker' is only reached via an explicit `--service-mode=docker` flag or /.dockerenv auto-detection, and podman creates /run/.containerenv, not /.dockerenv. RESIDUAL GAP, stated rather than laundered: a podman-compose host therefore has no working compose service-mode at all. Fixing that means adding a real 'podman-compose' mode, not swapping this literal."
+  }
+}

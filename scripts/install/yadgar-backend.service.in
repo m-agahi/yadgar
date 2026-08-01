@@ -18,7 +18,14 @@ After=network.target
 # yadgar/tests/scripts/test_admin_token_cross_generator.py.
 
 [Service]
-Environment=DOCKER_HOST=unix:///run/podman/podman.sock
+# task:0105 — podman-only. DOCKER_HOST names podman's rootful socket, which the
+# local podman CLI ignores (it reads CONTAINER_HOST) but the docker-compat shim
+# path may use. On docker it points the docker CLI at a socket that does not
+# exist, so every Exec* below fails; omitted there so docker uses its own
+# default socket / active context. generate_systemd.sh strips or deletes the line.
+# This unit stays Type=simple on BOTH runtimes — it has no readiness contract to
+# make conditional (see the plan's stated residuals).
+@PODMAN_ONLY@Environment=DOCKER_HOST=unix:///run/podman/podman.sock
 EnvironmentFile=@SECRETS_ENV_FILE@
 ExecStartPre=-@RUNTIME@ stop yadgar-backend
 ExecStartPre=-@RUNTIME@ rm yadgar-backend

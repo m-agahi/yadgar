@@ -35,8 +35,10 @@ try:
 except ImportError:
     # Standalone fallback — duplicate of instructions_loaded.py logic.
     # Keeps this script functional even without the yadgar package on sys.path.
+    import contextlib
     import json
     import os
+    import urllib.error
     import urllib.parse
     import urllib.request
 
@@ -78,11 +80,14 @@ except ImportError:
         headers = _auth_headers()
         try:
             req = urllib.request.Request(url, headers=headers)
-            resp = urllib.request.urlopen(req, timeout=2.0)
-            result = json.loads(resp.read().decode())
+            with contextlib.closing(urllib.request.urlopen(req, timeout=2.0)) as resp:
+                result = json.loads(resp.read().decode())
             text = result.get("text", "")
             if text:
                 print(text)
+        except urllib.error.HTTPError as e:
+            # Close the file wrapper (py3.14 ResourceWarning leak guard).
+            e.close()
         except Exception:
             pass
 

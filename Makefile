@@ -309,8 +309,14 @@ clean:
 	@echo "Cleaned generated systemd units."
 
 ## check: Run v5.45.x + v5.46.x tests
+## Capped like every other pytest entry point (see scripts/test-capped.sh). The
+## `--override-ini="addopts="` strip also drops pytest-timeout's session default,
+## so `--timeout=300` is restored explicitly — `--noconftest` cannot take the
+## `-n 4 --dist loadgroup` the full addopts carry, hence the strip stays.
 check:
-	python3 -m pytest yadgar/tests/scripts/test_v5_45_*.py yadgar/tests/scripts/test_v5_46_*.py --noconftest --override-ini="addopts=" -q
+	@TEST_TIMEOUT=900 TEST_CPU_QUOTA=200% TEST_MEM_MAX=8G scripts/test-capped.sh \
+	  python3 -m pytest yadgar/tests/scripts/test_v5_45_*.py yadgar/tests/scripts/test_v5_46_*.py \
+	    --noconftest --override-ini="addopts=" --timeout=300 -q
 
 ## test-clean: Kill orphaned test SurrealDB procs left by crashed runs (never touches prod)
 test-clean:
@@ -338,17 +344,21 @@ test:
 ## never collides with a concurrent e2e/pre-push run.
 test-ci:
 	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
-	  uv run --extra test --extra ml python -m pytest yadgar/tests/ \
+	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest yadgar/tests/ \
 	    -m "not integration and not e2e" -p no:randomly -n auto -q $(PYTEST_ARGS)'
 
 ## e2e: Run the behavior-contract e2e safety-net suite against the local `surreal` binary.
 ## Requires: ~/.local/bin/surreal (or surreal on PATH). See yadgar/tests/e2e/conftest.py.
 ## Excluded from CI (-m 'not e2e') — CI's embedded SurrealDB can't run these reliably.
 ## Install the pre-push hook once with: pre-commit install --hook-type pre-push
+## Capped like the other pytest entry points, with e2e-specific limits: serial
+## (-n0) and measured ~7min, so a 30min ceiling is generous while still bounding
+## the pre-push hook; 400% leaves room for the suite's SurrealDB children.
 e2e:
 	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
 	  OTEL_SDK_DISABLED=true PATH="$$HOME/.local/bin:$$PATH" \
-	  uv run --extra test --extra ml python -m pytest yadgar/tests/e2e/ \
+	  TEST_TIMEOUT=1800 TEST_CPU_QUOTA=400% TEST_MEM_MAX=12G \
+	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest yadgar/tests/e2e/ \
 	    -m e2e -p no:randomly -n0 --reruns 2 --reruns-delay 2 --tb=short -q $(PYTEST_ARGS)'
 
 ## eval: Run the v6 Phase 0 eval harness (native golden set, recall@k/MRR/nDCG/latency).
@@ -360,7 +370,8 @@ eval:
 	@echo "    Golden set: benchmarks/golden/golden_set.jsonl"
 	@echo "    WARNING: golden set is BOOTSTRAP (auto-drafted) — REQUIRES HUMAN CURATION."
 	@echo "    Results are informational only until the golden set is reviewed."
-	@OTEL_SDK_DISABLED=true uv run --extra test --extra ml python benchmarks/run_eval.py
+	@OTEL_SDK_DISABLED=true TEST_TIMEOUT=3600 TEST_CPU_QUOTA=300% TEST_MEM_MAX=16G \
+	  scripts/test-capped.sh uv run --extra test --extra ml python benchmarks/run_eval.py
 
 ## longmemeval: Run LongMemEval (external memory benchmark) via the unified MCP recall path (v5.80 fan-out).
 ## Retrieval-only + a stratified subset by default (fast iteration). Override: `make longmemeval Q=100`,
@@ -369,7 +380,8 @@ eval:
 Q ?= 30
 longmemeval:
 	@echo "==> LongMemEval (unified MCP recall · retrieval-only) — $(Q) questions (0=all) ..."
-	@OTEL_SDK_DISABLED=true uv run --extra test --extra ml python benchmarks/run_longmemeval.py \
+	@OTEL_SDK_DISABLED=true TEST_TIMEOUT=14400 TEST_CPU_QUOTA=300% TEST_MEM_MAX=20G \
+	  scripts/test-capped.sh uv run --extra test --extra ml python benchmarks/run_longmemeval.py \
 	    --unified --retrieval-only --variant s --stratify-per-type --max-questions $(Q) $(ARGS)
 
 ## perf: Run the #79 recall-latency load-test harness (RECORD-ONLY, non-gating).
@@ -379,9 +391,13 @@ longmemeval:
 ## Requires a live daemon: set YADGAR_DAEMON_URL (+ YADGAR_BACKEND_METRICS_URL for CE).
 ## SKIPS with a reason (exit 0) if YADGAR_DAEMON_URL is unset. See
 ## docs/plans/perf-loadtest-contract-2026-06-30.md. NEVER gates a PR (Phase 1).
+## CI runs this target inside a container with no user-scope systemd — both
+## perf workflows set TEST_ALLOW_UNCAPPED=1 explicitly (the container runtime
+## already provides the cgroup); locally it runs fully capped.
 perf:
 	@echo "==> #79 recall-latency load-test (record-only, non-gating) ..."
-	@OTEL_SDK_DISABLED=true python benchmarks/run_perf_loadtest.py
+	@OTEL_SDK_DISABLED=true TEST_TIMEOUT=1800 TEST_CPU_QUOTA=300% TEST_MEM_MAX=12G \
+	  scripts/test-capped.sh python benchmarks/run_perf_loadtest.py
 
 ## upgrade-test: Print the manual upgrade-test runbook (see docs/testing/upgrade-test.md)
 upgrade-test:

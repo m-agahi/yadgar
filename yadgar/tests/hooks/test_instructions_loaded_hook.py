@@ -93,6 +93,9 @@ class TestDaemonCall:
             def read(self):
                 return json.dumps({"text": "## Yadgar Context\n- anchor: foo"}).encode()
 
+            def close(self):
+                pass
+
         def _fake_urlopen(req, timeout=None):
             return _FakeResp()
 
@@ -119,6 +122,9 @@ class TestDaemonCall:
         class _FakeResp:
             def read(self):
                 return json.dumps({"text": ""}).encode()
+
+            def close(self):
+                pass
 
         def _fake_urlopen(req, timeout=None):
             captured["url"] = req.full_url

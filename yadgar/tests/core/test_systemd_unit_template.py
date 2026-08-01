@@ -6,6 +6,11 @@ Tests:
   39. test_unit_template_has_timeoutstopsec
   40. test_unit_template_environmentfile_optional_prefix
   41. test_launchd_plist_has_exit_timeout  (optional 5th)
+
+task:0105 added test_unit_template_docker_render_gates_readiness_without_notify —
+readiness is now runtime-conditional, so T37 asserts on the RENDERED podman unit
+and its docker counterpart asserts the Type=exec + health-gate shape. T38/T39/T40
+still read the source text: those directives are runtime-invariant.
 """
 
 from __future__ import annotations
@@ -13,23 +18,61 @@ from __future__ import annotations
 import re
 
 from yadgar.tests._paths import REPO_ROOT
+from yadgar.tests._unit_render import render_systemd
 
 SERVICE_IN = REPO_ROOT / "scripts" / "install" / "yadgar.service.in"
 PLIST_IN = REPO_ROOT / "scripts" / "install" / "launchd" / "com.openfantasy.yadgar.plist.in"
 
 
+def _render(tmp_path, runtime: str) -> str:
+    """The RENDERED yadgar.service for *runtime* (task:0105 made Type= conditional)."""
+    root = tmp_path / runtime
+    render_systemd(root, {"YADGAR_RUNTIME": runtime})
+    return (root / "units" / "yadgar.service").read_text()
+
+
 # ── T37 ─────────────────────────────────────────────────────────────────────
 
 
-def test_unit_template_has_type_notify():
-    """T37: yadgar.service.in must use Type=notify (not Type=simple)."""
-    content = SERVICE_IN.read_text()
+def test_unit_template_has_type_notify(tmp_path):
+    """T37: the RENDERED podman unit must use Type=notify (not Type=simple).
+
+    task:0105 made readiness runtime-conditional, so the template now reads
+    ``Type=@SERVICE_TYPE@`` and this assertion moved from the source text to the
+    rendered output. Both original assertions are kept verbatim on the podman
+    arm — the runtime this test has always been about. Left on the source text it
+    would pass on prose alone (a comment naming the directive is enough to
+    satisfy a substring check), which is a hollow green rather than a check.
+    """
+    content = _render(tmp_path, "podman")
     assert "Type=notify" in content, (
-        "yadgar.service.in missing Type=notify. "
+        "rendered podman yadgar.service missing Type=notify. "
         "Phase 7 requires sd_notify signals from host CLI to reach systemd."
     )
     assert "Type=simple" not in content, (
-        "yadgar.service.in still contains Type=simple — must be removed."
+        "rendered podman yadgar.service still contains Type=simple — must be removed."
+    )
+
+
+def test_unit_template_docker_render_gates_readiness_without_notify(tmp_path):
+    """task:0105: the docker arm — Type=notify there has no READY=1 source at all.
+
+    Docker sets no NOTIFY_SOCKET in the container and has no sd_notify proxy, so
+    a Type=notify unit sits until TimeoutStartSec. Type=exec plus a bounded
+    ExecStartPost /health poll supplies the same After= ordering guarantee.
+    """
+    content = _render(tmp_path, "docker")
+    assert "Type=exec" in content, "rendered docker yadgar.service is not Type=exec"
+    assert "Type=notify" not in content, (
+        "rendered docker yadgar.service is Type=notify — nothing can send READY=1 "
+        "on docker, so the unit would sit until TimeoutStartSec kills it."
+    )
+    assert "Type=simple" not in content, (
+        "rendered docker yadgar.service contains Type=simple — active would then "
+        "mean 'the docker CLI forked', so After= ordering guarantees nothing."
+    )
+    assert re.search(r"^ExecStartPost=curl .*--retry .*/health", content, re.MULTILINE), (
+        "rendered docker yadgar.service has no ExecStartPost= readiness gate"
     )
 
 

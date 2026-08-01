@@ -9,11 +9,17 @@ digest is what Car D injects into a yadgar memory BLOCK (always-injected at
 SessionStart, recall-free).
 
 Layout: a budget-RESERVED preamble (``header`` + the optional ``stale @ <sha>``
-marker) followed by the body, whose sections are kept in priority order when
-truncating to the remaining budget:
+marker), followed by a body whose FOUR sections — layers, hotspots,
+entry-points, endpoints — are still assembled in that priority order, but each
+gets its OWN water-filled share of the remaining budget (Car 0087,
+BC-CODEGRAPH-9) rather than all four sharing one budget with a single tail-cut
+at the end:
 
     preamble: header > stale-line
-    body:     layers > hotspots > entry-points > endpoints
+    body:     layers, hotspots, entry-points, endpoints — each independently
+              budgeted via ``_water_fill`` (max-min fair share); a section
+              with less demand than its equal share frees the surplus for
+              hungrier sections, but every section is guaranteed SOME share.
 
 The marker is a qualifier on the WHOLE digest ("everything below describes
 commit X and may be out of date"), so it belongs at the top on its own merits —
@@ -23,6 +29,41 @@ the memory-block ``char_limit`` both lean on.  It used to be rendered LAST, so
 the naive tail cut threw it away on any repo with package-qualified names
 (measured: 3268 chars untruncated vs a 2000 budget → both ``endpoints:`` and the
 marker absent).  See BC-CODEGRAPH-8.
+
+BC-CODEGRAPH-9 (Car 0087): the SAME whole-blob tail-cut bug that BC-CODEGRAPH-8
+fixed for the stale marker also applied to the body's own four sections —
+whichever came first (``layers``) consumed the ENTIRE body budget on any real
+repo, so ``endpoints`` (last in priority order) was silently truncated away
+entirely, or worse, cut MID-LINE (observed live on this repo's own injected
+``code_graph`` memory block: ``endpoints:\n  PATCH /`` — a truncated route
+fragment, not a real one). The fix is per-section budgeting: each of the four
+body sections is rendered against its OWN allocated share (``_water_fill``,
+below), and within a section, truncation drops WHOLE lines/names from the end
+— never a character-level mid-line cut — so a shown row is always complete.
+Each truncated section carries its own ``… (N of M shown)`` marker so a reader
+can tell "12 of 47 shown" apart from "47 of 47 shown, nothing hidden"; ``M`` is
+always the TRUE total available (before the ``_MAX_*`` soft cap), so the
+marker is honest even when the soft cap — not the per-section budget — did the
+cutting.
+
+Allocation policy (``_water_fill``): classic max-min fair share / progressive
+filling. Start with an equal split of the body budget across the (2-4) active
+sections; any section whose full untruncated render fits inside its equal
+share is granted exactly that (its unused surplus is NOT reserved — it is
+redistributed, again equal-split, among the remaining hungry sections); repeat
+until every section is either fully satisfied or the remaining budget has been
+split evenly among the sections still over their share. A section with ZERO
+demand (``entry-points`` is entirely absent — no ``entry`` layer at all — is
+skipped, not merely zero-content) never enters the split, so it can never
+"reserve" budget it doesn't use. This is computed once, upfront, from each
+section's full-text DEMAND — it does not do a second live pass to reclaim the
+few chars a truncated section ends up leaving unused after line-level
+fitting; that residual slack is small (at most one partial line's worth per
+section) and is simply left unused rather than chased for a second time.
+A safety-net whole-blob ``_truncate`` still runs on the assembled body if,
+despite per-section budgeting, rounding or a pathologically tiny budget left
+the total over ``body_budget`` — the same invariant the degenerate branch
+below always guaranteed, now just rarely needed.
 
 Determinism: every collection is sorted with an explicit tie-break (this repo's
 own ADR-0108/0147 flake was exactly an un-tie-broken sort), no timestamps → same
@@ -35,7 +76,7 @@ URL literals — that is not endpoint data.  Endpoints come ONLY from the
 has also been observed leaking through ``layers`` rows (a route-path fragment,
 sometimes containing PII such as an email, standing in for a real
 package/component name) — ``_filter_layer_noise``/``_looks_like_url_literal``
-guard that path before ``_layers_section``/``_entry_points_section`` render it.
+guard that path before ``_layers_data``/``_entry_points_data`` render it.
 A SECOND, distinct noise class (task #58) — Python builtins and generic short
 route-path fragments mislabelled as layers — is caught by
 ``_looks_like_builtin_layer``/``_looks_like_generic_route_fragment``; all three
@@ -59,6 +100,8 @@ from __future__ import annotations
 import builtins
 import keyword
 import re
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -273,7 +316,7 @@ def _is_layer_noise(row: dict[str, Any]) -> bool:
 def _filter_layer_noise(architecture: dict[str, Any]) -> dict[str, Any]:
     """Return ``architecture`` with noise ``layers`` rows dropped.
 
-    Single choke point: both ``_layers_section`` and ``_entry_points_section``
+    Single choke point: both ``_layers_data`` and ``_entry_points_data``
     read ``architecture["layers"]``, so filtering once here (rather than
     duplicating the check in each section) closes both leak paths in one place.
     Noise = URL-literal fragments OR Python builtins OR generic route fragments
@@ -289,12 +332,20 @@ def _filter_layer_noise(architecture: dict[str, Any]) -> dict[str, Any]:
 
 
 @observe(tier="stage")
-def _layers_section(architecture: dict[str, Any]) -> list[str]:
-    """Render the ``layers:`` section: ``<layer>: <name> — <reason>`` lines.
+def _layers_data(architecture: dict[str, Any]) -> tuple[str, list[str], int]:
+    """Return ``(header, item_lines, total_available)`` for the layers section.
 
     Sorted by (layer, name) so equal layers keep a stable order (tie-break).
     ``entry``-layer rows are ALSO surfaced as entry-points elsewhere; they stay
     in the layers list too (the two views serve different questions).
+
+    ``item_lines`` are soft-capped to ``_MAX_LAYERS`` AND already defanged
+    (``_defang_secret_shaped_runs``, per-line — see the "Defang timing" note on
+    ``_fit_line_section``) so a caller can measure/join them directly with no
+    second whole-text defang pass. ``total_available`` is the FULL row count
+    BEFORE the ``_MAX_LAYERS`` soft cap, so a "N of M shown" marker can report
+    the true scope even when the soft cap — not a per-section budget — is what
+    trimmed the list.
     """
     rows = []
     for row in architecture.get("layers") or []:
@@ -305,36 +356,48 @@ def _layers_section(architecture: dict[str, Any]) -> list[str]:
             rows.append((layer, name, reason))
     rows.sort(key=lambda r: (r[0], r[1]))
 
-    lines = ["layers:"]
-    for layer, name, reason in rows[:_MAX_LAYERS]:
-        suffix = f" — {reason}" if reason else ""
-        lines.append(f"  {layer}: {name}{suffix}")
-    return lines
+    total_available = len(rows)
+    items = [
+        _defang_secret_shaped_runs(f"  {layer}: {name}" + (f" — {reason}" if reason else ""))
+        for layer, name, reason in rows[:_MAX_LAYERS]
+    ]
+    return "layers:", items, total_available
 
 
 @observe(tier="stage")
-def _entry_points_section(architecture: dict[str, Any]) -> list[str]:
-    """Render entry-points, DERIVED from ``layers`` where ``layer == 'entry'``.
+def _entry_points_data(architecture: dict[str, Any]) -> tuple[str, list[str], int] | None:
+    """Return ``(prefix, names, total_available)`` for entry-points, or ``None``.
 
-    There is no ``entry_points`` key in the measured architecture shape — entry
-    points are the ``entry`` layer.  Empty → no section (skipped, not blocking).
+    Derived from ``layers`` where ``layer == 'entry'`` (there is no
+    ``entry_points`` key in the measured architecture shape). ``None`` — not a
+    zero-item tuple — when there are no entry rows at all: matches the
+    pre-existing behavior of skipping the section entirely (no bare header),
+    and means the section contributes NO demand to ``_water_fill``, so its
+    entire notional share is free for the other three sections rather than
+    being reserved-but-unused.
+
+    ``names`` are soft-capped to ``_MAX_ENTRY_POINTS`` and already defanged.
     """
-    names = sorted(
+    names_all = sorted(
         str(row.get("name", ""))
         for row in architecture.get("layers") or []
         if str(row.get("layer", "")) == "entry" and row.get("name")
     )
-    if not names:
-        return []
-    return ["entry-points: " + ", ".join(names[:_MAX_ENTRY_POINTS])]
+    if not names_all:
+        return None
+    total_available = len(names_all)
+    names = [_defang_secret_shaped_runs(n) for n in names_all[:_MAX_ENTRY_POINTS]]
+    return "entry-points: ", names, total_available
 
 
 @observe(tier="stage")
-def _hotspots_section(architecture: dict[str, Any]) -> list[str]:
-    """Render top hotspots by fan_in, tie-broken by qualified_name.
+def _hotspots_data(architecture: dict[str, Any]) -> tuple[str, list[str], int]:
+    """Return ``(header, item_lines, total_available)`` for the hotspots section.
 
     Sort key ``(-fan_in, qualified_name)`` — equal-fan_in hotspots keep a stable
     order (ADR-0108/0147: an un-tie-broken sort is exactly the flake class).
+    ``item_lines`` soft-capped to ``_MAX_HOTSPOTS`` and already defanged; see
+    ``_layers_data`` for why both of those matter to the caller.
     """
     rows = []
     for row in architecture.get("hotspots") or []:
@@ -344,10 +407,12 @@ def _hotspots_section(architecture: dict[str, Any]) -> list[str]:
             rows.append((fan_in, qname))
     rows.sort(key=lambda r: (-r[0], r[1]))
 
-    lines = ["hotspots:"]
-    for fan_in, qname in rows[:_MAX_HOTSPOTS]:
-        lines.append(f"  {qname} (fan_in={fan_in})")
-    return lines
+    total_available = len(rows)
+    items = [
+        _defang_secret_shaped_runs(f"  {qname} (fan_in={fan_in})")
+        for fan_in, qname in rows[:_MAX_HOTSPOTS]
+    ]
+    return "hotspots:", items, total_available
 
 
 @observe(tier="stage")
@@ -387,11 +452,16 @@ def _extract_endpoint(row: dict[str, Any] | list[Any]) -> tuple[str, str, str]:
 
 
 @observe(tier="stage")
-def _endpoints_section(endpoints: list[dict[str, Any]]) -> list[str]:
-    """Render the ``endpoints:`` section from route_method rows.
+def _endpoints_data(endpoints: list[dict[str, Any]]) -> tuple[str, list[str], int]:
+    """Return ``(header, item_lines, total_available)`` for the endpoints section.
 
-    0 rows (PHP/Go framework routes not parsed) → ``(none extracted)``.  Sorted
-    by (path, method) for determinism.
+    0 rows (PHP/Go framework routes not parsed) → the ``header`` IS the literal
+    ``"endpoints: (none extracted)"`` text with no items and
+    ``total_available=0``, so it renders as a single line with no "N of M"
+    marker (0 shown of 0 available — nothing was hidden) — this is a case, not
+    a special short-circuit, so ``_fit_line_section`` handles it uniformly.
+    Otherwise sorted by (path, method) for determinism and soft-capped to
+    ``_MAX_ENDPOINTS``; items already defanged.
     """
     parsed = []
     for row in endpoints or []:
@@ -399,13 +469,15 @@ def _endpoints_section(endpoints: list[dict[str, Any]]) -> list[str]:
         if method or path:
             parsed.append((path, method))
     if not parsed:
-        return ["endpoints: (none extracted)"]
+        return _defang_secret_shaped_runs("endpoints: (none extracted)"), [], 0
 
     parsed = sorted(set(parsed))
-    lines = ["endpoints:"]
-    for path, method in parsed[:_MAX_ENDPOINTS]:
-        lines.append(f"  {method} {path}".rstrip())
-    return lines
+    total_available = len(parsed)
+    items = [
+        _defang_secret_shaped_runs(f"  {method} {path}".rstrip())
+        for path, method in parsed[:_MAX_ENDPOINTS]
+    ]
+    return "endpoints:", items, total_available
 
 
 @observe(tier="stage")
@@ -454,6 +526,154 @@ def _truncate(text: str, budget: int) -> str:
 
 
 @observe(tier="stage")
+def _section_full_text(header: str, items: list[str], total_available: int) -> str:
+    """Render a line-style section's full (budget-unaware) text.
+
+    ``items`` are ALREADY defanged (see ``_layers_data``/``_hotspots_data``/
+    ``_endpoints_data``) — this function only joins, never re-derives content.
+    Used both as the fast-path return of ``_fit_line_section`` (when the full
+    text already fits its allocated share) and as the DEMAND figure
+    ``_water_fill`` measures each section against. A trailing ``"… (N of M
+    shown)"`` marker is appended whenever the soft cap already dropped rows
+    (``len(items) < total_available``), even before any budget constraint is
+    applied — so the reader is told the true scope regardless of which
+    mechanism (soft cap or budget) did the trimming.
+    """
+    shown = len(items)
+    lines = [header, *items]
+    if shown < total_available:
+        lines.append(f"  … ({shown} of {total_available} shown)")
+    return "\n".join(lines)
+
+
+@observe(tier="stage")
+def _csv_full_text(prefix: str, names: list[str], total_available: int) -> str:
+    """Render entry-points' full (budget-unaware) comma-joined single line.
+
+    ``names`` are ALREADY defanged (see ``_entry_points_data``). Mirrors
+    ``_section_full_text`` but for the ONE section rendered as a single
+    comma-joined line rather than one line per item.
+    """
+    shown = len(names)
+    text = prefix + ", ".join(names)
+    if shown < total_available:
+        text += f" … (+{total_available - shown} more)"
+    return text
+
+
+@observe(tier="stage")
+def _fit_line_section(header: str, items: list[str], total_available: int, budget: int) -> str:
+    """Fit a header + item lines (layers/hotspots/endpoints style) to ``budget``.
+
+    Defang timing: ``items`` arrive already defanged (one ``_defang_secret_shaped_runs``
+    pass per line, at construction in ``_layers_data``/``_hotspots_data``/
+    ``_endpoints_data``) rather than defanged here as one whole-text pass. The
+    two are equivalent — no ``[A-Za-z0-9/+]`` run can span a ``"\\n"`` or the
+    ``" — "``/``" "`` separators inside a line, since none of those characters
+    are in that class — but per-line defang lets this function measure
+    already-final lengths, which is what keeps the ``len(out) <= budget``
+    invariant exact once each section is measured/allocated independently.
+
+    When the full untruncated rendering (header + every item, plus an "N of M"
+    marker if the soft cap already trimmed some) fits in ``budget``, it is
+    returned unchanged. Otherwise items are dropped from the END (lowest
+    priority within the section) one at a time — never a mid-line character
+    cut, so a shown row is always a complete, well-formed line — until what
+    remains, plus a marker reporting the new (smaller) shown-count, fits.
+    """
+    full_text = _section_full_text(header, items, total_available)
+    if len(full_text) <= budget:
+        return full_text
+
+    for shown in range(len(items), -1, -1):
+        kept = items[:shown]
+        remaining = total_available - shown
+        lines = [header, *kept]
+        if remaining > 0:
+            lines.append(f"  … ({shown} of {total_available} shown)")
+        text = "\n".join(lines)
+        if len(text) <= budget:
+            return text
+    # Pathological: budget too small even for the bare header. render_digest
+    # re-checks the assembled body against body_budget and falls back to a
+    # whole-blob _truncate as a safety net, so returning the header here
+    # (rather than an empty string) keeps this function total and simple.
+    return header
+
+
+@observe(tier="stage")
+def _fit_csv_section(prefix: str, names: list[str], total_available: int, budget: int) -> str:
+    """Fit the entry-points comma-joined single line to ``budget``.
+
+    ``names`` are already defanged/soft-capped (see ``_entry_points_data``).
+    Whole NAMES are dropped from the end, never a mid-name character cut —
+    mirrors ``_fit_line_section``'s line-level (not char-level) truncation.
+    """
+    full_text = _csv_full_text(prefix, names, total_available)
+    if len(full_text) <= budget:
+        return full_text
+
+    for shown in range(len(names), -1, -1):
+        kept = names[:shown]
+        remaining = total_available - shown
+        text = prefix + ", ".join(kept)
+        if remaining > 0:
+            text += f" … (+{remaining} more)"
+        if len(text) <= budget:
+            return text
+    return prefix
+
+
+@observe(tier="stage")
+def _water_fill(demands: list[int], total_budget: int) -> list[int]:
+    """Max-min fair share: split ``total_budget`` across ``demands``, in order.
+
+    Classic progressive-filling bandwidth-allocation algorithm. A section
+    whose demand is <= its current equal share is granted its FULL demand
+    immediately; the leftover is redistributed (again equal-split) among the
+    remaining sections. This is what stops an early, big section (layers)
+    from starving a later one (endpoints) the way a single shared
+    whole-budget tail-cut did — every section still in the running gets at
+    least the current equal share, and a section that needs less than its
+    share never "reserves" the unused part.
+
+    Deterministic: ``demands`` is iterated as a list (never a set), in the
+    caller's priority order; only integer ``//``/``%`` are used, never floats
+    — so equal runs are reproducible byte-for-byte and the split does not
+    depend on set/dict iteration order.
+
+    Returns a list of per-index allocations (same length/order as ``demands``)
+    summing to at most ``total_budget``.
+    """
+    n = len(demands)
+    allocation = [0] * n
+    if n == 0 or total_budget <= 0:
+        return allocation
+
+    remaining_budget = total_budget
+    active = list(range(n))
+    while active:
+        share = remaining_budget // len(active)
+        satisfied_now = [i for i in active if demands[i] <= share]
+        if satisfied_now:
+            for i in satisfied_now:
+                allocation[i] = demands[i]
+                remaining_budget -= demands[i]
+            active = [i for i in active if i not in satisfied_now]
+            continue
+        # Nobody's demand fits the current equal share: split what remains
+        # evenly across the still-active sections. The first `extra` sections
+        # (in `active`'s fixed order) get one additional char so the shares
+        # sum EXACTLY to remaining_budget.
+        base = remaining_budget // len(active)
+        extra = remaining_budget % len(active)
+        for idx, i in enumerate(active):
+            allocation[i] = base + (1 if idx < extra else 0)
+        active = []
+    return allocation
+
+
+@observe(tier="stage")
 def render_digest(
     architecture: dict[str, Any],
     endpoints: list[dict[str, Any]],
@@ -469,17 +689,24 @@ def render_digest(
     ``stale`` / ``head_sha``.
 
     The header and the optional ``stale @ <sha>`` marker form a budget-RESERVED
-    preamble; the body sections follow in priority order (layers > hotspots >
-    entry-points > endpoints) and are truncated against the budget that remains
-    after the preamble.  The ellipsis marker is counted in the budget, so
-    ``len(result) <= budget`` holds — the marker's survival is structural, not a
-    side effect of the digest happening to be short.
+    preamble. The body's four sections (layers, hotspots, entry-points,
+    endpoints — entry-points omitted entirely when there is no ``entry``
+    layer) still render in that priority order, but each is fit against its
+    OWN ``_water_fill``-allocated share of the remaining budget (BC-CODEGRAPH-9,
+    Car 0087) rather than all four sharing one budget with a single tail-cut —
+    the bug that let an early section (layers) starve a later one (endpoints)
+    entirely. The ellipsis / "N of M shown" markers are counted in each
+    section's budget, and a whole-blob ``_truncate`` safety net still runs on
+    the assembled body if per-section allocation ever leaves the total over
+    ``body_budget``, so ``len(result) <= budget`` holds unconditionally — the
+    marker's survival is structural, not a side effect of the digest happening
+    to be short.
     """
     limit = config.DIGEST_CHAR_BUDGET if budget is None else budget
 
     # Layer-noise guard: drop leaked route-path fragments (can carry PII),
     # builtins, and generic route fragments (task #58) BEFORE either reader
-    # (_layers_section, _entry_points_section) sees them — single choke point,
+    # (_layers_data, _entry_points_data) sees them — single choke point,
     # see _filter_layer_noise / _is_layer_noise.
     architecture = _filter_layer_noise(architecture)
 
@@ -487,12 +714,16 @@ def render_digest(
         [_header_line(architecture, identity)],
         _stale_line(identity),
     ]
-    body_sections: list[list[str]] = [
-        _layers_section(architecture),
-        _hotspots_section(architecture),
-        _entry_points_section(architecture),
-        _endpoints_section(endpoints),
-    ]
+
+    layers_header, layers_items, layers_total = _layers_data(architecture)
+    hotspots_header, hotspots_items, hotspots_total = _hotspots_data(architecture)
+    entry_data = _entry_points_data(architecture)
+    end_header, end_items, end_total = _endpoints_data(endpoints)
+
+    layers_full = _section_full_text(layers_header, layers_items, layers_total)
+    hotspots_full = _section_full_text(hotspots_header, hotspots_items, hotspots_total)
+    end_full = _section_full_text(end_header, end_items, end_total)
+    entry_full = _csv_full_text(*entry_data) if entry_data is not None else ""
 
     # Secret-gate FP guard (#30): break long [A-Za-z0-9/+] runs (git SHAs, 40-char
     # identifier/path segments) so the digest can never coincidentally form the
@@ -502,17 +733,47 @@ def render_digest(
     # spaces, so it grows the text) and before truncation, so the ceiling holds.
     # See _defang_secret_shaped_runs — the gate itself is unchanged.
     preamble = _defang_secret_shaped_runs(_join_sections(preamble_sections))
-    body = _defang_secret_shaped_runs(_join_sections(body_sections))
 
     body_budget = limit - len(preamble) - 1  # -1 for the joining newline
     if body_budget <= len(_ELLIPSIS):
         # Degenerate: the budget cannot hold the preamble plus a meaningful cut of
         # the body (pathological budget, or an absurd repo_id / language list).
         # Fall back to truncating the whole assembled text exactly as before —
-        # never slice with a negative or sub-ellipsis body budget.
-        return _truncate(_join_sections([[preamble], [body]]), limit)
+        # never per-section-fit with a negative or sub-ellipsis budget. All four
+        # section texts are already defanged (per-line, at construction), so no
+        # extra defang pass is needed here.
+        body = "\n".join(s for s in (layers_full, hotspots_full, entry_full, end_full) if s)
+        return _truncate(preamble + "\n" + body, limit)
 
-    return preamble + "\n" + _truncate(body, body_budget)
+    # Water-fill body_budget across the sections that are actually present
+    # (entry-points is entirely absent, not zero-content, when there is no
+    # `entry` layer — see _entry_points_data) so a section with nothing to say
+    # never reserves budget it won't use.
+    slots: list[tuple[int, Callable[[int], str]]] = [
+        (len(layers_full), partial(_fit_line_section, layers_header, layers_items, layers_total)),
+        (
+            len(hotspots_full),
+            partial(_fit_line_section, hotspots_header, hotspots_items, hotspots_total),
+        ),
+    ]
+    if entry_data is not None:
+        slots.append((len(entry_full), partial(_fit_csv_section, *entry_data)))
+    slots.append((len(end_full), partial(_fit_line_section, end_header, end_items, end_total)))
+
+    allocations = _water_fill([demand for demand, _render in slots], body_budget)
+    body_parts = [
+        render(alloc) for (_demand, render), alloc in zip(slots, allocations, strict=True)
+    ]
+    body = "\n".join(part for part in body_parts if part)
+
+    # Safety net: per-section allocation is designed to sum to <= body_budget,
+    # but never trust that in the return path — if rounding or an edge case
+    # ever leaves the assembled body over budget, fall back to the same
+    # whole-blob truncate the degenerate branch above uses.
+    if len(body) > body_budget:
+        body = _truncate(body, body_budget)
+
+    return preamble + "\n" + body
 
 
 @observe(tier="stage")

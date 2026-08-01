@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -491,33 +492,22 @@ def test_orchestrator_records_re_exec_state(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_install_systemd_service_type_notify(tmp_path: Path) -> None:
-    """T42: install_systemd_service() core unit must use Type=notify (not Type=simple).
+def _written_units(tmp_path: Path, monkeypatch, runtime: str) -> dict[str, str]:
+    """Capture every unit ``install_systemd_service`` writes, rendered for *runtime*.
 
-    Mirrors Phase 7 assertion (T37) but targets the Python-generated unit,
-    not the .in template.  Also asserts the db unit is allowed to remain Type=simple
-    (SurrealDB container does not sd_notify).
+    task:0105 pins the runtime explicitly — the test used to inherit ambient
+    detection, so a podman-shaped assertion passed or failed by accident of which
+    runtime the developer had installed. Pinning is a strengthening; every
+    original assertion still runs, on the podman arm.
     """
-    import yadgar.core.daemon as _daemon_mod
-
-    daemon = _daemon_mod.YadgarDaemon()
-
-    # Patch the service dir so we don't write to ~/.config/systemd/user
-    service_dir = tmp_path / "systemd" / "user"
-    service_dir.mkdir(parents=True)
-
-    # Monkey-patch Path.home() indirectly by patching service_dir lookup inside daemon
     import unittest.mock as mock
 
-    with mock.patch.object(
-        _daemon_mod,
-        "Path",
-        side_effect=lambda *a, **kw: _patched_path(service_dir, *a, **kw),
-    ):
-        # Can't easily mock Path.home() via side_effect — use a more direct approach
-        pass
+    import yadgar.core.daemon as _daemon_mod
 
-    # Directly call and capture the unit text by patching write_text
+    monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", runtime)
+    home = tmp_path / runtime
+    (home / "systemd" / "user").mkdir(parents=True, exist_ok=True)
+
     written: dict[str, str] = {}
     orig_write = Path.write_text
 
@@ -527,34 +517,129 @@ def test_install_systemd_service_type_notify(tmp_path: Path) -> None:
 
     with (
         mock.patch.object(Path, "write_text", capturing_write),
-        mock.patch("pathlib.Path.home", return_value=tmp_path),
+        mock.patch("pathlib.Path.home", return_value=home),
     ):
-        daemon.install_systemd_service(dev=False)
+        _daemon_mod.YadgarDaemon().install_systemd_service(dev=False)
 
     assert written, "install_systemd_service must write at least one unit file"
+    return written
 
-    # The core service unit must use Type=notify
-    core_key = next((k for k in written if k.startswith("yadgar") and "db" not in k), None)
-    assert core_key is not None, f"No core unit file found in written keys: {list(written.keys())}"
-    core_unit = written[core_key]
+
+def test_install_systemd_service_type_notify(tmp_path: Path, monkeypatch) -> None:
+    """T42: install_systemd_service() core unit must use Type=notify (not Type=simple).
+
+    Mirrors Phase 7 assertion (T37) but targets the Python-generated unit,
+    not the .in template.  Also asserts the db unit is allowed to remain Type=simple
+    (SurrealDB container does not sd_notify).
+
+    task:0105 pins the runtime to podman — the arm this assertion has always been
+    about — and selects the core unit by EXACT name. The old ``startswith("yadgar")
+    and "db" not in k`` predicate matched ``yadgar-backend.service`` too, and since
+    that unit is written first it was in fact the one being asserted on. Harmless
+    while both units were Type=notify; wrong the moment they can differ.
+    """
+    written = _written_units(tmp_path, monkeypatch, "podman")
+
+    core_unit = written.get("yadgar.service")
+    assert core_unit is not None, f"No core unit file found in written keys: {list(written)}"
     assert "Type=notify" in core_unit, (
-        f"Core unit '{core_key}' missing Type=notify.\n"
+        "Core unit 'yadgar.service' missing Type=notify.\n"
         "Phase 7 follow-up: daemon.py install_systemd_service must match .in template."
     )
     assert "Type=simple" not in core_unit, (
-        f"Core unit '{core_key}' still contains Type=simple — must be replaced by Type=notify."
+        "Core unit 'yadgar.service' still contains Type=simple — must be replaced by Type=notify."
     )
 
-    # The DB unit is allowed to remain Type=simple (SurrealDB does not sd_notify)
-    db_key = next((k for k in written if "db" in k), None)
-    if db_key:
-        db_unit = written[db_key]
-        # DB unit may still be Type=simple — that's fine
-        assert "Type=simple" in db_unit or "Type=" in db_unit, (
-            "DB unit should still define a Type= directive."
-        )
+    # The backend unit must still define a Type= directive of its own.
+    backend_unit = written.get("yadgar-backend.service")
+    assert backend_unit is not None, f"No backend unit written: {list(written)}"
+    assert "Type=" in backend_unit, "Backend unit should still define a Type= directive."
 
 
-def _patched_path(service_dir: Path, *args, **kwargs) -> Path:
-    """Helper — not used directly but documents the approach tried."""
-    return Path(*args, **kwargs)
+def test_install_systemd_service_core_unit_on_docker_gates_readiness(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """task:0105: the core unit's docker arm.
+
+    On podman the core is Type=notify because podman's default sdnotify=container
+    mode forwards the daemon's own READY=1 out of the container. Docker passes no
+    NOTIFY_SOCKET in, so that emit is a silent no-op and Type=notify would hang
+    the unit until TimeoutStartSec. Type=simple stays forbidden on both arms.
+    """
+    written = _written_units(tmp_path, monkeypatch, "docker")
+
+    core_unit = written["yadgar.service"]
+    assert "Type=exec" in core_unit, f"docker core unit is not Type=exec:\n{core_unit[:500]}"
+    assert "Type=notify" not in core_unit, (
+        f"docker core unit is Type=notify with no READY=1 source:\n{core_unit[:500]}"
+    )
+    assert "Type=simple" not in core_unit, (
+        f"Core unit 'yadgar.service' still contains Type=simple.\n{core_unit[:500]}"
+    )
+    assert re.search(r"^ExecStartPost=curl .*--retry .*/health", core_unit, re.MULTILINE), (
+        f"docker core unit has no ExecStartPost= readiness gate:\n{core_unit[:500]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# _default_health_check — py3.14 ResourceWarning leak guard (Car 0036)
+# ---------------------------------------------------------------------------
+#
+# HTTPError is itself a response object holding a file wrapper (a
+# tempfile._TemporaryFileWrapper via addbase on py3.14); the polling loop in
+# _default_health_check can hit this on every retry while the daemon is
+# coming up (e.g. transient 503s), leaking one wrapper per iteration if
+# unclosed. An unclosed instance fires a spurious ResourceWarning at GC that
+# pytest-xdist mis-attributes to an unrelated test.
+
+
+def test_default_health_check_closes_http_error(monkeypatch) -> None:
+    import urllib.error
+    from unittest.mock import patch
+
+    from yadgar.core.update.orchestrator import _default_health_check
+
+    http_err = urllib.error.HTTPError(url="", code=503, msg="Unavailable", hdrs={}, fp=None)
+    monkeypatch.setattr(time, "sleep", lambda *_a, **_kw: None)
+    # Patching the module-global time.time affects every time.time() caller in
+    # the process (observability instrumentation, prometheus_client, ...) — a
+    # finite side_effect list StopIterations on those unrelated calls. Use an
+    # unbounded callable instead: call 1 = deadline base (deadline=60), call 2 =
+    # first loop condition (10 < 60 -> True -> one iteration: HTTPError raised
+    # +closed), call 3+ = large value (>= deadline -> loop exits; harmless for
+    # any other unrelated time.time() caller since only a numeric type matters).
+    calls = {"n": 0}
+
+    def _fake_time():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0.0
+        if calls["n"] == 2:
+            return 10.0
+        return 1000.0
+
+    with (
+        patch("urllib.request.urlopen", side_effect=http_err),
+        patch("yadgar.core.update.orchestrator.time.time", side_effect=_fake_time),
+    ):
+        result = _default_health_check()
+
+    assert result is False
+    assert http_err.fp is None or http_err.fp.closed, "must close the caught HTTPError"
+
+
+def test_default_health_check_closes_response_on_success(monkeypatch) -> None:
+    from unittest.mock import MagicMock, patch
+
+    from yadgar.core.update.orchestrator import _default_health_check
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = _default_health_check()
+
+    assert result is True
+    mock_resp.__exit__.assert_called_once()
