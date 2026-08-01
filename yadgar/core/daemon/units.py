@@ -12,8 +12,10 @@ union of both generators, so the profile arm gains everything §1.3 of the plan
 listed as a regression the naive delegation would have shipped (the SurrealDB
 loopback publish, the state-dir bind + ``YADGAR_VACUUM_TRIGGER_PATH``, the viz
 port, ``ExecReload``, ``--stop-timeout``, ``--security-opt label=disable``,
-``TimeoutStopSec`` and the trigger-dir ``ExecStartPre``). Stage C adds the seven
-units the Python side never had.
+``TimeoutStopSec`` and the trigger-dir ``ExecStartPre``). Stage C added the seven
+units the Python side never had — they live in
+``yadgar/core/daemon/maintenance_units.py`` and are composed in here by
+:func:`build_units`, so all nine now come out of one renderer.
 
 Comments are emitted, not dropped: the parity baseline is the ``sed`` render of
 the templates, and those carry ~60 comment lines per unit explaining WHY each
@@ -30,6 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from yadgar._shared.observability.observe import observe
+from yadgar.core.daemon.maintenance_units import HostExecs, build_maintenance_units
 from yadgar.core.daemon.unit_docs import (
     BACKEND_SERVICE_DOC,
     BACKEND_UNIT_DOC,
@@ -92,6 +95,13 @@ class UnitSpec:
     # shared
     stop_timeout: int | None = None
     suffix: str = ""
+    # The HOST entry points the maintenance units exec (task:0110 Stage C).
+    # None means "this arm installs no maintenance units": build_units then emits
+    # only the two service units, because yadgar.target's second Wants= names
+    # timers and a .path that would not exist. Resolved by
+    # yadgar/core/daemon/unit_install.py:resolve_host_exec, which aborts rather
+    # than baking a broken ExecStart into a unit that fails at 4am.
+    execs: HostExecs | None = None
     # Both halves of the vacuum-trigger pair, or neither. The core container's
     # YADGAR_VACUUM_TRIGGER_PATH write is only observable if this install also
     # ships yadgar-vacuum-trigger.path to watch the projected host dir; setting
@@ -117,6 +127,7 @@ def setup_unit_spec(
     state_dir: str,
     secrets_env_file: str,
     backend_image: str,
+    execs: HostExecs,
     surreal_port: int = 8000,
     hf_cache_dir: str | None = None,
 ) -> UnitSpec:
@@ -132,6 +143,11 @@ def setup_unit_spec(
     ``backend_queue_base`` stays ``/data``: the shell path has always kept the
     queue beside the DB, and moving it to a separate volume would orphan queued
     writes on upgrade. A data move does not belong in a generator car (plan §9.5).
+
+    *execs* is REQUIRED here and optional on :class:`UnitSpec`: this arm renders
+    all nine units, so both host entry points must already be resolved
+    (fail-loud) before a spec exists, while the ``daemon install-service`` arm
+    renders only the two service units and has no host CLI to resolve.
     """
     return UnitSpec(
         runtime=runtime,
@@ -157,6 +173,7 @@ def setup_unit_spec(
         core_memory="1g",
         stop_timeout=30,
         vacuum_trigger=True,
+        execs=execs,
     )
 
 
@@ -432,10 +449,27 @@ def build_core_unit(spec: UnitSpec) -> UnitFile:
 
 @observe(tier="boundary")
 def build_units(spec: UnitSpec) -> dict[str, UnitFile]:
-    """Every unit the Python renderer can currently emit, keyed by filename.
+    """Every unit *spec* asks for, keyed by filename.
 
-    Stage A/B: the two service units. Stage C adds ``yadgar.target``, the vacuum
-    trio and the nightly pair — the parity harness's ledger is the ratchet that
-    makes that addition observable.
+    The two service units always. The seven greenfield units only when the spec
+    carries :class:`~yadgar.core.daemon.maintenance_units.HostExecs` — the
+    ``daemon install-service`` arm resolves no host CLI and installs no timers,
+    and emitting ``yadgar.target`` there would name four units that arm never
+    writes.
+
+    ``spec.state_dir`` reaches both the core unit's ``-v`` bind source and the
+    ``.path`` unit's ``PathExists=``. One renderer makes that a shared input
+    rather than the exact-string cross-generator comparison it used to be
+    (plan §4.2).
     """
-    return {u.name: u for u in (build_backend_unit(spec), build_core_unit(spec))}
+    units = [build_backend_unit(spec), build_core_unit(spec)]
+    out = {u.name: u for u in units}
+    if spec.execs is not None:
+        out |= build_maintenance_units(
+            state_dir=spec.state_dir,
+            data_dir=spec.data_dir,
+            secrets_env_file=spec.secrets_env_file,
+            surreal_port=spec.backend_surreal_port,
+            execs=spec.execs,
+        )
+    return out

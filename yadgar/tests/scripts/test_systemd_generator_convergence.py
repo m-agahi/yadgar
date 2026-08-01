@@ -35,6 +35,7 @@ from pathlib import Path
 
 import pytest
 
+from yadgar.core.daemon.maintenance_units import HostExecs
 from yadgar.core.daemon.unit_model import render_unit
 from yadgar.core.daemon.units import build_units, setup_unit_spec
 from yadgar.tests._paths import REPO_ROOT
@@ -72,17 +73,14 @@ ALL_UNITS = (
 # parity assertion run — and leaving it in PENDING once it converges fails
 # test_pending_units_still_diverge. Both directions are gated.
 
-PARITY_UNITS: frozenset[str] = frozenset({"yadgar.service", "yadgar-backend.service"})
+PARITY_UNITS: frozenset[str] = frozenset(ALL_UNITS)
 
-PENDING_UNITS: dict[str, str] = {
-    "yadgar.target": "Stage C — greenfield (duplicate Wants=)",
-    "yadgar-vacuum.service": "Stage C — greenfield (host CLI, 30min span)",
-    "yadgar-vacuum.timer": "Stage C — greenfield ([Timer], local time)",
-    "yadgar-vacuum-trigger.path": "Stage C — greenfield ([Path])",
-    "yadgar-vacuum-trigger.service": "Stage C — greenfield (two ExecStart=)",
-    "yadgar-nightly-cycle.service": "Stage C — greenfield (bare ExecStart)",
-    "yadgar-nightly-cycle.timer": "Stage C — greenfield ([Timer], UTC)",
-}
+# Stage C emptied this: all nine render at parity, so the ledger's pending half
+# is now the PROOF rather than a to-do list. Both it and
+# test_pending_units_still_diverge stay — Stage D still needs the ledger, and an
+# empty dict is what says "nothing is outstanding". Re-populating it is how a
+# future unit re-enters the ratchet.
+PENDING_UNITS: dict[str, str] = {}
 
 
 @dataclass(frozen=True)
@@ -187,6 +185,13 @@ def _rendered(runtime: str) -> dict[str, str]:
         backend_image=SNAPSHOT_ENV["YADGAR_BACKEND_IMAGE"],
         surreal_port=int(SNAPSHOT_ENV["YADGAR_BACKEND_SURREAL_PORT"]),
         hf_cache_dir="/home/testuser/.cache/huggingface",
+        # The fixtures were captured with these two exported, so the shell's
+        # _resolve_host_exec took its override branch. Passing the same values
+        # pins the render without the test depending on what is installed here.
+        execs=HostExecs(
+            vacuum=SNAPSHOT_ENV["YADGAR_HOST_CLI"],
+            nightly=SNAPSHOT_ENV["YADGAR_HOST_NIGHTLY_CLI"],
+        ),
     )
     return {name: render_unit(u) for name, u in build_units(spec).items()}
 
