@@ -30,7 +30,7 @@
   "yadgar/core/vacuum/__init__.py:331": {
     "rationale": "_wait_for_yadgar_health gates vacuum finalize on the core actually being able to serve from the swapped-in DB before check_invariants runs — a data-safety hard gate that genuinely needs readiness (db connected), not just process-up liveness."
   },
-  "yadgar/core/vacuum/launcher.py:321": {
+  "yadgar/core/vacuum/launcher.py:338": {
     "rationale": "Belt-and-suspenders poll confirming the side backend's port was actually released after SIGTERM before the swap proceeds. The side backend (SurrealDB) has no /health/live variant to probe instead."
   },
   "yadgar/core/vacuum/__init__.py:1307": {

@@ -42,6 +42,8 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
+from yadgar.core.vacuum import launcher as _launcher_mod
+
 # ---------------------------------------------------------------------------
 # Fake container runtime: a shell script that records argv and answers the five
 # subcommands the launcher uses.  YADGAR_CONTAINER_RUNTIME points _get_runtime()
@@ -212,12 +214,22 @@ def _container_only_host(monkeypatch, td: str, **runtime_kwargs) -> Path:
     ``~/.local/bin/surreal``, so HOME must be pinned to the empty tmp dir too,
     or this helper silently stops being container-only on a workstation with a
     pipx-installed ``surreal`` (exactly the layout task 0107 is about).
+
+    HOME is still not enough: three of the four candidates (``/usr/local/bin``,
+    ``/opt/homebrew/bin``, ``/usr/bin``) are ABSOLUTE and no environment
+    variable can neutralise them.  The CI image ships a real `surreal` in
+    ``/usr/local/bin``, so this helper resolved one there, the host branch was
+    taken, and "container-only" was a lie (PR #22).  The candidate LIST is
+    therefore redirected to a single HOME-anchored entry, which the empty HOME
+    above makes unresolvable — and NOT to ``()``, which would keep these tests
+    green even if the candidate-dir loop were deleted outright.
     """
     empty_bin = Path(td) / "empty-bin"
     empty_bin.mkdir(exist_ok=True)
     monkeypatch.setenv("PATH", str(empty_bin))
     monkeypatch.setenv("HOME", td)
     monkeypatch.delenv("YADGAR_SURREAL_BIN", raising=False)
+    monkeypatch.setattr(_launcher_mod, "_SURREAL_BIN_CANDIDATES", ("~/.local/bin/surreal",))
     binary, log = _write_fake_runtime(Path(td), **runtime_kwargs)
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(binary))
     monkeypatch.setenv("YADGAR_BACKEND_IMAGE", "docker.io/openfantasy/yadgar-backend:test")

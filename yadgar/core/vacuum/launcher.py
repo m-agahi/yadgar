@@ -218,12 +218,29 @@ def _resolve_surreal_binary() -> str | None:
 def _launcher_mode() -> str:
     """Read VACUUM_SIDE_LAUNCHER (``YADGAR_VACUUM_SIDE_LAUNCHER``), default ``auto``.
 
+    Resolved through :func:`resolve_knob` — live env > ``get_settings()`` (which
+    is yaml-aware) > literal default — NOT a bare ``os.environ.get``.  The knob
+    exists so an operator can PIN a branch; a pin written into ``config.yaml``
+    (or set from the config UI) that the code never reads is the phantom-knob
+    bug, ratcheted against by
+    ``yadgar/tests/core/test_no_phantom_knobs.py``.  Env stays first, so the
+    live-override semantics every existing caller and test relies on are
+    unchanged.
+
+    Normalisation (strip/lower/validate) is applied AFTER the resolution rather
+    than inside ``parse``: ``parse`` wraps ONLY the raw env string, so folding
+    case there would accept ``Container`` from the environment and reject it
+    from ``config.yaml``.
+
     An unrecognised value falls back to ``auto`` rather than raising — a
     typo'd pin must not turn into a startup crash; the ``host`` mode's own
     unresolvable-binary case already fails loud without going that far.
     """
-    raw = os.environ.get("YADGAR_VACUUM_SIDE_LAUNCHER", "auto").strip().lower()
-    return raw if raw in _LAUNCHER_MODES else "auto"
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415 — avoid import cycle
+
+    raw = str(resolve_knob("YADGAR_VACUUM_SIDE_LAUNCHER", "VACUUM_SIDE_LAUNCHER", str, "auto"))
+    normalised = raw.strip().lower()
+    return normalised if normalised in _LAUNCHER_MODES else "auto"
 
 
 class SideBackendLauncher(ABC):

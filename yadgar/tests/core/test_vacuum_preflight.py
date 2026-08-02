@@ -38,6 +38,8 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
+from yadgar.core.vacuum import launcher as _launcher_mod
+
 # ---------------------------------------------------------------------------
 # Scaffolding (mirrors test_vacuum_exit_code.py)
 # ---------------------------------------------------------------------------
@@ -175,12 +177,27 @@ def _no_side_build_launcher(monkeypatch, td: str) -> None:
     for), so on a real workstation with a pipx-installed ``surreal`` this would
     silently resolve from the developer's actual home. HOME must be patched to
     an empty dir too, or this helper's name is a lie on such a box.
+
+    ...and HOME is still not enough: three of the four candidates
+    (``/usr/local/bin``, ``/opt/homebrew/bin``, ``/usr/bin``) are ABSOLUTE, so
+    no environment variable can neutralise them. The CI image installs a real
+    `surreal` into ``/usr/local/bin``, so this helper resolved a binary there
+    and the "no launcher" precondition never held — the whole run proceeded
+    past the preflight and every skip assertion below failed (PR #22). The
+    candidate LIST itself is therefore redirected to a single HOME-anchored
+    entry, which the empty HOME above then makes unresolvable.
+
+    Deliberately NOT redirected to ``()``: an empty tuple would make these
+    tests pass even if the candidate-dir loop were deleted outright. One live
+    HOME-anchored entry keeps the mechanism exercised, just pointed somewhere
+    this test controls.
     """
     empty_bin = Path(td) / "empty-bin"
     empty_bin.mkdir(exist_ok=True)
     monkeypatch.setenv("PATH", str(empty_bin))
     monkeypatch.setenv("HOME", td)
     monkeypatch.delenv("YADGAR_SURREAL_BIN", raising=False)
+    monkeypatch.setattr(_launcher_mod, "_SURREAL_BIN_CANDIDATES", ("~/.local/bin/surreal",))
     monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(Path(td) / "no-such-runtime"))
 
 

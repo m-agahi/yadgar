@@ -26,15 +26,41 @@ from __future__ import annotations
 
 import stat
 import tempfile
+import types as _types
 from pathlib import Path
 
 import pytest
+
+from yadgar.core.vacuum import launcher as launcher_mod
 
 
 def _make_exec(path: Path, body: str = "#!/bin/sh\nexit 0\n") -> Path:
     path.write_text(body)
     path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return path
+
+
+def _neutralise_candidate_dirs(monkeypatch) -> None:
+    """Make the candidate-dir fallback resolve nothing, for tests whose whole
+    premise is "no binary is obtainable".
+
+    Emptying ``PATH`` and pinning ``HOME`` is NOT sufficient: three of the four
+    entries in ``_SURREAL_BIN_CANDIDATES`` (``/usr/local/bin/surreal``,
+    ``/opt/homebrew/bin/surreal``, ``/usr/bin/surreal``) are ABSOLUTE paths
+    that no environment variable can redirect.  The CI image installs a real
+    `surreal` into ``/usr/local/bin``, so on CI the resolver kept returning it
+    and every "nothing resolves" assertion in this module failed against a host
+    where a binary genuinely was resolvable (PR #22).  The product behaviour is
+    correct and deliberate — ADR-0191 chose the candidate-dir fallback over
+    PATH-luck precisely so a pipx-installed binary is found under the systemd
+    user-manager PATH — so the fix belongs here, in the precondition.
+
+    Redirects to ONE ``HOME``-anchored entry rather than ``()``: an empty tuple
+    would leave these tests green even if the candidate-dir loop were deleted
+    from the resolver entirely.  The caller must also pin ``HOME`` at a
+    directory with no ``.local/bin/surreal`` in it.
+    """
+    monkeypatch.setattr(launcher_mod, "_SURREAL_BIN_CANDIDATES", ("~/.local/bin/surreal",))
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +117,14 @@ class TestResolveSurrealBinary:
     def test_returns_none_when_nothing_resolves(self, monkeypatch):
         """No override, empty PATH, no candidates → None; the caller falls to
         the container branch.
+
+        "no candidates" needs the candidate LIST redirected, not just HOME and
+        PATH emptied: three of the four defaults (``/usr/local/bin``,
+        ``/opt/homebrew/bin``, ``/usr/bin``) are ABSOLUTE, so no env var
+        reaches them.  The CI image carries a real `surreal` in
+        ``/usr/local/bin`` and this test resolved it, asserting ``None``
+        against a host where a binary genuinely WAS resolvable (PR #22).  See
+        :func:`_neutralise_candidate_dirs`.
         """
         from yadgar.core.vacuum.launcher import (
             ContainerLauncher,
@@ -108,6 +142,7 @@ class TestResolveSurrealBinary:
             monkeypatch.setenv("PATH", str(empty_bin))
             monkeypatch.delenv("YADGAR_SURREAL_BIN", raising=False)
             monkeypatch.delenv("YADGAR_VACUUM_SIDE_LAUNCHER", raising=False)
+            _neutralise_candidate_dirs(monkeypatch)
 
             assert _resolve_surreal_binary() is None
 
@@ -239,6 +274,9 @@ class TestLauncherKnob:
             monkeypatch.setenv("PATH", str(empty_bin))
             monkeypatch.delenv("YADGAR_SURREAL_BIN", raising=False)
             monkeypatch.setenv("YADGAR_VACUUM_SIDE_LAUNCHER", "host")
+            # "unresolvable" must mean unresolvable — the absolute candidate
+            # dirs are not reachable by any env var (PR #22).
+            _neutralise_candidate_dirs(monkeypatch)
             # A present, working container runtime + image — if the pin were
             # not honoured, this would silently succeed via the container.
             fake_runtime = _make_exec(
@@ -296,3 +334,70 @@ def test_launcher_mode_never_raises_on_any_input(monkeypatch, mode):
     monkeypatch.setenv("YADGAR_VACUUM_SIDE_LAUNCHER", mode)
     result = _launcher_mode()
     assert result in {"auto", "host", "container"}
+
+
+# ---------------------------------------------------------------------------
+# The knob must not be a PHANTOM: config.yaml has to be authoritative.
+# ---------------------------------------------------------------------------
+
+
+class TestLauncherKnobIsNotEnvOnly:
+    """``VACUUM_SIDE_LAUNCHER`` is registered in ``FIELD_META``, so it is shown
+    and written by config.yaml and the config UI.  It was read with a bare
+    ``os.environ.get``, so a value set THERE was silently discarded — the exact
+    phantom-knob class ``test_no_phantom_knobs.py`` ratchets against.  The knob
+    exists so an operator can PIN a branch (ADR-0191), which is worthless if
+    the sanctioned place to write the pin is ignored.
+    """
+
+    def test_settings_value_is_honoured_when_env_is_unset(self, monkeypatch):
+        import yadgar._shared.config.config as config_mod
+        from yadgar.core.vacuum.launcher import _launcher_mode
+
+        monkeypatch.delenv("YADGAR_VACUUM_SIDE_LAUNCHER", raising=False)
+        # Patch where resolve_knob LOOKS get_settings up, not at a re-export —
+        # patching the re-export leaves resolve_knob reading the real (cached)
+        # settings and the test passes for the wrong reason.
+        monkeypatch.setattr(
+            config_mod,
+            "get_settings",
+            lambda: _types.SimpleNamespace(VACUUM_SIDE_LAUNCHER="container"),
+        )
+
+        assert _launcher_mode() == "container", (
+            "a VACUUM_SIDE_LAUNCHER pin written to config.yaml must take effect; "
+            "reading it via os.environ only makes the yaml/UI value a no-op"
+        )
+
+    def test_live_env_still_outranks_settings(self, monkeypatch):
+        """Precedence guard: env FIRST keeps today's semantics (and every other
+        test in this module, which pins the knob via monkeypatch.setenv).
+        """
+        import yadgar._shared.config.config as config_mod
+        from yadgar.core.vacuum.launcher import _launcher_mode
+
+        monkeypatch.setattr(
+            config_mod,
+            "get_settings",
+            lambda: _types.SimpleNamespace(VACUUM_SIDE_LAUNCHER="container"),
+        )
+        monkeypatch.setenv("YADGAR_VACUUM_SIDE_LAUNCHER", "host")
+
+        assert _launcher_mode() == "host"
+
+    def test_settings_value_is_normalised_like_an_env_value(self, monkeypatch):
+        """Case/whitespace folding happens AFTER resolution, so a yaml value is
+        normalised identically to an env one — normalising inside ``parse``
+        would reach only the env string.
+        """
+        import yadgar._shared.config.config as config_mod
+        from yadgar.core.vacuum.launcher import _launcher_mode
+
+        monkeypatch.delenv("YADGAR_VACUUM_SIDE_LAUNCHER", raising=False)
+        monkeypatch.setattr(
+            config_mod,
+            "get_settings",
+            lambda: _types.SimpleNamespace(VACUUM_SIDE_LAUNCHER="  Container  "),
+        )
+
+        assert _launcher_mode() == "container"
