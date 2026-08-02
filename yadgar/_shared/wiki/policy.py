@@ -96,7 +96,7 @@ DEFAULT_POLICY = WikiPolicy(
 
 POLICY_BY_TYPE: dict[str, WikiPolicy] = {
     "agent_prompt": WikiPolicy(
-        gate_mode="similarity",
+        gate_mode="identity",  # D21: two agent_prompt pages from different projects aren't duplicates
         recall_disposition="exclude",
         dir_scope="strict",
         merge="allow",
