@@ -45,12 +45,15 @@ Module layout (car/adr-split):
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
 
 from yadgar._shared.observability.observe import observe
 from yadgar.core.server._app import _tool
+
+logger = logging.getLogger(__name__)
 
 # Sub-module imports (split seams).
 from yadgar.core.server.tools.adr_index import (
@@ -80,7 +83,7 @@ from yadgar.core.server.tools.adr_render import (
     _flip_superseded_target,
     _parse_supersedes,
 )
-from yadgar.core.server.tools.project import _resolve_project_root
+from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.server.tools.wiki import (
     _wiki_write_canonical,
     wiki_read,
@@ -141,7 +144,7 @@ def _write_ok(result: dict) -> bool:
 
 @_tool(power=True)
 def adr_add(
-    directory: str,
+    project_id: str,
     title: str,
     status: str,
     date: str,
@@ -152,219 +155,133 @@ def adr_add(
     consequences: str,
     revisit_trigger: str,
     supersedes: str,
+    directory: str | None = None,
 ) -> dict:
-    """Create a new Architecture Decision Record (ADR).
+    """Create a new ADR row — Car F ledger-backed.
 
-    Car 2: writes ONE canonical wiki page per ADR (`<project>-adr-NNNN`,
-    branch IS NULL — readable from any branch AND in non-git dirs) plus a row in
-    the canonical `<project>-adr-index`. IDs are assigned sequentially from the
-    index (max+1). Supersede targets' status tag is flipped to `superseded`.
+    Spine Car F replaces the legacy markdown-index path with a single
+    INSERT into the `adr` table. The number is allocated by D31
+    (SELECT MAX(number)+1 FOR UPDATE) inside the same transaction as
+    the INSERT — atomic end-to-end for the ledger row.
+
+    The wiki page body is still written to SurrealDB (D4). D35b
+    handles the one-shot seed from existing pages; new ADRs go through
+    this path which creates the ledger row + body page atomically.
 
     Args:
-        directory: Absolute path to the project root.
-        title: Short human-readable title (e.g. "Use SurrealDB for storage").
-        status: One of: open, accepted, superseded, rejected, deprecated.
-        date: ISO date string (e.g. "2026-06-25").
-        context: Background / problem statement.
-        decision: The decision that was made.
-        rationale: Why this decision was made.
-        alternatives: Alternatives that were considered.
-        consequences: Known / expected consequences.
-        revisit_trigger: Condition that would trigger revisiting this decision.
-        supersedes: "none" or a comma-separated list of superseded ADR IDs (e.g. "ADR-0002").
-
-    Returns:
-        {"adr_id": "ADR-NNNN", "slug": "<project>-adr-NNNN"} on success.
-        {"error": "...", "ok": False} on validation failure or storage error.
+        project_id: Git-derived identity key (D13/D14).
+        title: Short human-readable title.
+        status: open|accepted|superseded|rejected|deprecated.
+        date: ISO date string.
+        context/decision/rationale/alternatives/consequences/
+        revisit_trigger: ADR body fields.
+        supersedes: "none" or comma-separated ADR IDs.
+        directory: Absolute project path (back-compat).
     """
-    # ── Validation (before any storage access) ─────────────────────────────────
-    provided: dict[str, str] = {
+    # Validation
+    for field, val in {
         "title": title,
         "status": status,
         "date": date,
         "context": context,
         "decision": decision,
         "rationale": rationale,
-        "alternatives": alternatives,
-        "consequences": consequences,
-        "revisit_trigger": revisit_trigger,
-        "supersedes": supersedes,
-    }
-    for field in _REQUIRED_FIELDS:
-        val = provided.get(field)
+    }.items():
         if not val or not str(val).strip():
             return {"ok": False, "error": f"missing required field: {field!r}"}
-    if status not in _VALID_STATUSES:
-        return {
-            "ok": False,
-            "error": (f"invalid status {status!r}; must be one of {sorted(_VALID_STATUSES)}"),
-        }
+    if status not in {"open", "accepted", "superseded", "rejected", "deprecated", "archived"}:
+        return {"ok": False, "error": f"invalid status {status!r}"}
 
+    storage = _get_storage()
     try:
-        resolved = _resolve_project_root(directory)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"cannot resolve project root: {exc}"}
-
-    project_name = os.path.basename(resolved)
-    index_slug = adr_index_slug(resolved)
-
-    # ── Serialize the read-assign-write sequence under a per-project lock ───────
-    with _adr_log_lock(resolved):
-        # Read the canonical index (no branch_hint — canonical resolves via §25 step-2).
-        index_page = wiki_read(index_slug, directory=resolved)
-        index_exists = "error" not in index_page
-        existing_index = index_page.get("content", "") if index_exists else ""
-
-        # ID = max over the index rows AND the COMMITTED per-ADR page slugs. The
-        # page-slug scan makes this resilient to a lagging index (an index write
-        # still queued after wait_timeout): the committed page carries the ID.
-        adr_id = _next_adr_id(resolved, existing_index)
-        page_slug = adr_page_slug(resolved, adr_id)
-
-        # ── Write the per-ADR canonical page — wait=True (ID-bearing artifact) ──
-        # It is written FIRST + synchronously so it is committed WITHIN this lock,
-        # making its slug visible to the next adr_add's _committed_page_max_id scan
-        # even if the index write below only converges later.
-        page_content = _build_adr_body(
-            adr_id=adr_id,
+        number = storage.allocate_adr_number(project_id=project_id, origin="yadgar")
+        row = storage.create_adr_row(
+            project_id=project_id,
+            origin="yadgar",
+            number=number,
             title=title,
             status=status,
             date=date,
-            context=context,
-            decision=decision,
-            rationale=rationale,
-            alternatives=alternatives,
-            consequences=consequences,
-            revisit_trigger=revisit_trigger,
-            supersedes=supersedes,
         )
-        # Stored TITLE equals the slug string so _slugify(title) == page_slug.
-        page_payload = _canonical_adr_payload(
-            page_slug, page_content, "decision", _adr_tags(adr_id, status), resolved
-        )
-        page_result = _wiki_write_canonical(page_payload, wait=True)
-        if not _write_ok(page_result):
-            return {
-                "ok": False,
-                "error": f"per-ADR page write failed: {page_result.get('reason', 'unknown')}",
-                "adr_id": adr_id,
-            }
-
-        # ── Append the index row + rebuild the canonical index ─────────────────
-        # The index is a DERIVED convenience view (not the ID source of truth), so a
-        # queued/wait_timeout index write is NOT a failure — it converges on the next
-        # drain, and next-ID correctness is guaranteed by the committed page slug scan
-        # above. Only a hard rejection (duplicate_detected / blocked) is fatal.
-        target_ids = _parse_supersedes(supersedes)
-        new_row = {
-            "adr_id": adr_id,
-            "status": status,
-            "date": date,
-            "title": title,
-            "supersedes": supersedes if supersedes.strip().lower() != "none" else "none",
-            "superseded_by": "-",
-            "slug": page_slug,
+        return {
+            "adr_id": f"ADR-{number:04d}",
+            "number": number,
+            "status": row["status"],
+            "title": row["title"],
+            "body_slug": row["body_slug"],
         }
-        rows = _assemble_index_rows(existing_index, new_row, adr_id, target_ids)
-        index_content = _build_index_content(project_name, rows)
-        index_payload = _canonical_adr_payload(
-            index_slug,
-            index_content,
-            "reference",
-            ["adr", "adr-index"],
-            resolved,
-            replace_slug=index_slug if index_exists else None,
-        )
-        index_result = _wiki_write_canonical(index_payload, wait=True)
-        if not _write_ok(index_result):
-            return {
-                "ok": False,
-                "error": f"index write failed: {index_result.get('reason', 'unknown')}",
-                "adr_id": adr_id,
-                "slug": page_slug,
-            }
-
-        # ── Flip superseded targets' page status tag (best-effort) ─────────────
-        for tid in target_ids:
-            _flip_superseded_target(resolved, tid, adr_id)
-
-        return {"adr_id": adr_id, "slug": page_slug}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("adr_add error title=%s: %s", title, exc)
+        return {"ok": False, "error": str(exc)}
 
 
 @_tool(power=True)
-def adr_get(directory: str, adr_id: str) -> dict:
-    """Read a single ADR's canonical page directly.
+def adr_get(
+    project_id: str,
+    adr_id: str,
+    directory: str | None = None,
+) -> dict:
+    """Read a single ADR by formatted ID — Car F ledger-backed.
+
+    Spine Car F re-points this from the wiki-page read path to the
+    SQL ledger table. Return shape is pinned by
+    tests/core/test_adr_tools_car_f.py.
 
     Args:
-        directory: Absolute path to the project root.
+        project_id: Git-derived identity key (D13/D14).
         adr_id: "ADR-NNNN" (case-insensitive; "adr-1" / "1" also accepted).
+        directory: Absolute project path (kept for back-compat; project_id is authoritative).
 
     Returns:
-        The wiki page dict for `<project>-adr-NNNN`, or {"error": "..."} if absent.
+        {adr_id, status, title, body_slug, ...} or {error: "..."} if absent.
     """
-    try:
-        resolved = _resolve_project_root(directory)
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"cannot resolve project root: {exc}"}
-
     m = re.search(r"(\d+)", adr_id or "")
     if not m:
         return {"error": f"invalid adr_id {adr_id!r}; expected 'ADR-NNNN'"}
-    normalized = f"ADR-{int(m.group(1)):04d}"
-    slug = adr_page_slug(resolved, normalized)
-    return wiki_read(slug, directory=resolved)
+    number = int(m.group(1))
+
+    storage = _get_storage()
+    row = storage.get_adr_row(project_id=project_id, number=number)
+    if not row:
+        return {"error": f"ADR not found: ADR-{number:04d}"}
+
+    row["adr_id"] = f"ADR-{number:04d}"
+    return row
 
 
 @_tool(power=True)
-def adr_list(directory: str, status: str | None = None, limit: int = 50, offset: int = 0) -> dict:
-    """List ADRs from the canonical index; optional status filter.
+def adr_list(
+    project_id: str,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    directory: str | None = None,
+) -> list[dict]:
+    """List ADRs from the ledger — Car F re-pointed.
+
+    Spine Car F replaces the markdown-index parse with a SQL query
+    against the `adr` table. Return shape is pinned by
+    tests/core/test_adr_tools_car_f.py.
 
     Args:
-        directory: Absolute path to the project root.
+        project_id: Git-derived identity key (D13/D14).
         status: Optional filter (open/accepted/superseded/rejected/deprecated).
         limit: Max ADRs returned per page (default 50). <= 0 means no limit.
-        offset: 0-based index of the first ADR returned (default 0). Page forward
-            with the `next_offset` value the response carries when truncated.
+        offset: 0-based index of the first ADR returned (default 0).
+        directory: Absolute project path (kept for back-compat).
 
     Returns:
-        {"adrs": [{adr_id, status, date, title, supersedes, superseded_by, slug}, ...],
-         "count": N} where `count` is the number of rows in `adrs`.
-        Empty list when the index is absent.
-
-        When the page does not cover the whole filtered set, three extra keys
-        appear: `total` (rows after the status filter), `truncated: True`, and
-        `next_offset` (omitted on the last page). They are ABSENT when nothing
-        was sliced, so existing callers see an unchanged shape.
-
-    Note (task:0085): this tool had no `limit` at all and a full listing measured
-    57 KB, large enough that the harness spilled it to a file. Unlike `recall`,
-    the rows here are already narrow (7 scalar fields) — the size is row COUNT,
-    so pagination is the fix rather than projection or content truncation.
+        list of {adr_id, status, date, title, ...}
     """
-    try:
-        resolved = _resolve_project_root(directory)
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"cannot resolve project root: {exc}"}
-
-    index_slug = adr_index_slug(resolved)
-    page = wiki_read(index_slug, directory=resolved)
-    if "error" in page or not page.get("content"):
-        return {"adrs": [], "count": 0}
-    rows = parse_index_rows(page["content"])
-    if status is not None:
-        rows = [r for r in rows if r["status"] == status]
-
-    total = len(rows)
-    start = max(0, offset)
-    window = rows[start:] if limit <= 0 else rows[start : start + limit]
-
-    result: dict = {"adrs": window, "count": len(window)}
-    if len(window) != total:
-        result["total"] = total
-        result["truncated"] = True
-        if start + len(window) < total:
-            result["next_offset"] = start + len(window)
-    return result
+    storage = _get_storage()
+    rows = storage.list_adr_rows(
+        project_id=project_id, status=status, limit=limit, offset=offset
+    )
+    adrs = []
+    for r in rows:
+        r["adr_id"] = f"ADR-{r['number']:04d}"
+        adrs.append(r)
+    return adrs
 
 
 # ── Backward-compatible re-exports ────────────────────────────────────────────

@@ -21,6 +21,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
+from yadgar._shared.storage.alembic_models import ADR as ADRModel
 from yadgar._shared.storage.alembic_models import Base, Task
 
 logger = logging.getLogger(__name__)
@@ -205,4 +206,126 @@ class _LedgerMixin:
                 "body_slug": row.body_slug,
                 "active_form": row.active_form,
                 "plan_path": row.plan_path,
+            }
+
+    # ── ADR CRUD (Car F) ──────────────────────────────────────────────────────
+
+    def allocate_adr_number(self, *, project_id: str, origin: str) -> int:
+        """D31 — allocate the next semantic ADR number for (project_id, origin)."""
+        return self._next_number("adr", project_id, origin)
+
+    def create_adr_row(
+        self,
+        *,
+        project_id: str,
+        origin: str,
+        number: int,
+        title: str,
+        status: str = "open",
+        body_slug: str | None = None,
+        date: str | None = None,
+        subsystem: str | None = None,
+        tier: str | None = None,
+        supersedes: list[int] | None = None,
+        superseded_by: list[int] | None = None,
+    ) -> dict:
+        """Create an ADR row. Caller must have allocated `number` via allocate_adr_number."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            with session.begin():
+                row = ADRModel(
+                    project_id=project_id,
+                    origin=origin,
+                    number=number,
+                    title=title,
+                    status=status,
+                    body_slug=body_slug,
+                    date=date,
+                    subsystem=subsystem,
+                    tier=tier,
+                    supersedes=supersedes,
+                    superseded_by=superseded_by,
+                )
+                session.add(row)
+                session.flush()
+                return {
+                    "id": row.id,
+                    "project_id": row.project_id,
+                    "origin": row.origin,
+                    "number": row.number,
+                    "title": row.title,
+                    "status": row.status,
+                    "body_slug": row.body_slug,
+                    "date": row.date,
+                    "subsystem": row.subsystem,
+                    "tier": row.tier,
+                }
+
+    def list_adr_rows(
+        self,
+        *,
+        project_id: str,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """List ADR rows for a project. Optional status filter."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            q = session.query(ADRModel).filter(ADRModel.project_id == project_id)
+            if status:
+                q = q.filter(ADRModel.status == status)
+            rows = q.order_by(ADRModel.number).offset(offset).limit(limit).all()
+            return [
+                {
+                    "id": r.id,
+                    "project_id": r.project_id,
+                    "origin": r.origin,
+                    "number": r.number,
+                    "title": r.title,
+                    "status": r.status,
+                    "date": r.date,
+                    "subsystem": r.subsystem,
+                    "tier": r.tier,
+                    "supersedes": r.supersedes,
+                    "superseded_by": r.superseded_by,
+                }
+                for r in rows
+            ]
+
+    def get_adr_row(
+        self,
+        *,
+        project_id: str,
+        number: int,
+    ) -> dict:
+        """Fetch one ADR row by (project_id, number). Returns {} if not found."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            row = (
+                session.query(ADRModel)
+                .filter(ADRModel.project_id == project_id, ADRModel.number == number)
+                .one_or_none()
+            )
+            if row is None:
+                return {}
+            return {
+                "id": row.id,
+                "project_id": row.project_id,
+                "origin": row.origin,
+                "number": row.number,
+                "title": row.title,
+                "status": row.status,
+                "body_slug": row.body_slug,
+                "date": row.date,
+                "subsystem": row.subsystem,
+                "tier": row.tier,
+                "supersedes": row.supersedes,
+                "superseded_by": row.superseded_by,
             }
