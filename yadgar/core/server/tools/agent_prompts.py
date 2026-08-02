@@ -31,16 +31,14 @@ from yadgar.core.server._app import _tool
 logger = logging.getLogger(__name__)
 
 # ── S6 discovery surface ──────────────────────────────────────────────────────
-# Global TOC page: title "Agent Prompt TOC" → slug "agent-prompt-toc" (_slugify).
+# Car I — TOC machinery deleted. D40 makes the SQL `uses` column the
+# reader; no TOC page, no regex parser, no upsert. The library anchor
+# below is retained as project-level context.
 _TOC_TITLE = "Agent Prompt TOC"
-_TOC_SLUG = "agent-prompt-toc"
-# One row per pattern: `- `<pattern>` → <purpose>`. Regex pins the pattern column
-# so re-save scan-replaces the existing line (idempotent upsert, no dupes).
-_TOC_ROW_RE = re.compile(r"^- `(?P<pattern>[^`]+)` → .*$", re.MULTILINE)
 # Reason tag that identifies the single library-discovery anchor (create-if-absent).
 _LIBRARY_ANCHOR_REASON = "agent-prompt-library"
 _LIBRARY_ANCHOR_CONTENT = (
-    "Agent-prompt library: see wiki [[agent-prompt-toc]] for available prompts; "
+    "Agent-prompt library: see wiki agent-prompt pages for available prompts; "
     "recall(type='wiki', tags=['agent-prompt']) to search; "
     "agent_prompt_save to add."
 )

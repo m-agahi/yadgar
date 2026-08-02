@@ -22,6 +22,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from yadgar._shared.storage.alembic_models import ADR as ADRModel
+from yadgar._shared.storage.alembic_models import AgentPrompt as AgentPromptModel
 from yadgar._shared.storage.alembic_models import Base, Task
 
 logger = logging.getLogger(__name__)
@@ -329,3 +330,112 @@ class _LedgerMixin:
                 "supersedes": row.supersedes,
                 "superseded_by": row.superseded_by,
             }
+
+    # ── Agent prompt CRUD (Car I) ─────────────────────────────────────────────
+
+    def allocate_agent_prompt_number(self, *, origin: str) -> int:
+        """D31 — allocate the next semantic agent_prompt number. project_id='global'."""
+        return self._next_number("agent_prompt", "global", origin)
+
+    def save_agent_prompt(
+        self,
+        *,
+        origin: str,
+        number: int,
+        title: str,
+        kind: str,
+        purpose: str | None = None,
+        body_slug: str | None = None,
+        composes: list[str] | None = None,
+    ) -> dict:
+        """Create/update an agent_prompt row. Caller allocates `number` via D31."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            with session.begin():
+                row = AgentPromptModel(
+                    project_id="global",
+                    origin=origin,
+                    number=number,
+                    title=title,
+                    kind=kind,
+                    purpose=purpose,
+                    body_slug=body_slug,
+                    composes=composes,
+                )
+                session.add(row)
+                session.flush()
+                return {
+                    "id": row.id,
+                    "pattern": title,  # legacy callers used "pattern" as the key
+                    "title": row.title,
+                    "kind": row.kind,
+                    "purpose": row.purpose,
+                    "uses": row.uses,
+                }
+
+    def list_agent_prompt_rows(self, *, status: str | None = None) -> list[dict]:
+        """List agent_prompt rows. Default sort: uses DESC (D40 — surface popular first)."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            q = session.query(AgentPromptModel)
+            if status:
+                q = q.filter(AgentPromptModel.status == status)
+            rows = q.order_by(AgentPromptModel.uses.desc()).all()
+            return [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "kind": r.kind,
+                    "purpose": r.purpose,
+                    "uses": r.uses,
+                    "status": r.status,
+                    "composes": r.composes,
+                    "body_slug": r.body_slug,
+                }
+                for r in rows
+            ]
+
+    def get_agent_prompt_row(self, *, title: str) -> dict:
+        """Fetch one agent_prompt row by title (the pattern key). Returns {} if not found."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            row = (
+                session.query(AgentPromptModel)
+                .filter(AgentPromptModel.title == title)
+                .one_or_none()
+            )
+            if row is None:
+                return {}
+            return {
+                "id": row.id,
+                "title": row.title,
+                "kind": row.kind,
+                "purpose": row.purpose,
+                "uses": row.uses,
+                "status": row.status,
+                "composes": row.composes,
+                "body_slug": row.body_slug,
+            }
+
+    def increment_agent_prompt_uses(self, *, title: str) -> int:
+        """D40 — increment the uses counter for an agent_prompt by title. Returns new count."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            with session.begin():
+                row = (
+                    session.query(AgentPromptModel)
+                    .filter(AgentPromptModel.title == title)
+                    .one_or_none()
+                )
+                if row is None:
+                    return 0
+                row.uses = (row.uses or 0) + 1
+                return row.uses

@@ -43,14 +43,11 @@ from yadgar._shared.wiki.contract import WikiAddOptions
 
 logger = logging.getLogger(__name__)
 
-# ── agent-prompt TOC / anchor constants ───────────────────────────────────────
-# Mirrors of the pure constants in yadgar.core.server.tools.agent_prompts. Kept
-# here (not imported) because the "backend must not import core" import-linter
-# contract forbids a backend→core edge. These are format constants, not logic —
-# if the TOC/anchor shape changes, update both sites.
+# Car I — agent-prompt TOC machinery deleted. D40 makes the SQL `uses`
+# column the reader; no TOC page, no regex parser, no upsert. The
+# library anchor below is retained (it's project-level context, not
+# the per-prompt counter).
 _TOC_TITLE = "Agent Prompt TOC"
-_TOC_SLUG = "agent-prompt-toc"
-_TOC_ROW_RE = re.compile(r"^- `(?P<pattern>[^`]+)` → .*$", re.MULTILINE)
 _LIBRARY_ANCHOR_REASON = "agent-prompt-library"
 _LIBRARY_ANCHOR_CONTENT = (
     "Agent-prompt library: see wiki [[agent-prompt-toc]] for available prompts; "
@@ -64,18 +61,8 @@ _TOC_USES_RE = re.compile(r" \(uses: \d+\)\s*$")
 
 
 def _toc_row(pattern: str, purpose: str) -> str:
+    """Legacy helper — kept for back-compat with callers that haven't migrated yet."""
     return f"- `{pattern}` → {purpose}"
-
-
-@observe(tier="hot", metric="backend.admin.agent_prompt._toc_with_row")
-def _toc_with_row(body: str, pattern: str, new_row: str) -> str:
-    """Return TOC body with `pattern`'s row upserted (replace if present, else append)."""
-    found = any(m.group("pattern") == pattern for m in _TOC_ROW_RE.finditer(body))
-    if found:
-        return _TOC_ROW_RE.sub(
-            lambda m: new_row if m.group("pattern") == pattern else m.group(0), body
-        )
-    return body.rstrip() + "\n" + new_row + "\n"
 
 
 # ── Layer 0: slug-keyed page ops ──────────────────────────────────────────────
@@ -336,44 +323,6 @@ def wiki_replace_markdown_block(payload: dict) -> dict:
 # ── agent_prompt_save (wiki.add + TOC + library anchor) ───────────────────────
 
 
-@observe(tier="stage", metric="backend.admin.agent_prompt._upsert_toc_row")
-def _upsert_toc_row(pattern: str, purpose: str, branch_hint: str | None) -> None:
-    """Scan-replace-or-add the `pattern → purpose` row in the global TOC page.
-
-    Backend-side copy of the core helper (the whole read-modify-write runs where
-    storage + wiki live). Idempotent; best-effort — failures logged, never raised.
-    """
-    wiki = _st._wiki
-    if wiki is None:
-        return
-    try:
-        existing = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
-        new_row = _toc_row(pattern, purpose)
-        if existing and existing.get("content"):
-            content = _toc_with_row(existing["content"], pattern, new_row)
-        else:
-            content = (
-                "# Agent Prompt TOC\n\n"
-                "Reusable subagent dispatch prompts. "
-                "recall(type='wiki', tags=['agent-prompt']) to pull one.\n\n"
-                f"{new_row}\n"
-            )
-        wiki.add(
-            title=_TOC_TITLE,
-            content=content,
-            category="reference",
-            tags=["agent-prompt-toc"],
-            opts=WikiAddOptions(
-                source_memory_ids=[],
-                confidence="high",
-                branch=branch_hint,
-                directory_context="global",
-            ),
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.debug("agent_prompt_save: TOC upsert failed: %s", e)
-
-
 @observe(tier="stage", metric="backend.admin.agent_prompt._ensure_library_anchor")
 def _ensure_library_anchor(branch_hint: str | None) -> None:
     """Create the global discovery anchor pointing at the TOC, if absent.
@@ -482,7 +431,7 @@ def agent_prompt_save(payload: dict) -> dict:
             version = 1
 
     # S6 discovery surface (best-effort; failures never block the save):
-    _upsert_toc_row(pattern, purpose, branch_hint)
+    # Car I: TOC upsert deleted — D40 makes the SQL `uses` column the reader.
     _ensure_library_anchor(branch_hint)
 
     return {
@@ -493,79 +442,31 @@ def agent_prompt_save(payload: dict) -> dict:
     }
 
 
-# ── increment_prompt_usage (Stage 3.4 usage counter, #33) ─────────────────────
-
-
-@observe(tier="stage", metric="backend.admin.agent_prompt._set_toc_row_count")
-def _set_toc_row_count(pattern: str, count: int) -> bool:
-    """Stamp ` (uses: N)` on *pattern*'s TOC row (replace any prior suffix).
-
-    Returns True when the TOC row was found + rewritten, False otherwise
-    (pattern not in TOC, TOC absent, wiki uninitialised). Best-effort —
-    failures logged, never raised.
-    """
-    wiki = _st._wiki
-    if wiki is None:
-        return False
-    try:
-        existing = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
-        if not existing or not existing.get("content"):
-            return False
-        content = existing["content"]
-        lines = content.splitlines()
-        updated = False
-        for i, line in enumerate(lines):
-            m = _TOC_ROW_RE.match(line)
-            if m and m.group("pattern") == pattern:
-                base = _TOC_USES_RE.sub("", line)
-                lines[i] = f"{base} (uses: {count})"
-                updated = True
-        if not updated:
-            return False
-        new_body = "\n".join(lines) + ("\n" if content.endswith("\n") else "")
-        wiki.add(
-            title=_TOC_TITLE,
-            content=new_body,
-            category="reference",
-            tags=["agent-prompt-toc"],
-            opts=WikiAddOptions(
-                source_memory_ids=[],
-                confidence="high",
-                branch=None,
-                directory_context="global",
-            ),
-        )
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.debug("increment_prompt_usage: TOC count update failed: %s", e)
-        return False
+# ── increment_prompt_usage — Car I: uses counter now lives in the SQL
+# agent_prompt.uses column (D40). The legacy TOC-stamping + throttled
+# memory row are deleted; SELECT ... ORDER BY uses DESC is the reader.
+# Kept as a no-op forwarder for one release cycle so callers that still
+# dispatch_prelude don't break; will be removed in the next major.
 
 
 @observe(tier="boundary", metric="backend.admin.increment_prompt_usage")
 def increment_prompt_usage(payload: dict) -> dict:
-    """Increment the per-pattern prelude-usage counter. Storage-write half.
+    """Increment the per-pattern uses counter (Car I — SQL-backed).
 
-    payload: {"pattern": str}
-    Called (best-effort) by agent_dispatch_prelude on each assembly that
-    resolved a pattern page. Counts persist in the single global
-    '_prompt_usage' memory row; the pattern's agent-prompt-toc row gains a
-    ` (uses: N)` suffix — THROTTLED to count == 1 or count % 10 == 0 so the
-    TOC page (wiki-versioned) does not churn a version per prelude call.
-    Dead patterns stay visible in the TOC: no suffix = never dispatched.
+    payload: {"pattern": str, "directory": str?}
+    Called by agent_dispatch_prelude. Counts persist in the agent_prompt
+    table's `uses` column (D40). SELECT ... ORDER BY uses DESC is the
+    reader — no TOC stamping, no version churn, no throttle.
 
-    Returns {"incremented": bool, "pattern": str, "count": int, "toc_updated": bool}.
+    Returns {"incremented": bool, "pattern": str, "count": int}.
     """
     pattern = (payload.get("pattern") or "").strip()
     if not pattern:
-        return {"incremented": False, "pattern": "", "count": 0, "toc_updated": False}
+        return {"incremented": False, "pattern": "", "count": 0}
     storage = _get_storage()
-    count = storage.increment_prompt_usage(pattern)
-    toc_updated = False
-    if count == 1 or count % 10 == 0:
-        toc_updated = _set_toc_row_count(pattern, count)
+    count = storage.increment_agent_prompt_uses(title=pattern)
     return {
         "incremented": True,
         "pattern": pattern,
         "count": count,
-        "toc_updated": toc_updated,
     }
