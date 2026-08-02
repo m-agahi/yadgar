@@ -216,6 +216,13 @@ class _ControllingSvc:
 
     backend: _Backend | None = None
     fail_stop_backend: bool = False
+    # v5.171.0 (car 0111): phase 2 now calls stop_backend() legitimately — it
+    # stops ONLY the backend and leaves the core up (ADR-0188).  Before that it
+    # called stop(), so a bare fail_stop_backend=True poison pill could only ever
+    # fire on the RESTORE path.  It now fires on the phase-2 call too, which is a
+    # correct call, so the pill must be armed AFTER the expected legitimate ones.
+    # fail_stop_backend_after=N lets the first N calls succeed and raises on N+1.
+    fail_stop_backend_after: int = 0
     calls: list[str] = []
 
     def __init__(self, mode: str = "manual") -> None:
@@ -229,7 +236,11 @@ class _ControllingSvc:
     def stop_backend(self) -> None:
         type(self).calls.append("stop_backend")
         if type(self).fail_stop_backend:
-            raise RuntimeError("simulated systemctl/D-Bus failure stopping yadgar-backend (06-16)")
+            seen = type(self).calls.count("stop_backend")
+            if seen > type(self).fail_stop_backend_after:
+                raise RuntimeError(
+                    "simulated systemctl/D-Bus failure stopping yadgar-backend (06-16)"
+                )
         if type(self).backend is not None:
             type(self).backend.stop()
 
@@ -244,13 +255,23 @@ class _ControllingSvc:
 
 
 @contextlib.contextmanager
-def _drive_backend(backend: _Backend, *, fail_stop_backend: bool = False):
+def _drive_backend(
+    backend: _Backend,
+    *,
+    fail_stop_backend: bool = False,
+    fail_stop_backend_after: int = 0,
+):
     """Patch ServiceController so vacuum drives *backend*; restore on exit.
 
     Supersedes the autouse service_stub (last patch wins) for the vacuum body.
+
+    ``fail_stop_backend_after`` lets the first N stop_backend calls succeed —
+    needed since car 0111 made phase 2 stop ONLY the backend (ADR-0188), so a
+    legitimate stop_backend now precedes the restore path the poison pill aims at.
     """
     _ControllingSvc.backend = backend
     _ControllingSvc.fail_stop_backend = fail_stop_backend
+    _ControllingSvc.fail_stop_backend_after = fail_stop_backend_after
     _ControllingSvc.calls = []
     try:
         with (
@@ -261,6 +282,7 @@ def _drive_backend(backend: _Backend, *, fail_stop_backend: bool = False):
     finally:
         _ControllingSvc.backend = None
         _ControllingSvc.fail_stop_backend = False
+        _ControllingSvc.fail_stop_backend_after = 0
 
 
 def _vacuum_args(backend: _Backend):
@@ -408,7 +430,7 @@ class TestBCE2_VacuumAtomicity:
         # stop_backend is never on its critical restore path — (a) goes green only
         # because the canonical was genuinely never renamed.
         with (
-            _drive_backend(backend, fail_stop_backend=True),
+            _drive_backend(backend, fail_stop_backend=True, fail_stop_backend_after=1) as svc,
             patch("yadgar.core.vacuum.httpx.post", side_effect=_import_fails),
             patch("yadgar.core.vacuum._wait_for_yadgar_health", return_value=True),
             # P0 #37: no yadgar core in e2e — stub CI verification (rollback is
@@ -418,6 +440,19 @@ class TestBCE2_VacuumAtomicity:
             code = cmd_vacuum_impl(_vacuum_args(backend))
 
         assert code != 0, "BC-E2(a): vacuum must report failure when side import fails"
+
+        # The 06-16 invariant, asserted EXPLICITLY rather than left implicit in the
+        # poison pill.  Car 0111 (ADR-0188) made phase 2 stop only the backend, so
+        # exactly ONE stop_backend is expected on this path.  A SECOND one means the
+        # abort took a restore path that stops the backend before renaming `.bloated`
+        # back — the precise shape that stranded the DB on 06-16.  Counting is what
+        # keeps this a real guard: `fail_stop_backend_after=1` alone would silently
+        # tolerate the regression if the pill were ever re-armed at a higher number.
+        assert svc.calls.count("stop_backend") == 1, (
+            "BC-E2(a): expected exactly one stop_backend (phase 2). Got "
+            f"{svc.calls.count('stop_backend')} — calls={svc.calls}. A second call "
+            "means the import-fail abort is on a restore path that stops the backend."
+        )
 
         # ABORT-UNTOUCHED proof: the canonical was NEVER renamed → no `.old-*`.
         assert _old_swap_siblings(backend.db_path) == [], (
