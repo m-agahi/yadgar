@@ -5,7 +5,7 @@ the in-flight spine/knob plans that are about to land on master.
 **Date:** 2026-08-02
 **Branch:** `docs/saas-loose-coupling-and-db-per-service-2026-08-02` (doc-only)
 **Amends:**
-- `docs/plans/saas-rewrite-plan-2026-08-02.md` §3.5 (stores), §4 (SaaS spine), §6 (deploy tiers)
+- `docs/plans/new-arch/saas-rewrite-plan-2026-08-02.md` §3.5 (stores), §4 (SaaS spine), §6 (deploy tiers)
 - `docs/plans/split-store-engine-decision-2026-08-02.md` §4.5 (one MariaDB)
 - `docs/plans/task-table-refactor-2026-07-29.md` §3 (schema — three tables in one MariaDB), §2.7 D34 (Alembic owns MariaDB)
 - `docs/plans/settings-to-db-config-migration-2026-07-24.md` §G (runtime_config as first mover onto MariaDB)

@@ -2,7 +2,7 @@
 
 **Status:** Investigation — findings from probing candle's ModernBERT support
 against the Ettin-32m architecture. Not a decision to port; not a commitment.
-**Context:** The SaaS rewrite plan (PR #25, `docs/plans/saas-rewrite-plan-2026-08-02.md`)
+**Context:** The SaaS rewrite plan (PR #25, `docs/plans/new-arch/saas-rewrite-plan-2026-08-02.md`)
 flagged Ettin-in-Rust as the third-highest-risk piece. This doc investigates
 whether the risk is real or whether the path is clearer than expected.
 **Branch:** `docs/ettin-rust-investigation-2026-08-02` (doc-only)
