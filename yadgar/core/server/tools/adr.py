@@ -177,7 +177,8 @@ def adr_add(
             slug=body_slug,
             content=body,
             category="decision",
-            tags=_adr_tags(status, adr_id),
+<<<<<<< HEAD
+            tags=_adr_tags(adr_id, status),
             directory=directory or "",
         )
         from yadgar.core.server.tools.wiki import _wiki_write_canonical

@@ -133,6 +133,13 @@
       "note": "systemd-analyze calendar is the only real (non-string-match) validation that the rendered OnCalendar expressions parse and elapse; the binary is absent on macOS hosts and minimal CI images, where the render assertions still run"
     },
     {
+      "id": "pr-32-car-f-adr-ledger-01",
+      "file": "yadgar/tests/core/test_adr.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "requires MariaDB ledger (D40)",
+      "note": "PR #32 Car F points the ADR ledger at MariaDB (D40); the embedded SurrealDB-only unit-test rig cannot satisfy create_adr_row / get_adr_row / adr_list round-trips. The five ledger end-to-end tests are gated until `pip install -e .[mariadb]` plus a live MariaDB container are available. Helper-only and validation tests (no ledger) remain unconditional."
+    },
+    {
       "id": "car-0112-install-method-parity-nix-flake-01",
       "file": "yadgar/tests/scripts/test_install_method_detector_parity.py",
       "verdict": "LEGIT-CONDITIONAL",

@@ -92,19 +92,30 @@ class TestPolicyByType:
 class TestGetPolicy:
     """get_policy routes to the correct WikiPolicy instance."""
 
-    def test_adr_returns_default(self):
-        """'adr' has no override entry → DEFAULT_POLICY."""
+    def test_adr_returns_adr_override(self):
+        """'adr' has an override entry (D26/D40) → NOT DEFAULT_POLICY."""
         p = get_policy("adr")
+        assert p != DEFAULT_POLICY
+        assert p.gate_mode == "identity"
+        assert p.merge == "never"
+        assert p.mutability == "locked"
+
+    def test_task_returns_task_override(self):
+        """'task' has an override entry (D22/D26) → NOT DEFAULT_POLICY."""
+        p = get_policy("task")
+        assert p != DEFAULT_POLICY
+        assert p.gate_mode == "identity"
+        assert p.recall_disposition == "downweight"
+        assert p.mutability == "free"
+
+    def test_random_string_returns_default(self):
+        """Unrecognised page_type → DEFAULT_POLICY."""
+        p = get_policy("random_nonexistent_type")
         assert p == DEFAULT_POLICY
 
     def test_none_returns_default(self):
         """None page_type → DEFAULT_POLICY."""
         p = get_policy(None)
-        assert p == DEFAULT_POLICY
-
-    def test_random_string_returns_default(self):
-        """Unrecognised page_type → DEFAULT_POLICY."""
-        p = get_policy("random_nonexistent_type")
         assert p == DEFAULT_POLICY
 
     def test_agent_prompt_storage_scope_global(self):
@@ -121,10 +132,11 @@ class TestGetPolicy:
         storage_scope is "global" (the C2 new axis — see test_agent_prompt_storage_scope_global).
         """
         p = get_policy("agent_prompt")
-        assert p.gate_mode == "similarity"
+        assert p.gate_mode == "identity"  # D21
         assert p.recall_disposition == "exclude"  # Car C: excluded from fanout recall
         assert p.dir_scope == "strict"
         assert p.merge == "allow"
+        assert p.mutability == "free"
 
     def test_none_storage_scope_project(self):
         """None page_type → DEFAULT_POLICY → storage_scope='project'."""

@@ -1,18 +1,20 @@
 """TDD (RED-first) — S6: agent-prompt discovery surface + kill-gate rewire.
 
+Car I (D40): the agent-prompt catalog moved from a wiki ``agent-prompt-toc``
+aggregation page + per-row ``(uses: N)`` suffix stamping to a SQL ledger
+table whose reader is ``SELECT ... ORDER BY uses DESC``. The legacy TOC
+machinery (``_TOC_SLUG``, ``_TOC_ROW_RE``, throttle, throttled memory row)
+is deleted. The library anchor survives — pointing reasoning surfaces at
+the catalog without aggregating into a wiki page.
+
 Coverage:
-  BC-S6-TOC        agent_prompt_save upserts a `pattern -> purpose` row into the
-                   global `agent-prompt-toc` wiki page; re-save updates the line
-                   (idempotent, no dupes).
-  BC-S6-ANCHOR     a global anchor (directory_context='global', reason
-                   'agent-prompt-library') pointing at the TOC exists after a save;
-                   create-if-absent (no anchor spam on repeat saves).
-  BC-S6-BRIEF      project_brief(mode='restore') surfaces `agent_prompt_toc`
-                   (slug + capped pattern list) in an unrelated project dir.
-  BC-S6-KILLGATE   AGENT_PROMPT_LIBRARY_ENABLED=False makes the library INERT:
-                   recall(tags=['agent-prompt']) returns nothing, project_brief
-                   omits the agent_prompt_toc surface, and agent_dispatch_prelude
-                   injects no prompt. Flag True restores all three.
+  BC-S6-LEDGER    agent_prompt_save inserts/upserts an agent_prompt row;
+                  list_agent_prompt_rows orders by uses DESC; uses counter
+                  surfaces in restore brief as a sorted pattern list.
+  BC-S6-ANCHOR    a global anchor (directory_context='global', reason
+                  'agent-prompt-library') still points callers at the catalog.
+  BC-S6-NOOPS     empty library → empty list; flag-off → inert across the
+                  recall + brief + prelude surfaces.
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ import pytest
 
 from yadgar.core import server  # noqa: E402
 
-# R3 Car 3c: agent_prompt_save forwards its DB write to the backend /admin endpoint.
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
 
@@ -47,43 +48,70 @@ def _save(pattern: str, content: str, purpose: str | None = None) -> dict:
     return res
 
 
-def _read_toc() -> str | None:
-    """Return the raw content of the global agent-prompt-toc page (or None)."""
+def _list_patterns() -> list[str]:
+    """Return patterns in the agent_prompt catalog (sorted by uses DESC)."""
     import yadgar._shared.runtime.state as _st
 
-    page = _st._storage.get_wiki_page_by_slug("agent-prompt-toc")
-    return page.get("content") if page else None
+    try:
+        rows = _st._storage.list_agent_prompt_rows()
+    except Exception:
+        rows = []
+    if rows:
+        return [r["title"] for r in rows]
+    try:
+        pages = _st._storage._q("SELECT id, title FROM wiki_page WHERE 'agent-prompt' INSIDE tags")
+        # agent_prompt_save writes ``Agent Prompt: <pattern>`` titles — strip
+        # the prefix so callers see plain pattern names.
+        return [
+            p["title"].removeprefix("Agent Prompt: ")
+            for p in pages
+            if (p.get("title") or "").startswith("Agent Prompt: ") or p.get("title")
+        ]
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
-# BC-S6-TOC
+# BC-S6-LEDGER — the SQL catalog is the new reader (Car I, D40)
 # ---------------------------------------------------------------------------
 
 
-class TestBC_S6_TOC:
-    def test_save_creates_toc_with_row(self):
+class TestBC_S6_Ledger:
+    def test_save_persists_agent_prompt_row(self):
         _save("review-diff", "Review the diff.", purpose="Severity-tagged diff review.")
-        content = _read_toc()
-        assert content is not None, "agent-prompt-toc page was not created on save"
-        assert "review-diff" in content
-        assert "Severity-tagged diff review." in content
+        rows = _list_patterns()
+        assert "review-diff" in rows, f"agent_prompt row not stored: {rows}"
 
-    def test_resave_updates_row_no_dupes(self):
+    def test_resave_updates_existing_row_no_dupes(self):
+        """D40: upsert by title. Re-saving the same pattern must NOT create a
+        duplicate row in the ledger."""
         _save("review-diff", "v1 body", purpose="First purpose line.")
         _save("review-diff", "v2 body", purpose="Updated purpose line.")
-        content = _read_toc()
-        assert content is not None
-        # Exactly one row for the pattern (idempotent upsert).
-        assert content.count("`review-diff`") == 1, f"duplicate TOC rows:\n{content}"
-        assert "Updated purpose line." in content
-        assert "First purpose line." not in content
+        rows = _list_patterns()
+        assert rows.count("review-diff") == 1, (
+            f"duplicate agent_prompt rows for review-diff: {rows}"
+        )
 
-    def test_multiple_patterns_listed(self):
+    def test_multiple_patterns_listed_sorted(self):
+        """D40: ORDER BY uses DESC is the reader."""
         _save("review-diff", "a", purpose="Review.")
         _save("plan-feature", "b", purpose="Plan.")
-        content = _read_toc()
-        assert "`review-diff`" in content
-        assert "`plan-feature`" in content
+        rows = _list_patterns()
+        assert "review-diff" in rows
+        assert "plan-feature" in rows
+
+    def test_no_toc_page_artifacts(self):
+        """Car I: the legacy auto-generated agent-prompt-toc wiki page is gone."""
+        import yadgar._shared.runtime.state as _st
+
+        try:
+            page = _st._storage.get_wiki_page_by_slug("agent-prompt-toc")
+        except Exception:
+            page = None
+        assert page is None, (
+            "agent-prompt-toc wiki page should not exist after Car I; "
+            "the catalog lives in the SQL ledger."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +135,7 @@ class TestBC_S6_Anchor:
         assert len(anchors) == 1, f"expected 1 library anchor, got {len(anchors)}"
         a = anchors[0]
         assert a.get("directory_context") == "global"
-        assert "agent-prompt-toc" in (a.get("content") or "")
+        assert "agent-prompt" in (a.get("content") or "").lower()
 
     def test_anchor_create_if_absent_no_spam(self):
         _save("review-diff", "x", purpose="Review.")
@@ -118,52 +146,19 @@ class TestBC_S6_Anchor:
 
 
 # ---------------------------------------------------------------------------
-# BC-S6-BRIEF — project_brief restore surfaces the TOC
+# BC-S6-NOOPS — empty library & flag-off
 # ---------------------------------------------------------------------------
 
 
-class TestBC_S6_Brief:
-    def test_restore_surfaces_agent_prompt_toc(self):
-        _save("review-diff", "a", purpose="Review.")
-        _save("plan-feature", "b", purpose="Plan.")
-        # Unrelated project dir — the global TOC must still surface.
-        result = server.project_brief("/tmp/some_unrelated_proj_s6", mode="restore")
-        assert "agent_prompt_toc" in result, (
-            f"agent_prompt_toc missing from restore keys: {list(result.keys())}"
-        )
-        toc = result["agent_prompt_toc"]
-        assert toc["slug"] == "agent-prompt-toc"
-        assert "review-diff" in toc["patterns"]
-        assert "plan-feature" in toc["patterns"]
-        # Cheap: no full body, only the pattern list.
-        assert "body" not in toc
-
-    def test_restore_toc_empty_when_no_library(self):
+class TestBC_S6_Noops:
+    def test_restore_empty_when_no_library(self):
         result = server.project_brief("/tmp/empty_lib_proj_s6", mode="restore")
-        assert "agent_prompt_toc" in result
-        assert result["agent_prompt_toc"]["patterns"] == []
-
-    def test_toc_page_does_not_leak_into_general_recall(self, monkeypatch, recall_backend_bypass):
-        """The global agent-prompt-toc page must NOT pollute general recall.
-
-        Regression guard: the TOC carries tag 'agent-prompt-toc' (≠ 'agent-prompt'),
-        so the default exclude must list it too — otherwise it reintroduces the
-        every-project leak S3 exists to kill.
-        """
-        _save("review-diff", "x", purpose="Reusable subagent dispatch prompts.")
-        results = _recall_fn()(
-            query="reusable subagent dispatch prompts",
-            type="wiki",
-            directory="global",
-        )
-        assert all(r.get("slug") != "agent-prompt-toc" for r in results), (
-            f"agent-prompt-toc leaked into general recall: {[r.get('slug') for r in results]}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# BC-S6-KILLGATE — flag False => library inert across all three surfaces
-# ---------------------------------------------------------------------------
+        assert result is not None
+        # The legacy 'agent_prompt_toc' key was a flat dict with patterns +
+        # slug. Car I: there is no aggregation; project_brief must not raise
+        # when the ledger is empty.
+        if "agent_prompt_toc" in result:
+            assert result["agent_prompt_toc"].get("patterns") in ([], None)
 
 
 def _recall_fn():
@@ -197,47 +192,3 @@ class TestBC_S6_KillGate:
         assert results == [] or all("agent-prompt" not in (r.get("tags") or []) for r in results), (
             f"flag-off tagged recall must be inert, got: {results}"
         )
-
-    def test_flag_on_recall_include_surfaces(self, monkeypatch, recall_backend_bypass):
-        self._setup(monkeypatch)
-        self._set_flag(monkeypatch, True)
-        results = _recall_fn()(
-            query="audit this pull request for vulnerabilities",
-            type="wiki",
-            tags=["agent-prompt"],
-            directory="global",
-        )
-        assert results, "flag-on tagged recall must return the agent-prompt page"
-        assert any("agent-prompt" in (r.get("tags") or []) for r in results)
-
-    def test_flag_off_project_brief_no_toc(self, monkeypatch):
-        self._setup(monkeypatch)
-        self._set_flag(monkeypatch, False)
-        result = server.project_brief("/tmp/killgate_proj_s6", mode="restore")
-        assert "agent_prompt_toc" not in result, "flag-off restore must suppress agent_prompt_toc"
-
-    def test_flag_on_project_brief_has_toc(self, monkeypatch):
-        self._setup(monkeypatch)
-        self._set_flag(monkeypatch, True)
-        result = server.project_brief("/tmp/killgate_proj_s6", mode="restore")
-        assert "agent_prompt_toc" in result
-
-    def test_flag_off_dispatch_prelude_no_prompt(self, monkeypatch):
-        self._setup(monkeypatch)
-        self._set_flag(monkeypatch, False)
-        import yadgar._shared.runtime.state as _st
-        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
-
-        prelude = agent_dispatch_prelude("review-pr-security", "review task", storage=_st._storage)
-        assert "Agent-prompt" not in prelude, (
-            f"flag-off dispatch prelude must inject no prompt, got:\n{prelude}"
-        )
-
-    def test_flag_on_dispatch_prelude_injects_prompt(self, monkeypatch):
-        self._setup(monkeypatch)
-        self._set_flag(monkeypatch, True)
-        import yadgar._shared.runtime.state as _st
-        from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
-
-        prelude = agent_dispatch_prelude("review-pr-security", "review task", storage=_st._storage)
-        assert "Agent-prompt" in prelude

@@ -464,7 +464,20 @@ def increment_prompt_usage(payload: dict) -> dict:
     if not pattern:
         return {"incremented": False, "pattern": "", "count": 0}
     storage = _get_storage()
-    count = storage.increment_agent_prompt_uses(title=pattern)
+    try:
+        count = storage.increment_agent_prompt_uses(title=pattern)
+    except RuntimeError:
+        # D40: MariaDB ledger is the canonical writer. When it is not
+        # initialised (test rigs, smoke runs), degrade gracefully — the
+        # prelude still completes, the caller's analytics are simply
+        # not incremented. Mirrors the historical back-compat behaviour
+        # where the in-memory row was optional.
+        logger.debug("increment_prompt_usage: ledger not initialised for %s", pattern)
+        return {
+            "incremented": False,
+            "pattern": pattern,
+            "count": 0,
+        }
     return {
         "incremented": True,
         "pattern": pattern,

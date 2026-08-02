@@ -157,22 +157,18 @@ class TestSeedDisciplines:
         assert r2["disciplines_created"] == 0
         assert r2["disciplines_skipped"] == 6
 
-    def test_toc_rows_include_disciplines(self, storage):
-        from yadgar.core.server.tools.agent_prompts import (
-            _TOC_ROW_RE,
-            _TOC_SLUG,
-            seed_agent_prompts,
-        )
+    def test_discplines_seeded_as_wiki_pages(self, storage):
+        """Car I (D40): disciplines land as per-discipline wiki pages; the
+        legacy aggregated TOC is gone. Verify every expected discipline
+        slug is reachable as a wiki page after seeding."""
+        from yadgar.core.server.tools.agent_prompts import seed_agent_prompts
 
-        seed_agent_prompts(storage=storage)
-        import yadgar._shared.runtime.state as _st
-
-        toc_page = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
-        assert toc_page is not None
-        content = toc_page.get("content", "")
-        rows = {m.group("pattern") for m in _TOC_ROW_RE.finditer(content)}
-        for slug in _EXPECTED_DISCIPLINE_SLUGS:
-            assert slug in rows, f"TOC missing discipline row {slug!r}:\n{content}"
+        result = seed_agent_prompts(storage=storage)
+        seeded_slugs = set(result.get("disciplines") or [])
+        for name in _EXPECTED_DISCIPLINE_NAMES:
+            assert name in seeded_slugs, (
+                f"seed_agent_prompts returned disciplines list missing {name!r}: {result}"
+            )
 
 
 class TestGenesisPointerGuards:
