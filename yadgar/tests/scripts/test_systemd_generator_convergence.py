@@ -35,9 +35,11 @@ from pathlib import Path
 
 import pytest
 
+from yadgar import __version__
 from yadgar.core.daemon.maintenance_units import HostExecs
+from yadgar.core.daemon.unit_install import UNIT_SCHEMA_VERSION, stamp_unit
 from yadgar.core.daemon.unit_model import render_unit
-from yadgar.core.daemon.units import build_units, setup_unit_spec
+from yadgar.core.daemon.units import ALL_UNIT_NAMES, build_units, setup_unit_spec
 from yadgar.tests._paths import REPO_ROOT
 from yadgar.tests._unit_render import render_systemd
 
@@ -55,18 +57,10 @@ SNAPSHOT_ENV = {
     "YADGAR_HOST_NIGHTLY_CLI": "/home/testuser/.local/bin/yadgar-nightly-cycle",
 }
 
-# The unit set generate_systemd.sh owns (its UNITS array, :214-224).
-ALL_UNITS = (
-    "yadgar.service",
-    "yadgar-backend.service",
-    "yadgar.target",
-    "yadgar-vacuum.service",
-    "yadgar-vacuum.timer",
-    "yadgar-vacuum-trigger.path",
-    "yadgar-vacuum-trigger.service",
-    "yadgar-nightly-cycle.service",
-    "yadgar-nightly-cycle.timer",
-)
+# Stage D: this was a fourth hand-transcription of the same nine names
+# (generate_systemd.sh's UNITS array, uninstall.sh's SYSTEMD_UNITS,
+# test_v5_169's EXPECTED_SYSTEMD_UNITS, and this). It is now derived.
+ALL_UNITS = ALL_UNIT_NAMES
 
 # ── The convergence ledger ───────────────────────────────────────────────────
 # Moving a unit from PENDING_UNITS to PARITY_UNITS is the only way to make its
@@ -175,7 +169,9 @@ def _snapshot(runtime: str, unit: str) -> str:
     return (SNAPSHOTS / runtime / unit).read_text()
 
 
-def _rendered(runtime: str) -> dict[str, str]:
+def _rendered(
+    runtime: str, hf_cache_dir: str | None = "/home/testuser/.cache/huggingface"
+) -> dict[str, str]:
     """The Python renderer's output for the ``yadgar-setup`` arm, same inputs."""
     spec = setup_unit_spec(
         runtime=runtime,
@@ -184,7 +180,7 @@ def _rendered(runtime: str) -> dict[str, str]:
         secrets_env_file=SNAPSHOT_ENV["YADGAR_SECRETS_ENV_FILE"],
         backend_image=SNAPSHOT_ENV["YADGAR_BACKEND_IMAGE"],
         surreal_port=int(SNAPSHOT_ENV["YADGAR_BACKEND_SURREAL_PORT"]),
-        hf_cache_dir="/home/testuser/.cache/huggingface",
+        hf_cache_dir=hf_cache_dir,
         # The fixtures were captured with these two exported, so the shell's
         # _resolve_host_exec took its override branch. Passing the same values
         # pins the render without the test depending on what is installed here.
@@ -330,18 +326,67 @@ def test_snapshot_set_is_exactly_the_nine_units_per_runtime():
         assert {p.name for p in (SNAPSHOTS / runtime).iterdir()} == set(ALL_UNITS)
 
 
-def test_snapshots_are_a_faithful_render_of_the_templates(tmp_path: Path):
-    """The fixtures still equal what ``generate_systemd.sh`` renders today.
+# REPLACED task:0110 Stage D — test_snapshots_are_a_faithful_render_of_the_templates.
+# It re-rendered scripts/install/*.in through `sed` and required byte-equality
+# with the fixtures, which stopped a template edit from silently invalidating the
+# baseline. The templates are deleted, so it had nothing left to render. Its job
+# — "the thing the installer actually writes is the thing this file diffs" — is
+# taken over by the end-to-end test below, which is stronger: it goes through the
+# real wrapper, so a wrapper that resolved the wrong renderer or skipped the
+# delegation fails here rather than passing on an in-process render.
 
-    Stage-D casualty: once the wrapper renders nothing this test is deleted and
-    the fixtures become the sole baseline. Until then it stops a ``.in`` edit
-    from silently invalidating them.
+
+def test_the_wrapper_installs_exactly_what_the_python_renderer_builds(tmp_path: Path):
+    """``generate_systemd.sh`` renders nothing — it delegates, and installs THIS.
+
+    The parity assertions above compare builder output to the fixtures in
+    process. This is the only test that proves the shell entry point users
+    actually run reaches that builder: it runs the wrapper and requires every
+    installed file to equal ``stamp + render_unit(...)`` byte for byte.
+
+    ``hf_cache_dir=None`` because ``render_systemd`` patches ``HOME`` to a fresh
+    tmp dir, where ``~/.cache/huggingface`` does not exist — the same conditional
+    the profile arm applies.
     """
     for runtime in RUNTIMES:
         root = tmp_path / runtime
         render_systemd(root, {**SNAPSHOT_ENV, "YADGAR_RUNTIME": runtime})
+        expected = _rendered(runtime, hf_cache_dir=None)
+        installed = {p.name: p.read_text() for p in (root / "units").iterdir() if p.is_file()}
+        assert set(installed) == set(ALL_UNITS), (
+            f"{runtime}: the wrapper installed {sorted(installed)}, not the nine units"
+        )
+        for unit, text in sorted(installed.items()):
+            assert text == stamp_unit(expected[unit], __version__), (
+                f"{runtime}/{unit}: the wrapper installed something other than the "
+                f"Python renderer's stamped output"
+            )
+
+
+def test_installed_units_carry_the_schema_stamp(tmp_path: Path):
+    """The stamp's own shape, pinned once (plan §7) rather than per unit.
+
+    It is applied on the WRITE path, so it never reaches ``render_unit`` output
+    and never becomes an ``INTENTIONAL_DELTAS`` entry — which is what keeps
+    ``test_only_the_divergent_two_carry_deltas`` a live tripwire instead of a
+    line every unit needs.
+    """
+    root = tmp_path / "podman"
+    render_systemd(root, {**SNAPSHOT_ENV, "YADGAR_RUNTIME": "podman"})
+    for unit in ALL_UNITS:
+        head = (root / "units" / unit).read_text().splitlines()[:2]
+        assert head[0] == f"# yadgar-unit-schema: {UNIT_SCHEMA_VERSION}", f"{unit}: {head[0]!r}"
+        assert head[1] == f"# rendered-by: yadgar {__version__}", f"{unit}: {head[1]!r}"
+
+
+def test_no_snapshot_carries_the_stamp():
+    """The fixtures are BUILDER output, so the stamp must not have leaked in.
+
+    If it ever does, every unit acquires a diff line, no unit is byte-identical,
+    and the divergent-two tripwire fires on a correct implementation.
+    """
+    for runtime in RUNTIMES:
         for unit in ALL_UNITS:
-            assert (root / "units" / unit).read_text() == _snapshot(runtime, unit), (
-                f"{runtime}/{unit}: scripts/install/{unit}.in changed since the parity "
-                f"baseline was captured. Re-capture the fixtures and re-review the deltas."
+            assert "yadgar-unit-schema" not in _snapshot(runtime, unit), (
+                f"{runtime}/{unit}: the schema stamp leaked into the parity fixture"
             )

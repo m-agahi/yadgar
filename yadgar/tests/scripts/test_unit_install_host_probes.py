@@ -22,14 +22,18 @@ import pytest
 
 from yadgar.core.daemon.unit_install import (
     NIX_GUARDED_UNITS,
+    UNIT_SCHEMA_VERSION,
     HostCliUnresolved,
     InstallAborted,
     NixManagedUnit,
+    UnitValidationFailed,
     ensure_trigger_dir,
     fail_no_host_cli_message,
     guard_nix_symlinks,
     resolve_host_exec,
     seed_upgrade_env,
+    stamp_unit,
+    write_units,
 )
 
 ISO_MODULE = "yadgar_iso_probe_0110c"
@@ -242,3 +246,59 @@ def test_upgrade_env_is_never_overwritten(tmp_path):
     path, seeded = seed_upgrade_env(state, "docker.io/openfantasy/yadgar:1.2.3")
     assert seeded is False
     assert path.read_text() == "YADGAR_IMAGE_TAG=docker.io/openfantasy/yadgar:9.9.9\n"
+
+
+# ── write_units: stamp, stage, validate, move (task:0110 Stage D) ─────────────
+
+
+def test_write_units_stamps_and_installs_every_unit(tmp_path):
+    out = tmp_path / "user"
+    written = write_units({"a.service": "[Unit]\n", "b.timer": "[Timer]\n"}, out, "1.2.3")
+    assert {p.name for p in written} == {"a.service", "b.timer"}
+    assert (out / "a.service").read_text() == (
+        f"# yadgar-unit-schema: {UNIT_SCHEMA_VERSION}\n# rendered-by: yadgar 1.2.3\n[Unit]\n"
+    )
+
+
+def test_write_units_leaves_no_staging_dir_behind(tmp_path):
+    out = tmp_path / "user"
+    write_units({"a.service": "[Unit]\n"}, out, "1.2.3")
+    assert [p.name for p in out.iterdir()] == ["a.service"], (
+        "the staging dir must be gone — systemd reads this directory, and a "
+        "leftover .yadgar-render-<pid>/ is at best noise and at worst a partial set"
+    )
+
+
+def test_a_failed_unit_installs_nothing_at_all(tmp_path):
+    """Validation runs on the STAGED copies, so a bad unit blocks the whole set.
+
+    Plan §9.3: the shell renderer wrote each unit straight into the output dir
+    one at a time, so an abort halfway left a mixed-generation set with no clean
+    recovery. Here the units that DID render must not reach the output dir
+    either — a coherent old set beats a partial new one.
+    """
+    out = tmp_path / "user"
+    out.mkdir()
+    (out / "a.service").write_text("[Unit]\nDescription=previous\n")
+    with pytest.raises(UnitValidationFailed) as exc:
+        write_units({"a.service": "[Unit]\n", "b.timer": "   "}, out, "1.2.3")
+    assert "b.timer" in str(exc.value)
+    assert (out / "a.service").read_text() == "[Unit]\nDescription=previous\n"
+    assert [p.name for p in out.iterdir()] == ["a.service"]
+
+
+def test_unit_validation_failure_is_an_install_abort():
+    assert issubclass(UnitValidationFailed, InstallAborted)
+
+
+def test_write_units_rejects_a_unit_with_no_section_header(tmp_path):
+    """A body that is all comments renders, installs, and does nothing at all."""
+    with pytest.raises(UnitValidationFailed, match="no section header"):
+        write_units({"a.service": "# only a comment\n"}, tmp_path / "user", "1.2.3")
+
+
+def test_stamp_is_prepended_not_interleaved():
+    """systemd tolerates a comment anywhere, but the wrapper parses the FIRST line."""
+    assert stamp_unit("[Unit]\n", "9.9.9").startswith(
+        f"# yadgar-unit-schema: {UNIT_SCHEMA_VERSION}\n"
+    )

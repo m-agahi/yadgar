@@ -38,10 +38,11 @@ REQUIRED_SCRIPTS = [
     "share/yadgar/scripts/restore.sh",
     "share/yadgar/scripts/uninstall.sh",
     "share/yadgar/scripts/append_claude_rules.sh",
-    # systemd .in templates (generate_systemd.sh uses ${SCRIPT_DIR}/yadgar.service.in)
-    "share/yadgar/scripts/yadgar.service.in",
-    "share/yadgar/scripts/yadgar-backend.service.in",
-    "share/yadgar/scripts/yadgar.target.in",
+    # NO systemd .in templates: task:0110 Stage D (ADR-0190) deleted all nine.
+    # generate_systemd.sh renders nothing — it resolves the co-shipped `yadgar`
+    # CLI and delegates to `yadgar daemon render-units`, so the systemd unit
+    # definitions ride in the PACKAGE (yadgar/core/daemon/units.py et al) and
+    # need no shared-data entry. The launchd surface still uses templates.
     # launchd .in templates (generate_launchd.sh uses ${SCRIPT_DIR}/launchd/...)
     "share/yadgar/scripts/launchd/com.openfantasy.yadgar.plist.in",
     "share/yadgar/scripts/launchd/com.openfantasy.yadgar-backend.plist.in",

@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from yadgar import __version__
+from yadgar.core.daemon.unit_install import UNIT_SCHEMA_VERSION
 from yadgar.tests._paths import REPO_ROOT
 
 FIXTURES = REPO_ROOT / "yadgar" / "tests" / "core" / "snapshots" / "install_systemd_service"
@@ -89,6 +91,22 @@ def _written_units(monkeypatch, runtime: str) -> dict[str, str]:
     return written
 
 
+def _without_stamp(name: str, text: str) -> str:
+    """Drop the two-line provenance header task:0110 Stage D adds on the WRITE path.
+
+    Asserted, not merely tolerated: the stamp carries the yadgar VERSION, so a
+    fixture holding it would need regenerating on every release cascade and the
+    diff would stop being the review artifact this file exists to be. The header
+    itself is pinned here once and its shape once more in
+    ``yadgar/tests/scripts/test_systemd_generator_convergence.py``.
+    """
+    head, _, body = text.partition("\n")
+    line2, _, rest = body.partition("\n")
+    assert head == f"# yadgar-unit-schema: {UNIT_SCHEMA_VERSION}", f"{name}: {head!r}"
+    assert line2 == f"# rendered-by: yadgar {__version__}", f"{name}: {line2!r}"
+    return rest
+
+
 @pytest.mark.parametrize("runtime", ["podman", "docker"])
 def test_install_systemd_service_matches_characterization_fixture(monkeypatch, runtime):
     """The two profile-arm units are byte-identical to their committed fixture."""
@@ -100,10 +118,11 @@ def test_install_systemd_service_matches_characterization_fixture(monkeypatch, r
     if os.environ.get("YADGAR_UPDATE_UNIT_FIXTURES"):
         arm.mkdir(parents=True, exist_ok=True)
         for name, text in written.items():
-            (arm / name).write_text(text)
+            (arm / name).write_text(_without_stamp(name, text))
         pytest.fail("fixtures regenerated — re-run without YADGAR_UPDATE_UNIT_FIXTURES")
     for name, text in sorted(written.items()):
         expected = (arm / name).read_text()
+        text = _without_stamp(name, text)
         assert text == expected, (
             f"{runtime}/{name} drifted from its characterization fixture. If the change is "
             f"intentional, regenerate with YADGAR_UPDATE_UNIT_FIXTURES=1 and review the diff."

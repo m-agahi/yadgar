@@ -44,6 +44,7 @@ from pathlib import Path
 
 import pytest
 
+from yadgar.core.daemon.units import ALL_UNIT_NAMES
 from yadgar.tests._paths import REPO_ROOT
 from yadgar.tests._unit_render import render_launchd, render_systemd
 
@@ -54,19 +55,10 @@ SETUP_SH = INSTALL_DIR / "yadgar-setup.sh"
 MAKEFILE = REPO_ROOT / "Makefile"
 FLAKE_NIX = REPO_ROOT / "flake.nix"
 
-# The nine unit files generate_systemd.sh must render (three pre-existing plus
-# the six maintenance units transcribed from flake.nix:568-690).
-EXPECTED_SYSTEMD_UNITS = {
-    "yadgar.service",
-    "yadgar-backend.service",
-    "yadgar.target",
-    "yadgar-vacuum.service",
-    "yadgar-vacuum.timer",
-    "yadgar-vacuum-trigger.path",
-    "yadgar-vacuum-trigger.service",
-    "yadgar-nightly-cycle.service",
-    "yadgar-nightly-cycle.timer",
-}
+# The nine unit files the yadgar-setup arm installs. task:0110 Stage D replaced
+# a hand-kept transcription here with the renderer's own tuple — this file used
+# to be the third of four independent spellings of the same nine names.
+EXPECTED_SYSTEMD_UNITS = set(ALL_UNIT_NAMES)
 
 EXPECTED_LAUNCHD_PLISTS = {
     "com.openfantasy.yadgar.plist",
@@ -449,6 +441,27 @@ def test_uninstall_removes_every_systemd_unit_the_generator_renders(tmp_path):
     uninstall = UNINSTALL_SH.read_text()
     missing = sorted(u for u in rendered if u not in uninstall)
     assert not missing, f"uninstall.sh leaves these rendered units behind: {missing}"
+
+
+def test_uninstall_unit_array_is_exactly_the_renderers_unit_set():
+    """The other direction: ``uninstall.sh`` must not name a unit nobody renders.
+
+    task:0110 Stage D collapsed four hand-kept spellings of the nine unit names
+    into ``ALL_UNIT_NAMES``. ``uninstall.sh:109`` keeps a literal shell array ON
+    PURPOSE — uninstall has to work after the package is removed, so it cannot
+    query the CLI — which makes it a deliberate mirror rather than a fifth
+    source. This is the assertion that makes the mirror safe in BOTH directions:
+    the test above catches a unit the array forgot, this one catches an entry
+    left behind after a unit is dropped, which would `rm` a file the installer
+    never wrote and `systemctl disable` a name that does not exist.
+    """
+    body = UNINSTALL_SH.read_text().split("SYSTEMD_UNITS=(", 1)[1].split(")", 1)[0]
+    listed = [line.strip() for line in body.splitlines() if line.strip()]
+    assert listed == list(ALL_UNIT_NAMES), (
+        "uninstall.sh's SYSTEMD_UNITS array has drifted from "
+        f"yadgar.core.daemon.units.ALL_UNIT_NAMES.\n  uninstall.sh: {listed}\n"
+        f"  renderer:     {list(ALL_UNIT_NAMES)}"
+    )
 
 
 def test_uninstall_removes_every_launchd_plist_the_generator_renders(tmp_path):

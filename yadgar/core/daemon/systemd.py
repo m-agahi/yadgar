@@ -35,6 +35,7 @@ and ``yadgar/tests/scripts/test_systemd_generator_convergence.py``.
 import os
 from pathlib import Path
 
+from yadgar import __version__
 from yadgar._shared.observability.observe import observe
 from yadgar.core.daemon.profiles import ContainerProfile
 from yadgar.core.daemon.runtime import (
@@ -46,6 +47,7 @@ from yadgar.core.daemon.runtime import (
     _container_memory_mb,
     _get_runtime,
 )
+from yadgar.core.daemon.unit_install import write_units
 from yadgar.core.daemon.unit_model import render_unit
 from yadgar.core.daemon.units import UnitSpec, build_units
 
@@ -128,10 +130,13 @@ def install_systemd_service(profile: ContainerProfile, dev: bool = False) -> dic
     backend_service_name = spec.backend_unit_name
     core_service_name = spec.core_unit_name
 
+    # Same stamped, staged, validated write path the yadgar-setup arm uses
+    # (task:0110 Stage D). Both arms therefore leave units that say which schema
+    # and which yadgar version produced them, and neither can leave a half-written
+    # set behind.
+    write_units({name: render_unit(unit) for name, unit in units.items()}, service_dir, __version__)
     backend_path = service_dir / backend_service_name
     core_path = service_dir / core_service_name
-    backend_path.write_text(render_unit(units[backend_service_name]))
-    core_path.write_text(render_unit(units[core_service_name]))
 
     return {
         "backend_service": str(backend_path),

@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from yadgar.tests._paths import REPO_ROOT
+from yadgar.tests._unit_render import RENDERER_CLI
 
 GENERATE_SYSTEMD_SH = REPO_ROOT / "scripts" / "install" / "generate_systemd.sh"
 SYSTEMD_TEMPLATES_DIR = REPO_ROOT / "scripts" / "install"
@@ -24,6 +25,7 @@ def _run_generate_systemd(
     env["YADGAR_SECRETS_ENV_FILE"] = "/home/testuser/.yadgar/secrets.env"
     env["YADGAR_BACKEND_IMAGE"] = "openfantasy/yadgar-backend:5.45.0"
     env["YADGAR_CORE_IMAGE"] = "openfantasy/yadgar:5.45.0"
+    env["YADGAR_RENDERER_CLI"] = RENDERER_CLI
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -43,21 +45,34 @@ class TestV5_45GenerateSystemd:
             f"scripts/install/generate_systemd.sh not found at {GENERATE_SYSTEMD_SH}"
         )
 
-    def test_v5_45_systemd_template_files_exist(self):
-        """Three .in template files must exist under scripts/install/."""
-        for name in ["yadgar.service.in", "yadgar-backend.service.in", "yadgar.target.in"]:
-            path = SYSTEMD_TEMPLATES_DIR / name
-            assert path.exists(), f"Template not found: {path}"
+    def test_v5_45_no_systemd_templates_remain(self):
+        """The inverse of the original test_v5_45_systemd_template_files_exist.
 
-    def test_v5_45_yadgar_target_template_has_both_services(self):
-        """yadgar.target.in must list Wants=yadgar.service yadgar-backend.service."""
-        target_template = SYSTEMD_TEMPLATES_DIR / "yadgar.target.in"
-        content = target_template.read_text()
-        assert "yadgar.service" in content, "yadgar.target.in must mention yadgar.service"
-        assert "yadgar-backend.service" in content, (
-            "yadgar.target.in must mention yadgar-backend.service"
+        That test required ``yadgar.service.in`` / ``yadgar-backend.service.in`` /
+        ``yadgar.target.in`` to be present. task:0110 Stage D (ADR-0190) deletes
+        all nine templates and makes ``generate_systemd.sh`` a delegating wrapper,
+        so the original assertion is not merely obsolete — it is backwards. Kept
+        inverted rather than dropped: a template reappearing next to a wrapper
+        that ignores it is a second renderer growing back, which is the whole
+        defect class this car removes.
+        """
+        strays = sorted(p.name for p in SYSTEMD_TEMPLATES_DIR.glob("*.in"))
+        assert not strays, (
+            f"systemd unit templates are back under scripts/install/: {strays}. "
+            "generate_systemd.sh renders nothing (ADR-0190); a .in file here is dead "
+            "weight at best and a second renderer at worst."
         )
-        assert "Wants" in content, "yadgar.target.in must contain Wants= directive"
+
+    def test_v5_45_yadgar_target_lists_both_services(self, tmp_path):
+        """Retargeted from ``yadgar.target.in``'s text to the rendered unit."""
+        result = _run_generate_systemd(tmp_path)
+        assert result.returncode == 0, f"generate_systemd.sh failed\nstderr: {result.stderr}"
+        content = (tmp_path / "yadgar.target").read_text()
+        assert "yadgar.service" in content, "yadgar.target must mention yadgar.service"
+        assert "yadgar-backend.service" in content, (
+            "yadgar.target must mention yadgar-backend.service"
+        )
+        assert "Wants" in content, "yadgar.target must contain Wants= directive"
 
     def test_v5_45_generate_systemd_writes_yadgar_target(self, tmp_path):
         """generate_systemd.sh must write yadgar.target to output dir."""

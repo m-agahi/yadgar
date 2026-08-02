@@ -1,7 +1,7 @@
 """v5.46.20 TDD — install comprehensive fixes (RED scaffolding).
 
 Bugs covered:
-  BUG 1: yadgar.service.in missing YADGAR_MCP_AUTH_TOKEN passthrough
+  BUG 1: rendered yadgar.service missing YADGAR_MCP_AUTH_TOKEN passthrough
   BUG 2: SELinux :Z mount flag — replace with --security-opt label=disable
   BUG 3: _wait_for_daemon timeout too short (30 → 120s), add 10s progress log
   BUG 4: _step_pull_images must stop containers before pull
@@ -18,11 +18,37 @@ from unittest.mock import MagicMock, patch
 
 from yadgar.tests._paths import REPO_ROOT
 
-SERVICE_IN = REPO_ROOT / "scripts" / "install" / "yadgar.service.in"
-BACKEND_SERVICE_IN = REPO_ROOT / "scripts" / "install" / "yadgar-backend.service.in"
 SETUP_SH = REPO_ROOT / "scripts" / "install" / "yadgar-setup.sh"
 BOOTSTRAP_SH = REPO_ROOT / "scripts" / "install" / "bootstrap_secrets.sh"
 SEED_PY = REPO_ROOT / "yadgar" / "core" / "cli" / "seed.py"
+
+
+def _rendered(unit: str) -> str:
+    """One ``yadgar-setup``-arm unit as text.
+
+    task:0110 Stage D (ADR-0190) deleted ``scripts/install/yadgar.service.in`` and
+    ``yadgar-backend.service.in``, which the assertions below read as source text.
+    They are RETARGETED rather than dropped: every one of them pins a real
+    property of the installed unit (the ``YADGAR_MCP_AUTH_TOKEN`` passthrough, the
+    absence of the ``:Z`` mount suffix, ``--security-opt label=disable`` and its
+    position relative to ``--user root``), and asserting on the render is what
+    those template assertions were always a proxy for. Built in process — the
+    wrapper's own delegation is covered in test_systemd_wrapper_delegation.py, so
+    a subprocess here would only buy runtime.
+    """
+    from yadgar.core.daemon.maintenance_units import HostExecs
+    from yadgar.core.daemon.unit_model import render_unit
+    from yadgar.core.daemon.units import build_units, setup_unit_spec
+
+    spec = setup_unit_spec(
+        runtime="podman",
+        data_dir="/home/testuser/.local/share/yadgar",
+        state_dir="/home/testuser/.local/state/yadgar",
+        secrets_env_file="/home/testuser/.config/yadgar/secrets.env",
+        backend_image="openfantasy/yadgar-backend:test",
+        execs=HostExecs(vacuum="/usr/bin/true", nightly="/usr/bin/true"),
+    )
+    return render_unit(build_units(spec)[unit])
 
 
 def _load_seed_module():
@@ -34,38 +60,38 @@ def _load_seed_module():
     return mod
 
 
-# ── T1: BUG 1 — YADGAR_MCP_AUTH_TOKEN passthrough in yadgar.service.in ────────
+# ── T1: BUG 1 — YADGAR_MCP_AUTH_TOKEN passthrough in rendered yadgar.service ────────
 
 
 class TestAuthTokenPassthrough:
-    """T1: yadgar.service.in ExecStart must pass YADGAR_MCP_AUTH_TOKEN to container."""
+    """T1: rendered yadgar.service ExecStart must pass YADGAR_MCP_AUTH_TOKEN to container."""
 
     def test_yadgar_service_has_auth_token_env_passthrough(self):
-        """yadgar.service.in ExecStart block contains -e YADGAR_MCP_AUTH_TOKEN=..."""
-        content = SERVICE_IN.read_text()
+        """rendered yadgar.service ExecStart block contains -e YADGAR_MCP_AUTH_TOKEN=..."""
+        content = _rendered("yadgar.service")
         assert "YADGAR_MCP_AUTH_TOKEN" in content, (
-            "yadgar.service.in missing -e YADGAR_MCP_AUTH_TOKEN passthrough. "
+            "rendered yadgar.service missing -e YADGAR_MCP_AUTH_TOKEN passthrough. "
             "Token in secrets.env (EnvironmentFile) never reaches container."
         )
 
     def test_yadgar_service_auth_token_uses_env_var_syntax(self):
         """YADGAR_MCP_AUTH_TOKEN must be passed as ${YADGAR_MCP_AUTH_TOKEN} (not hardcoded)."""
-        content = SERVICE_IN.read_text()
+        content = _rendered("yadgar.service")
         assert "${YADGAR_MCP_AUTH_TOKEN}" in content, (
-            "yadgar.service.in must use -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} syntax."
+            "rendered yadgar.service must use -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} syntax."
         )
 
     def test_backend_service_does_not_need_auth_token(self):
-        """yadgar-backend.service.in: backend serves SurrealDB+embed, auth is at MCP layer.
+        """rendered yadgar-backend.service: backend serves SurrealDB+embed, auth is at MCP layer.
 
         This test is informational — verifies backend doesn't incorrectly depend on
         YADGAR_MCP_AUTH_TOKEN (it should not). If it does appear, it's unexpected.
         """
         # Backend doesn't enforce REQUIRE_AUTH — absence is expected/OK.
         # We just confirm the file is readable and has expected backend vars.
-        content = BACKEND_SERVICE_IN.read_text()
+        content = _rendered("yadgar-backend.service")
         assert "SURREAL_USER" in content, (
-            "yadgar-backend.service.in unexpectedly missing SURREAL_USER"
+            "rendered yadgar-backend.service unexpectedly missing SURREAL_USER"
         )
 
 
@@ -130,41 +156,41 @@ class TestBootstrapSecretsWritesToken:
 
 
 class TestSELinuxMountFix:
-    """T2: Both .in templates must use --security-opt label=disable, not :Z mount."""
+    """T2: Both rendered units must use --security-opt label=disable, not :Z mount."""
 
     def test_yadgar_service_no_z_mount_suffix(self):
-        """yadgar.service.in: -v @DATA_DIR@:/data must NOT have :Z suffix."""
-        content = SERVICE_IN.read_text()
+        """rendered yadgar.service: -v @DATA_DIR@:/data must NOT have :Z suffix."""
+        content = _rendered("yadgar.service")
         assert ":/data:Z" not in content, (
-            "yadgar.service.in still has :Z mount suffix — causes SELinux Enforcing failures."
+            "rendered yadgar.service still has :Z mount suffix — causes SELinux Enforcing failures."
         )
 
     def test_backend_service_no_z_mount_suffix(self):
-        """yadgar-backend.service.in: -v @DATA_DIR@:/data must NOT have :Z suffix."""
-        content = BACKEND_SERVICE_IN.read_text()
+        """rendered yadgar-backend.service: -v @DATA_DIR@:/data must NOT have :Z suffix."""
+        content = _rendered("yadgar-backend.service")
         assert ":/data:Z" not in content, (
-            "yadgar-backend.service.in still has :Z mount suffix — causes SELinux Enforcing failures."
+            "rendered yadgar-backend.service still has :Z mount suffix — causes SELinux Enforcing failures."
         )
 
     def test_yadgar_service_has_security_opt_label_disable(self):
-        """yadgar.service.in must contain --security-opt label=disable."""
-        content = SERVICE_IN.read_text()
+        """rendered yadgar.service must contain --security-opt label=disable."""
+        content = _rendered("yadgar.service")
         assert "--security-opt label=disable" in content, (
-            "yadgar.service.in missing --security-opt label=disable. "
+            "rendered yadgar.service missing --security-opt label=disable. "
             "Required for Rocky Linux / RHEL with SELinux Enforcing."
         )
 
     def test_backend_service_has_security_opt_label_disable(self):
-        """yadgar-backend.service.in must contain --security-opt label=disable."""
-        content = BACKEND_SERVICE_IN.read_text()
+        """rendered yadgar-backend.service must contain --security-opt label=disable."""
+        content = _rendered("yadgar-backend.service")
         assert "--security-opt label=disable" in content, (
-            "yadgar-backend.service.in missing --security-opt label=disable. "
+            "rendered yadgar-backend.service missing --security-opt label=disable. "
             "Required for Rocky Linux / RHEL with SELinux Enforcing."
         )
 
     def test_yadgar_service_security_opt_before_user_root(self):
         """--security-opt label=disable must appear before --user root in ExecStart."""
-        content = SERVICE_IN.read_text()
+        content = _rendered("yadgar.service")
         idx_security = content.find("--security-opt label=disable")
         idx_user = content.find("--user root")
         assert idx_security != -1 and idx_user != -1, (

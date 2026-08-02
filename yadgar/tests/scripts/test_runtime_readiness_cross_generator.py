@@ -54,18 +54,14 @@ extension of that module, and lives there
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from yadgar.core.daemon import systemd as systemd_mod
 from yadgar.core.daemon.profiles import _prod_profile
-from yadgar.tests._paths import REPO_ROOT
-from yadgar.tests._unit_render import BASH, render_launchd, render_systemd
+from yadgar.tests._unit_render import render_launchd, render_systemd
 
 # Constructs that only mean anything under podman's sd_notify proxy. Each entry
 # is (pattern, why-it-is-fatal-on-docker) — the message is what a future reader
@@ -333,57 +329,17 @@ def test_podman_units_keep_their_sd_notify_readiness(label, tmp_path, monkeypatc
         )
 
 
-def test_runtime_markers_are_matched_at_column_zero_only(tmp_path, monkeypatch):
-    """A marker MENTIONED mid-line must not delete or mangle that line.
-
-    Observed on the first render of this change: an unanchored ``/@DOCKER_ONLY@/d``
-    silently ate a prose comment line in ``yadgar.service.in`` that merely named
-    the marker while explaining the mechanism. The markers are line PREFIXES by
-    definition, so ``generate_systemd.sh`` anchors both the delete and the strip
-    to column 0. Without that anchor a template cannot document its own syntax,
-    and — worse — any future directive whose VALUE contains a marker-shaped token
-    would vanish from the rendered unit with no error.
-
-    Renders through the real generator rather than asserting on the sed text, so
-    a regression in either expression fails here.
-    """
-    probe = "ExecStartPre=-/usr/bin/true mid-line @DOCKER_ONLY@ and @PODMAN_ONLY@ mention"
-
-    # Render from a THROWAWAY COPY of scripts/install — never mutate the tracked
-    # template. A test that edits repo source leaves the tree dirty if pytest is
-    # killed mid-run, which on this repo means a broken pre-commit for whoever
-    # runs next.
-    install_dir = tmp_path / "install-copy"
-    shutil.copytree(REPO_ROOT / "scripts" / "install", install_dir)
-    template = install_dir / "yadgar.service.in"
-    template.write_text(template.read_text().replace("[Service]\n", f"[Service]\n{probe}\n", 1))
-
-    for runtime in ("podman", "docker"):
-        out = tmp_path / f"probe-{runtime}"
-        (out / "units").mkdir(parents=True)
-        (out / "home").mkdir(parents=True)
-        env = {
-            **os.environ,
-            "HOME": str(out / "home"),
-            "YADGAR_RUNTIME": runtime,
-            "YADGAR_SYSTEMD_OUTPUT_DIR": str(out / "units"),
-            "YADGAR_STATE_DIR": str(out / "state"),
-            "YADGAR_HOST_CLI": "/usr/bin/true",
-            "YADGAR_HOST_NIGHTLY_CLI": "/usr/bin/true",
-        }
-        proc = subprocess.run(
-            [BASH, str(install_dir / "generate_systemd.sh")],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert proc.returncode == 0, f"{runtime}: render failed\n{proc.stderr}"
-        rendered = (out / "units" / "yadgar.service").read_text()
-        assert probe in rendered, (
-            f"{runtime}: a line MENTIONING the markers mid-line was deleted or "
-            f"rewritten — generate_systemd.sh must anchor both the strip and the "
-            f"delete to column 0"
-        )
+# DELETED task:0110 Stage D — test_runtime_markers_are_matched_at_column_zero_only.
+# It pinned that `generate_systemd.sh` anchored its `@PODMAN_ONLY@`/`@DOCKER_ONLY@`
+# sed expressions to column 0, by mutating a copy of `yadgar.service.in` and
+# re-rendering. ADR-0190 RETIRES that mechanism outright: the templates are gone
+# and the runtime conditional is a Python branch (`units.readiness_for`), so the
+# test had no marker, no sed and no template left to exercise. Retargeting was not
+# possible — there is no column-0-anchoring property in a data model to assert.
+# What it protected is now covered structurally: `readiness_for` returns the
+# directives for ONE runtime, so a podman render cannot carry the docker gate
+# (test_docker_only_gate_is_absent_on_podman above) and no marker text exists to
+# leak (test_no_unrendered_runtime_marker_survives_into_a_unit below).
 
 
 def test_no_unrendered_runtime_marker_survives_into_a_unit(tmp_path, monkeypatch):

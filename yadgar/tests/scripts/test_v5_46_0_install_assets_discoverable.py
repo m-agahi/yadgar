@@ -115,15 +115,15 @@ def test_top_level_install_assets_has_anchors_yaml():
     assert anchors.exists(), f"Missing: {anchors}"
 
 
-def test_top_level_install_assets_has_systemd_templates():
-    """install_assets/ (scripts/install/) must have .in systemd unit templates."""
-    scripts_dir = REPO_ROOT / "scripts" / "install"
-    templates = list(scripts_dir.glob("*.in"))
-    assert templates, f"No .in templates found in {scripts_dir}"
-    names = {t.name for t in templates}
-    assert "yadgar.service.in" in names, f"yadgar.service.in missing; found: {names}"
-    assert "yadgar-backend.service.in" in names, "yadgar-backend.service.in missing"
-    assert "yadgar.target.in" in names, "yadgar.target.in missing"
+# DELETED task:0110 Stage D — test_top_level_install_assets_has_systemd_templates.
+# It required scripts/install/*.in to exist so the wheel could ship them.
+# ADR-0190 deletes all nine and makes generate_systemd.sh delegate to
+# `yadgar daemon render-units`, so the systemd unit definitions ride in the
+# package rather than in shared-data. Not retargeted here — the inverse property
+# ("no template grew back") is asserted once, in
+# test_v5_45_generate_systemd.py::test_v5_45_no_systemd_templates_remain, and a
+# second copy of it would be the duplication this car exists to remove. The
+# launchd templates below still ship and are still checked.
 
 
 def test_top_level_install_assets_has_launchd_templates():

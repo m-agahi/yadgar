@@ -15,11 +15,19 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from yadgar.tests._paths import REPO_ROOT
 
-__all__ = ["BASH", "render_launchd", "render_systemd"]
+__all__ = ["BASH", "RENDERER_CLI", "render_launchd", "render_systemd"]
+
+# task:0110 Stage D: generate_systemd.sh renders nothing — it resolves a `yadgar`
+# CLI and delegates. Pin that resolution at the interpreter running the tests
+# rather than letting the wrapper's `command -v yadgar` find whatever is
+# installed on the host (there usually IS one, at some other version). Same
+# discipline the parity harness applies to YADGAR_HOST_CLI.
+RENDERER_CLI = f"{sys.executable} -m yadgar"
 
 BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 INSTALL_DIR = REPO_ROOT / "scripts" / "install"
@@ -39,6 +47,7 @@ def _base_env(tmp_path: Path) -> dict[str, str]:
             "YADGAR_SECRETS_ENV_FILE": "/home/testuser/.yadgar/secrets.env",
             "YADGAR_BACKEND_IMAGE": "openfantasy/yadgar-backend:test",
             "YADGAR_CORE_IMAGE": "openfantasy/yadgar:test",
+            "YADGAR_RENDERER_CLI": RENDERER_CLI,
         }
     )
     return env
