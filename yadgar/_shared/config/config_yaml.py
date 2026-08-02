@@ -20,6 +20,8 @@ from yadgar._shared.observability.observe import observe
 FIELD_META: dict[str, dict[str, object]] = {
     # core
     "db_path": {"desc": "SurrealDB storage path", "section": "core"},
+    "db_url": {"desc": "SurrealDB HTTP endpoint (server mode)", "section": "core"},
+    "mariadb_url": {"desc": "MariaDB connection URL (spine Car A — relational set)", "section": "core"},
     "port": {"desc": "HTTP server port (daemon mode, default 8742)", "section": "core"},
     "embedding_model": {
         "desc": "Sentence-transformer model (e.g. all-MiniLM-L6-v2, all-mpnet-base-v2)",
