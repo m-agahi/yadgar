@@ -29,6 +29,16 @@ _OPEN_STATUSES = ("pending", "in_progress")
 _TITLE_MAX = 200  # D12
 
 
+def _format_task_id(number: int) -> str:
+    """D11 — format a task number as the harness-readable [id] prefix.
+
+    The harness renders tasks as "[status] [id] subject". D11 says the
+    [id] must be the prefix-reconciled task number, not a fresh
+    session handle. Foreign projects get the [owner/repo/id] form.
+    """
+    return f"[{number}]"
+
+
 @observe(tier="hot", metric="tools.task._validate_title")
 def _validate_title(title: object) -> dict | None:
     """Return an error dict if title is invalid, else None.

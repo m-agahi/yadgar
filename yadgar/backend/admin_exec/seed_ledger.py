@@ -146,3 +146,110 @@ def _collect_page_numbers(pages: list[dict]) -> set[int]:
         if n is not None:
             numbers.add(n)
     return numbers
+
+
+# ── Task seed (Car E) ──────────────────────────────────────────────────────────
+
+_TASK_SECTION_RE = re.compile(r"^## task:(\d+)\s*$", re.MULTILINE)
+
+
+def _extract_task_sections(content: str) -> list[tuple[int, str]]:
+    """Extract (task_number, body) from a task-list page.
+
+    The markdown format is `## task:NNNN\\n<body>`; the body runs until
+    the next `## task:` or end of file.
+    """
+    sections: list[tuple[int, str]] = []
+    matches = list(_TASK_SECTION_RE.finditer(content or ""))
+    for i, m in enumerate(matches):
+        num = int(m.group(1))
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        body = content[start:end].strip()
+        sections.append((num, body))
+    return sections
+
+
+@observe(tier="boundary", metric="backend.admin.seed_tasks_from_page")
+def seed_tasks_from_page(
+    *,
+    directory: str,
+    project_id: str,
+    dry_run: bool = False,
+) -> dict:
+    """Seed the `task` table from the project's task-list wiki page.
+
+    One-shot admin op. Idempotent — re-running converges. Source of
+    truth is the per-project task-list page (D35b); the ledger table
+    is the new query surface.
+
+    D35c: per-page `## task:<id>` section count must equal seeded
+    rows per project, same exact-equality rule.
+    """
+    storage = _get_storage()
+
+    # Read the task-list page for this project.
+    task_list_slug = f"{project_id.replace('/', '_')}_task-list"
+    page = storage.get_wiki_page_by_slug(task_list_slug)
+    if not page or not page.get("content"):
+        return {"dry_run": dry_run, "candidates": 0, "seeded": 0, "skipped": 0}
+
+    sections = _extract_task_sections(page["content"])
+    existing_rows = storage.list_task_rows(
+        project_id=project_id, status=None
+    )
+    existing_numbers = {r["number"] for r in existing_rows}
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "candidates": len(sections),
+            "seeded": 0,
+            "skipped": 0,
+        }
+
+    seeded = 0
+    skipped = 0
+    for number, body in sections:
+        if number in existing_numbers:
+            skipped += 1
+            continue
+        # First line of body becomes the title.
+        title = body.splitlines()[0].strip()[:200] if body else f"task-{number}"
+        try:
+            storage.create_task_row(
+                project_id=project_id,
+                origin="yadgar",
+                number=number,
+                title=title or f"task-{number}",
+                state="open",
+            )
+            seeded += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("seed_tasks failed number=%s: %s", number, exc)
+            skipped += 1
+
+    return {
+        "dry_run": False,
+        "candidates": len(sections),
+        "seeded": seeded,
+        "skipped": skipped,
+    }
+
+
+@observe(tier="boundary", metric="backend.admin.verify_task_seed")
+def verify_task_seed(
+    *,
+    section_numbers: set[int],
+    row_numbers: set[int],
+) -> dict:
+    """D35c verification gate: exact equality on {number set}."""
+    missing = sorted(section_numbers - row_numbers)
+    extra = sorted(row_numbers - section_numbers)
+    return {
+        "passed": not missing and not extra,
+        "missing_in_table": missing,
+        "extra_in_table": extra,
+        "section_count": len(section_numbers),
+        "row_count": len(row_numbers),
+    }
