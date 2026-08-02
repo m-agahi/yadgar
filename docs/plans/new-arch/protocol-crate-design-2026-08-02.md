@@ -560,6 +560,154 @@ adding a field is a minor version bump (old clients ignore the new field,
 new clients handle its absence). Removing or renaming a field is a major
 version bump (requires a new `/v2/` endpoint or a migration).
 
+### 2.7 The three-layer type model (wire vs storage vs internal)
+
+The current `yadgar/_shared/contracts/models.py` (341 LOC) defines 15+
+pydantic models in one file with no distinction between wire types, storage
+types, and internal types. The `Memory` model has 37 fields — some are wire
+fields (`content`, `tags`, `heat`), some are storage fields (`embedding` as
+bytes, `last_decay_at`, `file_hash`), some are consolidation-internal
+(`plasticity`, `excitability`, `sr_x`, `sr_y`). All 37 in one model; every
+service that touches `Memory` gets all 37 whether it needs them or not.
+
+**The protocol crate defines wire types only.** There are three layers:
+
+| Layer | What it is | Where it lives | Example |
+|---|---|---|---|
+| **Wire types** | What crosses service boundaries (trait method params/returns, inter-service HTTP, MCP tool responses) | `yadgar-protocol` | `Memory` (15 stable fields), `RecallRequest`, `Adr` |
+| **Storage types** | What the DB holds (table rows, Surreal records with all fields) | The impl crate that owns the DB | `MemoryRow` (37 fields, embedding bytes, decay watermarks) in `yadgar-storage-surreal` |
+| **Internal types** | What a service uses but never shares across boundaries | The service's own crate | `ScoredCandidate` (retrieval scoring), `EngramSlot` (consolidation), `LockState` (scheduler) |
+
+**The test: "does this type appear in a trait method signature?"**
+
+If a type appears in a trait method parameter or return type, it crosses a
+boundary → it's in the protocol. If it only appears inside one service's
+code, it's internal → it stays in that service.
+
+```
+GraphStore::insert_memory(tenant, memory: &MemoryWrite) → MemoryId
+                    ↑ wire type ↑         ↑ wire type ↑
+
+GraphStore::get_memory(tenant, id: &MemoryId) → Option<Memory>
+                                     ↑ wire type ↑     ↑ wire type ↑
+```
+
+`MemoryWrite` and `Memory` are wire types (they cross the `GraphStore` trait
+boundary) → protocol crate. But the Surreal row that
+`SurrealServer::insert_memory` actually writes (with `embedding: bytes`,
+`last_decay_at: datetime`, `plasticity: f32`, etc.) is a storage type →
+`yadgar-storage-surreal` crate.
+
+#### The three layers in practice
+
+```rust
+// ── yadgar-protocol/src/domain/memory.rs (WIRE TYPE — crosses boundaries) ──
+#[derive(Serialize, Deserialize)]
+pub struct Memory {
+    pub id: MemoryId,
+    pub content: String,
+    pub tags: Vec<String>,
+    pub tenant_id: TenantId,
+    pub heat: f32,
+    pub importance: f32,
+    pub is_protected: bool,
+    // 15 stable fields — what every service needs
+    #[serde(default)] pub schema_version: u16,
+}
+
+// ── yadgar-storage-surreal/src/row.rs (STORAGE TYPE — DB-internal) ──
+pub struct MemoryRow {
+    pub id: i64,
+    pub content: String,
+    pub embedding: Vec<u8>,        // bytes in DB, not in wire type
+    pub tags: Vec<String>,
+    pub heat: f32,
+    pub last_decay_at: Option<DateTime<Utc>>,  // DB watermark, not in wire
+    pub plasticity: f32,           // consolidation frontier, not in wire
+    pub excitability: f32,         // consolidation frontier, not in wire
+    pub sr_x: f32,                 // cognitive map, not in wire
+    pub sr_y: f32,
+    // all 37 fields — what the DB actually holds
+}
+
+// ── yadgar-storage-surreal/src/mapping.rs (THE MAPPING — wire ↔ storage) ──
+impl From<MemoryRow> for Memory {
+    fn from(row: MemoryRow) -> Memory {
+        Memory {
+            id: row.id as u64,
+            content: row.content,
+            tags: row.tags,
+            heat: row.heat,
+            // only the 15 wire fields; the other 22 stay in storage
+        }
+    }
+}
+
+// ── yadgar-recall/src/candidate.rs (INTERNAL TYPE — never crosses boundaries) ──
+pub struct ScoredCandidate {
+    pub memory: Memory,           // wire type (from protocol)
+    pub fts_score: f32,           // internal — only recall uses this
+    pub knn_score: f32,           // internal
+    pub ppr_score: f32,           // internal
+    pub fused_score: f32,         // internal
+    pub rerank_score: Option<f32>, // internal
+}
+// ScoredCandidate never appears in a trait method signature → NOT in protocol
+```
+
+#### Why the split matters
+
+If each service designs its own wire format for a shared concept (like an
+ADR), you get inconsistency — service A's `Adr` has `status` as a string,
+service B's has it as an enum, the gateway has to translate. That's the
+current system: 79 tools return `dict`, each with a different ad-hoc shape.
+The protocol crate prevents this by owning the wire types.
+
+But if you put storage types and internal types in the protocol too, it
+becomes the new `_shared` — a 31k LOC dumping ground. The protocol crate
+must stay lean (~2-3k LOC) by containing ONLY what crosses boundaries. The
+enforcement is a size check (§5.4 below).
+
+#### Serialization format — composition-root choice, not protocol-mandated
+
+The types are in the protocol. The *format* is swappable:
+
+```rust
+// Every protocol type derives Serialize + Deserialize:
+#[derive(Serialize, Deserialize)]
+pub struct Memory { ... }
+
+// JSON (default — MCP is JSON, HTTP is JSON):
+serde_json::to_string(&memory)
+
+// bincode (fastest for in-process, solo mode — no serialization overhead
+// vs JSON for tokio mpsc channels):
+bincode::serialize(&memory)
+
+// CBOR / MessagePack (if binary over HTTP is needed for bandwidth):
+serde_cbor::to_vec(&memory)
+```
+
+**The protocol crate mandates `#[derive(Serialize, Deserialize)]` on every
+type.** It does NOT mandate the format. JSON is the default (MCP transport,
+HTTP inter-service calls). Solo mode could use bincode for in-process
+channels (faster than JSON). The format is selected at the composition root,
+same as every other swappable thing.
+
+#### Protocol crate size budget
+
+| Category | Count | Approx LOC | Lives in |
+|---|---|---|---|
+| Wire domain models | ~15 (Memory, Wiki, ADR, Task, AgentPrompt, Checkpoint, Entity, Relationship, Block, Bookmark, Config, Tenant, User, Role, Identity) | ~800 | protocol |
+| Request/response types | ~20 (RecallRequest/Response, EmbedRequest/Response, WriteRequest/Response, etc.) | ~600 | protocol |
+| Traits | 15 (Queue, Cache, GraphStore, RelationalStore, Embedder, Reranker, Authn, Authz, Encryptor, Meter, Scheduler, ObjectStore, Notifier, Logger, Tracer, Metrics) | ~500 | protocol |
+| Error + health + version + identity | 4 (ErrorEnvelope, HealthStatus, ApiVersion, Identity) | ~300 | protocol |
+| **Total protocol crate** | | **~2200 LOC** | |
+
+Storage types (the 37-field `MemoryRow`, the SQL schemas) live in the impl
+crates. Internal types (`ScoredCandidate`, `EngramSlot`) live in the service
+crates. **The protocol crate stays at ~2-3k LOC.**
+
 ---
 
 ## 3. What the protocol crate is NOT
@@ -572,13 +720,23 @@ version bump (requires a new `/v2/` endpoint or a migration).
 3. **Not a schema definition.** The SQL table schemas are in each
    service's own crate (`migrations/adr/`, `migrations/tasks/`). The
    protocol defines the *wire types*, not the *storage schema*. A service
-   maps between them.
+   maps between them (§2.7 three-layer type model).
 4. **Not a config system.** Config knobs are in `yadgar_config` (a
    service). The protocol defines the `ConfigKey`/`ConfigValue` types, not
    the config storage.
 5. **Not a research frontier.** Experimental fields (v3 cognitive-map
    coordinates, engram excitability) stay in the consolidation service's
    internal types. The protocol is the stable surface.
+6. **Not a storage type definition.** The 37-field `MemoryRow` with
+   embedding bytes, decay watermarks, and engram allocator state lives in
+   `yadgar-storage-surreal`, not in the protocol. The protocol's `Memory`
+   has 15 stable wire fields. The mapping between wire and storage is in
+   the impl crate, not the protocol.
+7. **Not an internal type definition.** `ScoredCandidate` (retrieval
+   scoring), `EngramSlot` (consolidation), `LockState` (scheduler) —
+   these are service-internal types that never cross boundaries. They stay
+   in the service crate. The protocol contains only types that appear in
+   trait method signatures.
 
 ---
 
@@ -706,6 +864,43 @@ tests run against a real Postgres (in CI) and validate that the impl
 satisfies the protocol. A new impl (e.g., `yadgar-storage-pgvector`) runs
 the same contract tests — if they pass, the impl is protocol-compliant.
 
+### 5.4 The protocol crate size check
+
+The `_shared` package in the current Python codebase accreted 31k LOC
+because nothing prevented it. The protocol crate must not repeat this.
+
+Add to `scripts/check_service_crate_deps.py` (or a sibling script):
+
+```python
+# The protocol crate must stay lean — if it exceeds 5000 LOC, it's accreting
+# storage/internal types that belong in service/impl crates.
+PROTOCOL_MAX_LOC = 5000
+
+def check_protocol_size():
+    loc = count_lines("crates/yadgar-protocol/src/")
+    if loc > PROTOCOL_MAX_LOC:
+        fail(f"yadgar-protocol is {loc} LOC (max {PROTOCOL_MAX_LOC}). "
+             "Move storage types to impl crates, internal types to service crates. "
+             "The protocol contains ONLY wire types that cross boundaries.")
+```
+
+If `yadgar-protocol/src/` exceeds 5000 LOC, CI fails with "protocol crate
+is accreting — move internal/storage types to their owning service." This
+prevents the `_shared` 31k LOC failure mode from recurring in Rust.
+
+### 5.5 The wire-type-only lint (complement to the no-SDK lint)
+
+A second check: no impl crate or service crate may define a type that
+appears in a `yadgar-protocol` trait signature. If `yadgar-recall` defines
+its own `Memory` struct (instead of using the protocol's `Memory`), that's
+a boundary violation — the wire type must be shared, not redefined.
+
+This is harder to lint automatically (it requires knowing which types
+appear in trait signatures), but a simpler proxy works: grep for
+`pub struct Memory` / `pub struct Adr` / `pub struct Task` etc. outside
+`yadgar-protocol/src/domain/`. If any service or impl crate redefines a
+wire type, CI fails.
+
 ---
 
 ## 6. What this fixes vs the current system
@@ -717,7 +912,8 @@ the same contract tests — if they pass, the impl is protocol-compliant.
 | `_shared` is 31k LOC, no enforced boundary | `yadgar-protocol` is ~3-5k LOC of pure types + traits; the no-SDK lint prevents accretion |
 | HTTP backend "API" is 7 unversioned POST endpoints | Every inter-service call has a typed request/response in the protocol; URI-versioned (`/v1/recall`) |
 | Auth is one env-var bearer token, no Identity type | `Identity`, `Tenant`, `Role`, `Authn` trait, `Authz` trait — attested identity propagated to every service |
-| `Memory` has 37 fields including v3 frontier experiments | Protocol `Memory` has 15 stable fields; experimental fields stay in consolidation's internal types |
+| `Memory` has 37 fields including v3 frontier experiments | Protocol `Memory` has 15 stable wire fields; storage types (37-field `MemoryRow`) stay in impl crates; internal types (`ScoredCandidate`) stay in service crates — §2.7 three-layer type model |
+| No type layering — wire, storage, and internal types in one 341-LOC file | Three-layer model: wire types in protocol (~2.2k LOC), storage types in impl crates, internal types in service crates — enforced by a 5000 LOC size check on the protocol crate |
 | No health/ready distinction | `HealthStatus` (alive) + `ReadyStatus` (can serve) — the loose-coupling protocol |
 | No queue/backpressure contract | `Queue` trait + `WorkItem` + `QueueFull` — the backpressure protocol |
 | No cache contract (two in-process LRUs) | `Cache` trait + `ScopeVersion` — the version-in-key invalidation contract |
