@@ -178,7 +178,8 @@ def adr_add(
         supersedes: "none" or comma-separated ADR IDs.
         directory: Absolute project path (back-compat).
     """
-    # Validation
+    # Strict-type validation: required fields MUST be non-empty strings.
+    # No str() coercion — rejects int/float/None with a clear error.
     for field, val in {
         "title": title,
         "status": status,
@@ -187,9 +188,21 @@ def adr_add(
         "decision": decision,
         "rationale": rationale,
     }.items():
-        if not val or not str(val).strip():
+        if not isinstance(val, str):
+            return {
+                "ok": False,
+                "error": f"{field} must be a string, got {type(val).__name__}",
+            }
+        if not val.strip():
             return {"ok": False, "error": f"missing required field: {field!r}"}
-    if status not in {"open", "accepted", "superseded", "rejected", "deprecated", "archived"}:
+    if not isinstance(status, str) or status not in {
+        "open",
+        "accepted",
+        "superseded",
+        "rejected",
+        "deprecated",
+        "archived",
+    }:
         return {"ok": False, "error": f"invalid status {status!r}"}
 
     storage = _get_storage()
@@ -235,10 +248,20 @@ def adr_get(
     Returns:
         {adr_id, status, title, body_slug, ...} or {error: "..."} if absent.
     """
+    # Strict types: reject non-string adr_id rather than crash on re.search.
+    if not isinstance(adr_id, str):
+        return {"error": f"adr_id must be a string, got {type(adr_id).__name__}"}
+    if not isinstance(project_id, str):
+        return {"error": f"project_id must be a string, got {type(project_id).__name__}"}
+
     m = re.search(r"(\d+)", adr_id or "")
     if not m:
         return {"error": f"invalid adr_id {adr_id!r}; expected 'ADR-NNNN'"}
-    number = int(m.group(1))
+    number_str = m.group(1)
+    # Strict types: reject non-integer numbers (no float truncation, no hex).
+    if not number_str.isdigit():
+        return {"error": f"invalid adr_id number {adr_id!r}; must be decimal integer"}
+    number = int(number_str)
 
     storage = _get_storage()
     row = storage.get_adr_row(project_id=project_id, number=number)

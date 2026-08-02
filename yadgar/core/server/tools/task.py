@@ -30,8 +30,20 @@ _TITLE_MAX = 200  # D12
 
 
 @observe(tier="hot", metric="tools.task._validate_title")
-def _validate_title(title: str | None) -> dict | None:
-    """Return an error dict if title is invalid, else None."""
+def _validate_title(title: object) -> dict | None:
+    """Return an error dict if title is invalid, else None.
+
+    Strict types: title MUST be a non-empty string. No implicit coercion
+    (int/float/None all rejected with a clear error). Python's automatic
+    type casting would let `42` become `"42"` via str() — we reject
+    it explicitly so callers get a clear error instead of a silent
+    type-confused row.
+    """
+    if not isinstance(title, str):
+        return {
+            "ok": False,
+            "error": f"title must be a string, got {type(title).__name__}",
+        }
     if not title or not title.strip():
         return {"ok": False, "error": "title is required"}
     if len(title) > _TITLE_MAX:
@@ -39,6 +51,18 @@ def _validate_title(title: str | None) -> dict | None:
             "ok": False,
             "error": f"title exceeds {_TITLE_MAX} chars (D12)",
         }
+    return None
+
+
+def _validate_project_id(project_id: object) -> dict | None:
+    """Strict-type check: project_id MUST be a non-empty string."""
+    if not isinstance(project_id, str):
+        return {
+            "ok": False,
+            "error": f"project_id must be a string, got {type(project_id).__name__}",
+        }
+    if not project_id or not project_id.strip():
+        return {"ok": False, "error": "project_id is required"}
     return None
 
 
@@ -63,6 +87,9 @@ def task_write(
         body_slug: Wiki page slug for the task body (D4).
         directory: Absolute project path for directory guard.
     """
+    err = _validate_project_id(project_id)
+    if err is not None:
+        return err
     err = _validate_title(title)
     if err is not None:
         return err
