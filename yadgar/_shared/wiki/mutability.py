@@ -15,11 +15,14 @@ from __future__ import annotations
 
 from typing import Literal
 
+from yadgar._shared.observability.observe import observe
+
 Mutability = Literal["free", "locked", "derived"]
 
 VALID_MUTABILITY: frozenset[str] = frozenset({"free", "locked", "derived"})
 
 
+@observe(tier="stage")
 def effective_mutability(*, page_type: str | None, override: str | None) -> str:
     """Return the effective mutability for a page.
 
@@ -33,6 +36,7 @@ def effective_mutability(*, page_type: str | None, override: str | None) -> str:
     return get_policy(page_type).mutability
 
 
+@observe(tier="stage")
 def can_edit(*, page_type: str | None, override: str | None) -> bool:
     """Return True if agent/tool edits are permitted on this page.
 

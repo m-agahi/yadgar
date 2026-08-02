@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from yadgar._shared.wiki.store import WikiStore
 
 
+@observe(tier="stage")
 def _caller_tag_matches_page_type(page_type: str | None, caller_tags: list[str] | None) -> bool:
     """Car C1 — narrow tag-override exemption.
 
@@ -44,6 +45,7 @@ def _caller_tag_matches_page_type(page_type: str | None, caller_tags: list[str] 
 DOWNWEIGHT_FACTOR: float = 0.5
 
 
+@observe(tier="stage")
 def _apply_downweight(page_type: str | None, native_score: float) -> float:
     """Car C2 — apply downweight if the page_type's policy is "downweight".
 

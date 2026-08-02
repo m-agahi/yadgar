@@ -14,6 +14,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage.alembic_models import Base
 
 config = context.config  # type: ignore[attr-defined]
@@ -32,6 +33,7 @@ if _mariadb_url:
 target_metadata = Base.metadata
 
 
+@observe(tier="stage")
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     context.configure(
@@ -44,6 +46,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+@observe(tier="stage")
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
     connectable = engine_from_config(

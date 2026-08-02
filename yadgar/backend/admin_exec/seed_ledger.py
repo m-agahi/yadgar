@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 _ADR_SLUG_NUMBER_RE = re.compile(r"_adr-(\d+)$")
 
 
+@observe(tier="stage")
 def _extract_adr_number(slug: str) -> int | None:
     """Extract the ADR number from a slug like 'm-agahi_yadgar_adr-0194'."""
     m = _ADR_SLUG_NUMBER_RE.search(slug or "")
@@ -137,6 +138,7 @@ def verify_adr_seed(
     }
 
 
+@observe(tier="stage")
 def _collect_page_numbers(pages: list[dict]) -> set[int]:
     """Helper for the verification gate — extract numbers from page list."""
     numbers: set[int] = set()
@@ -153,6 +155,7 @@ def _collect_page_numbers(pages: list[dict]) -> set[int]:
 _TASK_SECTION_RE = re.compile(r"^## task:(\d+)\s*$", re.MULTILINE)
 
 
+@observe(tier="stage")
 def _extract_task_sections(content: str) -> list[tuple[int, str]]:
     """Extract (task_number, body) from a task-list page.
 

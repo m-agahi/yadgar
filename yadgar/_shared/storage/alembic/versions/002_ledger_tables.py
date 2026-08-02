@@ -23,6 +23,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from yadgar._shared.observability.observe import observe
+
 # revision identifiers, used by Alembic.
 revision: str = "002_ledger_tables"
 down_revision: str | None = "001_runtime_config"
@@ -30,6 +32,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+@observe(tier="stage")
 def upgrade() -> None:
     # task table
     op.create_table(
@@ -123,6 +126,7 @@ def upgrade() -> None:
     )
 
 
+@observe(tier="stage")
 def downgrade() -> None:
     op.drop_table("agent_prompt")
     op.drop_index("adr_project_status_idx", table_name="adr")

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import re
 
+from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.server._app import _tool
 
@@ -38,6 +39,7 @@ def _format_adr_id(number: int) -> str:
     return _ADR_ID_FORMAT.format(number=number)
 
 
+@observe(tier="stage")
 def _parse_adr_id(adr_id: str) -> int | None:
     """Parse 'ADR-NNNN' to an integer. Returns None on malformed input."""
     m = _ADR_ID_RE.match(adr_id)
@@ -46,6 +48,7 @@ def _parse_adr_id(adr_id: str) -> int | None:
     return int(m.group(1))
 
 
+@observe(tier="stage")
 def _to_adr_row(row: dict) -> dict:
     """Convert a ledger row to the public adr_list/adr_get return shape.
 

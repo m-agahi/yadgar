@@ -26,6 +26,7 @@ _TASK_ARCHIVE_AFTER_DAYS = 90
 _NO_BODY_IMMEDIATE_ARCHIVE = True
 
 
+@observe(tier="stage")
 def _parse_dt(value: str | None) -> datetime | None:
     """Parse an ISO datetime string. Returns None on failure."""
     if not value:
@@ -38,6 +39,7 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
+@observe(tier="stage")
 def should_archive_completed_task(
     *,
     completed_at: str | None,

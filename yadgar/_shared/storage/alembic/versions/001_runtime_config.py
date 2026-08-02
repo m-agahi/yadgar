@@ -18,6 +18,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from yadgar._shared.observability.observe import observe
+
 # revision identifiers, used by Alembic.
 revision: str = "001_runtime_config"
 down_revision: str | None = None
@@ -25,6 +27,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+@observe(tier="stage")
 def upgrade() -> None:
     op.create_table(
         "runtime_config",
@@ -45,5 +48,6 @@ def upgrade() -> None:
     )
 
 
+@observe(tier="stage")
 def downgrade() -> None:
     op.drop_table("runtime_config")

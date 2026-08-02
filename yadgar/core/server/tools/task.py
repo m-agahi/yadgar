@@ -64,6 +64,7 @@ def _validate_title(title: object) -> dict | None:
     return None
 
 
+@observe(tier="stage")
 def _validate_project_id(project_id: object) -> dict | None:
     """Strict-type check: project_id MUST be a non-empty string."""
     if not isinstance(project_id, str):

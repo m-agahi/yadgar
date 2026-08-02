@@ -74,6 +74,7 @@ from yadgar.core.server.tools.adr_render import (
 logger = logging.getLogger(__name__)
 
 
+@observe(tier="stage")
 def _validate_subsystem(subsystem: object) -> str:
     """Car H D28: subsystem is free-form. Returns the string or empty."""
     if not isinstance(subsystem, str):

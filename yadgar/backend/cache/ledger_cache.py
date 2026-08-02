@@ -14,6 +14,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from yadgar._shared.observability.observe import observe
+
 _KEY_SEP = "\x00"
 
 
@@ -28,6 +30,7 @@ class LedgerCache:
     def _key(project_id: str, kind: str) -> str:
         return f"{kind}{_KEY_SEP}{project_id}"
 
+    @observe(tier="stage")
     def _get(self, project_id: str, kind: str) -> Any:
         key = self._key(project_id, kind)
         entry = self._store.get(key)
@@ -39,6 +42,7 @@ class LedgerCache:
             return None
         return value
 
+    @observe(tier="stage")
     def _set(self, project_id: str, kind: str, value: Any, ttl_seconds: int | None = None) -> None:
         key = self._key(project_id, kind)
         ttl = ttl_seconds if ttl_seconds is not None else self._ttl
