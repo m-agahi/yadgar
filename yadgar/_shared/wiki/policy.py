@@ -102,6 +102,13 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
         merge="allow",
         storage_scope="global",
     ),
+    "task": WikiPolicy(
+        gate_mode="identity",  # D21: structurally unique per project
+        recall_disposition="downweight",  # D22: task pages are project-scoped, recalled less often
+        dir_scope="strict",
+        merge="allow",
+        storage_scope="project",
+    ),
 }
 """Explicit overrides keyed by page_type string.
 

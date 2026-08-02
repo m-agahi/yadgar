@@ -21,6 +21,42 @@ if TYPE_CHECKING:
     from yadgar._shared.wiki.store import WikiStore
 
 
+def _caller_tag_matches_page_type(page_type: str | None, caller_tags: list[str] | None) -> bool:
+    """Car C1 — narrow tag-override exemption.
+
+    The previous behavior exempted ANY tagged recall from policy exclusion.
+    C1 narrows this: only when the caller's tag matches the page type's own
+    page_type does the exemption apply. So ``recall(tags=["agent-prompt"])``
+    on an agent_prompt page is exempt, but ``recall(tags=["unrelated"])`` on
+    the same page respects the exclusion.
+
+    Returns:
+        True if the caller has at least one tag AND it matches ``page_type``.
+    """
+    if not caller_tags or not page_type:
+        return False
+    return page_type in caller_tags
+
+
+# Car C2: downweight factor — multiplies the native_score of any page whose
+# policy has recall_disposition="downweight". Pages that are excluded are
+# dropped before this applies (exclusion wins over downweight).
+DOWNWEIGHT_FACTOR: float = 0.5
+
+
+def _apply_downweight(page_type: str | None, native_score: float) -> float:
+    """Car C2 — apply downweight if the page_type's policy is "downweight".
+
+    Only affects pages with recall_disposition="downweight". Excluded pages
+    are filtered upstream (not downweighted). Included pages pass through.
+    """
+    from yadgar._shared.wiki.policy import get_policy
+
+    if get_policy(page_type).recall_disposition == "downweight":
+        return native_score * DOWNWEIGHT_FACTOR
+    return native_score
+
+
 class WikiProvider(SourceProvider):
     """SourceProvider backed by WikiStore (wiki knowledge base).
 
@@ -95,13 +131,17 @@ class WikiProvider(SourceProvider):
             # #33/ADR-0162) out of everyday recall while wiki_query/wiki_read/
             # wiki_list (which call WikiStore.query directly, not via this
             # provider) remain fully unaffected.
-            # OVERRIDE: when the caller passed an explicit include_tag (self._tags),
-            # they opted in to this page type — skip the exclusion so
-            # recall(tags=["agent-prompt"]) can still reach agent_prompt pages.
-            # Disposition is switchable: one-field flip in policy.py.
-            if not self._tags and get_policy(page.get("page_type")).recall_disposition == "exclude":
+            # OVERRIDE (Car C1): exemption only applies when the caller's tag
+            # matches the page type's own opt-in tag (page_type). Previously
+            # any tagged recall was exempt — C1 narrows this so
+            # recall(tags=["unrelated"]) respects the exclusion.
+            if not _caller_tag_matches_page_type(
+                page.get("page_type"), self._tags
+            ) and get_policy(page.get("page_type")).recall_disposition == "exclude":
                 continue
             native_score = float(page.get("_retrieval_score", 0.0))
+            # Car C2: downweight applies to pages whose policy is "downweight".
+            native_score = _apply_downweight(page.get("page_type"), native_score)
             # Tag raw dict so orchestrator can set _source="wiki" downstream
             raw = dict(page)
             raw["_source"] = "wiki"
