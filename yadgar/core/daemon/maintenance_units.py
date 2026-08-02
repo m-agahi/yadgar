@@ -4,8 +4,8 @@ The seven units ``scripts/install/*.in`` renders that the Python generator never
 had: the target that ACTIVATES everything, the weekly vacuum (service + timer),
 the MCP vacuum-trigger pair (``.path`` + ``.service``) and the nightly cycle
 (service + timer). Stage C ports them into the unit model so all nine render
-from one renderer; the ``sed`` templates stay authoritative until Stage D flips
-the wrapper.
+from this module. Stage D deleted the ``sed`` templates and turned the wrapper
+into a delegating shim, so these builders are now what an install writes.
 
 Three shapes here are the reason plan §4.4 chose an ordered directive model over
 more f-strings, and each is pinned by a test in
@@ -331,7 +331,7 @@ def build_vacuum_trigger_path(*, state_dir: str) -> UnitFile:
     """``yadgar-vacuum-trigger.path`` — watches for MCP ``vacuum_now()``'s file.
 
     *state_dir* must be the SAME string the core unit puts on the left of its
-    ``-v`` bind. Since both units now come from one renderer that is a shared
+    ``-v`` bind. Since both units now come from the same builder set that is a shared
     input rather than a cross-generator string comparison (plan §4.2).
     """
     return UnitFile(

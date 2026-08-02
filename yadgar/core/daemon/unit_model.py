@@ -1,7 +1,8 @@
 """An ordered systemd unit-file model (task:0110 Stage A, ADR-0190).
 
-The convergence car makes one Python renderer the single source of truth for the
-nine units ``scripts/install/*.in`` currently render with ``sed``. Two of those
+The convergence car retires the nine ``scripts/install/*.in`` templates and makes
+the Python renderer the only NON-NIX Linux unit renderer (``flake.nix`` still
+builds its own, different set at nix eval time). Two of those
 nine cannot be expressed by a dict-keyed model, which is why directives here are
 an **ordered list of pairs** rather than a mapping:
 

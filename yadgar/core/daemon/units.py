@@ -1,8 +1,9 @@
-"""The unit BUILDERS — one renderer, driven by an explicit input record (ADR-0190).
+"""The unit BUILDERS — driven by an explicit input record (ADR-0190).
 
 task:0110. ``yadgar/core/daemon/systemd.py`` used to hold two f-string unit
-templates; ``scripts/install/*.in`` holds nine ``sed`` templates for the same
-job. D3 of the plan says the converged renderer takes a **mode, not a fork**:
+templates; ``scripts/install/*.in`` held nine ``sed`` templates for the same
+job (deleted in Stage D). D3 of the plan says the converged renderer takes a
+**mode, not a fork**:
 one set of builders, and everything the two install surfaces genuinely disagree
 about arrives as a field on :class:`UnitSpec`.
 
@@ -15,7 +16,8 @@ port, ``ExecReload``, ``--stop-timeout``, ``--security-opt label=disable``,
 ``TimeoutStopSec`` and the trigger-dir ``ExecStartPre``). Stage C added the seven
 units the Python side never had — they live in
 ``yadgar/core/daemon/maintenance_units.py`` and are composed in here by
-:func:`build_units`, so all nine now come out of one renderer.
+:func:`build_units`, so all nine now come out of this module. ``flake.nix``
+remains a separate, unconverged renderer — see :data:`ALL_UNIT_NAMES`.
 
 Comments are emitted, not dropped: the parity baseline is the ``sed`` render of
 the templates, and those carry ~60 comment lines per unit explaining WHY each
