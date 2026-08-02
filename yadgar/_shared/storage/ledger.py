@@ -19,8 +19,9 @@ from typing import Any
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import sessionmaker
 
-from yadgar._shared.storage.alembic_models import Base
+from yadgar._shared.storage.alembic_models import Base, Task
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +94,115 @@ class _LedgerMixin:
             return True
         except Exception:
             return False
+
+    # ── Task CRUD (Car D) ─────────────────────────────────────────────────────
+
+    def allocate_task_number(self, *, project_id: str, origin: str) -> int:
+        """D31 — allocate the next semantic task number for (project_id, origin)."""
+        return self._next_number("task", project_id, origin)
+
+    def create_task_row(
+        self,
+        *,
+        project_id: str,
+        origin: str,
+        number: int,
+        title: str,
+        active_form: str | None = None,
+        state: str = "open",
+        plan_path: str | None = None,
+        body_slug: str | None = None,
+        directory: str | None = None,
+    ) -> dict:
+        """Create a task row. Caller must have allocated `number` via allocate_task_number."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            with session.begin():
+                row = Task(
+                    project_id=project_id,
+                    origin=origin,
+                    number=number,
+                    title=title,
+                    active_form=active_form,
+                    state=state,
+                    plan_path=plan_path,
+                    body_slug=body_slug,
+                )
+                session.add(row)
+                session.flush()
+                return {
+                    "id": row.id,
+                    "project_id": row.project_id,
+                    "origin": row.origin,
+                    "number": row.number,
+                    "title": row.title,
+                    "status": row.status,
+                    "state": row.state,
+                    "body_slug": row.body_slug,
+                    "active_form": row.active_form,
+                    "plan_path": row.plan_path,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+
+    def list_task_rows(
+        self,
+        *,
+        project_id: str,
+        status: list[str] | None = None,
+        directory: str | None = None,
+    ) -> list[dict]:
+        """List task rows for a project. If status is given, filter to those statuses."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            q = session.query(Task).filter(Task.project_id == project_id)
+            if status:
+                q = q.filter(Task.status.in_(status))
+            rows = q.order_by(Task.number).all()
+            return [
+                {
+                    "id": r.id,
+                    "project_id": r.project_id,
+                    "origin": r.origin,
+                    "number": r.number,
+                    "title": r.title,
+                    "status": r.status,
+                    "state": r.state,
+                }
+                for r in rows
+            ]
+
+    def get_task_row(
+        self,
+        *,
+        project_id: str,
+        number: int,
+        directory: str | None = None,
+    ) -> dict:
+        """Fetch one task row by (project_id, number). Returns {} if not found."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            row = (
+                session.query(Task)
+                .filter(Task.project_id == project_id, Task.number == number)
+                .one_or_none()
+            )
+            if row is None:
+                return {}
+            return {
+                "id": row.id,
+                "project_id": row.project_id,
+                "origin": row.origin,
+                "number": row.number,
+                "title": row.title,
+                "status": row.status,
+                "state": row.state,
+                "body_slug": row.body_slug,
+                "active_form": row.active_form,
+                "plan_path": row.plan_path,
+            }
