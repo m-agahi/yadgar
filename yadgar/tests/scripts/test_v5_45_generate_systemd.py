@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from yadgar.tests._paths import REPO_ROOT
-from yadgar.tests._unit_render import RENDERER_CLI
+from yadgar.tests._unit_render import RENDERER_ENV
 
 GENERATE_SYSTEMD_SH = REPO_ROOT / "scripts" / "install" / "generate_systemd.sh"
 SYSTEMD_TEMPLATES_DIR = REPO_ROOT / "scripts" / "install"
@@ -25,7 +25,7 @@ def _run_generate_systemd(
     env["YADGAR_SECRETS_ENV_FILE"] = "/home/testuser/.yadgar/secrets.env"
     env["YADGAR_BACKEND_IMAGE"] = "openfantasy/yadgar-backend:5.45.0"
     env["YADGAR_CORE_IMAGE"] = "openfantasy/yadgar:5.45.0"
-    env["YADGAR_RENDERER_CLI"] = RENDERER_CLI
+    env.update(RENDERER_ENV)
     if extra_env:
         env.update(extra_env)
     return subprocess.run(

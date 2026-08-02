@@ -5,7 +5,7 @@ import shutil
 import subprocess
 
 from yadgar.tests._paths import REPO_ROOT
-from yadgar.tests._unit_render import RENDERER_CLI
+from yadgar.tests._unit_render import RENDERER_ENV
 
 DETECT_OS_SH = REPO_ROOT / "scripts" / "install" / "detect_os.sh"
 GENERATE_SYSTEMD_SH = REPO_ROOT / "scripts" / "install" / "generate_systemd.sh"
@@ -64,7 +64,7 @@ class TestV5_45NixOSGuard:
                 "YADGAR_SECRETS_ENV_FILE": str(tmp_path / "secrets.env"),
                 "YADGAR_BACKEND_IMAGE": "openfantasy/yadgar-backend:test",
                 "YADGAR_CORE_IMAGE": "openfantasy/yadgar:test",
-                "YADGAR_RENDERER_CLI": RENDERER_CLI,
+                **RENDERER_ENV,
             },
         )
         assert result.returncode != 0, (

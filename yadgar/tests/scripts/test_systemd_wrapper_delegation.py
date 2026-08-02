@@ -52,6 +52,9 @@ def _run(tmp_path: Path, renderer: str, out_dir: Path) -> subprocess.CompletedPr
             "YADGAR_SYSTEMD_OUTPUT_DIR": str(out_dir),
             "YADGAR_STATE_DIR": str(tmp_path / "state"),
             "YADGAR_RENDERER_CLI": renderer,
+            # Only meaningful for the real-interpreter arm below; harmless for
+            # the bash stubs. See RENDERER_ENV's rationale in _unit_render.py.
+            "PYTHONPATH": str(REPO_ROOT),
             "YADGAR_HOST_CLI": "/usr/bin/true",
             "YADGAR_HOST_NIGHTLY_CLI": "/usr/bin/true",
         }

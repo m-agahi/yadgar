@@ -43,7 +43,7 @@ from pathlib import Path
 # Paths
 # ---------------------------------------------------------------------------
 from yadgar.tests._paths import REPO_ROOT
-from yadgar.tests._unit_render import RENDERER_CLI
+from yadgar.tests._unit_render import RENDERER_ENV
 
 SCRIPTS_DIR = REPO_ROOT / "scripts" / "install"
 SETUP_SH = SCRIPTS_DIR / "yadgar-setup.sh"
@@ -67,7 +67,7 @@ def _render_units() -> dict[str, str]:
             "YADGAR_SECRETS_ENV_FILE": f"{tmpdir}/secrets.env",
             "YADGAR_BACKEND_IMAGE": "test-registry/yadgar-backend:test",
             "YADGAR_CORE_IMAGE": "test-registry/yadgar:test",
-            "YADGAR_RENDERER_CLI": RENDERER_CLI,
+            **RENDERER_ENV,
             # Suppress nix-symlink guard (no existing units to check)
             "HOME": tmpdir,
         }

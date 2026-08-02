@@ -134,8 +134,12 @@ _resolve_renderer || _fail_renderer "no yadgar renderer found."
 # this check exists for fall straight through. Note the assignment is NOT
 # `local schema=$(...)` — `local` swallows the command's exit status, which would
 # silently re-open the same hole.
+#
+# `tail -n 1` because only the LAST line is the answer: a renderer whose startup
+# ever writes to stdout (a deprecation notice, an observability banner) would
+# otherwise look unparseable and abort a perfectly healthy install.
 schema=""
-if ! schema="$("${RENDERER[@]}" daemon render-units --print-schema 2> /dev/null)"; then
+if ! schema="$("${RENDERER[@]}" daemon render-units --print-schema 2> /dev/null | tail -n 1)"; then
     _fail_renderer "${RENDERER[0]} does not support 'daemon render-units --print-schema' (too old)."
 fi
 schema="${schema//[[:space:]]/}"
