@@ -50,24 +50,8 @@ import re
 import threading
 
 from yadgar._shared.observability.observe import observe
-from yadgar.core.server._app import _tool
-
-logger = logging.getLogger(__name__)
-
-
-def _validate_subsystem(subsystem: object) -> str:
-    """Car H D28: subsystem is free-form. Returns the string or empty."""
-    if not isinstance(subsystem, str):
-        return ""
-    return subsystem.strip()[:128]
-
-
-# Sub-module imports (split seams).
-# Car G — _build_index_content, _committed_page_max_id, _index_max_id,
-# _next_adr_id, _next_adr_id_from_index, _render_index_row, parse_index_rows,
-# _INDEX_HEADER, _INDEX_ROW_RE all deleted from adr_index.py (the SQL
-# ledger is the ID source of truth). The slug helpers below stay.
 from yadgar._shared.runtime.lifecycle import _get_storage
+from yadgar.core.server._app import _tool
 from yadgar.core.server.tools.adr_index import (
     _ADR_HEADER_RE,
     _ADR_PAGE_SLUG_RE,
@@ -86,6 +70,18 @@ from yadgar.core.server.tools.adr_render import (
     _flip_superseded_target,
     _parse_supersedes,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_subsystem(subsystem: object) -> str:
+    """Car H D28: subsystem is free-form. Returns the string or empty."""
+    if not isinstance(subsystem, str):
+        return ""
+    return subsystem.strip()[:128]
+
+
+
 
 # ── Per-project ADR write lock ─────────────────────────────────────────────────
 # The core daemon is a single persistent process (streamable-http). When
@@ -314,19 +310,10 @@ __all__ = [
     # adr_index public surface
     "_ADR_HEADER_RE",
     "_ADR_PAGE_SLUG_RE",
-    "_INDEX_HEADER",
-    "_INDEX_ROW_RE",
-    "_build_index_content",
-    "_committed_page_max_id",
-    "_index_max_id",
-    "_next_adr_id",
-    "_next_adr_id_from_index",
-    "_render_index_row",
     "adr_index_slug",
     "adr_log_slug",
     "adr_page_slug",
     "parse_adr_ids",
-    "parse_index_rows",
     # adr_render public surface
     "_REQUIRED_FIELDS",
     "_VALID_STATUSES",
@@ -342,4 +329,5 @@ __all__ = [
     "_FATAL_WRITE_REASONS",
     "_adr_log_lock",
     "_write_ok",
+    "_validate_subsystem",
 ]
