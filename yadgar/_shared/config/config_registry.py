@@ -179,6 +179,7 @@ _REGISTRY: list[ConfigEntry] = [
     # ── Core server ──────────────────────────────────────────────────────────
     ConfigEntry("YADGAR_PORT", "8765", "int"),
     ConfigEntry("YADGAR_DB_URL", "http://127.0.0.1:8000", "string"),
+    ConfigEntry("YADGAR_MARIADB_URL", "", "string"),  # spine Car A — MariaDB for relational set
     ConfigEntry("YADGAR_EMBED_URL", "", "string"),
     ConfigEntry("YADGAR_DATA_DIR", str(_paths.DATA_DIR), "string"),
     ConfigEntry("YADGAR_HOST", "127.0.0.1", "string"),

@@ -80,6 +80,7 @@ from yadgar._shared.storage.scope import ScopeFilter as ScopeFilter
 from yadgar._shared.storage.user import _UserMixin
 from yadgar._shared.storage.vector import _VectorMixin
 from yadgar._shared.storage.wiki import _WikiMixin
+from yadgar._shared.storage.ledger import _LedgerMixin
 
 _log = logging.getLogger(__name__)
 
@@ -234,18 +235,25 @@ class StorageEngine(
     _NarrativeMixin,
     _CausalMixin,
     _UserMixin,
+    _LedgerMixin,
 ):
     """SurrealDB-backed persistent storage for yadgar.
 
     Supports two modes:
       - Server mode: YADGAR_DB_URL set → HTTP API against a running SurrealDB.
       - Embedded mode: surrealkv driver, exclusive file lock, rolling backup.
+
+    Spine (task-table-refactor-2026-07-29): also owns a MariaDB engine for
+    the relational set (runtime_config + task + adr + agent_prompt). Set
+    YADGAR_MARIADB_URL to enable; absent → ledger tables are disabled and
+    the spine tools return a clear error.
     """
 
     def __init__(self, db_path: str, embedding_dim: int = 384):
         self._embedding_dim = embedding_dim
         self._db_path = db_path
         self._db_url = os.environ.get("YADGAR_DB_URL")
+        self._init_ledger(os.environ.get("YADGAR_MARIADB_URL", ""))
 
         if self._db_url:
             # Server mode: talk to the SurrealDB HTTP API with a shared httpx.Client.
