@@ -2,16 +2,17 @@
 
 **Date:** 2026-07-29 (rev 2026-08-02 — numbers re-measured, identity re-decided against the
 two-engine split, circular dependency and project-key collision resolved, migration/rollback
-written, §11.3 answered)
-**Tasks:** #0047, #0080 · related #0035 #0048 #0051 #0095 #0096 #0097 #0098 #0119
+written, §11.3 answered, §12.1 resolved: knob store moves to MariaDB in this train)
+**Tasks:** #0047, #0080, #0119 · related #0035 #0048 #0051 #0095 #0096 #0097 #0098
 **ADR:** ADR-0182 (supersedes ADR-0181) · ADR-0183 (portability seam)
 
 **Binding context — `docs/plans/split-store-engine-decision-2026-08-02.md`.** The user has decided
 the backend runs **two engines**: SurrealDB keeps graph, memory, **wiki bodies and embeddings**;
 **MariaDB** (decided 2026-08-02, that doc §4.5) takes the relational set — which is exactly what
-this spine builds. Where this plan touches engine choice, backup, the four operational paths, the
-license posture or the FTS motivation, it **defers to that doc by filename and does not restate
-it**. Nothing below may contradict it.
+this spine builds, **plus the runtime config store (task #0119, decided 2026-08-02)**. Where this
+plan touches engine choice, backup, the four operational paths, the license posture or the FTS
+motivation, it **defers to that doc by filename and does not restate it**. Nothing below may
+contradict it.
 
 **Status:** REFINED — 2026-08-02. Build-ready except the items listed in **§12 Unresolved**.
 Not started; **no code exists yet** — there is no `task` table in `migrations.py` and no
@@ -29,6 +30,7 @@ Move their **indexes** to tables; leave their **bodies** as wiki pages.
 | task list | **16,060**-char page, read whole every stop-hook checkpoint | table query, capped titles |
 | ADR index | **32,163**-char page, regex-parsed per `adr_list`, per `adr_add` **and** per `project_brief` | table query |
 | agent-prompt TOC | **9,538**-char markdown table; `uses:N` stamped into prose | table columns |
+| runtime config | SurrealDB `runtime_config` table, 0 rows (empty) | **MariaDB** — same Alembic chain as the ledger tables |
 | bodies (**194** ADR pages + **63** prompt/discipline pages) | — | **untouched — still wiki pages, still in SurrealDB, still embedded** |
 | MCP surface | — | `adr_*` and `agent_prompt_save` **signatures unchanged** |
 | engine | SurrealDB wiki pages | **MariaDB** rows — see `split-store-engine-decision-2026-08-02.md` §4.5 |
@@ -213,7 +215,7 @@ has read it wrong.
 | D15 | **No repo file.** Override via `config_set("project.key_override", …, scope="project")`. | Avoids repo burden, fork inheritance, accidental edits. ADR-0163's store is already directory-scoped. **This creates a dependency on the config store — see D33 for the cycle it would otherwise close.** |
 | D32 | **NEW 2026-08-02 — three key schemes coexist and each keeps a distinct job. They are not competitors.** | **The three, and the rule:<br>① `project_id` = `<owner>/<repo>` (D13/D14) — the **identity** key. Stamped on every ledger row. The only key that is meaningful on another machine. Cross-instance identity is its whole purpose.<br>② the config store's **absolute filesystem path** (`runtime_config.directory`) — the **lookup** key, and it must stay a path. At call time the caller's only handle *is* a directory; every MCP tool signature takes `directory=`. A store keyed on `project_id` could not be read before `project_id` had been derived, and deriving it requires reading the store (D15's override) — that is the cycle, and keying the store by path breaks it by construction.<br>③ `body_slug`, basename-derived (`adr_index.py:46,51,61`) — the **addressing** key for wiki pages.<br>**Totality of ①:** every directory resolves — git remote present → `<owner>/<repo>`; absent → `local/<basename>` (D14). No third case, no failure mode, so `path → project_id` is a total function.<br>**Non-injective direction, stated because it is the ambiguous case:** two clones of one repo on one machine share a `project_id` but have distinct paths. That is correct for a lookup key (per-checkout settings) and correct for an identity key (both are the same project). Rows from both clones merge, which is the intent.<br>**What genuinely does NOT resolve — ③.** Two repos named `infrastructure` produce the same `body_slug`. Ordinary reads are safe: `wiki_slug_idx` (`migrations.py:1390`) is **non-unique** and resolution is (slug, `directory_context`, branch). **Two real collision surfaces remain:** `get_wiki_page_by_slug` (`_shared/storage/wiki.py:380`) is a **slug-only, DB-wide** lookup, and `wiki_bookmark_slug_idx` (`migrations.py:190,1404`) is **UNIQUE on slug**, so bookmarking the same-named page from two repos collides.<br>**Decision: ③ is OUT OF SCOPE for this train and is a named blocker on task 0095.** Re-slugging 194 ADR pages plus their `[[slug]]` crossrefs is a wiki-corpus migration, not a ledger one, and it must not ride along. Stated as a known live limitation, not as "fixed." |
 | D16 | **A derived key is STORED on the row at write time, never recomputed at read time.** | **Rationale corrected post-audit.** An earlier draft blamed live default-branch resolution (`server_helpers.py:326`) for the codeberg→github task-list break. **That is refuted**: `_default_branch_for_root` has exactly one non-test caller (`server_helpers.py:386`, the memory-write worktree path), and the live `yadgar-task-list` row has `branch: null`, so branch resolution never participated. The documented cause is commit `eefa176e` (2026-07-15) — the v5.42.3 `missing_branch` hard-reject made canonical writes impossible, so the mirror never persisted; fixed by `wiki_write_task_list`. The decision stands on its own merit (a recomputed key silently re-points existing rows); the incident is *not* evidence for it. |
-| D33 | **NEW 2026-08-02 — the spine's dependency on the config store has two limbs. One is eliminated; the other is an explicit ordering constraint. Neither is left implicit.** | **The cycle, stated plainly:** D6 used to read `ledger.sequence_batch` from the config store **at migration time**, and D15 stores `project.key_override` **in** the config store. If the knob store and the spine fold together (task 0119) into engine #2, the spine would consume the very thing it is merging into.<br>**Limb 1 — migration-time read: ELIMINATED.** D6's rewrite deletes `ledger.sequence_batch` outright. There is no sequence, so there is no batch knob, so **the spine's migration reads nothing from the config store**. This is not a mitigation; the dependency no longer exists. It is also why D6's rewrite had to land before this one could be resolved.<br>**Limb 2 — write-time read: ORDERING CONSTRAINT.** D15's `project.key_override` is read when a row is **written** (to stamp `project_id`, D16), never at migration time. Two conditions make that safe and **both are binding**:<br>  (a) **Schema ordering.** `runtime_config` must be created **before** the ledger tables in whichever engine's ordered migration list holds them. Under D34 that is a single Alembic revision chain, so this is an ordinary `down_revision` edge, not a cross-system handshake.<br>  (b) **The read is lazy and NON-FATAL.** A config-store miss, an empty store, or an unreachable store **falls back to the derived key (D13/D14) and never fails a spine write.** The override is a convenience, not a precondition. A spine write that can be blocked by the settings store is a worse defect than the one D15 solves.<br>**Ordering rule, one line:** *migration-time: spine reads nothing from the config store. Write-time: spine may read it, must tolerate its absence.* |
+| D33 | **NEW 2026-08-02 — the spine's dependency on the config store has two limbs. One is eliminated; the other is an explicit ordering constraint. Neither is left implicit. RESOLVED 2026-08-02: the knob store moves to MariaDB in this train (task #0119), so the ordering constraint is binding — `runtime_config` is the first revision in Car A's Alembic chain, and the ledger tables follow it.** | **The cycle, stated plainly:** D6 used to read `ledger.sequence_batch` from the config store **at migration time**, and D15 stores `project.key_override` **in** the config store. If the knob store and the spine fold together (task 0119) into engine #2, the spine would consume the very thing it is merging into.<br>**Limb 1 — migration-time read: ELIMINATED.** D6's rewrite deletes `ledger.sequence_batch` outright. There is no sequence, so there is no batch knob, so **the spine's migration reads nothing from the config store**. This is not a mitigation; the dependency no longer exists. It is also why D6's rewrite had to land before this one could be resolved.<br>**Limb 2 — write-time read: ORDERING CONSTRAINT, NOW BINDING.** D15's `project.key_override` is read when a row is **written** (to stamp `project_id`, D16), never at migration time. Two conditions make that safe and **both are binding**:<br>  (a) **Schema ordering.** `runtime_config` must be created **before** the ledger tables. Under D34 both live in the same Alembic revision chain, so this is an ordinary `down_revision` edge — `runtime_config` is the first revision, the ledger tables follow it. No cross-system handshake.<br>  (b) **The read is lazy and NON-FATAL.** A config-store miss, an empty store, or an unreachable store **falls back to the derived key (D13/D14) and never fails a spine write.** The override is a convenience, not a precondition. A spine write that can be blocked by the settings store is a worse defect than the one D15 solves.<br>**Ordering rule, one line:** *migration-time: spine reads nothing from the config store. Write-time: spine may read it, must tolerate its absence.* |
 
 **Task 0095 is the blocking decision, and it is time-boxed.** The project-key scheme above is
 cheap to change **only while `runtime_config` is empty** — verified **0 rows, 2026-08-02**
@@ -460,7 +462,7 @@ reverse-sync.
 
 | Car | Scope | Depends on |
 |---|---|---|
-| A | `_LedgerMixin` + **Alembic revision chain (D34; NOT `migrations.py`'s list)** + tables + **`MAX+1 FOR UPDATE` allocation scoped `(project_id, origin)` (D31) — no sequence, no DDL at runtime (D6)** + least-privilege grants in place of `PERMISSIONS` (§3, D19) + **a no-op scope-filter hook** (not tenancy columns — D17) + **new AST guard `scripts/check_ledger_chokepoint.py` with an allowlist for pre-existing violations**. **Includes a RED test that two concurrent allocations on one `(project_id, origin)` never collide** — that is D31's entire claim and the current `threading.Lock` fails it across processes. | — |
+| A | `_LedgerMixin` + **Alembic revision chain (D34; NOT `migrations.py`'s list)** + **`runtime_config` table (first revision — task #0119, knob store moves to MariaDB in this train)** + ledger tables + **`MAX+1 FOR UPDATE` allocation scoped `(project_id, origin)` (D31) — no sequence, no DDL at runtime (D6)** + least-privilege grants in place of `PERMISSIONS` (§3, D19) + **a no-op scope-filter hook** (not tenancy columns — D17) + **new AST guard `scripts/check_ledger_chokepoint.py` with an allowlist for pre-existing violations**. **Includes a RED test that two concurrent allocations on one `(project_id, origin)` never collide** — that is D31's entire claim and the current `threading.Lock` fails it across processes. | — |
 | B | backend ops + cache | A |
 | C1 | **3a** — tag-override matches the page type's own opt-in tag | — |
 | C2 | **3b** — implement `downweight` | — |
@@ -476,9 +478,7 @@ reverse-sync.
 
 D/E ∥ F/G ∥ I after B. **C gates D and F.** J depends only on A and can land early.
 
-**Ordering constraint from D33(a):** `runtime_config` must exist in engine #2 before any ledger
-table — an ordinary `down_revision` edge in Car A's Alembic chain if the knob store moves in the
-same train (task 0119), and a no-op if it does not.
+**Ordering constraint from D33(a):** `runtime_config` is the **first revision** in Car A's Alembic chain; the ledger tables follow it via ordinary `down_revision` edges. Both live in the same chain (D34), so this is a single-engine ordering constraint, not a cross-system handshake.
 
 **Every seed step (E, G, I) is a separate one-shot operation, not a migration step (D35a).** Each
 ships with its verification gate (D35c) in the same car; a seed whose gate is deferred to a later
@@ -654,9 +654,7 @@ now lives where it belongs, under **D33** in §2.3.)*
 
 Everything else in this plan is decided. These are not.
 
-1. **Does the knob store (task 0119) move to engine #2 in this train, or stay in SurrealDB?**
-   D33 makes the spine safe either way, but the answer determines whether Car A's Alembic chain
-   needs a `runtime_config` revision ahead of the ledger tables, or none at all.
+1. **RESOLVED 2026-08-02 — the knob store (task #0119) moves to MariaDB in this train.** `runtime_config` is the first revision in Car A's Alembic chain; the ledger tables follow it. D33 is updated accordingly. Task #0119 is promoted from "related" to a spine task.
 2. **Task 0095 — the project-key scheme — is blocking and time-boxed.** `runtime_config` is
    empty **today** (0 rows, verified 2026-08-02); the re-key is free only until task 0035 seeds
    its first row. D32 states which scheme owns which surface, but 0095 is where the *value* is
