@@ -173,16 +173,18 @@ def _assemble_index_rows(
 ) -> list[dict]:
     """Return the full ADR index row-set after adding ``new_row`` + supersede back-links.
 
-    Two-pass: append the new row, then flip each supersede target's status to
-    'superseded' and record the new ADR's NNNN in its ``superseded_by`` column.
+    Spine Car F: re-pointed from parse_index_rows to ledger-backed. The
+    supersede logic now operates on ledger rows (update supersedes/superseded_by
+    columns on target rows) rather than rewriting a markdown index page.
     """
-    from yadgar.core.server.tools.adr_index import parse_index_rows  # noqa: PLC0415
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
 
-    rows = parse_index_rows(existing_index)
+    storage = _get_storage()
+    rows = storage.list_adr_rows(project_id=new_row.get("project_id", ""))
     rows.append(new_row)
     if not target_ids:
         return rows
-    by_id = {r["adr_id"]: r for r in rows}
+    by_id = {r.get("adr_id", f"ADR-{r.get('id', 0):04d}"): r for r in rows}
     nnnn = new_adr_id.split("-")[1]
     for tid in target_ids:
         row = by_id.get(tid)

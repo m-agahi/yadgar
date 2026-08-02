@@ -3283,7 +3283,7 @@ config knobs.
 - **tools:** `adr_add`, `adr_list`, `adr_get`
 - **migrations:** `yadgar/_shared/storage/alembic/versions/002_ledger_tables.py`
 - **bc:** —
-- **refs:** `yadgar/core/server/tools/adr.py`, `yadgar/core/server/tools/adr_ledger.py`
+- **refs:** `yadgar/core/server/tools/adr.py`
 - **wiring:** Car F. Existing adr_list/adr_get re-pointed from the markdown-index parser to the SQL `adr` table. adr_add uses D31 allocation.
 - **explanation:** Fixes the ADR index drift bug — the index write could lag the page write, so _next_adr_id had to scan committed page slugs as a second id source. With D31, the number and its row are one atomic write.
 

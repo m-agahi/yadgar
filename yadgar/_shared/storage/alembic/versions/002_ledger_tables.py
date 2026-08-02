@@ -8,10 +8,9 @@ Create Date: 2026-08-02 00:00:01
 Spine Car A — ledger tables for the relational set. Bodies stay as wiki
 pages in SurrealDB (D4, non-negotiable); these tables hold metadata only.
 
-Identity:
-- Surrogate PK: engine-native AUTO_INCREMENT, never touched by app code (D6a)
-- Semantic number: allocated via SELECT MAX(number)+1 FOR UPDATE scoped to
-  (project_id, origin) in the same transaction as the INSERT (D31)
+Identity: id is the AUTO_INCREMENT PK and also the semantic number.
+No separate number column — per-project numbering is not needed; global
+uniqueness across all projects is sufficient.
 
 Schema per §3 of task-table-refactor-2026-07-29.md.
 """
@@ -40,7 +39,6 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("project_id", sa.String(length=255), nullable=False),
         sa.Column("origin", sa.String(length=64), nullable=False),
-        sa.Column("number", sa.Integer(), nullable=False),
         sa.Column("owner_kind", sa.String(length=16), nullable=False, server_default="user"),
         sa.Column("owner_id", sa.String(length=255), nullable=True),
         sa.Column("reach", sa.String(length=16), nullable=False, server_default="project"),
@@ -61,7 +59,6 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("project_id", "origin", "number", name="task_pk_identity"),
     )
     op.create_index("task_project_status_idx", "task", ["project_id", "status"])
 
@@ -71,13 +68,12 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("project_id", sa.String(length=255), nullable=False),
         sa.Column("origin", sa.String(length=64), nullable=False),
-        sa.Column("number", sa.Integer(), nullable=False),
         sa.Column("owner_kind", sa.String(length=16), nullable=False, server_default="user"),
         sa.Column("owner_id", sa.String(length=255), nullable=True),
         sa.Column("reach", sa.String(length=16), nullable=False, server_default="project"),
         sa.Column("title", sa.String(length=200), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="open"),
-        sa.Column("body_slug", sa.String(length=255), nullable=False),  # D4 mandatory
+        sa.Column("body_slug", sa.String(length=255), nullable=True),  # D4: set after wiki write
         sa.Column("date", sa.String(length=32), nullable=True),
         sa.Column("subsystem", sa.String(length=128), nullable=True),  # D28
         sa.Column("tier", sa.String(length=32), nullable=True),  # D27
@@ -92,7 +88,6 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("project_id", "origin", "number", name="adr_pk_identity"),
     )
     op.create_index("adr_project_status_idx", "adr", ["project_id", "status"])
 
@@ -102,7 +97,6 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("project_id", sa.String(length=255), nullable=False, server_default="global"),
         sa.Column("origin", sa.String(length=64), nullable=False),
-        sa.Column("number", sa.Integer(), nullable=False),  # D3: assigned + ignored
         sa.Column("owner_kind", sa.String(length=16), nullable=False, server_default="user"),
         sa.Column("owner_id", sa.String(length=255), nullable=True),
         sa.Column("reach", sa.String(length=16), nullable=False, server_default="global"),
@@ -122,7 +116,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("project_id", "origin", "number", name="agent_prompt_pk_identity"),
+        sa.UniqueConstraint("title", name="agent_prompt_title_unique"),
     )
 
 

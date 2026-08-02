@@ -1,12 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""RED tests for Car D — task tools.
+"""Tests for Car D — task tools.
 
 Spine task-table-refactor-2026-07-29, Car D: NEW MCP tools task_list,
-task_get, task_write. They go through _LedgerMixin (D20) and use the
-D31 allocation primitive.
-
-These tests validate the tool surface and payload handling. Storage-layer
-correctness is validated separately in tests/_shared/test_ledger_d31_allocation.py.
+task_get, task_write. id is the AUTO_INCREMENT PK and also the semantic
+number — no separate allocation step.
 """
 
 from __future__ import annotations
@@ -22,15 +19,13 @@ def mock_storage():
     return s
 
 
-def test_task_write_creates_task_with_allocated_number(mock_storage) -> None:
-    """task_write allocates a number via D31 and creates the row."""
+def test_task_write_creates_task(mock_storage) -> None:
+    """task_write creates the row. id is the AUTO_INCREMENT number."""
     from yadgar.core.server.tools.task import task_write
 
-    mock_storage.allocate_task_number.return_value = 42
     mock_storage.create_task_row.return_value = {
-        "id": 1,
+        "id": 42,
         "project_id": "m-agahi/yadgar",
-        "number": 42,
         "title": "spine plan",
         "status": "pending",
         "state": "open",
@@ -46,11 +41,11 @@ def test_task_write_creates_task_with_allocated_number(mock_storage) -> None:
             active_form="writing spine plan",
         )
 
-    assert result["number"] == 42
-    mock_storage.allocate_task_number.assert_called_once()
+    assert result["id"] == 42
     mock_storage.create_task_row.assert_called_once()
     call_kwargs = mock_storage.create_task_row.call_args.kwargs
-    assert call_kwargs["number"] == 42
+    assert call_kwargs["title"] == "spine plan"
+    assert call_kwargs["project_id"] == "m-agahi/yadgar"
 
 
 def test_task_list_defaults_to_open_only(mock_storage) -> None:
@@ -58,7 +53,7 @@ def test_task_list_defaults_to_open_only(mock_storage) -> None:
     from yadgar.core.server.tools.task import task_list
 
     mock_storage.list_task_rows.return_value = [
-        {"id": 1, "number": 1, "status": "pending", "title": "open task"},
+        {"id": 1, "status": "pending", "title": "open task"},
     ]
 
     with patch(
@@ -68,7 +63,6 @@ def test_task_list_defaults_to_open_only(mock_storage) -> None:
         result = task_list(project_id="m-agahi/yadgar")
 
     call_kwargs = mock_storage.list_task_rows.call_args.kwargs
-    # D37: open-only is the default — the filter is passed automatically
     assert call_kwargs.get("status") == ["pending", "in_progress"]
     assert result == mock_storage.list_task_rows.return_value
 
@@ -94,9 +88,8 @@ def test_task_get_returns_single_row(mock_storage) -> None:
     from yadgar.core.server.tools.task import task_get
 
     mock_storage.get_task_row.return_value = {
-        "id": 1,
+        "id": 42,
         "project_id": "m-agahi/yadgar",
-        "number": 42,
         "title": "spine plan",
     }
 
@@ -109,7 +102,7 @@ def test_task_get_returns_single_row(mock_storage) -> None:
     mock_storage.get_task_row.assert_called_once_with(
         project_id="m-agahi/yadgar", number=42, directory=None
     )
-    assert result["number"] == 42
+    assert result["id"] == 42
 
 
 def test_task_write_rejects_empty_title(mock_storage) -> None:
@@ -124,7 +117,7 @@ def test_task_write_rejects_empty_title(mock_storage) -> None:
 
     assert result["ok"] is False
     assert "title" in result.get("error", "").lower()
-    mock_storage.allocate_task_number.assert_not_called()
+    mock_storage.create_task_row.assert_not_called()
 
 
 def test_task_write_rejects_oversized_title(mock_storage) -> None:
@@ -139,4 +132,4 @@ def test_task_write_rejects_oversized_title(mock_storage) -> None:
         result = task_write(project_id="m-agahi/yadgar", title=long_title)
 
     assert result["ok"] is False
-    mock_storage.allocate_task_number.assert_not_called()
+    mock_storage.create_task_row.assert_not_called()

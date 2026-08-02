@@ -33,7 +33,16 @@ def ledger_task_create(payload: dict) -> dict:
     """
     storage = _get_storage()
     try:
-        return storage.create_task(payload)
+        return storage.create_task_row(
+            project_id=payload["project_id"],
+            origin=payload.get("origin", "yadgar"),
+            title=payload["title"],
+            active_form=payload.get("active_form"),
+            state=payload.get("state", "open"),
+            plan_path=payload.get("plan_path"),
+            body_slug=payload.get("body_slug"),
+            directory=payload.get("directory"),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("ledger_task_create error title=%s: %s", payload.get("title"), exc)
         return {"ok": False, "error": str(exc)}
@@ -48,7 +57,18 @@ def ledger_adr_add(payload: dict) -> dict:
     """
     storage = _get_storage()
     try:
-        return storage.add_adr(payload)
+        return storage.create_adr_row(
+            project_id=payload["project_id"],
+            origin=payload.get("origin", "yadgar"),
+            title=payload["title"],
+            status=payload.get("status", "open"),
+            body_slug=payload.get("body_slug"),
+            date=payload.get("date"),
+            subsystem=payload.get("subsystem"),
+            tier=payload.get("tier"),
+            supersedes=payload.get("supersedes"),
+            superseded_by=payload.get("superseded_by"),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("ledger_adr_add error title=%s: %s", payload.get("title"), exc)
         return {"ok": False, "error": str(exc)}
@@ -63,7 +83,14 @@ def ledger_agent_prompt_save(payload: dict) -> dict:
     """
     storage = _get_storage()
     try:
-        return storage.save_agent_prompt(payload)
+        return storage.save_agent_prompt(
+            origin=payload.get("origin", "yadgar"),
+            title=payload["pattern"],
+            kind=payload.get("kind", "pattern"),
+            purpose=payload.get("purpose"),
+            body_slug=payload.get("body_slug"),
+            composes=payload.get("composes"),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "ledger_agent_prompt_save error pattern=%s: %s",

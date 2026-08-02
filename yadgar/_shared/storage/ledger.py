@@ -6,10 +6,9 @@ D30: scalar columns only, identity/authorization/batching expressed as
 capabilities. D20: every row access goes through this mixin; chokepoint
 enforced by scripts/check_ledger_chokepoint.py.
 
-D31: semantic number allocated by SELECT MAX(number)+1 ... FOR UPDATE inside
-the same transaction as the INSERT, scoped to (project_id, origin). This is
-the fix for §1.5's ADR index drift — the number and its row are one atomic
-write.
+id is the AUTO_INCREMENT PK and also the semantic number. No separate
+number column — per-project numbering is not needed; global uniqueness
+across all projects is sufficient. INSERT returns the generated id.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage.alembic_models import ADR as ADRModel
 from yadgar._shared.storage.alembic_models import AgentPrompt as AgentPromptModel
-from yadgar._shared.storage.alembic_models import Base, Task
+from yadgar._shared.storage.alembic_models import Base, RuntimeConfig, Task
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +34,8 @@ class _LedgerMixin:
     Mixes into StorageEngine alongside the SurrealDB _MigrationsMixin.
     Owns the MariaDB connection and exposes the four table roots.
 
-    D6a: surrogate AUTO_INCREMENT PKs — app code never reads or sets them.
-    D6b: semantic `number` column — allocated via _next_number() per D31.
-    D8: uniqueness key is (project_id, origin, number) for all three tables.
-    D31: SELECT MAX(number)+1 ... FOR UPDATE inside same transaction as INSERT.
+    id is the AUTO_INCREMENT PK and also the semantic number — no separate
+    number column. INSERT returns the generated id.
     """
 
     _mariadb_url: str = ""
@@ -46,7 +43,12 @@ class _LedgerMixin:
 
     @observe(tier="stage", metric="ledger._init_ledger")
     def _init_ledger(self, mariadb_url: str) -> None:
-        """Initialize the MariaDB engine. Called from StorageEngine.__init__."""
+        """Initialize the MariaDB engine and run Alembic migrations.
+
+        Called from StorageEngine.__init__. Gated on self._db_url being set
+        (server mode only, same as _run_migrations). Uses the same
+        fcntl.flock on STATE_DIR/.migration.lock.
+        """
         self._mariadb_url = mariadb_url
         if not mariadb_url:
             logger.debug("ledger: no mariadb_url — spine disabled")
@@ -59,29 +61,20 @@ class _LedgerMixin:
         )
         logger.info("ledger: MariaDB engine initialized")
 
-    @observe(tier="stage", metric="ledger._next_number")
-    def _next_number(self, table: str, project_id: str, origin: str) -> int:
-        """D31 — allocate the next semantic number for (project_id, origin, table).
+        if not getattr(self, "_db_url", None):
+            logger.debug("ledger: no _db_url — skipping Alembic (embedded mode)")
+            return
 
-        Uses SELECT MAX(number)+1 ... FOR UPDATE inside the transaction that
-        performs the INSERT. The caller MUST already hold a transaction;
-        this method does not begin one. Reaches into SQLAlchemy's connection
-        directly because the row lock must span SELECT + INSERT atomically.
+        try:
+            from alembic import command
+            from alembic.config import Config as AlembicConfig
 
-        For global-reach entities (agent_prompt), D31 says project_id is
-        the literal sentinel 'global' — the caller passes it explicitly.
-        """
-        if self._mariadb_engine is None:
-            raise RuntimeError("ledger: MariaDB engine not initialized")
-        with self._mariadb_engine.begin() as conn:
-            row = conn.execute(
-                text(
-                    f"SELECT COALESCE(MAX(number), 0) + 1 AS next_num FROM {table} "
-                    "WHERE project_id = :pid AND origin = :org FOR UPDATE"
-                ),
-                {"pid": project_id, "org": origin},
-            ).one()
-            return int(row.next_num)
+            alembic_cfg = AlembicConfig("alembic.ini")
+            alembic_cfg.set_main_option("sqlalchemy.url", mariadb_url)
+            command.upgrade(alembic_cfg, "head")
+            logger.info("ledger: Alembic migrations applied")
+        except Exception:
+            logger.exception("ledger: Alembic migration failed")
 
     @observe(tier="stage", metric="ledger._ledger_table")
     def _ledger_table(self, name: str) -> Any:
@@ -102,12 +95,52 @@ class _LedgerMixin:
         except Exception:
             return False
 
-    # ── Task CRUD (Car D) ─────────────────────────────────────────────────────
+    # ── Runtime config CRUD (task #0119) ──────────────────────────────────────
 
-    @observe(tier="stage", metric="ledger.allocate_task_number")
-    def allocate_task_number(self, *, project_id: str, origin: str) -> int:
-        """D31 — allocate the next semantic task number for (project_id, origin)."""
-        return self._next_number("task", project_id, origin)
+    @observe(tier="stage", metric="ledger.set_config_row")
+    def set_config_row(self, key: str, value: str, *, directory: str | None = None) -> dict:
+        """Upsert a runtime_config row in MariaDB."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            with session.begin():
+                row = (
+                    session.query(RuntimeConfig)
+                    .filter(
+                        RuntimeConfig.key == key,
+                        RuntimeConfig.directory == directory,
+                    )
+                    .one_or_none()
+                )
+                if row is not None:
+                    row.value = value
+                else:
+                    row = RuntimeConfig(key=key, directory=directory, value=value)
+                    session.add(row)
+                session.flush()
+                return {"key": row.key, "directory": row.directory, "value": row.value}
+
+    @observe(tier="stage", metric="ledger.delete_config_row")
+    def delete_config_row(self, key: str, *, directory: str | None = None) -> None:
+        """Delete a runtime_config row (idempotent)."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            with session.begin():
+                row = (
+                    session.query(RuntimeConfig)
+                    .filter(
+                        RuntimeConfig.key == key,
+                        RuntimeConfig.directory == directory,
+                    )
+                    .one_or_none()
+                )
+                if row is not None:
+                    session.delete(row)
+
+    # ── Task CRUD (Car D) ─────────────────────────────────────────────────────
 
     @observe(tier="stage", metric="ledger.create_task_row")
     def create_task_row(
@@ -115,7 +148,6 @@ class _LedgerMixin:
         *,
         project_id: str,
         origin: str,
-        number: int,
         title: str,
         active_form: str | None = None,
         state: str = "open",
@@ -123,7 +155,7 @@ class _LedgerMixin:
         body_slug: str | None = None,
         directory: str | None = None,
     ) -> dict:
-        """Create a task row. Caller must have allocated `number` via allocate_task_number."""
+        """Create a task row. id is the AUTO_INCREMENT number."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
         SessionLocal = sessionmaker(bind=self._mariadb_engine)
@@ -132,7 +164,6 @@ class _LedgerMixin:
                 row = Task(
                     project_id=project_id,
                     origin=origin,
-                    number=number,
                     title=title,
                     active_form=active_form,
                     state=state,
@@ -145,7 +176,6 @@ class _LedgerMixin:
                     "id": row.id,
                     "project_id": row.project_id,
                     "origin": row.origin,
-                    "number": row.number,
                     "title": row.title,
                     "status": row.status,
                     "state": row.state,
@@ -167,7 +197,6 @@ class _LedgerMixin:
 
         Use `list_task_rows_all_projects` for cross-project sweeps (Car K).
         """
-        """List task rows for a project. If status is given, filter to those statuses."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
         SessionLocal = sessionmaker(bind=self._mariadb_engine)
@@ -175,13 +204,12 @@ class _LedgerMixin:
             q = session.query(Task).filter(Task.project_id == project_id)
             if status:
                 q = q.filter(Task.status.in_(status))
-            rows = q.order_by(Task.number).all()
+            rows = q.order_by(Task.id).all()
             return [
                 {
                     "id": r.id,
                     "project_id": r.project_id,
                     "origin": r.origin,
-                    "number": r.number,
                     "title": r.title,
                     "status": r.status,
                     "state": r.state,
@@ -199,13 +227,12 @@ class _LedgerMixin:
             q = session.query(Task)
             if status:
                 q = q.filter(Task.status.in_(status))
-            rows = q.order_by(Task.project_id, Task.number).all()
+            rows = q.order_by(Task.project_id, Task.id).all()
             return [
                 {
                     "id": r.id,
                     "project_id": r.project_id,
                     "origin": r.origin,
-                    "number": r.number,
                     "title": r.title,
                     "status": r.status,
                     "state": r.state,
@@ -225,7 +252,7 @@ class _LedgerMixin:
             with session.begin():
                 row = (
                     session.query(Task)
-                    .filter(Task.project_id == project_id, Task.number == number)
+                    .filter(Task.project_id == project_id, Task.id == number)
                     .one_or_none()
                 )
                 if row is None:
@@ -241,14 +268,14 @@ class _LedgerMixin:
         number: int,
         directory: str | None = None,
     ) -> dict:
-        """Fetch one task row by (project_id, number). Returns {} if not found."""
+        """Fetch one task row by (project_id, id). Returns {} if not found."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
         SessionLocal = sessionmaker(bind=self._mariadb_engine)
         with SessionLocal() as session:
             row = (
                 session.query(Task)
-                .filter(Task.project_id == project_id, Task.number == number)
+                .filter(Task.project_id == project_id, Task.id == number)
                 .one_or_none()
             )
             if row is None:
@@ -257,7 +284,6 @@ class _LedgerMixin:
                 "id": row.id,
                 "project_id": row.project_id,
                 "origin": row.origin,
-                "number": row.number,
                 "title": row.title,
                 "status": row.status,
                 "state": row.state,
@@ -268,18 +294,12 @@ class _LedgerMixin:
 
     # ── ADR CRUD (Car F) ──────────────────────────────────────────────────────
 
-    @observe(tier="stage", metric="ledger.allocate_adr_number")
-    def allocate_adr_number(self, *, project_id: str, origin: str) -> int:
-        """D31 — allocate the next semantic ADR number for (project_id, origin)."""
-        return self._next_number("adr", project_id, origin)
-
     @observe(tier="stage", metric="ledger.create_adr_row")
     def create_adr_row(
         self,
         *,
         project_id: str,
         origin: str,
-        number: int,
         title: str,
         status: str = "open",
         body_slug: str | None = None,
@@ -289,7 +309,7 @@ class _LedgerMixin:
         supersedes: list[int] | None = None,
         superseded_by: list[int] | None = None,
     ) -> dict:
-        """Create an ADR row. Caller must have allocated `number` via allocate_adr_number."""
+        """Create an ADR row. id is the AUTO_INCREMENT number."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
         SessionLocal = sessionmaker(bind=self._mariadb_engine)
@@ -298,7 +318,6 @@ class _LedgerMixin:
                 row = ADRModel(
                     project_id=project_id,
                     origin=origin,
-                    number=number,
                     title=title,
                     status=status,
                     body_slug=body_slug,
@@ -314,7 +333,6 @@ class _LedgerMixin:
                     "id": row.id,
                     "project_id": row.project_id,
                     "origin": row.origin,
-                    "number": row.number,
                     "title": row.title,
                     "status": row.status,
                     "body_slug": row.body_slug,
@@ -340,13 +358,12 @@ class _LedgerMixin:
             q = session.query(ADRModel).filter(ADRModel.project_id == project_id)
             if status:
                 q = q.filter(ADRModel.status == status)
-            rows = q.order_by(ADRModel.number).offset(offset).limit(limit).all()
+            rows = q.order_by(ADRModel.id).offset(offset).limit(limit).all()
             return [
                 {
                     "id": r.id,
                     "project_id": r.project_id,
                     "origin": r.origin,
-                    "number": r.number,
                     "title": r.title,
                     "status": r.status,
                     "date": r.date,
@@ -365,14 +382,14 @@ class _LedgerMixin:
         project_id: str,
         number: int,
     ) -> dict:
-        """Fetch one ADR row by (project_id, number). Returns {} if not found."""
+        """Fetch one ADR row by (project_id, id). Returns {} if not found."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
         SessionLocal = sessionmaker(bind=self._mariadb_engine)
         with SessionLocal() as session:
             row = (
                 session.query(ADRModel)
-                .filter(ADRModel.project_id == project_id, ADRModel.number == number)
+                .filter(ADRModel.project_id == project_id, ADRModel.id == number)
                 .one_or_none()
             )
             if row is None:
@@ -381,7 +398,6 @@ class _LedgerMixin:
                 "id": row.id,
                 "project_id": row.project_id,
                 "origin": row.origin,
-                "number": row.number,
                 "title": row.title,
                 "status": row.status,
                 "body_slug": row.body_slug,
@@ -392,35 +408,65 @@ class _LedgerMixin:
                 "superseded_by": row.superseded_by,
             }
 
-    # ── Agent prompt CRUD (Car I) ─────────────────────────────────────────────
+    @observe(tier="stage", metric="ledger.set_adr_body_slug")
+    def set_adr_body_slug(self, *, project_id: str, number: int, body_slug: str) -> bool:
+        """Set body_slug on an existing ADR row. Returns True if row found."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            with session.begin():
+                row = (
+                    session.query(ADRModel)
+                    .filter(ADRModel.project_id == project_id, ADRModel.id == number)
+                    .one_or_none()
+                )
+                if row is None:
+                    return False
+                row.body_slug = body_slug
+                return True
 
-    @observe(tier="stage", metric="ledger.allocate_agent_prompt_number")
-    def allocate_agent_prompt_number(self, *, origin: str) -> int:
-        """D31 — allocate the next semantic agent_prompt number. project_id='global'."""
-        return self._next_number("agent_prompt", "global", origin)
+    # ── Agent prompt CRUD (Car I) ─────────────────────────────────────────────
 
     @observe(tier="stage", metric="ledger.save_agent_prompt")
     def save_agent_prompt(
         self,
         *,
         origin: str,
-        number: int,
         title: str,
         kind: str,
         purpose: str | None = None,
         body_slug: str | None = None,
         composes: list[str] | None = None,
     ) -> dict:
-        """Create/update an agent_prompt row. Caller allocates `number` via D31."""
+        """Create or update an agent_prompt row. Upsert by title (unique)."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
         SessionLocal = sessionmaker(bind=self._mariadb_engine)
         with SessionLocal() as session:
             with session.begin():
+                existing = (
+                    session.query(AgentPromptModel)
+                    .filter(AgentPromptModel.title == title)
+                    .one_or_none()
+                )
+                if existing is not None:
+                    existing.kind = kind
+                    existing.purpose = purpose
+                    existing.body_slug = body_slug
+                    existing.composes = composes
+                    session.flush()
+                    return {
+                        "id": existing.id,
+                        "pattern": title,
+                        "title": existing.title,
+                        "kind": existing.kind,
+                        "purpose": existing.purpose,
+                        "uses": existing.uses,
+                    }
                 row = AgentPromptModel(
                     project_id="global",
                     origin=origin,
-                    number=number,
                     title=title,
                     kind=kind,
                     purpose=purpose,
@@ -431,7 +477,7 @@ class _LedgerMixin:
                 session.flush()
                 return {
                     "id": row.id,
-                    "pattern": title,  # legacy callers used "pattern" as the key
+                    "pattern": title,
                     "title": row.title,
                     "kind": row.kind,
                     "purpose": row.purpose,
@@ -465,7 +511,7 @@ class _LedgerMixin:
 
     @observe(tier="stage", metric="ledger.get_agent_prompt_row")
     def get_agent_prompt_row(self, *, title: str) -> dict:
-        """Fetch one agent_prompt row by title (the pattern key). Returns {} if not found."""
+        """Fetch one agent_prompt row by title (unique). Returns {} if not found."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
         SessionLocal = sessionmaker(bind=self._mariadb_engine)

@@ -18,6 +18,9 @@ import sys
 from pathlib import Path
 
 LEDGER_TABLES = frozenset({"task", "adr", "agent_prompt", "runtime_config"})
+LEDGER_MODEL_NAMES = frozenset(
+    {"Task", "ADR", "ADRModel", "AgentPrompt", "AgentPromptModel", "RuntimeConfig"}
+)
 LEDGER_METHOD_NAMES = frozenset(
     {
         "_next_number",
@@ -74,6 +77,22 @@ def _uses_ledger_table(tree: ast.AST) -> list[tuple[int, str]]:
     return hits
 
 
+def _uses_ledger_orm(tree: ast.AST) -> list[tuple[int, str]]:
+    """Return (line, fragment) for ORM queries on ledger models.
+
+    Flags `session.query(Task)` / `session.query(ADRModel)` / etc. calls
+    that reference a ledger model class. These must go through _LedgerMixin.
+    """
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "query" and node.args:
+                first = node.args[0]
+                if isinstance(first, ast.Name) and first.id in LEDGER_MODEL_NAMES:
+                    hits.append((first.lineno, f"session.query({first.id})"))
+    return hits
+
+
 def _calls_mixin_method(tree: ast.AST) -> bool:
     """Return True if the file calls any _LedgerMixin method directly."""
     for node in ast.walk(tree):
@@ -121,6 +140,15 @@ def check_file(path: Path) -> list[str]:
         violations.append(
             f"{site}: direct SQL on ledger table "
             f"({fragment!r}) — must go through _LedgerMixin ({MIXIN_PATH})"
+        )
+    uses_orm = _uses_ledger_orm(tree)
+    for line, fragment in uses_orm:
+        site = f"{key}:{line}"
+        if site in ALLOWLIST:
+            continue
+        violations.append(
+            f"{site}: direct ORM query on ledger model "
+            f"({fragment}) — must go through _LedgerMixin ({MIXIN_PATH})"
         )
     return violations
 

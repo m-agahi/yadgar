@@ -19,6 +19,9 @@ contradict it.
 Not started; **no code exists yet** — there is no `task` table in `migrations.py` and no
 `_LedgerMixin`, despite ADR-0183 D30 naming the latter "the engine seam."
 
+**PR #32 review fixes:** see [§13 — PR #32 Fix Plan](#13-pr-32-fix-plan-2026-08-03) for the
+post-review corrections applied to the implementation.
+
 ---
 
 ## 0. TL;DR
@@ -666,3 +669,78 @@ Everything else in this plan is decided. These are not.
 Deferred to `split-store-engine-decision-2026-08-02.md` §8, not restated here: the cross-engine
 backup quiesce point, MariaDB's unverified idle RSS, `asyncmy`'s unverified license, and whether
 the FTS hypothesis is tested inside SurrealDB first.
+
+---
+
+## 13. PR #32 Fix Plan (2026-08-03)
+
+Based on review of `feat/spine-knob-mariadb` against this plan. All fixes applied.
+
+### Fix 1: Drop D31 allocation — use `id` as the number
+
+**Problem:** `_next_number()` does `SELECT MAX+1 FOR UPDATE` in its own transaction, then `create_*_row()` does INSERT in a separate transaction. The lock is released between them — race condition. The whole allocation mechanism is unnecessary.
+
+**Decision:** Drop the `number` column entirely. `id` (AUTO_INCREMENT PK) IS the number. INSERT returns the generated id. No allocation step, no race, no separate transaction. Per-project numbering is not needed — global uniqueness across all projects is sufficient.
+
+**Changes:**
+- `alembic_models.py` — removed `number` column from Task, ADR, AgentPrompt. `id` is the number.
+- `alembic/versions/002_ledger_tables.py` — removed `number` column, removed `(project_id, origin, number)` unique constraints.
+- `ledger.py` — deleted `_next_number()`, `allocate_task_number()`, `allocate_adr_number()`, `allocate_agent_prompt_number()`. Removed `number` parameter from `create_task_row()`, `create_adr_row()`, `save_agent_prompt()`. All queries use `id` instead of `number`.
+- `adr.py` — removed `allocate_adr_number()` call. Uses `row["id"]` as the number.
+- `task.py` — removed `allocate_task_number()` call.
+- `agent_prompts_ledger.py` — no change needed (doesn't allocate).
+- `backend/admin_exec/ledger.py` — removed `number` from payload handling.
+- Tests updated.
+
+### Fix 2: `adr_add` must write the wiki page body and store its slug
+
+**Problem:** `adr_add` only created the ledger row. No wiki page body was written to SurrealDB. `body_slug` was not set.
+
+**Decision:** Create row → get id → write wiki body via `_wiki_write_canonical()` with slug `{project_id}_adr-{id}` → set `body_slug` on the row via `set_adr_body_slug()`.
+
+**Changes:**
+- `adr.py` — added wiki body write + `set_adr_body_slug()` call.
+- `ledger.py` — added `set_adr_body_slug()` method.
+- `alembic_models.py` — `ADR.body_slug` changed to `nullable=True` (set after wiki write).
+- `alembic/versions/002_ledger_tables.py` — same.
+
+### Fix 3: Re-point callers of deleted `parse_index_rows` / `_build_index_content`
+
+**Problem:** `adr_index.py` deleted these functions but `adr_render.py:179` and `project.py:1880` still imported them.
+
+**Decision:** Re-point to ledger-backed queries.
+
+**Changes:**
+- `adr_render.py` — `_assemble_index_rows` re-pointed from `parse_index_rows` to `storage.list_adr_rows()`.
+- `project.py` — `_build_adr_log` re-pointed from `wiki_read` + `parse_index_rows` to `storage.list_adr_rows()`.
+- `project.py` — `_build_agent_prompt_toc` re-pointed from TOC page to `storage.list_agent_prompt_rows()`.
+
+### Fix 4: Delete `adr_ledger.py` — dead code
+
+**Problem:** `adr_ledger.py` was added as a parallel implementation but never imported in `tools/__init__.py`. Dead code.
+
+**Decision:** Deleted. Moved `_should_regenerate_rollup` into `adr.py`.
+
+### Fix 5: Fix backend method name mismatches
+
+**Problem:** `backend/admin_exec/ledger.py` called methods that didn't exist on `_LedgerMixin`.
+
+**Decision:** Renamed calls to match existing methods. Added `set_config_row`/`delete_config_row` to `_LedgerMixin`.
+
+### Fix 6: Auto-invoke Alembic migrations
+
+**Problem:** `_init_ledger()` never ran `alembic upgrade head`.
+
+**Decision:** Added Alembic migration invocation in `_init_ledger()`, gated on `self._db_url` being set (server mode only).
+
+### Fix 7: Extend chokepoint guard to catch ORM queries
+
+**Problem:** `check_ledger_chokepoint.py` only caught raw SQL, not ORM queries.
+
+**Decision:** Added ORM query detection for `session.query(Task/ADRModel/AgentPrompt)` calls outside `_LedgerMixin`.
+
+### Fix 8: `save_agent_prompt` — upsert, not insert-only
+
+**Problem:** `save_agent_prompt` always did `session.add()`. Called twice with same title → UNIQUE constraint violation.
+
+**Decision:** Query by title first. Update if found, insert if not. Added UNIQUE constraint on `agent_prompt.title`. Similarity gate for near-duplicate titles deferred (needs embed service integration).

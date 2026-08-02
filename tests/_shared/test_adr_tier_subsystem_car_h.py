@@ -47,7 +47,7 @@ def test_h_adr_list_defaults_to_binding_tier() -> None:
 
 def test_h_rollup_regen_on_write() -> None:
     """Rollup pages regenerate on write (D29)."""
-    from yadgar.core.server.tools.adr_ledger import _should_regenerate_rollup
+    from yadgar.core.server.tools.adr import _should_regenerate_rollup
 
     # Rollups regenerate on every ADR write by default (D29).
     assert _should_regenerate_rollup() is True

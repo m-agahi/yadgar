@@ -106,12 +106,9 @@ def task_write(
         return err
     storage = _get_storage()
     try:
-        # D31: allocate number inside the same transaction as the INSERT.
-        number = storage.allocate_task_number(project_id=project_id, origin="yadgar")
         return storage.create_task_row(
             project_id=project_id,
             origin="yadgar",
-            number=number,
             title=title,
             active_form=active_form,
             state=state,

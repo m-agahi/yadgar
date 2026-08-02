@@ -1877,20 +1877,14 @@ def _build_adr_log(resolved: str) -> dict:
     Lazy import avoids the adr.py ↔ project.py circular dependency at load time
     (adr imports project helpers at module level; both are loaded by call time).
     """
-    from yadgar.core.server.tools.adr import adr_index_slug, parse_index_rows  # noqa: PLC0415
-    from yadgar.core.server.tools.wiki import wiki_read  # noqa: PLC0415
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+    from yadgar.core.server.tools.adr import adr_index_slug  # noqa: PLC0415
 
     slug = adr_index_slug(resolved)
     try:
-        page = wiki_read(slug, directory=resolved)
-        if "error" in page or not page.get("content"):
-            latest_ids: list[str] = []
-        else:
-            rows = parse_index_rows(page["content"])
-            latest_ids = [
-                r["adr_id"]
-                for r in sorted(rows, key=lambda r: int(r["adr_id"].split("-")[1]), reverse=True)
-            ][:3]
+        storage = _get_storage()
+        rows = storage.list_adr_rows(project_id=resolved, limit=3)
+        latest_ids = [f"ADR-{r['id']:04d}" for r in rows]
     except Exception:
         latest_ids = []
     return {"slug": slug, "latest_ids": latest_ids}
@@ -1900,24 +1894,17 @@ def _build_adr_log(resolved: str) -> dict:
 def _build_agent_prompt_toc(storage) -> dict:
     """Build the agent_prompt_toc field for restore mode (S6 discovery surface).
 
-    GLOBAL (not per-project): reads the fixed slug `agent-prompt-toc` (saved with
-    directory_context='global'), so it surfaces in EVERY project's restore.
-    Returns a cheap metadata-only dict: slug + capped pattern list (no body) to
-    keep the restore token budget safe. Graceful on any error → empty patterns.
+    Spine Car I: re-pointed from TOC page to ledger. Reads agent_prompt rows
+    sorted by uses DESC (D40). Returns a cheap metadata-only dict: slug + capped
+    pattern list (no body) to keep the restore token budget safe.
     """
-    from yadgar.core.server.tools.agent_prompts import (  # noqa: PLC0415
-        _TOC_ROW_RE,
-        _TOC_SLUG,
-    )
-
     patterns: list[str] = []
     try:
-        page = storage.get_wiki_page_by_slug(_TOC_SLUG)
-        if page and page.get("content"):
-            patterns = [m.group("pattern") for m in _TOC_ROW_RE.finditer(page["content"])][:20]
+        rows = storage.list_agent_prompt_rows()
+        patterns = [r["title"] for r in rows][:20]
     except Exception:
         patterns = []
-    return {"slug": _TOC_SLUG, "patterns": patterns}
+    return {"slug": "agent-prompt-toc", "patterns": patterns}
 
 
 @observe(tier="stage", metric="tools.project._project_brief_restore")

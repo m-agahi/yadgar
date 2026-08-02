@@ -3,44 +3,14 @@
 #   Collapsing into **kwargs loses schema enforcement. PERMANENT — see .complexity-allowlist.json.
 """ADR (Architecture Decision Record) MCP tool registrations.
 
-Car 2 (ADR-consultable, v5.141.0) made ADRs recall-native. The write-only
-`<project>-adr-log` monolith is replaced by:
-
-  * one CANONICAL wiki page per ADR — slug `<project>-adr-NNNN`, page_type `adr`,
-    tags `["adr","decisions","adr-status:<status>","adr-<NNNN>"]`, category
-    `decision`. The stored wiki TITLE equals the slug string (so `_slugify(title)`
-    yields the deterministic `<project>-adr-NNNN` slug); the human-readable
-    `ADR-NNNN: <title>` is the content's H1.
-  * one thin CANONICAL index page — slug `<project>-adr-index`, tags
-    `["adr","adr-index"]` — a metadata table (ID source of truth for max+1).
-
-Both are written CANONICAL (branch IS NULL) via Car 0's server-side
-`_wiki_write_canonical` (flow 1: page_type in CANONICAL_PAGE_TYPES, `_internal`
-set server-side, `force=True` to bypass the drainer sim gate). Canonical pages
-resolve via §25 step-2 (dir + branch IS NULL) from ANY caller branch AND in
-non-git dirs — this closes the memory-531352 default-branch-pin bug (a non-git
-`aws-work-adr-log` was mis-pinned to a bogus "master" and unreadable).
+Spine Car F: adr_add, adr_list, adr_get re-pointed from the legacy markdown
+index parser to the SQL ledger table. id is the AUTO_INCREMENT PK and also
+the semantic number — no separate number column.
 
 Three tools:
-  adr_add  — assign next ID from the index, write the per-ADR page + index row,
-             flip supersede targets' status tag.
-  adr_get  — read `<project>-adr-NNNN` canonical (direct fetch, no branch footgun).
-  adr_list — read the index; optional status filter ("show all open").
-
-Decisions:
-- @_tool(power=True) — write-tool convention (adr_add); reads are also power to
-  match the module (adr_get/adr_list are cheap reads but sit next to the write).
-- The index create + first-row write use `wait=True` (read-your-writes) so a
-  subsequent adr_add reads the just-written index when assigning the next ID.
-  The per-ADR page write is async (deterministic slug, does not feed IDs).
-- Per-project threading.Lock (_adr_log_lock) wraps the full read-assign-write
-  sequence to prevent duplicate ID assignment under concurrent adr_add calls
-  (single-process assumption; see docs/plans/archive/adr-add-id-race-2026-07-13.md).
-
-Module layout (car/adr-split):
-  adr_index.py  — slug helpers, ID assignment, index parse/render
-  adr_render.py — body builder, tag helpers, supersede handling, write-path assembly
-  adr.py        — lock, write-ok predicate, MCP tool handlers + backward-compat re-exports
+  adr_add  — create ledger row + wiki page body (D4), return id as number
+  adr_get  — fetch one ADR by (project_id, number)
+  adr_list — list ADRs for a project, optional status filter
 """
 
 from __future__ import annotations
@@ -64,7 +34,6 @@ from yadgar.core.server.tools.adr_render import (
     _REQUIRED_FIELDS,
     _VALID_STATUSES,
     _adr_tags,
-    _assemble_index_rows,
     _build_adr_body,
     _canonical_adr_payload,
     _flip_superseded_target,
@@ -82,16 +51,12 @@ def _validate_subsystem(subsystem: object) -> str:
     return subsystem.strip()[:128]
 
 
+def _should_regenerate_rollup() -> bool:
+    """Car H D29: rollup pages regenerate on every ADR write."""
+    return True
+
+
 # ── Per-project ADR write lock ─────────────────────────────────────────────────
-# The core daemon is a single persistent process (streamable-http). When
-# YADGAR_OFFLOAD_TOOLS=1 the ThreadPoolExecutor can run two adr_add calls
-# concurrently: both would read the same index content, derive the same next ID,
-# and both write — producing duplicate IDs (lost-update).
-#
-# A threading.Lock keyed by resolved project root serializes the full
-# read-index → next-id → write-page → append-index-row sequence. The lock is
-# process-local; single-process single-backend topology is an explicit
-# assumption (see docs/plans/archive/adr-add-id-race-2026-07-13.md).
 _ADR_LOG_LOCKS: dict[str, threading.Lock] = {}
 _ADR_LOG_LOCKS_GUARD = threading.Lock()
 
@@ -105,8 +70,6 @@ def _adr_log_lock(resolved: str) -> threading.Lock:
         return _ADR_LOG_LOCKS[resolved]
 
 
-# A wait=True canonical write that is still QUEUED after wait_timeout WILL commit
-# on the next drain — it is NOT a failure. Only these terminal reasons are fatal.
 _FATAL_WRITE_REASONS: frozenset[str] = frozenset(
     {"duplicate_detected", "rejected", "content_too_large", "invalid_unicode_surrogates"}
 )
@@ -114,18 +77,11 @@ _FATAL_WRITE_REASONS: frozenset[str] = frozenset(
 
 @observe(exempt="trivial dict-field predicate; no I/O, no error branch worth spanning")
 def _write_ok(result: dict) -> bool:
-    """True when a canonical write committed OR is safely queued (converges).
-
-    ``_wiki_write_canonical(wait=True)`` returns ``stored:False, reason:wait_timeout,
-    queued:True`` when the drainer did not commit within the wait budget — the write
-    is still queued and WILL land. That is NOT a failure for the ADR path (next-ID
-    correctness comes from the committed page-slug scan, not the index). Only a hard
-    terminal rejection (duplicate_detected / blocked / oversize) is fatal.
-    """
+    """True when a canonical write committed OR is safely queued (converges)."""
     if result.get("stored") is not False:
         return True
     if result.get("queued"):
-        return True  # wait_timeout — converges on next drain
+        return True
     reason = str(result.get("reason", ""))
     if reason.startswith("blocked_by_policy"):
         return False
@@ -150,16 +106,11 @@ def adr_add(
     supersedes: str,
     directory: str | None = None,
 ) -> dict:
-    """Create a new ADR row — Car F ledger-backed.
+    """Create a new ADR — ledger row + wiki page body (D4).
 
-    Spine Car F replaces the legacy markdown-index path with a single
-    INSERT into the `adr` table. The number is allocated by D31
-    (SELECT MAX(number)+1 FOR UPDATE) inside the same transaction as
-    the INSERT — atomic end-to-end for the ledger row.
-
-    The wiki page body is still written to SurrealDB (D4). D35b
-    handles the one-shot seed from existing pages; new ADRs go through
-    this path which creates the ledger row + body page atomically.
+    Spine Car F: id is the AUTO_INCREMENT PK and also the semantic number.
+    The wiki page body is written to SurrealDB with slug
+    {project_id}_adr-{id} per D32.
 
     Args:
         project_id: Git-derived identity key (D13/D14).
@@ -171,8 +122,6 @@ def adr_add(
         supersedes: "none" or comma-separated ADR IDs.
         directory: Absolute project path (back-compat).
     """
-    # Strict-type validation: required fields MUST be non-empty strings.
-    # No str() coercion — rejects int/float/None with a clear error.
     for field, val in {
         "title": title,
         "status": status,
@@ -200,21 +149,50 @@ def adr_add(
 
     storage = _get_storage()
     try:
-        number = storage.allocate_adr_number(project_id=project_id, origin="yadgar")
         row = storage.create_adr_row(
             project_id=project_id,
             origin="yadgar",
-            number=number,
             title=title,
             status=status,
             date=date,
         )
+        number = row["id"]
+        adr_id = f"ADR-{number:04d}"
+        body_slug = f"{project_id.replace('/', '_')}_adr-{number}"
+
+        body = _build_adr_body(
+            adr_id=adr_id,
+            title=title,
+            status=status,
+            date=date,
+            context=context,
+            decision=decision,
+            rationale=rationale,
+            alternatives=alternatives,
+            consequences=consequences,
+            revisit_trigger=revisit_trigger,
+            supersedes=supersedes,
+        )
+        payload = _canonical_adr_payload(
+            slug=body_slug,
+            content=body,
+            category="decision",
+            tags=_adr_tags(status, adr_id),
+            directory=directory or "",
+        )
+        from yadgar.core.server.tools.wiki import _wiki_write_canonical
+
+        write_result = _wiki_write_canonical(payload, wait=True)
+        if not _write_ok(write_result):
+            return {"ok": False, "error": f"wiki body write failed: {write_result.get('reason')}"}
+
+        storage.set_adr_body_slug(project_id=project_id, number=number, body_slug=body_slug)
         return {
-            "adr_id": f"ADR-{number:04d}",
+            "adr_id": adr_id,
             "number": number,
             "status": row["status"],
             "title": row["title"],
-            "body_slug": row["body_slug"],
+            "body_slug": body_slug,
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("adr_add error title=%s: %s", title, exc)
@@ -229,19 +207,14 @@ def adr_get(
 ) -> dict:
     """Read a single ADR by formatted ID — Car F ledger-backed.
 
-    Spine Car F re-points this from the wiki-page read path to the
-    SQL ledger table. Return shape is pinned by
-    tests/core/test_adr_tools_car_f.py.
-
     Args:
         project_id: Git-derived identity key (D13/D14).
         adr_id: "ADR-NNNN" (case-insensitive; "adr-1" / "1" also accepted).
-        directory: Absolute project path (kept for back-compat; project_id is authoritative).
+        directory: Absolute project path (kept for back-compat).
 
     Returns:
         {adr_id, status, title, body_slug, ...} or {error: "..."} if absent.
     """
-    # Strict types: reject non-string adr_id rather than crash on re.search.
     if not isinstance(adr_id, str):
         return {"error": f"adr_id must be a string, got {type(adr_id).__name__}"}
     if not isinstance(project_id, str):
@@ -251,7 +224,6 @@ def adr_get(
     if not m:
         return {"error": f"invalid adr_id {adr_id!r}; expected 'ADR-NNNN'"}
     number_str = m.group(1)
-    # Strict types: reject non-integer numbers (no float truncation, no hex).
     if not number_str.isdigit():
         return {"error": f"invalid adr_id number {adr_id!r}; must be decimal integer"}
     number = int(number_str)
@@ -275,10 +247,6 @@ def adr_list(
 ) -> list[dict]:
     """List ADRs from the ledger — Car F re-pointed.
 
-    Spine Car F replaces the markdown-index parse with a SQL query
-    against the `adr` table. Return shape is pinned by
-    tests/core/test_adr_tools_car_f.py.
-
     Args:
         project_id: Git-derived identity key (D13/D14).
         status: Optional filter (open/accepted/superseded/rejected/deprecated).
@@ -293,40 +261,34 @@ def adr_list(
     rows = storage.list_adr_rows(project_id=project_id, status=status, limit=limit, offset=offset)
     adrs = []
     for r in rows:
-        r["adr_id"] = f"ADR-{r['number']:04d}"
+        r["adr_id"] = f"ADR-{r['id']:04d}"
         adrs.append(r)
     return adrs
 
 
 # ── Backward-compatible re-exports ────────────────────────────────────────────
-# All names that external callers / tests import from this module path remain
-# importable here. The split is an internal detail.
 __all__ = [
-    # MCP tools
     "adr_add",
     "adr_get",
     "adr_list",
-    # adr_index public surface
     "_ADR_HEADER_RE",
     "_ADR_PAGE_SLUG_RE",
     "adr_index_slug",
     "adr_log_slug",
     "adr_page_slug",
     "parse_adr_ids",
-    # adr_render public surface
     "_REQUIRED_FIELDS",
     "_VALID_STATUSES",
     "_adr_tags",
-    "_assemble_index_rows",
     "_build_adr_body",
     "_canonical_adr_payload",
     "_flip_superseded_target",
     "_parse_supersedes",
-    # adr.py-local
     "_ADR_LOG_LOCKS",
     "_ADR_LOG_LOCKS_GUARD",
     "_FATAL_WRITE_REASONS",
     "_adr_log_lock",
     "_write_ok",
     "_validate_subsystem",
+    "_should_regenerate_rollup",
 ]

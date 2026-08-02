@@ -457,16 +457,5 @@
     "rationale": "Spine Car A (task-table-refactor-2026-07-29): create_adr_row takes 12 params for the ADR schema (project_id, origin, number, title, status, body_slug, date, subsystem, tier, supersedes, superseded_by, plus the engine seam kwarg). D27/D28 fields (tier, subsystem, date) are the spine plan decisions and must be present at INSERT time. A AdrCreate dataclass would be the honest fix \u2014 deferred until telemetry shows which fields are actually exercised.",
     "added": "2026-08-02",
     "added_by": "spine-car-a"
-  },
-  {
-    "path": "yadgar/core/server/tools/adr_ledger.py",
-    "function": "adr_add",
-    "lineno": 116,
-    "metrics": {
-      "params": 12
-    },
-    "rationale": "Spine Car F (task-table-refactor-2026-07-29): adr_add takes 12 params for the full ADR schema (project_id, title, status, date, context, decision, rationale, alternatives, consequences, revisit_trigger, supersedes, directory). These are the canonical ADR body fields per the plan \u2014 collapsing into a dataclass would lose the MCP tool signature stability that live consumers (project.py:1889, adr_render.py:181, 7 test refs) depend on.",
-    "added": "2026-08-02",
-    "added_by": "spine-car-f"
   }
 ]

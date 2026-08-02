@@ -61,10 +61,9 @@ class RuntimeConfig(Base):
 class Task(Base):
     """Task ledger row.
 
-    identity: (project_id, origin, number) — D8
-    semantic number: allocated via MAX(number)+1 FOR UPDATE scoped to
-    (project_id, origin) — D31
-    surrogate PK: engine-native AUTO_INCREMENT, never touched by app code — D6a
+    id is the AUTO_INCREMENT PK and also the semantic number — no separate
+    number column. Per-project numbering is not needed; global uniqueness
+    across all projects is sufficient.
     """
 
     __tablename__ = "task"
@@ -76,7 +75,6 @@ class Task(Base):
     )
     project_id: Mapped[str] = mapped_column(String(255), nullable=False)
     origin: Mapped[str] = mapped_column(String(64), nullable=False)
-    number: Mapped[int] = mapped_column(Integer, nullable=False)
     owner_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
     owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reach: Mapped[str] = mapped_column(String(16), nullable=False, default="project")
@@ -93,10 +91,7 @@ class Task(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        UniqueConstraint("project_id", "origin", "number", name="task_pk_identity"),
-        Index("task_project_status_idx", "project_id", "status"),
-    )
+    __table_args__ = (Index("task_project_status_idx", "project_id", "status"),)
 
 
 class ADR(Base):
@@ -111,13 +106,12 @@ class ADR(Base):
     )
     project_id: Mapped[str] = mapped_column(String(255), nullable=False)
     origin: Mapped[str] = mapped_column(String(64), nullable=False)
-    number: Mapped[int] = mapped_column(Integer, nullable=False)
     owner_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
     owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reach: Mapped[str] = mapped_column(String(16), nullable=False, default="project")
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
-    body_slug: Mapped[str] = mapped_column(String(255), nullable=False)  # D4: mandatory
+    body_slug: Mapped[str] = mapped_column(String(255), nullable=True)  # D4: set after wiki write
     date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subsystem: Mapped[str | None] = mapped_column(String(128), nullable=True)  # D28
     tier: Mapped[str | None] = mapped_column(String(32), nullable=True)  # D27
@@ -128,10 +122,7 @@ class ADR(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        UniqueConstraint("project_id", "origin", "number", name="adr_pk_identity"),
-        Index("adr_project_status_idx", "project_id", "status"),
-    )
+    __table_args__ = (Index("adr_project_status_idx", "project_id", "status"),)
 
 
 class AgentPrompt(Base):
@@ -146,7 +137,6 @@ class AgentPrompt(Base):
     )
     project_id: Mapped[str] = mapped_column(String(255), nullable=False, default="global")
     origin: Mapped[str] = mapped_column(String(64), nullable=False)
-    number: Mapped[int] = mapped_column(Integer, nullable=False)  # D3: assigned + ignored
     owner_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
     owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reach: Mapped[str] = mapped_column(String(16), nullable=False, default="global")
@@ -162,6 +152,4 @@ class AgentPrompt(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        UniqueConstraint("project_id", "origin", "number", name="agent_prompt_pk_identity"),
-    )
+    __table_args__ = (UniqueConstraint("title", name="agent_prompt_title_unique"),)
