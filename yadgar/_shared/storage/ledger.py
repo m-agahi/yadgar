@@ -155,6 +155,10 @@ class _LedgerMixin:
         status: list[str] | None = None,
         directory: str | None = None,
     ) -> list[dict]:
+        """List task rows for a project. If status is given, filter to those statuses.
+
+        Use `list_task_rows_all_projects` for cross-project sweeps (Car K).
+        """
         """List task rows for a project. If status is given, filter to those statuses."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
@@ -176,6 +180,52 @@ class _LedgerMixin:
                 }
                 for r in rows
             ]
+
+    def list_task_rows_all_projects(
+        self, *, status: list[str] | None = None
+    ) -> list[dict]:
+        """Car K — list task rows across ALL projects (for the archive sweep)."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            q = session.query(Task)
+            if status:
+                q = q.filter(Task.status.in_(status))
+            rows = q.order_by(Task.project_id, Task.number).all()
+            return [
+                {
+                    "id": r.id,
+                    "project_id": r.project_id,
+                    "origin": r.origin,
+                    "number": r.number,
+                    "title": r.title,
+                    "status": r.status,
+                    "state": r.state,
+                    "modified_at": r.modified_at.isoformat() if r.modified_at else None,
+                    "body_slug": r.body_slug,
+                }
+                for r in rows
+            ]
+
+    def update_task_status(
+        self, *, project_id: str, number: int, status: str
+    ) -> bool:
+        """Car K — flip a task's status (used by the archive sweep)."""
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            with session.begin():
+                row = (
+                    session.query(Task)
+                    .filter(Task.project_id == project_id, Task.number == number)
+                    .one_or_none()
+                )
+                if row is None:
+                    return False
+                row.status = status
+                return True
 
     def get_task_row(
         self,
