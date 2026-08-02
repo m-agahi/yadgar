@@ -56,22 +56,17 @@ from yadgar.core.server._app import _tool
 logger = logging.getLogger(__name__)
 
 # Sub-module imports (split seams).
+# Car G — _build_index_content, _committed_page_max_id, _index_max_id,
+# _next_adr_id, _next_adr_id_from_index, _render_index_row, parse_index_rows,
+# _INDEX_HEADER, _INDEX_ROW_RE all deleted from adr_index.py (the SQL
+# ledger is the ID source of truth). The slug helpers below stay.
 from yadgar.core.server.tools.adr_index import (
     _ADR_HEADER_RE,
     _ADR_PAGE_SLUG_RE,
-    _INDEX_HEADER,
-    _INDEX_ROW_RE,
-    _build_index_content,
-    _committed_page_max_id,
-    _index_max_id,
-    _next_adr_id,
-    _next_adr_id_from_index,
-    _render_index_row,
     adr_index_slug,
     adr_log_slug,
     adr_page_slug,
     parse_adr_ids,
-    parse_index_rows,
 )
 from yadgar.core.server.tools.adr_render import (
     _REQUIRED_FIELDS,
