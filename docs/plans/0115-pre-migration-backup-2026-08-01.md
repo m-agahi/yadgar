@@ -4,7 +4,8 @@
 **Task:** #0115 (schema migrations run on backend boot with the data unprotected)
 **Status:** DRAFT — not started.
 **Target train:** `feat/v5.172-bug-train`.
-**Blocking dependency:** `0027c-core-startup-backend-retry.md` — both cars edit the
+**Blocking dependency:** `docs/plans/archive/0027c-core-startup-backend-retry-2026-08-01.md`
+(SHIPPED in the v5.172 train, `fe84e3ec`) — both cars edit the
 `StorageEngine.__init__` → `_init_schema()` seam (`yadgar/_shared/storage/__init__.py:292`).
 See §8.
 

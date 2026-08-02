@@ -27,7 +27,7 @@ engine set; ``/health/live`` goes green as soon as the HTTP server binds.
 
 Design + rejected alternatives:
 ``docs/plans/archive/runtime-agnostic-systemd-readiness-2026-08-01.md`` and
-``docs/plans/0110-converge-systemd-generators-2026-08-01.md``.
+``docs/plans/archive/0110-converge-systemd-generators-2026-08-01.md``.
 Cross-generator guards: ``yadgar/tests/scripts/test_runtime_readiness_cross_generator.py``
 and ``yadgar/tests/scripts/test_systemd_generator_convergence.py``.
 """
