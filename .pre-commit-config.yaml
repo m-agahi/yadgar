@@ -14,7 +14,14 @@ repos:
         name: Sync version to server.json
         language: system
         entry: python3 scripts/sync_version.py
-        files: ^pyproject\.toml$
+        # BOTH tracks trigger the sync. pyproject.toml is the CORE source;
+        # server.json's backend_version is the BACKEND source, and
+        # sync_version.py already propagates it to flake.nix, docker-compose.yml
+        # and yadgar/__init__.py. Gating on pyproject alone meant a backend bump
+        # never fired the propagation it needed, and check_versions.py VALIDATES
+        # the backend track rather than syncing it — so the commit just failed
+        # until all four sites were hand-edited to agree (v5.171.0).
+        files: ^(pyproject\.toml|server\.json)$
         pass_filenames: false
 
       - id: sync-uv-lock

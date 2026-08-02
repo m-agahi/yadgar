@@ -228,3 +228,41 @@ class TestDriftGuards:
             f"server.json backend_version={server_backend_version!r}.\n"
             "Fix: keep yadgar/__init__.py BACKEND_VERSION and server.json backend_version in sync."
         )
+
+
+# ---------------------------------------------------------------------------
+# v5.171.0 — the sync-version hook must fire on server.json, not only pyproject
+# ---------------------------------------------------------------------------
+
+
+def test_sync_version_hook_fires_on_server_json() -> None:
+    """`scripts/sync_version.py` already propagates ``backend_version``.
+
+    It reads ``backend_version`` from server.json (:45) and pushes it into
+    flake.nix (:82), docker-compose.yml (:111) and yadgar/__init__.py (:127).
+    But the pre-commit hook that runs it was gated ``files: ^pyproject\\.toml$``,
+    so editing the BACKEND track never triggered the sync — `check_versions.py`
+    VALIDATES the backend track rather than syncing it, so a backend bump failed
+    the commit repeatedly until all four sites were hand-edited to agree.
+
+    The core track never had this problem: bumping pyproject fires the hook,
+    which rewrites everything downstream. This asserts the backend track gets
+    the same treatment.
+    """
+    import yaml  # noqa: PLC0415
+
+    cfg = yaml.safe_load((REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    hooks = [
+        h for repo in cfg["repos"] for h in repo.get("hooks", []) if h.get("id") == "sync-version"
+    ]
+    assert len(hooks) == 1, "expected exactly one sync-version hook"
+
+    pattern = hooks[0]["files"]
+    assert re.search(pattern, "server.json"), (
+        f"sync-version hook files pattern {pattern!r} does not match 'server.json', "
+        "so a backend_version bump does not trigger the propagation that "
+        "scripts/sync_version.py already implements"
+    )
+    assert re.search(pattern, "pyproject.toml"), (
+        f"sync-version hook files pattern {pattern!r} must still match 'pyproject.toml'"
+    )
