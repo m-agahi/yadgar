@@ -18,10 +18,13 @@ monolithic trait is superseded by this split.
 
 The `yadgar-protocol` crate is the single source of truth for every wire
 type, every service trait, and every error code in the SaaS rewrite. It
-contains **15 traits** (Queue, Cache, RelationalStore, GraphStore, Embedder,
-Reranker, Authn, Authz, Encryptor, Meter, ObjectStore, Scheduler, Notifier,
-Logger, Tracer, Metrics) + **the request/response types for every inter-service call** + **the
-domain models** (Memory, Wiki, ADR, Task, AgentPrompt, Checkpoint, etc.) +
+contains **18 service traits + 1 testing trait** (Queue, Cache,
+RelationalStore, GraphStore, Embedder, Reranker, Authn, Authz, Encryptor,
+Meter, Scheduler, ObjectStore, Notifier, Logger, Tracer, Metrics,
+ConfigProvider, BackupTarget, Clock) + **the request/response types for every inter-service call** + **the
+domain models** (Memory, Wiki, ADR, Task, AgentPrompt, Checkpoint, etc.) + **the
+error envelope** + **the health/ready contracts** + **the versioning
+scheme** + **standard pagination, headers, time format, and idempotency**.
 **the error envelope** + **the health/ready contracts** + **the versioning
 scheme**.
 
@@ -155,8 +158,12 @@ crates/yadgar-protocol/
     error.rs            — ErrorEnvelope, ErrorKind, Result<T>
     health.rs           — HealthStatus, ReadyStatus, DependencyStatus
     identity.rs         — Identity, Tenant, User, Role, ApiKey, Session
+    headers.rs          — standard header name constants, HeaderMap helpers
+    pagination.rs       — PageRequest, PageResponse<T>, Cursor
+    time.rs             — Timestamp, Duration, TimeFormat, Clock trait
     auth.rs             — Authn trait, Authz trait, AuthzDecision
     crypto.rs           — Encryptor trait, EncryptedPayload, KeyId
+    config.rs           — ConfigProvider trait, ConfigKey, ConfigValue, ConfigScope
     queue.rs            — Queue trait, WorkItem, QueueFull, QueueTimeout
     cache.rs            — Cache trait, ScopeVersion, CacheKey
     storage.rs          — GraphStore trait, RelationalStore trait
@@ -164,6 +171,7 @@ crates/yadgar-protocol/
     meter.rs            — Meter trait, UsageEvent, Quota, QuotaCheck
     scheduler.rs        — Scheduler trait, JobDef, JobRun, JobStatus
     object_store.rs     — ObjectStore trait, SnapshotRef, ObjectMeta
+    backup.rs           — BackupTarget trait, SnapshotMeta, VerifyResult
     notifier.rs         — Notifier trait, Alert, AlertLevel
     logger.rs           — Logger trait, LogLevel, LogFields
     tracer.rs           — Tracer trait, SpanGuard, SpanStatus
@@ -178,12 +186,11 @@ crates/yadgar-protocol/
       checkpoint.rs     — Checkpoint, CheckpointId, Epoch
       block.rs          — MemoryBlock, BlockName, BlockScope
       bookmark.rs       — Bookmark, BookmarkPosition
-      config.rs         — ConfigKey, ConfigValue, ConfigScope
   Cargo.toml            — serde, serde_json, uuid, chrono, thiserror
                           NO backing-store SDKs (sqlx, valkey, candle, etc.)
 ```
 
-### 2.1 The 13 service traits
+### 2.1 The 18 service traits + 1 testing trait
 
 Each trait is `#[async_trait]` (or Rust's native async trait in 2026+),
 `Send + Sync`, with methods that return `Result<T, ErrorEnvelope>`.
@@ -351,6 +358,129 @@ pub trait Metrics: Send + Sync {
     fn counter(&self, name: &str, value: f64, tags: &[(&str, &str)]);
     fn gauge(&self, name: &str, value: f64, tags: &[(&str, &str)]);
     fn histogram(&self, name: &str, value: f64, tags: &[(&str, &str)]);
+}
+
+// config.rs — every service reads config knobs (rate limits, queue depths,
+// feature flags, model selection). Without a trait, each service hardcodes
+// its config access path and can't swap it.
+#[async_trait]
+pub trait ConfigProvider: Send + Sync {
+    async fn get(&self, key: &str, scope: &ConfigScope) -> Result<Option<ConfigValue>, ErrorEnvelope>;
+    async fn set(&self, key: &str, value: &ConfigValue, scope: &ConfigScope) -> Result<(), ErrorEnvelope>;
+    async fn list(&self, scope: &ConfigScope) -> Result<Vec<ConfigEntry>, ErrorEnvelope>;
+    async fn invalidate(&self, key: &str, scope: &ConfigScope) -> Result<(), ErrorEnvelope>;
+}
+
+pub struct ConfigScope {
+    pub tenant_id: Option<TenantId>,
+    pub directory: Option<String>,  // per-directory override
+}
+
+// backup.rs — each store (Surreal, Postgres, SQLite) provides its own
+// snapshot/restore/verify logic. The backup service iterates all registered
+// targets and never imports a store SDK.
+#[async_trait]
+pub trait BackupTarget: Send + Sync {
+    fn name(&self) -> &str;  // "surreal", "yadgar_iam", "yadgar_adr", etc.
+    async fn snapshot(&self, dest: &mut dyn AsyncWrite) -> Result<SnapshotMeta, ErrorEnvelope>;
+    async fn restore(&self, source: &mut dyn AsyncRead) -> Result<(), ErrorEnvelope>;
+    async fn verify(&self, meta: &SnapshotMeta) -> Result<VerifyResult, ErrorEnvelope>;
+}
+
+pub struct SnapshotMeta {
+    pub target_name: String,
+    pub quiesce_id: Uuid,
+    pub size_bytes: u64,
+    pub row_counts: Vec<(String, u64)>,  // (table, count)
+    pub checksum: String,
+    pub snapshot_at: Timestamp,          // protocol Timestamp, not chrono
+}
+
+pub struct VerifyResult {
+    pub valid: bool,
+    pub checks: Vec<VerifyCheck>,
+}
+
+pub struct VerifyCheck {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+// time.rs — standard time/date format + Clock trait for testability
+// ────────────────────────────────────────────────────────────────
+// THE RULE: every timestamp in every wire type is a `Timestamp` (alias for
+// chrono::DateTime<Utc>), serialized as ISO-8601 UTC with 'Z' suffix.
+// No local time. No timezone offsets. No epoch integers. No "2026-08-02"
+// date-only strings where a timestamp is expected. One format, everywhere.
+
+pub type Timestamp = chrono::DateTime<chrono::Utc>;
+pub type Duration = chrono::Duration;
+
+/// Serialize as ISO-8601 UTC: "2026-08-02T15:57:57.123456789Z"
+/// Deserialize from ISO-8601 UTC (reject local time / offsets).
+/// This is enforced via a serde::Serializer/Deserializer wrapper, not a
+/// convention — a service that sends "2026-08-02 15:57:57" (space instead
+/// of T, no Z) gets a deserialization error, not silent misinterpretation.
+
+// The Clock trait — for deterministic time in tests
+#[async_trait]
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Timestamp;
+}
+
+// Solo/SaaS production impl:
+pub struct SystemClock;
+impl Clock for SystemClock {
+    fn now(&self) -> Timestamp { chrono::Utc::now() }
+}
+
+// Test impl (in test crates, NOT in the protocol crate):
+// pub struct MockClock { frozen: AtomicRefCell<Timestamp> }
+// impl Clock for MockClock {
+//     fn now(&self) -> Timestamp { *self.frozen.borrow() }
+//     fn advance(&self, d: Duration) { *self.frozen.borrow_mut() += d }
+// }
+//
+// Every service that needs "what time is it?" takes Arc<dyn Clock> at the
+// composition root. Production wires SystemClock; tests wire MockClock.
+// No service calls chrono::Utc::now() directly — that's untestable.
+
+// headers.rs — standard header name constants
+// ───────────────────────────────────────────
+// Every inter-service call carries these headers. The gateway sets them
+// from the IAM-attested JWT; downstream services trust them. The constants
+// ensure no service typos "X-Tenant-ID" vs "X-Tenant-Id".
+
+pub const HEADER_TENANT_ID: &str = "X-Tenant-Id";
+pub const HEADER_USER_ID: &str = "X-User-Id";
+pub const HEADER_ROLES: &str = "X-Roles";
+pub const HEADER_REQUEST_ID: &str = "X-Request-Id";
+pub const HEADER_API_VERSION: &str = "X-Api-Version";
+pub const HEADER_IDEMPOTENCY_KEY: &str = "X-Idempotency-Key";
+pub const HEADER_RETRY_AFTER: &str = "Retry-After";
+pub const HEADER_QUEUE_DEPTH: &str = "X-Queue-Depth";
+pub const HEADER_TRACE_PARENT: &str = "traceparent";  // W3C Trace Context
+
+// pagination.rs — standard pagination for all list operations
+// ──────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageRequest {
+    pub limit: u16,              // max 100, default 25
+    pub offset: u32,             // offset-based (simple, fine for small datasets)
+    pub cursor: Option<String>,  // cursor-based (for large datasets, avoids COUNT)
+}
+
+impl Default for PageRequest {
+    fn default() -> Self { Self { limit: 25, offset: 0, cursor: None } }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageResponse<T: Serialize> {
+    pub items: Vec<T>,
+    pub total: Option<u32>,      // None if count is expensive (cursor mode)
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
 }
 ```
 
@@ -700,9 +830,10 @@ same as every other swappable thing.
 |---|---|---|---|
 | Wire domain models | ~15 (Memory, Wiki, ADR, Task, AgentPrompt, Checkpoint, Entity, Relationship, Block, Bookmark, Config, Tenant, User, Role, Identity) | ~800 | protocol |
 | Request/response types | ~20 (RecallRequest/Response, EmbedRequest/Response, WriteRequest/Response, etc.) | ~600 | protocol |
-| Traits | 15 (Queue, Cache, GraphStore, RelationalStore, Embedder, Reranker, Authn, Authz, Encryptor, Meter, Scheduler, ObjectStore, Notifier, Logger, Tracer, Metrics) | ~500 | protocol |
+| Traits | 18 + Clock (Queue, Cache, GraphStore, RelationalStore, Embedder, Reranker, Authn, Authz, Encryptor, Meter, Scheduler, ObjectStore, Notifier, Logger, Tracer, Metrics, ConfigProvider, BackupTarget, Clock) | ~700 | protocol |
 | Error + health + version + identity | 4 (ErrorEnvelope, HealthStatus, ApiVersion, Identity) | ~300 | protocol |
-| **Total protocol crate** | | **~2200 LOC** | |
+| Cross-cutting types | 4 (pagination, headers, time format, idempotency) | ~200 | protocol |
+| **Total protocol crate** | | **~2600 LOC** | |
 
 Storage types (the 37-field `MemoryRow`, the SQL schemas) live in the impl
 crates. Internal types (`ScoredCandidate`, `EngramSlot`) live in the service
@@ -792,6 +923,9 @@ pub struct WriteMemoryRequest {
     pub memory: MemoryWrite,
     pub tenant_id: TenantId,
     pub wait: bool,         // false = async (202), true = sync (200)
+    pub idempotency_key: Option<Uuid>,  // gateway sets this; write service
+                                         // checks Valkey for cached response
+                                         // → duplicate detected, return cached
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -918,6 +1052,13 @@ wire type, CI fails.
 | No queue/backpressure contract | `Queue` trait + `WorkItem` + `QueueFull` — the backpressure protocol |
 | No cache contract (two in-process LRUs) | `Cache` trait + `ScopeVersion` — the version-in-key invalidation contract |
 | No observability contract | `Logger` + `Tracer` + `Metrics` traits — three separate concerns, each independently swappable (solo: stderr; SaaS: Loki + Tempo + Prometheus) |
+| No config provider contract | `ConfigProvider` trait — solo: `LocalConfigProvider` (SQLite); SaaS: `RemoteConfigProvider` (HTTP to yadgar-config + read-through cache) |
+| No backup target contract | `BackupTarget` trait — each store impl provides its own snapshot/restore/verify; backup service iterates targets, never imports a store SDK |
+| No standard time format | `Timestamp` type (alias for `chrono::DateTime<Utc>`) + `Clock` trait; every wire timestamp is ISO-8601 UTC with 'Z' suffix, enforced by serde; no local time, no epoch ints, no date-only-where-timestamp-expected |
+| No pagination standard | `PageRequest` / `PageResponse<T>` — every list operation uses the same types (offset or cursor, `limit` max 100) |
+| No standard headers | `headers.rs` constants — `X-Tenant-Id`, `X-User-Id`, `X-Roles`, `X-Request-Id`, `X-Api-Version`, `X-Idempotency-Key`, `traceparent` (W3C) — no typos across services |
+| No idempotency for write retries | `idempotency_key: Option<Uuid>` on every write request type; write service checks Valkey for cached response → duplicate detected |
+| No mockable time for tests | `Clock` trait — production wires `SystemClock`, tests wire `MockClock`; no service calls `chrono::Utc::now()` directly |
 
 ---
 
@@ -1055,8 +1196,9 @@ that depends only on the protocol + its own impls.
 
 ## 11. The one-sentence summary
 
-**The protocol crate is the compiler-enforced contract: 15 traits, ~20
-domain models, one error envelope, one identity type, one versioning scheme
-— no SDKs, no impls, no frontier fields — and every service depends on it
-and nothing else, so swapping a backing store changes one line at the
+**The protocol crate is the compiler-enforced contract: 18 traits + Clock,
+~20 domain models, one error envelope, one identity type, one versioning
+scheme, one time format, standard pagination + headers + idempotency — no
+SDKs, no impls, no frontier fields — and every service depends on it and
+nothing else, so swapping a backing store changes one line at the
 composition root and zero lines in the service.**
