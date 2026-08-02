@@ -72,6 +72,12 @@ class WikiPolicy:
     merge: str
     """``"allow"`` or ``"never"``."""
 
+    mutability: str = "free"
+    """D26 — Car J: ``"free"`` (agents/tools can edit), ``"locked"`` (only
+    sanctioned server-side lifecycle transitions can touch), or
+    ``"derived"`` (regenerated on write, never edited directly).
+    """
+
     storage_scope: str = "project"
     """``"project"`` — stamped with caller's directory_context (default).
     ``"global"`` — directory_context is overridden to ``"global"`` at write time,
@@ -101,6 +107,7 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
         dir_scope="strict",
         merge="allow",
         storage_scope="global",
+        mutability="free",  # D26
     ),
     "task": WikiPolicy(
         gate_mode="identity",  # D21: structurally unique per project
@@ -108,6 +115,15 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
         dir_scope="strict",
         merge="allow",
         storage_scope="project",
+        mutability="free",  # D26
+    ),
+    "adr": WikiPolicy(
+        gate_mode="identity",
+        recall_disposition="include",
+        dir_scope="strict",
+        merge="never",
+        storage_scope="project",
+        mutability="locked",  # D26: decisions are not edited by agents
     ),
 }
 """Explicit overrides keyed by page_type string.

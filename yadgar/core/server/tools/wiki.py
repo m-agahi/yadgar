@@ -1705,3 +1705,51 @@ def wiki_replace_markdown_block(
             "slug": slug,
         },
     )
+
+
+@_tool(power=True)
+def wiki_set_mutability(
+    slug: str,
+    mutability: str,
+    reason: str,
+    directory: str | None = None,
+    branch_hint: str | None = None,
+) -> dict:
+    """Set a per-page mutability override. Power-gated; logged.
+
+    Args:
+        slug: Wiki page slug.
+        mutability: One of "free", "locked", "derived".
+        reason: Human-readable justification (required; logged).
+        directory: Absolute project path.
+        branch_hint: Branch context for §25 resolution.
+    """
+    from yadgar._shared.wiki.mutability import VALID_MUTABILITY
+
+    if mutability not in VALID_MUTABILITY:
+        return {
+            "ok": False,
+            "error": f"mutability must be one of {sorted(VALID_MUTABILITY)}, got {mutability!r}",
+        }
+    if not reason or not reason.strip():
+        return {"ok": False, "error": "reason is required for mutability override"}
+
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    if page_id is None:
+        return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+    logger.info(
+        "wiki_set_mutability slug=%s mutability=%s reason=%r",
+        slug,
+        mutability,
+        reason,
+    )
+
+    return _forward_admin(
+        "wiki_set_mutability",
+        {
+            "page_id": page_id,
+            "mutability": mutability,
+            "reason": reason,
+        },
+    )
