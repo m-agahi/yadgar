@@ -262,9 +262,15 @@ def test_every_backend_or_core_template_is_covered_by_this_suite():
     appear in it and would ship uncovered — the exact shape of the three
     historical misses. This scans the install tree instead of trusting the list.
     """
+    # task:0110 Stage D deleted yadgar.service.in and yadgar-backend.service.in;
+    # the systemd surface is rendered by yadgar/core/daemon/units.py and is still
+    # covered above, through BOTH the `generate_systemd.sh` arm (the wrapper, which
+    # now delegates to it) and the `install_systemd_service (Python)` arm. What is
+    # NOT auto-detected any more is a new PYTHON unit builder — this scan only sees
+    # the launchd template tree. Acceptable because there is one Python builder
+    # module and `build_units` is its single entry point, where a new container
+    # unit is visible in review; a template could be added in a corner unseen.
     covered = {
-        "yadgar.service.in",
-        "yadgar-backend.service.in",
         "com.openfantasy.yadgar.plist.in",
         "com.openfantasy.yadgar-backend.plist.in",
     }

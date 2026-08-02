@@ -914,16 +914,24 @@ def test_unit_directive_guard_scope_covers_both_unit_generators():
     """Both live unit generators must be in the file set, not just the Python one.
 
     task:0101's post-mortem was that a narrow guard scope only relocates the
-    recurrence. The ``.in`` templates render the units the shell installer
-    actually writes; leaving them out would guard half the install surface.
+    recurrence. The scope must reach wherever unit TEXT is produced, on every
+    surface the installer writes.
+
+    task:0110 Stage D moved the shell installer's unit text: ``.in`` templates are
+    gone and ``scripts/install/generate_systemd.sh`` renders nothing, so the two
+    template entries below are replaced by the Python builders that took their
+    place. This is a REPLACEMENT, not a narrowing — those modules are already
+    inside ``_runtime_guarded_sources``' ``yadgar/`` scope, and naming them here
+    is what stops a future edit from quietly dropping them the way this test
+    exists to prevent.
     """
     root = _repo_root()
     guarded = {str(p.relative_to(root)) for p in _unit_directive_guarded_files()}
 
     for required in (
         "yadgar/core/daemon/systemd.py",  # the task:0104 site
-        "scripts/install/yadgar.service.in",  # shell-installer core unit
-        "scripts/install/yadgar-backend.service.in",  # shell-installer backend unit
+        "yadgar/core/daemon/units.py",  # core + backend unit builders (task:0110)
+        "yadgar/core/daemon/maintenance_units.py",  # target/timers/path builders
         "scripts/install/launchd/com.openfantasy.yadgar.plist.in",  # macOS core
         "yadgar/core/systemd/yadgar.service",  # checked-in unit
     ):

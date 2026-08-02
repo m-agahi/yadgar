@@ -182,6 +182,42 @@ def _handle_install_service(daemon, dev: bool) -> None:
     print(f"  Status:  {result['status']}")
 
 
+def _handle_render_units(args) -> None:
+    """``yadgar daemon render-units`` — the renderer ``generate_systemd.sh`` delegates to.
+
+    task:0110 Stage D (ADR-0190). Handled BEFORE ``cmd_daemon`` builds a
+    ``YadgarDaemon``: rendering unit files needs no container runtime, and the
+    wrapper queries ``--print-schema`` on a host that may have neither, where a
+    daemon construction failure would be misread as "renderer too old".
+    """
+    from yadgar.core.daemon.unit_generate import generate_units  # noqa: PLC0415
+    from yadgar.core.daemon.unit_install import UNIT_SCHEMA_VERSION, InstallAborted  # noqa: PLC0415
+
+    if getattr(args, "print_schema", False):
+        print(UNIT_SCHEMA_VERSION)
+        return
+    try:
+        result = generate_units()
+    except InstallAborted as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+    print(f"Systemd units written to {result['output_dir']}/")
+    for name in result["units"]:
+        print(f"  {name}")
+    print("Maintenance entry points resolved at render time:")
+    print(f"  vacuum:        {result['vacuum_exec']}")
+    print(f"  nightly-cycle: {result['nightly_exec']}")
+    print(f"SurrealDB published on 127.0.0.1:{result['surreal_port']} (loopback only).")
+    print(f"Vacuum trigger dir: {result['trigger_dir']}")
+    if result["upgrade_env_seeded"]:
+        print(f"Seeded {result['upgrade_env']}")
+    else:
+        print(
+            f"Note: {result['upgrade_env']} already exists — not overwritten "
+            "(orchestrator manages it)."
+        )
+
+
 def _handle_test(args, daemon) -> None:
     extra = list(getattr(args, "extra_args", []) or [])
     if not any(a.startswith("-n") or a == "--dist" for a in extra):
@@ -220,15 +256,20 @@ def cmd_daemon(args):
 
     from yadgar.core.daemon import YadgarDaemon
 
+    sub = args.daemon_command
+    if sub == "render-units":
+        # Before the daemon is constructed — see _handle_render_units.
+        _handle_render_units(args)
+        return
+
     port = int(getattr(args, "port", None) or _os.environ.get("YADGAR_PORT", "8765"))
     dev = bool(getattr(args, "dev", False))
     daemon = YadgarDaemon(port=port, db_path=getattr(args, "db_path", None))
 
-    sub = args.daemon_command
     if sub is None:
         print(
             "Usage: yadgar daemon [--dev] <pull|build|push|start|stop|graceful-stop|restart|"
-            "status|configure-mcp|install-service|test|lint|shell>"
+            "status|configure-mcp|install-service|render-units|test|lint|shell>"
         )
         return
 
@@ -284,6 +325,15 @@ def register(subparsers):
     )
     daemon_sub.add_parser(
         "install-service", help="Install systemd user service for auto-start on login"
+    )
+    render_p = daemon_sub.add_parser(
+        "render-units",
+        help="Render all nine yadgar-setup systemd user units (called by generate_systemd.sh)",
+    )
+    render_p.add_argument(
+        "--print-schema",
+        action="store_true",
+        help="Print the rendered-unit schema version and exit (wrapper skew check)",
     )
     test_p = daemon_sub.add_parser("test", help="Run pytest inside the dev container (yadgar-dev)")
     test_p.add_argument("extra_args", nargs="*", help="Extra arguments forwarded to pytest")

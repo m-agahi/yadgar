@@ -4,9 +4,8 @@ import os
 import shutil
 import subprocess
 
-import pytest
-
 from yadgar.tests._paths import REPO_ROOT
+from yadgar.tests._unit_render import RENDERER_ENV
 
 DETECT_OS_SH = REPO_ROOT / "scripts" / "install" / "detect_os.sh"
 GENERATE_SYSTEMD_SH = REPO_ROOT / "scripts" / "install" / "generate_systemd.sh"
@@ -65,6 +64,7 @@ class TestV5_45NixOSGuard:
                 "YADGAR_SECRETS_ENV_FILE": str(tmp_path / "secrets.env"),
                 "YADGAR_BACKEND_IMAGE": "openfantasy/yadgar-backend:test",
                 "YADGAR_CORE_IMAGE": "openfantasy/yadgar:test",
+                **RENDERER_ENV,
             },
         )
         assert result.returncode != 0, (
@@ -95,13 +95,11 @@ class TestV5_45NixOSGuard:
             f"Error should mention nix flake or NixOS\ncombined: {combined[:400]}"
         )
 
-    def test_v5_45_yadgar_target_unit_wants_both_services(self):
-        """yadgar.target.in template must have Wants= covering both services (DP5)."""
-        target_template = REPO_ROOT / "scripts" / "install" / "yadgar.target.in"
-        if not target_template.exists():
-            pytest.skip("yadgar.target.in not yet created (Step 2)")
-        content = target_template.read_text()
-        # Per DP5 resolution canonical content:
-        assert "Wants=" in content or "Wants =" in content, "Must have Wants= directive"
-        assert "yadgar.service" in content
-        assert "yadgar-backend.service" in content
+    # DELETED task:0110 Stage D — test_v5_45_yadgar_target_unit_wants_both_services.
+    # It read `scripts/install/yadgar.target.in` and SKIPPED when absent, so once
+    # ADR-0190 deleted the template it would have gone permanently green-by-skip:
+    # a guard that reports success while checking nothing. Its property (DP5:
+    # yadgar.target Wants= both services) is covered on the RENDERED unit by
+    # test_v5_45_generate_systemd.py::test_v5_45_yadgar_target_lists_both_services,
+    # and byte-for-byte against the parity fixture by
+    # test_systemd_generator_convergence.py.

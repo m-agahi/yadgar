@@ -101,11 +101,18 @@ fi
 # `loginctl disable-linger $USER` themselves. Asymmetric on purpose, not an
 # oversight.
 
-# Every unit generate_systemd.sh renders. The list previously covered only the
+# Every unit the yadgar-setup arm installs. The list previously covered only the
 # three daemon units, so an uninstall left the timers and the trigger watcher
-# behind — still scheduled, now pointing at a removed install. Guarded by
-# test_uninstall_removes_every_systemd_unit_the_generator_renders, which derives
-# its expectation from an actual render rather than a second hardcoded list.
+# behind — still scheduled, now pointing at a removed install.
+#
+# task:0110 Stage D made yadgar.core.daemon.units.ALL_UNIT_NAMES the renderer's
+# unit set, and this array is now a DELIBERATE MIRROR of it, not a second source:
+# uninstall must work after the yadgar package is gone, so it cannot ask the CLI
+# what it installed. Both directions are pinned in
+# test_v5_169_maintenance_unit_parity.py —
+# test_uninstall_removes_every_systemd_unit_the_generator_renders (a unit this
+# array forgot) and test_uninstall_unit_array_is_exactly_the_renderers_unit_set
+# (an entry left here after a unit was dropped). Keep the ORDER identical too.
 SYSTEMD_UNITS=(
     yadgar.service
     yadgar-backend.service

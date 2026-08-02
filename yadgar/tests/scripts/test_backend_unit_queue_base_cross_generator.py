@@ -34,6 +34,7 @@ import pytest
 from yadgar.core.daemon import systemd as systemd_mod
 from yadgar.core.daemon.profiles import _prod_profile
 from yadgar.tests._paths import REPO_ROOT
+from yadgar.tests._unit_render import RENDERER_ENV
 
 BASH = shutil.which("bash") or "/run/current-system/sw/bin/bash"
 INSTALL_DIR = REPO_ROOT / "scripts" / "install"
@@ -67,6 +68,7 @@ def _render_systemd_backend(tmp_path: Path) -> str:
             "YADGAR_SECRETS_ENV_FILE": "/home/testuser/.yadgar/secrets.env",
             "YADGAR_BACKEND_IMAGE": "openfantasy/yadgar-backend:test",
             "YADGAR_CORE_IMAGE": "openfantasy/yadgar:test",
+            **RENDERER_ENV,
         }
     )
     result = subprocess.run(

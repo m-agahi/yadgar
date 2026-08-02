@@ -9,8 +9,17 @@ Tests:
 
 task:0105 added test_unit_template_docker_render_gates_readiness_without_notify —
 readiness is now runtime-conditional, so T37 asserts on the RENDERED podman unit
-and its docker counterpart asserts the Type=exec + health-gate shape. T38/T39/T40
-still read the source text: those directives are runtime-invariant.
+and its docker counterpart asserts the Type=exec + health-gate shape.
+
+task:0110 Stage D (ADR-0190) deleted ``scripts/install/yadgar.service.in``, which
+T38/T39/T40 read as source text. They are RETARGETED at the rendered unit, not
+deleted: each pins a property from the plan's §1.3 regression list
+(``${YADGAR_IMAGE_TAG}``, ``TimeoutStopSec=45``, the ``EnvironmentFile=-``
+prefix), and those are exactly what a port drops quietly. Asserting on the render
+is also strictly stronger than asserting on a template — a template can carry a
+directive the renderer never emits, and the substring checks below would have
+been satisfied by prose. The launchd assertion (T41) is untouched: that surface
+still has templates.
 """
 
 from __future__ import annotations
@@ -20,7 +29,6 @@ import re
 from yadgar.tests._paths import REPO_ROOT
 from yadgar.tests._unit_render import render_systemd
 
-SERVICE_IN = REPO_ROOT / "scripts" / "install" / "yadgar.service.in"
 PLIST_IN = REPO_ROOT / "scripts" / "install" / "launchd" / "com.openfantasy.yadgar.plist.in"
 
 
@@ -79,17 +87,17 @@ def test_unit_template_docker_render_gates_readiness_without_notify(tmp_path):
 # ── T38 ─────────────────────────────────────────────────────────────────────
 
 
-def test_unit_template_uses_image_tag_env_var():
+def test_unit_template_uses_image_tag_env_var(tmp_path):
     """T38: ExecStart must reference ${YADGAR_IMAGE_TAG}, not a literal version tag."""
-    content = SERVICE_IN.read_text()
+    content = _render(tmp_path, "podman")
     assert "${YADGAR_IMAGE_TAG}" in content, (
-        "yadgar.service.in ExecStart missing ${YADGAR_IMAGE_TAG}. "
+        "rendered yadgar.service ExecStart missing ${YADGAR_IMAGE_TAG}. "
         "Image tag must come from EnvironmentFile (~/.local/state/yadgar/upgrade.env) "
         "so routine upgrades rewrite only the env-file, not the unit."
     )
     # Must NOT contain a literal versioned image tag like docker.io/openfantasy/yadgar:5.x
     assert not re.search(r"docker\.io/openfantasy/yadgar:\d+\.", content), (
-        "yadgar.service.in ExecStart still contains a literal versioned image tag "
+        "rendered yadgar.service ExecStart still contains a literal versioned image tag "
         "(e.g. docker.io/openfantasy/yadgar:5.x). Replace with ${YADGAR_IMAGE_TAG}."
     )
 
@@ -97,11 +105,11 @@ def test_unit_template_uses_image_tag_env_var():
 # ── T39 ─────────────────────────────────────────────────────────────────────
 
 
-def test_unit_template_has_timeoutstopsec():
-    """T39: yadgar.service.in must have TimeoutStopSec=45."""
-    content = SERVICE_IN.read_text()
+def test_unit_template_has_timeoutstopsec(tmp_path):
+    """T39: the rendered yadgar.service must have TimeoutStopSec=45."""
+    content = _render(tmp_path, "podman")
     assert "TimeoutStopSec=45" in content, (
-        "yadgar.service.in missing TimeoutStopSec=45. "
+        "rendered yadgar.service missing TimeoutStopSec=45. "
         "45s graceful-stop window needed for queue flush + STOPPING=1 signal."
     )
 
@@ -109,11 +117,11 @@ def test_unit_template_has_timeoutstopsec():
 # ── T40 ─────────────────────────────────────────────────────────────────────
 
 
-def test_unit_template_environmentfile_optional_prefix():
+def test_unit_template_environmentfile_optional_prefix(tmp_path):
     """T40: EnvironmentFile must use leading '-' so missing file is non-fatal."""
-    content = SERVICE_IN.read_text()
+    content = _render(tmp_path, "podman")
     assert "EnvironmentFile=-%h/.local/state/yadgar/upgrade.env" in content, (
-        "yadgar.service.in missing EnvironmentFile=-%h/.local/state/yadgar/upgrade.env. "
+        "rendered yadgar.service missing EnvironmentFile=-%h/.local/state/yadgar/upgrade.env. "
         "Leading '-' required — first install has no env-file yet."
     )
 

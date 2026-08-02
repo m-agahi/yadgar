@@ -1,8 +1,9 @@
-"""The unit BUILDERS — one renderer, driven by an explicit input record (ADR-0190).
+"""The unit BUILDERS — driven by an explicit input record (ADR-0190).
 
 task:0110. ``yadgar/core/daemon/systemd.py`` used to hold two f-string unit
-templates; ``scripts/install/*.in`` holds nine ``sed`` templates for the same
-job. D3 of the plan says the converged renderer takes a **mode, not a fork**:
+templates; ``scripts/install/*.in`` held nine ``sed`` templates for the same
+job (deleted in Stage D). D3 of the plan says the converged renderer takes a
+**mode, not a fork**:
 one set of builders, and everything the two install surfaces genuinely disagree
 about arrives as a field on :class:`UnitSpec`.
 
@@ -15,7 +16,8 @@ port, ``ExecReload``, ``--stop-timeout``, ``--security-opt label=disable``,
 ``TimeoutStopSec`` and the trigger-dir ``ExecStartPre``). Stage C added the seven
 units the Python side never had — they live in
 ``yadgar/core/daemon/maintenance_units.py`` and are composed in here by
-:func:`build_units`, so all nine now come out of one renderer.
+:func:`build_units`, so all nine now come out of this module. ``flake.nix``
+remains a separate, unconverged renderer — see :data:`ALL_UNIT_NAMES`.
 
 Comments are emitted, not dropped: the parity baseline is the ``sed`` render of
 the templates, and those carry ~60 comment lines per unit explaining WHY each
@@ -32,7 +34,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from yadgar._shared.observability.observe import observe
-from yadgar.core.daemon.maintenance_units import HostExecs, build_maintenance_units
+from yadgar.core.daemon.maintenance_units import (
+    MAINTENANCE_UNIT_NAMES,
+    HostExecs,
+    build_maintenance_units,
+)
 from yadgar.core.daemon.unit_docs import (
     BACKEND_SERVICE_DOC,
     BACKEND_UNIT_DOC,
@@ -46,12 +52,32 @@ from yadgar.core.daemon.unit_docs import (
 from yadgar.core.daemon.unit_model import Comment, Directive, Entry, Section, UnitFile, comments
 
 __all__ = [
+    "ALL_UNIT_NAMES",
+    "SERVICE_UNIT_NAMES",
     "UnitSpec",
     "build_backend_unit",
     "build_core_unit",
     "build_units",
     "setup_unit_spec",
 ]
+
+# The two units BOTH arms render. `daemon install-service` renders only these.
+SERVICE_UNIT_NAMES = ("yadgar.service", "yadgar-backend.service")
+
+# The unit set the `yadgar-setup` arm installs, DERIVED rather than spelled.
+# task:0110 Stage D: `generate_systemd.sh` used to carry its own `UNITS` array
+# (`:214`) and two test modules carried a third and fourth transcription of the
+# same nine names. Those three are gone — they import this. `uninstall.sh:109`
+# keeps a literal shell array on purpose (uninstall must work after the package
+# is removed, so it cannot query the CLI); that mirror is pinned against this
+# tuple by test_v5_169_maintenance_unit_parity.py.
+#
+# NOT a single source of truth for the repo: `flake.nix` builds its units
+# declaratively at nix eval time and enumerates its own set — a DIFFERENT set,
+# eight units with per-unit `Install.WantedBy` and no `yadgar.target` at all.
+# Nothing here can derive that; the five *_cross_generator.py suites are what
+# keep it honest.
+ALL_UNIT_NAMES = SERVICE_UNIT_NAMES + MAINTENANCE_UNIT_NAMES
 
 
 @dataclass(frozen=True)
