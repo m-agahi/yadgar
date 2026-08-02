@@ -3264,3 +3264,47 @@ config knobs.
 - **refs:** `yadgar/core/install/clients/hooks_render.py::_emit_cursor_hooks`, `yadgar/core/install/clients/hooks_render.py::_cursor_hooks_path`, `yadgar/core/install/clients/hooks_render.py::_CURSOR_EVENT_MAP`, `yadgar/core/install/clients/hooks_render.py::_YADGAR_HOOK_MARKER`, `yadgar/core/install/clients/hooks_render.py::_merge_cursor_hook_entry`, `yadgar/core/install/clients/hooks_render.py::register_hooks`
 - **wiring:** The second per-client hook emitter added to the `_EMITTERS` dispatch table (Car B of the multi-client harness hooks train, 2026-07-20). The per-kind emitter in `hooks_render._emit_cursor_hooks` writes `.cursor/hooks.json` (project scope) or `~/.cursor/hooks.json` (global scope) with the schema `{version: 1, hooks: {<event>: [{...}]}}`. Cursor runs EVERY command registered for an event, so the writer uses `_merge_cursor_hook_entry` to APPEND yadgar's entry alongside any user-installed ones (NOT clobber). Foreign-preserve is real here (unlike opencode's plugin-file single-artifact model): the writer keeps the user's version + all non-yadgar event entries, and replaces yadgar's entry in place on re-run (matched by the `yadgar hook ` marker in the command). Coverage: only 2 of Cursor's ~18 hook types — `postToolUse` (→ `yadgar hook post-tool-capture`) and `preCompact` (→ `yadgar hook pre-compact-drain`). The remaining 16 (including `sessionStart`, `beforeSubmitPrompt`, `stop`) are NOT wired because Cursor's inject path (`additional_context` on `sessionStart`/`postToolUse` + `beforeSubmitPrompt` output) is broken upstream (accepted+merged but never surfaced to the model — see ADR-0143 re-verification notes) and Cursor's `stop` is observation-only (`followup_message` auto-continues, does not block). Wiring these would fake a non-functional hook (plan R7 forbids). The Car 1 cursor hook re-audit confirmed: NO inject, NO blocking stop, just the 2 fire-and-POST hooks.
 - **explanation:** The cursor port deliberately ships a SMALL surface (2 events) because the larger surface isn't actually functional. Per plan R7, never faking a hook is the load-bearing rule. The entry catalogues the cursor-specific constraint (additional_context bug + observation-only stop) so a future maintainer reading the registry doesn't think "0/5 = bug, why isn't cursor wired up" — it's 2/2-FUNCTIONAL = 0/18-claimed = honest, and the missing 16 are explicitly out-of-scope due to upstream bugs, not yadgar's work. Foreign-preserve via the marker-detect + append pattern is the load-bearing piece (vs claude_code's settings.json which is foreign-preserve-by-format) — Cursor's hooks.json requires explicit per-entry handling because the format doesn't auto-dedupe.
+
+### CAP-SPINE-001 — task_list / task_get / task_write MCP tools
+- **status:** LIVE
+- **category:** infra
+- **settings:** `MARIADB_URL`, `DB_URL`
+- **tools:** `task_list`, `task_get`, `task_write`
+- **migrations:** `yadgar/_shared/storage/alembic/versions/002_ledger_tables.py`
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/task.py`, `yadgar/_shared/storage/ledger.py`
+- **wiring:** Car D of task-table-refactor-2026-07-29. Three NEW MCP tools backed by the `task` SQL ledger table. task_write allocates a semantic number via D31 (SELECT MAX(number)+1 FOR UPDATE inside the same transaction as INSERT) and inserts the row. task_list defaults to open-only (status IN pending, in_progress per D37). task_get fetches by (project_id, number).
+- **explanation:** Replaces the markdown-based task-list page that was read-whole on every stop-hook checkpoint.
+
+### CAP-SPINE-002 — adr_add / adr_list / adr_get MCP tools (ledger-backed)
+- **status:** LIVE
+- **category:** infra
+- **settings:** `MARIADB_URL`, `DB_URL`
+- **tools:** `adr_add`, `adr_list`, `adr_get`
+- **migrations:** `yadgar/_shared/storage/alembic/versions/002_ledger_tables.py`
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/adr.py`, `yadgar/core/server/tools/adr_ledger.py`
+- **wiring:** Car F. Existing adr_list/adr_get re-pointed from the markdown-index parser to the SQL `adr` table. adr_add uses D31 allocation.
+- **explanation:** Fixes the ADR index drift bug — the index write could lag the page write, so _next_adr_id had to scan committed page slugs as a second id source. With D31, the number and its row are one atomic write.
+
+### CAP-SPINE-003 — agent_prompt_list / agent_prompt_get MCP tools
+- **status:** LIVE
+- **category:** infra
+- **settings:** `MARIADB_URL`, `DB_URL`
+- **tools:** `agent_prompt_list`, `agent_prompt_get`
+- **migrations:** `yadgar/_shared/storage/alembic/versions/002_ledger_tables.py`
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/agent_prompts_ledger.py`
+- **wiring:** Car I. NEW tools backed by the `agent_prompt` SQL table. agent_prompt_list returns rows sorted by uses descending (D40).
+- **explanation:** Deletes the legacy agent-prompt TOC machinery and the %10 throttle.
+
+### CAP-SPINE-004 — wiki_set_mutability MCP tool
+- **status:** LIVE
+- **category:** infra
+- **settings:** —
+- **tools:** `wiki_set_mutability`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/wiki.py`, `yadgar/_shared/wiki/mutability.py`
+- **wiring:** Car J. Power-gated, logged tool that sets a per-page mutability override.
+- **explanation:** Adds the WikiPolicy mutability field and per-page override mechanism.

@@ -141,6 +141,12 @@ ignore = [
 "yadgar/_shared/retrieval/_reranking_heuristic.py" = ["C901"]
 "yadgar/_shared/retrieval/fusion.py" = ["C901"]
 "yadgar/_shared/retrieval/query_analysis.py" = ["C901"]
+# spine Car A (task-table-refactor-2026-07-29): the three ledger write
+# functions match the table schema directly. Collapsing into dataclasses
+# would break the MCP tool signature stability that 7+ test refs and
+# live consumers depend on. Documented in .complexity-allowlist.json.
+"yadgar/_shared/storage/ledger.py" = ["PLR0913"]
+"yadgar/core/server/tools/adr_ledger.py" = ["PLR0913"]
 "yadgar/_shared/retrieval/reranking.py" = ["C901", "PLR0913"]
 "yadgar/_shared/retrieval/scoring.py" = ["C901"]
 "yadgar/_shared/rules_engine/rules_engine.py" = ["C901"]

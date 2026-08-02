@@ -55,6 +55,8 @@ class YamlConfigSource(PydanticBaseSettingsSource):
 class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8765
+    DB_URL: str = "http://127.0.0.1:8000"  # SurrealDB HTTP endpoint
+    MARIADB_URL: str = ""  # spine Car A — MariaDB for the relational set (runtime_config + task + adr + agent_prompt)
     DECAY_FACTOR: float = 0.9995  # ~34% heat after 3 months without access
     COLD_THRESHOLD: float = 0.02  # Archive memories below this heat (~6 months of no access)
     ACTION_STREAM_COLD_THRESHOLD: float = (
