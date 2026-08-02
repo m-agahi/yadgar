@@ -313,3 +313,85 @@ after `OVERWRITE` with identical params, and 5 after `OVERWRITE` changing `BATCH
 build-blocking risk that re-tuning the knob could reset the counter and destroy D7's permanence
 invariant. That risk does not exist. The mitigation it proposed — preserving position via `START` —
 would itself have been yadgar managing the index, which D6 now forbids outright.)*
+
+---
+
+## 11. Field note (2026-08-02) — `state` is orthogonal to `status`, and D7 collides with practice
+
+Added from live use of the markdown task list, for refinement before Car A. Two
+things surfaced that the current schema does not express.
+
+### 11.1 `status` cannot distinguish "planned" from "shipped"
+
+The user asked why tasks 0115, 0116, 0117 and 0122 were still open when they
+"looked tackled". All four were legitimately open — but for four *different*
+reasons, and `status: pending` flattened them into one:
+
+| task | why it was open | what `pending` implied |
+|---|---|---|
+| 0115 | 693-line plan doc written, **no code** | indistinguishable from untouched |
+| 0116 | 924-line plan doc written, **no code**, deliberately not a train car | same |
+| 0117 | spike, **never started** | same |
+| 0122 | needs a **decision**, nothing to build until one is made | same |
+
+The confusion was reasonable: substantial artifacts existed for two of them. A
+`pending → in_progress → completed` axis measures *motion*; it says nothing about
+*what kind of thing is missing*. The interim fix was a subject prefix —
+`[PLANNED]` design doc but no code · `[SPIKE]` measurement not started ·
+`[DECIDE]` blocked on a decision · `[VERIFY]` built but unproven live — because
+the harness renders only `[status] [id] subject` in its injected list, so
+metadata alone is invisible at restore.
+
+**For the spine:** a second dimension, e.g. `state ∈ {open, planned, spike,
+needs_decision, built_unverified}`, orthogonal to `status`. Two properties matter
+more than the exact enum:
+
+- **`built_unverified` is not `completed`.** Car 0111's acceptance case (backend
+  stopped, core stays `active` with MainPID unchanged) cannot be proven by any
+  artifact in this repo — it needs a fresh VM. Marking it `completed` on merge
+  would assert something unverified; leaving it `in_progress` implies work
+  remains. Neither is true. Same shape as tasks 0022/0023 (hooks built, never
+  live-tested) and 0063 (verifiable only in a browser).
+- **`planned` should carry its artifact.** A `plan_path` column beats prose: the
+  question "is there a design for this?" is then answerable by query rather than
+  by reading the description. Note the metadata already written on these rows
+  uses exactly `{"state": ..., "plan": ...}`.
+
+### 11.2 D7 (archive, never hard-delete) collides with the token cost of the page
+
+D7's rationale is sound for identifiers: external references — plan filenames, PR
+titles, `(#93)` in commit messages — must not silently retarget.
+
+But on 2026-08-02 the markdown page hit **114 KB**, read *in full* at every
+session start, and the user's instruction was explicit: delete completed tasks
+outright to cut restore cost. Compaction to ~15 KB came from deleting 15 closed
+rows plus 9 shipped cars, and reducing survivors to pointers. That is a **~87%
+cut on a per-session tax** — task 0080's own subject.
+
+These are not actually in conflict once separated:
+
+- **Identifier permanence** (D6/D7's real concern) requires that a number is
+  never *reused*. A sequence guarantees that whether or not the row survives.
+- **Row retention** is a storage/read cost question, and a table answers it far
+  better than markdown: closed rows can stay in the table at zero restore cost,
+  because the reader `SELECT`s open rows instead of parsing the whole document.
+
+**So the spine mostly dissolves this problem** — which is an argument *for* Car A,
+worth stating in §8 (Expected impact) rather than leaving implicit. The residual
+question for refinement: does an *archived* row keep its body wiki page (D4), or
+does the page get deleted while the row persists? Today's compaction deleted both.
+If bodies persist for every closed task forever, the wiki grows unbounded in a
+corpus that `recall` already has to downweight (D22).
+
+### 11.3 Open questions for Car A
+
+1. Is `state` a column, or is it derivable (e.g. `plan_path IS NOT NULL AND
+   merged_at IS NULL` → planned)? Derivable is cheaper but cannot express
+   `built_unverified`.
+2. Does `task_list` default to open-only? The markdown page had no such option —
+   every reader paid for every row, which is the whole of §11.2.
+3. On archive, is the body page deleted, or retained and excluded from recall?
+4. Should `blocked_by` become a real column? It is currently prose, and the
+   0095 → {0047, 0119, 0035} chain is load-bearing: 0095 must be decided before
+   the spine stamps `project_id` or 0035 seeds ~200 config rows, because
+   `runtime_config` is empty *today* and the re-key is free only until then.
