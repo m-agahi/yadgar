@@ -25,7 +25,8 @@ the benchmark for reader+judge) calls this service, never the model directly.
 needs its own backpressure (token-bucket rate limiting per tenant per
 model), its own circuit breaker (API provider down → degrade or fail), its
 own cost accounting (metering records token usage), and its own model
-selection logic (free tier → local Ollama; pro tier → Claude Haiku;
+selection logic (free tier → local Ollama; pro tier → a reasoning model
+with good speed (e.g. MiniMax-M3, DeepSeek V4, GLM-5.2);
 enterprise → Claude Sonnet). A library in each service would duplicate all
 of this; a service centralizes it.
 
@@ -325,7 +326,7 @@ gateway → yadgar-llm /v1/generate
   → LlmRequest { tenant_id, options: { model: None } }
   → yadgar-llm: looks up tenant's configured model from yadgar-config
     → free tier: "ollama/llama3-8b" (local, no cost)
-    → pro tier: "anthropic/claude-haiku-4" (cheap, fast)
+    → pro tier: "minimax/minimax-m3" (good reasoning, $0.14/task, 89 tok/s)
     → enterprise tier: "anthropic/claude-sonnet-4-6" (best quality)
   → routes to the provider impl for that model
   → records token usage in yadgar-metering
@@ -385,7 +386,9 @@ LLM service links the impl(s) at the composition root.
 
 ```
 crates/
-  yadgar-llm-anthropic/  — AnthropicLlm (Claude API: claude-sonnet, claude-haiku)
+  yadgar-llm-anthropic/  — AnthropicLlm (Claude API: Sonnet, Opus)
+  yadgar-llm-minimax/    — MiniMaxLlm (MiniMax-M3 — strong reasoning, fast, cheap)
+  yadgar-llm-openai/     — OpenAiLlm (GPT-5.6 Sol, Luna, Terra)
   yadgar-llm-openai/     — OpenAiLlm (GPT-4o, GPT-4o-mini)
   yadgar-llm-ollama/     — OllamaLlm (local Ollama: llama3, mistral, etc.)
   yadgar-llm-claude-cli/ — ClaudeCliLlm (shells out to `claude -p` — the benchmark pattern)
@@ -527,7 +530,9 @@ transport.** The agent receives 5-10 memory dicts, parses them, identifies
 which ones are relevant, synthesizes an answer, and responds. That's
 2.5-5k tokens of input just for the recall results, plus the agent's
 reasoning tokens. The SaaS model does the synthesis server-side with a
-fast LLM (Claude Haiku, ~800ms) and returns a 200-token answer. The agent
+fast reasoning LLM (e.g. MiniMax-M3 at 89 tok/s, or GLM-5.2 at 105 tok/s,
+or Claude Sonnet 5 for highest quality) and returns a 200-token answer.
+The agent
 gets a ready-to-use answer — no parsing, no deduction, no wasted tokens.
 
 ### 7.2 The latency budget — 1 second target
@@ -542,7 +547,7 @@ recall request arrives at gateway
       → total retrieval                          ~120ms
   → LLM answer synthesis (yadgar-llm):
       → format context + prompt                  ~5ms
-      → LLM generate (Claude Haiku, 500 tokens)  ~600-800ms
+      → LLM generate (reasoning model, 500 tokens)  ~600-800ms
       → total LLM                                ~800ms
   → gateway response                             ~5ms
   ─────────────────────────────────────────────────────
@@ -551,13 +556,20 @@ recall request arrives at gateway
 
 **1 second is achievable with:**
 - Candle embed + Ettin rerank in-process (~70ms total, no network hop)
-- Claude Haiku (or equivalent fast model) for answer generation (~800ms
-  for 500 tokens at temperature 0.0)
+- A reasoning model for answer generation (~800ms for 500 tokens at
+  temperature 0.0). The model needs good reasoning — a weak model like
+  Haiku produces shallow answers that miss nuance. The sweet spot:
+  intelligence ≥ 40, speed ≥ 80 tok/s, cost ≤ $0.20/task.
+  - MiniMax-M3 (intelligence 44, 89 tok/s, $0.14/task) — default pro pick
+  - GLM-5.2 (intelligence 34, 105 tok/s) — faster, cheaper, slightly weaker
+  - DeepSeek V4 Pro (intelligence 44, 57 tok/s, $0.05/task) — cheapest
+    reasoning model, but slower throughput
 - Parallel where possible (embed + FTS can run in parallel)
 
 **With GPU (SaaS enterprise tier):**
 - Embed + rerank on GPU: ~10ms
-- Claude Sonnet (better quality, still ~600ms for 500 tokens)
+- Claude Sonnet 5 or GPT-5.6 Sol (highest reasoning quality, ~600ms for
+  500 tokens)
 - Total: ~700ms
 
 **With a local model (solo, Ollama):**
