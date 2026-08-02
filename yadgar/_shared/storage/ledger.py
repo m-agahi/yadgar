@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
@@ -181,9 +181,7 @@ class _LedgerMixin:
                 for r in rows
             ]
 
-    def list_task_rows_all_projects(
-        self, *, status: list[str] | None = None
-    ) -> list[dict]:
+    def list_task_rows_all_projects(self, *, status: list[str] | None = None) -> list[dict]:
         """Car K — list task rows across ALL projects (for the archive sweep)."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
@@ -208,9 +206,7 @@ class _LedgerMixin:
                 for r in rows
             ]
 
-    def update_task_status(
-        self, *, project_id: str, number: int, status: str
-    ) -> bool:
+    def update_task_status(self, *, project_id: str, number: int, status: str) -> bool:
         """Car K — flip a task's status (used by the archive sweep)."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")

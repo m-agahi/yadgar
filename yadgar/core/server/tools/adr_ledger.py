@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 import re
 
-from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.server._app import _tool
 
@@ -28,6 +27,7 @@ logger = logging.getLogger(__name__)
 def _should_regenerate_rollup() -> bool:
     """Car H D29: rollup pages regenerate on every ADR write."""
     return True
+
 
 _ADR_ID_RE = re.compile(r"^ADR-(\d+)$")
 _ADR_ID_FORMAT = "ADR-{number:04d}"
@@ -80,9 +80,7 @@ def adr_list(
         {'adrs': [{adr_id, status, date, title, ...}], 'count': N}
     """
     storage = _get_storage()
-    rows = storage.list_adr_rows(
-        project_id=project_id, status=status, limit=limit, offset=offset
-    )
+    rows = storage.list_adr_rows(project_id=project_id, status=status, limit=limit, offset=offset)
     adrs = [_to_adr_row(r) for r in rows]
     return {"adrs": adrs, "count": len(adrs)}
 

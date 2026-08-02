@@ -10,6 +10,7 @@ This is the FIRST Alembic revision per D33(a): the ledger tables depend on
 runtime_config existing first (D15's project.key_override is read at write
 time, and the read must tolerate absence — falls back to derived key).
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence

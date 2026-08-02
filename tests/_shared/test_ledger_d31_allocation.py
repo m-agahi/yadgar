@@ -20,7 +20,7 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from yadgar._shared.storage.alembic_models import Base, Task
 

@@ -15,6 +15,7 @@ Identity:
 
 Schema per §3 of task-table-refactor-2026-07-29.md.
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence

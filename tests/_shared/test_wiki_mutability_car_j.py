@@ -19,10 +19,7 @@ transitions (otherwise the supersede retype deadlocks against its own guard).
 
 from __future__ import annotations
 
-import pytest
-
-from yadgar._shared.wiki.policy import POLICY_BY_TYPE, DEFAULT_POLICY, WikiPolicy
-
+from yadgar._shared.wiki.policy import DEFAULT_POLICY, POLICY_BY_TYPE, WikiPolicy
 
 # ── Policy field: mutability ─────────────────────────────────────────────────
 

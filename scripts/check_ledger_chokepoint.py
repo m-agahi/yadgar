@@ -106,7 +106,7 @@ def check_file(path: Path) -> list[str]:
         return []
     try:
         source = path.read_text()
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return []
     try:
         tree = ast.parse(source, filename=str(path))

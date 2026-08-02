@@ -10,8 +10,6 @@ The downweight factor is configurable via a constant on the provider.
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 
 def test_c2_downweight_factor_exists() -> None:
     """The downweight factor is exposed as a module-level constant."""

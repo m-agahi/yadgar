@@ -13,14 +13,11 @@ All tables live in MariaDB. Bodies stay as wiki pages in SurrealDB (D4).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import (
     JSON,
     BigInteger,
-    Column,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
@@ -58,9 +55,7 @@ class RuntimeConfig(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        UniqueConstraint("key", "directory", name="runtime_config_key_dir_idx"),
-    )
+    __table_args__ = (UniqueConstraint("key", "directory", name="runtime_config_key_dir_idx"),)
 
 
 class Task(Base):

@@ -14,10 +14,8 @@ Policy:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 def test_k_archive_completed_tasks_after_90_days() -> None:
@@ -26,8 +24,8 @@ def test_k_archive_completed_tasks_after_90_days() -> None:
         should_archive_completed_task,
     )
 
-    old_date = (datetime.now(timezone.utc) - timedelta(days=91)).isoformat()
-    recent_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    old_date = (datetime.now(UTC) - timedelta(days=91)).isoformat()
+    recent_date = (datetime.now(UTC) - timedelta(days=30)).isoformat()
 
     # body_slug must be provided to skip the immediate-archive rule
     assert should_archive_completed_task(completed_at=old_date, body_slug="some-slug") is True
@@ -55,7 +53,7 @@ def test_k_archive_sweep_updates_status() -> None:
             "project_id": "m-agahi/yadgar",
             "number": 42,
             "status": "completed",
-            "modified_at": (datetime.now(timezone.utc) - timedelta(days=100)).isoformat(),
+            "modified_at": (datetime.now(UTC) - timedelta(days=100)).isoformat(),
         },
     ]
 

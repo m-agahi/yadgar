@@ -135,9 +135,10 @@ class WikiProvider(SourceProvider):
             # matches the page type's own opt-in tag (page_type). Previously
             # any tagged recall was exempt — C1 narrows this so
             # recall(tags=["unrelated"]) respects the exclusion.
-            if not _caller_tag_matches_page_type(
-                page.get("page_type"), self._tags
-            ) and get_policy(page.get("page_type")).recall_disposition == "exclude":
+            if (
+                not _caller_tag_matches_page_type(page.get("page_type"), self._tags)
+                and get_policy(page.get("page_type")).recall_disposition == "exclude"
+            ):
                 continue
             native_score = float(page.get("_retrieval_score", 0.0))
             # Car C2: downweight applies to pages whose policy is "downweight".

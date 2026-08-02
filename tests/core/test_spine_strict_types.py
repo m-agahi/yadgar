@@ -13,9 +13,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ── ADR ID parsing ───────────────────────────────────────────────────────────
 
 
@@ -53,9 +50,7 @@ def test_adr_get_rejects_non_integer_number() -> None:
         "yadgar.core.server.tools.adr._get_storage",
         return_value=MagicMock(),
     ):
-        result = adr_get(
-            project_id="m-agahi/yadgar", adr_id="ADR-notanumber"
-        )
+        result = adr_get(project_id="m-agahi/yadgar", adr_id="ADR-notanumber")
 
     assert result.get("error") is not None
 

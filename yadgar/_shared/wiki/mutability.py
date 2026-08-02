@@ -20,9 +20,7 @@ Mutability = Literal["free", "locked", "derived"]
 VALID_MUTABILITY: frozenset[str] = frozenset({"free", "locked", "derived"})
 
 
-def effective_mutability(
-    *, page_type: str | None, override: str | None
-) -> str:
+def effective_mutability(*, page_type: str | None, override: str | None) -> str:
     """Return the effective mutability for a page.
 
     Override beats policy. Invalid override values fall back to the

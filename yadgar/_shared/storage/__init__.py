@@ -53,6 +53,7 @@ from yadgar._shared.storage.dbsize import _DbSizeMixin
 from yadgar._shared.storage.entity import RelationshipMeta as RelationshipMeta
 from yadgar._shared.storage.entity import _EntityMixin
 from yadgar._shared.storage.episode import _EpisodeMixin
+from yadgar._shared.storage.ledger import _LedgerMixin
 from yadgar._shared.storage.memory import _MemoryMixin
 from yadgar._shared.storage.migrations import _MIGRATIONS as _MIGRATIONS
 from yadgar._shared.storage.migrations import (
@@ -80,7 +81,6 @@ from yadgar._shared.storage.scope import ScopeFilter as ScopeFilter
 from yadgar._shared.storage.user import _UserMixin
 from yadgar._shared.storage.vector import _VectorMixin
 from yadgar._shared.storage.wiki import _WikiMixin
-from yadgar._shared.storage.ledger import _LedgerMixin
 
 _log = logging.getLogger(__name__)
 

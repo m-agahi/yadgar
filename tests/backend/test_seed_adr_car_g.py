@@ -13,7 +13,6 @@ D35c verification gate: exact equality on {number set}, no >= tolerance.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,7 +38,7 @@ def test_seed_adr_from_pages_reads_pages_not_index(mock_storage) -> None:
         "yadgar.backend.admin_exec.seed_ledger._get_storage",
         return_value=mock_storage,
     ):
-        result = seed_adr_from_pages(
+        seed_adr_from_pages(
             directory="/home/max/git/yadgar",
             project_id="m-agahi/yadgar",
         )
@@ -102,8 +101,8 @@ def test_seed_adr_is_idempotent(mock_storage) -> None:
 def test_seed_adr_exact_equality_gate(mock_storage) -> None:
     """D35c: verification gate uses exact equality, not >=."""
     from yadgar.backend.admin_exec.seed_ledger import (
-        verify_adr_seed,
         _collect_page_numbers,
+        verify_adr_seed,
     )
 
     # 194 pages, 195 index rows: the 194→195 gap is the index page itself.
@@ -123,7 +122,5 @@ def test_legacy_adr_parser_deleted() -> None:
     """The legacy markdown-index parser is deleted after seed."""
     from yadgar.core.server.tools import adr_index
 
-    assert not hasattr(adr_index, "parse_index_rows"), \
-        "parse_index_rows should be deleted (D35b)"
-    assert not hasattr(adr_index, "_INDEX_ROW_RE"), \
-        "_INDEX_ROW_RE should be deleted"
+    assert not hasattr(adr_index, "parse_index_rows"), "parse_index_rows should be deleted (D35b)"
+    assert not hasattr(adr_index, "_INDEX_ROW_RE"), "_INDEX_ROW_RE should be deleted"

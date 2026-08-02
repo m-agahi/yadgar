@@ -26,7 +26,6 @@ from yadgar._shared.wiki.policy import (
     get_policy,
 )
 
-
 # ── C1 — tag-override matches page type's own opt-in tag ─────────────────────
 
 
@@ -45,7 +44,6 @@ def test_c1_adr_policy_included_in_recall() -> None:
 
 def test_c2_downweight_is_a_valid_disposition() -> None:
     """downweight is a documented disposition value."""
-    from yadgar._shared.wiki.policy import get_policy
 
     # Currently no page_type uses downweight — Car H rollups will.
     # For now, the DEFAULT policy is include; downweight is a valid value

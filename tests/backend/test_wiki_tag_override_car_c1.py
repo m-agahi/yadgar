@@ -13,10 +13,7 @@ provider call site is updated separately to use this resolver.
 
 from __future__ import annotations
 
-from dataclasses import replace
-
-from yadgar._shared.wiki.policy import POLICY_BY_TYPE, get_policy
-
+from yadgar._shared.wiki.policy import POLICY_BY_TYPE
 
 # ── Opt-in tag registry ──────────────────────────────────────────────────────
 

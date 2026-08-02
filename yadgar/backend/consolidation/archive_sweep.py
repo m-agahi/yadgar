@@ -15,7 +15,7 @@ Policy:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
@@ -34,7 +34,7 @@ def _parse_dt(value: str | None) -> datetime | None:
         if value.endswith("Z"):
             value = value[:-1] + "+00:00"
         return datetime.fromisoformat(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -56,7 +56,7 @@ def should_archive_completed_task(
     dt = _parse_dt(completed_at)
     if dt is None:
         return False
-    age = datetime.now(timezone.utc) - dt
+    age = datetime.now(UTC) - dt
     return age.days >= _TASK_ARCHIVE_AFTER_DAYS
 
 

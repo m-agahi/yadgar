@@ -138,9 +138,7 @@ def task_list(
     """
     storage = _get_storage()
     if include_closed:
-        return storage.list_task_rows(
-            project_id=project_id, status=None, directory=directory
-        )
+        return storage.list_task_rows(project_id=project_id, status=None, directory=directory)
     return storage.list_task_rows(
         project_id=project_id, status=list(_OPEN_STATUSES), directory=directory
     )
@@ -160,6 +158,4 @@ def task_get(
         directory: Absolute project path for directory guard.
     """
     storage = _get_storage()
-    return storage.get_task_row(
-        project_id=project_id, number=number, directory=directory
-    )
+    return storage.get_task_row(project_id=project_id, number=number, directory=directory)

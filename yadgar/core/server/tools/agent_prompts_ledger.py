@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 
-from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.server._app import _tool
 

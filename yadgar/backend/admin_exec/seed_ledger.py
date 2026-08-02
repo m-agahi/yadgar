@@ -195,9 +195,7 @@ def seed_tasks_from_page(
         return {"dry_run": dry_run, "candidates": 0, "seeded": 0, "skipped": 0}
 
     sections = _extract_task_sections(page["content"])
-    existing_rows = storage.list_task_rows(
-        project_id=project_id, status=None
-    )
+    existing_rows = storage.list_task_rows(project_id=project_id, status=None)
     existing_numbers = {r["number"] for r in existing_rows}
 
     if dry_run:

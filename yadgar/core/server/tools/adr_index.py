@@ -9,8 +9,6 @@ from __future__ import annotations
 import os
 import re
 
-from yadgar._shared.observability.observe import observe
-
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 # Regex that matches ## ADR-NNNN at column 0 (header-only scan — used by the

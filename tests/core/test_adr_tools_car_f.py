@@ -84,9 +84,7 @@ def test_adr_get_returns_full_record(mock_storage) -> None:
         "yadgar.core.server.tools.adr._get_storage",
         return_value=mock_storage,
     ):
-        result = adr_get(
-            adr_id="ADR-0194", project_id="m-agahi/yadgar"
-        )
+        result = adr_get(adr_id="ADR-0194", project_id="m-agahi/yadgar")
 
     # Contract: adr_get returns adr_id, status, title, body_slug
     assert result["adr_id"] == "ADR-0194"

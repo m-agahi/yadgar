@@ -10,8 +10,6 @@ Spine task-table-refactor-2026-07-29, Car H:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 
 def test_h_tier_field_on_adr_policy() -> None:
     """ADR rows carry a tier field (binding | historical)."""

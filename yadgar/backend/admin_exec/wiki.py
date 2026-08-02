@@ -371,8 +371,8 @@ def agent_prompt_save(payload: dict) -> dict:
     title = payload["title"]
     full_content = payload["full_content"]
     tags = payload["tags"]
-    pattern = payload["pattern"]
-    purpose = payload["purpose"]
+    payload["pattern"]
+    payload["purpose"]
     branch_hint = payload.get("branch_hint")
     effective_dir = payload["directory"]
 
