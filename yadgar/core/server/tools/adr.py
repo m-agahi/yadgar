@@ -55,6 +55,13 @@ from yadgar.core.server._app import _tool
 
 logger = logging.getLogger(__name__)
 
+
+def _validate_subsystem(subsystem: object) -> str:
+    """Car H D28: subsystem is free-form. Returns the string or empty."""
+    if not isinstance(subsystem, str):
+        return ""
+    return subsystem.strip()[:128]
+
 # Sub-module imports (split seams).
 # Car G — _build_index_content, _committed_page_max_id, _index_max_id,
 # _next_adr_id, _next_adr_id_from_index, _render_index_row, parse_index_rows,

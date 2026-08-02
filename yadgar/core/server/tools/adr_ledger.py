@@ -24,6 +24,11 @@ from yadgar.core.server._app import _tool
 
 logger = logging.getLogger(__name__)
 
+
+def _should_regenerate_rollup() -> bool:
+    """Car H D29: rollup pages regenerate on every ADR write."""
+    return True
+
 _ADR_ID_RE = re.compile(r"^ADR-(\d+)$")
 _ADR_ID_FORMAT = "ADR-{number:04d}"
 
