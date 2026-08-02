@@ -44,8 +44,7 @@ class _LedgerMixin:
     _mariadb_url: str = ""
     _mariadb_engine: Engine | None = None
 
-    @observe(tier="stage", metric=f"ledger._init_ledger")
-
+    @observe(tier="stage", metric="ledger._init_ledger")
     def _init_ledger(self, mariadb_url: str) -> None:
         """Initialize the MariaDB engine. Called from StorageEngine.__init__."""
         self._mariadb_url = mariadb_url
@@ -60,8 +59,7 @@ class _LedgerMixin:
         )
         logger.info("ledger: MariaDB engine initialized")
 
-    @observe(tier="stage", metric=f"ledger._next_number")
-
+    @observe(tier="stage", metric="ledger._next_number")
     def _next_number(self, table: str, project_id: str, origin: str) -> int:
         """D31 — allocate the next semantic number for (project_id, origin, table).
 
@@ -85,16 +83,14 @@ class _LedgerMixin:
             ).one()
             return int(row.next_num)
 
-    @observe(tier="stage", metric=f"ledger._ledger_table")
-
+    @observe(tier="stage", metric="ledger._ledger_table")
     def _ledger_table(self, name: str) -> Any:
         """Return the SQLAlchemy table object for a ledger table."""
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
         return Base.metadata.tables[f"{name}"]
 
-    @observe(tier="stage", metric=f"ledger._ledger_healthcheck")
-
+    @observe(tier="stage", metric="ledger._ledger_healthcheck")
     def _ledger_healthcheck(self) -> bool:
         """Return True if MariaDB is reachable. Used by /health."""
         if self._mariadb_engine is None:
@@ -108,14 +104,12 @@ class _LedgerMixin:
 
     # ── Task CRUD (Car D) ─────────────────────────────────────────────────────
 
-    @observe(tier="stage", metric=f"ledger.allocate_task_number")
-
+    @observe(tier="stage", metric="ledger.allocate_task_number")
     def allocate_task_number(self, *, project_id: str, origin: str) -> int:
         """D31 — allocate the next semantic task number for (project_id, origin)."""
         return self._next_number("task", project_id, origin)
 
-    @observe(tier="stage", metric=f"ledger.create_task_row")
-
+    @observe(tier="stage", metric="ledger.create_task_row")
     def create_task_row(
         self,
         *,
@@ -161,8 +155,7 @@ class _LedgerMixin:
                     "created_at": row.created_at.isoformat() if row.created_at else None,
                 }
 
-    @observe(tier="stage", metric=f"ledger.list_task_rows")
-
+    @observe(tier="stage", metric="ledger.list_task_rows")
     def list_task_rows(
         self,
         *,
@@ -196,8 +189,7 @@ class _LedgerMixin:
                 for r in rows
             ]
 
-    @observe(tier="stage", metric=f"ledger.list_task_rows_all_projects")
-
+    @observe(tier="stage", metric="ledger.list_task_rows_all_projects")
     def list_task_rows_all_projects(self, *, status: list[str] | None = None) -> list[dict]:
         """Car K — list task rows across ALL projects (for the archive sweep)."""
         if self._mariadb_engine is None:
@@ -223,8 +215,7 @@ class _LedgerMixin:
                 for r in rows
             ]
 
-    @observe(tier="stage", metric=f"ledger.update_task_status")
-
+    @observe(tier="stage", metric="ledger.update_task_status")
     def update_task_status(self, *, project_id: str, number: int, status: str) -> bool:
         """Car K — flip a task's status (used by the archive sweep)."""
         if self._mariadb_engine is None:
@@ -242,8 +233,7 @@ class _LedgerMixin:
                 row.status = status
                 return True
 
-    @observe(tier="stage", metric=f"ledger.get_task_row")
-
+    @observe(tier="stage", metric="ledger.get_task_row")
     def get_task_row(
         self,
         *,
@@ -278,14 +268,12 @@ class _LedgerMixin:
 
     # ── ADR CRUD (Car F) ──────────────────────────────────────────────────────
 
-    @observe(tier="stage", metric=f"ledger.allocate_adr_number")
-
+    @observe(tier="stage", metric="ledger.allocate_adr_number")
     def allocate_adr_number(self, *, project_id: str, origin: str) -> int:
         """D31 — allocate the next semantic ADR number for (project_id, origin)."""
         return self._next_number("adr", project_id, origin)
 
-    @observe(tier="stage", metric=f"ledger.create_adr_row")
-
+    @observe(tier="stage", metric="ledger.create_adr_row")
     def create_adr_row(
         self,
         *,
@@ -335,8 +323,7 @@ class _LedgerMixin:
                     "tier": row.tier,
                 }
 
-    @observe(tier="stage", metric=f"ledger.list_adr_rows")
-
+    @observe(tier="stage", metric="ledger.list_adr_rows")
     def list_adr_rows(
         self,
         *,
@@ -371,8 +358,7 @@ class _LedgerMixin:
                 for r in rows
             ]
 
-    @observe(tier="stage", metric=f"ledger.get_adr_row")
-
+    @observe(tier="stage", metric="ledger.get_adr_row")
     def get_adr_row(
         self,
         *,
@@ -408,14 +394,12 @@ class _LedgerMixin:
 
     # ── Agent prompt CRUD (Car I) ─────────────────────────────────────────────
 
-    @observe(tier="stage", metric=f"ledger.allocate_agent_prompt_number")
-
+    @observe(tier="stage", metric="ledger.allocate_agent_prompt_number")
     def allocate_agent_prompt_number(self, *, origin: str) -> int:
         """D31 — allocate the next semantic agent_prompt number. project_id='global'."""
         return self._next_number("agent_prompt", "global", origin)
 
-    @observe(tier="stage", metric=f"ledger.save_agent_prompt")
-
+    @observe(tier="stage", metric="ledger.save_agent_prompt")
     def save_agent_prompt(
         self,
         *,
@@ -454,8 +438,7 @@ class _LedgerMixin:
                     "uses": row.uses,
                 }
 
-    @observe(tier="stage", metric=f"ledger.list_agent_prompt_rows")
-
+    @observe(tier="stage", metric="ledger.list_agent_prompt_rows")
     def list_agent_prompt_rows(self, *, status: str | None = None) -> list[dict]:
         """List agent_prompt rows. Default sort: uses DESC (D40 — surface popular first)."""
         if self._mariadb_engine is None:
@@ -480,8 +463,7 @@ class _LedgerMixin:
                 for r in rows
             ]
 
-    @observe(tier="stage", metric=f"ledger.get_agent_prompt_row")
-
+    @observe(tier="stage", metric="ledger.get_agent_prompt_row")
     def get_agent_prompt_row(self, *, title: str) -> dict:
         """Fetch one agent_prompt row by title (the pattern key). Returns {} if not found."""
         if self._mariadb_engine is None:
@@ -506,8 +488,7 @@ class _LedgerMixin:
                 "body_slug": row.body_slug,
             }
 
-    @observe(tier="stage", metric=f"ledger.increment_agent_prompt_uses")
-
+    @observe(tier="stage", metric="ledger.increment_agent_prompt_uses")
     def increment_agent_prompt_uses(self, *, title: str) -> int:
         """D40 — increment the uses counter for an agent_prompt by title. Returns new count."""
         if self._mariadb_engine is None:

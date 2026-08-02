@@ -81,8 +81,6 @@ def _validate_subsystem(subsystem: object) -> str:
     return subsystem.strip()[:128]
 
 
-
-
 # ── Per-project ADR write lock ─────────────────────────────────────────────────
 # The core daemon is a single persistent process (streamable-http). When
 # YADGAR_OFFLOAD_TOOLS=1 the ThreadPoolExecutor can run two adr_add calls
