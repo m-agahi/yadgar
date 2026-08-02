@@ -7,6 +7,10 @@ are wrong.
 **Branch:** `docs/move-new-arch-plans-to-subdir` (doc-only, no-release)
 **Governs:** `docs/plans/new-arch/saas-architecture-principles-2026-08-02.md`
 Principle 1 (the spine: differences left-shifted to the composition root).
+**Amends:** `saas-architecture-principles-2026-08-02.md` Principle 7 —
+the `Observable` trait is split into `Logger` + `Tracer` + `Metrics` (three
+separate traits, three swap points). The principles doc's `Observable`
+monolithic trait is superseded by this split.
 
 ---
 
@@ -14,9 +18,9 @@ Principle 1 (the spine: differences left-shifted to the composition root).
 
 The `yadgar-protocol` crate is the single source of truth for every wire
 type, every service trait, and every error code in the SaaS rewrite. It
-contains **13 traits** (Queue, Cache, RelationalStore, GraphStore, Embedder,
-Reranker, Authn, Authz, Encryptor, Meter, ObjectStore, Scheduler, Notifier)
-+ **the request/response types for every inter-service call** + **the
+contains **15 traits** (Queue, Cache, RelationalStore, GraphStore, Embedder,
+Reranker, Authn, Authz, Encryptor, Meter, ObjectStore, Scheduler, Notifier,
+Logger, Tracer, Metrics) + **the request/response types for every inter-service call** + **the
 domain models** (Memory, Wiki, ADR, Task, AgentPrompt, Checkpoint, etc.) +
 **the error envelope** + **the health/ready contracts** + **the versioning
 scheme**.
@@ -161,7 +165,9 @@ crates/yadgar-protocol/
     scheduler.rs        — Scheduler trait, JobDef, JobRun, JobStatus
     object_store.rs     — ObjectStore trait, SnapshotRef, ObjectMeta
     notifier.rs         — Notifier trait, Alert, AlertLevel
-    observable.rs       — Observable trait, SpanGuard, MetricTag
+    logger.rs           — Logger trait, LogLevel, LogFields
+    tracer.rs           — Tracer trait, SpanGuard, SpanStatus
+    metrics.rs          — Metrics trait, MetricTag
     domain/
       mod.rs
       memory.rs         — Memory, MemoryId, MemoryContent, MemoryMeta
@@ -310,14 +316,41 @@ pub trait Notifier: Send + Sync {
     async fn emit(&self, alert: &Alert) -> Result<(), ErrorEnvelope>;
 }
 
-// observable.rs
+// logger.rs — structured event logging (NOT tracing, NOT metrics)
 #[async_trait]
-pub trait Observable: Send + Sync {
-    fn record_request(&self, service: &str, endpoint: &str, duration: Duration, status: u16);
-    fn record_queue_depth(&self, queue: &str, depth: usize, limit: usize);
-    fn record_circuit_state(&self, service: &str, state: CircuitState);
-    fn emit_log(&self, level: LogLevel, msg: &str, fields: &[(String, JsonValue)]);
-    fn start_span(&self, name: &str) -> SpanGuard;
+pub trait Logger: Send + Sync {
+    fn log(&self, level: LogLevel, msg: &str, fields: &LogFields);
+    fn flush(&self);  // for async sinks (Loki, Elasticsearch)
+}
+
+pub enum LogLevel { Trace, Debug, Info, Warn, Error, Fatal }
+
+pub struct LogFields {
+    pub service: String,
+    pub tenant_id: Option<TenantId>,
+    pub request_id: Option<Uuid>,
+    pub fields: Vec<(String, JsonValue)>,
+}
+
+// tracer.rs — distributed tracing (span trees, NOT flat logs)
+pub trait Tracer: Send + Sync {
+    fn start_span(&self, name: &str, parent: Option<&SpanId>) -> SpanGuard;
+    fn finish_span(&self, guard: SpanGuard, status: SpanStatus);
+}
+
+pub struct SpanGuard {
+    pub id: SpanId,
+    pub parent: Option<SpanId>,
+    pub started_at: DateTime<Utc>,
+}
+
+pub enum SpanStatus { Ok, Error(String) }
+
+// metrics.rs — counters, histograms, gauges (NOT logs, NOT spans)
+pub trait Metrics: Send + Sync {
+    fn counter(&self, name: &str, value: f64, tags: &[(&str, &str)]);
+    fn gauge(&self, name: &str, value: f64, tags: &[(&str, &str)]);
+    fn histogram(&self, name: &str, value: f64, tags: &[(&str, &str)]);
 }
 ```
 
@@ -688,7 +721,7 @@ the same contract tests — if they pass, the impl is protocol-compliant.
 | No health/ready distinction | `HealthStatus` (alive) + `ReadyStatus` (can serve) — the loose-coupling protocol |
 | No queue/backpressure contract | `Queue` trait + `WorkItem` + `QueueFull` — the backpressure protocol |
 | No cache contract (two in-process LRUs) | `Cache` trait + `ScopeVersion` — the version-in-key invalidation contract |
-| No observability contract | `Observable` trait + `SpanGuard` — every service emits the same metrics/traces |
+| No observability contract | `Logger` + `Tracer` + `Metrics` traits — three separate concerns, each independently swappable (solo: stderr; SaaS: Loki + Tempo + Prometheus) |
 
 ---
 
@@ -742,7 +775,7 @@ composition root wires impls into services at boot.
 |---|---|
 | 6-7 | `queue.rs`, `cache.rs`, `storage.rs` (GraphStore + RelationalStore) — the data-plane contracts |
 | 8 | `embed.rs` (Embedder + Reranker), `meter.rs`, `scheduler.rs` — the remaining service traits |
-| 9 | `object_store.rs`, `notifier.rs`, `observable.rs` — the operational contracts. The inter-service request/response types (RecallRequest, EmbedRequest, WriteMemoryRequest, etc.) |
+| 9 | `object_store.rs`, `notifier.rs`, `logger.rs`, `tracer.rs`, `metrics.rs` — the operational contracts (logging, tracing, metrics as three separate traits). The inter-service request/response types (RecallRequest, EmbedRequest, WriteMemoryRequest, etc.) |
 | 10 | `scripts/check_service_crate_deps.py` — the no-SDK lint. A `contract_tests/` skeleton. The crate compiles, all types serialize/deserialize correctly. |
 
 **Deliverable:** `crates/yadgar-protocol/` compiles. Every trait is defined.
@@ -807,19 +840,26 @@ that depends only on the protocol + its own impls.
    that translate between MCP parameters and protocol types. MCP could be
    replaced by another transport (gRPC, GraphQL) without touching the
    protocol.
-6. **Should `Observable` be a trait or a `tracing`-style macro?** The
-   `tracing` crate (Rust's standard) uses macros, not traits. But the
-   architecture needs `dyn` dispatch (solo: stderr, SaaS: OTel).
-   **Recommendation: trait with a `tracing`-compatible impl** — the
-   `OtelObservable` impl uses `tracing` + `opentelemetry` under the hood;
-   the `StderrObservable` impl logs to stderr. Services call
-   `self.obs.start_span("recall")` without knowing which.
+6. **Should `Logger`, `Tracer`, and `Metrics` be one trait or three?**
+   They were initially one `Observable` trait. Split into three because
+   they have different backends (Loki vs Tempo vs Prometheus), different
+   consumers (ops vs debug vs alerting), different formats (JSON line vs
+   span tree vs Prometheus format), and different volumes (high vs medium
+   vs low). A solo user who only wants logs shouldn't get the tracing/metrics
+   impl, and a SaaS user who sends traces to Tempo but logs to Loki
+   shouldn't have to configure one trait that handles both awkwardly.
+   **Decision: three traits, three impls, three swap points.** Each service
+   takes `Arc<dyn Logger> + Arc<dyn Tracer> + Arc<dyn Metrics>` at the
+   composition root — mix and match per deployment tier. The `tracing` crate
+   (Rust's standard) is used inside the `OtelTracer` impl, not as the
+   public interface — services call `self.tracer.start_span("recall")`
+   without knowing which impl.
 
 ---
 
 ## 11. The one-sentence summary
 
-**The protocol crate is the compiler-enforced contract: 13 traits, ~20
+**The protocol crate is the compiler-enforced contract: 15 traits, ~20
 domain models, one error envelope, one identity type, one versioning scheme
 — no SDKs, no impls, no frontier fields — and every service depends on it
 and nothing else, so swapping a backing store changes one line at the
