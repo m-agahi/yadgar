@@ -11,7 +11,7 @@ Type=oneshot
 # searched $PATH for a bare ExecStart command since v239. `systemctl` in
 # particular MUST be the one belonging to the init system actually running the
 # user bus, so pinning an absolute path would be wrong on some distros.
-ExecStart=rm -f @STATE_DIR@/triggers/vacuum_requested
+ExecStart=rm -f /tmp/yadgar-parity-fixture/state/triggers/vacuum_requested
 ExecStart=systemctl --user start yadgar-vacuum.service
 
 # No [Install]: started by yadgar-vacuum-trigger.path.

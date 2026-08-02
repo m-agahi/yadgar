@@ -599,12 +599,50 @@ def test_generated_units_declare_no_container_runtime_daemon_dependency(
         deps = [ln for ln in text.splitlines() if _UNIT_DEP_RUNTIME.search(ln)]
         assert deps == [], f"{name} unit depends on a container-runtime unit: {deps}"
 
-    # The dependency that IS real must survive: core must not start before backend.
+    # The dependency that IS real must survive: core must not start before
+    # backend.  "Real" means ORDERING, not lifecycle coupling (task:0111 /
+    # ADR-0188) — see test_core_unit_wants_backend_not_requires below for why
+    # the pull-in is Wants= rather than Requires=.
     core = units["core"]
-    assert "Requires=yadgar-backend.service" in core, "core lost its backend dependency"
+    assert "Wants=yadgar-backend.service" in core, "core lost its backend dependency"
     after = [ln for ln in core.splitlines() if ln.startswith("After=")]
     assert any("yadgar-backend.service" in ln for ln in after), (
         f"core lost its backend ordering: {after}"
+    )
+
+
+def test_core_unit_wants_backend_not_requires(podman_env, tmp_path, monkeypatch):
+    """task:0111 / ADR-0188 — the core must not be STOPPED with the backend.
+
+    ``Requires=`` propagates stop: ``systemctl --user stop yadgar-backend``
+    takes ``yadgar`` down with it, whoever asked.  That is the entire reason a
+    vacuum (which must stop the backend to quiesce the store) took the whole
+    memory engine down for ~68 s and dropped every connected MCP session.
+
+    ``Wants=`` keeps the pull-in (starting core still starts the backend) and
+    ``After=`` keeps boot ordering; only the stop propagation is dropped, which
+    is exactly the behaviour wanted.  The private nix module was decoupled this
+    way in v5.3.9; the in-repo generators never were.
+
+    ``After=`` is asserted here too: flipping the dependency must NOT change
+    START ordering, which ``After=`` plus the ADR-0185 readiness shape provide.
+    """
+    core = _render_units(tmp_path, monkeypatch)["core"]
+
+    assert "yadgar-backend" in core, (
+        "core unit names no backend dependency at all — this test would pass "
+        "vacuously on a unit that lost the relationship entirely"
+    )
+    requires = [ln for ln in core.splitlines() if ln.startswith("Requires=")]
+    assert not [ln for ln in requires if "yadgar-backend" in ln], (
+        f"core still Requires= the backend — stopping the backend stops the core: {requires}"
+    )
+    assert "Wants=yadgar-backend.service" in core, (
+        f"core lost the backend pull-in; it must Wants= the backend:\n{core}"
+    )
+    after = [ln for ln in core.splitlines() if ln.startswith("After=")]
+    assert any("yadgar-backend.service" in ln for ln in after), (
+        f"core lost its backend START ordering — Wants= alone does not order: {after}"
     )
 
 
@@ -876,16 +914,24 @@ def test_unit_directive_guard_scope_covers_both_unit_generators():
     """Both live unit generators must be in the file set, not just the Python one.
 
     task:0101's post-mortem was that a narrow guard scope only relocates the
-    recurrence. The ``.in`` templates render the units the shell installer
-    actually writes; leaving them out would guard half the install surface.
+    recurrence. The scope must reach wherever unit TEXT is produced, on every
+    surface the installer writes.
+
+    task:0110 Stage D moved the shell installer's unit text: ``.in`` templates are
+    gone and ``scripts/install/generate_systemd.sh`` renders nothing, so the two
+    template entries below are replaced by the Python builders that took their
+    place. This is a REPLACEMENT, not a narrowing — those modules are already
+    inside ``_runtime_guarded_sources``' ``yadgar/`` scope, and naming them here
+    is what stops a future edit from quietly dropping them the way this test
+    exists to prevent.
     """
     root = _repo_root()
     guarded = {str(p.relative_to(root)) for p in _unit_directive_guarded_files()}
 
     for required in (
         "yadgar/core/daemon/systemd.py",  # the task:0104 site
-        "scripts/install/yadgar.service.in",  # shell-installer core unit
-        "scripts/install/yadgar-backend.service.in",  # shell-installer backend unit
+        "yadgar/core/daemon/units.py",  # core + backend unit builders (task:0110)
+        "yadgar/core/daemon/maintenance_units.py",  # target/timers/path builders
         "scripts/install/launchd/com.openfantasy.yadgar.plist.in",  # macOS core
         "yadgar/core/systemd/yadgar.service",  # checked-in unit
     ):

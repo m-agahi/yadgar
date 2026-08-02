@@ -137,14 +137,14 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 |---|---|---|---|---|
 | `reranker_enabled` | `YADGAR_RERANKER_ENABLED` | bool | `true` | Enable cross-encoder reranking stage. |
 | `reranker_top_k` | `YADGAR_RERANKER_TOP_K` | int | `50` | Number of candidates passed to reranker. |
-| `cross_encoder_enabled` | `YADGAR_CROSS_ENCODER_ENABLED` | bool | `true` | Enable cross-encoder reranking stage. |
-| `cross_encoder_model` | `YADGAR_CROSS_ENCODER_MODEL` | str | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Baseline cross-encoder model (legacy path). The live reranker is the `gte_reranker_*` slot — see below. |
+| `cross_encoder_enabled` | `YADGAR_CROSS_ENCODER_ENABLED` | bool | `true` | Enable the cross-encoder rerank stage. Also gates the fallback model load in `local_ml_client.py` — two meanings, one flag (ADR-0192). |
+| `cross_encoder_model` | `YADGAR_CROSS_ENCODER_MODEL` | str | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Degraded-mode fallback CE model, reached only when the primary is disabled or has failed. Not baked into `Dockerfile.backend`, so it scores zeros in the offline container. The live reranker is the `gte_reranker_*` slot — see below. |
 | `cross_encoder_top_k` | `YADGAR_CROSS_ENCODER_TOP_K` | int | `10` | Top-k passed to cross-encoder. |
 | `cross_encoder_weight` | `YADGAR_CROSS_ENCODER_WEIGHT` | float | `0.6` | Cross-encoder score weight in blend (retrieval gets 1-this). |
 | `gte_reranker_enabled` | `YADGAR_GTE_RERANKER_ENABLED` | bool | `true` | Enable the advanced cross-encoder reranker (field name kept `GTE_*` for env/back-compat; T4 flipped the default model to Ettin-32m). |
 | `gte_reranker_model` | `YADGAR_GTE_RERANKER_MODEL` | str | `cross-encoder/ettin-reranker-32m-v1` | Primary reranker model (Ettin-32m, Train 4). GTE rollback: set to `Alibaba-NLP/gte-reranker-modernbert-base` (baked into `Dockerfile.backend` one cycle). |
 | `gte_reranker_max_length` | `YADGAR_GTE_RERANKER_MAX_LENGTH` | int | `512` | Max token length for GTE reranker. |
-| `gte_reranker_fallback_to_flashrank` | `YADGAR_GTE_RERANKER_FALLBACK_TO_FLASHRANK` | bool | `true` | Legacy fallback flag. FlashRank is not a dependency (`_try_flashrank` is a lazy no-op), so this is effectively inert — the reranker is Ettin-only. |
+| `gte_reranker_fallback_to_flashrank` | `YADGAR_GTE_RERANKER_FALLBACK_TO_FLASHRANK` | bool | `true` | Failure-mode selector, not a FlashRank switch (name kept for env back-compat). When the primary reranker fails: `true` falls through to the `cross_encoder_model` tier, `false` returns zero scores. Never read when `gte_reranker_enabled=false`. The FlashRank tier was removed in ADR-0192. |
 | `nli_reranking_enabled` | `YADGAR_NLI_RERANKING_ENABLED` | bool | `false` | Enable NLI entailment scoring stage. v5.6.6 default flipped `true`→`false` — NLI averages ~55 s/call on CPU for marginal gain over CE alone. |
 | `nli_model` | `YADGAR_NLI_MODEL` | str | `cross-encoder/nli-deberta-v3-base` | NLI model name. |
 | `nli_weight` | `YADGAR_NLI_WEIGHT` | float | `0.3` | NLI signal weight in final blend. |
@@ -603,12 +603,15 @@ Rows older than these thresholds are pruned each consolidation cycle. Set to `0`
 
 | Key | Env var | Type | Default | Description |
 |---|---|---|---|---|
+| `maintenance_ttl_sec` | `YADGAR_MAINTENANCE_TTL_SEC` | int | `2400` | Self-heal deadline (seconds) for the maintenance write-gate the vacuum engages around its count-capture/export/swap window (task:0113). A SIGKILLed vacuum cannot release the gate; after this many seconds the core clears it and logs a WARN. Default sits above `yadgar-vacuum.service`'s `TimeoutStartSec=30min`. |
 | `vacuum_old_max_age_days` | `VACUUM_OLD_MAX_AGE_DAYS` | int | `7` | Age backstop for surreal_db.old-* rollback dirs (ADR-0076 D1): reap any .old dir older than this many days on each vacuum finalize. The current-run .old is always exempted. |
-| `vacuum_snapshot_retention` | `YADGAR_VACUUM_SNAPSHOT_RETENTION` | int | `3` | Number of pre-vacuum DB snapshots to retain. |
+| `vacuum_snapshot_retention` | `YADGAR_VACUUM_SNAPSHOT_RETENTION` | int | `2` | Number of pre-vacuum DB snapshots to retain; pruned on every vacuum exit path (task:0046). Each snapshot is a full-size copy of the DB. Values below `1` are clamped to `1` — a vacuum never leaves the host without a rollback anchor. |
+| `vacuum_snapshot_max_age_days` | `YADGAR_VACUUM_SNAPSHOT_MAX_AGE_DAYS` | int | `14` | Age backstop for surreal_db.pre-vacuum-* snapshots (task:0046): reap any snapshot older than this many days. The NEWEST snapshot is exempt unconditionally, so this can never take the host below one rollback anchor. |
 | `vacuum_auto_enabled` | `YADGAR_VACUUM_AUTO_ENABLED` | bool | `true` | Enable the backstop threshold trigger (emergency backstop only from v5.7.0; nightly cron is primary). |
 | `vacuum_auto_threshold_bytes` | `YADGAR_VACUUM_AUTO_THRESHOLD_BYTES` | int | `2147483648` | Backstop fires when the DB exceeds this size (default 2 GiB). |
 | `vacuum_auto_window_start` | `YADGAR_VACUUM_AUTO_WINDOW_START` | str (HH:MM) | `19:00` | Local-time start of the backstop trigger window (24-hour, validated `HH:MM`). |
 | `vacuum_auto_window_end` | `YADGAR_VACUUM_AUTO_WINDOW_END` | str (HH:MM) | `23:00` | Local-time end of the backstop trigger window (exclusive, validated `HH:MM`). |
+| `vacuum_side_launcher` | `YADGAR_VACUUM_SIDE_LAUNCHER` | str | `auto` | Which side-build launcher Phase 3 uses for its throwaway SurrealDB (task 0107): `auto` (host binary first, container second, SKIP third), `host` (host binary only, fails loud rather than falling through), or `container` (container only, ignoring any resolvable host binary). |
 
 ---
 

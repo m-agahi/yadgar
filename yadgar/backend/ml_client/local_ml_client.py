@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 
 from yadgar._shared.observability.observe import observe
@@ -19,8 +18,14 @@ logger = logging.getLogger(__name__)
 class LocalMLClient:
     """Uses sentence_transformers directly. For stdio/daemon mode (no backend).
 
-    All heavy imports (sentence_transformers, torch, flashrank) are deferred
-    to method bodies — importing this module has zero ML import cost.
+    All heavy imports (sentence_transformers, torch) are deferred to method
+    bodies — importing this module has zero ML import cost.
+
+    The CE chain is TWO tiers (ADR-0192): the `GTE_RERANKER_MODEL` primary
+    (Ettin-32m, ADR-0104) and, when that is disabled or fails, the degraded
+    `CROSS_ENCODER_MODEL` sentence-transformers fallback. A third FlashRank tier
+    existed until 0121 and was removed: `flashrank` is absent from pyproject and
+    uv.lock, so its import could never succeed in any shipped configuration.
     """
 
     def __init__(self, settings) -> None:
@@ -28,7 +33,6 @@ class LocalMLClient:
         self._gte_reranker = None  # Lazy-loaded GTE-Reranker (STCrossEncoder)
         self._gte_load_failed = False  # T-0006: track permanent GTE failure
         self._nli_model = None  # Lazy-loaded NLI CrossEncoder
-        self._flashrank_ranker = None  # Lazy-loaded FlashRank Ranker
         self._cross_encoder = None  # Lazy-loaded sentence-transformers CrossEncoder (fallback)
         self._last_used: float = 0.0  # monotonic timestamp of last call
 
@@ -84,41 +88,31 @@ class LocalMLClient:
             logger.warning("LocalMLClient: GTE-Reranker failed, falling back: %s", e)
             self._gte_reranker = False
             self._gte_load_failed = True  # T-0006: mark permanent failure
-            # Terminal: return zeros when fallback to FlashRank is explicitly disabled
+            # Terminal: the flag is a FAILURE-MODE SELECTOR, not a FlashRank switch
+            # (ADR-0192). False => zeros, here. True => fall through to the degraded
+            # sentence-transformers tier below. It has never selected FlashRank.
+            # Note it is not read at all when GTE_RERANKER_ENABLED=False: the guard
+            # above returns None first, so the ST fallback runs whatever its value.
             if not getattr(settings, "GTE_RERANKER_FALLBACK_TO_FLASHRANK", True):
                 return [0.0] * len(texts)
 
         return None
 
     @observe(tier="hot")
-    def _try_flashrank(self, query: str, texts: list[str]) -> list[float] | None:
-        """Attempt FlashRank (ONNX) scoring.  Returns scores on success, None to fall through."""
-        try:
-            from flashrank import Ranker, RerankRequest  # noqa: PLC0415
-
-            if self._flashrank_ranker is None:
-                self._flashrank_ranker = Ranker(
-                    model_name="ms-marco-MiniLM-L-12-v2",
-                    cache_dir=os.path.expanduser("~/.cache/flashrank"),
-                )
-
-            passages = [{"id": i, "text": t} for i, t in enumerate(texts)]
-            rerank_req = RerankRequest(query=query, passages=passages)
-            results = self._flashrank_ranker.rerank(rerank_req)
-            # Rebuild score list in original order
-            score_map: dict[int, float] = {r["id"]: r["score"] for r in results}
-            return [score_map.get(i, 0.0) for i in range(len(texts))]
-        except ImportError:
-            pass
-        except Exception:
-            logger.debug(
-                "LocalMLClient: FlashRank failed, trying sentence-transformers CrossEncoder"
-            )
-        return None
-
-    @observe(tier="hot")
     def _try_st_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
-        """sentence-transformers CrossEncoder fallback.  Always returns a list (zeros on error)."""
+        """Degraded sentence-transformers CrossEncoder tier (zeros on error).
+
+        REACHABLE, not dead (ADR-0192) — it runs whenever `_try_gte_reranker`
+        returns None, i.e. when `GTE_RERANKER_ENABLED=False` (the operator
+        kill-switch) or the Ettin primary failed with
+        `GTE_RERANKER_FALLBACK_TO_FLASHRANK=True` (the default).
+
+        How degraded depends on where LocalMLClient runs. `CROSS_ENCODER_MODEL`
+        (`cross-encoder/ms-marco-MiniLM-L-6-v2`) is deliberately NOT baked into
+        Dockerfile.backend, so inside the offline container the load below fails
+        and this returns zeros; in host stdio/daemon mode with network it works
+        normally. The LIVE reranker is `GTE_RERANKER_MODEL`, not this one.
+        """
         settings = self._settings
         # Respect explicit disable before loading the heavy CrossEncoder fallback.
         if settings is not None and not getattr(settings, "CROSS_ENCODER_ENABLED", True):
@@ -166,8 +160,9 @@ class LocalMLClient:
     def score_cross_encoder(self, query: str, texts: list[str]) -> list[float]:
         """Return raw cross-encoder scores for (query, text) pairs.
 
-        Tries GTE-Reranker first, falls back to FlashRank, then sentence-transformers
-        CrossEncoder — mirroring the priority chain in reranking.py.
+        Two tiers (ADR-0192): the GTE-Reranker primary, then the degraded
+        sentence-transformers CrossEncoder — mirroring the priority chain in
+        reranking.py.
 
         Returns list of float scores, one per text. Returns zeros on total failure.
         """
@@ -176,10 +171,6 @@ class LocalMLClient:
             return []
 
         result = self._try_gte_reranker(query, texts)
-        if result is not None:
-            return result
-
-        result = self._try_flashrank(query, texts)
         if result is not None:
             return result
 
@@ -198,8 +189,11 @@ class LocalMLClient:
             return []
 
         settings = self._settings
+        # Must mirror Settings.NLI_MODEL exactly — this inline fallback said
+        # `-small` while the field said `-base` (0121 §2.7, caught by
+        # scripts/check_model_id_liveness.py rule 2).
         nli_model_name = (
-            settings.NLI_MODEL if settings is not None else "cross-encoder/nli-deberta-v3-small"
+            settings.NLI_MODEL if settings is not None else "cross-encoder/nli-deberta-v3-base"
         )
 
         try:
@@ -257,8 +251,8 @@ class LocalMLClient:
         idle_seconds=N continue to work regardless of the env setting.
 
         Handle → gauge/counter label mapping:
-          _gte_reranker, _flashrank_ranker, _cross_encoder → "ce"
-          _nli_model                                       → "nli"
+          _gte_reranker, _cross_encoder → "ce"
+          _nli_model                    → "nli"
         Pair/embedding are not managed here.
         """
         import gc
@@ -289,10 +283,6 @@ class LocalMLClient:
             self._nli_model = None
             unloaded.append("NLI")
             unloaded_nli = True
-        if self._flashrank_ranker is not None:
-            self._flashrank_ranker = None
-            unloaded.append("FlashRank")
-            unloaded_ce = True
         if self._cross_encoder is not None:
             self._cross_encoder = None
             unloaded.append("CrossEncoder")

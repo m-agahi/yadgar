@@ -185,9 +185,18 @@ class Settings(BaseSettings):
     # v9: Temporal retrieval settings
     TEMPORAL_RETRIEVAL_ENABLED: bool = True
 
-    # v10: Cross-encoder reranking settings
+    # v10: Cross-encoder reranking settings.
+    # NOT the live reranker — that is the GTE_RERANKER_* slot below (`GTE_*` kept
+    # for env back-compat; the model is Ettin-32m since T4/ADR-0104). These fields
+    # configure the CE rerank STAGE plus the degraded sentence-transformers
+    # fallback tier that runs only when the Ettin primary is off or has failed.
+    # CROSS_ENCODER_MODEL is deliberately not baked into Dockerfile.backend, so in
+    # the offline container that fallback scores zeros (ADR-0192).
     CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    CROSS_ENCODER_ENABLED: bool = True  # FlashRank ONNX is fast enough for CPU
+    # Two readers, two meanings (ADR-0192, flagged not fixed): gates the CE rerank
+    # stage in retrieval/_reranking_cross_encoder.py, and gates the ST fallback
+    # model load in ml_client/local_ml_client.py.
+    CROSS_ENCODER_ENABLED: bool = True
     CROSS_ENCODER_TOP_K: int = 10
     CROSS_ENCODER_WEIGHT: float = 0.6  # CE weight in blend (retrieval gets 1-this)
 
@@ -293,6 +302,13 @@ class Settings(BaseSettings):
     GTE_RERANKER_ENABLED: bool = True
     GTE_RERANKER_MODEL: str = "cross-encoder/ettin-reranker-32m-v1"
     GTE_RERANKER_MAX_LENGTH: int = 512
+    # Misleading name kept for env back-compat (YADGAR_GTE_RERANKER_FALLBACK_TO_
+    # FLASHRANK is documented and already written into every operator's config.yaml;
+    # renaming needs an alias + deprecation window — ADR-0192 revisit_trigger).
+    # It is a FAILURE-MODE SELECTOR, not a FlashRank switch: when the reranker
+    # fails, False => return zeros, True => fall through to the degraded
+    # sentence-transformers tier. It has never selected FlashRank, and it is not
+    # read at all when GTE_RERANKER_ENABLED=False.
     GTE_RERANKER_FALLBACK_TO_FLASHRANK: bool = True
 
     # v23 NLI. v5.6.6: default True→False (~55s/call CPU, marginal gain); YADGAR_NLI_RERANKING_ENABLED=true re-enables.
@@ -557,10 +573,53 @@ class Settings(BaseSettings):
     # Migrations can be slower than operational reads (lock contention, backfill queries).
     MIGRATION_HTTP_TIMEOUT_SEC: int = 30
 
+    # Task 0027c: bounded wait-for-backend at CORE startup (core_init_engines).
+    # StorageEngine.__init__ runs _init_schema() inline and issues HTTP at once,
+    # so a core started while the backend is down used to crashloop on
+    # Restart=on-failure. The gate polls the backend /health for this many
+    # seconds before failing cleanly. MUST stay strictly below the core unit's
+    # TimeoutStartSec (asserted by test_retry_budget_is_inside_core_unit_timeout)
+    # — a gate that outlives the start timeout turns a slow start into a
+    # crashloop. 0 disables the gate entirely (escape hatch).
+    # NOT a cold-boot mechanism: After=yadgar-backend.service is.
+    BACKEND_READY_WAIT_SEC: int = 60
+    # Fixed interval between /health probes. Fixed, not exponential — the wait is
+    # for another process to finish loading a model, so backoff only adds latency
+    # after readiness. 2s matches daemon.py's existing health poll.
+    BACKEND_READY_POLL_SEC: float = 2.0
+
+    # task:0113 — self-heal deadline (seconds) for the maintenance write-gate the
+    # vacuum engages around its count-capture → export → swap window.  The
+    # release runs in a finally, which covers returns/exceptions/sys.exit but not
+    # SIGKILL, OOM-kill or power loss; post-task:0111 the core no longer restarts
+    # during a vacuum, so a clear-on-start reset would never fire.  This TTL is
+    # the only backstop that does.  Default 2400s sits above
+    # yadgar-vacuum.service's TimeoutStartSec=30min so a slow-but-alive vacuum is
+    # never un-gated underneath itself.
+    MAINTENANCE_TTL_SEC: int = 2400
+
     # vacuum settings
-    # Number of pre-vacuum DB snapshots to retain. Older ones are pruned by
-    # scripts/cleanup-backups.sh after a successful vacuum.
-    VACUUM_SNAPSHOT_RETENTION: int = 3
+    # Number of pre-vacuum DB snapshots to retain; older ones are pruned on
+    # EVERY vacuum exit path.  Lowered 3 -> 2 by task:0046: each
+    # snapshot is a full-size DB copy, so three of them guarded a 224 MB live DB
+    # with ~800 MB of insurance.  The 2026-07-10 recovery used ONE quiesced copy;
+    # the second exists only for the case where the newest is itself torn, and
+    # past that ADR-0090's `.surql` export path is the fallback.  A never-zero
+    # floor is enforced in code (`max(1, keep_n)`), not by this default.
+    VACUUM_SNAPSHOT_RETENTION: int = 2
+
+    # Age backstop for those snapshots (task:0046), mirroring ADR-0076 D1's
+    # VACUUM_OLD_MAX_AGE_DAYS.  The NEWEST snapshot is exempt unconditionally, so
+    # this can never take the host below one rollback anchor.
+    VACUUM_SNAPSHOT_MAX_AGE_DAYS: int = 14
+
+    # Task 0107: which side-build launcher Phase 3 uses to obtain its throwaway
+    # SurrealDB — "auto" (host binary first, container second, SKIP third,
+    # today's behaviour), "host" (host binary only, fails loud rather than
+    # falling through when unresolvable), or "container" (container only,
+    # ignoring any resolvable host binary — ADR-0186's structurally
+    # skew-proof branch). See yadgar/core/vacuum/launcher.py::_launcher_mode.
+    VACUUM_SIDE_LAUNCHER: str = "auto"
 
     # v4.9: threshold-driven auto-trigger for vacuum (emergency backstop only from v5.7.0).
     #

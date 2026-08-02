@@ -1,13 +1,13 @@
 [Unit]
-Description=Yadgar Memory Engine / MCP Server (Docker)
+Description=Yadgar Memory Engine / MCP Server
 After=network.target yadgar-backend.service
-Requires=yadgar-backend.service
-# The -v @STATE_DIR@ bind below projects the container's
-# YADGAR_VACUUM_TRIGGER_PATH write onto the host, where
-# yadgar-vacuum-trigger.path watches for it. Both halves are required: the env
-# var has no code default, so unset means "no watcher on this surface" and
-# vacuum_now() refuses rather than writing into a void.
-# @STATE_DIR@ must be spelled IDENTICALLY here and in that unit's PathExists=.
+# Wants=, NOT Requires= (task:0111 / ADR-0188). Requires= propagates STOP: a
+# `systemctl --user stop yadgar-backend` — which every vacuum does to quiesce
+# the surrealkv store — would take the core down with it and drop every
+# connected MCP session. Wants= keeps the pull-in (starting core still starts
+# the backend); After= above keeps the start ordering. Only the stop
+# propagation is dropped, which is the whole point.
+Wants=yadgar-backend.service
 
 [Service]
 # task:0105 — readiness is runtime-conditional. The Type below renders `notify`
@@ -18,36 +18,24 @@ Requires=yadgar-backend.service
 # replaces that signal with a bounded /health poll; per man systemd.service,
 # "the execution of ExecStartPost= is taken into account for the purpose of
 # Before=/After= ordering constraints", which is the guarantee notify buys.
-# generate_systemd.sh either STRIPS a column-0 marker prefix or DELETES the line.
-Type=@SERVICE_TYPE@
-@PODMAN_ONLY@NotifyAccess=all
+# The renderer emits each runtime-conditional line only on the arm that needs it.
+Type=exec
 # DOCKER_HOST is a podman-only belt: it names podman's rootful socket, which the
 # local podman CLI ignores (it reads CONTAINER_HOST) but the docker-compat shim
 # path may use. On docker it is not merely useless, it points the docker CLI at a
 # socket that does not exist, so every Exec* in this unit fails — hence omitted
 # entirely there, letting docker use its own default socket / active context.
-@PODMAN_ONLY@Environment=DOCKER_HOST=unix:///run/podman/podman.sock
-EnvironmentFile=@SECRETS_ENV_FILE@
+EnvironmentFile=/home/testuser/.config/yadgar/secrets.env
 # upgrade.env carries YADGAR_IMAGE_TAG; leading '-' makes missing file non-fatal (first install).
-EnvironmentFile=-%h/.local/state/yadgar/upgrade.env
-ExecStartPre=-@RUNTIME@ stop yadgar
-ExecStartPre=-@RUNTIME@ rm yadgar
-# Pre-create the state dir HERE, not only at render time in generate_systemd.sh.
-# podman does NOT auto-create a missing `-v` host source — it fails the run with
-# `statfs <path>: no such file or directory`. So if the dir is gone at start
-# (user cleaned ~/.local/state, or a purge ran between install and boot) the CORE
-# daemon would fail to start, not just the vacuum trigger. Mirrors the flake,
-# which pre-creates it in this same unit's ExecStartPre for the same reason.
-# `mkdir` is resolved from the unit's $PATH, like @RUNTIME@ above.
-ExecStartPre=mkdir -p @STATE_DIR@/triggers
-ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user root \
+EnvironmentFile=-/home/testuser/.local/state/yadgar/upgrade.env
+ExecStartPre=-docker stop yadgar
+ExecStartPre=-docker rm yadgar
+ExecStart=docker run --name yadgar --rm --security-opt label=disable --user root \
     --network yadgar-net \
     -p 127.0.0.1:8765:8765 \
     -p 127.0.0.1:42069:42069 \
-    -v @DATA_DIR@:/data \
-    -v @STATE_DIR@:/root/.local/state/yadgar \
+    -v yadgar-data:/data \
     -e YADGAR_DB_URL=http://yadgar-backend:8000 \
-    -e YADGAR_VACUUM_TRIGGER_PATH=/root/.local/state/yadgar/triggers/vacuum_requested \
     -e YADGAR_EMBED_URL=http://yadgar-backend:8001 \
     -e YADGAR_HOST=0.0.0.0 \
     -e YADGAR_PORT=8765 \
@@ -57,10 +45,10 @@ ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user r
     -e YADGAR_RW_USER=${YADGAR_RW_USER} \
     -e YADGAR_RW_PASS=${YADGAR_RW_PASS} \
     -e YADGAR_MCP_AUTH_TOKEN=${YADGAR_MCP_AUTH_TOKEN} \
-    --memory 1g --cpus 1 --stop-timeout 30 \
-    ${YADGAR_IMAGE_TAG}
+    --memory 2048m --cpus 1.0 --memory-swap 2048m --stop-timeout 30 \
+    docker.io/openfantasy/yadgar:9.9.9
 # Docker readiness gate. `curl` is resolved from the unit's $PATH, like `mkdir`
-# and @RUNTIME@ above. No shell wrapper, so systemd's own `$` expansion never
+# and docker above. No shell wrapper, so systemd's own `$` expansion never
 # applies; curl's --retry does the polling. --retry-connrefused covers "port not
 # listening yet", --retry-all-errors covers "listening but not healthy yet"
 # (--fail makes a 5xx an error, which plain --retry would not retry).
@@ -69,8 +57,8 @@ ExecStart=@RUNTIME@ run --name yadgar --rm --security-opt label=disable --user r
 # /health (readiness) not /health/live (liveness, ADR-0019): podman's READY=1 is
 # emitted last, after the full engine set, so gating on liveness would mark this
 # unit active EARLIER than the podman arm does.
-@DOCKER_ONLY@ExecStartPost=curl --fail --silent --show-error --output /dev/null --retry 45 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:8765/health
-ExecStop=@RUNTIME@ stop yadgar
+ExecStartPost=curl --fail --silent --show-error --output /dev/null --retry 45 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:8765/health
+ExecStop=docker stop yadgar
 # ExecReload: reserved for future config-only reload; no-op until orchestrator wires it.
 ExecReload=/bin/true
 Restart=on-failure

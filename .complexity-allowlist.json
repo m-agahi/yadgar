@@ -26,9 +26,9 @@
   "function": "<file>",
   "lineno": 1,
   "metrics": {
-   "file_loc": 1739
+   "file_loc": 2046
   },
-  "rationale": "P0 #37 safe-stop train (2026-07-10): +~265 LOC for the swap quiescence gate, finalize rollback-on-unverified, and the /proc inode-coherence scan (all with incident-context docstrings — the 07-09 split-brain postmortem lives next to the code it guards). Prior entry: I33 obs rollout 1015. The honest fix is splitting finalize/guards out of __init__ — that restructure belongs to the parked T2 layer-boundary train (#5), not a P0 incident-fix branch. Car 0092 (2026-07-31): 1280 -> 1713. +~430 LOC for the side-build surreal-binary preflight, the named-skip-reason consolidation_log path, and the abort-path .pre-vacuum prune -- again incident-context docstrings carrying the wedge postmortem (export + stop-both-units + full copytree ran before a FileNotFoundError, and no abort path pruned the snapshot it had just made). The honest fix remains splitting finalize/guards/preflight out of __init__ into siblings of phases.py; that restructure still belongs to the parked T2 layer-boundary train (#5), not a bug-train car. Car 0092 full fix (2026-08-01): 1713 -> 1739. The side-build LAUNCHER SEAM itself was deliberately put in a NEW sibling (yadgar/core/vacuum/launcher.py) rather than added here, and _stop_side_backend_clean MOVED there with it -- so the container branch cost this file +26 net LOC (the broadened preflight and its incident-context docstring), not +250.",
+  "rationale": "P0 #37 safe-stop train (2026-07-10): +~265 LOC for the swap quiescence gate, finalize rollback-on-unverified, and the /proc inode-coherence scan (all with incident-context docstrings — the 07-09 split-brain postmortem lives next to the code it guards). Prior entry: I33 obs rollout 1015. The honest fix is splitting finalize/guards out of __init__ — that restructure belongs to the parked T2 layer-boundary train (#5), not a P0 incident-fix branch. Car 0092 (2026-07-31): 1280 -> 1713. +~430 LOC for the side-build surreal-binary preflight, the named-skip-reason consolidation_log path, and the abort-path .pre-vacuum prune -- again incident-context docstrings carrying the wedge postmortem (export + stop-both-units + full copytree ran before a FileNotFoundError, and no abort path pruned the snapshot it had just made). The honest fix remains splitting finalize/guards/preflight out of __init__ into siblings of phases.py; that restructure still belongs to the parked T2 layer-boundary train (#5), not a bug-train car. Car 0092 full fix (2026-08-01): 1713 -> 1739. The side-build LAUNCHER SEAM itself was deliberately put in a NEW sibling (yadgar/core/vacuum/launcher.py) rather than added here, and _stop_side_backend_clean MOVED there with it -- so the container branch cost this file +26 net LOC (the broadened preflight and its incident-context docstring), not +250. Car 0113 (2026-08-01): 1739 -> 1974. +~235 LOC for the write-quiescence seam (the maintenance enter/exit/release helpers, the cross-process queue-drain nudge, and the incident-context block explaining WHY the exact-count gate is structurally blind to a write landing between the export and the backend stop). The seam is deliberately here rather than in a sibling: it wraps cmd_vacuum_impl's existing sensitive-lock try/finally, which lives in this file, and splitting only the wrapper out would put the lifecycle on one side of a module boundary and the lock it must not skip on the other. The honest fix remains splitting finalize/guards/preflight out into siblings of phases.py, still parked on the T2 layer-boundary train (#5). Car 0046 (2026-08-01): 1974 -> 2046. +72 net LOC, almost entirely the incident-context docstrings on the single reap site (_reap_vacuum_residue carries the reasoning of the SEVEN scattered call sites it replaces, including Car 0092's low-disk wedge argument, so deleting those calls cannot be misread as regressing it). The retention MECHANICS deliberately went to phases.py next to _run_cleanup_script (_reap_export_pairs, _reap_snapshots_by_age, the stamp parser), not here; what stays is the wrapper, which — like 0113's — must live beside the try/finally and the lock it may not skip. Two removals partly offset it: seven reap call sites and their comment blocks, and _vacuum_finalize's keep_n param (which retired that function's params=9 allowlist entry outright).",
   "added": "2026-07-10",
   "added_by": "safestop-car2"
  },
@@ -435,16 +435,5 @@
   "rationale": "R3 write-path regression fix: 'reason' (semantic_immortal anchor reason) must survive the enqueue->drain boundary so drainer-side phase_validate can re-check the require-reason invariant. The signature mirrors the memorize MCP schema (already noqa'd PLR0913); all 9 params are queue-payload fields — a params dataclass would just relocate the field list without reducing essential complexity.",
   "added": "2026-07-08",
   "added_by": "reorg3-test-migration"
- },
- {
-  "path": "yadgar/core/vacuum/__init__.py",
-  "function": "_vacuum_finalize",
-  "lineno": 902,
-  "metrics": {
-   "params": 9
-  },
-  "rationale": "P0 #37 item 3: the finalize gained db_path (the rollback target — cannot be derived when --db-path names a non-standard canonical) on top of the pre-existing 8-param signature (url, home, old, snapshot, svc, keep_n, raw/filtered scratch). Bundling params into a context object means rewriting ~10 positional call sites across the legacy vacuum test suites — churn deferred to the T2 layer-boundary restructure (#5); a P0 incident branch keeps the seam stable.",
-  "added": "2026-07-10",
-  "added_by": "safestop-car2"
  }
 ]

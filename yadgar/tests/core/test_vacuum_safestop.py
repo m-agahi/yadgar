@@ -8,9 +8,12 @@ manifest.
 
 Three fixes under test:
 
-  item 6 (root defect) — QUIESCENCE GATE: `svc.stop()` runs minutes before the
-    swap (export + snapshot + side-build sit in between); nothing re-verified
-    the backend was still down at swap time. `_atomic_swap` is now gated on
+  item 6 (root defect) — QUIESCENCE GATE: the Phase 2 backend stop
+    (`svc.stop_backend()` since task:0111; `svc.stop()` before it) runs minutes
+    before the swap (export + snapshot + side-build sit in between); nothing
+    re-verified the backend was still down at swap time. The gate is
+    BACKEND-scoped either way — it polls the SurrealDB port, so a live core does
+    not trip it. `_atomic_swap` is now gated on
     `_assert_backend_quiesced` — a LIVE backend at swap time ABORTS the vacuum
     with the canonical untouched.
 
@@ -164,9 +167,7 @@ class TestFinalizeRollback:
                 return_value=(coherent, set() if coherent else {"surreal_db.old-20260709_191332"}),
             ),
         ):
-            result = _vacuum_finalize(
-                "http://127.0.0.1:8080", home, old, snap, svc, keep_n=3, db_path=db
-            )
+            result = _vacuum_finalize("http://127.0.0.1:8080", home, old, snap, svc, db_path=db)
         return result, home, db, old, svc
 
     def _assert_rolled_back(self, result, home, db, old, svc):

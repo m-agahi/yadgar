@@ -70,6 +70,8 @@ from yadgar.core.ops import ServiceController, detect_service_mode
 from yadgar.core.vacuum.phases import (
     _atomic_swap,
     _dir_bytes,
+    _reap_export_pairs,
+    _reap_snapshots_by_age,
     _recover_interrupted_swap,
     _run_cleanup_script,
     _vacuum_export,
@@ -108,15 +110,25 @@ _STRIPPED_TABLES = frozenset({"action_log"})
 # in yadgar/core/server/routes/admin_ops.py.
 _CHECK_INVARIANTS_PATH = "/api/check_invariants"
 
-# Car 0046: number of PRIOR vacuum_export_* pairs (raw + filtered) to retain as
-# a backstop against unbounded accumulation.  ADR-0076 D2 deletes the CURRENT
+# task:0113 — the core write-gate this module engages for the WHOLE run.  Same
+# named-constant discipline as above, for the same route-existence guard.
+_MAINTENANCE_ENTER_PATH = "/api/control/maintenance/enter"
+_MAINTENANCE_EXIT_PATH = "/api/control/maintenance/exit"
+
+# Car 0046: number of vacuum_export_* RUNS (raw + filtered) to retain as a
+# backstop against unbounded accumulation.  ADR-0076 D2 deletes the CURRENT
 # run's own pair on a retained swap but intentionally KEEPS it on any abort
 # (forensics) — that retention had no ceiling, and 1.4 GB of scratch built up
-# on the workstation before a manual sweep.  2 prior pairs (4 files) is enough
-# to diagnose a fix-in-progress (this run's failure plus the one before it)
-# without keeping every historical failure forever; older pairs carry no
-# additional diagnostic value once the two most recent are on hand.
-_VACUUM_EXPORT_KEEP_RUNS = 2
+# on the workstation before a manual sweep.
+#
+# Lowered 2 -> 1 by task:0046: the scratch is DIAGNOSTIC, not recovery,
+# and one pair is ~206 MB against a 224 MB live DB.  Note the window means
+# different things per outcome, and the difference is correct: on a retained
+# swap `_delete_export_scratch` has already removed THIS run's pair, so the 1
+# retained run is the PREVIOUS one; on an abort this run's own pair is the
+# newest and is what the window holds — which is exactly what a debugging
+# session reads.
+_VACUUM_EXPORT_KEEP_RUNS = 1
 
 # Car 0092: named SKIP reasons.  A skip is exit 0 and reclaims nothing, so the
 # reason is the only thing telling an operator what to do about it — no usable
@@ -149,17 +161,78 @@ def _reap_stale_pre_vacuum_snapshots(yadgar_home: Path, keep_n: int) -> None:
     accumulated snapshots silently converted vacuum into a permanent no-op with
     a green timer.  Pruning keeps the ``keep_n`` MOST RECENT, so the aborting
     run's own snapshot always survives for forensics.
+
+    task:0046 — the ``max(1, keep_n)`` clamp is the NEVER-ZERO FLOOR, and it
+    lives HERE rather than in the settings resolver on purpose: a snapshot is the
+    last-resort rollback anchor for ADR-0090's chronic unclean close, so no
+    caller — a hostile ``YADGAR_VACUUM_SNAPSHOT_RETENTION=0``, a future in-repo
+    call site, a test — may reach the wipe-everything case.
     """
-    _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", keep_n)
+    _run_cleanup_script(yadgar_home, "surreal_db.pre-vacuum-*", max(1, keep_n))
 
 
 @observe(tier="stage")
 def _reap_stale_export_scratch(yadgar_home: Path) -> None:
-    """Car 0046: bound vacuum_export_* accumulation to _VACUUM_EXPORT_KEEP_RUNS
-    prior pairs.  Called on every ``_vacuum_finalize`` exit path — the previous
-    "kept forever on abort" retention (ADR-0076 D2) had no ceiling.
+    """Car 0046: bound vacuum_export_* to _VACUUM_EXPORT_KEEP_RUNS whole RUNS.
+
+    Delegates to the pair-aware reaper: retention is expressed in runs, ordered
+    by the stamp in the filename, so a partial write can neither eat a slot nor
+    leave a half-pair behind.  See :func:`~yadgar.core.vacuum.phases._reap_export_pairs`.
     """
-    _run_cleanup_script(yadgar_home, "vacuum_export_*", _VACUUM_EXPORT_KEEP_RUNS * 2)
+    _reap_export_pairs(yadgar_home, _VACUUM_EXPORT_KEEP_RUNS)
+
+
+@observe(tier="stage")
+def _reap_vacuum_residue(yadgar_home: Path, settings) -> None:  # type: ignore[no-untyped-def]
+    """The ONE vacuum-residue reap site (task:0046 A).  NEVER raises.
+
+    ``_reap_stale_export_scratch`` was called from three sites, all inside
+    ``_vacuum_finalize``, which only a run that reaches Phase 3 success ever
+    sees; ``_reap_stale_pre_vacuum_snapshots`` was separately patched onto three
+    abort ``return``\\ s by Car 0092.  Eleven exit paths, two reapers, two
+    different subsets covered — and a host that keeps aborting (container-only,
+    low-disk) accumulated export pairs without bound.  Called from
+    ``cmd_vacuum_impl``'s ``finally``, this cannot be missed by a new ``return``
+    and — unlike any return-site patch — also covers exceptions.
+
+    It does not need to know whether the run succeeded: retention is keep-newest,
+    so the aborting run's own artefacts are the newest and survive for forensics
+    (ADR-0076 D2), while ``_vacuum_finalize`` has already dropped this run's own
+    pair on the success path.
+
+    Car 0092's low-disk call site carried the reasoning "a wedged host reaches
+    the low-disk branch BECAUSE stale .pre-vacuum-* dirs ate the headroom; prune
+    before skipping so a later run can proceed."  That intent is about the NEXT
+    run finding headroom, not this one recovering, so running it from the
+    ``finally`` — milliseconds later, after the skip row is logged — satisfies it
+    exactly.  Recorded here so the deletion of that call is not read as a
+    regression of the Car 0092 wedge fix.
+
+    Each step gets its OWN try/except, per ``_restart_services_after_abort``: a
+    bare sequence stops at the first raise, and a raising reap must not skip the
+    steps after it — nor propagate into the caller's ``finally`` and skip
+    ``sensitive_lock.release()``.
+    """
+    keep_n = _snapshot_keep_n(settings)
+    max_age = int(getattr(settings, "VACUUM_SNAPSHOT_MAX_AGE_DAYS", 14))
+    _reap_step("pre-vacuum snapshots", _reap_stale_pre_vacuum_snapshots, yadgar_home, keep_n)
+    _reap_step("snapshot age-backstop", _reap_snapshots_by_age, yadgar_home, max_age)
+    _reap_step("export scratch", _reap_stale_export_scratch, yadgar_home)
+
+
+@observe(tier="stage")
+def _reap_step(label: str, reap, *args) -> None:  # type: ignore[no-untyped-def]
+    """Run one reap, swallowing and naming any failure.  See _reap_vacuum_residue."""
+    try:
+        reap(*args)
+    except Exception as exc:
+        print(f"[vacuum] WARNING: residue reap ({label}) failed: {exc}", file=sys.stderr)
+
+
+def _snapshot_keep_n(settings) -> int:  # type: ignore[no-untyped-def]
+    """Configured ``.pre-vacuum`` window size.  The FLOOR is not applied here —
+    see :func:`_reap_stale_pre_vacuum_snapshots`."""
+    return int(getattr(settings, "VACUUM_SNAPSHOT_RETENTION", 2))
 
 
 # ---------------------------------------------------------------------------
@@ -202,8 +275,8 @@ def _build_http_client(backend_url: str) -> httpx.Client:
 def _assert_backend_quiesced(backend_url: str) -> bool:
     """True iff NOTHING answers GET <backend_url>/health — the store is quiesced.
 
-    P0 #37 item 6 (the RCA §4 root defect): ``svc.stop()`` runs in Phase 2,
-    but the swap happens minutes later (export write-out, snapshot copytree,
+    P0 #37 item 6 (the RCA §4 root defect): the Phase 2 backend stop
+    (``svc.stop_backend()``) runs early, but the swap happens minutes later (export write-out, snapshot copytree,
     and the side-build /import all sit in between). Nothing re-verified the
     backend was still DOWN at swap time, so any external (re)start in that
     window — a nix deploy, a manual ``systemctl start``, systemd recovery —
@@ -656,12 +729,21 @@ def _build_and_verify_side_db(
 def _restart_services_after_abort(svc: ServiceController, *, backend: bool = True) -> None:
     """Bring BOTH units back after a vacuum abort — backend first, then core.
 
-    task:0027a.  Phase 2's ``svc.stop()`` stops ``yadgar`` AND ``yadgar-backend``
-    (``ops.ServiceController.SERVICES``), but every abort path between that stop
-    and finalize used to restart only the backend — and the quiescence-gate abort
-    restarted nothing at all.  ``systemctl --user stop`` is an EXPLICIT stop, so
-    ``Restart=on-failure``/``always`` will not bring core back: any of those paths
-    left the memory engine down until a human noticed.
+    task:0027a.  Phase 2 used to call ``svc.stop()``, which stops ``yadgar`` AND
+    ``yadgar-backend`` (``ops.ServiceController.SERVICES``), but every abort path
+    between that stop and finalize used to restart only the backend — and the
+    quiescence-gate abort restarted nothing at all.  ``systemctl --user stop`` is
+    an EXPLICIT stop, so ``Restart=on-failure``/``always`` will not bring core
+    back: any of those paths left the memory engine down until a human noticed.
+
+    task:0111 / ADR-0188 narrowed Phase 2 to ``stop_backend()``, which does NOT
+    retire the core start below — it turns it into a BELT.  A generator change
+    does not rewrite units already installed: on a host whose ``yadgar.service``
+    still carries ``Requires=yadgar-backend.service`` (rendered before the
+    ``Wants=`` flip), stopping the backend still cascades and the core IS down
+    here.  On a correctly-regenerated host the call is an idempotent no-op.
+    Keep BOTH starts, and keep the order — do not "simplify" this to backend-only
+    on the reasoning that the core is never stopped now.
 
     Each start gets its OWN try/except deliberately.  Sharing one would mean a
     raising ``start_backend()`` (masked unit, docker daemon gone, manual mode)
@@ -803,8 +885,8 @@ def _side_build_swap_and_start(
         )
         return None
 
-    # 3b-pre: QUIESCENCE GATE (P0 #37 item 6). svc.stop() ran minutes ago in
-    # Phase 2; an external restart in the side-build window would have
+    # 3b-pre: QUIESCENCE GATE (P0 #37 item 6). The backend stop ran minutes ago
+    # in Phase 2; an external restart in the side-build window would have
     # re-opened the ORIGINAL canonical. Renaming under a live store is exactly
     # the 07-09 path/inode split-brain — verify quiescence or ABORT.
     if not _assert_backend_quiesced(backend_url):
@@ -1071,12 +1153,11 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     old_path: Path,
     snapshot_path: Path,
     svc: ServiceController,
-    keep_n: int = 3,
     raw_path: Path | None = None,
     filtered_path: Path | None = None,
     db_path: Path | None = None,
 ) -> bool:
-    """Start yadgar, gate the swapped-in DB, retire the .old dir — or ROLL BACK.
+    """Gate the swapped-in DB, retire the .old dir — or ROLL BACK.
 
     ``old_path`` is the previous-canonical retained by the atomic swap
     (``surreal_db.old-<ts>``).
@@ -1087,6 +1168,13 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     is promoted back to canonical and the unverified compacted DB is discarded,
     rather than retaining a half-swapped state (the 07-09 silent split-brain).
     The vacuum then exits 2 so the nightly unit goes red.
+
+    NO ``start_yadgar()`` here (task:0111 / ADR-0188): Phase 2 stops the BACKEND
+    only, so there is nothing to start — but the wait is deliberately KEPT and
+    what it MEANS changed.  Core ``/health`` is READINESS: it probes
+    ``YADGAR_DB_URL``'s own ``/health`` (``http.py::_build_health_payload`` →
+    ``_probe_dependency``), so it stopped meaning "the core booted" and now means
+    "the backend came back on the COMPACTED DB and the core can reach it".
 
     ``check_invariants`` is ADVISORY here and ONLY here (task:0045 D2).  It ran
     against a route that did not exist until this change, so it 404'd on every
@@ -1107,10 +1195,12 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     violations, unchanged.
 
     ``raw_path`` / ``filtered_path``: the vacuum export scratch files written by
-    ``_vacuum_export`` (ADR-0076 D2).  This run's own pair is deleted whenever
-    the swap is RETAINED; kept on the rollback paths for forensics, but bounded
-    to ``_VACUUM_EXPORT_KEEP_RUNS`` PRIOR pairs on every outcome (Car 0046) —
-    the old unbounded "kept on failure" retention accumulated 1.4 GB.
+    ``_vacuum_export`` (ADR-0076 D2).  This run's own pair is deleted here
+    whenever the swap is RETAINED, and kept on the rollback paths for forensics.
+    Bounding the ACCUMULATION is no longer this function's job — task:0046 moved
+    every residue reap (export scratch and ``.pre-vacuum`` snapshots alike) to
+    the single ``finally`` in ``cmd_vacuum_impl``, because finalize is reachable
+    only after Phase 3 succeeds and eight other exit paths leaked past it.
 
     ``db_path``: the canonical DB path (rollback target). Defaults to
     ``yadgar_home / "surreal_db"``.
@@ -1123,14 +1213,11 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
         True when the swap was RETAINED (with or without an advisory
         check_invariants failure); False when a hard gate rolled it back.
     """
-    yadgar_url = f"http://127.0.0.1:{os.environ.get('YADGAR_PORT', '8765')}"
+    yadgar_url = _core_url()
     if db_path is None:
         db_path = yadgar_home / "surreal_db"
 
-    print("[vacuum] starting yadgar ...", flush=True)
-    svc.start_yadgar()
-
-    print(f"[vacuum] waiting for {yadgar_url}/health ...", flush=True)
+    print(f"[vacuum] waiting for {yadgar_url}/health (core readiness) ...", flush=True)
     if not _wait_for_yadgar_health(yadgar_url, timeout_s=180.0):
         _rollback_swap_on_finalize_failure(
             "yadgar core did not become healthy on the swapped-in DB (180s)",
@@ -1141,7 +1228,6 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
         )
         # Age-backstop still runs — failure does not exempt stale .old dirs.
         _reap_stale_old_dirs(yadgar_home, old_path)
-        _reap_stale_export_scratch(yadgar_home)
         return False
 
     # Wait up to 30s for API layer readiness before check_invariants.
@@ -1170,7 +1256,6 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
             backend_url,
         )
         _reap_stale_old_dirs(yadgar_home, old_path)
-        _reap_stale_export_scratch(yadgar_home)
         return False
 
     # ADVISORY gate (task:0045 D2) — logged, never a rollback trigger.  See the
@@ -1193,18 +1278,14 @@ def _vacuum_finalize(  # noqa: PLR0913 — established finalize signature + db_p
     # The swap is RETAINED — both hard gates passed.  Retire the previous
     # canonical (this is the reclaim: .old holds the entire pre-vacuum DB) and
     # drop the export scratch.  The .pre-vacuum snapshot remains the last-resort
-    # recovery anchor (pruned by keep_n below).
+    # recovery anchor (its window is pruned by the caller's residue reap).
     print(f"[vacuum] removing previous DB dir: {old_path}", flush=True)
     shutil.rmtree(str(old_path), ignore_errors=True)
     _delete_export_scratch(raw_path, filtered_path)
-    _reap_stale_export_scratch(yadgar_home)  # Car 0046: bound any older leaked pairs
 
     # D1: Age-backstop — reap stale .old dirs older than VACUUM_OLD_MAX_AGE_DAYS.
     # Runs unconditionally (retained OR rolled back).  current_old exempted.
     _reap_stale_old_dirs(yadgar_home, old_path)
-
-    # Prune pre-vacuum snapshots (Car 0092: the abort paths now do this too).
-    _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
 
     # The swap was RETAINED — the return tracks retention, NOT check_invariants.
     # Returning ci_ok here would re-arm the exact bug this change removes: a
@@ -1277,14 +1358,13 @@ def _surreal_version(binary: str) -> str:
 
 @observe(tier="stage")
 def _has_surreal_binary() -> bool:
-    """Return True iff a host-side ``surreal`` binary is resolvable on PATH.
+    """Return True iff a host-side ``surreal`` binary is resolvable.
 
     Car 0092.  Phase 3's side build spawns a THROWAWAY ``surreal start``
-    host-side (``yadgar.core._surreal_runner.spawn_surreal`` — a bare
-    PATH-resolved ``subprocess.Popen(["surreal", ...])``).  On a container
-    install that binary exists only inside the ``yadgar-backend`` image, so the
-    spawn raises ``FileNotFoundError`` — which ``_build_and_verify_side_db``
-    swallows in its broad ``except Exception`` and turns into a plain abort.
+    host-side (``yadgar.core._surreal_runner.spawn_surreal``).  On a container
+    install that binary is nowhere resolvable, so the spawn raises
+    ``FileNotFoundError`` — which ``_build_and_verify_side_db`` swallows in its
+    broad ``except Exception`` and turns into a plain abort.
 
     Without this preflight that abort landed at the WORST possible moment: after
     the full ``/export``, after BOTH units were stopped, and after the full-size
@@ -1302,14 +1382,29 @@ def _has_surreal_binary() -> bool:
     this host take the HOST-BINARY branch?": a host without the binary can now run
     the side build in a one-shot backend container instead.  The skip decision
     therefore lives in :func:`_has_side_build_launcher`, which owns the SKIP
-    message; this function only answers about PATH and logs which binary a
-    host-binary run resolved.
+    message; this function only answers about resolution and logs which binary
+    a host-binary run resolved.
+
+    Task 0107: resolution goes through
+    ``yadgar.core.vacuum.launcher._resolve_surreal_binary_and_source`` — the
+    same env-independent resolver ``select_side_launcher`` and the actual spawn
+    use — rather than a second, independent ``shutil.which("surreal")``.  The
+    preflight log line now names the chosen binary AND how it was resolved
+    (``env override`` / ``PATH`` / ``candidate dir``), so a run is
+    self-documenting about which of the (previously) three PATH-dependent
+    resolution points fired.
     """
-    binary = shutil.which("surreal")
-    if binary is None:
+    from yadgar.core.vacuum.launcher import (  # noqa: PLC0415 — avoid import cycle
+        _resolve_surreal_binary_and_source,
+    )
+
+    resolved = _resolve_surreal_binary_and_source()
+    if resolved is None:
         return False
+    binary, source = resolved
     print(
-        f"[vacuum] preflight: side-build binary {binary} ({_surreal_version(binary)})",
+        f"[vacuum] preflight: side-build binary {binary} ({_surreal_version(binary)}), "
+        f"resolved via {source}",
         flush=True,
     )
     return True
@@ -1319,9 +1414,10 @@ def _has_surreal_binary() -> bool:
 def _has_side_build_launcher() -> bool:
     """Return True iff Phase 3 can obtain a SurrealDB to build the side DB with.
 
-    Car 0092 (full fix).  Two ways, tried in that order:
+    Car 0092 (full fix).  Two ways, tried in that order when
+    ``VACUUM_SIDE_LAUNCHER=auto`` (the default):
 
-    1. a host-side ``surreal`` on PATH (dev boxes, nix hosts) — unchanged;
+    1. a host-side ``surreal`` (dev boxes, nix hosts) — unchanged;
     2. a one-shot ``yadgar-backend`` container, which runs THE SAME binary that
        will later open the built store, so builder/opener version skew is
        structurally impossible rather than merely currently-absent.
@@ -1330,11 +1426,56 @@ def _has_side_build_launcher() -> bool:
     the v5.170.0 path, reason string unchanged for telemetry continuity.  Before
     the launcher seam a container-only install took that skip on EVERY nightly:
     honest, loud and permanent, reclaiming nothing forever.
+
+    Task 0107: honours ``VACUUM_SIDE_LAUNCHER`` ∈ ``{auto, host, container}``
+    (:func:`~yadgar.core.vacuum.launcher._launcher_mode`).  ``host`` and
+    ``container`` do NOT fall through to the other branch when their pin is
+    unresolvable — an operator who read ADR-0186 and pinned a branch
+    explicitly needs the log to say the PIN is what's blocking the run, not
+    have it silently swapped for the other branch.
     """
+    from yadgar.core.vacuum.launcher import (  # noqa: PLC0415 — avoid import cycle
+        _launcher_mode,
+        backend_image,
+        backend_image_present,
+    )
+
+    mode = _launcher_mode()
+
+    if mode == "host":
+        if _has_surreal_binary():
+            return True
+        print(
+            "[vacuum] SKIP: VACUUM_SIDE_LAUNCHER=host is pinned but no usable "
+            "`surreal` binary resolved (checked YADGAR_SURREAL_BIN, PATH, and "
+            "the known install-layout candidate dirs) — refusing to silently "
+            "fall through to the container branch. Fix the pin, or unset it to "
+            "use auto.",
+            file=sys.stderr,
+        )
+        return False
+
+    if mode == "container":
+        if backend_image_present():
+            print(
+                f"[vacuum] preflight: VACUUM_SIDE_LAUNCHER=container is pinned "
+                f"— the side build will run in a one-shot {backend_image()} "
+                "container",
+                flush=True,
+            )
+            return True
+        print(
+            "[vacuum] SKIP: VACUUM_SIDE_LAUNCHER=container is pinned but the "
+            f"{backend_image()} image is not in the local container-runtime "
+            "store — refusing to silently fall through to a host binary. Pull "
+            "the image (`yadgar daemon pull`), or unset the pin to use auto.",
+            file=sys.stderr,
+        )
+        return False
+
+    # auto (default)
     if _has_surreal_binary():
         return True
-    from yadgar.core.vacuum.launcher import backend_image, backend_image_present  # noqa: PLC0415
-
     if backend_image_present():
         print(
             f"[vacuum] preflight: no host `surreal` — the side build will run in a "
@@ -1343,12 +1484,13 @@ def _has_side_build_launcher() -> bool:
         )
         return True
     print(
-        "[vacuum] SKIP: no usable `surreal` — none on the host PATH, and the "
+        "[vacuum] SKIP: no usable `surreal` — none on the host PATH (or the "
+        "known install-layout candidate dirs), and the "
         f"{backend_image()} image (which carries one) is not in the local "
         "container-runtime store. The Phase 3 side-path build needs one or the "
         "other. Skipping this run (no destructive op performed: no export, no "
-        "service stop, no snapshot). Install surreal on the host PATH, or pull "
-        "the backend image (`yadgar daemon pull`).",
+        "service stop, no snapshot). Install surreal on the host PATH, set "
+        "YADGAR_SURREAL_BIN, or pull the backend image (`yadgar daemon pull`).",
         file=sys.stderr,
     )
     return False
@@ -1527,6 +1669,135 @@ def _vacuum_report_and_log(  # noqa: PLR0913 — one row of report fields, no co
 
 
 # ---------------------------------------------------------------------------
+# Write quiescence (task:0113)
+#
+# The exact-count gate compares source_counts (captured at T0) against a side DB
+# built from the export (T1).  A write landing in (T0, T1] makes the two
+# disagree and ABORTS the run spuriously; a write landing in (T1, backend-stop]
+# is in NEITHER number, so the gate PASSES, the swap is retained, and the row
+# leaves with the rmtree of .old.  The second case is silent write loss and no
+# comparison of two pre-stop snapshots can ever see it.
+#
+# The fix quiesces first: engage the core write-gate, drain the residual queue,
+# THEN capture + export.  Held through the swap, released after finalize.
+# ---------------------------------------------------------------------------
+
+
+@observe(tier="stage")
+def _core_url() -> str:
+    """Base URL of the local yadgar CORE (not SurrealDB, not the embed backend)."""
+    return f"http://127.0.0.1:{os.environ.get('YADGAR_PORT', '8765')}"
+
+
+def _maintenance_ttl_seconds(settings) -> float:  # type: ignore[no-untyped-def]
+    """Self-heal deadline for THIS vacuum's write-gate window.
+
+    Per-enter, because the callers' windows differ by an order of magnitude:
+    ``yadgar-vacuum.service`` has ``TimeoutStartSec=30min`` while nightly holds
+    the gate across backup + consolidation + vacuum + backup.  The default sits
+    comfortably above the unit timeout so a slow-but-alive vacuum is never
+    un-gated underneath itself.
+    """
+    return float(getattr(settings, "MAINTENANCE_TTL_SEC", 2400))
+
+
+@observe(tier="stage")
+def _maintenance_post(path: str, body: dict | None = None) -> dict:
+    """POST a core maintenance route; return the decoded body.  Raises on failure.
+
+    Mirrors ``_check_invariants_verified``'s bearer handling.  Callers convert a
+    raise into WARN-and-proceed — an unreachable gate must never fail a vacuum
+    (precedent: ``nightly_cycle.py`` step 1).
+    """
+    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    resp = httpx.post(f"{_core_url()}{path}", json=body or {}, headers=headers, timeout=15.0)
+    if resp.status_code not in (200, 202):
+        raise RuntimeError(f"{path} returned HTTP {resp.status_code}: {resp.text[:200]}")
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+@observe(tier="stage")
+def _maintenance_enter(ttl_seconds: float) -> bool:
+    """Engage the core write-gate; return the state it was in BEFORE this call.
+
+    ``previous=True`` means an outer window is already open (nightly_cycle holds
+    it across steps 1-7 and runs this vacuum at step 4).  The caller must then
+    NOT exit at the end of the run, or it un-gates the engine while the nightly
+    still has DB work to do.
+
+    ``ttl_seconds`` is the self-heal deadline for a vacuum that dies without
+    running its cleanup (SIGKILL / OOM).  A nested enter never shortens an outer
+    window — the handler widens rather than overwrites.
+    """
+    return bool(
+        _maintenance_post(_MAINTENANCE_ENTER_PATH, {"ttl_seconds": ttl_seconds}).get("previous")
+    )
+
+
+@observe(tier="stage")
+def _maintenance_exit() -> None:
+    """Release the core write-gate."""
+    _maintenance_post(_MAINTENANCE_EXIT_PATH)
+
+
+@observe(tier="stage")
+def _maintenance_release(entered: bool) -> None:
+    """Un-gate the engine, but only if THIS run engaged it.  NEVER raises.
+
+    ``entered`` is False when an outer window was already open (nightly step 4)
+    or when the enter itself failed — in both cases there is nothing of ours to
+    release.  A raise here would propagate out of the caller's ``finally`` and
+    skip ``sensitive_lock.release()``, wedging the host permanently; same
+    per-step-try/except discipline as ``_restart_services_after_abort``.
+    """
+    if not entered:
+        return
+    try:
+        _maintenance_exit()
+    except Exception as exc:
+        print(
+            f"[vacuum] CRITICAL: could not release the core write-gate: {exc}\n"
+            "[vacuum] Every MCP tool fast-fails until it clears. It self-clears after "
+            f"MAINTENANCE_TTL_SEC; to un-wedge now, POST {_MAINTENANCE_EXIT_PATH}.",
+            file=sys.stderr,
+        )
+
+
+@observe(tier="stage")
+def _drain_backend_queue() -> None:
+    """Flush the residual file queue before the count baseline.  Raises on failure.
+
+    The write-gate stops NEW MCP calls enqueuing; it does NOT stop the drainer
+    applying files already on disk.  ADR-0139: after the ADR-0078 core/backend
+    split the LIVE drainer exists only in the BACKEND process — an in-core
+    ``drain_now()`` is a production no-op — so this must be a cross-process POST
+    to the backend ``/admin`` surface, not a call against ``backend_url`` (which
+    is SurrealDB and serves no admin ops).
+    """
+    from yadgar.core.forward import _forward_admin  # noqa: PLC0415 — leaf module, lazy by design
+
+    result = _forward_admin("drain_now", {})
+    print(f"[vacuum] queue drain nudge: {result}", flush=True)
+
+
+@observe(tier="stage")
+def _drain_queue_best_effort() -> None:
+    """``_drain_backend_queue`` with WARN-and-proceed (plan 0113 §2.4 B).
+
+    The drain only NARROWS the (T0, T1] window; the exact-count comparison
+    remains the real gate, and a spurious abort is the bug being fixed here, not
+    a safety property worth preserving.  A backend without ``YADGAR_EMBED_URL``
+    (today's ``yadgar-vacuum.service``) lands here every run.
+    """
+    try:
+        _drain_backend_queue()
+    except Exception as exc:
+        print(f"[vacuum] WARNING: queue drain nudge failed — proceeding: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1579,11 +1850,49 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
             f"(job={held.get('job')} pid={held.get('pid')}) — skipping this vacuum.",
             file=sys.stderr,
         )
+        # DELIBERATELY before the try below, so the residue reap does NOT run:
+        # a live vacuum owns the in-flight export scratch and .pre-vacuum
+        # snapshot, and reaping under its lock is precisely the race this lock
+        # exists to prevent (task:0046).
         return 0  # skip — not a failure; canonical untouched
+    # -- Write-gate (task:0113) — engage BEFORE the count baseline, hold through
+    # the swap.  Every entry path (viz, MCP tool, timer, nightly step 4, manual)
+    # funnels here, so this one seam covers all of them.
+    #
+    # Each cleanup action gets its OWN try/except, per _restart_services_after_abort:
+    # a bare `finally` runs its statements in order and stops at the first raise,
+    # so an un-gating failure would skip sensitive_lock.release() and leave the
+    # host unable to vacuum again.  Order: un-gate the engine first, release the
+    # lock last.
+    entered = False
     try:
-        return _cmd_vacuum_body(
-            args, settings, backend_url, db_path, yadgar_home, started_at, started_ts
+        entered = not _maintenance_enter(_maintenance_ttl_seconds(settings))
+    except Exception as exc:
+        print(
+            f"[vacuum] WARNING: could not engage the core write-gate — "
+            f"proceeding without write-gate: {exc}",
+            file=sys.stderr,
         )
+    # Then flush what is already queued: the gate stops new enqueues, not the
+    # backend drainer.  Plan 0113 §2.3 order is enter → drain → capture → export;
+    # sitting here rather than inside the body means a run that later SKIPS
+    # (low disk, no surreal binary) also pays for it — a harmless drain the
+    # backend would have done within its 30s interval anyway.
+    _drain_queue_best_effort()
+    try:
+        try:
+            return _cmd_vacuum_body(
+                args, settings, backend_url, db_path, yadgar_home, started_at, started_ts
+            )
+        finally:
+            # Both of these are non-raising BY CONSTRUCTION (each wraps its own
+            # steps in try/except), which is what makes it safe to run them as a
+            # plain sequence: a bare `finally` stops at the first raise.  Order
+            # is un-gate the engine, then reap, then release the lock last — a
+            # reap failure must not leave the engine gated, and the reap must
+            # still hold the lock so it cannot race an incoming vacuum.
+            _maintenance_release(entered)
+            _reap_vacuum_residue(yadgar_home, settings)
     finally:
         sensitive_lock.release()
 
@@ -1631,8 +1940,6 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     before_bytes = _dir_bytes(db_path)
     print(f"[vacuum] DB size before: {before_bytes / 1024 / 1024:.1f} MB ({db_path})", flush=True)
 
-    keep_n: int = getattr(settings, "VACUUM_SNAPSHOT_RETENTION", 3)
-
     # -- Non-destructive preflights (Car 0092): surreal binary, then free space. --
     # MUST run BEFORE the export / service stop / full-size copytree below.
     # Phase 3 spawns a throwaway `surreal start` host-side, and on a container
@@ -1644,9 +1951,10 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     # so a skip logged with the backend down would be half-silent.
     skip = _preflight_skip_reason(yadgar_home, before_bytes)
     if skip is not None:
-        # A wedged host reaches the low-disk branch BECAUSE stale .pre-vacuum-*
-        # dirs ate the headroom; prune before skipping so a later run can proceed.
-        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
+        # The .pre-vacuum prune that used to sit here (a wedged host reaches the
+        # low-disk branch BECAUSE stale snapshots ate the headroom) now runs from
+        # cmd_vacuum_impl's finally — see _reap_vacuum_residue for why that still
+        # satisfies the Car 0092 wedge fix.
         _log_vacuum_skip(backend_url, started_ts, started_at, before_bytes, *skip)
         return 0  # skip is not a failure — canonical untouched
 
@@ -1664,7 +1972,7 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         print(f"[vacuum] ERROR capturing source counts: {exc}", file=sys.stderr)
         return 1
 
-    # -- Phase 1: Export (real backend still UP — no lost writes vs. count capture) --
+    # -- Phase 1: Export (backend still UP, but WRITE-GATED since task:0113) --
     raw_path: Path | None = None
     filtered_path: Path | None = None
     try:
@@ -1680,12 +1988,13 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     except Exception as exc:
         print(f"[vacuum] ERROR in snapshot/drop phase: {exc}", file=sys.stderr)
         # Best-effort: bring BOTH units back on the untouched canonical.
-        # svc.stop() may already have run inside _vacuum_snapshot_and_drop, so
-        # core can be down here too (task:0027a).
+        # Phase 2 stops the BACKEND only (task:0111), so the core start is
+        # normally an idempotent no-op — but a host whose yadgar.service was
+        # rendered before the Requires=→Wants= flip still cascades, and there
+        # core IS down here (task:0027a).
         _restart_services_after_abort(svc)
-        # Car 0092: a partial copytree may have left a .pre-vacuum dir behind;
-        # finalize (the only pre-0092 prune site) is unreachable from here.
-        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
+        # A partial copytree may have left a .pre-vacuum dir behind; the reap in
+        # cmd_vacuum_impl's finally bounds it (task:0046).
         return 1
 
     # -- Phase 3: side-build → verify → atomic swap → start on compacted DB. --
@@ -1696,11 +2005,10 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         backend_url, filtered_path, db_path, yadgar_home, source_counts, svc
     )
     if old_path is None:
-        # Car 0092: the ONLY .pre-vacuum prune used to live in _vacuum_finalize,
-        # which this return never reaches — so every aborted night parked another
-        # full-size DB copy on disk.  This run's own snapshot is the newest and
-        # survives the keep_n prune (forensics); older ones go.
-        _reap_stale_pre_vacuum_snapshots(yadgar_home, keep_n)
+        # This run's own snapshot AND its export pair are the newest, so both
+        # survive the keep-newest reap in cmd_vacuum_impl's finally (forensics);
+        # older ones go.  Pre-0046 that reap was reachable only from finalize, so
+        # every aborted night parked another full-size DB copy on disk.
         return 1
 
     # -- Finalize --
@@ -1710,7 +2018,6 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
         old_path,
         snapshot_path,
         svc,
-        keep_n,
         raw_path=raw_path,
         filtered_path=filtered_path,
         db_path=db_path,

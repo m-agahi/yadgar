@@ -208,10 +208,13 @@ FIELD_META: dict[str, dict[str, object]] = {
     "reranker_enabled": {"desc": "Enable cross-encoder reranking stage", "section": "reranking"},
     "reranker_top_k": {"desc": "Number of candidates passed to reranker", "section": "reranking"},
     "cross_encoder_enabled": {
-        "desc": "Enable FlashRank ONNX cross-encoder reranking",
+        "desc": "Enable the cross-encoder rerank stage (also gates the fallback model load)",
         "section": "reranking",
     },
-    "cross_encoder_model": {"desc": "Cross-encoder model name", "section": "reranking"},
+    "cross_encoder_model": {
+        "desc": "Degraded-mode fallback CE model. The live reranker is gte_reranker_model",
+        "section": "reranking",
+    },
     "cross_encoder_top_k": {"desc": "Top-k passed to cross-encoder", "section": "reranking"},
     "cross_encoder_weight": {
         "desc": "Cross-encoder score weight in blend (retrieval gets 1-this)",
@@ -227,7 +230,7 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "reranking",
     },
     "gte_reranker_fallback_to_flashrank": {
-        "desc": "Fall back to FlashRank if GTE reranker fails",
+        "desc": "On reranker failure: true = use the fallback CE, false = score zeros",
         "section": "reranking",
     },
     "nli_reranking_enabled": {
@@ -1493,6 +1496,21 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "backend_timeouts",
     },
+    "backend_ready_wait_sec": {
+        "desc": (
+            "Seconds the CORE waits at startup for the backend /health to return 200 before failing "
+            "(default 60). Stops the crashloop when the core starts while the backend is down. MUST "
+            "stay strictly below the core unit's TimeoutStartSec. 0 disables the gate."
+        ),
+        "section": "backend_timeouts",
+    },
+    "backend_ready_poll_sec": {
+        "desc": (
+            "Interval (seconds) between backend /health probes in the core startup readiness gate "
+            "(default 2.0). Fixed interval, not exponential backoff."
+        ),
+        "section": "backend_timeouts",
+    },
     # circuit breaker + rerank concurrency
     "circuit_breaker_enabled": {
         "desc": (
@@ -1765,12 +1783,20 @@ FIELD_META: dict[str, dict[str, object]] = {
         "section": "table_retention",
     },
     # vacuum
+    "maintenance_ttl_sec": {
+        "desc": "Self-heal deadline (seconds) for the maintenance write-gate the vacuum engages around its count-capture/export/swap window (task:0113). A vacuum killed with SIGKILL cannot release the gate; after this many seconds the core clears it and logs a WARN. Default 2400 (above yadgar-vacuum.service's 30min start timeout).",
+        "section": "vacuum",
+    },
     "vacuum_old_max_age_days": {
         "desc": "Age backstop for surreal_db.old-* rollback dirs (ADR-0076 D1): reap any .old dir older than this many days on each vacuum finalize. Default 7. The current-run .old is always exempted.",
         "section": "vacuum",
     },
     "vacuum_snapshot_retention": {
-        "desc": "Number of pre-vacuum DB snapshots to retain; older ones are pruned after a successful vacuum (default 3).",
+        "desc": "Number of pre-vacuum DB snapshots to retain; older ones are pruned on every vacuum exit path (default 2). Each snapshot is a full-size copy of the DB. Values below 1 are clamped to 1 — a vacuum never leaves the host without a rollback anchor.",
+        "section": "vacuum",
+    },
+    "vacuum_snapshot_max_age_days": {
+        "desc": "Age backstop for surreal_db.pre-vacuum-* snapshots (task:0046): reap any snapshot older than this many days. Default 14. The NEWEST snapshot is exempt unconditionally, so this can never take the host below one rollback anchor.",
         "section": "vacuum",
     },
     "vacuum_auto_enabled": {
@@ -1787,6 +1813,10 @@ FIELD_META: dict[str, dict[str, object]] = {
     },
     "vacuum_auto_window_end": {
         "desc": "Local-time window end (HH:MM, 24-hour, exclusive) for the backstop auto-vacuum trigger (default 23:00).",
+        "section": "vacuum",
+    },
+    "vacuum_side_launcher": {
+        "desc": "Which side-build launcher Phase 3 uses for its throwaway SurrealDB (task 0107): 'auto' (host binary first, container second, SKIP third — default), 'host' (host binary only, fails loud rather than falling through), or 'container' (container only, ignoring any resolvable host binary).",
         "section": "vacuum",
     },
 }

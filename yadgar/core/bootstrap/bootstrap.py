@@ -35,6 +35,7 @@ import yadgar._shared.runtime.state as _st
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import init_engines as _shared_init_engines
+from yadgar.core.bootstrap.backend_ready import await_backend_ready
 from yadgar.core.staleness import StalenessDetector
 
 
@@ -86,6 +87,19 @@ def core_init_engines(
     engines are populated so the consolidation/staleness slots are non-None on the
     full path.
     """
+    # Task #0027c: bounded wait-for-backend BEFORE any engine is constructed.
+    # StorageEngine.__init__ runs _init_schema() inline, which issues HTTP on its
+    # first statement — with the backend down that raised out of here, out of
+    # main(), and Restart=on-failure looped it forever. The gate must live HERE,
+    # above the delegation: the BACKEND calls _shared_init_engines directly
+    # (embed_service._ensure_recall_engines, engine_set="slim"), so a gate one
+    # level down would make the backend wait for its own /health. FULL path only,
+    # which also preserves the byte-identity of core_init_engines(slim) with
+    # lifecycle.init_engines(slim) documented above. No-op when there is no remote
+    # backend (YADGAR_EMBED_URL unset) or the budget is 0.
+    if engine_set == "full":
+        await_backend_ready()
+
     result = _shared_init_engines(
         db_path=db_path,
         embedding_model=embedding_model,

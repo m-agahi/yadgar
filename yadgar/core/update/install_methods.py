@@ -1,10 +1,14 @@
 """v5.48.0 — Install-method detection and upgrade-command generation.
 
-Detection order (matches detect_install_method.sh):
+Detection order (detect_install_method.sh mirrors this exactly — see
+Car 0112):
   1. which yadgar → real path
   2. Match against: /nix/store/* → nix-flake
                     */Cellar/yadgar/* → brew
-                    */.local/pipx/venvs/yadgar/* → pipx
+                    */pipx/venvs/yadgar/* → pipx (any PIPX_HOME layout,
+                        e.g. legacy ~/.local/pipx or pipx>=1.6's
+                        ~/.local/share/pipx; explicit PIPX_HOME env var
+                        honored first)
   3. If file content starts with "docker run" → container
   4. If .git dir ancestor exists → source
   5. Fallback → unknown
@@ -53,8 +57,18 @@ def detect_install_method() -> str:
     if "/Cellar/yadgar/" in real:
         return "brew"
 
-    # pipx: resolves into .local/pipx/venvs/yadgar/
-    if "/.local/pipx/venvs/yadgar/" in real:
+    # pipx: resolves into <PIPX_HOME>/venvs/yadgar/. Legacy default is
+    # ~/.local/pipx; pipx >=1.6 changed the default to the XDG data dir,
+    # i.e. ~/.local/share/pipx, inserting a "share" segment. Respect an
+    # explicit PIPX_HOME first (honors custom installs), then fall back to
+    # matching the pipx/venvs/yadgar/ segment regardless of what precedes
+    # it so both known defaults resolve without hardcoding either prefix.
+    pipx_home = os.environ.get("PIPX_HOME")
+    if pipx_home:
+        pipx_venv_prefix = os.path.join(os.path.realpath(pipx_home), "venvs", "yadgar") + os.sep
+        if real.startswith(pipx_venv_prefix):
+            return "pipx"
+    if "/pipx/venvs/yadgar/" in real:
         return "pipx"
 
     # container: shim whose first line invokes docker run

@@ -176,7 +176,6 @@ def test_local_ml_client_stage_methods_span_sourced():
         "score_cross_encoder",
         "score_nli",
         "_try_gte_reranker",
-        "_try_flashrank",
         "_try_st_cross_encoder",
         "_load_gte_reranker",
     ):

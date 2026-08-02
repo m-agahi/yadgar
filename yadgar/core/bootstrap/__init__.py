@@ -7,11 +7,14 @@ path — imports keep working through this PEP-562 re-export ``__init__``
 directly.
 
   bootstrap.py — core_init_engines — core-side composition-root entry
+  backend_ready.py — await_backend_ready — bounded startup gate (task 0027c)
 """
 
 from typing import Final
 
 _EXPORTS: Final = {
+    "BackendNotReadyError": "yadgar.core.bootstrap.backend_ready",
+    "await_backend_ready": "yadgar.core.bootstrap.backend_ready",
     "StalenessDetector": "yadgar.core.bootstrap.bootstrap",
     "_build_core_only_engines": "yadgar.core.bootstrap.bootstrap",
     "_shared_init_engines": "yadgar.core.bootstrap.bootstrap",

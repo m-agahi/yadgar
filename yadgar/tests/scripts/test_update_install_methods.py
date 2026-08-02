@@ -24,9 +24,36 @@ from unittest.mock import patch
 class TestDetectInstallMethod:
     """Unit tests for yadgar.update.install_methods.detect_install_method."""
 
-    def test_detects_pipx(self, tmp_path):
-        """Returns 'pipx' when yadgar resolves to pipx venv path."""
+    def test_detects_pipx_legacy_layout(self, tmp_path):
+        """Returns 'pipx' when yadgar resolves to legacy pipx venv path (PIPX_HOME=~/.local/pipx)."""
         fake_bin = tmp_path / "home" / ".local" / "pipx" / "venvs" / "yadgar" / "bin" / "yadgar"
+        fake_bin.parent.mkdir(parents=True)
+        fake_bin.write_text("#!/usr/bin/env python3\n")
+
+        with patch("subprocess.check_output", return_value=str(fake_bin)):
+            import importlib
+
+            from yadgar.core.update import install_methods
+
+            importlib.reload(install_methods)
+            result = install_methods.detect_install_method()
+
+        assert result == "pipx"
+
+    def test_detects_pipx_modern_share_layout(self, tmp_path):
+        """Returns 'pipx' for modern pipx (>=1.6) venv path (PIPX_HOME=~/.local/share/pipx).
+
+        Regression test: pipx changed its default PIPX_HOME to
+        ~/.local/share/pipx (XDG data dir), so the resolved binary path
+        gained a "share" segment. The old substring match required the
+        literal ".local/pipx/venvs/yadgar/" prefix and silently returned
+        "unknown" for this layout, making `yadgar update --install`
+        unreachable (can_self_install("unknown") is False) on any stock
+        modern pipx install.
+        """
+        fake_bin = (
+            tmp_path / "home" / ".local" / "share" / "pipx" / "venvs" / "yadgar" / "bin" / "yadgar"
+        )
         fake_bin.parent.mkdir(parents=True)
         fake_bin.write_text("#!/usr/bin/env python3\n")
 
@@ -150,6 +177,23 @@ class TestDetectInstallMethod:
     def test_returns_unknown_for_unrecognized_path(self, tmp_path):
         """Returns 'unknown' when path matches no known pattern and no git ancestor."""
         fake_bin = tmp_path / "bin" / "yadgar"
+        fake_bin.parent.mkdir(parents=True)
+        fake_bin.write_text("#!/usr/bin/env python3\n")  # not a docker shim
+
+        with patch("subprocess.check_output", return_value=str(fake_bin)):
+            import importlib
+
+            from yadgar.core.update import install_methods
+
+            importlib.reload(install_methods)
+            result = install_methods.detect_install_method()
+
+        assert result == "unknown"
+
+    def test_no_false_positive_on_path_merely_containing_pipx_substring(self, tmp_path):
+        """A path that contains 'pipx' as a substring of a directory name (not the
+        pipx/venvs/<pkg>/ layout) must NOT be misdetected as 'pipx'."""
+        fake_bin = tmp_path / "opt" / "mypipxtool" / "bin" / "yadgar"
         fake_bin.parent.mkdir(parents=True)
         fake_bin.write_text("#!/usr/bin/env python3\n")  # not a docker shim
 

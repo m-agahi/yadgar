@@ -109,7 +109,7 @@
       "file": "yadgar/tests/backend/test_model_load_smoke.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "real-model load smoke — opt-in via YADGAR_MODEL_LOAD_SMOKE=1",
-      "note": "Deps-train gates b/c/d: downloads real model weights (Ettin/GTE/MiniLM/doc2query) and runs real inference — opt-in local pre-merge gate, never runs in CE-mocked CI legs. Covers the module-level skipif plus the flashrank importorskip (flashrank is not a locked dep; prod treats its absence as silent fall-through)."
+      "note": "Deps-train gates b/c/d: downloads real model weights (Ettin/GTE/MiniLM/doc2query) and runs real inference — opt-in local pre-merge gate, never runs in CE-mocked CI legs. Covers the module-level skipif. The flashrank importorskip this note used to sanction was removed with the flashrank CE tier (ADR-0191, task 0121): flashrank was never in pyproject/uv.lock, so that case never executed in any gate."
     },
     {
       "id": "code-graph-live-smoke-01",
@@ -131,6 +131,13 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "systemd-analyze not available",
       "note": "systemd-analyze calendar is the only real (non-string-match) validation that the rendered OnCalendar expressions parse and elapse; the binary is absent on macOS hosts and minimal CI images, where the render assertions still run"
+    },
+    {
+      "id": "car-0112-install-method-parity-nix-flake-01",
+      "file": "yadgar/tests/scripts/test_install_method_detector_parity.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "requires a real /nix/store filesystem",
+      "note": "nix-flake detection requires a real path literally prefixed /nix/store/, which cannot be synthesized under tmp_path — the check-in-store fixture (a symlink to the test host's own nix-built bash) only exists on real NixOS/nix-installed hosts. The CI test-fast job runs in a plain ubuntu-based container with no /nix/store, so this one parity case skips there; the other 7 (pipx legacy/modern/explicit-PIPX_HOME/false-positive, brew, source, unknown) are pure tmp_path fixtures and always run."
     }
   ]
 }

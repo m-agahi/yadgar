@@ -432,6 +432,13 @@ jobs:
         # CAP-CODEGRAPH-001's prose false. This one gates the prose tokens.
         run: python scripts/check_registry_prose_liveness.py
 
+      - name: Check model-id liveness — config default ↔ image bake ↔ code literal
+        # Task 0121. Neither I32 lint sees this axis: coverage enumerates setting
+        # NAMES and never reads a default, and prose-liveness measures identifier
+        # death while every identifier here is alive. Both were green on the tree
+        # whose CROSS_ENCODER_MODEL made two readers name the wrong reranker.
+        run: python scripts/check_model_id_liveness.py
+
       - name: Check internal route literals resolve to registered routes
         # core/vacuum POSTed /api/check_invariants for months with no route behind
         # it, and six tests mocked that URL to 200 — the mocks agreed with the

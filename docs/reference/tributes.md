@@ -50,7 +50,6 @@ More broadly, sentence-transformers underpins the entire open embeddings and rer
 | **ONNX Runtime** | Microsoft | MIT | Quantized (int8) inference path for CE models (evaluated; currently dormant — see ADR-0043) | [onnxruntime.ai](https://onnxruntime.ai) |
 | **Hugging Face Hub** (`huggingface_hub`) | Hugging Face | Apache 2.0 | Model download and caching | [GitHub](https://github.com/huggingface/huggingface_hub) |
 | **Hugging Face Transformers** (transitive) | Hugging Face | Apache 2.0 | Tokenizers and model config parsing (transitive via sentence-transformers) | [GitHub](https://github.com/huggingface/transformers) |
-| **FlashRank** | Prithivi Damodaran | Apache 2.0 | Lightweight ONNX reranker fallback in the CE chain | [GitHub](https://github.com/PrithivirajDamodaran/FlashRank) |
 | **hf-xet** | Hugging Face / XetHub | Apache 2.0 | Accelerated model file download from Hub | [GitHub](https://github.com/huggingface/hf-xet) |
 | **msgpack** | Sadayuki Furuhashi / msgpack-python contributors | Apache 2.0 | Binary snapshot serialization for LRU caches (CE + embed) | [GitHub](https://github.com/msgpack/msgpack-python) |
 

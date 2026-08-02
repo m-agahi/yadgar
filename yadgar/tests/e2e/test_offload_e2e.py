@@ -140,6 +140,14 @@ class _Daemon:
                 # embed probe reports false → /health 503 in BOTH arms (a constant,
                 # which is why we discriminate on LATENCY, not status).
                 "YADGAR_EMBED_URL": "http://127.0.0.1:9/embed",
+                # Port 9 (discard) is deliberately unreachable — these tests
+                # exercise offload/health behaviour with a DEAD backend.  Car
+                # 0027c (ADR-0193) added a startup gate that polls the backend
+                # /health for BACKEND_READY_WAIT_SEC (default 60) and then exits
+                # rather than crashlooping.  Correct in production; here it would
+                # consume the harness's own 60s wait and surface as "daemon did
+                # not become reachable".  0 is the gate's documented disable.
+                "YADGAR_BACKEND_READY_WAIT_SEC": "0",
                 "YADGAR_DATA_DIR": self._data_dir,
                 "YADGAR_DB_PATH": self._data_dir + "/db",
                 # Inherit OTEL_SDK_DISABLED from the parent (make e2e sets it). Do

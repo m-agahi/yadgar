@@ -1,0 +1,21 @@
+[Unit]
+Description=Yadgar SurrealKV vacuum (export → fresh DB → reimport)
+After=yadgar.service yadgar-backend.service
+
+[Service]
+# Runs on the HOST, not in a container: the vacuum flow interleaves phases
+# requiring different daemon states (export → backend DOWN → reimport →
+# backend UP) and the container image ships no systemctl, so
+# --service-mode=systemd cannot work from inside one.
+Type=oneshot
+# Leading '-' — a missing secrets file must not wedge the timer into a
+# permanent start failure. Mirrors flake.nix's `-${cfg.secretsEnvFile}`.
+EnvironmentFile=-/home/testuser/.config/yadgar/secrets.env
+# SurrealDB over the loopback publish from yadgar-backend.service.
+Environment=YADGAR_DB_URL=http://127.0.0.1:8000
+Environment=YADGAR_DATA_DIR=/home/testuser/.local/share/yadgar
+ExecStart=/home/testuser/.local/bin/yadgar vacuum --service-mode=systemd --yes
+TimeoutStartSec=30min
+
+# No [Install]: this unit is started by yadgar-vacuum.timer and by
+# yadgar-vacuum-trigger.service, never enabled directly. Same shape as flake.nix.

@@ -10,11 +10,11 @@ After=yadgar.service yadgar-backend.service
 Type=oneshot
 # Leading '-' — a missing secrets file must not wedge the timer into a
 # permanent start failure. Mirrors flake.nix's `-${cfg.secretsEnvFile}`.
-EnvironmentFile=-@SECRETS_ENV_FILE@
+EnvironmentFile=-/home/testuser/.config/yadgar/secrets.env
 # SurrealDB over the loopback publish from yadgar-backend.service.
-Environment=YADGAR_DB_URL=http://127.0.0.1:@BACKEND_SURREAL_PORT@
-Environment=YADGAR_DATA_DIR=@DATA_DIR@
-ExecStart=@VACUUM_EXEC@ vacuum --service-mode=systemd --yes
+Environment=YADGAR_DB_URL=http://127.0.0.1:8000
+Environment=YADGAR_DATA_DIR=/home/testuser/.local/share/yadgar
+ExecStart=/home/testuser/.local/bin/yadgar vacuum --service-mode=systemd --yes
 TimeoutStartSec=30min
 
 # No [Install]: this unit is started by yadgar-vacuum.timer and by

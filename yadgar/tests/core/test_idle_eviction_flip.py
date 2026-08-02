@@ -10,8 +10,8 @@ Coverage:
 5. Span emission: model.unload span emitted on unload, model.load on load (skipped if no harness).
 
 Handle → label mapping:
-  _gte_reranker, _flashrank_ranker, _cross_encoder → "ce"
-  _nli_model                                       → "nli"
+  _gte_reranker, _cross_encoder → "ce"
+  _nli_model                    → "nli"
   "pair"/"embedding" not managed by LocalMLClient unload path.
 """
 
@@ -235,7 +235,11 @@ class TestLoadDurationHistogram:
         mock_st = MagicMock()
         mock_st.CrossEncoder = MagicMock(return_value=mock_ce_instance)
 
-        with patch.dict("sys.modules", {"sentence_transformers": mock_st, "flashrank": None}):
+        # settings=None makes _try_gte_reranker return None at its top guard, so the
+        # chain lands on _try_st_cross_encoder and loads the mocked CrossEncoder.
+        # The old `"flashrank": None` suppression here went vacuous when ADR-0192
+        # deleted the middle tier; dropped rather than left green-and-meaningless.
+        with patch.dict("sys.modules", {"sentence_transformers": mock_st}):
             try:
                 client.score_cross_encoder("q", ["text"])
             except Exception:
@@ -332,7 +336,11 @@ class TestSpanEmission:
         mock_st = MagicMock()
         mock_st.CrossEncoder = MagicMock(return_value=mock_ce_instance)
 
-        with patch.dict("sys.modules", {"sentence_transformers": mock_st, "flashrank": None}):
+        # settings=None makes _try_gte_reranker return None at its top guard, so the
+        # chain lands on _try_st_cross_encoder and loads the mocked CrossEncoder.
+        # The old `"flashrank": None` suppression here went vacuous when ADR-0192
+        # deleted the middle tier; dropped rather than left green-and-meaningless.
+        with patch.dict("sys.modules", {"sentence_transformers": mock_st}):
             try:
                 client.score_cross_encoder("q", ["text"])
             except Exception:

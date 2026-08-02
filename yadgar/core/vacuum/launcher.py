@@ -46,6 +46,17 @@ Two invocation details are load-bearing rather than cosmetic:
 
 Guarded by ``yadgar/tests/core/test_vacuum_side_launcher.py`` (no container is
 created there: the runtime is a fake that records argv).
+
+**Which branch a host takes must not depend on inherited ``PATH`` (task
+0107).**  The unit that runs this never sets ``PATH``, and the systemd
+user-manager default excludes ``~/.local/bin`` (pipx) — so a host with a
+perfectly usable ``surreal`` could silently take the container branch, or the
+SKIP, under the timer while resolving fine from an interactive shell, and
+could flip branches across reboots.  :func:`_resolve_surreal_binary` is the
+single, env-independent resolver every branch decision and the actual spawn
+now goes through; ``VACUUM_SIDE_LAUNCHER`` lets an operator pin the branch
+explicitly instead of selecting it by absence.  Guarded by
+``yadgar/tests/core/test_vacuum_binary_resolution.py``.
 """
 
 from __future__ import annotations
@@ -58,6 +69,21 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
+
+#: Fixed candidate dirs checked, in order, when neither the env override nor
+#: PATH resolves a binary.  ``~/.local/bin`` is the pipx layout that motivated
+#: this car (task 0107): the systemd user-manager PATH excludes it, so a host
+#: with a perfectly good `surreal` silently took the container branch (or the
+#: SKIP) under the timer while resolving fine from an interactive shell.
+_SURREAL_BIN_CANDIDATES: tuple[str, ...] = (
+    "~/.local/bin/surreal",
+    "/usr/local/bin/surreal",
+    "/opt/homebrew/bin/surreal",
+    "/usr/bin/surreal",
+)
+
+#: Valid values for VACUUM_SIDE_LAUNCHER (YADGAR_VACUUM_SIDE_LAUNCHER).
+_LAUNCHER_MODES = frozenset({"auto", "host", "container"})
 
 #: Deterministic name for the throwaway side container.  Deterministic ON PURPOSE:
 #: a crashed run must be findable and reapable by the next one (a random name
@@ -138,6 +164,85 @@ def backend_image_present() -> bool:
         return False
 
 
+@observe(tier="stage")
+def _resolve_surreal_binary_and_source() -> tuple[str, str] | None:
+    """Resolve a usable ``surreal`` binary, independent of inherited PATH.
+
+    Task 0107: three call sites used to ask "is there a `surreal`?" against the
+    ambient ``PATH`` independently (this module's branch decision, the
+    preflight log line, and ``spawn_surreal``'s bare ``Popen(["surreal", ...])``)
+    — so which branch a host took was decided by whatever environment happened
+    to be inherited, and the systemd user-manager PATH silently excludes
+    ``~/.local/bin`` (the pipx install layout) while an interactive shell's
+    does not.  This is the single resolver all three now go through.
+
+    Resolution order, first hit wins:
+
+    1. ``YADGAR_SURREAL_BIN`` if set and executable — explicit operator
+       override, and the escape hatch for any layout not covered below.
+    2. ``shutil.which("surreal")`` — today's behaviour, so a nix/dev host
+       resolves bit-for-bit unchanged.
+    3. :data:`_SURREAL_BIN_CANDIDATES`, checked in order for executability.
+
+    Returns:
+        ``(absolute_path, source_label)`` where ``source_label`` is one of
+        ``"env override"`` / ``"PATH"`` / ``"candidate dir"`` (naming HOW a run
+        resolved its binary, for the preflight log line), or ``None`` when
+        nothing resolves.
+    """
+    override = os.environ.get("YADGAR_SURREAL_BIN", "").strip()
+    if override and os.access(override, os.X_OK):
+        return override, "env override"
+    found = shutil.which("surreal")
+    if found is not None:
+        return found, "PATH"
+    for candidate in _SURREAL_BIN_CANDIDATES:
+        path = os.path.expanduser(candidate)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path, "candidate dir"
+    return None
+
+
+@observe(tier="stage")
+def _resolve_surreal_binary() -> str | None:
+    """Resolve a usable ``surreal`` binary path, or ``None``.  See
+    :func:`_resolve_surreal_binary_and_source` for the resolution order — this
+    is the plain-path convenience wrapper used by the branch decision and the
+    actual spawn.
+    """
+    resolved = _resolve_surreal_binary_and_source()
+    return resolved[0] if resolved is not None else None
+
+
+@observe(tier="stage")
+def _launcher_mode() -> str:
+    """Read VACUUM_SIDE_LAUNCHER (``YADGAR_VACUUM_SIDE_LAUNCHER``), default ``auto``.
+
+    Resolved through :func:`resolve_knob` — live env > ``get_settings()`` (which
+    is yaml-aware) > literal default — NOT a bare ``os.environ.get``.  The knob
+    exists so an operator can PIN a branch; a pin written into ``config.yaml``
+    (or set from the config UI) that the code never reads is the phantom-knob
+    bug, ratcheted against by
+    ``yadgar/tests/core/test_no_phantom_knobs.py``.  Env stays first, so the
+    live-override semantics every existing caller and test relies on are
+    unchanged.
+
+    Normalisation (strip/lower/validate) is applied AFTER the resolution rather
+    than inside ``parse``: ``parse`` wraps ONLY the raw env string, so folding
+    case there would accept ``Container`` from the environment and reject it
+    from ``config.yaml``.
+
+    An unrecognised value falls back to ``auto`` rather than raising — a
+    typo'd pin must not turn into a startup crash; the ``host`` mode's own
+    unresolvable-binary case already fails loud without going that far.
+    """
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415 — avoid import cycle
+
+    raw = str(resolve_knob("YADGAR_VACUUM_SIDE_LAUNCHER", "VACUUM_SIDE_LAUNCHER", str, "auto"))
+    normalised = raw.strip().lower()
+    return normalised if normalised in _LAUNCHER_MODES else "auto"
+
+
 class SideBackendLauncher(ABC):
     """Start / prove-a-clean-stop / force-reap a throwaway SurrealDB for the side build."""
 
@@ -174,11 +279,24 @@ class HostBinaryLauncher(SideBackendLauncher):
     def start(self, *, side_path: Path, port: int, user: str, password: str) -> None:
         from yadgar.core._surreal_runner import spawn_surreal  # noqa: PLC0415
 
+        # Resolved via _resolve_surreal_binary (task 0107), not a second bare
+        # `shutil.which("surreal")` — the whole point is that the branch
+        # decision and the actual spawn can no longer disagree.
+        binary = _resolve_surreal_binary()
+        if binary is None:
+            # Unreachable in a normal run — select_side_launcher only returns
+            # this class when a binary already resolved.  Fail-closed guard
+            # for a direct caller / a resolution that changed mid-run.
+            raise FileNotFoundError(
+                "no usable `surreal` binary resolved (checked YADGAR_SURREAL_BIN, "
+                "PATH, and the known install-layout candidate dirs)"
+            )
         self._proc = spawn_surreal(
             port=port,
             data_dir=str(side_path),
             surreal_user=user,
             surreal_pass=password,
+            binary=binary,
         )
 
     @observe(tier="stage")
@@ -398,10 +516,27 @@ class ContainerLauncher(SideBackendLauncher):
 def select_side_launcher() -> SideBackendLauncher | None:
     """Pick the side-build launcher for this host, or None when neither is available.
 
-    Host binary FIRST: it is the cheaper path and the one dev/nix hosts have been
-    using all along, so choosing it keeps those installs bit-for-bit unchanged.
+    Honours VACUUM_SIDE_LAUNCHER (:func:`_launcher_mode`), ∈ ``{auto, host,
+    container}``:
+
+    * ``auto`` (default) — host binary FIRST: it is the cheaper path and the
+      one dev/nix hosts have been using all along, so choosing it keeps those
+      installs bit-for-bit unchanged.  Container SECOND.
+    * ``host`` — host binary only.  Does NOT fall through to the container
+      when unresolvable (see ``_has_side_build_launcher`` for the fail-loud
+      SKIP an operator who pinned this sees).
+    * ``container`` — container only, ignoring any resolvable host binary.
+
+    Binary resolution goes through :func:`_resolve_surreal_binary` (task 0107)
+    rather than a bare ``shutil.which``, so the branch chosen here is
+    independent of which environment happened to be inherited.
     """
-    if shutil.which("surreal") is not None:
+    mode = _launcher_mode()
+    if mode == "container":
+        return ContainerLauncher() if backend_image_present() else None
+    if mode == "host":
+        return HostBinaryLauncher() if _resolve_surreal_binary() is not None else None
+    if _resolve_surreal_binary() is not None:
         return HostBinaryLauncher()
     if backend_image_present():
         return ContainerLauncher()

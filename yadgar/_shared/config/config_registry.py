@@ -512,6 +512,9 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_BACKEND_IMPORT_TIMEOUT_SEC", "300", "int"),
     ConfigEntry("YADGAR_MIGRATION_HTTP_TIMEOUT_SEC", "30", "int"),
     ConfigEntry("YADGAR_RERANK_BACKEND_TIMEOUT_SEC", "90", "int"),
+    # core startup readiness gate (task 0027c)
+    ConfigEntry("YADGAR_BACKEND_READY_WAIT_SEC", "60", "int"),
+    ConfigEntry("YADGAR_BACKEND_READY_POLL_SEC", "2.0", "float"),
     # circuit breaker + rerank concurrency
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3", "int"),
@@ -564,12 +567,15 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS", "30", "int"),
     ConfigEntry("YADGAR_DREAM_INSIGHT_MAX_AGE_DAYS", "21", "int"),
     # vacuum
+    ConfigEntry("YADGAR_MAINTENANCE_TTL_SEC", "2400", "int"),
     ConfigEntry("VACUUM_OLD_MAX_AGE_DAYS", "7", "int"),
-    ConfigEntry("YADGAR_VACUUM_SNAPSHOT_RETENTION", "3", "int"),
+    ConfigEntry("YADGAR_VACUUM_SNAPSHOT_RETENTION", "2", "int"),
+    ConfigEntry("YADGAR_VACUUM_SNAPSHOT_MAX_AGE_DAYS", "14", "int"),
     ConfigEntry("YADGAR_VACUUM_AUTO_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_VACUUM_AUTO_THRESHOLD_BYTES", "2147483648", "int"),
     ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_START", "19:00", "string"),
     ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_END", "23:00", "string"),
+    ConfigEntry("YADGAR_VACUUM_SIDE_LAUNCHER", "auto", "string"),
 ]
 
 

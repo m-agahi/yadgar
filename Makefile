@@ -255,6 +255,11 @@ setup: pre-setup
 	  echo "    Runtime: $$RUNTIME"
 	@$(MAKE) pull-images
 	@$(MAKE) bootstrap-secrets
+# task:0110 Stage D: generate_systemd.sh renders nothing — it resolves a `yadgar`
+# CLI and delegates. Left alone it would fall through to `command -v yadgar`, i.e.
+# whatever is INSTALLED, and `make setup` from a checkout would stop rendering
+# from the checkout. YADGAR_RENDERER_CLI + PYTHONPATH keep this target's units
+# derived from the working tree, which is what a repo-local `make setup` means.
 	@OS=$$(YADGAR_TEST_OS_MARKER="$(YADGAR_TEST_OS_MARKER)" bash $(SCRIPTS_DIR)/detect_os.sh); \
 	  RUNTIME=$$(bash $(SCRIPTS_DIR)/detect_runtime.sh); \
 	  case "$$OS" in \
@@ -265,6 +270,8 @@ setup: pre-setup
 	      YADGAR_BACKEND_IMAGE="docker.io/openfantasy/yadgar-backend:$(YADGAR_BACKEND_VERSION)" \
 	      YADGAR_CORE_IMAGE="docker.io/openfantasy/yadgar:$(YADGAR_VERSION)" \
 	      YADGAR_SYSTEMD_OUTPUT_DIR="$(HOME)/.config/systemd/user" \
+	      YADGAR_RENDERER_CLI="python3 -m yadgar" \
+	      PYTHONPATH="$(CURDIR)" \
 	      bash $(SCRIPTS_DIR)/generate_systemd.sh \
 	      ;; \
 	    macos) \
