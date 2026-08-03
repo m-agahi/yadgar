@@ -83,12 +83,12 @@ def run_archive_sweep() -> dict:
             try:
                 storage.update_task_status(
                     project_id=row["project_id"],
-                    number=row["number"],
+                    number=row["id"],
                     status="archived",
                 )
                 archived += 1
             except Exception as exc:  # noqa: BLE001
-                logger.warning("archive_sweep failed for task %s: %s", row.get("number"), exc)
+                logger.warning("archive_sweep failed for task %s: %s", row.get("id"), exc)
                 skipped += 1
         else:
             skipped += 1

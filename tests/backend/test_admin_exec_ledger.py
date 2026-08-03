@@ -61,7 +61,7 @@ def test_task_create_op_returns_error_on_exception(mock_storage) -> None:
         "yadgar.backend.admin_exec.ledger._get_storage",
         return_value=mock_storage,
     ):
-        result = ledger_task_create({"title": "x"})
+        result = ledger_task_create({"project_id": "m-agahi/yadgar", "title": "x"})
 
     assert result["ok"] is False
     assert "db down" in result["error"]

@@ -39,6 +39,7 @@ from yadgar.core.server.tools.adr_render import (
     _flip_superseded_target,
     _parse_supersedes,
 )
+from yadgar.core.server.tools.wiki import _wiki_write_canonical
 
 logger = logging.getLogger(__name__)
 
@@ -180,8 +181,6 @@ def adr_add(
             tags=_adr_tags(adr_id, status),
             directory=directory or "",
         )
-        from yadgar.core.server.tools.wiki import _wiki_write_canonical
-
         write_result = _wiki_write_canonical(payload, wait=True)
         if not _write_ok(write_result):
             return {"ok": False, "error": f"wiki body write failed: {write_result.get('reason')}"}

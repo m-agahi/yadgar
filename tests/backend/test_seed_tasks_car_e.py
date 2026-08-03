@@ -56,7 +56,7 @@ def test_seed_tasks_idempotent(mock_storage) -> None:
         "slug": "m-agahi_yadgar_task-list",
     }
     mock_storage.list_task_rows.return_value = [
-        {"number": 1, "project_id": "m-agahi/yadgar"},
+        {"id": 1, "project_id": "m-agahi/yadgar"},
     ]
 
     with patch(

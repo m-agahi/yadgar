@@ -82,7 +82,7 @@ def test_seed_adr_is_idempotent(mock_storage) -> None:
         {"slug": "m-agahi_yadgar_adr-0001", "content": "...", "page_type": "adr"},
     ]
     mock_storage.list_adr_rows.return_value = [
-        {"number": 1, "project_id": "m-agahi/yadgar"},
+        {"id": 1, "project_id": "m-agahi/yadgar"},
     ]
 
     with patch(

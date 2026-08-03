@@ -13,6 +13,7 @@ across all projects is sufficient. INSERT returns the generated id.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -26,6 +27,11 @@ from yadgar._shared.storage.alembic_models import AgentPrompt as AgentPromptMode
 from yadgar._shared.storage.alembic_models import Base, RuntimeConfig, Task
 
 logger = logging.getLogger(__name__)
+
+# Sentinel for list_config_rows: distinguishes "no directory filter → ALL rows
+# (global + every dir, for warmup)" from directory=None ("global-only"). None is
+# a meaningful value here (global scope), so it cannot double as the unset marker.
+_UNSET = object()
 
 
 class _LedgerMixin:
@@ -53,6 +59,8 @@ class _LedgerMixin:
         if not mariadb_url:
             logger.debug("ledger: no mariadb_url — spine disabled")
             return
+        # sync driver for now (pymysql); async conversion per ADR-0195 is a
+        # follow-up task (would switch to create_async_engine + asyncmy).
         self._mariadb_engine = create_engine(
             mariadb_url,
             pool_size=5,
@@ -75,6 +83,7 @@ class _LedgerMixin:
             logger.info("ledger: Alembic migrations applied")
         except Exception:
             logger.exception("ledger: Alembic migration failed")
+            raise
 
     @observe(tier="stage", metric="ledger._ledger_table")
     def _ledger_table(self, name: str) -> Any:
@@ -95,13 +104,20 @@ class _LedgerMixin:
         except Exception:
             return False
 
-    # ── Runtime config CRUD (task #0119) ──────────────────────────────────────
+    # ── Runtime config CRUD (task #0119 — moved from SurrealDB, PR #32 B1) ─────
 
     @observe(tier="stage", metric="ledger.set_config_row")
-    def set_config_row(self, key: str, value: str, *, directory: str | None = None) -> dict:
-        """Upsert a runtime_config row in MariaDB."""
+    def set_config_row(self, key: str, value, *, directory: str | None = None) -> dict:
+        """Upsert a runtime_config row in MariaDB.
+
+        ``value`` is JSON-encoded for storage (supports bool/int/str/list/dict)
+        and decoded back on the returned dict, matching the SurrealDB
+        ``_RuntimeConfigMixin`` return shape exactly:
+        ``{id, key, directory, value, created_at, updated_at}``.
+        """
         if self._mariadb_engine is None:
             raise RuntimeError("ledger: MariaDB engine not initialized")
+        encoded = json.dumps(value, ensure_ascii=False)
         SessionLocal = sessionmaker(bind=self._mariadb_engine)
         with SessionLocal() as session:
             with session.begin():
@@ -114,12 +130,93 @@ class _LedgerMixin:
                     .one_or_none()
                 )
                 if row is not None:
-                    row.value = value
-                else:
-                    row = RuntimeConfig(key=key, directory=directory, value=value)
-                    session.add(row)
+                    row.value = encoded
+                    session.flush()
+                    return {
+                        "id": row.id,
+                        "key": row.key,
+                        "directory": row.directory,
+                        "value": json.loads(row.value) if isinstance(row.value, str) else row.value,
+                        "created_at": row.created_at.isoformat() if row.created_at else None,
+                        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                    }
+                row = RuntimeConfig(key=key, directory=directory, value=encoded)
+                session.add(row)
                 session.flush()
-                return {"key": row.key, "directory": row.directory, "value": row.value}
+                return {
+                    "id": row.id,
+                    "key": row.key,
+                    "directory": row.directory,
+                    "value": value,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                }
+
+    @observe(tier="stage", metric="ledger.get_config_row")
+    def get_config_row(self, key: str, *, directory: str | None = None) -> dict | None:
+        """Fetch the exact (key, directory) row. Returns None if not found.
+
+        NO fallback — the raw row only. Resolution/fallback is Car G2's getter.
+        Matches the SurrealDB return shape: ``{id, key, directory, value,
+        created_at, updated_at}`` with ``value`` JSON-decoded.
+        """
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            row = (
+                session.query(RuntimeConfig)
+                .filter(
+                    RuntimeConfig.key == key,
+                    RuntimeConfig.directory == directory,
+                )
+                .one_or_none()
+            )
+            if row is None:
+                return None
+            return {
+                "id": row.id,
+                "key": row.key,
+                "directory": row.directory,
+                "value": json.loads(row.value) if isinstance(row.value, str) else row.value,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+
+    @observe(tier="stage", metric="ledger.list_config_rows")
+    def list_config_rows(self, directory: str | None = _UNSET) -> list[dict]:  # type: ignore[assignment]
+        """Return runtime_config rows.
+
+        directory=<sentinel> (default): ALL rows — global + every directory
+            (bulk read for Car G2 warmup).
+        directory=None: global rows only.
+        directory=<abs path>: rows for that directory only.
+
+        Matches the SurrealDB return shape with ``value`` JSON-decoded.
+        """
+        if self._mariadb_engine is None:
+            raise RuntimeError("ledger: MariaDB engine not initialized")
+        SessionLocal = sessionmaker(bind=self._mariadb_engine)
+        with SessionLocal() as session:
+            q = session.query(RuntimeConfig)
+            if directory is _UNSET:
+                pass  # all rows
+            elif directory is None:
+                q = q.filter(RuntimeConfig.directory.is_(None))
+            else:
+                q = q.filter(RuntimeConfig.directory == directory)
+            rows = q.order_by(RuntimeConfig.key.asc()).all()
+            return [
+                {
+                    "id": r.id,
+                    "key": r.key,
+                    "directory": r.directory,
+                    "value": json.loads(r.value) if isinstance(r.value, str) else r.value,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                }
+                for r in rows
+            ]
 
     @observe(tier="stage", metric="ledger.delete_config_row")
     def delete_config_row(self, key: str, *, directory: str | None = None) -> None:

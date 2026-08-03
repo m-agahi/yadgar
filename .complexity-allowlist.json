@@ -441,9 +441,9 @@
     "function": "create_task_row",
     "lineno": 106,
     "metrics": {
-      "params": 10
+      "params": 8
     },
-    "rationale": "Spine Car A (task-table-refactor-2026-07-29): create_task_row takes 10 params to match the task table schema (project_id, origin, number, title, active_form, state, plan_path, body_slug, directory, plus the engine seam kwarg). The D36 field additions (state, plan_path) and D4 body_slug cannot be collapsed without losing the D31 allocation atomicity contract. Grouping into a TaskCreate dataclass would be the honest fix \u2014 deferred until Car K telemetry shows which fields are actually exercised.",
+    "rationale": "Spine Car A (task-table-refactor-2026-07-29): create_task_row takes 8 params to match the task table schema (project_id, origin, title, active_form, state, plan_path, body_slug, directory). The D36 field additions (state, plan_path) and D4 body_slug cannot be collapsed without losing table-schema alignment. Grouping into a TaskCreate dataclass would be the honest fix \u2014 deferred until Car K telemetry shows which fields are actually exercised.",
     "added": "2026-08-02",
     "added_by": "spine-car-a"
   },

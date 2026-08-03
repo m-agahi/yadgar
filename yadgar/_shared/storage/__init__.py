@@ -381,6 +381,16 @@ class StorageEngine(
     # ------------------------------------------------------------------ Context manager
 
     @observe(tier="stage")
+    def _dispose_mariadb(self) -> None:
+        """Dispose the MariaDB engine pool if initialized (spine Car A)."""
+        _mariadb_engine = getattr(self, "_mariadb_engine", None)
+        if _mariadb_engine is not None:
+            try:
+                _mariadb_engine.dispose()
+            except Exception:
+                pass
+
+    @observe(tier="stage")
     def close(self):
         # Unregister atexit to avoid double-close
         try:
@@ -394,6 +404,8 @@ class StorageEngine(
             yadgar_surrealdb_pool_active.set(0)
         except Exception:
             pass
+        # Dispose the MariaDB engine pool (spine Car A — connection-pool lifecycle).
+        self._dispose_mariadb()
         if getattr(self, "_db_url", None):
             # Server mode: close the shared httpx client(s) — OWNER + optional RO.
             http = getattr(self, "_http", None)

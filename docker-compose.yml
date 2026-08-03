@@ -30,11 +30,36 @@ volumes:
   yadgar-dev-data:
   yadgar-queue-data:
   yadgar-backend-logs:
+  yadgar-mariadb-data:
   # Production bind-mount alternative (see comment block above):
   # To switch, remove the named volume entry above and use a host path in the
   # backend service volumes section: - /var/log/yadgar:/data/logs
 
 services:
+  # Spine Car A (task-table-refactor-2026-07-29) — MariaDB for the relational
+  # set (runtime_config + task + adr + agent_prompt). Schema is provisioned by
+  # Alembic (alembic upgrade head) on engine init; no manual DDL needed.
+  mariadb:
+    image: mariadb:11
+    container_name: yadgar-mariadb
+    networks:
+      - yadgar-net
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - yadgar-mariadb-data:/var/lib/mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-yadgar_dev}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-yadgar}
+    security_opt:
+      - "no-new-privileges:true"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb-optimized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
   backend:
     image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.61.1}
     build:
@@ -65,11 +90,16 @@ services:
       # R3: queue root for the backend drainer. Core omits this → falls back to YADGAR_DATA_DIR
       # (/data). Both resolve to <shared yadgar-queue-data volume>/queue.
       YADGAR_QUEUE_BASE: /queue-data
+      # Spine Car A — MariaDB for the relational set (runtime_config + task + adr + agent_prompt).
+      YADGAR_MARIADB_URL: mysql+pymysql://root:${MARIADB_ROOT_PASSWORD:-yadgar_dev}@yadgar-mariadb:3306/yadgar
     security_opt:
       - "no-new-privileges:true"
     read_only: true
     tmpfs:
       - /tmp
+    depends_on:
+      mariadb:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
       interval: 10s
@@ -100,6 +130,8 @@ services:
       # ADR-0180: core CALLS the backend's /admin/* routes and must send this
       # bearer. Same token as the backend service above — one shared secret.
       YADGAR_MCP_AUTH_TOKEN: ${YADGAR_MCP_AUTH_TOKEN:?must set YADGAR_MCP_AUTH_TOKEN}
+      # Spine Car A — MariaDB for the relational set (same as backend).
+      YADGAR_MARIADB_URL: mysql+pymysql://root:${MARIADB_ROOT_PASSWORD:-yadgar_dev}@yadgar-mariadb:3306/yadgar
     security_opt:
       - "no-new-privileges:true"
     read_only: true

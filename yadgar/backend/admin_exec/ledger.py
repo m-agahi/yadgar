@@ -33,8 +33,11 @@ def ledger_task_create(payload: dict) -> dict:
     """
     storage = _get_storage()
     try:
+        project_id = payload.get("project_id")
+        if not project_id:
+            return {"ok": False, "error": "project_id is required"}
         return storage.create_task_row(
-            project_id=payload["project_id"],
+            project_id=project_id,
             origin=payload.get("origin", "yadgar"),
             title=payload["title"],
             active_form=payload.get("active_form"),

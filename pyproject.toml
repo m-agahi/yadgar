@@ -73,10 +73,10 @@ dependencies = [
     # config.toml MCP-registration target (preserves user comments + key order).
     "tomlkit>=0.13",
     # spine Car A (task-table-refactor-2026-07-29) — MariaDB for relational set:
-    # runtime_config + task + adr + agent_prompt tables. asyncmy is the async
-    # MySQL/MariaDB driver; SQLAlchemy 2.0 async dialect is mysql+asyncmy://.
+    # runtime_config + task + adr + agent_prompt tables. pymysql is the sync
+    # MySQL/MariaDB driver; SQLAlchemy 2.0 sync dialect is mysql+pymysql://.
     "sqlalchemy>=2.0.30",
-    "asyncmy>=0.2.10",
+    "pymysql>=1.1.0",
     "alembic>=1.13.0",
 ]
 

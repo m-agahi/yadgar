@@ -148,12 +148,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asyncmy"
-version = "0.2.11"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/78/3c/d8297584c40f3d1af55365026bcdca7844ecfea1d917ad19df48f8331a26/asyncmy-0.2.11.tar.gz", hash = "sha256:c3d65d959dde62c911e39ecd1ad0f1339a5e6929fc411d48cfc2f82846190bf4", size = 62865, upload-time = "2026-01-15T11:32:30.368Z" }
-
-[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1774,6 +1768,15 @@ crypto = [
 ]
 
 [[package]]
+name = "pymysql"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/bc/1c6a92f385940f727daeecf3bacaf186e03875dff57197801046c583bcf0/pymysql-1.2.0.tar.gz", hash = "sha256:6c7b17ca686988104d7426c27895b455cdeea3e9d3ceb1270f0c3704fead8c33", size = 49021, upload-time = "2026-05-19T08:26:22.302Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/bd/2534e130295c8cfd4f0a2e31623baab7502278f1e97bcfe61db75656a77f/pymysql-1.2.0-py3-none-any.whl", hash = "sha256:62169ce6d5510f08e140c5e7990ee884a9764024e4a9a27b2cc11f1099322ae0", size = 45716, upload-time = "2026-05-19T08:26:20.974Z" },
+]
+
+[[package]]
 name = "pyparsing"
 version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2689,7 +2692,6 @@ version = "5.172.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
-    { name = "asyncmy" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "mcp" },
@@ -2704,6 +2706,7 @@ dependencies = [
     { name = "prometheus-client" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pymysql" },
     { name = "python-multipart" },
     { name = "regex" },
     { name = "ruamel-yaml" },
@@ -2772,7 +2775,6 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
     { name = "anyio", marker = "extra == 'test'", specifier = ">=4.0" },
-    { name = "asyncmy", specifier = ">=0.2.10" },
     { name = "coverage", marker = "extra == 'test'", specifier = ">=7.0" },
     { name = "cyclonedx-bom", marker = "extra == 'dist'", specifier = "==7.3.0" },
     { name = "cyclonedx-bom", marker = "extra == 'sbom'", specifier = "==7.3.0" },
@@ -2794,6 +2796,7 @@ requires-dist = [
     { name = "prometheus-client", specifier = ">=0.20.0" },
     { name = "pydantic", specifier = ">=2.5.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "pymysql", specifier = ">=1.1.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.4.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.0" },

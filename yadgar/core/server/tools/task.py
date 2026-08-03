@@ -4,12 +4,12 @@
 Three tools:
   task_list  — list tasks for a project_id (default: open-only per D37)
   task_get   — fetch one task by (project_id, number)
-  task_write — create or update a task row; number allocated via D31
+  task_write — create or update a task row; id is AUTO_INCREMENT and is the number
 
 All tools delegate to StorageEngine via yadgar.server.lifecycle._get_storage().
 D20: every row access goes through _LedgerMixin (chokepoint guard).
-D31: semantic number allocated by SELECT MAX(number)+1 FOR UPDATE inside
-the same transaction as the INSERT.
+id is the AUTO_INCREMENT PK and also the semantic number — no separate
+number column or allocation step; INSERT returns the generated id.
 D37: task_list defaults to open-only (status IN pending, in_progress).
 
 Error model: {ok: False, error: "..."} — never raise.
@@ -152,7 +152,7 @@ def task_get(
 
     Args:
         project_id: Git-derived identity key.
-        number: Semantic task number (allocated by D31).
+        number: Task id (AUTO_INCREMENT — the semantic number).
         directory: Absolute project path for directory guard.
     """
     storage = _get_storage()

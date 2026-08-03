@@ -19,8 +19,16 @@ contradict it.
 Not started; **no code exists yet** — there is no `task` table in `migrations.py` and no
 `_LedgerMixin`, despite ADR-0183 D30 naming the latter "the engine seam."
 
-**PR #32 review fixes:** see [§13 — PR #32 Fix Plan](#13-pr-32-fix-plan-2026-08-03) for the
-post-review corrections applied to the implementation.
+**PR #32 review fixes (1st pass):** see [§13 — PR #32 Fix Plan](#13-pr-32-fix-plan-2026-08-03)
+for the post-review corrections applied to the implementation.
+
+**PR #32 2nd-pass review (2026-08-03):** REQUEST-CHANGES. Two design-level blockers remain —
+see [§13.2 — Second review pass](#132-second-review-pass-2026-08-03). (1) MRO collision:
+`_RuntimeConfigMixin` (SurrealDB) precedes `_LedgerMixin` (MariaDB) in the `StorageEngine` MRO,
+so the knob store was NOT moved to MariaDB — the ledger config methods are dead code and
+`_LedgerMixin` lacks `get_config_row`/`list_config_rows`. (2) Systematic `"number"` vs `"id"`
+key mismatch in `seed_ledger.py`/`archive_sweep.py` (runtime KeyError/TypeError, masked by
+mocks returning the wrong shape). 2 of ~80 tests fail.
 
 ---
 
@@ -744,3 +752,97 @@ Based on review of `feat/spine-knob-mariadb` against this plan. All fixes applie
 **Problem:** `save_agent_prompt` always did `session.add()`. Called twice with same title → UNIQUE constraint violation.
 
 **Decision:** Query by title first. Update if found, insert if not. Added UNIQUE constraint on `agent_prompt.title`. Similarity gate for near-duplicate titles deferred (needs embed service integration).
+
+### 13.2 Second review pass (2026-08-03)
+
+Adversarial self-authored review per `agent-prompt-pr-review` v8 (self-authored mode: PR body
+treated as claims, re-derived against repo state). **Verdict: REQUEST-CHANGES.** Two
+design-level blockers defeat the PR's core promise; 2 of ~80 tests fail. All blocker claims
+re-verified by the main thread against source before posting.
+
+**Blockers:**
+
+1. **MRO collision — knob store NOT moved to MariaDB.** `StorageEngine` MRO:
+   `_RuntimeConfigMixin` (SurrealDB, `__init__.py:229`) precedes `_LedgerMixin` (MariaDB,
+   `__init__.py:238`). Both define `set_config_row`/`delete_config_row`; `_RuntimeConfigMixin`
+   also defines `get_config_row`/`list_config_rows`, which `_LedgerMixin` lacks entirely.
+   Python resolves all four to the SurrealDB mixin → the `_LedgerMixin` config methods are
+   dead code. `runtime_config.py` is not in the diff. The §13 Fix 5 "added
+   `set_config_row`/`delete_config_row` to `_LedgerMixin`" did not remove them from
+   `_RuntimeConfigMixin`, so the move is incomplete. PR body claim "knob store moved to
+   MariaDB (task #0119)" is FALSE.
+   **Fix:** remove the config CRUD methods from `_RuntimeConfigMixin` (or remove the whole
+   mixin), or rename the ledger methods, or reorder the MRO so `_LedgerMixin` wins — and add
+   `get_config_row`/`list_config_rows` to `_LedgerMixin`.
+
+2. **Systematic `"number"` vs `"id"` key mismatch — runtime crash.** `list_adr_rows`,
+   `list_task_rows`, and `list_task_rows_all_projects` return dicts keyed `"id"`
+   (`ledger.py:210,233,364,500`), but:
+   - `seed_ledger.py:69,202` read `r["number"]` → KeyError
+   - `seed_ledger.py:97,224` pass `number=c["number"]` / `number=number` to
+     `create_adr_row`/`create_task_row`, which have NO `number` parameter (AUTO_INCREMENT
+     only — `ledger.py:146,298`) → TypeError
+   - `archive_sweep.py:86` reads `row["number"]` → KeyError
+
+   Tests pass only because mocks return `{"number": ...}` instead of the real `{"id": ...}`
+   shape — string-matching-on-mock-source failure (the exact failure mode the pr-review
+   pattern's Tests lens warns about). Root cause ties to Fix 1: the `number` column was
+   dropped (`id` IS the number) but the seed/archive callers were never updated, and the
+   mocks still model the old shape.
+   **Fix:** `r["id"]` / `row["id"]` everywhere; drop the `number=` kwargs (the seed cannot
+   control the AUTO_INCREMENT id). Open design gap: the seed needs to insert rows with
+   specific historical numbers, but the schema is global AUTO_INCREMENT with no
+   per-project numbering — the seed must either accept renumbering or use an explicit
+   `number` column (reverting Fix 1's "drop `number`" for the seed path).
+
+3. **2 tests fail** (both in new PR test files; no pre-existing failures isolated):
+   - `tests/core/test_adr_tools_car_f.py::test_adr_add_creates_row_and_writes_body` — patches
+     `_wiki_write_canonical` at module level, but the import was moved to function-local
+     (`adr.py:183`) → `AttributeError: module 'yadgar.core.server.tools.adr' has no attribute
+     '_wiki_write_canonical'`. Test was never green.
+   - `tests/backend/test_admin_exec_ledger.py::test_task_create_op_returns_error_on_exception`
+     — `payload["project_id"]` accessed without `.get()` (`backend/admin_exec/ledger.py:37`)
+     → `KeyError('project_id')` fires before the mock's `side_effect=RuntimeError("db down")`.
+
+**Concerns:**
+
+- `asyncmy` dependency unused — code uses synchronous `create_engine`, not
+  `create_async_engine`. `asyncmy` is async-only; a `mysql+asyncmy://` URL + sync
+  `create_engine` fails at runtime. Use `pymysql` (sync) OR switch to `create_async_engine`.
+- Alembic migration failure silently swallowed (`ledger.py:76` `except Exception:
+  logger.exception(...)`) → server starts with no schema; all ledger ops fail with
+  "table doesn't exist" instead of a clear startup error. Re-raise or set a disabling flag.
+- No MariaDB engine `dispose()` on shutdown → connection-pool leak on every daemon restart.
+- No MariaDB service in `docker-compose.yml`; no schema/connection docs.
+- `task.py:11` docstring still cites "D31: SELECT MAX(number)+1 FOR UPDATE" — D31 was
+  dropped in commit 45bf6d1e; code uses plain AUTO_INCREMENT.
+- `.complexity-allowlist.json` rationale for `create_task_row` stale — mentions a `number`
+  parameter and "D31 allocation atomicity contract", both dropped; function has 8 params,
+  not 10.
+
+**PR-desc vs diff (self-authored TRUE/FALSE/UNVERIFIABLE):**
+
+| Body claim | Verdict | Evidence |
+|---|---|---|
+| MariaDB as second engine for relational set | PARTIALLY TRUE | engine created, but runtime_config NOT moved (MRO collision) |
+| D31 number allocation | FALSE | dropped in 45bf6d1e; plain AUTO_INCREMENT |
+| `runtime_config.py` — knob store moved to MariaDB | FALSE | not in the diff |
+| `storage/wiki.py` — runtime_config removed | FALSE | not in the diff |
+| `adr_ledger.py` — new file | FALSE | created in 1186748a, deleted in 195c26a8; absent at branch tip |
+| 15 test files / 80 tests | PARTIALLY FALSE | 15 files correct; 2 of ~80 tests fail |
+| Pre-commit hooks all green | FALSE | 2 tests fail |
+| Pre-push e2e safety net passes | FALSE | 2 tests fail |
+| 11 cars (A–K) | TRUE | commits fef83c7a..320a1218 match A–K |
+| Alembic chain separate from SurrealDB | TRUE | alembic.ini + versions/001 + 002 exist |
+| D20 chokepoint guard | TRUE | `scripts/check_ledger_chokepoint.py` exists |
+| `server.json` 5.61.0 → 5.61.1, `pyproject.toml` 5.171.0 → 5.172.0 | TRUE | verified in diff |
+| 64 files changed, +5155/-1846 | TRUE | matches GH metadata |
+
+**Checks:** Tests 2 fail / 78 pass. Ruff clean on spine files. PR template compliant
+(all section headers present). MRO resolution verified live: `set_config_row`,
+`delete_config_row`, `get_config_row` all resolve to `_RuntimeConfigMixin` (SurrealDB).
+
+**Blind spots the author did not think of:** connection-pool lifecycle across two engines;
+transaction boundary crossing engines; failure mode when one engine is down (no
+`dispose()`/health check); test fixtures that assumed a single store; the seed-vs-schema
+numbering gap (Fix 1 dropped `number` but the seed needs historical numbers).

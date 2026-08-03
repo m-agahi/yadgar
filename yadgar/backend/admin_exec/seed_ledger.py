@@ -66,7 +66,7 @@ def seed_adr_from_pages(
     )
     # Read existing rows.
     existing_rows = storage.list_adr_rows(project_id=project_id, limit=10000)
-    existing_numbers = {r["number"] for r in existing_rows}
+    existing_numbers = {r["id"] for r in existing_rows}
 
     candidates: list[dict] = []
     for page in pages:
@@ -94,7 +94,6 @@ def seed_adr_from_pages(
             storage.create_adr_row(
                 project_id=project_id,
                 origin="yadgar",
-                number=c["number"],
                 title=c["title"],
                 status="accepted",
                 body_slug=c["slug"],
@@ -199,7 +198,7 @@ def seed_tasks_from_page(
 
     sections = _extract_task_sections(page["content"])
     existing_rows = storage.list_task_rows(project_id=project_id, status=None)
-    existing_numbers = {r["number"] for r in existing_rows}
+    existing_numbers = {r["id"] for r in existing_rows}
 
     if dry_run:
         return {
@@ -221,7 +220,6 @@ def seed_tasks_from_page(
             storage.create_task_row(
                 project_id=project_id,
                 origin="yadgar",
-                number=number,
                 title=title or f"task-{number}",
                 state="open",
             )
