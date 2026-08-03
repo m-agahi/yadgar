@@ -33,6 +33,10 @@ _INFRA_SECRET_ALLOWLIST: set[str] = {
     "PORT",
     "HOST",
     "DB_URL",
+    # v5.172.0 spine Car A: MariaDB connection URL — same shape as DB_URL
+    # (per-deploy-target endpoint, never user-tunable, resolved from env at
+    # alembic + storage init). Phantom-knob ratchet does not apply.
+    "MARIADB_URL",
     "EMBED_URL",
     "DATA_DIR",
     "DB_PATH",
