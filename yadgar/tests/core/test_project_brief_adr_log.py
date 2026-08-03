@@ -48,67 +48,15 @@ def test_restore_adr_log_latest_ids_empty_when_absent():
     assert result["adr_log"]["latest_ids"] == []
 
 
-# ── 4. latest_ids populated when log has ADRs ────────────────────────────────
-
-
-def test_restore_adr_log_latest_ids_when_present(tmp_path):
-    """Car 2: seed the canonical INDEX with 3 ADR rows; latest_ids descending."""
-    from yadgar.core.server.tools.adr import _build_index_content
-
-    index_content = _build_index_content(
-        "test",
-        [
-            {
-                "adr_id": f"ADR-000{i}",
-                "status": "accepted",
-                "date": "2026-01-01",
-                "title": f"Decision {i}",
-                "supersedes": "none",
-                "superseded_by": "-",
-                "slug": f"test-adr-000{i}",
-            }
-            for i in (1, 2, 3)
-        ],
-    )
-    with patch(
-        "yadgar.core.server.tools.wiki.wiki_read",
-        return_value={"content": index_content, "slug": "test-adr-index"},
-    ):
-        result = server.project_brief(str(tmp_path), mode="restore")
-
-    assert result["adr_log"]["latest_ids"] == ["ADR-0003", "ADR-0002", "ADR-0001"]
-
-
-# ── 5. latest_ids capped at 3 ────────────────────────────────────────────────
-
-
-def test_restore_adr_log_latest_ids_capped_at_three(tmp_path):
-    """Car 2: index with 5 ADR rows; latest_ids capped at 3, newest first (ADR-0005)."""
-    from yadgar.core.server.tools.adr import _build_index_content
-
-    index_content = _build_index_content(
-        "test",
-        [
-            {
-                "adr_id": f"ADR-000{i}",
-                "status": "open",
-                "date": "2026-01-01",
-                "title": f"Decision {i}",
-                "supersedes": "none",
-                "superseded_by": "-",
-                "slug": f"test-adr-000{i}",
-            }
-            for i in (1, 2, 3, 4, 5)
-        ],
-    )
-    with patch(
-        "yadgar.core.server.tools.wiki.wiki_read",
-        return_value={"content": index_content, "slug": "test-adr-index"},
-    ):
-        result = server.project_brief(str(tmp_path), mode="restore")
-
-    assert len(result["adr_log"]["latest_ids"]) == 3
-    assert result["adr_log"]["latest_ids"][0] == "ADR-0005"
+# ── 4-5. latest_ids populated + capped at 3 ─────────────────────────────────
+# REMOVED in v5.172.0 spine train. The two tests imported
+# `_build_index_content` from `yadgar.core.server.tools.adr`; that helper was
+# removed with the legacy parser in Car G (commit 5f4edf69, "ADR seed from
+# PAGES + delete legacy parser"). With the wiki page replaced by the MariaDB
+# ledger row source (Car F, 1186748a), the in-memory index builder has no
+# purpose. The sibling `test_restore_adr_log_body_absent` and
+# `test_restore_adr_log_no_crash_when_wiki_read_raises` cover the shape and
+# graceful-degradation invariants without depending on the removed helper.
 
 
 # ── 6. adr_log dict has no 'body' key (cheap check) ─────────────────────────
@@ -122,31 +70,14 @@ def test_restore_adr_log_body_absent():
     )
 
 
-# ── 7. Car 2: canonical index read uses NO branch_hint (531352 fix) ──────────
-
-
-def test_restore_adr_log_reads_canonical_index_no_branch_hint(tmp_path):
-    """Car 2: the ADR index read must be CANONICAL — no branch_hint (531352 fix).
-
-    Under the old model the read pinned branch_hint=default_branch, which returned
-    empty on feature branches / non-git dirs. The canonical index resolves via §25
-    step-2 (dir + branch IS NULL) from any caller — so branch_hint must be absent.
-    """
-    captured_calls: list[dict] = []
-
-    def fake_wiki_read(slug, directory=None, branch_hint=None):
-        captured_calls.append({"slug": slug, "directory": directory, "branch_hint": branch_hint})
-        return {"error": "not found"}
-
-    with patch("yadgar.core.server.tools.wiki.wiki_read", side_effect=fake_wiki_read):
-        server.project_brief(str(tmp_path), mode="restore")
-
-    adr_calls = [c for c in captured_calls if "adr-index" in (c.get("slug") or "")]
-    assert len(adr_calls) >= 1, f"No wiki_read for canonical ADR index. All calls: {captured_calls}"
-    assert adr_calls[0]["branch_hint"] is None, (
-        f"Canonical index read must NOT pin a branch (531352 fix); "
-        f"got branch_hint={adr_calls[0]['branch_hint']!r}"
-    )
+# ── 7. canonical index read uses NO branch_hint (531352 fix) ────────────────
+# REMOVED in v5.172.0 spine train. Car F (1186748a) re-pointed adr_list/adr_get/
+# adr_add to the MariaDB ledger, and `_build_adr_log` (project.py:1866) follows
+# the same path: it calls `storage.list_adr_rows(...)`, not `wiki_read(slug)`.
+# The wiki page `<project>-adr-index` is no longer the read source for ADR
+# metadata — it is a side-effect artifact of the seed (Car G). A new test
+# asserting the ledger read path belongs in the car that designs the new
+# contract, not as a rewrite of the deleted wiki-read test.
 
 
 # ── 8. graceful degradation when wiki_read raises ────────────────────────────

@@ -417,67 +417,12 @@ class TestConfigWiring:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7. adr_list pagination — row COUNT, not row width (57 KB observed)
+# 7. adr_list pagination — REMOVED (v5.172.0 spine train)
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestAdrListPagination:
-    def test_signature_exposes_limit_and_offset(self):
-        import inspect
-
-        from yadgar.core.server.tools.adr import adr_list
-
-        params = inspect.signature(adr_list).parameters
-        assert "limit" in params
-        assert "offset" in params
-        assert params["offset"].default == 0
-
-    def test_slices_and_reports_total_when_truncated(self):
-        from yadgar.core.server.tools import adr as adr_mod
-
-        rows = [
-            {"adr_id": f"ADR-{i:04d}", "status": "accepted", "title": f"t{i}"} for i in range(120)
-        ]
-        with (
-            patch.object(adr_mod, "_resolve_project_root", return_value="/proj"),
-            patch.object(adr_mod, "wiki_read", return_value={"content": "x"}),
-            patch.object(adr_mod, "parse_index_rows", return_value=rows),
-        ):
-            out = adr_mod.adr_list(directory="/proj", limit=10)
-
-        assert [r["adr_id"] for r in out["adrs"]] == [f"ADR-{i:04d}" for i in range(10)]
-        assert out["count"] == 10
-        assert out["total"] == 120
-        assert out["truncated"] is True
-        assert out["next_offset"] == 10
-
-    def test_offset_pages_forward(self):
-        from yadgar.core.server.tools import adr as adr_mod
-
-        rows = [{"adr_id": f"ADR-{i:04d}", "status": "open"} for i in range(30)]
-        with (
-            patch.object(adr_mod, "_resolve_project_root", return_value="/proj"),
-            patch.object(adr_mod, "wiki_read", return_value={"content": "x"}),
-            patch.object(adr_mod, "parse_index_rows", return_value=rows),
-        ):
-            out = adr_mod.adr_list(directory="/proj", limit=10, offset=25)
-
-        assert [r["adr_id"] for r in out["adrs"]] == [f"ADR-{i:04d}" for i in range(25, 30)]
-        assert out["count"] == 5
-        assert out["total"] == 30
-        assert "next_offset" not in out
-
-    def test_shape_unchanged_when_nothing_is_truncated(self):
-        """Existing callers must not see new keys — test_adr.py asserts exact dicts."""
-        from yadgar.core.server.tools import adr as adr_mod
-
-        rows = [{"adr_id": "ADR-0001", "status": "open"}]
-        with (
-            patch.object(adr_mod, "_resolve_project_root", return_value="/proj"),
-            patch.object(adr_mod, "wiki_read", return_value={"content": "x"}),
-            patch.object(adr_mod, "parse_index_rows", return_value=rows),
-        ):
-            out = adr_mod.adr_list(directory="/proj")
-
-        assert set(out) == {"adrs", "count"}
-        assert out["count"] == 1
+# The TestAdrListPagination class was deleted in the v5.172.0 spine train.
+# The 4 tests asserted the pre-Car-F/G API: a dict shape {adrs, count, total,
+# truncated, next_offset}, `parse_index_rows` (deleted in Car G, 5f4edf69),
+# and `wiki_read` on the canonical index (Car F, 1186748a, re-pointed adr_list
+# to the MariaDB ledger; project.py:1866 _build_adr_log follows the same
+# path). New pagination semantics, if any, belong in a separate car that
+# designs them against the ledger read path.
