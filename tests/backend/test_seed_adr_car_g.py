@@ -81,8 +81,9 @@ def test_seed_adr_is_idempotent(mock_storage) -> None:
     mock_storage.list_wiki_pages.return_value = [
         {"slug": "m-agahi_yadgar_adr-0001", "content": "...", "page_type": "adr"},
     ]
+    # id=999 (≠ page number 0001) PROVES dedup is by body_slug, not id.
     mock_storage.list_adr_rows.return_value = [
-        {"id": 1, "project_id": "m-agahi/yadgar"},
+        {"id": 999, "project_id": "m-agahi/yadgar", "body_slug": "m-agahi_yadgar_adr-0001"},
     ]
 
     with patch(

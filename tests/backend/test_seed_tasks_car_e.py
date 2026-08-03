@@ -55,8 +55,10 @@ def test_seed_tasks_idempotent(mock_storage) -> None:
         "content": "## task:0001\n\nfirst task\n",
         "slug": "m-agahi_yadgar_task-list",
     }
+    # id=999 (≠ section number 0001) PROVES dedup is by body_slug, not id.
+    # Seed computes slug "m-agahi_yadgar_task-0001" for section 0001.
     mock_storage.list_task_rows.return_value = [
-        {"id": 1, "project_id": "m-agahi/yadgar"},
+        {"id": 999, "project_id": "m-agahi/yadgar", "body_slug": "m-agahi_yadgar_task-0001"},
     ]
 
     with patch(

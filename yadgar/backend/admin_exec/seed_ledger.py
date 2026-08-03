@@ -66,7 +66,7 @@ def seed_adr_from_pages(
     )
     # Read existing rows.
     existing_rows = storage.list_adr_rows(project_id=project_id, limit=10000)
-    existing_numbers = {r["id"] for r in existing_rows}
+    existing_slugs = {r["body_slug"] for r in existing_rows}
 
     candidates: list[dict] = []
     for page in pages:
@@ -87,7 +87,7 @@ def seed_adr_from_pages(
     seeded = 0
     skipped = 0
     for c in candidates:
-        if c["number"] in existing_numbers:
+        if c["slug"] in existing_slugs:
             skipped += 1
             continue
         try:
@@ -100,7 +100,7 @@ def seed_adr_from_pages(
             )
             seeded += 1
         except Exception as exc:  # noqa: BLE001
-            logger.warning("seed_adr failed number=%s: %s", c["number"], exc)
+            logger.warning("seed_adr failed slug=%s: %s", c["slug"], exc)
             skipped += 1
 
     return {
@@ -198,7 +198,8 @@ def seed_tasks_from_page(
 
     sections = _extract_task_sections(page["content"])
     existing_rows = storage.list_task_rows(project_id=project_id, status=None)
-    existing_numbers = {r["id"] for r in existing_rows}
+    existing_slugs = {r["body_slug"] for r in existing_rows}
+    pid = project_id.replace("/", "_")
 
     if dry_run:
         return {
@@ -211,7 +212,8 @@ def seed_tasks_from_page(
     seeded = 0
     skipped = 0
     for number, body in sections:
-        if number in existing_numbers:
+        task_slug = f"{pid}_task-{number:04d}"
+        if task_slug in existing_slugs:
             skipped += 1
             continue
         # First line of body becomes the title.
@@ -222,10 +224,11 @@ def seed_tasks_from_page(
                 origin="yadgar",
                 title=title or f"task-{number}",
                 state="open",
+                body_slug=task_slug,
             )
             seeded += 1
         except Exception as exc:  # noqa: BLE001
-            logger.warning("seed_tasks failed number=%s: %s", number, exc)
+            logger.warning("seed_tasks failed slug=%s: %s", task_slug, exc)
             skipped += 1
 
     return {
