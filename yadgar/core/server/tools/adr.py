@@ -177,7 +177,6 @@ def adr_add(
             slug=body_slug,
             content=body,
             category="decision",
-<<<<<<< HEAD
             tags=_adr_tags(adr_id, status),
             directory=directory or "",
         )
