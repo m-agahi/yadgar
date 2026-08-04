@@ -5,7 +5,7 @@ SaaS rewrite. The protocol crate is the keystone; every service depends on
 it, and if it can't express the contracts cleanly, the service boundaries
 are wrong.
 **Branch:** `docs/move-new-arch-plans-to-subdir` (doc-only, no-release)
-**Governs:** `docs/plans/new-arch/saas-architecture-principles-2026-08-02.md`
+**Governs:** `docs/saas/saas-architecture-principles-2026-08-02.md`
 Principle 1 (the spine: differences left-shifted to the composition root).
 **Amends:** `saas-architecture-principles-2026-08-02.md` Principle 7 —
 the `Observable` trait is split into `Logger` + `Tracer` + `Metrics` (three

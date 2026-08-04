@@ -5,8 +5,8 @@ loose-coupling addendum (PR #27). Fills the gap where neither explicitly
 covered work queues or backpressure.
 **Branch:** `docs/saas-valkey-queue-backpressure-2026-08-02` (doc-only)
 **Amends:**
-- `docs/plans/new-arch/saas-rewrite-plan-2026-08-02.md` §3.5 (stores — Valkey role expands)
-- `docs/plans/new-arch/saas-loose-coupling-and-db-per-service-2026-08-02.md` §5.5 (metering outbox generalizes to a queue trait)
+- `docs/saas/saas-rewrite-plan-2026-08-02.md` §3.5 (stores — Valkey role expands)
+- `docs/saas/saas-loose-coupling-and-db-per-service-2026-08-02.md` §5.5 (metering outbox generalizes to a queue trait)
 
 ---
 

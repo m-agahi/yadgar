@@ -3,7 +3,7 @@
 **Status:** DECISION — states the security model explicitly so it's not
 ambiguous. Adds the dedicated-deployment tier for physical isolation.
 **Branch:** `docs/saas-security-posture-and-isolation-2026-08-02` (doc-only)
-**Amends:** `docs/plans/new-arch/saas-architecture-principles-2026-08-02.md`
+**Amends:** `docs/saas/saas-architecture-principles-2026-08-02.md`
 Principle 8 (security as boundary) — adds the explicit posture statement
 and the isolation tier table.
 
