@@ -5,7 +5,7 @@ Fills a gap in the SaaS rewrite plan (PR #25) which had 13 services but no
 LLM service. The user flagged that an LLM service is needed for
 consolidation quality, recall augmentation, and the reader/judge pattern.
 **Branch:** `docs/move-new-arch-plans-to-subdir` (doc-only, no-release)
-**Amends:** `docs/plans/new-arch/saas-rewrite-plan-2026-08-02.md` §3 (add
+**Amends:** `docs/saas/saas-rewrite-plan-2026-08-02.md` §3 (add
 service #14), `docs/plans/new-arch/protocol-crate-design-2026-08-02.md` §2
 (add the `Llm` trait to the protocol crate).
 
