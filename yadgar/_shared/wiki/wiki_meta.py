@@ -23,6 +23,39 @@ that predate this field are treated as schema_version=0 / untyped.
 
 from yadgar._shared.observability.observe import observe
 
+# ── Agent-library page types (ADR-0209) ──────────────────────────────────────
+# The prompt library used ONE page_type (``agent_prompt``) for two families
+# discriminated only by slug prefix and tags, while ADR-0198 splits them at the
+# row level and ADR-0208 gives them different governance. page_type is the
+# policy lever (``get_policy(page_type).recall_disposition``), so the split has
+# to be a type, not a string prefix.
+#
+# These constants live here — NOT in policy.py and NOT duplicated per side —
+# because both core (``tools/agent_prompts.py``) and backend
+# (``admin_exec/wiki.py``, ``retrieval/providers/wiki.py``) need them and the
+# import-linter contract forbids a backend→core edge. ``_shared`` is the one
+# place both may import (contrast the _TOC_SLUG / _TOC_ROW_RE pair, which is
+# hand-mirrored core↔backend).
+
+#: Dispatch-pattern pages: ``agent-prompt-<pattern>``.
+PAGE_TYPE_AGENT_PATTERN = "agent_pattern"
+
+#: Cross-cutting rule pages: ``agent-discipline-<name>``. Per ADR-0209 the
+#: prelude CONTRACT lives inside this type too (distinguished by ADR-0198's
+#: ``always_applied`` flag), rather than being promoted to a third type.
+PAGE_TYPE_AGENT_DISCIPLINE = "agent_discipline"
+
+#: The library index (``agent-prompt-toc``). Deliberately absent from
+#: wiki_page_types.yaml: it is a link list with no Purpose/Prompt sections, and
+#: ``check_page_type_format`` returns [] for unregistered types — so registering
+#: it in POLICY_BY_TYPE alone buys the recall exclusion (task 0134) with no
+#: permanent lint warning.
+PAGE_TYPE_AGENT_INDEX = "agent_index"
+
+#: Pre-ADR-0209 value. Retained for rows on installs that have not yet run
+#: migration 028 — they must keep resolving to the same routing policy.
+PAGE_TYPE_AGENT_PROMPT_LEGACY = "agent_prompt"
+
 
 @observe(tier="stage")
 def _load_page_type_schemas() -> dict:

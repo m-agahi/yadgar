@@ -91,12 +91,18 @@ class TestAgentPromptSave:
         assert r1["slug"] != r2["slug"]
 
     def test_saved_page_has_correct_page_type(self, storage):
+        """ADR-0209: dispatch patterns are `agent_pattern`, not `agent_prompt`.
+
+        The pre-split type is retained in the policy table for un-migrated
+        rows, but the write path must never produce it again.
+        """
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_PATTERN
         from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         agent_prompt_save("dispatch-fix-bug", "Fix bugs.", directory="global", storage=storage)
         page = storage.get_wiki_page_by_slug("agent-prompt-dispatch-fix-bug")
         assert page is not None
-        assert page.get("page_type") == "agent_prompt"
+        assert page.get("page_type") == PAGE_TYPE_AGENT_PATTERN
 
     def test_storage_scope_override_global_when_project_dir_supplied(self, storage):
         """C2 (#83): agent_prompt_save with a project directory must store global scope.

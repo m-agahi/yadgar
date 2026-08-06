@@ -12,6 +12,7 @@ from yadgar._shared.security.enforcement import _enforcement_on, _inc_relaxed
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.server_helpers import _has_unpaired_surrogate, _push_event
 from yadgar._shared.storage.directory import is_directory_eligible
+from yadgar._shared.wiki.policy import is_recall_visible
 from yadgar.core.forward import _forward_admin
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
@@ -705,6 +706,10 @@ def wiki_query(
             _allowed_branches.add(_effective_branch)
 
         results = [r for r in results if r.get("branch") in _allowed_branches]
+
+        # Task 0134: wiki_query is a SEARCH path and used to bypass
+        # recall_disposition entirely. See is_recall_visible for the shared rule.
+        results = [r for r in results if is_recall_visible(r, tags)]
 
         # v5.43.0 / v5.62.0: directory scoping — scope to caller directory.
         # v5.62.0: replaces hand-rolled predicate with is_directory_eligible() from

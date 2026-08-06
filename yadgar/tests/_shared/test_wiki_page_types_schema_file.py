@@ -37,7 +37,14 @@ class TestSchemaFileLoads:
             "decision",
             "analysis",
             "adr",
+            # Pre-ADR-0209 type, retained for pages on installs that have not
+            # yet run migration 028.
             "agent_prompt",
+            # ADR-0209 split. agent_index (the TOC) is deliberately ABSENT —
+            # it has no Purpose/Prompt sections, so a lint schema would warn
+            # forever; it is registered in POLICY_BY_TYPE only.
+            "agent_pattern",
+            "agent_discipline",
             "task_list",
         }
 

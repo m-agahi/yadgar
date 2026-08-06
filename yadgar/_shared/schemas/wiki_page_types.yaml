@@ -30,6 +30,10 @@ page_types:
     # ADR pages and makes the CANONICAL_PAGE_TYPES allowlist assertion unambiguous.
     required: [Context, Decision, Consequences]
   agent_prompt:
+    # PRE-ADR-0209 type. Split into agent_pattern + agent_discipline below;
+    # migration 028 re-types the live corpus. Retained so pages on an install
+    # that has not yet migrated still lint against the shape they were written
+    # with. Do NOT write new pages with this type.
     required: [Purpose, Prompt]
     optional: [Preconditions, Failure modes, Verification, Composes]
     metadata:
@@ -40,6 +44,35 @@ page_types:
       applies_to: >-
         Task shapes this prompt applies to (free text; surfaced in the
         agent-prompt-toc purpose column).
+  agent_pattern:
+    # ADR-0209: dispatch-pattern pages (agent-prompt-<pattern>). Same document
+    # shape as the pre-split agent_prompt type — the split is about GOVERNANCE
+    # (ADR-0208 gives disciplines an asymmetric removal guard), not layout.
+    required: [Purpose, Prompt]
+    optional: [Preconditions, Failure modes, Verification, Composes]
+    metadata:
+      composes_with: >-
+        [[slug]] links under the ## Composes section — discipline pages
+        (agent-discipline-*) this prompt composes with; resolved by
+        agent_dispatch_prelude at assembly time (Stage 3 composition).
+      applies_to: >-
+        Task shapes this prompt applies to (free text; surfaced in the
+        agent-prompt-toc purpose column).
+  agent_discipline:
+    # ADR-0209: cross-cutting rule pages (agent-discipline-<name>) PLUS the
+    # prelude contract, which stays inside this type per ADR-0198's refusal of
+    # a singleton special case — it is flagged, not promoted.
+    required: [Purpose, Prompt]
+    optional: [Preconditions, Failure modes, Verification, Composes]
+    metadata:
+      always_applied: >-
+        TRUE only for the prelude contract (agent-prompt-contract), which
+        prefixes every dispatch and whose `covers:` list decides which
+        disciplines are dropped from an assembled prelude. ADR-0208 exempts it
+        from auto-apply on a clean three-way merge for that reason.
+      composes_with: >-
+        Discipline pages are composed INTO a prelude by agent_dispatch_prelude;
+        they carry no ## Composes list of their own.
   task_list:
     required: [Meta]
     optional: [Tasks]
