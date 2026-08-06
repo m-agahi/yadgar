@@ -515,15 +515,35 @@ of hundreds of rows parsed out of prose. `runtime_config` is neither: the schema
 
 So the pilot reduces to: create the table in MariaDB, repoint `_RuntimeConfigMixin`'s four methods
 (`set_config_row` / `get_config_row` / `list_config_rows` / `delete_config_row`,
-`_shared/storage/runtime_config.py:93-191`) at the new engine, and verify. Nothing above those four methods
-changes — the resolver, the cache, the tools, the route and the host client all sit behind them.
+`_shared/storage/runtime_config.py:93-191`) at the new engine, and verify.
+
+~~Nothing above those four methods changes — the resolver, the cache, the tools, the route and
+the host client all sit behind them.~~ **FALSE for the READ half — corrected 2026-08-06, ADR-0200.**
+Config reads are CORE-in-process today: `core/server/tools/_runtime_config.py:22-26` reads
+"Reads stay CORE via `_get_storage()` … `_get_storage` is the in-process shared StorageEngine,
+not a raw DB handle" — which only works while core and engine #2 share reachability. Once
+`runtime_config` moves behind the backend-only boundary (ADR-0078 / anchor #33), core can no
+longer call `_get_storage()` for it directly; core's read path has to become an HTTP forward,
+which needs the **backend PTC layer ADR-0200 specifies but does not yet exist** (core PTC →
+backend PTC → DB, version-in-key invalidation via `ScopeVersions`, piggybacked on responses).
+§C above already designs this backend cache — the correction here is that building it is not
+optional polish on top of an unchanged resolver, it is a hard prerequisite the read path did
+not have before. The WRITE half's claim stands: writes already funnel through the backend admin
+ops (`backend/admin_exec/runtime_config.py:28-58`), which is exactly where ADR-0200's picture
+puts them.
 
 **The cost this plan therefore inherits, stated up front.** Decision doc §2 is explicit that the four
 operational arms — backup, restore-verification enumeration, migrations, `check_invariants` — land in the
 **same commit** as the first engine-#2 row, because of the 2026-06-16 incident where a partial restore
-passed a `>=` check and destroyed 3,622 memories. Making `runtime_config` the pilot means **this plan's
-Phase 0.9 carries the engine-#2 operational bootstrap.** That is a real cost and it is larger than the
-schema move itself.
+passed a `>=` check and destroyed 3,622 memories.
+
+~~Making `runtime_config` the pilot means this plan's Phase 0.9 carries the engine-#2
+operational bootstrap.~~ **FALSE as stated — corrected 2026-08-06.** ADR-0203 (2026-08-06) moved
+the bootstrap OUT of this plan entirely: it became its own plan, with this plan and the spine
+train merely *depending* on it. **ADR-0210 then amends ADR-0203's packaging** — the bootstrap
+did not get its own train after all; the user redirected it to ship as cars of the combined
+strict-typing train instead. Either way, Phase 0.9 below is **not** where the four arms are
+built; this plan (task 0035) is responsible only for the schema move and, later, seeding.
 
 It is nonetheless an argument *for* going first, not against: those four arms have to be built for the
 first engine-#2 table whichever kind it is, and building them against a table with **zero rows and zero
@@ -531,7 +551,14 @@ readers in production** is the cheapest possible rehearsal. A restore-verificati
 nothing; the same bug found while migrating 195 ADRs costs the ADR corpus.
 
 **One thing the pilot must NOT do:** seed a row. Per §0.1.3 the first seed closes task 0095's free-re-key
-window. Phase 0.9 is schema + operational arms + tests against an empty table; Phase 1 seeds.
+window. Phase 0.9 is schema + tests against an empty table; Phase 1 seeds.
+
+**Ratchet note, added 2026-08-06.** `EXPECTED_CONFIG_ROWS = 0` in
+`yadgar/backend/admin_exec/invariants_cross_engine.py:112` asserts the `config` table holds
+exactly zero rows — it is how the cross-engine `check_invariants` arm keeps the schema-only
+pilot honest. **This constant MUST move in the same commit that seeds the table's first row**,
+or `check_invariants` goes red on Phase 1's legitimate seed, reading it as "something wrote rows
+no code in this tree writes."
 
 ---
 
@@ -566,24 +593,27 @@ window. Phase 0.9 is schema + operational arms + tests against an empty table; P
 - *Float values* — **widen `_JSON_VALUE_TYPES`** rather than string-encode (§0.3). Flagged for confirmation
   below because it blocks Batch 1.
 
-**Still open:**
-1. **Confirm the float widening** (§0.3, Phase 0.3). It is a one-line change but it gates Batch 1 entirely,
-   and the alternative (string-encoding at ~145 call sites) is bad enough that it should be rejected
-   explicitly rather than by omission.
-2. **Task 0095 — settle the project identity key before the first seed** (§0.1.3). The refinement to
-   confirm: schema-only Phase 0.9 may proceed with 0095 open; only Phase 1's first `config_set` is gated.
-3. **Scope: does this plan own the engine-#2 operational bootstrap?** §G's first-mover argument means
-   Phase 0.9 carries backup, restore-verification enumeration, Alembic migrations and cross-engine
-   `check_invariants` — decision doc §2 requires all four in the same commit as the first engine-#2 row.
-   That is a materially bigger scope than "knob migration" implies, and it should be an explicit choice.
-   Alternatives: (a) accept it here, on the argument that a zero-row table is the cheapest possible
-   rehearsal; (b) split Phase 0.9 into its own plan/train that this one depends on; (c) let a different
-   kind (ADRs) go first and pay the bootstrap there instead — worse, since ADRs also carry a real
-   data migration.
-4. **Batch 1 scope** — retrieval weights + toggles + gates + viz together, or retrieval only for a first
-   proof?
-5. **STRUCTURAL-REINIT (Phase 3)** — defer? (rec: yes.)
-6. **Dead knobs** (HOPFIELD_BETA, RECALL_QUALITY_FLOOR, retired COMET_*) — separate delete PR, not this
-   train? (rec: yes, and re-verify each has no reader first — the draft's list already had one false
-   entry, HOPFIELD_MAX_PATTERNS.)
-7. **A viz/CLI surface** to browse + set live knobs — this train or a follow-up?
+**Was "Still open" — ALL DECIDED 2026-08-04–06, kept as the historical record of what was asked:**
+1. ~~Confirm the float widening~~ (§0.3, Phase 0.3). **Decided — ADR-0207:** widen
+   `_JSON_VALUE_TYPES` to include `float`, no coercion layer; string-encoding rejected explicitly.
+2. ~~Task 0095 — settle the project identity key before the first seed~~ (§0.1.3). **Decided —
+   ADR-0199** (`owner/repo`, host excluded) **and ADR-0202** (slug mechanics, once-per-session
+   resolution). The refinement stands as stated: schema-only Phase 0.9 may proceed with 0095's
+   mechanics now resolved; Phase 1's first `config_set` is where the key takes effect.
+3. ~~Scope: does this plan own the engine-#2 operational bootstrap?~~ **Decided — ADR-0203:** no,
+   it is its own plan/train (alternative (b) above), not this one. **Amended by ADR-0210:**
+   "its own train" is further overridden — it ships as cars of the combined strict-typing train
+   instead. Either way, not carried by task 0035. See §G's corrected text above.
+4. ~~Batch 1 scope~~ — retrieval weights + toggles + gates + viz together, or retrieval only for a
+   first proof? **Decided — ADR-0207:** ALL AT ONCE, fix-forward, on the strength of a mechanical
+   dead-knob sweep run as a prerequisite (not the old hand list).
+5. ~~STRUCTURAL-REINIT (Phase 3)~~ — defer? **Decided — ADR-0207:** yes, deferred, stays in
+   `config.yaml`; a DB knob that silently no-ops until a re-init is worse than one that honestly
+   needs a restart.
+6. ~~Dead knobs~~ (HOPFIELD_BETA, RECALL_QUALITY_FLOOR, retired COMET_*) — separate delete PR, not
+   this train? **Decided — ADR-0207:** the dead-knob sweep is a PREREQUISITE of this train, not a
+   follow-up, and must be mechanical (zero-reader detection) rather than the hand list — which is
+   demonstrably untrustworthy: it already named `HOPFIELD_MAX_PATTERNS` as dead when it has a
+   live reader.
+7. ~~A viz/CLI surface~~ to browse + set live knobs — this train or a follow-up? **Decided —
+   ADR-0207:** ships WITH this train, as a viz panel.

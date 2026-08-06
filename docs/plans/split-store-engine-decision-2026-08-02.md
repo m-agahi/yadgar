@@ -1,7 +1,12 @@
 # Split-store engine decision — 2026-08-02
 
-**Status:** decision doc. No code. Supersedes the "does the relational set leave SurrealDB"
+**Status:** decision doc. Supersedes the "does the relational set leave SurrealDB"
 half of task 0119.
+
+**Update 2026-08-06:** every open question in §8 is now decided — see ADR-0199 through
+ADR-0213, cited inline against each item below. The gate this doc originally stated
+("§8.A blocks any code") is **LIFTED**. §8's tables are kept as the historical record of what
+was asked; they are not reopened by keeping them.
 
 **Decided by the user, not open for re-litigation in this doc:** the backend runs **two
 engines**. SurrealDB keeps graph, memory, wiki bodies and embeddings. A second SQL engine
@@ -20,8 +25,10 @@ state its own downside is not evidence.
    the restore verification gate, migrations and `check_invariants` are where the bill lands.
 2. **One question picks the engine:** does Alembic-grade migration tooling matter enough to
    constrain the choice? Yes → MariaDB. No → rqlite. §4.4.
-3. **Identity is not a blocker** (per the user's rule: the engine driver owns it). The
-   nuance that survives is that `ADR-NNNN` is a semantic number, not a surrogate key. §5.1.
+3. **Identity is not a blocker** (per the user's rule: the engine driver owns it).
+   **Superseded 2026-08-04 by ADR-0197:** the nuance below no longer survives — the
+   `AUTO_INCREMENT` surrogate key *is* the semantic `ADR-NNNN`/task number, with no separate
+   `number` column and no `MAX+1 FOR UPDATE` allocation. §5.1.
 4. **Backup expands rather than ports.** Engine #2 leaves the vacuum pipeline entirely —
    InnoDB does not need it. What survives is the cross-engine *quiesce point*. §5.2.
 5. **Two findings weaken specific motivations** without touching the decision: SurrealDB
@@ -274,12 +281,26 @@ This **dissolves** the cross-engine round-trip concern. `_next_id`
 (`_shared/storage/client.py:437`, `UPSERT counter:{table} SET val = (val ?? 0) + 1`) stays a
 Surreal-only mechanism. Engine-#2 tables use the engine's native identity column.
 
-**The one nuance the rule does not cover:** `ADR-0194` is a *semantic, user-visible* number,
-not a surrogate key. `AUTO_INCREMENT` is per-table, not per-project, and burns values on
-rollback — so it cannot be the ADR number. With a real engine this is easy and stays inside
-the four verbs: `SELECT MAX(number)+1 … FOR UPDATE` inside a transaction, per project. That
-also **fixes §1.3's live drift**, because the number and the row become one atomic write
-instead of two.
+**RETIRED 2026-08-04 by ADR-0197 — read this before the paragraph below, not after.** The
+mechanism this section originally proposed — `SELECT MAX(number)+1 … FOR UPDATE` allocating a
+separate semantic `number` column — **must not be built**. It does not exist anywhere in the
+implementation and citing this section as if it does is exactly the drift ADR-0197 exists to
+correct. **What is actually decided:** the `AUTO_INCREMENT` primary key itself **is** the
+semantic ADR/task number. There is no separate `number` column and no allocation step. The
+existing corpus renumbers at seed time (one known gap, `ADR-0124`, so everything from `0125`
+shifts down by one) — accepted, since nothing downstream resolves an ADR by the number printed
+in old prose: `adr_get` and every crossref resolve by row id / `body_slug`. This still **fixes
+§1.3's live drift**, because the number and the row are the same write by construction, not
+because of a `MAX+1` transaction.
+
+~~The one nuance the rule does not cover: `ADR-0194` is a *semantic, user-visible* number, not
+a surrogate key. `AUTO_INCREMENT` is per-table, not per-project, and burns values on rollback —
+so it cannot be the ADR number. With a real engine this is easy and stays inside the four
+verbs: `SELECT MAX(number)+1 … FOR UPDATE` inside a transaction, per project. That also fixes
+§1.3's live drift, because the number and the row become one atomic write instead of two.~~
+**Kept struck through, not deleted, because the bootstrap plan cites this section as binding —
+a reader following that citation must land on the retirement notice above, not silently rebuild
+a mechanism ADR-0197 already killed.**
 
 ### 5.2 Backup — expand, do not port
 
@@ -417,41 +438,43 @@ position goes unused.
 ## 8. Decision register — every open question across all three plans
 
 Consolidated 2026-08-02 so the whole decision surface can be reviewed in one place. Each
-entry names its source doc; the plans keep their own detail. **Nothing below is decided.**
+entry names its source doc; the plans keep their own detail. **ALL ANSWERED 2026-08-04–06 —
+see the ADR column added to each table below.** The tables are kept verbatim as the historical
+record of what was asked; only the resolution is new.
 
-### 8.A BLOCKING — must be answered before any code
+### 8.A ANSWERED — was BLOCKING, gate now LIFTED
 
-| # | Question | Source | Why it blocks |
+| # | Question | Source | Why it blocks | Decided |
+|---|---|---|---|---|
+| A1 | **Project identity key scheme (task 0095).** Three schemes coexist: `project_id` = `owner/repo`, a basename-derived `body_slug`, and the config store's absolute filesystem path. | decision §1.4 · spine D32 · knob "Blocking before any seed" | **Time-boxed.** Re-key is free only while `runtime_config` is empty (0 rows, verified). Task 0035 seeding one row closes the window. Spine's refinement: the gate is the first `config_set`, **not** the schema — so a zero-row schema-only pilot may proceed with 0095 open. **Confirm that reading.** | **ADR-0199** — `owner/repo`, host excluded, `local/<basename>` fallback; resolved once per session, never re-derived per write. Slug mechanics in **ADR-0202**. |
+| A2 | **Widen the config write path to accept `float`.** `_JSON_VALUE_TYPES` (`tools/runtime_config.py:52`) excludes it; 88 of 344 Settings fields are float — the entire stated Batch 1. | knob §0.3 | One-line fix, but Phase 1 cannot start without it. The alternative — string-encoding at ~145 call sites — reintroduces the phantom-knob class and should be **rejected explicitly**, not left open. | **ADR-0207** — widen `_JSON_VALUE_TYPES` to include `float`, no coercion layer. String-encoding rejected explicitly. |
+| A3 | **Does the knob plan own the engine-#2 operational bootstrap?** Its Phase 0.9 currently carries backup, restore-verification, Alembic and cross-engine `check_invariants`. | knob §G | That is far larger than "knob migration" implies. Three alternatives are listed in the knob doc. Scope must be settled before sequencing. | **ADR-0203** — the bootstrap becomes its own plan/train, config table schema-only + zero rows. **Amended by ADR-0210:** the "own train" packaging is overridden by later user direction — it ships as cars of the combined strict-typing train instead; everything else in ADR-0203 (four-arms-together, schema-only) still stands. |
+
+### 8.B ANSWERED — needed before the first engine-#2 row lands
+
+| # | Question | Source | Note | Decided |
+|---|---|---|---|---|
+| B1 | **Cross-engine quiesce point for backup.** Both engines stopped, or a Surreal snapshot taken while SQL holds a read view? | decision §5.2 · ADR-0196 | A Surreal snapshot at 03:00 + a SQL snapshot at 03:05 restores rows referencing memories that do not exist. | **ADR-0204** — hold the existing maintenance write-gate across both snapshots (assert, drain, snapshot MariaDB, snapshot Surreal, release), release-on-abort mandatory. **Amended by ADR-0210:** its "reads stay available" claim is FALSE and withdrawn — the gate short-circuits every MCP tool, so the window is a full outage, accepted; backup runs as a nightly step, not an independent schedule, and hard-fails without the gate. **Further amended by ADR-0211:** withdraws ADR-0210's own gate-primitive-rewrite clause (nested TTL takes the min) as a misreading of working code — nesting semantics are unchanged; the enter response gains a `deadline_seconds` field instead. |
+| B2 | **The ADR two-write drift is RELOCATED, not eliminated.** `adr_add` goes from page-then-index (both Surreal) to page-then-row (Surreal, then MariaDB) — same two writes, now across an engine boundary with no transaction. | spine §12 | The spine specifies row-last ordering plus a `check_invariants` cross-engine check, but this is ADR-0183's predicted orphan class **arriving early**. Deserves an explicit call rather than an author's mitigation. | **ADR-0201** — writes go row-first (amends ADR-0198); ADR page bodies are prose-only, all metadata lives on the row. |
+| B3 | **`body_slug` stays basename-derived**, with two live DB-wide collision surfaces: `get_wiki_page_by_slug` (`_shared/storage/wiki.py:380`, slug-only) and UNIQUE `wiki_bookmark_slug_idx` (`migrations.py:190,1404`). | spine D32 · §12 | Deferring to 0095 is the author's call. Confirm, or accept a wiki-corpus re-slug as separate scope. | **ADR-0202** — slug is `owner_repo_kind-id` (opaque, immutable, `/`→`_` over the whole path, lowercase); `project_id` resolves once per session and travels as a caller parameter thereafter. |
+| B4 | **Does the knob store move in this train (task 0119)?** | spine §12 | Determines whether Car A needs a `runtime_config` revision ahead of the ledger tables. | **ADR-0203**, same as A3 — `config` table ships schema-only, zero rows, as part of the bootstrap. **Amended by ADR-0210:** ships inside the strict-typing train, not a separate one. |
+
+### 8.C VERIFIED — cheap, and each one could have invalidated a decision
+
+| # | Item | Source | If it comes back wrong | Verified |
+|---|---|---|---|---|
+| C1 | `asyncmy`'s own license | decision §4.5 | Breaks the Apache-2.0/GPL-2.0 no-conflict analysis; a GPL/LGPL connector changes everything. | **ADR-0205** — `asyncmy` 0.2.11 is Apache-2.0, no conflict. **Re-verify per ADR-0212:** the dependency later resolved to 0.2.13 — confirm the license carried before relying on it again. |
+| C2 | MariaDB idle RSS in the 4 GB backend container (embed already ~1.3 GB) | decision §4.5 | §4.4's stated disqualifying condition for MariaDB. | **ADR-0205** — measured 86.6 MB (podman stats) / 119 MB summed VmRSS, ~2% of the cap. §4.4's disqualifying condition is NOT met. |
+| C3 | **SurrealDB's current license** — possibly BSL 1.1 | decision §5.3 | Not blocked on the split; **live in already-published images today**. Larger pre-existing exposure than the GPL-2.0 one being added. | **ADR-0205** — confirmed BSL 1.1 (Change Date 2030-01-01, Additional Use Grant bars use "as a Database Service"). NOTICE gap is real and already live in shipped images (task 0132). The SaaS-tier question is explicitly DEFERRED, not resolved. |
+| C4 | Read frequency of the ~145 CHEAP-classified knobs | knob §F | The classification is reasoned, not measured. The knob plan argues the mitigation is cheaper than the measurement — confirm or reject. | **ADR-0205** — accepted UNMEASURED: the mitigation (hoist / cache) is correct regardless of the count, so measuring 145 knobs to produce a number nobody would act on was rejected as effort better spent elsewhere. |
+
+### 8.D DECIDED — was scope, not urgent
+
+| # | Question | Source | Decided |
 |---|---|---|---|
-| A1 | **Project identity key scheme (task 0095).** Three schemes coexist: `project_id` = `owner/repo`, a basename-derived `body_slug`, and the config store's absolute filesystem path. | decision §1.4 · spine D32 · knob "Blocking before any seed" | **Time-boxed.** Re-key is free only while `runtime_config` is empty (0 rows, verified). Task 0035 seeding one row closes the window. Spine's refinement: the gate is the first `config_set`, **not** the schema — so a zero-row schema-only pilot may proceed with 0095 open. **Confirm that reading.** |
-| A2 | **Widen the config write path to accept `float`.** `_JSON_VALUE_TYPES` (`tools/runtime_config.py:52`) excludes it; 88 of 344 Settings fields are float — the entire stated Batch 1. | knob §0.3 | One-line fix, but Phase 1 cannot start without it. The alternative — string-encoding at ~145 call sites — reintroduces the phantom-knob class and should be **rejected explicitly**, not left open. |
-| A3 | **Does the knob plan own the engine-#2 operational bootstrap?** Its Phase 0.9 currently carries backup, restore-verification, Alembic and cross-engine `check_invariants`. | knob §G | That is far larger than "knob migration" implies. Three alternatives are listed in the knob doc. Scope must be settled before sequencing. |
-
-### 8.B DESIGN — needed before the first engine-#2 row lands
-
-| # | Question | Source | Note |
-|---|---|---|---|
-| B1 | **Cross-engine quiesce point for backup.** Both engines stopped, or a Surreal snapshot taken while SQL holds a read view? | decision §5.2 · ADR-0196 | A Surreal snapshot at 03:00 + a SQL snapshot at 03:05 restores rows referencing memories that do not exist. |
-| B2 | **The ADR two-write drift is RELOCATED, not eliminated.** `adr_add` goes from page-then-index (both Surreal) to page-then-row (Surreal, then MariaDB) — same two writes, now across an engine boundary with no transaction. | spine §12 | The spine specifies row-last ordering plus a `check_invariants` cross-engine check, but this is ADR-0183's predicted orphan class **arriving early**. Deserves an explicit call rather than an author's mitigation. |
-| B3 | **`body_slug` stays basename-derived**, with two live DB-wide collision surfaces: `get_wiki_page_by_slug` (`_shared/storage/wiki.py:380`, slug-only) and UNIQUE `wiki_bookmark_slug_idx` (`migrations.py:190,1404`). | spine D32 · §12 | Deferring to 0095 is the author's call. Confirm, or accept a wiki-corpus re-slug as separate scope. |
-| B4 | **Does the knob store move in this train (task 0119)?** | spine §12 | Determines whether Car A needs a `runtime_config` revision ahead of the ledger tables. |
-
-### 8.C MEASURE / VERIFY — cheap, and each one can invalidate a decision
-
-| # | Item | Source | If it comes back wrong |
-|---|---|---|---|
-| C1 | `asyncmy`'s own license | decision §4.5 | Breaks the Apache-2.0/GPL-2.0 no-conflict analysis; a GPL/LGPL connector changes everything. |
-| C2 | MariaDB idle RSS in the 4 GB backend container (embed already ~1.3 GB) | decision §4.5 | §4.4's stated disqualifying condition for MariaDB. |
-| C3 | **SurrealDB's current license** — possibly BSL 1.1 | decision §5.3 | Not blocked on the split; **live in already-published images today**. Larger pre-existing exposure than the GPL-2.0 one being added. |
-| C4 | Read frequency of the ~145 CHEAP-classified knobs | knob §F | The classification is reasoned, not measured. The knob plan argues the mitigation is cheaper than the measurement — confirm or reject. |
-
-### 8.D SCOPE — decide, but not urgent
-
-| # | Question | Source |
-|---|---|---|
-| D1 | Test the FTS-prefilter hypothesis **inside SurrealDB** first (it already has FULLTEXT/BM25 in server mode), or drop the ADR-retrieval change and keep only the metadata move? Dropping ADR embeddings is currently **unmeasurable** — `golden_set.jsonl` has 43 rows with zero ADR coverage. | decision §6.3 |
-| D2 | Per-knob **global-vs-directory-scoped** decision. `WIKI_SIM_CONTENT_THRESHOLD`'s consumers are split between dir-aware (`tools/wiki.py:986`) and dir-blind (`queue_drainer/dlq.py:316`), so a per-dir override behaves inconsistently. | knob §D |
-| D3 | The agent-prompt `uses` column ships **with a reader**, or the write-only counter is deleted rather than migrated. | spine D40 |
+| D1 | Test the FTS-prefilter hypothesis **inside SurrealDB** first (it already has FULLTEXT/BM25 in server mode), or drop the ADR-retrieval change and keep only the metadata move? Dropping ADR embeddings is currently **unmeasurable** — `golden_set.jsonl` has 43 rows with zero ADR coverage. | decision §6.3 | **ADR-0206** — the FTS-prefilter hypothesis is dropped; ADR embeddings are kept as-is. Reframed as two access modes: intentional lookup (tasks/prompts/knobs/an ADR by slug) never enters recall at all; ambient recall carries ADRs alone, with superseded ADRs down-weighted, never excluded. |
+| D2 | Per-knob **global-vs-directory-scoped** decision. `WIKI_SIM_CONTENT_THRESHOLD`'s consumers are split between dir-aware (`tools/wiki.py:986`) and dir-blind (`queue_drainer/dlq.py:316`), so a per-dir override behaves inconsistently. | knob §D | **ADR-0207** — ALL KNOBS GLOBAL, no per-project override (follows ADR-0198's removal of the `directory` column; closes a real NULL-uniqueness hole in the unique index). |
+| D3 | The agent-prompt `uses` column ships **with a reader**, or the write-only counter is deleted rather than migrated. | spine D40 | **ADR-0207** — ships with a reader; it is the evidence base for task 0015's prompt-pruning question. |
 
 ### 8.E Defects surfaced in passing — file, don't decide
 
