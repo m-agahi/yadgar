@@ -297,19 +297,23 @@ async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)
     """Run a single admin op's storage-write body backend-side and return its result.
 
     Mirrors the /recall + /consolidate routes: lazily builds the slim engine set
-    (which includes storage) via _ensure_recall_engines, then runs the op in a
-    worker thread so the event loop is not blocked by the storage IO.
+    (which includes storage) via _ensure_recall_engines, then dispatches the op.
+
+    Engine-#2 car B: dispatch goes through ``run_admin_op_async``, which keeps a
+    SYNC op body on the ``asyncio.to_thread`` path (unchanged — the event loop is
+    still not blocked by storage IO) and awaits an ASYNC op body directly on the
+    loop. No existing op changed shape.
 
     op must be a registered admin op (yadgar.backend.admin_exec.run_admin_op).
     Unknown ops → 400. Called by the core thin forwarders (_forward_admin).
     """
-    from yadgar.backend.admin_exec import run_admin_op  # noqa: PLC0415
+    from yadgar.backend.admin_exec import run_admin_op_async  # noqa: PLC0415
 
     # Bootstrap engines (idempotent, guarded by lock) — the op needs storage.
     await asyncio.to_thread(_es._ensure_recall_engines)
 
     try:
-        result = await asyncio.to_thread(run_admin_op, req.op, req.payload)
+        result = await run_admin_op_async(req.op, req.payload)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
