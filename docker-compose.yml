@@ -30,13 +30,19 @@ volumes:
   yadgar-dev-data:
   yadgar-queue-data:
   yadgar-backend-logs:
+  # Engine #2 (ADR-0195) datadir. Production needs no equivalent entry: there
+  # the whole data root is a single writable host bind-mount
+  # (~/.local/share/yadgar -> /data), so /data/mariadb is already writable and
+  # no unit renderer changes. Dev is the odd one out because it mounts
+  # yadgar-db-data at /data READ-ONLY, hence this narrow rw volume.
+  yadgar-mariadb-data:
   # Production bind-mount alternative (see comment block above):
   # To switch, remove the named volume entry above and use a host path in the
   # backend service volumes section: - /var/log/yadgar:/data/logs
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.61.0}
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.63.0}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -48,6 +54,13 @@ services:
     volumes:
       - yadgar-db-data:/data:ro
       - yadgar-backend-logs:/data/logs
+      # Engine #2 datadir — WRITABLE, mounted over the :ro /data at exactly the
+      # one path mariadbd owns (same nesting trick /data/logs already uses).
+      # Chosen over flipping /data to rw: production's /data IS writable, so
+      # this makes dev match production for the datadir path ONLY, without
+      # widening the dev DB mount. `read_only: true` below is unaffected — it
+      # hardens the container's own filesystem layers, not volume mounts.
+      - yadgar-mariadb-data:/data/mariadb
       # R3: backend runs the queue drainer → needs the file queue r/w. Backend's /data is
       # the read-only DB, so mount the shared queue volume at a distinct path. Core mounts
       # the SAME volume at /data → both see volume-root/queue (see YADGAR_QUEUE_BASE below).

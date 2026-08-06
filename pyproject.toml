@@ -177,6 +177,27 @@ ml = [
     # backsliding under sentence-transformers' wide <6.0.0 bound.
     "transformers>=5.0",
 ]
+# Engine #2 (ADR-0195): the relational set lives in MariaDB, served by the
+# BACKEND container only. Deliberately an EXTRA, not a base dependency:
+#   * `asyncmy` is a COMPILED (Cython) driver. In base deps every pipx / pip
+#     install of the core package would need a wheel for the running
+#     interpreter — or a C toolchain to build one. Install is this repo's worst
+#     surface (ADR-0195 consequences); adding a compile step to it for a driver
+#     core never opens is the wrong trade.
+#   * Core has ZERO engine-#2 access by design (ADR-0195 / ADR-0200: core
+#     forwards to backend admin ops), so the driver is backend-only in exactly
+#     the way the `ml` extra above is backend-only.
+# `sqlalchemy` + `alembic` travel with it: alembic is the migration arm this
+# split buys (ADR-0195 rationale — it moots task 0051's surrealmigrate fork),
+# and alembic depends on sqlalchemy regardless.
+# NOTE: the yadgar-ci image bakes `--extra test --extra ml` (Dockerfile.ci:116)
+# and has no auto-sync pipeline — it must be rebuilt with `--extra sql` before
+# any test may import these.
+sql = [
+    "asyncmy>=0.2.11",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+]
 test = [
     # starlette 1.3.x testclient prefers httpx2 (`import httpx2 as httpx`) and
     # emits StarletteDeprecationWarning when only plain httpx is installed —

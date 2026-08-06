@@ -1,11 +1,26 @@
-# Backend container: SurrealDB v3 + sentence-transformers embedding service
+# Backend container: SurrealDB v3 + MariaDB (engine #2) + sentence-transformers
+# embedding service. All three are PROCESSES in this one container — there is no
+# separate MariaDB service and no MariaDB port published (ADR-0195: the backend
+# owns engine #2; core reaches it only through backend admin ops).
 FROM python:3.14-slim-trixie AS backend
 ARG TARGETARCH
 WORKDIR /app
 COPY . /app
 # curl is needed for HEALTHCHECK. Unpinned — base image is pinned to trixie
 # so apt resolves to a single deterministic version per build.
-RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+#
+# mariadb-server is engine #2 (ADR-0195). Installed from Debian trixie's own
+# archive rather than `COPY --from=mariadb:11.4 /usr/sbin/mariadbd`, which is
+# how SurrealDB is baked one layer down. The two cases are NOT alike: the
+# surreal binary is a self-contained static Rust executable, while mariadbd is
+# dynamically linked against a long tail (libssl, libaio, liburing, libpcre2,
+# libnuma, libzstd, ...) plus a versioned plugin dir, an error-message file and
+# the mariadb-install-db / mariadb-admin helpers this entrypoint needs. Copying
+# it would mean hand-tracking that closure across two distros' library ABIs,
+# which breaks silently on a base-image bump. apt costs image size and buys a
+# self-consistent, apt-upgradeable install resolved against the SAME libc the
+# rest of the image uses.
+RUN apt-get update && apt-get install -y --no-install-recommends curl mariadb-server && \
     rm -rf /var/lib/apt/lists/*
 # Install torch + sentence-transformers + uvicorn (for embed service).
 # CPU-only torch on BOTH arches: this is a CPU embedding service, so the CUDA
@@ -13,9 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
 # CUDA-bundled aarch64 wheels (>2GB) → the long silent install tripped Docker
 # Build Cloud's gRPC keepalive and failed the arm64 build (v5.57.2). The cpu
 # index has cp314 wheels for both aarch64 and x86_64.
+# [sql] is the engine-#2 extra (asyncmy + sqlalchemy + alembic) — backend-only,
+# see the justification on the extra in pyproject.toml.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install "/app[ml]" uvicorn
+    pip install "/app[ml,sql]" uvicorn
 # SurrealDB v3
 COPY --from=surrealdb/surrealdb:v3.1.5 /surreal /usr/local/bin/surreal
 COPY entrypoint-backend.sh /entrypoint-backend.sh
