@@ -207,6 +207,7 @@ prompts:
     - Isolated worktree off origin/master; branch + version state per [[agent-discipline-branch-state]] (git fetch first; version pre-claim; 5-site sync incl yadgar/__init__.py::BACKEND_VERSION — manual site).
     - Test/monitor/push hygiene per [[agent-discipline-process-hygiene]]. Per-file -n0; no full sweeps; no make targets.
     - Commit gates per [[agent-discipline-commit-hygiene]].
+    - Types per [[agent-discipline-strict-typing]] — annotate every signature; seams carry a dataclass/TypedDict, never a bare dict; coerce at the boundary. The type ratchet FAILS the commit if a file you touched gains errors.
     - DB access: backend pipelines only (ADR-0078) — a new core-side DB read is STOP-AND-ASK.
     - Ship: push, PR via codeberg API (base master, no template exists), VERIFY body via GET after create. Leave worktree for main thread.
     - End report with ## Yadgar findings.
@@ -216,6 +217,7 @@ prompts:
     - [[agent-discipline-branch-state]]
     - [[agent-discipline-process-hygiene]]
     - [[agent-discipline-commit-hygiene]]
+    - [[agent-discipline-strict-typing]]
     - [[agent-discipline-adr-consult]]
 
 # ── v5.124.0 consolidation: merged canonicals + retained generic patterns ──────
@@ -558,6 +560,17 @@ disciplines:
     Commit with the worktree venv on PATH (`PATH=<worktree>/.venv/bin:$PATH git commit` — lint-imports is language:system).
     `git add` explicit paths only (never -A); no staged file >2MB.
     Pre-commit gotchas: py314 except-tuple parens; I13 caps (nesting ≤4, cyclomatic ≤15, params ≤8); I33 observe-coverage (`@observe(span=False)` for hot-loop/per-item helpers, ADR-0074).
+- name: strict-typing
+  purpose: 'Strict-typing discipline: annotate every seam, no untyped dicts across modules, explicit coercion at boundaries.'
+  content: |-
+    Python coerces silently, so a type error surfaces as an exception far from its cause. In the 203-defect audit ALL THREE severe coupling defects were untyped dict/positional passing.
+    Annotate EVERY signature you write or touch — params and return. `-> None` counts.
+    Seams (module→module, core→backend, stage→stage) carry a frozen kw_only dataclass or a TypedDict, NEVER a bare dict/tuple. Bare `dict`/`list`/`Any` in a signature is a defect, not a shortcut.
+    Coerce at the BOUNDARY, explicitly: config/env/JSON/DB values get `float(x)`/`int(x)`/`str(x)` where READ, not where used. JSON round-trips `1.0` as `1`; `isinstance(True, int)` is True; a test double is neither.
+    `None` is a value, not an absence: annotate `X | None` and resolve it at the boundary. Never let `None` reach a batch/encode API — one None fails the WHOLE batch, not the row.
+    Payloads you did not construct (parsed, merged, injected, cross-process): validate, then access. A bare `d["k"]` on one of those is a production KeyError.
+    NEVER silence: no `# type: ignore`, no `cast()`, no `except Exception:` around attribute access (turns a typo into a silent no-op). Fix the type, or state the reason inline.
+    ENFORCED: `scripts/check_type_ratchet.py` (pre-commit) fails a commit when a file you touched gains type errors; `[tool.mypy]` overrides run `strict = true` on the allowlist. New modules start at ZERO — no baseline entry means no allowance.
 - name: adr-consult
   purpose: 'Read-side ADR discipline: consult binding ADR decisions before planning/building/debugging a subsystem.'
   content: |-

@@ -142,7 +142,7 @@ class TestSeedIdempotent:
         assert toc_page is not None, "TOC page absent after seed"
         content = toc_page.get("content", "")
         row_matches = list(_TOC_ROW_RE.finditer(content))
-        assert len(row_matches) == 22, (
+        assert len(row_matches) == 23, (
             f"TOC should have exactly 22 rows (15 starters + contract + 6 disciplines), "
             f"found {len(row_matches)}:\n{content}"
         )

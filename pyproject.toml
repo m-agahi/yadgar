@@ -155,6 +155,37 @@ max-complexity = 15  # I13 hard cap
 [tool.ruff.lint.pylint]
 max-args = 8  # I13 hard cap (params)
 
+# ---------------------------------------------------------------------------
+# Strict-typing enforcement (two arms, deliberately asymmetric)
+#
+# Arm 1 — THIS SECTION: an opt-in allowlist runs `strict = true`, so a
+#   subsystem is strict from its FIRST commit. Add a module when you START it;
+#   retrofitting strict onto a grown module never happens.
+# Arm 2 — scripts/check_type_ratchet.py: a file you TOUCH may not gain type
+#   errors versus .mypy-ratchet-baseline.json. Legacy code keeps its errors,
+#   it just cannot accumulate more.
+#
+# The tree-wide default below is PERMISSIVE ON PURPOSE. ~306k lines across
+# ~1129 modules predate any type checker (task 0116); a blanket strict gate
+# emits thousands of errors on day one and gets switched off within a week.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+follow_imports = "silent"
+# The ratchet reports per-file counts, so mypy's own summary is noise.
+show_error_codes = true
+# Override sections for not-yet-created modules must not warn.
+warn_unused_configs = false
+
+[[tool.mypy.overrides]]
+# STRICT ALLOWLIST — append here as each new subsystem lands. Intentionally
+# empty at introduction: naming a module that does not exist yet would read as
+# a decision already implemented. The spine rebuild (task 0047) is the first
+# customer and adds its modules in the same commit that creates them.
+module = []
+strict = true
+
 [project.optional-dependencies]
 ml = [
     # [onnx] extra REMOVED (5.131.0 deps train): the resolver routes it through
@@ -204,6 +235,11 @@ test = [
 dev = [
     "yadgar[test]",
     "ruff>=0.4.0",
+    # Type checker for the strict-typing ratchet (scripts/check_type_ratchet.py).
+    # Ruff CANNOT type-check — it lints. Annotations without a checker enforce
+    # NOTHING (task 0116), which is how the three severe coupling defects in the
+    # 203-defect audit shipped as untyped dict/positional passing.
+    "mypy>=1.11",
 ]
 # Distribution tooling: SBOM generation via CycloneDX (cyclonedx-py is an alias; use cyclonedx-bom directly)
 # Pin exact version — OWASP supply-chain; no auto-upgrade without review.
