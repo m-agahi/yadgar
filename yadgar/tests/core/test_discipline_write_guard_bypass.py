@@ -139,6 +139,50 @@ class TestRemovalsAreBlocked:
         assert _content(pid) == _BODY
 
 
+class TestWikiUpdateCovered:
+    """wiki_update never enters WikiStore, so it needs its own pre-check.
+
+    ``backend/admin_exec/wiki.py::wiki_update`` calls ``storage.update_wiki_page``
+    directly — the store-level chokepoint cannot see it, and ``content`` is in
+    the tool's allowed-keys list, so one call could strip every rule line. The
+    guard therefore also sits in the ``@_tool`` shell. That shell is a disjoint
+    entry point from ``discipline_save`` (which goes ``_save_discipline_page`` →
+    ``_forward_admin("agent_prompt_save")`` → ``wiki.add``), so this cannot
+    double-gate the sanctioned path.
+    """
+
+    def test_content_removal_blocked(self):
+        from yadgar.core.server.tools.admin_other import wiki_update
+
+        pid = _make_page("agent-discipline-guard-update", PAGE_TYPE_AGENT_DISCIPLINE)
+        result = wiki_update(pid, {"content": "## Prompt\n\n" + _RULE_1 + "\n"})
+        assert result.get("error") == "discipline_removal_requires_confirmation"
+        assert _RULE_2 in result["removed_lines"]
+        assert _content(pid) == _BODY, "rejected write must not touch the page"
+
+    def test_content_addition_allowed(self):
+        from yadgar.core.server.tools.admin_other import wiki_update
+
+        pid = _make_page("agent-discipline-guard-update-add", PAGE_TYPE_AGENT_DISCIPLINE)
+        wiki_update(pid, {"content": _BODY + "Rule four: and one more.\n"})
+        assert "Rule four: and one more." in _content(pid)
+
+    def test_non_content_fields_unaffected(self):
+        """Only `content` can remove a rule — a tag edit must still work."""
+        from yadgar.core.server.tools.admin_other import wiki_update
+
+        pid = _make_page("agent-discipline-guard-update-tags", PAGE_TYPE_AGENT_DISCIPLINE)
+        result = wiki_update(pid, {"tags": ["agent-prompt", "agent-discipline", "extra"]})
+        assert result.get("error") != "discipline_removal_requires_confirmation"
+
+    def test_non_discipline_page_unaffected(self):
+        from yadgar.core.server.tools.admin_other import wiki_update
+
+        pid = _make_page("plain-guard-update-control", None)
+        wiki_update(pid, {"content": "wiped\n"})
+        assert _content(pid) == "wiped\n"
+
+
 class TestAdditionsFlow:
     """ADR-0208 is asymmetric — the guard must not become a write ban."""
 
