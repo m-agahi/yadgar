@@ -5,7 +5,9 @@ resolved by the user 2026-08-06. Ready to build.
 
 Binding decisions: ADR-0195 (split store), ADR-0196 (backup half — engine #2
 leaves the vacuum pipeline), ADR-0203 (own train; `config` schema-only),
-ADR-0204 (quiesce — **amended, see §4.2**), ADR-0205 (MariaDB viable).
+ADR-0204 (quiesce — **read the amendment ADR-0210 first**), ADR-0205
+(MariaDB viable), **ADR-0210** (audit corrections: gate blocks reads, backup
+is a nightly step, train shape).
 
 > **Landmine when following those citations.** Split-store §5.1 still teaches
 > `SELECT MAX(number)+1 … FOR UPDATE` for ADR numbering. That is **RETIRED by
@@ -14,8 +16,10 @@ ADR-0204 (quiesce — **amended, see §4.2**), ADR-0205 (MariaDB viable).
 > identity half.
 
 > **Train-shape note.** ADR-0203 says this is its OWN train. The user directed
-> it ship as cars of the combined strict-typing train. Deliberate override —
-> car 11 carries an amending ADR so the record matches reality.
+> it ship as cars of the combined strict-typing train. Deliberate override,
+> recorded in **ADR-0210** — ADR-0203 remains the citation for WHY this is a
+> distinct body of work with four arms landing together, but no longer for how
+> it is packaged.
 
 ---
 
@@ -75,7 +79,7 @@ deliberately so for now.
 
 ### 4.2 Quiesce — a nightly step (amends ADR-0204)
 
-**ADR-0204's decision text is FALSE and car 11 amends it.** It says "reads stay
+**ADR-0204's decision text is FALSE; ADR-0210 withdraws it.** It says "reads stay
 available; only writes block". The gate short-circuits EVERY MCP tool including
 reads (`core/server/_app.py:517-518`, enforcement `:540-559`); no read exemption
 exists. During the window `recall`, `wiki_read` and `config_get` all fast-fail.
