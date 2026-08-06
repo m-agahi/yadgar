@@ -1012,8 +1012,10 @@ whether each column meant anything for that entity. It does not, and several wer
   changes only on seed/adopt) tracks which packaged baseline a page was seeded from, distinct from
   `content_hash` (mirrored on both the row and the page, regenerated on every write, whose two
   copies disagreeing IS the row/page desync signal). **`agent_pattern` and `agent_discipline` in
-  §3.2 need both columns added**; §3's table definitions above predate this and are not yet
-  updated to show them.
+  §3.2 now carry both columns**, added in the same pass as this note. `content_hash` is `NOT
+  NULL` with no default, which is safe only because D35a's seed is a one-shot write that
+  computes the hash from the source page at insert time — there is no pre-existing row a
+  migration would need to backfill it onto.
 - **The `page_type` split in ADR-0209 also lands here.** `agent_pattern` and `agent_discipline`
   are separate page types now (not one `agent_prompt` type discriminated by slug prefix), because
   their governance genuinely differs — disciplines carry the asymmetric removal guard, the
