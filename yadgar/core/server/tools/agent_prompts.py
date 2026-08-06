@@ -71,6 +71,29 @@ def _unwrap_purpose_prompt(content: str) -> str:
     return content
 
 
+_PURPOSE_EXTRACT_RE = re.compile(
+    r"^##\s+Purpose\b\s*\n+(.*?)\n##\s+Prompt\b",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+@observe(tier="hot", metric="tools.agent_prompts._extract_purpose")
+def _extract_purpose(wrapped_content: str) -> str | None:
+    """Extract the '## Purpose' text from a wrapped agent-prompt page, if present.
+
+    Companion to _unwrap_purpose_prompt (which extracts the '## Prompt' body).
+    Used by discipline_save so an update that omits purpose= reuses the
+    existing stored purpose instead of silently overwriting it with the
+    generic default — a discipline write path exists specifically to avoid
+    silent content loss, so the purpose line deserves the same care as the
+    prompt body.
+
+    Returns None if content isn't wrapped in the expected Purpose/Prompt form.
+    """
+    m = _PURPOSE_EXTRACT_RE.match(wrapped_content.lstrip())
+    return m.group(1).strip() if m else None
+
+
 # R3 Car 3c: the TOC-upsert + library-anchor writes (previously _upsert_toc_row /
 # _ensure_library_anchor here) moved backend-side into
 # yadgar.backend.admin_exec.wiki (they are DB writes on the agent_prompt_save path,
@@ -316,6 +339,117 @@ def _save_discipline_page(
             "directory": "global",
         },
     )
+
+
+@observe(tier="hot", metric="tools.agent_prompts._removed_prompt_lines")
+def _removed_prompt_lines(old_body: str, new_body: str) -> list[str]:
+    """Return non-empty lines present in old_body but absent (verbatim) from new_body.
+
+    ADR-0208 asymmetric guard, precise definition: an update is additions-only
+    when every non-empty existing line survives *somewhere* in the incoming
+    body — order and duplication don't matter. This mirrors
+    scripts/check_test_weakening.py's delta-counting shape (count what changed,
+    don't ban edits outright) rather than a line-position diff: a rule that
+    moved to a different spot in the file is not a removal.
+
+    Deduplicated: a repeated identical old line is only reported once.
+    """
+    new_lines = {ln for ln in new_body.splitlines() if ln.strip()}
+    seen: set[str] = set()
+    removed: list[str] = []
+    for ln in old_body.splitlines():
+        if not ln.strip() or ln in seen:
+            continue
+        seen.add(ln)
+        if ln not in new_lines:
+            removed.append(ln)
+    return removed
+
+
+@_tool()
+def discipline_save(
+    name: str,
+    content: str,
+    purpose: str | None = None,
+    confirm_removal: bool = False,
+    branch_hint: str | None = None,
+) -> dict:
+    """Save (upsert) a discipline page under agent-discipline-<name>.
+
+    This is the MCP write path ADR-0208 calls a hard prerequisite: disciplines
+    are the rule sets that bind every future dispatch (see agent-prompt-toc /
+    the prelude contract's ``covers:`` list), and until now the only writer was
+    the seeder's create-if-absent path (_seed_discipline_pages) — updating a
+    discipline required a code change plus a release.
+
+    ADR-0208 asymmetric guard: because a discipline binds every future
+    dispatch, an instance able to rewrite it unguarded could weaken its own
+    constraints. Additions flow freely; a net REMOVAL of an existing rule
+    requires explicit ratification. Precise definition: compare the existing
+    page's '## Prompt' body against the incoming content (after stripping any
+    accidental Purpose/Prompt wrapper). If every non-empty existing line
+    survives somewhere in the new body, the update is additions-only and is
+    allowed. If any non-empty existing line is absent, it is a removal and the
+    save is REJECTED — naming exactly which line(s) would be lost — unless
+    confirm_removal=True ratifies it. Creating a page that does not exist yet
+    is never a removal (nothing to compare against).
+
+    Out of scope (ADR-0209, a later car): baseline_hash, content_hash, drift
+    detection against the packaged seed, and three-way merge. This tool is
+    purely the additions-flow / removal-needs-ratification gate.
+
+    Args:
+        name: Discipline name (e.g. "adr-consult"). Page slug:
+              agent-discipline-<name>.
+        content: The discipline's prompt text. May be bare or already wrapped
+                 in '## Purpose' / '## Prompt' headers (unwrapped automatically,
+                 same double-wrap guard as agent_prompt_save).
+        purpose: One-line description for the TOC. When omitted on an UPDATE,
+                 the existing page's stored purpose is reused (never silently
+                 clobbered). When omitted on a CREATE (no existing page to
+                 reuse from), falls back to a generic default string.
+        confirm_removal: Ratify a detected net removal of existing rule
+                 line(s). Ignored when the guard detects no removal.
+        branch_hint: Caller branch context (optional).
+
+    Returns:
+        On success: {"saved": True, "version": N, "slug": "agent-discipline-<name>", ...}
+            (the underlying agent_prompt_save result).
+        On guard rejection: {"saved": False, "error": "removal_requires_confirmation",
+            "slug": "...", "removed_lines": [...], "message": "..."}.
+        On secret-gate rejection: the gate_or_reject dict (same as agent_prompt_save).
+    """
+    _gate = gate_or_reject(content)
+    if _gate is not None:
+        return _gate
+
+    slug = f"{DISCIPLINE_SLUG_PREFIX}{name}"
+    new_body = _unwrap_purpose_prompt(content)
+    existing = _read_agent_prompt(slug)
+
+    if existing is not None and not confirm_removal:
+        old_body = _unwrap_purpose_prompt(existing["content"])
+        removed = _removed_prompt_lines(old_body, new_body)
+        if removed:
+            return {
+                "saved": False,
+                "error": "removal_requires_confirmation",
+                "slug": slug,
+                "removed_lines": removed,
+                "message": (
+                    f"{len(removed)} existing rule line(s) would be removed from "
+                    f"{slug!r}. Pass confirm_removal=True to ratify the removal:\n"
+                    + "\n".join(f"  - {ln}" for ln in removed)
+                ),
+            }
+
+    if purpose is not None:
+        _purpose = purpose
+    elif existing is not None:
+        _purpose = _extract_purpose(existing["content"]) or f"Agent discipline: {name}."
+    else:
+        _purpose = f"Agent discipline: {name}."
+    return _save_discipline_page(name, _purpose, new_body, branch_hint=branch_hint)
 
 
 @observe(tier="stage", metric="tools.agent_prompts._seed_discipline_pages")

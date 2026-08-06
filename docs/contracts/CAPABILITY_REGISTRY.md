@@ -1976,6 +1976,20 @@ config knobs.
 
 ---
 
+### CAP-WIKI-024 — Discipline write path with asymmetric removal guard (ADR-0208 prerequisite)
+
+- **status:** LIVE
+- **category:** wiki
+- **settings:** —
+- **tools:** `discipline_save`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/agent_prompts.py::discipline_save`, `yadgar/core/server/tools/agent_prompts.py::_removed_prompt_lines`, `yadgar/core/server/tools/agent_prompts.py::_save_discipline_page`
+- **wiring:** `discipline_save(name, content, purpose=None, confirm_removal=False, branch_hint=None)` is `@_tool()`-registered in `agent_prompts.py` and exported in `tools/__init__.py` (this package has no autodiscovery — a decorated function is not a live tool until listed there). It is the first MCP exposure of the upsert `_save_discipline_page` already implements; previously the only caller was the create-if-absent seeder (`_seed_discipline_pages`), so updating a live discipline required a code change plus a release. On call: I26 secret-gate on `content`, then unwrap any accidental `## Purpose`/`## Prompt` wrapper, then (if the page already exists and `confirm_removal` is not set) diff the existing page's unwrapped `## Prompt` body against the incoming body via `_removed_prompt_lines` — a pure set-membership helper, not a line-position diff, so a rule that moved elsewhere in the file is not flagged. A clean diff (or a brand-new page — never a removal) forwards to `_save_discipline_page`, which rides the existing `agent_prompt_save` write path (backend `/admin` op, TOC row, wiki-epoch bump).
+- **explanation:** ADR-0208's asymmetric weakening guard, scoped to disciplines: additions to a discipline's rule body flow freely; a net removal of any existing non-empty line is REJECTED (`{"saved": False, "error": "removal_requires_confirmation", "removed_lines": [...]}`, naming exactly which line(s) would be lost) unless `confirm_removal=True` ratifies it. Rationale: a discipline binds every future dispatch, so an instance able to rewrite it unguarded could weaken its own constraints. Mirrors `scripts/check_test_weakening.py`'s delta-counting shape (count what changed, don't ban edits) rather than banning edits outright. Deliberately does NOT implement `baseline_hash`/`content_hash`/drift-detection-against-the-packaged-seed/three-way-merge — ADR-0209 scopes those to a later car; this entry is purely the additions-flow / removal-needs-ratification gate. The seeder's create-if-absent behavior (never reseeds over a live page) is unchanged and unaffected by this tool.
+
+---
+
 ### CAP-OPS-001 — DLQ inspection and replay (dead-letter queue)
 - **status:** LIVE
 - **category:** ops
