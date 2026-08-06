@@ -47,6 +47,26 @@ def _get_storage() -> StorageEngine:
     return _st._storage
 
 
+def _get_sql_storage() -> Any:  # MariaStorageEngine | None
+    """Engine #2 (MariaDB, ADR-0195), or ``None`` when it is not available.
+
+    DELIBERATELY does not assert, unlike every other getter here. Absence is a
+    normal state, not a programming error, in two distinct ways:
+
+      * on CORE it is always None — ADR-0078/ADR-0200 keep core off every
+        database, so ``init_engines`` is only asked for engine #2 by the
+        backend;
+      * on the BACKEND it is None whenever MariaDB did not come up.
+        ``entrypoint-backend.sh`` treats every engine-#2 failure as a WARNING
+        and leaves the container healthy (``MARIADB_PID=""``, not on the
+        HEALTHCHECK, not in the closing ``wait -n``). An asserting getter would
+        convert that deliberate non-fatal into a crash for its callers.
+
+    Callers must branch on None rather than assume a handle.
+    """
+    return _st._sql_storage
+
+
 @observe(tier="stage")
 def _get_embeddings() -> EmbeddingEngine:
     # §13: raise RuntimeError (not AssertionError — assert can be stripped with -O)
@@ -376,6 +396,53 @@ def _inject_storage_caches(storage) -> None:
     storage._scope_versions = get_scope_versions()
 
 
+@observe(tier="stage")
+def _init_sql_storage() -> Any:  # MariaStorageEngine | None
+    """Build engine #2 (MariaDB, ADR-0195), or return None if it is unavailable.
+
+    THE IMPORT IS LAZY AND MUST STAY LAZY. ``sqlalchemy`` / ``asyncmy`` live in
+    the ``sql`` extra; ``Dockerfile.ci:116`` bakes only ``--extra test --extra
+    ml`` and ``yadgar-ci`` has no auto-sync pipeline. A module-scope import here
+    would fail EVERY CI test the moment this lands, because the composition root
+    is on every import path. Lazy keeps the blast radius to callers that
+    actually want a database.
+
+    NON-FATAL BY DESIGN. Mirrors what ``entrypoint-backend.sh`` already chose:
+    mysqld is started outside the container HEALTHCHECK and outside the closing
+    ``wait -n``, and every failure there is a WARNING. Nothing reads engine #2
+    yet (car D lands the ``config`` schema; the knob train repoints reads), so a
+    missing option file, a missing extra or a malformed file all degrade to None
+    with a warning rather than taking the process down.
+
+    Connectionless: this only constructs the ``AsyncEngine``. See
+    ``MariaStorageEngine`` — ``init_engines`` is sync and runs inside a worker
+    thread on the backend boot path, where opening a connection would bind the
+    pool to an event loop that dies with the thread.
+    """
+    try:
+        from yadgar._shared.storage.sql import (  # noqa: PLC0415 — lazy by design
+            MariaStorageEngine,
+            default_option_file_path,
+        )
+    except ImportError as exc:
+        logger.warning("engine #2 unavailable: %s (install the 'sql' extra)", exc)
+        return None
+
+    cnf = default_option_file_path()
+    if not cnf.is_file():
+        logger.info("engine #2 not configured: no client option file at %s", cnf)
+        return None
+
+    try:
+        engine = MariaStorageEngine.from_option_file(cnf)
+    except Exception as exc:  # noqa: BLE001 — engine #2 absence must not be fatal
+        logger.warning("engine #2 unavailable: could not build engine from %s: %s", cnf, exc)
+        return None
+
+    logger.info("engine #2 composed: %s", engine.url)
+    return engine
+
+
 @observe(tier="boundary")
 def init_engines(
     db_path: str | None = None,
@@ -384,6 +451,7 @@ def init_engines(
     watch_directory: str | None = None,
     local_engines: bool = False,
     engine_set: Literal["slim", "full"] = "full",
+    sql_storage: bool = False,
 ):
     """Initialize all engines. Returns (storage, embeddings, buffer, consolidation, staleness).
 
@@ -401,6 +469,22 @@ def init_engines(
         every engine the recall path touches is in the 14. A missing engine
         surfaces immediately as a None-crash on the first ``/recall`` (caught by
         the backend-recall parity smoke).
+
+    sql_storage (engine #2, ADR-0195 car C): when True, ALSO compose the second
+        concrete storage class — ``MariaStorageEngine`` over the container-local
+        MariaDB socket — into ``_st._sql_storage``. Two concrete classes side by
+        side, no ABC and no shared MRO (ADR-0195; see the sql package docstring
+        for what a shared MRO cost PR #32).
+
+        Defaults False, and that default is load-bearing: ``init_engines`` is
+        the composition root for BOTH processes, and ADR-0078/ADR-0200 forbid
+        core touching either database. Only the BACKEND passes True
+        (``embed_service._ensure_recall_engines``). Never on by inference —
+        core and backend both bind-mount the same data root, so "the socket is
+        reachable" does not distinguish them.
+
+        Failure is non-fatal: the slot stays None and every caller branches on
+        it (see ``_get_sql_storage``).
     """
     # Q16: reset shutdown flag so a re-initialized server can shut down cleanly
     _st._shutdown_done = False
@@ -408,6 +492,7 @@ def init_engines(
     _settings = get_settings()
     _st._storage = StorageEngine(db_path or _settings.DB_PATH)
     _inject_storage_caches(_st._storage)
+    _st._sql_storage = _init_sql_storage() if sql_storage else None
     _st._embeddings, _ml_client = _init_embedding_client(
         embedding_model, _settings, local_engines=local_engines
     )

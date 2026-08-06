@@ -925,7 +925,15 @@ def _ensure_recall_engines() -> None:
         # Car 3 (folder-split #17): slim engine set — build only the 14 engines
         # the /recall path needs, skip the 10 CORE-ONLY engines. Behavior-neutral
         # for recall (byte-identical output; a missing engine = immediate crash).
-        _init_engines(local_engines=True, engine_set="slim")
+        #
+        # sql_storage=True (engine #2, ADR-0195 car C): this is the ONLY caller
+        # that asks for it. ADR-0078/ADR-0200 keep core off every database, so
+        # the flag defaults False and core never flips it. Reached at backend
+        # BOOT, not just on the first /recall — lifespan awaits
+        # _start_queue_drainer, which calls this. Absence is non-fatal: mysqld
+        # is deliberately outside the container HEALTHCHECK, so a MariaDB
+        # failure leaves _st._sql_storage None and the service serving.
+        _init_engines(local_engines=True, engine_set="slim", sql_storage=True)
         # T2 Car E2: compose the backend Retriever (the shared root no longer
         # builds it — retrieval sank to yadgar.backend.retrieval). MUST run
         # before ensure_restoration_engines, which wires _st._retriever into

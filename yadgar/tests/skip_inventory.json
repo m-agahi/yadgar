@@ -7,6 +7,13 @@
   },
   "entries": [
     {
+      "id": "engine2-sql-extra-absent-01",
+      "file": "yadgar/tests/_shared/test_mariadb_engine.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "sqlalchemy not installed (sql extra)",
+      "note": "Engine-#2 car C. sqlalchemy/asyncmy live in the `sql` extra; Dockerfile.ci:116 bakes only `--extra test --extra ml` and yadgar-ci has no auto-sync pipeline, so these skip until that image is rebuilt with `--extra sql`. Covers the same importorskip in yadgar/tests/integration/test_mariadb_connection.py. The credential half (test_mariadb_option_file.py) and the wiring half (test_mariadb_composition.py) are pure stdlib and never skip."
+    },
+    {
       "id": "v5-169-setup-linger-timeout-01",
       "file": "yadgar/tests/scripts/test_v5_169_setup_linger.py",
       "verdict": "LEGIT-CONDITIONAL",
