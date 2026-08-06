@@ -6,9 +6,17 @@ specifies two concrete classes selected at the composition root, and PR #32
 showed what a shared MRO costs (a MariaDB mixin ordered behind SurrealDB's, so
 SurrealDB won every call and the MariaDB half was dead code with green tests).
 
-  config.py   — MySQL option-file parsing. PURE STDLIB, no third-party import.
-  mariadb.py  — ``MariaStorageEngine``: async SQLAlchemy engine over the local
-                unix socket. Imports ``sqlalchemy`` lazily, inside functions.
+  config.py    — MySQL option-file parsing. PURE STDLIB, no third-party import.
+  mariadb.py   — ``MariaStorageEngine``: async SQLAlchemy engine over the local
+                 unix socket. Imports ``sqlalchemy`` lazily, inside functions.
+  migrate.py   — the Alembic runner (car D). Programmatic ``Config``, no ini
+                 file; ``upgrade_to_head`` is awaited from the backend lifespan.
+  migrations/  — the Alembic environment + revision chain. Loaded BY PATH by
+                 alembic, never imported as a module (``env.py``'s body calls
+                 ``context.is_offline_mode()``, which needs a pushed context).
+                 Deliberately separate from SurrealDB's hand-rolled chain in
+                 ``../migrations.py`` — spine schema D34: one ordered list
+                 spanning two engines has no meaningful "version N".
 
 Why it lives under ``_shared`` and not ``yadgar/backend``: only the backend
 touches it (ADR-0078/ADR-0200 — core forwards to backend admin ops and never
