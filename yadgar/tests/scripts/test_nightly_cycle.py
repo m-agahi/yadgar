@@ -96,6 +96,10 @@ def _run_with_mocks(
         Settings=MagicMock(return_value=SimpleNamespace(DB_PATH=str(db_dir))),
         configure_logging=MagicMock(),
         default_retention=MagicMock(return_value=3),
+        # Engine-#2 car F step 5b. MUST be stubbed here: the real driver POSTs to
+        # the core maintenance route, so an unstubbed main() would enter the
+        # write-gate on whatever core is listening on the test host.
+        run_cross_engine_backup=MagicMock(return_value={"ok": True, "sql_dump": "d.sql"}),
     )
     if extra_patches:
         base.update(extra_patches)
@@ -364,6 +368,8 @@ class TestStopCoreFailure:
             Settings=MagicMock(return_value=SimpleNamespace(DB_PATH=str(db_dir))),
             configure_logging=MagicMock(),
             default_retention=MagicMock(return_value=3),
+            # Car F step 5b — stub it or main() POSTs to whatever core is live.
+            run_cross_engine_backup=MagicMock(return_value={"ok": True}),
         ):
             code = mod.main(args)
 
@@ -518,12 +524,15 @@ class TestVacuumFailure:
             Settings=MagicMock(return_value=SimpleNamespace(DB_PATH=str(db_dir))),
             configure_logging=MagicMock(),
             default_retention=MagicMock(return_value=3),
+            # Car F step 5b — stub it or main() POSTs to whatever core is live.
+            run_cross_engine_backup=MagicMock(return_value={"ok": True}),
         ):
             code = mod.main(args)
 
         assert code == 40, f"Expected 40, got {code}"
         assert len(snap_calls) == 2, f"Expected pre + post snapshots, got: {snap_calls}"
-        mock_prune.assert_called_once()
+        # Three pools since car F: nightly-*, quiesce-*, and the MariaDB dumps.
+        assert mock_prune.call_count == 3
 
     def test_vacuum_exit_code_2_fails_cycle_red(self, tmp_path: Path) -> None:
         """cmd_vacuum_impl exit code 2 = swap ROLLED BACK (P0 #37): unverified swap is
@@ -787,6 +796,8 @@ class TestPostBackupQuiesced:
             Settings=MagicMock(return_value=SimpleNamespace(DB_PATH=str(db_dir))),
             configure_logging=MagicMock(),
             default_retention=MagicMock(return_value=3),
+            # Car F step 5b — stub it or main() POSTs to whatever core is live.
+            run_cross_engine_backup=MagicMock(return_value={"ok": True}),
         ):
             code = mod.main(args)
 

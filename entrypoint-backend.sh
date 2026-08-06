@@ -101,6 +101,20 @@ MARIADB_DB="${MARIADB_DB:-yadgar}"
 MARIADB_ADMIN_USER="$(id -un 2>/dev/null || echo yadgar)"
 MARIADB_APP_USER="${MARIADB_APP_USER:-yadgar_app}"
 
+# EXPORTED, and the "no env plumbing at all" note above is why this is easy to
+# get wrong (engine-#2 car F). The Python side does need to FIND the option file
+# before asyncmy can read the password out of it, and its resolution ladder
+# (`_shared/storage/sql/config.py::default_option_file_path`) reads exactly these
+# names. Without an export they are shell locals: the ladder falls through to
+# `_paths.DB_PATH.parent/mariadb/client.cnf`, and this container sets neither
+# `YADGAR_DATA_DIR` nor `YADGAR_DB_PATH` (unlike the CORE container, which gets
+# `-e YADGAR_DATA_DIR=/data`), so `DB_PATH` resolves under `$HOME` —
+# `/home/yadgar/.local/share/yadgar/surreal_db` — and the lookup misses
+# `/data/mariadb/client.cnf` entirely. Cars C (connect), D (boot migration) and
+# F (dump) all resolve through that one ladder, so exporting it is what makes
+# engine #2 addressable from Python at all.
+export SURREAL_DATA_ROOT MARIADB_DATA_DIR MARIADB_CLIENT_CNF MARIADB_DB
+
 # --- safe-stop begin (P0 #37 Option B: writers-first ordered stop) ---------
 # SurrealKV never flushes the store on close upstream: surrealkv's
 # `impl Drop for Tree` skips the async close when the tokio runtime is already

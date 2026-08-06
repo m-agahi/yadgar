@@ -2,7 +2,7 @@
   "_meta": {
     "version": "1",
     "description": "Sanctioned skips for yadgar test suite. Every skip must appear here or CI gate fails.",
-    "updated": "2026-08-06",
+    "updated": "2026-08-07",
     "adr": "Car 1 of test-suite hardening train (fix/test-hardening-car1-skips)"
   },
   "entries": [
@@ -159,6 +159,27 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "requires a real /nix/store filesystem",
       "note": "nix-flake detection requires a real path literally prefixed /nix/store/, which cannot be synthesized under tmp_path — the check-in-store fixture (a symlink to the test host's own nix-built bash) only exists on real NixOS/nix-installed hosts. The CI test-fast job runs in a plain ubuntu-based container with no /nix/store, so this one parity case skips there; the other 7 (pipx legacy/modern/explicit-PIPX_HOME/false-positive, brew, source, unknown) are pure tmp_path fixtures and always run."
+    },
+    {
+      "id": "engine2-carf-container-runtime-absent-01",
+      "file": "yadgar/tests/integration/test_mariadb_dump_arm.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "docker/podman not available on this host",
+      "note": "Engine-#2 car F. The dump arm's integration test spins a scratch MariaDB container to prove the real argv + credential path; no container runtime means no server to dump. Mirrors the same guard in yadgar/tests/integration/test_mariadb_connection.py (car C). Torn down with -v so no anonymous datadir volume leaks."
+    },
+    {
+      "id": "engine2-carf-mariadb-client-absent-01",
+      "file": "yadgar/tests/integration/test_mariadb_dump_arm.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "mariadb-dump not available on this host",
+      "note": "Engine-#2 car F. In production the dump runs INSIDE the backend container, where the mariadb-server apt install (Dockerfile.backend) provides mariadb-dump; a host running this integration test needs the client binary locally. Distinct from engine2-sql-extra-absent-01: this arm shells a binary and imports nothing from the `sql` extra, so the yadgar-ci --extra sql rebuild does not fix it."
+    },
+    {
+      "id": "engine2-scratch-mariadb-start-failed-01",
+      "file": "yadgar/tests/integration/test_mariadb_dump_arm.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "could not start MariaDB container",
+      "note": "Engine-#2 cars C and F. Both MariaDB integration tests skip rather than fail when `podman/docker run` itself errors (image not pulled, no network, rootless storage full) — the runtime is present but cannot produce a server, which is an environment fault and not a yadgar regression. Also covers the identical guard in yadgar/tests/integration/test_mariadb_connection.py, which predates this entry."
     }
   ]
 }

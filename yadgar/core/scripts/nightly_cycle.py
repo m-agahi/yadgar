@@ -18,7 +18,14 @@ Lifecycle (steps 1-7):
      the gate.
   5. Post-backup snapshot (label="nightly-post") — another logical HTTP export.
      Backend stays up; no second stop needed.
-  6. Prune old snapshots.
+  5b. Cross-engine quiesced backup (engine-#2 car F, ADR-0204 as amended by
+     ADR-0210/0211) — asserts the gate (nesting inside step 1's window), drains
+     the queue to VERIFIED empty, dumps MariaDB, exports Surreal (label
+     "quiesce"), releases only a window it opened itself.  A step of the nightly
+     cycle rather than its own schedule so that only ONE holder ever opens a
+     maintenance window (windows nest by design, so a second scheduled holder
+     could snapshot mid-consolidation-write).
+  6. Prune old snapshots — three pools: nightly-*, quiesce-*, and the MariaDB dumps.
   7. EXIT maintenance mode. Core was never stopped, so only the flag is cleared.
 
 Exit codes:
@@ -28,6 +35,8 @@ Exit codes:
   30 — consolidation failed (non-fatal — continue)
   40 — vacuum failed (non-fatal — continue)
   50 — post-backup failed (non-fatal — continue)
+  55 — cross-engine quiesced backup HARD-FAILED (non-fatal to the cycle — no
+       snapshot pair was written, but consolidation/vacuum/prune still ran)
   60 — prune failed (non-fatal — continue)
   70 — final core restart failed
 
@@ -67,6 +76,7 @@ from yadgar._shared.observability.exception_telemetry import record_exception
 from yadgar._shared.observability.log_config import configure_logging
 from yadgar._shared.storage import StorageEngine
 from yadgar.core.backup import create_snapshot, default_retention, prune_snapshots
+from yadgar.core.backup.quiesce import run_cross_engine_backup
 from yadgar.core.consolidation import run_nightly_consolidation
 from yadgar.core.vacuum import cmd_vacuum_impl
 
@@ -420,12 +430,76 @@ def _step_post_backup(db_path: Path, snapshot_dir: Path, backend_url: str) -> in
         return 50
 
 
-def _step_prune(snapshot_dir: Path, retention: int) -> int:
-    """Step 6: Prune old snapshots. Returns 0 on success, 60 on failure."""
+def _step_cross_engine_backup(
+    db_path: Path, snapshot_dir: Path, backend_url: str, data_root: Path
+) -> int:
+    """Step 5b: cross-engine quiesced backup. Returns 0, or 55 on hard failure.
+
+    ADR-0204's sequence (gate → verified-empty drain → MariaDB → Surreal →
+    release), run as a step of the nightly cycle per ADR-0210 §2 so that only
+    ONE holder ever opens a maintenance window. It nests inside the step-1
+    window: its enter sees ``previous=True`` and therefore does NOT exit, the
+    same caller-side contract the step-4 vacuum honours.
+
+    HARD FAILURE IS SCOPED TO THE SNAPSHOT, NOT THE CYCLE. ``run_cross_engine_backup``
+    raises rather than degrading — an ungated or unverified snapshot is silently
+    inconsistent (ADR-0210 §3, the 2026-06-16 shape). But the answer to that is
+    "write no snapshot", not "abandon consolidation and prune": this returns 55
+    and the cycle continues, exactly as vacuum's 40 does.
+
+    Deliberately does NOT replace ``_step_post_backup``. That step exports via
+    ``backend_url`` (SurrealDB) while this one's gate lives in CORE, so a core
+    outage that hard-fails here would otherwise newly cost the ``nightly-post``
+    artifact that succeeds today — trading an existing safety net for a new one.
+    The pair also has to stay distinguishable from the unquiesced exports for
+    car G's restore-verification. The third export per night is the honest cost.
+    """
+    _log_start("cross_engine_backup")
+    t0 = time.monotonic()
+    try:
+        result = run_cross_engine_backup(
+            db_path=db_path,
+            snapshot_dir=snapshot_dir,
+            backend_url=backend_url,
+            data_root=data_root,
+        )
+        _log_step(
+            "cross_engine_backup",
+            "ok",
+            (time.monotonic() - t0) * 1000,
+            sql_dump=str(result.get("sql_dump")),
+        )
+        return 0
+    except Exception as exc:
+        record_exception("nightly_cycle.cross_engine_backup", exc)
+        _log_step("cross_engine_backup", "error", (time.monotonic() - t0) * 1000, error=str(exc))
+        _log.error(
+            "step 5b (cross-engine backup) HARD-FAILED — no quiesced snapshot pair was "
+            "written; the unquiesced nightly-post export is unaffected: %s",
+            exc,
+            extra={
+                "component": "nightly_cycle",
+                "action": "cross_engine_backup",
+                "outcome": "error",
+            },
+        )
+        return 55
+
+
+def _step_prune(snapshot_dir: Path, mariadb_dir: Path, retention: int) -> int:
+    """Step 6: Prune old snapshots. Returns 0 on success, 60 on failure.
+
+    Three pools, each retained independently rather than sharing one glob:
+    the unquiesced ``nightly-pre``/``nightly-post`` exports, the quiesced
+    ``quiesce`` exports (car F), and engine #2's logical dumps. Nothing globbed
+    the last two before — without this they accumulate unbounded.
+    """
     _log_start("prune")
     t0 = time.monotonic()
     try:
         removed = prune_snapshots(snapshot_dir, "surreal_db.nightly-*", retention=retention)
+        removed += prune_snapshots(snapshot_dir, "surreal_db.quiesce-*", retention=retention)
+        removed += prune_snapshots(mariadb_dir, "mariadb.*.sql", retention=retention)
         _log_step("prune", "ok", (time.monotonic() - t0) * 1000, removed=len(removed))
         return 0
     except Exception as exc:
@@ -528,7 +602,8 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
             lambda: _step_consolidation(db_path, settings),
             lambda: _step_vacuum(db_path, backend_url, service_mode),
             lambda: _step_post_backup(db_path, snapshot_dir, backend_url),
-            lambda: _step_prune(snapshot_dir, retention),
+            lambda: _step_cross_engine_backup(db_path, snapshot_dir, backend_url, db_path.parent),
+            lambda: _step_prune(snapshot_dir, db_path.parent / "backups" / "mariadb", retention),
         ]:
             result = step_fn()
             if result != 0 and first_failure == 0:

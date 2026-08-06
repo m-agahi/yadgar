@@ -65,9 +65,24 @@ work. Stating it here so an unreferenced table does not later read as dead code.
 ## 4. The arms
 
 ### 4.1 Backup — `mariadb-dump`, physical DEFERRED not dropped
-For a table whose target state is zero rows, logical dump over TCP proves the
-arm end-to-end. ADR-0196 explicitly sanctions `mariadb-dump` for logical
-snapshots.
+For a table whose target state is zero rows, a logical dump proves the arm
+end-to-end. ADR-0196 explicitly sanctions `mariadb-dump` for logical snapshots.
+
+> **Not "over TCP"** — that phrase predates ADR-0212, which starts mariadbd
+> `--skip-networking`: there is no listener, not even on loopback. The dump goes
+> over the LOCAL UNIX SOCKET.
+
+**Built (car F): the dump runs INSIDE the backend container**, as the
+`mariadb_dump` admin op (`yadgar/backend/admin_exec/backup_sql.py`), because
+every host-side route is a trap. `client.cnf` carries a container-absolute
+socket path (`/data/mariadb/mysqld.sock`); `MariaStorageEngine` construction is
+CONNECTIONLESS, so a host-side `_init_sql_storage()` hands back a handle that
+can never connect and fails SILENTLY; and the host has no `mariadb-dump` binary
+at all — it ships with the `mariadb-server` apt install baked into
+`Dockerfile.backend`. The DESTINATION is the same trap in a second costume: an
+absolute path from a host caller would resolve in the container's namespace and
+land in its writable layer, so the op resolves its own destination from the
+shared data root and returns a BASENAME the host verifies under its own root.
 
 `mariadb-backup` (physical, full + incremental via LSN) is **deferred to the
 spine train**, when there is data worth incrementing over. It is not dropped —
@@ -174,8 +189,12 @@ points are fixed here, not left to build time:
 
 - Car D — `alembic upgrade head` at backend boot, mirroring Surreal's
   `_init_schema` (`_shared/storage/__init__.py:292`).
-- Car F — backup driver on the host-side systemd path, like vacuum's
-  trigger-file → `yadgar-vacuum.service`.
+- Car F — **a step of the nightly cycle** (`nightly_cycle._step_cross_engine_backup`,
+  between post-backup and prune), NOT its own trigger-file →
+  `yadgar-backup.service`. That earlier wording predates **ADR-0210 §2**: a
+  second scheduled holder could open a window overlapping the nightly cycle,
+  because windows NEST rather than exclude. Nightly IS the host-side systemd
+  path, so the acceptance rule is satisfied with one holder and one window.
 - Car G — inside the real restore path (§4.3).
 - Car H — existing backend admin op.
 
