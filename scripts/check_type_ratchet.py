@@ -27,9 +27,26 @@ locally it misses damage done by an EARLIER commit on the same branch.
 When the merge-base is unreachable (shallow clone), the selection collapses
 to the staged diff and the check degrades gracefully rather than exploding.
 
+WHY AN INCOMPLETE RUN IS A FAILURE, NOT A PASS
+----------------------------------------------
+This guard shipped PASSING VACUOUSLY.  ``yadgar/_shared/storage/client.py``
+carried a prose comment opening ``# type:``; mypy read it as a PEP 484 type
+comment, rejected it as invalid syntax, and ABORTED — attributing one error to
+a module that was FOLLOWED rather than requested.  ``compare_against_baseline``
+ignores paths outside the change set by design, so it found no violations and
+the guard returned 0.  Every branch whose import graph reached that module —
+effectively the whole tree — passed without being type-checked at all.
+
+So absence of errors is no longer accepted as evidence of success.  Before any
+comparison happens, ``detect_incomplete_run`` demands POSITIVE proof that mypy
+analysed what it was handed, and fails LOUD when it did not.  The same gate
+guards ``--update-baseline``: a baseline recorded from an aborted run would
+bake the blindness into the data instead of the code.
+
 Usage:
     python scripts/check_type_ratchet.py
-    python scripts/check_type_ratchet.py --update-baseline   # re-record
+    python scripts/check_type_ratchet.py --update-baseline               # re-record touched files
+    python scripts/check_type_ratchet.py --all-files --update-baseline   # regenerate whole baseline
 """
 
 from __future__ import annotations
@@ -41,6 +58,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 GitRunner = Callable[[list[str]], str]
 
@@ -51,6 +69,27 @@ DEFAULT_BASE_REF = "origin/master"
 # mypy emits ``path:line: error: message  [code]``; notes and the trailing
 # summary line must not be counted as errors.
 _ERROR_LINE = re.compile(r"^(?P<path>[^:]+):\d+:(?:\d+:)? error:")
+
+# mypy prints exactly one summary line, in one of two shapes, and drops the
+# plural at 1.  Its ``checked N source files`` count is the only POSITIVE
+# evidence the run produced that the requested files were really analysed.
+_SUMMARY_CLEAN = re.compile(r"^Success: no issues found in (?P<checked>\d+) source files?\b", re.M)
+_SUMMARY_ERRORS = re.compile(
+    r"^Found \d+ errors? in \d+ files? \(checked (?P<checked>\d+) source files?\)", re.M
+)
+
+# What mypy prints INSTEAD of a checked-count when a blocking error stopped it.
+_ABORT_MARKER = "errors prevented further checking"
+
+# A file mypy could not even parse. Both spellings appear: the human message and
+# the error code.
+_SYNTAX_ERROR_LINE = re.compile(
+    r"^(?P<path>[^:]+):\d+:(?:\d+:)? error: .*?(?:Invalid syntax|\[syntax\])"
+)
+
+# mypy's exit codes: 0 = no issues, 1 = type errors found. Anything else is a
+# fatal/usage error and the stdout that came with it cannot be trusted.
+_USABLE_RETURNCODES = frozenset({0, 1})
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +111,75 @@ def parse_mypy_errors(output: str) -> dict[str, int]:
         path = match.group("path")
         counts[path] = counts.get(path, 0) + 1
     return counts
+
+
+def parse_checked_count(output: str) -> int | None:
+    """Return the ``checked N source files`` count, or None if mypy printed none.
+
+    None means mypy never got as far as reporting a total — the run cannot be
+    read as clean no matter how empty the rest of the output looks.
+    """
+    for pattern in (_SUMMARY_CLEAN, _SUMMARY_ERRORS):
+        match = pattern.search(output)
+        if match is not None:
+            return int(match.group("checked"))
+    return None
+
+
+def detect_incomplete_run(output: str, changed: list[str], returncode: int) -> list[str]:
+    """Return the reasons mypy did NOT check what it was asked to check.
+
+    An empty list means the run is usable — it may still report type errors,
+    which is the ratchet's business, not this function's.  A non-empty list
+    means the result says nothing about *changed* and must never score as a
+    pass.  Every reason names the offending path where one exists: a loud
+    failure that does not say WHICH file broke only relocates the blindness.
+    """
+    reasons: list[str] = []
+
+    if returncode not in _USABLE_RETURNCODES:
+        reasons.append(
+            f"mypy exited {returncode}; only 0 (clean) and 1 (type errors found) mean it ran."
+        )
+
+    if _ABORT_MARKER in output:
+        reasons.append(f'mypy reported "{_ABORT_MARKER}" — it stopped early.')
+
+    unparseable = sorted(
+        {
+            match.group("path")
+            for match in map(_SYNTAX_ERROR_LINE.match, output.splitlines())
+            if match is not None
+        }
+    )
+    if unparseable:
+        reasons.append("mypy could not parse: " + ", ".join(unparseable))
+
+    # An error against a path OUTSIDE the requested set means the run derailed
+    # into a module it was only following. This is sound ONLY because
+    # pyproject sets `follow_imports = "silent"`, under which a merely-followed
+    # module reports no ordinary errors — so anything it does report is a
+    # blocking error. If that setting is ever changed, this check starts firing
+    # on every run and THIS COMMENT is the reason why.
+    wanted = {Path(path).as_posix() for path in changed}
+    stray = sorted(
+        path for path in parse_mypy_errors(output) if Path(path).as_posix() not in wanted
+    )
+    if stray:
+        reasons.append(
+            "mypy reported errors in files it was not asked about, so it derailed "
+            "into a followed module: " + ", ".join(stray)
+        )
+
+    checked = parse_checked_count(output)
+    if checked is None:
+        reasons.append("mypy printed no summary line, so there is no evidence it checked anything.")
+    elif checked < len(changed):
+        reasons.append(
+            f"mypy accounted for only {checked} source file(s) but was handed {len(changed)}."
+        )
+
+    return reasons
 
 
 def select_changed_python_files(names: list[str], root: Path) -> list[str]:
@@ -150,6 +258,17 @@ def collect_changed_names(base_ref: str, run_git: GitRunner) -> list[str]:
     return names
 
 
+def collect_all_python_names(run_git: GitRunner) -> list[str]:
+    """Every TRACKED .py path — the baseline's universe.
+
+    Deliberately the same universe ``select_changed_python_files`` draws from,
+    which is any tracked ``.py`` file and not just ``yadgar/``. A baseline
+    narrower than that would hold an untouched legacy ``scripts/*.py`` to zero
+    the first time somebody edits it, and block the commit.
+    """
+    return run_git(["ls-files", "*.py"]).splitlines()
+
+
 def resolve_mypy_interpreter(root: Path) -> str:
     """Return the interpreter that should run mypy.
 
@@ -166,8 +285,20 @@ def resolve_mypy_interpreter(root: Path) -> str:
     return sys.executable
 
 
-def run_mypy(paths: list[str]) -> str:
-    """Run mypy over *paths* and return its stdout (config lives in pyproject)."""
+class MypyRun(NamedTuple):
+    """mypy's stdout together with the exit code that qualifies it.
+
+    The exit code is carried deliberately: reading stdout alone is precisely
+    how this guard went blind, because an aborted run's stdout looks empty of
+    anything the ratchet was watching for.
+    """
+
+    output: str
+    returncode: int
+
+
+def run_mypy(paths: list[str]) -> MypyRun:
+    """Run mypy over *paths* and return stdout + exit code (config in pyproject)."""
     result = subprocess.run(
         [resolve_mypy_interpreter(REPO_ROOT), "-m", "mypy", *paths],
         capture_output=True,
@@ -181,7 +312,7 @@ def run_mypy(paths: list[str]) -> str:
             "This guard fails LOUD rather than passing silently — a type gate "
             "that no-ops when its checker is missing is worse than no gate."
         )
-    return result.stdout
+    return MypyRun(output=result.stdout, returncode=result.returncode)
 
 
 def load_baseline() -> dict[str, int]:
@@ -201,16 +332,47 @@ def main() -> int:
     parser.add_argument(
         "--update-baseline",
         action="store_true",
-        help="Re-record the baseline for the changed files (use when a legacy "
+        help="Re-record the baseline for the selected files (use when a legacy "
         "file's errors legitimately move, never to silence a new error).",
+    )
+    parser.add_argument(
+        "--all-files",
+        action="store_true",
+        help="Select every tracked .py file instead of the branch diff. Combine "
+        "with --update-baseline to regenerate the whole baseline from scratch.",
     )
     args = parser.parse_args()
 
-    changed = select_changed_python_files(collect_changed_names(args.base_ref, _git), REPO_ROOT)
+    names = (
+        collect_all_python_names(_git)
+        if args.all_files
+        else collect_changed_names(args.base_ref, _git)
+    )
+    changed = select_changed_python_files(names, REPO_ROOT)
     if not changed:
         return 0
 
-    current = parse_mypy_errors(run_mypy(changed))
+    run = run_mypy(changed)
+
+    # Gate BEFORE any comparison, and on the --update-baseline path too: a
+    # baseline recorded from a run that never happened is the same blindness,
+    # merely persisted to disk where it is harder to see.
+    incomplete = detect_incomplete_run(run.output, changed, run.returncode)
+    if incomplete:
+        print("Strict-typing ratchet COULD NOT RUN\n")
+        print(f"mypy did not check the {len(changed)} file(s) it was given:\n")
+        for reason in incomplete:
+            print(f"  {reason}")
+        print(
+            "\nThis is NOT a pass. The result says nothing about the files you "
+            "touched.\nA common cause is a prose comment that opens `# type:` — "
+            "mypy reads it as a\nPEP 484 type comment, rejects it as invalid "
+            "syntax and abandons the whole run.\nFix the blocking error above, "
+            "then re-run."
+        )
+        return 1
+
+    current = parse_mypy_errors(run.output)
 
     if args.update_baseline:
         baseline = load_baseline()

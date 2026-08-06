@@ -16,6 +16,21 @@ Coverage:
   (c) COMPARE: NEW changed file with any error -> violation (baseline 0)
   (c) COMPARE: unchanged file with errors -> ignored entirely
   (d) BASE: merge-base resolves; unreachable base fails OPEN (empty selection)
+  (f) INCOMPLETE: an aborted mypy run is never mistaken for a clean one
+
+WHY (f) EXISTS
+--------------
+The ratchet shipped PASSING VACUOUSLY.  ``yadgar/_shared/storage/client.py``
+carried a prose comment opening ``# type:``; mypy parsed it as a PEP 484 type
+comment, rejected it as invalid syntax, and ABORTED — reporting one error
+against a path that was not in the change set.  ``compare_against_baseline``
+ignores paths outside the change set by design, so it saw no violations and
+the guard returned 0.  Every branch whose import graph reached that module —
+almost the whole tree — passed without being checked at all.
+
+A guard that cannot tell "clean" from "never ran" is worse than no guard, so
+absence of errors is no longer accepted as evidence of success: the run must
+also produce mypy's own summary line accounting for every file requested.
 """
 
 from __future__ import annotations
@@ -29,6 +44,8 @@ if _SCRIPTS_DIR not in sys.path:
 
 from check_type_ratchet import (  # noqa: E402
     compare_against_baseline,
+    detect_incomplete_run,
+    parse_checked_count,
     parse_mypy_errors,
     resolve_merge_base,
     resolve_mypy_interpreter,
@@ -153,3 +170,93 @@ def test_interpreter_prefers_repo_venv_when_present(tmp_path: Path) -> None:
 
 def test_interpreter_falls_back_to_current_when_no_venv(tmp_path: Path) -> None:
     assert resolve_mypy_interpreter(tmp_path) == sys.executable
+
+
+# ---------------------------------------------------------------------------
+# (f) INCOMPLETE — the run must be proved to have checked what it was asked to
+# check.  Every payload below is real mypy output captured from this repo.
+# ---------------------------------------------------------------------------
+
+# Verbatim capture of the defect: mypy aborted on a prose `# type:` comment in
+# a module that was FOLLOWED, not requested. Exit code 2.
+_ABORTED_OUTPUT = """\
+yadgar/_shared/storage/client.py:35: error: Invalid syntax  [syntax]
+Found 1 error in 1 file (errors prevented further checking)
+"""
+
+_CLEAN_OUTPUT = "Success: no issues found in 2 source files\n"
+
+_REAL_ERRORS_OUTPUT = """\
+a.py:2: error: Incompatible return value type (got "int", expected "str")  [return-value]
+Found 1 error in 1 file (checked 2 source files)
+"""
+
+
+def test_checked_count_parses_both_summary_forms() -> None:
+    assert parse_checked_count(_CLEAN_OUTPUT) == 2
+    assert parse_checked_count(_REAL_ERRORS_OUTPUT) == 2
+    # Singular forms must parse too — mypy drops the plural at 1.
+    assert parse_checked_count("Success: no issues found in 1 source file\n") == 1
+    assert parse_checked_count("Found 1 error in 1 file (checked 1 source file)\n") == 1
+
+
+def test_checked_count_is_none_when_run_aborted() -> None:
+    """The abort summary names no checked count — that absence is the signal."""
+    assert parse_checked_count(_ABORTED_OUTPUT) is None
+    assert parse_checked_count("") is None
+
+
+def test_aborted_run_is_detected_not_treated_as_clean() -> None:
+    """THE REGRESSION TEST: this exact output previously scored as a pass."""
+    reasons = detect_incomplete_run(
+        output=_ABORTED_OUTPUT,
+        changed=["a.py", "b.py"],
+        returncode=2,
+    )
+    assert reasons, "aborted mypy run must never be reported as clean"
+    joined = "\n".join(reasons)
+    assert "errors prevented further checking" in joined
+    # The offending path must be named, or the failure just relocates the blindness.
+    assert "yadgar/_shared/storage/client.py" in joined
+
+
+def test_syntax_error_outside_changed_set_is_detected() -> None:
+    """follow_imports = "silent" means a followed module cannot report a normal
+    error — so an error outside the requested set proves the run derailed."""
+    output = (
+        "some/other/module.py:35: error: Invalid syntax  [syntax]\n"
+        "Found 1 error in 1 file (checked 2 source files)\n"
+    )
+    reasons = detect_incomplete_run(output=output, changed=["a.py", "b.py"], returncode=1)
+    assert reasons
+    joined = "\n".join(reasons)
+    assert "some/other/module.py" in joined
+
+
+def test_clean_run_over_changed_files_still_passes() -> None:
+    """The guard must not be paranoid to the point of uselessness."""
+    assert detect_incomplete_run(output=_CLEAN_OUTPUT, changed=["a.py", "b.py"], returncode=0) == []
+
+
+def test_run_reporting_real_errors_in_changed_files_is_complete() -> None:
+    """Type errors are the ratchet's business; they are not an incomplete run."""
+    assert (
+        detect_incomplete_run(output=_REAL_ERRORS_OUTPUT, changed=["a.py", "b.py"], returncode=1)
+        == []
+    )
+
+
+def test_missing_summary_line_is_detected() -> None:
+    """Absence of output must not be the only evidence of success."""
+    assert detect_incomplete_run(output="", changed=["a.py"], returncode=0)
+
+
+def test_fewer_files_checked_than_requested_is_detected() -> None:
+    """Positive evidence: mypy must account for every file it was handed."""
+    output = "Success: no issues found in 1 source file\n"
+    assert detect_incomplete_run(output=output, changed=["a.py", "b.py"], returncode=0)
+
+
+def test_fatal_returncode_is_detected_even_with_plausible_output() -> None:
+    """Exit 2 is mypy's fatal-error code; never trust the stdout that came with it."""
+    assert detect_incomplete_run(output=_CLEAN_OUTPUT, changed=["a.py", "b.py"], returncode=2)

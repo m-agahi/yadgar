@@ -318,7 +318,7 @@ _OPENCODE = ClientDescriptor(
     ),
     mcp_format=McpFormat.JSON,
     mcp_root_key=("mcp",),
-    mcp_entry_schema=McpEntrySchema.OPENCODE_REMOTE,  # type:"remote"
+    mcp_entry_schema=McpEntrySchema.OPENCODE_REMOTE,  # emits `"type": "remote"`
     mcp_auth=McpAuth.BEARER_ENVREF,
     rules_path=PathSpec(
         global_factory=lambda: _home() / ".config" / "opencode" / "AGENTS.md",
