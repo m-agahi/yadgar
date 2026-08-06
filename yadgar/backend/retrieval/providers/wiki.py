@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage.directory import is_directory_eligible
-from yadgar._shared.wiki.policy import get_policy
+from yadgar._shared.wiki.policy import is_recall_visible
 from yadgar.backend.retrieval.providers.base import Candidate, Scope, SourceProvider
 
 if TYPE_CHECKING:
@@ -88,18 +88,16 @@ class WikiProvider(SourceProvider):
             dc = page.get("directory_context")
             if not is_directory_eligible(dc, caller_dir):
                 continue
-            # Car C (#83): policy-driven recall exclusion.
-            # Pages whose page_type resolves to recall_disposition="exclude" are
-            # dropped from fanout recall. This keeps agent_prompt pages (and
-            # formerly repo_wiki's structural code inventory, decommissioned
-            # #33/ADR-0162) out of everyday recall while wiki_query/wiki_read/
-            # wiki_list (which call WikiStore.query directly, not via this
-            # provider) remain fully unaffected.
-            # OVERRIDE: when the caller passed an explicit include_tag (self._tags),
-            # they opted in to this page type — skip the exclusion so
-            # recall(tags=["agent-prompt"]) can still reach agent_prompt pages.
+            # Car C (#83): policy-driven recall exclusion, shared with
+            # wiki_query since task 0134 (both search paths, one rule — see
+            # is_recall_visible). Keeps agent-library pages (and formerly
+            # repo_wiki's structural code inventory, decommissioned
+            # #33/ADR-0162) out of everyday recall. Exact-key reads
+            # (wiki_read / wiki_get / wiki_list) never apply it.
+            # The tag opt-in is PER PAGE: passing tags is consent to see the
+            # pages carrying them, not a blanket kill-switch for the filter.
             # Disposition is switchable: one-field flip in policy.py.
-            if not self._tags and get_policy(page.get("page_type")).recall_disposition == "exclude":
+            if not is_recall_visible(page, self._tags):
                 continue
             native_score = float(page.get("_retrieval_score", 0.0))
             # Tag raw dict so orchestrator can set _source="wiki" downstream

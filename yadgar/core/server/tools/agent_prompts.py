@@ -7,7 +7,8 @@ Storage convention (v5.85 rework):
   - Slug pattern: agent-prompt-<task-pattern>  (deterministic, no -vN suffix)
   - Tags: ["agent-prompt", "task:<pattern>"]
   - Category: "reference"
-  - page_type: "agent_prompt"
+  - page_type: "agent_pattern" (ADR-0209; was "agent_prompt" pre-split.
+    Discipline pages carry "agent_discipline", the TOC "agent_index").
   - wiki versioning (wiki_page_version table) carries history.
 
 Retrieval (S4/S5 collapse):
@@ -25,6 +26,10 @@ import re
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.security.secrets import gate_or_reject
+from yadgar._shared.wiki.wiki_meta import (
+    PAGE_TYPE_AGENT_DISCIPLINE,
+    PAGE_TYPE_AGENT_PATTERN,
+)
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 
@@ -175,6 +180,16 @@ def agent_prompt_save(
             "purpose": _purpose,
             "branch_hint": branch_hint,
             "directory": _effective_dir,
+            # ADR-0209: the CALLER decides the family — the backend op keys
+            # everything else off the payload slug, and re-deriving the type
+            # from a slug prefix backend-side would rebuild the string-matching
+            # the split exists to remove. The contract is seeded through this
+            # same function (_seed_contract_page) but belongs to the discipline
+            # type, so it is excepted by slug here rather than typed as a
+            # pattern (ADR-0209: flagged, not promoted to a third type).
+            "page_type": (
+                PAGE_TYPE_AGENT_DISCIPLINE if slug == CONTRACT_SLUG else PAGE_TYPE_AGENT_PATTERN
+            ),
         },
     )
 
@@ -312,8 +327,11 @@ def _save_discipline_page(
     Same write path as agent_prompt_save (I26 secret gate core-side, DB write
     forwarded to the backend agent_prompt_save admin op — the op keys everything
     off the payload slug, so discipline slugs ride the existing machinery, incl.
-    the TOC row + wiki-epoch bump). page_type stays agent_prompt: disciplines
-    are prompt-text fragments and get the same Purpose/Prompt wrap + lint.
+    the TOC row + wiki-epoch bump). Disciplines keep the same Purpose/Prompt
+    wrap + lint shape as patterns, but carry their OWN page_type since ADR-0209
+    (``agent_discipline``) — ADR-0208 gives them different governance (the
+    asymmetric removal guard), and page_type is the lever that governance keys
+    off, not the slug prefix.
     """
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -337,6 +355,7 @@ def _save_discipline_page(
             "purpose": purpose,
             "branch_hint": branch_hint,
             "directory": "global",
+            "page_type": PAGE_TYPE_AGENT_DISCIPLINE,
         },
     )
 
