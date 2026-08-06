@@ -27,7 +27,9 @@ from yadgar._shared.wiki.contract import (
     WikiAddOptions,
 )
 from yadgar._shared.wiki.policy import get_policy as _get_wiki_policy
+from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
 from yadgar._shared.wiki.slug import slugify as _slugify_fn
+from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 
 logger = logging.getLogger(__name__)
 
@@ -1723,6 +1725,13 @@ class WikiStore:
                 return result  # error dict
             new_content = result
 
+        # Task 23: append_section writes directly rather than via
+        # _apply_text_edit, so it needs its own ADR-0208 guard call. Most
+        # positions can only grow the page, but replace_section can drop lines.
+        rejected = self._reject_if_discipline_weakening(page_id, page_content, new_content)
+        if rejected is not None:
+            return rejected
+
         size_before = len(page_content.encode())
         size_after = len(new_content.encode())
 
@@ -1894,6 +1903,57 @@ class WikiStore:
         }
 
     @observe(tier="stage")
+    def _reject_if_discipline_weakening(
+        self,
+        page_id: int,
+        old_content: str,
+        new_content: str,
+    ) -> dict | None:
+        """ADR-0208 asymmetric guard at the wiki write chokepoint (task 23).
+
+        Car 8 put the guard on ``discipline_save``'s front door, but every
+        generic edit tool — ``wiki_replace_text``, ``wiki_delete_text``,
+        ``wiki_append_section``, the positional family — resolves an
+        ``agent-discipline-*`` slug like any other page and could strip rule
+        lines with zero ratification. A guard the same instance can walk around
+        is not a guard, so it belongs here, below all of them.
+
+        Keyed on ``page_type == agent_discipline`` (ADR-0209's split is what
+        makes that possible; before it, patterns and disciplines shared a type
+        and this could only have been a slug-prefix test). Additions flow
+        freely; a net removal is refused outright. There is deliberately NO
+        ``confirm_removal`` escape at this layer — ``discipline_save`` is the
+        sanctioned path and already carries the ratification flag, so adding one
+        to five generic tools would widen their MCP surface to re-open the door
+        this closes.
+
+        ``wiki_restore`` does NOT route through here: ADR-0208's consequences
+        name it as the recovery path for auto-applied merges, and reverting to
+        a previously-ratified version is not an unratified weakening.
+
+        Returns an error dict when the edit must be refused, else None.
+        """
+        page = self._storage.get_wiki_page(page_id)
+        if page is None or page.get("page_type") != PAGE_TYPE_AGENT_DISCIPLINE:
+            return None
+        removed = removed_prompt_lines(old_content, new_content)
+        if not removed:
+            return None
+        return {
+            "ok": False,
+            "error": "discipline_removal_requires_confirmation",
+            "page_id": page_id,
+            "slug": page.get("slug"),
+            "removed_lines": removed,
+            "message": (
+                f"{len(removed)} rule line(s) would be removed from discipline page "
+                f"{page.get('slug')!r}. Generic wiki edits may only ADD to a discipline "
+                "(ADR-0208). Use discipline_save(name, content, confirm_removal=True) "
+                "to ratify a removal:\n" + "\n".join(f"  - {ln}" for ln in removed)
+            ),
+        }
+
+    @observe(tier="stage")
     def _apply_text_edit(
         self,
         page_id: int,
@@ -1901,7 +1961,15 @@ class WikiStore:
         old_content: str,
         replaced_count: int,
     ) -> dict:
-        """Write new_content to page, create version row, return result dict."""
+        """Write new_content to page, create version row, return result dict.
+
+        Single chokepoint for the eight anchor-text / positional edit ops, so
+        the ADR-0208 discipline guard is applied once here rather than at each
+        caller (task 23).
+        """
+        rejected = self._reject_if_discipline_weakening(page_id, old_content, new_content)
+        if rejected is not None:
+            return rejected
         self._storage.update_wiki_page(page_id, {"content": new_content})
         new_version = self._storage.get_max_version_for_page(page_id)
         return {

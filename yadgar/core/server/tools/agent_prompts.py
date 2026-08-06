@@ -26,6 +26,7 @@ import re
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.security.secrets import gate_or_reject
+from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
 from yadgar._shared.wiki.wiki_meta import (
     PAGE_TYPE_AGENT_DISCIPLINE,
     PAGE_TYPE_AGENT_PATTERN,
@@ -360,29 +361,12 @@ def _save_discipline_page(
     )
 
 
-@observe(tier="hot", metric="tools.agent_prompts._removed_prompt_lines")
-def _removed_prompt_lines(old_body: str, new_body: str) -> list[str]:
-    """Return non-empty lines present in old_body but absent (verbatim) from new_body.
-
-    ADR-0208 asymmetric guard, precise definition: an update is additions-only
-    when every non-empty existing line survives *somewhere* in the incoming
-    body — order and duplication don't matter. This mirrors
-    scripts/check_test_weakening.py's delta-counting shape (count what changed,
-    don't ban edits outright) rather than a line-position diff: a rule that
-    moved to a different spot in the file is not a removal.
-
-    Deduplicated: a repeated identical old line is only reported once.
-    """
-    new_lines = {ln for ln in new_body.splitlines() if ln.strip()}
-    seen: set[str] = set()
-    removed: list[str] = []
-    for ln in old_body.splitlines():
-        if not ln.strip() or ln in seen:
-            continue
-        seen.add(ln)
-        if ln not in new_lines:
-            removed.append(ln)
-    return removed
+#: ADR-0208 line-delta primitive. The BODY moved to
+#: ``yadgar._shared.wiki.prompt_guard`` (task 23) so the wiki write chokepoint
+#: in ``_shared/wiki/store.py`` can enforce the same rule on the generic edit
+#: tools — ``_shared`` may not import core. Re-bound here (not reimplemented)
+#: so this module's own callers and tests keep their import path.
+_removed_prompt_lines = removed_prompt_lines
 
 
 @_tool()
