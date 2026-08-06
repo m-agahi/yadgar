@@ -189,6 +189,32 @@ def run_admin_op(op: str, payload: dict) -> dict:
     return impl(payload)
 
 
+@observe(tier="boundary", metric="backend.admin.run_admin_op_blocking")
+def run_admin_op_blocking(op: str, payload: dict) -> dict:
+    """Dispatch ANY op shape from a SYNC caller that has no running event loop.
+
+    The in-process ``_forward_admin`` bypass the test harnesses install
+    (``tests/conftest.py``, ``tests/_backend_harness.py``) is a plain sync
+    function, because the core tools it stands in for are. Once engine-#2 car H
+    made ``check_invariants`` a coroutine, that bypass would hit ``run_admin_op``'s
+    deliberate ``TypeError`` — an error about a PRODUCTION misdispatch, raised at
+    a test seam where the op is perfectly legal.
+
+    ``run_admin_op`` itself is left alone on purpose: its TypeError is pinned by
+    ``test_admin_async_dispatch`` and is the guard that keeps a coroutine body
+    from being handed to a sync caller in the daemon, where a private event loop
+    would bind a connection pool to a loop that is about to die.
+
+    NOT for the daemon. The ``/admin`` route is already on a loop and must keep
+    calling ``run_admin_op_async``; ``asyncio.run`` from inside a running loop
+    raises, which is the correct outcome if this is ever misused there.
+    """
+    impl = _ADMIN_OPS.get(op)
+    if impl is not None and _is_async_op(impl):
+        return asyncio.run(run_admin_op_async(op, payload))
+    return run_admin_op(op, payload)
+
+
 @observe(
     exempt=(
         "instrumenting here would add a SECOND boundary metric sample to every "

@@ -2,7 +2,7 @@
   "_meta": {
     "version": "1",
     "description": "Sanctioned skips for yadgar test suite. Every skip must appear here or CI gate fails.",
-    "updated": "2026-07-26",
+    "updated": "2026-08-06",
     "adr": "Car 1 of test-suite hardening train (fix/test-hardening-car1-skips)"
   },
   "entries": [
@@ -19,6 +19,13 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "alembic not installed (sql extra)",
       "note": "Engine-#2 car D. alembic travels with sqlalchemy/asyncmy in the `sql` extra; Dockerfile.ci:116 bakes only `--extra test --extra ml` and yadgar-ci has no auto-sync pipeline, so the Alembic-chain tests skip until that image is rebuilt with `--extra sql`. Separate pattern from engine2-sql-extra-absent-01 because the two importorskips name different modules and either can be the one that is missing. Covers the same importorskip in yadgar/tests/integration/test_mariadb_migrations.py. The wiring half (yadgar/tests/backend/test_engine2_migration_wiring.py) is pure stdlib plus stubs and never skips."
+    },
+    {
+      "id": "engine2-carh-cross-engine-invariants-01",
+      "file": "yadgar/tests/integration/test_cross_engine_invariants.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "alembic not installed (sql extra)",
+      "note": "Engine-#2 car H (the cross-engine check_invariants arm). The live half reads a real alembic_version stamp and a real config row count, so it needs alembic AND sqlalchemy from the `sql` extra; Dockerfile.ci:116 bakes only `--extra test --extra ml` and yadgar-ci has no auto-sync pipeline. The second importorskip in the same file ('sqlalchemy not installed (sql extra)') is covered by engine2-sql-extra-absent-01. The offline half (yadgar/tests/backend/test_cross_engine_invariants.py) is pure stdlib plus stubs and NEVER skips - which matters more here than elsewhere: this car exists to kill vacuous passes, so its own coverage must not evaporate when an extra is missing."
     },
     {
       "id": "v5-169-setup-linger-timeout-01",

@@ -111,14 +111,15 @@ def patch_admin_bypass(monkeypatch: Any) -> None:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
     import yadgar.core.forward as _forward_module
-    from yadgar.backend.admin_exec import run_admin_op
+    from yadgar.backend.admin_exec import run_admin_op_blocking
 
     _orig_forward_admin = _forward_module._forward_admin
 
     def _bypass_admin(op, payload, timeout_s=30.0):
         if os.environ.get("YADGAR_EMBED_URL"):
             return _orig_forward_admin(op, payload, timeout_s=timeout_s)
-        return run_admin_op(op, payload)
+        # Blocking variant: engine-#2 car H made check_invariants a coroutine op.
+        return run_admin_op_blocking(op, payload)
 
     monkeypatch.setattr(_forward_module, "_forward_admin", _bypass_admin)
     for _consumer in (

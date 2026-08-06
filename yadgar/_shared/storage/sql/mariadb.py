@@ -53,6 +53,7 @@ the parsed file rather than hardcoding ``yadgar_app``.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -75,6 +76,10 @@ DRIVER = "mysql+asyncmy"
 # that a FLOOR).
 DEFAULT_POOL_SIZE = 5
 DEFAULT_MAX_OVERFLOW = 5
+
+# Bare unquoted SQL identifier. Guards ``count_rows``, whose table name cannot be
+# a bind parameter.
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class MariaStorageEngine:
@@ -183,6 +188,27 @@ class MariaStorageEngine:
                 )
             )
             return [str(r[0]) for r in result]
+
+    @observe(tier="boundary")
+    async def count_rows(self, table: str) -> int:
+        """Row count for one engine-#2 table. Read-only.
+
+        Engine-#2 car H's config-baseline assertion needs an EXACT count, in both
+        directions, engine-direct (``config_list()`` returned ``[]`` before this
+        train existed and cannot tell the engines apart).
+
+        A table name cannot be parameterised in SQL, so it is validated as a bare
+        identifier and quoted with backticks rather than interpolated raw. Callers
+        pass module constants today; the guard is what keeps that from becoming a
+        latent injection point the first time one does not.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        if not _IDENTIFIER_RE.fullmatch(table):
+            raise ValueError(f"not a bare SQL identifier: {table!r}")
+        async with self._engine.connect() as conn:
+            result = await conn.execute(text(f"SELECT COUNT(*) FROM `{table}`"))  # noqa: S608
+            return int(result.scalar_one())
 
     @observe(tier="stage")
     async def dispose(self) -> None:
