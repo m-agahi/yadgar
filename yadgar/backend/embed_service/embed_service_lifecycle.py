@@ -23,6 +23,7 @@ keeps resolving.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
@@ -209,6 +210,99 @@ def _bootstrap_graph_layout_if_empty(storage) -> None:
         name="graph-layout-bootstrap",
         daemon=True,
     ).start()
+
+
+@observe(tier="stage")
+async def _cancel_lifespan_task(task) -> None:
+    """Cancel a lifespan background task and swallow whatever it raises.
+
+    The snapshot and warmup tasks were cancelled by two byte-identical five-line
+    blocks inline in ``lifespan``. Folded into one helper because ``lifespan``
+    was at 149 of the I30 hard 150-line cap, leaving no room for the engine-#2
+    steps below — the same reason ``_shutdown_tracing_bounded`` was extracted
+    from it earlier. No behaviour change: cancel, await, swallow.
+    """
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):  # fmt: skip
+        pass
+
+
+@observe(tier="stage")
+async def _migrate_engine_two() -> str | None:
+    """``alembic upgrade head`` on engine #2 at backend boot (car D).
+
+    THE NAMED CALLER for the Alembic chain, mirroring how SurrealDB's schema
+    init is wired: ``StorageEngine.__init__`` calls ``_init_schema``
+    (``_shared/storage/__init__.py:292``) the moment its connection exists. Same
+    shape here, one step later — engine #2 is composed inside
+    ``_ensure_recall_engines`` (``init_engines(sql_storage=True)``), which the
+    lifespan already awaits via ``_start_queue_drainer``, so this runs directly
+    after that and before the app reports ready.
+
+    WHY NOT NEXT TO THE CONSTRUCTION, THE WAY SURREAL DOES IT. ``init_engines``
+    is sync and runs in a worker thread, while alembic here must drive an ASYNC
+    connection. Migrating there would need a private event loop, and
+    ``AsyncAdaptedQueuePool`` would then cache a connection bound to a loop that
+    dies with the thread — the exact hazard car C kept construction
+    connectionless to avoid. The lifespan is on the real loop.
+
+    NON-FATAL, MATCHING CARS A AND C. mysqld is started outside the container
+    HEALTHCHECK and outside the closing ``wait -n``; ``_init_sql_storage``
+    degrades to None on any failure. Nothing READS engine #2 yet — config reads
+    are core-in-process and repointing them is the knob train's build (ADR-0200)
+    — so a failed migration cannot produce a wrong answer, only an absent table.
+    THE MOMENT THE KNOB TRAIN REPOINTS READS THIS MUST BECOME FATAL, or the
+    daemon serves defaults from a schema-less database. PR #32's review flagged
+    the silent-swallow version of this; the error is logged with its traceback
+    rather than dropped.
+
+    Returns:
+        The head revision id, or None when engine #2 is absent or migration failed.
+    """
+    from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
+
+    sql_storage = _get_sql_storage()
+    if sql_storage is None:
+        logger.info("engine #2 absent — skipping alembic upgrade head")
+        return None
+
+    try:
+        from yadgar._shared.storage.sql.migrate import upgrade_to_head  # noqa: PLC0415
+
+        head = await upgrade_to_head(sql_storage.engine)
+    except Exception:
+        logger.exception("engine #2 migration FAILED — the relational schema is not at head")
+        return None
+
+    logger.info("engine #2 migrated to alembic head %s", head)
+    return head
+
+
+@observe(tier="stage")
+async def _dispose_engine_two() -> None:
+    """Release engine #2's connection pool on shutdown (car C's flagged gap).
+
+    HERE AND NOT IN ``lifecycle.shutdown``. That function is SYNC while
+    ``MariaStorageEngine.dispose`` is a coroutine, so disposing there would need
+    ``asyncio.run`` — a private event loop, tearing down a pool whose
+    connections belong to the server loop. This is the same reason car C kept
+    construction connectionless, and it is why the correct point is the lifespan
+    teardown, which is already awaiting (``_drain_db_tasks`` two steps up).
+
+    Called after ``_stop_queue_drainer`` so writers are down first, and never
+    raises: shutdown must proceed.
+    """
+    from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
+
+    sql_storage = _get_sql_storage()
+    if sql_storage is None:
+        return
+    try:
+        await sql_storage.dispose()
+    except Exception as _exc:  # noqa: BLE001 — shutdown must proceed
+        logger.warning("engine #2 dispose failed: %s", _exc)
 
 
 # Sentinel: set on first import so embed_service.py force-reloads this sibling
