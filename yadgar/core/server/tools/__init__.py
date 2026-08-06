@@ -106,6 +106,7 @@ from yadgar.core.server.tools.misc import (
 )
 from yadgar.core.server.tools.agent_prompts import (
     agent_prompt_save,
+    discipline_save,
     seed_agent_prompts,
 )
 from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
@@ -189,6 +190,7 @@ __all__ = [
     "resource_stale",
     "resource_processes",
     "agent_prompt_save",
+    "discipline_save",
     "seed_agent_prompts",
     "agent_dispatch_prelude",
     "audit_anchors",
