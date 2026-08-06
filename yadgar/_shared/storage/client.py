@@ -31,11 +31,16 @@ _log = logging.getLogger(__name__)
 
 _CAMEL_CASE_RE = re.compile(r"([a-z])([A-Z])")
 
-# Embedded SurrealDB (Python SDK v2) rejects an INTEGER second arg to
-# type::record('table', $id) — "the second argument must be a table name or a
-# string". Server mode (HTTP) accepts it. To keep ONE statement form across both
-# modes, the embedded transport inlines type::record('t', $p) -> t:{int} when the
-# param is an integer (the canonical record-id type), dropping the inlined param.
+# Embedded SurrealDB (Python SDK v2) rejects an INTEGER second arg to the
+# `type::record('table', $id)` builtin — "the second argument must be a table
+# name or a string". Server mode (HTTP) accepts it. To keep ONE statement form
+# across both modes, the embedded transport inlines `type::record('t', $p)` ->
+# t:{int} when the param is an integer (the canonical record-id type), dropping
+# the inlined param.
+#
+# Keep the SurrealQL call backticked and never let it START a comment line: a
+# comment opening `# type:` is parsed by mypy as a PEP 484 type comment and
+# rejected as invalid syntax, which aborts the whole mypy run.
 _TYPE_RECORD_RE = re.compile(r"type::record\(\s*'(\w+)'\s*,\s*\$(\w+)\s*\)")
 
 # Hard row-cap for the read-only DB inspection surface (_q_ro / POST /read_query /
