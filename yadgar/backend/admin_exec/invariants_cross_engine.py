@@ -72,6 +72,7 @@ REASON_STORAGE_ABSENT = "storage_absent"
 REASON_QUERY_FAILED = "query_failed"
 REASON_CONFIG_TABLE_ABSENT = "config_table_absent"
 REASON_SPINE_NOT_SHIPPED = "spine_not_shipped"
+REASON_EMBEDDED_MODE = "embedded_mode_no_migrations"
 
 # ── check names ──────────────────────────────────────────────────────────────
 
@@ -257,6 +258,18 @@ def check_surreal_schema_head(storage: Any) -> dict:
             "status": STATUS_UNAVAILABLE,
             "reason": REASON_STORAGE_ABSENT,
             "detail": {"message": "SurrealDB storage is not composed"},
+        }
+    if not getattr(storage, "_db_url", None):
+        # ``_run_migrations`` early-returns on a falsy ``_db_url``
+        # (``_shared/storage/__init__.py``): the embedded SurrealDB v2 package
+        # predates HNSW and the chain is server-mode only. So an empty
+        # ``schema_version`` is the DEFINED state here, not drift — reporting a
+        # violation would be a false red on every embedded dev/test stack. It is
+        # still not ``ok``: the check genuinely cannot assert.
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_EMBEDDED_MODE,
+            "detail": {"message": "embedded SurrealDB — migrations do not run in this mode"},
         }
     try:
         from yadgar._shared.storage.migrations import _MIGRATIONS  # noqa: PLC0415

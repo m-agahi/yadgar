@@ -68,11 +68,17 @@ class _FakeSqlEngine:
 
 
 class _FakeSurrealStorage:
-    """Only ``_q`` is used, and only for ``schema_version``."""
+    """Only ``_q`` and ``_db_url`` are used, and only for ``schema_version``."""
 
-    def __init__(self, versions: list[str] | None = None, raises: Exception | None = None) -> None:
+    def __init__(
+        self,
+        versions: list[str] | None = None,
+        raises: Exception | None = None,
+        db_url: str | None = "http://surreal:8000",
+    ) -> None:
         self._versions = versions
         self._raises = raises
+        self._db_url = db_url
 
     def _q(self, _surql: str, _params: dict | None = None) -> list:
         if self._raises is not None:
@@ -300,6 +306,19 @@ def test_surreal_query_failure_is_unavailable_not_ok() -> None:
     ]
     assert check["status"] == ce.STATUS_UNAVAILABLE
     assert check["reason"] == ce.REASON_QUERY_FAILED
+
+
+def test_embedded_surreal_is_unavailable_not_a_false_violation() -> None:
+    """Embedded mode DEFINES migrations as not running — empty is not drift.
+
+    ``_run_migrations`` early-returns on a falsy ``_db_url``, so an empty
+    ``schema_version`` there is the specified state. Reporting a violation would
+    be a false red on every embedded dev stack; reporting ok would be the
+    vacuous pass. Unavailable is the only honest answer.
+    """
+    check = _run(_FakeSurrealStorage([], db_url=None))["checks"][ce.CHECK_SURREAL_SCHEMA_HEAD]
+    assert check["status"] == ce.STATUS_UNAVAILABLE
+    assert check["reason"] == ce.REASON_EMBEDDED_MODE
 
 
 def test_surreal_storage_absent_is_unavailable_not_ok() -> None:
