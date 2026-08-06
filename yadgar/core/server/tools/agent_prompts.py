@@ -71,6 +71,29 @@ def _unwrap_purpose_prompt(content: str) -> str:
     return content
 
 
+_PURPOSE_EXTRACT_RE = re.compile(
+    r"^##\s+Purpose\b\s*\n+(.*?)\n##\s+Prompt\b",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+@observe(tier="hot", metric="tools.agent_prompts._extract_purpose")
+def _extract_purpose(wrapped_content: str) -> str | None:
+    """Extract the '## Purpose' text from a wrapped agent-prompt page, if present.
+
+    Companion to _unwrap_purpose_prompt (which extracts the '## Prompt' body).
+    Used by discipline_save so an update that omits purpose= reuses the
+    existing stored purpose instead of silently overwriting it with the
+    generic default — a discipline write path exists specifically to avoid
+    silent content loss, so the purpose line deserves the same care as the
+    prompt body.
+
+    Returns None if content isn't wrapped in the expected Purpose/Prompt form.
+    """
+    m = _PURPOSE_EXTRACT_RE.match(wrapped_content.lstrip())
+    return m.group(1).strip() if m else None
+
+
 # R3 Car 3c: the TOC-upsert + library-anchor writes (previously _upsert_toc_row /
 # _ensure_library_anchor here) moved backend-side into
 # yadgar.backend.admin_exec.wiki (they are DB writes on the agent_prompt_save path,
@@ -381,9 +404,10 @@ def discipline_save(
         content: The discipline's prompt text. May be bare or already wrapped
                  in '## Purpose' / '## Prompt' headers (unwrapped automatically,
                  same double-wrap guard as agent_prompt_save).
-        purpose: One-line description for the TOC. Defaults to a generic
-                 string when omitted (mirrors agent_prompt_save's default —
-                 pass purpose explicitly on update to keep a custom one).
+        purpose: One-line description for the TOC. When omitted on an UPDATE,
+                 the existing page's stored purpose is reused (never silently
+                 clobbered). When omitted on a CREATE (no existing page to
+                 reuse from), falls back to a generic default string.
         confirm_removal: Ratify a detected net removal of existing rule
                  line(s). Ignored when the guard detects no removal.
         branch_hint: Caller branch context (optional).
@@ -419,7 +443,12 @@ def discipline_save(
                 ),
             }
 
-    _purpose = purpose or f"Agent discipline: {name}."
+    if purpose is not None:
+        _purpose = purpose
+    elif existing is not None:
+        _purpose = _extract_purpose(existing["content"]) or f"Agent discipline: {name}."
+    else:
+        _purpose = f"Agent discipline: {name}."
     return _save_discipline_page(name, _purpose, new_body, branch_hint=branch_hint)
 
 

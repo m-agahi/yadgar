@@ -92,6 +92,29 @@ class TestDisciplineSaveAdditionsOnly:
         assert "Rule two." in page["content"]
         assert "Rule three." in page["content"]
 
+    def test_omitted_purpose_on_update_reuses_stored_purpose(self, storage):
+        """discipline_save is the write path — it must not silently clobber
+        the stored purpose when the caller updates content without passing
+        purpose= again."""
+        from yadgar.core.server.tools.agent_prompts import _read_agent_prompt, discipline_save
+
+        discipline_save(
+            "zz-probe-purpose-reuse",
+            "Rule one.",
+            purpose="A specific, hand-written purpose.",
+        )
+        result = discipline_save(
+            "zz-probe-purpose-reuse",
+            "Rule one.\nRule two.",
+        )
+        assert result.get("error") is None, f"additions-only update rejected: {result}"
+        assert result["saved"] is True
+
+        page = _read_agent_prompt("agent-discipline-zz-probe-purpose-reuse", storage=storage)
+        assert "A specific, hand-written purpose." in page["content"], (
+            f"purpose was clobbered by the generic default:\n{page['content']}"
+        )
+
 
 class TestDisciplineSaveRemovalGuard:
     def test_removal_rejected_without_confirmation(self, storage):
