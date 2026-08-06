@@ -133,11 +133,11 @@ Re-derived after the audit; car contents moved materially.
 
 | car | scope | depends on |
 |---|---|---|
-| A | Deps (`asyncmy`, `sqlalchemy`, `alembic` — all three absent today) + MariaDB in `docker-compose.yml` **and** the nix-repo podman/systemd unit | — |
+| A | Deps (`asyncmy`, `sqlalchemy`, `alembic` — all three absent today) + MariaDB **baked into `Dockerfile.backend` and started by `entrypoint-backend.sh`**, with its own rw datadir volume | — |
 | B | **Async op-dispatch rewrite** — own car, own tests | — |
 | C | MariaDB connection + composition root; two concrete storage classes | A, B |
 | D | Alembic + `config` schema-only; `alembic upgrade head` at backend boot | C |
-| E | **Gate primitive fix** — nested TTL takes the min, exit restores `previous` | — |
+| E | Enter response returns `deadline_seconds` so a holder can VERIFY its belt (purely additive — see ADR-0211) | — |
 | F | Backup arm (§4.1) + quiesce (§4.2), as a nightly step | D, E |
 | G | Restore-verification enumeration (§4.3), on the real restore path | F |
 | H | Cross-engine `check_invariants` (§4.4) | D |
@@ -152,16 +152,20 @@ from those bodies without rewriting `run_admin_op` and every op signature. That
 is a cross-cutting change to the path EVERY existing admin op runs through, so
 it gets its own car and its own regression tests rather than hiding inside C.
 
-**Car E exists because** the belt has holes that bite once backup nests inside
-nightly: a no-TTL enter leaves `deadline=None` (no belt at all), and a
-TTL-bearing enter nested inside a no-TTL window silently discards its TTL
-(`control.py:689-690`). Inner exit also clears unconditionally
-(`control.py:711-719`), so it un-gates the outer window unless it honors
-`previous` — vacuum already hand-rolls that workaround
-(`core/vacuum/__init__.py:1735, 1869`), which is evidence the primitive is
-missing something rather than that callers are careless. Fixing it once serves
-backup, vacuum and nightly; vacuum's hand-rolled handling must be reconciled,
-not left to double up.
+**Car E exists because** a caller could not verify it had a self-heal belt at
+all: enter returned `previous` but not the resolved deadline. It now returns
+`deadline_seconds`, and the backup hard-fails when that is null.
+
+**The gate primitive is NOT being changed** (ADR-0211, which withdraws
+ADR-0210's clause saying otherwise). The audit reported that a nested TTL is
+"silently discarded" and that vacuum "hand-rolls a workaround" — both readings
+are wrong. Never-shortening an outer window is deliberate and documented, and
+inverting it would let an inner short TTL expire the outer holder's gate
+mid-work, releasing writes during maintenance. `previous` is the CALLER-side
+contract; `core/vacuum/__init__.py:1869` (`entered = not _maintenance_enter(...)`)
+is a correct consumer of it, not a workaround. Car E's tests
+`test_nested_no_ttl_outer_survives_ttl_inner` and
+`test_nested_both_ttls_later_deadline_wins` pin this — do not "fix" it.
 
 ### Acceptance rule (standing, every car)
 **No car is done until its deliverable has a named caller in the running
@@ -193,7 +197,15 @@ points are fixed here, not left to build time:
 7. `config` row count is 0, asserted. `alembic_version` rows are EXPECTED and
    do not touch task 0095's gate, which is scoped to the first `config_set`.
    The MariaDB healthcheck must stay ping/SELECT so it cannot become a writer.
-8. The MariaDB service exists in **both** compose and the nix prod unit.
+8. MariaDB starts **inside the backend container** (baked into `Dockerfile.backend`,
+   started by `entrypoint-backend.sh`), with its datadir a SIBLING of the
+   surrealkv store under the shared data root. No separate service, no unit
+   renderer change — so there is no "prod wiring" step and the audit's blocker
+   B4 does not apply. Verified: core and backend both bind-mount
+   `/home/max/.local/share/yadgar -> /data` rw, and the vacuum touches only
+   `surreal_db`-prefixed paths (`core/vacuum/phases.py:265`,
+   `core/vacuum/__init__.py:1218,1940,2032`), so a sibling `mariadb/` is outside
+   every copytree, rmtree and reap glob.
 
 ## 7. Risks
 
@@ -204,8 +216,15 @@ points are fixed here, not left to build time:
 - **The gate can wedge writes** — highest-blast-radius new failure mode.
 - **MariaDB idle RSS 86.6 MB (ADR-0205) is a FLOOR** — empty DB, default
   config, zero connections. Re-measure under load before the knob train seeds.
-- **Nix work is cross-repo** and this repo's tests cannot cover it; task 0122
-  records the unit renderers already disagree on activation topology, so car A
-  must state WHICH renderers it touches.
+- **CI image is a PREREQUISITE for cars D and later.** `Dockerfile.ci:116` bakes
+  `--extra test --extra ml`; car A put the engine-#2 deps in a new `sql` extra.
+  `yadgar-ci` has no auto-sync pipeline, so any test importing asyncmy /
+  sqlalchemy / alembic FAILS in CI until that image is rebuilt with `--extra sql`.
+- **Backend image grew 3.20 GB → 3.66 GB** (+14%) from the apt `mariadb-server`
+  install. The cap is 2.0 GB and was ALREADY exceeded before this train; the
+  gate is `stages: [manual]` so it never fires on a commit. Not introduced here,
+  but this train makes it worse and someone should own the number.
+- **`asyncmy` locked at 0.2.13; ADR-0205 verified Apache-2.0 on 0.2.11.**
+  Re-verify the license on the locked version rather than assuming it carried.
 - **Container discipline:** anything started must be timeout-wrapped,
   resource-capped and torn down.
