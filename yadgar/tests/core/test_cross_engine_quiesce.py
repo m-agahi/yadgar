@@ -42,6 +42,23 @@ def _dump_result(filename: str = "mariadb.yadgar.nightly-quiesce-20260806T210000
     return {"ok": True, "filename": filename, "bytes": 42, "database": "yadgar"}
 
 
+def _verify_ok(filename: str = "x.sql") -> dict:
+    """Car G's enumeration reporting a clean restore.
+
+    The driver treats anything other than ``status == "ok"`` as a hard failure,
+    so every fake that gets as far as the dump has to answer this op — an
+    unanswered one would look exactly like a verification that refused.
+    """
+    return {
+        "ok": True,
+        "status": "ok",
+        "artifact": filename,
+        "violations": [],
+        "unavailable": [],
+        "checks": {"row_identity": {"status": "ok", "detail": {"counts": {"config": {}}}}},
+    }
+
+
 def _plant_dump(root: Path, filename: str, body: str = "CREATE TABLE `config` (id INT);\n") -> Path:
     target = root / "backups" / "mariadb" / filename
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +93,8 @@ def harness(tmp_path):
         if op == "mariadb_dump":
             _plant_dump(tmp_path, filename)
             return _dump_result(filename)
+        if op == "mariadb_restore_verify":
+            return _verify_ok(filename)
         raise AssertionError(f"unexpected op {op}")
 
     def _fake_snapshot(db_path, snapshot_dir, label, backend_url):
@@ -118,6 +137,9 @@ def test_sequence_is_gate_drain_mariadb_surreal_release(harness):
         "enter",
         "forward:drain_now",
         "forward:mariadb_dump",
+        # Car G: the artifact is PROVEN RESTORABLE before the Surreal half is
+        # taken, so a dump that cannot be restored never gets a partner.
+        "forward:mariadb_restore_verify",
         "surreal:quiesce",
     ]
     assert result["ok"] is True
@@ -138,6 +160,8 @@ def test_own_window_is_released(tmp_path):
     filename = "mariadb.yadgar.q-1.sql"
 
     def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "mariadb_restore_verify":
+            return _verify_ok()
         if op == "drain_now":
             return {"drained": True, "items_processed": 0}
         _plant_dump(tmp_path, filename)
@@ -231,6 +255,8 @@ def test_drain_that_reports_no_live_drainer_hard_fails(tmp_path):
     touched: list[str] = []
 
     def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "mariadb_restore_verify":
+            return _verify_ok()
         if op == "drain_now":
             return {"drained": False, "items_processed": 0}
         touched.append(op)
@@ -263,6 +289,8 @@ def test_drain_retries_until_verified_empty(tmp_path):
     filename = "mariadb.yadgar.q-2.sql"
 
     def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "mariadb_restore_verify":
+            return _verify_ok()
         if op == "drain_now":
             return next(passes)
         _plant_dump(tmp_path, filename)
@@ -291,6 +319,8 @@ def test_drain_that_never_settles_hard_fails(tmp_path):
     touched: list[str] = []
 
     def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "mariadb_restore_verify":
+            return _verify_ok()
         if op == "drain_now":
             return {"drained": True, "items_processed": 7}
         touched.append(op)
@@ -321,6 +351,8 @@ def test_dump_missing_on_the_hosts_side_hard_fails(tmp_path):
     touched: list[str] = []
 
     def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "mariadb_restore_verify":
+            return _verify_ok()
         if op == "drain_now":
             return {"drained": True, "items_processed": 0}
         return _dump_result("mariadb.yadgar.ghost.sql")  # nothing planted
@@ -345,6 +377,8 @@ def test_dump_without_the_expected_table_hard_fails(tmp_path):
     filename = "mariadb.yadgar.q-3.sql"
 
     def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "mariadb_restore_verify":
+            return _verify_ok()
         if op == "drain_now":
             return {"drained": True, "items_processed": 0}
         _plant_dump(tmp_path, filename, body="-- MariaDB dump\n-- no tables at all\n")
@@ -377,6 +411,8 @@ def test_a_failed_surreal_half_removes_the_orphaned_dump(tmp_path):
     filename = "mariadb.yadgar.q-5.sql"
 
     def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "mariadb_restore_verify":
+            return _verify_ok()
         if op == "drain_now":
             return {"drained": True, "items_processed": 0}
         _plant_dump(tmp_path, filename)
@@ -403,6 +439,8 @@ def test_release_still_happens_when_the_surreal_snapshot_raises(tmp_path):
     filename = "mariadb.yadgar.q-4.sql"
 
     def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "mariadb_restore_verify":
+            return _verify_ok()
         if op == "drain_now":
             return {"drained": True, "items_processed": 0}
         _plant_dump(tmp_path, filename)
@@ -422,3 +460,143 @@ def test_release_still_happens_when_the_surreal_snapshot_raises(tmp_path):
         _run(tmp_path)
 
     assert rec.calls == ["exit"]
+
+
+# ---------------------------------------------------------------------------
+# Car G: the artifact must be PROVEN RESTORABLE before it is kept
+# ---------------------------------------------------------------------------
+
+
+def test_a_refused_restore_verification_deletes_the_dump_and_takes_no_surreal_half(tmp_path):
+    """A dump that does not restore is worse than no dump — it reads as a backup.
+
+    2026-06-16's real damage was trusting a restore that had not been verified.
+    So a refusal here removes the artifact rather than leaving it in the retention
+    pool, and the Surreal half is never taken: the two pools stay 1:1 by
+    construction rather than by arithmetic that only holds while nothing fails.
+    """
+    filename = "mariadb.yadgar.q-6.sql"
+    touched: list[str] = []
+
+    def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "drain_now":
+            return {"drained": True, "items_processed": 0}
+        if op == "mariadb_restore_verify":
+            return {
+                "status": "violation",
+                "violations": ["restore[row_identity]: 2 rows missing"],
+                "unavailable": [],
+                "checks": {},
+            }
+        _plant_dump(tmp_path, filename)
+        return _dump_result(filename)
+
+    with (
+        patch.object(
+            quiesce,
+            "_maintenance_enter",
+            side_effect=lambda ttl: {"previous": True, "deadline_seconds": 900.0},
+        ),
+        patch.object(quiesce, "_forward_admin", side_effect=_fake_forward),
+        patch.object(quiesce, "create_snapshot", side_effect=lambda **k: touched.append("snap")),
+        pytest.raises(RuntimeError, match="did NOT verify by enumeration"),
+    ):
+        _run(tmp_path)
+
+    assert touched == []
+    assert not (tmp_path / "backups" / "mariadb" / filename).exists()
+
+
+def test_an_unavailable_verification_is_also_refused(tmp_path):
+    """``unavailable`` is not ``ok``. A check that could not run proves nothing.
+
+    Distinct from the violation case on purpose: a driver that only tested for
+    ``status == "violation"`` would keep an artifact whose verification never
+    ran, which is the exact vacuous-pass shape car H's tri-state exists for.
+    """
+    filename = "mariadb.yadgar.q-7.sql"
+
+    def _fake_forward(op, payload, timeout_s=30.0):
+        if op == "drain_now":
+            return {"drained": True, "items_processed": 0}
+        if op == "mariadb_restore_verify":
+            return {
+                "status": "unavailable",
+                "violations": [],
+                "unavailable": ["row_identity(query_failed)"],
+                "checks": {},
+            }
+        _plant_dump(tmp_path, filename)
+        return _dump_result(filename)
+
+    with (
+        patch.object(
+            quiesce,
+            "_maintenance_enter",
+            side_effect=lambda ttl: {"previous": True, "deadline_seconds": 900.0},
+        ),
+        patch.object(quiesce, "_forward_admin", side_effect=_fake_forward),
+        patch.object(quiesce, "create_snapshot", side_effect=lambda **k: None),
+        pytest.raises(RuntimeError, match="did NOT verify by enumeration"),
+    ):
+        _run(tmp_path)
+
+    assert not (tmp_path / "backups" / "mariadb" / filename).exists()
+
+
+def test_verify_dump_streams_rather_than_slurping_the_artifact(tmp_path, monkeypatch):
+    """``_verify_dump`` must never read the whole artifact into memory.
+
+    The first cut called ``read_text()``. Harmless against a zero-row table and
+    wrong the moment engine #2 holds real data — a logical dump has no size bound
+    and this runs on the nightly host beside everything else.
+
+    TWO pins, because the obvious one alone is too narrow. Making ``read_text``
+    explode only proves that one method is not called; it says nothing about a
+    loop that appends every line to a list, and against the one-line artifact the
+    other tests plant, streaming and slurping are indistinguishable anyway. So
+    the artifact here carries a 5,000-line TAIL after the marker and the lines
+    actually consumed are counted: stopping at the marker is the property, and it
+    is measured rather than asserted by construction.
+    """
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("_verify_dump slurped the artifact instead of streaming it")
+
+    consumed = [0]
+    real_open = Path.open
+
+    class _CountingFile:
+        """A handle that records how many lines the caller actually pulls."""
+
+        def __init__(self, handle):
+            self._handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return self._handle.__exit__(*exc)
+
+        def __iter__(self):
+            for line in self._handle:
+                consumed[0] += 1
+                yield line
+
+    planted = _plant_dump(
+        tmp_path,
+        "mariadb.yadgar.q-8.sql",
+        body="CREATE TABLE `config` (id INT);\n" + "-- filler\n" * 5000,
+    )
+
+    def _counting_open(self, *args, **kwargs):
+        handle = real_open(self, *args, **kwargs)
+        return _CountingFile(handle) if self == planted else handle
+
+    monkeypatch.setattr(Path, "read_text", _boom)
+    monkeypatch.setattr(Path, "open", _counting_open)
+
+    assert quiesce._verify_dump(tmp_path, planted.name, "config") == planted
+    # The marker is line 1 of 5,001. Anything that walks the whole artifact —
+    # or accumulates it — shows up here as a number in the thousands.
+    assert consumed[0] == 1

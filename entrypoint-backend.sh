@@ -433,6 +433,15 @@ _bootstrap_mariadb_accounts() {
     if [ -z "${_pass}" ]; then
         _pass="$(python3 -c 'import secrets; print(secrets.token_hex(24))')" || return 1
     fi
+    # The SECOND grant is engine-#2 car G's. Its restore verification replays a
+    # dump into a throwaway schema named `<db>_restorecheck_<hex>`, and the app
+    # account's own grant is scoped to `${MARIADB_DB}` alone — it could not
+    # CREATE or DROP that schema. The pattern escapes `_` (a LIKE wildcard in a
+    # grant's db position) so the match is literal, and it is deliberately the
+    # NARROWEST thing that works: a bug in the scratch-name construction cannot
+    # reach any other schema, because the server refuses the statement rather
+    # than trusting the name.
+    #
     # SQL (and therefore the password) goes in on STDIN, never on a command
     # line — it must not land in /proc/<pid>/cmdline, same rule as the surreal
     # bootstrap above. Escape any literal single-quote by doubling it.
@@ -443,6 +452,7 @@ CREATE DATABASE IF NOT EXISTS \`${MARIADB_DB}\`;
 CREATE USER IF NOT EXISTS '${MARIADB_APP_USER}'@'localhost' IDENTIFIED BY '${_pass_esc}';
 ALTER USER '${MARIADB_APP_USER}'@'localhost' IDENTIFIED BY '${_pass_esc}';
 GRANT ALL PRIVILEGES ON \`${MARIADB_DB}\`.* TO '${MARIADB_APP_USER}'@'localhost';
+GRANT ALL PRIVILEGES ON \`${MARIADB_DB}\\_restorecheck\\_%\`.* TO '${MARIADB_APP_USER}'@'localhost';
 SQLEOF
     # Client credentials as a MySQL option file: asyncmy reads user/password/
     # socket/database straight out of it via read_default_file

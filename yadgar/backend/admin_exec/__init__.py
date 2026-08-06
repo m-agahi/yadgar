@@ -37,6 +37,7 @@ from yadgar.backend.admin_exec import (
     memory,
     project,
     restoration,
+    restore_sql,
     runtime_config,
     seed,
     staleness,
@@ -121,6 +122,10 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # process's namespace makes client.cnf's container-absolute socket path true
     # and only this image carries mariadb-dump. See admin_exec/backup_sql.py.
     "mariadb_dump": backup_sql.mariadb_dump,
+    # engine #2 restore arm (car G): THE restore path. There is no other way to
+    # replay a dump into engine #2, and the enumeration gate runs inside this op
+    # before a restore can be called good — see admin_exec/restore_sql.py.
+    "mariadb_restore_verify": restore_sql.mariadb_restore_verify,
 }
 
 

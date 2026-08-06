@@ -188,6 +188,13 @@ def _verify_dump(data_root: Path, filename: str, expected_table: str) -> Path:
     under the host's own data root is what proves the artifact landed on the
     shared bind-mount rather than in the container's writable layer. Trusting
     the op's absolute path would re-open exactly the failure this guards.
+
+    STREAMED, not read whole (car G). The first cut of this function called
+    ``read_text()`` on the artifact — harmless against a zero-row table and
+    wrong the moment engine #2 holds real data, because a logical dump has no
+    size bound and this runs on the nightly host beside everything else. Scanning
+    line by line and stopping at the marker also means the happy path usually
+    touches only the artifact's head.
     """
     path = data_root / "backups" / "mariadb" / filename
     if not path.is_file():
@@ -195,10 +202,18 @@ def _verify_dump(data_root: Path, filename: str, expected_table: str) -> Path:
             f"cross-engine backup: the dump op reported {filename!r} but it is "
             f"not visible at {path} — the artifact did not land on the shared data root"
         )
-    body = path.read_text(encoding="utf-8", errors="replace")
-    if not body.strip():
+    saw_content = False
+    saw_table = False
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not saw_content and line.strip():
+                saw_content = True
+            if f"`{expected_table}`" in line or f" {expected_table} " in line:
+                saw_table = True
+                break
+    if not saw_content:
         raise RuntimeError(f"cross-engine backup: dump at {path} is empty")
-    if f"`{expected_table}`" not in body and f" {expected_table} " not in body:
+    if not saw_table:
         raise RuntimeError(
             f"cross-engine backup: dump at {path} does not carry the {expected_table!r} "
             "table. With a zero-row schema, a successful exit and an empty artifact "
@@ -233,12 +248,13 @@ def run_cross_engine_backup(
     Returns:
         ``{"ok": True, "sql_dump": <basename>, "sql_bytes": int,
         "surreal_snapshot": str, "drain_passes": int, "nested": bool,
-        "deadline_seconds": float}``
+        "deadline_seconds": float, "restore_verified": {<table>: {source, restored}}}``
 
     Raises:
-        RuntimeError: gate unobtainable, no self-heal belt, drain unverified, or
-            a dump that is not visible/complete on the host side. In every case
-            NEITHER engine is snapshotted.
+        RuntimeError: gate unobtainable, no self-heal belt, drain unverified, a
+            dump that is not visible/complete on the host side, or a dump that
+            does not RESTORE (car G's enumeration). In every case NEITHER engine
+            is snapshotted, and an unrestorable dump is deleted rather than kept.
     """
     try:
         enter = _maintenance_enter(ttl_seconds)
@@ -277,6 +293,25 @@ def run_cross_engine_backup(
             dump_path = _verify_dump(data_root, filename, expected_table)
             sql_bytes = dump_path.stat().st_size
 
+            # Car G: the artifact is now PROVEN RESTORABLE before it is kept, by
+            # replaying it into a scratch schema in the backend container and
+            # enumerating that schema row-for-row against the live one. This runs
+            # INSIDE the held window on purpose — the source must not move while
+            # it is the thing being compared against, and the gate is what stops
+            # it. A backup nobody has ever restored is the false safety net the
+            # 2026-06-16 incident was made of, so a failure here deletes the
+            # artifact via the handler below rather than keeping one that reads
+            # as a backup and is not.
+            verification = _forward_admin(
+                "mariadb_restore_verify", {"filename": filename}, timeout_s=900.0
+            )
+            if verification.get("status") != "ok":
+                raise RuntimeError(
+                    f"cross-engine backup: {filename!r} did NOT verify by enumeration "
+                    f"({verification.get('status')}): "
+                    f"{verification.get('violations') or verification.get('unavailable')}"
+                )
+
             # MariaDB first, Surreal second — the referencing side before the
             # referenced one, so even a gate that failed open leaves at worst an
             # unreferenced body page rather than a dangling row (ADR-0204).
@@ -310,4 +345,11 @@ def run_cross_engine_backup(
         "drain_passes": passes,
         "nested": not entered,
         "deadline_seconds": float(deadline),
+        # Positive evidence, not a boolean nobody set: the row counts the
+        # enumeration actually compared. An "ok" with no numbers behind it is the
+        # vacuous pass this whole arm exists to make impossible.
+        "restore_verified": verification.get("checks", {})
+        .get("row_identity", {})
+        .get("detail", {})
+        .get("counts", {}),
     }
