@@ -29,6 +29,7 @@ from typing import TypeIs
 from yadgar._shared.observability.observe import observe
 from yadgar.backend.admin_exec import (
     audit,
+    backup_sql,
     blocks,
     bookmarks,
     drain,
@@ -116,6 +117,10 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # runs the LIVE backend drainer's drain_now() synchronously so the core
     # wait-path can flush promptly over HTTP instead of waiting a full interval.
     "drain_now": drain.drain_now,
+    # engine #2 backup arm (car F): the logical dump runs HERE because only this
+    # process's namespace makes client.cnf's container-absolute socket path true
+    # and only this image carries mariadb-dump. See admin_exec/backup_sql.py.
+    "mariadb_dump": backup_sql.mariadb_dump,
 }
 
 
