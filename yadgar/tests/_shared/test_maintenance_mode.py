@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 
+import pytest
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.testclient import TestClient
@@ -294,3 +295,172 @@ def test_maintenance_endpoints_not_gated_by_debug_apis(monkeypatch):
         )
     finally:
         _st._maintenance_mode = saved
+
+
+# ---------------------------------------------------------------------------
+# 7 — enter response exposes the effective deadline (car E, task:0113 follow-up)
+#
+# A caller (e.g. a backup arm asserting the gate per ADR-0204) cannot verify it
+# actually holds a self-heal belt from ``previous`` alone — it needs to know
+# whether the window it is inside of has an expiry at all.  These tests are
+# PURELY ADDITIVE assertions on the response body; they must not encode any
+# change to gate/nesting semantics (see test_nested_no_ttl_outer_survives_ttl_inner
+# below, which pins the opposite of "nested TTL takes the min").
+# ---------------------------------------------------------------------------
+
+
+def test_enter_with_ttl_on_cold_gate_reports_deadline_seconds(monkeypatch):
+    """Cold gate + ttl_seconds=60 → deadline_seconds is present and ~60."""
+    client = _make_maintenance_app(monkeypatch)
+
+    saved_mode = _st._maintenance_mode
+    saved_deadline = _st._maintenance_deadline
+    try:
+        _st._maintenance_mode = False
+        _st._maintenance_deadline = None
+        resp = client.post(
+            "/api/control/maintenance/enter",
+            json={"ttl_seconds": 60},
+            headers=_auth_headers(),
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        body = resp.json()
+        assert body.get("deadline_seconds") is not None, (
+            f"Cold gate with a ttl must report a deadline_seconds, got: {body}"
+        )
+        assert body["deadline_seconds"] == pytest.approx(60, abs=5), (
+            f"deadline_seconds should be ~60s out, got: {body['deadline_seconds']}"
+        )
+    finally:
+        _st._maintenance_mode = saved_mode
+        _st._maintenance_deadline = saved_deadline
+
+
+def test_enter_with_no_ttl_on_cold_gate_reports_deadline_seconds_none(monkeypatch):
+    """Cold gate + no ttl → deadline_seconds is None (no belt — preserved on purpose)."""
+    client = _make_maintenance_app(monkeypatch)
+
+    saved_mode = _st._maintenance_mode
+    saved_deadline = _st._maintenance_deadline
+    try:
+        _st._maintenance_mode = False
+        _st._maintenance_deadline = None
+        resp = client.post(
+            "/api/control/maintenance/enter",
+            json={},
+            headers=_auth_headers(),
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        body = resp.json()
+        assert body.get("deadline_seconds") is None, (
+            f"Cold gate with no ttl must report deadline_seconds=None, got: {body}"
+        )
+    finally:
+        _st._maintenance_mode = saved_mode
+        _st._maintenance_deadline = saved_deadline
+
+
+def test_nested_no_ttl_outer_survives_ttl_inner(monkeypatch):
+    """Outer entered with NO ttl, inner enters WITH a ttl → deadline_seconds stays None.
+
+    This PINS the never-shorten / never-add-expiry invariant documented on
+    ``maintenance_enter_handler``: "stays None if either side asked for no
+    expiry".  A caller can use this response field to DETECT it has no belt —
+    do NOT "fix" this by making the nested ttl take effect; that would let an
+    inner TTL silently install an expiry the outer holder never asked for,
+    which is a regression of the documented nesting contract, not a bug fix.
+    """
+    client = _make_maintenance_app(monkeypatch)
+
+    saved_mode = _st._maintenance_mode
+    saved_deadline = _st._maintenance_deadline
+    try:
+        _st._maintenance_mode = False
+        _st._maintenance_deadline = None
+
+        # Outer: no ttl.
+        resp_outer = client.post(
+            "/api/control/maintenance/enter",
+            json={},
+            headers=_auth_headers(),
+        )
+        assert resp_outer.status_code == 200
+        assert resp_outer.json().get("deadline_seconds") is None
+
+        # Inner (nested): ttl=30 — must NOT install an expiry on the outer window.
+        resp_inner = client.post(
+            "/api/control/maintenance/enter",
+            json={"ttl_seconds": 30},
+            headers=_auth_headers(),
+        )
+        assert resp_inner.status_code == 200, (
+            f"Expected 200, got {resp_inner.status_code}: {resp_inner.text}"
+        )
+        body_inner = resp_inner.json()
+        assert body_inner.get("previous") is True, (
+            f"Inner enter must report previous=True (nested), got: {body_inner}"
+        )
+        assert body_inner.get("deadline_seconds") is None, (
+            "Nested enter with a ttl over a no-ttl outer window must NOT install "
+            f"a deadline (never-shorten/never-add-expiry contract), got: {body_inner}"
+        )
+    finally:
+        _st._maintenance_mode = saved_mode
+        _st._maintenance_deadline = saved_deadline
+
+
+def test_nested_both_ttls_later_deadline_wins(monkeypatch):
+    """Nested enter, both sides have a ttl → the LATER deadline wins (widening).
+
+    Covers both directions: an inner ttl longer than the outer's widens the
+    window forward, and an inner ttl shorter than the outer's must NOT pull
+    the deadline back in — nesting only ever widens.
+    """
+    client = _make_maintenance_app(monkeypatch)
+
+    saved_mode = _st._maintenance_mode
+    saved_deadline = _st._maintenance_deadline
+    try:
+        # Case A: outer ttl=30, inner ttl=90 → widened to ~90.
+        _st._maintenance_mode = False
+        _st._maintenance_deadline = None
+        client.post(
+            "/api/control/maintenance/enter",
+            json={"ttl_seconds": 30},
+            headers=_auth_headers(),
+        )
+        resp = client.post(
+            "/api/control/maintenance/enter",
+            json={"ttl_seconds": 90},
+            headers=_auth_headers(),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body.get("previous") is True
+        assert body.get("deadline_seconds") == pytest.approx(90, abs=5), (
+            f"Later (inner) deadline should win, got: {body.get('deadline_seconds')}"
+        )
+
+        # Case B: outer ttl=90, inner ttl=30 → stays widened at ~90 (not shortened).
+        _st._maintenance_mode = False
+        _st._maintenance_deadline = None
+        client.post(
+            "/api/control/maintenance/enter",
+            json={"ttl_seconds": 90},
+            headers=_auth_headers(),
+        )
+        resp2 = client.post(
+            "/api/control/maintenance/enter",
+            json={"ttl_seconds": 30},
+            headers=_auth_headers(),
+        )
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert body2.get("previous") is True
+        assert body2.get("deadline_seconds") == pytest.approx(90, abs=5), (
+            "A shorter nested ttl must not shorten the outer deadline, got: "
+            f"{body2.get('deadline_seconds')}"
+        )
+    finally:
+        _st._maintenance_mode = saved_mode
+        _st._maintenance_deadline = saved_deadline
