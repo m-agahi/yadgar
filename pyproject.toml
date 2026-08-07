@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.171.0"
+version = "5.172.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -155,6 +155,37 @@ max-complexity = 15  # I13 hard cap
 [tool.ruff.lint.pylint]
 max-args = 8  # I13 hard cap (params)
 
+# ---------------------------------------------------------------------------
+# Strict-typing enforcement (two arms, deliberately asymmetric)
+#
+# Arm 1 — THIS SECTION: an opt-in allowlist runs `strict = true`, so a
+#   subsystem is strict from its FIRST commit. Add a module when you START it;
+#   retrofitting strict onto a grown module never happens.
+# Arm 2 — scripts/check_type_ratchet.py: a file you TOUCH may not gain type
+#   errors versus .mypy-ratchet-baseline.json. Legacy code keeps its errors,
+#   it just cannot accumulate more.
+#
+# The tree-wide default below is PERMISSIVE ON PURPOSE. ~306k lines across
+# ~1129 modules predate any type checker (task 0116); a blanket strict gate
+# emits thousands of errors on day one and gets switched off within a week.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+follow_imports = "silent"
+# The ratchet reports per-file counts, so mypy's own summary is noise.
+show_error_codes = true
+# Override sections for not-yet-created modules must not warn.
+warn_unused_configs = false
+
+[[tool.mypy.overrides]]
+# STRICT ALLOWLIST — append here as each new subsystem lands. Intentionally
+# empty at introduction: naming a module that does not exist yet would read as
+# a decision already implemented. The spine rebuild (task 0047) is the first
+# customer and adds its modules in the same commit that creates them.
+module = []
+strict = true
+
 [project.optional-dependencies]
 ml = [
     # [onnx] extra REMOVED (5.131.0 deps train): the resolver routes it through
@@ -176,6 +207,27 @@ ml = [
     # transformers 5.x only. Explicit floor prevents a future re-lock silently
     # backsliding under sentence-transformers' wide <6.0.0 bound.
     "transformers>=5.0",
+]
+# Engine #2 (ADR-0195): the relational set lives in MariaDB, served by the
+# BACKEND container only. Deliberately an EXTRA, not a base dependency:
+#   * `asyncmy` is a COMPILED (Cython) driver. In base deps every pipx / pip
+#     install of the core package would need a wheel for the running
+#     interpreter — or a C toolchain to build one. Install is this repo's worst
+#     surface (ADR-0195 consequences); adding a compile step to it for a driver
+#     core never opens is the wrong trade.
+#   * Core has ZERO engine-#2 access by design (ADR-0195 / ADR-0200: core
+#     forwards to backend admin ops), so the driver is backend-only in exactly
+#     the way the `ml` extra above is backend-only.
+# `sqlalchemy` + `alembic` travel with it: alembic is the migration arm this
+# split buys (ADR-0195 rationale — it moots task 0051's surrealmigrate fork),
+# and alembic depends on sqlalchemy regardless.
+# NOTE: the yadgar-ci image bakes `--extra test --extra ml` (Dockerfile.ci:116)
+# and has no auto-sync pipeline — it must be rebuilt with `--extra sql` before
+# any test may import these.
+sql = [
+    "asyncmy>=0.2.11",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
 ]
 test = [
     # starlette 1.3.x testclient prefers httpx2 (`import httpx2 as httpx`) and
@@ -204,6 +256,11 @@ test = [
 dev = [
     "yadgar[test]",
     "ruff>=0.4.0",
+    # Type checker for the strict-typing ratchet (scripts/check_type_ratchet.py).
+    # Ruff CANNOT type-check — it lints. Annotations without a checker enforce
+    # NOTHING (task 0116), which is how the three severe coupling defects in the
+    # 203-defect audit shipped as untyped dict/positional passing.
+    "mypy>=1.11",
 ]
 # Distribution tooling: SBOM generation via CycloneDX (cyclonedx-py is an alias; use cyclonedx-bom directly)
 # Pin exact version — OWASP supply-chain; no auto-upgrade without review.

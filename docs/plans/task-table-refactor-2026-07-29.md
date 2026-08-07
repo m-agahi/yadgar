@@ -44,7 +44,7 @@ Move their **indexes** to tables; leave their **bodies** as wiki pages.
 | agent-prompt TOC | **9,538**-char markdown table; `uses:N` stamped into prose | table columns |
 | runtime config | SurrealDB `runtime_config` table, 0 rows (empty) | **MariaDB** — same Alembic chain as the ledger tables |
 | bodies (**194** ADR pages + **63** prompt/discipline pages) | — | **untouched — still wiki pages, still in SurrealDB, still embedded** |
-| MCP surface | — | `adr_*` and `agent_prompt_save` **signatures unchanged** |
+| MCP surface | — | ~~`adr_*` and `agent_prompt_save` signatures unchanged~~ **FALSE — corrected 2026-08-06, ADR-0208/ADR-0209.** The surface gains a discipline write path (shipped as `discipline_save`, `core/server/tools/agent_prompts.py:373`) and every ledger row gains `baseline_hash`/`content_hash` columns, so `adr_get`/`agent_prompt_get`'s return shape is not identical to today's either. See §14.3. |
 | engine | SurrealDB wiki pages | **MariaDB** rows — see `split-store-engine-decision-2026-08-02.md` §4.5 |
 
 **Every number in the previous revision of this plan was stale.** The task page had shrunk ~77%
@@ -322,6 +322,8 @@ single `agent_prompt` table with a `kind` enum is replaced.
 | `body_slug` | VARCHAR(255) | NO | UQ | — | → wiki page |
 | `status` | ENUM | NO | | `active` | `active` \| `deprecated` |
 | `uses` | INT UNSIGNED | NO | | 0 | atomic `SET uses = uses + 1`, never read-modify-write |
+| `baseline_hash` | CHAR(64) | YES | | NULL | **NEW, ADR-0208/ADR-0209.** Hash of the packaged YAML content this page was seeded from; changes ONLY on seed/adopt, never on a live edit. NULL for pages never seeded from the packaged baseline. |
+| `content_hash` | CHAR(64) | NO | | — | **NEW, ADR-0209.** Hash of the current page body, mirrored onto the page as metadata and regenerated on every write; disagreement between the two copies IS the row/page desync signal `check_page_row_desync` needs. Hash tag itself is excluded from the hashed input. |
 | `updated_at` | DATETIME | NO | | now / on update | |
 
 **`agent_discipline`** — the contract is a discipline with `always_applied = TRUE`, not a special case.
@@ -334,6 +336,8 @@ single `agent_prompt` table with a `kind` enum is replaced.
 | `always_applied` | BOOLEAN | NO | | FALSE | TRUE for the contract |
 | `position` | TINYINT UNSIGNED | NO | | 0 | order among always-applied |
 | `status` | ENUM | NO | | `active` | |
+| `baseline_hash` | CHAR(64) | YES | | NULL | **NEW, ADR-0208/ADR-0209.** Same meaning as on `agent_pattern`. The contract row (the `always_applied=TRUE` discipline) never auto-applies a merge even when clean — ADR-0208's one named exception. |
+| `content_hash` | CHAR(64) | NO | | — | **NEW, ADR-0209.** Same meaning as on `agent_pattern`. |
 | `updated_at` | DATETIME | NO | | now / on update | |
 
 **`agent_pattern_composes`** — ordered join
@@ -425,12 +429,20 @@ Fold that into the cross-engine checks task 0136 already adds.
 
 ```
 task_list / task_get / task_write                   NEW
-adr_add / adr_list / adr_get                        EXISTING — signatures AND return shapes unchanged
+adr_add / adr_list / adr_get                        EXISTING — signatures unchanged; return shape
+                                                     GAINS baseline_hash/content_hash (ADR-0209)
 agent_prompt_list / agent_prompt_get                NEW
-agent_prompt_save / agent_dispatch_prelude          EXISTING — unchanged
+agent_prompt_save / agent_dispatch_prelude          EXISTING — signatures unchanged; return shape
+                                                     GAINS baseline_hash/content_hash (ADR-0209)
+discipline_save                                     NEW — ADR-0208's discipline write path (SHIPPED,
+                                                     core/server/tools/agent_prompts.py:373)
 seed_agent_prompts                                  EXISTING — unchanged
 wiki_set_mutability(slug, value, reason)            NEW — power=True, logged
 ```
+
+**Corrected 2026-08-06 (ADR-0208, ADR-0209):** the two "unchanged" claims above and in the §0
+TL;DR table were false as originally stated — return shapes were not covered by "signature," and
+the prompt-family write surface was missing a tool entirely. Detail in §14.3.
 
 ### 4.1 Batch write — spine level
 
@@ -991,6 +1003,35 @@ whether each column meant anything for that entity. It does not, and several wer
   `memorize()`, `wiki_read`, so a client without those tools gets instructions it cannot follow.
   The `always_applied` flag means that is an INSERT, not a migration. Do not key contracts to
   patterns. Contract-improvement capture is filed as task **0138**.
+- **RESOLVED 2026-08-06 — ADR-0208 amended by ADR-0209, correcting §0 and §4's "unchanged"
+  claims.** The seed YAML is a fresh-install baseline, not the source of truth after that; the
+  live wiki page is authoritative, and upstream changes reach it by three-way merge with an
+  asymmetric weakening guard (removals need ratification, additions do not). That flow needed a
+  discipline write path on the MCP surface that did not exist — now shipped as `discipline_save`
+  (`core/server/tools/agent_prompts.py:373`). It also needed provenance: `baseline_hash` (row-side,
+  changes only on seed/adopt) tracks which packaged baseline a page was seeded from, distinct from
+  `content_hash` (mirrored on both the row and the page, regenerated on every write, whose two
+  copies disagreeing IS the row/page desync signal). **`agent_pattern` and `agent_discipline` in
+  §3.2 now carry both columns**, added in the same pass as this note. `content_hash` is `NOT
+  NULL` with no default, which is safe only because D35a's seed is a one-shot write that
+  computes the hash from the source page at insert time — there is no pre-existing row a
+  migration would need to backfill it onto.
+- **The `page_type` split in ADR-0209 also lands here.** `agent_pattern` and `agent_discipline`
+  are separate page types now (not one `agent_prompt` type discriminated by slug prefix), because
+  their governance genuinely differs — disciplines carry the asymmetric removal guard, the
+  contract never auto-applies. The contract stays inside `agent_discipline`, flagged
+  `always_applied=TRUE` per D3/D3's three-table split above, not promoted to a fourth type.
+- **The `content_hash` mirror is not optional polish — it is what makes
+  `check_page_row_desync` a genuine check instead of a permanent stub.** That cross-engine
+  invariant (`yadgar/backend/admin_exec/invariants_cross_engine.py:392`) is written today as a
+  deliberate TRIPWIRE: with no `adr`/`agent_pattern`/`agent_discipline` table yet, it reports
+  `status=unavailable, reason=spine_not_shipped` — a designed pass, not a real one — and its own
+  docstring states it flips to a live comparison "the moment any spine ledger table APPEARS."
+  So shipping any of those three tables **without** also shipping `content_hash` on both the row
+  and the page turns a currently-honest "unavailable" into a silent gap the check no longer even
+  reports on, which is the exact vacuous-pass failure mode this arm exists to prevent. Building
+  `content_hash` comparison is therefore a hard requirement of this spine train, not deferred
+  scope.
 
 ---
 

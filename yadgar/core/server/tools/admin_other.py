@@ -15,6 +15,8 @@ from yadgar._shared.runtime.lifecycle import (
     _get_storage,
 )
 from yadgar._shared.security.secrets import gate_or_reject
+from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
+from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 from yadgar.core.server._helpers import _q_with_timeout
@@ -608,6 +610,45 @@ def vacuum_checkpoints(dry_run: bool = True) -> dict:
     return _vc(storage, dry_run=dry_run)
 
 
+@observe(tier="stage", metric="tools.wiki_update._reject_discipline_content_removal")
+def _reject_discipline_content_removal(page_id: int, fields: dict) -> dict | None:
+    """ADR-0208 guard for wiki_update's content patch (task 23).
+
+    Mirrors ``WikiStore._reject_if_discipline_weakening`` using the same shared
+    ``removed_prompt_lines`` primitive; it lives here rather than in the store
+    because wiki_update's backend op bypasses ``WikiStore`` entirely.
+
+    Returns an error dict when the patch would remove rule lines from an
+    ``agent_discipline`` page, else None. A patch that does not touch
+    ``content`` cannot remove a rule and is never gated.
+    """
+    if "content" not in fields:
+        return None
+    try:
+        page = _get_storage().get_wiki_page(page_id)
+    except Exception as e:  # noqa: BLE001 — a read failure must not block the write path
+        logger.debug("wiki_update discipline guard: page read failed: %s", e)
+        return None
+    if page is None or page.get("page_type") != PAGE_TYPE_AGENT_DISCIPLINE:
+        return None
+    removed = removed_prompt_lines(page.get("content", ""), fields["content"])
+    if not removed:
+        return None
+    return {
+        "ok": False,
+        "error": "discipline_removal_requires_confirmation",
+        "page_id": page_id,
+        "slug": page.get("slug"),
+        "removed_lines": removed,
+        "message": (
+            f"{len(removed)} rule line(s) would be removed from discipline page "
+            f"{page.get('slug')!r}. Generic wiki edits may only ADD to a discipline "
+            "(ADR-0208). Use discipline_save(name, content, confirm_removal=True) "
+            "to ratify a removal:\n" + "\n".join(f"  - {ln}" for ln in removed)
+        ),
+    }
+
+
 @_tool(power=True)
 def wiki_update(page_id: int, fields: dict, wait: bool = False) -> dict:
     """Patch selected fields on a wiki page record.
@@ -633,6 +674,17 @@ def wiki_update(page_id: int, fields: dict, wait: bool = False) -> dict:
     _gate = gate_or_reject(_content_val)
     if _gate is not None:
         return _gate
+
+    # Task 23 / ADR-0208: wiki_update is the ONE edit path that never enters
+    # WikiStore — the backend op calls storage.update_wiki_page directly, so the
+    # store-level discipline guard cannot see it, and `content` is an allowed key
+    # here. Pre-check core-side instead (reads are allowed core-side). This shell
+    # is a disjoint entry point from discipline_save (which goes
+    # _save_discipline_page -> _forward_admin("agent_prompt_save") -> wiki.add),
+    # so the sanctioned write path is not double-gated.
+    _rejected = _reject_discipline_content_removal(int(page_id), fields)
+    if _rejected is not None:
+        return _rejected
 
     # R3 Car 3c: allowed-key validation + secret-gate stay core (raise before any
     # state touch); the DB write (update_wiki_page → epoch bump) forwards to the

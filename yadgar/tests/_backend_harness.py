@@ -110,15 +110,24 @@ def patch_admin_bypass(monkeypatch: Any) -> None:
     Args:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
+    # Imported EAGERLY, not left to the sys.modules probe below: the nightly
+    # driver is imported inside the test body, so whether it is already in
+    # sys.modules when this fixture runs depends on autouse ordering. A consumer
+    # that is silently absent from that loop is an unpatched real HTTP call, and
+    # the whole point of this bypass is that there is no such thing. Safe to
+    # import here — quiesce pulls in no yadgar.core.server module (see
+    # core/forward.py's LEAF MODULE note for why that matters).
+    import yadgar.core.backup.quiesce  # noqa: F401
     import yadgar.core.forward as _forward_module
-    from yadgar.backend.admin_exec import run_admin_op
+    from yadgar.backend.admin_exec import run_admin_op_blocking
 
     _orig_forward_admin = _forward_module._forward_admin
 
     def _bypass_admin(op, payload, timeout_s=30.0):
         if os.environ.get("YADGAR_EMBED_URL"):
             return _orig_forward_admin(op, payload, timeout_s=timeout_s)
-        return run_admin_op(op, payload)
+        # Blocking variant: engine-#2 car H made check_invariants a coroutine op.
+        return run_admin_op_blocking(op, payload)
 
     monkeypatch.setattr(_forward_module, "_forward_admin", _bypass_admin)
     for _consumer in (
@@ -134,6 +143,12 @@ def patch_admin_bypass(monkeypatch: Any) -> None:
         "yadgar.core.server.tools.dispatch_helper",
         # consolidation orchestrator binds _forward_admin (check_invariants tail)
         "yadgar.core.consolidation.orchestrator",
+        # nightly step 5b's driver binds _forward_admin at module scope for the
+        # engine-#2 presence probe, the drain and the dump. Without it here the
+        # e2e nightly reaches the REAL forwarder and fails on an unset
+        # YADGAR_EMBED_URL — which the driver correctly refuses to read as
+        # "engine absent", so the whole cycle hard-fails on a host-config error.
+        "yadgar.core.backup.quiesce",
     ):
         _mod = sys.modules.get(_consumer)
         if _mod is not None and hasattr(_mod, "_forward_admin"):

@@ -40,6 +40,10 @@ import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_replay, _get_storage
 from yadgar._shared.wiki.contract import WikiAddOptions
+from yadgar._shared.wiki.wiki_meta import (
+    PAGE_TYPE_AGENT_INDEX,
+    PAGE_TYPE_AGENT_PROMPT_LEGACY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -368,6 +372,12 @@ def _upsert_toc_row(pattern: str, purpose: str, branch_hint: str | None) -> None
                 confidence="high",
                 branch=branch_hint,
                 directory_context="global",
+                # Task 0134: the TOC used to be written untyped, so it fell
+                # through to DEFAULT_POLICY include and the library index
+                # ranked in everyday recall. Stamped on every re-upsert (this
+                # runs on every agent_prompt_save) rather than relying on
+                # WikiStore.add's preserve-existing-type behaviour.
+                page_type=PAGE_TYPE_AGENT_INDEX,
             ),
         )
     except Exception as e:  # noqa: BLE001
@@ -426,6 +436,11 @@ def agent_prompt_save(payload: dict) -> dict:
     purpose = payload["purpose"]
     branch_hint = payload.get("branch_hint")
     effective_dir = payload["directory"]
+    # ADR-0209: the family is decided CORE-side and carried on the payload —
+    # this op keys everything else off the slug, but re-deriving the page_type
+    # from a slug prefix here would rebuild exactly the string-matching the
+    # split removes. Default only covers a payload from a pre-split core.
+    page_type = payload.get("page_type") or PAGE_TYPE_AGENT_PROMPT_LEGACY
 
     wiki = _st._wiki
     if wiki is not None:
@@ -439,7 +454,7 @@ def agent_prompt_save(payload: dict) -> dict:
                 confidence="high",
                 branch=branch_hint,
                 directory_context=effective_dir,
-                page_type="agent_prompt",
+                page_type=page_type,
             ),
         )
         page_id = result.get("id")
@@ -459,7 +474,7 @@ def agent_prompt_save(payload: dict) -> dict:
                     "category": "reference",
                     "confidence": "high",
                     "directory_context": effective_dir,
-                    "page_type": "agent_prompt",
+                    "page_type": page_type,
                 },
             )
             version = storage.get_max_version_for_page(page_id)
@@ -475,7 +490,7 @@ def agent_prompt_save(payload: dict) -> dict:
                     "confidence": "high",
                     "source_memory_ids": [],
                     "directory_context": effective_dir,
-                    "page_type": "agent_prompt",
+                    "page_type": page_type,
                     "wiki_schema_version": 1,
                 }
             )

@@ -15,6 +15,7 @@ patch hook) that falls back to the module-level settings — no core import.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import yadgar._shared.runtime.state as _st
@@ -878,12 +879,37 @@ def _run_check_invariants(storage) -> dict:  # type: ignore[no-untyped-def]
 
 
 @observe(tier="boundary", metric="backend.admin.check_invariants")
-def check_invariants(payload: dict) -> dict:
+async def check_invariants(payload: dict) -> dict:
     """Run consistency checks + auto-repair over the memory store. Storage-write half.
 
     payload: {} (no args)
-    Returns {"ok", "violations", "fixed", "counts", ...}. The auto-repair DELETEs
-    happen inside ``_run_check_invariants``; this op is the backend entry point
-    the core ``check_invariants`` shell forwards to.
+    Returns {"ok", "violations", "fixed", "counts", "cross_engine", ...}. The
+    auto-repair DELETEs happen inside ``_run_check_invariants``; this op is the
+    backend entry point the core ``check_invariants`` shell forwards to.
+
+    ASYNC AS OF ENGINE-#2 CAR H — the FIRST async admin op. ``asyncmy`` is
+    async-only, so the cross-engine arm cannot be reached from a sync body
+    without ``asyncio.run`` inside a worker thread, which would bind a pool to an
+    event loop that dies with the thread (cars C and D each documented that
+    hazard). ``run_admin_op_async`` has admitted coroutine bodies since car B.
+    ``_run_check_invariants`` is UNCHANGED and still runs off the loop in
+    ``asyncio.to_thread``: with a 60 s per-table timeout against a 120 s op floor
+    (``core/forward.py:47``), calling it directly here would stall the backend.
+
+    ``cross_engine`` is present UNCONDITIONALLY, including when engine #2 is
+    absent — see ``invariants_cross_engine`` on why absence must be loud without
+    flipping ``ok``, while a real cross-engine disagreement does flip it.
     """
-    return _run_check_invariants(_get_storage())
+    from yadgar.backend.admin_exec.invariants_cross_engine import (  # noqa: PLC0415
+        run_cross_engine_checks,
+    )
+
+    storage = _get_storage()
+    result = await asyncio.to_thread(_run_check_invariants, storage)
+
+    cross = await run_cross_engine_checks(storage)
+    result["cross_engine"] = cross
+    if cross["violations"]:
+        result["violations"] = list(result.get("violations", [])) + cross["violations"]
+        result["ok"] = False
+    return result

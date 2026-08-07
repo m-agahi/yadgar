@@ -1508,11 +1508,17 @@ def admin_backend_bypass(monkeypatch):
     import sys
 
     import yadgar.core.forward as _forward_module
-    from yadgar.backend.admin_exec import run_admin_op
+    from yadgar.backend.admin_exec import run_admin_op_blocking
 
     def _bypass_admin(op, payload, timeout_s=30.0):
-        """Direct run_admin_op call — bypasses HTTP, same _st storage."""
-        return run_admin_op(op, payload)
+        """Direct dispatch — bypasses HTTP, same _st storage.
+
+        ``run_admin_op_blocking`` rather than ``run_admin_op``: engine-#2 car H
+        made ``check_invariants`` a coroutine op, and the sync entry point raises
+        TypeError on those by design (it guards a production misdispatch, not
+        this seam).
+        """
+        return run_admin_op_blocking(op, payload)
 
     # Patch the source AND every consumer module: the CRUD tools bind the helper
     # by name (``from ._forward import _forward_admin``), so patching only the

@@ -19,6 +19,11 @@ from yadgar._shared.wiki.policy import (  # noqa: E402
     WikiPolicy,
     get_policy,
 )
+from yadgar._shared.wiki.wiki_meta import (  # noqa: E402
+    PAGE_TYPE_AGENT_DISCIPLINE,
+    PAGE_TYPE_AGENT_INDEX,
+    PAGE_TYPE_AGENT_PATTERN,
+)
 
 # ── A. WikiPolicy dataclass ────────────────────────────────────────────────────
 
@@ -134,3 +139,74 @@ class TestGetPolicy:
     def test_agent_prompt_is_not_default(self):
         """agent_prompt must differ from DEFAULT (single source assertion)."""
         assert get_policy("agent_prompt") != DEFAULT_POLICY
+
+
+# ── E. ADR-0209 page-type split ───────────────────────────────────────────────
+
+
+class TestAgentPageTypeSplit:
+    """ADR-0209: `agent_prompt` splits into `agent_pattern` + `agent_discipline`.
+
+    The TOC index gets its own `agent_index` type — task 0134's null-page_type
+    defect (null → DEFAULT_POLICY include → the index is recall-visible).
+    All three carry the agent_prompt routing: exclude from fanout recall,
+    global storage scope.
+    """
+
+    @pytest.mark.parametrize(
+        "page_type",
+        [PAGE_TYPE_AGENT_PATTERN, PAGE_TYPE_AGENT_DISCIPLINE, PAGE_TYPE_AGENT_INDEX],
+    )
+    def test_registered_in_policy_by_type(self, page_type):
+        assert page_type in POLICY_BY_TYPE
+
+    @pytest.mark.parametrize(
+        "page_type",
+        [PAGE_TYPE_AGENT_PATTERN, PAGE_TYPE_AGENT_DISCIPLINE, PAGE_TYPE_AGENT_INDEX],
+    )
+    def test_excluded_from_fanout_recall(self, page_type):
+        assert get_policy(page_type).recall_disposition == "exclude"
+
+    @pytest.mark.parametrize(
+        "page_type",
+        [PAGE_TYPE_AGENT_PATTERN, PAGE_TYPE_AGENT_DISCIPLINE, PAGE_TYPE_AGENT_INDEX],
+    )
+    def test_storage_scope_global(self, page_type):
+        """The library is a cross-project shared resource (ADR-0159)."""
+        assert get_policy(page_type).storage_scope == "global"
+
+    def test_split_types_match_legacy_agent_prompt_policy(self):
+        """Splitting the type must not change ROUTING — only the taxonomy.
+
+        A behaviour change smuggled in with the migration would be invisible
+        until a page landed in the wrong scope.
+        """
+        legacy = get_policy("agent_prompt")
+        assert get_policy(PAGE_TYPE_AGENT_PATTERN) == legacy
+        assert get_policy(PAGE_TYPE_AGENT_DISCIPLINE) == legacy
+
+    def test_legacy_agent_prompt_entry_retained(self):
+        """Un-migrated installs still carry page_type='agent_prompt' rows."""
+        assert "agent_prompt" in POLICY_BY_TYPE
+
+    def test_agent_index_not_in_page_type_schemas(self):
+        """The TOC is a link index, not a Purpose/Prompt page.
+
+        Registering it in wiki_page_types.yaml would demand a required section
+        the TOC body does not carry, producing a permanent lint warning.
+        check_page_type_format returns [] for unregistered types, so
+        policy-only registration gets exclude-routing with zero lint noise.
+        """
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPES
+
+        assert PAGE_TYPE_AGENT_INDEX not in PAGE_TYPES
+
+    @pytest.mark.parametrize(
+        "page_type",
+        [PAGE_TYPE_AGENT_PATTERN, PAGE_TYPE_AGENT_DISCIPLINE],
+    )
+    def test_split_types_registered_in_page_type_schemas(self, page_type):
+        """Both prompt families keep the agent_prompt Purpose/Prompt shape."""
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPES
+
+        assert PAGE_TYPES[page_type] == ["Purpose", "Prompt"]

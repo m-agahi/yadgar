@@ -71,7 +71,11 @@ SITES = [
         "config_registry.py prometheus metrics setter",
     ),
     (
-        "yadgar/backend/embed_service/embed_service.py",
+        # Car D of the strict-typing-gate train extracted this cancel/await/swallow
+        # block into a shared helper (_cancel_lifespan_task) to keep embed_service.py's
+        # `lifespan` under the I30 hard 150-line cap. The parenthesised except travelled
+        # with it — same file family, new module.
+        "yadgar/backend/embed_service/embed_service_lifecycle.py",
         "asyncio.CancelledError, Exception",
         "embed_service.py shutdown handler (critical — Exception was escaping)",
     ),
@@ -211,7 +215,10 @@ def test_embed_service_exception_is_caught_in_shutdown_handler() -> None:
     and must include both ``asyncio.CancelledError`` and ``Exception``.
     """
     # T2 Car D: embed_service packaged under backend/embed_service/ (ADR-0084).
-    path = YADGAR_ROOT / "backend" / "embed_service" / "embed_service.py"
+    # strict-typing-gate Car D further extracted the shutdown cancel/await/swallow
+    # block into embed_service_lifecycle.py (_cancel_lifespan_task) to keep
+    # embed_service.py's `lifespan` under the I30 hard 150-line cap.
+    path = YADGAR_ROOT / "backend" / "embed_service" / "embed_service_lifecycle.py"
     content = path.read_text(encoding="utf-8")
 
     # Find all parenthesised except clauses

@@ -29,13 +29,20 @@ class TestMigration027Registration:
         assert callable(entry["fn"])
         assert entry["fn"] is _migration_027_runtime_config_table
 
-    def test_migration_027_is_last(self):
-        """027 is the final migration in the list (highest number).
+    def test_latest_migration_is_the_known_tail(self):
+        """The registered migrations' highest version number matches the known tail.
 
-        Update this to the new tail whenever a later migration is appended.
+        This does NOT assert 027 specifically is last anymore — 028
+        (agent page_type split, ADR-0209) was appended after 027. The guard's
+        PURPOSE survives: a hardcoded expected value that must be bumped by
+        hand whenever a new migration is appended, so an unnoticed append
+        still fails CI. Update the literal below to the new tail whenever a
+        later migration is appended; do NOT replace it with something
+        computed from `_MIGRATIONS` itself (e.g. asserting the list's max
+        equals its own max) — that would never fail and stops being a guard.
         """
         nums = [int(m["version"].split("_")[0]) for m in _MIGRATIONS]
-        assert max(nums) == 27
+        assert max(nums) == 28
 
 
 class TestMigration027DefinesTable:

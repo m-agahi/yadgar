@@ -16,6 +16,12 @@ import logging
 from typing import TYPE_CHECKING
 
 import yadgar._shared.paths as _paths
+from yadgar._shared.wiki.wiki_meta import (
+    PAGE_TYPE_AGENT_DISCIPLINE,
+    PAGE_TYPE_AGENT_INDEX,
+    PAGE_TYPE_AGENT_PATTERN,
+    WIKI_SCHEMA_VERSION,
+)
 
 if TYPE_CHECKING:
     pass  # StorageEngine referenced only in annotations below — no import needed
@@ -1067,6 +1073,67 @@ def _migration_026_drop_wiki_draft(storage) -> None:
     _log.info("migration_026: dropped dead wiki_draft table")
 
 
+#: ADR-0209 slug→page_type map, longest-prefix-first. Order matters:
+#: agent-prompt-contract and agent-prompt-toc are both agent-prompt-* and must
+#: be matched before the generic pattern rule.
+_AGENT_PAGE_TYPE_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("agent-discipline-", PAGE_TYPE_AGENT_DISCIPLINE),
+    ("agent-prompt-contract", PAGE_TYPE_AGENT_DISCIPLINE),
+    ("agent-prompt-toc", PAGE_TYPE_AGENT_INDEX),
+    ("agent-prompt-", PAGE_TYPE_AGENT_PATTERN),
+)
+
+
+def _agent_page_type_for_slug(slug: str) -> str | None:
+    """Return the ADR-0209 page_type for *slug*, or None when it is not a library page."""
+    for prefix, page_type in _AGENT_PAGE_TYPE_BY_PREFIX:
+        if slug.startswith(prefix):
+            return page_type
+    return None
+
+
+def _migration_028_agent_page_type_split(storage) -> None:
+    """Re-type the agent-prompt library: agent_prompt → pattern / discipline / index (ADR-0209).
+
+    Patterns and disciplines shared ``page_type=agent_prompt``, discriminated
+    only by slug prefix and tags, while ADR-0198 splits them at the row level
+    and ADR-0208 gives them different governance. ``page_type`` is the policy
+    lever — ``get_policy(page_type).recall_disposition`` — so the families need
+    distinct types rather than a prefix test at every read site.
+
+    Keys off the SLUG, not the existing page_type, for two reasons: the TOC
+    carries ``page_type=null`` (task 0134's defect — null falls through to
+    DEFAULT_POLICY *include*, making the library index recall-visible), so a
+    type-keyed sweep would miss exactly the row that most needs fixing; and the
+    slug prefix is what the write path has always keyed on. Prefix matching is
+    ``startswith``, NOT ``CONTAINS 'agent-'`` — the latter false-positives on
+    unrelated slugs such as ``1password-ssh-agent-key-config``.
+
+    ``agent-prompt-contract`` maps to ``agent_discipline``: ADR-0209 keeps the
+    contract INSIDE the discipline type (flagged via ADR-0198's
+    ``always_applied``), rather than promoting it to a third type.
+
+    Idempotent: only rows whose page_type differs from the target are written,
+    so a second run issues zero updates.
+    """
+    rows = storage._q("SELECT id, slug, page_type FROM wiki_page")
+    updated = 0
+    for row in rows or []:
+        slug = row.get("slug") or ""
+        target = _agent_page_type_for_slug(slug)
+        if target is None or row.get("page_type") == target:
+            continue
+        page_id = storage._extract_id(row.get("id"))
+        if page_id is None:
+            continue
+        storage.update_wiki_page(
+            page_id,
+            {"page_type": target, "wiki_schema_version": WIKI_SCHEMA_VERSION},
+        )
+        updated += 1
+    _log.info("migration_028: re-typed %d agent-library wiki pages (ADR-0209)", updated)
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -1163,6 +1230,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "027_runtime_config_table",
         "fn": _migration_027_runtime_config_table,
+    },
+    {
+        "version": "028_agent_page_type_split",
+        "fn": _migration_028_agent_page_type_split,
     },
 ]
 

@@ -466,6 +466,10 @@ async def lifespan(app: FastAPI):
     # (or fail-loud logged) before the app reports ready.
     await asyncio.to_thread(_start_queue_drainer)
 
+    # engine #2 (car D): schema to alembic head. HERE because _start_queue_drainer
+    # is what composed _st._sql_storage. Non-fatal; see _migrate_engine_two.
+    await _migrate_engine_two()
+
     # viz-render-perf (Car A): warm the graph-layout cache on boot when empty so a
     # fresh deploy renders the viz pre-laid-out instead of the slow client cold
     # layout on the first load. Non-blocking (daemon thread) + non-fatal. Storage
@@ -500,19 +504,13 @@ async def lifespan(app: FastAPI):
     # backend 5.30.1: stop the queue drainer first (join capped at 5s).
     await asyncio.to_thread(_stop_queue_drainer)
 
-    # Cancel snapshot task on shutdown
-    _snap_task.cancel()
-    try:
-        await _snap_task
-    except (asyncio.CancelledError, Exception):  # fmt: skip
-        pass
+    # engine #2 (car D): release the MariaDB pool once writers are down. Awaited
+    # on THIS loop — lifecycle.shutdown is sync (see _dispose_engine_two).
+    await _dispose_engine_two()
 
-    # Cancel warmup task on shutdown (no-op if already finished)
-    _warmup_task.cancel()
-    try:
-        await _warmup_task
-    except (asyncio.CancelledError, Exception):  # fmt: skip
-        pass
+    # Cancel the snapshot + warmup background tasks (warmup may already be done).
+    await _cancel_lifespan_task(_snap_task)
+    await _cancel_lifespan_task(_warmup_task)
 
     # Final cache snapshot on shutdown
     try:
@@ -925,7 +923,15 @@ def _ensure_recall_engines() -> None:
         # Car 3 (folder-split #17): slim engine set — build only the 14 engines
         # the /recall path needs, skip the 10 CORE-ONLY engines. Behavior-neutral
         # for recall (byte-identical output; a missing engine = immediate crash).
-        _init_engines(local_engines=True, engine_set="slim")
+        #
+        # sql_storage=True (engine #2, ADR-0195 car C): this is the ONLY caller
+        # that asks for it. ADR-0078/ADR-0200 keep core off every database, so
+        # the flag defaults False and core never flips it. Reached at backend
+        # BOOT, not just on the first /recall — lifespan awaits
+        # _start_queue_drainer, which calls this. Absence is non-fatal: mysqld
+        # is deliberately outside the container HEALTHCHECK, so a MariaDB
+        # failure leaves _st._sql_storage None and the service serving.
+        _init_engines(local_engines=True, engine_set="slim", sql_storage=True)
         # T2 Car E2: compose the backend Retriever (the shared root no longer
         # builds it — retrieval sank to yadgar.backend.retrieval). MUST run
         # before ensure_restoration_engines, which wires _st._retriever into
@@ -973,6 +979,9 @@ _queue_base_path = _sib_lifecycle._queue_base_path
 _start_queue_drainer = _sib_lifecycle._start_queue_drainer
 _stop_queue_drainer = _sib_lifecycle._stop_queue_drainer
 _bootstrap_graph_layout_if_empty = _sib_lifecycle._bootstrap_graph_layout_if_empty
+_cancel_lifespan_task = _sib_lifecycle._cancel_lifespan_task
+_migrate_engine_two = _sib_lifecycle._migrate_engine_two
+_dispose_engine_two = _sib_lifecycle._dispose_engine_two
 _forked_boost_write = _sib_routes._forked_boost_write
 _run_landscape_backend = _sib_routes._run_landscape_backend
 admin_route = _sib_routes.admin_route

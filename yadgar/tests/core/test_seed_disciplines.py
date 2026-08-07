@@ -6,11 +6,11 @@ yadgar/core/seed/materials/agent_prompts.yaml, seeded create-if-absent by
 seed_agent_prompts, slug ``agent-discipline-<name>``.
 
 Tests:
-  1. test_disciplines_loaded          — DISCIPLINES loads 5 entries from the yaml
+  1. test_disciplines_loaded          — DISCIPLINES loads 7 entries from the yaml
   2. test_discipline_content_nonempty — every discipline has purpose + multi-line content
-  3. test_seed_creates_disciplines    — fresh store → 5 discipline pages created
-  4. test_seed_disciplines_idempotent — second call creates 0, skips 5
-  5. test_toc_rows_include_disciplines— TOC rows include the 5 discipline slugs
+  3. test_seed_creates_disciplines    — fresh store → 7 discipline pages created
+  4. test_seed_disciplines_idempotent — second call creates 0, skips 7
+  5. test_toc_rows_include_disciplines— TOC rows include the 7 discipline slugs
      (total row count is pinned in test_seed_agent_prompts: 21 as of v5.123.0)
   6. test_contract_covers_subset      — CONTRACT_COVERS ⊆ discipline slugs
   7. test_genesis_discipline_refs_seeded — every [[agent-discipline-*]] ref in any
@@ -34,6 +34,7 @@ _EXPECTED_DISCIPLINE_NAMES = [
     "branch-state",
     "plan-lifecycle",
     "commit-hygiene",
+    "strict-typing",
     "adr-consult",
 ]
 _EXPECTED_DISCIPLINE_SLUGS = [f"agent-discipline-{n}" for n in _EXPECTED_DISCIPLINE_NAMES]
@@ -139,7 +140,7 @@ class TestSeedDisciplines:
         )
 
         result = seed_agent_prompts(storage=storage)
-        assert result["disciplines_created"] == 6, f"expected 6 disciplines created: {result}"
+        assert result["disciplines_created"] == 7, f"expected 7 disciplines created: {result}"
         assert result["disciplines_skipped"] == 0
         assert sorted(result["disciplines"]) == sorted(_EXPECTED_DISCIPLINE_NAMES)
 
@@ -155,7 +156,7 @@ class TestSeedDisciplines:
         seed_agent_prompts(storage=storage)
         r2 = seed_agent_prompts(storage=storage)
         assert r2["disciplines_created"] == 0
-        assert r2["disciplines_skipped"] == 6
+        assert r2["disciplines_skipped"] == 7
 
     def test_toc_rows_include_disciplines(self, storage):
         from yadgar.core.server.tools.agent_prompts import (

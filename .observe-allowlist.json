@@ -104,6 +104,10 @@
       "category": "generated",
       "rationale": "schema migration boilerplate run once per version bump at startup; generated-style DDL steps with no recurring ops signal to surface on a dashboard, matching the 'generated/migration boilerplate' exemption category."
     },
+    "yadgar/_shared/storage/sql/migrations/**": {
+      "category": "generated",
+      "rationale": "engine-#2 (MariaDB) Alembic environment + revision scripts, the exact counterpart of the SurrealDB migrations.py exemption above: alembic loads env.py by PATH with its own EnvironmentContext pushed and calls upgrade()/downgrade() through its own runner, so these are framework-invoked DDL boilerplate rather than a yadgar call path. A glob rather than per-function entries because the spine train (task 0047) adds further revisions to this directory, and per-function entries would go stale on every one. The real ops path IS instrumented: migrate.py's upgrade_to_head carries the boundary span for the whole migration."
+    },
     "yadgar/_shared/observability/log_config.py": {
       "category": "framework-instrumented",
       "rationale": "the ENTIRE logging subsystem is the sink @observe's own span+metric+log writes flow into: an @observe here opens a span per log record \u2192 LogSpanProcessor emits a 'span_end' log line \u2192 that record re-enters the observed log path (filter/format/emit) \u2192 more spans \u2192 per-log amplification flood that crash-looped core+backend under real OTLP (v5.105 \u2192 v5.106). Log-emission functions are un-instrumentable by construction; the thread-local re-entry guard stops infinite recursion but NOT the per-log fan-out. Path-glob so no future @observe on this file can re-open the flood."

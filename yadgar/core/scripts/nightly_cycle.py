@@ -18,7 +18,14 @@ Lifecycle (steps 1-7):
      the gate.
   5. Post-backup snapshot (label="nightly-post") — another logical HTTP export.
      Backend stays up; no second stop needed.
-  6. Prune old snapshots.
+  5b. Cross-engine quiesced backup (engine-#2 car F, ADR-0204 as amended by
+     ADR-0210/0211) — asserts the gate (nesting inside step 1's window), drains
+     the queue to VERIFIED empty, dumps MariaDB, exports Surreal (label
+     "quiesce"), releases only a window it opened itself.  A step of the nightly
+     cycle rather than its own schedule so that only ONE holder ever opens a
+     maintenance window (windows nest by design, so a second scheduled holder
+     could snapshot mid-consolidation-write).
+  6. Prune old snapshots — three pools: nightly-*, quiesce-*, and the MariaDB dumps.
   7. EXIT maintenance mode. Core was never stopped, so only the flag is cleared.
 
 Exit codes:
@@ -28,6 +35,8 @@ Exit codes:
   30 — consolidation failed (non-fatal — continue)
   40 — vacuum failed (non-fatal — continue)
   50 — post-backup failed (non-fatal — continue)
+  55 — cross-engine quiesced backup HARD-FAILED (non-fatal to the cycle — no
+       snapshot pair was written, but consolidation/vacuum/prune still ran)
   60 — prune failed (non-fatal — continue)
   70 — final core restart failed
 
@@ -67,6 +76,7 @@ from yadgar._shared.observability.exception_telemetry import record_exception
 from yadgar._shared.observability.log_config import configure_logging
 from yadgar._shared.storage import StorageEngine
 from yadgar.core.backup import create_snapshot, default_retention, prune_snapshots
+from yadgar.core.backup.quiesce import run_cross_engine_backup
 from yadgar.core.consolidation import run_nightly_consolidation
 from yadgar.core.vacuum import cmd_vacuum_impl
 
@@ -87,8 +97,27 @@ _UNIT_BACKEND = "yadgar-backend"
 _SYSTEMCTL_RETRIES = 3
 _SYSTEMCTL_BACKOFF_SEC = 0.5
 
-# Default URL for the running yadgar core process (port from settings.PORT = 8765).
-_CORE_URL = os.environ.get("YADGAR_CORE_URL", "http://127.0.0.1:8765")
+_CORE_URL_DEFAULT = "http://127.0.0.1:8765"
+
+
+def _core_url() -> str:
+    """URL of the running yadgar core process (port from settings.PORT = 8765).
+
+    READ AT CALL TIME, not at import. This used to be a module constant used as
+    a DEFAULT ARGUMENT on the three functions below — and a default argument is
+    bound once, when ``def`` executes. So ``YADGAR_CORE_URL`` set after this
+    module was first imported had NO effect on the gate calls, which made the
+    test-suite guard that sets it a guard in name only: a test importing
+    nightly_cycle before the fixture ran would still POST to whatever core was
+    listening on 8765 — on a developer host, the LIVE daemon.
+
+    ``quiesce._core_url()` already resolved the same variable per call, so this
+    also makes the two halves of step 5b agree about which core they mean.
+    Production is unaffected either way: the daemon's environment is fixed
+    before the process starts.
+    """
+    return os.environ.get("YADGAR_CORE_URL", _CORE_URL_DEFAULT)
+
 
 # task:0113 — self-heal deadline for the nightly's own maintenance window.
 # Steps 1-7 span backup + consolidation + vacuum + backup + prune, so this is
@@ -108,7 +137,7 @@ _NIGHTLY_MAINTENANCE_TTL_SEC = 21600.0
 
 
 def _maintenance_http(
-    action: str, core_url: str = _CORE_URL, ttl_seconds: float | None = None
+    action: str, core_url: str | None = None, ttl_seconds: float | None = None
 ) -> None:
     """POST /api/control/maintenance/{action} to the running core.
 
@@ -123,8 +152,12 @@ def _maintenance_http(
     Raises on HTTP error or connection failure — caller converts to exit codes.
     Auth token from YADGAR_MCP_AUTH_TOKEN if set (same as MCP clients use).
 
+    ``core_url=None`` resolves ``_core_url()`` per call — see its docstring for
+    why a module-constant default argument made the test guard ineffective.
+
     Patch seam: tests replace this function via patch.multiple(_MODULE, ...).
     """
+    core_url = core_url or _core_url()
     url = f"{core_url}/api/control/maintenance/{action}"
     data = json.dumps({"ttl_seconds": ttl_seconds} if ttl_seconds else {}).encode()
     headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -248,7 +281,7 @@ def _log_start(action: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _step_stop_core(core_url: str = _CORE_URL) -> int:
+def _step_stop_core(core_url: str | None = None) -> int:
     """Step 1: Enter nightly maintenance mode in core. Always returns 0 (best-effort).
 
     v5.72 (#62): Core STAYS UP — we flip an in-process maintenance flag via HTTP
@@ -420,12 +453,88 @@ def _step_post_backup(db_path: Path, snapshot_dir: Path, backend_url: str) -> in
         return 50
 
 
-def _step_prune(snapshot_dir: Path, retention: int) -> int:
-    """Step 6: Prune old snapshots. Returns 0 on success, 60 on failure."""
+def _step_cross_engine_backup(
+    db_path: Path, snapshot_dir: Path, backend_url: str, data_root: Path
+) -> int:
+    """Step 5b: cross-engine quiesced backup. Returns 0, or 55 on hard failure.
+
+    ADR-0204's sequence (gate → verified-empty drain → MariaDB → Surreal →
+    release), run as a step of the nightly cycle per ADR-0210 §2 so that only
+    ONE holder ever opens a maintenance window. It nests inside the step-1
+    window: its enter sees ``previous=True`` and therefore does NOT exit, the
+    same caller-side contract the step-4 vacuum honours.
+
+    HARD FAILURE IS SCOPED TO THE SNAPSHOT, NOT THE CYCLE. ``run_cross_engine_backup``
+    raises rather than degrading — an ungated or unverified snapshot is silently
+    inconsistent (ADR-0210 §3, the 2026-06-16 shape). But the answer to that is
+    "write no snapshot", not "abandon consolidation and prune": this returns 55
+    and the cycle continues, exactly as vacuum's 40 does.
+
+    Deliberately does NOT replace ``_step_post_backup``. That step exports via
+    ``backend_url`` (SurrealDB) while this one's gate lives in CORE, so a core
+    outage that hard-fails here would otherwise newly cost the ``nightly-post``
+    artifact that succeeds today — trading an existing safety net for a new one.
+    The pair also has to stay distinguishable from the unquiesced exports for
+    car G's restore-verification. The third export per night is the honest cost.
+    """
+    _log_start("cross_engine_backup")
+    t0 = time.monotonic()
+    try:
+        result = run_cross_engine_backup(
+            db_path=db_path,
+            snapshot_dir=snapshot_dir,
+            backend_url=backend_url,
+            data_root=data_root,
+        )
+        if result.get("skipped"):
+            # A skip gets its OWN outcome. Logging it as "ok" with an absent
+            # sql_dump would read as a backup that ran and produced nothing —
+            # indistinguishable in the logs from a genuine vacuous pass, which
+            # is the failure class this arm exists to make impossible.
+            _log_step(
+                "cross_engine_backup",
+                "skipped",
+                (time.monotonic() - t0) * 1000,
+                reason=str(result.get("reason")),
+            )
+            return 0
+        _log_step(
+            "cross_engine_backup",
+            "ok",
+            (time.monotonic() - t0) * 1000,
+            sql_dump=str(result.get("sql_dump")),
+        )
+        return 0
+    except Exception as exc:
+        record_exception("nightly_cycle.cross_engine_backup", exc)
+        _log_step("cross_engine_backup", "error", (time.monotonic() - t0) * 1000, error=str(exc))
+        _log.error(
+            "step 5b (cross-engine backup) HARD-FAILED — no quiesced snapshot pair was "
+            "written; the unquiesced nightly-post export is unaffected: %s",
+            exc,
+            extra={
+                "component": "nightly_cycle",
+                "action": "cross_engine_backup",
+                "outcome": "error",
+            },
+        )
+        return 55
+
+
+def _step_prune(snapshot_dir: Path, mariadb_dir: Path, retention: int) -> int:
+    """Step 6: Prune old snapshots. Returns 0 on success, 60 on failure.
+
+    Three pools, each retained independently rather than sharing one glob:
+    the unquiesced ``nightly-pre``/``nightly-post`` exports, the quiesced
+    ``quiesce`` exports (car F), and engine #2's logical dumps. Nothing globbed
+    the last two before — without this they accumulate unbounded.
+    """
     _log_start("prune")
     t0 = time.monotonic()
     try:
         removed = prune_snapshots(snapshot_dir, "surreal_db.nightly-*", retention=retention)
+        removed += prune_snapshots(snapshot_dir, "surreal_db.quiesce-*", retention=retention)
+        removed += prune_snapshots(mariadb_dir, "mariadb.*.sql", retention=retention)
         _log_step("prune", "ok", (time.monotonic() - t0) * 1000, removed=len(removed))
         return 0
     except Exception as exc:
@@ -439,7 +548,7 @@ def _step_prune(snapshot_dir: Path, retention: int) -> int:
         return 60
 
 
-def _step_start_core(core_url: str = _CORE_URL) -> int:
+def _step_start_core(core_url: str | None = None) -> int:
     """Step 7: Exit nightly maintenance mode in core. Always returns 0 (best-effort).
 
     v5.72 (#62): Core was never stopped — flip the maintenance flag back OFF via
@@ -528,7 +637,8 @@ def main(args=None) -> int:  # type: ignore[no-untyped-def]
             lambda: _step_consolidation(db_path, settings),
             lambda: _step_vacuum(db_path, backend_url, service_mode),
             lambda: _step_post_backup(db_path, snapshot_dir, backend_url),
-            lambda: _step_prune(snapshot_dir, retention),
+            lambda: _step_cross_engine_backup(db_path, snapshot_dir, backend_url, db_path.parent),
+            lambda: _step_prune(snapshot_dir, db_path.parent / "backups" / "mariadb", retention),
         ]:
             result = step_fn()
             if result != 0 and first_failure == 0:

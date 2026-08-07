@@ -29,8 +29,11 @@ gate_mode
 
 recall_disposition
     ``"include"``    — pages appear in normal fanout recall (default).
-    ``"exclude"``    — pages excluded from recall fanout; still reachable via
-                        ``wiki_query`` / ``wiki_read`` / ``wiki_list``.
+    ``"exclude"``    — pages dropped from SEARCH results (unified-recall fanout
+                        AND ``wiki_query``, task 0134) unless the caller opted
+                        in by tag — see ``is_recall_visible``. Always reachable
+                        by exact key: ``wiki_read`` / ``wiki_get`` /
+                        ``wiki_list`` never apply the filter.
     ``"downweight"`` — reserved for future tuning (treat as include for now).
 
 dir_scope
@@ -45,9 +48,16 @@ merge
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.wiki.wiki_meta import (
+    PAGE_TYPE_AGENT_DISCIPLINE,
+    PAGE_TYPE_AGENT_INDEX,
+    PAGE_TYPE_AGENT_PATTERN,
+    PAGE_TYPE_AGENT_PROMPT_LEGACY,
+)
 
 
 @dataclass(frozen=True)
@@ -94,14 +104,33 @@ DEFAULT_POLICY = WikiPolicy(
 )
 """Fallback policy for all page types not explicitly listed."""
 
+_AGENT_LIBRARY_POLICY = WikiPolicy(
+    gate_mode="similarity",
+    recall_disposition="exclude",
+    dir_scope="strict",
+    merge="allow",
+    storage_scope="global",
+)
+"""Shared routing for every agent-prompt-library page type.
+
+ADR-0209 splits the TYPE, not the routing: all library pages stay excluded from
+search fanout (they are dispatch scaffolding, not knowledge) and global-scoped
+(ADR-0159 — the library is a cross-project shared resource, and a caller-dir
+stamp made it invisible from every other project). One shared instance so the
+three entries below cannot drift apart silently.
+"""
+
 POLICY_BY_TYPE: dict[str, WikiPolicy] = {
-    "agent_prompt": WikiPolicy(
-        gate_mode="similarity",
-        recall_disposition="exclude",
-        dir_scope="strict",
-        merge="allow",
-        storage_scope="global",
-    ),
+    # Pre-ADR-0209 type. Rows on an install that has not run migration 028 still
+    # carry it, so the entry must stay until that migration is universal.
+    PAGE_TYPE_AGENT_PROMPT_LEGACY: _AGENT_LIBRARY_POLICY,
+    PAGE_TYPE_AGENT_PATTERN: _AGENT_LIBRARY_POLICY,
+    PAGE_TYPE_AGENT_DISCIPLINE: _AGENT_LIBRARY_POLICY,
+    # The TOC index. Registered HERE ONLY (no wiki_page_types.yaml entry) —
+    # task 0134: a null page_type fell through to DEFAULT_POLICY include, which
+    # made the index recall-visible. See PAGE_TYPE_AGENT_INDEX's docstring for
+    # why it gets no lint schema.
+    PAGE_TYPE_AGENT_INDEX: _AGENT_LIBRARY_POLICY,
 }
 """Explicit overrides keyed by page_type string.
 
@@ -128,3 +157,34 @@ def get_policy(page_type: str | None) -> WikiPolicy:
     if page_type is None:
         return DEFAULT_POLICY
     return POLICY_BY_TYPE.get(page_type, DEFAULT_POLICY)
+
+
+@observe(tier="hot")
+def is_recall_visible(page: dict, opt_in_tags: Sequence[str] | None = None) -> bool:
+    """Return whether *page* may appear in SEARCH results.
+
+    The single rule shared by the unified-recall wiki provider and
+    ``wiki_query`` (task 0134 fixed both call sites diverging).
+
+    A page whose ``page_type`` resolves to ``recall_disposition="exclude"``
+    is dropped UNLESS the caller opted into it by tag — i.e. the page carries
+    at least one of *opt_in_tags*. The opt-in is deliberately PER PAGE: the
+    documented ``recall(tags=["agent-prompt"])`` lookup is consent to see
+    agent-prompt pages, not consent to see every excluded page that happens to
+    rank alongside them. (The pre-0134 code gated the whole filter on "were any
+    tags passed at all", so one unrelated tag disabled the exclusion wholesale
+    — and the ``agent-prompt-toc`` index, tagged ``agent-prompt-toc`` rather
+    than ``agent-prompt``, surfaced on every targeted prompt lookup.)
+
+    Args:
+        page: A wiki page dict; reads ``page_type`` and ``tags``.
+        opt_in_tags: Tags the caller explicitly asked for, if any.
+
+    Returns:
+        True when the page may be returned by a search path.
+    """
+    if get_policy(page.get("page_type")).recall_disposition != "exclude":
+        return True
+    if not opt_in_tags:
+        return False
+    return bool(set(page.get("tags") or []) & set(opt_in_tags))

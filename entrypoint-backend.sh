@@ -67,6 +67,54 @@ _UVICORN_LOG_LEVEL="${_LOG_LEVEL}"
 # Data root for the surrealkv store (bind-mounted; /data in production).
 SURREAL_DATA_ROOT="${SURREAL_DATA_ROOT:-/data}"
 
+# --- engine #2 (MariaDB, ADR-0195) -----------------------------------------
+# Datadir is a SIBLING SUBDIRECTORY of the shared data root, never inside the
+# surrealkv tree. Rationale, in order of what it buys:
+#   * the root is a host bind-mount shared by the backend and core containers
+#     (`~/.local/share/yadgar -> /data`), so it is writable in production and
+#     reachable by host-side systemd units — no new volume, no new mount, no
+#     unit-renderer change (task 0122's 4-5 divergent renderers stay untouched);
+#   * a SEPARATE subdir keeps it out of everything the vacuum touches. Verified:
+#     the vacuum operates exclusively on `surreal_db`-prefixed paths under the
+#     root — `_dir_bytes(db_path)` / `copytree(db_path)` where `db_path =
+#     yadgar_home/"surreal_db"` (core/vacuum/phases.py:265, core/vacuum/
+#     __init__.py:1218,1940,2032) and every reap glob is `surreal_db.*` or
+#     `vacuum_export_*`. A copytree of a live InnoDB datadir would be
+#     corruption; ADR-0196 keeps engine #2 out of the vacuum pipeline entirely.
+MARIADB_DATA_DIR="${MARIADB_DATA_DIR:-${SURREAL_DATA_ROOT}/mariadb}"
+# Socket-only: NO listener on any port, not even loopback. Core never talks to
+# engine #2 directly (ADR-0195/ADR-0200 — it forwards to backend admin ops), so
+# a TCP listener would be attack surface with no consumer. asyncmy supports
+# `unix_socket` transport and `read_default_file` (asyncmy/connection.pyx:390,
+# :818), so the client side needs no env plumbing at all.
+MARIADB_SOCKET="${MARIADB_DATA_DIR}/mysqld.sock"
+MARIADB_CLIENT_CNF="${MARIADB_DATA_DIR}/client.cnf"
+MARIADB_DB="${MARIADB_DB:-yadgar}"
+# Two accounts, deliberately:
+#   * ADMIN — created by mariadb-install-db as the socket-auth root equivalent,
+#     named after the OS user (`--auth-root-socket-user` defaults to `--user`).
+#     Used ONLY by this script, needs no password, and cannot be used by the
+#     app: asyncmy implements mysql_native_password / ed25519 / caching_sha2
+#     but NOT the unix_socket auth plugin (asyncmy/auth.py).
+#   * APP — password auth, privileges scoped to the engine-#2 database alone.
+#     This is what car C connects with.
+MARIADB_ADMIN_USER="$(id -un 2>/dev/null || echo yadgar)"
+MARIADB_APP_USER="${MARIADB_APP_USER:-yadgar_app}"
+
+# EXPORTED, and the "no env plumbing at all" note above is why this is easy to
+# get wrong (engine-#2 car F). The Python side does need to FIND the option file
+# before asyncmy can read the password out of it, and its resolution ladder
+# (`_shared/storage/sql/config.py::default_option_file_path`) reads exactly these
+# names. Without an export they are shell locals: the ladder falls through to
+# `_paths.DB_PATH.parent/mariadb/client.cnf`, and this container sets neither
+# `YADGAR_DATA_DIR` nor `YADGAR_DB_PATH` (unlike the CORE container, which gets
+# `-e YADGAR_DATA_DIR=/data`), so `DB_PATH` resolves under `$HOME` —
+# `/home/yadgar/.local/share/yadgar/surreal_db` — and the lookup misses
+# `/data/mariadb/client.cnf` entirely. Cars C (connect), D (boot migration) and
+# F (dump) all resolve through that one ladder, so exporting it is what makes
+# engine #2 addressable from Python at all.
+export SURREAL_DATA_ROOT MARIADB_DATA_DIR MARIADB_CLIENT_CNF MARIADB_DB
+
 # --- safe-stop begin (P0 #37 Option B: writers-first ordered stop) ---------
 # SurrealKV never flushes the store on close upstream: surrealkv's
 # `impl Drop for Tree` skips the async close when the tokio runtime is already
@@ -96,21 +144,39 @@ _write_torn_stop_marker() {
     echo "SURREAL_UNCLEAN_STOP: reason=$1 exit_status=$2 (marker: ${TORN_STOP_MARKER})" >&2
 }
 
+_writer_alive() {
+    # True while ANY still-set writer pid is running.
+    local _p
+    for _p in "${EMBED_PID:-}" "${MARIADB_PID:-}"; do
+        [ -n "${_p}" ] && kill -0 "${_p}" 2>/dev/null && return 0
+    done
+    return 1
+}
+
 _stop_writers() {
     # Writers stop FIRST. Bounded wait so a hung uvicorn cannot eat the stop
     # budget surreal needs for its own shutdown.
-    kill "${EMBED_PID:-}" "${WIKI_BACKUP_PID:-}" "${INODE_GUARD_PID:-}" 2>/dev/null || true
+    #
+    # mysqld (engine #2) is a writer too, and its SIGTERM path is a clean InnoDB
+    # shutdown, so it is stopped here alongside uvicorn. The two are waited on
+    # CONCURRENTLY inside the SAME 5s window the embed wait always had — the
+    # total stop budget (5s writers + SURREAL_STOP_DEADLINE) is unchanged, which
+    # is what keeps us inside podman's --stop-timeout 30. A SIGKILLed mysqld is
+    # recoverable from the InnoDB redo log on next start; a SIGKILLed surrealkv
+    # store is NOT (ADR-0090), which is why surreal's budget is the protected one.
+    kill "${EMBED_PID:-}" "${MARIADB_PID:-}" "${WIKI_BACKUP_PID:-}" "${INODE_GUARD_PID:-}" 2>/dev/null || true
     local _ticks=25  # 5s @ 0.2s
-    while [ -n "${EMBED_PID:-}" ] && kill -0 "${EMBED_PID}" 2>/dev/null; do
+    while _writer_alive; do
         if [ "${_ticks}" -le 0 ]; then
-            echo "entrypoint: embed service did not exit within 5s — SIGKILL (preserving surreal's stop budget)" >&2
-            kill -9 "${EMBED_PID}" 2>/dev/null || true
+            echo "entrypoint: writers did not exit within 5s — SIGKILL (preserving surreal's stop budget)" >&2
+            kill -9 "${EMBED_PID:-}" "${MARIADB_PID:-}" 2>/dev/null || true
             break
         fi
         sleep 0.2
         _ticks=$(( _ticks - 1 ))
     done
     wait "${EMBED_PID:-}" 2>/dev/null || true
+    wait "${MARIADB_PID:-}" 2>/dev/null || true
 }
 
 _stop_surreal_and_wait() {
@@ -281,6 +347,158 @@ if [[ -n "${YADGAR_RW_USER:-}" && -n "${YADGAR_RW_PASS:-}" && -n "${YADGAR_RO_US
 else
     echo "WARNING: YADGAR_RW_USER/PASS or YADGAR_RO_USER/PASS not set — skipping user bootstrap (legacy ROOT-only mode)" >&2
 fi
+
+# --- engine #2: MariaDB (ADR-0195) ------------------------------------------
+# Started HERE — after surreal is healthy, before the embed service — on purpose:
+#   * after surreal's health/auto-restore loop so nothing new can perturb the
+#     most load-bearing logic in this file (safe-start recovery);
+#   * before the embed service so mysqld is up by the time the container reports
+#     healthy, without being ON the health path.
+# It is deliberately NOT in the closing `wait -n` and NOT in the container
+# HEALTHCHECK: a mysqld failure must not kill the container or flip it unhealthy
+# while surreal + embed serve. Nothing reads engine #2 yet (the `config` table
+# lands in car D; the read path is repointed by the knob train), so every
+# failure below is a WARNING, never fatal.
+_start_mariadb() {
+    _MARIADB_INSTALL_LOG="${YADGAR_LOG_DIR}/mariadb-install-db.log"
+    mkdir -p "${MARIADB_DATA_DIR}" || return 1
+    chmod 0700 "${MARIADB_DATA_DIR}" 2>/dev/null || true
+    if [ ! -d "${MARIADB_DATA_DIR}/mysql" ]; then
+        echo "entrypoint: initialising MariaDB datadir at ${MARIADB_DATA_DIR}" >&2
+        # The chown warnings this emits for /usr/lib/mysql/plugin/auth_pam_tool_dir
+        # under a read-only rootfs are expected and non-fatal (PAM auth unused).
+        #
+        # DO NOT change this redirect to `>/dev/null`. Observed on 11.8.6-deb13u1:
+        # run from THIS script, install-db with stdout on /dev/null fails its
+        # internal `mariadbd --bootstrap` with `ERROR: 1290 ... --skip-grant-tables`
+        # (2/2 runs), while the identical invocation with stdout on a file or on
+        # the container's stdout succeeds (2/2). The same command with /dev/null
+        # in a bare shell OUTSIDE this script succeeds, so it is not the redirect
+        # alone. Mechanism not identified; a log file both avoids it and leaves
+        # the install transcript on disk, which /dev/null never would.
+        if ! mariadb-install-db \
+            --user="${MARIADB_ADMIN_USER}" \
+            --datadir="${MARIADB_DATA_DIR}" \
+            --skip-test-db \
+            --auth-root-authentication-method=socket \
+            >>"${_MARIADB_INSTALL_LOG}" 2>&1; then
+            echo "ERROR: mariadb-install-db failed — transcript: ${_MARIADB_INSTALL_LOG}" >&2
+            tail -20 "${_MARIADB_INSTALL_LOG}" >&2 2>/dev/null || true
+            return 1
+        fi
+    fi
+    # --skip-networking: socket only, no listener on any port (not even
+    # loopback). Explicit --socket/--pid-file/--log-error keep every writable
+    # path inside volumes that exist in BOTH dev and prod, so `read_only: true`
+    # on the container rootfs stays intact.
+    # --user is REQUIRED, not cosmetic: production runs this container as root
+    # (`--user root` in scripts/install/launchd/*.plist.in and the systemd unit —
+    # the image's `USER yadgar` is overridden there), and mariadbd HARD-REFUSES
+    # to start as root unless --user=root is passed explicitly. When the process
+    # is unprivileged the flag is a no-op warning. Verified against a host
+    # bind-mount running as root, which is the production shape.
+    mariadbd \
+        --user="${MARIADB_ADMIN_USER}" \
+        --datadir="${MARIADB_DATA_DIR}" \
+        --socket="${MARIADB_SOCKET}" \
+        --pid-file="${MARIADB_DATA_DIR}/mysqld.pid" \
+        --log-error="${YADGAR_LOG_DIR}/mariadb-error.log" \
+        --tmpdir=/tmp \
+        --skip-networking \
+        --skip-name-resolve &
+    MARIADB_PID=$!
+}
+
+_mariadb_ready() {
+    # PING ONLY — never a write. A writing probe would break the zero-rows
+    # property the knob train's re-key window (task 0095) depends on.
+    mariadb-admin --socket="${MARIADB_SOCKET}" --protocol=socket \
+        --user="${MARIADB_ADMIN_USER}" ping >/dev/null 2>&1
+}
+
+_bootstrap_mariadb_accounts() {
+    # Idempotent, runs on EVERY start — same shape as the surreal
+    # `DEFINE USER IF NOT EXISTS` block above. Creates the engine-#2 DATABASE
+    # (empty: no tables, no rows — car D owns the schema, and the knob train
+    # owns the first row) and the password-auth app account car C connects with.
+    #
+    # An existing password is REUSED from the option file so a restart does not
+    # rotate credentials underneath a running client; ALTER USER then forces the
+    # server to agree with the file, so a hand-edited or half-written file
+    # self-heals rather than locking the app out.
+    local _pass=""
+    if [ -r "${MARIADB_CLIENT_CNF}" ]; then
+        _pass="$(awk -F'[ \t]*=[ \t]*' '/^password/ {print $2; exit}' "${MARIADB_CLIENT_CNF}")"
+    fi
+    if [ -z "${_pass}" ]; then
+        _pass="$(python3 -c 'import secrets; print(secrets.token_hex(24))')" || return 1
+    fi
+    # The SECOND grant is engine-#2 car G's. Its restore verification replays a
+    # dump into a throwaway schema named `<db>_restorecheck_<hex>`, and the app
+    # account's own grant is scoped to `${MARIADB_DB}` alone — it could not
+    # CREATE or DROP that schema. The pattern escapes `_` (a LIKE wildcard in a
+    # grant's db position) so the match is literal, and it is deliberately the
+    # NARROWEST thing that works: a bug in the scratch-name construction cannot
+    # reach any other schema, because the server refuses the statement rather
+    # than trusting the name.
+    #
+    # SQL (and therefore the password) goes in on STDIN, never on a command
+    # line — it must not land in /proc/<pid>/cmdline, same rule as the surreal
+    # bootstrap above. Escape any literal single-quote by doubling it.
+    local _pass_esc="${_pass//\'/\'\'}"
+    mariadb --socket="${MARIADB_SOCKET}" --protocol=socket \
+        --user="${MARIADB_ADMIN_USER}" <<SQLEOF || return 1
+CREATE DATABASE IF NOT EXISTS \`${MARIADB_DB}\`;
+CREATE USER IF NOT EXISTS '${MARIADB_APP_USER}'@'localhost' IDENTIFIED BY '${_pass_esc}';
+ALTER USER '${MARIADB_APP_USER}'@'localhost' IDENTIFIED BY '${_pass_esc}';
+GRANT ALL PRIVILEGES ON \`${MARIADB_DB}\`.* TO '${MARIADB_APP_USER}'@'localhost';
+GRANT ALL PRIVILEGES ON \`${MARIADB_DB}\\_restorecheck\\_%\`.* TO '${MARIADB_APP_USER}'@'localhost';
+SQLEOF
+    # Client credentials as a MySQL option file: asyncmy reads user/password/
+    # socket/database straight out of it via read_default_file
+    # (asyncmy/connection.pyx:375-390), so car C needs no env var — no new
+    # secret reaches the compose env block, /etc/yadgar/secrets.env or any of
+    # task 0122's unit renderers.
+    ( umask 077 && cat > "${MARIADB_CLIENT_CNF}" <<CNFEOF
+[client]
+socket = ${MARIADB_SOCKET}
+user = ${MARIADB_APP_USER}
+password = ${_pass}
+database = ${MARIADB_DB}
+CNFEOF
+    ) || return 1
+    echo "entrypoint: MariaDB bootstrap complete (db=${MARIADB_DB}, app user=${MARIADB_APP_USER}, creds: ${MARIADB_CLIENT_CNF})" >&2
+}
+
+set +e
+_start_mariadb
+_mariadb_start_status=$?
+if [ "${_mariadb_start_status}" -eq 0 ]; then
+    _ticks=150  # 30s @ 0.2s
+    until _mariadb_ready; do
+        if ! kill -0 "${MARIADB_PID}" 2>/dev/null; then
+            echo "WARNING: mariadbd exited before becoming ready — engine #2 unavailable (see ${YADGAR_LOG_DIR}/mariadb-error.log)" >&2
+            MARIADB_PID=""
+            break
+        fi
+        if [ "${_ticks}" -le 0 ]; then
+            echo "WARNING: mariadbd not ready after 30s — continuing without engine #2" >&2
+            break
+        fi
+        sleep 0.2
+        _ticks=$(( _ticks - 1 ))
+    done
+    if [ -n "${MARIADB_PID}" ] && _mariadb_ready; then
+        echo "entrypoint: MariaDB ready (socket ${MARIADB_SOCKET})" >&2
+        _bootstrap_mariadb_accounts || \
+            echo "WARNING: MariaDB account bootstrap failed — engine #2 present but unusable by the app" >&2
+    fi
+else
+    echo "WARNING: MariaDB start/bootstrap failed — continuing without engine #2" >&2
+    MARIADB_PID=""
+fi
+set -e
+# --- engine #2 end ----------------------------------------------------------
 
 # Start embedding service
 python3 -m uvicorn yadgar.backend.embed_service:app \

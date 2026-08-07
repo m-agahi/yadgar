@@ -7,7 +7,8 @@ Coverage targets:
 - _step_pre_backup: success returns 0, failure returns 20; passes backend_url
 - _step_vacuum: success/failure returns 0/40; backend start is a safety no-op
 - _step_post_backup: failure returns 50, success returns 0; passes backend_url; NO stop
-- _step_prune: success returns 0, failure returns 60
+- _step_prune: success returns 0, failure returns 60; prunes all THREE artifact
+  pools since engine-#2 car F (nightly-*, quiesce-*, and the MariaDB dumps)
 - _step_start_core: success returns 0, failure returns 70; starts ONLY core
 """
 
@@ -296,29 +297,33 @@ def test_step_post_backup_snapshot_fails_returns_50(tmp_path):
 
 def test_step_prune_success(tmp_path):
     snapshot_dir = tmp_path / "snapshots"
+    mariadb_dir = tmp_path / "backups" / "mariadb"
     with patch("yadgar.core.scripts.nightly_cycle.prune_snapshots", return_value=[]) as mock_prune:
-        result = nc._step_prune(snapshot_dir, retention=3)
+        result = nc._step_prune(snapshot_dir, mariadb_dir, retention=3)
     assert result == 0
-    mock_prune.assert_called_once()
+    # Three pools since engine-#2 car F: nightly-*, quiesce-*, and the SQL dumps.
+    assert mock_prune.call_count == 3
 
 
 def test_step_prune_failure_returns_60(tmp_path):
     snapshot_dir = tmp_path / "snapshots"
+    mariadb_dir = tmp_path / "backups" / "mariadb"
     with patch("yadgar.core.scripts.nightly_cycle.prune_snapshots", side_effect=OSError("fail")):
         with patch("yadgar.core.scripts.nightly_cycle.record_exception"):
-            result = nc._step_prune(snapshot_dir, retention=3)
+            result = nc._step_prune(snapshot_dir, mariadb_dir, retention=3)
     assert result == 60
 
 
 def test_step_prune_passes_retention(tmp_path):
     snapshot_dir = tmp_path / "snapshots"
+    mariadb_dir = tmp_path / "backups" / "mariadb"
     captured = []
     with patch(
         "yadgar.core.scripts.nightly_cycle.prune_snapshots",
         side_effect=lambda *a, **kw: captured.append(kw) or [],
     ):
-        nc._step_prune(snapshot_dir, retention=7)
-    assert captured[0]["retention"] == 7
+        nc._step_prune(snapshot_dir, mariadb_dir, retention=7)
+    assert all(c["retention"] == 7 for c in captured)
 
 
 # R3 Car 1: _make_embedding_engine deleted — backend's _get_engine() always uses

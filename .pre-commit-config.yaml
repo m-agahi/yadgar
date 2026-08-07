@@ -341,6 +341,17 @@ repos:
         types: [python]
         exclude: "^benchmarks/"
 
+      - id: type-ratchet
+        name: Strict-typing ratchet (touched files may not gain type errors)
+        language: system
+        entry: python scripts/check_type_ratchet.py
+        pass_filenames: false
+        # always_run + cumulative BRANCH diff, for the same reason as
+        # check-test-weakening/check-backend-bump: a CI checkout has an empty
+        # index, so a `files:`-filtered hook would skip on exactly the commits
+        # where an EARLIER commit on the branch introduced the type error.
+        always_run: true
+
   - repo: local
     hooks:
       - id: verify-version-bump-local

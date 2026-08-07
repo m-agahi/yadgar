@@ -41,6 +41,14 @@ from yadgar._shared.wiki.store import WikiStore
 
 # Global instances — initialized in main()
 _storage: StorageEngine | None = None
+# Engine #2 (MariaDB, ADR-0195) — the SECOND concrete storage class, built by
+# lifecycle._init_sql_storage. `Any` for the same reason as the slots below: the
+# annotation must not drag `yadgar._shared.storage.sql` (and through it
+# `sqlalchemy`, an OPTIONAL extra) into this leaf module's import graph.
+# Stays None on core by design (ADR-0078/ADR-0200: core opens no database) and
+# on any backend where MariaDB failed to come up — entrypoint-backend.sh treats
+# that as a WARNING, not a fatal, so this slot's absence must not be fatal either.
+_sql_storage: Any = None
 _embeddings: EmbeddingEngine | None = None
 _buffer: ActionLogger | None = None
 _consolidation: Any = None  # backend: ConsolidationScheduler (None core-side)

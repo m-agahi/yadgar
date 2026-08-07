@@ -680,6 +680,13 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
 
     A nested enter NEVER shortens the outer window — the deadline is widened to
     the later of the two (and stays None if either side asked for no expiry).
+
+    Returns ``deadline_seconds`` (task:0113 follow-up, car E) — seconds until the
+    EFFECTIVE deadline after nesting is resolved, or ``None`` when the window has
+    no expiry.  Purely informational: a caller (e.g. a backup arm asserting this
+    gate per ADR-0204) can use it to verify it actually has a self-heal belt
+    before doing something destructive.  This field never changes gate behavior —
+    it just reports the ``_maintenance_deadline`` this call already computed.
     """
     import yadgar._shared.runtime.state as _st  # noqa: PLC0415 — late import, write live attr
 
@@ -694,6 +701,7 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
         _st._maintenance_entered_at = time.monotonic()
     _st._maintenance_mode = True
     _st._maintenance_deadline = deadline
+    deadline_seconds = (deadline - time.monotonic()) if deadline is not None else None
     logger.info(
         "maintenance mode entered",
         extra={
@@ -704,7 +712,14 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
             "ttl_seconds": ttl,
         },
     )
-    return JSONResponse({"status": "maintenance", "maintenance_mode": True, "previous": previous})
+    return JSONResponse(
+        {
+            "status": "maintenance",
+            "maintenance_mode": True,
+            "previous": previous,
+            "deadline_seconds": deadline_seconds,
+        }
+    )
 
 
 @observe(tier="boundary")

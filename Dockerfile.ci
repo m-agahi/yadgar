@@ -3,7 +3,7 @@
 # Purpose: used by .forgejo/workflows/{ci.yaml,release.yaml} container jobs
 #          so CI runners can pull from dockerhub (PD-42 carve-out).
 # Contains: system deps (make, git, curl, ca-certificates, build-essential)
-#           + pre-installed yadgar test + ml extras to speed CI start
+#           + pre-installed yadgar test + ml + sql extras to speed CI start
 #           + SurrealDB v3.1.5 baked in (saves 15-30s CI per run, v5.46.9)
 #           + HuggingFace all-MiniLM-L6-v2 baked in (saves 30-60s, v5.46.9)
 #           + bsdmainutils for `column` binary (fixes F5 make help failure, v5.46.9)
@@ -105,7 +105,7 @@ WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
 COPY uv.lock /app/uv.lock
 
-# Install the FULL [test,ml] extras (deps only — the package itself is installed
+# Install the FULL [test,ml,sql] extras (deps only — the package itself is installed
 # per-run) FROM uv.lock, not from pyproject's open constraints. LOCK PARITY IS
 # LOAD-BEARING: an unpinned resolve here pulled starlette>1.0.0 whose testclient
 # deprecates plain httpx — invisible while warnings were tolerated, fatal under
@@ -113,7 +113,7 @@ COPY uv.lock /app/uv.lock
 # the exact versions the repo locks. Legs install only the package itself
 # (`uv pip install --system --no-deps -e .`) so nothing re-resolves at run time.
 RUN pip install --no-cache-dir uv && \
-    uv export --frozen --no-emit-project --extra test --extra ml \
+    uv export --frozen --no-emit-project --extra test --extra ml --extra sql \
         -o /tmp/requirements-lock.txt && \
     uv pip install --system --no-cache -r /tmp/requirements-lock.txt && \
     rm -f /tmp/requirements-lock.txt && \
