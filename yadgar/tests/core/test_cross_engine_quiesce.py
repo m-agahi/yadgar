@@ -37,6 +37,13 @@ import pytest
 
 from yadgar.core.backup import quiesce
 
+# Captured at IMPORT time, before the autouse fixture below replaces the
+# attribute. The detection tests at the bottom of this file need the genuine
+# implementation back; ``wraps=quiesce._engine_two_state`` cannot give it to
+# them, because by the time a test body runs that name already resolves to the
+# fixture's stand-in and the "real" detector would quietly be the fake one.
+_REAL_ENGINE_TWO_STATE = quiesce._engine_two_state
+
 
 def _dump_result(filename: str = "mariadb.yadgar.nightly-quiesce-20260806T210000Z.sql") -> dict:
     return {"ok": True, "filename": filename, "bytes": 42, "database": "yadgar"}
@@ -71,6 +78,35 @@ class _Recorder:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+
+
+@pytest.fixture(autouse=True)
+def _engine_two_present_by_default():
+    """Every pre-existing case in this file is about an engine that IS there.
+
+    The driver now asks the backend whether engine #2 exists BEFORE it asserts
+    the gate, so without this each of the fakes below would have to answer one
+    more op. Pinning the detector to PRESENT keeps those cases testing what they
+    were written to test — the gate, the drain, the artifact — while the
+    detection tests at the bottom of this file patch it back out and drive the
+    real ``_engine_two_state`` through ``_forward_admin``.
+
+    Deliberately NOT the default the production code takes when it cannot tell:
+    that is a hard failure, and it has its own tests.
+    """
+    # A stand-in already in place would mean this fixture is nesting over
+    # another patch rather than over the real function — the shape that made
+    # ``wraps=quiesce._engine_two_state`` silently wrap the FAKE and turned four
+    # detection tests green against a detector that never ran. Assert the thing
+    # being replaced is the genuine article so that bug cannot return silently.
+    assert quiesce._engine_two_state is _REAL_ENGINE_TWO_STATE, (
+        "the detector was already patched before this fixture ran — a nested "
+        "stand-in makes every test in this file assert against a fake detector"
+    )
+    with patch.object(
+        quiesce, "_engine_two_state", return_value=(quiesce.ENGINE_PRESENT, "test-default")
+    ):
+        yield
 
 
 @pytest.fixture
@@ -600,3 +636,279 @@ def test_verify_dump_streams_rather_than_slurping_the_artifact(tmp_path, monkeyp
     # The marker is line 1 of 5,001. Anything that walks the whole artifact —
     # or accumulates it — shows up here as a number in the thousands.
     assert consumed[0] == 1
+
+
+# ---------------------------------------------------------------------------
+# Engine #2 ABSENT -> clean SKIP; "cannot tell" -> hard fail
+#
+# The nightly runs host-side and cannot see engine #2 for itself, so step 5b
+# asks the backend. Getting the QUESTION right matters more than getting the
+# answer right, because the two wrong answers fail in OPPOSITE directions:
+#
+#   * calling a PRESENT engine absent silently disables the backup — the arm
+#     stops running and every log line still reads green. That is the
+#     vacuous-pass class this train exists to close.
+#   * calling an ABSENT engine present hard-fails step 5b on every host that has
+#     not deployed the new backend image, which is the defect being fixed.
+#
+# So absence is only ever concluded from a POSITIVE answer by a REACHABLE
+# backend. Anything that merely fails to answer — a connect error, a 5xx, a
+# malformed body — is "cannot tell", and cannot-tell fails CLOSED.
+# ---------------------------------------------------------------------------
+
+
+def _http_error(status_code: int, body: str) -> Exception:
+    """An ``httpx.HTTPStatusError`` shaped exactly as ``_forward_admin`` raises it.
+
+    ``_forward_admin`` calls ``resp.raise_for_status()``, so its caller sees a
+    real ``HTTPStatusError`` carrying the response. Building the genuine article
+    rather than a stand-in keeps these tests honest about the ``.response``
+    attribute the detector reads.
+    """
+    import httpx
+
+    request = httpx.Request("POST", "http://127.0.0.1:8001/admin")
+    response = httpx.Response(status_code, text=body, request=request)
+    return httpx.HTTPStatusError(f"HTTP {status_code}", request=request, response=response)
+
+
+def _detect_only(forward):
+    """Patch the driver so ONLY detection can run: the gate raises if reached.
+
+    The ordering is the contract, not an implementation detail — an absent
+    engine must never cause a maintenance window, and the window IS a full MCP
+    outage (ADR-0210). Making ``_maintenance_enter`` explode is what turns
+    "detect first, gate second" from a comment into an assertion.
+    """
+    return (
+        patch.object(quiesce, "_engine_two_state", _REAL_ENGINE_TWO_STATE),
+        patch.object(quiesce, "_forward_admin", side_effect=forward),
+        patch.object(
+            quiesce,
+            "_maintenance_enter",
+            side_effect=AssertionError("the gate was asserted despite an unresolved engine"),
+        ),
+        patch.object(
+            quiesce,
+            "create_snapshot",
+            side_effect=AssertionError("a snapshot was taken despite an unresolved engine"),
+        ),
+    )
+
+
+def _status_only(present):
+    """A ``_forward_admin`` fake that answers the status op and nothing else."""
+
+    def _forward(op, payload, timeout_s=30.0):
+        assert op == "sql_engine_status", f"unexpected op before detection resolved: {op}"
+        return {"present": present, "engine": "mariadb"}
+
+    return _forward
+
+
+def test_engine_absent_skips_and_never_asserts_the_gate(tmp_path):
+    """The backend says there is no engine #2 -> skip cleanly, open NO window.
+
+    There is nothing to quiesce, so there is nothing to fail about. The gate
+    stub raises if touched: an absent engine must not cost an MCP outage.
+    """
+    detect, forward, gate, snap = _detect_only(_status_only(False))
+    with detect, forward, gate, snap:
+        result = _run(tmp_path)
+
+    assert result["skipped"] is True
+    assert result["ok"] is True
+    assert result["reason"] == quiesce.REASON_ENGINE_TWO_ABSENT
+    # A skip is not a backup that produced nothing: it carries no artifact keys
+    # at all, so a caller cannot log it as a dump-less success.
+    assert "sql_dump" not in result
+    assert "surreal_snapshot" not in result
+
+
+def test_old_backend_image_that_does_not_know_the_op_is_absence(tmp_path):
+    """A 400 ``unknown admin op`` from a REACHABLE backend proves engine #2 is absent.
+
+    The image that registers ``sql_engine_status`` is the same image that bakes
+    mariadb-server (ADR-0212), so a backend that does not know the op cannot be
+    running engine #2. This is the skew that hard-failed the nightly on every
+    host without the new backend image — and it is a POSITIVE answer, not
+    silence: an unreachable backend cannot return 400.
+    """
+
+    def _forward(op, payload, timeout_s=30.0):
+        raise _http_error(400, "\"unknown admin op: 'sql_engine_status'\"")
+
+    detect, forward, gate, snap = _detect_only(_forward)
+    with detect, forward, gate, snap:
+        result = _run(tmp_path)
+
+    assert result["skipped"] is True
+    assert result["reason"] == quiesce.REASON_BACKEND_PREDATES_ENGINE_TWO
+
+
+# -- the discriminator: "cannot tell" is NOT absence -------------------------
+
+
+def test_unreachable_backend_is_not_absence(tmp_path):
+    """THE mutation guard. A detector that answered "absent" here would silently
+    disable the backup on every host whose backend is merely down or slow.
+
+    An engine that is present-but-unreachable is indistinguishable from an
+    absent one ONLY if silence counts as an answer. Here it does not: no answer
+    is a hard failure, and no snapshot is taken either way.
+    """
+    import httpx
+
+    def _forward(op, payload, timeout_s=30.0):
+        raise httpx.ConnectError("[Errno 111] Connection refused")
+
+    detect, forward, gate, snap = _detect_only(_forward)
+    with detect, forward, gate, snap, pytest.raises(RuntimeError, match="could not determine"):
+        _run(tmp_path)
+
+
+def test_backend_error_response_is_not_absence(tmp_path):
+    """A 500 means the backend broke while answering, not that the engine is gone.
+
+    Distinct from the 400 case ON PURPOSE. Without this, the unknown-op branch
+    could be widened to catch every ``HTTPStatusError`` and nothing would
+    notice — turning any backend fault into a silently skipped backup.
+    """
+
+    def _forward(op, payload, timeout_s=30.0):
+        raise _http_error(500, "internal server error")
+
+    detect, forward, gate, snap = _detect_only(_forward)
+    with detect, forward, gate, snap, pytest.raises(RuntimeError, match="could not determine"):
+        _run(tmp_path)
+
+
+def test_a_400_that_is_not_about_an_unknown_op_is_not_absence(tmp_path):
+    """400 alone is not the signal — the ``unknown admin op`` detail is.
+
+    A validation rejection is the backend refusing THIS request, not reporting
+    on engine #2. Reading any 400 as absence would make a malformed payload look
+    like a missing engine.
+    """
+
+    def _forward(op, payload, timeout_s=30.0):
+        raise _http_error(400, '{"detail":"payload failed validation"}')
+
+    detect, forward, gate, snap = _detect_only(_forward)
+    with detect, forward, gate, snap, pytest.raises(RuntimeError, match="could not determine"):
+        _run(tmp_path)
+
+
+def test_a_malformed_status_body_is_not_absence(tmp_path):
+    """A response missing ``present`` answered nothing. Absence must be EXPLICIT.
+
+    Guards the ``present is False`` shape: a falsy default would read an empty
+    body as "absent", inferring a state-changing conclusion from a key that is
+    not there — the 2026-06-16 shape.
+    """
+
+    def _forward(op, payload, timeout_s=30.0):
+        return {"engine": "mariadb"}
+
+    detect, forward, gate, snap = _detect_only(_forward)
+    with detect, forward, gate, snap, pytest.raises(RuntimeError, match="could not determine"):
+        _run(tmp_path)
+
+
+def test_no_backend_url_configured_is_not_absence(tmp_path):
+    """``_forward_admin`` raises when YADGAR_EMBED_URL is unset — a
+    misconfiguration, not a verdict about engine #2."""
+
+    def _forward(op, payload, timeout_s=30.0):
+        raise RuntimeError("YADGAR_EMBED_URL is not set")
+
+    detect, forward, gate, snap = _detect_only(_forward)
+    with detect, forward, gate, snap, pytest.raises(RuntimeError, match="could not determine"):
+        _run(tmp_path)
+
+
+# -- present: none of the three hard failures changes ------------------------
+
+
+def test_detection_precedes_the_gate_on_the_happy_path(tmp_path):
+    """Order, asserted as an order: ask FIRST, gate SECOND.
+
+    Detection must not need a window — a window is a full MCP outage, so opening
+    one only to discover there was nothing to back up is the cost this fix
+    exists to avoid.
+    """
+    rec = _Recorder()
+    filename = "mariadb.yadgar.q-present.sql"
+
+    def _forward(op, payload, timeout_s=30.0):
+        rec.calls.append(f"forward:{op}")
+        if op == "sql_engine_status":
+            return {"present": True, "engine": "mariadb"}
+        if op == "drain_now":
+            return {"drained": True, "items_processed": 0}
+        if op == "mariadb_restore_verify":
+            return _verify_ok(filename)
+        _plant_dump(tmp_path, filename)
+        return _dump_result(filename)
+
+    def _enter(ttl):
+        rec.calls.append("enter")
+        return {"previous": True, "deadline_seconds": 900.0}
+
+    def _snapshot(db_path, snapshot_dir, label, backend_url):
+        rec.calls.append(f"surreal:{label}")
+        return Path("/x.surql")
+
+    with (
+        patch.object(quiesce, "_engine_two_state", _REAL_ENGINE_TWO_STATE),
+        patch.object(quiesce, "_forward_admin", side_effect=_forward),
+        patch.object(quiesce, "_maintenance_enter", side_effect=_enter),
+        patch.object(quiesce, "create_snapshot", side_effect=_snapshot),
+    ):
+        result = _run(tmp_path)
+
+    assert rec.calls == [
+        "forward:sql_engine_status",
+        "enter",
+        "forward:drain_now",
+        "forward:mariadb_dump",
+        "forward:mariadb_restore_verify",
+        "surreal:quiesce",
+    ]
+    assert result["ok"] is True
+    assert result.get("skipped", False) is False
+
+
+def test_present_engine_still_hard_fails_on_an_unobtainable_gate(tmp_path):
+    """ADR-0210 §3 is untouched by the skip path: a real engine + no gate = raise.
+
+    The skip must be reachable ONLY through absence. If a present engine could
+    reach it, this fix would have weakened the three hard failures rather than
+    scoping them.
+    """
+    with (
+        patch.object(
+            quiesce, "_engine_two_state", return_value=(quiesce.ENGINE_PRESENT, "present")
+        ),
+        patch.object(quiesce, "_maintenance_enter", side_effect=ConnectionError("core down")),
+        patch.object(quiesce, "create_snapshot", side_effect=AssertionError("snapshotted")),
+        pytest.raises(RuntimeError, match="write-gate"),
+    ):
+        _run(tmp_path)
+
+
+def test_present_engine_still_hard_fails_on_a_null_deadline(tmp_path):
+    """The belt check (ADR-0211) is likewise untouched for a present engine."""
+    with (
+        patch.object(
+            quiesce, "_engine_two_state", return_value=(quiesce.ENGINE_PRESENT, "present")
+        ),
+        patch.object(
+            quiesce,
+            "_maintenance_enter",
+            side_effect=lambda ttl: {"previous": True, "deadline_seconds": None},
+        ),
+        patch.object(quiesce, "create_snapshot", side_effect=AssertionError("snapshotted")),
+        pytest.raises(RuntimeError, match="deadline_seconds"),
+    ):
+        _run(tmp_path)

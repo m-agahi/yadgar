@@ -97,8 +97,27 @@ _UNIT_BACKEND = "yadgar-backend"
 _SYSTEMCTL_RETRIES = 3
 _SYSTEMCTL_BACKOFF_SEC = 0.5
 
-# Default URL for the running yadgar core process (port from settings.PORT = 8765).
-_CORE_URL = os.environ.get("YADGAR_CORE_URL", "http://127.0.0.1:8765")
+_CORE_URL_DEFAULT = "http://127.0.0.1:8765"
+
+
+def _core_url() -> str:
+    """URL of the running yadgar core process (port from settings.PORT = 8765).
+
+    READ AT CALL TIME, not at import. This used to be a module constant used as
+    a DEFAULT ARGUMENT on the three functions below — and a default argument is
+    bound once, when ``def`` executes. So ``YADGAR_CORE_URL`` set after this
+    module was first imported had NO effect on the gate calls, which made the
+    test-suite guard that sets it a guard in name only: a test importing
+    nightly_cycle before the fixture ran would still POST to whatever core was
+    listening on 8765 — on a developer host, the LIVE daemon.
+
+    ``quiesce._core_url()` already resolved the same variable per call, so this
+    also makes the two halves of step 5b agree about which core they mean.
+    Production is unaffected either way: the daemon's environment is fixed
+    before the process starts.
+    """
+    return os.environ.get("YADGAR_CORE_URL", _CORE_URL_DEFAULT)
+
 
 # task:0113 — self-heal deadline for the nightly's own maintenance window.
 # Steps 1-7 span backup + consolidation + vacuum + backup + prune, so this is
@@ -118,7 +137,7 @@ _NIGHTLY_MAINTENANCE_TTL_SEC = 21600.0
 
 
 def _maintenance_http(
-    action: str, core_url: str = _CORE_URL, ttl_seconds: float | None = None
+    action: str, core_url: str | None = None, ttl_seconds: float | None = None
 ) -> None:
     """POST /api/control/maintenance/{action} to the running core.
 
@@ -133,8 +152,12 @@ def _maintenance_http(
     Raises on HTTP error or connection failure — caller converts to exit codes.
     Auth token from YADGAR_MCP_AUTH_TOKEN if set (same as MCP clients use).
 
+    ``core_url=None`` resolves ``_core_url()`` per call — see its docstring for
+    why a module-constant default argument made the test guard ineffective.
+
     Patch seam: tests replace this function via patch.multiple(_MODULE, ...).
     """
+    core_url = core_url or _core_url()
     url = f"{core_url}/api/control/maintenance/{action}"
     data = json.dumps({"ttl_seconds": ttl_seconds} if ttl_seconds else {}).encode()
     headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -258,7 +281,7 @@ def _log_start(action: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _step_stop_core(core_url: str = _CORE_URL) -> int:
+def _step_stop_core(core_url: str | None = None) -> int:
     """Step 1: Enter nightly maintenance mode in core. Always returns 0 (best-effort).
 
     v5.72 (#62): Core STAYS UP — we flip an in-process maintenance flag via HTTP
@@ -463,6 +486,18 @@ def _step_cross_engine_backup(
             backend_url=backend_url,
             data_root=data_root,
         )
+        if result.get("skipped"):
+            # A skip gets its OWN outcome. Logging it as "ok" with an absent
+            # sql_dump would read as a backup that ran and produced nothing —
+            # indistinguishable in the logs from a genuine vacuous pass, which
+            # is the failure class this arm exists to make impossible.
+            _log_step(
+                "cross_engine_backup",
+                "skipped",
+                (time.monotonic() - t0) * 1000,
+                reason=str(result.get("reason")),
+            )
+            return 0
         _log_step(
             "cross_engine_backup",
             "ok",
@@ -513,7 +548,7 @@ def _step_prune(snapshot_dir: Path, mariadb_dir: Path, retention: int) -> int:
         return 60
 
 
-def _step_start_core(core_url: str = _CORE_URL) -> int:
+def _step_start_core(core_url: str | None = None) -> int:
     """Step 7: Exit nightly maintenance mode in core. Always returns 0 (best-effort).
 
     v5.72 (#62): Core was never stopped — flip the maintenance flag back OFF via

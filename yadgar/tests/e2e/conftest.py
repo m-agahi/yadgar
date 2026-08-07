@@ -54,6 +54,45 @@ def _assert_not_real_data_dir(path: Path | str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Live-core guard — no e2e test may reach a running daemon's maintenance gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_live_core(monkeypatch):
+    """Point every core-URL reader at a dead port so no e2e test can gate the
+    live daemon.
+
+    ``nightly_cycle.main()`` reaches CORE over HTTP — the maintenance write-gate
+    lives there, not in the backend — at three points: step 1's enter, step 5b's
+    cross-engine backup, and step 7's exit. ``BC-D1`` drives the REAL ``main()``,
+    so on a developer host all three POST to whatever is listening on
+    ``127.0.0.1:8765``, which is the LIVE daemon. That is not hypothetical: it
+    happened, and the run gated every MCP tool for the duration.
+
+    This mirrors ``yadgar/tests/scripts/conftest.py`` (the same guard for the
+    host-ops script tests) and, like it, is a DEFAULT rather than a convention:
+    an unstubbed reach fails fast against a closed port instead of silently
+    mutating the developer's running engine.
+
+    It is a REAL protection, not a skip. Step 1 and step 7 are best-effort by
+    design (``_step_stop_core`` logs a warning and returns 0 when core is
+    unreachable), so the cycle still exercises its whole path — the gate calls
+    simply have nothing to talk to. Step 5b's own hard-fail-without-gate rule
+    (ADR-0210 §3) is untouched: it is not reached at all when engine #2 is
+    absent, which is the state an e2e host is in.
+
+    This became effective only once ``nightly_cycle._core_url()`` started reading
+    the variable per call. While the module bound it to a DEFAULT ARGUMENT at
+    import, setting the env var here could not affect steps 1 and 7 at all.
+
+    A test that genuinely wants a live HTTP core sets the variable itself;
+    ``monkeypatch.setenv`` inside the test overrides this fixture's value.
+    """
+    monkeypatch.setenv("YADGAR_CORE_URL", "http://127.0.0.1:9")
+
+
+# ---------------------------------------------------------------------------
 # Service-control stub
 # ---------------------------------------------------------------------------
 

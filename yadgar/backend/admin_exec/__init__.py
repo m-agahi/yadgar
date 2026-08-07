@@ -33,6 +33,7 @@ from yadgar.backend.admin_exec import (
     blocks,
     bookmarks,
     drain,
+    engine_status,
     invariants,
     memory,
     project,
@@ -118,6 +119,12 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # runs the LIVE backend drainer's drain_now() synchronously so the core
     # wait-path can flush promptly over HTTP instead of waiting a full interval.
     "drain_now": drain.drain_now,
+    # engine #2 presence probe: the ONE question a host-side caller cannot answer
+    # for itself, since a host-built MariaStorageEngine is connectionless and the
+    # socket path in client.cnf is container-absolute. A pure slot read, never a
+    # liveness probe — see admin_exec/engine_status.py for why that distinction
+    # is what keeps an unreachable engine from being mistaken for an absent one.
+    "sql_engine_status": engine_status.sql_engine_status,
     # engine #2 backup arm (car F): the logical dump runs HERE because only this
     # process's namespace makes client.cnf's container-absolute socket path true
     # and only this image carries mariadb-dump. See admin_exec/backup_sql.py.

@@ -115,6 +115,58 @@ def test_hard_failure_does_not_mask_an_earlier_failure(tmp_path):
     assert code == 30
 
 
+def test_absent_engine_skips_the_step_and_keeps_the_cycle_at_exit_zero(tmp_path):
+    """No engine #2 -> step 5b is a clean SKIP and the nightly still exits 0.
+
+    Until the new backend image is deployed there is no engine #2 anywhere, so a
+    step that hard-failed on absence would fail the nightly on every host
+    including production. Nothing to quiesce means nothing to fail about; the
+    step returns 0 and the rest of the cycle is untouched.
+    """
+    mod = _import_module()
+    code, calls = _run_main(
+        mod,
+        tmp_path,
+        run_cross_engine_backup=MagicMock(
+            return_value={"ok": True, "skipped": True, "reason": "engine_two_absent"}
+        ),
+    )
+
+    assert code == 0
+    assert "prune" in calls
+    assert "exit" in calls
+
+
+def test_a_skip_is_not_logged_as_a_completed_backup(tmp_path, caplog):
+    """A skip must NOT surface as ``outcome: ok`` with an absent ``sql_dump``.
+
+    That shape reads in the logs as a backup that ran and produced nothing —
+    indistinguishable from a real vacuous pass, which is the failure class this
+    arm exists to make impossible. It gets its own outcome instead.
+    """
+    import logging
+
+    mod = _import_module()
+    with (
+        patch.object(
+            mod,
+            "run_cross_engine_backup",
+            return_value={"ok": True, "skipped": True, "reason": "engine_two_absent"},
+        ),
+        caplog.at_level(logging.INFO, logger="yadgar.nightly_cycle"),
+    ):
+        assert (
+            mod._step_cross_engine_backup(
+                tmp_path / "surreal_db", tmp_path / "surql", "http://x", tmp_path
+            )
+            == 0
+        )
+
+    outcomes = [getattr(r, "outcome", None) for r in caplog.records]
+    assert "skipped" in outcomes, f"skip not distinguishable in the log record: {outcomes}"
+    assert "ok" not in outcomes, "a skipped backup was logged as a completed one"
+
+
 def test_prune_covers_the_two_new_artifact_pools(tmp_path):
     """The quiesced surql pool and the MariaDB dumps — neither was globbed before."""
     mod = _import_module()

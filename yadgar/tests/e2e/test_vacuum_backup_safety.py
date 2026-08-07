@@ -1114,7 +1114,22 @@ class TestBCD1_NightlyCompletesExitZero:
     def test_real_nightly_main_exits_zero_no_contention(self, dedicated_backend, tmp_path, caplog):
         import logging
 
+        from yadgar.core.backup import quiesce as _quiesce
         from yadgar.core.scripts import nightly_cycle as nc
+
+        # The live-core guard must be in effect BEFORE main() runs. This test
+        # drives the REAL cycle, which POSTs the core maintenance gate at steps
+        # 1, 5b and 7 — on a developer host that is the LIVE daemon on 8765, and
+        # gating it would fast-fail every MCP tool for the duration. Asserted
+        # here rather than trusted: both readers resolve the URL per call, so a
+        # guard that silently stopped applying would otherwise be invisible.
+        assert nc._core_url() != nc._CORE_URL_DEFAULT, (
+            "BC-D1: the _no_live_core guard is not in effect — the real nightly "
+            "cycle would POST the maintenance gate to the LIVE daemon."
+        )
+        assert _quiesce._core_url() != "http://127.0.0.1:8765", (
+            "BC-D1: step 5b's core URL is unguarded — see e2e conftest _no_live_core."
+        )
 
         backend = dedicated_backend
         _seed_memories(backend.url, 8)

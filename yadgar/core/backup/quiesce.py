@@ -22,6 +22,46 @@ already exists rather than adding a second (ADR-0210 §2). The window IS a full
 MCP outage: the gate short-circuits every tool, reads included; ADR-0204's
 "reads stay available" claim is withdrawn by ADR-0210.
 
+AN ABSENT ENGINE #2 IS A SKIP, NOT A FAILURE
+--------------------------------------------
+Before anything else — and specifically BEFORE the gate — this driver asks the
+backend whether engine #2 exists at all. If it does not, there is nothing to
+quiesce, so there is nothing to fail about: step 5b logs a skip, the nightly
+continues, and NO maintenance window is ever opened. The ordering is the point.
+A window is a full MCP outage (ADR-0210), so opening one only to discover there
+was nothing to back up would impose the whole cost of the arm on every host that
+does not have the arm.
+
+That is not hypothetical. Engine #2 ships in the BACKEND IMAGE (ADR-0212 bakes
+mariadb-server into ``Dockerfile.backend``) while this driver ships in CORE,
+which updates independently. Between the two rollouts every host — production
+included — runs a new core against an old backend. Hard-failing there fails the
+nightly nightly, for a backup that was never possible.
+
+WHY "ABSENT" AND "PRESENT BUT BROKEN" MUST NOT COLLAPSE
+-------------------------------------------------------
+Absence disables the backup. So absence is only ever concluded from a POSITIVE
+answer given by a REACHABLE backend, of which there are exactly two:
+
+* ``{"present": false}`` — the backend looked at its own composition slot and
+  found no engine (``_get_sql_storage`` returns None on core always, and on the
+  backend whenever MariaDB did not come up).
+* HTTP 400 ``unknown admin op`` — the backend answered, and does not know the
+  op. The image that registers ``sql_engine_status`` is the image that bakes
+  mariadb-server, so a backend without the op cannot be running engine #2. An
+  UNREACHABLE backend cannot return 400; this is evidence, not silence.
+
+Everything else — a connect error, a timeout, a 5xx, any other 400, a body
+without ``present`` — is "cannot tell", and cannot-tell HARD-FAILS. A detector
+that reported absent on a connect error would silently switch the backup off on
+every host whose backend was momentarily down, which is the exact vacuous-pass
+shape the three hard failures below exist to prevent.
+
+An engine that is PRESENT BUT BROKEN stays on the hard-fail path by
+construction: the probe is a slot read, not a liveness check, so a wedged
+MariaDB still answers ``present: true`` and then ``mariadb_dump`` fails loudly
+on the real fault.
+
 THREE HARD FAILURES, ALL DELIBERATE
 -----------------------------------
 Nightly's own gate entry is BEST-EFFORT — it proceeds ungated when core is
@@ -89,6 +129,30 @@ SURREAL_LABEL = "quiesce"
 # "the arm produced a header" — with zero rows, size alone cannot.
 EXPECTED_TABLE = "config"
 
+# The backend admin op that answers "was engine #2 composed in your process?".
+# Registered in ``backend/admin_exec/__init__.py``; a backend that does not know
+# it predates engine #2 entirely.
+ENGINE_STATUS_OP = "sql_engine_status"
+
+# Tri-state, and the third value is a first-class outcome rather than a synonym
+# for either of the others — the same stance car H's ``check_invariants`` arm
+# takes, and for the same reason: a check that could not run has proven nothing.
+ENGINE_PRESENT = "present"
+ENGINE_ABSENT = "absent"
+ENGINE_UNKNOWN = "unknown"
+
+# Reasons mirror ``backend/admin_exec/invariants_cross_engine.py``'s vocabulary
+# BY VALUE and are duplicated here deliberately: core must not import backend
+# (pyproject import-linter contract "core and backend must not import each
+# other's internals"). Keep the strings in step if that file's ever change.
+REASON_ENGINE_TWO_ABSENT = "engine_two_absent"
+REASON_BACKEND_PREDATES_ENGINE_TWO = "backend_predates_engine_two"
+
+# Marker in the /admin route's 400 body for an op it does not have. The route
+# maps ``KeyError(f"unknown admin op: {op!r}")`` straight into ``detail``, so
+# this substring is the contract between the two sides.
+_UNKNOWN_OP_MARKER = "unknown admin op"
+
 
 @observe(tier="stage")
 def _core_url() -> str:
@@ -154,6 +218,75 @@ def _release(entered: bool) -> None:
             _MAINTENANCE_EXIT_PATH,
             extra={"component": "backup.quiesce", "action": "release", "outcome": "error"},
         )
+
+
+@observe(tier="stage")
+def _engine_two_state() -> tuple[str, str]:
+    """Ask the BACKEND whether engine #2 exists. Returns ``(state, reason)``.
+
+    Asking rather than inferring is forced by the deployment shape, not chosen
+    for tidiness: ``client.cnf``'s socket path is container-absolute, a
+    host-built ``MariaStorageEngine`` is connectionless and so fails silently,
+    and mariadbd runs ``--skip-networking``. Only the backend process knows
+    whether ``_init_sql_storage`` composed anything, so only it can answer.
+
+    Needs NO maintenance window — it is one small POST to /admin, which is why
+    it can run before the gate.
+
+    ABSENT is returned ONLY on a positive answer from a reachable backend:
+    ``present: false``, or a 400 naming the op as unknown (an old image, whose
+    absence of the op implies absence of the engine that ships with it). Every
+    other outcome is UNKNOWN, which the caller converts into a hard failure.
+    Never raises — the tri-state IS the error channel, so a transport fault
+    cannot arrive looking like a verdict.
+    """
+    import httpx  # noqa: PLC0415 — lazy, matching the rest of the host-ops path
+
+    try:
+        result = _forward_admin(ENGINE_STATUS_OP, {}, timeout_s=15.0)
+    except httpx.HTTPStatusError as exc:
+        response = exc.response
+        if response.status_code == 400 and _UNKNOWN_OP_MARKER in response.text:
+            return ENGINE_ABSENT, REASON_BACKEND_PREDATES_ENGINE_TWO
+        # Any other HTTP failure is the backend faulting while answering, which
+        # says nothing about engine #2. Widening this branch to every
+        # HTTPStatusError would turn a backend fault into a skipped backup.
+        return ENGINE_UNKNOWN, f"backend returned HTTP {response.status_code}"
+    except Exception as exc:  # noqa: BLE001 — a transport fault is not a verdict
+        return ENGINE_UNKNOWN, f"{type(exc).__name__}: {exc}"
+
+    present = result.get("present")
+    if present is True:
+        return ENGINE_PRESENT, ""
+    if present is False:
+        return ENGINE_ABSENT, REASON_ENGINE_TWO_ABSENT
+    # Tested EXPLICITLY against True/False rather than by truthiness: a body
+    # with no ``present`` key would otherwise read as absent, which is deciding
+    # to stop backing up on the strength of a key that is not there.
+    return ENGINE_UNKNOWN, f"status op returned no usable 'present' field: {result!r}"
+
+
+@observe(tier="stage")
+def _skip_result(reason: str) -> dict[str, Any]:
+    """The shape returned when there is no engine #2 to back up.
+
+    Carries NO ``sql_dump``/``surreal_snapshot`` keys on purpose. A skip that
+    reported the artifact keys as empty would be indistinguishable from a backup
+    that ran and produced nothing — which is the vacuous pass, spelled in the
+    return value instead of in the logs.
+    """
+    _log.info(
+        "cross-engine backup SKIPPED — engine #2 is not present (%s); no maintenance "
+        "window was opened and nothing was snapshotted",
+        reason,
+        extra={
+            "component": "backup.quiesce",
+            "action": "cross_engine_backup",
+            "outcome": "skipped",
+            "reason": reason,
+        },
+    )
+    return {"ok": True, "skipped": True, "reason": reason}
 
 
 @observe(tier="stage")
@@ -250,12 +383,32 @@ def run_cross_engine_backup(
         "surreal_snapshot": str, "drain_passes": int, "nested": bool,
         "deadline_seconds": float, "restore_verified": {<table>: {source, restored}}}``
 
+        or, when engine #2 is absent, ``{"ok": True, "skipped": True,
+        "reason": str}`` — with no window opened and nothing snapshotted.
+
     Raises:
-        RuntimeError: gate unobtainable, no self-heal belt, drain unverified, a
-            dump that is not visible/complete on the host side, or a dump that
-            does not RESTORE (car G's enumeration). In every case NEITHER engine
-            is snapshotted, and an unrestorable dump is deleted rather than kept.
+        RuntimeError: engine-#2 presence could not be DETERMINED, gate
+            unobtainable, no self-heal belt, drain unverified, a dump that is not
+            visible/complete on the host side, or a dump that does not RESTORE
+            (car G's enumeration). In every case NEITHER engine is snapshotted,
+            and an unrestorable dump is deleted rather than kept.
     """
+    # DETECT FIRST, GATE SECOND. An absent engine must not cost a maintenance
+    # window — the window is a full MCP outage (ADR-0210), and there would be
+    # nothing to put in it. Nothing below this block runs on a host without
+    # engine #2, including the gate.
+    state, reason = _engine_two_state()
+    if state == ENGINE_ABSENT:
+        return _skip_result(reason)
+    if state != ENGINE_PRESENT:
+        raise RuntimeError(
+            f"cross-engine backup: could not determine whether engine #2 is present "
+            f"({reason}). Refusing to guess: treating this as ABSENT would silently "
+            "disable the backup on a host that HAS an engine and whose backend is "
+            "merely unreachable, and treating it as PRESENT would open a maintenance "
+            "window to back up something that may not exist."
+        )
+
     try:
         enter = _maintenance_enter(ttl_seconds)
     except Exception as exc:
