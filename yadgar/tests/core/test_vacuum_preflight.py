@@ -33,6 +33,7 @@ import stat
 import tempfile
 import types as _types
 from contextlib import ExitStack
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -418,10 +419,19 @@ class TestPreVacuumSnapshotsPrunedOnAbort:
 
         with tempfile.TemporaryDirectory() as td:
             db = _fake_db(td)
-            # Four stale snapshots from prior failed runs, oldest first.
+            # Four stale snapshots from prior failed runs, oldest first. Stamps
+            # are relative to real "now" (not a hardcoded calendar date) so
+            # this test does not rot: _reap_snapshots_by_age (the 14d age
+            # backstop) parses the NAME's stamp and compares it against
+            # datetime.now(UTC), independent of the os.utime() below, which
+            # only controls the keep_n prune's mtime ordering. A fixed
+            # 2026-07-2x stamp ages past the 14d cutoff on wall-clock alone
+            # and gets reaped by the backstop before keep_n is ever exercised.
             stale = []
+            now = datetime.now(UTC)
             for i in range(4):
-                snap = Path(td) / f"surreal_db.pre-vacuum-2026072{i}_000000"
+                stamp = (now - timedelta(days=4 - i)).strftime("%Y%m%d_%H%M%S")
+                snap = Path(td) / f"surreal_db.pre-vacuum-{stamp}"
                 snap.mkdir()
                 (snap / "vlog").mkdir()
                 os.utime(snap, (1_000_000 + i * 1000, 1_000_000 + i * 1000))
