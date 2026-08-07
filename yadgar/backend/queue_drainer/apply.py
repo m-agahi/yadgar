@@ -80,7 +80,6 @@ class _ApplyMixin:
                 provenance_agent=p.get("provenance_agent"),
                 tier=p.get("tier"),
                 valid_until=p.get("valid_until"),
-                branch=p.get("branch"),
                 reason=p.get("reason", ""),  # R3: semantic_immortal tier requires reason
                 # ttl_days not needed: valid_until already computed before enqueue
             )
@@ -88,15 +87,12 @@ class _ApplyMixin:
         if op == "anchor":
             from yadgar.backend.write_exec import run_anchor_replay
 
-            # Branch in anchor payload (p.get("branch")) is captured at enqueue
-            # time and is authoritative for the replay write.
             run_anchor_replay(
                 content=p["content"],
                 context=p["context"],
                 reason=p.get("reason", ""),
                 tier=p.get("tier"),
                 valid_until=p.get("valid_until"),
-                branch=p.get("branch"),
                 # ttl_days not needed: valid_until already computed before enqueue
             )
             return

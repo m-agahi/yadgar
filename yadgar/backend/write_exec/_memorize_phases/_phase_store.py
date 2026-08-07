@@ -95,10 +95,8 @@ def _store_via_curator(ctx: MemorizeContext, storage, embeddings, fhash: str | N
         memory_id = _direct_insert(ctx, storage, embeddings, fhash)
         ctx.curation_action = "created"
     else:
-        # Curator inserted or merged — backfill branch + v5.8 fields
+        # Curator inserted or merged — backfill the v5.8 fields
         update_kw: dict = {}
-        if ctx.resolved_branch is not None:
-            update_kw["branch"] = ctx.resolved_branch
         if ctx.tier is not None:
             update_kw["tier"] = ctx.tier
         if ctx.computed_valid_until is not None:
@@ -145,5 +143,4 @@ def _direct_insert(ctx: MemorizeContext, storage, embeddings, fhash: str | None)
         },
         embeddings_engine=embeddings,
         settings=get_settings(),
-        branch=ctx.resolved_branch,
     )

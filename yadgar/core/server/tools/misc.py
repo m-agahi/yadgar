@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
 
 import yadgar._shared.runtime.state as _st
@@ -92,52 +91,6 @@ def _gate_checkpoint_text(
     return gate_or_reject(current_task, custom_context, _list_text)
 
 
-@observe(tier="stage", metric="tools.misc._resolve_checkpoint_branch")
-def _resolve_checkpoint_branch(
-    directory: str, branch_hint: str | None
-) -> tuple[str | None, dict | None]:
-    """Resolve branch for checkpoint at the MCP boundary.
-
-    Resolution order: _detect_branch(directory) → branch_hint → YADGAR_CI_BRANCH env.
-    Returns (branch, None) on success, (None, error_dict) when branch is absent
-    and not draining (hard-reject path).
-    """
-    # Capture branch at API boundary for payload tagging and future filter use.
-    # v5.46.7: resolution order: _detect_branch(directory) → branch_hint
-    #           → YADGAR_CI_BRANCH env → hard-reject.
-    _branch = None
-    try:
-        import yadgar.core.server as _srv
-
-        _branch = _srv._detect_branch(directory)
-    except Exception:
-        pass  # non-fatal — fall through to branch_hint
-
-    # v5.42.3: branch_hint fallback
-    if not _branch and branch_hint:
-        _branch = branch_hint
-
-    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
-    if not _branch:
-        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
-
-    # v5.42.3: hard-reject at MCP boundary when branch context is absent.
-    # Enqueue-only shell: always runs on the request thread (never draining).
-    if not _branch:
-        return None, {
-            "error": "missing_branch",
-            "stored": False,
-            "message": (
-                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
-                "the working directory is a git repo accessible to the yadgar daemon."
-            ),
-            "field": "branch_hint",
-            "op_type": "checkpoint",
-        }
-
-    return _branch, None
-
-
 @_tool(always_load=True)
 def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existing 8-param fn
     directory: str,
@@ -156,8 +109,8 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     the restore tool uses this checkpoint to reconstruct what you were doing.
     Checkpoints auto-supersede — only the latest one matters.
 
-    branch_hint: host-supplied branch name (v5.42.3). Used when daemon-side
-      _detect_branch() cannot reach the host .git directory.
+    branch_hint: accepted and IGNORED (ADR-0215 — branch scoping removed). Retained
+      on the signature only until Car 5 drops it from the MCP surface.
     """
     # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
     _surrogate_err = _validate_checkpoint_surrogates(
@@ -184,13 +137,10 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     if _gate is not None:
         return _gate
 
-    _branch, _branch_err = _resolve_checkpoint_branch(directory, branch_hint)
-    if _branch_err is not None:
-        return _branch_err
-
     # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
     # canonical repo root so checkpoints stay restorable from the canonical repo.
-    directory, _branch = normalize_write_context(directory, _branch)
+    # ADR-0215: the branch half of the pair is discarded — nothing reads it now.
+    directory, _ = normalize_write_context(directory, None)
 
     # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
     _get_file_queue().enqueue(
@@ -204,7 +154,6 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
             "next_steps": next_steps,
             "active_errors": active_errors,
             "custom_context": custom_context,
-            "branch": _branch,
         },
     )
     return {"queued": True, "directory": directory}
@@ -305,47 +254,6 @@ def _validate_anchor_inputs(
     return _tier, _computed_valid_until, None
 
 
-@observe(tier="stage", metric="tools.misc._resolve_anchor_branch")
-def _resolve_anchor_branch(context: str, branch_hint: str | None) -> tuple[str | None, dict | None]:
-    """Resolve branch for anchor at the MCP boundary.
-
-    Resolution order: _detect_branch(context) → branch_hint → YADGAR_CI_BRANCH env.
-    Returns (branch, None) on success, (None, error_dict) when branch is absent
-    and not draining (hard-reject path).
-    """
-    _branch = None
-    try:
-        import yadgar.core.server as _srv
-
-        _branch = _srv._detect_branch(context)
-    except Exception:
-        pass  # non-fatal — fall through to branch_hint
-
-    # v5.42.3: branch_hint fallback
-    if not _branch and branch_hint:
-        _branch = branch_hint
-
-    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
-    if not _branch:
-        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
-
-    # v5.42.3: hard-reject at MCP boundary when branch context is absent.
-    # Enqueue-only shell: always runs on the request thread (never draining).
-    if not _branch:
-        return None, {
-            "error": "missing_branch",
-            "stored": False,
-            "message": (
-                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
-                "the working directory is a git repo accessible to the yadgar daemon."
-            ),
-            "field": "branch_hint",
-            "op_type": "anchor",
-        }
-
-    return _branch, None
-
-
 @_tool(always_load=True)
 def anchor(
     content: str,
@@ -371,9 +279,8 @@ def anchor(
     valid_until: ISO-8601 UTC explicit expiry. Mutually exclusive with ttl_days.
     ttl_days: shorthand valid_until = now() + ttl_days. Mutually exclusive with valid_until.
 
-    branch_hint: host-supplied branch name (v5.42.3). Used when daemon-side
-      _detect_branch() cannot reach the host .git directory. Agents should pass
-      branch_hint=<current-branch> from SessionStart hook context.
+    branch_hint: accepted and IGNORED (ADR-0215 — branch scoping removed). Retained
+      on the signature only until Car 5 drops it from the MCP surface.
     """
     # secret-gate: skip — gate_or_reject() is called inside _validate_anchor_inputs()
     _tier, _computed_valid_until, _err = _validate_anchor_inputs(
@@ -382,23 +289,16 @@ def anchor(
     if _err is not None:
         return _err
 
-    # Capture branch at API boundary — enqueue-time value used by drainer.
-    # v5.46.7: resolution order: _detect_branch(context) → branch_hint
-    #           → YADGAR_CI_BRANCH env → hard-reject.
-    _branch, _branch_err = _resolve_anchor_branch(context, branch_hint)
-    if _branch_err is not None:
-        return _branch_err
-
     # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
     # canonical repo root so anchors stay visible to canonical-repo recall.
-    context, _branch = normalize_write_context(context, _branch)
+    # ADR-0215: the branch half of the pair is discarded — nothing reads it now.
+    context, _ = normalize_write_context(context, None)
 
     # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
     _enqueue_payload: dict = {
         "content": content,
         "context": context,
         "reason": reason,
-        "branch": _branch,
         "tier": _tier,
     }
     if _computed_valid_until is not None:

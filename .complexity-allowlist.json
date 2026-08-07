@@ -401,16 +401,5 @@
   "rationale": "Backend caching train Car 0 (#49): the unified backend Cache constructor mirrors the core yadgar/cache.py Cache (which sits at the 8-param cap: name/max_bytes/invalidation/key_fn/deep_copy/obs_tier/clock) plus one backend-only param, checkpoint_hash, needed to ckpt-gate the msgpack snapshot (a snapshot written under a different model hash must be discarded on load — the ce/embed model-swap contract). Each param is an independent, orthogonal cache policy bound once at construction; wrapping them in a config-object would add a dataclass indirection for a single construction site (the two _make_*_cache factories) with no readability gain. Allowlisted: Car 0, #49.",
   "added": "2026-07-06",
   "added_by": "backend-cache-train-car0"
- },
- {
-  "path": "yadgar/backend/write_exec/memorize_impl.py",
-  "function": "run_memorize_replay",
-  "lineno": 32,
-  "metrics": {
-   "params": 9
-  },
-  "rationale": "R3 write-path regression fix: 'reason' (semantic_immortal anchor reason) must survive the enqueue->drain boundary so drainer-side phase_validate can re-check the require-reason invariant. The signature mirrors the memorize MCP schema (already noqa'd PLR0913); all 9 params are queue-payload fields — a params dataclass would just relocate the field list without reducing essential complexity.",
-  "added": "2026-07-08",
-  "added_by": "reorg3-test-migration"
  }
 ]

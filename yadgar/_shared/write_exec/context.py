@@ -23,11 +23,9 @@ class MemorizeContext:
     valid_until: str | None
     ttl_days: int | None
     reason: str
-    branch_hint: str | None
 
     # --- Derived (set during phases) ---
     computed_valid_until: str | None = None
-    resolved_branch: str | None = None
     embedding: list[float] | None = None
     provenance_agent_resolved: str = "default"
 

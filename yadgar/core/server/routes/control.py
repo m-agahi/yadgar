@@ -290,7 +290,6 @@ _WRITE_BLOCKED: frozenset[str] = frozenset(
         "YADGAR_UPDATE_DEBUG_APIS_ENABLED",  # sibling gate
         "YADGAR_ALLOW_ROOT",  # privilege escalation
         "YADGAR_REQUIRE_AUTH",  # auth bypass
-        "YADGAR_BRANCH_ENFORCEMENT",  # enforcement bypass
         "YADGAR_DIRECTORY_ENFORCEMENT",  # enforcement bypass
         "YADGAR_IN_CONTAINER",  # runtime-detected; not user-settable
     }

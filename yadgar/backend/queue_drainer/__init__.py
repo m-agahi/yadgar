@@ -320,15 +320,6 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                 )
                 return 0
 
-        # v5.42.3: memory-op branch validation (defense-in-depth, symmetric with wiki)
-        if op_type in self._MEMORY_OP_TYPES:
-            reject_reason = self._validate_branch_context(data)
-            if reject_reason:
-                self._reject_permanent_to_dlq(
-                    path, fname, attempt, op_type, reject_reason, data, now
-                )
-                return 0
-
         return self._apply_pending(fname, path, data, op_type, now)
 
     @observe(tier="hot", metric="drainer.reject_permanent_to_dlq")
@@ -342,9 +333,10 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         data: dict,
         now: float,
     ) -> None:
-        """Move a file to DLQ as a permanent policy rejection.
+        """Move a file to DLQ as a permanent policy rejection (§26 Option Z).
 
-        Shared by wiki_add and memory-op rejection paths (§26 Option Z + v5.42.3).
+        ADR-0215 removed the memory-op branch rejection path, so every current
+        caller is a wiki_add rejection; the helper stays op-type agnostic.
         """
         attempt.count = self._max_permanent
         attempt.last_error = reject_reason
@@ -361,19 +353,12 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             failure_metadata=failure_metadata,
         )
         self._attempts.pop(fname, None)
-        if op_type == "wiki_add":
-            logger.warning("wiki_add rejected (DLQ): %s — %s", fname, reject_reason)
-        else:
-            logger.warning(
-                "%s rejected (DLQ, missing_branch): %s — %s", op_type, fname, reject_reason
-            )
+        logger.warning("%s rejected (DLQ): %s — %s", op_type, fname, reject_reason)
 
     def _build_rejection_reason_and_meta(
         self, reject_reason: str, data: dict, op_type: str
     ) -> tuple[str, dict | None]:
         """Return (failure_reason, failure_metadata) for a permanent policy rejection."""
-        if reject_reason.startswith("missing_branch"):
-            return "missing_branch", self._build_missing_branch_metadata(data, op_type)
         if reject_reason.startswith("missing_directory"):
             # v5.42.5: directory_context missing → DLQ with missing_directory
             return "missing_directory", self._build_missing_directory_metadata(data, op_type)
@@ -387,9 +372,6 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                     "Pass upsert=True to overwrite or use a different slug."
                 ),
             }
-        # memory-op branch failures always come as missing_branch (never hit the above two)
-        if op_type in self._MEMORY_OP_TYPES:
-            return "missing_branch", self._build_missing_branch_metadata(data, op_type)
         return "policy_rejected", None
 
     def _observe_drainer_lag(self, data: dict, now: float) -> None:

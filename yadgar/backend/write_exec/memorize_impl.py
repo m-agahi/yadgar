@@ -20,7 +20,6 @@ from ._memorize_phases import (
     phase_contradiction,
     phase_embed,
     phase_post_write,
-    phase_resolve_branch,
     phase_soft_gate,
     phase_store,
     phase_validate,
@@ -38,16 +37,12 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     provenance_agent: str | None = None,
     tier: str | None = None,
     valid_until: str | None = None,
-    branch: str | None = None,
     reason: str = "",
 ) -> dict:
     """Run the full memorize pipeline synchronously (drain-replay).
 
-    Called by the queue drainer's apply path. Runs validate → resolve_branch →
-    embed → contradiction → store → post_write. Never enqueues.
-
-    ``branch`` is the enqueue-time branch captured in the queue payload; it is
-    threaded through ctx.branch_hint so phase_resolve_branch resolves it.
+    Called by the queue drainer's apply path. Runs validate → embed →
+    contradiction → store → post_write. Never enqueues.
 
     ``reason`` carries the semantic_immortal anchor reason so phase_validate on
     the drainer side can re-check the require-reason invariant without re-calling
@@ -66,14 +61,9 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
         valid_until=valid_until,
         ttl_days=None,  # valid_until already computed before enqueue
         reason=reason,
-        branch_hint=branch,
     )
 
     result = phase_validate(ctx, settings)
-    if result is not None:
-        return result
-
-    result = phase_resolve_branch(ctx)
     if result is not None:
         return result
 

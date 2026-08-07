@@ -2243,9 +2243,8 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
     v5.10.1: also writes a marker to ~/.local/state/yadgar/active-work-tracked/ so the
     watchdog timer knows which directories to poll.
 
-    v5.42.3: branch_hint added for parity with memorize/anchor/checkpoint.
-    Hard-rejects when branch context cannot be determined and no branch_hint supplied.
-    Resolution order: _detect_branch(directory) → branch_hint → hard-reject.
+    branch_hint: accepted and IGNORED (ADR-0215 — branch scoping removed). Retained
+    on the signature only until Car 5 drops it from the MCP surface.
 
     Returns: {previous_content: str | None, new_memory: dict}
     """
@@ -2254,39 +2253,12 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
     if _gate is not None:
         return _gate
 
-    # v5.46.7: branch context validation (MCP boundary).
-    # Resolution order: _detect_branch(directory) → branch_hint → YADGAR_CI_BRANCH env → reject.
-    _branch = None
-    try:
-        _branch = _detect_branch(directory)
-    except Exception:
-        pass
-
-    if not _branch and branch_hint:
-        _branch = branch_hint
-
-    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
-    if not _branch:
-        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
-
-    if not _branch:
-        return {
-            "error": "missing_branch",
-            "stored": False,
-            "message": (
-                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
-                "the working directory is a git repo accessible to the yadgar daemon."
-            ),
-            "field": "branch_hint",
-            "op_type": "update_active_work",
-        }
-
     # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
     # canonical repo root before resolution — _resolve_project_root alone returns
     # the WORKTREE toplevel for linked worktrees, which orphans the row.
     directory, _ = normalize_write_context(directory, None)
 
-    # R3 Car 3d: secret-gate + branch resolution stay core (above); the atomic
+    # R3 Car 3d: the secret gate stays core (above); the atomic
     # _active_work delete-then-insert (+ project_brief epoch bump) forwards to the
     # backend /admin op. The host-FS watchdog marker stays core (host lifecycle).
     resolved = _resolve_project_root(directory)

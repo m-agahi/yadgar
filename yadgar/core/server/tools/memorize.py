@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
@@ -71,10 +70,8 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
       Only meaningful when is_protected=True. Adds 'anchor:<reason>' tag.
       Required when tier='semantic_immortal' and ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=True.
 
-    branch_hint: host-supplied branch name. Used when daemon-side _detect_branch() fails
-      (e.g., daemon runs in a container without access to the host .git directory).
-      Resolution order: _detect_branch(context) → branch_hint → hard-reject (v5.42.3).
-      SessionStart hooks should always pass branch_hint=<current-branch>.
+    branch_hint: accepted and IGNORED (ADR-0215 — branch scoping removed). Retained
+      on the signature only until Car 5 drops it from the MCP surface.
 
     wait: read-your-writes surface (mirrors wiki_add's wait semantics).
       wait=False (default): enqueue and return {stored, queued, queue_id}
@@ -96,7 +93,6 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
         valid_until=valid_until,
         ttl_days=ttl_days,
         reason=reason,
-        branch_hint=branch_hint,
     )
 
     # Validate + compute valid_until / provenance (still on the request thread:
@@ -106,54 +102,14 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     if result is not None:
         return result
 
-    # Resolve the branch to capture at enqueue time, then enqueue and return.
-    branch, branch_err = _resolve_memorize_branch(ctx)
-    if branch_err is not None:
-        return branch_err
-    ctx.resolved_branch = branch
-
     # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
     # canonical repo root so rows stay visible to canonical-repo recall. Covers
     # the SubagentStop footer path too (it calls this same tool).
-    ctx.context, ctx.resolved_branch = normalize_write_context(ctx.context, ctx.resolved_branch)
+    # ADR-0215: the branch half of the pair is discarded — nothing downstream
+    # reads it any more.
+    ctx.context, _ = normalize_write_context(ctx.context, None)
 
     return _enqueue(ctx, wait=wait)
-
-
-@observe(tier="hot", metric="tools.memorize._resolve_memorize_branch")
-def _resolve_memorize_branch(ctx: MemorizeContext) -> tuple[str | None, dict | None]:
-    """Resolve branch at the MCP boundary for the enqueue payload.
-
-    Resolution order: _detect_branch(context) → branch_hint → YADGAR_CI_BRANCH.
-    Returns (branch, None) on success, (None, error_dict) when branch is absent
-    (hard-reject — v5.42.3).
-    """
-    branch = None
-    try:
-        import yadgar.core.server as _srv  # noqa: PLC0415
-
-        branch = _srv._detect_branch(ctx.context)
-    except Exception:
-        pass  # non-fatal — fall through to branch_hint
-
-    if not branch and ctx.branch_hint:
-        branch = ctx.branch_hint
-
-    if not branch:
-        branch = os.environ.get("YADGAR_CI_BRANCH") or None
-
-    if not branch:
-        return None, {
-            "error": "missing_branch",
-            "stored": False,
-            "message": (
-                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
-                "the working directory is a git repo accessible to the yadgar daemon."
-            ),
-            "field": "branch_hint",
-            "op_type": "memorize",
-        }
-    return branch, None
 
 
 @observe(tier="stage")
@@ -168,7 +124,6 @@ def _enqueue(ctx: MemorizeContext, wait: bool = False) -> dict:
         "context": ctx.context,
         "tags": list(ctx.tags),
         "is_protected": ctx.is_protected,
-        "branch": ctx.resolved_branch,
         "provenance_agent": ctx.provenance_agent_resolved,
     }
     if ctx.tier is not None:

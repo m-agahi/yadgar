@@ -225,7 +225,6 @@ class TestDrainerRejectsNoDirectory:
         self,
         *,
         directory_context: str | None = "ABSENT",
-        branch: str = "feat/test",
         internal: bool = False,
     ) -> dict:
         payload: dict = {
@@ -235,7 +234,6 @@ class TestDrainerRejectsNoDirectory:
             "content": "Test content for directory enforcement.",
             "category": "reference",
             "tags": [],
-            "branch": branch,
         }
         if directory_context != "ABSENT":
             payload["directory_context"] = directory_context
@@ -283,7 +281,6 @@ class TestDrainerRejectsNoDirectory:
                 "content": "Content without directory.",
                 "category": "reference",
                 "tags": [],
-                "branch": "feat/test",
                 # No directory_context
             },
         )

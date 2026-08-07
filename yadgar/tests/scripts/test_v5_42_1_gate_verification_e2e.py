@@ -95,6 +95,11 @@ def _drainer_env(tmp_path, monkeypatch):
     # Enforcement is orthogonal to the backfill/gate scenario exercised here; disable
     # it to reach that pre-enforcement code path. Not #52 test-weakening: no assertion
     # is changed. _enforcement_on reads os.environ live per-call.
+    #
+    # ADR-0215 Car 2 removed the branch reject from the memory-op write path, but
+    # wiki_add's branch reject lives in _check_wiki_add_context and is Car 3's to
+    # retire. Until it lands, this setenv is still load-bearing — dropping it makes
+    # step 1 below fail with missing_branch. Car 3 deletes the line with the knob.
     monkeypatch.setenv("YADGAR_BRANCH_ENFORCEMENT", "false")
     monkeypatch.setenv("YADGAR_DIRECTORY_ENFORCEMENT", "false")
     server.init_engines(
@@ -186,7 +191,6 @@ def test_v5_42_1_gate_fires_post_backfill_e2e(_drainer_env, admin_backend_bypass
         title=_NEAR_CLONE_TITLE,
         content=_NEAR_CLONE_CONTENT,
         wait=False,
-        branch_hint="feat/test-branch",
     )
     assert enqueue_result.get("queued") is True, (
         f"wiki_add(wait=False) did not queue: {enqueue_result}"

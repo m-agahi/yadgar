@@ -1,7 +1,6 @@
 {
   "enqueue_count": 1,
   "payload_fields": [
-    "branch",
     "content",
     "context",
     "is_protected",

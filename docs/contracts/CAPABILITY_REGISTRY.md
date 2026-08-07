@@ -960,7 +960,7 @@ config knobs.
 - **migrations:** `008`
 - **bc:** `BC-AN1`, `BC-AN2`
 - **refs:** `yadgar/core/server/tools/misc.py::anchor`, `yadgar/core/server/tools/memorize.py::_compute_valid_until`
-- **wiring:** `anchor()` MCP tool → `_validate_anchor_inputs()` (validates tier + reason requirement) → `_resolve_anchor_branch()` (daemon-side git detection + branch_hint fallback + YADGAR_CI_BRANCH) → enqueues to file queue (async default) or synchronously calls `replay.anchor_memory()` (drain replay path). The file queue drainer calls the sync path. `ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=true` (default): semantic_immortal tier requires a non-empty `reason`. `ANCHOR_CONDITIONAL_TTL_DAYS=90`: default expiry for conditional anchors. `ANCHOR_EPHEMERAL_TTL_DAYS=14`: default expiry for ephemeral anchors.
+- **wiring:** `anchor()` MCP tool → `_validate_anchor_inputs()` (validates tier + reason requirement) → `normalize_write_context()` (collapses worktree paths to the canonical repo root) → enqueues to file queue (async default) or synchronously calls `replay.anchor_memory()` (drain replay path). The file queue drainer calls the sync path. `ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=true` (default): semantic_immortal tier requires a non-empty `reason`. `ANCHOR_CONDITIONAL_TTL_DAYS=90`: default expiry for conditional anchors. `ANCHOR_EPHEMERAL_TTL_DAYS=14`: default expiry for ephemeral anchors.
 - **explanation:** The anchor system creates compaction-resistant memories (is_protected=True, max heat, max importance, tagged `_anchor`). Three tiers control expiry: `semantic_immortal` (no expiry, requires reason), `conditional` (expires in ANCHOR_CONDITIONAL_TTL_DAYS), and `ephemeral` (expires in ANCHOR_EPHEMERAL_TTL_DAYS). Valid_until can also be set explicitly via `valid_until` or `ttl_days` parameters.
 
 ### CAP-STOR-029 — Anchor audit (audit_anchors tool)
@@ -1125,7 +1125,7 @@ config knobs.
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/core/server/tools/memorize.py::memorize`, `yadgar/_shared/write_exec/context.py`
-- **wiring:** MCP client calls `memorize()` → registered via `@_tool()` decorator in `memorize.py` → constructs `MemorizeContext` → sequentially calls `phase_validate`, `phase_resolve_branch`, `phase_embed`, `phase_contradiction`, `phase_store`, `phase_post_write`. Each phase returns a rejection dict (short-circuit) or `None` (continue). Final response is the stored memory dict.
+- **wiring:** MCP client calls `memorize()` → registered via `@_tool()` decorator in `memorize.py` → constructs `MemorizeContext` → sequentially calls `phase_validate`, `phase_embed`, `phase_contradiction`, `phase_store`, `phase_post_write`. Each phase returns a rejection dict (short-circuit) or `None` (continue). Final response is the stored memory dict.
 - **explanation:** `memorize` is the primary write-path MCP tool. It accepts `content`, `context` (must be an absolute directory path), `tags`, optional protection/tier/TTL fields, and a `branch_hint`. It orchestrates six phases: input validation + secret-gate, branch resolution, write-gate + embedding + thermo scoring, contradiction detection, storage (via curator or direct insert), and post-write hooks (synaptic boost, reinjection, shadow-gate stamp, CRDT clock, viz event). The `remember` no-op redirect stub was deleted in v6 T3 (see CAP-STOR-027).
 
 ---

@@ -237,9 +237,8 @@ yadgar_dlq_rejection_count = Gauge(
 )
 
 # ── v5.42.6 — enforcement-relaxed writes counter (I23) ───────────────────────
-# Emitted by dlq.py::_validate_wiki_add / _validate_branch_context when
-# YADGAR_DIRECTORY_ENFORCEMENT or YADGAR_BRANCH_ENFORCEMENT is false.
-# enforcement labels: "directory" | "branch"
+# Emitted by dlq.py::_validate_wiki_add when YADGAR_DIRECTORY_ENFORCEMENT is false.
+# enforcement labels: "directory"
 
 yadgar_writes_with_enforcement_relaxed = Counter(
     "yadgar_writes_with_enforcement_relaxed",

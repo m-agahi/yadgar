@@ -1,8 +1,8 @@
 """Backend checkpoint replay entry (R3 Car 1 write-half).
 
 The queue drainer replays a queued ``checkpoint`` job by writing it synchronously
-via the replay engine. The enqueue fast-path + secret/branch gating live in the
-core checkpoint shell; this module owns the sync execution.
+via the replay engine. The enqueue fast-path + secret gating live in the core
+checkpoint shell; this module owns the sync execution.
 
 Imports ``_shared`` + backend only — no ``yadgar.core.*`` edge.
 """
