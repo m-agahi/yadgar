@@ -6,7 +6,7 @@ No entry-point code calls these yet (wired in Step 2 behind UNIFIED_RECALL_ENABL
 Design notes:
   - Candidate carries all fields needed for downstream fusion/reranking steps
     (Steps 3–4) without surfacing them before those steps ship.
-  - scope.directory and scope.branch are carried so Step 3 (DB-level
+  - scope.directory is carried so Step 3 (DB-level
     DirectoryFilter) can be wired without a signature change.
   - ``raw`` holds the provider's native dict for lossless pass-through; the
     fan-out orchestrator (Step 2) returns raw dicts, not Candidates, so
@@ -28,16 +28,11 @@ class Scope:
         directory: Caller's working directory (required — mirrors v5.65 Fix D).
             Used in Step 3 for DB-level DirectoryFilter; carried here so the
             provider signature is stable.
-        branch: Active git branch, or None when not in a git repo.
-            Used for branch-aware filtering (Step 3).
-        default_branch: Repository default branch (e.g. "master"), or None.
         min_heat: Minimum heat threshold forwarded to the memory provider.
             Wiki candidates have no heat; this field is ignored by WikiProvider.
     """
 
     directory: str
-    branch: str | None = None
-    default_branch: str | None = None
     min_heat: float = 0.0
 
 
@@ -57,7 +52,6 @@ class Candidate:
             heat-weighted WRRF, BM25+vector blend). Used as a prior in
             Step 4 fusion; NOT the final ranking key.
         directory_context: Directory the item was stored under, or None.
-        branch: Branch the item was stored on, or None.
         raw: Original provider dict, preserved for lossless pass-through.
             Step 2 returns raw dicts (not Candidates) to avoid breaking the
             existing recall return type.
@@ -69,7 +63,6 @@ class Candidate:
     content: str
     native_score: float
     directory_context: str | None
-    branch: str | None
     raw: dict = field(default_factory=dict)
 
 
@@ -97,7 +90,7 @@ class SourceProvider(ABC):
 
         Args:
             query: Free-text search query.
-            scope: Directory/branch/heat scope for this call.
+            scope: Directory/heat scope for this call.
             limit: Maximum number of candidates to return.  Providers may
                 return fewer; the orchestrator requests limit > max_results
                 to give the fusion step a candidate pool to work with.

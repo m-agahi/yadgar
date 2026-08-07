@@ -37,8 +37,6 @@ from pathlib import Path
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage.blocks import _BlocksMixin
 from yadgar._shared.storage.bookmarks import _BookmarksMixin
-from yadgar._shared.storage.branch import BranchFilter as BranchFilter
-from yadgar._shared.storage.branch import _build_branch_clause as _build_branch_clause
 from yadgar._shared.storage.causal import _CausalMixin
 from yadgar._shared.storage.client import _CAMEL_CASE_RE as _CAMEL_CASE_RE
 from yadgar._shared.storage.client import _EMBEDDING_FIELDS as _EMBEDDING_FIELDS

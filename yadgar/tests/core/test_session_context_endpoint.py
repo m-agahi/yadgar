@@ -329,42 +329,6 @@ def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
     assert "TaskCreate" in body["text"]
 
 
-def test_task_list_nudge_absent_for_default_branch_pinned_row(tmp_path, monkeypatch):
-    """REGRESSION TRAP (memory 531352 / ADR-log branch-pin bug class).
-
-    The task-list page MUST be written canonically (branch=None). If a future
-    edit reverts the template to write it with branch_hint="{default_branch}"
-    (branch='master' row), it becomes UNREACHABLE from any feature-branch
-    session: the endpoint resolves the page under the caller's CURRENT branch,
-    and §25 (dir+branch → dir+NULL → global) never matches a master-pinned row
-    when the caller is on a feature branch.
-
-    Here we seed the page the WRONG (default-branch-pinned) way and query with a
-    feature branch — the nudge MUST be ABSENT, proving the master-pin is a dead
-    write for the common feature-branch case. Anyone who re-adds branch_hint to
-    the template Step 4c write will turn this red.
-    """
-    token = "tl-masterpin"
-    from yadgar.core import server as _server
-
-    _seed_task_list_page(str(tmp_path), branch="master")
-
-    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
-        client = _make_client(token, monkeypatch)
-        resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup&branch=feat/some-work",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert _NUDGE_MARKER not in body["text"], (
-        "a default-branch-pinned task-list row must be unreachable from a "
-        "feature-branch session — the template MUST write canonically "
-        f"(branch=None). Got: {body['text']!r}"
-    )
-
-
 def test_task_list_nudge_absent_when_page_missing(tmp_path, monkeypatch):
     """No page seeded → nudge ABSENT (the key R2 existence-check assertion)."""
     token = "tl-absent"
@@ -463,7 +427,7 @@ def test_task_list_nudge_fail_open_on_existence_check_error(tmp_path, monkeypatc
 
     class _Boom:
         def __getattr__(self, name):
-            if name == "get_wiki_page_by_slug_directory_branch":
+            if name == "get_wiki_page_by_slug_directory":
 
                 def _raise(*_a, **_k):
                     raise RuntimeError("existence check down")

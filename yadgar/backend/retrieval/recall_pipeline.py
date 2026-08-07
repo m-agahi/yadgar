@@ -228,18 +228,16 @@ def _fuse_with_span(memory_candidates, wiki_candidates, query, max_results, prof
 def _apply_fanout_boosts(
     pooled: list[dict],
     query: str,
-    current_branch: str | None,
     profile: str | None = None,
 ) -> list[dict]:
-    """Apply C4 branch boost and postmortem/incident boost to fanout results.
+    """Apply the postmortem/incident boost to fanout results.
 
     Phase 1 §5.2: mirrors recall.py:526-552 (legacy B5/B2 path) to close the
     parity gap where the default fanout path (B3/B4) lacked these boosts.
-
-    Branch boost (C4): convex combination base + (1-base) * BRANCH_BOOST_WEIGHT
-    for memories whose branch matches current_branch. Sort is applied only when
-    at least one boost fires — preserves the retriever's native order otherwise
-    (important: avoids the double-sort regression from PR #143).
+    ADR-0215 removed the C4 branch boost that used to live alongside it; the
+    postmortem boost is unaffected. Sort is applied only when at least one boost
+    fires — preserves the retriever's native order otherwise (important: avoids
+    the double-sort regression from PR #143).
 
     Postmortem/incident boost: convex combination with POSTMORTEM_BOOST_FACTOR
     for memories tagged _postmortem or _incident when the query contains a
@@ -255,7 +253,6 @@ def _apply_fanout_boosts(
     Args:
         pooled: Deduplicated fanout result list (mutated in-place for boosts).
         query: Recall query string (for postmortem keyword check).
-        current_branch: Active git branch or None (for branch boost).
         profile: Retrieval profile that triggered this fanout (None = default path).
 
     Returns:
@@ -264,17 +261,6 @@ def _apply_fanout_boosts(
     scope = settings.FANOUT_BOOST_SCOPE
     if scope == "off" or (scope == "scoped" and profile is None):
         return pooled
-
-    if current_branch is not None:
-        _boost_weight = settings.BRANCH_BOOST_WEIGHT
-        _branch_boosted = False
-        for m in pooled:
-            if m.get("branch") == current_branch:
-                base = min(float(m.get("_retrieval_score", m.get("heat", 0.0))), 1.0)
-                m["_retrieval_score"] = base + (1.0 - base) * _boost_weight
-                _branch_boosted = True
-        if _branch_boosted:
-            pooled.sort(key=lambda m: m.get("_retrieval_score", 0.0), reverse=True)
 
     _pm_boost_factor = settings.POSTMORTEM_BOOST_FACTOR
     _pm_keywords = settings.POSTMORTEM_BOOST_KEYWORDS
@@ -456,13 +442,11 @@ def _build_provider_tasks(  # noqa: PLR0913 — mirrors _fanout_recall's threade
 
 
 @observe(tier="stage", metric="tools.recall._fanout_recall", span=False)
-def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wraps params
+def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wraps params
     query: str,
     max_results: int,
     min_heat: float,
     directory: str,
-    current_branch: str | None,
-    default_branch: str | None,
     type_filter: str = "all",
     tags: list[str] | None = None,
     profile: str | None = None,
@@ -503,8 +487,6 @@ def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wr
         max_results: Maximum results to return.
         min_heat: Minimum heat threshold forwarded to MemoryProvider.
         directory: Caller directory (required, validated upstream).
-        current_branch: Active git branch or None.
-        default_branch: Repo default branch or None.
         type_filter: One of {"all", "memory", "wiki"}. Selects provider subset.
         tags: Tag include filter for wiki retrieval. When set, triggers SQL pre-filter
               (search_wiki_vectors_tagged) and suppresses the default agent-prompt exclude.
@@ -519,8 +501,6 @@ def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wr
     """
     scope = Scope(
         directory=directory,
-        branch=current_branch,
-        default_branch=default_branch,
         min_heat=min_heat,
     )
 
@@ -571,12 +551,10 @@ def _fanout_recall(  # noqa: PLR0913 — 10 params allowlisted (I30); Phase 2 wr
     # Final dedup by content (handles any duplicates fusion didn't catch)
     pooled = _dedup_by_content(pooled)
 
-    # Phase 1 §5.2: apply C4 branch boost + postmortem/incident boost.
+    # Phase 1 §5.2: apply the postmortem/incident boost.
     # §45: profile threaded through so FANOUT_BOOST_SCOPE gate can discriminate
     # profile-origin (hook=fast) callers from default (profile=None) callers.
-    pooled = _apply_fanout_boosts(
-        pooled, query=query, current_branch=current_branch, profile=profile
-    )
+    pooled = _apply_fanout_boosts(pooled, query=query, profile=profile)
 
     return pooled[:max_results]
 

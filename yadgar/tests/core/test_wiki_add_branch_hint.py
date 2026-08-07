@@ -105,11 +105,11 @@ class TestWikiAddBranchHint:
             f"expected branch IS NULL (canonical slot), got {stored_branch!r}"
         )
 
-        # Also verify wiki_read step-3 resolution resolves this page
+        # Also verify slug resolution reaches this page
         wiki = server._wiki
         assert wiki is not None
-        page = wiki.read_by_branch(result["slug"], current_branch=None, default_branch="master")
-        assert page is not None, "wiki_read step-3 must resolve canonical NULL page"
+        page = wiki.read_by_directory(result["slug"], _DIR)
+        assert page is not None, "slug resolution must reach the stored page"
 
     def test_explicit_branch_wins_over_hint(self, monkeypatch, _unit_backend_harness):
         """Explicit branch='A' wins over branch_hint='B'."""

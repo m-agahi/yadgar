@@ -752,25 +752,14 @@ class _MemoryMixin:
         query: str,
         min_heat: float = 0.1,
         limit: int = 50,
-        branch_filter=None,
     ) -> list[tuple[int, float]]:
-        """FTS search returning (memory_id, bm25_score) tuples. Higher = better.
-
-        When branch_filter is provided, restricts results to memories whose
-        branch is NULL, equals default_branch, or equals current_branch (when
-        current_branch is not None).
-        """
-        from yadgar._shared.storage.branch import _build_branch_clause
-
+        """FTS search returning (memory_id, bm25_score) tuples. Higher = better."""
         fts_query = self._preprocess_fts_query(query)
-        branch_clause, branch_params = _build_branch_clause(branch_filter)
-        branch_and = f" AND {branch_clause}" if branch_clause else ""
         params: dict = {"q": fts_query, "min": min_heat, "lim": limit}
-        params.update(branch_params)
         rows = self._q(
-            f"SELECT id, heat, search::score(1) AS score "
-            f"FROM memory WHERE content @1@ $q AND heat >= $min{branch_and} "
-            f"ORDER BY score DESC LIMIT $lim",
+            "SELECT id, heat, search::score(1) AS score "
+            "FROM memory WHERE content @1@ $q AND heat >= $min "
+            "ORDER BY score DESC LIMIT $lim",
             params,
         )
         results = []
@@ -788,15 +777,8 @@ class _MemoryMixin:
         session_hints: list[str],
         min_heat: float = 0.0,
         limit: int = 50,
-        branch_filter=None,
     ) -> list[dict]:
-        """Search memory content for temporal references using FTS.
-
-        When branch_filter is provided, restricts results to memories whose
-        branch is NULL, equals default_branch, or equals current_branch.
-        """
-        from yadgar._shared.storage.branch import _build_branch_clause
-
+        """Search memory content for temporal references using FTS."""
         terms = []
         for hint in date_hints:
             safe = hint.replace('"', "").replace("\\", "")
@@ -809,12 +791,9 @@ class _MemoryMixin:
         if not terms:
             return []
         fts_query = " OR ".join(terms)
-        branch_clause, branch_params = _build_branch_clause(branch_filter)
-        where_extra = f" AND {branch_clause}" if branch_clause else ""
         params: dict = {"q": fts_query, "min": min_heat, "lim": limit}
-        params.update(branch_params)
         rows = self._q(
-            f"SELECT * FROM memory WHERE content @@ $q AND heat >= $min{where_extra} "
+            "SELECT * FROM memory WHERE content @@ $q AND heat >= $min "
             "ORDER BY heat DESC LIMIT $lim",
             params,
         )
@@ -841,15 +820,8 @@ class _MemoryMixin:
         month_hints: list[str],
         min_heat: float = 0.0,
         limit: int = 200,
-        branch_filter=None,
     ) -> list[int]:
-        """Find memory IDs whose created_at falls in the given month(s).
-
-        When branch_filter is provided, restricts candidates to memories whose
-        branch is NULL, equals default_branch, or equals current_branch.
-        """
-        from yadgar._shared.storage.branch import _build_branch_clause
-
+        """Find memory IDs whose created_at falls in the given month(s)."""
         month_map = {
             "january": "01",
             "february": "02",
@@ -870,12 +842,9 @@ class _MemoryMixin:
             return []
 
         # Pull candidate memories (no month substring in SurrealQL, filter in Python)
-        branch_clause, branch_params = _build_branch_clause(branch_filter)
-        where_extra = f" AND {branch_clause}" if branch_clause else ""
         params: dict = {"min": min_heat, "lim": limit * 10}
-        params.update(branch_params)
         rows = self._q(
-            f"SELECT id, created_at FROM memory WHERE heat >= $min{where_extra} LIMIT $lim",
+            "SELECT id, created_at FROM memory WHERE heat >= $min LIMIT $lim",
             params,
         )
         results = []

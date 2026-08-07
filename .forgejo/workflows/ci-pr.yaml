@@ -458,6 +458,16 @@ jobs:
         # could never fail. This step evaluates the cumulative branch diff vs the
         # merge-base instead, which is the question a PR actually poses.
         run: python scripts/check_test_weakening.py --ci --base origin/master
+        # ADR-0215 branch-scoping-removal train: Cars 1/2/6 delete e2e files whose
+        # asserted behaviour no longer exists. check_test_weakening nets PER FILE, so
+        # a replacement file cannot offset a deletion. The `allow-test-weaken` PR label
+        # opens the script's own ALLOW_TEST_WEAKEN escape hatch (honoured only when the
+        # value is exactly "1"). Car 10 removes this block again — the bypass must not
+        # outlive the train.
+        # The `contains(... labels.*.name ...)` form is already used by this same file
+        # (the `no-release` gate below), so Forgejo Actions supports it here.
+        env:
+          ALLOW_TEST_WEAKEN: ${{ contains(github.event.pull_request.labels.*.name, 'allow-test-weaken') && '1' || '' }}
 
   # Gateway: aggregates all four subsystem test jobs.
   # if: always() is required — without it this job is SKIPPED (not failed)

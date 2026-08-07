@@ -180,29 +180,6 @@ class TestWikiSetMetadata:
         result = server.wiki_set_metadata("empty-branch-page", "branch", "")
         assert result.get("ok") is False
 
-    def test_branch_null_clears_field(self):
-        """Setting branch to null clears it; page resolves via IS NONE query."""
-        pid = _insert_page("null-branch-page", branch="feat/old-branch")
-        page = _storage().get_wiki_page(pid)
-        assert page["branch"] == "feat/old-branch"
-
-        # Pass branch_hint so §25 resolution finds the page before clearing
-        result = server.wiki_set_metadata(
-            "null-branch-page", "branch", None, branch_hint="feat/old-branch"
-        )
-        assert result.get("ok") is True
-
-        # Verify branch is truly NONE (not null) — resolves via IS NONE query
-        page = _storage().get_wiki_page(pid)
-        assert page.get("branch") is None
-
-        # Critical: page must resolve via IS NONE in §25 resolution
-        resolved = _storage().get_wiki_page_by_slug_directory_branch(
-            "null-branch-page", "global", "feat/test-branch"
-        )
-        assert resolved is not None
-        assert resolved["id"] == pid
-
     def test_version_row_created_on_real_change(self):
         """Successful metadata change creates a new wiki_page_version row."""
         pid = _insert_page("version-check-meta", directory_context="global")

@@ -94,7 +94,7 @@ CORE_ONLY_11 = [
 
 
 def _seed_memories(storage) -> None:
-    """Insert a few branch=NONE (legacy, always-visible) memories."""
+    """Insert a few always-visible memories."""
     for i, text in enumerate(
         [
             "slim parity storage engine architecture notes alpha",
@@ -109,7 +109,6 @@ def _seed_memories(storage) -> None:
                 "tags": ["test"],
                 "heat": 1.0,
             },
-            branch=None,
         )
 
 
@@ -131,8 +130,6 @@ def _run_backend_recall(query: str) -> list[dict]:
         max_results=5,
         min_heat=0.0,
         directory=_DIR,
-        current_branch=None,
-        default_branch="master",
         type_filter="all",
         tags=None,
         profile=None,

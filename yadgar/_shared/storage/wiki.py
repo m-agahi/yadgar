@@ -2,7 +2,7 @@
 
 _WikiMixin provides:
   - insert_wiki_page / update_wiki_page / get_wiki_page / get_wiki_page_by_slug
-  - get_wiki_page_by_slug_and_branch / delete_wiki_page / list_wiki_pages
+  - get_wiki_page_by_slug_directory / delete_wiki_page / list_wiki_pages
   - search_wiki_fts / search_wiki_fts_scored / search_wiki_vectors
   - replace_wiki_crossrefs / get_wiki_backlinks / get_all_wiki_crossrefs
   - upsert_project_init / upsert_active_work
@@ -407,93 +407,42 @@ class _WikiMixin:
         return ids
 
     @observe(tier="stage")
-    def get_wiki_page_by_slug_and_branch(
-        self,
-        slug: str,
-        current_branch: str | None,
-        default_branch: str,
-    ) -> dict | None:
-        """§25 Branch-aware wiki page resolution.
-
-        Resolution order:
-        1. Exact slug match on current_branch (when not None).
-        2. Exact slug match on default_branch.
-        3. Exact slug match with branch IS NONE (legacy/canonical).
-        4. Returns None if not found.
-        """
-        # Step 1: current branch (skip when current is None — non-git context)
-        if current_branch is not None:
-            rows = self._q(
-                "SELECT * FROM wiki_page WHERE slug = $slug AND branch = $branch LIMIT 1",
-                {"slug": slug, "branch": current_branch},
-            )
-            if rows:
-                return self._row_to_dict(rows[0])
-
-        # Step 2: default branch
-        rows = self._q(
-            "SELECT * FROM wiki_page WHERE slug = $slug AND branch = $branch LIMIT 1",
-            {"slug": slug, "branch": default_branch},
-        )
-        if rows:
-            return self._row_to_dict(rows[0])
-
-        # Step 3: NONE branch (legacy/canonical)
-        rows = self._q(
-            "SELECT * FROM wiki_page WHERE slug = $slug AND branch IS NONE LIMIT 1",
-            {"slug": slug},
-        )
-        return self._row_to_dict(rows[0]) if rows else None
-
-    @observe(tier="stage")
-    def get_wiki_page_by_slug_directory_branch(
+    def get_wiki_page_by_slug_directory(
         self,
         slug: str,
         caller_directory: str | None,
-        current_branch: str | None,
     ) -> dict | None:
-        """§25 4-step directory-aware wiki page resolution (v5.42.5).
+        """§25 directory-aware wiki page resolution.
 
-        Resolution order:
-        1. directory = $caller_dir  AND  branch = $current_branch  (project-branch-scoped)
-        2. directory = $caller_dir  AND  branch IS NONE            (project-canonical)
-        3. directory = 'global'     AND  branch IS NONE            (global fallback)
-        4. Returns None if not found.
+        ADR-0215 removed the branch axis; what remains is the directory ladder:
+        1. directory = $caller_dir   (project-scoped)
+        2. directory = 'global'      (global fallback)
+        3. Returns None if not found.
 
-        When caller_directory is None (legacy / no caller context), falls back to
-        the old 3-step branch-only resolution via get_wiki_page_by_slug_and_branch.
+        When caller_directory is None (no caller context), matches on slug alone.
 
         DP-3: trailing slash stripped from caller_directory before comparison.
         """
         if caller_directory is None:
-            # Legacy fallback — no directory context supplied.
-            return self.get_wiki_page_by_slug_and_branch(slug, current_branch, None)
+            rows = self._q(
+                "SELECT * FROM wiki_page WHERE slug = $slug LIMIT 1",
+                {"slug": slug},
+            )
+            return self._row_to_dict(rows[0]) if rows else None
 
         caller_dir = caller_directory.rstrip("/")
 
-        # Step 1: project-branch-scoped (directory + current branch)
-        if current_branch is not None:
-            rows = self._q(
-                "SELECT * FROM wiki_page WHERE slug = $slug "
-                "AND directory_context = $dir AND branch = $branch LIMIT 1",
-                {"slug": slug, "dir": caller_dir, "branch": current_branch},
-            )
-            if rows:
-                return self._row_to_dict(rows[0])
-
-        # Step 2: project-canonical (directory + branch IS NULL)
+        # Step 1: project-scoped
         rows = self._q(
-            "SELECT * FROM wiki_page WHERE slug = $slug "
-            "AND directory_context = $dir AND branch IS NONE LIMIT 1",
+            "SELECT * FROM wiki_page WHERE slug = $slug AND directory_context = $dir LIMIT 1",
             {"slug": slug, "dir": caller_dir},
         )
         if rows:
             return self._row_to_dict(rows[0])
 
-        # Step 3: global fallback (directory='global' + branch IS NULL)
+        # Step 2: global fallback
         rows = self._q(
-            "SELECT * FROM wiki_page WHERE slug = $slug "
-            "AND directory_context = 'global' AND branch IS NONE LIMIT 1",
+            "SELECT * FROM wiki_page WHERE slug = $slug AND directory_context = 'global' LIMIT 1",
             {"slug": slug},
         )
         return self._row_to_dict(rows[0]) if rows else None

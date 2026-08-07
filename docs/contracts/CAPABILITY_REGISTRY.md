@@ -717,9 +717,9 @@ config knobs.
 - **tools:** —
 - **migrations:** `004`
 - **bc:** —
-- **refs:** `yadgar/_shared/storage/migrations.py::_migration_004_branch_field`, `yadgar/_shared/storage/branch.py::BranchFilter`
-- **wiring:** Applied once at server-mode startup after v5. Adds `branch option<string>` column to `memory` and `wiki_page`; backfills pre-v5 rows to `'master'` in a single transaction. All subsequent memory and wiki inserts stamp the current branch. `BranchFilter` and `_build_branch_clause` use this field for scoped retrieval.
-- **explanation:** Enables per-branch memory and wiki scoping. Rows with `branch IS NONE` or `branch = default_branch` are visible to any branch context; rows stamped with a feature branch are only visible when that branch is active. Backfilling pre-v5 rows to `'master'` ensures they surface correctly in the default-branch context.
+- **refs:** `yadgar/_shared/storage/migrations.py::_migration_004_branch_field`
+- **wiring:** Applied once at server-mode startup after v5. Adds `branch option<string>` column to `memory` and `wiki_page`; backfills pre-v5 rows to `'master'` in a single transaction. All subsequent memory and wiki inserts stamp the current branch. ADR-0215 retired every READER of this field; the column itself is dropped by migration 029.
+- **explanation:** Enabled per-branch memory and wiki scoping: rows with `branch IS NONE` or `branch = default_branch` were visible to any branch context, while rows stamped with a feature branch were visible only when that branch was active. ADR-0215 removed that scoping entirely — the retrieval-side readers are gone as of the read-path car, and the column is retired by migration 029. This entry is retained because migration 004 itself is immutable history.
 
 ### CAP-STOR-007 — Migration 005: provenance_agent field
 - **status:** LIVE
@@ -915,9 +915,9 @@ config knobs.
 - **tools:** `anchor`
 - **migrations:** —
 - **bc:** `BC-ST1`
-- **refs:** `yadgar/_shared/storage/branch.py::BranchFilter`, `yadgar/_shared/storage/branch.py::_build_branch_clause`, `yadgar/core/server/tools/wiki.py`
-- **wiring:** `BRANCH_ENFORCEMENT=true` (default). Checked via `_enforcement_on("YADGAR_BRANCH_ENFORCEMENT")` in `wiki.py` and `file_queue/dlq.py` at write time. When enforced, writes without a resolvable branch are rejected. `BranchFilter` carries per-request branch context; `_build_branch_clause` generates the SQL predicate injected into memory and wiki queries to restrict results to NULL, default_branch, or current_branch rows.
-- **explanation:** Ensures that wiki and memory writes are stamped with the correct git branch, and that reads do not leak cross-branch content. The predicate `(branch IS NONE OR branch = $default OR branch = $current)` allows canonical (NULL/default) rows to surface in any branch context while isolating feature-branch content. Disabling via `YADGAR_BRANCH_ENFORCEMENT=false` removes the rejection guard (intended only for non-git contexts or testing).
+- **refs:** `yadgar/core/server/tools/wiki.py`
+- **wiring:** `BRANCH_ENFORCEMENT=true` (default). Checked via `_enforcement_on("YADGAR_BRANCH_ENFORCEMENT")` in `wiki.py` and `file_queue/dlq.py` at write time. When enforced, writes without a resolvable branch are rejected. The READ-side predicate this entry used to describe is gone (ADR-0215); only the write-side reject remains, and it is retired by the write-path car.
+- **explanation:** Ensured that wiki and memory writes were stamped with the correct git branch, and that reads did not leak cross-branch content. The read-side half of that claim no longer holds: ADR-0215 measured that the predicate hid 78% of the wiki from any non-default branch, and the read-path car deleted it. What survives here is the write-time rejection, gated by `YADGAR_BRANCH_ENFORCEMENT`, which the write-path car removes along with this entry.
 
 ### CAP-STOR-025 — Directory scoping enforcement (DIRECTORY_ENFORCEMENT)
 - **status:** LIVE
@@ -1790,8 +1790,8 @@ config knobs.
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/core/server/tools/wiki.py::_resolve_page_id_by_slug`, `yadgar/core/server/tools/wiki.py::wiki_read`
-- **wiring:** All read/write tools that accept `directory` + `branch_hint` parameters call `_resolve_page_id_by_slug()` or `_st._wiki.read_by_directory_branch()` for §25 4-step resolution. Branch detection uses `_detect_branch(cwd)` from `project.py` with a 30-second LRU cache; when daemon-side detection returns None (container scenario), `branch_hint` supplied by the caller is used as fallback.
-- **explanation:** The §25 directory+branch scoping system ensures wiki pages are correctly scoped to the project (directory_context) and branch they were written on. Resolution order for reads: (1) caller-dir + effective-branch, (2) caller-dir + NULL branch (canonical slot), (3) 'global' + NULL branch, (4) not-found. For writes, branch and directory are validated at the MCP boundary (enforcement gates `YADGAR_BRANCH_ENFORCEMENT`, `YADGAR_DIRECTORY_ENFORCEMENT`). This prevents cross-project wiki leakage and enables per-branch draft pages that fall through to the canonical slot on the default branch. The `branch_hint` parameter was added in v5.42.3–v5.42.6 to handle container/CI scenarios where git is unavailable in the daemon process.
+- **wiring:** All read/write tools that accept a `directory` parameter call `_resolve_page_id_by_slug()` or `_st._wiki.read_by_directory()` for §25 resolution. ADR-0215 removed the branch axis from that ladder; `branch_hint` is still accepted on the tool surface and ignored until the signature car removes it.
+- **explanation:** The §25 directory scoping system ensures wiki pages are correctly scoped to the project (`directory_context`) they were written for. Resolution order for reads: (1) caller-dir, (2) 'global', (3) not-found. For writes, directory is validated at the MCP boundary (`YADGAR_DIRECTORY_ENFORCEMENT`). This prevents cross-project wiki leakage. The branch half of this capability — a leading resolution step keyed on the caller's branch, the `YADGAR_BRANCH_ENFORCEMENT` write gate, and the `branch_hint` parameter added in v5.42.3–v5.42.6 for container/CI scenarios — is retired by ADR-0215: measured, it hid 78% of the corpus from any non-default branch while isolating 0.6% of rows.
 
 ### CAP-WIKI-007 — Wiki branch cleanup (cleanup_merged_branches) + stale-count signals
 - **status:** LIVE

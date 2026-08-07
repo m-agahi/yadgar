@@ -152,11 +152,10 @@
   "function": "recall",
   "lineno": 111,
   "metrics": {
-   "cyclomatic": 17,
    "fn_loc": 180,
    "params": 10
   },
-  "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436→180 and cyclomatic 55→17, but both remain above HARD caps due to: (1) multi-path input validation (type_filter, mode, profile, branch_hint, consolidation, shadow observe), (2) branch detection with fallback logic. params=10: all 10 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
+  "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436->180. ADR-0215 (branch removal) then deleted the branch-detection block, dropping cyclomatic below the HARD cap — that metric is gone from this entry. fn_loc remains above the cap due to multi-path input validation (type_filter, mode, profile, consolidation, shadow observe). params=10: all 10 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -169,17 +168,6 @@
    "params": 18
   },
   "rationale": "PERMANENT. Public MCP tool: 18 params are the LLM-facing schema and cannot be bundled without breaking the API. Car C (#83) adds slug+upsert (2 params), Car B0 added hash+source_file (2 params). R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
-  "added": "2026-06-13",
-  "added_by": "complexity-governance-agent"
- },
- {
-  "path": "yadgar/core/server/tools/wiki.py",
-  "function": "wiki_query",
-  "lineno": 555,
-  "metrics": {
-   "cyclomatic": 20
-  },
-  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -391,17 +379,6 @@
   "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split.",
   "added": "2026-07-03",
   "added_by": "feat/obs-p1-recall-readpath"
- },
- {
-  "path": "yadgar/backend/retrieval/recall_pipeline.py",
-  "function": "_fanout_recall",
-  "lineno": 333,
-  "metrics": {
-   "params": 10
-  },
-  "rationale": "Phase 1 backend contract widen (#45): added profile: str | None = None as the 9th param to thread rerank_level through the fanout. The 8-param SOFT cap is exceeded by 1; the function signature matches the backend RecallRequest contract (query/max_results/min_heat/directory/current_branch/default_branch/type_filter/tags/profile). Introducing a config-object wrapper would require changing all callers (core + backend) simultaneously, which couples Phase 1 to Phase 2 — Phase 2 is the planned refactor pass. Allowlisted until Phase 2 can wrap params cleanly.",
-  "added": "2026-07-05",
-  "added_by": "recall-backend-phase1"
  },
  {
   "path": "yadgar/core/server/tools/recall.py",

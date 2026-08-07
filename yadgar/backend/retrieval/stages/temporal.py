@@ -22,15 +22,6 @@ class TemporalStage(RetrievalStage):
 
     @observe(tier="stage", metric="retrieval.pipeline.temporal")
     def apply(self, state: RetrievalState) -> RetrievalState:
-        from yadgar._shared.storage import BranchFilter  # noqa: PLC0415
-
-        branch_filter = None
-        if state.default_branch is not None:
-            branch_filter = BranchFilter(
-                current_branch=state.current_branch,
-                default_branch=state.default_branch,
-            )
-
         settings = self._retriever._settings
         candidate_k = state.max_results * settings.CANDIDATE_POOL_MULTIPLIER
         if state.open_domain_mode:
@@ -43,6 +34,5 @@ class TemporalStage(RetrievalStage):
             state.scores,
             state.min_heat,
             candidate_k,
-            branch_filter=branch_filter,
         )
         return state

@@ -329,7 +329,6 @@ class _DLQMixin:
             candidates = _st._wiki.find_similar_wiki_pages(
                 title=title,
                 content=payload.get("content", ""),
-                branch=payload.get("branch"),
                 threshold=sim_threshold,
                 top_k=sim_top_k,
                 exclude_slug=payload.get("slug", ""),

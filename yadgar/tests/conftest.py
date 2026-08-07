@@ -1434,8 +1434,6 @@ def recall_backend_bypass(monkeypatch):
         max_results,
         min_heat,
         directory,
-        current_branch,
-        default_branch,
         type_filter,
         tags,
         mode=None,
@@ -1448,17 +1446,6 @@ def recall_backend_bypass(monkeypatch):
         if mode == "landscape":
             # Landscape not fully wired in unit tests — return empty (no AstrocytePool)
             return []
-        # Unit tests store memories with branch=YADGAR_CI_BRANCH.  recall.py may
-        # detect current_branch=None for fake test directories (e.g. /home/user/project).
-        # With current_branch=None and default_branch='master' (git fallback), the
-        # BranchFilter clause is (branch IS NONE OR branch='master') — excluding
-        # feat/* memories.  Fix: fill current_branch from YADGAR_CI_BRANCH so the
-        # clause becomes (branch IS NONE OR branch='master' OR branch='feat/test-branch')
-        # — includes unit-test memories without disabling branch isolation.
-        import os as _os
-
-        _ci_branch = _os.environ.get("YADGAR_CI_BRANCH")
-        _effective_branch = current_branch or _ci_branch or None
         # T2 Car E2: compose the backend retriever lazily against the test's
         # live engines (idempotent; the shared root no longer builds it).
         ensure_retrieval_engine()
@@ -1467,8 +1454,6 @@ def recall_backend_bypass(monkeypatch):
             max_results=max_results,
             min_heat=min_heat,
             directory=directory,
-            current_branch=_effective_branch,
-            default_branch=default_branch,
             type_filter=type_filter,
             tags=tags,
             profile=profile,

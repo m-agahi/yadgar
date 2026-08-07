@@ -1,7 +1,7 @@
 """MemoryProvider — wraps the existing Retriever pipeline as a SourceProvider.
 
 Part of v6 T6 (unified-scoped-recall), Step 1 — pure extraction.
-Step 3 (v6 T6): adds directory + branch scoping via ScopeFilter.from_scope().
+Step 3 (v6 T6): adds directory scoping via ScopeFilter.from_scope().
 
 The MemoryProvider applies a Python-side directory post-filter on top of the
 retriever pipeline results. This mirrors the legacy recall path's
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 class MemoryProvider(SourceProvider):
     """SourceProvider backed by the Retriever pipeline (memory store).
 
-    Calls ``Retriever.recall()`` with the scope's branch/heat context and
+    Calls ``Retriever.recall()`` with the scope's heat context and
     maps the returned memory dicts to normalized Candidate objects.
 
     Step 3: applies is_directory_eligible() post-filter at the provider level
@@ -58,7 +58,7 @@ class MemoryProvider(SourceProvider):
 
         Args:
             query: Search query.
-            scope: Scope carrying directory, branch context, and min_heat.
+            scope: Scope carrying directory and min_heat.
             limit: Maximum candidates to return before directory filtering.
 
         Returns:
@@ -72,8 +72,6 @@ class MemoryProvider(SourceProvider):
             query,
             max_results=limit,
             min_heat=scope.min_heat,
-            current_branch=scope.branch,
-            default_branch=scope.default_branch,
             profile=self._profile,
             deadline=self._deadline,
         )
@@ -99,7 +97,6 @@ class MemoryProvider(SourceProvider):
                     content=m.get("content", ""),
                     native_score=native_score,
                     directory_context=dc,
-                    branch=m.get("branch"),
                     raw=m,
                 )
             )

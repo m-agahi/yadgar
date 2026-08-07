@@ -876,10 +876,8 @@ async def _task_list_restore_nudge(directory: str, branch_hint: str | None) -> s
     agent_dispatch_prelude do not call it), and NOT via project_brief
     (subagent-callable → would leak).
 
-    The page is written CANONICALLY (branch=None) by the stop-hook step, so the
-    existence check resolves it under any caller branch via §25 step-2
-    (dir + branch IS NULL) — a default-branch-pinned row would be unreachable
-    from a feature-branch session (memory 531352 / ADR-log branch-pin bug class).
+    ADR-0215 removed branch scoping, so the existence check resolves the page by
+    directory alone and is reachable from any working tree.
 
     Fail-open: any error returns "" so session-start is never blocked.
     """
@@ -896,10 +894,9 @@ async def _task_list_restore_nudge(directory: str, branch_hint: str | None) -> s
             return ""
         slug = f"{project}-task-list"
         page = await asyncio.to_thread(
-            storage.get_wiki_page_by_slug_directory_branch,
+            storage.get_wiki_page_by_slug_directory,
             slug,
             directory,
-            branch_hint,
         )
         if not page:
             return ""

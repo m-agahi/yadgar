@@ -62,8 +62,6 @@ class RecallRequest(BaseModel):
 
     query: str
     directory: str
-    current_branch: str | None = None
-    default_branch: str | None = None
     max_results: int = 5
     min_heat: float = 0.0
     type: str = "all"  # noqa: A003 — matches MCP schema convention

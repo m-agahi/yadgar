@@ -111,7 +111,6 @@ def _insert_page_with_null_embedding(title: str, content: str) -> int:
             "embedding": None,  # NULL — the pre-v5.39 condition
             "source_memory_ids": [],
         },
-        branch=None,
     )
     return page_id
 
@@ -142,7 +141,6 @@ class TestNullEmbeddingBugReproduction:
         candidates = _wiki().find_similar_wiki_pages(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
-            branch=None,
             threshold=0.80,
         )
 
@@ -164,7 +162,6 @@ class TestNullEmbeddingBugReproduction:
         candidates = _wiki().find_similar_wiki_pages(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
-            branch=None,
             threshold=0.50,  # very low threshold — any match should show up
         )
         assert len(candidates) == 0, f"Expected 0 (all rows NULL → all excluded). Got: {candidates}"
@@ -235,7 +232,6 @@ class TestBackfillFixesBug:
         before = _wiki().find_similar_wiki_pages(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
-            branch=None,
             threshold=0.80,
         )
         assert len(before) == 0, f"Expected 0 before backfill, got {before}"
@@ -248,7 +244,6 @@ class TestBackfillFixesBug:
         after = _wiki().find_similar_wiki_pages(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
-            branch=None,
             threshold=0.80,
         )
         assert len(after) >= 1, (

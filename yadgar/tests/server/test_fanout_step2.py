@@ -156,8 +156,6 @@ class TestFanoutRecall:
                 max_results=max_results,
                 min_heat=0.0,
                 directory="/tmp/test",
-                current_branch="main",
-                default_branch="master",
                 **kw,
             )
 

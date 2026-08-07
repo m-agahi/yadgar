@@ -18,8 +18,6 @@ class RetrievalState:
         min_heat: Minimum heat threshold for memory candidates.
         profile: Profile name ("fast", "balanced", "full", "debug").
         stage_overrides: Per-call enable/disable map, e.g. {"nli": False}.
-        current_branch: Active git branch, or None.
-        default_branch: Repository default branch.
 
         scores: Per-memory, per-signal score map. Keys are memory IDs (int).
             Inner dict has keys: "vector", "fts", "ppr", "spread", "temporal".
@@ -42,8 +40,6 @@ class RetrievalState:
     min_heat: float = 0.0
     profile: str = "balanced"
     stage_overrides: dict = field(default_factory=dict)
-    current_branch: str | None = None
-    default_branch: str | None = None
 
     # Signal score accumulator: memory_id → {signal: score}
     scores: dict = field(default_factory=dict)

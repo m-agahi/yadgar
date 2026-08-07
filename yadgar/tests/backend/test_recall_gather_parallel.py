@@ -170,7 +170,6 @@ def _mk_candidate(cand_type, cid, content, score):
         content=content,
         native_score=score,
         directory_context=_DIR,
-        branch=None,
         raw=(
             {"id": cid, "content": content, "_retrieval_score": score, "heat": score, "tags": []}
             if cand_type == "memory"
@@ -209,8 +208,6 @@ def _run_fanout_at(monkeypatch, ncpu):
         max_results=5,
         min_heat=0.0,
         directory=_DIR,
-        current_branch=None,
-        default_branch="master",
         type_filter="all",
     )
 

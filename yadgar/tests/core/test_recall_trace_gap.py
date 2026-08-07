@@ -263,8 +263,6 @@ def test_fanout_fuse_span_emits_on_multi_provider(span_exporter):
             max_results=5,
             min_heat=0.0,
             directory="/tmp/test",
-            current_branch="master",
-            default_branch="master",
         )
 
     _assert_child_of(span_exporter, "recall.fanout.fuse", "tool.recall")
@@ -301,8 +299,6 @@ def test_fanout_fuse_span_absent_on_single_provider(span_exporter):
             max_results=5,
             min_heat=0.0,
             directory="/tmp/test",
-            current_branch="master",
-            default_branch="master",
         )
 
     assert "recall.fanout.fuse" not in _span_names(span_exporter)

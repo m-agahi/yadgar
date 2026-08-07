@@ -45,7 +45,7 @@ class _FakeWikiStore:
         self._storage = storage
         self.pages = {}  # slug -> page dict
 
-    def read_by_directory_branch(self, slug, caller_dir, branch):
+    def read_by_directory(self, slug, caller_dir):
         return dict(self.pages[slug]) if slug in self.pages else None
 
     def delete(self, slug):
@@ -169,13 +169,13 @@ def test_wiki_set_metadata_busts_wiki_read_cache(monkeypatch):
 def test_wiki_read_hit_skips_store(monkeypatch):
     fake, _storage, wtool = _wire_fake_wiki(monkeypatch)
     calls = []
-    orig = fake.read_by_directory_branch
+    orig = fake.read_by_directory
 
-    def counting_read(slug, caller_dir, branch):
+    def counting_read(slug, caller_dir):
         calls.append(slug)
-        return orig(slug, caller_dir, branch)
+        return orig(slug, caller_dir)
 
-    monkeypatch.setattr(fake, "read_by_directory_branch", counting_read)
+    monkeypatch.setattr(fake, "read_by_directory", counting_read)
     fake.pages["p"] = {"slug": "p", "title": "T", "content": "c"}
 
     wtool.wiki_read("p", directory="/repo")

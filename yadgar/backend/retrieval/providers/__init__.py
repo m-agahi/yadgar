@@ -3,7 +3,7 @@
 Public API:
   Candidate    — normalized result from any source
   SourceProvider — ABC for memory, wiki, and future sources
-  Scope        — query scope (directory, branch, min_heat)
+  Scope        — query scope (directory, min_heat)
 
 Providers live under this package:
   memory.py    — MemoryProvider (wraps Retriever)

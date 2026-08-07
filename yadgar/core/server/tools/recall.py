@@ -239,13 +239,11 @@ def _resolve_shape_limit(config_key: str, settings_field: str, directory: str) -
 
 
 @observe(tier="boundary", metric="tools.recall._forward_to_backend")
-def _forward_to_backend(  # noqa: PLR0913 — 12 args match full recall signature
+def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signature
     query: str,
     max_results: int,
     min_heat: float,
     directory: str,
-    current_branch: str | None,
-    default_branch: str | None,
     type_filter: str,
     tags: list[str] | None,
     mode: str | None = None,
@@ -261,9 +259,6 @@ def _forward_to_backend(  # noqa: PLR0913 — 12 args match full recall signatur
     Backend URL: derived from YADGAR_EMBED_URL (the same base URL used by
     RemoteMLClient for /rerank).  If YADGAR_EMBED_URL is not configured,
     raises RuntimeError (forward-only: no fallback).
-
-    Branch args come from the caller's _detect_branch resolution — the backend
-    must NOT call _detect_branch (no host .git in container).
 
     timeout_s: httpx request timeout. Defaults to 120.0 for the MCP recall path.
         The prompt-recall HOOK path passes a SHORT timeout (HOOK_RECALL_TIMEOUT_S)
@@ -299,8 +294,6 @@ def _forward_to_backend(  # noqa: PLR0913 — 12 args match full recall signatur
     payload: dict = {
         "query": query,
         "directory": directory,
-        "current_branch": current_branch,
-        "default_branch": default_branch,
         "max_results": max_results,
         "min_heat": min_heat,
         "type": type_filter,
@@ -356,9 +349,8 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         profile: Optional retrieval profile — "fast", "balanced", "full", "debug".
             Controls rerank stages on the backend (fast = no CE/NLI/MP; balanced =
             CE+MP; full = +NLI). Raises ValueError on unrecognised value.
-        branch_hint: Caller-supplied branch name. Fallback when daemon cannot detect
-            the branch (container scenario). Resolution order:
-            _detect_branch(directory) → branch_hint → None.
+        branch_hint: Accepted for back-compat and ignored (ADR-0215 removed
+            branch scoping).
         mode: Opt-in recall mode. None (default) = normal precise recall.
             "landscape" = broad cross-domain recall via consensus_retrieve across all
             astrocyte domains — each domain votes independently and results are merged
@@ -436,42 +428,12 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         if _st._consolidation is not None:
             _st._consolidation.record_activity()
 
-        # Branch context — detect before forwarding so we pass resolved branch to backend.
-        # backend must NOT call _detect_branch (no host .git in container).
-        try:
-            import sys as _sys  # noqa: PLC0415
-
-            _cwd = _dir_stripped
-            _srv = _sys.modules.get("yadgar.core.server")
-            if _srv is not None:
-                _detect_branch_fn = getattr(_srv, "_detect_branch", None)
-                _get_default_branch_fn = getattr(_srv, "_get_default_branch", None)
-            else:
-                _detect_branch_fn = None
-                _get_default_branch_fn = None
-            if _detect_branch_fn is None or _get_default_branch_fn is None:
-                from yadgar.core.server.tools.project import _detect_branch as _detect_branch_fn
-                from yadgar.core.server.tools.project import (
-                    _get_default_branch as _get_default_branch_fn,
-                )
-            _current_branch = _detect_branch_fn(_cwd)
-            _default_branch = _get_default_branch_fn(_cwd)
-        except Exception:
-            _current_branch = None
-            _default_branch = None
-
-        # branch_hint fallback — mirrors wiki_read (v5.42.6 F1).
-        if not _current_branch and branch_hint:
-            _current_branch = branch_hint
-
         # Phase 2a: forward-only — raise loud on backend error (no in-core fallback).
         merged = _forward_to_backend(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
             directory=_dir_stripped,
-            current_branch=_current_branch,
-            default_branch=_default_branch,
             type_filter=type,
             tags=tags,
             mode=mode,

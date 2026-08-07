@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
@@ -617,9 +616,7 @@ def wiki_query(
     directory: Absolute project path for scoping results to caller directory + 'global'.
         Required (v5.65 Fix D): callers must supply the real host directory.
         Container-safe: daemon does NOT fall back to os.getcwd().
-    branch_hint: Caller branch for §25 branch filter (v5.43.0).
-        Uses branch_hint when daemon-side _detect_branch returns None (container scenario).
-        Resolution order: _detect_branch(directory) → branch_hint → None (canonical slot).
+    branch_hint: Accepted for back-compat and ignored (ADR-0215 removed branch scoping).
 
     DEPRECATION (Phase 2a): unified recall is now the only path — prefer
     ``recall(query, directory=..., type="wiki")`` which routes through the
@@ -670,42 +667,9 @@ def wiki_query(
             return _q_hit
 
         assert _st._wiki is not None, "WikiStore not initialized"
-        # Fetch extra results before branch filter so we still return max_results after pruning.
+        # Fetch extra results before the directory filter so we still return
+        # max_results after pruning.
         results = _st._wiki.query(query, tags, category, max_results * 3)
-
-        # §25 Branch filter + current-branch 1.5x score boost.
-        # v5.43.0: accept caller-supplied directory + branch_hint to avoid daemon-CWD bug.
-        # Resolution: _detect_branch(directory or os.getcwd()) → branch_hint → None.
-        # Look up via yadgar.server so monkeypatches on "yadgar.server._detect_branch" etc. apply.
-        try:
-            import sys as _sys  # noqa: PLC0415
-
-            _cwd = (
-                _dir_stripped  # v5.65 Fix D: directory is required; _dir_stripped always non-empty
-            )
-            _srv = _sys.modules.get("yadgar.core.server")
-            _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
-            _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
-            if _detect_branch is None or _get_default_branch is None:
-                from yadgar.core.server.tools.project import (
-                    _detect_branch,  # noqa: PLC0415
-                    _get_default_branch,  # noqa: PLC0415
-                )
-            _current_branch = _detect_branch(_cwd)
-            _default_branch = _get_default_branch(_cwd)
-        except Exception:
-            _current_branch = None
-            _default_branch = None  # v5.42.4: canonical slot
-
-        # v5.43.0: use branch_hint when daemon-side detection returns None (container scenario).
-        # Mirrors the pattern in wiki_read (v5.42.6 F1) and _resolve_page_id_by_slug (v5.42.5).
-        _effective_branch = _current_branch or branch_hint
-
-        _allowed_branches: set[str | None] = {_default_branch, None}
-        if _effective_branch is not None:
-            _allowed_branches.add(_effective_branch)
-
-        results = [r for r in results if r.get("branch") in _allowed_branches]
 
         # Task 0134: wiki_query is a SEARCH path and used to bypass
         # recall_disposition entirely. See is_recall_visible for the shared rule.
@@ -720,13 +684,6 @@ def wiki_query(
         results = [
             r for r in results if is_directory_eligible(r.get("directory_context"), _dir_stripped)
         ]
-
-        if _effective_branch is not None:
-            for r in results:
-                if r.get("branch") == _effective_branch:
-                    base = r.get("_retrieval_score", 0.0)
-                    r["_retrieval_score"] = base * 1.5
-            results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
 
         results = results[:max_results]
 
@@ -759,70 +716,37 @@ def wiki_read(
 ) -> dict:
     """Read a specific wiki page by slug.
 
-    §25 Resolution order (v5.42.5 — directory-aware):
-    1. directory=$caller_dir AND branch=$effective_branch  (project-branch-scoped)
-    2. directory=$caller_dir AND branch IS NULL            (project-canonical)
-    3. directory='global'    AND branch IS NULL            (global fallback)
-    4. Not found → error dict.
+    §25 Resolution order (directory-aware; ADR-0215 removed the branch axis):
+    1. directory=$caller_dir  (project-scoped)
+    2. directory='global'     (global fallback)
+    3. Not found → error dict.
 
-    branch_hint: caller-supplied branch (v5.42.6 F1 fix, symmetric with wiki_add).
-    Uses branch_hint if _detect_branch returns None (container scenario).
-    Without branch_hint, falls through to steps 2+3 (permissive default —
-    reads are more permissive than writes per §25 design).
+    branch_hint: accepted for back-compat and ignored (ADR-0215).
 
-    When directory is not supplied, falls back to legacy branch-only resolution
+    When directory is not supplied, the slug is matched on its own
     (backward-compat mode; WARNING logged).
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
-    # Detect current branch for resolution order.
-    # Look up via yadgar.server so monkeypatches on "yadgar.server._detect_branch" etc. apply.
-    try:
-        import sys as _sys  # noqa: PLC0415
-
-        _cwd = os.getcwd()
-        _srv = _sys.modules.get("yadgar.core.server")
-        _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
-        _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
-        if _detect_branch is None or _get_default_branch is None:
-            from yadgar.core.server.tools.project import (
-                _detect_branch,  # noqa: PLC0415
-                _get_default_branch,  # noqa: PLC0415
-            )
-        _current_branch = _detect_branch(_cwd)
-        _default_branch = _get_default_branch(_cwd)
-    except Exception:
-        _current_branch = None
-        _default_branch = None  # v5.42.4: canonical slot
-
-    # v5.42.6 F1 fix: use branch_hint when daemon-side detection returns None.
-    # This mirrors _resolve_page_id_by_slug (v5.42.5) and wiki_add (v5.42.3).
-    # The effective branch for §25 step 1 uses branch_hint if _detect_branch failed.
-    _effective_branch = branch_hint or _current_branch
-
-    # Car 2: cache the resolved page by (slug, dir, effective-branch) + wiki epoch.
+    # Car 2: cache the resolved page by (slug, dir) + wiki epoch.
     # A hit skips the WikiStore read. A wiki write to ANY page bumps the global
     # epoch → this key moves → a stale page can never be served (the
     # wiki-write-busts-read guarantee). Only found pages are cached; a not-found
     # result is cheap to recompute and a later create bumps the epoch anyway.
     _caller_dir = directory.strip().rstrip("/") if directory is not None else None
-    _r_key = (slug, _caller_dir, _effective_branch, _current_wiki_epoch())
+    _r_key = (slug, _caller_dir, _current_wiki_epoch())
     _r_hit = _wiki_read_cache.get(_r_key)
     if _r_hit is not None:
         return _r_hit
 
-    if directory is not None:
-        # v5.42.5: 4-step directory-aware resolution
-        caller_dir = _caller_dir or None
-        page = _st._wiki.read_by_directory_branch(slug, caller_dir, _effective_branch)
-    else:
+    if directory is None:
         # Legacy fallback — no directory supplied; backward-compat mode.
         logger.warning(
-            "wiki_read('%s'): no directory supplied — using legacy branch-only resolution. "
+            "wiki_read('%s'): no directory supplied — matching on slug alone. "
             "Pass directory= for project-scoped results (v5.42.5).",
             slug,
         )
-        page = _st._wiki.read_by_branch(slug, _effective_branch, _default_branch)
+    page = _st._wiki.read_by_directory(slug, _caller_dir or None)
 
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}
@@ -974,13 +898,15 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
     Args:
         title: Title of the proposed new page.
         content: Content of the proposed new page.
-        branch: Branch context for scope filter (None = canonical slot).
+        branch: Accepted for back-compat and ignored (ADR-0215 removed branch scoping).
         threshold: Minimum cosine similarity (0-1). Defaults to WIKI_SIM_CONTENT_THRESHOLD.
         top_k: Maximum candidates to return (default 5).
+        directory: Caller project dir for the ADR-0158 directory-scoped candidate
+            filter (None = no directory filter).
 
     Returns:
         {"candidates": [...], "threshold_used": float}
-        Each candidate: {slug, title, similarity, branch}
+        Each candidate: {slug, title, similarity}
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
@@ -991,36 +917,12 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
         threshold if threshold is not None else getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
     )
 
-    # v5.42.2: auto-detect default branch when caller does not supply one,
-    # mirroring wiki_query (lines 462-483). Without this, find_similar_wiki_pages
-    # builds scope = {None} which excludes all branch="master" legacy pages
-    # written by the pre-v5.42.2 drainer, making the gate silent in production.
-    #
-    # We pass _default_branch (not _current_branch) so that find_similar_wiki_pages
-    # builds scope = {None, default_branch} — covering both the post-v5.42.2
-    # canonical-slot pages (branch=None) and the pre-v5.42.2 legacy pages
-    # (branch="master"). On a feature branch the scope still covers all real data.
-    if branch is None:
-        try:
-            import sys as _sys  # noqa: PLC0415
-
-            _cwd = os.getcwd()
-            _srv = _sys.modules.get("yadgar.core.server")
-            _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
-            if _get_default_branch is None:
-                from yadgar.core.server.tools.project import _get_default_branch  # noqa: PLC0415
-            _default_branch = _get_default_branch(_cwd)
-        except Exception:
-            _default_branch = None  # v5.42.4: canonical slot
-
-        branch = _default_branch
-
     candidates = _st._wiki.find_similar_wiki_pages(
         title=title,
         content=content,
-        branch=branch,
         threshold=effective_threshold,
         top_k=top_k,
+        directory_context=(directory.strip().rstrip("/") or None) if directory else None,
     )
     return {
         "candidates": candidates,
@@ -1037,39 +939,14 @@ def _resolve_page_id_by_slug(
     directory: str | None = None,
     branch_hint: str | None = None,
 ) -> tuple[int | None, dict | None]:
-    """Directory+branch-resolve slug → page dict. Returns (page_id, page) or (None, None).
+    """Directory-resolve slug → page dict. Returns (page_id, page) or (None, None).
 
-    v5.42.5 (F1 fix): accepts directory + branch_hint from caller so resolution uses
-    caller context instead of daemon os.getcwd(). When directory is None, falls back
-    to legacy branch-only resolution (backward-compat).
+    v5.42.5 (F1 fix): accepts directory from the caller so resolution uses caller
+    context instead of daemon os.getcwd(). ADR-0215 removed the branch axis;
+    branch_hint is accepted for back-compat and ignored.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    try:
-        import sys as _sys  # noqa: PLC0415
-
-        # Use caller-supplied branch_hint if available; otherwise detect from daemon CWD.
-        # With directory supplied (v5.42.5), daemon CWD is irrelevant for branch detection
-        # but we still resolve it as a secondary signal.
-        _cwd = os.getcwd()
-        _srv = _sys.modules.get("yadgar.core.server")
-        _detect_branch = getattr(_srv, "_detect_branch", None) if _srv else None
-        _get_default_branch = getattr(_srv, "_get_default_branch", None) if _srv else None
-        if _detect_branch is None or _get_default_branch is None:
-            from yadgar.core.server.tools.project import (  # noqa: PLC0415
-                _detect_branch,
-                _get_default_branch,
-            )
-        current_branch = branch_hint or _detect_branch(_cwd)
-        default_branch = _get_default_branch(_cwd)
-    except Exception:
-        current_branch = branch_hint
-        default_branch = None  # v5.42.4: canonical slot
-
-    if directory is not None:
-        # v5.42.5: use directory-aware 4-step resolution
-        page = _st._wiki.read_by_directory_branch(slug, directory, current_branch)
-    else:
-        page = _st._wiki.read_by_branch(slug, current_branch, default_branch)
+    page = _st._wiki.read_by_directory(slug, directory)
     if page is None:
         return None, None
     return page.get("id"), page

@@ -41,7 +41,7 @@ def _make_retriever(fts_hits_by_query: dict | None = None, comet_terms: list | N
 
     retriever = _StubRetriever()
 
-    def _fts_scored(query_str, min_heat=0.0, limit=50, branch_filter=None):
+    def _fts_scored(query_str, min_heat=0.0, limit=50):
         if fts_hits_by_query is None:
             return []
         # match on substring for simplicity
@@ -266,23 +266,3 @@ class TestCollectFtsScores:
         # Should not raise
         retriever._collect_fts_scores(scores, params)
         assert scores[1]["fts"] == 0.0
-
-    def test_branch_filter_forwarded(self):
-        """branch_filter is forwarded to storage calls."""
-        from yadgar._shared.storage import BranchFilter  # noqa: PLC0415
-
-        bf = BranchFilter(current_branch="feat/x", default_branch="master")
-        retriever = _make_retriever({"boosted": [(1, 1.0)]})
-        scores = _make_scores()
-        params = FTSParams(
-            query="boosted check",
-            enabled_signals=None,
-            open_domain_subqueries=[],
-            open_domain_mode=False,
-            candidate_k=50,
-            min_heat=0.0,
-            branch_filter=bf,
-        )
-        retriever._collect_fts_scores(scores, params)
-        calls = retriever._storage.search_memories_fts_scored.call_args_list
-        assert all(c.kwargs.get("branch_filter") is bf for c in calls if c.kwargs)
