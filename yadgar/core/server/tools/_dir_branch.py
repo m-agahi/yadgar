@@ -1,19 +1,21 @@
-"""Trusted per-directory git-context — core read-through cache (Car 0).
+"""Trusted per-directory ``gitness`` — core read-through cache.
 
-The canonical-write decision (§0.4) hangs on two TRUSTED per-directory facts:
+``gitness`` (is this directory a git work-tree?) is computed HOST-SIDE by the
+SessionStart context hook (the container cannot see the host ``.git``), POSTed to
+the SessionStart context endpoint (the SOLE set-channel — no model-callable tool
+writes it), and persisted DURABLY in the DB keyed by directory (restart-safe;
+``upsert_dir_branch_context``). That host-only set-channel is what makes the fact
+NON-FORGEABLE — the surviving half of ADR-0126.
 
-  * ``gitness``        — is this directory a git work-tree?
-  * ``default_branch`` — the repo default branch (``None`` when non-git).
+ADR-0216: this module used to carry ``default_branch`` alongside ``gitness``, and
+``_check_wiki_add_context`` consulted it to decide a write's branch. ADR-0215
+removed branch scoping, so ``default_branch`` is gone and the wiki write path no
+longer calls in here at all. The module, its cache namespace and the durable row
+survive per ADR-0216 so the trusted, non-forgeable gitness signal is preserved.
 
-They are computed HOST-SIDE by the SessionStart context hook (the container
-cannot see the host ``.git``), POSTed to the SessionStart context endpoint (the
-SOLE set-channel — no model-callable tool writes them), and persisted DURABLY in
-the DB keyed by directory (restart-safe; ``upsert_dir_branch_context``).
-
-Every wiki write needs the directory's ``gitness`` to decide the branch. Reading
-the durable store from the backend on every write would add a core↔backend round
-trip to the hot path, so this module wraps the durable store in a read-through
-cache on the shared core ``Cache`` engine:
+Reading the durable store from the backend on every call would add a core↔backend
+round trip, so this module wraps it in a read-through cache on the shared core
+``Cache`` engine:
 
   * namespace ``dir_branch_context`` (registered in ``cache._NAMESPACE_WEIGHTS``).
   * ``Manual`` invalidation — ``invalidate(directory)`` fired ON the SessionStart
@@ -21,11 +23,10 @@ cache on the shared core ``Cache`` engine:
   * ``TTL`` backstop — for the git-init-mid-life edge (a non-git dir becomes git,
     or vice versa, without a fresh SessionStart).
 
-Fail-safe (§0.3): a backend error is surfaced to the caller as an *error*, never
-silently coerced to canonical. The write path treats an error / unknown-directory
-result as "require branch_hint" (flow 4). A cache MISS is not "unknown directory"
-— only an empty backend result (``found=False``) is; a cold cache on a known dir
-triggers one backend read and fills.
+Fail-safe: a backend error is surfaced to the caller as an *error*, never silently
+coerced to a truthy answer. A cache MISS is not "unknown directory" — only an
+empty backend result (``found=False``) is; a cold cache on a known dir triggers
+one backend read and fills.
 """
 
 from __future__ import annotations
@@ -94,21 +95,21 @@ def invalidate(directory: str) -> None:
 
 @observe(tier="hot", metric="tools._dir_branch.get_context")
 def get_context(directory: str | None) -> dict:
-    """Return the TRUSTED git-context for *directory* via the read-through cache.
+    """Return the TRUSTED ``gitness`` for *directory* via the read-through cache.
 
     Return shape (always a dict — never raises to the caller):
-      {"found": True,  "gitness": bool, "default_branch": str | None}  — known dir
-      {"found": False, "gitness": False, "default_branch": None}       — unknown dir
-      {"error": True,  "found": False, ...}                             — backend down
+      {"found": True,  "gitness": bool}            — known dir
+      {"found": False, "gitness": False}           — unknown dir
+      {"error": True,  "found": False, ...}        — backend down
 
-    ``found=False`` (no error) = §0.4 flow 4 "unknown directory". ``error=True`` =
-    fail-safe: the write path treats it as flow 4 too (require branch_hint), NEVER
-    as canonical. A cache MISS silently triggers one backend read then fills — it
-    is not surfaced as unknown.
+    ``found=False`` (no error) = "unknown directory" (no SessionStart row yet).
+    ``error=True`` = fail-safe: callers must treat it as unknown, never as a
+    truthy gitness. A cache MISS silently triggers one backend read then fills —
+    it is not surfaced as unknown.
     """
     _dir = (directory or "").strip() or None
     if _dir is None:
-        return {"found": False, "gitness": False, "default_branch": None}
+        return {"found": False, "gitness": False}
 
     cache = _get_cache()
     cached = cache.get(_dir)
@@ -122,12 +123,13 @@ def get_context(directory: str | None) -> dict:
         result = _forward_admin("get_dir_branch_context", {"directory": _dir})
     except Exception as exc:  # noqa: BLE001 — surface as fail-safe error, do NOT cache
         logger.warning("dir_branch_context backend read failed for %s: %s", _dir, exc)
-        return {"error": True, "found": False, "gitness": False, "default_branch": None}
+        return {"error": True, "found": False, "gitness": False}
 
+    # Explicit key pick (never a spread): a pre-ADR-0216 backend still returning
+    # ``default_branch`` is silently ignored rather than cached and re-served.
     ctx = {
         "found": bool(result.get("found")),
         "gitness": bool(result.get("gitness")),
-        "default_branch": result.get("default_branch"),
     }
     # Cache both found + not-found (a known-unknown is a real answer worth caching;
     # the SessionStart upsert Manual-invalidates when the dir becomes known).
