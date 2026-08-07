@@ -21,27 +21,12 @@ from yadgar.core.server._app import _tool
 logger = logging.getLogger(__name__)
 
 
-# Car 0 §0.5: page types allowed on the sanctioned canonical write path. This is
-# a DEFENSE-IN-DEPTH assertion inside _wiki_write_canonical, NOT the gate — a model
-# supplies page_type/tags, so it is spoofable. The real boundary is that flow-1
-# canonical is reachable only via server-side sanctioned callers (never a model
-# arg), and flow-3 canonical is decided by trusted gitness. Registered as an I32
-# capability-registry constant.
+# Page types allowed on the sanctioned canonical write path. This is a
+# DEFENSE-IN-DEPTH assertion inside _wiki_write_canonical, NOT the gate — a model
+# supplies page_type/tags, so it is spoofable. The real boundary is that the
+# canonical path is reachable only via server-side sanctioned callers (never a
+# model arg). Registered as an I32 capability-registry constant.
 CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr"})
-
-
-def _missing_branch_error() -> dict:
-    """The v5.42.3 missing_branch reject (flows 2b + 4)."""
-    return {
-        "error": "missing_branch",
-        "stored": False,
-        "message": (
-            "Branch context required. Supply branch=<branch> or branch_hint=<branch-name>. "
-            "Agents should pass branch_hint=$(git branch --show-current) before wiki_add."
-        ),
-        "field": "branch_hint",
-        "op_type": "wiki_add",
-    }
 
 
 def _missing_directory_error() -> dict:
@@ -57,94 +42,49 @@ def _missing_directory_error() -> dict:
 
 
 @observe(tier="hot", metric="tools.wiki._check_wiki_add_context")
-def _check_wiki_add_context(branch: str | None, directory: str | None) -> dict:
-    """Decide the branch outcome at the MCP boundary — Car 0 §0.4 (the 4 flows).
+def _check_wiki_add_context(directory: str | None) -> dict:
+    """Apply DIRECTORY enforcement at the wiki_add MCP boundary.
 
-    Reads the TRUSTED per-directory ``gitness`` (via the §0.3 read-through cache)
-    and applies the flow table. The model never touches the canonical decision —
-    it falls out of trusted gitness.
+    Returns ``{}`` when the write may proceed, or ``{"error": ...}`` to REJECT.
 
-    Returns one of:
-      * ``{"error": ...}``                       — REJECT (flows 2b / 4; the
-        v5.42.3 corruption guard). Also the fail-safe path when the trusted store
-        is unavailable — never canonical on error.
-      * ``{"branch": <str>, "internal": False}`` — branch-scoped write (flow 2a).
-      * ``{"branch": None, "internal": True}``   — CANONICAL (flow 3, non-git dir);
-        server sets ``branch=None`` + ``_internal`` from trusted ``gitness``.
+    ADR-0215/0216: this used to be Car 0's four-flow branch router — it read the
+    trusted per-directory ``gitness`` and decided branch-scoped vs canonical.
+    Branch scoping is gone, so the whole flow table went with it and ``gitness``
+    is NO LONGER CONSULTED HERE. That is deliberate: directory enforcement was
+    never keyed on gitness (it tests only whether a directory was supplied), so
+    collapsing this function to directory-only removes nothing it depended on.
+    The trusted gitness mechanism itself survives per ADR-0216.
 
-    Error precedence preserves the v5.42.3 contract: a missing branch reports
-    ``missing_branch`` before ``missing_directory``. ``is_draining()`` callers are
-    exempt — this helper should only be called when not is_draining().
+    ``is_draining()`` callers are exempt — this helper should only be called when
+    not is_draining().
     """
     _effective_dir: str | None = (directory or "").strip() or None
-    _branch_enforced = _enforcement_on("YADGAR_BRANCH_ENFORCEMENT")
-
-    # Branch enforcement relaxed (YADGAR_BRANCH_ENFORCEMENT=false): the old permissive
-    # behaviour — proceed with whatever branch the caller supplied, no gitness lookup.
-    # Directory enforcement is still applied below.
-    if not _branch_enforced:
-        if not branch:
-            logger.warning(
-                "wiki_add: branch enforcement OFF — proceeding without branch context "
-                "(YADGAR_BRANCH_ENFORCEMENT=false)"
-            )
-            _inc_relaxed("branch")
-        if not _effective_dir:
-            if _enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT"):
-                return _missing_directory_error()
-            logger.warning(
-                "wiki_add: directory enforcement OFF — proceeding without directory context "
-                "(YADGAR_DIRECTORY_ENFORCEMENT=false)"
-            )
-            _inc_relaxed("directory")
-        return {"branch": branch, "internal": False}
-
-    # Branch enforcement ON. Without a directory the trusted gitness cannot be
-    # resolved → this is flow 4 (unknown directory): require branch_hint. Preserve
-    # the historical error precedence — a missing branch reports missing_branch
-    # BEFORE missing_directory (the v5.42.3 contract). A present branch with a
-    # missing directory falls through to the directory-enforcement check.
     if not _effective_dir:
-        if not branch:
-            return _missing_branch_error()
         if _enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT"):
             return _missing_directory_error()
+        logger.warning(
+            "wiki_add: directory enforcement OFF — proceeding without directory context "
+            "(YADGAR_DIRECTORY_ENFORCEMENT=false)"
+        )
         _inc_relaxed("directory")
-        return {"branch": branch, "internal": False}
-
-    # Enforcement ON + directory known → the §0.4 flow table, driven by trusted gitness.
-    from yadgar.core.server.tools import _dir_branch  # noqa: PLC0415
-
-    ctx = _dir_branch.get_context(_effective_dir)
-
-    # Fail-safe (§0.3): backend down OR unknown directory → require branch_hint.
-    #   flow 4 (unknown dir): no SessionStart row yet → conservative, need a branch.
-    #   error: never mis-decide canonical on a failed read.
-    if ctx.get("error") or not ctx.get("found"):
-        if branch:
-            return {"branch": branch, "internal": False}
-        return _missing_branch_error()
-
-    if ctx.get("gitness"):
-        # flow 2a: git dir + branch present → branch-scoped.
-        if branch:
-            return {"branch": branch, "internal": False}
-        # flow 2b: git dir + branch MISSING → REJECT (v5.42.3 guard).
-        return _missing_branch_error()
-
-    # flow 3: non-git dir → CANONICAL. branch_hint is IGNORED (no meaningful branch).
-    return {"branch": None, "internal": True}
+    return {}
 
 
 @observe(tier="hot", metric="tools.wiki._wiki_write_canonical")
 def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
-    """Sanctioned SERVER-SIDE canonical write (Car 0 §0.5, flow 1).
+    """Sanctioned SERVER-SIDE canonical write.
 
-    Sets ``branch=None`` + ``_internal=True`` on the payload so the write lands in
-    the canonical slot regardless of gitness (an ADR / task-list is a cross-branch
-    feature — it must read from any branch). Reachable ONLY from server-side
-    sanctioned callers (``adr_add``, ``wiki_write_task_list`` — wired in Cars 1/2);
-    never a ``wiki_add`` MCP param, so the model cannot invoke it.
+    Sets ``_internal=True`` on the payload — the server-only token that marks the
+    write as a sanctioned system write (the drainer honors it and strips it).
+    Reachable ONLY from server-side sanctioned callers (``adr_add``,
+    ``wiki_write_task_list``); never a ``wiki_add`` MCP param, so the model cannot
+    invoke it.
+
+    ADR-0215/0216: this also used to set ``branch=None`` to force the canonical
+    slot. Branch scoping is gone — canonical is now the only slot — so the
+    assignment went and this is a thin named passthrough. The seam is retained
+    deliberately (plan §4 Q1) so the sanctioned callers keep a stable server-side
+    entry point and ``_internal`` keeps its meaning for the drainer.
 
     Defense-in-depth: refuses to canonical-write a page whose ``page_type`` is not
     in ``CANONICAL_PAGE_TYPES``. Brutal-honesty — ``page_type`` is model-supplied
@@ -172,7 +112,6 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
             f"_wiki_write_canonical refuses page_type={page_type!r}; "
             f"canonical writes are restricted to {sorted(CANONICAL_PAGE_TYPES)}"
         )
-    payload["branch"] = None
     payload["_internal"] = True
     if wait:
         # RYW: enqueue then poll until the drainer commits (the sim gate is bypassed
@@ -195,23 +134,19 @@ def wiki_write_task_list(
     directory: str,
     wait: bool = True,
 ) -> dict:
-    """Persist a Claude Code harness task list to the wiki — CANONICAL, one call.
+    """Persist a Claude Code harness task list to the wiki — one call.
 
-    The SANCTIONED task-list mirror writer (Car 1). The stop-hook checkpoint
-    protocol (step 4) calls this to save the harness task list so it survives
-    ``/clear`` / session exit. The page is written CANONICAL (``branch IS NULL``)
-    so the session-start restore-nudge resolves it from ANY branch and from a
-    non-git project — a default-branch-pinned row would be unreachable from a
-    feature-branch session (the memory-531352 / ADR-log branch-pin bug class).
+    The SANCTIONED task-list mirror writer. The stop-hook checkpoint protocol
+    (step 4) calls this to save the harness task list so it survives ``/clear`` /
+    session exit. The page resolves by directory alone, so the session-start
+    restore-nudge finds it from any working tree and from a non-git project.
 
-    Why a dedicated tool and NOT ``wiki_add(page_type="task_list", ...)``: Car 0's
-    router (``_check_wiki_add_context``) decides the branch purely from trusted
-    ``gitness`` — ``page_type`` is deliberately NOT a canonical gate (§0.6 KILLED it
-    as forgeable). A raw ``wiki_add`` in a git dir with no branch_hint is
-    hard-rejected ``missing_branch``. This tool routes through the server-side
-    ``_wiki_write_canonical`` path (flow 1). The sanction is STRUCTURAL — the tool
-    is bounded to the ``{project}-task-list`` slug + ``task_list`` page_type, so a
-    model cannot use it to canonical-write an arbitrary page.
+    Why a dedicated tool and NOT ``wiki_add(page_type="task_list", ...)``: this
+    routes through the server-side ``_wiki_write_canonical`` path, which sets the
+    server-only ``_internal`` token — ``page_type`` is deliberately NOT a gate
+    (it is model-supplied and therefore forgeable). The sanction is STRUCTURAL —
+    the tool is bounded to the ``{project}-task-list`` slug + ``task_list``
+    page_type, so a model cannot use it to write an arbitrary page.
 
     Args:
         project: project name; the page is slug ``{project}-task-list``.
@@ -418,13 +353,11 @@ def wiki_add(
       Typed pages are format-checked by wiki_lint (missing required sections reported as warnings).
       wiki_add never rejects a write due to page_type/template mismatch — lint is advisory only.
 
-    Branch resolution (evaluated in priority order):
-    1. branch (non-empty string) — caller knows the branch explicitly; used as-is.
-    2. branch_hint (non-empty string) — host-side hook passed the caller's branch;
-       used when branch is None/empty (mirrors memorize branch_hint, v5.4 W1).
-    3. Both omitted / None — page stored with branch IS NULL, the canonical slot
-       resolved by wiki_read step 3. DO NOT fall back to _detect_branch(os.getcwd());
-       the daemon CWD is not the caller's repo and would always resolve to "master".
+    branch / branch_hint: DEPRECATED and inert. ADR-0215 removed branch scoping —
+      a write is never rejected for lacking branch context, and reads resolve by
+      directory alone, so supplying either changes nothing about where the page
+      lands or who can read it. Both parameters are accepted for back-compat and
+      are removed in a later car of the removal train.
 
     wait=False (default): async fast path — returns immediately with {"queued": True}.
     Only set wait=True when callers depend on next-call read-your-writes.
@@ -458,14 +391,15 @@ def wiki_add(
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
-    # Branch resolution — O(1), no subprocess. See docstring for priority order.
+    # ADR-0215: branch is inert — it gates nothing and resolves nothing. The
+    # coalesce is kept only so the (deprecated) column value a caller passes is
+    # still what gets stored until the parameters are removed.
     if not branch and branch_hint:
         branch = branch_hint
-    # Car 0 §0.4 decision — error dict = REJECT (2b/4); else {branch, internal}.
-    _decision = _check_wiki_add_context(branch, directory)
+    # Directory enforcement at the MCP boundary — error dict = REJECT.
+    _decision = _check_wiki_add_context(directory)
     if "error" in _decision:
         return _decision
-    branch, _internal = _decision["branch"], _decision.get("internal", False)
 
     _effective_dir: str | None = (directory or "").strip() or None
     # DP-3: strip trailing slash (preserve "global" sentinel as-is)
@@ -507,8 +441,6 @@ def wiki_add(
         "page_type": page_type,
         # Car C (#83): upsert semantics — drainer reads upsert from payload.
         "upsert": upsert,
-        # Car 0 flow 3 canonical token (server-set); drainer honors + strips it.
-        **({"_internal": True} if _internal else {}),
     }
 
     # wait=True: enqueue first (preserves FIFO), then poll until the drainer commits.

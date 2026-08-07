@@ -600,63 +600,67 @@ def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Car 0 — the SOLE set-channel end-to-end (hook params → durable store + cache)
+# The SOLE set-channel end-to-end (hook param -> durable store + cache)
 #
-# §0.9: "only the SessionStart POST writes {gitness, default_branch}" +
-# "invalidate(directory) on SessionStart upsert". These exercise the FULL wiring
-# (GET endpoint → _persist_dir_branch_context_from_request → upsert + invalidate)
-# that the unit tests bypass via a direct _forward_admin call. Every layer of the
-# chain swallows exceptions, so without this coverage a param-extraction /
-# gitness-compare / invalidate bug fails SILENTLY → the store never populates →
-# every branchless write hits flow 4 → the canonical path never works.
+# Only the SessionStart GET writes the trusted per-directory ``gitness`` fact,
+# and it invalidates the core cache on the upsert. These exercise the FULL wiring
+# (GET endpoint -> _persist_dir_branch_context_from_request -> upsert +
+# invalidate) that the unit tests bypass via a direct _forward_admin call. Every
+# layer of the chain swallows exceptions, so without this coverage a
+# param-extraction / gitness-compare / invalidate bug fails SILENTLY.
+#
+# ADR-0216: the endpoint used to carry ``default_branch`` alongside ``gitness``.
+# Branch scoping is gone; these are the gitness-only equivalents.
 # ---------------------------------------------------------------------------
 
 
-class TestCar0SetChannel:
-    """The GET endpoint is the only channel that populates the trusted git facts."""
+class TestGitnessSetChannel:
+    """The GET endpoint is the only channel that populates the trusted gitness."""
 
     def test_endpoint_populates_durable_store_and_fires_invalidate(
         self, tmp_path, monkeypatch, admin_backend_bypass
     ):
-        """GET with gitness+default_branch → durable store populated + cache busted."""
+        """GET with gitness=true -> durable store populated + cache busted."""
         from yadgar.core.server.tools import _dir_branch
 
         _dir_branch._get_cache().clear()
         _dir = str(tmp_path)
 
         # Prime the cache with a stale "unknown" entry so we can prove invalidate fires.
-        _dir_branch._get_cache().put(
-            _dir, {"found": False, "gitness": False, "default_branch": None}
-        )
+        _dir_branch._get_cache().put(_dir, {"found": False, "gitness": False})
         assert _dir_branch._get_cache().get(_dir) is not None
 
-        token = "car0-token"
+        token = "gitness-token"
         client = _make_client(token, monkeypatch)
         resp = client.get(
-            f"/hooks/session-context?directory={_dir}&gitness=true&default_branch=main",
+            f"/hooks/session-context?directory={_dir}&gitness=true",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200, resp.text
 
-        # Manual invalidate fired on the upsert → the stale cache entry is gone.
+        # Manual invalidate fired on the upsert -> the stale cache entry is gone.
         assert _dir_branch._get_cache().get(_dir) is None, "invalidate not wired to the upsert"
 
-        # Durable store populated with the TRUSTED facts (restart-safe read-through).
+        # Durable store populated with the TRUSTED fact (restart-safe read-through).
         ctx = _dir_branch.get_context(_dir)
         assert ctx["found"] is True
         assert ctx["gitness"] is True
-        assert ctx["default_branch"] == "main"
+        assert "default_branch" not in ctx
 
-    def test_endpoint_nongit_populates_canonical_facts(
+    def test_endpoint_nongit_populates_gitness_false(
         self, tmp_path, monkeypatch, admin_backend_bypass
     ):
-        """GET with gitness=false → non-git durable row (drives flow 3 canonical)."""
+        """GET with gitness=false -> a non-git durable row, not an absent one.
+
+        ``found=True, gitness=False`` and ``found=False`` are different answers:
+        the first is "known, not a repo", the second is "never session'd".
+        """
         from yadgar.core.server.tools import _dir_branch
 
         _dir_branch._get_cache().clear()
         _dir = str(tmp_path / "nongit")
 
-        token = "car0-token2"
+        token = "gitness-token2"
         client = _make_client(token, monkeypatch)
         resp = client.get(
             f"/hooks/session-context?directory={_dir}&gitness=false",
@@ -667,25 +671,22 @@ class TestCar0SetChannel:
         ctx = _dir_branch.get_context(_dir)
         assert ctx["found"] is True
         assert ctx["gitness"] is False
-        assert ctx["default_branch"] is None
+        assert "default_branch" not in ctx
 
     def test_endpoint_without_gitness_param_does_not_clobber(
         self, tmp_path, monkeypatch, admin_backend_bypass
     ):
-        """A pre-Car-0 hook (no gitness param) must NOT clobber an existing row."""
+        """A legacy hook (no gitness param) must NOT clobber an existing row."""
         from yadgar.core.forward import _forward_admin
         from yadgar.core.server.tools import _dir_branch
 
         _dir_branch._get_cache().clear()
         _dir = str(tmp_path / "known")
 
-        # Seed a known git row (as a Car-0 SessionStart would).
-        _forward_admin(
-            "upsert_dir_branch_context",
-            {"directory": _dir, "gitness": True, "default_branch": "master"},
-        )
+        # Seed a known git row (as a SessionStart would).
+        _forward_admin("upsert_dir_branch_context", {"directory": _dir, "gitness": True})
 
-        token = "car0-token3"
+        token = "gitness-token3"
         client = _make_client(token, monkeypatch)
         # Legacy hook: no gitness query param.
         resp = client.get(
@@ -698,4 +699,3 @@ class TestCar0SetChannel:
         ctx = _dir_branch.get_context(_dir)
         assert ctx["found"] is True
         assert ctx["gitness"] is True
-        assert ctx["default_branch"] == "master"

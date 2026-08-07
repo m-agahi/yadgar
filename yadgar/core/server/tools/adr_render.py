@@ -140,7 +140,7 @@ def _canonical_adr_payload(
     *,
     replace_slug: str | None = None,
 ) -> dict:
-    """Build a canonical (branch-NULL) wiki_add payload for the ADR write path.
+    """Build a canonical wiki_add payload for the ADR write path.
 
     ``title`` == ``slug`` so ``_slugify(title)`` yields the deterministic slug.
     ``force=True`` bypasses the drainer sim gate (canonical ADR/index pages are

@@ -14,17 +14,17 @@ Car 2 (ADR-consultable, v5.141.0) made ADRs recall-native. The write-only
   * one thin CANONICAL index page — slug `<project>-adr-index`, tags
     `["adr","adr-index"]` — a metadata table (ID source of truth for max+1).
 
-Both are written CANONICAL (branch IS NULL) via Car 0's server-side
-`_wiki_write_canonical` (flow 1: page_type in CANONICAL_PAGE_TYPES, `_internal`
-set server-side, `force=True` to bypass the drainer sim gate). Canonical pages
-resolve via §25 step-2 (dir + branch IS NULL) from ANY caller branch AND in
-non-git dirs — this closes the memory-531352 default-branch-pin bug (a non-git
-`aws-work-adr-log` was mis-pinned to a bogus "master" and unreadable).
+Both are written via the server-side `_wiki_write_canonical` seam (page_type in
+CANONICAL_PAGE_TYPES, `_internal` set server-side, `force=True` to bypass the
+drainer sim gate). Pages resolve by directory alone, so they are readable from
+any working tree AND in non-git dirs — this closes the memory-531352
+default-branch-pin bug (a non-git `aws-work-adr-log` was mis-pinned to a bogus
+"master" and unreadable).
 
 Three tools:
   adr_add  — assign next ID from the index, write the per-ADR page + index row,
              flip supersede targets' status tag.
-  adr_get  — read `<project>-adr-NNNN` canonical (direct fetch, no branch footgun).
+  adr_get  — read `<project>-adr-NNNN` (direct fetch by slug + directory).
   adr_list — read the index; optional status filter ("show all open").
 
 Decisions:
@@ -156,7 +156,7 @@ def adr_add(
     """Create a new Architecture Decision Record (ADR).
 
     Car 2: writes ONE canonical wiki page per ADR (`<project>-adr-NNNN`,
-    branch IS NULL — readable from any branch AND in non-git dirs) plus a row in
+    readable from any working tree AND in non-git dirs) plus a row in
     the canonical `<project>-adr-index`. IDs are assigned sequentially from the
     index (max+1). Supersede targets' status tag is flipped to `superseded`.
 
@@ -210,7 +210,7 @@ def adr_add(
 
     # ── Serialize the read-assign-write sequence under a per-project lock ───────
     with _adr_log_lock(resolved):
-        # Read the canonical index (no branch_hint — canonical resolves via §25 step-2).
+        # Read the canonical index (resolves by slug + directory).
         index_page = wiki_read(index_slug, directory=resolved)
         index_exists = "error" not in index_page
         existing_index = index_page.get("content", "") if index_exists else ""

@@ -177,10 +177,9 @@ def _forward_hook_recall(
     """Forward a prompt-recall HOOK recall to the backend /recall endpoint.
 
     Reuses tools.recall._forward_to_backend (the SAME mechanism the MCP recall
-    tool uses) so the forward is not duplicated. Resolves the caller's git branch
-    (backend cannot — no host .git in container), then forwards with a SHORT
-    httpx timeout (HOOK_RECALL_TIMEOUT_S) so a hung backend cannot keep the hook's
-    bounded-pool thread alive past its budget (#81 starvation guard).
+    tool uses) so the forward is not duplicated, with a SHORT httpx timeout
+    (HOOK_RECALL_TIMEOUT_S) so a hung backend cannot keep the hook's bounded-pool
+    thread alive past its budget (#81 starvation guard).
 
     Runs synchronously — the caller (_recall_with_timeout) executes it in the
     bounded hook-recall pool under asyncio.wait_for. On backend error this raises
@@ -197,35 +196,12 @@ def _forward_hook_recall(
     # silently scope to nothing. (The deployed hook sends a clean cwd; defensive.)
     directory = (directory or "").strip().rstrip("/")
 
-    # Resolve branch context (mirrors recall.py:207-233). Backend must not detect.
-    current_branch: str | None = None
-    default_branch: str | None = None
-    try:
-        import yadgar.core.server as _srv  # noqa: PLC0415
-
-        _detect = getattr(_srv, "_detect_branch", None)
-        _get_default = getattr(_srv, "_get_default_branch", None)
-        if _detect is None or _get_default is None:
-            from yadgar.core.server.tools.project import (  # noqa: PLC0415
-                _detect_branch as _detect,
-            )
-            from yadgar.core.server.tools.project import (  # noqa: PLC0415
-                _get_default_branch as _get_default,
-            )
-        current_branch = _detect(directory)
-        default_branch = _get_default(directory)
-    except Exception:  # noqa: BLE001 — branch is best-effort; backend tolerates None
-        current_branch = None
-        default_branch = None
-
     timeout_s = get_settings().HOOK_RECALL_TIMEOUT_S
     return _forward_to_backend(
         query=query,
         max_results=max_results,
         min_heat=min_heat,
         directory=directory,
-        current_branch=current_branch,
-        default_branch=default_branch,
         type_filter="all",
         tags=None,
         mode=None,
@@ -288,25 +264,13 @@ _SENTINEL_MAX_RETRIES = 3
 
 @observe(tier="stage")
 def _sentinel_memorize(content: str, directory_context: str) -> None:
-    """Import one sentinel record into memory. Extracted for patching in tests.
-
-    v5.42.3: passes branch_hint from daemon-side _detect_branch so the sentinel
-    memorize carries branch context. Internal path — daemon has access to cwd git.
-    """
+    """Import one sentinel record into memory. Extracted for patching in tests."""
     import yadgar.core.server as _srv  # noqa: PLC0415
-
-    # v5.42.3: detect branch for internal path; pass as branch_hint  # _internal-only
-    _branch_hint: str | None = None
-    try:
-        _branch_hint = _srv._detect_branch(directory_context)
-    except Exception:
-        pass
 
     result = _srv.memorize(
         content=content,
         context=directory_context,
         tags=["_session_end_sentinel", "session_end"],
-        branch_hint=_branch_hint,
     )
     if not result.get("stored") and not result.get("queued"):
         # Raise so the caller's retry logic triggers
@@ -862,7 +826,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
 
 @observe(tier="stage")
-async def _task_list_restore_nudge(directory: str, branch_hint: str | None) -> str:
+async def _task_list_restore_nudge(directory: str) -> str:
     """Return the task-list restore-nudge line, or "" when no page exists.
 
     If a saved "<project>-task-list" wiki page exists for `directory`, return a
@@ -1006,42 +970,36 @@ def _code_graph_suggest_line(directory: str, blocks: list[dict]) -> str:
 
 @observe(tier="stage", metric="http._persist_dir_branch_context_from_request")
 def _persist_dir_branch_context_from_request(request: Request, directory: str) -> None:
-    """Extract the Car 0 trusted git facts from the request + persist them.
+    """Extract the trusted ``gitness`` fact from the request + persist it.
 
-    ``gitness`` absent = a pre-Car-0 hook → skip (never clobber a known dir's
-    durable row on a legacy hook). Runs on a worker thread (blocking forward).
+    ``gitness`` absent = a legacy hook → skip (never clobber a known dir's durable
+    row on a legacy hook). Runs on a worker thread (blocking forward).
     """
     gitness_param = request.query_params.get("gitness", None)
     if gitness_param is None:
         return
-    _persist_dir_branch_context(
-        directory,
-        gitness_param == "true",
-        request.query_params.get("default_branch", "") or None,
-    )
+    _persist_dir_branch_context(directory, gitness_param == "true")
 
 
 @observe(tier="stage", metric="http._persist_dir_branch_context")
-def _persist_dir_branch_context(directory: str, gitness: bool, default_branch: str | None) -> None:
-    """Durably persist the TRUSTED per-directory git-context + bust the core cache.
+def _persist_dir_branch_context(directory: str, gitness: bool) -> None:
+    """Durably persist the TRUSTED per-directory ``gitness`` + bust the core cache.
 
-    Car 0 §0.2-§0.3: the SessionStart context endpoint is the SOLE set-channel.
-    Writes the durable directory-keyed row via the backend admin op (ADR-0078:
-    core never touches the DB directly), then fires the Manual cache invalidate so
-    a gitness change is picked up on the next write. Best-effort — a failure here
-    must never break the session-context render (the write path fail-safes to
-    "require branch_hint" when the store is unreadable).
+    The SessionStart context endpoint is the SOLE set-channel. Writes the durable
+    directory-keyed row via the backend admin op (ADR-0078: core never touches the
+    DB directly), then fires the Manual cache invalidate so a gitness change is
+    picked up on the next read. Best-effort — a failure here must never break the
+    session-context render.
+
+    ADR-0216: ``default_branch`` used to ride along in the same blob; ADR-0215
+    removed branch scoping, so only ``gitness`` is persisted now.
     """
     try:
         from yadgar.core.forward import _forward_admin  # noqa: PLC0415
 
         _forward_admin(
             "upsert_dir_branch_context",
-            {
-                "directory": directory,
-                "gitness": bool(gitness),
-                "default_branch": default_branch,
-            },
+            {"directory": directory, "gitness": bool(gitness)},
         )
     except Exception as _exc:  # noqa: BLE001 — never break session-context on this
         logger.warning("dir_branch_context durable upsert failed for %s: %s", directory, _exc)
@@ -1064,9 +1022,8 @@ async def hook_session_context(request: Request) -> JSONResponse:
     Query params:
         directory: project directory (optional, defaults to cwd)
         mode: brief mode (optional, defaults to "catalog")
-        branch: host-side git branch hint (optional, v5.1.9 F2); passed to
-            project_brief as branch_hint= so the container doesn't need git
-            access.
+        gitness: host-side "is this a git work-tree" fact ("true"/"false"). The
+            SOLE set-channel for the trusted per-directory gitness row.
         source: SessionStart source field (v5.7.9); values: "compact",
             "clear", "startup", "resume". Missing/unknown → treated as
             "startup". "compact" suppresses restore hint (compact handler
@@ -1075,7 +1032,6 @@ async def hook_session_context(request: Request) -> JSONResponse:
     """
     directory = request.query_params.get("directory", os.getcwd())
     mode = request.query_params.get("mode", "catalog")
-    branch_hint = request.query_params.get("branch", "") or None
     # v5.7.9: read source for per-source hint copy and compact suppression.
     # Unknown/missing values fall through to the "startup" default.
     source = request.query_params.get("source", "") or "startup"
@@ -1086,10 +1042,10 @@ async def hook_session_context(request: Request) -> JSONResponse:
     # Record timestamp for prompt-recall throttling (bounded dict)
     _bounded_set(_st._last_session_context, directory, time.monotonic())
 
-    # Car 0 §0.1-§0.3: this endpoint is the SOLE set-channel for the TRUSTED
-    # per-directory git facts (gitness/default_branch), computed host-side by the
-    # SessionStart hook. Persist them DURABLY + Manual-invalidate the core cache
-    # (all guarding lives in the helper; "gitness" absent → pre-Car-0 hook → skip).
+    # This endpoint is the SOLE set-channel for the TRUSTED per-directory
+    # ``gitness`` fact, computed host-side by the SessionStart hook. Persist it
+    # DURABLY + Manual-invalidate the core cache (all guarding lives in the
+    # helper; "gitness" absent → legacy hook → skip).
     await asyncio.to_thread(_persist_dir_branch_context_from_request, request, directory)
 
     # v5.10.6: import any pending session-end sentinel files before project_brief query.
@@ -1127,7 +1083,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
         _pb = getattr(_srv, "project_brief", None) if _srv else None
         if _pb is None:
             from yadgar.core.server.tools.project import project_brief as _pb  # noqa: PLC0415
-        brief = await asyncio.to_thread(_pb, directory, mode=mode, branch_hint=branch_hint)
+        brief = await asyncio.to_thread(_pb, directory, mode=mode)
         render = brief.get("_render", "")
 
         render = _SOURCE_PREFIX.get(source, "") + render
@@ -1197,7 +1153,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
             # Hoisted FIRST (v5.149): the task-restore nudge led the render so it is
             # not buried under the project-brief catalog — the advisory tail form was
             # ignored. Prepend keeps it the first thing the model reads this session.
-            render = await _task_list_restore_nudge(directory, branch_hint) + render
+            render = await _task_list_restore_nudge(directory) + render
 
         return JSONResponse({"text": render})
     except Exception as _e:
@@ -1695,15 +1651,6 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
         if _memorize is None:
             from yadgar.core.server.tools.memorize import memorize as _memorize  # noqa: PLC0415
 
-        # v5.42.3: detect branch for internal path  # _internal-only
-        _plan_branch_hint: str | None = None
-        try:
-            import yadgar.core.server as _srv_mod2  # noqa: PLC0415
-
-            _plan_branch_hint = await _asyncio.to_thread(_srv_mod2._detect_branch, str(p.parent))
-        except Exception:
-            pass
-
         try:
             result = await _asyncio.to_thread(
                 _memorize,
@@ -1711,7 +1658,6 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
                 context=str(p.parent),
                 tags=["_plan", "plan-file"],
                 is_protected=False,
-                branch_hint=_plan_branch_hint,
             )
             return JSONResponse(
                 {"status": "ok", "memorized": True, "file": filename, "git_ref": git_ref}

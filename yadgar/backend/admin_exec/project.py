@@ -85,40 +85,38 @@ def update_active_work(payload: dict) -> dict:
 
 @observe(tier="boundary", metric="backend.admin.upsert_dir_branch_context")
 def upsert_dir_branch_context(payload: dict) -> dict:
-    """Persist the TRUSTED per-directory git-context (Car 0). Storage-write half.
+    """Persist the TRUSTED per-directory ``gitness``. Storage-write half.
 
-    payload: {"directory": str, "gitness": bool, "default_branch": str | None}
-    The SessionStart context endpoint (host-side, sees .git) computed these; this
-    is the DURABLE, restart-safe upsert. Returns the stored context dict.
+    payload: {"directory": str, "gitness": bool}
+    The SessionStart context endpoint (host-side, sees .git) computed it; this is
+    the DURABLE, restart-safe upsert. Returns the stored context dict.
+
+    ADR-0216: ``default_branch`` used to travel in the same payload; ADR-0215
+    removed branch scoping, so ``gitness`` is the only surviving fact.
     """
     directory = payload["directory"]
     gitness = bool(payload.get("gitness"))
-    default_branch = payload.get("default_branch")
     storage = _get_storage()
-    return storage.upsert_dir_branch_context(directory, gitness, default_branch)
+    return storage.upsert_dir_branch_context(directory, gitness)
 
 
 @observe(tier="boundary", metric="backend.admin.get_dir_branch_context")
 def get_dir_branch_context(payload: dict) -> dict:
-    """Read the TRUSTED per-directory git-context (Car 0). Read half.
+    """Read the TRUSTED per-directory ``gitness``. Read half.
 
     payload: {"directory": str}
-    Returns {"found": bool, "gitness": bool, "default_branch": str | None}. The
-    core read-through cache fills from this on a miss (ADR-0078: core never reads
-    the DB directly). ``found=False`` = "unknown directory" (§0.4 flow 4).
+    Returns {"found": bool, "gitness": bool}. The core read-through cache fills
+    from this on a miss (ADR-0078: core never reads the DB directly).
+    ``found=False`` = "unknown directory" (no SessionStart row yet).
     """
     directory = payload.get("directory")
     if not directory:
-        return {"found": False, "gitness": False, "default_branch": None}
+        return {"found": False, "gitness": False}
     storage = _get_storage()
     ctx = storage.get_dir_branch_context(directory)
     if ctx is None:
-        return {"found": False, "gitness": False, "default_branch": None}
-    return {
-        "found": True,
-        "gitness": ctx["gitness"],
-        "default_branch": ctx["default_branch"],
-    }
+        return {"found": False, "gitness": False}
+    return {"found": True, "gitness": ctx["gitness"]}
 
 
 @observe(tier="boundary", metric="backend.admin.record_prelude_marker")

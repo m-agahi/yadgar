@@ -891,28 +891,31 @@ class _WikiMixin:
         return {"previous_content": previous_content, "new_memory": new_memory}
 
     @observe(tier="stage")
-    def upsert_dir_branch_context(
-        self, directory: str, gitness: bool, default_branch: str | None
-    ) -> dict:
-        """Atomic delete-then-insert of the TRUSTED per-directory git-context row.
+    def upsert_dir_branch_context(self, directory: str, gitness: bool) -> dict:
+        """Atomic delete-then-insert of the TRUSTED per-directory ``gitness`` row.
 
-        Car 0 (canonical-write foundation): persists the two TRUSTED branch-model
-        facts — ``gitness`` (is this dir a git work-tree) and ``default_branch``
-        (repo default, ``None`` when non-git) — DURABLY keyed by directory so they
-        survive a daemon restart. Written ONLY via the SessionStart context
-        endpoint (the sole set-channel); no model-callable path reaches this.
+        Persists ``gitness`` (is this dir a git work-tree) DURABLY keyed by
+        directory so it survives a daemon restart. Written ONLY via the
+        SessionStart context endpoint (the sole set-channel); no model-callable
+        path reaches this.
+
+        ADR-0216: the blob used to carry ``default_branch`` alongside ``gitness``;
+        ADR-0215 removed branch scoping, so only ``gitness`` is written now. Rows
+        written by an older build still carry the extra key — both readers pick
+        keys explicitly (never spread), so a stale ``default_branch`` is inert and
+        the row self-heals on the next SessionStart upsert.
 
         Storage shape mirrors ``upsert_dispatch_prelude_marker`` — a single memory
         row tagged ``_dir_branch_context`` whose content is a JSON blob. No schema
         migration (memory-table row, not a new table).
 
-        Returns the stored ``{directory, gitness, default_branch}`` dict.
+        Returns the stored ``{directory, gitness}`` dict.
         """
         import json  # noqa: PLC0415
 
         now = self._now_iso()
         mid = self._next_id("memory")
-        blob = json.dumps({"gitness": bool(gitness), "default_branch": default_branch})
+        blob = json.dumps({"gitness": bool(gitness)})
         self._q(
             "BEGIN TRANSACTION;\n"
             "DELETE FROM memory WHERE directory_context = $dir "
@@ -939,20 +942,20 @@ class _WikiMixin:
                 "agent": "default",
             },
         )
-        return {
-            "directory": directory,
-            "gitness": bool(gitness),
-            "default_branch": default_branch,
-        }
+        return {"directory": directory, "gitness": bool(gitness)}
 
     @observe(tier="stage")
     def get_dir_branch_context(self, directory: str) -> dict | None:
-        """Read the TRUSTED per-directory git-context row (Car 0).
+        """Read the TRUSTED per-directory ``gitness`` row.
 
-        Returns ``{gitness: bool, default_branch: str | None}`` when a SessionStart
-        row exists for the directory, else ``None`` (the "unknown directory" case
-        — §0.4 flow 4). A malformed/legacy blob also returns ``None`` (fail-safe:
-        an unreadable row is treated as unknown, forcing the conservative path).
+        Returns ``{gitness: bool}`` when a SessionStart row exists for the
+        directory, else ``None`` (the "unknown directory" case). A malformed blob
+        also returns ``None`` (fail-safe: an unreadable row is treated as unknown,
+        forcing the conservative path).
+
+        ADR-0216 reader tolerance: the returned dict is built by explicit key pick,
+        so a pre-ADR-0216 blob still carrying ``default_branch`` is silently
+        ignored — no migration and no strip-on-read is required.
         """
         import json  # noqa: PLC0415
 
@@ -969,10 +972,7 @@ class _WikiMixin:
             return None
         if not isinstance(data, dict) or "gitness" not in data:
             return None
-        return {
-            "gitness": bool(data.get("gitness")),
-            "default_branch": data.get("default_branch"),
-        }
+        return {"gitness": bool(data.get("gitness"))}
 
     @observe(tier="stage")
     def upsert_dispatch_prelude_marker(self, directory: str) -> dict:
