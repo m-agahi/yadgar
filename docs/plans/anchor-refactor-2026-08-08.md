@@ -799,30 +799,55 @@ numeric diff (which requires the baseline to exist and be compared) and the file
 
 ---
 
-## Open questions for the user
+## Decisions — Q1–Q4 RESOLVED 2026-08-08; only Q5 is the user's
 
-**Q1 — Flip the default anchor tier from `conditional` (90d) to `ephemeral` (14d)?**
-Makes permanence opt-in rather than default. Affects only future writes; fully knob-reversible.
-Cost: routine `anchor()` calls that *should* have been long-lived now need an explicit
-`tier="conditional"`. **Car 4 does not ship (c) without a yes.**
+The plan as first drafted marked all five "user decision". That was over-deferral: four are
+ordinary engineering judgement that follow from the user's already-stated complaint (permanence
+by default lets junk in) and from the measured evidence. They are decided here. **The one thing
+that genuinely belongs to the user is row-level disposition of their own memories** — Q5 and
+Car 6 — because those decide what gets deleted, and no measurement settles that.
 
-**Q2 — `DECISION_AUTO_PROTECT` (door 4): tag-and-expire, or turn it off?**
-(i) tag `_anchor` + `anchor:auto-decision` + default expiry → becomes visible and reapable, and
-~10 existing rows enter the audit surface for the first time. (ii) `config.py:160` → `False` →
-the regex stops protecting anything. Recommendation: (i). Neither option retroactively touches the
-~10 existing rows — those go through Car 6 like everything else.
+**Q1 — flip the default tier `conditional` (90d) → `ephemeral` (14d): YES, DO IT.**
+This is the direct implementation of the stated complaint. Permanence should be opt-in. Risks are
+small and covered: fully knob-reversible with no deploy, per-call overridable with
+`tier="conditional"`, touches no existing row, and Car 5 makes `anchor()` echo the resolved
+`valid_until` so a caller who wanted permanence sees the 14 days immediately rather than
+discovering it in a fortnight. Car 4 ships (c).
 
-**Q3 — Add a deterministic tiebreak to the anchor ORDER BY now, or defer with the 6375 redesign?**
-All 146 anchors are at `heat = 1.0`, so `restore()` currently shows an arbitrary 8. A
-`, created_at DESC` tiebreak in four queries across two files makes it stable-but-still-truncated.
-Cheap, but it changes what every session sees, so it is deliberately not smuggled into another
-car. Currently **NOT in scope**.
+**Q2 — `DECISION_AUTO_PROTECT` (door 4): option (i), TAG AND EXPIRE.**
+The intent — don't let a recorded decision decay — is sound and worth keeping; the bug is that the
+rows are invisible to every audit surface. Turning the regex off (option ii) throws away a working
+feature to fix a visibility defect. Tag `_anchor` + `anchor:auto-decision`, apply the default
+expiry. The ~10 existing rows are not touched retroactively; they surface in Car 6 like everything
+else, which is the point.
 
-**Q4 — Car 7: options (A), (B) or (C)?** Recommendation **(A)** — keep both fields, document the
-distinction, add the one-way invariant. (B) is correct but a much larger migration; (C) is the
-audit's original and is recommended against.
+**Q3 — deterministic tiebreak: DEFER, as the plan already scoped it.**
+It stays NOT in scope. `ORDER BY heat DESC, created_at DESC` is correct and cheap, but it changes
+what every session sees, and while the corpus is 146-deep a stable-but-arbitrary 8 is barely
+better than an unstable arbitrary 8. Re-assess after Car 6 with the post-cull number — if the
+corpus lands near 30, the cap stops binding and the tiebreak may be unnecessary. Deciding it now
+would be optimising the symptom before the cause is removed.
 
-**Q5 — Car 1: what is the disposition policy for the 174 grace rows?** Per-row review is the
-default (Car 1a). If the user prefers a blanket rule — e.g. "let all 174 expire, they are v5.8
-migration residue" — say so and Car 1 collapses to a single `let-expire` update, which is
-materially faster and still leaves every row recoverable.
+**Q4 — Car 7: option (A), keep both fields and document the distinction.**
+Cheapest option that is not wrong: zero migration, and it adds the invariant in the direction the
+corpus actually satisfies (`'_anchor' INSIDE tags ⇒ is_protected = true`, currently 0 violations)
+instead of the biconditional that would fail on 101 legitimate rows. (B) — splitting into
+`decay_exempt` + `is_anchor` — is semantically cleaner and stays on the table as a future ADR, but
+it migrates 101 system rows and rewrites ~7 read queries to buy naming clarity, which is not worth
+a one-way migration today. (C), the audit's original collapse, is rejected outright. Car 7 still
+writes the ADR — the record of why the audit was wrong is worth having — but it records (A) as
+accepted rather than opening the question again.
+
+### Q5 — STILL THE USER'S: disposition of the 174 grace rows
+
+Per-row review (Car 1a) is the default. The alternative is a blanket rule — e.g. "let all 174
+expire, they are v5.8 migration residue" — which collapses Car 1 to a single `let-expire` update
+and is materially faster.
+
+This one is not delegated because it decides what happens to memories the user wrote. Nothing in
+the measurements settles it: the rows are recoverable either way (nothing deletes them at the
+cliff), so the question is purely whether the user wants to look before they go dark.
+
+**Same principle governs Car 6**: the plan produces the 155-row review table; the user rules on
+each row. An agent pruning someone's memory corpus on its own judgement is not a time saving, it
+is a category error.
