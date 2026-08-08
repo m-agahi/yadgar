@@ -307,7 +307,16 @@ class _WikiMixin:
         caller-side allowlist (``WikiStore._METADATA_FIELDS``) admits
         ``directory_context`` alone, and because ``wiki_page`` is SCHEMALESS a
         surviving branch writer would silently re-create the column that
-        migration 029 just dropped.
+        migration 029 just dropped. This method therefore has ONE update shape:
+        ``<field> = $upd_val``. The former ``branch = NONE`` special case (needed
+        because a Python ``None`` param stores an explicit null, which ``IS NONE``
+        does NOT match) is gone with the field it served.
+
+        The ``wiki_page_version`` snapshot below still carries ``branch``: that
+        column is an audit-trail record of past versions and migration 029
+        deliberately leaves it in place (see
+        ``_migration_029_drop_branch_column``, which drops the field on ``memory``
+        and ``wiki_page`` only).
 
         Creates a wiki_page_version row in the same compound transaction.
         """
@@ -339,16 +348,9 @@ class _WikiMixin:
             "ver_now": now,
         }
 
-        if field == "branch" and value is None:
-            # SET branch = NONE uses literal SurrealDB NONE (absent field),
-            # which IS NONE queries match. Passing Python None as a param
-            # would store explicit null, which IS NONE does NOT match.
-            page_set_clause = "branch = NONE, updated_at = $upd_now"
-            params["upd_now"] = now
-        else:
-            page_set_clause = f"{field} = $upd_val, updated_at = $upd_now"
-            params["upd_val"] = value
-            params["upd_now"] = now
+        page_set_clause = f"{field} = $upd_val, updated_at = $upd_now"
+        params["upd_val"] = value
+        params["upd_now"] = now
 
         self._q(
             "BEGIN TRANSACTION;\n"

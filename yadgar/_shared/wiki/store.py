@@ -715,11 +715,9 @@ class WikiStore:
         # (run_wiki_add_replay also calls WikiStore.add). See ADR-0158 (wiki_policy).
         if _get_wiki_policy(page_type).storage_scope == "global":
             # A global-scoped page is cross-project canonical. The TYPE, not the
-            # caller, decides the scope. (Pre-ADR-0215 this also had to force
-            # branch=None, or a global page written with a caller branch_hint
-            # stranded at global+branch=<x> and was unreachable via wiki_read —
-            # the agent-prompt 404 drift. The branch axis is gone; only the
-            # directory override remains.)
+            # caller, decides the scope, so the caller-supplied directory is
+            # overridden here. ADR-0215 removed the branch axis; the directory
+            # override is the whole of this enforcement point.
             effective_dir = "global"
 
         existing = self._storage.get_wiki_page_by_slug(slug)

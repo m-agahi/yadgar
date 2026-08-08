@@ -419,11 +419,6 @@ def wiki_add(
         "source_memory_ids": source_memory_ids,
         "confidence": confidence,
         "append": append,
-        # ADR-0215: branch scoping is gone from the tool surface; every write now
-        # lands in the canonical slot. Car 9 dropped the column and removed the
-        # reader (`run_wiki_add_replay` no longer looks at this key); it survives
-        # only so a payload queued before the train still deserialises. Car 10.
-        "branch": None,
         # v5.41.5: pass bypass flags so drainer can skip gate for these paths
         "force": force,
         "replace_slug": replace_slug,
