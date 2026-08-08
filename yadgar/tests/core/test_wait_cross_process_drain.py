@@ -98,7 +98,6 @@ class TestWikiAddCrossProcessDrain:
                 content="cross-process commit content",
                 wait=True,
                 tags=["xproc"],
-                branch_hint="feat/test-branch",
                 directory=_TEST_DIR,
             )
 
@@ -131,7 +130,6 @@ class TestWikiAddCrossProcessDrain:
                 content="forward fail content",
                 wait=True,
                 tags=["xproc-fail"],
-                branch_hint="feat/test-branch",
                 directory=_TEST_DIR,
             )
 

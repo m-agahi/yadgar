@@ -452,7 +452,6 @@ class TestWriteGateIntegration:
                     content="Using Redis for caching with TTL-based expiration",
                     context="/tmp/integration-test",
                     tags=["redis", "caching"],
-                    branch_hint="feat/test-branch",  # R3: branch required
                 )
                 # First memory in a new directory should always be stored
                 assert "id" in result1
@@ -462,7 +461,6 @@ class TestWriteGateIntegration:
                     content="PostgreSQL database with connection pooling via pgbouncer",
                     context="/tmp/integration-test",
                     tags=["postgres", "database"],
-                    branch_hint="feat/test-branch",  # R3: branch required
                 )
 
                 # Now try to store a near-duplicate — may be blocked by write gate
@@ -471,7 +469,6 @@ class TestWriteGateIntegration:
                     content="Using Redis for caching with TTL-based expiration policy",
                     context="/tmp/integration-test",
                     tags=["redis"],
-                    branch_hint="feat/test-branch",  # R3: branch required
                 )
                 # This may be blocked or may be merged by curator.
                 # v4.4: gate fires during drain — caller gets DB row (id present) or

@@ -1049,9 +1049,7 @@ class TestServerStartupShutdown:
         from yadgar.tests._backend_harness import wire_drainer
 
         with wire_drainer(server._get_file_queue):
-            result = memorize_sync(
-                "lifecycle test", "/tmp", ["test"], branch_hint="feat/test-branch"
-            )
+            result = memorize_sync("lifecycle test", "/tmp", ["test"])
             assert result["id"] is not None
 
         # Shutdown

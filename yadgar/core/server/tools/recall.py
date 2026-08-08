@@ -322,7 +322,6 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
     min_heat: float = 0.0,
     profile: str | None = None,
     directory: str | None = None,
-    branch_hint: str | None = None,
     type: str = "all",  # noqa: A002 — shadows built-in but matches MCP schema convention
     mode: str | None = None,
     tags: list[str] | None = None,
@@ -349,8 +348,6 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         profile: Optional retrieval profile — "fast", "balanced", "full", "debug".
             Controls rerank stages on the backend (fast = no CE/NLI/MP; balanced =
             CE+MP; full = +NLI). Raises ValueError on unrecognised value.
-        branch_hint: Accepted for back-compat and ignored (ADR-0215 removed
-            branch scoping).
         mode: Opt-in recall mode. None (default) = normal precise recall.
             "landscape" = broad cross-domain recall via consensus_retrieve across all
             astrocyte domains — each domain votes independently and results are merged

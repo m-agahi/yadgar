@@ -115,7 +115,6 @@ class TestWaitFalseDefault:
             title=title,
             content="content",
             tags=["test"],
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert result.get("stored") is True
@@ -131,7 +130,6 @@ class TestWaitFalseDefault:
             content="content",
             wait=False,
             tags=["test2"],
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert result.get("stored") is True
@@ -152,7 +150,6 @@ class TestWaitTrueBlocking:
             content="version one",
             wait=True,
             tags=["waitflag"],
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         # Must be committed (not just queued)
@@ -162,7 +159,7 @@ class TestWaitTrueBlocking:
 
         slug = result.get("slug")
         assert slug is not None
-        history = wiki_history(slug=slug, directory=_TEST_DIR, branch_hint="feat/test-branch")
+        history = wiki_history(slug=slug, directory=_TEST_DIR)
         assert "error" not in history, f"wiki_history error: {history}"
         assert history.get("total_versions", 0) >= 1, (
             "wait=True should ensure at least 1 version is visible without sleep"
@@ -272,7 +269,6 @@ class TestWaitTimeout:
                     content="timeout test",
                     wait=True,
                     tags=["timeout-test"],
-                    branch_hint="feat/test-branch",
                     directory=_TEST_DIR,
                 )
         elapsed = time.perf_counter() - t0
@@ -304,7 +300,6 @@ class TestWaitFalsePerf:
             title=title0,
             content="warmup",
             tags=["warmup"],
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
 
@@ -328,7 +323,6 @@ class TestWaitFalsePerf:
                     title=title,
                     content="perf test",
                     tags=["perf"],
-                    branch_hint="feat/test-branch",
                     directory=_TEST_DIR,
                 )
                 elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -354,7 +348,6 @@ class TestWaitComposesWithOtherParams:
             title=title,
             content="first write",
             tags=["force-wait"],
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert r1.get("stored") is True
@@ -366,7 +359,6 @@ class TestWaitComposesWithOtherParams:
             wait=True,
             force=True,
             tags=["force-wait"],
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert r2.get("stored") is True
@@ -384,7 +376,6 @@ class TestWaitComposesWithOtherParams:
             content="original",
             wait=True,
             tags=["replace-wait"],
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
 
@@ -395,7 +386,6 @@ class TestWaitComposesWithOtherParams:
             wait=True,
             replace_slug=slug,
             tags=["replace-wait"],
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert result.get("stored") is True

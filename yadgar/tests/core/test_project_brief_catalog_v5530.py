@@ -65,7 +65,6 @@ def _add_wiki_page(title: str, category: str, directory: str, flush) -> None:
         wait=True,
         directory=directory,
         force=True,
-        branch_hint="feat/test",
     )
     flush()
 
@@ -277,7 +276,6 @@ def test_catalog_mode_render_no_bare_slug_only_line(flush_queue):
         wait=True,
         directory=directory,
         force=True,
-        branch_hint="feat/test",
     )
     flush_queue()
 
@@ -306,7 +304,6 @@ def test_catalog_mode_render_length_capped(flush_queue):
             wait=True,
             directory=directory,
             force=True,
-            branch_hint="feat/test",
         )
         flush_queue()
 

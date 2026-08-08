@@ -206,7 +206,6 @@ class TestDrainerReroutesRejectionToDLQ:
             title="Yadgar Roadmap B",
             content=_ROADMAP_CONTENT_B,
             wait=False,
-            branch_hint="feat/test-branch",
             directory="/home/max/git/yadgar",
         )
         assert len(fq.pending()) == 1
@@ -243,7 +242,6 @@ class TestDrainerReroutesRejectionToDLQ:
             title="Roadmap Clone",
             content=_ROADMAP_CONTENT_B,
             wait=True,
-            branch_hint="feat/test-branch",
             directory="/home/max/git/yadgar",
         )
         # Either committed (gate didn't fire) or rejected
@@ -275,7 +273,6 @@ class TestDrainerReroutesRejectionToDLQ:
             title="Metrics Test B",
             content=_ROADMAP_CONTENT_B,
             wait=False,
-            branch_hint="feat/test-branch",
             directory="/home/max/git/yadgar",
         )
         drainer.drain_now()
@@ -293,7 +290,6 @@ class TestDrainerReroutesRejectionToDLQ:
             content=_ROADMAP_CONTENT_B,
             force=True,
             wait=False,
-            branch_hint="feat/test-branch",
             directory="/home/max/git/yadgar",
         )
         assert len(fq.pending()) == 1

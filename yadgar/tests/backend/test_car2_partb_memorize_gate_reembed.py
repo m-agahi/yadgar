@@ -51,7 +51,6 @@ def _make_ctx(tags, *, is_protected=False, tier=None, embedding=None) -> Memoriz
         valid_until=None,
         ttl_days=None,
         reason="",
-        branch_hint="master",
     )
     ctx.embedding = embedding
     return ctx

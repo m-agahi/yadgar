@@ -2059,7 +2059,7 @@ _project_brief_cache = _make_project_brief_cache()
 
 
 @_tool(always_load=True)
-def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None = None) -> dict:
+def project_brief(directory: str, mode: str = "catalog") -> dict:
     """Return a layered project context snapshot for the given directory.
 
     Choose mode based on your use-case — new callers should use "signals" or "restore":
@@ -2083,17 +2083,10 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
         mode: One of "signals", "restore", "catalog" (deprecated), "full".
             Default "catalog" is kept only for back-compat — prefer "signals" or
             "restore" for all new callers.
-        branch_hint: Optional branch name from the host-side hook (v5.1.9). When
-            present, used directly (host has git visibility; container does not).
-            When absent, falls back to _get_current_branch(resolved).
     """
     resolved = _resolve_project_root(directory)
 
-    # v5.1.9 F3: prefer host-supplied branch_hint.
-    if branch_hint:
-        branch: str | None = branch_hint
-    else:
-        branch = _get_current_branch(resolved)
+    branch: str | None = _get_current_branch(resolved)
 
     # Car 1: whole-payload cache for the query-agnostic modes (catalog/restore/full).
     # Checked BEFORE any storage round-trip so a hit skips _fetch_presence_rows +
@@ -2234,7 +2227,7 @@ def _register_active_work_directory(resolved: str) -> None:
 
 
 @_tool(power=True)
-def update_active_work(directory: str, content: str, branch_hint: str | None = None) -> dict:
+def update_active_work(directory: str, content: str) -> dict:
     """Replace this directory's _active_work memory atomically.
 
     Deletes any existing _active_work memory(ies) for the directory,
@@ -2243,8 +2236,6 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
     v5.10.1: also writes a marker to ~/.local/state/yadgar/active-work-tracked/ so the
     watchdog timer knows which directories to poll.
 
-    branch_hint: accepted and IGNORED (ADR-0215 — branch scoping removed). Retained
-    on the signature only until Car 5 drops it from the MCP surface.
 
     Returns: {previous_content: str | None, new_memory: dict}
     """

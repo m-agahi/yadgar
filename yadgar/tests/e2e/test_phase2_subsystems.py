@@ -84,7 +84,7 @@ def _memorize_and_find(e2e_engines, content: str, directory: str, tags: list[str
     server = e2e_engines["server"]
     storage = e2e_engines["storage"]
 
-    result = server.memorize(content, directory, tags, branch_hint=_E2E_BRANCH)
+    result = server.memorize(content, directory, tags)
     if not result.get("queued"):
         return result
     _drain(e2e_engines)
@@ -417,7 +417,6 @@ class TestBCG1_WikiWriteReadScope:
             directory=yadgar_dir,
             category="reference",
             tags=["e2e", "bc-g1"],
-            branch_hint=_E2E_BRANCH,
             wait=True,
         )
         assert add.get("committed") or add.get("stored") or "slug" in add, (
@@ -427,7 +426,7 @@ class TestBCG1_WikiWriteReadScope:
         assert slug, f"BC-G1: wiki_add must return a slug, got {add}"
 
         # Read under the SAME directory — must resolve to our page.
-        same = wiki_read(slug, directory=yadgar_dir, branch_hint=_E2E_BRANCH)
+        same = wiki_read(slug, directory=yadgar_dir)
         assert "error" not in same, (
             f"BC-G3: wiki_read(slug, directory=yadgar_dir) MUST resolve the page. Got {same}"
         )
@@ -437,7 +436,7 @@ class TestBCG1_WikiWriteReadScope:
 
         # Read under a DIFFERENT directory — §25 resolution must NOT surface the
         # yadgar-scoped page (no project-canonical/global fallback to it).
-        cross = wiki_read(slug, directory=other_dir, branch_hint=_E2E_BRANCH)
+        cross = wiki_read(slug, directory=other_dir)
         cross_is_other = "error" in cross or "xg1yad88008" not in str(cross.get("content", ""))
         assert cross_is_other, (
             "BC-G3: a page scoped to yadgar_dir MUST NOT resolve under other_dir. "

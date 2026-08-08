@@ -126,17 +126,6 @@
   "added_by": "complexity-governance-agent"
  },
  {
-  "path": "yadgar/core/server/tools/misc.py",
-  "function": "checkpoint",
-  "lineno": 36,
-  "metrics": {
-   "params": 9
-  },
-  "rationale": "PERMANENT. The 9 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
-  "added": "2026-06-13",
-  "added_by": "complexity-governance-agent"
- },
- {
   "path": "yadgar/core/server/tools/project.py",
   "function": "_render_project_brief",
   "lineno": 213,
@@ -153,9 +142,9 @@
   "lineno": 111,
   "metrics": {
    "fn_loc": 180,
-   "params": 10
+   "params": 9
   },
-  "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436->180. ADR-0215 (branch removal) then deleted the branch-detection block, dropping cyclomatic below the HARD cap — that metric is gone from this entry. fn_loc remains above the cap due to multi-path input validation (type_filter, mode, profile, consolidation, shadow observe). params=10: all 10 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
+  "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436->180. ADR-0215 (branch removal) then deleted the branch-detection block, dropping cyclomatic below the HARD cap — that metric is gone from this entry. ADR-0215 Car 5 then dropped the branch_hint param (10->9). fn_loc remains above the cap due to multi-path input validation (type_filter, mode, profile, consolidation, shadow observe). params=9: all 9 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -165,9 +154,9 @@
   "lineno": 351,
   "metrics": {
    "cyclomatic": 25,
-   "params": 18
+   "params": 14
   },
-  "rationale": "PERMANENT. Public MCP tool: 18 params are the LLM-facing schema and cannot be bundled without breaking the API. Car C (#83) adds slug+upsert (2 params), Car B0 added hash+source_file (2 params). R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
+  "rationale": "PERMANENT. Public MCP tool: the params are the LLM-facing schema and cannot be bundled without breaking the API. Car C (#83) adds slug+upsert (2 params). ADR-0215 Car 5 dropped branch+branch_hint, leaving 14. R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -387,7 +376,7 @@
   "metrics": {
    "params": 10
   },
-  "rationale": "Phase 2a: pure forwarder function — mirrors full recall() MCP signature (10 params) plus positional context (current_branch, default_branch) needed for backend. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site — not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
+  "rationale": "Phase 2a: pure forwarder function — mirrors the recall() MCP signature plus the transport params (timeout_s, deadline_ms) the backend call needs. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site — not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
   "added": "2026-07-05",
   "added_by": "phase2a-cutover-agent"
  },

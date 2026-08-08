@@ -232,8 +232,6 @@ class TestMCPBoundaryEnforcementKnobs:
                 content="Test content for MCP boundary knob test.",
                 category="reference",
                 tags=["test"],
-                branch="master",
-                branch_hint=None,
                 # directory omitted — would normally hard-reject
                 directory=None,
             )

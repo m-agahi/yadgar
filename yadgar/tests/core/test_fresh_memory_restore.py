@@ -348,7 +348,6 @@ class TestMemorizeReturnsMemoryId:
             valid_until=None,
             ttl_days=None,
             reason="",
-            branch_hint=None,
         )
         ctx.memory_id = 523183
 
@@ -416,7 +415,6 @@ class TestMemorizeReturnsMemoryId:
             valid_until=None,
             ttl_days=None,
             reason="",
-            branch_hint=None,
         )
         ctx.memory_id = 999
 
@@ -454,7 +452,6 @@ class TestMemorizeReturnsMemoryId:
             valid_until=None,
             ttl_days=None,
             reason="",
-            branch_hint=None,
         )
         ctx.memory_id = 100
 

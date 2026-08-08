@@ -92,7 +92,7 @@ def _gate_checkpoint_text(
 
 
 @_tool(always_load=True)
-def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existing 8-param fn
+def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     directory: str,
     current_task: str = "",
     files_being_edited: list[str] = None,
@@ -101,7 +101,6 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     next_steps: list[str] = None,
     active_errors: list[str] = None,
     custom_context: str = "",
-    branch_hint: str | None = None,
 ) -> dict:
     """Snapshot your current working state for post-compaction recovery.
 
@@ -109,8 +108,6 @@ def checkpoint(  # noqa: PLR0913 — v5.42.3 added branch_hint param; pre-existi
     the restore tool uses this checkpoint to reconstruct what you were doing.
     Checkpoints auto-supersede — only the latest one matters.
 
-    branch_hint: accepted and IGNORED (ADR-0215 — branch scoping removed). Retained
-      on the signature only until Car 5 drops it from the MCP surface.
     """
     # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
     _surrogate_err = _validate_checkpoint_surrogates(
@@ -262,7 +259,6 @@ def anchor(
     tier: str | None = None,
     valid_until: str | None = None,
     ttl_days: int | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Mark critical context as compaction-resistant.
 
@@ -279,8 +275,6 @@ def anchor(
     valid_until: ISO-8601 UTC explicit expiry. Mutually exclusive with ttl_days.
     ttl_days: shorthand valid_until = now() + ttl_days. Mutually exclusive with valid_until.
 
-    branch_hint: accepted and IGNORED (ADR-0215 — branch scoping removed). Retained
-      on the signature only until Car 5 drops it from the MCP surface.
     """
     # secret-gate: skip — gate_or_reject() is called inside _validate_anchor_inputs()
     _tier, _computed_valid_until, _err = _validate_anchor_inputs(
