@@ -624,6 +624,19 @@ Each data step aborts with `Migration029Abort` rather than continuing on a bad s
 
 ## Car 10 — Docs, ADR amendments, residue proof
 
+> **EXECUTED 2026-08-08. The `- [ ]` boxes below were never ticked — read the
+> ARCHIVED status header at the top of this file for what actually happened,
+> not these checkboxes.** Most of this car is done (all three ADR amendments,
+> every doc rewrite, Sets A-E with an exclusion-family breakdown, the SDK-JS
+> dead-tool removal, plus two dangling BEHAVIOR_CONTRACT test pointers this
+> car's own sweep discovered). Two items were deliberately NOT done and are
+> **not oversights**: the **"Revert the Car 1 CI bypass"** block below
+> (reverting it ships a red `invariant-checks` job — `check_test_weakening
+> --ci --base origin/master` is RED at the tip on Car 1's cumulative deletion
+> and cannot go green before merge) and **Set F** (measured, not closable from
+> a worktree — re-seeding pulls bodies from deployed code). Full residue proof
+> and counts: the Car 10 entry in `docs/CHANGELOG.md`.
+
 ### ADR amendments (amend, do not supersede)
 
 - [ ] **ADR-0126** — amend: the §0.4 four-flow table is dissolved by ADR-0215. Record that the *trusted-facts / non-forgeability* principle **survives** via gitness (ADR-0216); only the branch flows die. Flows 2a/2b/3 collapse into "directory enforcement, then write."
