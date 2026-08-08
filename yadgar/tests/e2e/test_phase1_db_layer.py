@@ -51,7 +51,7 @@ def _drain(e2e_engines) -> None:
 
 
 def _memorize_and_drain(e2e_engines, content: str, directory: str, tags: list[str]) -> dict | None:
-    """Call memorize() with branch_hint, drain, return stored row dict or None.
+    """Call memorize(), drain, return stored row dict or None.
 
     Returns the stored memory dict (with 'id', 'content', etc.) after drain,
     or None if the memory can't be found (signals a bug in the write path).
@@ -430,7 +430,6 @@ class TestBCB2_WikiDirectoryFilter:
 
         # Seed a wiki page tagged to other_dir (aws-work)
         # Slug is auto-derived from title by the wiki layer.
-        # branch_hint required (v5.42.3): wiki_add rejects without branch context.
         result = wiki_add(
             title="BC-B2 AWS xb2aws66601 test wiki page",
             content="# BC-B2 AWS Wiki\n\nThis page belongs to aws-work project xb2aws66601.",

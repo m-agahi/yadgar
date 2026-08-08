@@ -398,8 +398,8 @@ def test_task_list_mirror_step_present():
     assert "replace_section" in content
     assert 'section_heading="task:<id>"' in content
     # The full-rewrite default write goes through the sanctioned canonical writer
-    # (Car 1) — replace_slug + branch-NULL are baked in server-side, so the
-    # template no longer instructs a raw wiki_add(replace_slug=...).
+    # (Car 1) — replace_slug is baked in server-side, so the template no longer
+    # instructs a raw wiki_add(replace_slug=...).
     assert 'wiki_write_task_list(project="{project}", content=<merged full page>' in content
 
 

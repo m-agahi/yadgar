@@ -148,7 +148,7 @@ def test_session_context_uses_directory_param(tmp_path, monkeypatch):
 
     captured_dir = {}
 
-    def _fake_brief(directory, mode="catalog", branch_hint=None):
+    def _fake_brief(directory, mode="catalog"):
         captured_dir["dir"] = directory
         return {
             "_render": f"# Project at {directory}",
@@ -301,9 +301,9 @@ def _seed_task_list_page(
 def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
     """Startup session-context CONTAINS the restore-nudge when the page exists.
 
-    The stop-hook step writes the task-list page CANONICALLY (no branch_hint →
-    branch=None slot) so it is reachable from any caller branch via §25 step-2
-    (dir + branch IS NULL). Seed it that way and assert the nudge fires.
+    The stop-hook step writes the task-list page through the sanctioned canonical
+    writer, so it resolves on directory_context alone and is reachable from any
+    caller. Seed it that way and assert the nudge fires.
     """
     token = "tl-present"
     from yadgar.core import server as _server

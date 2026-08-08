@@ -10,10 +10,13 @@ The environment each test constructs is exactly the one the guard fired on:
   * No branch detection exists to fall back on — Car 6 deleted the helper the
     write path used to consult, so a real branch cannot leak in and make a
     test pass vacuously.
-  * ``YADGAR_CI_BRANCH`` is DELETED from the environment. This is load-bearing,
-    not hygiene: the repo's own CI workflows export ``YADGAR_CI_BRANCH: master``,
-    so without the delenv these tests would be green pre-Car-2 on CI and red only
-    on a developer host.
+  * ``YADGAR_CI_BRANCH`` is DELETED from the environment. This was load-bearing
+    when written: the repo's CI workflows then exported ``YADGAR_CI_BRANCH: master``,
+    so without the delenv these tests would have been green pre-Car-2 on CI and red
+    only on a developer host. Car 4 removed that export and Car 2 removed the last
+    reader, so as of Car 10 the variable exists nowhere in the repo and the delenv
+    is belt-and-braces. It is kept so the test still constructs the exact
+    environment its name claims.
   * No ``branch_hint`` is passed to anything.
 
 Pre-Car-2 that combination produced ``{"error": "missing_branch", "stored": False}``
@@ -62,8 +65,9 @@ PROJECT_DIR = "/home/test/yadgar-project"
 def _no_branch_context_anywhere(monkeypatch) -> None:
     """Construct the exact environment the v5.42.3 hard-reject fired on.
 
-    The repo's CI workflows export ``YADGAR_CI_BRANCH``; without the delenv these
-    tests are green pre-car on CI and only red locally.
+    Car 4 deleted the CI export and Car 2 the last reader, so this delenv no
+    longer changes behaviour — it is retained to keep the constructed environment
+    faithful to the test's premise.
     """
     monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
 

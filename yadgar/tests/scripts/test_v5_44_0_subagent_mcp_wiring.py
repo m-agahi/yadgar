@@ -2,7 +2,7 @@
 
 Covers:
 - Base: bundled agent template files exist + correct structure
-- X1: agent_dispatch_prelude extended with branch_hint/directory/subagent_type/include_context
+- X1: agent_dispatch_prelude extended with directory/subagent_type/include_context
 - X2: SubagentStop directive parser (memorize/wiki_add/anchor) + writeback
 - X3: OS-detection helpers (platform_paths.py)
 - X4: install-subagents idempotency

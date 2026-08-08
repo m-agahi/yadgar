@@ -1599,11 +1599,6 @@ def _unit_backend_harness(request, monkeypatch, _isolate_file_queue):
         wire_drainer,
     )
 
-    # Provide a default branch so memorize/anchor/wiki_add calls in unit tests
-    # don't need explicit branch_hint.  Tests that explicitly assert "no branch"
-    # behaviour already remove this via monkeypatch.delenv("YADGAR_CI_BRANCH").
-    monkeypatch.setenv("YADGAR_CI_BRANCH", "feat/test-branch")
-
     # Install the five forward bypasses (monkeypatch unwinds at test teardown).
     patch_admin_bypass(monkeypatch)
     patch_recall_bypass(monkeypatch)

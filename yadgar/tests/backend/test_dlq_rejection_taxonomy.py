@@ -201,7 +201,7 @@ class TestDrainerReroutesRejectionToDLQ:
         # Write a page to DB directly (sync path, no gate)
         _write_sync("Yadgar Roadmap A", _ROADMAP_CONTENT_A)
 
-        # Enqueue a near-duplicate (v5.42.3: branch_hint required)
+        # Enqueue a near-duplicate
         server.wiki_add(
             title="Yadgar Roadmap B",
             content=_ROADMAP_CONTENT_B,
@@ -237,7 +237,7 @@ class TestDrainerReroutesRejectionToDLQ:
         # Write original
         _write_sync("Roadmap Original", _ROADMAP_CONTENT_A)
 
-        # wait=True should still get sync rejection (v5.42.3: branch_hint required)
+        # wait=True should still get sync rejection
         result = server.wiki_add(
             title="Roadmap Clone",
             content=_ROADMAP_CONTENT_B,

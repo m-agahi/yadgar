@@ -50,7 +50,7 @@ def _slugify(title: str) -> str:
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 
-def _insert_wiki_page(slug, title, content, branch, directory="global"):
+def _insert_wiki_page(slug, title, content, directory="global"):
     """Insert a wiki page directly to storage for test setup."""
     st = _storage()
     return st.insert_wiki_page(
@@ -65,15 +65,11 @@ def _insert_wiki_page(slug, title, content, branch, directory="global"):
             "confidence": "high",
             "directory_context": directory,
         },
-        branch=branch,
     )
 
 
-def _insert_memory(content, branch, directory="/proj/test"):
-    """Insert a memory directly to storage for test setup.
-
-    Note: insert_memory() takes branch as a separate kwarg, not inside the dict.
-    """
+def _insert_memory(content, directory="/proj/test"):
+    """Insert a memory directly to storage for test setup."""
     st = _storage()
     return st.insert_memory(
         {
@@ -88,12 +84,11 @@ def _insert_memory(content, branch, directory="/proj/test"):
             "embedding_model": "all-MiniLM-L6-v2",
             "_internal": True,
         },
-        branch=branch,
     )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Q — wiki_query branch_hint + directory
+# Q — wiki_query directory scoping
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -105,14 +100,12 @@ def test_q3_wiki_query_scopes_to_directory(tmp_path):
         "schema-q3-proj-a",
         "Schema Q3 Project A",
         "schema discipline project alpha",
-        branch=None,
         directory="/proj/alpha",
     )
     _insert_wiki_page(
         "schema-q3-proj-b",
         "Schema Q3 Project B",
         "schema discipline project beta",
-        branch=None,
         directory="/proj/beta",
     )
 
@@ -145,16 +138,6 @@ def test_q4_wiki_query_requires_directory_v565():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# R — recall branch_hint
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# V — regression guards: v5.42.5 tools still accept directory + branch_hint
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # B — regression guards: v5.42.5 boundary enforcement
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -177,8 +160,3 @@ def test_b2_agent_prompt_save_rejects_missing_directory():
     assert result.get("error") == "missing_directory", (
         f"B2: expected missing_directory, got {result}"
     )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# I — integration: long-running agent flow with branch_hint threading
-# ═══════════════════════════════════════════════════════════════════════════════

@@ -1789,9 +1789,10 @@ def _build_adr_log(resolved: str) -> dict:
 
     Car 2 (ADR-consultable): re-pointed to the CANONICAL `<project>-adr-index`.
     The write-only `<project>-adr-log` monolith is deleted in migration — a read
-    still pinned to it (with branch_hint=default) would resolve a deleted slug
-    and silently return empty. The canonical index reads via §25 step-2 (dir +
-    branch IS NULL) from any caller branch AND in non-git dirs (no branch_hint).
+    still pinned to it would resolve a deleted slug and silently return empty.
+    The canonical index resolves on directory_context alone, so it reads from any
+    caller and in non-git dirs. (ADR-0215 removed the branch axis this paragraph
+    used to describe.)
 
     Returns a cheap metadata-only dict: index slug + up to 3 most-recent IDs.
 

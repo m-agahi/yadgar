@@ -301,13 +301,13 @@ class _WikiMixin:
         field: str,
         value: str | None,
     ) -> bool:
-        """Set directory_context or branch on a wiki page. Returns True if page found.
+        """Set directory_context on a wiki page. Returns True if page found.
 
-        branch=None uses 'SET branch = NONE' (literal SurrealDB NONE) so the
-        field becomes absent and §25 IS NONE resolution queries match.
-        Passing Python None as a param would store explicit SQL null, which
-        IS NONE does NOT match — this is the branch-null trap noted in the
-        v5.61 plan.
+        ADR-0215: ``branch`` was the other settable field here. It is gone — the
+        caller-side allowlist (``WikiStore._METADATA_FIELDS``) admits
+        ``directory_context`` alone, and because ``wiki_page`` is SCHEMALESS a
+        surviving branch writer would silently re-create the column that
+        migration 029 just dropped.
 
         Creates a wiki_page_version row in the same compound transaction.
         """
@@ -319,10 +319,7 @@ class _WikiMixin:
         new_ver = self.get_max_version_for_page(int(page_id)) + 1
 
         merged = dict(old_page)
-        if field == "branch" and value is None:
-            merged["branch"] = None
-        else:
-            merged[field] = value
+        merged[field] = value
 
         new_content = merged.get("content", "")
         change_summary = _compute_change_summary(old_page.get("content", ""), new_content)
