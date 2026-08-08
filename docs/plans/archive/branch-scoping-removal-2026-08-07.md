@@ -1,5 +1,80 @@
 # Branch-scoping removal — train plan
 
+> **ARCHIVED 2026-08-08 — executing on `feat/branch-scoping-removal`, ships with this PR.**
+> Cars 0-10 executed. **This plan is NOT fully discharged.** The scope below is
+> deliberately left undone; each item says why and who owns it. Do not read the
+> green residue proof (Car 10 / CHANGELOG) as "the train is finished" — Sets A-E
+> are green against the REPO, and three of the five items below live outside it.
+>
+> **1. Car 9's live-DB half — deferred to deploy, BY DESIGN.** Migration 029 is
+> written, registered and e2e-green against a fresh 001→029 replay, but it has
+> **not been applied to the live corpus**. The pre-migration backup
+> (`docs/plans/0115-pre-migration-backup-2026-08-01.md`) must be taken first.
+> **A deploy operator must know two things.** (a) *Migration aborts are terminal.*
+> `_run_migrations_locked` has no try/except and writes `schema_version` only on
+> success, so a failed assert means the daemon never boots and retries
+> identically on every restart. The remedy is **restore from backup, never
+> retry** — 029's asserts are designed to halt *before* the irreversible column
+> drop precisely so the backup is still valid. (b) *The column drop is not the
+> safety property; killing the writers is.* Both tables are SCHEMALESS, so
+> `REMOVE FIELD` drops only the type definition: stored values survive (hence
+> 029's explicit nulling steps) and any surviving writer silently re-creates
+> `branch` untyped while `INFO FOR TABLE` still looks clean.
+>
+> **2. Set F (live agent-prompt corpus) — measured, NOT closed.** Cannot be
+> closed from a worktree: `seed_agent_prompts` re-seeds from **deployed** code,
+> so forcing a re-seed now would reinstall pre-train bodies. Measured 2026-08-08:
+> the seed SOURCE (`yadgar/core/seed/materials/agent_prompts.yaml`, 30 `branch`
+> hits) is **clean** — every hit is git-branch-as-a-concept, zero `branch_hint`.
+> Sampled live pages (`agent-prompt-contract`, the discipline pages, ~10 starters
+> surfaced by recall) are also clean. **Coverage boundary:** 71 `agent-*` pages
+> exist and were not each read in full. Re-verify after deploy.
+>
+> **3. Two e2e files Cars 2/6 were to DELETE still exist AND ARE RED at the tip.**
+> Not merely forgotten — broken. `yadgar/tests/scripts/test_v5_42_2_branch_default_e2e.py`
+> (2 failures: `wiki_add() got an unexpected keyword argument 'branch'` — Car 5
+> dropped the param, this file still passes it) and
+> `yadgar/tests/scripts/test_v5_42_1_gate_verification_e2e.py` (1 failure, the
+> similarity gate returns 0 candidates; could be environmental — the embed model —
+> and was not isolated). **CI does not see them:** `addopts` carries
+> `-m 'not e2e'`, so they surface only under `make e2e`. Car 10 did NOT delete
+> them: doing so trips `check_test_weakening` on files outside its
+> `ALLOW_TEST_WEAKEN` authorization (granted for Car 1's
+> `test_scope_filter_e2e.py` only), which is an explicit STOP condition.
+>
+> **4. The rest of Cars 2/6's DELETE list resolved differently, and that is fine.**
+> Of 21 files on those lists, 11 survive — but **9 were deliberately rewritten in
+> place rather than deleted** (several say so in their docstrings, citing
+> ADR-0215/0217) and all 9 **pass**: `test_worktree_context_normalization`,
+> `test_worktree_orphan_repair`, `test_adr`, `test_branch_schema_migration`,
+> `test_memorize_worktree_normalization`, `test_project_brief_adr_log`,
+> `test_v5_46_4_fixture_directory_context`, `test_session_start_context_hook`,
+> `test_v5_42_6_enforcement_knobs`. Recorded so a future reader does not
+> "finish the job" by deleting live, passing coverage.
+>
+> **5. Dead storage-primitive params kept: `insert_memory(branch=)`,
+> `insert_wiki_page(branch=)`, `anchor_memory(branch=)`.** No production caller
+> passes non-None, but ~10 test files do; removing them turned 33 tests red.
+> Car 9's guard class shows the intent — close the TOOL-REACHABLE writers
+> (`WikiAddOptions.branch`, `_METADATA_FIELDS`, `_MEMORY_UPDATABLE_FIELDS`),
+> leave the primitives as direct row-seeding affordances. Belongs with item 3.
+>
+> **6. The Car 1 CI bypass is NOT reverted (plan lines 622-627).** Reverting it
+> ships a red `invariant-checks` job: `check_test_weakening --ci --base
+> origin/master` is RED at the tip on Car 1's deletion, and the guard is
+> branch-diff-relative so it cannot go green before merge. The
+> `allow-test-weaken` label must stay on this PR; revert the two workflow `env:`
+> blocks as a follow-up on master.
+>
+> **Stale in the text below, corrected by later ADRs — do not follow as written.**
+> The binding line says ADR-0216 ("gitness survives"). **ADR-0217 SUPERSEDES
+> ADR-0216: gitness is DELETED**, its stated rationale having been verified false
+> against the code during Car 3. Anywhere this plan says gitness survives —
+> including Car 3's invariant, Car 10's ADR-0126 amendment text, and Set C's
+> "`_compute_git_facts` survives name-only" — is wrong. ADR-0219 and ADR-0220
+> (2026-08-08, `anchor_renew`'s write boundary and grace-row disposition) are not
+> branch-scoping ADRs and are not contradicted by this train.
+
 > Plan doc. Created 2026-08-07. Binding: **ADR-0215** (remove branch scoping entirely) and **ADR-0216** (gitness survives, loses its branch half).
 > Amends: ADR-0123, ADR-0126, ADR-0158. Enumeration was done separately and is treated as given; spot-checks and corrections are marked **[CORRECTION]**.
 

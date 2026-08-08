@@ -93,7 +93,7 @@ Telemetry caveat: `consolidation_log` vacuum rows written before task:0045 carry
 - BC-G7 wiki bookmarks CRUD. ⏳[r] P2
 - BC-G9 wiki edit primitives (set_metadata/anchor-text/positional/structural) mutate as specified, versioned. ⏳[u] P2
 - BC-G10 wiki_set_metadata reaches ALL rows of a slug across directory contexts (the migration found dup-row stragglers it couldn't touch). ✅ `tests/e2e/test_wiki_set_metadata_allrows.py::TestWikiSetMetadataAllRows::test_set_metadata_updates_all_rows_for_slug` P2
-- BC-G11 fan-out recall (UNIFIED_RECALL_ENABLED=True) scopes wiki results to caller directory (same eligible-set rule as legacy). ✅ `tests/e2e/test_scope_filter_e2e.py::TestScopeFilterE2E::test_db_clause_excludes_other_dir` P1
+- BC-G11 fan-out recall scopes wiki results to the caller directory. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB2_WikiDirectoryFilter::test_aws_wiki_excluded_from_yadgar_recall` P1
 
 ### U. Unified recall fan-out (v6 T6 — UNIFIED_RECALL_ENABLED flag-ON only)
 - BC-U1 recall(type="all") returns BOTH mem:<id> and wiki:<slug> when both exist in scope. ✅ `tests/e2e/test_fusion_e2e.py::TestFusionE2E::test_fanout_returns_memory_and_wiki` P1
@@ -289,7 +289,7 @@ Telemetry caveat: `consolidation_log` vacuum rows written before task:0045 carry
 - BC-I29 no dead capability: stored ≡ used ≡ shown (edge types). ⏳[ci] P2 (`scripts/check_dead_capability.py`)
 - BC-I30 complexity-cap integrity: caps configurable, allowlist gated, no silent baselining. ⏳[ci] P2 (`scripts/check_complexity.py`)
 - BC-I31 directory scoping: single is_directory_eligible predicate, hard-require, no 'system'. ⏳[r] P1 (ties DC1)
-- BC-I32 capability-registry coverage: every Settings field, MCP tool, migration, and BC-* is catalogued in CAPABILITY_REGISTRY. ⏳[u] P2 (`scripts/check_capability_coverage.py`; test `yadgar/tests/test_capability_coverage.py`)
+- BC-I32 capability-registry coverage: every Settings field, MCP tool, migration, and BC-* is catalogued in CAPABILITY_REGISTRY. ⏳[u] P2 (`scripts/check_capability_coverage.py`; test `yadgar/tests/core/test_capability_coverage.py`)
 
 ### MCP tool surface (72 registered tools — `yadgar/server/tools/*`)
 > Replaces the old single BC-MCP umbrella. Each registered `@_tool` gets a row;
