@@ -584,6 +584,222 @@ def de_anchor(memory_id: int) -> dict:
     return _forward_admin("memory_update", {"memory_id": mid, "fields": fields})
 
 
+# Fallback tier when a renewal names neither ttl_days nor tier AND the row itself
+# carries no usable tier. NEVER "semantic_immortal": immortality must be asked for
+# explicitly, never granted by omission (see anchor_renew's docstring).
+_RENEW_DEFAULT_TIER: str = "conditional"
+
+
+@observe(tier="stage", metric="tools.admin_other._validate_anchor_renew_args")
+def _validate_anchor_renew_args(
+    ttl_days: int | None,
+    tier: str | None,
+    reason: str,
+) -> dict | None:
+    """Validate ``anchor_renew``'s arguments in isolation (no DB access).
+
+    Returns the error dict to hand straight back to the caller, or ``None`` when
+    the arguments are acceptable.  Split from the row-resolution half purely to
+    keep both under the I30 complexity cap.
+    """
+    from yadgar.core.server.tools.misc import _VALID_ANCHOR_TIERS
+
+    if not reason or not reason.strip():
+        return {
+            "ok": False,
+            "error": (
+                "anchor_renew requires a non-empty 'reason' argument explaining why "
+                "this anchor still deserves a compaction-proof slot"
+            ),
+        }
+
+    _gate = gate_or_reject(reason, tags=["_anchor"])
+    if _gate is not None:
+        return _gate
+
+    if tier is not None and tier not in _VALID_ANCHOR_TIERS:
+        return {
+            "ok": False,
+            "error": f"invalid tier: {tier!r}. Must be one of {sorted(_VALID_ANCHOR_TIERS)}",
+        }
+
+    if ttl_days is not None and tier == "semantic_immortal":
+        return {
+            "ok": False,
+            "error": (
+                "conflict: ttl_days sets a finite expiry but tier='semantic_immortal' "
+                "means never expires — choose one"
+            ),
+        }
+
+    if ttl_days is not None and int(ttl_days) <= 0:
+        return {"ok": False, "error": f"ttl_days must be positive, got {ttl_days!r}"}
+
+    return None
+
+
+@observe(tier="stage", metric="tools.admin_other._resolve_anchor_renew_target")
+def _resolve_anchor_renew_target(
+    memory_id: int,
+    ttl_days: int | None,
+    tier: str | None,
+) -> tuple[dict | None, str, str | None, dict | None]:
+    """Fetch the target row, confirm it is an anchor, and resolve the new expiry.
+
+    Mirrors ``misc._validate_anchor_inputs``' shape: returns
+    ``(memory_row, effective_tier, new_valid_until, error_dict_or_None)``.
+    """
+    from yadgar.core.server.tools.misc import _VALID_ANCHOR_TIERS
+
+    mid = int(memory_id)
+    mem = _get_storage().get_memory(mid)
+    if mem is None:
+        return None, "", None, {"ok": False, "error": f"Memory {mid} not found"}
+
+    # Anchor-ness is keyed on the TAG, not is_protected: the corpus holds many
+    # is_protected rows without the tag (_active_work and friends), and both
+    # surfacing queries require the tag.
+    if "_anchor" not in list(mem.get("tags") or []):
+        return (
+            None,
+            "",
+            None,
+            {
+                "ok": False,
+                "error": (
+                    f"Memory {mid} is not an anchor (no '_anchor' tag), so it has no "
+                    "time-box to renew. Use anchor() to create one — anchor_renew never "
+                    "promotes."
+                ),
+            },
+        )
+
+    # Effective tier: explicit → the row's own tier → conditional. Never immortal
+    # by omission.
+    _row_tier = mem.get("tier")
+    if tier is not None:
+        effective_tier = tier
+    elif _row_tier in _VALID_ANCHOR_TIERS:
+        effective_tier = str(_row_tier)
+    else:
+        effective_tier = _RENEW_DEFAULT_TIER
+
+    from yadgar._shared.server_helpers import _compute_valid_until
+
+    try:
+        # valid_until=None: this tool takes ttl_days/tier only, so the explicit-
+        # timestamp branch never applies. ttl_days wins over the tier default,
+        # matching _compute_valid_until's documented resolution order.
+        new_valid_until = _compute_valid_until(effective_tier, None, ttl_days, settings)
+    except ValueError as exc:
+        return None, "", None, {"ok": False, "error": str(exc)}
+
+    return mem, effective_tier, new_valid_until, None
+
+
+@_tool(power=True)
+def anchor_renew(
+    memory_id: int,
+    ttl_days: int | None = None,
+    tier: str | None = None,
+    reason: str = "",
+) -> dict:
+    """Renew an anchor's time-box so it keeps surfacing past its ``valid_until``.
+
+    The gap this closes: every anchor surfacing query filters
+    ``valid_until IS NONE OR valid_until > now``, so at its expiry instant an anchor
+    silently stops surfacing.  Nothing deletes it and — for ``migration_grace`` rows —
+    no signal fires either (``project.py`` excludes grace rows by design, ADR-0083).
+    The row becomes an invisible, undeleted zombie.  Until this tool there was no
+    sanctioned way back: ``memory_update``'s allowlist rejects ``valid_until`` and
+    ``migration_grace``, and ``db_inspect`` is read-only.
+
+    This is deliberately a DEDICATED tool rather than a widening of
+    ``_MEMORY_UPDATE_ALLOWED``.  That allowlist is a safety boundary (it rejects
+    ``heat``, ``embedding``, ``id``, ``created_at``); adding expiry fields to it would
+    weaken the guarantee for every ``memory_update`` caller to serve one workflow.
+
+    Semantics:
+      * ``ttl_days``  → new expiry at ``now + ttl_days``.
+      * ``tier``      → new expiry from that tier's default TTL
+                        (``conditional`` 90d, ``ephemeral`` 14d), or NO expiry for
+                        ``semantic_immortal``.
+      * Neither given → falls back to the ROW's existing tier, then to
+        ``conditional``.  Immortality is reachable ONLY by naming
+        ``tier="semantic_immortal"`` — never by omission, which would otherwise turn
+        a bare ``anchor_renew(id, reason=...)`` into the opposite of this tool's job.
+      * ``migration_grace`` is ALWAYS cleared.  That flag is what makes an expired row
+        invisible-but-undeleted; renewing without clearing it just moves the cliff.
+      * ``reason`` is REQUIRED and is recorded as an ``anchor:<reason>`` tag, the same
+        way ``anchor()`` does.  Renewing re-asserts that something deserves a
+        compaction-proof slot, and an unreasoned anchor set is how the corpus filled
+        with junk.
+
+    Anchor-ness is keyed on the ``_anchor`` TAG, not ``is_protected`` — the corpus
+    holds many ``is_protected`` rows without the tag (``_active_work`` and friends),
+    and both surfacing queries require the tag.
+
+    Args:
+        memory_id: Integer ID of the anchor to renew.
+        ttl_days: Renew for this many days from now. Mutually exclusive with
+            ``tier="semantic_immortal"``.
+        tier: One of ``semantic_immortal`` | ``conditional`` | ``ephemeral``.
+        reason: REQUIRED, non-empty. Why this anchor still deserves its slot.
+
+    Returns:
+        ``{ok, memory_id, tier, valid_until, reason, migration_grace_cleared, memory}``
+        — ``valid_until`` is the RESOLVED new expiry (``None`` = never expires), so the
+        caller can see the new cliff. Returns ``{"ok": False, "error": ...}`` on a
+        missing memory, a non-anchor, a missing reason, or an invalid/conflicting tier.
+    """
+    _arg_err = _validate_anchor_renew_args(ttl_days, tier, reason)
+    if _arg_err is not None:
+        return _arg_err
+
+    mem, effective_tier, new_valid_until, _err = _resolve_anchor_renew_target(
+        memory_id, ttl_days, tier
+    )
+    if _err is not None:
+        return _err
+    if mem is None:  # unreachable: _err is None ⇒ the row resolved. Guard, not assert.
+        return {"ok": False, "error": f"Memory {int(memory_id)} could not be resolved"}
+
+    mid = int(memory_id)
+    new_tags = list(mem.get("tags") or [])
+    if f"anchor:{reason}" not in new_tags:
+        new_tags.append(f"anchor:{reason}")
+
+    fields: dict = {
+        # The zombie-maker. Always cleared — a renewed row must never sit in grace.
+        "migration_grace": False,
+        "tags": new_tags,
+        "tier": effective_tier,
+    }
+    if new_valid_until is not None:
+        fields["valid_until"] = new_valid_until
+
+    updated = _forward_admin(
+        "anchor_renew",
+        {
+            "memory_id": mid,
+            "fields": fields,
+            # option<string> cannot be cleared by a JSON null; the backend half
+            # issues the bare NONE literal instead.
+            "clear_valid_until": new_valid_until is None,
+        },
+    )
+
+    return {
+        "ok": True,
+        "memory_id": mid,
+        "tier": effective_tier,
+        "valid_until": new_valid_until,
+        "reason": reason,
+        "migration_grace_cleared": True,
+        "memory": updated,
+    }
+
+
 @_tool(power=True)
 def vacuum_checkpoints(dry_run: bool = True) -> dict:
     """Collapse stale checkpoints: keep latest per directory_context, delete rest.

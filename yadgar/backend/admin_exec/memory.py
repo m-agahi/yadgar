@@ -117,6 +117,47 @@ def memory_update(payload: dict) -> dict:
     return updated
 
 
+@observe(tier="boundary", metric="backend.admin.anchor_renew")
+def anchor_renew(payload: dict) -> dict:
+    """Apply an anchor renewal. Storage-write half.
+
+    payload: {"memory_id": int, "fields": dict, "clear_valid_until": bool}
+
+    ``fields`` and the tier/TTL arithmetic are resolved core-side; this half only
+    writes.  It exists as its OWN op rather than riding ``memory_update`` because
+    of the ``clear_valid_until`` branch: ``valid_until`` is ``option<string>``, so
+    it cannot be cleared by passing a Python ``None`` through
+    ``update_memory_fields`` (SurrealDB rejects the resulting JSON null).  Clearing
+    needs the bare ``NONE`` literal, which is ``clear_memory_valid_until``.
+
+    Returns the updated memory dict (embedding bytes stripped).
+    Raises ValueError if the memory is not found.
+    """
+    memory_id = int(payload["memory_id"])
+    fields = dict(payload.get("fields") or {})
+    clear_valid_until = bool(payload.get("clear_valid_until", False))
+
+    storage = _get_storage()
+    if storage.get_memory(memory_id) is None:
+        raise ValueError(f"Memory {memory_id} not found")
+
+    if fields:
+        storage.update_memory_fields(memory_id, **fields)
+
+    # Order matters: update_memory_fields never receives valid_until on this path
+    # when clearing, so the NONE write is not at risk of being overwritten.
+    if clear_valid_until:
+        storage.clear_memory_valid_until(memory_id)
+
+    updated = storage.get_memory(memory_id)
+    if updated is None:
+        raise ValueError(f"Memory {memory_id} not found after renew")
+    updated.pop("embedding", None)
+    updated.pop("centroid_embedding", None)
+    updated.pop("implicit_embedding", None)
+    return updated
+
+
 @observe(tier="boundary", metric="backend.admin.reembed_all")
 def reembed_all(payload: dict) -> dict:
     """Generate embeddings for all memories missing them. Storage-write half.

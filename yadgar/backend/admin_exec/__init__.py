@@ -73,6 +73,7 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # memory / rules writes (R3 Car 3b / R5 group 2)
     "forget": memory.forget,
     "memory_update": memory.memory_update,
+    "anchor_renew": memory.anchor_renew,
     "reembed_all": memory.reembed_all,
     "add_rule": memory.add_rule,
     "archive_purge": memory.archive_purge,

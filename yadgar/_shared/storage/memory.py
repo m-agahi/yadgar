@@ -36,6 +36,7 @@ Clusters + similarity links → storage/cluster.py (_ClusterMixin)
 import logging
 import os
 import re as _re
+from typing import TYPE_CHECKING
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
@@ -71,6 +72,17 @@ def _validate_provenance_agent(value: str) -> str:
 
 class _MemoryMixin:
     """Memory CRUD and primary-table operations — mixed into StorageEngine."""
+
+    if TYPE_CHECKING:
+        # Provided by _ClientMixin, which is composed alongside this mixin into
+        # StorageEngine. Declared here (type-check time only, zero runtime effect)
+        # so mypy can resolve the ~100 `self._q` / `self._now_iso` call sites in
+        # this module instead of reporting them all as attr-defined errors.
+        # Signatures mirror client.py exactly so the composed class has no
+        # incompatible-base conflict.
+        def _q(self, surql: str, params: dict | None = None) -> list: ...
+
+        def _now_iso(self) -> str: ...
 
     # ------------------------------------------------------------------ Memories
 
@@ -964,6 +976,25 @@ class _MemoryMixin:
                 self._resolve_memory_doc_cache().invalidate(mid)
             except Exception:  # noqa: BLE001 — cache bust must never fail a write
                 _log.debug("memory_doc cache invalidate failed for %s", mid, exc_info=True)
+
+    @observe(tier="stage", metric="storage.memory.clear_memory_valid_until")
+    def clear_memory_valid_until(self, memory_id: int) -> None:
+        """Clear ``valid_until`` back to NONE (no expiry).
+
+        Cannot go through ``update_memory_fields``: the field is
+        ``option<string>``, so a Python ``None`` serialises to JSON null and
+        SurrealDB rejects it outright —
+        ``Couldn't coerce value for field `valid_until`: Expected `none | string`
+        but found `NULL```.  Only the bare ``NONE`` literal sets it.
+
+        The distinction is load-bearing rather than cosmetic: every anchor
+        surfacing query tests ``valid_until IS NONE OR valid_until > $now``, and a
+        stored NULL reports ``IS NONE`` as false while ``NULL > $now`` is also
+        false — so a null-cleared row would silently stop surfacing instead of
+        becoming immortal.
+        """
+        mid = int(memory_id)  # §5: cast to int to prevent record-ID injection
+        self._q(f"UPDATE memory:{mid} SET valid_until = NONE")
 
     @observe(tier="stage", metric="storage.memory.update_memory_last_accessed")
     def update_memory_last_accessed(self, memory_id: int, timestamp: str):
