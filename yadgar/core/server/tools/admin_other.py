@@ -684,6 +684,35 @@ def _resolve_anchor_renew_target(
     else:
         effective_tier = _RENEW_DEFAULT_TIER
 
+    # ttl_days vs. an EFFECTIVE semantic_immortal tier is the same conflict
+    # _validate_anchor_renew_args already rejects for the explicit `tier` argument
+    # (admin_other.py:626-633) — but that check only ever sees the raw argument.
+    # When `tier` is omitted, effective_tier falls back to the ROW's own stored
+    # tier (just above); if that stored tier is semantic_immortal, ttl_days must
+    # be rejected here too. Otherwise _compute_valid_until's ttl_days-wins
+    # resolution order (server_helpers.py:137-140 — correct and depended-on by
+    # memorize()/anchor(), NOT to be reordered) writes a finite valid_until
+    # alongside tier="semantic_immortal": the exact zombie shape this tool exists
+    # to repair, freshly manufactured. Demoting the tier silently instead of
+    # rejecting would be the same class of unasked-for persistence change this
+    # function already refuses in the non-anchor-promotion check above.
+    if ttl_days is not None and effective_tier == "semantic_immortal":
+        return (
+            None,
+            "",
+            None,
+            {
+                "ok": False,
+                "error": (
+                    "conflict: ttl_days sets a finite expiry but the effective tier "
+                    "is 'semantic_immortal' (resolved from the row's own stored tier) "
+                    "— pass tier='conditional' or tier='ephemeral' to demote and renew "
+                    "with ttl_days, or pass tier='semantic_immortal' explicitly to keep "
+                    "it immortal (this still clears migration_grace)"
+                ),
+            },
+        )
+
     from yadgar._shared.server_helpers import _compute_valid_until
 
     try:
@@ -725,9 +754,21 @@ def anchor_renew(
                         (``conditional`` 90d, ``ephemeral`` 14d), or NO expiry for
                         ``semantic_immortal``.
       * Neither given → falls back to the ROW's existing tier, then to
-        ``conditional``.  Immortality is reachable ONLY by naming
-        ``tier="semantic_immortal"`` — never by omission, which would otherwise turn
-        a bare ``anchor_renew(id, reason=...)`` into the opposite of this tool's job.
+        ``conditional``.  A NORMAL row can only become immortal by naming
+        ``tier="semantic_immortal"`` explicitly — never by omission, which would
+        otherwise turn a bare ``anchor_renew(id, reason=...)`` on a normal row into
+        the opposite of this tool's job.  A row that is ALREADY stored
+        ``semantic_immortal`` correctly stays immortal on a bare renew — that is
+        inheriting the row's own tier, the same fallback ``conditional``/
+        ``ephemeral`` rows get, not "granting immortality by omission".
+      * ``ttl_days`` conflicts with an effective ``semantic_immortal`` tier
+        whether that tier came from the explicit ``tier`` argument OR was resolved
+        from the row's own stored tier — REJECTED either way with an error naming
+        the conflict.  A finite TTL and "never expires" written to the same row in
+        the same call is the one outcome this tool must never produce silently;
+        demote first with ``tier="conditional"``/``"ephemeral"`` to renew with
+        ``ttl_days``, or keep immortality with an explicit
+        ``tier="semantic_immortal"`` (which still clears ``migration_grace``).
       * ``migration_grace`` is ALWAYS cleared.  That flag is what makes an expired row
         invisible-but-undeleted; renewing without clearing it just moves the cliff.
       * ``reason`` is REQUIRED and is recorded as an ``anchor:<reason>`` tag, the same
@@ -741,8 +782,10 @@ def anchor_renew(
 
     Args:
         memory_id: Integer ID of the anchor to renew.
-        ttl_days: Renew for this many days from now. Mutually exclusive with
-            ``tier="semantic_immortal"``.
+        ttl_days: Renew for this many days from now. Mutually exclusive with an
+            effective ``semantic_immortal`` tier — rejected whether that tier is
+            passed explicitly via ``tier`` or resolved from the row's own stored
+            tier.
         tier: One of ``semantic_immortal`` | ``conditional`` | ``ephemeral``.
         reason: REQUIRED, non-empty. Why this anchor still deserves its slot.
 

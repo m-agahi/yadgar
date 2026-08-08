@@ -18,12 +18,20 @@ Two behaviours here are load-bearing and easy to get wrong:
 
   1. **Clearing ``migration_grace``** — that flag is what makes an expired row an
      invisible undeleted zombie.  Renewing without clearing it just moves the cliff.
-  2. **Never granting immortality by omission** — ``_compute_valid_until(None, None,
-     None, settings)`` returns ``None`` (no expiry).  Naively reusing it would make
-     ``anchor_renew(id, reason="r")`` silently create an immortal anchor, which is the
-     opposite of this tool's purpose.  The effective tier therefore falls back to the
-     ROW's tier and then to ``conditional`` — immortality requires an explicit
-     ``tier="semantic_immortal"``.
+  2. **Never granting immortality to a NORMAL row by omission** — ``_compute_valid_until(
+     None, None, None, settings)`` returns ``None`` (no expiry).  Naively reusing it would
+     make ``anchor_renew(id, reason="r")`` on a normal (non-immortal) row silently create an
+     immortal anchor, which is the opposite of this tool's purpose.  The effective tier
+     therefore falls back to the ROW's own stored tier and then to ``conditional`` — a
+     normal row can only become immortal via an explicit ``tier="semantic_immortal"``.
+     A bare renew on a row that is ALREADY stored ``semantic_immortal`` correctly
+     *preserves* that tier (inheriting the row's own state, not "granting by omission").
+  3. **A finite ``ttl_days`` must never coexist with an effective ``semantic_immortal``
+     tier** — whether that tier came from the explicit ``tier`` argument or was resolved
+     from the row's own stored tier.  Checking only the raw argument (and not the
+     resolved effective tier) let ``anchor_renew(mid, ttl_days=30, reason="r")`` on a
+     stored-immortal row write ``tier="semantic_immortal"`` AND a finite ``valid_until``
+     in the same row — manufacturing the exact zombie shape this tool exists to repair.
 """
 
 from __future__ import annotations
@@ -215,6 +223,62 @@ class TestAnchorRenew:
         mid = _insert_anchor()
         result = server.anchor_renew(mid, ttl_days=30, tier="semantic_immortal", reason="r")
         assert result.get("ok") is False or result.get("stored") is False
+
+    def test_ttl_days_conflicts_with_stored_semantic_immortal_tier(self):
+        """Same conflict as above, but the tier comes from the STORED row, not the
+        ``tier`` argument (which is ``None`` here).
+
+        Before the fix, ``_validate_anchor_renew_args`` only ever tests the raw
+        ``tier`` argument — never the row's own tier — so this call sailed through
+        and ``_resolve_anchor_renew_target`` resolved ``effective_tier =
+        "semantic_immortal"`` from the stored row while ``_compute_valid_until``
+        still honored ``ttl_days`` (its resolution order puts the ``ttl_days``
+        branch before the ``semantic_immortal`` branch). The result was a STORED
+        row carrying both ``tier="semantic_immortal"`` AND a finite ``valid_until``
+        — the exact zombie shape this tool exists to repair, freshly manufactured.
+
+        The row is inserted with ``valid_until`` absent (a coherent immortal state,
+        not a pre-existing zombie) so the assertion below is discriminating in only
+        one direction: it fails pre-fix (the call writes a finite valid_until) and
+        passes post-fix (the call is rejected and the row is untouched).
+        """
+        mid = _insert_anchor(tier="semantic_immortal", valid_until=None)
+
+        result = server.anchor_renew(mid, ttl_days=30, reason="r")
+
+        row = _stored(mid)
+        assert not (row["tier"] == "semantic_immortal" and row["valid_until"] is not None), (
+            f"stored row must never carry tier='semantic_immortal' together with a "
+            f"finite valid_until, got tier={row['tier']!r} valid_until={row['valid_until']!r}"
+        )
+        assert result.get("ok") is False, (
+            f"ttl_days against an effective (stored) semantic_immortal tier must be "
+            f"rejected, got {result!r}"
+        )
+        # And the row must be provably untouched, not merely "not both set at once".
+        assert row["vu_is_none"] is True, "rejected renew must not mutate the row's valid_until"
+        assert row["tier"] == "semantic_immortal", "rejected renew must not mutate the row's tier"
+
+    def test_bare_renew_preserves_immortality_of_stored_semantic_immortal_row(self):
+        """A bare ``anchor_renew(mid, reason="r")`` on a stored ``semantic_immortal``
+        row must keep it immortal — this is CORRECT inheritance of the row's own
+        tier (mirroring the ``conditional``/``ephemeral`` fallback tested above),
+        not "immortality granted by omission" in the sense the tool guards against
+        (which is: a NORMAL row spontaneously becoming immortal because no tier was
+        named). Must not regress when the ttl_days-conflict fix lands.
+        """
+        mid = _insert_anchor(tier="semantic_immortal", valid_until=None)
+
+        result = server.anchor_renew(mid, reason="still needed")
+
+        row = _stored(mid)
+        assert row["vu_is_none"] is True, (
+            f"bare renew on a stored semantic_immortal row must preserve valid_until "
+            f"IS NONE, got {row['valid_until']!r}"
+        )
+        assert row["tier"] == "semantic_immortal"
+        assert result.get("ok") is True
+        assert result.get("valid_until") is None
 
     def test_invalid_tier_is_rejected(self):
         mid = _insert_anchor()
