@@ -394,7 +394,7 @@ def test_recommended_action_fires_on_squash_merge(_engines, tmp_path, monkeypatc
 #
 # Every other test in this file patches _get_master_head_info wholesale, so
 # nothing exercised the real function. That gap is why Car 3 (ADR-0215) could
-# delete the field _get_default_branch read, leaving it returning None
+# delete the field the old default-branch helper read, leaving it returning None
 # unconditionally — `git log None …` then raised inside the function's broad
 # except, _get_master_head_info returned None, and the roadmap-update-lag
 # signal was silently dead with the whole suite green. These two tests close it.
