@@ -583,7 +583,8 @@ reverse-sync.
 
 | Car | Scope | Depends on |
 |---|---|---|
-| A | `_LedgerMixin` + **Alembic revision chain (D34; NOT `migrations.py`'s list)** + **`runtime_config` table (first revision — task #0119, knob store moves to MariaDB in this train)** + ledger tables + ~~**`MAX+1 FOR UPDATE` allocation scoped `(project_id, origin)` (D31)**~~ **[RETIRED §14.1 — engine-native AUTO_INCREMENT, no allocation step]** + least-privilege grants in place of `PERMISSIONS` (§3, D19) + **a no-op scope-filter hook** (not tenancy columns — D17) + **new AST guard `scripts/check_ledger_chokepoint.py` with an allowlist for pre-existing violations**. ~~**Includes a RED test that two concurrent allocations on one `(project_id, origin)` never collide**~~ **[RETIRED §14.1 — no allocation to test; AUTO_INCREMENT is engine-serialised. The concurrency test that IS still needed is on `config` upsert and the `uses` counter, per §3.1/§3.2.]** | — |
+| A0 | identity derivation (`yadgar/core/identity.py`) + `.yadgar/` gitignore + `project` registry table + FK (`003_project_registry` alembic rev) + `_ensure_project_exists` (FAIL LOUD) + ADR-0202 amendment — §16.11 | — |
+| A | `_LedgerMixin` + **Alembic revision chain (D34; NOT `migrations.py`'s list)** + **`runtime_config` table (first revision — task #0119, knob store moves to MariaDB in this train)** + ledger tables + ~~**`MAX+1 FOR UPDATE` allocation scoped `(project_id, origin)` (D31)**~~ **[RETIRED §14.1 — engine-native AUTO_INCREMENT, no allocation step]** + least-privilege grants in place of `PERMISSIONS` (§3, D19) + **a no-op scope-filter hook** (not tenancy columns — D17) + **new AST guard `scripts/check_ledger_chokepoint.py` with an allowlist for pre-existing violations**. ~~**Includes a RED test that two concurrent allocations on one `(project_id, origin)` never collide**~~ **[RETIRED §14.1 — no allocation to test; AUTO_INCREMENT is engine-serialised. The concurrency test that IS still needed is on `config` upsert and the `uses` counter, per §3.1/§3.2.]** | A0 |
 | B | backend ops + cache | A |
 | C1 | **3a** — tag-override matches the page type's own opt-in tag | — |
 | C2 | **3b** — implement `downweight` | — |
@@ -596,6 +597,8 @@ reverse-sync.
 | I | `agent_prompt` table + `list`/`get` + delete TOC machinery + **re-point `_build_agent_prompt_toc` (`project.py:1898-1921`)** | B |
 | J | `mutability` policy field + per-page override + `wiki_set_mutability`, **enforced at `storage/wiki.py:215`** and covering `admin_exec/wiki.py:139 wiki_update` | A |
 | K | nightly archive sweep, policy-dispatched | E, G, I |
+| L | memory + wiki `directory_context`→`project_id` backfill + quarantine + 194-page ADR re-slug (one-shot offline) — §16.11 | A0 |
+| M | cross-project `project=` param on recall/memorize/wiki/adr/task tools, validated against the registry — §16.11 | A0, D, F |
 
 D/E ∥ F/G ∥ I after B. **C gates D and F.** J depends only on A and can land early.
 
@@ -1219,7 +1222,11 @@ created.
 `task.project_id` and `adr.project_id` become FKs to `project.key`. That is the enforcement the
 current unvalidated string has none of.
 
-### 16.6 Cross-project work — solved by the key, not by a mode
+**Enforcement = FAIL LOUD (decision 2026-08-08, amends ADR-0202):** the registry check on write REJECTS an unknown `project_id` with a structured error. NOT `INSERT OR IGNORE` — auto-creating the project row would manufacture phantom namespaces, the exact failure ADR-0202 says the registry exists to prevent. This decision is recorded in the ADR-0202 wiki page (`yadgar-adr-0202`) when Car A0 ships.
+
+**Alembic ordering:** Car A0's identity CODE (`yadgar/core/identity.py`) precedes Car A's write path so derivation is available when `_LedgerMixin` stamps `project_id`. The registry's alembic revision `003_project_registry` FOLLOWS Car A's `002_ledger_tables` (the `project_id` column ships in `002`; `003` creates the `project` table and adds the FKs). "A0 precedes A" is a code-availability statement, not an alembic-order statement.
+
+### 16.6 Cross-project work — solved by the key, not by a mode (Car M)
 
 Working in project A while filing an ADR or task for project B is a real, frequent workflow that
 has **no mechanism today**. It becomes easy the moment identity stops being a filesystem fact: with
@@ -1303,11 +1310,11 @@ Train membership, dependency-ordered:
 
 1. MariaDB service + Alembic chain
 2. `config` — key-PK, `default_value` with boot re-sync, **float accepted** (split-store §8.A2)
-3. `project` registry + identity derivation (this section)
+3. `project` registry + identity derivation (this section) **(Car A0)**
 4. Ledger tables — `task`, `adr`, `agent_pattern`, `agent_discipline` + join tables (§3, task 0047)
 5. `agent_pattern_model` + `client` (task 0094)
 6. Backend PTC + version piggyback + core moved onto HTTP forwards (§15, ADR-0200)
-7. Memory + wiki migration onto project keys, with quarantine
+7. Memory + wiki migration onto project keys, with quarantine **(Car L)**
 8. **Operational arms — backup, restore-verification gate, `check_invariants`** (task 0136).
    NON-NEGOTIABLE per ADR-0195: they land in the same commit as the first engine-#2 row.
 9. Tests relocated to `yadgar/tests/` so `testpaths` collects them (task 0137)
@@ -1358,3 +1365,46 @@ constraint because NULL is self-documenting — it reads as "not applicable, thi
 than a stale value that still looks current — and a CHECK would have to enumerate valid
 combinations, which is more surface for the same guarantee. Update §3.4's `state` column
 accordingly: `NULL` allowed, default `open`.
+
+### 16.11 Car assignments for project identity (task 0095, folded 2026-08-08)
+
+Task 0095 (standalone project-identity plan, now archived under `docs/plans/archive/`) was folded into this train. Its scope ships as three new cars (A0, L, M). The design already lived in §16.1-16.8; this subsection assigns car letters and records build-time decisions that supersede the folded plan's errors.
+
+#### Car A0 — identity derivation + project registry (prereq to Car A's write path)
+
+- `yadgar/core/identity.py` (NEW) — `derive_project_id()`, `_resolve_insteadof()`, `.yadgar/project-id` walk, `local/<basename>` fallback. Core-side, NOT `yadgar/_shared/` (decision 2026-08-08). Composes with `_resolve_project_root` / `_worktree_canonical_root` (`yadgar/_shared/server_helpers/server_helpers.py`) — does not duplicate.
+- `.yadgar/` entry ADDED to the global gitignore (`~/.config/git/ignore`, verified absent today); agent gitconfig (`~/.config/git/agent`) includes the excludes file so subagents ignore it. Never committed (D32 ②).
+- `project` registry table + FK: alembic revision `003_project_registry` in `yadgar/_shared/storage/sql/migrations/versions/` (AFTER Car A's `002_ledger_tables`). Creates `project` (key PK, display_name, kind ENUM(git|local), remote_url, created_at per §16.5) and adds FKs `task.project_id`/`adr.project_id` → `project.key`. NOT a separate `0004`; NOT an `op.add_column` migration — the column ships in `002`.
+- `_ensure_project_exists(project_id)` (backend) — registry check on write. FAIL LOUD (decision 2026-08-08): REJECT unknown `project_id` with a structured error. NOT `INSERT OR IGNORE`.
+- ADR-0202 amendment (wiki page `yadgar-adr-0202`): records enforcement = fail-loud. Written when Car A0 ships.
+
+**Tables carrying `project_id`:** `task`, `adr` ONLY. `agent_pattern`/`agent_discipline`/`agent_pattern_composes` are reach-global (D3) — no `project_id`. (`agent_prompt_usage`, named in the folded plan, was fabricated — it does not exist.)
+
+**backend-bump:** YES (registry `_ensure_project_exists` is backend code; `identity.py` itself is core → NO on its own).
+
+#### Car L — memory + wiki backfill + re-slug (one-shot, offline)
+
+§16.8 + §16.9 migration case 3. ~2,919 memories + ~2,237 wiki pages carry `directory_context` (NOT NULL via migration 016, `yadgar/_shared/storage/migrations.py:623` wiki_page, `:663` memory). Backfill `project_id` per-row:
+- path exists + git repo → derive from remote
+- path exists, not git → `local/<basename>`
+- path gone → `project_id='unresolved'`, original path preserved in a `legacy_directory` column, surfaced for review (suggest-and-confirm, never auto-map)
+
+Wiki re-slug (D32 ③): 194 ADR pages → `body_slug = {project_id}_adr-NNNN` (`/`→`_`); `[[crossrefs]]` updated; task-list page deleted (tasks move to SQL, Car D).
+
+**Nightly derives `project_id` per-row from the source row's `directory_context`** (`yadgar/backend/consolidation/cleanup.py:192`) — same mechanism as the queue drainer. NO `YADGAR_PROJECT_ID` env var, NO systemd unit (the folded plan's nightly branch was deleted — no `yadgar-nightly.service` exists; nightly is the `yadgar-nightly-cycle` console_script).
+
+**backend-bump:** YES (scripts + backend consolidation path).
+
+#### Car M — cross-project `project=` param (dedicated)
+
+§16.6. Optional `project: str | None = None` on the MCP tools:
+- `recall()`, `memorize()` — `yadgar/core/server/tools/`
+- `wiki_add`/`wiki_read`/`wiki_query` — `yadgar/core/server/tools/wiki.py`
+- `adr_add`/`adr_list` — Car F
+- task tools — Car D (build-time; `task.py` does not exist yet, built there)
+
+Default = derived current project (from SessionStart — Car E extends `yadgar/core/hooks/session-start-context.py`, NOT a new `session_start.py`). Override validated against the `project` registry (Car A0): unknown project → REJECTED (fail-loud).
+
+**Non-session writers:** drainer derives per-item from `directory_context` (`yadgar/backend/queue_drainer/apply.py:126`, already per-item); CLI derives from cwd (`yadgar/core/cli/`). (The folded plan's `yadgar/core/queue_drainer.py` and `yadgar/cli/main.py` paths were wrong.)
+
+**backend-bump:** NO (MCP tools are in `core/server/tools/`, not `backend/`; `BACKEND_BUILD_DIRS=("backend",)` per `scripts/check_backend_bump.py`). The drainer per-item derivation (backend) is a separate YES, folded into Car A0/L.

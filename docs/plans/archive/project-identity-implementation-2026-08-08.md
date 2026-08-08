@@ -1,6 +1,6 @@
 # Project identity implementation — task 0095 (2026-08-08)
 
-**Status:** plan. **Owner:** m-agahi. **Blocks:** 0047 (ledger spine).
+**Status:** SUPERSEDED — folded into `docs/plans/task-table-refactor-2026-07-29.md` §16 (task 0047, the spine train). Retired 2026-08-08: this plan's scope ships as cars of 0047's train (Car A0 = identity + registry, Car L = memory/wiki backfill, Car M = cross-project params). 0047 §16 already carried the design at decision level ("ONE train" — §16.9); this standalone plan duplicated it with a backwards dependency ("unblocks 0047") and six wrong file paths, one fabricated table (`agent_prompt_usage`), and two dead migrations. Not built; not completed — retired by fold. **Owner:** m-agahi. **Was:** blocked 0047 (ledger spine).
 
 Two-phase plan. Phase 1 unblocks the spine immediately — identity derivation
 function + `project_id` column on ledger tables, no registry, no migration.
