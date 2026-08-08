@@ -178,18 +178,17 @@ class _DLQMixin:
     def _fill_wiki_add_defaults(self, payload: dict) -> dict:
         """Fill fields that the export-yadgar skill cannot know (§26 Option Z).
 
-        - branch: leave as None if absent (canonical slot; matches wiki_add direct path).
         - confidence: set to 'medium' if absent.
         - _internal: strip before storage write (never persisted to DB).
 
-        v5.42.2: changed from hardcoded "master" → None to match the wiki_add direct
-        handler's canonical-slot behavior. Callers that need an explicit branch must pass
-        it themselves; the drainer no longer injects a default branch value.
-
         v5.42.3: _internal flag stripped here so it is never passed to wiki_add().
+
+        ADR-0215: the branch arm (leave-as-None-if-absent) was dropped. Migration
+        029 drops the branch column from wiki_page/memory entirely, so no reader
+        of payload["branch"] remains — run_wiki_add_replay never looks at it.
+        A payload that still carries a stale "branch" key deserialises unchanged
+        (plain JSON read via .get() downstream); one missing it is unaffected too.
         """
-        if "branch" not in payload:
-            payload["branch"] = None
         if not payload.get("confidence"):
             payload["confidence"] = "medium"
         payload.pop("_internal", None)  # strip before DB write — system-only runtime flag
