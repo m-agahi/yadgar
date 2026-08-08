@@ -20,7 +20,6 @@ on:
   workflow_dispatch: {}
 
 env:
-  YADGAR_CI_BRANCH: master
   YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
   OTEL_SDK_DISABLED: "true"
 
