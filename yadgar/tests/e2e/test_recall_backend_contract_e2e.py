@@ -70,8 +70,6 @@ def _run_off_path(query: str, max_results: int = 20) -> list[tuple]:
         max_results=max_results,
         min_heat=0.0,
         directory=YADGAR_DIR,
-        current_branch="master",
-        default_branch="master",
     )
     # Extract (id, score) tuples — use _retrieval_score as primary, fallback heat.
     return [(r.get("id"), float(r.get("_retrieval_score", r.get("heat", 0.0)))) for r in results]
@@ -93,8 +91,6 @@ def _run_on_path(query: str, max_results: int = 20) -> list[tuple]:
     payload = {
         "query": query,
         "directory": YADGAR_DIR,
-        "current_branch": "master",
-        "default_branch": "master",
         "max_results": max_results,
         "min_heat": 0.0,
         "type": "all",
@@ -293,8 +289,6 @@ class TestRecallBackendBootstrap:
         payload = {
             "query": _BOOT_QUERY,
             "directory": YADGAR_DIR,
-            "current_branch": "master",
-            "default_branch": "master",
             "max_results": 10,
             "min_heat": 0.0,
             "type": "all",
@@ -637,8 +631,6 @@ class TestRecallBackendProdEnvBootstrap:
         payload = {
             "query": _PROD_QUERY,
             "directory": YADGAR_DIR,
-            "current_branch": "master",
-            "default_branch": "master",
             "max_results": 10,
             "min_heat": 0.0,
             "type": "all",

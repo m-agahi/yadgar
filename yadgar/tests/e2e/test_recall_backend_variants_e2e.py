@@ -160,8 +160,6 @@ def _base_payload(**overrides) -> dict:
     payload = {
         "query": _QUERY,
         "directory": _DIR,
-        "current_branch": "master",
-        "default_branch": "master",
         "max_results": 10,
         "min_heat": 0.0,
         "type": "all",

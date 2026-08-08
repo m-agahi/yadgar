@@ -332,11 +332,9 @@ class TestResolutionProjectBeatsGlobal:
         from yadgar.core.server.tools.wiki import wiki_read
 
         with (
-            patch("yadgar.core.server.tools.wiki.os") as mock_os,
             patch("yadgar.core.server._detect_branch", return_value="main", create=True),
             patch("yadgar.core.server._get_default_branch", return_value=None, create=True),
         ):
-            mock_os.getcwd.return_value = "/daemon/cwd"
             result = wiki_read(slug, directory="/proj/A")
 
         assert result.get("error") is None, f"Got error: {result}"
@@ -365,11 +363,9 @@ class TestResolutionProjectBeatsGlobal:
         from yadgar.core.server.tools.wiki import wiki_read
 
         with (
-            patch("yadgar.core.server.tools.wiki.os") as mock_os,
             patch("yadgar.core.server._detect_branch", return_value=None, create=True),
             patch("yadgar.core.server._get_default_branch", return_value=None, create=True),
         ):
-            mock_os.getcwd.return_value = "/daemon/cwd"
             result = wiki_read(slug, directory="/proj/B")
 
         assert result.get("error") is None, f"Got error: {result}"
@@ -428,10 +424,10 @@ class TestResolveSlugCallerDirectory:
 
         from yadgar.core.server.tools.wiki import wiki_history
 
-        with patch("yadgar.core.server.tools.wiki.os") as mock_os:
-            mock_os.getcwd.return_value = "/daemon/root"
-            # directory param routes to caller context, ignores os.getcwd()
-            result = wiki_history(slug, directory="/caller/repo")
+        # ADR-0215: wiki.py no longer imports os / falls back to os.getcwd() at
+        # all — the directory param is the only source of truth now, so the
+        # caller-dir-wins invariant this test checks is structurally guaranteed.
+        result = wiki_history(slug, directory="/caller/repo")
 
         assert "error" not in result, f"Expected success but got error: {result}"
         assert result.get("slug") == slug, f"Unexpected result: {result}"
