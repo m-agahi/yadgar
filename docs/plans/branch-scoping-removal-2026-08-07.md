@@ -539,6 +539,9 @@ Delete the whole five-layer chain (the same chain ADR-0216 said must be edited e
 - [ ] `README.md` — 15 hits; grep for `branch_hint` and §25
 - [ ] `AGENTS.md` (root) — 3 hits
 - [ ] `docs/contracts/CAPABILITY_REGISTRY.md` — already done in Car 7; re-run the prose-liveness gate here as a cross-check
+- [ ] **[FOUND 2026-08-08 — a real Car 5 miss, not docs]** `sdk-js/src/generated/tools.ts` still wraps `wiki_cleanup_merged_branches` at `:294` (the `callTool` wrapper) and `:473` (the `WRAPPED_TOOLS` list). Car 6 DELETED that tool server-side, so the SDK now calls a tool that does not exist. **`verify-tool-coverage` will NOT catch this** — it diffs `WRAPPED_TOOLS` against a hardcoded `EXPECTED_SERVER_TOOLS`, and both are stale together, so it stays green while the SDK is broken. Remove from both lists, and remove `WikiCleanupMergedBranchesArgs` from `types.ts`. This is the name-only blindness documented in [[guards-and-tooling-in-this-repo-that-do-not-check-what-their-nam]] actually biting.
+- [ ] `README.md:68` and `:351` — drop `wiki_cleanup_merged_branches` from the Sync-helpers / Maintenance lists. (`wiki_refresh_stale` alongside it is the PRE-EXISTING ADR-0157 drift — leave it, note it.)
+- [ ] `docs/reference/configuration.md:839` (§26 heading) and `:867` (the tool's own subsection) — the `wiki_cleanup_merged_branches` half goes; the `wiki_refresh_stale` half is ADR-0157 drift and stays.
 - [ ] **Wiki pages** (3, live corpus — not files): `yadgar-directory-branch-contract-v5-42-3-5-architecture` (delete or rewrite as directory-only) plus 2 others. Find with `recall(query="branch contract §25 resolution", directory="/home/max/git/yadgar", type="wiki")`.
 - [ ] **Do NOT touch:** `docs/plans/archive/**`, `docs/CHANGELOG.md` history, `docs/reports/**`, `docs/roadmap/archive/**`. These are historical records; rewriting them destroys the archaeology this repo depends on.
 
