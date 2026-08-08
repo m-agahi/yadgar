@@ -124,32 +124,12 @@ class TestWikiSetMetadata:
         page = _storage().get_wiki_page(pid)
         assert page["directory_context"] == "/home/max/projects/myapp"
 
-    def test_set_branch_non_null(self):
-        """Setting branch to a non-empty string succeeds."""
-        pid = _insert_page("set-branch-page", branch=None)
-        result = server.wiki_set_metadata("set-branch-page", "branch", "feat/my-feature")
-        assert result.get("ok") is True
-        page = _storage().get_wiki_page(pid)
-        assert page["branch"] == "feat/my-feature"
-
     def test_idempotent_noop_directory_context(self):
         """Same directory_context value → ok:True, no version created."""
         pid = _insert_page("idempotent-dir", directory_context="/home/max/project")
         initial_versions = _version_count(pid)
         result = server.wiki_set_metadata(
             "idempotent-dir", "directory_context", "/home/max/project"
-        )
-        assert result.get("ok") is True
-        assert result.get("changed") is False
-        assert _version_count(pid) == initial_versions
-
-    def test_idempotent_noop_branch(self):
-        """Same branch value → ok:True, no version created."""
-        pid = _insert_page("idempotent-branch", branch="feat/stable")
-        initial_versions = _version_count(pid)
-        # Pass branch_hint so §25 resolution locates the page
-        result = server.wiki_set_metadata(
-            "idempotent-branch", "branch", "feat/stable", branch_hint="feat/stable"
         )
         assert result.get("ok") is True
         assert result.get("changed") is False

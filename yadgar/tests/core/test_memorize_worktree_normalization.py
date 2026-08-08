@@ -98,7 +98,7 @@ def test_memorize_non_git_context_verbatim(tmp_path, stub_queue):
 
     plain = tmp_path / "not-a-repo"
     plain.mkdir()
-    result = memorize("plain dir finding", str(plain), ["test"], branch_hint="feat/hint")
+    result = memorize("plain dir finding", str(plain), ["test"])
     assert result["queued"] is True
     _op, payload = stub_queue.jobs[-1]
     assert payload["context"] == str(plain)

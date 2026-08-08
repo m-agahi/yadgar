@@ -302,8 +302,6 @@ def wiki_add(
     source_memory_ids: list[int] | None = None,
     confidence: str = "medium",
     append: bool = False,
-    branch: str | None = None,
-    branch_hint: str | None = None,
     force: bool = False,
     replace_slug: str | None = None,
     wait: bool = False,
@@ -353,12 +351,6 @@ def wiki_add(
       Typed pages are format-checked by wiki_lint (missing required sections reported as warnings).
       wiki_add never rejects a write due to page_type/template mismatch — lint is advisory only.
 
-    branch / branch_hint: DEPRECATED and inert. ADR-0215 removed branch scoping —
-      a write is never rejected for lacking branch context, and reads resolve by
-      directory alone, so supplying either changes nothing about where the page
-      lands or who can read it. Both parameters are accepted for back-compat and
-      are removed in a later car of the removal train.
-
     wait=False (default): async fast path — returns immediately with {"queued": True}.
     Only set wait=True when callers depend on next-call read-your-writes.
     wait=True: enqueues then blocks until the drainer commits, returning
@@ -391,11 +383,6 @@ def wiki_add(
         if _has_unpaired_surrogate(_field):
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
-    # ADR-0215: branch is inert — it gates nothing and resolves nothing. The
-    # coalesce is kept only so the (deprecated) column value a caller passes is
-    # still what gets stored until the parameters are removed.
-    if not branch and branch_hint:
-        branch = branch_hint
     # Directory enforcement at the MCP boundary — error dict = REJECT.
     _decision = _check_wiki_add_context(directory)
     if "error" in _decision:
@@ -433,7 +420,9 @@ def wiki_add(
         "source_memory_ids": source_memory_ids,
         "confidence": confidence,
         "append": append,
-        "branch": branch,
+        # ADR-0215: branch scoping is gone from the tool surface; every write now
+        # lands in the canonical slot. The key stays until Car 8 drops the column.
+        "branch": None,
         # v5.41.5: pass bypass flags so drainer can skip gate for these paths
         "force": force,
         "replace_slug": replace_slug,
@@ -539,7 +528,6 @@ def wiki_query(
     category: str | None = None,
     max_results: int = 5,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> list[dict]:
     """Search wiki pages by keyword + semantic similarity.
 
@@ -548,7 +536,6 @@ def wiki_query(
     directory: Absolute project path for scoping results to caller directory + 'global'.
         Required (v5.65 Fix D): callers must supply the real host directory.
         Container-safe: daemon does NOT fall back to os.getcwd().
-    branch_hint: Accepted for back-compat and ignored (ADR-0215 removed branch scoping).
 
     DEPRECATION (Phase 2a): unified recall is now the only path — prefer
     ``recall(query, directory=..., type="wiki")`` which routes through the
@@ -585,7 +572,6 @@ def wiki_query(
     _q_key = (
         query,
         _dir_stripped,
-        branch_hint or "",
         category,
         tuple(tags) if tags else None,
         max_results,
@@ -644,7 +630,6 @@ def wiki_query(
 def wiki_read(
     slug: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Read a specific wiki page by slug.
 
@@ -653,7 +638,6 @@ def wiki_read(
     2. directory='global'     (global fallback)
     3. Not found → error dict.
 
-    branch_hint: accepted for back-compat and ignored (ADR-0215).
 
     When directory is not supplied, the slug is matched on its own
     (backward-compat mode; WARNING logged).
@@ -817,7 +801,6 @@ def wiki_autolink(
 def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writes to DB
     title: str,
     content: str,
-    branch: str | None = None,
     threshold: float | None = None,
     top_k: int = 5,
     directory: str | None = None,
@@ -830,7 +813,6 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
     Args:
         title: Title of the proposed new page.
         content: Content of the proposed new page.
-        branch: Accepted for back-compat and ignored (ADR-0215 removed branch scoping).
         threshold: Minimum cosine similarity (0-1). Defaults to WIKI_SIM_CONTENT_THRESHOLD.
         top_k: Maximum candidates to return (default 5).
         directory: Caller project dir for the ADR-0158 directory-scoped candidate
@@ -869,13 +851,11 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
 def _resolve_page_id_by_slug(
     slug: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> tuple[int | None, dict | None]:
     """Directory-resolve slug → page dict. Returns (page_id, page) or (None, None).
 
     v5.42.5 (F1 fix): accepts directory from the caller so resolution uses caller
-    context instead of daemon os.getcwd(). ADR-0215 removed the branch axis;
-    branch_hint is accepted for back-compat and ignored.
+    context instead of daemon os.getcwd(). ADR-0215 removed the branch axis.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
     page = _st._wiki.read_by_directory(slug, directory)
@@ -885,9 +865,7 @@ def _resolve_page_id_by_slug(
 
 
 @_tool()
-def wiki_history(
-    slug: str, limit: int = 20, directory: str | None = None, branch_hint: str | None = None
-) -> dict:
+def wiki_history(slug: str, limit: int = 20, directory: str | None = None) -> dict:
     """List version history for a wiki page, newest first.
 
     Returns metadata for each version (no content — use wiki_read_version for that).
@@ -903,10 +881,9 @@ def wiki_history(
         slug: Wiki page slug.
         limit: Max versions to return (default 20).
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
-        branch_hint: Caller branch for §25 resolution (v5.42.5 F1 fix).
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, page = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, page = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     versions = _st._wiki.history(page_id, limit=limit)
@@ -915,16 +892,13 @@ def wiki_history(
 
 
 @_tool()
-def wiki_read_version(
-    slug: str, version: int, directory: str | None = None, branch_hint: str | None = None
-) -> dict:
+def wiki_read_version(slug: str, version: int, directory: str | None = None) -> dict:
     """Read a specific historical version of a wiki page (full content + snapshot fields).
 
     Args:
         slug: Wiki page slug.
         version: Version number (1-based; use wiki_history to find version numbers).
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
-        branch_hint: Caller branch for §25 resolution (v5.42.5 F1 fix).
 
     Returns the full snapshot including: version, title, content, category, tags,
     confidence, source_memory_ids, branch, change_summary, created_at.
@@ -932,7 +906,7 @@ def wiki_read_version(
     Error: {"error": "...", "max_version": N} if version not found.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.read_version(page_id, version)
@@ -947,7 +921,6 @@ def wiki_diff(
     v2: int,
     fmt: str = "unified",
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Diff two versions of a wiki page.
 
@@ -957,14 +930,13 @@ def wiki_diff(
         v2: Second (newer) version number.
         fmt: "unified" (default, human-readable text diff) or "json" (structured).
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
-        branch_hint: Caller branch for §25 resolution (v5.42.5 F1 fix).
 
     unified format returns: {"diff": "<unified diff text>", "v1": N, "v2": M, ...}
     json format returns: {"hunks": [...], "added_lines": N, "removed_lines": M,
                           "sections_changed": [...], ...}
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.diff(page_id, v1, v2, fmt=fmt)
@@ -978,7 +950,6 @@ def wiki_restore(
     version: int,
     wait: bool = False,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Restore a wiki page to a previous version by creating a new version.
 
@@ -1003,14 +974,13 @@ def wiki_restore(
         wait: Accepted for API symmetry with wiki_add. This tool writes
             synchronously (no queue) — wait=True is a no-op.
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
-        branch_hint: Caller branch for §25 resolution (v5.42.5 F1 fix).
 
     Returns: {"page_id": N, "restored_from_version": V, "new_version": N+1, "note": "..."}
     """
     # R3 Car 3c: slug→page_id resolution stays CORE (backend has no git/cwd, so
     # backend-side _detect_branch would resolve the wrong row); the restore write
     # forwards keyed by page_id.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     return _forward_admin("wiki_restore", {"page_id": page_id, "version": version, "slug": slug})
@@ -1024,7 +994,6 @@ def wiki_append_section(
     position: str = "end_of_section",
     wait: bool = False,
     directory: str | None = None,
-    branch_hint: str | None = None,
     heading_type: str = "h2",
 ) -> dict:
     """Section-atomic wiki write: patch a specific section without replacing entire content.
@@ -1067,7 +1036,7 @@ def wiki_append_section(
 
     # R3 Car 3c: slug→page_id resolution stays core (backend has no git/cwd); the
     # section write forwards keyed by page_id.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
 
@@ -1093,20 +1062,19 @@ def wiki_set_metadata(
     field: str,
     value: str | None,
     directory: str | None = None,  # noqa: ARG001 — kept for API back-compat
-    branch_hint: str | None = None,  # noqa: ARG001 — kept for API back-compat
 ) -> dict:
-    """Set directory_context or branch on ALL rows sharing a slug (BC-G10 fix).
+    """Set directory_context on ALL rows sharing a slug (BC-G10 fix).
 
-    Reaches every row for the slug — per-branch rows + 'global' stragglers —
-    not just the single row returned by §25 resolution. This fixes the bug
-    where wiki_set_metadata reported changed=False even though straggler rows
-    were never touched (only one row was resolved via LIMIT 1 resolution).
+    Reaches every row for the slug — including 'global' stragglers — not just
+    the single row returned by §25 resolution. This fixes the bug where
+    wiki_set_metadata reported changed=False even though straggler rows were
+    never touched (only one row was resolved via LIMIT 1 resolution).
 
-    field must be 'directory_context' or 'branch'. Other fields are rejected.
+    field must be 'directory_context'. Other fields are rejected. ADR-0215
+    removed branch scoping, so 'branch' is no longer a settable field.
 
-    Validation per field:
-      directory_context: 'global' or an absolute path (starts with '/').
-      branch: null (sets canonical slot, resolves via IS NONE) or non-empty string.
+    Validation: directory_context must be 'global' or an absolute path
+    (starts with '/').
 
     Idempotent per row: no version row created when the value already matches.
     On real change per row: creates a wiki_page_version row (v5.41 versioning).
@@ -1116,14 +1084,21 @@ def wiki_set_metadata(
 
     Args:
         slug: Wiki page slug.
-        field: Metadata field to set. Must be 'directory_context' or 'branch'.
-        value: New value. For branch, null clears it (sets canonical slot).
+        field: Metadata field to set. Must be 'directory_context'.
+        value: New value.
         directory: Kept for API back-compat (unused — all-rows path needs no §25 resolution).
-        branch_hint: Kept for API back-compat (unused — same reason).
 
     Returns: {ok, slug, rows_updated, page_ids} or {ok: False, error}.
     Preserved keys for back-compat callers that inspect {ok, slug}.
     """
+    # ADR-0215: 'branch' left the allowed-field set with the rest of branch
+    # scoping. Rejected at the MCP boundary; the store still knows the column
+    # until Car 8 drops it, so the gate has to live here.
+    if field != "directory_context":
+        return {
+            "ok": False,
+            "error": f"invalid field '{field}' — allowed: ['directory_context']",
+        }
     # R3 Car 3c: slug-keyed all-rows metadata write forwards to backend /admin.
     # No §25 page_id resolution needed (impl reaches every row for the slug).
     return _forward_admin("wiki_set_metadata", {"slug": slug, "field": field, "value": value})
@@ -1139,7 +1114,6 @@ def wiki_replace_text(
     new_text: str,
     occurrences: int | str = 1,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Replace old_text with new_text in a wiki page (surgical anchor-text edit).
 
@@ -1160,7 +1134,6 @@ def wiki_replace_text(
         new_text: Replacement text.
         occurrences: Expected match count, or 'all'.
         directory: Caller directory for §25 resolution.
-        branch_hint: Caller branch for §25 resolution.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
@@ -1170,7 +1143,7 @@ def wiki_replace_text(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1192,7 +1165,6 @@ def wiki_delete_text(
     text: str,
     occurrences: int | str = 1,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Delete text from a wiki page (surgical anchor-text edit).
 
@@ -1208,13 +1180,12 @@ def wiki_delete_text(
         text: Text to remove (exact match, case-sensitive).
         occurrences: Expected match count when text present, or 'all'.
         directory: Caller directory for §25 resolution.
-        branch_hint: Caller branch for §25 resolution.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     # No secret gate (nothing new is written).
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1230,7 +1201,6 @@ def wiki_insert_after(
     anchor_text: str,
     new_text: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Insert new_text immediately after anchor_text in a wiki page.
 
@@ -1242,7 +1212,6 @@ def wiki_insert_after(
         anchor_text: Unique text to locate (exact, case-sensitive).
         new_text: Content to insert immediately after anchor_text.
         directory: Caller directory for §25 resolution.
-        branch_hint: Caller branch for §25 resolution.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
@@ -1252,7 +1221,7 @@ def wiki_insert_after(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1268,7 +1237,6 @@ def wiki_insert_before(
     anchor_text: str,
     new_text: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Insert new_text immediately before anchor_text in a wiki page.
 
@@ -1280,7 +1248,6 @@ def wiki_insert_before(
         anchor_text: Unique text to locate (exact, case-sensitive).
         new_text: Content to insert immediately before anchor_text.
         directory: Caller directory for §25 resolution.
-        branch_hint: Caller branch for §25 resolution.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
@@ -1290,7 +1257,7 @@ def wiki_insert_before(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1312,7 +1279,6 @@ def wiki_replace_at(
     new_text: str,
     anchor_hint: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Replace `length` chars at (line, col) in a wiki page (positional escape hatch).
 
@@ -1331,7 +1297,6 @@ def wiki_replace_at(
         new_text: Replacement text.
         anchor_hint: Expected text at (line, col). Must be ≥20 chars.
         directory: Caller directory for §25 resolution.
-        branch_hint: Caller branch for §25 resolution.
 
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
@@ -1342,7 +1307,7 @@ def wiki_replace_at(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1368,7 +1333,6 @@ def wiki_delete_at(
     length: int,
     anchor_hint: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Delete `length` chars at (line, col) in a wiki page (positional escape hatch).
 
@@ -1387,14 +1351,13 @@ def wiki_delete_at(
         length: Number of chars to delete.
         anchor_hint: Expected text at (line, col). Must be ≥20 chars.
         directory: Caller directory for §25 resolution.
-        branch_hint: Caller branch for §25 resolution.
 
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     # No secret gate (nothing new is written).
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1419,7 +1382,6 @@ def wiki_insert_at(
     new_text: str,
     anchor_hint: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Insert new_text at (line, col) in a wiki page (positional escape hatch).
 
@@ -1437,7 +1399,6 @@ def wiki_insert_at(
         new_text: Text to insert at position.
         anchor_hint: Expected text immediately before insertion point. Must be ≥20 chars.
         directory: Caller directory for §25 resolution.
-        branch_hint: Caller branch for §25 resolution.
 
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
@@ -1448,7 +1409,7 @@ def wiki_insert_at(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1475,7 +1436,6 @@ def wiki_replace_markdown_block(
     block_index: int,
     new_content: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Replace the Nth block of block_type in a wiki page (structural edit).
 
@@ -1495,7 +1455,6 @@ def wiki_replace_markdown_block(
         block_index: 0-based index within that block_type.
         new_content: Replacement content for the block (whole span including markers).
         directory: Caller directory for §25 resolution.
-        branch_hint: Caller branch for §25 resolution.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
@@ -1505,7 +1464,7 @@ def wiki_replace_markdown_block(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, branch_hint=branch_hint)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 

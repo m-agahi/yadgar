@@ -64,7 +64,6 @@ def _memorize_and_drain(e2e_engines, content: str, directory: str, tags: list[st
         content,
         directory,
         tags,
-        branch_hint=_E2E_BRANCH,
     )
     # Early-reject path — not queued, return result as-is
     if not result.get("queued"):
@@ -235,7 +234,6 @@ class TestBCA1_MemorizeRecallRoundTrip:
             "BC-A1 unique sentinel content",
             directory=yadgar_dir,
             max_results=10,
-            branch_hint=_E2E_BRANCH,
         )
         result_ids = _ids_from_results(results)
         # Also check by content string if id type mismatch
@@ -446,7 +444,6 @@ class TestBCB2_WikiDirectoryFilter:
             directory=other_dir,
             category="reference",
             tags=["e2e", "bc-b2"],
-            branch_hint="master",
             wait=True,
         )
         # Accept any success indicator: committed, stored, or queued
@@ -497,7 +494,6 @@ class TestBCB2_WikiDirectoryFilter:
             directory=yadgar_dir,
             category="reference",
             tags=["e2e", "bc-b2"],
-            branch_hint="master",
             wait=True,
         )
         assert (

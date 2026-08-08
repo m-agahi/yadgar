@@ -106,7 +106,6 @@ def _insert_roadmap_wiki(updated_at_ts: float) -> None:
         confidence="high",
         source_memory_ids=[],
         wait=True,
-        branch_hint="feat/test-branch",
         directory=_TEST_DIR,
     )
     # Patch updated_at directly in storage to simulate wiki being refreshed at updated_at_ts

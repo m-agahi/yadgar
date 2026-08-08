@@ -296,7 +296,7 @@ class TestWikiCheckDuplicate:
             title="Yadgar Roadmap Future Improvements",
             content=_ROADMAP_CONTENT_A,
             directory="/home/user/simgate",
-            branch_hint="feat/test-branch",  # R3: branch required
+            # R3: branch required
         )
         assert "slug" in add_result or add_result.get("stored"), f"wiki_add failed: {add_result}"
         drainer.drain_now()

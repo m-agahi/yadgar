@@ -87,7 +87,6 @@ def test_wiki_list_response_bounded_at_scale(flush_queue):
             title=f"Test page {i}",
             content=f"content {i} " * 5,
             category="reference",
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
     flush_queue()
@@ -103,7 +102,6 @@ def test_wiki_list_returns_no_content(flush_queue):
     server.wiki_add(
         title="Check page",
         content="This content should not appear in list",
-        branch_hint="feat/test-branch",
         directory=_TEST_DIR,
     )
     flush_queue()
@@ -118,7 +116,6 @@ def test_wiki_list_respects_limit(flush_queue):
         server.wiki_add(
             title=f"Limit page {i}",
             content=f"content {i}",
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
     flush_queue()
@@ -128,15 +125,9 @@ def test_wiki_list_respects_limit(flush_queue):
 
 def test_wiki_list_slug_prefix_filter(flush_queue):
     """slug_prefix filters to matching slugs only."""
-    server.wiki_add(
-        title="alpha one", content="content a1", branch_hint="feat/test-branch", directory=_TEST_DIR
-    )
-    server.wiki_add(
-        title="alpha two", content="content a2", branch_hint="feat/test-branch", directory=_TEST_DIR
-    )
-    server.wiki_add(
-        title="beta one", content="content b1", branch_hint="feat/test-branch", directory=_TEST_DIR
-    )
+    server.wiki_add(title="alpha one", content="content a1", directory=_TEST_DIR)
+    server.wiki_add(title="alpha two", content="content a2", directory=_TEST_DIR)
+    server.wiki_add(title="beta one", content="content b1", directory=_TEST_DIR)
     flush_queue()
     result = server.wiki_list(slug_prefix="alpha")
     for p in result:
@@ -149,7 +140,6 @@ def test_wiki_list_negative_limit_returns_all(flush_queue):
         server.wiki_add(
             title=f"Neg limit page {i}",
             content=f"content neg {i}",
-            branch_hint="feat/test-branch",
             force=True,
             directory=_TEST_DIR,
         )
@@ -164,7 +154,6 @@ def test_wiki_list_zero_limit_returns_all(flush_queue):
         server.wiki_add(
             title=f"Zero limit page {i}",
             content=f"content zero {i}",
-            branch_hint="feat/test-branch",
             force=True,
             directory=_TEST_DIR,
         )
@@ -179,7 +168,6 @@ def test_wiki_list_huge_limit_returns_all(flush_queue):
         server.wiki_add(
             title=f"Huge limit page {i}",
             content=f"content huge {i}",
-            branch_hint="feat/test-branch",
             force=True,
             directory=_TEST_DIR,
         )

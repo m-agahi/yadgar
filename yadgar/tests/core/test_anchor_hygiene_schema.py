@@ -141,7 +141,6 @@ class TestValidUntil:
             is_protected=True,
             tier="semantic_immortal",
             reason="test",  # v5.10.2: ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON defaults True
-            branch_hint="feat/test-branch",  # R3: branch required
         )
         mid = result.get("id")
         assert mid is not None, f"memorize_sync must return id; got: {result}"
@@ -158,7 +157,6 @@ class TestValidUntil:
             ["_anchor"],
             is_protected=True,
             tier="conditional",
-            branch_hint="feat/test-branch",  # R3: branch required
         )
         after = datetime.now(UTC)
         mid = result.get("id")
@@ -182,7 +180,6 @@ class TestValidUntil:
             ["_anchor"],
             is_protected=True,
             tier="ephemeral",
-            branch_hint="feat/test-branch",  # R3: branch required
         )
         after = datetime.now(UTC)
         mid = result.get("id")
@@ -207,7 +204,6 @@ class TestValidUntil:
             is_protected=True,
             tier="conditional",
             ttl_days=30,
-            branch_hint="feat/test-branch",  # R3: branch required
         )
         after = datetime.now(UTC)
         mid = result.get("id")
@@ -232,7 +228,6 @@ class TestValidUntil:
             is_protected=True,
             tier="conditional",
             valid_until=target.isoformat(),
-            branch_hint="feat/test-branch",  # R3: branch required
         )
         mid = result.get("id")
         assert mid is not None, f"memorize_sync must return id; got: {result}"
@@ -292,7 +287,7 @@ class TestAnchorTool:
             content="conditional anchor",
             context="/tmp/proj",
             tier="conditional",
-            branch_hint="feat/test-branch",  # R3: branch required
+            # R3: branch required
         )
         assert result.get("queued") or result.get("status") == "anchored"
 
@@ -301,7 +296,7 @@ class TestAnchorTool:
             content="ephemeral anchor",
             context="/tmp/proj",
             tier="ephemeral",
-            branch_hint="feat/test-branch",  # R3: branch required
+            # R3: branch required
         )
         assert result.get("queued") or result.get("status") == "anchored"
 
@@ -310,7 +305,7 @@ class TestAnchorTool:
         result = engines.anchor(
             content="default tier anchor",
             context="/tmp/proj",
-            branch_hint="feat/test-branch",  # R3: branch required
+            # R3: branch required
         )
         assert result.get("queued") or result.get("status") == "anchored"
 
@@ -320,7 +315,7 @@ class TestAnchorTool:
             content="immortal anchor no reason",
             context="/tmp/proj",
             tier="semantic_immortal",
-            branch_hint="feat/test-branch",  # R3: branch required
+            # R3: branch required
         )
         assert result.get("stored") is False or result.get("error") is not None
         reason_str = result.get("reason", "") or result.get("error", "")
@@ -333,7 +328,7 @@ class TestAnchorTool:
             context="/tmp/proj",
             tier="semantic_immortal",
             reason="permanent credential location, never changes",
-            branch_hint="feat/test-branch",  # R3: branch required
+            # R3: branch required
         )
         assert result.get("queued") or result.get("status") == "anchored"
 
@@ -343,7 +338,7 @@ class TestAnchorTool:
             content="bad tier",
             context="/tmp/proj",
             tier="invalid_tier_xyz",
-            branch_hint="feat/test-branch",  # R3: branch required
+            # R3: branch required
         )
         assert result.get("stored") is False or result.get("error") is not None
 
@@ -383,7 +378,6 @@ class TestAutoProtect:
             ["_anchor"],
             is_protected=False,  # explicit False — tier should auto-set is_protected=True
             tier="conditional",
-            branch_hint="feat/test-branch",  # R3: branch required
         )
         mid = result.get("id")
         assert mid is not None, f"memorize_sync must return id; got: {result}"

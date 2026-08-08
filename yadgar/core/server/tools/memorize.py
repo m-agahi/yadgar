@@ -38,7 +38,6 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     valid_until: str | None = None,
     ttl_days: int | None = None,
     reason: str = "",
-    branch_hint: str | None = None,
     wait: bool = False,
 ) -> dict:
     """Store a new memory with embedding.
@@ -70,8 +69,6 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
       Only meaningful when is_protected=True. Adds 'anchor:<reason>' tag.
       Required when tier='semantic_immortal' and ANCHOR_SEMANTIC_IMMORTAL_REQUIRES_REASON=True.
 
-    branch_hint: accepted and IGNORED (ADR-0215 — branch scoping removed). Retained
-      on the signature only until Car 5 drops it from the MCP surface.
 
     wait: read-your-writes surface (mirrors wiki_add's wait semantics).
       wait=False (default): enqueue and return {stored, queued, queue_id}

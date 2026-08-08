@@ -108,9 +108,7 @@ def test_signals_mode_recommended_actions_refresh_active_work_when_stale(monkeyp
     directory = "/tmp/stale_aw_test"
 
     # branch_hint required: directory is not a git repo so _detect_branch returns None.
-    server.update_active_work(
-        directory=directory, content="active work content", branch_hint="master"
-    )
+    server.update_active_work(directory=directory, content="active work content")
     flush_queue()
 
     from yadgar.core.server.tools import project as proj_mod
@@ -140,7 +138,6 @@ def test_signals_mode_recommended_actions_refresh_checkpoint_when_stale(monkeypa
         current_task="test task",
         key_decisions=["d1"],
         next_steps=["s1"],
-        branch_hint="master",
     )
     flush_queue()
 
@@ -353,7 +350,7 @@ def test_active_work_age_hours_populated(flush_queue):
     """active_work_age_hours is a non-negative float when active_work exists."""
     directory = "/tmp/aw_age_test"
     # branch_hint required: directory is not a git repo so _detect_branch returns None.
-    server.update_active_work(directory=directory, content="current task", branch_hint="master")
+    server.update_active_work(directory=directory, content="current task")
     flush_queue()
 
     result = server.project_brief(directory, mode="signals")
@@ -385,7 +382,6 @@ def test_checkpoint_age_hours_populated(flush_queue):
         current_task="test",
         key_decisions=["d"],
         next_steps=["s"],
-        branch_hint="master",
     )
     flush_queue()
 
@@ -417,7 +413,7 @@ def test_restore_mode_project_anchor_has_project_scope(flush_queue):
     """Project anchor (directory_context=dir) gets scope='project'."""
     directory = "/tmp/restore_project_scope"
     # branch_hint required: directory is not a git repo so _detect_branch returns None.
-    server.anchor("project scope anchor", directory, "key_decision", branch_hint="master")
+    server.anchor("project scope anchor", directory, "key_decision")
     flush_queue()
 
     result = server.project_brief(directory, mode="restore")

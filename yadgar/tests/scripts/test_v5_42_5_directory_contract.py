@@ -153,7 +153,6 @@ class TestWikiAddDirectoryBoundary:
             result = wiki_add(
                 title="Test Page",
                 content="Some content",
-                branch="feat/x",
                 directory="",
             )
         assert result.get("error") == "missing_directory", (
@@ -171,7 +170,6 @@ class TestWikiAddDirectoryBoundary:
             result = wiki_add(
                 title="Test Page",
                 content="Some content",
-                branch="feat/x",
                 directory="   ",
             )
         assert result.get("error") == "missing_directory", (
@@ -188,7 +186,6 @@ class TestWikiAddDirectoryBoundary:
             result = wiki_add(
                 title="Test Page No Dir",
                 content="Some content",
-                branch="feat/x",
                 # no directory param
             )
         assert result.get("error") == "missing_directory", (
@@ -205,7 +202,6 @@ class TestWikiAddDirectoryBoundary:
             result = wiki_add(
                 title="Valid Dir Page",
                 content="Some content",
-                branch="feat/x",
                 directory="/proj/x",
             )
         assert result.get("error") != "missing_directory", (

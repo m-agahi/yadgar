@@ -112,7 +112,6 @@ def agent_prompt_save(
     pattern: str,
     content: str,
     directory: str | None = None,
-    branch_hint: str | None = None,
     purpose: str | None = None,
     storage=None,  # noqa: ARG001 — kept for API back-compat (seed_agent_prompts passes it);
     # R3 Car 3c: the DB write forwards to backend /admin, which uses its own storage.
@@ -127,7 +126,6 @@ def agent_prompt_save(
                  ASCII alphanumeric, hyphens, underscores only.
         content: The prompt text content.
         directory: Absolute project path or 'global'. Required (v5.42.5).
-        branch_hint: Caller branch context (optional).
         purpose: One-line description for the TOC. Derived from pattern if omitted.
         storage: Accepted for API back-compat (R3 Car 3c: the storage write forwards
                  to the backend /admin op, which resolves its own storage). Unused.
@@ -179,7 +177,6 @@ def agent_prompt_save(
             "tags": tags,
             "pattern": pattern,
             "purpose": _purpose,
-            "branch_hint": branch_hint,
             "directory": _effective_dir,
             # ADR-0209: the CALLER decides the family — the backend op keys
             # everything else off the payload slug, and re-deriving the type
@@ -293,7 +290,6 @@ DISCIPLINE_SLUG_PREFIX = "agent-discipline-"
 @observe(tier="stage", metric="tools.agent_prompts._seed_contract_page")
 def _seed_contract_page(
     storage,
-    branch_hint: str | None = None,
 ) -> bool:
     """Idempotently seed the prelude contract wiki page (create-if-absent).
 
@@ -310,7 +306,6 @@ def _seed_contract_page(
         content,
         directory="global",
         purpose=purpose,
-        branch_hint=branch_hint,
         storage=storage,
     )
     return True
@@ -321,7 +316,6 @@ def _save_discipline_page(
     name: str,
     purpose: str,
     content: str,
-    branch_hint: str | None = None,
 ) -> dict:
     """Save (upsert) a discipline page under slug agent-discipline-<name>.
 
@@ -354,7 +348,6 @@ def _save_discipline_page(
             # next to dispatch-pattern rows.
             "pattern": slug,
             "purpose": purpose,
-            "branch_hint": branch_hint,
             "directory": "global",
             "page_type": PAGE_TYPE_AGENT_DISCIPLINE,
         },
@@ -375,7 +368,6 @@ def discipline_save(
     content: str,
     purpose: str | None = None,
     confirm_removal: bool = False,
-    branch_hint: str | None = None,
 ) -> dict:
     """Save (upsert) a discipline page under agent-discipline-<name>.
 
@@ -413,7 +405,6 @@ def discipline_save(
                  reuse from), falls back to a generic default string.
         confirm_removal: Ratify a detected net removal of existing rule
                  line(s). Ignored when the guard detects no removal.
-        branch_hint: Caller branch context (optional).
 
     Returns:
         On success: {"saved": True, "version": N, "slug": "agent-discipline-<name>", ...}
@@ -452,20 +443,18 @@ def discipline_save(
         _purpose = _extract_purpose(existing["content"]) or f"Agent discipline: {name}."
     else:
         _purpose = f"Agent discipline: {name}."
-    return _save_discipline_page(name, _purpose, new_body, branch_hint=branch_hint)
+    return _save_discipline_page(name, _purpose, new_body)
 
 
 @observe(tier="stage", metric="tools.agent_prompts._seed_discipline_pages")
 def _seed_discipline_pages(
     storage,
-    branch_hint: str | None = None,
     only: str | None = None,
 ) -> tuple[int, int]:
     """Idempotently seed the discipline pages (create-if-absent per name).
 
     Args:
         storage: StorageEngine used for the existence check.
-        branch_hint: Caller branch context (optional).
         only: When set, seed just this discipline name (Stage-3 seed-on-miss
               path from prelude composition). Unknown names are a no-op.
 
@@ -481,7 +470,7 @@ def _seed_discipline_pages(
         if _read_agent_prompt(slug, storage=storage) is not None:
             skipped += 1
             continue
-        _save_discipline_page(name, purpose, content, branch_hint=branch_hint)
+        _save_discipline_page(name, purpose, content)
         created += 1
     return created, skipped
 
@@ -489,7 +478,6 @@ def _seed_discipline_pages(
 @_tool(power=True)
 def seed_agent_prompts(
     storage=None,
-    branch_hint: str | None = None,
 ) -> dict:
     """Idempotently seed the 15 starter agent-prompts + contract + disciplines (global).
 
@@ -507,7 +495,6 @@ def seed_agent_prompts(
     Args:
         storage: StorageEngine instance (injected for testing; otherwise
                  resolved from server lifecycle).
-        branch_hint: Caller branch context (optional).
 
     Returns:
         {"seeded": True, "created": N, "skipped": M, "patterns": [...all 15...],
@@ -531,18 +518,15 @@ def seed_agent_prompts(
                 content,
                 directory="global",
                 purpose=purpose,
-                branch_hint=branch_hint,
                 storage=storage,
             )
             created += 1
 
     # Seed the prelude contract page alongside (idempotent, does not affect counts).
-    _seed_contract_page(storage=storage, branch_hint=branch_hint)
+    _seed_contract_page(storage=storage)
 
     # Stage 2: seed the discipline pages (idempotent; separate count keys).
-    disciplines_created, disciplines_skipped = _seed_discipline_pages(
-        storage=storage, branch_hint=branch_hint
-    )
+    disciplines_created, disciplines_skipped = _seed_discipline_pages(storage=storage)
 
     return {
         "seeded": True,
