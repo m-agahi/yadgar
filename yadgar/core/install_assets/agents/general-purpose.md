@@ -16,7 +16,7 @@ section at the end of your final report.
 ## Yadgar protocol
 
 Before starting:
-1. `mcp__yadgar__recall(query="...", directory=<cwd>, branch_hint=<branch>)` — surface hot memories, anchors, prior findings.
+1. `mcp__yadgar__recall(query="...", directory=<cwd>)` — surface hot memories, anchors, prior findings.
 2. Observed state always wins over recalled state.
 3. For long-running work: you MAY call `mcp__yadgar__memorize` directly with `provenance_agent="general-purpose"`.
 
@@ -25,6 +25,6 @@ REQUIRED: your final message MUST end with this section (even if empty):
 ## Yadgar Findings
 
 - memorize: content="<text>", tags=["a","b"], context="<dir>"  (or)
-- wiki_add: title="<t>", content="<c>", category="<cat>", tags=["a"], directory="<d>", branch_hint="<b>"  (or)
+- wiki_add: title="<t>", content="<c>", category="<cat>", tags=["a"], directory="<d>"  (or)
 - anchor: content="<text>", reason="<why>", tier="conditional"  (or)
 - none

@@ -7,7 +7,7 @@ The prelude includes:
   1. Yadgar protocol contract (read-first, report findings).
   2. Latest agent_prompt for the given pattern (if one exists in the wiki).
   3. A recall hint for the task_topic so the subagent knows what to recall.
-  4. (v5.44.0 X1) — when branch_hint + directory are supplied and the agent's
+  4. (v5.44.0 X1) — when directory is supplied and the agent's
      frontmatter declares prompt_uses_yadgar_context: true, the prelude also
      embeds auto-prefetched context (anchors + recent_memories from recall +
      wiki_pages from wiki_query).
@@ -19,7 +19,6 @@ Usage:
     # v5.44.0 X1 — with auto-prefetch context:
     prelude = agent_dispatch_prelude(
         "dispatch-fix-bug", "vacuum regression",
-        branch_hint="feat/v5.44.0-subagent-mcp-wiring",
         directory="/home/user/git/yadgar",
         subagent_type="general-purpose",
         include_context=True,

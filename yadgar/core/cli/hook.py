@@ -185,9 +185,6 @@ def hook_session_start_context() -> None:
     params: dict = {"directory": cwd}
     if source:
         params["source"] = source
-    branch = _detect_branch(cwd)
-    if branch:
-        params["branch"] = branch
 
     result = _http_get("/hooks/session-context", params)
     if result:
@@ -205,9 +202,6 @@ def hook_post_compact_rehydrate() -> None:
         directory = os.getcwd()
 
     params: dict = {"directory": directory}
-    branch = _detect_branch(directory)
-    if branch:
-        params["branch"] = branch
 
     result = _http_get("/hooks/post-compact", params)
     if result:
