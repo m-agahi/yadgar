@@ -37,7 +37,6 @@ import type {
   WikiDiscardArgs,
   WikiCoverageArgs,
   WikiRefreshStaleArgs,
-  WikiCleanupMergedBranchesArgs,
   BlockCreateArgs,
   BlockGetArgs,
   BlockUpdateArgs,
@@ -290,11 +289,6 @@ export class YadgarClient {
   /** Detect stale repo-wiki pages and signal for regeneration. */
   wikiRefreshStale(args: WikiRefreshStaleArgs): Promise<DictResult> {
     return tools.wikiRefreshStale(this._client, args);
-  }
-
-  /** List wiki pages whose branch is no longer in git. */
-  wikiCleanupMergedBranches(args: WikiCleanupMergedBranchesArgs): Promise<DictResult> {
-    return tools.wikiCleanupMergedBranches(this._client, args);
   }
 
   // ---------------------------------------------------------------------------

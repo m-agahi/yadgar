@@ -699,54 +699,25 @@ See `MIGRATION_NOTES.md` for the step-by-step deployment procedure.
 
 These fields exist on the SurrealDB tables but have no corresponding env var or config key — they are written by storage helpers and read by queries.
 
-### `memory` table
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `branch` | `option<string>` | `NONE` | Git branch captured at write time. `NONE` for pre-v5 rows before backfill or non-git contexts. After migration 004 all pre-v5 rows are set to `'master'`. |
-
-### `wiki_page` table
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `branch` | `option<string>` | `NONE` | Git branch captured at write time. Same semantics as `memory.branch`. |
+> **Removed — `memory.branch` / `wiki_page.branch` (ADR-0215, migration 029).**
+> Both tables carried an `option<string> branch` field captured at write time.
+> The whole branch-scoping mechanism — write-path auto-capture, the retrieval
+> filter, the score boost, and the §25 four-step `wiki_read` ladder — was retired.
+> Reads now resolve on `directory_context` alone: (1) caller directory,
+> (2) `'global'`, (3) not found.
 
 ---
 
-## §25 Branch tagging (v5.0 Stage 10)
+## §25 — retired (ADR-0215)
 
-### Write-path auto-capture
-
-Every write call (`memorize`, `anchor`, `checkpoint`, `wiki_add`) auto-captures the current git branch via `_detect_branch(directory)` before enqueueing. The branch is stored in the `branch` field on `memory` and `wiki_page` rows. Non-git directories and detached HEAD states result in `branch = NONE`.
-
-`_detect_branch` is LRU-cached with a **30-second TTL** (time-bucket trick via `functools.lru_cache`). The 30-second window is hardcoded — there is no env-var to tune it.
-
-`_get_default_branch` is LRU-cached with a **5-minute TTL** (same mechanism). Also hardcoded.
-
-Auto-capture failure is non-fatal: if git detection raises for any reason, the memory is still stored with `branch = NONE`.
-
-### Retrieval filter
-
-`recall()` and `wiki_query()` apply a branch filter post-retrieval:
-
-```
-branch IN (current_branch, default_branch, NONE)
-```
-
-Memories/pages on unrelated branches are excluded. When `current_branch` is `None` (non-git working directory), the filter degenerates to `branch IN (default_branch, NONE)`.
-
-**Branch score boost**: results where `branch == current_branch` receive a convex-combination boost (`branch_boost_weight`, default `0.2`), then the result list is re-sorted. This surfaces feature-branch context ahead of default-branch context.
-
-### `wiki_read` resolution order
-
-`wiki_read(slug)` resolves the slug in order:
-
-1. `branch = current_branch` (exact match)
-2. `branch = default_branch` (exact match)
-3. `branch IS NONE` (legacy/canonical)
-4. Not found → error dict
-
-Default branch is detected via `git symbolic-ref refs/remotes/origin/HEAD`, falling back to `"master"`.
+Branch tagging (v5.0 Stage 10) is gone. The former contents of this section —
+`_detect_branch` write-path capture and its 30-second LRU cache,
+`_get_default_branch` and its 5-minute cache, the
+`branch IN (current_branch, default_branch, NONE)` retrieval filter, the
+`branch_boost_weight` convex boost, and the four-step `wiki_read` resolution
+order — no longer exist in the code. See ADR-0215 for the measurements that
+motivated removal and `docs/plans/archive/branch-scoping-removal-2026-08-07.md`
+for the execution record.
 
 ---
 
@@ -834,7 +805,15 @@ Replace the `_active_work` memory for a directory atomically (delete-then-insert
 
 ---
 
-## §26 wiki_refresh_stale + wiki_cleanup_merged_branches (v5.0)
+## §26 wiki_refresh_stale (v5.0)
+
+> `wiki_cleanup_merged_branches` was deleted with branch scoping (ADR-0215).
+> Its subsection is removed below.
+>
+> **Note (not this train's scope):** `wiki_refresh_stale`'s `force_branch`
+> parameter and its master-only enforcement are git-workflow concepts, not
+> branch *scoping*. They are pre-existing drift from **ADR-0157** and are left
+> as-is deliberately.
 
 ### MCP tools
 
@@ -862,24 +841,6 @@ Returns:
 
 `skipped_reason` is `"not_default_branch"` when enforcement kicks in.
 
-#### `wiki_cleanup_merged_branches(directory, dry_run=True) → dict` — `power=True`
-
-List (and optionally delete) `wiki_page` rows whose `branch` is no longer in `git branch -a`.
-
-Pages with `branch IN (master, main, NULL)` are never candidates.
-
-`dry_run=True` (default): returns candidates without deleting.
-`dry_run=False`: deletes the listed pages and returns `deleted_count`.
-
-Returns:
-```json
-{
-  "candidates": [{"id": 42, "slug": "old-feat-page", "branch": "feat/merged-long-ago"}],
-  "deleted_count": 0,
-  "dry_run": true
-}
-```
-
 ### Queue drainer validation (Option Z)
 
 The queue drainer applies the following checks to every `wiki_add` operation before inserting it into the DB:
@@ -889,7 +850,6 @@ The queue drainer applies the following checks to every `wiki_add` operation bef
 | `wiki_schema_version >= 2` | DLQ with `reason="schema_version_too_old"` |
 | Required fields: `slug`, `title`, `content`, `category` | DLQ with `reason="missing_required_field: <field>"` |
 | Content passes v4.9 degenerate filter | DLQ with `reason="degenerate_content"` |
-| `branch` field absent | Filled with `"master"` |
 | `confidence` field absent | Filled with `"medium"` |
 
 Frontmatter shape expected by `wiki_refresh_stale`:

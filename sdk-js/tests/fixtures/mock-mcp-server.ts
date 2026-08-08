@@ -53,7 +53,7 @@ const TOOL_NAMES = [
   "dlq_requeue", "wiki_add", "wiki_query", "wiki_read", "wiki_list",
   "wiki_get", "wiki_update", "wiki_delete", "wiki_lint", "wiki_drafts",
   "wiki_approve", "wiki_discard", "wiki_coverage", "wiki_refresh_stale",
-  "wiki_cleanup_merged_branches", "block_create", "block_get", "block_update",
+  "block_create", "block_get", "block_update",
   "block_delete", "block_list", "bookmark_add", "bookmark_remove",
   "bookmark_list", "bookmark_reorder", "project_brief", "bootstrap_project",
   "update_active_work", "install_hooks", "sync_instructions", "seed_project",

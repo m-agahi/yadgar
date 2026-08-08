@@ -53,7 +53,6 @@ const EXPECTED_SERVER_TOOLS = new Set([
   "wiki_discard",
   "wiki_coverage",
   "wiki_refresh_stale",
-  "wiki_cleanup_merged_branches",
   "block_create",
   "block_get",
   "block_update",

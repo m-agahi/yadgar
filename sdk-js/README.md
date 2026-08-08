@@ -95,7 +95,6 @@ All tools exposed by the yadgar MCP server are available as typed methods on `Ya
 | `wikiDiscard(args)` | Discard a pending wiki draft |
 | `wikiCoverage(args)` | Generate wiki coverage report |
 | `wikiRefreshStale(args)` | Detect stale repo-wiki pages |
-| `wikiCleanupMergedBranches(args)` | List wiki pages for removed branches |
 | `blockCreate(args)` | Create a new memory block |
 | `blockGet(args)` | Fetch a memory block by name and scope |
 | `blockUpdate(args)` | Replace a memory block's content |

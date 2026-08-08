@@ -46,14 +46,14 @@ Claude Code (MCP client)
 ### Write path (`memorize` / `wiki_add`)
 
 1. **Secret scrub** — content checked against credential patterns (AWS, JWT, etc.)
-2. **MCP boundary contract validation** — `branch` (or `branch_hint`) and `directory_context` required; missing → hard-reject (`{"error": "missing_branch"}` / `{"error": "missing_directory"}`). Gated by `YADGAR_BRANCH_ENFORCEMENT` / `YADGAR_DIRECTORY_ENFORCEMENT` (default ON).
+2. **MCP boundary contract validation** — `directory_context` required; missing → hard-reject (`{"error": "missing_directory"}`). Gated by `YADGAR_DIRECTORY_ENFORCEMENT` (default ON). The branch half of this gate was retired by ADR-0215.
 3. **Rules engine** — custom write-block rules evaluated
 4. **File queue enqueue (ADR-0075)** — payload written to `YADGAR_QUEUE_BASE=/data/queue` (shared `yadgar-queue-data` Docker volume). Both core and backend mount this volume.
-5. **Drainer enforcement (defense-in-depth)** — backend drainer re-validates branch + directory; missing → DLQ with `failure_reason=missing_branch` or `missing_directory`.
+5. **Drainer enforcement (defense-in-depth)** — backend drainer re-validates directory; missing → DLQ with `failure_reason=missing_directory`.
 6. **Similarity gate (wiki_add only, drainer-deferred)** — near-duplicate detected → DLQ with `failure_reason=duplicate_detected`. `wait=True` callers receive sync rejection; `wait=False` get `{"queued": True, "similarity_check": "deferred"}`.
 7. **Write gate (memorize only)** — similarity scored against recent memories
 8. **Embedding** — backend embed service encodes content; cached
-9. **Storage** — backend inserts into SurrealDB with `heat=1.0`, tags, `directory_context`, `branch`
+9. **Storage** — backend inserts into SurrealDB with `heat=1.0`, tags, `directory_context`
 10. **Versioning snapshot (wiki_add only)** — `wiki_page_version` row inserted in same compound transaction
 
 ### Read path (`recall` / `wiki_read` / `wiki_query`)
@@ -76,7 +76,7 @@ Claude Code (MCP client)
 
 **Latency (ADR-0105, corrected):** CE is ~25% of the cold recall wall (not the "~90%" once quoted — that was a dead-metric artifact from the split-container era). Signal-gather (KNN/FTS/PPR/spreading) is the ~45% dominator. Ettin-32m (Train 4) cut CE per-pass ~4.7× vs GTE-ModernBERT → 2.44× end-to-end speedup.
 
-`recall()` accepts `profile` (`"fast"` / `"balanced"` / `"full"` / `"debug"`) + `stage_overrides` (v5.31.0), plus `directory` and `branch_hint` (v5.43.0).
+`recall()` accepts `profile` (`"fast"` / `"balanced"` / `"full"` / `"debug"`) + `stage_overrides` (v5.31.0), plus `directory`.
 
 ### Consolidation path (background daemon)
 
@@ -225,23 +225,26 @@ Both containers ship Python 3.14; no host Python required. Source `~/.config/yad
 
 On non-Docker hosts, `yadgar-vacuum.service` (systemd oneshot) runs `yadgar vacuum --service-mode=systemd` on a weekly timer. It runs on the host and connects to the MCP daemon over HTTP.
 
-## Branch + Directory Contract (v5.42.x)
+## Directory Contract
+
+> Branch scoping was removed entirely by **ADR-0215**. This section covered a
+> combined branch+directory contract through v5.42.x–v5.65; the directory half
+> below is what survives. Measured before removal, the branch axis hid 78% of the
+> wiki corpus from any non-default branch while isolating 0.6% of rows.
 
 **Schema:**
 - Every `memory` and `wiki_page` row carries `directory_context: string NOT NULL` — either an absolute project path or the literal `"global"`.
-- `branch: option<string>` (NULL-able) — non-NULL = branch-scoped; NULL = canonical (branch-invariant).
-- Three semantic categories: **project-canonical** (`directory=path, branch=NULL`), **project-branch-scoped** (`directory=path, branch=name`), **global** (`directory="global", branch=NULL`).
+- Two semantic categories: **project-scoped** (`directory=path`) and **global** (`directory="global"`).
 
 **Caller contract:**
-- Writers MUST supply `branch` (or `branch_hint`) AND `directory` — hard-reject at MCP boundary otherwise.
+- Writers MUST supply `directory` — hard-reject at MCP boundary otherwise.
 - Drainer re-validates (defense-in-depth) → DLQ on missing.
-- Both gated by `YADGAR_BRANCH_ENFORCEMENT` and `YADGAR_DIRECTORY_ENFORCEMENT` (default ON).
-- `branch_hint` required since daemon CWD ≠ caller CWD (container scenario).
+- Gated by `YADGAR_DIRECTORY_ENFORCEMENT` (default ON).
 
-**Resolution (§25, 4-step):**
-- `wiki_read(slug)` resolves via: (1) `directory=caller_dir AND branch=current_branch`; (2) `directory=caller_dir AND branch IS NULL`; (3) `directory='global' AND branch IS NULL`; (4) not found → error dict.
+**Resolution (2-step):**
+- `wiki_read(slug)` resolves via: (1) `directory=caller_dir`; (2) `directory='global'`; (3) not found → error dict.
 
-**Special case — canonical writes (`wiki_write_task_list`, ADR pages):** written with `branch=NULL` (canonical) so they resolve from any branch and from non-git projects.
+**Special case — canonical writes (`wiki_write_task_list`, ADR pages):** these keep a dedicated server-side seam (`_wiki_write_canonical`, `_internal`) even though every write is now branch-invariant by construction.
 
 ## Knowledge-Graph Viz (galaxy, post-#52)
 
@@ -345,7 +348,7 @@ Same as above — see Retrieval Pipeline section.
 
 ## DLQ Taxonomy (v5.42.0+)
 
-`failure_reason` values: `permanent_error` · `duplicate_detected` · `policy_rejected` · `missing_branch` · `missing_directory`.
+`failure_reason` values: `permanent_error` · `duplicate_detected` · `policy_rejected` · `missing_directory`.
 
 MCP tools: `dlq_inspect(filter)` · `dlq_requeue(id)` ⚡ · `dlq_dismiss(id)` ⚡. File queue location: `YADGAR_QUEUE_BASE/queue/` (default `/data/queue/`).
 

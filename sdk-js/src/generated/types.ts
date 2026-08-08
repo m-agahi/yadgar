@@ -212,11 +212,6 @@ export interface WikiRefreshStaleArgs {
   force_branch?: boolean;
 }
 
-export interface WikiCleanupMergedBranchesArgs {
-  directory: string;
-  dry_run?: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Memory blocks
 // ---------------------------------------------------------------------------

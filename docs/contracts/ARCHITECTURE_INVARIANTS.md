@@ -731,7 +731,6 @@ Two bugs found in live verification:
 
 - **CB-2** — bulkhead / connection-pool isolation. Trigger: if backend connection-pool exhaustion surfaces in v5.4 P11 metrics.
 - **CB-3** — rate limiter on hook firing. Trigger: v5.3.10 root cause was hook volume driving rerank load; if hook traffic keeps stressing backend even with CB-1, add upstream throttle.
-- **DOC-1** — branch-routing canonical-NULL pattern. Trigger: once W1 ships (`wiki_add` `branch_hint` arg), document the symmetric "branch=None means canonical" rule for `wiki_read` callers.
 
 ---
 

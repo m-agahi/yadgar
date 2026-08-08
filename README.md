@@ -62,10 +62,10 @@ A single `recall()` query searches **both stores at once**, fuses and re-ranks t
 
 ### Curated wiki
 - **Versioned pages** — full history (`wiki_history`, `wiki_diff`, `wiki_read_version`, `wiki_restore`); `wiki_add` commits directly (no draft step).
-- **Branch-scoped resolution** — `wiki_read(slug)` resolves current branch → default branch → unscoped.
+- **Directory-scoped resolution** — `wiki_read(slug)` resolves caller directory → `global` → not found. (Branch scoping was removed by ADR-0215.)
 - **Surgical editing** — anchor-text and positional edit tools (`wiki_replace_text`, `wiki_insert_before/after`, `wiki_append_section`, `wiki_replace_markdown_block`, positional `wiki_*_at`) so pages mutate in place instead of full rewrites.
 - **Auto-linking** — `wiki_autolink` inserts `[[slug]]` cross-references by matching page titles; validated so it never manufactures broken refs.
-- **Sync helpers** — `wiki_refresh_stale`, `wiki_cleanup_merged_branches`, `wiki_coverage`, `wiki_lint`.
+- **Sync helpers** — `wiki_refresh_stale`, `wiki_coverage`, `wiki_lint`.
 - **Code graph** (on by default, opt-out; successor to the retired repo-wiki generator) — `yadgar code-graph` shells out host-side to the [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) static binary (158-language tree-sitter, offline) to index the latest `origin/<default-branch>` and render a bounded architecture *digest* into an always-injected memory block (recall-free). `code_graph.enabled` defaults to `true` in the DB-backed runtime-config store (no row needed) and every installer surface installs the host binary automatically — unattended, no prompt, so a scripted/QA install needs no flags. `yadgar setup`, `yadgar-setup`, and `make setup` all route through `yadgar code-graph install`. Each has one opt-out — `yadgar setup --no-code-graph`, `yadgar-setup --no-code-graph`, `make setup YADGAR_CODE_GRAPH=0` — which skips the binary **and** persists `code_graph.enabled=false`, so the flag and the binary can never disagree (a failed download, e.g. offline, does the same rather than aborting the install). Opt a single repo out with `config_set("code_graph.enabled", false, scope="project", directory=<repo>)`, or disable globally with `config_set("code_graph.enabled", false, scope="global")` — a per-dir override always wins over global. See ADR-0162/0163.
 - **Bookmarks** — pin wiki pages in the viz UI (`bookmark_*`); drag-to-reorder, dense-integer positions.
 
@@ -348,7 +348,7 @@ Core: `wiki_add` · `wiki_read` ⚡ · `wiki_query` · `wiki_list` ⚡ · `wiki_
 
 Editing: `wiki_append_section` ⚡ · `wiki_replace_text` ⚡ · `wiki_delete_text` ⚡ · `wiki_insert_before/after` ⚡ · `wiki_replace_at` / `wiki_delete_at` / `wiki_insert_at` ⚡ · `wiki_replace_markdown_block` ⚡ · `wiki_autolink` ⚡ · `wiki_set_metadata` ⚡
 
-Maintenance: `wiki_coverage` · `wiki_refresh_stale` ⚡ · `wiki_cleanup_merged_branches` ⚡
+Maintenance: `wiki_coverage` · `wiki_refresh_stale` ⚡
 
 **Task-list mirror:** `wiki_write_task_list(project, content, directory)` — canonical write bounded to `{project}-task-list` slug; used by stop-hook checkpoint (step 4).
 
