@@ -181,8 +181,6 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         max_results,
         min_heat,
         directory,
-        current_branch,
-        default_branch,
         type_filter,
         tags,
         mode=None,
@@ -195,8 +193,6 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
                 max_results,
                 min_heat,
                 directory,
-                current_branch,
-                default_branch,
                 type_filter,
                 tags,
                 mode=mode,
@@ -206,18 +202,6 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         if mode is not None:
             # landscape / unknown modes not wired for direct in-process path
             return []
-        # In unit tests, memories are stored with branch=YADGAR_CI_BRANCH.
-        # recall.py detects current_branch from _detect_branch(), which returns
-        # None for fake test directories (e.g. /home/user/project).  With
-        # current_branch=None and default_branch='master' (git fallback), the
-        # BranchFilter SQL clause is:
-        #   (branch IS NONE OR branch = 'master')
-        # — which excludes feat/* memories stored under YADGAR_CI_BRANCH.
-        # Fix: fill current_branch from YADGAR_CI_BRANCH so the clause becomes:
-        #   (branch IS NONE OR branch = 'master' OR branch = 'feat/test-branch')
-        # — which includes unit-test memories without disabling branch isolation.
-        _ci_branch = os.environ.get("YADGAR_CI_BRANCH")
-        _effective_branch = current_branch or _ci_branch or None
         # T2 Car E2: compose the backend retriever lazily against the test's
         # live engines (idempotent; the shared root no longer builds it).
         ensure_retrieval_engine()
@@ -226,8 +210,6 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
             max_results=max_results,
             min_heat=min_heat,
             directory=directory,
-            current_branch=_effective_branch,
-            default_branch=default_branch,
             type_filter=type_filter,
             tags=tags,
             profile=profile,

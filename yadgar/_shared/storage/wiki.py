@@ -2,7 +2,7 @@
 
 _WikiMixin provides:
   - insert_wiki_page / update_wiki_page / get_wiki_page / get_wiki_page_by_slug
-  - get_wiki_page_by_slug_and_branch / delete_wiki_page / list_wiki_pages
+  - get_wiki_page_by_slug_directory / delete_wiki_page / list_wiki_pages
   - search_wiki_fts / search_wiki_fts_scored / search_wiki_vectors
   - replace_wiki_crossrefs / get_wiki_backlinks / get_all_wiki_crossrefs
   - upsert_project_init / upsert_active_work
@@ -301,13 +301,22 @@ class _WikiMixin:
         field: str,
         value: str | None,
     ) -> bool:
-        """Set directory_context or branch on a wiki page. Returns True if page found.
+        """Set directory_context on a wiki page. Returns True if page found.
 
-        branch=None uses 'SET branch = NONE' (literal SurrealDB NONE) so the
-        field becomes absent and §25 IS NONE resolution queries match.
-        Passing Python None as a param would store explicit SQL null, which
-        IS NONE does NOT match — this is the branch-null trap noted in the
-        v5.61 plan.
+        ADR-0215: ``branch`` was the other settable field here. It is gone — the
+        caller-side allowlist (``WikiStore._METADATA_FIELDS``) admits
+        ``directory_context`` alone, and because ``wiki_page`` is SCHEMALESS a
+        surviving branch writer would silently re-create the column that
+        migration 029 just dropped. This method therefore has ONE update shape:
+        ``<field> = $upd_val``. The former ``branch = NONE`` special case (needed
+        because a Python ``None`` param stores an explicit null, which ``IS NONE``
+        does NOT match) is gone with the field it served.
+
+        The ``wiki_page_version`` snapshot below still carries ``branch``: that
+        column is an audit-trail record of past versions and migration 029
+        deliberately leaves it in place (see
+        ``_migration_029_drop_branch_column``, which drops the field on ``memory``
+        and ``wiki_page`` only).
 
         Creates a wiki_page_version row in the same compound transaction.
         """
@@ -319,10 +328,7 @@ class _WikiMixin:
         new_ver = self.get_max_version_for_page(int(page_id)) + 1
 
         merged = dict(old_page)
-        if field == "branch" and value is None:
-            merged["branch"] = None
-        else:
-            merged[field] = value
+        merged[field] = value
 
         new_content = merged.get("content", "")
         change_summary = _compute_change_summary(old_page.get("content", ""), new_content)
@@ -342,16 +348,9 @@ class _WikiMixin:
             "ver_now": now,
         }
 
-        if field == "branch" and value is None:
-            # SET branch = NONE uses literal SurrealDB NONE (absent field),
-            # which IS NONE queries match. Passing Python None as a param
-            # would store explicit null, which IS NONE does NOT match.
-            page_set_clause = "branch = NONE, updated_at = $upd_now"
-            params["upd_now"] = now
-        else:
-            page_set_clause = f"{field} = $upd_val, updated_at = $upd_now"
-            params["upd_val"] = value
-            params["upd_now"] = now
+        page_set_clause = f"{field} = $upd_val, updated_at = $upd_now"
+        params["upd_val"] = value
+        params["upd_now"] = now
 
         self._q(
             "BEGIN TRANSACTION;\n"
@@ -407,93 +406,42 @@ class _WikiMixin:
         return ids
 
     @observe(tier="stage")
-    def get_wiki_page_by_slug_and_branch(
-        self,
-        slug: str,
-        current_branch: str | None,
-        default_branch: str,
-    ) -> dict | None:
-        """§25 Branch-aware wiki page resolution.
-
-        Resolution order:
-        1. Exact slug match on current_branch (when not None).
-        2. Exact slug match on default_branch.
-        3. Exact slug match with branch IS NONE (legacy/canonical).
-        4. Returns None if not found.
-        """
-        # Step 1: current branch (skip when current is None — non-git context)
-        if current_branch is not None:
-            rows = self._q(
-                "SELECT * FROM wiki_page WHERE slug = $slug AND branch = $branch LIMIT 1",
-                {"slug": slug, "branch": current_branch},
-            )
-            if rows:
-                return self._row_to_dict(rows[0])
-
-        # Step 2: default branch
-        rows = self._q(
-            "SELECT * FROM wiki_page WHERE slug = $slug AND branch = $branch LIMIT 1",
-            {"slug": slug, "branch": default_branch},
-        )
-        if rows:
-            return self._row_to_dict(rows[0])
-
-        # Step 3: NONE branch (legacy/canonical)
-        rows = self._q(
-            "SELECT * FROM wiki_page WHERE slug = $slug AND branch IS NONE LIMIT 1",
-            {"slug": slug},
-        )
-        return self._row_to_dict(rows[0]) if rows else None
-
-    @observe(tier="stage")
-    def get_wiki_page_by_slug_directory_branch(
+    def get_wiki_page_by_slug_directory(
         self,
         slug: str,
         caller_directory: str | None,
-        current_branch: str | None,
     ) -> dict | None:
-        """§25 4-step directory-aware wiki page resolution (v5.42.5).
+        """§25 directory-aware wiki page resolution.
 
-        Resolution order:
-        1. directory = $caller_dir  AND  branch = $current_branch  (project-branch-scoped)
-        2. directory = $caller_dir  AND  branch IS NONE            (project-canonical)
-        3. directory = 'global'     AND  branch IS NONE            (global fallback)
-        4. Returns None if not found.
+        ADR-0215 removed the branch axis; what remains is the directory ladder:
+        1. directory = $caller_dir   (project-scoped)
+        2. directory = 'global'      (global fallback)
+        3. Returns None if not found.
 
-        When caller_directory is None (legacy / no caller context), falls back to
-        the old 3-step branch-only resolution via get_wiki_page_by_slug_and_branch.
+        When caller_directory is None (no caller context), matches on slug alone.
 
         DP-3: trailing slash stripped from caller_directory before comparison.
         """
         if caller_directory is None:
-            # Legacy fallback — no directory context supplied.
-            return self.get_wiki_page_by_slug_and_branch(slug, current_branch, None)
+            rows = self._q(
+                "SELECT * FROM wiki_page WHERE slug = $slug LIMIT 1",
+                {"slug": slug},
+            )
+            return self._row_to_dict(rows[0]) if rows else None
 
         caller_dir = caller_directory.rstrip("/")
 
-        # Step 1: project-branch-scoped (directory + current branch)
-        if current_branch is not None:
-            rows = self._q(
-                "SELECT * FROM wiki_page WHERE slug = $slug "
-                "AND directory_context = $dir AND branch = $branch LIMIT 1",
-                {"slug": slug, "dir": caller_dir, "branch": current_branch},
-            )
-            if rows:
-                return self._row_to_dict(rows[0])
-
-        # Step 2: project-canonical (directory + branch IS NULL)
+        # Step 1: project-scoped
         rows = self._q(
-            "SELECT * FROM wiki_page WHERE slug = $slug "
-            "AND directory_context = $dir AND branch IS NONE LIMIT 1",
+            "SELECT * FROM wiki_page WHERE slug = $slug AND directory_context = $dir LIMIT 1",
             {"slug": slug, "dir": caller_dir},
         )
         if rows:
             return self._row_to_dict(rows[0])
 
-        # Step 3: global fallback (directory='global' + branch IS NULL)
+        # Step 2: global fallback
         rows = self._q(
-            "SELECT * FROM wiki_page WHERE slug = $slug "
-            "AND directory_context = 'global' AND branch IS NONE LIMIT 1",
+            "SELECT * FROM wiki_page WHERE slug = $slug AND directory_context = 'global' LIMIT 1",
             {"slug": slug},
         )
         return self._row_to_dict(rows[0]) if rows else None
@@ -940,90 +888,6 @@ class _WikiMixin:
             "created_at": now,
         }
         return {"previous_content": previous_content, "new_memory": new_memory}
-
-    @observe(tier="stage")
-    def upsert_dir_branch_context(
-        self, directory: str, gitness: bool, default_branch: str | None
-    ) -> dict:
-        """Atomic delete-then-insert of the TRUSTED per-directory git-context row.
-
-        Car 0 (canonical-write foundation): persists the two TRUSTED branch-model
-        facts — ``gitness`` (is this dir a git work-tree) and ``default_branch``
-        (repo default, ``None`` when non-git) — DURABLY keyed by directory so they
-        survive a daemon restart. Written ONLY via the SessionStart context
-        endpoint (the sole set-channel); no model-callable path reaches this.
-
-        Storage shape mirrors ``upsert_dispatch_prelude_marker`` — a single memory
-        row tagged ``_dir_branch_context`` whose content is a JSON blob. No schema
-        migration (memory-table row, not a new table).
-
-        Returns the stored ``{directory, gitness, default_branch}`` dict.
-        """
-        import json  # noqa: PLC0415
-
-        now = self._now_iso()
-        mid = self._next_id("memory")
-        blob = json.dumps({"gitness": bool(gitness), "default_branch": default_branch})
-        self._q(
-            "BEGIN TRANSACTION;\n"
-            "DELETE FROM memory WHERE directory_context = $dir "
-            "AND '_dir_branch_context' INSIDE tags;\n"
-            "CREATE type::record('memory', $id) SET "
-            "content = $content, embedding = NONE, tags = $tags, "
-            "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
-            "heat = $heat, is_stale = false, file_hash = NONE, "
-            "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
-            "excitability = 1.0, store_type = $store_type, "
-            "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
-            "reconsolidation_count = 0, provenance_agent = $agent, "
-            "vector_clock = '{}', is_protected = true;\n"
-            "COMMIT TRANSACTION",
-            {
-                "id": mid,
-                "content": blob,
-                "tags": ["_dir_branch_context"],
-                "dir": directory,
-                "now": now,
-                "heat": 1.0,
-                "store_type": "semantic",
-                "agent": "default",
-            },
-        )
-        return {
-            "directory": directory,
-            "gitness": bool(gitness),
-            "default_branch": default_branch,
-        }
-
-    @observe(tier="stage")
-    def get_dir_branch_context(self, directory: str) -> dict | None:
-        """Read the TRUSTED per-directory git-context row (Car 0).
-
-        Returns ``{gitness: bool, default_branch: str | None}`` when a SessionStart
-        row exists for the directory, else ``None`` (the "unknown directory" case
-        — §0.4 flow 4). A malformed/legacy blob also returns ``None`` (fail-safe:
-        an unreadable row is treated as unknown, forcing the conservative path).
-        """
-        import json  # noqa: PLC0415
-
-        rows = self._q(
-            "SELECT content FROM memory WHERE directory_context = $dir "
-            "AND '_dir_branch_context' INSIDE tags LIMIT 1",
-            {"dir": directory},
-        )
-        if not rows:
-            return None
-        try:
-            data = json.loads(rows[0].get("content") or "")
-        except (ValueError, TypeError):  # fmt: skip
-            return None
-        if not isinstance(data, dict) or "gitness" not in data:
-            return None
-        return {
-            "gitness": bool(data.get("gitness")),
-            "default_branch": data.get("default_branch"),
-        }
 
     @observe(tier="stage")
     def upsert_dispatch_prelude_marker(self, directory: str) -> dict:

@@ -78,7 +78,6 @@ def test_memorize_from_worktree_lands_canonical(worktree_repo, stub_queue):
     op, payload = stub_queue.jobs[-1]
     assert op == "memorize"
     assert payload["context"] == str(repo)
-    assert payload["branch"] == "master"
 
 
 def test_memorize_from_plain_repo_unchanged(worktree_repo, stub_queue):
@@ -89,7 +88,6 @@ def test_memorize_from_plain_repo_unchanged(worktree_repo, stub_queue):
     assert result["queued"] is True
     _op, payload = stub_queue.jobs[-1]
     assert payload["context"] == str(repo)
-    assert payload["branch"] == "master"
 
 
 def test_memorize_non_git_context_verbatim(tmp_path, stub_queue):
@@ -98,11 +96,10 @@ def test_memorize_non_git_context_verbatim(tmp_path, stub_queue):
 
     plain = tmp_path / "not-a-repo"
     plain.mkdir()
-    result = memorize("plain dir finding", str(plain), ["test"], branch_hint="feat/hint")
+    result = memorize("plain dir finding", str(plain), ["test"])
     assert result["queued"] is True
     _op, payload = stub_queue.jobs[-1]
     assert payload["context"] == str(plain)
-    assert payload["branch"] == "feat/hint"
 
 
 # ── anchor ────────────────────────────────────────────────────────────────────
@@ -117,7 +114,6 @@ def test_anchor_from_worktree_lands_canonical(worktree_repo, stub_queue):
     op, payload = stub_queue.jobs[-1]
     assert op == "anchor"
     assert payload["context"] == str(repo)
-    assert payload["branch"] == "master"
 
 
 # ── checkpoint ────────────────────────────────────────────────────────────────
@@ -132,7 +128,6 @@ def test_checkpoint_from_worktree_lands_canonical(worktree_repo, stub_queue):
     op, payload = stub_queue.jobs[-1]
     assert op == "checkpoint"
     assert payload["directory"] == str(repo)
-    assert payload["branch"] == "master"
 
 
 # ── update_active_work ────────────────────────────────────────────────────────

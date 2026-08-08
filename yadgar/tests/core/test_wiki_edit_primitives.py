@@ -60,9 +60,8 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "wiki_edit_test.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
-        _migration_013_wiki_page_version(_storage())
-        yield
+    _migration_013_wiki_page_version(_storage())
+    yield
     server.shutdown()
 
 
@@ -124,32 +123,12 @@ class TestWikiSetMetadata:
         page = _storage().get_wiki_page(pid)
         assert page["directory_context"] == "/home/max/projects/myapp"
 
-    def test_set_branch_non_null(self):
-        """Setting branch to a non-empty string succeeds."""
-        pid = _insert_page("set-branch-page", branch=None)
-        result = server.wiki_set_metadata("set-branch-page", "branch", "feat/my-feature")
-        assert result.get("ok") is True
-        page = _storage().get_wiki_page(pid)
-        assert page["branch"] == "feat/my-feature"
-
     def test_idempotent_noop_directory_context(self):
         """Same directory_context value → ok:True, no version created."""
         pid = _insert_page("idempotent-dir", directory_context="/home/max/project")
         initial_versions = _version_count(pid)
         result = server.wiki_set_metadata(
             "idempotent-dir", "directory_context", "/home/max/project"
-        )
-        assert result.get("ok") is True
-        assert result.get("changed") is False
-        assert _version_count(pid) == initial_versions
-
-    def test_idempotent_noop_branch(self):
-        """Same branch value → ok:True, no version created."""
-        pid = _insert_page("idempotent-branch", branch="feat/stable")
-        initial_versions = _version_count(pid)
-        # Pass branch_hint so §25 resolution locates the page
-        result = server.wiki_set_metadata(
-            "idempotent-branch", "branch", "feat/stable", branch_hint="feat/stable"
         )
         assert result.get("ok") is True
         assert result.get("changed") is False
@@ -173,35 +152,6 @@ class TestWikiSetMetadata:
         _insert_page("empty-dir-page")
         result = server.wiki_set_metadata("empty-dir-page", "directory_context", "")
         assert result.get("ok") is False
-
-    def test_branch_empty_string_rejects(self):
-        """Empty string for branch → ok:False (use null/None to clear)."""
-        _insert_page("empty-branch-page")
-        result = server.wiki_set_metadata("empty-branch-page", "branch", "")
-        assert result.get("ok") is False
-
-    def test_branch_null_clears_field(self):
-        """Setting branch to null clears it; page resolves via IS NONE query."""
-        pid = _insert_page("null-branch-page", branch="feat/old-branch")
-        page = _storage().get_wiki_page(pid)
-        assert page["branch"] == "feat/old-branch"
-
-        # Pass branch_hint so §25 resolution finds the page before clearing
-        result = server.wiki_set_metadata(
-            "null-branch-page", "branch", None, branch_hint="feat/old-branch"
-        )
-        assert result.get("ok") is True
-
-        # Verify branch is truly NONE (not null) — resolves via IS NONE query
-        page = _storage().get_wiki_page(pid)
-        assert page.get("branch") is None
-
-        # Critical: page must resolve via IS NONE in §25 resolution
-        resolved = _storage().get_wiki_page_by_slug_directory_branch(
-            "null-branch-page", "global", "feat/test-branch"
-        )
-        assert resolved is not None
-        assert resolved["id"] == pid
 
     def test_version_row_created_on_real_change(self):
         """Successful metadata change creates a new wiki_page_version row."""

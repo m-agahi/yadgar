@@ -2,7 +2,7 @@
 
 TDD — written BEFORE the implementation.
 Covers:
-- branch fill (placeholder "master" when absent)
+- branch stays absent on canonical-slot writes (ADR-0215: no fill, no reader)
 - v4.9 degenerate filter applied to wiki_add ops
 - required fields validated (slug, title, content, category)
 - schema_version < 2 → DLQ
@@ -109,22 +109,21 @@ def queue_and_drainer(tmp_path, _isolate_file_queue):
         server._queue_drainer = None
 
 
-# ── branch fill ───────────────────────────────────────────────────────────────
+# ── branch absence (ADR-0215) ────────────────────────────────────────────────
 
 
 def test_branch_left_as_none_when_absent(queue_and_drainer, flush_queue):
-    """wiki_add ops with _internal=True + no branch go to canonical slot (branch=None).
+    """wiki_add ops with no branch key insert with branch=None (canonical slot).
 
-    v5.42.2: drainer no longer injects branch='master'. Absent branch = None (canonical slot).
-    v5.42.3: external payloads without branch are rejected. _internal=True is the carve-out
-    for system/migration writes that legitimately target the canonical NULL-branch slot.
+    ADR-0215: the drainer no longer fills a branch field at all — there is no
+    reader of payload["branch"] anywhere in the write path. This asserts the
+    resulting invariant: a payload without the key never produces a row with
+    a non-None branch value.
     """
     fq, drainer = queue_and_drainer
 
-    # v5.42.3: use _internal=True for canonical-slot writes without branch context
     op = _make_wiki_op(branch=None)
     assert "branch" not in op["payload"]
-    op["payload"]["_internal"] = True  # explicit canonical-slot write carve-out
 
     fq.enqueue("wiki_add", op["payload"])
     drainer.drain_now()
@@ -135,20 +134,6 @@ def test_branch_left_as_none_when_absent(queue_and_drainer, flush_queue):
     assert rows[0].get("branch") is None, (
         f"expected branch=None (canonical slot), got {rows[0].get('branch')!r}"
     )
-
-
-def test_branch_not_overwritten_when_present(queue_and_drainer, flush_queue):
-    """Explicit branch field is preserved, not overwritten with 'master'."""
-    fq, drainer = queue_and_drainer
-
-    op = _make_wiki_op(branch="feat/something", slug="slug-with-branch")
-    fq.enqueue("wiki_add", op["payload"])
-    drainer.drain_now()
-
-    storage = server._get_storage()
-    rows = storage._q("SELECT slug, branch FROM wiki_page WHERE slug = 'slug-with-branch'")
-    assert rows, "wiki page should have been inserted"
-    assert rows[0].get("branch") == "feat/something"
 
 
 # ── degenerate filter ─────────────────────────────────────────────────────────

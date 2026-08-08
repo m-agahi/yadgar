@@ -256,10 +256,8 @@ class TestDirectInsertSettings:
             valid_until=None,
             ttl_days=None,
             reason="test",
-            branch_hint=None,
         )
         ctx.embedding = _dummy_embedding_bytes()
-        ctx.resolved_branch = None
         ctx.computed_valid_until = None
         ctx.provenance_agent_resolved = "default"
         ctx.tier = None

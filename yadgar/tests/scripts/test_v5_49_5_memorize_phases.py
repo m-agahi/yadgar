@@ -13,7 +13,6 @@ from yadgar.backend.write_exec._memorize_phases import (
     phase_contradiction,
     phase_embed,
     phase_post_write,
-    phase_resolve_branch,
     phase_store,
     phase_validate,
 )
@@ -31,7 +30,6 @@ def _make_ctx(**overrides) -> MemorizeContext:
         valid_until=None,
         ttl_days=None,
         reason="",
-        branch_hint=None,
     )
     defaults.update(overrides)
     return MemorizeContext(**defaults)
@@ -133,48 +131,9 @@ def test_phase_validate_calls_secret_gate(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 10 — _phase_resolve_branch: uses branch_hint when cwd fails
+# Tests 10-11 — the branch-resolution phase — REMOVED (ADR-0215): the phase
+# module is gone, so there is no branch to resolve at replay time.
 # ---------------------------------------------------------------------------
-
-
-def test_phase_resolve_branch_uses_branch_hint_when_cwd_fails(monkeypatch):
-    """phase_resolve_branch uses branch_hint when _detect_branch returns None."""
-    import yadgar.backend.queue_drainer as _fq
-
-    # _phase_resolve_branch calls _file_queue.is_draining() via module ref — patch source
-    monkeypatch.setattr(_fq, "is_draining", lambda: True)  # draining → no enqueue
-
-    ctx = _make_ctx(branch_hint="feat/fallback-branch")
-
-    with patch("yadgar.core.server._detect_branch", return_value=None):
-        result = phase_resolve_branch(ctx)
-
-    assert result is None, "Draining path should return None (continue)"
-    assert ctx.resolved_branch == "feat/fallback-branch"
-
-
-# ---------------------------------------------------------------------------
-# Test 11 — _phase_resolve_branch: prefers cwd when both available
-# ---------------------------------------------------------------------------
-
-
-def test_phase_resolve_branch_prefers_branch_hint_over_ci_env(monkeypatch):
-    """R3 migration: branch_hint wins over YADGAR_CI_BRANCH env.
-
-    R3 move (Car 1 write-half): phase_resolve_branch runs in the backend drainer,
-    not the core shell. The daemon cwd != caller repo — git subprocess removed.
-    Resolution order: ctx.branch_hint → YADGAR_CI_BRANCH → None.
-    branch_hint (enqueue-time value) is authoritative when present.
-    """
-    monkeypatch.setenv("YADGAR_CI_BRANCH", "feat/ci-branch")
-
-    ctx = _make_ctx(branch_hint="feat/explicit-branch")
-
-    result = phase_resolve_branch(ctx)
-
-    assert result is None
-    # branch_hint wins over YADGAR_CI_BRANCH (R3 resolution order)
-    assert ctx.resolved_branch == "feat/explicit-branch"
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +203,6 @@ def test_phase_contradiction_flags_known_pairs(monkeypatch):
         return_value=mock_result,
     ):
         ctx = _make_ctx()
-        ctx.resolved_branch = "feat/test"
         result = phase_contradiction(ctx)
 
     assert result is not None
@@ -282,7 +240,6 @@ def test_phase_store_returns_id(monkeypatch):
     ctx = _make_ctx()
     ctx.embedding = [0.1, 0.2]
     ctx.initial_heat = 1.0
-    ctx.resolved_branch = "feat/test"
 
     phase_store(ctx)
 

@@ -53,8 +53,6 @@ class TestForwardCarriesDeadline:
             max_results=5,
             min_heat=0.0,
             directory=_DIR,
-            current_branch=None,
-            default_branch=None,
             type_filter="all",
             tags=None,
             **kwargs,
@@ -210,8 +208,6 @@ def _fanout_with_deadline(deadline):
             max_results=5,
             min_heat=0.0,
             directory=_DIR,
-            current_branch=None,
-            default_branch=None,
             type_filter="all",
             tags=None,
             profile=None,
@@ -317,7 +313,6 @@ class TestCollectGraphTemporalScoresHelper:
             open_domain_mode=False,
             candidate_k=15,
             min_heat=0.0,
-            branch_filter=None,
         )
         result = Retriever._collect_graph_temporal_scores(mock, params, {}, [], deadline)
         return mock, result

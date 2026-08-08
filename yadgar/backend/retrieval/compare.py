@@ -19,8 +19,6 @@ def recall_compare(
     profiles: list[str],
     max_results: int = 10,
     min_heat: float = 0.0,
-    current_branch: str | None = None,
-    default_branch: str | None = None,
 ) -> dict:
     """Run the same query under multiple profiles; return side-by-side results.
 
@@ -31,8 +29,6 @@ def recall_compare(
         profiles: List of profile names to compare, e.g. ["balanced", "full"].
         max_results: Maximum results per profile.
         min_heat: Minimum heat threshold.
-        current_branch: Active git branch for branch filtering.
-        default_branch: Repository default branch for branch filtering.
 
     Returns:
         Dict with keys:
@@ -62,8 +58,6 @@ def recall_compare(
             max_results=max_results,
             min_heat=min_heat,
             profile=profile_name,
-            current_branch=current_branch,
-            default_branch=default_branch,
             scores=defaultdict(
                 lambda: {
                     "vector": 0.0,

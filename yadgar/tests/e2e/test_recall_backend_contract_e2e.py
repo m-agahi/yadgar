@@ -48,7 +48,6 @@ def _insert_wiki(title: str, content: str) -> str:
     assert _st._wiki is not None
     opts = WikiAddOptions(
         source_memory_ids=[],
-        branch="master",
         directory_context=YADGAR_DIR,
     )
     page = _st._wiki.add(
@@ -70,8 +69,6 @@ def _run_off_path(query: str, max_results: int = 20) -> list[tuple]:
         max_results=max_results,
         min_heat=0.0,
         directory=YADGAR_DIR,
-        current_branch="master",
-        default_branch="master",
     )
     # Extract (id, score) tuples — use _retrieval_score as primary, fallback heat.
     return [(r.get("id"), float(r.get("_retrieval_score", r.get("heat", 0.0)))) for r in results]
@@ -93,8 +90,6 @@ def _run_on_path(query: str, max_results: int = 20) -> list[tuple]:
     payload = {
         "query": query,
         "directory": YADGAR_DIR,
-        "current_branch": "master",
-        "default_branch": "master",
         "max_results": max_results,
         "min_heat": 0.0,
         "type": "all",
@@ -153,9 +148,6 @@ class TestRecallBackendContractHarness:
         monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
         monkeypatch.setattr(storage, "boost_memories_access", lambda ids, ts: None)
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         # Seed corpus with graded heat.
         _insert_mem(storage, embeddings, f"{_QUERY} alpha highest", heat=0.9)
         _insert_mem(storage, embeddings, f"{_QUERY} beta medium", heat=0.5)
@@ -194,9 +186,6 @@ class TestRecallBackendContractParity:
         monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
         monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
         monkeypatch.setattr(storage, "boost_memories_access", lambda ids, ts: None)
-
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         # Seed corpus — unique query prefix guards against cross-test contamination.
         _insert_mem(storage, embeddings, f"{_QUERY} parity high relevance", heat=0.9)
@@ -287,14 +276,9 @@ class TestRecallBackendBootstrap:
         original_init = _lifecycle.init_engines
         _lifecycle.init_engines = _noop_init_engines
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         payload = {
             "query": _BOOT_QUERY,
             "directory": YADGAR_DIR,
-            "current_branch": "master",
-            "default_branch": "master",
             "max_results": 10,
             "min_heat": 0.0,
             "type": "all",
@@ -383,9 +367,6 @@ class TestRecallCoreForwarderE2E:
 
         # Ensure backend engines are ready (uses fixture's _st).
         _svc._recall_engines_ready = True
-
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         # Monkeypatch httpx.post to route through ASGITransport.
         # _forward_to_backend calls: httpx.post(url, json=payload, headers=..., timeout=120.0)
@@ -485,9 +466,6 @@ class TestRecallCoreForwarderE2E:
         from yadgar.backend.embed_service import app as _backend_app
 
         _svc._recall_engines_ready = True
-
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         import os as _os
 
@@ -594,9 +572,6 @@ class TestRecallBackendProdEnvBootstrap:
         from yadgar._shared.runtime import state as _st
         from yadgar.backend.embed_service import app
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         # Prod BACKEND container condition: shared offload flag ON, no EMBED_URL.
         # This is the exact env that made #44 raise inside _init_embedding_client.
         monkeypatch.setenv("YADGAR_OFFLOAD_TOOLS", "1")
@@ -637,8 +612,6 @@ class TestRecallBackendProdEnvBootstrap:
         payload = {
             "query": _PROD_QUERY,
             "directory": YADGAR_DIR,
-            "current_branch": "master",
-            "default_branch": "master",
             "max_results": 10,
             "min_heat": 0.0,
             "type": "all",

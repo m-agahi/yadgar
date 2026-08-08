@@ -12,7 +12,7 @@ Pinned here:
 - _resolve_prompt_template_path() returns an existing on-disk path
 - _PROMPT_TEMPLATE_PATH (module-level) is an existing on-disk path
 - template file contains the expected protocol content (adr_add, wiki_add,
-  project_brief, {directory}/{project}/{default_branch} placeholders, substitution header)
+  project_brief, {directory}/{project} placeholders, substitution header)
 - main() reason is the short pointer line, NOT the full protocol
 - decision is still "block" (hook remains blocking)
 - missing/unresolvable template fails LOUD (RuntimeError), never a silent broken pointer
@@ -43,8 +43,6 @@ _EXPECTED_TEMPLATE = """<!-- YADGAR CHECKPOINT PROTOCOL
      Substitute these placeholders throughout this file before following instructions:
        {directory}      = your current working directory (absolute path; the project root)
        {project}        = basename of {directory}
-       {default_branch} = last segment of `git -C {directory} symbolic-ref refs/remotes/origin/HEAD`;
-                          fall back to "master" for non-git projects or on any git error.
 -->
 
 Yadgar checkpoint. CAPTURE FIRST (steps 1-5), THEN maintenance (steps 6-7).
@@ -69,7 +67,7 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
    - Read existing ADRs FIRST — actually CALL it now and dedup against the
      RETURNED content, not your memory of it: wiki_read("{project}-adr-log",
-     directory="{directory}", branch_hint="{default_branch}"). If the page is
+     directory="{directory}"). If the page is
      absent the log is empty — no prior ADRs to dedup against. Do NOT create the
      log manually; adr_add handles creation automatically.
    - Scan THIS session for durable decisions since the last checkpoint.
@@ -97,7 +95,7 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
            revisit_trigger=<condition to reconsider; "none" if none>,
            supersedes=<ADR-NNNN or "none">,
        )
-     adr_add assigns the ADR-NNNN id, formats, and branch-pins the entry.
+     adr_add assigns the ADR-NNNN id and formats the entry.
      ALL fields mandatory — write "none" if truly empty (keeps it machine-parseable).
      A decision still unresolved this session → status: open, revisit_trigger = pending question.
 
@@ -106,9 +104,9 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    the topic (wiki_list → slug → wiki_read the slug NOW and edit the content it
    RETURNS — do NOT rewrite a page from memory; update via
    wiki_add(replace_slug=<slug>, ..., directory="{directory}",
-   branch_hint="{default_branch}", wait=True); no near-duplicate pages). If no
+   wait=True); no near-duplicate pages). If no
    page fits, create one with wiki_add(tags=[...], directory="{directory}",
-   branch_hint="{default_branch}", wait=True).
+   wait=True).
    Verify wiki_history. Facts/structure only — decisions go in step 1.
 
 3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
@@ -137,7 +135,7 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
        repo structure/convention   → wiki_add / update owning page (step 2)
        reusable dispatch prompt     → agent_prompt_save (step 3)
        useful working fact          → memorize(content=REWRITTEN in your words,
-                                        context="{directory}", tags=[...], branch_hint="{default_branch}")
+                                        context="{directory}", tags=[...])
                                         — never store the raw bullet verbatim
        noise/status/one-off/dup     → DISCARD (do nothing)
      Dedup vs what you wrote this checkpoint + existing ADRs/wiki. Storing nothing is valid + common.
@@ -158,11 +156,10 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      RETURNS — never against a remembered copy of the page. Absent = no saved list
      yet.
    - Step 5c — BRANCH on {have open tasks after reconcile?} × {page exists?}:
-     (The task-list page is CANONICAL — one call lands it on the project-canonical
-     / branch-NULL slot via the sanctioned wiki_write_task_list writer, so the
-     session-start restore-nudge resolves it from ANY branch and from a non-git
-     project. You do NOT craft a wiki_add / choose a branch — the writer sets the
-     canonical branch server-side.)
+     (The task-list page is CANONICAL — one call lands it via the sanctioned
+     wiki_write_task_list writer, so the session-start restore-nudge resolves it
+     from any project, including a non-git project. You do NOT craft a
+     wiki_add — the writer handles placement server-side.)
      - have tasks · NO page → CREATE. wiki_write_task_list(project="{project}",
        content=<full page: ## Meta + one ## task:<id> section each>,
        directory="{directory}").
@@ -311,7 +308,6 @@ def test_template_has_protocol_content():
     # Substitution header present
     assert "{directory}" in content
     assert "{project}" in content
-    assert "{default_branch}" in content
     # Protocol steps present
     assert "adr_add(" in content
     assert "wiki_add(" in content
@@ -325,12 +321,11 @@ def test_template_has_protocol_content():
 
 def test_template_has_substitution_header():
     """Template file has the substitution-key header block so the instance can
-    derive {directory}, {project}, {default_branch} without rendering."""
+    derive {directory} and {project} without rendering."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     assert "YADGAR CHECKPOINT PROTOCOL" in content
     assert "Substitute these placeholders" in content
     assert "basename of {directory}" in content
-    assert "symbolic-ref refs/remotes/origin/HEAD" in content
 
 
 def test_agent_prompt_step_is_read_first():
@@ -403,8 +398,8 @@ def test_task_list_mirror_step_present():
     assert "replace_section" in content
     assert 'section_heading="task:<id>"' in content
     # The full-rewrite default write goes through the sanctioned canonical writer
-    # (Car 1) — replace_slug + branch-NULL are baked in server-side, so the
-    # template no longer instructs a raw wiki_add(replace_slug=...).
+    # (Car 1) — replace_slug is baked in server-side, so the template no longer
+    # instructs a raw wiki_add(replace_slug=...).
     assert 'wiki_write_task_list(project="{project}", content=<merged full page>' in content
 
 

@@ -51,8 +51,6 @@ def _call_recall(query: str = "test query", profile=None, **kwargs):
         patch.object(_recall_module, "_forward_to_backend", side_effect=_spy_forward),
         patch.object(_recall_module, "_apply_recall_session_side_effects"),
         patch.object(_recall_module, "_st") as mock_st,
-        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         mock_st._consolidation = None
         mock_st._pool = None
@@ -137,8 +135,6 @@ class TestRecallInvalidProfile:
         with (
             patch.object(_recall_module, "_forward_to_backend") as mock_fwd,
             patch.object(_recall_module, "_st") as mock_st,
-            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             mock_st._consolidation = None
             mock_st._pool = None
@@ -160,8 +156,6 @@ class TestRecallInvalidProfile:
         with (
             patch.object(_recall_module, "_forward_to_backend") as mock_fwd,
             patch.object(_recall_module, "_st") as mock_st,
-            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             mock_st._consolidation = None
             mock_st._pool = None
@@ -269,8 +263,6 @@ class TestStageOverridesRemoved:
             patch.object(_recall_module, "_forward_to_backend", return_value=[]),
             patch.object(_recall_module, "_apply_recall_session_side_effects"),
             patch.object(_recall_module, "_st") as mock_st,
-            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             mock_st._consolidation = None
             mock_st._pool = None

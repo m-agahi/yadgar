@@ -22,15 +22,6 @@ class KNNStage(RetrievalStage):
 
     @observe(tier="stage", metric="retrieval.pipeline.knn")
     def apply(self, state: RetrievalState) -> RetrievalState:
-        from yadgar._shared.storage import BranchFilter  # noqa: PLC0415
-
-        branch_filter = None
-        if state.default_branch is not None:
-            branch_filter = BranchFilter(
-                current_branch=state.current_branch,
-                default_branch=state.default_branch,
-            )
-
         settings = self._retriever._settings
         profile_dict = state.query_analysis.get("_profile_dict", {})
         profile_signals = set(profile_dict.get("signals", []))
@@ -55,7 +46,6 @@ class KNNStage(RetrievalStage):
             open_domain_subqueries,
             candidate_k,
             state.min_heat,
-            branch_filter=branch_filter,
         )
         state.vector_memory_ids = vector_memory_ids
         state.query_embedding = query_embedding

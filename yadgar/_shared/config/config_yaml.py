@@ -990,14 +990,6 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "wiki_similarity_gate",
     },
-    "branch_enforcement": {
-        "desc": (
-            "When True (default), wiki_add and memorize reject payloads missing branch. "
-            "Set to False as a migration escape hatch. "
-            "Emits WARN log + yadgar_writes_with_enforcement_relaxed metric when off."
-        ),
-        "section": "wiki_similarity_gate",
-    },
     # v5.51.0 — hook recall latency budget
     "hook_recall_timeout_s": {
         "desc": (
@@ -1370,13 +1362,6 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "thermodynamics",
     },
-    "branch_boost_weight": {
-        "desc": (
-            "Convex-combination boost for current-branch memories: "
-            "boosted = score + (1 - score) * BRANCH_BOOST_WEIGHT (default 0.2). Keeps scores in [0, 1]."
-        ),
-        "section": "retrieval_fusion",
-    },
     "postmortem_boost_factor": {
         "desc": (
             "Convex boost applied to _postmortem/_incident-tagged memories when the query contains an "
@@ -1403,7 +1388,7 @@ FIELD_META: dict[str, dict[str, object]] = {
     },
     "fanout_boost_scope": {
         "desc": (
-            "Controls when C4 branch and postmortem/incident boosts apply in fanout recall "
+            "Controls when the postmortem/incident boost applies in fanout recall "
             "(default scoped). "
             "'scoped': apply only when profile is not None (profile-origin callers, e.g. hook=fast). "
             "'global': apply to all fanout recalls regardless of profile. "

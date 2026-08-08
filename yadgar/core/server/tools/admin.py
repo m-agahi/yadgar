@@ -25,6 +25,7 @@ from yadgar.core.server.tools.admin_other import (
     _MEMORY_UPDATE_ALLOWED,
     _WIKI_UPDATE_ALLOWED,
     add_rule,
+    anchor_renew,
     consolidate_now,
     de_anchor,
     forget,
@@ -56,6 +57,7 @@ __all__ = [
     "wiki_get",
     "memory_update",
     "de_anchor",
+    "anchor_renew",
     "wiki_update",
     "archive_purge",
 ]

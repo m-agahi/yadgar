@@ -7,7 +7,7 @@ The prelude includes:
   1. Yadgar protocol contract (read-first, report findings).
   2. Latest agent_prompt for the given pattern (if one exists in the wiki).
   3. A recall hint for the task_topic so the subagent knows what to recall.
-  4. (v5.44.0 X1) — when branch_hint + directory are supplied and the agent's
+  4. (v5.44.0 X1) — when directory is supplied and the agent's
      frontmatter declares prompt_uses_yadgar_context: true, the prelude also
      embeds auto-prefetched context (anchors + recent_memories from recall +
      wiki_pages from wiki_query).
@@ -19,7 +19,6 @@ Usage:
     # v5.44.0 X1 — with auto-prefetch context:
     prelude = agent_dispatch_prelude(
         "dispatch-fix-bug", "vacuum regression",
-        branch_hint="feat/v5.44.0-subagent-mcp-wiring",
         directory="/home/user/git/yadgar",
         subagent_type="general-purpose",
         include_context=True,
@@ -346,7 +345,6 @@ def agent_dispatch_prelude(
     task_topic: str,
     storage=None,
     # v5.44.0 X1 — auto-prefetch context params (all optional for backward compat)
-    branch_hint: str | None = None,
     directory: str | None = None,
     subagent_type: str | None = None,
     include_context: bool = False,
@@ -358,8 +356,8 @@ def agent_dispatch_prelude(
     Total length is capped at 3 500 characters (orchestrator context budget).
 
     v5.44.0 X1 extension: when include_context=True (opt-in, per DP-X1-1),
-    auto-fetches yadgar context using recall(directory, branch_hint) and
-    wiki_query(directory, branch_hint) and embeds a structured context block
+    auto-fetches yadgar context using recall(directory) and
+    wiki_query(directory) and embeds a structured context block
     in the prelude. This satisfies DP-X1-1: opt-in via caller flag (agent
     definition frontmatter field prompt_uses_yadgar_context maps to this).
 
@@ -372,10 +370,8 @@ def agent_dispatch_prelude(
                         so the subagent knows which yadgar memories to surface.
         storage:        StorageEngine instance (injected for testing; otherwise
                         resolved from server lifecycle).
-        branch_hint:    Caller's branch name (v5.43.0 surface). Used when
-                        include_context=True for recall + wiki_query calls.
-        directory:      Caller's working directory. Used for branch detection
-                        when include_context=True.
+        directory:      Caller's working directory. Used for the recall +
+                        wiki_query calls when include_context=True.
         subagent_type:  Agent type label injected into the context block header.
         include_context: When True, embed auto-prefetched yadgar context block
                         (anchors + recent_memories + wiki_pages). Default False
@@ -440,7 +436,6 @@ def agent_dispatch_prelude(
     if include_context:
         context_block = _build_context_block(
             task_topic=task_topic,
-            branch_hint=branch_hint,
             directory=directory,
             subagent_type=subagent_type,
             storage=storage,
@@ -463,15 +458,14 @@ def agent_dispatch_prelude(
 @observe(tier="stage", metric="tools.dispatch_helper._build_context_block")
 def _build_context_block(
     task_topic: str,
-    branch_hint: str | None,
     directory: str | None,
     subagent_type: str | None,
     storage,
 ) -> str:
     """Fetch and render a yadgar context block for auto-prefetch (X1).
 
-    Calls recall(directory, branch_hint) + wiki_query(directory, branch_hint)
-    using the v5.43.0 signatures. Returns empty string on any error.
+    Calls recall(directory) + wiki_query(directory). Returns empty string on
+    any error.
     """
     import datetime  # noqa: PLC0415
 
@@ -486,7 +480,6 @@ def _build_context_block(
             query=task_topic or "context",
             max_results=5,
             directory=directory,
-            branch_hint=branch_hint,
         )
         if memories:
             lines.append("### Recent memories")
@@ -503,7 +496,6 @@ def _build_context_block(
             query=task_topic or "context",
             max_results=3,
             directory=directory,
-            branch_hint=branch_hint,
         )
         if pages:
             lines.append("### Wiki pages")

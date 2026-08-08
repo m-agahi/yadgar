@@ -51,7 +51,7 @@ def _drain(e2e_engines) -> None:
 
 
 def _memorize_and_drain(e2e_engines, content: str, directory: str, tags: list[str]) -> dict | None:
-    """Call memorize() with branch_hint, drain, return stored row dict or None.
+    """Call memorize(), drain, return stored row dict or None.
 
     Returns the stored memory dict (with 'id', 'content', etc.) after drain,
     or None if the memory can't be found (signals a bug in the write path).
@@ -64,7 +64,6 @@ def _memorize_and_drain(e2e_engines, content: str, directory: str, tags: list[st
         content,
         directory,
         tags,
-        branch_hint=_E2E_BRANCH,
     )
     # Early-reject path — not queued, return result as-is
     if not result.get("queued"):
@@ -224,18 +223,10 @@ class TestBCA1_MemorizeRecallRoundTrip:
         )
 
         # Verify recall surfaces the row from this directory.
-        # branch_hint=_E2E_BRANCH mirrors the memorize() write branch: R3 made the
-        # write path honor branch_hint when _detect_branch(directory) fails (the
-        # documented _detect_branch → branch_hint resolution). The e2e yadgar_dir
-        # is a synthetic (non-git) path, so both write and read must supply the
-        # branch_hint to land on the same branch slot — in production the hooks
-        # pass branch_hint to both memorize and recall. Pre-R3 the write ignored
-        # branch_hint (stamped branch=None) so an unstamped read matched by luck.
         results = recall(
             "BC-A1 unique sentinel content",
             directory=yadgar_dir,
             max_results=10,
-            branch_hint=_E2E_BRANCH,
         )
         result_ids = _ids_from_results(results)
         # Also check by content string if id type mismatch
@@ -439,14 +430,12 @@ class TestBCB2_WikiDirectoryFilter:
 
         # Seed a wiki page tagged to other_dir (aws-work)
         # Slug is auto-derived from title by the wiki layer.
-        # branch_hint required (v5.42.3): wiki_add rejects without branch context.
         result = wiki_add(
             title="BC-B2 AWS xb2aws66601 test wiki page",
             content="# BC-B2 AWS Wiki\n\nThis page belongs to aws-work project xb2aws66601.",
             directory=other_dir,
             category="reference",
             tags=["e2e", "bc-b2"],
-            branch_hint="master",
             wait=True,
         )
         # Accept any success indicator: committed, stored, or queued
@@ -497,7 +486,6 @@ class TestBCB2_WikiDirectoryFilter:
             directory=yadgar_dir,
             category="reference",
             tags=["e2e", "bc-b2"],
-            branch_hint="master",
             wait=True,
         )
         assert (

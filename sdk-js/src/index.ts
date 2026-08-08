@@ -50,7 +50,6 @@ export type {
   WikiDiscardArgs,
   WikiCoverageArgs,
   WikiRefreshStaleArgs,
-  WikiCleanupMergedBranchesArgs,
   BlockCreateArgs,
   BlockGetArgs,
   BlockUpdateArgs,

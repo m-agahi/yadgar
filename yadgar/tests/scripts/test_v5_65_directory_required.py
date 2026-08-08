@@ -75,8 +75,6 @@ class TestRecallDirectoryRequired:
             patch.object(_st, "_replay", None),
             patch.object(_st, "_wiki", None),
             patch.object(_st, "_last_recalled_ids", {}),
-            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
         ):
             return recall_fn(**kwargs)
 
@@ -153,11 +151,7 @@ class TestWikiQueryDirectoryRequired:
         mock_wiki = MagicMock()
         mock_wiki.query.return_value = []
 
-        with (
-            patch.object(_st, "_wiki", mock_wiki),
-            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
-        ):
+        with patch.object(_st, "_wiki", mock_wiki):
             return wq_fn(**kwargs)
 
     def test_wiki_query_no_directory_raises(self):

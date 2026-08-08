@@ -1,16 +1,16 @@
 """ADR (Architecture Decision Record) MCP tool — TDD test suite.
 
 Car 2 (ADR-consultable, v5.141.0) rewrote adr_add to write recall-native records:
-  * one CANONICAL wiki page per ADR (`<project>-adr-NNNN`, branch IS NULL)
+  * one CANONICAL wiki page per ADR (`<project>-adr-NNNN`)
   * one thin CANONICAL index (`<project>-adr-index`) — the ID source of truth
 
-The OLD contract (branch_hint=default-branch pin on the `<project>-adr-log`
-monolith) is REVERSED: ADR pages must resolve from any caller branch AND in
-non-git dirs, WITHOUT a branch_hint (the memory-531352 bug fix).
+The OLD contract (a default-branch pin on the `<project>-adr-log` monolith) is
+REVERSED: ADR pages must resolve from any caller AND in non-git dirs (the
+memory-531352 bug fix).
 
 Tests cover:
   1. Validation (pure unit, no store)
-  2. Canonical round-trip: sequential IDs, readable without branch_hint, index rows
+  2. Canonical round-trip: sequential IDs, readable from any caller, index rows
   3. adr_get / adr_list
   4. Supersede: status tag flip + index back-link
   5. Concurrent ID assignment (per-project lock)
@@ -101,7 +101,7 @@ class TestAdrAddCanonicalRoundTrip:
     """End-to-end against the real embedded wiki store.
 
     Patches ONLY _resolve_project_root. The wiki layer is real — proves the
-    canonical write + read-your-writes ID assignment + branch-NULL resolution.
+    canonical write + read-your-writes ID assignment + directory resolution.
     """
 
     def test_sequential_ids_and_per_adr_pages(self, tmp_path):
@@ -122,14 +122,11 @@ class TestAdrAddCanonicalRoundTrip:
         assert r1.get("slug") == "myproj-adr-0001"
         assert r2.get("slug") == "myproj-adr-0002"
 
-        # Each per-ADR page resolves CANONICALLY — WITHOUT a branch_hint.
+        # Each per-ADR page resolves CANONICALLY from the caller directory.
         p1 = wiki_read("myproj-adr-0001", directory=project_dir)
         p2 = wiki_read("myproj-adr-0002", directory=project_dir)
         assert "error" not in p1, f"ADR-0001 page not found canonically: {p1}"
         assert "error" not in p2, f"ADR-0002 page not found canonically: {p2}"
-        assert p1.get("branch") is None, (
-            f"ADR page must be canonical (branch NULL): {p1.get('branch')!r}"
-        )
         assert "SurrealDB" in p1.get("content", "")
         assert "SQLite" in p2.get("content", "")
         # page_type + tags
@@ -138,7 +135,7 @@ class TestAdrAddCanonicalRoundTrip:
         assert "adr-status:accepted" in (p1.get("tags") or [])
 
     def test_index_rows_track_all_adrs(self, tmp_path):
-        """The canonical index carries one row per ADR, readable without branch_hint."""
+        """The canonical index carries one row per ADR, readable from any caller."""
         from yadgar.core.server.tools.adr import adr_add, parse_index_rows
         from yadgar.core.server.tools.wiki import wiki_read
 
@@ -152,7 +149,6 @@ class TestAdrAddCanonicalRoundTrip:
 
         index = wiki_read("idxproj-adr-index", directory=project_dir)
         assert "error" not in index, f"index not found canonically: {index}"
-        assert index.get("branch") is None, "index must be canonical"
         rows = parse_index_rows(index["content"])
         assert [r["adr_id"] for r in rows] == ["ADR-0001", "ADR-0002"]
         assert rows[0]["slug"] == "idxproj-adr-0001"

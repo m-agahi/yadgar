@@ -153,7 +153,6 @@ class TestWikiAddDirectoryBoundary:
             result = wiki_add(
                 title="Test Page",
                 content="Some content",
-                branch="feat/x",
                 directory="",
             )
         assert result.get("error") == "missing_directory", (
@@ -171,7 +170,6 @@ class TestWikiAddDirectoryBoundary:
             result = wiki_add(
                 title="Test Page",
                 content="Some content",
-                branch="feat/x",
                 directory="   ",
             )
         assert result.get("error") == "missing_directory", (
@@ -188,7 +186,6 @@ class TestWikiAddDirectoryBoundary:
             result = wiki_add(
                 title="Test Page No Dir",
                 content="Some content",
-                branch="feat/x",
                 # no directory param
             )
         assert result.get("error") == "missing_directory", (
@@ -205,7 +202,6 @@ class TestWikiAddDirectoryBoundary:
             result = wiki_add(
                 title="Valid Dir Page",
                 content="Some content",
-                branch="feat/x",
                 directory="/proj/x",
             )
         assert result.get("error") != "missing_directory", (
@@ -225,7 +221,6 @@ class TestDrainerRejectsNoDirectory:
         self,
         *,
         directory_context: str | None = "ABSENT",
-        branch: str = "feat/test",
         internal: bool = False,
     ) -> dict:
         payload: dict = {
@@ -235,7 +230,6 @@ class TestDrainerRejectsNoDirectory:
             "content": "Test content for directory enforcement.",
             "category": "reference",
             "tags": [],
-            "branch": branch,
         }
         if directory_context != "ABSENT":
             payload["directory_context"] = directory_context
@@ -283,7 +277,6 @@ class TestDrainerRejectsNoDirectory:
                 "content": "Content without directory.",
                 "category": "reference",
                 "tags": [],
-                "branch": "feat/test",
                 # No directory_context
             },
         )
@@ -334,13 +327,7 @@ class TestResolutionProjectBeatsGlobal:
 
         from yadgar.core.server.tools.wiki import wiki_read
 
-        with (
-            patch("yadgar.core.server.tools.wiki.os") as mock_os,
-            patch("yadgar.core.server._detect_branch", return_value="main", create=True),
-            patch("yadgar.core.server._get_default_branch", return_value=None, create=True),
-        ):
-            mock_os.getcwd.return_value = "/daemon/cwd"
-            result = wiki_read(slug, directory="/proj/A")
+        result = wiki_read(slug, directory="/proj/A")
 
         assert result.get("error") is None, f"Got error: {result}"
         assert result.get("directory_context") == "/proj/A", (
@@ -367,13 +354,7 @@ class TestResolutionProjectBeatsGlobal:
 
         from yadgar.core.server.tools.wiki import wiki_read
 
-        with (
-            patch("yadgar.core.server.tools.wiki.os") as mock_os,
-            patch("yadgar.core.server._detect_branch", return_value=None, create=True),
-            patch("yadgar.core.server._get_default_branch", return_value=None, create=True),
-        ):
-            mock_os.getcwd.return_value = "/daemon/cwd"
-            result = wiki_read(slug, directory="/proj/B")
+        result = wiki_read(slug, directory="/proj/B")
 
         assert result.get("error") is None, f"Got error: {result}"
         assert result.get("directory_context") == "global", (
@@ -431,10 +412,10 @@ class TestResolveSlugCallerDirectory:
 
         from yadgar.core.server.tools.wiki import wiki_history
 
-        with patch("yadgar.core.server.tools.wiki.os") as mock_os:
-            mock_os.getcwd.return_value = "/daemon/root"
-            # directory param routes to caller context, ignores os.getcwd()
-            result = wiki_history(slug, directory="/caller/repo")
+        # ADR-0215: wiki.py no longer imports os / falls back to os.getcwd() at
+        # all — the directory param is the only source of truth now, so the
+        # caller-dir-wins invariant this test checks is structurally guaranteed.
+        result = wiki_history(slug, directory="/caller/repo")
 
         assert "error" not in result, f"Expected success but got error: {result}"
         assert result.get("slug") == slug, f"Unexpected result: {result}"

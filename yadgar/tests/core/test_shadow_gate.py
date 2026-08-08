@@ -42,7 +42,6 @@ def _make_ctx(
         valid_until=None,
         ttl_days=None,
         reason="test",
-        branch_hint=None,
     )
     ctx.embedding = [0.1] * 4
     ctx.surprise = surprise  # thermo — used for heat boost, NOT for shadow stamp
@@ -51,7 +50,6 @@ def _make_ctx(
     ctx.importance = 0.5
     ctx.valence = 0.0
     ctx.initial_heat = 1.0
-    ctx.resolved_branch = None
     return ctx
 
 
@@ -74,7 +72,6 @@ class TestContextField:
             valid_until=None,
             ttl_days=None,
             reason="r",
-            branch_hint=None,
         )
         # Field must exist with a sane default
         assert hasattr(ctx, "gate_surprisal")
@@ -92,7 +89,6 @@ class TestContextField:
             valid_until=None,
             ttl_days=None,
             reason="r",
-            branch_hint=None,
         )
         assert hasattr(ctx, "would_reject")
 
@@ -110,7 +106,6 @@ class TestContextField:
             valid_until=None,
             ttl_days=None,
             reason="r",
-            branch_hint=None,
         )
         ctx.surprise = 0.9
         ctx.gate_surprisal = 0.3
@@ -157,7 +152,6 @@ class TestPhaseEmbedCapturesGateSurprisal:
             valid_until=None,
             ttl_days=None,
             reason="r",
-            branch_hint=None,
         )
 
         with (
@@ -210,7 +204,6 @@ class TestPhaseEmbedCapturesGateSurprisal:
             valid_until=None,
             ttl_days=None,
             reason="r",
-            branch_hint=None,
         )
 
         with (

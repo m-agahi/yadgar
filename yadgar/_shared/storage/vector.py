@@ -46,28 +46,18 @@ class _VectorMixin:
         query_embedding: bytes,
         top_k: int = 10,
         min_heat: float = 0.1,
-        branch_filter=None,
     ) -> list[tuple[int, float]]:
         """KNN search via HNSW index, filtered by min_heat.
 
         Returns list of (memory_id, distance) tuples sorted by ascending distance.
         SurrealDB v3: KNN operator requires <|K, EF|> — single-param <|K|> is broken.
-
-        When branch_filter is provided, restricts results to memories whose
-        branch is NULL, equals default_branch, or equals current_branch (when
-        current_branch is not None).
         """
-        from yadgar._shared.storage.branch import _build_branch_clause
-
         fetch_k = min(top_k * 4, 4096)
         floats = self._bytes_to_floats(query_embedding)
-        branch_clause, branch_params = _build_branch_clause(branch_filter)
-        branch_and = f" AND {branch_clause}" if branch_clause else ""
         params = {"qv": floats}
-        params.update(branch_params)
         rows = self._q(
             f"SELECT id, heat, vector::similarity::cosine(embedding, $qv) AS sim "
-            f"FROM memory WHERE embedding <|{fetch_k}, 40|> $qv{branch_and} "
+            f"FROM memory WHERE embedding <|{fetch_k}, 40|> $qv "
             f"ORDER BY sim DESC",
             params,
         )

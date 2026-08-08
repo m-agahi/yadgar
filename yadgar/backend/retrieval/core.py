@@ -12,7 +12,7 @@ from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.storage import BranchFilter, StorageEngine
+from yadgar._shared.storage import StorageEngine
 from yadgar.backend.retrieval.entities import _extract_query_entities
 from yadgar.backend.retrieval.fusion import PROFILES, _FusionMixin
 from yadgar.backend.retrieval.graph_helpers import _GraphHelpersMixin
@@ -385,8 +385,6 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         query: str,
         max_results: int = 5,
         min_heat: float = 0.1,
-        current_branch: str | None = None,
-        default_branch: str | None = None,
         profile: str = "balanced",
         stage_overrides: dict | None = None,
     ) -> list[dict]:
@@ -400,8 +398,6 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             query: Search query.
             max_results: Maximum results to return.
             min_heat: Minimum heat threshold.
-            current_branch: Active git branch for branch filtering.
-            default_branch: Repository default branch.
             profile: Profile name ("fast", "balanced", "full", "debug").
             stage_overrides: Per-call disable map, e.g. {"nli": False}.
 
@@ -418,8 +414,6 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             min_heat=min_heat,
             profile=profile,
             stage_overrides=stage_overrides or {},
-            current_branch=current_branch,
-            default_branch=default_branch,
             scores=defaultdict(
                 lambda: {
                     "vector": 0.0,
@@ -503,7 +497,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
 
         Extracted from recall() (I13 cap). Reuses the FTSParams bundle recall()
         already built (query / enabled_signals / candidate_k / min_heat /
-        branch_filter). Returns (w_temporal, deadline_hit); once the deadline is
+        candidate_k / min_heat). Returns (w_temporal, deadline_hit); once the deadline is
         exceeded, remaining collections are skipped and deadline_hit=True tells
         recall() to also skip the rerank pipeline.
         """
@@ -516,19 +510,15 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         if _deadline_passed(deadline):
             return 0.0, True
 
-        w_temporal = self._collect_temporal_scores(
-            p.query, scores, p.min_heat, p.candidate_k, branch_filter=p.branch_filter
-        )
+        w_temporal = self._collect_temporal_scores(p.query, scores, p.min_heat, p.candidate_k)
         return w_temporal, _deadline_passed(deadline)
 
     @observe(tier="boundary", metric="retrieval.recall")
-    def recall(  # noqa: PLR0913 — 8 args; deadline added per ADR-0077
+    def recall(
         self,
         query: str,
         max_results: int = 5,
         min_heat: float = 0.1,
-        current_branch: str | None = None,
-        default_branch: str | None = None,
         profile: str | None = None,
         deadline: float | None = None,
     ) -> list[dict]:
@@ -540,13 +530,6 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         An optional heuristic reranker refines the final ordering.
 
         Args:
-            current_branch: Active git branch, or None for non-git/unknown contexts.
-                When set (along with default_branch), candidate queries are filtered
-                to (NULL | default | current) branch in SurrealQL — avoids fetching
-                rows that will be discarded (C2).
-            default_branch: Repository default branch (e.g. 'master', 'main').
-                Must be provided alongside current_branch to enable filtering.
-                When None (default), no branch filter is applied — all rows pass.
             deadline: Monotonic deadline (time.monotonic() epoch) derived from the
                 client's deadline_ms budget (ADR-0077). Checked between signal-
                 collection stages: once exceeded, remaining collections and the
@@ -561,20 +544,9 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             if _span and _span.is_recording():
                 _span.set_attribute("query_len", len(query))
                 _span.set_attribute("max_results", max_results)
-                _span.set_attribute("branch", current_branch or "")
                 _span.set_attribute("profile", profile or "")
         except Exception:
             pass
-
-        # Build branch filter for storage-level predicate injection (C2).
-        # Only created when default_branch is explicitly provided by caller.
-        # Without it, behavior is backward-compatible: no filtering.
-        branch_filter: BranchFilter | None = None
-        if default_branch is not None:
-            branch_filter = BranchFilter(
-                current_branch=current_branch,
-                default_branch=default_branch,
-            )
 
         # Determine active retrieval profile.
         # Caller-supplied `profile` kwarg overrides RETRIEVAL_PROFILE setting.
@@ -614,7 +586,6 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             open_domain_mode=open_domain_mode,
             candidate_k=candidate_k,
             min_heat=min_heat,
-            branch_filter=branch_filter,
         )
         _deadline_hit = _deadline_passed(deadline)
 
@@ -632,7 +603,6 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
                 open_domain_subqueries,
                 candidate_k,
                 min_heat,
-                branch_filter=branch_filter,
             )
             _deadline_hit = _deadline_passed(deadline)
 

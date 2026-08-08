@@ -240,7 +240,7 @@ Security observations:
 **Rationale:** User direction 2026-06-05 evening — "i need proper planning to fix all the tests (i mean all i need clean 100 percent results) before we move to 5.47. so plan then implement. only build and push when you get to the last one. do it automatically." 12 directional questions answered via AskUserQuestion (release shape, pass def, CI image strategy, tag policy, fixture authority, B2 mechanism, deploy semantics, budget overrun, SBOM fold, self-test coverage, PyPI failure handling, plan doc shape).
 
 **Cycle strategy:**
-- v5.46.3 — CI infrastructure (yadgar-ci image + YADGAR_CI_BRANCH env + make availability + pytest-asyncio + SBOM wheel install)
+- v5.46.3 — CI infrastructure (yadgar-ci image + YADGAR_CI_BRANCH env *(later retired by ADR-0215)* + make availability + pytest-asyncio + SBOM wheel install)
 - v5.46.4 — Test fixture refactor (directory_context + vector-dim + harness hardening + migration assertion + DLQ fixtures + token budget)
 - v5.46.5 — Missing functions, endpoints, hook files (hook_db_lockdown_check, session-start-context.py, /hooks/session-context, /viz/config, sleep_cycle, dbsize mock)
 - v5.46.6 — Behavior fixes + final cleanup + SHIP (circuit breaker probe state, NLI default-OFF test alignment, health endpoint, B18-B21 cascade verification, optional W1+W2 fold, amd64 build + nix bump + tag + PyPI publish + post-ship verification)
@@ -252,7 +252,7 @@ Security observations:
 **Removed/added artifacts:**
 - ADD: `Dockerfile.ci` at repo root (custom yadgar-ci image spec)
 - ADD: `docker.io/openfantasy/yadgar-ci:5.46.3+` image on dockerhub
-- ADD: `YADGAR_CI_BRANCH=master` env var in workflows
+- ADD: `YADGAR_CI_BRANCH=master` env var in workflows *(retired by ADR-0215 — branch scoping removed, so the CI branch override has no reader)*
 - ADD: ~30 LOC light self-tests across the chain
 - MODIFY: `.forgejo/workflows/{ci.yaml,release.yaml}` image refs + SBOM install step
 - MODIFY: ~50 test files (fixture refactor per B1/B8/B13/B9/B10/B11)

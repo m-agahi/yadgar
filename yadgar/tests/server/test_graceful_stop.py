@@ -88,11 +88,8 @@ def test_graceful_stop_flushes_queue(tmp_path):
         def store(self, *a, **kw):
             pass
 
-    # Override drainer to bypass branch validation and real DB calls
+    # Override drainer to bypass payload validation and real DB calls
     class _TrackingDrainer(QueueDrainer):
-        def _validate_branch_context(self, data: dict) -> str | None:  # type: ignore[override]
-            return None  # disable branch validation for test
-
         def _validate_wiki_add(self, data: dict) -> str | None:  # type: ignore[override]
             return None  # disable wiki_add validation for test
 

@@ -41,7 +41,6 @@ import type {
   WikiDiscardArgs,
   WikiCoverageArgs,
   WikiRefreshStaleArgs,
-  WikiCleanupMergedBranchesArgs,
   // Blocks
   BlockCreateArgs,
   BlockGetArgs,
@@ -289,12 +288,6 @@ export async function wikiRefreshStale(client: Client, args: WikiRefreshStaleArg
   return extractToolResult(result) as DictResult;
 }
 
-/** List wiki pages whose branch is no longer in git. */
-export async function wikiCleanupMergedBranches(client: Client, args: WikiCleanupMergedBranchesArgs): Promise<DictResult> {
-  const result = await client.callTool({ name: "wiki_cleanup_merged_branches", arguments: args as unknown as Record<string, unknown> });
-  return extractToolResult(result) as DictResult;
-}
-
 // ---------------------------------------------------------------------------
 // Memory blocks
 // ---------------------------------------------------------------------------
@@ -470,7 +463,6 @@ export const WRAPPED_TOOLS = [
   "wiki_discard",
   "wiki_coverage",
   "wiki_refresh_stale",
-  "wiki_cleanup_merged_branches",
   "block_create",
   "block_get",
   "block_update",

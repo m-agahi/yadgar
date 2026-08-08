@@ -84,13 +84,6 @@
       "note": "T7 — investigation showed backend does not require YADGAR_DB_USER; test body is pass by design"
     },
     {
-      "id": "v5-46-9-branch-fallback-ci-env",
-      "file": "yadgar/tests/scripts/test_v5_46_9_branch_fallback_conditional.py",
-      "verdict": "LEGIT-CONDITIONAL",
-      "reason_pattern": "YADGAR_CI_BRANCH set in environment",
-      "note": "Documents v5.46.7 regression: daemon unconditionally uses YADGAR_CI_BRANCH as branch fallback. Fix is test-side in other tests (monkeypatch.delenv). Cannot be exercised in CI where YADGAR_CI_BRANCH=master is set globally."
-    },
-    {
       "id": "causal-discovery-char-regen",
       "file": "yadgar/tests/backend/test_causal_discovery_characterization.py",
       "verdict": "LEGIT-CONDITIONAL",

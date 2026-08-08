@@ -44,7 +44,6 @@ from yadgar.core.cli.hook import (  # noqa: F401
     _PORT,
     _auth_headers,
     _capture_in_flight_host,
-    _detect_branch,
     _http_get,
     _http_post,
     _log_hook_error,

@@ -1,7 +1,5 @@
 """Tests for predictive coding write gate — surprisal-based memory gating."""
 
-import os
-
 import pytest
 
 from yadgar._shared.config import Settings
@@ -9,19 +7,6 @@ from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.predictive_coding import WriteGate
 from yadgar.backend.retrieval import Retriever
-
-# ---------------------------------------------------------------------------
-# v5.54.5 B2: integration tests in this module call memorize() with /tmp/...
-# paths (not git repos) and don't supply branch_hint. Mirror CI's
-# YADGAR_CI_BRANCH=master so branch resolution doesn't hard-reject.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _ci_branch_fallback(monkeypatch):
-    """Set YADGAR_CI_BRANCH when not already set (mirrors CI env)."""
-    if not os.environ.get("YADGAR_CI_BRANCH"):
-        monkeypatch.setenv("YADGAR_CI_BRANCH", "test-branch")
 
 
 @pytest.fixture
@@ -452,7 +437,6 @@ class TestWriteGateIntegration:
                     content="Using Redis for caching with TTL-based expiration",
                     context="/tmp/integration-test",
                     tags=["redis", "caching"],
-                    branch_hint="feat/test-branch",  # R3: branch required
                 )
                 # First memory in a new directory should always be stored
                 assert "id" in result1
@@ -462,7 +446,6 @@ class TestWriteGateIntegration:
                     content="PostgreSQL database with connection pooling via pgbouncer",
                     context="/tmp/integration-test",
                     tags=["postgres", "database"],
-                    branch_hint="feat/test-branch",  # R3: branch required
                 )
 
                 # Now try to store a near-duplicate — may be blocked by write gate
@@ -471,7 +454,6 @@ class TestWriteGateIntegration:
                     content="Using Redis for caching with TTL-based expiration policy",
                     context="/tmp/integration-test",
                     tags=["redis"],
-                    branch_hint="feat/test-branch",  # R3: branch required
                 )
                 # This may be blocked or may be merged by curator.
                 # v4.4: gate fires during drain — caller gets DB row (id present) or

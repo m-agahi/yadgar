@@ -81,8 +81,6 @@ def _fanout(profile, type_filter="all", monkey_wiki=None, monkey_memory=None):
             max_results=5,
             min_heat=0.0,
             directory=_DIR,
-            current_branch=None,
-            default_branch=None,
             type_filter=type_filter,
             tags=None,
             profile=profile,

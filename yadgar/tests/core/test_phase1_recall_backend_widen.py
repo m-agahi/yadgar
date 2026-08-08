@@ -5,7 +5,7 @@ until the implementation is in place.
 
 Covers:
   §3.1 profile threading + fusion-CE gate (fast skips both memory-arm CE and fusion CE)
-  §5.2 branch boost + postmortem boost in _fanout_recall
+  §5.2 postmortem boost in _fanout_recall
   §5.1 backend /recall — 400s removed, landscape dispatch, profile threading
   §5.5 BACKEND_VERSION bump (unit-side; canonical drift guard is in test_v5_46_12_*)
 """
@@ -16,10 +16,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 _DIR = "/home/test/yadgar-project"
-_BRANCH = "feat/test-branch"
 
 
-def _make_candidate(content, score=0.5, cand_type="memory", branch=None):
+def _make_candidate(content, score=0.5, cand_type="memory"):
     from yadgar.backend.retrieval.providers.base import Candidate
 
     mid = abs(hash(content)) % 10000
@@ -30,14 +29,12 @@ def _make_candidate(content, score=0.5, cand_type="memory", branch=None):
         content=content,
         native_score=score,
         directory_context=_DIR,
-        branch=branch,
         raw={
             "id": mid,
             "content": content,
             "_retrieval_score": score,
             "heat": score,
             "directory_context": _DIR,
-            "branch": branch,
             "tags": [],
         },
     )
@@ -53,7 +50,6 @@ def _make_wiki_candidate(content, score=0.4):
         content=content,
         native_score=score,
         directory_context=_DIR,
-        branch="master",
         raw={
             "slug": "test-wiki",
             "content": content,
@@ -224,7 +220,7 @@ class TestMemoryProviderProfileThreading:
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
         provider = MemoryProvider(mock_retriever, profile="fast")
-        scope = Scope(directory=_DIR, branch=None, default_branch=None, min_heat=0.0)
+        scope = Scope(directory=_DIR, min_heat=0.0)
         provider.candidates("test query", scope, limit=10)
         mock_retriever.recall.assert_called_once()
         call_kw = mock_retriever.recall.call_args.kwargs
@@ -250,115 +246,12 @@ class TestMemoryProviderProfileThreading:
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
         provider = MemoryProvider(mock_retriever, profile=None)
-        scope = Scope(directory=_DIR, branch=None, default_branch=None, min_heat=0.0)
+        scope = Scope(directory=_DIR, min_heat=0.0)
         provider.candidates("test query", scope, limit=10)
         # profile=None is fine to pass explicitly, but must not cause errors
         # (Retriever.recall accepts profile kwarg — None is the default)
         # Just assert recall was called
         mock_retriever.recall.assert_called_once()
-
-
-class TestBranchBoostInFanout:
-    """§5.2: C4 branch boost must fire in _fanout_recall."""
-
-    def test_current_branch_memory_gets_boosted(self, monkeypatch):
-        import yadgar._shared.runtime.state as _st
-
-        base_score = 0.5
-        boosted_memory = {
-            "id": 1001,
-            "content": "memory on current branch",
-            "_retrieval_score": base_score,
-            "heat": base_score,
-            "directory_context": _DIR,
-            "branch": _BRANCH,
-            "tags": [],
-        }
-        other_memory = {
-            "id": 1002,
-            "content": "memory on other branch",
-            "_retrieval_score": base_score,
-            "heat": base_score,
-            "directory_context": _DIR,
-            "branch": "other-branch",
-            "tags": [],
-        }
-
-        mock_retriever = MagicMock()
-        mock_retriever.recall.return_value = [boosted_memory, other_memory]
-        monkeypatch.setattr(_st, "_retriever", mock_retriever)
-        monkeypatch.setattr(_st, "_wiki", None)
-
-        import yadgar.backend.retrieval.recall_pipeline as _pipe
-
-        # FANOUT_BOOST_SCOPE default is "scoped": boosts fire only when profile is
-        # not None. This test calls _fanout_recall on the default (no-profile) path
-        # to prove the branch-boost mechanism itself fires — force "global" so scope
-        # does not gate it out. (monkeypatch auto-restores the shared singleton.)
-        monkeypatch.setattr(_pipe.settings, "FANOUT_BOOST_SCOPE", "global")
-
-        from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
-
-        results = _fanout_recall(
-            query="test branch boost",
-            max_results=5,
-            min_heat=0.0,
-            directory=_DIR,
-            current_branch=_BRANCH,
-            default_branch="master",
-        )
-
-        branched = next((r for r in results if r.get("id") == 1001), None)
-        other = next((r for r in results if r.get("id") == 1002), None)
-
-        assert branched is not None, "Current-branch memory missing from results"
-        assert other is not None, "Other-branch memory missing from results"
-
-        boosted_score = branched.get("_retrieval_score", 0.0)
-        other_score = other.get("_retrieval_score", 0.0)
-
-        assert boosted_score > base_score, (
-            f"Branch boost did NOT fire: score {boosted_score} == base {base_score}"
-        )
-        assert boosted_score > other_score, (
-            f"Boosted memory score {boosted_score} must exceed non-boosted {other_score}"
-        )
-
-    def test_no_branch_no_boost(self, monkeypatch):
-        import yadgar._shared.runtime.state as _st
-
-        base_score = 0.5
-        mem = {
-            "id": 1003,
-            "content": "memory with branch",
-            "_retrieval_score": base_score,
-            "heat": base_score,
-            "directory_context": _DIR,
-            "branch": "feat/something",
-            "tags": [],
-        }
-        mock_retriever = MagicMock()
-        mock_retriever.recall.return_value = [mem]
-        monkeypatch.setattr(_st, "_retriever", mock_retriever)
-        monkeypatch.setattr(_st, "_wiki", None)
-
-        from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
-
-        results = _fanout_recall(
-            query="test no boost",
-            max_results=5,
-            min_heat=0.0,
-            directory=_DIR,
-            current_branch=None,
-            default_branch=None,
-        )
-
-        r = next((x for x in results if x.get("id") == 1003), None)
-        assert r is not None
-        score = r.get("_retrieval_score", 0.0)
-        assert abs(score - base_score) < 0.001, (
-            f"Branch boost applied when current_branch=None: got {score}, expected {base_score}"
-        )
 
 
 class TestPostmortemBoostInFanout:
@@ -404,8 +297,6 @@ class TestPostmortemBoostInFanout:
             max_results=5,
             min_heat=0.0,
             directory=_DIR,
-            current_branch="master",
-            default_branch="master",
         )
 
         pm_result = next((r for r in results if r.get("id") == 2001), None)
@@ -455,8 +346,6 @@ class TestPostmortemBoostInFanout:
             max_results=5,
             min_heat=0.0,
             directory=_DIR,
-            current_branch="master",
-            default_branch="master",
         )
 
         r = next((x for x in results if x.get("id") == 2003), None)
@@ -488,8 +377,6 @@ class TestPostmortemBoostInFanout:
             max_results=5,
             min_heat=0.0,
             directory=_DIR,
-            current_branch=None,  # No branch — avoids branch-boost interference
-            default_branch=None,
         )
 
         r = next((x for x in results if x.get("id") == 2004), None)

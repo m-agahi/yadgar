@@ -126,17 +126,6 @@
   "added_by": "complexity-governance-agent"
  },
  {
-  "path": "yadgar/core/server/tools/misc.py",
-  "function": "checkpoint",
-  "lineno": 36,
-  "metrics": {
-   "params": 9
-  },
-  "rationale": "PERMANENT. The 9 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
-  "added": "2026-06-13",
-  "added_by": "complexity-governance-agent"
- },
- {
   "path": "yadgar/core/server/tools/project.py",
   "function": "_render_project_brief",
   "lineno": 213,
@@ -152,11 +141,10 @@
   "function": "recall",
   "lineno": 111,
   "metrics": {
-   "cyclomatic": 17,
    "fn_loc": 180,
-   "params": 10
+   "params": 9
   },
-  "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436→180 and cyclomatic 55→17, but both remain above HARD caps due to: (1) multi-path input validation (type_filter, mode, profile, branch_hint, consolidation, shadow observe), (2) branch detection with fallback logic. params=10: all 10 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
+  "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436->180. ADR-0215 (branch removal) then deleted the branch-detection block, dropping cyclomatic below the HARD cap — that metric is gone from this entry. ADR-0215 Car 5 then dropped the branch_hint param (10->9). fn_loc remains above the cap due to multi-path input validation (type_filter, mode, profile, consolidation, shadow observe). params=9: all 9 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -166,20 +154,9 @@
   "lineno": 351,
   "metrics": {
    "cyclomatic": 25,
-   "params": 18
+   "params": 14
   },
-  "rationale": "PERMANENT. Public MCP tool: 18 params are the LLM-facing schema and cannot be bundled without breaking the API. Car C (#83) adds slug+upsert (2 params), Car B0 added hash+source_file (2 params). R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
-  "added": "2026-06-13",
-  "added_by": "complexity-governance-agent"
- },
- {
-  "path": "yadgar/core/server/tools/wiki.py",
-  "function": "wiki_query",
-  "lineno": 555,
-  "metrics": {
-   "cyclomatic": 20
-  },
-  "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+  "rationale": "PERMANENT. Public MCP tool: the params are the LLM-facing schema and cannot be bundled without breaking the API. Car C (#83) adds slug+upsert (2 params). ADR-0215 Car 5 dropped branch+branch_hint, leaving 14. R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -254,9 +231,9 @@
   "function": "<file>",
   "lineno": 1,
   "metrics": {
-   "file_loc": 1387
+   "file_loc": 1738
   },
-  "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.157.0 #76: recorded 1153 had drifted to ~1369 from migrations accumulated since 2026-06-13 (this touch only adds migration 026_drop_wiki_draft, ~+18 LoC net after removing the wiki_draft _init_schema entry); resyncing the recorded value. Each migration is an append-only single-responsibility fn — the module is a migration ledger by design; wave N split remains deferred.",
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.157.0 #76: recorded 1153 had drifted to ~1369 from migrations accumulated since 2026-06-13 (this touch only adds migration 026_drop_wiki_draft, ~+18 LoC net after removing the wiki_draft _init_schema entry); resyncing the recorded value. Each migration is an append-only single-responsibility fn — the module is a migration ledger by design; wave N split remains deferred. ADR-0215 Car 9: 1387 -> 1738 (+351). Migration 029 is unusually large for a ledger entry because it is a DATA migration, not a DDL one-liner: it carries five helpers (_m029_count / _m029_purge_unprotected_branch_memories / _m029_collision_pairs / _m029_resolve_slug_collisions / _m029_null_branch / _m029_assert_branch_fully_nulled), a Migration029Abort exception type and four measured constants, each abort path carrying the operator-facing message that tells a deploy-time reader whether to restore from the backup. Split into helpers rather than one function precisely to keep per-function complexity inside the caps; the cost lands on file_loc. Wave N split of this module remains deferred.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },
@@ -360,17 +337,6 @@
   "added_by": "feat/improvement-train"
  },
  {
-  "path": "yadgar/_shared/storage/wiki.py",
-  "function": "<file>",
-  "lineno": 1,
-  "metrics": {
-   "file_loc": 1012
-  },
-  "rationale": "v5.89 #69: upsert_dispatch_prelude_marker added ~37 lines to mirror upsert_active_work. The _WikiMixin class holds all memory/wiki upsert helpers; splitting the file creates import cycles. Scheduled for mixin decomposition in a dedicated refactor.",
-  "added": "2026-06-30",
-  "added_by": "feat/v5.89-settings-redesign"
- },
- {
   "path": "yadgar/_shared/observability/metrics.py",
   "function": "<file>",
   "lineno": 1,
@@ -393,24 +359,13 @@
   "added_by": "feat/obs-p1-recall-readpath"
  },
  {
-  "path": "yadgar/backend/retrieval/recall_pipeline.py",
-  "function": "_fanout_recall",
-  "lineno": 333,
-  "metrics": {
-   "params": 10
-  },
-  "rationale": "Phase 1 backend contract widen (#45): added profile: str | None = None as the 9th param to thread rerank_level through the fanout. The 8-param SOFT cap is exceeded by 1; the function signature matches the backend RecallRequest contract (query/max_results/min_heat/directory/current_branch/default_branch/type_filter/tags/profile). Introducing a config-object wrapper would require changing all callers (core + backend) simultaneously, which couples Phase 1 to Phase 2 — Phase 2 is the planned refactor pass. Allowlisted until Phase 2 can wrap params cleanly.",
-  "added": "2026-07-05",
-  "added_by": "recall-backend-phase1"
- },
- {
   "path": "yadgar/core/server/tools/recall.py",
   "function": "_forward_to_backend",
   "lineno": 44,
   "metrics": {
    "params": 10
   },
-  "rationale": "Phase 2a: pure forwarder function — mirrors full recall() MCP signature (10 params) plus positional context (current_branch, default_branch) needed for backend. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site — not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
+  "rationale": "Phase 2a: pure forwarder function — mirrors the recall() MCP signature plus the transport params (timeout_s, deadline_ms) the backend call needs. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site — not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
   "added": "2026-07-05",
   "added_by": "phase2a-cutover-agent"
  },
@@ -424,16 +379,5 @@
   "rationale": "Backend caching train Car 0 (#49): the unified backend Cache constructor mirrors the core yadgar/cache.py Cache (which sits at the 8-param cap: name/max_bytes/invalidation/key_fn/deep_copy/obs_tier/clock) plus one backend-only param, checkpoint_hash, needed to ckpt-gate the msgpack snapshot (a snapshot written under a different model hash must be discarded on load — the ce/embed model-swap contract). Each param is an independent, orthogonal cache policy bound once at construction; wrapping them in a config-object would add a dataclass indirection for a single construction site (the two _make_*_cache factories) with no readability gain. Allowlisted: Car 0, #49.",
   "added": "2026-07-06",
   "added_by": "backend-cache-train-car0"
- },
- {
-  "path": "yadgar/backend/write_exec/memorize_impl.py",
-  "function": "run_memorize_replay",
-  "lineno": 32,
-  "metrics": {
-   "params": 9
-  },
-  "rationale": "R3 write-path regression fix: 'reason' (semantic_immortal anchor reason) must survive the enqueue->drain boundary so drainer-side phase_validate can re-check the require-reason invariant. The signature mirrors the memorize MCP schema (already noqa'd PLR0913); all 9 params are queue-payload fields — a params dataclass would just relocate the field list without reducing essential complexity.",
-  "added": "2026-07-08",
-  "added_by": "reorg3-test-migration"
  }
 ]

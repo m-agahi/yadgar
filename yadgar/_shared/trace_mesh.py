@@ -127,10 +127,9 @@ ALIASES: dict[str, str] = {
     "_scan_stale_wiki_slugs": "scan stale wiki slugs",
     "_slug_prefix": "compute slug prefix",
     "_current_epoch": "epoch cache hit",
-    # ── branch / identity helpers ────────────────────────────────────────────
-    "_detect_branch": "detect git branch",
-    "_detect_branch_cached": "detect git branch (cached)",
-    "_get_default_branch_cached": "detect default branch (cached)",
+    # ── identity helpers ─────────────────────────────────────────────────────
+    "_origin_head_short": "resolve origin/HEAD short name",
+    "_origin_head_short_cached": "resolve origin/HEAD short name (cached)",
     # ── anchor / checkpoint validation ───────────────────────────────────────
     "_validate_anchor_inputs": "validate anchor inputs",
     "_validate_checkpoint_surrogates": "validate checkpoint fields",

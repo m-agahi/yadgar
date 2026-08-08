@@ -199,7 +199,6 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         "file_hash",
         "provenance_agent",
         "vector_clock",
-        "branch",
         # v5.8.0 anchor hygiene fields
         "tier",
         "valid_until",

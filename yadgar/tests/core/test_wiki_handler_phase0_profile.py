@@ -139,7 +139,6 @@ def _measure_e2e() -> list[float]:
             content="MCP handler I9 profiling end-to-end content measurement",
             tags=["perf"],
             wait=False,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         latencies.append((time.perf_counter() - t0) * 1000)
@@ -247,7 +246,6 @@ def test_wiki_add_phase0_profiling(_profile_env, tmp_path):
             content="warmup",
             tags=["perf-warmup"],
             wait=False,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
 

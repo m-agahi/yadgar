@@ -317,7 +317,13 @@ repos:
         # "Could not read any configuration". Contract config lives in
         # pyproject.toml [tool.importlinter]; must stay 4 kept / 0 broken.
         language: system
-        entry: lint-imports
+        # Self-resolve the CURRENT worktree's venv. `language: system` runs under
+        # pre-commit's python, not the project venv, so a bare `lint-imports` is
+        # "Executable not found" in any worktree that has not exported PATH by hand
+        # (every agent worktree, repeatedly). Must be THIS tree's .venv, never the
+        # main repo's — the editable install points at whichever tree owns it, so
+        # borrowing it would analyse the wrong code.
+        entry: bash -c 'PATH="$PWD/.venv/bin:$PATH" exec lint-imports'
         files: ^(yadgar/.*\.py|pyproject\.toml)$
         pass_filenames: false
         # pre-commit only (fail fast at commit). Without this the hook runs every

@@ -11,9 +11,9 @@ wiki_replace_at, wiki_delete_at, wiki_insert_at, wiki_replace_markdown_block,
 wiki_set_metadata, wiki_autolink, agent_prompt_save.
 
 DESIGN — slug→page_id resolution stays CORE.
-``_resolve_page_id_by_slug`` calls ``os.getcwd()`` + ``_detect_branch(cwd)``. The
-backend container has no git and a different cwd, so backend-side resolution would
-land the wrong (directory, branch) row. Core resolves the slug to a ``page_id``
+``_resolve_page_id_by_slug`` resolves against the caller's ``os.getcwd()``. The
+backend container has a different cwd, so backend-side resolution would land the
+wrong directory row. Core resolves the slug to a ``page_id``
 (reads are allowed core-side — "zero DB" is a write-side goal — and core+backend
 share the same DB), then forwards the write keyed by ``page_id``. Impls that need
 the page therefore take ``page_id`` in the payload, not ``slug``+context.
@@ -182,7 +182,7 @@ def wiki_append_section(payload: dict) -> dict:
 
 @observe(tier="boundary", metric="backend.admin.wiki_set_metadata")
 def wiki_set_metadata(payload: dict) -> dict:
-    """Set directory_context or branch on ALL rows sharing a slug. Storage-write half.
+    """Set directory_context on ALL rows sharing a slug. Storage-write half.
 
     payload: {"slug": str, "field": str, "value": str | None}
     Returns {ok, slug, rows_updated, page_ids} or {ok: False, error}.
@@ -341,7 +341,7 @@ def wiki_replace_markdown_block(payload: dict) -> dict:
 
 
 @observe(tier="stage", metric="backend.admin.agent_prompt._upsert_toc_row")
-def _upsert_toc_row(pattern: str, purpose: str, branch_hint: str | None) -> None:
+def _upsert_toc_row(pattern: str, purpose: str) -> None:
     """Scan-replace-or-add the `pattern → purpose` row in the global TOC page.
 
     Backend-side copy of the core helper (the whole read-modify-write runs where
@@ -370,7 +370,6 @@ def _upsert_toc_row(pattern: str, purpose: str, branch_hint: str | None) -> None
             opts=WikiAddOptions(
                 source_memory_ids=[],
                 confidence="high",
-                branch=branch_hint,
                 directory_context="global",
                 # Task 0134: the TOC used to be written untyped, so it fell
                 # through to DEFAULT_POLICY include and the library index
@@ -385,7 +384,7 @@ def _upsert_toc_row(pattern: str, purpose: str, branch_hint: str | None) -> None
 
 
 @observe(tier="stage", metric="backend.admin.agent_prompt._ensure_library_anchor")
-def _ensure_library_anchor(branch_hint: str | None) -> None:
+def _ensure_library_anchor() -> None:
     """Create the global discovery anchor pointing at the TOC, if absent.
 
     Backend-side copy of the core helper — ``_get_replay`` is in the slim engine
@@ -408,7 +407,6 @@ def _ensure_library_anchor(branch_hint: str | None) -> None:
             "global",
             [f"anchor:{_LIBRARY_ANCHOR_REASON}"],
             _LIBRARY_ANCHOR_REASON,
-            branch=branch_hint,
         )
     except Exception as e:  # noqa: BLE001
         logger.debug("agent_prompt_save: library anchor ensure failed: %s", e)
@@ -418,8 +416,7 @@ def _ensure_library_anchor(branch_hint: str | None) -> None:
 def agent_prompt_save(payload: dict) -> dict:
     """Upsert an agent-prompt page + TOC row + library anchor. Storage-write half.
 
-    payload: {slug, title, full_content, tags, pattern, purpose, branch_hint,
-              directory}
+    payload: {slug, title, full_content, tags, pattern, purpose, directory}
     Content already secret-gated + directory-validated + wrapped core-side.
     Returns {saved: True, version, slug, page_id}.
 
@@ -434,7 +431,6 @@ def agent_prompt_save(payload: dict) -> dict:
     tags = payload["tags"]
     pattern = payload["pattern"]
     purpose = payload["purpose"]
-    branch_hint = payload.get("branch_hint")
     effective_dir = payload["directory"]
     # ADR-0209: the family is decided CORE-side and carried on the payload —
     # this op keys everything else off the slug, but re-deriving the page_type
@@ -452,7 +448,6 @@ def agent_prompt_save(payload: dict) -> dict:
             opts=WikiAddOptions(
                 source_memory_ids=[],
                 confidence="high",
-                branch=branch_hint,
                 directory_context=effective_dir,
                 page_type=page_type,
             ),
@@ -497,8 +492,8 @@ def agent_prompt_save(payload: dict) -> dict:
             version = 1
 
     # S6 discovery surface (best-effort; failures never block the save):
-    _upsert_toc_row(pattern, purpose, branch_hint)
-    _ensure_library_anchor(branch_hint)
+    _upsert_toc_row(pattern, purpose)
+    _ensure_library_anchor()
 
     return {
         "saved": True,
@@ -546,7 +541,6 @@ def _set_toc_row_count(pattern: str, count: int) -> bool:
             opts=WikiAddOptions(
                 source_memory_ids=[],
                 confidence="high",
-                branch=None,
                 directory_context="global",
             ),
         )

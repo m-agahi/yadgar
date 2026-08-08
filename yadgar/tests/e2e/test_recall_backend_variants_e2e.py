@@ -57,7 +57,6 @@ def _insert_wiki(title: str, content: str) -> str:
     assert _st._wiki is not None
     opts = WikiAddOptions(
         source_memory_ids=[],
-        branch="master",
         directory_context=_DIR,
     )
     page = _st._wiki.add(
@@ -140,9 +139,6 @@ def variant_corpus(e2e_engines, monkeypatch):
     # Seed pool-assigned memory for landscape
     _insert_and_assign_pool(storage, embeddings, f"def fix_handler() resolved TypeError {_QUERY}")
 
-    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
     # Mark engines ready (fixture engines already initialized).
     # T2 Car E2: pre-marking skips _ensure_recall_engines, which is what
     # composes the backend retriever now — compose it explicitly (idempotent).
@@ -160,8 +156,6 @@ def _base_payload(**overrides) -> dict:
     payload = {
         "query": _QUERY,
         "directory": _DIR,
-        "current_branch": "master",
-        "default_branch": "master",
         "max_results": 10,
         "min_heat": 0.0,
         "type": "all",

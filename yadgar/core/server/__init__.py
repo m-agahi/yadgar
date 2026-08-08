@@ -154,7 +154,6 @@ from yadgar.core.server.tools import (  # noqa: F401
     project_brief,
     bootstrap_project,
     update_active_work,
-    wiki_cleanup_merged_branches,
     forget,
     validate_memory,
     check_invariants,
@@ -168,6 +167,7 @@ from yadgar.core.server.tools import (  # noqa: F401
     wiki_get,
     memory_update,
     de_anchor,
+    anchor_renew,
     wiki_update,
     dlq_inspect,
     dlq_requeue,
@@ -218,13 +218,8 @@ from yadgar.core.server.tools import (  # noqa: F401
     config_delete,
 )
 
-# ── 7. Project helpers (tests import _detect_branch etc. indirectly) ──
+# ── 7. Project helpers ──
 from yadgar.core.server.tools.project import (  # noqa: F401
-    _detect_branch,
-    _detect_branch_cached,
-    _get_default_branch,
-    _get_default_branch_cached,
-    _get_current_branch,
     _resolve_project_root,
     _git_safe_env,
     _GIT_SAFE_ARGS,

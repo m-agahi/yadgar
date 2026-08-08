@@ -114,7 +114,7 @@ def _build_sync_env(monkeypatch, *, memory_id=_FIXED_MEMORY_ID, get_memory_retur
 
     _mem_mod = importlib.import_module("yadgar.core.server.tools.memorize")
 
-    # _phase_resolve_branch calls _file_queue.is_draining() via module — patch source
+    # The drain-replay path reads _file_queue.is_draining() via module ref — patch source
     monkeypatch.setattr(_fq, "is_draining", lambda: True)
 
     if get_memory_return is None:
@@ -202,7 +202,7 @@ def test_memorize_accept_path_returns_expected_dict(monkeypatch, tmp_path):
 
     R3 migration: core memorize() is enqueue-only; the sync accept path
     (the pipeline that produced this snapshot) now lives in the backend
-    run_memorize_replay — drive it directly with the enqueue-time branch.
+    run_memorize_replay — drive it directly.
     """
     _build_sync_env(monkeypatch)
     from yadgar.backend.write_exec.memorize_impl import run_memorize_replay
@@ -211,7 +211,6 @@ def test_memorize_accept_path_returns_expected_dict(monkeypatch, tmp_path):
         content="snapshot test content",
         context="/tmp/snapshot-test",
         tags=["test", "snapshot"],
-        branch="feat/snapshot-test",
     )
 
     # Core shape assertions (stable regardless of snapshot)
@@ -248,7 +247,6 @@ def test_memorize_reject_write_gate_returns_expected_dict(monkeypatch, tmp_path)
         content="snapshot test content for gate rejection",
         context="/tmp/snapshot-test",
         tags=["test"],
-        branch="feat/snapshot-test",
     )
 
     assert result.get("stored") is False
@@ -258,54 +256,10 @@ def test_memorize_reject_write_gate_returns_expected_dict(monkeypatch, tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — reject: missing branch
+# Test 3 — REMOVED (ADR-0215): memorize() no longer rejects a write for lacking
+# branch context, so there is no rejection dict left to snapshot. Positive
+# replacement lives in yadgar/tests/e2e/test_branch_agnostic_write_path.py.
 # ---------------------------------------------------------------------------
-
-
-def test_memorize_reject_missing_branch_returns_expected_dict(monkeypatch, tmp_path):
-    """memorize() with no branch context returns missing_branch error dict.
-
-    Snapshot: memorize_reject_missing_branch_v5_49_4.json
-    """
-    import importlib
-
-    import yadgar._shared.runtime.state as _st
-    import yadgar.backend.queue_drainer as _fq
-
-    _mem_mod = importlib.import_module("yadgar.core.server.tools.memorize")
-    _resolve_branch_mod = importlib.import_module(
-        "yadgar.backend.write_exec._memorize_phases._phase_resolve_branch"
-    )
-    _validate_mod = importlib.import_module("yadgar._shared.write_exec.validate")
-
-    # NOT draining — fast path, branch check fires
-    # _phase_resolve_branch uses _file_queue.is_draining() via module ref — patch source
-    monkeypatch.setattr(_fq, "is_draining", lambda: False)
-
-    mock_settings = _make_mock_settings()
-    monkeypatch.setattr(_mem_mod, "settings", mock_settings)
-    monkeypatch.setattr(_st, "_rules_engine", None)
-
-    from yadgar.core.server.tools.memorize import memorize
-
-    # No branch_hint, _detect_branch returns None, no YADGAR_CI_BRANCH env
-    with (
-        patch("yadgar.core.server._detect_branch", return_value=None),
-        patch.dict("os.environ", {}, clear=False),
-    ):
-        monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
-        # gate_or_reject must pass (no secret content)
-        with patch.object(_validate_mod, "gate_or_reject", return_value=None):
-            result = memorize(
-                content="missing branch test content",
-                context="/tmp/snapshot-test",
-                tags=["test"],
-            )
-
-    assert result.get("stored") is False
-    assert result.get("error") == "missing_branch"
-
-    _assert_matches_snapshot("memorize_reject_missing_branch_v5_49_4", result)
 
 
 # ---------------------------------------------------------------------------
@@ -397,16 +351,13 @@ def test_memorize_writes_to_queue(monkeypatch, tmp_path):
     mock_fq = MagicMock()
     mock_fq.enqueue.side_effect = _mock_enqueue
 
-    # R3 Car 1: the enqueue fast-path moved out of _phase_resolve_branch into
-    # the memorize tool itself — _get_file_queue is a memorize-module ref now.
+    # R3 Car 1: the enqueue fast-path lives in the memorize tool itself —
+    # _get_file_queue is a memorize-module ref now.
     monkeypatch.setattr(_mem_mod, "_get_file_queue", lambda: mock_fq)
 
     from yadgar.core.server.tools.memorize import memorize
 
-    with (
-        patch("yadgar.core.server._detect_branch", return_value="feat/queue-test"),
-        patch.object(_validate_mod, "gate_or_reject", return_value=None),
-    ):
+    with patch.object(_validate_mod, "gate_or_reject", return_value=None):
         result = memorize(
             content="queue side-effect test content",
             context="/tmp/queue-test",
@@ -424,7 +375,11 @@ def test_memorize_writes_to_queue(monkeypatch, tmp_path):
     assert pdata["content"] == "queue side-effect test content"
     assert pdata["context"] == "/tmp/queue-test"
     assert "test" in pdata["tags"]
-    assert pdata["branch"] == "feat/queue-test"
+    # ADR-0215: the enqueue payload carries no branch key at all. Asserted
+    # positively (not merely dropped) so a future write path that starts
+    # re-populating branch trips this test rather than silently re-arming the
+    # dimension the ADR removed.
+    assert "branch" not in pdata, f"memorize payload must carry no branch key; got {sorted(pdata)}"
 
     # Structural snapshot (masks UUID queue_id but preserves payload shape)
     snapshot_data = {

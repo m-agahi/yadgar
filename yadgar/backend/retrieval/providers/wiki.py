@@ -111,7 +111,6 @@ class WikiProvider(SourceProvider):
                     content=page.get("content", ""),
                     native_score=native_score,
                     directory_context=dc,
-                    branch=page.get("branch"),
                     raw=raw,
                 )
             )

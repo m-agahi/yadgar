@@ -15,16 +15,15 @@ logger = logging.getLogger(__name__)
 
 # v5.42.0: failure_reason taxonomy — failure_reason values treated as "rejections"
 # (i.e. similarity gate, policy rejected). "permanent_error" is the legacy/default.
-# v5.42.3: added "missing_branch" — queue entry lacks branch context.
 # v5.42.5: added "missing_directory" — queue entry lacks directory_context.
 # ("repo_wiki_schema_invalid" — the repo_wiki identity-gate rejection reason —
 # was removed with repo_wiki's decommission, #33/ADR-0162; the gate that
-# produced it no longer exists.)
+# produced it no longer exists. The v5.42.3 branch-context rejection was
+# removed with branch scoping itself, ADR-0215.)
 _REJECTION_TAXONOMY: frozenset[str] = frozenset(
     {
         "duplicate_detected",
         "policy_rejected",
-        "missing_branch",  # v5.42.3: queue entry lacks branch context
         "missing_directory",  # v5.42.5: queue entry lacks directory_context
     }
 )
@@ -119,14 +118,6 @@ _REQUEUE_REJECTION_ERROR = (
     "(3) call dlq_dismiss(filename) to acknowledge and drop this entry."
 )
 
-# v5.42.3: missing_branch rejection error message.
-_REQUEUE_MISSING_BRANCH_ERROR = (
-    "missing_branch rejection — cannot auto-requeue. "
-    "Edit the payload file to add a 'branch' key with the correct branch value, "
-    "then call dlq_requeue(filename, force=True) to retry. "
-    "Or call dlq_dismiss(filename) to drop this entry."
-)
-
 
 @_tool(power=True)
 def dlq_requeue(filename: str, force: bool = False) -> dict:
@@ -140,14 +131,12 @@ def dlq_requeue(filename: str, force: bool = False) -> dict:
     - wiki_delete the existing duplicate first, then retry
     - dlq_dismiss(filename) to acknowledge and drop the entry
 
-    v5.42.3: missing_branch entries require operator action before requeue:
-    1. Edit the payload file to add "branch": "<correct-branch>"
-    2. Call dlq_requeue(filename, force=True) to bypass taxonomy blocking
     Note: force=True bypasses the taxonomy gate ONLY. The drainer still re-validates
-    the payload content — a payload still missing branch after force=True is rejected again.
+    the payload content — a payload that still fails validation after force=True is
+    rejected again.
 
     filename: exact filename from dlq_inspect() (e.g. "0001778139482800_<uuid>.json")
-    force: if True, bypass taxonomy blocking (for missing_branch entries after operator fix)
+    force: if True, bypass taxonomy blocking (after the operator has fixed the payload)
     """
     import json as _json
 
@@ -162,15 +151,12 @@ def dlq_requeue(filename: str, force: bool = False) -> dict:
     if not src.exists():
         return {"requeued": False, "error": f"Not found in DLQ: {filename}"}
 
-    # v5.42.0 / v5.42.3: block requeue for rejection taxonomy entries unless force=True.
-    # missing_branch entries require operator to add branch to payload before requeuing.
+    # v5.42.0: block requeue for rejection taxonomy entries unless force=True.
     sidecar = fq.dlq_dir / (filename + ".error.json")
     if sidecar.exists() and not force:
         try:
             meta = _json.loads(sidecar.read_text())
             failure_reason = meta.get("failure_reason") or "permanent_error"
-            if failure_reason == "missing_branch":
-                return {"requeued": False, "error": _REQUEUE_MISSING_BRANCH_ERROR}
             if failure_reason in _REJECTION_TAXONOMY:
                 return {"requeued": False, "error": _REQUEUE_REJECTION_ERROR}
         except Exception:

@@ -96,9 +96,6 @@ class _DLQMixin:
     _MIN_WIKI_SCHEMA_VERSION: int = 2
     _WIKI_REQUIRED_FIELDS: tuple[str, ...] = ("slug", "title", "content", "category")
 
-    # ── v5.42.3: op types that require branch context ─────────────────────────
-    _MEMORY_OP_TYPES: frozenset[str] = frozenset({"memorize", "anchor", "checkpoint"})
-
     @observe(tier="stage", metric="drainer.dlq.validate_wiki_add")
     def _validate_wiki_add(self, record: dict) -> str | None:
         """Validate a wiki_add queue record (§26 Option Z).
@@ -106,9 +103,10 @@ class _DLQMixin:
         Returns a rejection reason string if the record should go to DLQ,
         or None if it passes all checks.
 
-        v5.42.3: adds branch check — payloads missing branch (and not _internal=True)
-        are rejected with failure_reason=missing_branch. Defense-in-depth for the
-        MCP boundary validator; also catches direct file_queue writes that bypass MCP.
+        v5.42.5: checks directory_context — payloads missing it (and not
+        _internal=True) are rejected with failure_reason=missing_directory.
+        Defense-in-depth for the MCP boundary validator; also catches direct
+        file_queue writes that bypass MCP.
         """
         p = record.get("payload", {})
 
@@ -134,23 +132,7 @@ class _DLQMixin:
         except Exception as _e:
             logger.debug("_validate_wiki_add: degenerate check failed: %s", _e)
 
-        # 4. v5.42.3: branch context required for external writes.
-        # _internal=True is the carve-out for system/migration paths.  # _internal-only
-        if not p.get("_internal"):
-            branch_val = p.get("branch")
-            if not branch_val:
-                if _enforcement_on("YADGAR_BRANCH_ENFORCEMENT"):
-                    return (
-                        "missing_branch: wiki_add payload lacks branch context. "
-                        "Supply branch or branch_hint. Use _internal=True for system writes."
-                    )
-                logger.warning(
-                    "wiki_add: branch enforcement OFF — missing branch allowed "
-                    "(YADGAR_BRANCH_ENFORCEMENT=false)"
-                )
-                _inc_relaxed("branch")
-
-        # 5. v5.42.5: directory_context required for all writes.
+        # 4. v5.42.5: directory_context required for all writes.
         # _internal=True carve-out applies here too.
         if not p.get("_internal"):
             dc = p.get("directory_context") or p.get("directory")
@@ -164,47 +146,6 @@ class _DLQMixin:
                 _inc_relaxed("directory")
 
         return None
-
-    @observe(tier="stage", metric="drainer.dlq.validate_branch_context")
-    def _validate_branch_context(self, record: dict) -> str | None:
-        """Validate that a memory-op queue record carries branch context (v5.42.3).
-
-        Symmetric with _validate_wiki_add branch check. Called for memorize,
-        anchor, and checkpoint ops. Returns rejection reason string or None.
-
-        _internal=True in payload is the approved carve-out for system paths:
-        sentinel, subagent_stop hook, plan_file hook, consolidation.
-        These set _internal=True when enqueuing.  # _internal-only
-        """
-        p = record.get("payload", {})
-
-        if not p.get("_internal"):  # _internal-only
-            branch_val = p.get("branch")
-            if not branch_val:
-                if _enforcement_on("YADGAR_BRANCH_ENFORCEMENT"):
-                    op = record.get("op", "memory-op")
-                    return (
-                        f"missing_branch: {op} payload lacks branch context. "
-                        "Supply branch_hint=<branch> or ensure daemon can detect git branch. "
-                        "Use _internal=True for system writes."
-                    )
-                logger.warning(
-                    "memory-op: branch enforcement OFF — missing branch allowed "
-                    "(YADGAR_BRANCH_ENFORCEMENT=false)"
-                )
-                _inc_relaxed("branch")
-        return None
-
-    def _build_missing_branch_metadata(self, record: dict, op_type: str) -> dict:
-        """Build failure_metadata dict for missing_branch DLQ entries (v5.42.3)."""
-        return {
-            "field": "branch",
-            "payload_op_type": op_type,
-            "hint": (
-                "Add 'branch' key to payload with the correct branch name, "
-                "then call dlq_requeue(filename, force=True) to retry."
-            ),
-        }
 
     @observe(tier="stage", metric="drainer.dlq.validate_directory_context")
     def _validate_directory_context(self, record: dict) -> str | None:
@@ -237,18 +178,17 @@ class _DLQMixin:
     def _fill_wiki_add_defaults(self, payload: dict) -> dict:
         """Fill fields that the export-yadgar skill cannot know (§26 Option Z).
 
-        - branch: leave as None if absent (canonical slot; matches wiki_add direct path).
         - confidence: set to 'medium' if absent.
         - _internal: strip before storage write (never persisted to DB).
 
-        v5.42.2: changed from hardcoded "master" → None to match the wiki_add direct
-        handler's canonical-slot behavior. Callers that need an explicit branch must pass
-        it themselves; the drainer no longer injects a default branch value.
-
         v5.42.3: _internal flag stripped here so it is never passed to wiki_add().
+
+        ADR-0215: the branch arm (leave-as-None-if-absent) was dropped. Migration
+        029 drops the branch column from wiki_page/memory entirely, so no reader
+        of payload["branch"] remains — run_wiki_add_replay never looks at it.
+        A payload that still carries a stale "branch" key deserialises unchanged
+        (plain JSON read via .get() downstream); one missing it is unaffected too.
         """
-        if "branch" not in payload:
-            payload["branch"] = None
         if not payload.get("confidence"):
             payload["confidence"] = "medium"
         payload.pop("_internal", None)  # strip before DB write — system-only runtime flag
@@ -329,7 +269,6 @@ class _DLQMixin:
             candidates = _st._wiki.find_similar_wiki_pages(
                 title=title,
                 content=payload.get("content", ""),
-                branch=payload.get("branch"),
                 threshold=sim_threshold,
                 top_k=sim_top_k,
                 exclude_slug=payload.get("slug", ""),

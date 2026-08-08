@@ -166,7 +166,6 @@ def test_fts_stage_span_emits(span_exporter):
         open_domain_mode=False,
         candidate_k=10,
         min_heat=0.0,
-        branch_filter=None,
     )
     stub._collect_fts_scores(_make_scores(), params)
     assert _find_suffix(span_exporter, "._collect_fts_scores") is not None, _span_names(

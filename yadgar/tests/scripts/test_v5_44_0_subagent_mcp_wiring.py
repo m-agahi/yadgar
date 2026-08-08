@@ -2,7 +2,7 @@
 
 Covers:
 - Base: bundled agent template files exist + correct structure
-- X1: agent_dispatch_prelude extended with branch_hint/directory/subagent_type/include_context
+- X1: agent_dispatch_prelude extended with directory/subagent_type/include_context
 - X2: SubagentStop directive parser (memorize/wiki_add/anchor) + writeback
 - X3: OS-detection helpers (platform_paths.py)
 - X4: install-subagents idempotency
@@ -115,7 +115,6 @@ class TestAgentDispatchPreludeX1:
                 "",
                 "some topic",
                 storage=storage,
-                branch_hint="feat/test",
                 directory="/tmp/test",
                 subagent_type="general-purpose",
                 include_context=False,  # OFF — default
@@ -139,42 +138,18 @@ class TestAgentDispatchPreludeX1:
                 "",
                 "some topic",
                 storage=storage,
-                branch_hint="feat/test",
                 directory="/tmp/test",
                 subagent_type="general-purpose",
                 include_context=True,
             )
             mock_ctx.assert_called_once_with(
                 task_topic="some topic",
-                branch_hint="feat/test",
                 directory="/tmp/test",
                 subagent_type="general-purpose",
                 storage=storage,
             )
 
         assert "Yadgar Context" in result
-
-    def test_include_context_uses_v5_43_0_signatures(self):
-        """_build_context_block is written to call recall/wiki_query with directory+branch_hint.
-
-        Verifies by inspecting the source code that the v5.43.0 kwarg names appear
-        in the _build_context_block function body (integration guard).
-        Also verifies the function accepts the expected parameters.
-        """
-        import inspect
-
-        from yadgar.core.server.tools.dispatch_helper import _build_context_block
-
-        # Signature check — function accepts branch_hint and directory params
-        sig = inspect.signature(_build_context_block)
-        param_names = list(sig.parameters.keys())
-        assert "branch_hint" in param_names, "Missing branch_hint param in _build_context_block"
-        assert "directory" in param_names, "Missing directory param in _build_context_block"
-
-        # Source check — function calls recall with directory= and branch_hint= kwargs
-        source = inspect.getsource(_build_context_block)
-        assert "directory=" in source, "_build_context_block must pass directory= to recall"
-        assert "branch_hint=" in source, "_build_context_block must pass branch_hint= to recall"
 
     def test_contract_text_updated_for_long_running(self):
         """v5.44.0 contract allows long_running agents to call memorize directly.
@@ -206,7 +181,6 @@ class TestAgentDispatchPreludeX1:
             "dispatch-fix-bug",
             "task topic",
             storage=storage,
-            branch_hint="feat/v5.44.0",
             directory="/tmp/project",
             subagent_type="general-purpose",
             include_context=False,

@@ -19,13 +19,7 @@ def _engines(tmp_path_factory):
     storage, embeddings, buffer, consolidation, staleness = server.init_engines(
         db_path=db_path, embedding_model="all-MiniLM-L6-v2"
     )
-    # v5.42.3: /tmp/* dirs are not git repos; patch _detect_branch so tests
-    # that call memorize/anchor/etc. with /tmp paths pass branch context.
-    with (
-        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
-    ):
-        yield
+    yield
     server.shutdown()
 
 
@@ -399,7 +393,6 @@ def test_check_invariants_autorepair_memory_entity_orphans():
 
 def test_check_invariants_nonfixable_stays_in_violations():
     """Ceiling breaches and slot anomalies remain in violations (not auto-repaired)."""
-    from unittest.mock import patch
 
     from yadgar.backend.admin_exec.invariants import _run_check_invariants
 

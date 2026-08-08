@@ -27,13 +27,9 @@ concurrency:
 permissions:
   contents: read
 
-# YADGAR_CI_BRANCH tells the yadgar daemon which branch context to use in the
-# CI runner (B2 fix — CI runner paths are anonymised so git branch detection
-# fails without this hint). See docs/reference/decisions.md PD-42.
 # YADGAR_TEST_SKIP_RUNTIME_CHECK: skip container-runtime detection in Makefile
 # pre-setup target when podman/docker is absent in CI runner (P8 fix v5.46.7).
 env:
-  YADGAR_CI_BRANCH: master
   YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
 
 jobs:
@@ -468,6 +464,10 @@ jobs:
         # which is ALWAYS empty in a CI checkout — so the guard ran, printed OK and
         # could never fail. This step evaluates the cumulative branch diff vs the
         # merge-base instead, which is the question a PR actually poses.
+        # NO env: block here, and none may be added. A sanctioned deletion is
+        # recorded per file in .test-weakening-allowlist.json, in the repo, in the
+        # diff a reviewer reads — not in a label-gated environment variable that
+        # silences every file at once from outside the repository.
         run: python scripts/check_test_weakening.py --ci --base origin/master
 
   # Gateway: aggregates all four subsystem test jobs.

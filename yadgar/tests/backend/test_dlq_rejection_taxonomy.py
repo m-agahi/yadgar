@@ -201,12 +201,11 @@ class TestDrainerReroutesRejectionToDLQ:
         # Write a page to DB directly (sync path, no gate)
         _write_sync("Yadgar Roadmap A", _ROADMAP_CONTENT_A)
 
-        # Enqueue a near-duplicate (v5.42.3: branch_hint required)
+        # Enqueue a near-duplicate
         server.wiki_add(
             title="Yadgar Roadmap B",
             content=_ROADMAP_CONTENT_B,
             wait=False,
-            branch_hint="feat/test-branch",
             directory="/home/max/git/yadgar",
         )
         assert len(fq.pending()) == 1
@@ -238,12 +237,11 @@ class TestDrainerReroutesRejectionToDLQ:
         # Write original
         _write_sync("Roadmap Original", _ROADMAP_CONTENT_A)
 
-        # wait=True should still get sync rejection (v5.42.3: branch_hint required)
+        # wait=True should still get sync rejection
         result = server.wiki_add(
             title="Roadmap Clone",
             content=_ROADMAP_CONTENT_B,
             wait=True,
-            branch_hint="feat/test-branch",
             directory="/home/max/git/yadgar",
         )
         # Either committed (gate didn't fire) or rejected
@@ -275,7 +273,6 @@ class TestDrainerReroutesRejectionToDLQ:
             title="Metrics Test B",
             content=_ROADMAP_CONTENT_B,
             wait=False,
-            branch_hint="feat/test-branch",
             directory="/home/max/git/yadgar",
         )
         drainer.drain_now()
@@ -293,7 +290,6 @@ class TestDrainerReroutesRejectionToDLQ:
             content=_ROADMAP_CONTENT_B,
             force=True,
             wait=False,
-            branch_hint="feat/test-branch",
             directory="/home/max/git/yadgar",
         )
         assert len(fq.pending()) == 1

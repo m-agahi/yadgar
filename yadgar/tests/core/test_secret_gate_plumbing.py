@@ -318,7 +318,7 @@ class TestMemorizeAllowlistedTagSucceeds:
             content=f"Test memory with fake token: {fake_token}",
             context="/home/user/test",
             tags=["test-fixture", "yadgar"],
-            branch_hint="feat/test-branch",  # R3: branch required at enqueue
+            # R3: branch required at enqueue
         )
 
         assert result.get("stored") is not False, (

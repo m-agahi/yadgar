@@ -780,7 +780,9 @@ def test_config_post_write_blocked_knob_returns_400(monkeypatch, tmp_path):
         ("YADGAR_DEBUG_APIS_ENABLED", "false"),  # gate self-disable
         ("YADGAR_ALLOW_ROOT", "true"),  # privilege escalation
         ("YADGAR_REQUIRE_AUTH", "false"),  # auth bypass
-        ("YADGAR_BRANCH_ENFORCEMENT", "false"),  # enforcement bypass
+        # YADGAR_BRANCH_ENFORCEMENT dropped from the blocked set with branch
+        # scoping itself (ADR-0215 Car 2); the directory knob it was paired with
+        # survives and is still write-protected.
         ("YADGAR_DIRECTORY_ENFORCEMENT", "false"),  # enforcement bypass
     ]
 

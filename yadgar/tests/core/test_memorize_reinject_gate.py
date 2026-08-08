@@ -24,7 +24,6 @@ _FAKE_MEMORY = {
     "heat": 0.5,
     "tags": [],
     "context": "test",
-    "branch": None,
 }
 
 
@@ -92,7 +91,7 @@ def _run_memorize_with_settings(settings_stub: MagicMock, retriever_mock: MagicM
             from yadgar.backend.write_exec.memorize_impl import run_memorize_replay
 
             start = time.perf_counter()
-            run_memorize_replay("hello world", context="test", tags=[], branch="test-branch")
+            run_memorize_replay("hello world", context="test", tags=[])
             return time.perf_counter() - start
 
 

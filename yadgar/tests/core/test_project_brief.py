@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-from unittest.mock import patch
 
 import pytest
 
@@ -19,14 +18,7 @@ def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("project_brief")
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
-    # v5.42.3: test dirs (/tmp/*) are not git repos; patch _detect_branch so
-    # tests that call anchor/checkpoint/memorize/update_active_work pass
-    # branch context without each call needing an explicit branch_hint.
-    with (
-        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
-    ):
-        yield
+    yield
     server.shutdown()
 
 
@@ -40,7 +32,6 @@ def test_catalog_mode_returns_expected_keys():
         "_mode",
         "project",
         "tech",
-        "branch",
         "init_memory_present",
         "active_work_present",
         "top_anchors",
@@ -119,7 +110,6 @@ def test_full_mode_includes_catalog_keys():
         "_mode",
         "project",
         "tech",
-        "branch",
         "init_memory_present",
         "active_work_present",
         "top_anchors",
@@ -285,11 +275,6 @@ def test_top_anchors_populated_from_anchor_memories(flush_queue):
 # ── branch field ─────────────────────────────────────────────────────────────
 
 
-def test_catalog_branch_field_is_string_or_none():
-    result = server.project_brief("/tmp/myproject")
-    assert result["branch"] is None or isinstance(result["branch"], str)
-
-
 # ── F1: anchor scope split ────────────────────────────────────────────────────
 
 
@@ -430,37 +415,6 @@ def test_catalog_key_wiki_pages_at_most_three():
 # ── F3: branch fallback ───────────────────────────────────────────────────────
 
 
-def test_branch_fallback_returns_string_for_git_repo(tmp_path):
-    """F3: branch is non-None when directory is inside a real git repo."""
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "t@t.com"],
-        cwd=str(tmp_path),
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"],
-        cwd=str(tmp_path),
-        check=True,
-        capture_output=True,
-    )
-
-    result = server.project_brief(str(tmp_path))
-    # New git repo with no commits shows "HEAD" or branch name;
-    # F3 fallback should return a non-empty string or None — never "unknown"
-    branch = result.get("branch")
-    # The key requirement: if .git exists, branch must not be the string "unknown"
-    assert branch != "unknown"
-
-
-def test_branch_fallback_non_git_stays_none(tmp_path):
-    """F3: branch stays None (not 'unknown' string) for non-git directory."""
-    result = server.project_brief(str(tmp_path))
-    # Should be None, not the string "unknown"
-    assert result["branch"] is None or result["branch"] != "unknown"
-
-
 # ── F4: empty-state nudge ─────────────────────────────────────────────────────
 
 
@@ -567,30 +521,3 @@ def test_render_token_count_under_limit(flush_queue):
     word_count = len(rendered.split())
     # 1500 token budget ~ 1500-1800 words; we keep a conservative upper bound
     assert word_count < 1800, f"Rendered catalog too large: {word_count} words"
-
-
-# ── F6 (v5.1.9): branch_hint kwarg ────────────────────────────────────────────
-
-
-def test_branch_hint_used_when_passed():
-    """F6: when branch_hint is provided, result['branch'] equals the hint."""
-    result = server.project_brief("/tmp/myproject", branch_hint="feat/from-host")
-    assert result["branch"] == "feat/from-host"
-
-
-def test_branch_hint_overrides_get_current_branch(monkeypatch):
-    """F6: branch_hint takes priority over _get_current_branch return value."""
-    from yadgar.core.server.tools import project as proj_mod
-
-    monkeypatch.setattr(proj_mod, "_get_current_branch", lambda _d: "container-branch")
-    result = server.project_brief("/tmp/myproject", branch_hint="host-branch")
-    assert result["branch"] == "host-branch"
-
-
-def test_branch_hint_absent_falls_back_to_get_current_branch(monkeypatch):
-    """F6: without branch_hint, falls back to _get_current_branch; None → None in dict."""
-    from yadgar.core.server.tools import project as proj_mod
-
-    monkeypatch.setattr(proj_mod, "_get_current_branch", lambda _d: None)
-    result = server.project_brief("/tmp/myproject")
-    assert result["branch"] is None

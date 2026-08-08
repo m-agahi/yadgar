@@ -685,13 +685,12 @@ class WikiStore:
         without page_type continue to work exactly as before).
 
         v5.55: rare optional params bundled into WikiAddOptions (complexity-debt I13):
-        source_memory_ids, confidence, branch, directory_context, page_type.
+        source_memory_ids, confidence, directory_context, page_type.
         params 10 → 6; HARD allowlist entry removed.
         """
         o = opts or WikiAddOptions()
         source_memory_ids = o.source_memory_ids
         confidence = o.confidence
-        branch = o.branch
         directory_context = o.directory_context
         page_type = o.page_type
 
@@ -715,18 +714,11 @@ class WikiStore:
         # enforcement point for both agent_prompt_save and raw wiki_add replay
         # (run_wiki_add_replay also calls WikiStore.add). See ADR-0158 (wiki_policy).
         if _get_wiki_policy(page_type).storage_scope == "global":
-            # A global-scoped page is cross-project canonical: it must also live in
-            # the canonical branch slot. §25 read reaches it ONLY via step 3
-            # (directory='global' AND branch IS NONE), so a global page inserted with
-            # a caller branch_hint (SessionStart passes "master" here) strands at
-            # global+branch=<x> — unreachable via wiki_read, still found via the
-            # plain-slug prelude path (the agent-prompt 404 drift). Couple branch=None
-            # with the dir override on INSERT (insert_wiki_page omits the column on
-            # None → SurrealDB NONE, matched by IS NONE). UPDATE keeps branch untouched
-            # (its generic setter would store explicit null — the branch-null trap);
-            # drifted rows are healed via wiki_set_metadata(field="branch", value=None).
+            # A global-scoped page is cross-project canonical. The TYPE, not the
+            # caller, decides the scope, so the caller-supplied directory is
+            # overridden here. ADR-0215 removed the branch axis; the directory
+            # override is the whole of this enforcement point.
             effective_dir = "global"
-            branch = None
 
         existing = self._storage.get_wiki_page_by_slug(slug)
         now = datetime.now(UTC).isoformat()
@@ -796,52 +788,31 @@ class WikiStore:
 
             page["page_type"] = page_type
             page["wiki_schema_version"] = WIKI_SCHEMA_VERSION
-        page_id = self._storage.insert_wiki_page(page, branch=branch)
+        page_id = self._storage.insert_wiki_page(page)
         page["id"] = page_id
-        # v5.43.0 (DP-2): include branch in returned dict so callers (e.g. wiki_approve)
-        # can propagate branch context without a round-trip read.
-        page["branch"] = branch
         self._sync_crossrefs(slug, links)
         self._link_memories(slug, source_memory_ids)
         return page
 
     def read(self, slug: str) -> dict | None:
-        """Read a wiki page by slug (legacy — no branch resolution)."""
+        """Read a wiki page by slug (legacy — no directory resolution)."""
         return self._storage.get_wiki_page_by_slug(slug)
 
-    def read_by_branch(
-        self,
-        slug: str,
-        current_branch: str | None,
-        default_branch: str,
-    ) -> dict | None:
-        """Read a wiki page with §25 branch resolution order.
-
-        1. Exact slug match on current_branch.
-        2. Exact slug match on default_branch.
-        3. Exact slug match with branch IS NONE (legacy/canonical).
-        4. Returns None if not found.
-        """
-        return self._storage.get_wiki_page_by_slug_and_branch(slug, current_branch, default_branch)
-
-    def read_by_directory_branch(
+    def read_by_directory(
         self,
         slug: str,
         caller_directory: str | None,
-        current_branch: str | None,
     ) -> dict | None:
-        """Read a wiki page with §25 4-step directory-aware resolution (v5.42.5).
+        """Read a wiki page with §25 directory-aware resolution.
 
-        1. directory=$caller_dir  AND  branch=$current_branch  (project-branch-scoped)
-        2. directory=$caller_dir  AND  branch IS NULL          (project-canonical)
-        3. directory='global'     AND  branch IS NULL          (global fallback)
-        4. Returns None if not found.
+        ADR-0215 removed the branch axis from this ladder:
+        1. directory=$caller_dir   (project-scoped)
+        2. directory='global'      (global fallback)
+        3. Returns None if not found.
 
-        When caller_directory is None: delegates to read_by_branch (legacy path).
+        When caller_directory is None: matches on slug alone.
         """
-        return self._storage.get_wiki_page_by_slug_directory_branch(
-            slug, caller_directory, current_branch
-        )
+        return self._storage.get_wiki_page_by_slug_directory(slug, caller_directory)
 
     @observe(tier="stage")
     def _collect_wiki_fts_scores(
@@ -1060,7 +1031,6 @@ class WikiStore:
         self,
         title: str,
         content: str,
-        branch: str | None = None,
         threshold: float = 0.80,
         top_k: int = 5,
         exclude_slug: str | None = None,
@@ -1075,8 +1045,8 @@ class WikiStore:
         (violates §4 non-goals). Gate uses a single cosine similarity threshold on
         the combined embedding.
 
-        Scope: branch-aware. Candidates must have branch == branch OR branch IS NULL
-        (canonical). Pages on unrelated branches are excluded.
+        Scope (ADR-0215): NOT branch-aware. Every stored page is a candidate
+        regardless of what branch value (if any) it carries.
 
         Directory scope (Car B, #83): when ``directory_context`` (the caller's
         project dir) is supplied, candidates are additionally filtered via
@@ -1089,7 +1059,6 @@ class WikiStore:
         Args:
             title: Title of the candidate new page.
             content: Content of the candidate new page.
-            branch: Branch context for scope filtering (None = canonical/NULL slot).
             threshold: Minimum cosine similarity to include a page. Default 0.80.
             top_k: Maximum number of candidates to return.
             exclude_slug: Exclude this slug (used to skip self-comparison on upsert).
@@ -1097,7 +1066,7 @@ class WikiStore:
                 filtering (None = no directory filter, legacy behaviour).
 
         Returns:
-            List of dicts with keys: slug, title, similarity, branch.
+            List of dicts with keys: slug, title, similarity.
             Sorted descending by similarity.
         """
         # Embed the new page (same formula as _compute_embedding — must stay in sync).
@@ -1113,7 +1082,8 @@ class WikiStore:
         if query_embedding is None:
             return []
 
-        # KNN search — get top_k * 4 candidates so we have room after branch + threshold filter
+        # KNN search — get top_k * 4 candidates so we have room after the
+        # directory + threshold filters
         try:
             vec_results = self._storage.search_wiki_vectors(query_embedding, top_k=top_k * 4)
         except Exception:
@@ -1122,12 +1092,6 @@ class WikiStore:
 
         if not vec_results:
             return []
-
-        # Branch-aware scope: allowed = {branch, None}
-        # (branch=None means canonical/NULL slot — always included)
-        allowed_branches: set[str | None] = {None}
-        if branch is not None:
-            allowed_branches.add(branch)
 
         # Car B (#83): directory scope. Normalise caller dir the same way add()
         # stamps directory_context (strip trailing slash, keep 'global' sentinel).
@@ -1139,7 +1103,6 @@ class WikiStore:
             vec_results,
             threshold=threshold,
             top_k=top_k,
-            allowed_branches=allowed_branches,
             caller_dir=caller_dir,
             exclude_slug=exclude_slug,
         )
@@ -1152,15 +1115,14 @@ class WikiStore:
         *,
         threshold: float,
         top_k: int,
-        allowed_branches: set[str | None],
         caller_dir: str | None,
         exclude_slug: str | None,
     ) -> list[dict]:
         """Filter KNN vector hits into gate candidates (Car B, #83 extraction).
 
         Split out of ``find_similar_wiki_pages`` to keep the parent under the I13
-        cyclomatic cap. Applies, in order: threshold, page-exists, branch scope,
-        directory scope (``is_directory_eligible``), self-slug exclusion. Caps at
+        cyclomatic cap. Applies, in order: threshold, page-exists, directory
+        scope (``is_directory_eligible``), self-slug exclusion. Caps at
         ``top_k`` hits. Behaviour is unchanged from the inline loop.
         """
         candidates: list[dict] = []
@@ -1171,11 +1133,6 @@ class WikiStore:
 
             page = self._storage.get_wiki_page(page_id)
             if page is None:
-                continue
-
-            # Branch scope filter
-            page_branch = page.get("branch")
-            if page_branch not in allowed_branches:
                 continue
 
             # Car B (#83): directory scope filter — a page in an unrelated project
@@ -1192,7 +1149,6 @@ class WikiStore:
                     "slug": page.get("slug", ""),
                     "title": page.get("title", ""),
                     "similarity": round(similarity, 4),
-                    "branch": page_branch,
                 }
             )
             if len(candidates) >= top_k:
@@ -1472,7 +1428,6 @@ class WikiStore:
         similar = self.find_similar_wiki_pages(
             page.get("title", ""),
             page.get("content", "") or "",
-            branch=page.get("branch"),
             threshold=threshold,
             top_k=50,
             exclude_slug=page.get("slug"),
@@ -1484,8 +1439,8 @@ class WikiStore:
     def _autolink_write_page(self, page: dict, content: str, proposals: list[dict]) -> None:
         """Apply insertions and upsert WITHOUT clobbering page metadata.
 
-        Re-passes the page's own category, directory_context, page_type, branch,
-        and confidence so the add() upsert never resets them to defaults.
+        Re-passes the page's own category, directory_context, page_type and
+        confidence so the add() upsert never resets them to defaults.
         Tags the page 'auto-linked' so editors can see machine edits.
         """
         new_content = _autolink_apply_insertions(content, proposals)
@@ -1498,7 +1453,6 @@ class WikiStore:
             tags=["auto-linked"],
             opts=WikiAddOptions(
                 confidence=page.get("confidence", "medium"),
-                branch=page.get("branch"),
                 directory_context=page.get("directory_context"),
                 page_type=page.get("page_type"),
             ),
@@ -1752,7 +1706,11 @@ class WikiStore:
 
     # ── Edit primitives (v5.61.0) ─────────────────────────────────────────
 
-    _METADATA_FIELDS: frozenset[str] = frozenset({"directory_context", "branch"})
+    #: ADR-0215 (Car 9): ``"branch"`` was removed. Migration 029 drops the column,
+    #: but the tables are SCHEMALESS — a surviving ``set_metadata(field="branch")``
+    #: would silently re-create it as an untyped field on rows the migration just
+    #: nulled, with no reader left to honour it.
+    _METADATA_FIELDS: frozenset[str] = frozenset({"directory_context"})
 
     @observe(tier="stage")
     def set_metadata(
@@ -1761,11 +1719,10 @@ class WikiStore:
         field: str,
         value: str | None,
     ) -> dict:
-        """Set directory_context or branch on a wiki page.
+        """Set directory_context on a wiki page.
 
         Idempotent: no-op when current value already matches.
         Creates a wiki_page_version row on real change.
-        branch=None uses UNSET so §25 IS NONE queries resolve correctly.
 
         Returns {ok, page_id, changed, version_id} or {ok: False, error}.
         """
@@ -1784,13 +1741,6 @@ class WikiStore:
                         "directory_context must be 'global' or an absolute path "
                         f"(starts with '/'); got {value!r}"
                     ),
-                }
-        elif field == "branch":
-            # None = canonical. Empty string invalid.
-            if value is not None and value == "":
-                return {
-                    "ok": False,
-                    "error": "branch must be null (canonical) or a non-empty string",
                 }
 
         page = self._storage.get_wiki_page(page_id)
@@ -1835,12 +1785,11 @@ class WikiStore:
         field: str,
         value: str | None,
     ) -> dict:
-        """Set directory_context or branch on ALL rows sharing a slug.
+        """Set directory_context on ALL rows sharing a slug.
 
         Unlike set_metadata(page_id, ...) which targets one row, this method
-        fetches EVERY page_id for the slug (across all branches + global
-        stragglers) via storage.get_wiki_page_ids_by_slug and applies
-        set_metadata to each.
+        fetches EVERY page_id for the slug (including 'global' stragglers) via
+        storage.get_wiki_page_ids_by_slug and applies set_metadata to each.
 
         Field validation + no-op detection delegate to set_metadata per row
         so the audit trail, version rows, and idempotency all work correctly.
@@ -1865,12 +1814,6 @@ class WikiStore:
                         "directory_context must be 'global' or an absolute path "
                         f"(starts with '/'); got {value!r}"
                     ),
-                }
-        elif field == "branch":
-            if value is not None and value == "":
-                return {
-                    "ok": False,
-                    "error": "branch must be null (canonical) or a non-empty string",
                 }
 
         page_ids = self._storage.get_wiki_page_ids_by_slug(slug)

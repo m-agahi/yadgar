@@ -6,8 +6,6 @@ Covers:
   - Bidirectional memory↔wiki linking (wiki_refs on memories)
 """
 
-from unittest.mock import patch
-
 import pytest
 
 from yadgar._shared.storage import StorageEngine
@@ -26,9 +24,7 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "p3_test.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    # v5.42.3: /tmp is not a git repo; patch _detect_branch for test isolation.
-    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
-        yield
+    yield
     server.shutdown()
 
 

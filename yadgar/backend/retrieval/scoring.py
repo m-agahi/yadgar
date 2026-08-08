@@ -5,7 +5,6 @@ import time as _time
 from dataclasses import dataclass
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.storage import BranchFilter
 from yadgar.backend.retrieval.entities import _QUERY_STOP_WORDS
 from yadgar.backend.retrieval.query_analysis import _build_boosted_fts_query, _pseudo_hyde_expand
 from yadgar.backend.retrieval.temporal import parse_temporal_expression
@@ -51,7 +50,6 @@ class FTSParams:
     open_domain_mode: bool
     candidate_k: int
     min_heat: float
-    branch_filter: BranchFilter | None = None
 
 
 def _normalize_fts_hits(
@@ -90,7 +88,6 @@ class _ScoringMixin:
                     _build_boosted_fts_query(fts_query),
                     min_heat=params.min_heat,
                     limit=params.candidate_k,
-                    branch_filter=params.branch_filter,
                 )
                 if hits:
                     _normalize_fts_hits(hits, scores, strength)
@@ -114,7 +111,6 @@ class _ScoringMixin:
                 " ".join(entity_names),
                 min_heat=params.min_heat,
                 limit=params.candidate_k,
-                branch_filter=params.branch_filter,
             )
             if hits:
                 strength = 0.7 if params.open_domain_mode else 0.5
@@ -135,7 +131,6 @@ class _ScoringMixin:
                 " ".join(comet_terms[:6]),
                 min_heat=params.min_heat,
                 limit=params.candidate_k,
-                branch_filter=params.branch_filter,
             )
             if hits:
                 _normalize_fts_hits(hits, scores, 0.6)
@@ -193,7 +188,6 @@ class _ScoringMixin:
         open_domain_subqueries: list,
         candidate_k: int,
         min_heat: float,
-        branch_filter: BranchFilter | None = None,
     ) -> tuple[list[int], object]:
         """Collect vector KNN scores into scores. Returns (vector_memory_ids, query_embedding)."""
         vector_memory_ids: list[int] = []
@@ -225,7 +219,6 @@ class _ScoringMixin:
                 encoded,
                 top_k=candidate_k,
                 min_heat=min_heat,
-                branch_filter=branch_filter,
             )
             _hnsw_total_ms += (_time.perf_counter() - _hnsw_t0) * 1000
             for mid, distance in vec_hits:
@@ -306,7 +299,6 @@ class _ScoringMixin:
         scores: dict,
         min_heat: float,
         candidate_k: int,
-        branch_filter: BranchFilter | None = None,
     ) -> float:
         """Collect temporal retrieval scores into scores. Returns w_temporal weight (0.0 if unused)."""
         w_temporal = 0.0
@@ -323,7 +315,6 @@ class _ScoringMixin:
                 session_hints=temporal_info["session_hints"],
                 min_heat=min_heat,
                 limit=candidate_k,
-                branch_filter=branch_filter,
             )
             if temporal_memories:
                 self._apply_temporal_content_scores(temporal_memories, scores)
@@ -335,7 +326,6 @@ class _ScoringMixin:
                     temporal_info["month_hints"],
                     min_heat=min_heat,
                     limit=candidate_k,
-                    branch_filter=branch_filter,
                 )
                 if month_matches:
                     self._apply_temporal_month_scores(month_matches, scores)

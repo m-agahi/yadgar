@@ -52,7 +52,6 @@ def _insert_wiki(title: str, content: str, source_memory_ids: list | None = None
     assert _st._wiki is not None, "WikiStore must be initialized in e2e_engines"
     opts = WikiAddOptions(
         source_memory_ids=source_memory_ids or [],
-        branch="master",
         directory_context=YADGAR_DIR,
     )
     page = _st._wiki.add(
@@ -70,9 +69,6 @@ def _run_fanout_recall(
 ) -> list[dict]:
     """Run fan-out recall (UNIFIED_RECALL_ENABLED=True) via the MCP tool."""
     import sys
-
-    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
     _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:

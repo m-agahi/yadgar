@@ -23,20 +23,6 @@ from unittest.mock import patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# v5.54.5 B2: memorize() calls in this module use /tmp/... paths (not git repos)
-# and don't supply branch_hint. Mirror CI's YADGAR_CI_BRANCH=master so branch
-# resolution doesn't hard-reject. Tests that expect missing_branch must delenv.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _ci_branch_fallback(monkeypatch):
-    """Set YADGAR_CI_BRANCH when not already set (mirrors CI env)."""
-    if not os.environ.get("YADGAR_CI_BRANCH"):
-        monkeypatch.setenv("YADGAR_CI_BRANCH", "test-branch")
-
-
-# ---------------------------------------------------------------------------
 # Hook script helpers
 # ---------------------------------------------------------------------------
 

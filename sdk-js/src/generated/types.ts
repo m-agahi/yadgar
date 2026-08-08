@@ -162,8 +162,6 @@ export interface WikiAddArgs {
   source_memory_ids?: number[] | null;
   confidence?: string;
   append?: boolean;
-  branch?: string | null;
-  branch_hint?: string | null;
 }
 
 export interface WikiQueryArgs {
@@ -212,11 +210,6 @@ export interface WikiRefreshStaleArgs {
   directory: string;
   slugs?: string[] | null;
   force_branch?: boolean;
-}
-
-export interface WikiCleanupMergedBranchesArgs {
-  directory: string;
-  dry_run?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +273,6 @@ export interface BookmarkReorderArgs {
 export interface ProjectBriefArgs {
   directory: string;
   mode?: string;
-  branch_hint?: string | null;
 }
 
 export interface BootstrapProjectArgs {

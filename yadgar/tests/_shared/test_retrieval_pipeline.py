@@ -193,11 +193,6 @@ class TestRetrievalStateDataclass:
         state = RetrievalState(query="x")
         assert state.profile == "balanced"
 
-    def test_state_current_branch_none_by_default(self):
-        state = RetrievalState(query="x")
-        assert state.current_branch is None
-        assert state.default_branch is None
-
 
 class _SideEffectStage(RetrievalStage):
     """Test stage that records call order."""

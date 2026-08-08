@@ -106,7 +106,6 @@ def _insert_roadmap_wiki(updated_at_ts: float) -> None:
         confidence="high",
         source_memory_ids=[],
         wait=True,
-        branch_hint="feat/test-branch",
         directory=_TEST_DIR,
     )
     # Patch updated_at directly in storage to simulate wiki being refreshed at updated_at_ts
@@ -389,3 +388,52 @@ def test_recommended_action_fires_on_squash_merge(_engines, tmp_path, monkeypatc
     assert "update_roadmap" in actions, (
         f"Expected update_roadmap for squash-merge ship (pyproject diff), got {actions}"
     )
+
+
+# ── _get_master_head_info against a REAL repo (no monkeypatch) ────────────────
+#
+# Every other test in this file patches _get_master_head_info wholesale, so
+# nothing exercised the real function. That gap is why Car 3 (ADR-0215) could
+# delete the field the old default-branch helper read, leaving it returning None
+# unconditionally — `git log None …` then raised inside the function's broad
+# except, _get_master_head_info returned None, and the roadmap-update-lag
+# signal was silently dead with the whole suite green. These two tests close it.
+
+
+def test_get_master_head_info_returns_real_head_for_a_real_repo(tmp_path):
+    """The unpatched function returns a populated dict for an actual git repo.
+
+    Discriminating: it goes RED the moment the mainline-ref source returns
+    something that cannot be interpolated into `git log <ref>` (the Car 3
+    failure mode), because the broad except then swallows it and yields None.
+    """
+    from yadgar.core.server.tools import project as _proj
+
+    repo = _make_git_repo(tmp_path)
+    _commit(repo, "chore: initial", pyproject_version="1.2.3")
+
+    info = _proj._get_master_head_info(str(repo))
+
+    assert info is not None, (
+        "_get_master_head_info returned None for a real git repo — the mainline ref "
+        "it names in `git log` is unusable (this is exactly the Car 3 regression)"
+    )
+    assert info["commit_ts"] > 0, f"expected a real committer timestamp, got {info!r}"
+    assert "chore: initial" in info["commit_msg"], info
+    assert info["pyproject_version"] == "1.2.3", info
+
+
+def test_origin_head_short_always_returns_a_usable_ref(tmp_path):
+    """The mainline-ref helper never returns None — callers interpolate it directly.
+
+    A repo with no `origin/HEAD` (the common case for a fresh local repo) must
+    still yield a usable name rather than None, or `git log None` recreates the
+    Car 3 failure.
+    """
+    from yadgar.core.server.tools import project as _proj
+
+    repo = _make_git_repo(tmp_path)
+    _commit(repo, "chore: initial")
+
+    ref = _proj._origin_head_short(str(repo))
+    assert isinstance(ref, str) and ref, f"expected a non-empty ref name, got {ref!r}"

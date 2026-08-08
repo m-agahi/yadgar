@@ -60,7 +60,6 @@ def _build_memorize_boundary_env(monkeypatch, tmp_path):
     import importlib
 
     import yadgar._shared.runtime.state as _st
-    import yadgar.core.server as _srv
 
     _mem_mod = importlib.import_module("yadgar.core.server.tools.memorize")
 
@@ -74,10 +73,6 @@ def _build_memorize_boundary_env(monkeypatch, tmp_path):
     fake_queue = MagicMock()
     fake_queue.enqueue.side_effect = _capture_enqueue
     monkeypatch.setattr(_mem_mod, "_get_file_queue", lambda: fake_queue)
-
-    # Deterministic branch: tmp_path is not a git repo — pin _detect_branch so
-    # the boundary does not hard-reject with missing_branch.
-    monkeypatch.setattr(_srv, "_detect_branch", lambda ctx: "feat/parity-test")
 
     monkeypatch.setattr(_st, "_rules_engine", None)
 

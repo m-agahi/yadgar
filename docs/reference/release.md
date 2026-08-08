@@ -68,6 +68,35 @@ yadgar daemon status       # expect Version: <version>, db ok, embed ok
 yadgar update --check      # PyPI probe — should report "Up to date"
 ```
 
+### If the daemon does not come up: a failed migration is TERMINAL — restore, do not retry
+
+Schema migrations run on backend boot (`_run_migrations` → `_run_migrations_locked`,
+`yadgar/_shared/storage/migrations.py`). That function has **no `try`/`except`** and
+writes the `schema_version` row **only on success**. So a migration that raises:
+
+- aborts the boot — the daemon never comes up;
+- leaves its version **unrecorded**, so the next start runs the *same* migration
+  against the *same* data and fails **identically**;
+- may have already applied earlier statements in its own body.
+
+**Restarting is not a remedy — it is an infinite loop.** The remedy is to restore
+from the pre-migration backup, fix the cause, then deploy again. Take that backup
+**before** any release carrying a new migration (convention:
+`docs/plans/0115-pre-migration-backup-2026-08-01.md`).
+
+Migrations that mutate data are written to halt *before* their irreversible step
+precisely so the backup is still valid at the point of failure — migration 029
+(ADR-0215 branch-column removal) asserts its protected-row survivor count and
+aborts with `Migration029Abort` ahead of the `REMOVE FIELD`. If you see a
+`Migration...Abort` in the boot log, that guard did its job: the data is in the
+state the backup describes.
+
+**Related, for anyone auditing a column removal:** `memory` and `wiki_page` are
+`SCHEMALESS`. `REMOVE FIELD` drops only the type definition — stored values
+survive, and any surviving writer re-creates the field untyped while
+`INFO FOR TABLE` still reports it absent. A clean `INFO FOR TABLE` is therefore
+**not** proof a column is retired; removing every writer is.
+
 ## 9. Optional Rocky VM smoke
 
 ```bash

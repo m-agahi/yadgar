@@ -217,24 +217,18 @@ Used at write time (v5.64) by `curation/strengthen.py`, `cls_store/promotion.py`
 
 `_build_directory_clause(df)` in `storage/directory.py` converts a `DirectoryFilter` dataclass into the SurrealQL `WHERE` fragment. It is the single place where directory predicate SQL is produced.
 
-## Branch-Aware Filter and Boost (v5.0)
+## Branch-Aware Filter and Boost — REMOVED (ADR-0215)
 
-`recall()` and `wiki_query()` filter results by git branch after fetch:
+`recall()` and `wiki_query()` no longer filter or boost by git branch. Retrieval
+scoping is `directory_context` only (see *Directory Scoping* above).
 
-```
-allowed = {default_branch, None}
-if current_branch is not None:
-    allowed.add(current_branch)
-results = [r for r in results if r["branch"] in allowed]
-```
-
-Results where `branch == current_branch` then receive a 1.5× multiplier on `_retrieval_score` and the list is re-sorted descending. Non-git contexts (`current_branch is None`) skip the boost; the filter degenerates to `{default_branch, None}`.
-
-The branch is captured at write time by `memorize`, `anchor`, `checkpoint`, and `wiki_add` via the `_detect_branch(directory)` helper (30s LRU cache). `bootstrap_project` and `update_active_work` intentionally leave the branch unset — project-level state is not branch-scoped.
-
-`wiki_read(slug)` performs a three-step resolution: exact slug on current branch → on default branch → on `branch IS NONE`. First hit wins.
-
-Known v5.x follow-up: filter is applied in Python after the SurrealQL fetch. Moving the filter into the `WHERE` clause eliminates the over-fetch buffer and is tracked for a future minor.
+Removed in the branch-scoping-removal train: the post-fetch
+`branch IN {current_branch, default_branch, None}` filter, the 1.5× same-branch
+`_retrieval_score` multiplier, the C4 convex fan-out boost
+(`BRANCH_BOOST_WEIGHT`), the write-time `_detect_branch` capture, and the
+three-step branch ladder in `wiki_read`. The measurement that motivated it: the
+branch axis hid 78% of the wiki corpus from any non-default branch while
+isolating 0.6% of rows.
 
 ## Pipeline Stages (v5.0)
 

@@ -103,13 +103,11 @@ def _drainer_env(tmp_path):
         return real_fq
 
     # Patch _get_file_queue in all the places that hold a direct reference.
-    # v5.42.3: also patch _detect_branch so wiki_add calls without branch_hint work.
     with (
         patch.object(_cl, "_get_file_queue", _get_fq),
         patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
-        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield drainer, real_fq
 
@@ -128,7 +126,6 @@ def _write_sync(title: str, content: str, **kwargs) -> dict:
     import yadgar._shared.runtime.state as _st
 
     kwargs.setdefault("force", True)
-    kwargs.setdefault("branch_hint", "feat/test-branch")
     kwargs.setdefault("directory", _TEST_DIR)
     result = server.wiki_add(title=title, content=content, **kwargs)
     if _st._queue_drainer is not None:
@@ -160,7 +157,6 @@ class TestWaitFalseDeferredPath:
                 title=f"Warmup {uuid.uuid4().hex}",
                 content="warmup content",
                 wait=False,
-                branch_hint="feat/test-branch",
                 directory=_TEST_DIR,
             )
 
@@ -169,7 +165,6 @@ class TestWaitFalseDeferredPath:
             title=f"Deferred Path Test {uuid.uuid4().hex}",
             content="Content for testing the deferred similarity check path.",
             wait=False,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -191,7 +186,6 @@ class TestWaitFalseDeferredPath:
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
             wait=False,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         # Must NOT return sync rejection.
@@ -222,7 +216,6 @@ class TestWaitTrueSyncRejection:
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
             wait=True,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert r2.get("stored") is False, (
@@ -252,7 +245,6 @@ class TestWaitTrueSyncRejection:
 3. Built-in defaults in config.py
 """,
             wait=True,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert r2.get("reason") != "duplicate_detected", (
@@ -279,7 +271,6 @@ class TestDrainerGateBypass:
             content=_ROADMAP_CONTENT_B,
             force=True,
             wait=True,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert r2.get("reason") != "duplicate_detected", (
@@ -297,7 +288,6 @@ class TestDrainerGateBypass:
             content=_ROADMAP_CONTENT_B,
             replace_slug="yadgar-roadmap-future-improvements",
             wait=True,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert r2.get("reason") != "duplicate_detected", (
@@ -314,7 +304,6 @@ class TestDrainerGateBypass:
             content=_ROADMAP_CONTENT_B,
             append=True,
             wait=True,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert r2.get("reason") != "duplicate_detected", (
@@ -354,7 +343,6 @@ class TestDrainerRejectionMetric:
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
             wait=True,
-            branch_hint="feat/test-branch",
             directory=_TEST_DIR,
         )
         assert r2.get("reason") == "duplicate_detected"

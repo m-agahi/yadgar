@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import pytest
 
-from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server
 
 
@@ -165,7 +164,6 @@ class TestFindSimilarWikiPages:
         result = _wiki().find_similar_wiki_pages(
             title="Yadgar Roadmap Future Improvements",
             content=_ROADMAP_CONTENT_A,
-            branch=None,
             threshold=0.80,
         )
         assert result == []
@@ -179,7 +177,6 @@ class TestFindSimilarWikiPages:
         candidates = _wiki().find_similar_wiki_pages(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
-            branch=None,
             threshold=0.80,
         )
         assert len(candidates) >= 1, (
@@ -215,7 +212,6 @@ YADGAR_EMBEDDING_MODEL: sentence-transformer model name
 YADGAR_PORT: HTTP daemon port (default 8765)
 YADGAR_DB_PATH: SurrealDB storage directory
 """,
-            branch=None,
             threshold=0.80,
         )
         # Should not match arch, hooks, or benchmark
@@ -238,7 +234,6 @@ YADGAR_DB_PATH: SurrealDB storage directory
         candidates = _wiki().find_similar_wiki_pages(
             title="Yadgar Architecture",
             content=_ARCH_CONTENT,
-            branch=None,
             threshold=0.50,  # very low threshold to ensure we'd catch self if not excluded
             exclude_slug="yadgar-architecture",
         )
@@ -255,7 +250,6 @@ YADGAR_DB_PATH: SurrealDB storage directory
         candidates = _wiki().find_similar_wiki_pages(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
-            branch=None,
             threshold=0.0,  # return everything
             top_k=2,
         )
@@ -268,33 +262,11 @@ YADGAR_DB_PATH: SurrealDB storage directory
         candidates = _wiki().find_similar_wiki_pages(
             title="Yadgar System Architecture Overview",
             content=_ARCH_CONTENT,
-            branch=None,
             threshold=0.0,
         )
         for c in candidates:
             assert "similarity" in c
             assert 0.0 <= c["similarity"] <= 1.0
-
-    def test_branch_scope_isolation(self):
-        """Page on branch 'feat/x' is NOT a candidate when checking on different branch."""
-        # Insert page on branch feat/x
-        _wiki().add(
-            "Yadgar Architecture",
-            _ARCH_CONTENT,
-            opts=WikiAddOptions(branch="feat/x"),
-        )
-        # Check for duplicates on branch feat/y -- should not find feat/x page
-        candidates = _wiki().find_similar_wiki_pages(
-            title="Yadgar Architecture Overview",
-            content=_ARCH_CONTENT,
-            branch="feat/y",
-            threshold=0.70,
-        )
-        # No candidates because the only existing page is on feat/x, not feat/y or None
-        assert len(candidates) == 0, (
-            f"Branch isolation failed: feat/x page returned as candidate for feat/y check. "
-            f"Candidates: {[c['slug'] for c in candidates]}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -324,19 +296,15 @@ class TestWikiCheckDuplicate:
             title="Yadgar Roadmap Future Improvements",
             content=_ROADMAP_CONTENT_A,
             directory="/home/user/simgate",
-            branch_hint="feat/test-branch",  # R3: branch required
+            # R3: branch required
         )
         assert "slug" in add_result or add_result.get("stored"), f"wiki_add failed: {add_result}"
         drainer.drain_now()
 
         # Check page B (different title, near-identical content).
-        # branch matches the stored page: check_duplicate scope is
-        # {None, branch} — auto-detection would pick the host repo's
-        # default branch, which never matches the harness test branch.
         result = server.wiki_check_duplicate(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
-            branch="feat/test-branch",
         )
         assert isinstance(result, dict)
         candidates = result.get("candidates", [])

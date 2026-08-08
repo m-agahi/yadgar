@@ -47,7 +47,6 @@ class TestEvalRoutesViaMCPTool:
         assert _st._wiki is not None, "WikiStore must be initialized in e2e_engines"
         opts = WikiAddOptions(
             source_memory_ids=[],
-            branch="master",
             directory_context=e2e_engines["yadgar_dir"],
         )
         page = _st._wiki.add(
@@ -71,8 +70,6 @@ class TestEvalRoutesViaMCPTool:
         # Set up server state for wiki retrieval (already asserted above)
 
         # Patch branch detection to avoid real git calls
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         # Fan-out is now unconditional (Phase 2a: recall() is a pure forwarder).
         # recall_backend_bypass fixture routes _forward_to_backend → _fanout_recall.

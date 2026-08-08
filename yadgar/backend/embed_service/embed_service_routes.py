@@ -195,8 +195,6 @@ async def recall_route(
                 max_results=req.max_results,
                 min_heat=req.min_heat,
                 directory=req.directory,
-                current_branch=req.current_branch,
-                default_branch=req.default_branch,
                 type_filter=req.type,
                 tags=req.tags,
                 profile=req.profile,

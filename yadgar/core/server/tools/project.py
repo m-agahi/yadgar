@@ -1,7 +1,7 @@
-"""Project context tools: git helpers, branch detection, project_brief, wiki_cleanup_merged_branches.
+"""Project context tools: git helpers, project_brief, wiki-staleness context.
 
 # Module size justified: single cohesive domain — project/git/wiki-staleness context tools.
-# All functions share _resolve_project_root, _detect_branch, and _git_safe_env helpers.
+# All functions share _resolve_project_root, _origin_head_short, and _git_safe_env helpers.
 # Seven+ callers (server/__init__.py, tools/__init__.py, tools/recall.py, tools/wiki.py,
 # tools/memorize.py, restoration.py, file_queue/apply.py) import helpers directly from
 # this module; splitting would require updating all those import sites for no architectural
@@ -51,82 +51,14 @@ from yadgar._shared.server_helpers import (  # noqa: E402
 )
 
 
-@observe(tier="stage", metric="tools.project._get_current_branch")
-def _get_current_branch(directory: str) -> str | None:
-    """Return current git branch for the given directory, or None if not in a repo."""
-    try:
-        out = (
-            subprocess.check_output(
-                ["git", *_GIT_SAFE_ARGS, "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
-                stderr=subprocess.DEVNULL,
-                timeout=2,
-                env=_git_safe_env(),
-            )
-            .decode()
-            .strip()
-        )
-        if out and out != "HEAD":
-            return out
-        return out or None
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
-        return None
-
-
-@observe(tier="stage", metric="tools.project._detect_branch_cached")
+@observe(tier="stage", metric="tools.project._origin_head_short_cached")
 @functools.lru_cache(maxsize=128)
-def _detect_branch_cached(directory: str, _ts_bucket: int) -> str | None:
-    """Cached per 30s bucket. Returns None for detached HEAD or non-git.
+def _origin_head_short_cached(directory: str, _ts_bucket: int) -> str:
+    """Cached per 5-minute bucket. Falls back to 'master'.
 
-    Do not call directly — use _detect_branch(directory) which injects the
+    Do not call directly — use _origin_head_short(directory), which injects the
     correct time bucket.
     """
-    try:
-        out = (
-            subprocess.check_output(
-                ["git", *_GIT_SAFE_ARGS, "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"],
-                stderr=subprocess.DEVNULL,
-                timeout=2,
-                env=_git_safe_env(),
-            )
-            .decode()
-            .strip()
-        )
-        return out if out and out != "HEAD" else None
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
-        return None
-
-
-@observe(tier="stage", metric="tools.project._detect_branch")
-def _detect_branch(directory: str) -> str | None:
-    """Return the current git branch for directory, or None on non-git/error.
-
-    LRU-cached with a ~30-second TTL via time-bucket trick.
-    Each directory's bucket boundary is phase-shifted by hash(directory) % 30
-    so invalidations don't align across all directories simultaneously
-    (thundering-herd prevention — v5.1 C3).
-    Never raises — all errors return None.
-    """
-    try:
-        _before = _detect_branch_cached.cache_info().hits
-        result = _detect_branch_cached(directory, int((time.time() + (hash(directory) % 30)) // 30))
-        try:
-            from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
-
-            if _detect_branch_cached.cache_info().hits > _before:
-                record_cache_hit("branch_detect")
-            else:
-                record_cache_miss("branch_detect")
-        except Exception:
-            pass
-        return result
-    except Exception:
-        return None
-
-
-@observe(tier="stage", metric="tools.project._get_default_branch_cached")
-@functools.lru_cache(maxsize=128)
-def _get_default_branch_cached(directory: str, _ts_bucket: int) -> str:
-    """Cached per 5-minute bucket. Falls back to 'master'."""
     try:
         out = (
             subprocess.check_output(
@@ -154,31 +86,22 @@ def _get_default_branch_cached(directory: str, _ts_bucket: int) -> str:
     return "master"
 
 
-@observe(tier="stage", metric="tools.project._get_default_branch")
-def _get_default_branch(directory: str) -> str | None:
-    """Return the repo default branch name (e.g. 'master' or 'main'), or ``None``.
+@observe(tier="stage", metric="tools.project._origin_head_short")
+def _origin_head_short(directory: str) -> str:
+    """Short name of ``origin/HEAD`` for *directory* (e.g. ``master`` / ``main``).
 
-    Car 0 §0.6: sources from the TRUSTED per-directory ``default_branch`` (computed
-    HOST-SIDE by the SessionStart hook, read via the ``dir_branch_context``
-    read-through cache) — NOT a daemon-side ``git symbolic-ref``, which cannot see
-    the host ``.git`` and is "doubly wrong" (returns "master" even for a
-    ``main``-default project, and always for a non-git dir).
+    ADR-0215 removed branch scoping, and ADR-0217 removed the trusted per-directory
+    trusted per-directory git-facts blob this used to be sourced from. The roadmap-
+    update-lag signal still needs a mainline ref to name in ``git log`` /
+    ``git show`` — so it reads it back from local git, at exactly the same daemon-
+    side visibility its sibling ``git`` calls in ``_get_master_head_info`` already
+    require. Never a write-path trust gate (that was the ADR-0126 objection to a
+    daemon-side ``symbolic-ref``); purely a best-effort local read.
 
-    Returns:
-      * the trusted ``default_branch`` for a known git dir,
-      * ``None`` for a non-git dir, an unknown dir (no SessionStart row yet), or a
-        backend read error — the manufactured "master" fallback is DROPPED.
-
-    Callers must tolerate ``None`` (the §25 resolution path already treats a NULL
-    default branch as "no default-branch slot", falling through to the canonical
-    NULL-branch slot).
+    Always returns a usable ref name — falls back to ``"master"`` — so callers can
+    interpolate it into a git invocation without a ``None`` guard.
     """
-    from yadgar.core.server.tools import _dir_branch  # noqa: PLC0415
-
-    ctx = _dir_branch.get_context(directory)
-    if ctx.get("found") and ctx.get("gitness"):
-        return ctx.get("default_branch")
-    return None
+    return _origin_head_short_cached(directory, int(time.time() // 300))
 
 
 # ── Project tools ──────────────────────────────────────────────────────
@@ -188,11 +111,9 @@ def _get_default_branch(directory: str) -> str | None:
 def _render_project_brief(brief: dict) -> str:
     """Render a project_brief dict as markdown for hook injection (§28)."""
     project = brief.get("project", "unknown")
-    branch = brief.get("branch") or "unknown"
     mode = brief.get("_mode", "catalog")
 
     lines: list[str] = [f"# {project} — {mode}\n"]
-    lines.append(f"**Branch:** {branch}\n")
 
     stale = brief.get("stale_wiki_count", 0)
     init_present = brief.get("init_memory_present", False)
@@ -851,7 +772,7 @@ def _get_master_head_info(resolved: str) -> dict | None:
     All git invocations use _GIT_SAFE_ARGS + _git_safe_env() (H-10 hardening).
     """
     try:
-        default_branch = _get_default_branch(resolved)
+        default_branch = _origin_head_short(resolved)
         # Committer timestamp
         ts_out = (
             subprocess.check_output(
@@ -936,7 +857,7 @@ def _get_pyproject_version_at_ts(resolved: str, ts: float) -> str | None:
     revision.  Returns None on any error or if pyproject.toml absent at that revision.
     """
     try:
-        default_branch = _get_default_branch(resolved)
+        default_branch = _origin_head_short(resolved)
         dt = datetime.fromtimestamp(ts, UTC)
         until_iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -1868,9 +1789,10 @@ def _build_adr_log(resolved: str) -> dict:
 
     Car 2 (ADR-consultable): re-pointed to the CANONICAL `<project>-adr-index`.
     The write-only `<project>-adr-log` monolith is deleted in migration — a read
-    still pinned to it (with branch_hint=default) would resolve a deleted slug
-    and silently return empty. The canonical index reads via §25 step-2 (dir +
-    branch IS NULL) from any caller branch AND in non-git dirs (no branch_hint).
+    still pinned to it would resolve a deleted slug and silently return empty.
+    The canonical index resolves on directory_context alone, so it reads from any
+    caller and in non-git dirs. (ADR-0215 removed the branch axis this paragraph
+    used to describe.)
 
     Returns a cheap metadata-only dict: index slug + up to 3 most-recent IDs.
 
@@ -1954,7 +1876,7 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     """Build catalog/full mode payload (back-compat).
 
     catalog mode is DEPRECATED as of v5.7.12. Kept for back-compat until v5.8.
-    ctx keys: resolved, mode, project, branch, storage, init_rows, active_rows,
+    ctx keys: resolved, mode, project, storage, init_rows, active_rows,
               init_memory_present, active_work_present, checkpoint_rows.
     """
     from datetime import timedelta
@@ -1980,7 +1902,6 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
         "_mode": mode,
         "project": ctx["project"],
         "tech": [],
-        "branch": ctx["branch"],
         "init_memory_present": ctx["init_memory_present"],
         "active_work_present": ctx["active_work_present"],
         "top_anchors": top_anchors,
@@ -2010,7 +1931,7 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
 
 # ── Car 1 (v5.111): project_brief whole-payload cache ─────────────────────────
 #
-# Query-AGNOSTIC — every agent hitting the same (dir, branch, mode) computes an
+# Query-AGNOSTIC — every agent hitting the same (dir, mode) computes an
 # identical brief, so the key has no query term and cross-agent calls collapse to
 # one compute. Invalidation = Epoch(dir) folded into the key + a TTL(300) backstop
 # for heat/anchor drift (which does NOT bump the epoch). deep_copy=True because the
@@ -2023,14 +1944,14 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
 _PROJECT_BRIEF_CACHE_TTL = 300.0
 
 
-def _project_brief_key(resolved: str, branch: str | None, mode: str) -> tuple:
-    """Effective cache key: (git-root, branch, mode, structural epoch).
+def _project_brief_key(resolved: str, mode: str) -> tuple:
+    """Effective cache key: (git-root, mode, structural epoch).
 
     Reads the epoch under the SAME resolved git-root the bump callers normalize
     to, so a structural write busts the entry (not a decorative no-op)."""
     from yadgar._shared.runtime.cache_epoch import _current_epoch  # noqa: PLC0415
 
-    return (resolved, branch or "", mode, _current_epoch(resolved))
+    return (resolved, mode, _current_epoch(resolved))
 
 
 @observe(tier="stage", metric="tools.project._make_project_brief_cache")
@@ -2059,7 +1980,7 @@ _project_brief_cache = _make_project_brief_cache()
 
 
 @_tool(always_load=True)
-def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None = None) -> dict:
+def project_brief(directory: str, mode: str = "catalog") -> dict:
     """Return a layered project context snapshot for the given directory.
 
     Choose mode based on your use-case — new callers should use "signals" or "restore":
@@ -2083,17 +2004,8 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
         mode: One of "signals", "restore", "catalog" (deprecated), "full".
             Default "catalog" is kept only for back-compat — prefer "signals" or
             "restore" for all new callers.
-        branch_hint: Optional branch name from the host-side hook (v5.1.9). When
-            present, used directly (host has git visibility; container does not).
-            When absent, falls back to _get_current_branch(resolved).
     """
     resolved = _resolve_project_root(directory)
-
-    # v5.1.9 F3: prefer host-supplied branch_hint.
-    if branch_hint:
-        branch: str | None = branch_hint
-    else:
-        branch = _get_current_branch(resolved)
 
     # Car 1: whole-payload cache for the query-agnostic modes (catalog/restore/full).
     # Checked BEFORE any storage round-trip so a hit skips _fetch_presence_rows +
@@ -2102,7 +2014,7 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
     # tolerates no staleness; its age numerics are recomputed every call.
     _cacheable = mode != "signals"
     if _cacheable:
-        _key = _project_brief_key(resolved, branch, mode)
+        _key = _project_brief_key(resolved, mode)
         _hit = _project_brief_cache.get(_key)
         if _hit is not None:
             return _hit
@@ -2146,7 +2058,6 @@ def project_brief(directory: str, mode: str = "catalog", branch_hint: str | None
                 "resolved": resolved,
                 "mode": mode,
                 "project": project,
-                "branch": branch,
                 "storage": storage,
                 "init_rows": init_rows,
                 "active_rows": active_rows,
@@ -2234,7 +2145,7 @@ def _register_active_work_directory(resolved: str) -> None:
 
 
 @_tool(power=True)
-def update_active_work(directory: str, content: str, branch_hint: str | None = None) -> dict:
+def update_active_work(directory: str, content: str) -> dict:
     """Replace this directory's _active_work memory atomically.
 
     Deletes any existing _active_work memory(ies) for the directory,
@@ -2243,9 +2154,6 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
     v5.10.1: also writes a marker to ~/.local/state/yadgar/active-work-tracked/ so the
     watchdog timer knows which directories to poll.
 
-    v5.42.3: branch_hint added for parity with memorize/anchor/checkpoint.
-    Hard-rejects when branch context cannot be determined and no branch_hint supplied.
-    Resolution order: _detect_branch(directory) → branch_hint → hard-reject.
 
     Returns: {previous_content: str | None, new_memory: dict}
     """
@@ -2254,39 +2162,12 @@ def update_active_work(directory: str, content: str, branch_hint: str | None = N
     if _gate is not None:
         return _gate
 
-    # v5.46.7: branch context validation (MCP boundary).
-    # Resolution order: _detect_branch(directory) → branch_hint → YADGAR_CI_BRANCH env → reject.
-    _branch = None
-    try:
-        _branch = _detect_branch(directory)
-    except Exception:
-        pass
-
-    if not _branch and branch_hint:
-        _branch = branch_hint
-
-    # v5.46.7: YADGAR_CI_BRANCH env fallback — CI runner sets this when git is unavailable.
-    if not _branch:
-        _branch = os.environ.get("YADGAR_CI_BRANCH") or None
-
-    if not _branch:
-        return {
-            "error": "missing_branch",
-            "stored": False,
-            "message": (
-                "Branch context required. Supply branch_hint=<current-branch-name> or ensure "
-                "the working directory is a git repo accessible to the yadgar daemon."
-            ),
-            "field": "branch_hint",
-            "op_type": "update_active_work",
-        }
-
     # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
     # canonical repo root before resolution — _resolve_project_root alone returns
     # the WORKTREE toplevel for linked worktrees, which orphans the row.
-    directory, _ = normalize_write_context(directory, None)
+    directory = normalize_write_context(directory)
 
-    # R3 Car 3d: secret-gate + branch resolution stay core (above); the atomic
+    # R3 Car 3d: the secret gate stays core (above); the atomic
     # _active_work delete-then-insert (+ project_brief epoch bump) forwards to the
     # backend /admin op. The host-FS watchdog marker stays core (host lifecycle).
     resolved = _resolve_project_root(directory)
@@ -2536,60 +2417,3 @@ def _hash_directory_manifest(directory: Path, h, hashlib_mod) -> bool:
         h.update(b"\0")
         any_file = True
     return any_file
-
-
-@_tool(power=True)
-def wiki_cleanup_merged_branches(directory: str, dry_run: bool = True) -> dict:
-    """List wiki_page rows whose branch is no longer in git branch -a (§26).
-
-    Run from within a git repo. dry_run=True (default) returns the candidate
-    list without deleting. dry_run=False deletes the listed pages.
-
-    Pages with branch in (master, main, None) are never candidates.
-
-    Returns:
-        {
-            "candidates": [{"id": int, "slug": str, "branch": str}, ...],
-            "deleted_count": int,
-            "dry_run": bool,
-        }
-    """
-    resolved = _resolve_project_root(directory)
-
-    # R3 Car 3d: the git-branch enumeration is HOST-only — the backend container
-    # cannot reach the host .git (the very reason branch_hint exists), so it stays
-    # core. The wiki_page query + deletes (DB write + wiki-epoch bump) forward to
-    # the backend /admin op with the live-branch set.
-    try:
-        raw = subprocess.check_output(
-            ["git", *_GIT_SAFE_ARGS, "-C", resolved, "branch", "-a", "--format=%(refname:short)"],
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-            env=_git_safe_env(),
-        ).decode()
-        live_branches: set[str] = set()
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # Strip remote prefix: "remotes/origin/feat/x" → "feat/x",
-            # "origin/feat/x" → "feat/x"
-            for prefix in ("remotes/origin/", "origin/"):
-                if line.startswith(prefix):
-                    line = line[len(prefix) :]
-                    break
-            live_branches.add(line)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as _e:
-        logger.warning("wiki_cleanup_merged_branches: git branch failed: %s", _e)
-        return {
-            "error": "git branch enumeration failed; cleanup aborted",
-            "deleted": [],
-            "deleted_count": 0,
-            "candidates": [],
-            "dry_run": dry_run,
-        }
-
-    return _forward_admin(
-        "wiki_cleanup_merged_branches",
-        {"live_branches": sorted(live_branches), "dry_run": dry_run},
-    )

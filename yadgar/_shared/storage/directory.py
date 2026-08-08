@@ -3,12 +3,12 @@
 Used by memory/wiki query methods to restrict results to the caller's project
 directory, plus always-eligible sentinels (global, empty, None).
 
-Structural twin of storage/branch.py (BranchFilter) so the two filter
-axes compose cleanly in retrieval.core without cross-importing full engines.
+Kept separate from the full StorageEngine so retrieval.core can import
+DirectoryFilter without pulling the engine in.
 
 v5.62.0: Python-side post-filter only.  The SurrealQL-level DirectoryFilter
-(pushed into WHERE clauses, mirroring _build_branch_clause SQL injection) is
-deferred to the unified-scoped-recall rebuild so it is built once, not twice.
+(pushed into WHERE clauses as an injected SQL fragment) is deferred to the
+unified-scoped-recall rebuild so it is built once, not twice.
 See docs/plans/recall-scoping-restamp.md §B note on DB-level filter.
 """
 

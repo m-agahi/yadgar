@@ -1,8 +1,8 @@
 """E2E tests for BC-G10: wiki_set_metadata must update ALL rows of a slug.
 
 Root cause (fixed in this PR): _resolve_page_id_by_slug returns ONE page_id
-via LIMIT 1 → only one row updated. A slug can have MANY rows (per-branch +
-global stragglers). The fix introduces WikiStore.set_metadata_by_slug +
+via LIMIT 1 → only one row updated. A slug can have MANY rows (per-directory
+rows + global stragglers). The fix introduces WikiStore.set_metadata_by_slug +
 storage.get_wiki_page_ids_by_slug.
 
 Test design:
@@ -25,11 +25,11 @@ pytestmark = pytest.mark.e2e
 YADGAR_DIR = "/home/test/yadgar-project"
 
 
-def _insert_wiki_page_direct(storage, slug: str, directory_context: str, branch=None) -> int:
+def _insert_wiki_page_direct(storage, slug: str, directory_context: str) -> int:
     """Seed a wiki_page row directly via storage (bypasses WikiStore add() de-dup).
 
     Returns the integer page_id. Used to manufacture the multi-row/straggler
-    state that triggers BC-G10 (same slug, different directory_context/branch).
+    state that triggers BC-G10 (same slug, different directory_context).
     """
     return storage.insert_wiki_page(
         {
@@ -42,8 +42,7 @@ def _insert_wiki_page_direct(storage, slug: str, directory_context: str, branch=
             "source_memory_ids": [],
             "links": [],
             "directory_context": directory_context,
-        },
-        branch=branch,
+        }
     )
 
 
@@ -63,21 +62,16 @@ class TestWikiSetMetadataAllRows:
         """
         from yadgar.core.server.tools.wiki import wiki_set_metadata
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         storage = e2e_engines["storage"]
 
         slug = "bc-g10-allrows-test-slug"
         target_dir = "/home/test/project"
 
-        # Seed row 1: global straggler (directory_context="global", branch=None)
-        pid1 = _insert_wiki_page_direct(storage, slug, directory_context="global", branch=None)
+        # Seed row 1: global straggler (directory_context="global")
+        pid1 = _insert_wiki_page_direct(storage, slug, directory_context="global")
 
-        # Seed row 2: project-scoped row (directory_context=YADGAR_DIR, branch="master")
-        pid2 = _insert_wiki_page_direct(
-            storage, slug, directory_context=YADGAR_DIR, branch="master"
-        )
+        # Seed row 2: project-scoped row (directory_context=YADGAR_DIR)
+        pid2 = _insert_wiki_page_direct(storage, slug, directory_context=YADGAR_DIR)
 
         assert pid1 != pid2, "Expected two distinct page_ids for the same slug"
 
@@ -120,17 +114,14 @@ class TestWikiSetMetadataAllRows:
         """
         from yadgar.core.server.tools.wiki import wiki_set_metadata
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         storage = e2e_engines["storage"]
 
         slug = "bc-g10-three-rows-slug"
         target_dir = "/home/test/target-project"
 
-        pid1 = _insert_wiki_page_direct(storage, slug, "global", branch=None)
-        pid2 = _insert_wiki_page_direct(storage, slug, YADGAR_DIR, branch="master")
-        pid3 = _insert_wiki_page_direct(storage, slug, "/home/test/other-dir", branch="feat/x")
+        pid1 = _insert_wiki_page_direct(storage, slug, "global")
+        pid2 = _insert_wiki_page_direct(storage, slug, YADGAR_DIR)
+        pid3 = _insert_wiki_page_direct(storage, slug, "/home/test/other-dir")
 
         result = wiki_set_metadata(slug, "directory_context", target_dir)
 
@@ -158,17 +149,14 @@ class TestWikiSetMetadataAllRows:
         """
         from yadgar.core.server.tools.wiki import wiki_set_metadata
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         storage = e2e_engines["storage"]
 
         slug = "bc-g10-idempotent-slug"
         target_dir = "/home/test/already-set-dir"
 
         # Both rows already carry target_dir
-        _insert_wiki_page_direct(storage, slug, target_dir, branch=None)
-        _insert_wiki_page_direct(storage, slug, target_dir, branch="master")
+        _insert_wiki_page_direct(storage, slug, target_dir)
+        _insert_wiki_page_direct(storage, slug, target_dir)
 
         result = wiki_set_metadata(slug, "directory_context", target_dir)
 

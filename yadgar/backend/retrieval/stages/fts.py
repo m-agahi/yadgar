@@ -24,15 +24,6 @@ class FTSStage(RetrievalStage):
     def apply(self, state: RetrievalState) -> RetrievalState:
         from collections import defaultdict  # noqa: PLC0415
 
-        from yadgar._shared.storage import BranchFilter  # noqa: PLC0415
-
-        branch_filter = None
-        if state.default_branch is not None:
-            branch_filter = BranchFilter(
-                current_branch=state.current_branch,
-                default_branch=state.default_branch,
-            )
-
         # Ensure scores defaultdict is set up
         if not state.scores:
             state.scores = defaultdict(
@@ -72,7 +63,6 @@ class FTSStage(RetrievalStage):
                 open_domain_mode=state.open_domain_mode,
                 candidate_k=candidate_k,
                 min_heat=state.min_heat,
-                branch_filter=branch_filter,
             ),
         )
         return state

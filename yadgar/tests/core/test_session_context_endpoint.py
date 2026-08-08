@@ -148,7 +148,7 @@ def test_session_context_uses_directory_param(tmp_path, monkeypatch):
 
     captured_dir = {}
 
-    def _fake_brief(directory, mode="catalog", branch_hint=None):
+    def _fake_brief(directory, mode="catalog"):
         captured_dir["dir"] = directory
         return {
             "_render": f"# Project at {directory}",
@@ -301,9 +301,9 @@ def _seed_task_list_page(
 def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
     """Startup session-context CONTAINS the restore-nudge when the page exists.
 
-    The stop-hook step writes the task-list page CANONICALLY (no branch_hint →
-    branch=None slot) so it is reachable from any caller branch via §25 step-2
-    (dir + branch IS NULL). Seed it that way and assert the nudge fires.
+    The stop-hook step writes the task-list page through the sanctioned canonical
+    writer, so it resolves on directory_context alone and is reachable from any
+    caller. Seed it that way and assert the nudge fires.
     """
     token = "tl-present"
     from yadgar.core import server as _server
@@ -327,42 +327,6 @@ def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
     # The nudge must name the slug + the restore mechanism.
     assert f"{tmp_path.name}-task-list" in body["text"]
     assert "TaskCreate" in body["text"]
-
-
-def test_task_list_nudge_absent_for_default_branch_pinned_row(tmp_path, monkeypatch):
-    """REGRESSION TRAP (memory 531352 / ADR-log branch-pin bug class).
-
-    The task-list page MUST be written canonically (branch=None). If a future
-    edit reverts the template to write it with branch_hint="{default_branch}"
-    (branch='master' row), it becomes UNREACHABLE from any feature-branch
-    session: the endpoint resolves the page under the caller's CURRENT branch,
-    and §25 (dir+branch → dir+NULL → global) never matches a master-pinned row
-    when the caller is on a feature branch.
-
-    Here we seed the page the WRONG (default-branch-pinned) way and query with a
-    feature branch — the nudge MUST be ABSENT, proving the master-pin is a dead
-    write for the common feature-branch case. Anyone who re-adds branch_hint to
-    the template Step 4c write will turn this red.
-    """
-    token = "tl-masterpin"
-    from yadgar.core import server as _server
-
-    _seed_task_list_page(str(tmp_path), branch="master")
-
-    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
-        client = _make_client(token, monkeypatch)
-        resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup&branch=feat/some-work",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert _NUDGE_MARKER not in body["text"], (
-        "a default-branch-pinned task-list row must be unreachable from a "
-        "feature-branch session — the template MUST write canonically "
-        f"(branch=None). Got: {body['text']!r}"
-    )
 
 
 def test_task_list_nudge_absent_when_page_missing(tmp_path, monkeypatch):
@@ -463,7 +427,7 @@ def test_task_list_nudge_fail_open_on_existence_check_error(tmp_path, monkeypatc
 
     class _Boom:
         def __getattr__(self, name):
-            if name == "get_wiki_page_by_slug_directory_branch":
+            if name == "get_wiki_page_by_slug_directory":
 
                 def _raise(*_a, **_k):
                     raise RuntimeError("existence check down")
@@ -633,105 +597,3 @@ def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
     assert "task 12" in text, f"expected 12th task to appear; got: {text!r}"
     assert "task 13" not in text, f"task 13 must be hidden behind the cap; got: {text!r}"
     assert "and 3 more" in text, f"expected '…and 3 more' overflow marker; got: {text!r}"
-
-
-# ---------------------------------------------------------------------------
-# Car 0 — the SOLE set-channel end-to-end (hook params → durable store + cache)
-#
-# §0.9: "only the SessionStart POST writes {gitness, default_branch}" +
-# "invalidate(directory) on SessionStart upsert". These exercise the FULL wiring
-# (GET endpoint → _persist_dir_branch_context_from_request → upsert + invalidate)
-# that the unit tests bypass via a direct _forward_admin call. Every layer of the
-# chain swallows exceptions, so without this coverage a param-extraction /
-# gitness-compare / invalidate bug fails SILENTLY → the store never populates →
-# every branchless write hits flow 4 → the canonical path never works.
-# ---------------------------------------------------------------------------
-
-
-class TestCar0SetChannel:
-    """The GET endpoint is the only channel that populates the trusted git facts."""
-
-    def test_endpoint_populates_durable_store_and_fires_invalidate(
-        self, tmp_path, monkeypatch, admin_backend_bypass
-    ):
-        """GET with gitness+default_branch → durable store populated + cache busted."""
-        from yadgar.core.server.tools import _dir_branch
-
-        _dir_branch._get_cache().clear()
-        _dir = str(tmp_path)
-
-        # Prime the cache with a stale "unknown" entry so we can prove invalidate fires.
-        _dir_branch._get_cache().put(
-            _dir, {"found": False, "gitness": False, "default_branch": None}
-        )
-        assert _dir_branch._get_cache().get(_dir) is not None
-
-        token = "car0-token"
-        client = _make_client(token, monkeypatch)
-        resp = client.get(
-            f"/hooks/session-context?directory={_dir}&gitness=true&default_branch=main",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert resp.status_code == 200, resp.text
-
-        # Manual invalidate fired on the upsert → the stale cache entry is gone.
-        assert _dir_branch._get_cache().get(_dir) is None, "invalidate not wired to the upsert"
-
-        # Durable store populated with the TRUSTED facts (restart-safe read-through).
-        ctx = _dir_branch.get_context(_dir)
-        assert ctx["found"] is True
-        assert ctx["gitness"] is True
-        assert ctx["default_branch"] == "main"
-
-    def test_endpoint_nongit_populates_canonical_facts(
-        self, tmp_path, monkeypatch, admin_backend_bypass
-    ):
-        """GET with gitness=false → non-git durable row (drives flow 3 canonical)."""
-        from yadgar.core.server.tools import _dir_branch
-
-        _dir_branch._get_cache().clear()
-        _dir = str(tmp_path / "nongit")
-
-        token = "car0-token2"
-        client = _make_client(token, monkeypatch)
-        resp = client.get(
-            f"/hooks/session-context?directory={_dir}&gitness=false",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert resp.status_code == 200, resp.text
-
-        ctx = _dir_branch.get_context(_dir)
-        assert ctx["found"] is True
-        assert ctx["gitness"] is False
-        assert ctx["default_branch"] is None
-
-    def test_endpoint_without_gitness_param_does_not_clobber(
-        self, tmp_path, monkeypatch, admin_backend_bypass
-    ):
-        """A pre-Car-0 hook (no gitness param) must NOT clobber an existing row."""
-        from yadgar.core.forward import _forward_admin
-        from yadgar.core.server.tools import _dir_branch
-
-        _dir_branch._get_cache().clear()
-        _dir = str(tmp_path / "known")
-
-        # Seed a known git row (as a Car-0 SessionStart would).
-        _forward_admin(
-            "upsert_dir_branch_context",
-            {"directory": _dir, "gitness": True, "default_branch": "master"},
-        )
-
-        token = "car0-token3"
-        client = _make_client(token, monkeypatch)
-        # Legacy hook: no gitness query param.
-        resp = client.get(
-            f"/hooks/session-context?directory={_dir}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert resp.status_code == 200, resp.text
-
-        # The known row survives — the guard skipped the upsert.
-        ctx = _dir_branch.get_context(_dir)
-        assert ctx["found"] is True
-        assert ctx["gitness"] is True
-        assert ctx["default_branch"] == "master"

@@ -131,10 +131,6 @@ const toolTestCases: ToolTestCase[] = [
     expectedTool: "wiki_refresh_stale",
   },
   {
-    call: (c) => c.wikiCleanupMergedBranches({ directory: "/tmp", dry_run: true }),
-    expectedTool: "wiki_cleanup_merged_branches",
-  },
-  {
     call: (c) => c.blockUpdate({ name: "task", content: "updated", scope: "project", directory: "/tmp" }),
     expectedTool: "block_update",
   },

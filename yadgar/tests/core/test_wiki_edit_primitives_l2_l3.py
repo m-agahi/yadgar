@@ -31,8 +31,6 @@ Test IDs:
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
@@ -53,9 +51,8 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "wiki_l2l3_test.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
-        _migration_013_wiki_page_version(_storage())
-        yield
+    _migration_013_wiki_page_version(_storage())
+    yield
     server.shutdown()
 
 

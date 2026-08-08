@@ -27,7 +27,6 @@ _REEXPORTED = [
     "_auth_headers",
     "_http_get",
     "_http_post",
-    "_detect_branch",
     "_capture_in_flight_host",
     "_log_hook_error",
     "dispatch",

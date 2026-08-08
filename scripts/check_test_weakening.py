@@ -39,19 +39,51 @@ cannot reach the merge-base, so it still fail-opens; the job that can actually g
 red is ``invariant-checks``, which carries ``fetch-depth: 0`` and runs this
 script with ``--ci --base origin/master`` (same shape as ``check_backend_bump``).
 
-Override: set ``ALLOW_TEST_WEAKEN=1`` in the environment to bypass.  This is
-intentionally a one-time env override, not a permanent flag, so weakening a
-test always requires an explicit acknowledgement.
+SANCTIONING A DELETION — ``.test-weakening-allowlist.json`` (replaced the env
+override, 2026-08-08)
+---------------------------------------------------------------------------
+This guard used to honour a single environment variable that bypassed the whole
+run.  That was a blanket, invisible escape hatch: one variable silenced EVERY
+file in the diff at once, and it left no trace in the diff a reviewer actually
+reads.  It was used three times on the ADR-0215 branch-removal train, and a CI
+``env:`` block wired it to a PR label so it could be set from outside the repo
+entirely.  It is GONE — no environment variable bypasses this guard any more,
+and none may be reintroduced.  The variable's name is deliberately not repeated
+anywhere in this file, so that a grep for it finds only the allowlist that
+replaced it (see ``.test-weakening-allowlist.json``) and the CHANGELOG history.
+
+A sanctioned deletion is instead recorded per file, in the repo, in the diff:
+
+    {"yadgar/tests/e2e/test_foo_e2e.py": {"allowed_delta": -12,
+                                          "rationale": "...why, citing the ADR"}}
+
+Governance mirrors the sibling allowlists (``.health-endpoint-allowlist.json``,
+``.urllib-httperror-close-allowlist.json``, ``.container-runtime-allowlist.json``):
+rationale >= 40 chars, malformed entries hard-fail.  Two rules are specific to
+this guard and are the whole point of the mechanism:
+
+  * An entry grants EXACTLY its recorded delta.  A file whose measured delta is
+    WORSE than the allowlisted one fails — an entry cannot absorb future
+    weakening of the same file.  A grandfathering entry is the same hole in a
+    nicer coat.
+  * A file with no entry fails, exactly as before.
+
+STALE ENTRIES ARE A WARNING HERE, NOT A HARD ERROR — deliberately unlike the
+sibling guards.  Their inputs are the filesystem; this guard's input is a diff
+against ``merge-base(origin/master, HEAD)``, which MOVES.  The moment a branch
+carrying an entry merges, its file leaves the diff and the entry goes stale
+through no fault of anyone's — hard-failing would turn master red for everybody.
+Stale entries are printed on every run so they get cleaned up rather than
+rotting silently.  Do not "fix" this to match the siblings.
 
 Usage:
     python scripts/check_test_weakening.py                    # pre-commit mode
     python scripts/check_test_weakening.py --ci --base origin/master   # CI mode
-    ALLOW_TEST_WEAKEN=1 python scripts/check_test_weakening.py         # bypass
 """
 
 from __future__ import annotations
 
-import os
+import json
 import re
 import subprocess
 import sys
@@ -62,7 +94,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _CONTRACT = _REPO_ROOT / "docs" / "contracts" / "BEHAVIOR_CONTRACT.md"
 _STATUS_HDR_RE = re.compile(r"\*\*([0-9]+)\s*✅")
 
-_ALLOW_ENV = "ALLOW_TEST_WEAKEN"
+_ALLOWLIST_NAME = ".test-weakening-allowlist.json"
+_MIN_RATIONALE = 40
 
 # Scan scope — MUST stay in lockstep with check_e2e_assertions.scan_paths()
 # (yadgar/tests/e2e/**/*.py ∪ yadgar/tests/**/*e2e*.py).  Declared here as a
@@ -176,24 +209,127 @@ def collect_inputs(base_ref: str, run_git: GitRunner) -> tuple[str, int | None, 
     return diff_text, base_green, after_green
 
 
-def check_diff(diff_text: str, head_green: int | None, staged_green: int | None) -> list[str]:
-    """Pure function: return violation strings given a diff + green counts."""
+def load_allowlist(path: Path) -> dict:
+    """Load the per-file allowlist, dropping ``_``-prefixed metadata keys.
+
+    Same shape and same tolerance as the sibling loaders: a missing file is an
+    empty allowlist (the strict pre-allowlist contract), malformed JSON raises.
+    """
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path.name} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{path.name} must be a JSON object of {{'path': {{allowed_delta, ...}}}}")
+    return {k: v for k, v in data.items() if not k.startswith("_")}
+
+
+def _allowlist_entry_errors(path: str, meta: object) -> list[str]:
+    """Validate one entry's shape. A malformed entry grants nothing and hard-fails."""
+    if not isinstance(meta, dict):
+        return [f"MALFORMED allowlist entry {path!r}: value must be an object"]
+    errors: list[str] = []
+    delta = meta.get("allowed_delta")
+    if not isinstance(delta, int) or isinstance(delta, bool):
+        errors.append(f"MALFORMED allowlist entry {path!r}: 'allowed_delta' must be an integer")
+    elif delta >= 0:
+        # An entry only ever sanctions a REMOVAL. A zero/positive allowance is
+        # either a typo or an attempt to register a file that needs no entry.
+        errors.append(
+            f"MALFORMED allowlist entry {path!r}: 'allowed_delta' must be negative "
+            f"(got {delta}) — an entry sanctions a removal, nothing else"
+        )
+    rationale = meta.get("rationale", "")
+    if not isinstance(rationale, str) or len(rationale.strip()) < _MIN_RATIONALE:
+        got = len(rationale.strip()) if isinstance(rationale, str) else 0
+        errors.append(
+            f"MALFORMED allowlist entry {path!r}: rationale must be >= "
+            f"{_MIN_RATIONALE} chars (got {got})"
+        )
+    return errors
+
+
+def stale_allowlist_entries(diff_text: str, allowlist: dict) -> list[str]:
+    """Return warning strings for entries that no longer describe reality.
+
+    Two shapes, both meaning "this entry over-grants and should be removed or
+    tightened": the file is no longer in the diff at all (the post-merge shape),
+    or its measured delta is BETTER than the recorded allowance.
+
+    Warnings, not errors — see the module docstring: the baseline is a moving
+    merge-base, so a correct entry goes stale on merge through nobody's fault.
+    """
+    deltas = _per_file_assert_deltas(diff_text)
+    warnings: list[str] = []
+    for path, meta in sorted(allowlist.items()):
+        if not isinstance(meta, dict) or not isinstance(meta.get("allowed_delta"), int):
+            continue  # malformed — already reported as a hard error by check_diff
+        allowed = meta["allowed_delta"]
+        measured = deltas.get(path)
+        if measured is None:
+            warnings.append(
+                f"STALE allowlist entry {path!r}: the file is not in the branch diff "
+                f"at all — remove it from {_ALLOWLIST_NAME}"
+            )
+        elif measured > allowed:
+            warnings.append(
+                f"STALE allowlist entry {path!r}: measured delta {measured:+d} is better "
+                f"than the allowed {allowed:+d} — tighten or remove it in {_ALLOWLIST_NAME}"
+            )
+    return warnings
+
+
+def check_diff(
+    diff_text: str,
+    head_green: int | None,
+    staged_green: int | None,
+    allowlist: dict | None = None,
+) -> list[str]:
+    """Pure function: return violation strings given a diff + green counts.
+
+    *allowlist* is ``{path: {"allowed_delta": int, "rationale": str}}``. Omitting
+    it (or passing ``{}``) is the strict contract: every net removal violates.
+    """
+    allowlist = allowlist or {}
     errors: list[str] = []
 
+    for path, meta in sorted(allowlist.items()):
+        errors.extend(_allowlist_entry_errors(path, meta))
+
     for path, delta in sorted(_per_file_assert_deltas(diff_text).items()):
-        if delta < 0:
+        if delta >= 0:
+            continue
+        entry = allowlist.get(path)
+        allowed = entry.get("allowed_delta") if isinstance(entry, dict) else None
+        if isinstance(allowed, int) and not isinstance(allowed, bool) and allowed < 0:
+            # Sign convention: deltas are negative, so "worse" is SMALLER.
+            # -12 against an allowed -12 passes; -13 does not.
+            if delta >= allowed:
+                continue
             errors.append(
-                f"layer 4 — NET removal of {abs(delta)} 'assert' statement(s) in "
-                f"{path}. If this is intentional, set ALLOW_TEST_WEAKEN=1 when "
-                "committing."
+                f"layer 4 — NET removal of {abs(delta)} 'assert' statement(s) in {path} "
+                f"({delta:+d}) EXCEEDS its allowlisted {allowed:+d}. An allowlist entry "
+                f"grants exactly its recorded delta; it does not absorb further "
+                f"weakening. Justify and update the entry in {_ALLOWLIST_NAME}, or "
+                f"restore the assertions."
             )
+            continue
+        errors.append(
+            f"layer 4 — NET removal of {abs(delta)} 'assert' statement(s) in {path}. "
+            f"If this deletion is sanctioned, add an entry to {_ALLOWLIST_NAME} "
+            f'recording the exact delta ({delta:+d}) and why — e.g. {{"{path}": '
+            f'{{"allowed_delta": {delta}, "rationale": "...citing the ADR"}}}}.'
+        )
 
     if head_green is not None and staged_green is not None:
         if staged_green < head_green:
             errors.append(
                 f"layer 4 — ✅ count dropped {head_green} → {staged_green} in "
-                "docs/contracts/BEHAVIOR_CONTRACT.md. If this is intentional, set "
-                "ALLOW_TEST_WEAKEN=1 when committing."
+                "docs/contracts/BEHAVIOR_CONTRACT.md. Restore the rows, or land the "
+                "contract change in a commit that explains which behaviours stopped "
+                "being covered and why."
             )
 
     return errors
@@ -201,10 +337,6 @@ def check_diff(diff_text: str, head_green: int | None, staged_green: int | None)
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-
-    if os.environ.get(_ALLOW_ENV, "").strip() == "1":
-        print(f"check_test_weakening: bypassed ({_ALLOW_ENV}=1)")
-        return 0
 
     # CI mode and pre-commit mode differ ONLY in the base ref and the label.
     # Both run the same collector into the same pure check_diff — the ADR-0080
@@ -245,7 +377,18 @@ def main(argv: list[str] | None = None) -> int:
 
     diff_text, base_green, after_green = collect_inputs(base_ref, _git)
 
-    errors = check_diff(diff_text, base_green, after_green)
+    try:
+        allowlist = load_allowlist(_REPO_ROOT / _ALLOWLIST_NAME)
+    except ValueError as exc:
+        print(f"test-weakening guard{label} ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    # Printed on EVERY run, pass or fail — a dead entry that nobody is told about
+    # is how an allowlist rots into a permanent grandfather clause.
+    for warning in stale_allowlist_entries(diff_text, allowlist):
+        print(f"test-weakening guard{label} WARNING: {warning}", file=sys.stderr)
+
+    errors = check_diff(diff_text, base_green, after_green, allowlist)
     if errors:
         print(f"test-weakening guard{label} FAILED:", file=sys.stderr)
         for e in errors:

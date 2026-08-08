@@ -3,8 +3,8 @@
 Coverage:
   1. MemoryProvider.candidates() wraps Retriever.recall() → normalized Candidates
   2. WikiProvider.candidates() wraps WikiStore.query() → normalized Candidates
-  3. Candidate fields (type, id, title, content, native_score, directory_context, branch, raw)
-  4. Scope carries directory + branch fields
+  3. Candidate fields (type, id, title, content, native_score, directory_context, raw)
+  4. Scope carries the directory field
   5. MemoryProvider type == "memory", WikiProvider type == "wiki"
   6. No calls to recall() or wiki_query() MCP tools — providers are pure extraction
 """
@@ -67,8 +67,6 @@ def mock_wiki():
 def default_scope():
     return Scope(
         directory="/home/user/project",
-        branch="feat/test",
-        default_branch="master",
         min_heat=0.0,
     )
 
@@ -82,19 +80,13 @@ class TestScope:
     def test_scope_fields(self):
         scope = Scope(
             directory="/project",
-            branch="main",
-            default_branch="main",
             min_heat=0.1,
         )
         assert scope.directory == "/project"
-        assert scope.branch == "main"
-        assert scope.default_branch == "main"
         assert scope.min_heat == 0.1
 
     def test_scope_optional_defaults(self):
         scope = Scope(directory="/project")
-        assert scope.branch is None
-        assert scope.default_branch is None
         assert scope.min_heat == 0.0
 
 
@@ -113,7 +105,6 @@ class TestCandidate:
             content="hello",
             native_score=0.9,
             directory_context="/project",
-            branch="main",
             raw=raw,
         )
         assert c.type == "memory"
@@ -122,7 +113,6 @@ class TestCandidate:
         assert c.content == "hello"
         assert c.native_score == 0.9
         assert c.directory_context == "/project"
-        assert c.branch == "main"
         assert c.raw is raw
 
     def test_candidate_wiki_type(self):
@@ -133,7 +123,6 @@ class TestCandidate:
             content="Wiki content here",
             native_score=0.7,
             directory_context=None,
-            branch=None,
             raw={},
         )
         assert c.type == "wiki"
@@ -185,8 +174,6 @@ class TestMemoryProvider:
             "test query",
             max_results=10,
             min_heat=0.0,
-            current_branch="feat/test",
-            default_branch="master",
             profile=None,
             deadline=None,
         )
@@ -208,7 +195,6 @@ class TestMemoryProvider:
         assert first.content == "memory content 1"
         assert first.native_score == pytest.approx(0.9)
         assert first.directory_context == "/home/user/project"
-        assert first.branch == "master"
 
     def test_candidates_raw_is_original_dict(self, mock_retriever, default_scope):
         provider = MemoryProvider(mock_retriever)
@@ -277,7 +263,6 @@ class TestWikiProvider:
         assert first.content == "wiki page content about testing"
         assert first.native_score == pytest.approx(0.85)
         assert first.directory_context == "/home/user/project"
-        assert first.branch == "master"
 
     def test_candidates_raw_has_source_tag(self, mock_wiki, default_scope):
         provider = WikiProvider(mock_wiki)

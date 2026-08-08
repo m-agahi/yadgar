@@ -73,6 +73,7 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # memory / rules writes (R3 Car 3b / R5 group 2)
     "forget": memory.forget,
     "memory_update": memory.memory_update,
+    "anchor_renew": memory.anchor_renew,
     "reembed_all": memory.reembed_all,
     "add_rule": memory.add_rule,
     "archive_purge": memory.archive_purge,
@@ -108,11 +109,8 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "check_invariants": invariants.check_invariants,
     "update_active_work": project.update_active_work,
     "bootstrap_project_store": project.bootstrap_project_store,
-    "wiki_cleanup_merged_branches": project.wiki_cleanup_merged_branches,
     "record_prelude_marker": project.record_prelude_marker,
     # Car 0: trusted per-directory git-context durable store (upsert + read).
-    "upsert_dir_branch_context": project.upsert_dir_branch_context,
-    "get_dir_branch_context": project.get_dir_branch_context,
     # restoration writes (T2 Car B — pre-compact drain is write-only, no compute)
     "pre_compact_drain": restoration.pre_compact_drain,
     # cross-process drain nudge (task #29 — wiki_add/memorize wait cold-drain fix):

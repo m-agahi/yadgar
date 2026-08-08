@@ -48,8 +48,7 @@ def _store_novel_memory(content: str, context: str = "/test/project", tags=None)
     """
     if tags is None:
         tags = ["testing"]
-    # R3: branch_hint required — drainer rejects writes without branch context.
-    return memorize_sync(content, context, tags, branch_hint="feat/test-branch")
+    return memorize_sync(content, context, tags)
 
 
 # ── Tests: Remember Pipeline ──────────────────────────────────────────

@@ -400,9 +400,8 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_MEMORIZE_SIM_GATE_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_MEMORIZE_SIM_THRESHOLD", "0.85", "float"),
     ConfigEntry("YADGAR_MEMORIZE_SIM_TOP_K", "3", "int"),
-    # ── v5.42.6 enforcement knobs ─────────────────────────────────────────────
+    # ── v5.42.6 enforcement knob ──────────────────────────────────────────────
     ConfigEntry("YADGAR_DIRECTORY_ENFORCEMENT", "true", "bool"),
-    ConfigEntry("YADGAR_BRANCH_ENFORCEMENT", "true", "bool"),
     # ── v5.48.0 update mechanism knobs ────────────────────────────────────────
     ConfigEntry("YADGAR_UPDATE_CHECK_ON_START", "false", "bool"),
     ConfigEntry("YADGAR_UPDATE_CHECK_TIMEOUT_SECONDS", "5", "int"),
@@ -486,7 +485,6 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_REINJECT_ON_WRITE", "false", "bool"),
     # thermodynamics / retrieval boosts
     ConfigEntry("YADGAR_RECALL_BOOST", "0.05", "float"),
-    ConfigEntry("YADGAR_BRANCH_BOOST_WEIGHT", "0.2", "float"),
     ConfigEntry("YADGAR_POSTMORTEM_BOOST_FACTOR", "0.3", "float"),
     ConfigEntry(
         "YADGAR_POSTMORTEM_BOOST_KEYWORDS",

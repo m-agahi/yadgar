@@ -53,7 +53,7 @@ def run_wiki_add_replay(payload: dict) -> dict:
 
     ``payload`` is the queued wiki_add job dict (the same shape the drainer
     already holds). Recognised keys: ``title``, ``content``, ``category``,
-    ``tags``, ``source_memory_ids``, ``confidence``, ``branch``, ``append``,
+    ``tags``, ``source_memory_ids``, ``confidence``, ``append``,
     ``replace_slug``, ``directory_context``, ``page_type``.
 
     Handles replace_slug overwrite, append merge, and normal upsert.
@@ -64,7 +64,6 @@ def run_wiki_add_replay(payload: dict) -> dict:
     tags = payload.get("tags")
     source_memory_ids = payload.get("source_memory_ids")
     confidence = payload.get("confidence", "medium")
-    branch = payload.get("branch")
     append = payload.get("append", False)
     replace_slug = payload.get("replace_slug")
     directory_context = payload.get("directory_context")
@@ -85,7 +84,6 @@ def run_wiki_add_replay(payload: dict) -> dict:
                 opts=WikiAddOptions(
                     source_memory_ids=source_memory_ids,
                     confidence=confidence,
-                    branch=branch,
                     directory_context=directory_context,
                     page_type=page_type,
                 ),
@@ -116,7 +114,6 @@ def run_wiki_add_replay(payload: dict) -> dict:
             opts=WikiAddOptions(
                 source_memory_ids=source_memory_ids,
                 confidence=confidence,
-                branch=branch,
                 directory_context=directory_context,
                 page_type=page_type,
                 slug=explicit_slug,  # Car B (#83): store at caller slug, no title fallback
