@@ -80,10 +80,6 @@ class TestMigration028Registration:
             "027_runtime_config_table"
         )
 
-    def test_is_tail(self):
-        """028 is the newest migration — append-only order."""
-        assert _MIGRATIONS[-1]["version"] == "028_agent_page_type_split"
-
 
 class TestMigration028Mapping:
     def test_pattern_page(self):

@@ -390,9 +390,16 @@ def test_wiki_set_metadata_forwards_slug_keyed_no_resolution():
         return {"ok": True, "slug": "s", "rows_updated": 1}
 
     with patch.object(_w, "_forward_admin", _fake_forward):
-        _w.wiki_set_metadata("s", "branch", "feat/x")
+        # ADR-0215 removed 'branch' from the settable set — 'directory_context'
+        # is now the only allowed field, so it is what exercises the forward.
+        _w.wiki_set_metadata("s", "directory_context", "/home/max/work")
 
-    assert calls == [("wiki_set_metadata", {"slug": "s", "field": "branch", "value": "feat/x"})]
+    assert calls == [
+        (
+            "wiki_set_metadata",
+            {"slug": "s", "field": "directory_context", "value": "/home/max/work"},
+        )
+    ]
 
 
 def test_wiki_update_validates_and_gates_core_then_forwards():

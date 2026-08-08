@@ -70,7 +70,10 @@ KNOWN_MEMORY_FIELDS: frozenset[str] = frozenset(
         "source_episode_id",
         "directory_context",
         "vector_clock",
-        "branch",
+        # ADR-0215 / migration 029: the 'branch' column is dropped. It is
+        # deliberately absent here — memory is SCHEMALESS, so listing it as a
+        # known field would license a generic setter to re-create the column
+        # untyped on rows migration 029 just nulled.
         # ── Graph / cluster ────────────────────────────────────────────────
         "cluster_id",
         "wiki_refs",
