@@ -415,25 +415,25 @@ Delete the whole five-layer chain (the same chain ADR-0216 said must be edited e
 
 ### `BRANCH_ENFORCEMENT` — all three sync files together
 
-- [ ] `yadgar/_shared/config/config.py` — delete the `branch_enforcement` Settings field
-- [ ] `yadgar/_shared/config/config_registry.py` — delete the registry entry
-- [ ] `yadgar/_shared/config/config_yaml.py` — delete if present (grep first: `grep -n branch_enforcement yadgar/_shared/config/config_yaml.py`)
+- [x] `yadgar/_shared/config/config.py` — delete the `branch_enforcement` Settings field
+- [x] `yadgar/_shared/config/config_registry.py` — delete the registry entry
+- [x] `yadgar/_shared/config/config_yaml.py` — delete if present (grep first: `grep -n branch_enforcement yadgar/_shared/config/config_yaml.py`)
 
 ### `BRANCH_BOOST_WEIGHT` — all three
 
-- [ ] `yadgar/_shared/config/config.py` (2 refs)
-- [ ] `yadgar/_shared/config/config_registry.py` (1)
-- [ ] `yadgar/_shared/config/config_yaml.py` (1)
+- [x] `yadgar/_shared/config/config.py` (2 refs)
+- [x] `yadgar/_shared/config/config_registry.py` (1)
+- [x] `yadgar/_shared/config/config_yaml.py` (1)
 
 ### CAPABILITY_REGISTRY — four whole entries + prose
 
-- [ ] `docs/contracts/CAPABILITY_REGISTRY.md:911-920` — **delete** `CAP-STOR-024 — Branch scoping enforcement (BRANCH_ENFORCEMENT)`
-- [ ] `:1794` — **delete/rewrite** `CAP-WIKI-006` (§25 directory+branch scoping). The **directory** half survives → rewrite as directory-only rather than delete, or the directory-scoping capability becomes an ORPHAN.
-- [ ] `:1955-1969` — **delete** the Car-0 wiring entries (`CAP-WIKI-021` and its sibling) whose `settings:` cite `BRANCH_ENFORCEMENT`. **Careful:** these entries also cover `DIRECTORY_ENFORCEMENT` and the gitness mechanism, which survive per ADR-0216 → **rewrite to the surviving gitness/directory scope**, don't delete wholesale, or `DIRECTORY_ENFORCEMENT` orphans.
-- [ ] `:440,446` — the fanout-boost entry: remove `BRANCH_BOOST_WEIGHT` from `settings:` and the branch-boost sentence from `explanation:`. `POSTMORTEM_BOOST_*` and `FANOUT_BOOST_SCOPE` survive.
-- [ ] `:963` — the `anchor()` entry's `wiring:` prose names `_resolve_anchor_branch` + `YADGAR_CI_BRANCH` — rewrite (this is exactly the `check_registry_prose_liveness.py` failure class: a cited identifier that stops existing)
-- [ ] Full sweep — 68 branch hits in this file: `grep -n -i branch docs/contracts/CAPABILITY_REGISTRY.md`. Classify each; the code-graph default-branch entries are FALSE POSITIVES and stay.
-- [ ] Any entry citing `wiki_cleanup_merged_branches` as an MCP tool → delete (the tool is gone, so the entry is STALE)
+- [x] `docs/contracts/CAPABILITY_REGISTRY.md:911-920` — **delete** `CAP-STOR-024 — Branch scoping enforcement (BRANCH_ENFORCEMENT)`
+- [x] `:1794` — **delete/rewrite** `CAP-WIKI-006` (§25 directory+branch scoping). The **directory** half survives → rewrite as directory-only rather than delete, or the directory-scoping capability becomes an ORPHAN.
+- [x] `:1955-1969` — the Car-0 wiring entries (`CAP-WIKI-021` / `CAP-WIKI-022`) whose `settings:` cite `BRANCH_ENFORCEMENT`. **Executed as: drop `BRANCH_ENFORCEMENT` from `settings:`, keep both entries.** Plan text was STALE — it said gitness survives per ADR-0216, but **ADR-0217 SUPERSEDES ADR-0216 and deletes gitness entirely**. Cars 3/6 had already rewritten both entries' `wiring:`/`explanation:` prose to directory-only + ADR-0217, so the only stale token left was the knob. `DIRECTORY_ENFORCEMENT` still has live backing (`config.py`), so both entries stay and do not orphan.
+- [x] `:440,446` — the fanout-boost entry: remove `BRANCH_BOOST_WEIGHT` from `settings:` and the branch-boost sentence from `explanation:`. `POSTMORTEM_BOOST_*` and `FANOUT_BOOST_SCOPE` survive. (Retitled `CAP-RETR-026 — Postmortem-Boost`.)
+- [x] `:963` — the `anchor()` entry's `wiring:` prose names `_resolve_anchor_branch` + `YADGAR_CI_BRANCH` — **NO-OP: already clean.** An earlier car removed both identifiers; `CAP-STOR-028` cites neither. Verified by grep, not assumed.
+- [x] Full sweep — 68 branch hits in this file (**55 by the time Car 7 ran** — Cars 1-6 removed 13): `grep -n -i branch docs/contracts/CAPABILITY_REGISTRY.md`. Classified each; the code-graph default-branch entries are FALSE POSITIVES and stay. Also kept: migration-history entries (`CAP-STOR-006`/`CAP-STOR-017` — immutable history), code-branch false positives (vacuum, FastMCP sync branch, `check_test_weakening` git-diff scope, fusion belief branch), and `wiki_set_metadata`'s "across all branches" prose (**`WikiStore._METADATA_FIELDS` still contains `"branch"` — that claim is TRUE against the code until Car 9**).
+- [x] Any entry citing `wiki_cleanup_merged_branches` as an MCP tool → delete (the tool is gone, so the entry is STALE). **NO-OP: zero references in the registry** — Car 6 already removed them. `sdk-js/src/generated/tools.ts:294,:473` still wraps the dead tool; that is Car 10's residue sweep.
 
 **Exit criterion (positive evidence):** `python scripts/check_capability_coverage.py` and `python scripts/check_registry_prose_liveness.py` **both green in the same commit** as the Settings-field deletions, plus `pytest yadgar/tests/server/test_config_three_way_sync.py` green. The prose-liveness gate is the sharpest instrument in the train for this car — it fires when a registry sentence names an identifier that no longer exists, which is precisely the failure mode of a half-done registry edit. Additionally: `python scripts/check_capability_coverage.py --list-orphans` must show **no new orphans**, proving the surviving `DIRECTORY_ENFORCEMENT` / gitness capabilities were rewritten rather than dropped.
 

@@ -106,7 +106,6 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | `synaptic_window_minutes` | `YADGAR_SYNAPTIC_WINDOW_MINUTES` | int | `30` | Time window for synaptic boost propagation. |
 | `synaptic_boost` | `YADGAR_SYNAPTIC_BOOST` | float | `0.2` | Heat boost propagated from high-importance nearby memories. |
 | `recall_boost` | `YADGAR_RECALL_BOOST` | float | `0.05` | Per-access heat boost added during each decay cycle: `new_heat = min(decay(mem) + access_count_since_decay * RECALL_BOOST, 1.0)`. Set `0.0` for pure exponential decay. *(no FIELD_META)* |
-| `branch_boost_weight` | `YADGAR_BRANCH_BOOST_WEIGHT` | float | `0.2` | Convex-combination boost weight for current-branch memories: `boosted = score + (1 - score) * weight`. *(no FIELD_META)* |
 | `postmortem_boost_factor` | `YADGAR_POSTMORTEM_BOOST_FACTOR` | float | `0.3` | Boost applied (via the convex formula) when a recall query contains an action verb and a candidate carries `_postmortem`/`_incident` tags. `0.0` = disable. *(no FIELD_META)* |
 | `postmortem_boost_keywords` | `YADGAR_POSTMORTEM_BOOST_KEYWORDS` | tuple | `deploy,push,merge,restart,vacuum,rollback,upgrade,migrate,bump,release` | Action verbs that trigger the postmortem boost. *(no FIELD_META)* |
 
@@ -487,7 +486,6 @@ Operational literals promoted from hardcoded values to config.yaml-authoritative
 | `wiki_sim_top_k` | `YADGAR_WIKI_SIM_TOP_K` | int | `5` | — | Max candidate duplicate pages returned in the rejection response. |
 | `wiki_embed_failure_blocks_write` | `YADGAR_WIKI_EMBED_FAILURE_BLOCKS_WRITE` | bool | `false` | — | When true, `wiki_add` fails if `_compute_embedding` returns None or raises. Default false: WARN log + metric, proceed with NULL embedding. |
 | `directory_enforcement` | `YADGAR_DIRECTORY_ENFORCEMENT` | bool | `true` | — | When true, `wiki_add` rejects payloads missing `directory_context`. Set false as a migration escape hatch (emits WARN + `yadgar_writes_with_enforcement_relaxed` metric). |
-| `branch_enforcement` | `YADGAR_BRANCH_ENFORCEMENT` | bool | `true` | — | When true, `wiki_add` and `memorize` reject payloads missing `branch`. Set false as a migration escape hatch (same WARN + metric). |
 
 ---
 

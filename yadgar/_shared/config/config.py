@@ -372,12 +372,12 @@ class Settings(BaseSettings):
     # Max near-duplicate candidates returned in the (non-blocking) near_duplicates list.
     MEMORIZE_SIM_TOP_K: int = 3
 
-    # v5.42.6: enforcement knobs (I25 three-way registered).
-    # Default True: strict enforcement — missing directory/branch rejects the write.
+    # v5.42.6: enforcement knob (I25 three-way registered).
+    # Default True: strict enforcement — a missing directory rejects the write.
     # False: relax enforcement, emit WARN log + metric instead of rejecting.
-    # Set to False as a migration escape hatch if legacy callers lack branch/directory.
+    # Set to False as a migration escape hatch if legacy callers lack directory.
+    # ADR-0215 deleted the BRANCH_ENFORCEMENT sibling along with branch scoping.
     DIRECTORY_ENFORCEMENT: bool = True
-    BRANCH_ENFORCEMENT: bool = True
 
     # v5.62.0: Recall quality floor — drop results whose cross-encoder score is
     # below this threshold.  Targets keyword-only co-occurrence noise that survives
@@ -686,12 +686,6 @@ class Settings(BaseSettings):
     MAX_HASH_BYTES: int = 10_485_760  # 10 MiB
     # Auto-capture rate limit: max requests per directory key per minute.
     AUTO_CAPTURE_RATE_LIMIT: int = 30
-
-    # §25 branch-aware retrieval
-    # Convex-combination boost weight for current-branch memories.
-    # boosted = score + (1 - score) * BRANCH_BOOST_WEIGHT
-    # Keeps final scores in [0, 1]; 0.2 ≈ soft 1.2x at score=0.5.
-    BRANCH_BOOST_WEIGHT: float = 0.2
 
     # §22 project_brief — layered bootstrap
     # Hard character cap for _project_init memory content.
