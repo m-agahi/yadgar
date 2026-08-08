@@ -10,7 +10,6 @@ HTTP-only: reads via daemon HTTP endpoint. No direct surrealkv access.
 
 import json
 import os
-import subprocess
 import sys
 
 try:
@@ -23,27 +22,6 @@ except ImportError:
 
     def shutdown_tracing(*_a, **_k):
         pass
-
-
-def _compute_git_facts(cwd):
-    """Compute the TRUSTED per-directory git fact HOST-SIDE.
-
-    The container cannot see the host ``.git``; this hook runs on the host and can.
-    Returns ``gitness: bool`` — `git rev-parse --is-inside-work-tree` prints "true".
-
-    ADR-0216: this used to return ``(gitness, default_branch)``. Branch scoping was
-    removed by ADR-0215, so only ``gitness`` survives.
-    """
-    try:
-        _gr = subprocess.run(
-            ["git", "-C", cwd, "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-            timeout=2.0,
-        )
-        return _gr.returncode == 0 and _gr.stdout.strip() == "true"
-    except Exception:
-        return False
 
 
 @observe(tier="stage")
@@ -65,11 +43,6 @@ def main():
         except Exception:
             cwd = os.getcwd()
 
-        # The TRUSTED per-directory git fact (host-side). This SessionStart
-        # endpoint is the SOLE set-channel for gitness — no model tool writes it,
-        # so the fact stays non-forgeable (ADR-0126's surviving half).
-        _gitness = _compute_git_facts(cwd)
-
         # HTTP endpoint — works in daemon mode where DB lock is always held
         _port = os.environ.get("YADGAR_PORT", "8765")
         try:
@@ -78,8 +51,7 @@ def main():
             import urllib.parse as _parse
             import urllib.request as _req
 
-            # TRUSTED git fact — gitness is always sent (always meaningful).
-            _params = {"directory": cwd, "gitness": "true" if _gitness else "false"}
+            _params = {"directory": cwd}
             _url = f"http://127.0.0.1:{_port}/hooks/session-context?{_parse.urlencode(_params)}"
             _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
             _req_obj = _req.Request(_url)

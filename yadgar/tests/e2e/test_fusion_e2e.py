@@ -71,9 +71,6 @@ def _run_fanout_recall(
     """Run fan-out recall (UNIFIED_RECALL_ENABLED=True) via the MCP tool."""
     import sys
 
-    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
     _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
         import yadgar.core.server.tools.recall as _rm

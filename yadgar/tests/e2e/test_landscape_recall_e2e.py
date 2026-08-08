@@ -146,9 +146,6 @@ def _run_landscape_recall(
     """Run recall(mode="landscape") via the MCP tool module."""
     import sys
 
-    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
     _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
         import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
@@ -259,9 +256,6 @@ class TestLandscapeRecallE2E:
         """
         import sys
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
             import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
@@ -301,9 +295,6 @@ class TestLandscapeRecallE2E:
                 "is_protected": False,
             }
         )
-
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:

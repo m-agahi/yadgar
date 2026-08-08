@@ -866,8 +866,6 @@ def _reset_server_state():
         _s._last_prompt_recall.clear()
         _s._last_recalled_ids.clear()
         _s._event_queue.clear()
-        _s._detect_branch_cached.cache_clear()
-        _s._get_default_branch_cached.cache_clear()
         # Car 1 added @lru_cache to _resolve_project_root; clear it like its
         # siblings so stale git-root paths don't leak across tests.
         from yadgar.core.server.tools import project as _proj  # noqa: PLC0415

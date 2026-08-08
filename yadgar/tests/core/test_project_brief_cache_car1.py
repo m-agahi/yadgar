@@ -115,7 +115,6 @@ def _patch_compute(monkeypatch, calls: list):
         "_fetch_presence_rows",
         lambda storage, resolved: ([], [], []),
     )
-    monkeypatch.setattr(project, "_get_current_branch", lambda resolved: "master")
     monkeypatch.setattr(project, "_resolve_project_root", lambda d: d)
 
 

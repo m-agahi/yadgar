@@ -122,40 +122,13 @@ def test_restore_adr_log_body_absent():
     )
 
 
-# ── 7. Car 2: canonical index read uses NO branch_hint (531352 fix) ──────────
-
-
-def test_restore_adr_log_reads_canonical_index_no_branch_hint(tmp_path):
-    """Car 2: the ADR index read must be CANONICAL — no branch_hint (531352 fix).
-
-    Under the old model the read pinned branch_hint=default_branch, which returned
-    empty on feature branches / non-git dirs. The canonical index resolves via §25
-    step-2 (dir + branch IS NULL) from any caller — so branch_hint must be absent.
-    """
-    captured_calls: list[dict] = []
-
-    def fake_wiki_read(slug, directory=None, branch_hint=None):
-        captured_calls.append({"slug": slug, "directory": directory, "branch_hint": branch_hint})
-        return {"error": "not found"}
-
-    with patch("yadgar.core.server.tools.wiki.wiki_read", side_effect=fake_wiki_read):
-        server.project_brief(str(tmp_path), mode="restore")
-
-    adr_calls = [c for c in captured_calls if "adr-index" in (c.get("slug") or "")]
-    assert len(adr_calls) >= 1, f"No wiki_read for canonical ADR index. All calls: {captured_calls}"
-    assert adr_calls[0]["branch_hint"] is None, (
-        f"Canonical index read must NOT pin a branch (531352 fix); "
-        f"got branch_hint={adr_calls[0]['branch_hint']!r}"
-    )
-
-
 # ── 8. graceful degradation when wiki_read raises ────────────────────────────
 
 
 def test_restore_adr_log_no_crash_when_wiki_read_raises(tmp_path):
     """If wiki_read raises an exception, restore mode still returns a result."""
 
-    def raising_wiki_read(slug, directory=None, branch_hint=None):
+    def raising_wiki_read(slug, directory=None):
         raise RuntimeError("wiki connection error")
 
     with patch("yadgar.core.server.tools.wiki.wiki_read", side_effect=raising_wiki_read):

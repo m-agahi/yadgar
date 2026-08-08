@@ -16,8 +16,8 @@ Run: `make e2e` (local, real `surreal`) + pre-push hook; **excluded from CI**
 (`-m 'not e2e'`).
 
 **Surface (recounted v6 T6, self-enforced by `scripts/check_contract_coverage.py`):**
-**262 SHALLs / 41 subsystems.** Today: **57 ✅ · 200 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83) Of the 200 ⏳:
-**59 `[r]` (real-path coverage exists) · 109 `[u]` (unit-only) · 32 none.**
+**259 SHALLs / 41 subsystems.** Today: **57 ✅ · 197 ⏳ · 1 ❌.** (+ 2 🗑 RETIRED — BC-CM2/CM3, v5.71.0 #47; + 1 🗑 DELETED — BC-T2 remember tool, v6 T3; + 4 🗑 DELETED — BC-G5/T36/T37/T38 wiki-draft tools, v5.157.0 #76; + 2 🗑 DELETED — BC-T56/T58 container-blind repo-wiki/coverage tools, v5.160.0 #83; + 3 🗑 DELETED — BC-G3 §25 branch resolution and BC-G8/T57 branch-cleanup tool, v5.180.0 ADR-0215) Of the 197 ⏳:
+**58 `[r]` (real-path coverage exists) · 107 `[u]` (unit-only) · 32 none.**
 Goal: every SHALL → ✅ or ❌.
 
 **Lint rules** (`scripts/check_contract_coverage.py`, run as a non-e2e pytest):
@@ -88,13 +88,11 @@ Telemetry caveat: `consolidation_log` vacuum rows written before task:0045 carry
 ### G. Wiki
 - BC-G1 wiki_add(slug, content, directory=D) stamps D. ⏳[r] P1
 - BC-G2 wiki_query(term, directory=A) excludes other-project pages. ⏳[r] P1
-- BC-G3 wiki_read §25 resolution: dir+branch → dir+null → global → not-found. ⏳[r] P1
 - BC-G4 every wiki_add/update creates an immutable wiki_page_version. ⏳[r] P1
 - BC-G6 similarity gate blocks near-duplicate page. ⏳[r] P2
 - BC-G7 wiki bookmarks CRUD. ⏳[r] P2
-- BC-G8 wiki_cleanup_merged_branches removes merged-branch pages. ⏳[u] P2
 - BC-G9 wiki edit primitives (set_metadata/anchor-text/positional/structural) mutate as specified, versioned. ⏳[u] P2
-- BC-G10 wiki_set_metadata reaches ALL rows of a slug across branches (the migration found dup-row stragglers it couldn't touch). ✅ `tests/e2e/test_wiki_set_metadata_allrows.py::TestWikiSetMetadataAllRows::test_set_metadata_updates_all_rows_for_slug` P2
+- BC-G10 wiki_set_metadata reaches ALL rows of a slug across directory contexts (the migration found dup-row stragglers it couldn't touch). ✅ `tests/e2e/test_wiki_set_metadata_allrows.py::TestWikiSetMetadataAllRows::test_set_metadata_updates_all_rows_for_slug` P2
 - BC-G11 fan-out recall (UNIFIED_RECALL_ENABLED=True) scopes wiki results to caller directory (same eligible-set rule as legacy). ✅ `tests/e2e/test_scope_filter_e2e.py::TestScopeFilterE2E::test_db_clause_excludes_other_dir` P1
 
 ### U. Unified recall fan-out (v6 T6 — UNIFIED_RECALL_ENABLED flag-ON only)
@@ -135,7 +133,7 @@ Telemetry caveat: `consolidation_log` vacuum rows written before task:0045 carry
 ### H2. reembed_all / admin (P1 subset)
 - BC-ADM1 reembed_all re-embeds every missing-embedding row (v5.67). ✅ `tests/e2e/test_phase1_db_layer.py::TestBCADM1_ReembedAll::test_reembed_fills_missing_embeddings` P1
 
-### DB-CONTRACT (directory/branch, v5.42–v5.65, PD-46..49)
+### DB-CONTRACT (directory, v5.42–v5.65, PD-46..49)
 - BC-DC1 eligible set = {caller_dir, global, '', None}; single is_directory_eligible predicate (I31). ⏳[r] P1
 - BC-DC2 hard-require directory on reads; no os.getcwd() container fallback. ⏳[r] P1
 
@@ -353,7 +351,6 @@ Telemetry caveat: `consolidation_log` vacuum rows written before task:0045 carry
 | BC-T54 | wiki_delete_at | ⏳[u] | =G9 |
 | BC-T55 | wiki_delete_text | ⏳[u] | =G9 |
 | BC-T56 | ~~wiki_coverage~~ | removed | removed #83 Car C (ADR-0157) |
-| BC-T57 | wiki_cleanup_merged_branches | ⏳[u] | =G8 |
 | BC-T58 | ~~wiki_refresh_stale~~ | removed | removed #83 Car C (ADR-0157) |
 | BC-T59 | consolidate_now | ⏳[r] | =C1 |
 | BC-T60 | reembed_all | ⏳[u] | =ADM1 |

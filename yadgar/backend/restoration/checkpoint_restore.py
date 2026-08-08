@@ -135,7 +135,6 @@ class CheckpointRestore:
         Anchored memories get heat=1.0, is_protected=True, importance=1.0.
         They are ALWAYS included in restoration regardless of other scoring.
 
-        branch: auto-captured at write time via _detect_branch; None for non-git contexts.
         tier: v5.8.0 — anchor tier string ("semantic_immortal"|"conditional"|"ephemeral").
         valid_until: v5.8.0 — ISO-8601 UTC expiry string; None = no expiry.
         """

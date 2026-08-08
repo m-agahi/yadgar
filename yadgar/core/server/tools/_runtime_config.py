@@ -6,7 +6,7 @@ durable store in a read-through Path-To-Cache (PTC) resolver on the shared core
 ``Cache`` engine, and does the per-dir → global → default RESOLUTION that the raw
 storage rows deliberately leave to the reader.
 
-Design (mirrors ``_dir_branch`` construction shape; ADR-0140 precedent):
+Design (ADR-0140 precedent):
 
   * namespace ``runtime_config`` (registered in ``cache._NAMESPACE_WEIGHTS``).
   * ``Manual`` invalidation — writes are rare and small, so a whole-flush on every
@@ -77,9 +77,8 @@ def _get_cache():
     """Return the singleton cache (built once at import).
 
     The core ``Cache`` self-registers into a module-global registry and raises on a
-    duplicate name, so the instance must be built exactly once (mirrors
-    ``_dir_branch._get_cache``). Reuse a prior instance if already registered
-    (e.g. after a module reload).
+    duplicate name, so the instance must be built exactly once. Reuse a prior
+    instance if already registered (e.g. after a module reload).
     """
     global _cache
     if _cache is None:

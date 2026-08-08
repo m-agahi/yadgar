@@ -107,7 +107,6 @@ def test_signals_mode_recommended_actions_refresh_active_work_when_stale(monkeyp
     settings = get_settings()
     directory = "/tmp/stale_aw_test"
 
-    # branch_hint required: directory is not a git repo so _detect_branch returns None.
     server.update_active_work(directory=directory, content="active work content")
     flush_queue()
 
@@ -132,7 +131,6 @@ def test_signals_mode_recommended_actions_refresh_checkpoint_when_stale(monkeypa
     settings = get_settings()
     directory = "/tmp/stale_cp_test"
 
-    # branch_hint required: directory is not a git repo so _detect_branch returns None.
     server.checkpoint(
         directory=directory,
         current_task="test task",
@@ -349,7 +347,6 @@ def test_hot_memories_excludes_global_anchor(flush_queue):
 def test_active_work_age_hours_populated(flush_queue):
     """active_work_age_hours is a non-negative float when active_work exists."""
     directory = "/tmp/aw_age_test"
-    # branch_hint required: directory is not a git repo so _detect_branch returns None.
     server.update_active_work(directory=directory, content="current task")
     flush_queue()
 
@@ -376,7 +373,6 @@ def test_init_memory_age_hours_populated(flush_queue):
 def test_checkpoint_age_hours_populated(flush_queue):
     """stale_checkpoint_hours is a non-negative float when checkpoint exists."""
     directory = "/tmp/ckpt_age_test"
-    # branch_hint required: directory is not a git repo so _detect_branch returns None.
     server.checkpoint(
         directory=directory,
         current_task="test",
@@ -412,7 +408,6 @@ def test_restore_mode_global_anchor_has_global_scope(flush_queue):
 def test_restore_mode_project_anchor_has_project_scope(flush_queue):
     """Project anchor (directory_context=dir) gets scope='project'."""
     directory = "/tmp/restore_project_scope"
-    # branch_hint required: directory is not a git repo so _detect_branch returns None.
     server.anchor("project scope anchor", directory, "key_decision")
     flush_queue()
 

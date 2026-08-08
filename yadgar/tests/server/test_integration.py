@@ -106,16 +106,10 @@ def detector(storage, settings):
 @pytest.fixture(autouse=False)
 def server_engines(tmp_path):
     """Initialize full server engines for MCP tool tests."""
-    from unittest.mock import patch
 
     db_path = str(tmp_path / "server_integration.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
-    # v5.42.3: /tmp/* and /proj* paths are not git repos; patch _detect_branch.
-    with (
-        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
-    ):
-        yield
+    yield
     server.shutdown()
 
 

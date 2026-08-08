@@ -103,13 +103,11 @@ def _drainer_env(tmp_path):
         return real_fq
 
     # Patch _get_file_queue in all the places that hold a direct reference.
-    # v5.42.3: also patch _detect_branch so wiki_add calls without branch_hint work.
     with (
         patch.object(_cl, "_get_file_queue", _get_fq),
         patch("yadgar.core.server.tools.wiki._get_file_queue", _get_fq),
         patch.object(_state_mod, "_queue_drainer", drainer),
         patch.object(_state_mod, "_file_queue", real_fq),
-        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
     ):
         yield drainer, real_fq
 

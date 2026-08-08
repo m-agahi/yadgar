@@ -7,11 +7,9 @@ trivially green. This file is the counter: it asserts a behaviour that is
 
 The environment each test constructs is exactly the one the guard fired on:
 
-  * ``_detect_branch`` RAISES — patched on BOTH of its call seams. ``memorize``
-    and ``misc`` (anchor/checkpoint) reach it as ``yadgar.core.server._detect_branch``;
-    ``update_active_work`` reaches a module-level import in
-    ``yadgar.core.server.tools.project``. Patching only one leaves the other
-    resolving a real branch and the test passes vacuously for that tool.
+  * No branch detection exists to fall back on — Car 6 deleted the helper the
+    write path used to consult, so a real branch cannot leak in and make a
+    test pass vacuously.
   * ``YADGAR_CI_BRANCH`` is DELETED from the environment. This is load-bearing,
     not hygiene: the repo's own CI workflows export ``YADGAR_CI_BRANCH: master``,
     so without the delenv these tests would be green pre-Car-2 on CI and red only
@@ -64,19 +62,9 @@ PROJECT_DIR = "/home/test/yadgar-project"
 def _no_branch_context_anywhere(monkeypatch) -> None:
     """Construct the exact environment the v5.42.3 hard-reject fired on.
 
-    ``_detect_branch`` raises rather than returning None so a caller that
-    swallows the exception and a caller that checks falsiness are both covered.
+    The repo's CI workflows export ``YADGAR_CI_BRANCH``; without the delenv these
+    tests are green pre-car on CI and only red locally.
     """
-
-    def _boom(_directory):
-        raise RuntimeError("no git repo — daemon cannot detect a branch")
-
-    # Seam 1: memorize.py / misc.py — `import yadgar.core.server as _srv`
-    monkeypatch.setattr("yadgar.core.server._detect_branch", _boom, raising=False)
-    # Seam 2: project.py::update_active_work — module-level import
-    monkeypatch.setattr("yadgar.core.server.tools.project._detect_branch", _boom, raising=False)
-    # The repo's CI workflows export this; without the delenv these tests are
-    # green pre-car on CI and only red locally.
     monkeypatch.delenv("YADGAR_CI_BRANCH", raising=False)
 
 

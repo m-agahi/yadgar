@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -37,11 +36,7 @@ def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("project_brief_catalog_v5")
     db_path = str(tmp_path / "test.db")
     server.init_engines(db_path=db_path, embedding_model="all-MiniLM-L6-v2")
-    with (
-        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test"),
-        patch("yadgar.core.server._detect_branch", return_value="feat/test"),
-    ):
-        yield
+    yield
     server.shutdown()
 
 

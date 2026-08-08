@@ -47,13 +47,12 @@ def _check_wiki_add_context(directory: str | None) -> dict:
 
     Returns ``{}`` when the write may proceed, or ``{"error": ...}`` to REJECT.
 
-    ADR-0215/0216: this used to be Car 0's four-flow branch router — it read the
-    trusted per-directory ``gitness`` and decided branch-scoped vs canonical.
-    Branch scoping is gone, so the whole flow table went with it and ``gitness``
-    is NO LONGER CONSULTED HERE. That is deliberate: directory enforcement was
-    never keyed on gitness (it tests only whether a directory was supplied), so
-    collapsing this function to directory-only removes nothing it depended on.
-    The trusted gitness mechanism itself survives per ADR-0216.
+    ADR-0215/0217: this used to be Car 0's four-flow branch router — it read a
+    trusted per-directory git fact and decided branch-scoped vs canonical. Branch
+    scoping is gone, so the whole flow table went with it, and the git fact was
+    deleted as redundant (ADR-0217). Directory enforcement was never keyed on it
+    — it tests only whether a directory was supplied — so collapsing this
+    function to directory-only removes nothing it depended on.
 
     ``is_draining()`` callers are exempt — this helper should only be called when
     not is_draining().
@@ -977,8 +976,8 @@ def wiki_restore(
 
     Returns: {"page_id": N, "restored_from_version": V, "new_version": N+1, "note": "..."}
     """
-    # R3 Car 3c: slug→page_id resolution stays CORE (backend has no git/cwd, so
-    # backend-side _detect_branch would resolve the wrong row); the restore write
+    # R3 Car 3c: slug→page_id resolution stays CORE (backend has a different cwd,
+    # so backend-side resolution would resolve the wrong row); the restore write
     # forwards keyed by page_id.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:

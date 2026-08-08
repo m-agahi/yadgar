@@ -968,49 +968,6 @@ def _code_graph_suggest_line(directory: str, blocks: list[dict]) -> str:
         return ""
 
 
-@observe(tier="stage", metric="http._persist_dir_branch_context_from_request")
-def _persist_dir_branch_context_from_request(request: Request, directory: str) -> None:
-    """Extract the trusted ``gitness`` fact from the request + persist it.
-
-    ``gitness`` absent = a legacy hook → skip (never clobber a known dir's durable
-    row on a legacy hook). Runs on a worker thread (blocking forward).
-    """
-    gitness_param = request.query_params.get("gitness", None)
-    if gitness_param is None:
-        return
-    _persist_dir_branch_context(directory, gitness_param == "true")
-
-
-@observe(tier="stage", metric="http._persist_dir_branch_context")
-def _persist_dir_branch_context(directory: str, gitness: bool) -> None:
-    """Durably persist the TRUSTED per-directory ``gitness`` + bust the core cache.
-
-    The SessionStart context endpoint is the SOLE set-channel. Writes the durable
-    directory-keyed row via the backend admin op (ADR-0078: core never touches the
-    DB directly), then fires the Manual cache invalidate so a gitness change is
-    picked up on the next read. Best-effort — a failure here must never break the
-    session-context render.
-
-    ADR-0216: ``default_branch`` used to ride along in the same blob; ADR-0215
-    removed branch scoping, so only ``gitness`` is persisted now.
-    """
-    try:
-        from yadgar.core.forward import _forward_admin  # noqa: PLC0415
-
-        _forward_admin(
-            "upsert_dir_branch_context",
-            {"directory": directory, "gitness": bool(gitness)},
-        )
-    except Exception as _exc:  # noqa: BLE001 — never break session-context on this
-        logger.warning("dir_branch_context durable upsert failed for %s: %s", directory, _exc)
-    try:
-        from yadgar.core.server.tools import _dir_branch  # noqa: PLC0415
-
-        _dir_branch.invalidate(directory)
-    except Exception:  # noqa: BLE001
-        logger.debug("dir_branch_context invalidate failed for %s", directory, exc_info=True)
-
-
 @mcp_server.custom_route("/hooks/session-context", methods=["GET"])
 @trace_span()
 async def hook_session_context(request: Request) -> JSONResponse:
@@ -1022,8 +979,6 @@ async def hook_session_context(request: Request) -> JSONResponse:
     Query params:
         directory: project directory (optional, defaults to cwd)
         mode: brief mode (optional, defaults to "catalog")
-        gitness: host-side "is this a git work-tree" fact ("true"/"false"). The
-            SOLE set-channel for the trusted per-directory gitness row.
         source: SessionStart source field (v5.7.9); values: "compact",
             "clear", "startup", "resume". Missing/unknown → treated as
             "startup". "compact" suppresses restore hint (compact handler
@@ -1041,12 +996,6 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
     # Record timestamp for prompt-recall throttling (bounded dict)
     _bounded_set(_st._last_session_context, directory, time.monotonic())
-
-    # This endpoint is the SOLE set-channel for the TRUSTED per-directory
-    # ``gitness`` fact, computed host-side by the SessionStart hook. Persist it
-    # DURABLY + Manual-invalidate the core cache (all guarding lives in the
-    # helper; "gitness" absent → legacy hook → skip).
-    await asyncio.to_thread(_persist_dir_branch_context_from_request, request, directory)
 
     # v5.10.6: import any pending session-end sentinel files before project_brief query.
     _sentinel_dir_env = os.environ.get("YADGAR_SESSION_END_DIR", "")

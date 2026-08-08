@@ -34,7 +34,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -49,36 +48,6 @@ def _auth_headers() -> dict:
     if _AUTH_TOKEN:
         return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
     return {}
-
-
-def _detect_branch(directory: str) -> str:
-    """Return the current git branch for *directory*, or "" when undetectable.
-
-    HOST-side branch detection (R3): the daemon runs in a container and cannot
-    see the host ``.git`` — the hook must detect the branch here and pass it as
-    ``?branch=`` so writes land on the right branch. Additive + degrading: any
-    failure (not a repo, git missing, detached HEAD) yields "" and the caller
-    simply omits the ``branch`` param, preserving the pre-branch_hint wire shape.
-    """
-    if not directory:
-        return ""
-    try:
-        proc = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=directory,
-            capture_output=True,
-            text=True,
-            timeout=1.0,
-            check=False,
-        )
-    except Exception:
-        # git missing / not a repo / timeout / any OSError — never crash the
-        # hook on branch detection; degrade to no branch_hint (defensive, matches
-        # the other handlers' bare-Exception guard style).
-        return ""
-    if proc.returncode != 0:
-        return ""
-    return proc.stdout.strip()
 
 
 def _http_get(path: str, params: dict | None = None, timeout: float = 2.0) -> dict | None:

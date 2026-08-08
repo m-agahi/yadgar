@@ -159,8 +159,6 @@ def _call_recall_mcp_tool(query: str = "test query", max_results: int = 1, min_h
         patch.object(_st, "_replay", None),
         patch.object(_st, "_wiki", mock_wiki),
         patch.object(_st, "_last_recalled_ids", {}),
-        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         return recall_fn(
             query=query, max_results=max_results, min_heat=min_heat, directory="/tmp/test"
@@ -179,11 +177,7 @@ def _call_wiki_query_mcp_tool(
 
     mock_wiki = _make_mock_wiki()
 
-    with (
-        patch.object(_st, "_wiki", mock_wiki),
-        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
-    ):
+    with patch.object(_st, "_wiki", mock_wiki):
         return wiki_query_fn(
             query=query,
             tags=tags,
@@ -316,8 +310,6 @@ class TestRecallDurationMetricBugA:
             patch.object(_st, "_replay", None),
             patch.object(_st, "_last_recalled_ids", {}),
             patch("yadgar.core.server.tools.recall._forward_to_backend", _boom),
-            patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
             pytest.raises(RuntimeError, match="injected error for Bug A test"),
         ):
             from yadgar.core.server.tools.recall import recall as recall_fn

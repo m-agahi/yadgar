@@ -11,9 +11,9 @@ wiki_replace_at, wiki_delete_at, wiki_insert_at, wiki_replace_markdown_block,
 wiki_set_metadata, wiki_autolink, agent_prompt_save.
 
 DESIGN — slug→page_id resolution stays CORE.
-``_resolve_page_id_by_slug`` calls ``os.getcwd()`` + ``_detect_branch(cwd)``. The
-backend container has no git and a different cwd, so backend-side resolution would
-land the wrong (directory, branch) row. Core resolves the slug to a ``page_id``
+``_resolve_page_id_by_slug`` resolves against the caller's ``os.getcwd()``. The
+backend container has a different cwd, so backend-side resolution would land the
+wrong directory row. Core resolves the slug to a ``page_id``
 (reads are allowed core-side — "zero DB" is a write-side goal — and core+backend
 share the same DB), then forwards the write keyed by ``page_id``. Impls that need
 the page therefore take ``page_id`` in the payload, not ``slug``+context.

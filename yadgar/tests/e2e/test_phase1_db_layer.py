@@ -223,13 +223,6 @@ class TestBCA1_MemorizeRecallRoundTrip:
         )
 
         # Verify recall surfaces the row from this directory.
-        # branch_hint=_E2E_BRANCH mirrors the memorize() write branch: R3 made the
-        # write path honor branch_hint when _detect_branch(directory) fails (the
-        # documented _detect_branch → branch_hint resolution). The e2e yadgar_dir
-        # is a synthetic (non-git) path, so both write and read must supply the
-        # branch_hint to land on the same branch slot — in production the hooks
-        # pass branch_hint to both memorize and recall. Pre-R3 the write ignored
-        # branch_hint (stamped branch=None) so an unstamped read matched by luck.
         results = recall(
             "BC-A1 unique sentinel content",
             directory=yadgar_dir,

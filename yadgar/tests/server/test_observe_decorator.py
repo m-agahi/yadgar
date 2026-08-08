@@ -434,10 +434,9 @@ def test_observe_exempt_staticmethod(in_memory_tracer, obs_registry):
 # ── lru_cache attribute preservation (BUG-3 regression) ───────────────────────
 # @observe stacked ABOVE @functools.lru_cache must preserve the cache's public
 # attributes (cache_info / cache_clear / cache_parameters). The P5 rollout stacked
-# @observe above @lru_cache on tools.project._get_default_branch_cached /
-# _detect_branch_cached / config_registry._yaml_layer; the wrapper hid cache_info,
-# so callers doing `fn.cache_info().hits` raised AttributeError — which recall.py
-# swallowed, collapsing the allowed-branch set and dropping seeded wikis from recall.
+# @observe above @lru_cache on several cached helpers (config_registry._yaml_layer
+# among them); the wrapper hid cache_info, so callers doing `fn.cache_info().hits`
+# raised AttributeError — which recall.py swallowed, silently degrading retrieval.
 
 
 def test_observe_preserves_lru_cache_info(in_memory_tracer, obs_registry):

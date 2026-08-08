@@ -104,7 +104,7 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     # the SubagentStop footer path too (it calls this same tool).
     # ADR-0215: the branch half of the pair is discarded — nothing downstream
     # reads it any more.
-    ctx.context, _ = normalize_write_context(ctx.context, None)
+    ctx.context = normalize_write_context(ctx.context)
 
     return _enqueue(ctx, wait=wait)
 

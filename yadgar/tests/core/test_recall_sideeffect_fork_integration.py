@@ -83,11 +83,7 @@ def test_recall_defers_session_side_effects_through_fork():
     ):
         mock_st._consolidation = None
         mock_st._pool = None
-        with (
-            patch("yadgar.core.server.tools.project._detect_branch", return_value="master"),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
-        ):
-            result = recall_mod.recall(query="query text", directory="/tmp", max_results=5)
+        result = recall_mod.recall(query="query text", directory="/tmp", max_results=5)
 
     assert captured.get("called"), "recall() did not defer the session half through the fork seam"
     mock_apply.assert_called_once_with(fake_results, "query text")

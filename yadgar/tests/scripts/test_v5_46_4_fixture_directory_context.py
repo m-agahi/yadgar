@@ -2,6 +2,9 @@
 
 Meta-test: inspect source of key test files to verify directory_context is present
 in wiki_page INSERT fixtures (positive-path tests).
+
+ADR-0215 removed three of the four test files this scanned, and those checks went
+with them. The surviving check is the one whose target still exists.
 """
 
 from __future__ import annotations
@@ -13,30 +16,6 @@ TESTS_DIR = Path(__file__).parent.parent
 
 def _source(filename: str) -> str:
     return (TESTS_DIR / filename).read_text()
-
-
-def test_wiki_read_resolution_insert_has_directory_context():
-    """_insert_wiki_page in test_wiki_read_resolution.py must set directory_context."""
-    src = _source("core/test_wiki_read_resolution.py")
-    assert "directory_context" in src, (
-        "_insert_wiki_page fixture missing directory_context field — B1 fix not applied"
-    )
-
-
-def test_wiki_cleanup_merged_branches_inserts_have_directory_context():
-    """Direct INSERT calls in test_wiki_cleanup_merged_branches.py must include directory_context."""
-    src = _source("core/test_wiki_cleanup_merged_branches.py")
-    assert "directory_context" in src, (
-        "wiki_cleanup INSERT fixtures missing directory_context field — B1 fix not applied"
-    )
-
-
-def test_branch_schema_migration_insert_has_directory_context():
-    """_insert_bare_wiki_page in test_branch_schema_migration.py must set directory_context."""
-    src = _source("core/test_branch_schema_migration.py")
-    assert "directory_context" in src, (
-        "_insert_bare_wiki_page fixture missing directory_context field — B1 fix not applied"
-    )
 
 
 def test_export_duckdb_seeded_storage_has_directory_context():

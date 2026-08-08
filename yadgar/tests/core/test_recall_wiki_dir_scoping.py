@@ -92,8 +92,6 @@ def _call_recall_with_wiki(
         patch.object(_st, "_replay", None),
         patch.object(_st, "_wiki", mock_wiki),
         patch.object(_st, "_last_recalled_ids", {}),
-        patch("yadgar.core.server.tools.project._detect_branch", return_value=None),
-        patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
     ):
         return recall_fn(query=query, max_results=max_results, directory=directory)
 

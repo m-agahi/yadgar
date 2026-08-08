@@ -137,7 +137,7 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
     # canonical repo root so checkpoints stay restorable from the canonical repo.
     # ADR-0215: the branch half of the pair is discarded — nothing reads it now.
-    directory, _ = normalize_write_context(directory, None)
+    directory = normalize_write_context(directory)
 
     # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
     _get_file_queue().enqueue(
@@ -286,7 +286,7 @@ def anchor(
     # T2 fold-in (Q1 orphaned-memories fix): collapse worktree contexts to the
     # canonical repo root so anchors stay visible to canonical-repo recall.
     # ADR-0215: the branch half of the pair is discarded — nothing reads it now.
-    context, _ = normalize_write_context(context, None)
+    context = normalize_write_context(context)
 
     # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
     _enqueue_payload: dict = {

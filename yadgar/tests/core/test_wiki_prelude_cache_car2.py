@@ -90,13 +90,6 @@ def _wire_fake_wiki(monkeypatch):
     storage = _FakeStorage()
     fake = _FakeWikiStore(storage)
     monkeypatch.setattr(_state, "_wiki", fake)
-    # wiki_read resolves branch via yadgar.server module attrs — force stable values.
-    import sys as _sys
-
-    srv = _sys.modules.get("yadgar.core.server")
-    if srv is not None:
-        monkeypatch.setattr(srv, "_detect_branch", lambda d: None, raising=False)
-        monkeypatch.setattr(srv, "_get_default_branch", lambda d: "master", raising=False)
     return fake, storage, wtool
 
 
@@ -214,12 +207,6 @@ def _wire_fake_query(monkeypatch, results):
 
     store = _QStore()
     monkeypatch.setattr(_state, "_wiki", store)
-    import sys as _sys
-
-    srv = _sys.modules.get("yadgar.core.server")
-    if srv is not None:
-        monkeypatch.setattr(srv, "_detect_branch", lambda d: None, raising=False)
-        monkeypatch.setattr(srv, "_get_default_branch", lambda d: "master", raising=False)
     # is_directory_eligible: keep all rows.
     monkeypatch.setattr(wtool, "is_directory_eligible", lambda dc, d: True)
     return store, wtool

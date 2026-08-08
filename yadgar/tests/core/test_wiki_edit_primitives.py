@@ -60,9 +60,8 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "wiki_edit_test.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
-        _migration_013_wiki_page_version(_storage())
-        yield
+    _migration_013_wiki_page_version(_storage())
+    yield
     server.shutdown()
 
 
@@ -152,12 +151,6 @@ class TestWikiSetMetadata:
         """Empty string for directory_context → ok:False."""
         _insert_page("empty-dir-page")
         result = server.wiki_set_metadata("empty-dir-page", "directory_context", "")
-        assert result.get("ok") is False
-
-    def test_branch_empty_string_rejects(self):
-        """Empty string for branch → ok:False (use null/None to clear)."""
-        _insert_page("empty-branch-page")
-        result = server.wiki_set_metadata("empty-branch-page", "branch", "")
         assert result.get("ok") is False
 
     def test_version_row_created_on_real_change(self):

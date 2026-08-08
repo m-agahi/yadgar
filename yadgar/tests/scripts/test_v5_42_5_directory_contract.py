@@ -327,11 +327,7 @@ class TestResolutionProjectBeatsGlobal:
 
         from yadgar.core.server.tools.wiki import wiki_read
 
-        with (
-            patch("yadgar.core.server._detect_branch", return_value="main", create=True),
-            patch("yadgar.core.server._get_default_branch", return_value=None, create=True),
-        ):
-            result = wiki_read(slug, directory="/proj/A")
+        result = wiki_read(slug, directory="/proj/A")
 
         assert result.get("error") is None, f"Got error: {result}"
         assert result.get("directory_context") == "/proj/A", (
@@ -358,11 +354,7 @@ class TestResolutionProjectBeatsGlobal:
 
         from yadgar.core.server.tools.wiki import wiki_read
 
-        with (
-            patch("yadgar.core.server._detect_branch", return_value=None, create=True),
-            patch("yadgar.core.server._get_default_branch", return_value=None, create=True),
-        ):
-            result = wiki_read(slug, directory="/proj/B")
+        result = wiki_read(slug, directory="/proj/B")
 
         assert result.get("error") is None, f"Got error: {result}"
         assert result.get("directory_context") == "global", (

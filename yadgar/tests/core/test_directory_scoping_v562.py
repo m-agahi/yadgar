@@ -345,8 +345,6 @@ class TestDirectoryScopingIntegration:
 
     def test_other_project_excluded(self, monkeypatch):
         """assertion (1): AWS-dir rows excluded when directory=yadgar_dir."""
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         from yadgar.core import server
 
         storage = server._get_storage()
@@ -365,8 +363,6 @@ class TestDirectoryScopingIntegration:
 
     def test_genuine_yadgar_retained(self, monkeypatch):
         """assertion (5): genuine yadgar results are retained after scoping."""
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         from yadgar.core import server
 
         storage = server._get_storage()
@@ -396,8 +392,6 @@ class TestDirectoryScopingIntegration:
         v5.65 Fix D: directory=None no longer works (raises ValueError).
         Proof technique changed: compare YADGAR_DIR vs AWS_DIR scoping.
         """
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         from yadgar.core import server
 
         storage = server._get_storage()
@@ -426,8 +420,6 @@ class TestDirectoryScopingIntegration:
         two creation events).  After recall + dedup, at most one should appear.
         The TestDedupByContent unit tests prove the dedup logic in isolation.
         """
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         from yadgar.core import server
 
@@ -479,8 +471,6 @@ class TestQualityFloorBehavioral:
         verifies that the genuine row is retained (floor contract: no CE = pass)
         and dedup still collapses any duplicates.
         """
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         import sys
 
@@ -554,8 +544,6 @@ class TestWikiQueryDirectoryScoping:
 
     def test_wiki_query_uses_directory_eligible(self, monkeypatch):
         """wiki_query with directory= excludes other-project pages."""
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         from yadgar.core import server
 
         wiki = server._wiki
@@ -648,9 +636,6 @@ class TestProjectBriefWikiScoping:
         RED pre-fix: aws-work page appears in key_wiki_pages because list_wiki_pages
         is called without directory= arg.
         """
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server.tools.project._detect_branch", lambda _d: None)
         from yadgar.core import server
 
         wiki_storage = server._wiki._storage
@@ -684,9 +669,6 @@ class TestProjectBriefWikiScoping:
 
     def test_key_wiki_pages_excludes_other_project_in_full(self, monkeypatch):
         """full mode: key_wiki_pages must not include aws-work wiki pages."""
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: None)
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server.tools.project._detect_branch", lambda _d: None)
         from yadgar.core import server
 
         wiki_storage = server._wiki._storage

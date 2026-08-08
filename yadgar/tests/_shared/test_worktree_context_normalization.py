@@ -6,10 +6,12 @@ paths verbatim as directory_context — recall's exact-match directory filter
 then orphans those rows permanently once the worktree dies.
 
 ``normalize_write_context`` collapses a git-worktree write context to the
-canonical repo root (the common dir's parent) and pins THROWAWAY contexts
-(``.claude/worktrees/*``, ``/tmp/*``) to the repo default branch so findings
-outlive the ephemeral car branch. Non-worktree contexts pass through verbatim;
-unresolvable contexts NEVER reject — verbatim fallback.
+canonical repo root (the common dir's parent). Non-worktree contexts pass
+through verbatim; unresolvable contexts NEVER reject — verbatim fallback.
+
+ADR-0215 removed the branch half of the seam (throwaway contexts used to be
+additionally pinned to the repo default branch); the directory normalization
+this file exists for is unaffected and stays covered here.
 
 TDD: written before the implementation.
 """
@@ -101,61 +103,28 @@ def test_submodule_gitdir_file_is_not_normalized(tmp_path):
     assert sh._worktree_canonical_root(str(sub)) is None
 
 
-# ── throwaway-context predicate ───────────────────────────────────────────────
-
-
-def test_is_throwaway_context():
-    assert sh._is_throwaway_context("/home/u/proj/.claude/worktrees/agent-1")
-    assert sh._is_throwaway_context("/tmp/xyz/checkout")
-    assert not sh._is_throwaway_context("/home/u/proj")
-    assert not sh._is_throwaway_context("/home/u/worktrees/proj-wt")
-
-
 # ── normalize_write_context ───────────────────────────────────────────────────
 
 
-def test_normalize_throwaway_worktree_pins_default_branch(worktree_repo):
-    """Throwaway worktree: canonical root + default branch (fallback 'master')."""
+def test_normalize_worktree_resolves_to_canonical_root(worktree_repo):
+    """A worktree write context collapses to the canonical repo root."""
     repo, wt = worktree_repo
-    context, branch = sh.normalize_write_context(str(wt), "feat/car-x")
-    assert context == str(repo)
-    assert branch == "master"
-
-
-def test_normalize_non_throwaway_worktree_keeps_branch(worktree_repo, monkeypatch):
-    """Intentional (long-lived) worktrees keep their branch-scoping.
-
-    T2 Car D packaged server_helpers into a subpackage: ``sh`` is now the PEP-562
-    package shim (``yadgar._shared.server_helpers``), but ``normalize_write_context``
-    lives in — and calls its ``_is_throwaway_context`` sibling from — the
-    ``server_helpers.server_helpers`` submodule namespace. Patching the shim attr
-    never reaches the code under test, so the /tmp-hosted fixture path trips the
-    real throwaway predicate and pins to master. Re-point the patch at the
-    submodule seam (the actual call target) to exercise the non-throwaway branch.
-    """
-    repo, wt = worktree_repo
-    monkeypatch.setattr(
-        "yadgar._shared.server_helpers.server_helpers._is_throwaway_context",
-        lambda _p: False,
-    )
-    context, branch = sh.normalize_write_context(str(wt), "feat/car-x")
-    assert context == str(repo)
-    assert branch == "feat/car-x"
+    assert sh.normalize_write_context(str(wt)) == str(repo)
 
 
 def test_normalize_plain_repo_unchanged(worktree_repo):
     repo, _wt = worktree_repo
-    assert sh.normalize_write_context(str(repo), "master") == (str(repo), "master")
+    assert sh.normalize_write_context(str(repo)) == str(repo)
 
 
 def test_normalize_unresolvable_falls_back_verbatim(tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()
-    assert sh.normalize_write_context(str(plain), "feat/x") == (str(plain), "feat/x")
+    assert sh.normalize_write_context(str(plain)) == str(plain)
 
 
 def test_normalize_empty_context_passthrough():
-    assert sh.normalize_write_context("", "feat/x") == ("", "feat/x")
+    assert sh.normalize_write_context("") == ""
 
 
 def test_normalize_never_raises(monkeypatch, worktree_repo):
@@ -172,4 +141,4 @@ def test_normalize_never_raises(monkeypatch, worktree_repo):
         "yadgar._shared.server_helpers.server_helpers._worktree_canonical_root",
         _boom,
     )
-    assert sh.normalize_write_context(str(wt), "feat/car-x") == (str(wt), "feat/car-x")
+    assert sh.normalize_write_context(str(wt)) == str(wt)

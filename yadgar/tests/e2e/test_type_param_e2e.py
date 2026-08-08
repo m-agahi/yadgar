@@ -73,9 +73,6 @@ def _run_recall(
     """Run recall MCP tool with UNIFIED_RECALL_ENABLED=True."""
     import sys
 
-    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-    monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
     _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
         import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
@@ -201,9 +198,6 @@ class TestTypeParamE2E:
         # memories and perturb the fan-out call's ranking.
         import sys
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         # Monkey-patch storage.update_memory_heat to a no-op for parity measurement
         monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
         monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
@@ -327,9 +321,6 @@ class TestTypeParamE2E:
         """
         import sys
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
-
         _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:
             import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
@@ -390,9 +381,6 @@ class TestTypeParamE2E:
         )
 
         import sys
-
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         # Freeze heat updates to prevent the oracle call from perturbing the fanout call.
         monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
@@ -496,8 +484,6 @@ class TestTypeParamE2E:
 
         import sys
 
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
         monkeypatch.setattr(storage, "update_memory_heat", lambda mid, heat: None)
         monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
 
@@ -568,9 +554,6 @@ class TestTypeParamE2E:
             title=f"Alias Test Wiki {unique}",
             content=f"wiki query alias test {unique}",
         )
-
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         _rm = sys.modules.get("yadgar.core.server.tools.recall")
         if _rm is None:

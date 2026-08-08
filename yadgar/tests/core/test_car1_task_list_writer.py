@@ -34,15 +34,6 @@ def _engines(tmp_path_factory):
     server.shutdown()
 
 
-@pytest.fixture(autouse=True)
-def _reset_dir_branch_cache():
-    from yadgar.core.server.tools import _dir_branch
-
-    _dir_branch._get_cache().clear()
-    yield
-    _dir_branch._get_cache().clear()
-
-
 def _get_page(slug: str):
     from yadgar.core import server
 

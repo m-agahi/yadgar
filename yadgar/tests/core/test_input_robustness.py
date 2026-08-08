@@ -1,7 +1,6 @@
 """Robustness tests: Unicode edge cases, volume limits, and response schema contracts."""
 
 import json
-from unittest.mock import patch
 
 import pytest
 from hypothesis import given
@@ -20,13 +19,7 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "robustness.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    # v5.42.3: /tmp is not a git repo; patch _detect_branch so calls to
-    # memorize/wiki_add without branch_hint don't get rejected.
-    with (
-        patch("yadgar.core.server.tools.project._detect_branch", return_value="feat/test-branch"),
-        patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"),
-    ):
-        yield
+    yield
     server.shutdown()
 
 

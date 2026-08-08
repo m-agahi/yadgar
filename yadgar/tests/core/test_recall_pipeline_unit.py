@@ -307,11 +307,7 @@ def test_recall_forward_only_calls_session_side_effects():
         mock_st._consolidation = None
         mock_st._pool = None
 
-        with (
-            patch("yadgar.core.server.tools.project._detect_branch", return_value="master"),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
-        ):
-            result = _recall_fn(query="forward test", directory="/tmp", max_results=5)
+        result = _recall_fn(query="forward test", directory="/tmp", max_results=5)
 
         # Deferred session half — drain so the assertion is deterministic.
         drain_session_side_effects(timeout=10.0)
@@ -345,12 +341,8 @@ def test_recall_forward_only_loud_failure():
         mock_st._consolidation = None
         mock_st._pool = None
 
-        with (
-            patch("yadgar.core.server.tools.project._detect_branch", return_value="master"),
-            patch("yadgar.core.server.tools.project._get_default_branch", return_value="master"),
-        ):
-            try:
-                _recall_fn(query="loud fail test", directory="/tmp", max_results=5)
-                raise AssertionError("Expected recall() to raise on backend error")
-            except RuntimeError as exc:
-                assert "backend down" in str(exc), f"Wrong error: {exc}"
+        try:
+            _recall_fn(query="loud fail test", directory="/tmp", max_results=5)
+            raise AssertionError("Expected recall() to raise on backend error")
+        except RuntimeError as exc:
+            assert "backend down" in str(exc), f"Wrong error: {exc}"

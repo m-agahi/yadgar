@@ -217,17 +217,10 @@ def _resolve_project_root(directory: str) -> str:
 # memorize/anchor/checkpoint/update_active_work used to store worktree paths
 # verbatim as directory_context; recall's exact-match directory filter then
 # orphans those rows permanently once the worktree dies. The single shared
-# resolver below collapses a git-worktree context to the canonical repo root
-# and pins THROWAWAY contexts (.claude/worktrees/*, /tmp/*) to the repo
-# default branch so findings outlive the ephemeral car branch.
+# resolver below collapses a git-worktree context to the canonical repo root.
 
 _CLAUDE_WORKTREES_MARKER = "/.claude/worktrees/"
 _GIT_WORKTREES_MARKER = "/.git/worktrees/"
-
-
-def _is_throwaway_context(directory: str) -> bool:
-    """True for ephemeral checkout paths whose branch-scoping should not persist."""
-    return _CLAUDE_WORKTREES_MARKER in directory or directory.startswith("/tmp/")
 
 
 @observe(tier="stage", metric="tools.project._parse_worktree_gitdir_file")
@@ -320,83 +313,34 @@ def _worktree_canonical_root(directory: str) -> str | None:
     return _worktree_root_from_path_heuristics(directory)
 
 
-@observe(tier="stage", metric="tools.project._default_branch_for_root")
-@functools.lru_cache(maxsize=256)
-def _default_branch_for_root(root: str) -> str:
-    """Default branch for *root* via origin/HEAD; falls back to 'master'.
-
-    Mirrors tools.project._get_default_branch_cached (core) — duplicated here
-    because _shared must not import core (T2 layer boundary).
-    """
-    try:
-        out = (
-            subprocess.check_output(
-                [
-                    "git",
-                    *_GIT_SAFE_ARGS,
-                    "-C",
-                    root,
-                    "symbolic-ref",
-                    "--short",
-                    "refs/remotes/origin/HEAD",
-                ],
-                stderr=subprocess.DEVNULL,
-                timeout=2,
-                env=_git_safe_env(),
-            )
-            .decode()
-            .strip()
-        )
-        if out:
-            return out.split("/", 1)[-1] if "/" in out else out
-    except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
-        OSError,
-    ) as _e:
-        pass
-    return "master"
-
-
 @observe(tier="stage", metric="tools.project.normalize_write_context")
-def normalize_write_context(context: str, branch: str | None) -> tuple[str, str | None]:
+def normalize_write_context(context: str) -> str:
     """Collapse a git-worktree write context to its canonical repo root.
 
     The single seam every memory writer (memorize, anchor, checkpoint,
-    update_active_work) passes its (context, branch) pair through before
-    enqueue. Behavior:
+    update_active_work) passes its context through before enqueue. Behavior:
 
     - Non-worktree context → returned unchanged.
     - Worktree context → canonical repo root replaces the worktree path.
-    - THROWAWAY worktree context (.claude/worktrees/*, /tmp/*) → branch is
-      additionally pinned to the repo default branch: the car branch is
-      ephemeral, and default-branch rows stay recall-visible after it dies.
-      Intentional long-lived worktrees keep their branch-scoping.
     - NEVER rejects: any failure → verbatim passthrough + log.
+
+    ADR-0215 removed the branch half of this seam (throwaway worktree contexts
+    used to additionally pin the write to the repo default branch); the
+    directory normalization it exists for is unaffected.
     """
     try:
         if not context:
-            return context, branch
+            return context
         root = _worktree_canonical_root(context)
         if root is None:
-            return context, branch
-        new_branch = branch
-        if _is_throwaway_context(context):
-            new_branch = _default_branch_for_root(root)
-        logger.info(
-            "write-context normalized: %r -> %r (branch %r -> %r)",
-            context,
-            root,
-            branch,
-            new_branch,
-        )
-        return root, new_branch
+            return context
+        logger.info("write-context normalized: %r -> %r", context, root)
+        return root
     except Exception:
         logger.warning(
             "normalize_write_context failed for %r — storing verbatim", context, exc_info=True
         )
-        return context, branch
+        return context
 
 
 @observe(tier="hot", metric="tools.project._bump_epoch_for_context")

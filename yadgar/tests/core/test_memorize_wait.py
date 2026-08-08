@@ -37,10 +37,7 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "wait_test.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    # /tmp/* is not a git repo; patch _detect_branch so memorize() without
-    # branch_hint has branch context.
-    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
-        yield
+    yield
     server.shutdown()
 
 

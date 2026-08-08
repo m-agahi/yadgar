@@ -18,7 +18,6 @@ import pytest
 
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
-    from unittest.mock import patch
 
     from yadgar.core import server
 
@@ -27,9 +26,7 @@ def _engines(tmp_path_factory):
         db_path=str(tmp_path / "latency.db"),
         embedding_model="all-MiniLM-L6-v2",
     )
-    # v5.42.3: /latency/project is not a git repo; patch _detect_branch.
-    with patch("yadgar.core.server._detect_branch", return_value="feat/test-branch"):
-        yield
+    yield
     server.shutdown()
 
 

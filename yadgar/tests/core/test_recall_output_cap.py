@@ -273,13 +273,7 @@ class TestSideEffectClosureGetsUntrimmedRows:
             patch.object(mod, "_st") as mock_st,
         ):
             mock_st._consolidation = None
-            with (
-                patch("yadgar.core.server.tools.project._detect_branch", return_value="master"),
-                patch(
-                    "yadgar.core.server.tools.project._get_default_branch", return_value="master"
-                ),
-            ):
-                result = mod.recall(query="seam test", directory="/tmp", max_results=5)
+            result = mod.recall(query="seam test", directory="/tmp", max_results=5)
 
             drain_session_side_effects(timeout=10.0)
 
@@ -343,13 +337,7 @@ class TestMaxCharsParam:
             patch.object(mod, "_st") as mock_st,
         ):
             mock_st._consolidation = None
-            with (
-                patch("yadgar.core.server.tools.project._detect_branch", return_value="master"),
-                patch(
-                    "yadgar.core.server.tools.project._get_default_branch", return_value="master"
-                ),
-            ):
-                result = mod.recall(query="q", directory="/tmp", max_results=1, max_chars=100)
+            result = mod.recall(query="q", directory="/tmp", max_results=1, max_chars=100)
             drain_session_side_effects(timeout=10.0)
 
         assert len(result[0]["content"]) == 100

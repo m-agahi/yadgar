@@ -337,17 +337,6 @@
   "added_by": "feat/improvement-train"
  },
  {
-  "path": "yadgar/_shared/storage/wiki.py",
-  "function": "<file>",
-  "lineno": 1,
-  "metrics": {
-   "file_loc": 1012
-  },
-  "rationale": "v5.89 #69: upsert_dispatch_prelude_marker added ~37 lines to mirror upsert_active_work. The _WikiMixin class holds all memory/wiki upsert helpers; splitting the file creates import cycles. Scheduled for mixin decomposition in a dedicated refactor.",
-  "added": "2026-06-30",
-  "added_by": "feat/v5.89-settings-redesign"
- },
- {
   "path": "yadgar/_shared/observability/metrics.py",
   "function": "<file>",
   "lineno": 1,

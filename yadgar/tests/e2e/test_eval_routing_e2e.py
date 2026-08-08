@@ -71,8 +71,6 @@ class TestEvalRoutesViaMCPTool:
         # Set up server state for wiki retrieval (already asserted above)
 
         # Patch branch detection to avoid real git calls
-        monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master")
-        monkeypatch.setattr("yadgar.core.server._get_default_branch", lambda _d: "master")
 
         # Fan-out is now unconditional (Phase 2a: recall() is a pure forwarder).
         # recall_backend_bypass fixture routes _forward_to_backend → _fanout_recall.

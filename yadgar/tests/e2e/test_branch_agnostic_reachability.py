@@ -65,10 +65,6 @@ def _pin_caller_to_master(monkeypatch) -> None:
     helpers entirely — at that point there is simply nothing to patch and the
     caller has no branch context at all, which is the same assertion.
     """
-    monkeypatch.setattr("yadgar.core.server._detect_branch", lambda _d: "master", raising=False)
-    monkeypatch.setattr(
-        "yadgar.core.server._get_default_branch", lambda _d: "master", raising=False
-    )
 
 
 def _stamp_branch(storage, table: str, row_id: int, branch: str) -> bool:
