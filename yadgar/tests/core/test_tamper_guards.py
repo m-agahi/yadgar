@@ -655,15 +655,10 @@ class TestLayer4BranchDiffMode:
         assert base_green is None
         assert not ctw.check_diff(diff_text, base_green, after_green)
 
-    def test_allow_env_still_bypasses(self, monkeypatch) -> None:
-        monkeypatch.setenv("ALLOW_TEST_WEAKEN", "1")
-        assert ctw.main() == 0, "documented one-time override must keep working"
-
     def test_ci_mode_uses_branch_diff(self, monkeypatch) -> None:
         """`--ci --base <ref>` runs the same collector — same inputs, same verdict."""
         git = _FakeGit(_responses(branch_diff=_BRANCH_DIFF_WEAKENED))
         monkeypatch.setattr(ctw, "_git", git)
-        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
         assert ctw.main(["--ci", "--base", "origin/master"]) == 1
 
     def test_ci_mode_requires_base(self) -> None:
@@ -745,13 +740,11 @@ class TestLayer4CiModeRequiresRealBase:
 
     def test_ci_mode_hard_fails_when_base_unresolvable(self, monkeypatch) -> None:
         monkeypatch.setattr(ctw, "_git", _FakeGit({}))  # merge-base returns ""
-        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
         assert ctw.main(["--ci", "--base", "origin/master"]) == 1
 
     def test_precommit_mode_still_fails_open_when_base_unresolvable(self, monkeypatch) -> None:
         """Fresh clone / no remote must NOT block a local commit."""
         monkeypatch.setattr(ctw, "_git", _FakeGit({}))
-        monkeypatch.delenv("ALLOW_TEST_WEAKEN", raising=False)
         assert ctw.main([]) == 0
 
     def test_resolve_merge_base_returns_empty_when_git_fails(self) -> None:
@@ -760,3 +753,146 @@ class TestLayer4CiModeRequiresRealBase:
     def test_resolve_merge_base_returns_the_sha(self) -> None:
         git = _FakeGit({("merge-base", "origin/master", "HEAD"): "abc123\n"})
         assert ctw.resolve_merge_base("origin/master", git) == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# Layer 4 — per-entry allowlist (replaces the ALLOW_TEST_WEAKEN blanket bypass)
+# ---------------------------------------------------------------------------
+#
+# `ALLOW_TEST_WEAKEN=1` was a blanket, invisible, whole-run bypass: one env var
+# silenced EVERY file in the diff, left no trace in the diff a reviewer reads,
+# and was used three times on the ADR-0215 train.  It is replaced by a per-file
+# allowlist that records each sanctioned deletion with an exact allowed delta
+# and a written reason, so the sanction is reviewable where review happens.
+
+
+def _diff_for(path: str, removed: int = 0, added: int = 0) -> str:
+    """Build a minimal diff whose net assert delta for *path* is added-removed."""
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        + "-    assert gone\n" * removed
+        + "+    assert kept\n" * added
+    )
+
+
+_ALLOWED_FILE = "yadgar/tests/e2e/test_scope_filter_e2e.py"
+_REASON = (
+    "Deleted by Car 1 (7bf28dda) per ADR-0215 — asserted branch+directory scope "
+    "composition, and the branch axis no longer exists."
+)
+
+
+class TestLayer4Allowlist:
+    """Per-entry allowlist: exact delta, no grandfathering, stale entries surfaced."""
+
+    def test_allowlisted_file_within_its_delta_passes(self) -> None:
+        """The sanctioned deletion itself: measured -12, allowed -12 → clean."""
+        allowlist = {_ALLOWED_FILE: {"allowed_delta": -12, "rationale": _REASON}}
+        errors = ctw.check_diff(_diff_for(_ALLOWED_FILE, removed=12), 5, 5, allowlist)
+        assert not errors, errors
+
+    def test_allowlisted_file_exceeding_its_delta_fails(self) -> None:
+        """THE anti-grandfather property: -13 against an allowed -12 must FAIL.
+
+        An entry that absorbs any future weakening of the same file is the same
+        hole in a nicer coat — the allowlist would license the file forever.
+        """
+        allowlist = {_ALLOWED_FILE: {"allowed_delta": -12, "rationale": _REASON}}
+        errors = ctw.check_diff(_diff_for(_ALLOWED_FILE, removed=13), 5, 5, allowlist)
+        assert errors, "a delta worse than the allowlisted one must not be absorbed"
+        assert any("-13" in e and "-12" in e for e in errors), errors
+
+    def test_non_allowlisted_file_still_fails(self) -> None:
+        """A file with no entry fails exactly as it did before the allowlist."""
+        errors = ctw.check_diff(_diff_for("yadgar/tests/e2e/test_other.py", removed=1), 5, 5, {})
+        assert errors, "an ungoverned removal must still fire"
+        assert any("test_other.py" in e for e in errors), errors
+
+    def test_absent_allowlist_keeps_todays_strict_behaviour(self) -> None:
+        """Default (no allowlist passed) == the pre-allowlist contract."""
+        errors = ctw.check_diff(_diff_for(_ALLOWED_FILE, removed=12), 5, 5)
+        assert errors, "check_diff with no allowlist must stay strict"
+
+    def test_stale_entry_when_delta_improved_is_surfaced(self) -> None:
+        """Measured -11 against a recorded -12: the entry over-grants — say so."""
+        allowlist = {_ALLOWED_FILE: {"allowed_delta": -12, "rationale": _REASON}}
+        warnings = ctw.stale_allowlist_entries(_diff_for(_ALLOWED_FILE, removed=11), allowlist)
+        assert any("STALE" in w and _ALLOWED_FILE in w for w in warnings), warnings
+
+    def test_stale_entry_when_file_left_the_diff_is_surfaced(self) -> None:
+        """The post-merge shape: the file is no longer in the diff at all."""
+        allowlist = {_ALLOWED_FILE: {"allowed_delta": -12, "rationale": _REASON}}
+        warnings = ctw.stale_allowlist_entries("", allowlist)
+        assert any("STALE" in w and _ALLOWED_FILE in w for w in warnings), warnings
+
+    def test_stale_entry_does_not_fail_the_run(self) -> None:
+        """Stale is a WARNING here, unlike the sibling guards — the base ref moves."""
+        allowlist = {_ALLOWED_FILE: {"allowed_delta": -12, "rationale": _REASON}}
+        assert not ctw.check_diff("", 5, 5, allowlist), "stale must not be a hard error"
+
+    def test_short_rationale_is_malformed(self) -> None:
+        allowlist = {_ALLOWED_FILE: {"allowed_delta": -12, "rationale": "too short"}}
+        errors = ctw.check_diff(_diff_for(_ALLOWED_FILE, removed=12), 5, 5, allowlist)
+        assert any("MALFORMED" in e for e in errors), errors
+
+    def test_non_negative_allowed_delta_is_malformed(self) -> None:
+        """An entry only ever sanctions a REMOVAL; 0/+N is a meaningless entry."""
+        allowlist = {_ALLOWED_FILE: {"allowed_delta": 0, "rationale": _REASON}}
+        errors = ctw.check_diff(_diff_for(_ALLOWED_FILE, removed=12), 5, 5, allowlist)
+        assert any("MALFORMED" in e for e in errors), errors
+
+    def test_error_message_points_at_the_allowlist_not_an_env_var(self) -> None:
+        errors = ctw.check_diff(_diff_for("yadgar/tests/e2e/test_other.py", removed=1), 5, 5, {})
+        joined = " ".join(errors)
+        assert ".test-weakening-allowlist.json" in joined, errors
+        assert "ALLOW_TEST_WEAKEN" not in joined, "the removed env var must not be advertised"
+
+    def test_green_regression_message_points_at_the_allowlist(self) -> None:
+        joined = " ".join(ctw.check_diff("", head_green=5, staged_green=4))
+        assert "ALLOW_TEST_WEAKEN" not in joined, joined
+
+    def test_shipped_allowlist_is_wellformed(self) -> None:
+        """The real file on disk parses and every entry satisfies the schema."""
+        allowlist = ctw.load_allowlist(_REPO_ROOT / ctw._ALLOWLIST_NAME)
+        assert allowlist, "the shipped allowlist must not be empty"
+        for path, meta in allowlist.items():
+            assert isinstance(meta.get("allowed_delta"), int), path
+            assert meta["allowed_delta"] < 0, path
+            assert len(meta.get("rationale", "").strip()) >= ctw._MIN_RATIONALE, path
+
+
+class TestLayer4EnvBypassIsGone:
+    """The regression that matters: ALLOW_TEST_WEAKEN must do NOTHING.
+
+    Shape matters here.  Asserting `main() == 0` with the var set proves nothing
+    once the real branch diff is allowlisted — it would return 0 either way.  The
+    only test that can fail if the bypass came back drives main() over a
+    WEAKENED, NON-allowlisted diff with the var set and demands exit 1.
+    """
+
+    def test_env_var_does_not_bypass_a_weakened_diff(self, monkeypatch) -> None:
+        monkeypatch.setattr(ctw, "_git", _FakeGit(_responses(branch_diff=_BRANCH_DIFF_WEAKENED)))
+        monkeypatch.setattr(ctw, "_ALLOWLIST_NAME", ".nonexistent-allowlist.json")
+        monkeypatch.setenv("ALLOW_TEST_WEAKEN", "1")
+        assert ctw.main(["--ci", "--base", "origin/master"]) == 1, (
+            "ALLOW_TEST_WEAKEN must no longer bypass anything"
+        )
+
+    def test_env_var_does_not_bypass_in_precommit_mode(self, monkeypatch) -> None:
+        monkeypatch.setattr(ctw, "_git", _FakeGit(_responses(branch_diff=_BRANCH_DIFF_WEAKENED)))
+        monkeypatch.setattr(ctw, "_ALLOWLIST_NAME", ".nonexistent-allowlist.json")
+        monkeypatch.setenv("ALLOW_TEST_WEAKEN", "1")
+        assert ctw.main([]) == 1
+
+    def test_the_bypass_constant_is_deleted(self) -> None:
+        assert not hasattr(ctw, "_ALLOW_ENV"), "_ALLOW_ENV must be gone, not merely unused"
+
+    def test_the_script_never_mentions_the_env_var(self) -> None:
+        src = (_REPO_ROOT / "scripts" / "check_test_weakening.py").read_text(encoding="utf-8")
+        assert "ALLOW_TEST_WEAKEN" not in src, "no docstring/message may advertise the bypass"
+
+    def test_no_workflow_passes_the_env_var(self) -> None:
+        """Both workflow sets — they diverge, so both must be checked."""
+        for rel in (".github/workflows/ci-pr.yml", ".forgejo/workflows/ci-pr.yaml"):
+            text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+            assert "ALLOW_TEST_WEAKEN" not in text, f"{rel} still carries the bypass"

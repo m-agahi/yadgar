@@ -464,15 +464,11 @@ jobs:
         # which is ALWAYS empty in a CI checkout — so the guard ran, printed OK and
         # could never fail. This step evaluates the cumulative branch diff vs the
         # merge-base instead, which is the question a PR actually poses.
+        # NO env: block here, and none may be added. A sanctioned deletion is
+        # recorded per file in .test-weakening-allowlist.json, in the repo, in the
+        # diff a reviewer reads — not in a label-gated environment variable that
+        # silences every file at once from outside the repository.
         run: python scripts/check_test_weakening.py --ci --base origin/master
-        # ADR-0215 branch-scoping-removal train: Cars 1/2/6 delete e2e files whose
-        # asserted behaviour no longer exists. check_test_weakening nets PER FILE, so
-        # a replacement file cannot offset a deletion. The `allow-test-weaken` PR label
-        # opens the script's own ALLOW_TEST_WEAKEN escape hatch (honoured only when the
-        # value is exactly "1"). Car 10 removes this block again — the bypass must not
-        # outlive the train.
-        env:
-          ALLOW_TEST_WEAKEN: ${{ contains(github.event.pull_request.labels.*.name, 'allow-test-weaken') && '1' || '' }}
 
   # Gateway: aggregates all four subsystem test jobs.
   # if: always() is required — without it this job is SKIPPED (not failed)
