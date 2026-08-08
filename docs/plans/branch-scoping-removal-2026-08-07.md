@@ -328,6 +328,15 @@ Expected file-level distribution (2026-08-07): `wiki.py 73`, `misc.py 26`, `agen
 - [ ] `yadgar/backend/admin_exec/wiki.py` — 1 `_detect_branch`, 9 `branch_hint`
 - [ ] `yadgar/backend/restoration/checkpoint_restore.py` — 1 `_detect_branch`
 - [ ] `yadgar/core/hooks/pretooluse-router.py` — 2 `default_branch` (**check first**: the G3 push guard in this file is a FALSE POSITIVE family; only the `default_branch` refs tied to session context die)
+- [ ] **[HANDOFF — discovered during execution, not in the original enumeration]** Seven `monkeypatch.setattr("yadgar.core.server._get_default_branch", …)` sites survive the remediation car and MUST be removed in the same car that deletes `_get_default_branch`. `monkeypatch.setattr` raises `AttributeError` on a missing attribute, so leaving them turns 7 green tests red the moment the function goes:
+  - `yadgar/tests/e2e/test_recall_backend_contract_e2e.py` :153, :195, :287, :382, :484, :592
+  - `yadgar/tests/e2e/test_recall_backend_variants_e2e.py` :144
+
+  Regenerate rather than trusting those line numbers:
+  ```
+  git grep -n '_get_default_branch' -- yadgar/tests/
+  ```
+- [ ] **[HANDOFF from Car 3]** `project.py::_get_default_branch` currently returns `None` unconditionally (Car 3 removed the field it read), which silently disables the roadmap-update-lag signal until this car lands. When deleting it, decide what `_get_master_head_info` / `_get_pyproject_version_at_ts` use instead — `_get_default_branch_cached` is the obvious answer, but confirm rather than assume. `test_roadmap_update_signal` patches `_get_master_head_info` wholesale and will NOT catch a mistake here.
 
 ### Dead tooling — `wiki_cleanup_merged_branches` (all 6 sites)
 
