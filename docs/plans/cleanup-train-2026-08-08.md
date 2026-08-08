@@ -7,10 +7,17 @@ install/diagnostic cluster. All six are kept small enough that each car is
 one worktree + one or two files of production code; the bulk of the work
 is regression tests.
 
+**Audited 2026-08-08** (opus agent, full source verification). Findings
+applied to this revision: Car 0 dropped (already done), Car 1 docstring
+gap closed, Car 2 `memory_transition TIMED OUT` noted, Car 3 "history"
+claim fixed + meta-test added, Car 5 config mechanism corrected + param
+count addressed, ADR-0081/0082 archival stated, 0152 added to out-of-scope,
+backend-bump reasoning fixed.
+
 ## Status
 
 Open. Owner: m-agahi. Branch: `feat/cleanup-train-2026-08-08` (to be cut
-at Car 1; Car 0 is wiki-only and works on master).
+at Car 1).
 
 ## Pre-train sweeps (already done on master 2026-08-08)
 
@@ -27,27 +34,11 @@ at Car 1; Car 0 is wiki-only and works on master).
   `tests/e2e/test_phase1_db_layer.py::TestBCB2_WikiDirectoryFilter::test_aws_wiki_excluded_from_yadgar_recall`.
   BC-I32 (the second dangling pointer found in the same pass) also fixed.
   `check_contract_coverage.py` exits 0.
+- **0144 (branch-scoping removal train)** — MERGED at `cdd7e0a4` (PR #36).
+  Task list meta block updated to "MERGED", 0144 flipped to `completed`
+  in the 2026-08-08 19:19 UTC task-list pass. No further action needed.
 
 ## Cars (proposed)
-
-### Car 0 — task list sweep + close 0144 (wiki only, on master)
-
-The wiki task list was updated by the 2026-08-08 pass to mark 0149 and
-0153 completed, but the meta block still says "branch-scoping removal
-train IN FLIGHT" (stale) and 0144 itself is still `status: in_progress`
-even though the train merged at `cdd7e0a4`.
-
-**Scope:** two `wiki_replace_text` operations on
-`yadgar-task-list`:
-1. Replace the "BRANCH-SCOPING REMOVAL TRAIN IN FLIGHT" bullet with a
-   "MERGED" bullet pointing at the new plan page.
-2. Flip 0144 from `in_progress` to `completed` (or delete the row per the
-   2026-08-02 policy; the body is long enough to keep as a completed
-   record).
-
-**Acceptance:** `recall("branch-scoping removal status", type="wiki")`
-does not surface "IN FLIGHT" in its top 5; the meta line is
-"MERGED". `wiki_lint` clean.
 
 ### Car 1 — anchor_audit_prompt.md gathers wrong rows (task 0148)
 
@@ -66,7 +57,7 @@ Companion guard test
 substring-only and passed for the bug's entire lifetime — vacuous-pass
 family.
 
-**Fix (two halves):**
+**Fix (three parts):**
 
 1. `MemoryProvider.__init__` accepts `tags: list[str] | None = None`;
    the provider's `candidates()` query passes it through to the storage
@@ -74,7 +65,12 @@ family.
    `memory.py::get_memories_by_tag` / `get_memories_by_tags`). The
    pipeline passes `tags=` to the memory provider the same way it does
    to the wiki provider today.
-2. The byte-pin test at `test_stop_hook_template.py:42,289` is the
+2. Update the `recall()` MCP tool docstring at
+   `yadgar/core/server/tools/recall.py:358-361` — currently says
+   "Tag include filter for wiki results." After the fix, tags apply to
+   both memory and wiki providers. Change to "Tag include filter.
+   Applied to both memory and wiki results."
+3. The byte-pin test at `test_stop_hook_template.py:42,289` is the
    house pattern for guards; port the anchor-audit test to that shape:
    read the template, locate the `recall(` call, assert the first
    argument is a memory-only filter (e.g. `type="memory"`) AND that the
@@ -92,15 +88,21 @@ family.
 **Touched files:**
 `yadgar/backend/retrieval/providers/memory.py`,
 `yadgar/backend/retrieval/recall_pipeline.py`,
+`yadgar/core/server/tools/recall.py` (docstring only),
 `yadgar/tests/hooks/test_v5_158_anchor_audit_scheduler.py`,
 plus a new fixture under `yadgar/tests/fixtures/anchor_audit/`.
 
 **Risk:** low. The existing `tags=` path is dead code today; widening
 it to the memory provider only adds readers for a path that was
 previously unused. Surface area: one constructor signature, one query
-parameter.
+parameter. **Behavioral change note:** after the fix,
+`recall(tags=["_anchor"], type="memory")` will suddenly return ONLY
+anchor-tagged memories instead of unfiltered semantic results. Any code
+or prompt template that unknowingly relied on the broken behavior will
+get different results. The `recall()` docstring update (part 2) ensures
+the contract is documented correctly.
 
-### Car 2 — `tags=` byte-pin + the relationship-dangling repair (tasks 0155)
+### Car 2 — relationship-dangling repair (task 0155)
 
 `check_invariants` auto-fixes three sibling classes (1 dangling
 `wiki_crossref`, 1 phantom `memory:<N>` entity row, 29 over-occupied
@@ -126,6 +128,13 @@ row where `source_entity_id` or `target_entity_id` is missing:
 The audit log entry should make the violation auto-repairable on the
 next `check_invariants` call. Mirror the existing `caused_by` shape
 exactly: count key, fix list, log line, idempotent re-run returns zero.
+
+**Also investigate:** the 2026-08-08 vacuum noted `memory_transition
+TIMED OUT` during the invariant check — the table went unverified. If
+this timeout is chronic, the invariant check is vacuous (same family as
+the bugs this train fixes). The car should measure the timeout duration
+and, if it is consistently hit, file a follow-up task to either raise
+the timeout or split the check.
 
 **Acceptance:**
 
@@ -161,11 +170,17 @@ an EMPTY fallback contract (per `agent_dispatch_prelude`) — but a dead
 TOC entry lands on the same empty fallback anyway. The TOC is the
 designated cure; a stale TOC is the worst possible state of the cure.
 
-**Fix (two halves):**
+**Investigation before pruning:** determine whether the 9 pages were
+never created or were accidentally deleted. If accidentally deleted and
+the content is recoverable (wiki history), restore them instead of
+pruning. If never created, prune the TOC entries. The TOC is a curated
+table of contents, not a registry of all ever-written prompts — dead
+entries that were never real pages should be removed.
 
-1. Remove the 9 dead entries from the TOC. The patterns themselves can
-   stay in `agent-prompt-save` history; the TOC is a curated table of
-   contents, not a registry of all ever-written prompts.
+**Fix (three parts):**
+
+1. For each of the 9 slugs, check `wiki_history(slug)` — if versions
+   exist, restore the latest. If no history exists, remove from TOC.
 2. Add `scripts/check_agent_prompt_toc.py` (pre-commit + CI
    `invariant-checks`) that reads the TOC, extracts every backtick-
    wrapped slug of the form `agent-prompt-<pattern>`, asserts
@@ -173,20 +188,33 @@ designated cure; a stale TOC is the worst possible state of the cure.
    This is the same shape as
    `scripts/check_contract_coverage.py`'s dangling-test-reference
    rule.
+3. Add a meta-test for the guard itself: a test that temporarily
+   creates a fake dead TOC entry and verifies the script exits non-zero.
+   Without this, the guard is in the vacuous-pass family — a script
+   that always exits 0 because it never actually checks anything.
 
 **Acceptance:**
 
 - `python scripts/check_agent_prompt_toc.py` exits 0.
-- 9 dead entries are gone from the TOC; the kept entries still resolve.
+- Dead entries resolved (restored or pruned); the kept entries still
+  resolve.
 - New entry in `.pre-commit-config.yaml` registers the script under
   `always_run: true` (matches `check-changelog-unreleased-versions`).
+- Meta-test: temporarily add a fake dead slug to the TOC → script exits
+  non-zero; remove it → script exits 0.
 
 **Touched files:** `agent-prompt-toc` (wiki page),
 `scripts/check_agent_prompt_toc.py` (new),
+`yadgar/tests/scripts/test_check_agent_prompt_toc.py` (new, meta-test),
 `.pre-commit-config.yaml` (one new hook entry).
 
-**Risk:** low. Removing 9 lines from a curated doc + adding a
-pre-commit guard. No production code change.
+**Risk:** low. Removing dead TOC entries + adding a pre-commit guard.
+No production code change. **Note:** any agent dispatch code that
+references these dead patterns by slug will still get an empty fallback
+from `agent_dispatch_prelude` — the TOC fix prevents humans from
+picking dead patterns, but does not fix code that already references
+them. A follow-up grep for the 9 slugs across the codebase is
+recommended.
 
 ### Car 4 — `docs/CHANGELOG.md` stale second `## [Unreleased]` (task 0151)
 
@@ -219,11 +247,23 @@ compared to a threshold — the other actions in the same block
 corpus.
 
 **Fix:** mirror the active_work/checkpoint pattern. Add a configurable
-threshold (default 30 days, name: `INIT_MEMORY_STALE_HOURS` in
-`config.py`'s FIELD_META) and emit `bootstrap_project` with
-`reason: "init_memory stale (N days)"` when the age exceeds it. The
-suggestion text in `:135` already names `bootstrap_project`; the action
-is correct, only the trigger condition needs the threshold.
+threshold (default 30 days / 720 hours) as a `Settings` class attribute
+`YADGAR_INIT_MEMORY_STALE_HOURS: float = 720.0` in
+`yadgar/_shared/config/config.py` (following the existing convention:
+`ACTIVE_WORK_STALE_HOURS` at line 697, `CHECKPOINT_STALE_HOURS` at line
+705) and a corresponding `ConfigEntry` row in
+`yadgar/_shared/config/config_registry.py`. Emit `bootstrap_project`
+with `reason: "init_memory stale (N days)"` when the age exceeds the
+threshold. The suggestion text in `:135` already names
+`bootstrap_project`; the action is correct, only the trigger condition
+needs the threshold.
+
+**Param count constraint:** `_build_recommended_actions` has a
+docstring constraint of ≤8 parameters (line 1116). Adding
+`init_memory_age_hours` makes 9. Options: (a) refactor to a small
+dataclass (e.g. `_ProjectSignals`), (b) drop a low-value param, or
+(c) accept the violation and update the docstring. Decision deferred
+to implementation — the car should pick one and document the choice.
 
 **Acceptance:**
 
@@ -235,17 +275,19 @@ is correct, only the trigger condition needs the threshold.
   on the fixture, not on a string match.
 
 **Touched files:** `yadgar/core/server/tools/project.py`,
-`yadgar/_shared/config/config.py` (one FIELD_META row), one new test.
+`yadgar/_shared/config/config.py` (one `Settings` attribute),
+`yadgar/_shared/config/config_registry.py` (one `ConfigEntry` row),
+one new test.
 
 **Risk:** low. The age field already exists; only the threshold +
 action reason are new.
 
 ## Sequencing
 
-Linear, no dependencies between cars beyond the merge order. Car 0
-lands first (wiki-only, on master), Cars 1-5 each get their own
-worktree off `feat/cleanup-train-2026-08-08`, the integration step
-opens ONE PR at the end (per `agent-prompt-integrate-train-and-pr`).
+Linear, no dependencies between cars beyond the merge order. Cars 1-5
+each get their own worktree off `feat/cleanup-train-2026-08-08`, the
+integration step opens ONE PR at the end (per
+`agent-prompt-integrate-train-and-pr`).
 
 ## Out of scope (intentionally)
 
@@ -257,6 +299,8 @@ opens ONE PR at the end (per `agent-prompt-integrate-train-and-pr`).
 - 0120, 0122, 0124-0131, 0133, 0135, 0137, 0140, 0143, 0145-0147 —
   install/diagnostic cluster
 - 0001-0025, 0028, 0057-0060, 0077, 0080, 0114-0118, 0093 — long-tail
+- 0152 (collapse memorize + checkpoint + task sync) — same size class
+  but independent; separate car or follow-up train
 
 ## Acceptance gates
 
@@ -267,7 +311,14 @@ Per `agent-prompt-build-car`, each car's final report includes:
 - targeted red→green test evidence
 - ONE final full-suite result with REAL exit code
 - mutation test results for any guard
-- backend-bump-needed flag (none of these touch `yadgar/backend/**`
-  storage; Car 2 only adds a function in the existing
-  `admin_exec/invariants.py`, no schema change → no bump)
+- backend-bump-needed flag (Car 1 touches `backend/retrieval/` but adds
+  no schema change — no bump. Car 2 adds a function in
+  `admin_exec/invariants.py`, no schema change — no bump. Cars 3-5
+  touch no backend code.)
 - `## Yadgar findings` section
+
+## ADR-0081/0082 archival
+
+Per ADR-0081, the completing PR MUST archive this plan:
+`git mv docs/plans/cleanup-train-2026-08-08.md docs/plans/archive/`.
+Per ADR-0082, archival is the FIRST commit of the completing branch.
