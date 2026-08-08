@@ -59,7 +59,7 @@ Car 4 before Car 5 is the *second* ordering constraint and it is not the one ADR
             BRANCH_ENFORCEMENT BRANCH_BOOST_WEIGHT missing_branch \
             wiki_cleanup_merged_branches YADGAR_CI_BRANCH \
             read_by_branch read_by_directory_branch get_wiki_page_by_slug_and_branch; do
-    n=$(git grep -c "$id" -- yadgar/ sdk-js/src/ scripts/ .github/ install_assets/ \
+    n=$(git grep -c "$id" -- yadgar/ sdk-js/src/ scripts/ .github/ .forgejo/ \
         | awk -F: '{s+=$NF} END{print s+0}'); echo "$id: $n"; done
   ```
   Captured 2026-08-07: `branch_hint 582`, `BranchFilter 43`, `_build_branch_clause 15`, `_detect_branch 288`, `_get_current_branch 14`, `_get_default_branch 143`, `_default_branch_for_root 4`, `BRANCH_ENFORCEMENT 46`, `BRANCH_BOOST_WEIGHT 21`, `missing_branch 146`, `wiki_cleanup_merged_branches 34`, `YADGAR_CI_BRANCH 106`, `read_by_branch 19`, `read_by_directory_branch 10`, `get_wiki_page_by_slug_and_branch 6`.
@@ -270,7 +270,7 @@ Car 4 before Car 5 is the *second* ordering constraint and it is not the one ADR
 - [ ] `yadgar/core/cli/hook.py` — the uncached `_detect_branch` at :54 is Car 6; here, only the 2 `branch_hint` *emission* sites
 - [ ] `AGENTS.md` (repo root) — 3 branch refs; check whether any is the rules-block that `sync_instructions` regenerates
 
-**Exit criterion (positive evidence):** `git grep -n 'branch_hint' -- yadgar/core/install_assets/ yadgar/core/hooks/templates/ .github/` returns **0**, AND a freshly rendered rules file + stop-checkpoint prompt (produced by actually running the renderer, not by reading the template) contains no `branch_hint` and no `{default_branch}` placeholder. The render step is what distinguishes this from "edited a template that isn't the one shipped."
+**Exit criterion (positive evidence):** `git grep -n 'branch_hint' -- yadgar/core/install_assets/ yadgar/core/hooks/templates/ .github/ .forgejo/` returns **0**, AND a freshly rendered rules file + stop-checkpoint prompt (produced by actually running the renderer, not by reading the template) contains no `branch_hint` and no `{default_branch}` placeholder. The render step is what distinguishes this from "edited a template that isn't the one shipped."
 
 **Could this car pass while doing nothing?** Partly — editing the template but not the renderer's substitution map leaves a dangling `{default_branch}` that either KeyErrors or renders literally. The "render it and grep the output" criterion catches exactly that.
 
@@ -535,7 +535,7 @@ for id in branch_hint BranchFilter _build_branch_clause _detect_branch \
           missing_branch wiki_cleanup_merged_branches YADGAR_CI_BRANCH \
           read_by_branch read_by_directory_branch \
           get_wiki_page_by_slug_and_branch get_wiki_page_by_slug_directory_branch; do
-  n=$(git grep -c "$id" -- yadgar/ sdk-js/src/ scripts/ .github/ install_assets/ \
+  n=$(git grep -c "$id" -- yadgar/ sdk-js/src/ scripts/ .github/ .forgejo/ \
       docs/reference/ docs/contracts/ README.md AGENTS.md 2>/dev/null \
       | awk -F: '{s+=$NF} END{print s+0}')
   printf '%-40s %s\n' "$id" "$n"

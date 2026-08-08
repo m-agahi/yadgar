@@ -14,7 +14,7 @@ Output is caveman-compressed (no articles, no filler, fragments OK).
 
 ## Protocol
 
-1. `mcp__yadgar__recall(query="...", directory=<cwd>, branch_hint=<branch>)` first.
+1. `mcp__yadgar__recall(query="...", directory=<cwd>)` first.
 2. Investigate. Find the answer. Be thorough.
 3. Report compressed findings. Pattern: `[thing] [state] [reason]. [evidence file:line].`
 

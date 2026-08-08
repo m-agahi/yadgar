@@ -2,8 +2,6 @@
      Substitute these placeholders throughout this file before following instructions:
        {directory}      = your current working directory (absolute path; the project root)
        {project}        = basename of {directory}
-       {default_branch} = last segment of `git -C {directory} symbolic-ref refs/remotes/origin/HEAD`;
-                          fall back to "master" for non-git projects or on any git error.
 -->
 
 Yadgar anchor-audit maintenance. This is a periodic HYGIENE pass over the

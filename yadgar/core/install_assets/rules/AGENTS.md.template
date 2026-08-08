@@ -50,6 +50,4 @@ ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect her
 - `recall` searches episodic memory; `wiki_query` / `wiki_read` read the curated
   wiki. Use both when unsure which store holds the answer.
 - Use `restore(directory=...)` after `/clear` or `/compact` — NOT `recall`.
-- Pass `branch_hint` on `wiki_add` (project-canonical → `"master"`); hook-enabled
-  clients get it auto-supplied by the SessionStart context hook.
 - Don't memorize: ephemeral debug findings, single-use trivia, secrets.

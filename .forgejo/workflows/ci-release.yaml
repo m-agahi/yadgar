@@ -32,7 +32,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  YADGAR_CI_BRANCH: master
   YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
 
 jobs:
