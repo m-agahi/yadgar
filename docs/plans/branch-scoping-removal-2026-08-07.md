@@ -338,6 +338,26 @@ Expected file-level distribution (2026-08-07): `wiki.py 73`, `misc.py 26`, `agen
   ```
 - [ ] **[HANDOFF from Car 3]** `project.py::_get_default_branch` currently returns `None` unconditionally (Car 3 removed the field it read), which silently disables the roadmap-update-lag signal until this car lands. When deleting it, decide what `_get_master_head_info` / `_get_pyproject_version_at_ts` use instead — `_get_default_branch_cached` is the obvious answer, but confirm rather than assume. `test_roadmap_update_signal` patches `_get_master_head_info` wholesale and will NOT catch a mistake here.
 
+### gitness deletion — ADDED BY ADR-0217, reverses ADR-0216
+
+Car 3 deliberately PRESERVED this machinery while deleting only its branch half. ADR-0217 reverses that, so Car 6 removes what remains. **This partially unwinds Car 3's work — that is expected and acknowledged in ADR-0217, not a mistake to route around.**
+
+Delete the whole five-layer chain (the same chain ADR-0216 said must be edited end-to-end — the end-to-end discipline still applies, it is now an end-to-end *deletion*):
+
+- [ ] `yadgar/core/hooks/session-start-context.py` — stop computing and sending `gitness`; `_compute_git_facts` loses its last reason to exist. Check whether the whole function goes.
+- [ ] `yadgar/core/server/http.py` — `/hooks/session-context` drops the `gitness` query param; delete `_persist_dir_branch_context_from_request` / `_persist_dir_branch_context`
+- [ ] `yadgar/backend/admin_exec/project.py` — delete `upsert_dir_branch_context` and `get_dir_branch_context`, plus their op registrations in `admin_exec/__init__.py`
+- [ ] `yadgar/_shared/storage/wiki.py` — delete the `_dir_branch_context`-tagged memory-row read/write
+- [ ] `yadgar/core/cache/cache.py` — delete the `dir_branch_context` namespace + its weight entry
+- [ ] `yadgar/core/server/tools/_dir_branch.py` — **DELETE THE WHOLE MODULE** (Car 3 kept it for gitness alone)
+- [ ] `yadgar/core/server/tools/_runtime_config.py` — its 2 `dir_branch` refs
+- [ ] `yadgar/core/server/tools/wiki.py` — `_check_wiki_add_context` loses its gitness lookup entirely; it keeps directory enforcement on the caller-supplied directory, which is all it ever actually did
+- [ ] CAPABILITY_REGISTRY — Car 3 rewrote CAP-WIKI-021/022 to a gitness/directory scope. Those entries now need the gitness half removed too. **Car 3 also left `settings: BRANCH_ENFORCEMENT, DIRECTORY_ENFORCEMENT` on them, which becomes a `check_capability_coverage` failure the moment Car 7 deletes the `branch_enforcement` field — a partly-rewritten entry is exactly what Car 7 might skim as done.**
+- [ ] Tests: Car 3 added `yadgar/tests/core/test_gitness_chain_e2e.py` and replaced `TestCar0SetChannel` with `TestGitnessSetChannel` in `test_session_context_endpoint.py`. Both largely dissolve. **PRESERVE whatever in them asserts DIRECTORY behaviour** — rewrite rather than delete wholesale, or directory enforcement loses coverage at the moment its last neighbour is removed.
+- [ ] Pre-existing `_dir_branch_context` memory rows become orphaned. No migration needed — they age out once nothing writes them. **Confirm nothing reads the tag before relying on that**; do not assume.
+
+**Exit criterion for this sub-car:** `git grep -c 'gitness\|dir_branch' -- yadgar/ scripts/` returns **0**, AND `wiki_add(directory=<a non-git temp dir>)` still **stores** while `wiki_add(directory="")` with `YADGAR_DIRECTORY_ENFORCEMENT` on still **rejects** with `missing_directory`. The second half is the one that matters — it proves directory enforcement survived the removal of the thing ADR-0216 wrongly believed it depended on.
+
 ### Dead tooling — `wiki_cleanup_merged_branches` (all 6 sites)
 
 - [ ] `yadgar/core/server/tools/project.py:2541` — the MCP tool (4 refs)
@@ -593,7 +613,7 @@ Explicitly out. Touching any of these widens the train and muddies the residue p
 7. **Project identity / owner-repo (task 0095).** ADR-0215 explicitly leaves open whether it absorbs any of branch's scoping intent, and says *"It should not be assumed to."* Do not fold it in.
 8. **Renaming `dir_branch_context` → `dir_context`.** ADR-0216 permits it, does not require it, and warns it inflates the diff and adds a durable-tag migration. **Recommendation: don't.**
 9. **`ScopeFilter` and `DirectoryFilter`.** Only `ScopeFilter`'s branch field dies. The bundle and the directory half survive.
-10. **`gitness`.** Survives per ADR-0216. Any change to it beyond dropping `default_branch` is out of scope.
+10. ~~**`gitness`.** Survives per ADR-0216.~~ **REVERSED by ADR-0217 (2026-08-08) — gitness is now IN SCOPE and is DELETED in Car 6.** ADR-0216's rationale (that gitness feeds directory enforcement) was verified FALSE while executing Car 3: `_check_wiki_add_context` gates on `(directory or "").strip()` + the enforcement flag and never reads gitness. What it actually fed was the ADR-0126 §0.4 BRANCH flow table, which this train deletes. Decisively, project identity (ADR-0199) already encodes gitness and more precisely — a key in `local/<basename>` form means "no git remote here" — so gitness is REDUNDANT, not merely unused. See Car 6.
 
 ---
 
