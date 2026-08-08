@@ -57,7 +57,6 @@ def _insert_wiki(title: str, content: str) -> str:
     assert _st._wiki is not None
     opts = WikiAddOptions(
         source_memory_ids=[],
-        branch="master",
         directory_context=_DIR,
     )
     page = _st._wiki.add(

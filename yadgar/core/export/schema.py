@@ -99,7 +99,6 @@ MEMORY_COLUMNS: list[Column] = [
     Column("reconsolidation_count", "reconsolidation_count", "INTEGER"),
     Column("is_protected", "is_protected", "BOOLEAN"),
     Column("provenance_agent", "provenance_agent", "VARCHAR"),
-    Column("branch", "branch", "VARCHAR"),
     Column("anchor_id", "anchor_id", "VARCHAR"),
     Column("tier", "tier", "VARCHAR"),
     Column("narrative_weight", "narrative_weight", "DOUBLE"),
@@ -118,7 +117,6 @@ WIKI_PAGE_COLUMNS: list[Column] = [
     Column("approved", "approved", "BOOLEAN"),
     Column("created_at", "created_at", "TIMESTAMP"),
     Column("updated_at", "updated_at", "TIMESTAMP"),
-    Column("branch", "branch", "VARCHAR"),
     Column("summary", "summary", "VARCHAR"),
 ]
 

@@ -464,21 +464,34 @@ Delete the whole five-layer chain (the same chain ADR-0216 said must be edited e
 
 ### Step 8b — write (only after 8a is signed off)
 
-- [ ] **DELETE the UNPROTECTED branch-scoped rows only** — `is_protected = false`, ~73 memory rows, plus the ~14 branch-scoped `wiki_page` rows:
+> **EXECUTED AS PART OF CAR 9 (user-approved, 2026-08-08).** There is no live write
+> path available to an orchestrator: `db_inspect` is read-only by design (VIEWER role,
+> ADR-0078) and the MCP write tools cannot express this migration — `wiki_delete` takes a
+> *slug*, and the one collision pair shares a slug, so it would delete both rows. These
+> steps are therefore ordered statements inside `_migration_029_drop_branch_column`,
+> ahead of the column drop, executing at deploy time after the pre-migration backup.
+> **One deviation, user-approved:** branch-scoped `wiki_page` rows are NULLED, not
+> deleted (13, not ~14). The memory side has `is_protected` to separate durable
+> knowledge from branch litter; the wiki side has no equivalent, so a blanket delete
+> would destroy exactly the durable project knowledge ADR-0215 exists to make reachable.
+> Re-measured 2026-08-08: 87 unprotected memory rows to delete (was ~73), 21 protected
+> to keep.
+
+- [x] **DELETE the UNPROTECTED branch-scoped rows only** — `is_protected = false`, ~73 memory rows, plus the ~14 branch-scoped `wiki_page` rows:
   ```
   DELETE memory    WHERE branch != NONE AND branch != 'master' AND branch != 'main'
                      AND is_protected = false;
   DELETE wiki_page WHERE branch != NONE AND branch != 'master' AND branch != 'main';
   ```
-- [ ] **DO NOT DELETE the ~21 PROTECTED rows** (18 conditional + 3 semantic_immortal). They are anchored durable knowledge, not branch litter — they merely happened to be written on a feature branch. They fall through to the nulling step below and become globally reachable, which is the desired outcome. **Assert this explicitly before nulling:**
+- [x] **DO NOT DELETE the ~21 PROTECTED rows** (18 conditional + 3 semantic_immortal). They are anchored durable knowledge, not branch litter — they merely happened to be written on a feature branch. They fall through to the nulling step below and become globally reachable, which is the desired outcome. **Assert this explicitly before nulling:**
   ```
   SELECT count() FROM memory WHERE branch != NONE AND branch != 'master'
     AND branch != 'main' AND is_protected = true
   ```
   must still return **21** (or whatever 8a measured) immediately after the DELETE. If it returns 0, the DELETE was over-broad — STOP and restore from the backup.
-- [ ] **Resolve `(slug, directory_context)` collisions before nulling** — for each pair, keep the newest by `updated_at` and delete the loser (or merge if the user says so). If this is skipped, `get_wiki_page_by_slug_directory` returns an arbitrary row for that slug forever, silently. This is a correctness step, not tidying.
-- [ ] `UPDATE wiki_page SET branch = NONE WHERE branch != NONE`
-- [ ] `UPDATE memory SET branch = NONE WHERE branch != NONE`
+- [x] **Resolve `(slug, directory_context)` collisions before nulling** — for each pair, keep the newest by `updated_at` and delete the loser (or merge if the user says so). If this is skipped, `get_wiki_page_by_slug_directory` returns an arbitrary row for that slug forever, silently. This is a correctness step, not tidying.
+- [x] `UPDATE wiki_page SET branch = NONE WHERE branch != NONE`
+- [x] `UPDATE memory SET branch = NONE WHERE branch != NONE`
 - [ ] Optional (ADR-0216, explicitly not required): if `_dir_branch_context` rows are being renamed, migrate the durable tag. Recommendation: **don't** — Car 3 already confirmed reader tolerance, and the rows self-heal on next SessionStart.
 
 **Exit criterion (positive evidence):**
@@ -492,23 +505,39 @@ Delete the whole five-layer chain (the same chain ADR-0216 said must be edited e
 
 ## Car 9 — Schema drop (migration 029)
 
-**Scope:** Remove the column. Last structural step.
+**Scope:** Remove the column. Last structural step. **Absorbed Car 8b's data steps**
+(see the note there) — migration 029 nulls the data and then drops the column, in that
+order, so no deploy window exists where the column is gone but the values are not.
+Each data step aborts with `Migration029Abort` rather than continuing on a bad state.
 
-- [ ] `yadgar/_shared/storage/migrations.py` — add `_migration_029_drop_branch_column`:
+> **Landed 2026-08-08.** Additions beyond the checklist below, all forced by the code:
+> (a) `WikiStore._METADATA_FIELDS` dropped `"branch"` — note this was NOT the live MCP
+> write Car 7 reported (`tools/wiki.py::wiki_set_metadata` already rejects the field at
+> the boundary); what it gated was the privileged `POST /admin` path to
+> `set_metadata_by_slug`. (b) Removing `WikiAddOptions.branch` cascaded through
+> `WikiStore.add`, `_autolink_write_page`, `run_wiki_add_replay` and `admin_exec/wiki.py`.
+> (c) **The column drop is not the safety property** — both tables are SCHEMALESS, so
+> `REMOVE FIELD` drops only the type definition and a surviving writer would silently
+> re-create `branch` as an untyped field while `INFO FOR TABLE` stayed clean. Killing the
+> writers is what actually retires the column. (d) The live-DB half of the exit criterion
+> is deferred to deploy; the fresh-DB half is met by
+> `yadgar/tests/e2e/test_migration_029_drop_branch_column_e2e.py` (3 passed).
+
+- [x] `yadgar/_shared/storage/migrations.py` — add `_migration_029_drop_branch_column`:
   ```
   REMOVE FIELD IF EXISTS branch ON TABLE wiki_page;
   REMOVE FIELD IF EXISTS branch ON TABLE memory;
   ```
   and register it as `{"version": "029_drop_branch_column", ...}` at the end of the registry list.
-- [ ] **Do not touch migrations 004 or 015.** Migration 026's docstring sets the precedent: historical migrations are kept for history immutability. Editing them would break replay on a fresh DB.
-- [ ] **`wiki_draft.branch` needs nothing** — migration 026 dropped the whole table.
-- [ ] `yadgar/core/export/schema.py:102,121` — delete the two `Column("branch", "branch", "VARCHAR")` entries (DuckDB export schema).
-- [ ] **[Q5 — a real consumer exists; established 2026-08-07]** `yadgar/core/export/views.sql:159-169` — the `v_branch_distribution` view selects `memory.branch` **from the export**. DELETE it (a branch-distribution view is meaningless once there is one distribution). Dropping the schema columns without this leaves the view referencing a column that no longer exists.
-- [ ] `yadgar/tests/core/test_export_duckdb.py` — remove `v_branch_distribution` from **all three** sites: `:491` (`TestViewsCreated.test_all_views_present`), `:519` (`TestViewsExecutable.test_view_executes`, parametrized — it runs `SELECT * FROM v_branch_distribution LIMIT 10`), and `:661`. All three go red otherwise.
-- [ ] Everything else was checked and is clear — `yadgar/core/viz/`, `yadgar/backend/viz_exec/`, `viz-tests/`, `sdk-js/`, the CLI: zero reads of the export's branch column. No notebooks in the repo. (`yadgar/static/**` does not exist; the viz code is at `yadgar/core/viz/`.)
-- [ ] `yadgar/_shared/storage/client.py` — any branch field in the row mapper
-- [ ] `yadgar/_shared/wiki/contract.py`, `yadgar/_shared/wiki/policy.py` — branch refs in the wiki contract/policy shapes
-- [ ] Verify `python scripts/check_capability_coverage.py` — every migration must be referenced by ≥1 registry entry, so **029 needs a CAPABILITY_REGISTRY entry in this car** or it orphans.
+- [x] **Do not touch migrations 004 or 015.** Migration 026's docstring sets the precedent: historical migrations are kept for history immutability. Editing them would break replay on a fresh DB.
+- [x] **`wiki_draft.branch` needs nothing** — migration 026 dropped the whole table.
+- [x] `yadgar/core/export/schema.py:102,121` — delete the two `Column("branch", "branch", "VARCHAR")` entries (DuckDB export schema).
+- [x] **[Q5 — a real consumer exists; established 2026-08-07]** `yadgar/core/export/views.sql:159-169` — the `v_branch_distribution` view selects `memory.branch` **from the export**. DELETE it (a branch-distribution view is meaningless once there is one distribution). Dropping the schema columns without this leaves the view referencing a column that no longer exists.
+- [x] `yadgar/tests/core/test_export_duckdb.py` — remove `v_branch_distribution` from **all three** sites: `:491` (`TestViewsCreated.test_all_views_present`), `:519` (`TestViewsExecutable.test_view_executes`, parametrized — it runs `SELECT * FROM v_branch_distribution LIMIT 10`), and `:661`. All three go red otherwise.
+- [x] Everything else was checked and is clear — `yadgar/core/viz/`, `yadgar/backend/viz_exec/`, `viz-tests/`, `sdk-js/`, the CLI: zero reads of the export's branch column. No notebooks in the repo. (`yadgar/static/**` does not exist; the viz code is at `yadgar/core/viz/`.)
+- [x] `yadgar/_shared/storage/client.py` — any branch field in the row mapper
+- [x] `yadgar/_shared/wiki/contract.py`, `yadgar/_shared/wiki/policy.py` — branch refs in the wiki contract/policy shapes
+- [x] Verify `python scripts/check_capability_coverage.py` — every migration must be referenced by ≥1 registry entry, so **029 needs a CAPABILITY_REGISTRY entry in this car** or it orphans.
 
 **Exit criterion (positive evidence):** on a **fresh** DB built by replaying all migrations 001→029, `INFO FOR TABLE wiki_page` and `INFO FOR TABLE memory` contain **no `branch` field**. And on the **live** DB after applying 029, the same. Both, because a forward migration that only works on a fresh DB is a known failure shape. Plus: `test_branch_agnostic_reachability.py` (added in Car 1) still passes — proving reads work with the column physically absent, which is the thing the ordering hazard was about.
 

@@ -42,7 +42,6 @@ class WikiAddOptions:
 
     source_memory_ids: list[int] | None = None
     confidence: str = "medium"
-    branch: str | None = None
     directory_context: str | None = None
     page_type: str | None = None
     # Car B (#83): explicit-slug + upsert write contract.

@@ -154,17 +154,3 @@ GROUP BY tool, strftime(ts, '%Y-%m-%d')
 ORDER BY day DESC, call_count DESC;
 COMMENT ON VIEW v_tool_call_volume IS
     'MCP tool call volume by tool + day. Answers: which tools are actually used?';
-
--- 10. Branch distribution
-CREATE OR REPLACE VIEW v_branch_distribution AS
-SELECT
-    coalesce(branch, '(canonical)') AS branch,
-    count(*) AS memory_count,
-    avg(heat) AS avg_heat,
-    min(created_at) AS oldest,
-    max(created_at) AS newest
-FROM memory
-GROUP BY coalesce(branch, 'master')
-ORDER BY memory_count DESC;
-COMMENT ON VIEW v_branch_distribution IS
-    'Memory counts per branch. Answers: are non-master branches diverging?';

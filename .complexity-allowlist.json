@@ -231,9 +231,9 @@
   "function": "<file>",
   "lineno": 1,
   "metrics": {
-   "file_loc": 1387
+   "file_loc": 1738
   },
-  "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.157.0 #76: recorded 1153 had drifted to ~1369 from migrations accumulated since 2026-06-13 (this touch only adds migration 026_drop_wiki_draft, ~+18 LoC net after removing the wiki_draft _init_schema entry); resyncing the recorded value. Each migration is an append-only single-responsibility fn — the module is a migration ledger by design; wave N split remains deferred.",
+  "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.157.0 #76: recorded 1153 had drifted to ~1369 from migrations accumulated since 2026-06-13 (this touch only adds migration 026_drop_wiki_draft, ~+18 LoC net after removing the wiki_draft _init_schema entry); resyncing the recorded value. Each migration is an append-only single-responsibility fn — the module is a migration ledger by design; wave N split remains deferred. ADR-0215 Car 9: 1387 -> 1738 (+351). Migration 029 is unusually large for a ledger entry because it is a DATA migration, not a DDL one-liner: it carries five helpers (_m029_count / _m029_purge_unprotected_branch_memories / _m029_collision_pairs / _m029_resolve_slug_collisions / _m029_null_branch / _m029_assert_branch_fully_nulled), a Migration029Abort exception type and four measured constants, each abort path carrying the operator-facing message that tells a deploy-time reader whether to restore from the backup. Split into helpers rather than one function precisely to keep per-function complexity inside the caps; the cost lands on file_loc. Wave N split of this module remains deferred.",
   "added": "2026-06-13",
   "added_by": "complexity-governance-agent"
  },

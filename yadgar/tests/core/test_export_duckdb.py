@@ -488,7 +488,6 @@ class TestViewsCreated:
             "v_conflict_density",
             "v_wiki_coverage",
             "v_tool_call_volume",
-            "v_branch_distribution",
         }
         con = duckdb.connect(str(exported_db), read_only=True)
         result = con.execute(
@@ -516,7 +515,6 @@ class TestViewsExecutable:
             "v_conflict_density",
             "v_wiki_coverage",
             "v_tool_call_volume",
-            "v_branch_distribution",
         ],
     )
     def test_view_executes(self, exported_db: Path, view_name: str):
@@ -658,7 +656,6 @@ class TestExportFullCorpusSmoke:
             "v_conflict_density",
             "v_wiki_coverage",
             "v_tool_call_volume",
-            "v_branch_distribution",
         ]
         for view in views:
             rows = con.execute(f"SELECT * FROM {view} LIMIT 100").fetchall()  # noqa: S608

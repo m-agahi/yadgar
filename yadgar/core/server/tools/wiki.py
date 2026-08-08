@@ -420,7 +420,9 @@ def wiki_add(
         "confidence": confidence,
         "append": append,
         # ADR-0215: branch scoping is gone from the tool surface; every write now
-        # lands in the canonical slot. The key stays until Car 8 drops the column.
+        # lands in the canonical slot. Car 9 dropped the column and removed the
+        # reader (`run_wiki_add_replay` no longer looks at this key); it survives
+        # only so a payload queued before the train still deserialises. Car 10.
         "branch": None,
         # v5.41.5: pass bypass flags so drainer can skip gate for these paths
         "force": force,
@@ -1091,8 +1093,9 @@ def wiki_set_metadata(
     Preserved keys for back-compat callers that inspect {ok, slug}.
     """
     # ADR-0215: 'branch' left the allowed-field set with the rest of branch
-    # scoping. Rejected at the MCP boundary; the store still knows the column
-    # until Car 8 drops it, so the gate has to live here.
+    # scoping. Rejected here at the MCP boundary; Car 9 also removed it from
+    # WikiStore._METADATA_FIELDS, which closes the privileged POST /admin path
+    # that reaches set_metadata_by_slug without passing through this shell.
     if field != "directory_context":
         return {
             "ok": False,

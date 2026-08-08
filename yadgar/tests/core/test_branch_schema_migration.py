@@ -214,8 +214,16 @@ class TestBranchStorageHelpers:
         branch = rows[0].get("branch")
         assert branch is None, f"expected None (NONE), got {branch!r}"
 
-    def test_update_memory_fields_with_branch(self, storage):
-        """update_memory_fields accepts branch kwarg via _MEMORY_UPDATABLE_FIELDS."""
+    def test_update_memory_fields_rejects_branch(self, storage):
+        """ADR-0215 (Car 9): 'branch' left _MEMORY_UPDATABLE_FIELDS.
+
+        Was ``test_update_memory_fields_with_branch``, which asserted the
+        opposite. Migration 029 drops the column, and ``memory`` is SCHEMALESS —
+        a surviving generic setter would silently re-create ``branch`` as an
+        untyped field on rows the migration just nulled. ``update_memory_fields``
+        filters unknown keys rather than raising, so the assertion is that the
+        write is DROPPED.
+        """
         mid = storage.insert_memory(
             {
                 "content": "memory for update-branch test",
@@ -223,8 +231,9 @@ class TestBranchStorageHelpers:
                 "tags": [],
             }
         )
-        # Should not raise; branch in _MEMORY_UPDATABLE_FIELDS
         storage.update_memory_fields(mid, branch="feat/v5.0")
 
         rows = storage._q(f"SELECT branch FROM memory:{mid}")
-        assert rows[0].get("branch") == "feat/v5.0"
+        assert rows[0].get("branch") is None, (
+            "update_memory_fields must not write branch after ADR-0215 Car 9"
+        )

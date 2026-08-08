@@ -685,13 +685,12 @@ class WikiStore:
         without page_type continue to work exactly as before).
 
         v5.55: rare optional params bundled into WikiAddOptions (complexity-debt I13):
-        source_memory_ids, confidence, branch, directory_context, page_type.
+        source_memory_ids, confidence, directory_context, page_type.
         params 10 → 6; HARD allowlist entry removed.
         """
         o = opts or WikiAddOptions()
         source_memory_ids = o.source_memory_ids
         confidence = o.confidence
-        branch = o.branch
         directory_context = o.directory_context
         page_type = o.page_type
 
@@ -715,18 +714,13 @@ class WikiStore:
         # enforcement point for both agent_prompt_save and raw wiki_add replay
         # (run_wiki_add_replay also calls WikiStore.add). See ADR-0158 (wiki_policy).
         if _get_wiki_policy(page_type).storage_scope == "global":
-            # A global-scoped page is cross-project canonical: it must also live in
-            # the canonical branch slot. §25 read reaches it ONLY via step 3
-            # (directory='global' AND branch IS NONE), so a global page inserted with
-            # a caller branch_hint (SessionStart passes "master" here) strands at
-            # global+branch=<x> — unreachable via wiki_read, still found via the
-            # plain-slug prelude path (the agent-prompt 404 drift). Couple branch=None
-            # with the dir override on INSERT (insert_wiki_page omits the column on
-            # None → SurrealDB NONE, matched by IS NONE). UPDATE keeps branch untouched
-            # (its generic setter would store explicit null — the branch-null trap);
-            # drifted rows are healed via wiki_set_metadata(field="branch", value=None).
+            # A global-scoped page is cross-project canonical. The TYPE, not the
+            # caller, decides the scope. (Pre-ADR-0215 this also had to force
+            # branch=None, or a global page written with a caller branch_hint
+            # stranded at global+branch=<x> and was unreachable via wiki_read —
+            # the agent-prompt 404 drift. The branch axis is gone; only the
+            # directory override remains.)
             effective_dir = "global"
-            branch = None
 
         existing = self._storage.get_wiki_page_by_slug(slug)
         now = datetime.now(UTC).isoformat()
@@ -796,11 +790,8 @@ class WikiStore:
 
             page["page_type"] = page_type
             page["wiki_schema_version"] = WIKI_SCHEMA_VERSION
-        page_id = self._storage.insert_wiki_page(page, branch=branch)
+        page_id = self._storage.insert_wiki_page(page)
         page["id"] = page_id
-        # v5.43.0 (DP-2): include branch in returned dict so callers (e.g. wiki_approve)
-        # can propagate branch context without a round-trip read.
-        page["branch"] = branch
         self._sync_crossrefs(slug, links)
         self._link_memories(slug, source_memory_ids)
         return page
@@ -1450,8 +1441,8 @@ class WikiStore:
     def _autolink_write_page(self, page: dict, content: str, proposals: list[dict]) -> None:
         """Apply insertions and upsert WITHOUT clobbering page metadata.
 
-        Re-passes the page's own category, directory_context, page_type, branch,
-        and confidence so the add() upsert never resets them to defaults.
+        Re-passes the page's own category, directory_context, page_type and
+        confidence so the add() upsert never resets them to defaults.
         Tags the page 'auto-linked' so editors can see machine edits.
         """
         new_content = _autolink_apply_insertions(content, proposals)
@@ -1464,7 +1455,6 @@ class WikiStore:
             tags=["auto-linked"],
             opts=WikiAddOptions(
                 confidence=page.get("confidence", "medium"),
-                branch=page.get("branch"),
                 directory_context=page.get("directory_context"),
                 page_type=page.get("page_type"),
             ),
@@ -1718,7 +1708,11 @@ class WikiStore:
 
     # ── Edit primitives (v5.61.0) ─────────────────────────────────────────
 
-    _METADATA_FIELDS: frozenset[str] = frozenset({"directory_context", "branch"})
+    #: ADR-0215 (Car 9): ``"branch"`` was removed. Migration 029 drops the column,
+    #: but the tables are SCHEMALESS — a surviving ``set_metadata(field="branch")``
+    #: would silently re-create it as an untyped field on rows the migration just
+    #: nulled, with no reader left to honour it.
+    _METADATA_FIELDS: frozenset[str] = frozenset({"directory_context"})
 
     @observe(tier="stage")
     def set_metadata(
@@ -1727,11 +1721,10 @@ class WikiStore:
         field: str,
         value: str | None,
     ) -> dict:
-        """Set directory_context or branch on a wiki page.
+        """Set directory_context on a wiki page.
 
         Idempotent: no-op when current value already matches.
         Creates a wiki_page_version row on real change.
-        branch=None uses UNSET so §25 IS NONE queries resolve correctly.
 
         Returns {ok, page_id, changed, version_id} or {ok: False, error}.
         """
@@ -1750,13 +1743,6 @@ class WikiStore:
                         "directory_context must be 'global' or an absolute path "
                         f"(starts with '/'); got {value!r}"
                     ),
-                }
-        elif field == "branch":
-            # None = canonical. Empty string invalid.
-            if value is not None and value == "":
-                return {
-                    "ok": False,
-                    "error": "branch must be null (canonical) or a non-empty string",
                 }
 
         page = self._storage.get_wiki_page(page_id)
@@ -1801,12 +1787,11 @@ class WikiStore:
         field: str,
         value: str | None,
     ) -> dict:
-        """Set directory_context or branch on ALL rows sharing a slug.
+        """Set directory_context on ALL rows sharing a slug.
 
         Unlike set_metadata(page_id, ...) which targets one row, this method
-        fetches EVERY page_id for the slug (across all branches + global
-        stragglers) via storage.get_wiki_page_ids_by_slug and applies
-        set_metadata to each.
+        fetches EVERY page_id for the slug (including 'global' stragglers) via
+        storage.get_wiki_page_ids_by_slug and applies set_metadata to each.
 
         Field validation + no-op detection delegate to set_metadata per row
         so the audit trail, version rows, and idempotency all work correctly.
@@ -1831,12 +1816,6 @@ class WikiStore:
                         "directory_context must be 'global' or an absolute path "
                         f"(starts with '/'); got {value!r}"
                     ),
-                }
-        elif field == "branch":
-            if value is not None and value == "":
-                return {
-                    "ok": False,
-                    "error": "branch must be null (canonical) or a non-empty string",
                 }
 
         page_ids = self._storage.get_wiki_page_ids_by_slug(slug)

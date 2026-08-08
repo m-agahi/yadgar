@@ -1134,6 +1134,259 @@ def _migration_028_agent_page_type_split(storage) -> None:
     _log.info("migration_028: re-typed %d agent-library wiki pages (ADR-0209)", updated)
 
 
+class Migration029Abort(RuntimeError):
+    """Migration 029 hit a safety assert and refused to continue.
+
+    Raised (never swallowed) so ``_run_migrations_locked`` propagates: the
+    ``schema_version`` row is NOT written, so the migration stays pending and
+    re-runs on the next start. Everything after the failing assert — the nulling
+    sweep and the column drop — is skipped, which preserves the evidence needed
+    to decide whether to restore from the pre-migration backup.
+    """
+
+
+#: Rows written on a feature branch. Deliberately spelled as a literal predicate
+#: rather than built at runtime: it was validated against the live corpus on
+#: 2026-08-08 and its narrowness is the safety property (it must NOT sweep the
+#: thousands of canonical ``branch IS NONE`` rows).
+_M029_BRANCH_SCOPED = "branch != NONE AND branch != 'master' AND branch != 'main'"
+
+#: Circuit breaker on the DELETE step. Measured 2026-08-08: 87 unprotected
+#: branch-scoped memory rows (80 no-tier + 7 ephemeral). If the predicate ever
+#: matches an order of magnitude more, it has started matching explicit-null
+#: rows (the "branch-null trap") and the DELETE would be catastrophic — abort
+#: instead. Mirrors the archive_purge circuit-breaker convention.
+_M029_DELETE_CEILING = 300
+
+#: The single ``(slug, directory_context)`` collision measured 2026-08-08. Both
+#: rows already carry ``branch = null``, so this predates branch scoping and is
+#: unrelated to it — but ``get_wiki_page_by_slug_directory`` resolves with
+#: ``LIMIT 1``, so leaving it means an arbitrary row wins for that slug forever.
+#: Keep the newer row (updated 2026-06-23), drop the older (updated 2026-06-16).
+_M029_COLLISION_SLUG = "aws-org-migration-terraform-automation"
+_M029_COLLISION_KEEP_ID = 6706
+_M029_COLLISION_DROP_ID = 6705
+
+
+def _m029_count(storage, table: str, where: str) -> int:
+    """``SELECT count()`` over *table* filtered by *where*; 0 when no rows match."""
+    rows = storage._q(f"SELECT count() AS n FROM {table} WHERE {where} GROUP ALL")
+    if not rows:
+        return 0
+    return int(rows[0].get("n", 0) or 0)
+
+
+def _m029_purge_unprotected_branch_memories(storage) -> None:
+    """Step 1+2 — delete unprotected branch-scoped memories, assert the survivors.
+
+    ADR-0215: *"inspect those rows during migration and drop any that are pure
+    noise rather than silently promoting them."* Unprotected feature-branch
+    memories are that noise. PROTECTED ones (``tier`` conditional /
+    semantic_immortal) are anchored durable knowledge that merely happened to be
+    written on a branch — they survive and fall through to the nulling sweep,
+    which is what makes them globally reachable.
+
+    The post-DELETE assert is the safety property of this whole migration, not a
+    log line: if the protected count moved, the predicate was over-broad and the
+    migration aborts so the operator can restore from the backup.
+    """
+    where_unprotected = f"{_M029_BRANCH_SCOPED} AND is_protected = false"
+    where_protected = f"{_M029_BRANCH_SCOPED} AND is_protected = true"
+
+    to_delete = _m029_count(storage, "memory", where_unprotected)
+    protected_before = _m029_count(storage, "memory", where_protected)
+    _log.info(
+        "migration_029: branch-scoped memory rows — %d unprotected (delete), %d protected (keep)",
+        to_delete,
+        protected_before,
+    )
+
+    if to_delete > _M029_DELETE_CEILING:
+        raise Migration029Abort(
+            f"migration_029: DELETE candidate count {to_delete} exceeds the "
+            f"{_M029_DELETE_CEILING} circuit breaker — the branch-scoped predicate "
+            f"is matching far more than the ~87 rows measured 2026-08-08. Refusing "
+            f"to delete. Inspect with: SELECT count() FROM memory WHERE "
+            f"{where_unprotected} GROUP ALL"
+        )
+
+    if to_delete:
+        storage._q(f"DELETE memory WHERE {where_unprotected}")
+
+    protected_after = _m029_count(storage, "memory", where_protected)
+    if protected_after != protected_before:
+        raise Migration029Abort(
+            f"migration_029: the DELETE was over-broad — protected branch-scoped "
+            f"memories went {protected_before} -> {protected_after}. These rows are "
+            f"anchored durable knowledge and must survive. STOP and restore from the "
+            f"pre-migration backup (docs/plans/0115-pre-migration-backup-2026-08-01.md)."
+        )
+
+    remaining = _m029_count(storage, "memory", where_unprotected)
+    if remaining:
+        raise Migration029Abort(
+            f"migration_029: {remaining} unprotected branch-scoped memories survived "
+            f"the DELETE — the write did not take effect."
+        )
+
+    _log.info(
+        "migration_029: deleted %d unprotected branch-scoped memories; %d protected survived",
+        to_delete,
+        protected_after,
+    )
+
+
+def _m029_collision_pairs(storage) -> list[dict]:
+    """``(slug, directory_context)`` groups holding more than one wiki_page row."""
+    rows = storage._q(
+        "SELECT slug, directory_context, count() AS n FROM wiki_page "
+        "GROUP BY slug, directory_context"
+    )
+    return [r for r in (rows or []) if int(r.get("n", 0) or 0) > 1]
+
+
+def _m029_assert_no_collisions(storage) -> None:
+    """Every exit from the collision step passes through here, or it can skip silently."""
+    still = _m029_collision_pairs(storage)
+    if still:
+        raise Migration029Abort(
+            f"migration_029: (slug, directory_context) collisions remain: "
+            f"{[(p.get('slug'), p.get('directory_context')) for p in still]}"
+        )
+
+
+def _m029_resolve_slug_collisions(storage) -> None:
+    """Step 3 — collapse the one known duplicate ``(slug, directory_context)`` pair.
+
+    Deletes by RECORD ID, never by slug: both rows share the slug, so a
+    slug-keyed delete removes the survivor too. For the same reason this does NOT
+    go through ``delete_wiki_page`` — that helper cleans ``wiki_crossref`` rows
+    keyed on the slug, which would orphan the SURVIVING row's crossrefs.
+
+    Any collision the plan did not review aborts the migration: picking a winner
+    unreviewed is exactly the silent-arbitrary-row failure this step exists to
+    end.
+    """
+    pairs = _m029_collision_pairs(storage)
+    unknown = [p for p in pairs if p.get("slug") != _M029_COLLISION_SLUG]
+    if unknown:
+        raise Migration029Abort(
+            f"migration_029: {len(unknown)} unreviewed (slug, directory_context) "
+            f"collision(s) found: {[(p.get('slug'), p.get('directory_context')) for p in unknown]}. "
+            f"Only {_M029_COLLISION_SLUG!r} was reviewed. Resolve them (keep newest by "
+            f"updated_at) before re-running."
+        )
+
+    if not pairs:
+        _log.info("migration_029: no (slug, directory_context) collisions to resolve")
+        return
+
+    rows = storage._q("SELECT id FROM wiki_page WHERE slug = $s", {"s": _M029_COLLISION_SLUG})
+    ids = {storage._extract_id(r.get("id")) for r in (rows or [])}
+
+    if _M029_COLLISION_DROP_ID not in ids:
+        # Converged only if the collision is actually gone. Returning here on the
+        # strength of the drop-id's absence alone would let a collision on the
+        # reviewed slug between two OTHER ids slip past the one step whose entire
+        # purpose is not silently skipping.
+        _log.info(
+            "migration_029: collision loser wiki_page:%d already absent",
+            _M029_COLLISION_DROP_ID,
+        )
+        _m029_assert_no_collisions(storage)
+        return
+    if _M029_COLLISION_KEEP_ID not in ids:
+        raise Migration029Abort(
+            f"migration_029: the row to KEEP (wiki_page:{_M029_COLLISION_KEEP_ID}) is "
+            f"gone but the row to DROP (wiki_page:{_M029_COLLISION_DROP_ID}) is present. "
+            f"Deleting the drop-id now would erase the slug entirely. Resolve manually."
+        )
+
+    storage._q("DELETE type::record('wiki_page', $id)", {"id": _M029_COLLISION_DROP_ID})
+    _log.info(
+        "migration_029: collision resolved — kept wiki_page:%d, deleted wiki_page:%d (slug=%s)",
+        _M029_COLLISION_KEEP_ID,
+        _M029_COLLISION_DROP_ID,
+        _M029_COLLISION_SLUG,
+    )
+
+    _m029_assert_no_collisions(storage)
+
+
+def _m029_null_branch(storage) -> None:
+    """Steps 4+5 — null every surviving ``branch`` value on both tables.
+
+    ``SET branch = NONE`` UNSETS the field (literal SurrealDB NONE), which is what
+    ``IS NONE`` matches — assigning Python ``None`` through a generic setter would
+    store an explicit null instead and miss (the branch-null trap documented in
+    ``StorageEngine.set_wiki_page_metadata``).
+
+    Branch-scoped ``wiki_page`` rows are NULLED, never deleted. The memory side has
+    ``is_protected`` to separate durable knowledge from branch litter; the wiki side
+    has no equivalent, so a blanket delete would destroy exactly the durable
+    project knowledge ADR-0215 exists to make reachable.
+    """
+    for table in ("wiki_page", "memory"):
+        n = _m029_count(storage, table, "branch != NONE")
+        if n:
+            storage._q(f"UPDATE {table} SET branch = NONE WHERE branch != NONE")
+        _log.info("migration_029: nulled branch on %d %s row(s)", n, table)
+
+
+def _m029_assert_branch_fully_nulled(storage) -> None:
+    """Exit criterion, asserted BEFORE the drop (afterwards the column is gone)."""
+    for table in ("wiki_page", "memory"):
+        remaining = _m029_count(storage, table, "branch != NONE")
+        if remaining:
+            raise Migration029Abort(
+                f"migration_029: {remaining} {table} row(s) still carry a non-null "
+                f"branch after the nulling sweep — refusing to drop the column while "
+                f"values survive."
+            )
+
+
+def _migration_029_drop_branch_column(storage) -> None:
+    """Retire branch scoping: null the data, then drop the column (ADR-0215, Car 9).
+
+    ADR-0215 removes branch scoping entirely — stored knowledge is a property of
+    the PROJECT, not of the branch it happened to be written on. Cars 1-3 retired
+    every reader; this migration performs the data steps (originally planned as a
+    separate "Car 8") and the structural drop atomically, in that order, because
+    reversing them breaks reads mid-train.
+
+    Order (each step aborts the migration rather than continuing on a bad state):
+      1/2. delete UNPROTECTED branch-scoped memories, assert the protected ones survived
+      3.   resolve the one reviewed ``(slug, directory_context)`` collision, by ID
+      4/5. null every remaining ``branch`` value on wiki_page + memory
+      -.   assert both tables hold exactly one branch group (NONE) — pre-drop
+      6.   ``REMOVE FIELD`` on both tables
+
+    Migrations 004 (which defined the field) and 015 (which defined it on the
+    since-dropped ``wiki_draft`` table) are untouched: migration 026's docstring
+    sets the precedent that shipped migrations are immutable and removal is a new
+    forward migration. ``wiki_page_version.branch`` is an audit-trail snapshot and
+    is deliberately out of scope.
+
+    NOTE — both tables are SCHEMALESS (see ``_init_schema``), so ``REMOVE FIELD``
+    removes only the FIELD DEFINITION; it neither deletes stored values (hence the
+    nulling steps above) nor prevents a future write from re-creating the column
+    as an untyped field. Killing the writers is the real guarantee and is done in
+    code in the same car: ``WikiAddOptions.branch``, ``WikiStore._METADATA_FIELDS``
+    and ``_MEMORY_UPDATABLE_FIELDS`` no longer accept it.
+
+    Idempotent end-to-end: on a second run every count is already 0 and
+    ``REMOVE FIELD IF EXISTS`` is a no-op.
+    """
+    _m029_purge_unprotected_branch_memories(storage)
+    _m029_resolve_slug_collisions(storage)
+    _m029_null_branch(storage)
+    _m029_assert_branch_fully_nulled(storage)
+
+    storage._q("REMOVE FIELD IF EXISTS branch ON TABLE memory;")
+    storage._q("REMOVE FIELD IF EXISTS branch ON TABLE wiki_page;")
+    _log.info("migration_029: dropped branch field definition on memory + wiki_page (ADR-0215)")
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -1234,6 +1487,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "028_agent_page_type_split",
         "fn": _migration_028_agent_page_type_split,
+    },
+    {
+        "version": "029_drop_branch_column",
+        "fn": _migration_029_drop_branch_column,
     },
 ]
 

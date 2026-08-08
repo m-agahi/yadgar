@@ -50,7 +50,6 @@ def _insert_wiki(title: str, content: str) -> str:
     assert _st._wiki is not None, "WikiStore must be initialized in e2e_engines"
     opts = WikiAddOptions(
         source_memory_ids=[],
-        branch="master",
         directory_context=YADGAR_DIR,
     )
     page = _st._wiki.add(
