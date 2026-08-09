@@ -37,7 +37,7 @@ async def _task_list_restore_nudge(directory: str) -> str:
 Current body (http.py:855-942) reads the `{project}-task-list` wiki page via `storage.get_wiki_page_by_slug_directory` (http.py:860-863), then parses `## task:<id>` sections with `_TASK_RE = _re.compile(r"^## task:(\d+)", _re.MULTILINE)` (http.py:885) and inlines up to `_CAP = 12` (http.py:904) open tasks in a forcing nudge (http.py:920-933).
 
 After rewire:
-- Replace the wiki-page read + parse with a ledger read: call `list_task_rows(project_id=<derived>, status=["pending","in_progress"])` (D37 open-only) via the storage layer / HTTP forward to backend (§15 read path: core PTC → backend PTC → DB).
+- Replace the wiki-page read + parse with a ledger read: call `list_task_rows({"project_id": <derived>, "status": ["pending","in_progress"]})` (D37 open-only) via the storage layer / HTTP forward to backend (§15 read path: core PTC → backend PTC → DB; backend op takes a payload dict per car B:47-48).
 - Keep the forcing-nudge form (ADR-0137 Option B — imperative, hoisted FIRST at http.py:1105) and the `_CAP = 12` cap.
 - Emit `[{number}]` via the existing `_format_task_id` (task.py:32) for D11 prefix consistency.
 - Add the D11 instruction line to the nudge template: "Preserve the `[N]` prefix at the start of each `TaskCreate` subject so task ids reconcile across sessions."
