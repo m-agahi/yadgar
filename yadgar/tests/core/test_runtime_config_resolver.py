@@ -1,23 +1,25 @@
-"""Car G2 — runtime_config cache + PTC resolver + warmup + invalidation (ADR-0163).
+"""Car B + G2 — runtime_config cache + HTTP-forward resolver + warmup + invalidation.
 
-TDD red-first: tests written before the resolver implementation per project
-convention.
+ADR-0163 storage half (``_RuntimeConfigMixin``) + Car G2 cache + Car B HTTP
+forward: ``config_get`` / ``config_list`` no longer touch ``_get_storage()``
+in core — they forward to the backend ``get_config_row`` / ``list_config_rows``
+admin ops (ADR-0078 / ADR-0200 chokepoint).
 
 PTC resolver (config_get):
-  cache HIT — a second get does NOT touch storage
-  cache MISS — populates the cache from the durable store
+  cache HIT — a second get does NOT forward over HTTP
+  cache MISS — populates the cache from the backend forward
   per-dir row OVERRIDES global for the SAME key
   global FALLBACK when no per-dir row exists
   DEFAULT when neither per-dir nor global row exists
   typed values (bool/int/str/list/dict) pass through unchanged
-  storage EXCEPTION → returns default (never raises)
+  forward EXCEPTION → returns default (never raises)
 
 invalidate_config_cache():
-  empties the cache — the next get re-reads storage
+  empties the cache — the next get re-forwards
 
 warmup_runtime_config_cache():
-  pre-populates the cache — a get after warmup is a HIT (no storage call)
-  best-effort: a failing/None storage does not raise
+  pre-populates the cache via forward — a get after warmup is a HIT (no HTTP)
+  best-effort: a failing forward does not raise
 """
 
 from __future__ import annotations
@@ -30,31 +32,33 @@ _PROJ_DIR = "/home/test/project"
 _OTHER_DIR = "/home/test/other"
 
 
-class _FakeStorage:
-    """In-memory stand-in for the StorageEngine runtime_config surface.
+class _FakeBackend:
+    """In-memory stand-in for the backend ``get_config_row`` admin op.
 
-    ``rows`` maps (key, directory) → value. ``calls`` counts get_config_row
-    invocations so tests can assert PTC hits skip storage. ``raise_on_get`` forces
-    the fail-safe path.
+    ``rows`` maps (key, directory) → value. ``calls`` counts forward
+    invocations so tests can assert PTC hits skip the HTTP round-trip.
+    ``raise_on_get`` forces the fail-safe path.
     """
 
-    def __init__(self, rows=None, raise_on_get=False):
+    def __init__(self, rows=None, raise_on_get: bool = False):
         self.rows = dict(rows or {})
         self.calls = 0
         self.list_calls = 0
         self.raise_on_get = raise_on_get
 
-    def get_config_row(self, key, *, directory):
+    def forward_get(self, key: str, directory: str | None) -> dict:
         self.calls += 1
         if self.raise_on_get:
             raise RuntimeError("boom")
         if (key, directory) in self.rows:
-            return {"key": key, "directory": directory, "value": self.rows[(key, directory)]}
-        return None
+            return {
+                "row": {"key": key, "directory": directory, "value": self.rows[(key, directory)]}
+            }
+        return {"row": None}
 
-    def list_config_rows(self, *args, **kwargs):
+    def forward_list(self) -> dict:
         self.list_calls += 1
-        return [{"key": k, "directory": d, "value": v} for (k, d), v in self.rows.items()]
+        return {"rows": [{"key": k, "directory": d, "value": v} for (k, d), v in self.rows.items()]}
 
 
 @pytest.fixture
@@ -65,10 +69,18 @@ def fresh_cache(monkeypatch):
     rc._get_cache().clear()
 
 
-def _install(monkeypatch, storage):
-    """Point the resolver's _get_storage at a fake and return it."""
-    monkeypatch.setattr(rc, "_get_storage", lambda: storage)
-    return storage
+def _install(monkeypatch, backend: _FakeBackend) -> _FakeBackend:
+    """Point the resolver's _forward_admin at a fake backend and return it."""
+
+    def fake_forward(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
+        if op == "get_config_row":
+            return backend.forward_get(payload["key"], payload.get("directory"))
+        if op == "list_config_rows":
+            return backend.forward_list()
+        raise RuntimeError(f"unexpected op {op!r}")
+
+    monkeypatch.setattr(rc, "_forward_admin", fake_forward)
+    return backend
 
 
 # ---------------------------------------------------------------------------
@@ -77,15 +89,15 @@ def _install(monkeypatch, storage):
 
 
 class TestPTC:
-    def test_miss_then_hit_second_get_skips_storage(self, monkeypatch, fresh_cache):
-        storage = _install(monkeypatch, _FakeStorage({("k", None): "v"}))
+    def test_miss_then_hit_second_get_skips_forward(self, monkeypatch, fresh_cache):
+        backend = _install(monkeypatch, _FakeBackend({("k", None): "v"}))
         assert rc.config_get("k") == "v"
-        assert storage.calls == 1  # miss → one storage read
+        assert backend.calls == 1  # miss → one forward
         assert rc.config_get("k") == "v"
-        assert storage.calls == 1  # hit → NO further storage read
+        assert backend.calls == 1  # hit → NO further forward
 
     def test_miss_populates_cache(self, monkeypatch, fresh_cache):
-        _install(monkeypatch, _FakeStorage({("k", None): 42}))
+        _install(monkeypatch, _FakeBackend({("k", None): 42}))
         rc.config_get("k")
         # value is now cached under the requested (key, dir) key
         assert rc._get_cache().get(rc._cache_key("k", None)) == 42
@@ -100,7 +112,7 @@ class TestResolution:
     def test_per_dir_overrides_global_same_key(self, monkeypatch, fresh_cache):
         _install(
             monkeypatch,
-            _FakeStorage(
+            _FakeBackend(
                 {("code_graph.enabled", None): True, ("code_graph.enabled", _PROJ_DIR): False}
             ),
         )
@@ -109,17 +121,13 @@ class TestResolution:
         assert rc.config_get("code_graph.enabled", None) is True
 
     def test_global_fallback_when_no_per_dir_row(self, monkeypatch, fresh_cache):
-        _install(monkeypatch, _FakeStorage({("k", None): "glob"}))
+        _install(monkeypatch, _FakeBackend({("k", None): "glob"}))
         # requested for a dir with no row → falls back to global
         assert rc.config_get("k", _OTHER_DIR) == "glob"
 
     def test_default_when_neither_exists(self, monkeypatch, fresh_cache):
-        _install(monkeypatch, _FakeStorage({}))
+        _install(monkeypatch, _FakeBackend({}))
         assert rc.config_get("missing", _PROJ_DIR, default="fallback") == "fallback"
-
-    def test_default_when_storage_none(self, monkeypatch, fresh_cache):
-        _install(monkeypatch, None)
-        assert rc.config_get("k", default="d") == "d"
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +141,7 @@ class TestTypedValues:
         [True, False, 0, 123, "str", ["a", "b"], {"x": 1}],
     )
     def test_typed_values_pass_through(self, monkeypatch, fresh_cache, value):
-        _install(monkeypatch, _FakeStorage({("k", None): value}))
+        _install(monkeypatch, _FakeBackend({("k", None): value}))
         assert rc.config_get("k") == value
 
 
@@ -143,8 +151,8 @@ class TestTypedValues:
 
 
 class TestFailSafe:
-    def test_storage_exception_returns_default_no_raise(self, monkeypatch, fresh_cache):
-        _install(monkeypatch, _FakeStorage({}, raise_on_get=True))
+    def test_forward_exception_returns_default_no_raise(self, monkeypatch, fresh_cache):
+        _install(monkeypatch, _FakeBackend({}, raise_on_get=True))
         assert rc.config_get("k", _PROJ_DIR, default="safe") == "safe"
 
 
@@ -155,12 +163,12 @@ class TestFailSafe:
 
 class TestInvalidation:
     def test_invalidate_empties_cache_next_get_rereads(self, monkeypatch, fresh_cache):
-        storage = _install(monkeypatch, _FakeStorage({("k", None): "v"}))
+        backend = _install(monkeypatch, _FakeBackend({("k", None): "v"}))
         rc.config_get("k")
-        assert storage.calls == 1
+        assert backend.calls == 1
         rc.invalidate_config_cache()
         rc.config_get("k")
-        assert storage.calls == 2  # cache emptied → storage read again
+        assert backend.calls == 2  # cache emptied → forward again
 
 
 # ---------------------------------------------------------------------------
@@ -170,20 +178,22 @@ class TestInvalidation:
 
 class TestWarmup:
     def test_warmup_prepopulates_get_is_hit(self, monkeypatch, fresh_cache):
-        storage = _FakeStorage({("k", None): "v", ("k2", _PROJ_DIR): 9})
-        _install(monkeypatch, storage)
-        rc.warmup_runtime_config_cache(storage)
-        # a get after warmup is a HIT — no get_config_row call
+        backend = _FakeBackend({("k", None): "v", ("k2", _PROJ_DIR): 9})
+        _install(monkeypatch, backend)
+        rc.warmup_runtime_config_cache(object())  # arg ignored under Car B
+        # a get after warmup is a HIT — no get_config_row forward
         assert rc.config_get("k") == "v"
         assert rc.config_get("k2", _PROJ_DIR) == 9
-        assert storage.calls == 0  # warmup used list_config_rows, not per-key gets
+        assert backend.calls == 0  # warmup used list_config_rows, not per-key gets
+        assert backend.list_calls == 1
 
     def test_warmup_none_storage_noop(self, monkeypatch, fresh_cache):
+        _install(monkeypatch, _FakeBackend({}))
         rc.warmup_runtime_config_cache(None)  # must not raise
 
     def test_warmup_failure_swallowed(self, monkeypatch, fresh_cache):
-        class _Boom:
-            def list_config_rows(self, *a, **k):
-                raise RuntimeError("boom")
+        def boom(op, payload, timeout_s=30.0):
+            raise RuntimeError("boom")
 
-        rc.warmup_runtime_config_cache(_Boom())  # must not raise
+        monkeypatch.setattr(rc, "_forward_admin", boom)
+        rc.warmup_runtime_config_cache(object())  # must not raise

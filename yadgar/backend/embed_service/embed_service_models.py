@@ -145,9 +145,19 @@ class AdminRequest(BaseModel):
 
 
 class AdminResponse(BaseModel):
-    """Response body for POST /admin."""
+    """Response body for POST /admin.
+
+    ``scope_versions`` (Car B, §15.2 envelope choice): the current
+    ``(scope_kind, scope_id) -> int`` map for the kinds Cars D/F/I care
+    about (``config``, ``ledger``). Core compares this against its own
+    ``scope_versions`` snapshot; a bumped version means its PTC entries
+    for that scope are unreachable — zero extra round-trips in steady
+    state. Defaults to an empty dict so existing direct construction
+    (no ``scope_versions`` kwarg) still works.
+    """
 
     result: dict
+    scope_versions: dict = {}  # noqa: RUF012 — Pydantic model field default
 
 
 class VizRequest(BaseModel):

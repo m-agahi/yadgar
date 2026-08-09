@@ -35,6 +35,7 @@ from yadgar.backend.admin_exec import (
     drain,
     engine_status,
     invariants,
+    ledger,
     memory,
     project,
     restoration,
@@ -131,6 +132,19 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # replay a dump into engine #2, and the enumeration gate runs inside this op
     # before a restore can be called good — see admin_exec/restore_sql.py.
     "mariadb_restore_verify": restore_sql.mariadb_restore_verify,
+    # Car B: ledger READ ops (task / adr / agent_prompt) over MariaStorageEngine
+    # methods. Async because asyncmy is async-only. Closes the in-process
+    # _get_storage() read path core used to take for ledger tables.
+    "list_task_rows": ledger.list_task_rows,
+    "get_task_row": ledger.get_task_row,
+    "list_task_rows_all_projects": ledger.list_task_rows_all_projects,
+    "list_adr_rows": ledger.list_adr_rows,
+    "get_adr_row": ledger.get_adr_row,
+    "list_agent_prompt_rows": ledger.list_agent_prompt_rows,
+    # Car B: runtime_config READ ops (SurrealDB sync path). Closes the in-process
+    # _get_storage() read violation in core/server/tools/_runtime_config.py.
+    "get_config_row": runtime_config.get_config_row,
+    "list_config_rows": runtime_config.list_config_rows,
 }
 
 

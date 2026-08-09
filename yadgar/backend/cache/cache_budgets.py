@@ -21,6 +21,7 @@ I13: nesting ≤ 4.
 
 from __future__ import annotations
 
+from collections.abc import Hashable
 from pathlib import Path
 
 from yadgar._shared.contracts.protocols import CacheProtocol as CacheProtocol  # noqa: PLC0414
@@ -30,6 +31,7 @@ from yadgar.backend.cache.cache import (
     TTL,
     Cache,
     DataEpoch,
+    Manual,
 )
 
 # ── RAM-% byte-budget machinery ───────────────────────────────────────────────
@@ -57,6 +59,12 @@ _NAMESPACE_WEIGHTS = {
     "memory_doc": 4.0,
     "engram_slot": 1.0,
     "graph": 2.0,
+    # Car B: PTC namespaces for config + ledger reads. Rows are small dicts; a
+    # tiny weight (1.0 each) keeps the PTC off the hot memory path while
+    # admitting the same version-in-key invalidation machinery as the data
+    # caches.
+    "config_ptc": 1.0,
+    "ledger_ptc": 1.0,
 }
 
 
@@ -366,3 +374,154 @@ def get_ce_cache() -> CacheProtocol:
     from yadgar.backend.embed_service import _make_ce_cache  # noqa: PLC0415
 
     return _make_ce_cache()
+
+
+# ── config + ledger PTC namespaces (Car B) ────────────────────────────────────
+#
+# Path-To-Cache surfaces for config + ledger reads. Car B is the BUILD ADR-0200
+# names: backend PTC, scope kinds, piggyback envelope. Freshness is the same
+# version-in-key mechanism the data caches (slot/entity) use, extended to
+# ``scope_kind="config"`` and ``scope_kind="ledger"``. A ``ScopeVersions.bump``
+# makes prior keys unreachable — no explicit ``invalidate`` call, no
+# cross-service round-trip. The piggyback on every backend response carries the
+# current scope versions to core, so its PTC entries die with zero extra work.
+#
+# REUSES: the existing ``Cache`` class (``cache.py:154``) and ``ScopeVersions``
+# (``scope_versions.py:22``). No new class; no new invalidation policy; the
+# ``key_fn`` below is the only bespoke surface.
+
+
+@observe(tier="stage", metric="cache.config_ptc.key_fn")
+def _config_ptc_key_fn(key: Hashable) -> Hashable:
+    """PTC version-in-key for ``config`` reads.
+
+    The caller passes ``(config_key, directory)`` — directory is part of the
+    identity (global vs per-dir rows are distinct), and a per-dir row should
+    not invalidate when the global row's scope version bumps. Embeds the
+    current ``ScopeVersions.version("config", config_key)`` in the effective
+    key. A bump on that scope makes every prior key unreachable.
+
+    Keys with neither a string nor a tuple (defensive) collapse to the
+    sentinel ``"__global__"`` so they all share a single scope and bump
+    together — wrong but never crashes.
+    """
+    from yadgar.backend.cache.scope_versions import get_scope_versions
+
+    if isinstance(key, tuple) and len(key) >= 1:
+        scope_id = key[0]
+        directory = key[1] if len(key) > 1 else None
+    else:
+        scope_id = key if isinstance(key, str) else "__global__"
+        directory = None
+    if not isinstance(scope_id, str):
+        scope_id = "__global__"
+    v = get_scope_versions().version("config", scope_id)
+    return (scope_id, directory, v)
+
+
+@observe(tier="stage", metric="cache.ledger_ptc.key_fn")
+def _ledger_ptc_key_fn(key: Hashable) -> Hashable:
+    """PTC version-in-key for ``ledger`` reads.
+
+    The caller passes ``(project_id_or_sentinel, query_label)`` —
+    ``project_id`` is the scope_id; ``query_label`` distinguishes multiple
+    cached reads against the same project (e.g. ``"task_list"`` vs
+    ``"adr_list"``). Embeds the current
+    ``ScopeVersions.version("ledger", project_id)`` in the effective key.
+
+    Keys with neither a string nor a tuple (defensive) collapse to the
+    sentinel ``"__global__"`` so they all share a single scope and bump
+    together — wrong but never crashes.
+    """
+    from yadgar.backend.cache.scope_versions import get_scope_versions
+
+    if isinstance(key, tuple) and len(key) >= 1:
+        scope_id = key[0]
+        label = key[1] if len(key) > 1 else None
+    else:
+        scope_id = key if isinstance(key, str) else "__global__"
+        label = None
+    if not isinstance(scope_id, str):
+        scope_id = "__global__"
+    v = get_scope_versions().version("ledger", scope_id)
+    return (scope_id, label, v)
+
+
+@observe(tier="stage", metric="backend.cache.make_config_ptc_cache")
+def _make_config_ptc_cache() -> Cache:
+    """Build (and register) the unified ``config_ptc`` namespace (Car B).
+
+    Byte-budget from RAM-% (``config_ptc`` weight 1.0 — entries are small row
+    dicts). ``Manual`` invalidation paired with a version-in-key ``key_fn``:
+    freshness lives in the key, no TTL, no explicit ``invalidate`` call.
+    ``deep_copy=True`` because the cached value is a mutable row dict.
+    """
+    total = _backend_cache_total_budget_bytes(_backend_cache_ram_pct_local())
+    budget = _namespace_budget_bytes("config_ptc", total, active=("config_ptc",))
+    return Cache(
+        name="config_ptc",
+        max_bytes=budget,
+        invalidation=Manual(),
+        key_fn=_config_ptc_key_fn,
+        deep_copy=True,
+        obs_tier="cold",
+    )
+
+
+@observe(tier="stage", metric="backend.cache.get_config_ptc_cache")
+def get_config_ptc_cache() -> CacheProtocol:
+    """Return the process-global ``config_ptc`` namespace (Car B backend PTC).
+
+    Caches backend ``get_config_row`` / ``list_config_rows`` results keyed by
+    ``(config_key, config_scope_version)``. A ``ScopeVersions.bump("config",
+    key)`` makes prior entries unreachable — no explicit invalidate.
+
+    Single process-wide instance. Reuses the registered instance rather than
+    constructing a fresh ``Cache(name="config_ptc")`` (overwrite-on-dup would
+    split hit/miss stats).
+    """
+    existing = _REGISTRY.get("config_ptc")
+    if existing is not None:
+        return existing
+    return _make_config_ptc_cache()
+
+
+@observe(tier="stage", metric="backend.cache.make_ledger_ptc_cache")
+def _make_ledger_ptc_cache() -> Cache:
+    """Build (and register) the unified ``ledger_ptc`` namespace (Car B).
+
+    Byte-budget from RAM-% (``ledger_ptc`` weight 1.0 — entries are small row
+    lists). ``Manual`` invalidation paired with a version-in-key ``key_fn``:
+    freshness lives in the key, no TTL, no explicit ``invalidate`` call.
+    ``deep_copy=True`` because the cached value is a mutable list of row dicts.
+    """
+    total = _backend_cache_total_budget_bytes(_backend_cache_ram_pct_local())
+    budget = _namespace_budget_bytes("ledger_ptc", total, active=("ledger_ptc",))
+    return Cache(
+        name="ledger_ptc",
+        max_bytes=budget,
+        invalidation=Manual(),
+        key_fn=_ledger_ptc_key_fn,
+        deep_copy=True,
+        obs_tier="cold",
+    )
+
+
+@observe(tier="stage", metric="backend.cache.get_ledger_ptc_cache")
+def get_ledger_ptc_cache() -> CacheProtocol:
+    """Return the process-global ``ledger_ptc`` namespace (Car B backend PTC).
+
+    Caches backend ledger read results (task / adr / agent_prompt rows) keyed
+    by ``(scope_id, ledger_scope_version)``. ``scope_id`` is the project_id or
+    the sentinel ``"__global__"`` for cross-project reads. A
+    ``ScopeVersions.bump("ledger", scope_id)`` makes prior entries
+    unreachable — no explicit invalidate.
+
+    Single process-wide instance. Reuses the registered instance rather than
+    constructing a fresh ``Cache(name="ledger_ptc")`` (overwrite-on-dup would
+    split hit/miss stats).
+    """
+    existing = _REGISTRY.get("ledger_ptc")
+    if existing is not None:
+        return existing
+    return _make_ledger_ptc_cache()

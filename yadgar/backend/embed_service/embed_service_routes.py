@@ -302,10 +302,19 @@ async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)
     still not blocked by storage IO) and awaits an ASYNC op body directly on the
     loop. No existing op changed shape.
 
+    Car B (ADR-0053, §15.2): every response carries a ``scope_versions`` envelope
+    field — ``{kind: per_kind_epoch, ...}`` for the kinds Cars D/F/I care about
+    (``config``, ``ledger``). Core holds its own snapshot and compares; a
+    bumped epoch means its PTC entries for that kind are unreachable, with
+    zero extra round-trips in steady state. The same epoch survives in the
+    backend ``ScopeVersions`` singleton, so the response is cheap (one lock
+    acquire).
+
     op must be a registered admin op (yadgar.backend.admin_exec.run_admin_op).
     Unknown ops → 400. Called by the core thin forwarders (_forward_admin).
     """
     from yadgar.backend.admin_exec import run_admin_op_async  # noqa: PLC0415
+    from yadgar.backend.cache.scope_versions import get_scope_versions  # noqa: PLC0415
 
     # Bootstrap engines (idempotent, guarded by lock) — the op needs storage.
     await asyncio.to_thread(_es._ensure_recall_engines)
@@ -315,7 +324,11 @@ async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return AdminResponse(result=result)
+    # Car B piggyback: per-kind scope-version epochs the core PTC keys by.
+    # Cheap (single lock acquire on the singleton).
+    scope_versions = get_scope_versions().kind_epochs_snapshot(("config", "ledger"))
+
+    return AdminResponse(result=result, scope_versions=scope_versions)
 
 
 # ---------------------------------------------------------------------------

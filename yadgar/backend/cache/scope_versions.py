@@ -39,10 +39,17 @@ class ScopeVersions:
     miss → recompute. Vectors that the fresh read-side recheck already covers
     (delete, reslot-away, heat→0 for slots) need NO bump — see the engram_slot
     cache docstring.
+
+    Car B adds a per-kind GLOBAL counter (``kind_epoch``): bumped on every
+    ``bump(kind, _)`` regardless of ``scope_id``. The /admin response piggybacks
+    this so core can hold ONE number per kind and invalidate the entire kind's
+    PTC entries when the counter moves — zero extra round-trips in steady
+    state. Unbounded ``(kind, id) -> int`` map size never enters the response.
     """
 
     def __init__(self) -> None:
         self._versions: dict[tuple[str, Hashable], int] = {}
+        self._kind_epoch: dict[str, int] = {}
         self._lock = threading.Lock()
 
     @observe(tier="hot", metric="backend.cache.scope_version_read")
@@ -59,7 +66,32 @@ class ScopeVersions:
         with self._lock:
             v = self._versions.get(key, 0) + 1
             self._versions[key] = v
+            # Car B: also bump the per-kind global counter. The /admin response
+            # piggybacks this so core can hold one number per kind and invalidate
+            # the entire kind's PTC entries on a move.
+            self._kind_epoch[scope_kind] = self._kind_epoch.get(scope_kind, 0) + 1
             return v
+
+    @observe(tier="hot", metric="backend.cache.scope_kind_epoch_read")
+    def kind_epoch(self, scope_kind: str) -> int:
+        """Per-kind global epoch (bumped on every bump of any scope of this kind).
+
+        Cheap — O(1) under the same short lock as ``version``. Used to build the
+        ``scope_versions`` envelope field on /admin responses.
+        """
+        with self._lock:
+            return self._kind_epoch.get(scope_kind, 0)
+
+    @observe(tier="hot", metric="backend.cache.scope_kind_epoch_snapshot")
+    def kind_epochs_snapshot(self, kinds: tuple[str, ...]) -> dict[str, int]:
+        """Return ``{kind: epoch}`` for each kind in ``kinds`` (0 for untracked).
+
+        A single-lock snapshot of the per-kind epoch counters the /admin
+        response piggybacks. Cheap — one lock acquire per call, returns a fresh
+        dict so callers can mutate it.
+        """
+        with self._lock:
+            return {k: self._kind_epoch.get(k, 0) for k in kinds}
 
 
 # Process-global ScopeVersions — the version store the backend StorageEngine reads
