@@ -223,18 +223,39 @@ class _DLQMixin:
         if payload.get("append"):
             return None
 
-        # Car C (#83): upsert=False slug-collision check.
-        # Runs before the gate so it applies regardless of gate mode. When an
-        # explicit slug is present and upsert=False, a collision must be rejected
-        # synchronously (wait=True) or routed to DLQ (wait=False) rather than
-        # being silently swallowed inside _apply() → WikiStore.add().
-        #
-        # (Car B, #83 originally dispatched here on page_type policy gate_mode —
-        # "identity" mode for repo_wiki vs "similarity" for everything else. The
-        # identity gate + its repo_wiki_schema-backed validator were removed with
-        # repo_wiki's decommission (#33/ADR-0162); no page_type sets gate_mode=
-        # "identity" any more, so every wiki_add now runs the similarity gate.)
+        # Car C3 (0047 §7 D21): policy dispatch — identity vs similarity. The
+        # identity gate is a pass-through for deterministic-slug page types
+        # (adr, task_list, agent_prompt library) where content similarity is
+        # structurally near-identical by design. The slug IS the identity; a
+        # re-write of the same slug is an update, not a duplicate. The
+        # upsert=False slug-collision check at WikiStore.add handles real
+        # collisions — the identity gate does not duplicate it.
+        from yadgar._shared.wiki.policy import get_policy  # noqa: PLC0415
+
+        if get_policy(payload.get("page_type")).gate_mode == "identity":
+            return self._identity_gate_for_drainer(payload)
         return self._similarity_gate_for_drainer(payload)
+
+    @observe(tier="stage", metric="drainer.dlq.identity_gate_for_drainer")
+    def _identity_gate_for_drainer(self, payload: dict) -> dict | None:
+        """D21 identity gate: slug-based identity, no content-similarity check.
+
+        For page_types with deterministic slugs (``adr``, ``task_list``,
+        ``agent_pattern``/``agent_discipline``/legacy ``agent_prompt``), a
+        page's identity IS its slug — content similarity is structurally
+        near-identical by design (canonical writers all generate the same
+        shape). The gate is a pass-through: a re-write of the same slug is
+        an UPDATE, not a duplicate. The upsert=False slug-collision case is
+        already enforced at ``WikiStore.add`` → ``slug_exists``
+        (``__init__.py:365-374,419``).
+
+        Car C3 (0047 §7 D21): replaces the canonical ``force=True`` /
+        ``replace_slug`` bypasses used pre-C3 by ``_canonical_adr_payload``
+        and ``wiki_write_task_list``. Those bypasses are no longer required
+        — the gate path is now policy-driven, and identity-gated types pass
+        without a bypass flag.
+        """
+        return None
 
     @observe(tier="stage", metric="drainer.dlq.similarity_gate_for_drainer")
     def _similarity_gate_for_drainer(self, payload: dict) -> dict | None:

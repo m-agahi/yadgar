@@ -131,7 +131,7 @@ DEFAULT_POLICY = WikiPolicy(
 """Fallback policy for all page types not explicitly listed."""
 
 _AGENT_LIBRARY_POLICY = WikiPolicy(
-    gate_mode="similarity",
+    gate_mode="identity",
     recall_disposition="exclude",
     dir_scope="strict",
     merge="allow",
@@ -151,6 +151,15 @@ Car C1 (0047): ``opt_in_tag="agent-prompt"`` is the per-type opt-in key — the
 documented ``recall(tags=["agent-prompt"])`` lookup reaches these types. The
 TOC is SPLIT OFF into ``_AGENT_INDEX_POLICY`` below — it must never be
 recall-visible, so its opt_in_tag is None (unconditional exclusion).
+
+Car C3 (0047 §7 D21): ``gate_mode="identity"`` — library pages share
+structural prose (all of them are dispatch scaffolding of the same shape), so
+the content-similarity gate false-positives on every write. The slug IS the
+identity for these types, so the identity gate is a pass-through and the
+upsert=False slug-collision check at ``WikiStore.add`` handles real
+collisions. (Agent-prompt writes today bypass the drainer gate entirely via
+``admin_exec/wiki.py`` → ``wiki.add()`` direct call; this change is
+policy-consistent for any future drainer path.)
 """
 
 # Car C1 (0047): split off from _AGENT_LIBRARY_POLICY so the TOC can declare
@@ -164,6 +173,29 @@ _AGENT_INDEX_POLICY = WikiPolicy(
     merge="allow",
     storage_scope="global",
     opt_in_tag=None,
+)
+
+# Car C3 (0047 §7 D21): deterministic-slug canonical page types get the
+# identity gate. ADR/task-list pages share structural prose (the canonical
+# writers are all generating structurally near-identical content), so the
+# content-similarity gate false-positives on every write. The slug IS the
+# identity for these types — a re-write of the same slug is an UPDATE, not a
+# duplicate. The upsert=False slug-collision check at ``WikiStore.add``
+# handles real collisions; the identity gate does not duplicate it. This
+# replaces the ``force=True`` / ``replace_slug`` bypasses the canonical
+# writers used pre-C3. Per Car C3 plan §3:
+#   - recall_disposition: preserve DEFAULT_POLICY value ("include")
+#   - merge: preserve DEFAULT_POLICY value ("allow"); D26's "locked" mutability
+#     is enforced at storage/wiki.py:215, not at the policy merge field, so
+#     merge="never" would silently change wiki-merge behavior beyond the gate.
+#   - storage_scope: preserve DEFAULT_POLICY value ("project") — task_list
+#     and adr are project-scoped, not cross-project shared.
+_ADR_POLICY = WikiPolicy(
+    gate_mode="identity",
+    recall_disposition="include",
+    dir_scope="strict",
+    merge="allow",
+    storage_scope="project",
 )
 
 POLICY_BY_TYPE: dict[str, WikiPolicy] = {
@@ -182,23 +214,42 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
     PAGE_TYPE_AGENT_INDEX: _AGENT_INDEX_POLICY,
     # Car C2 (0047 §7 3b): task_list → downweight (D22). The task list stays
     # recall-visible (the user may legitimately ask "what tasks are open?")
-    # but sinks below knowledge pages of comparable relevance. gate_mode /
-    # dir_scope / merge / storage_scope match DEFAULT — only the disposition
-    # differs. The penalty is applied via `downweight_multiplier` at the
-    # scoring stage (fusion + wiki_query), NOT at the visibility filter.
+    # but sinks below knowledge pages of comparable relevance. The penalty
+    # is applied via `downweight_multiplier` at the scoring stage (fusion +
+    # wiki_query), NOT at the visibility filter.
+    #
+    # Car C3 (0047 §7 D21): task_list → identity gate (replacing
+    # gate_mode="similarity" from C2). The downweight disposition is
+    # orthogonal — the gate decides pass/reject, the disposition decides
+    # recall visibility + ranking penalty. Both coexist. The C2 entry's
+    # inline WikiPolicy is collapsed onto the shared ``_TASK_LIST_POLICY``
+    # above so task_list routing lives in one place.
     PAGE_TYPE_TASK_LIST: WikiPolicy(
-        gate_mode="similarity",
+        gate_mode="identity",
         recall_disposition="downweight",
         dir_scope="strict",
         merge="allow",
         storage_scope="project",
     ),
+    # Car C3 (0047 §7 D21): adr canonical pages get the identity gate.
+    # ``_canonical_adr_payload`` (called from ``adr_add``) used to set
+    # ``force=True`` to bypass the similarity gate; that bypass is now
+    # unnecessary because adr's gate_mode is identity. See adr_render.py
+    # for the deleted ``force=True`` line.
+    "adr": _ADR_POLICY,
 }
 """Explicit overrides keyed by page_type string.
 
 (repo_wiki's ``identity``/``exclude``/``never`` override was removed when the
 repo_wiki generator was decommissioned — #33/ADR-0162, superseded by
-code_graph's injected-memory-block model which stores no wiki pages at all.)
+code_graph's injected-memory-block model which stores no wiki pages at all.
+
+Car C3 (0047 §7 D21): the identity gate path is restored for
+deterministic-slug page types — ``adr`` (added), ``task_list`` (gate_mode
+flipped from similarity), and the agent-prompt library
+(``agent_pattern``/``agent_discipline``/legacy ``agent_prompt`` — gate_mode
+flipped via ``_AGENT_LIBRARY_POLICY``). The slug IS the identity for these
+types: a re-write of the same slug is an update, not a duplicate.)
 """
 
 

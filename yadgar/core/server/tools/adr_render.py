@@ -143,9 +143,12 @@ def _canonical_adr_payload(
     """Build a canonical wiki_add payload for the ADR write path.
 
     ``title`` == ``slug`` so ``_slugify(title)`` yields the deterministic slug.
-    ``force=True`` bypasses the drainer sim gate (canonical ADR/index pages are
-    legitimately near-duplicate). ``page_type="adr"`` satisfies the
-    ``_wiki_write_canonical`` CANONICAL_PAGE_TYPES allowlist assertion.
+    ``page_type="adr"`` satisfies the ``_wiki_write_canonical``
+    CANONICAL_PAGE_TYPES allowlist assertion. No ``force=True`` flag is set:
+    Car C3 (0047 §7 D21) flipped the ``adr`` page_type to
+    ``gate_mode="identity"`` so the drainer sim gate is a pass-through for
+    canonical ADR pages (the slug IS the identity — a re-write of the same
+    slug is an update, not a duplicate).
     """
     return {
         "wiki_schema_version": 2,
@@ -157,7 +160,6 @@ def _canonical_adr_payload(
         "source_memory_ids": None,
         "confidence": "high",
         "append": False,
-        "force": True,
         "replace_slug": replace_slug,
         "directory_context": directory,
         "page_type": "adr",

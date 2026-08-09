@@ -97,10 +97,18 @@ class TestPolicyByType:
 class TestGetPolicy:
     """get_policy routes to the correct WikiPolicy instance."""
 
-    def test_adr_returns_default(self):
-        """'adr' has no override entry → DEFAULT_POLICY."""
+    def test_adr_returns_c3_policy(self):
+        """Car C3 (0047 §7 D21): 'adr' resolves to _ADR_POLICY (identity gate).
+
+        Pre-C3 'adr' fell through to DEFAULT_POLICY. C3 introduces _ADR_POLICY
+        with gate_mode='identity' so canonical ADR pages bypass the similarity
+        gate without needing the ``force=True`` payload flag.
+        """
+        from yadgar._shared.wiki.policy import _ADR_POLICY
+
         p = get_policy("adr")
-        assert p == DEFAULT_POLICY
+        assert p == _ADR_POLICY
+        assert p.gate_mode == "identity"
 
     def test_none_returns_default(self):
         """None page_type → DEFAULT_POLICY."""
@@ -120,13 +128,17 @@ class TestGetPolicy:
     def test_agent_prompt_non_storage_axes(self):
         """'agent_prompt' policy: write-behaviour axes match expected values.
 
-        gate_mode, dir_scope, merge match the default (similarity/strict/allow).
-        recall_disposition is "exclude" (Car C policy-driven recall exclusion —
-        agent-prompt pages must not pollute everyday recall fanout).
-        storage_scope is "global" (the C2 new axis — see test_agent_prompt_storage_scope_global).
+        Car C3 (0047 §7 D21): gate_mode flipped from "similarity" to
+        "identity" — agent-prompt pages share structural prose (all
+        dispatch scaffolding of the same shape), so the content-similarity
+        gate false-positives on every write. dir_scope and merge match
+        the default (strict/allow). recall_disposition is "exclude" (Car C
+        policy-driven recall exclusion — agent-prompt pages must not pollute
+        everyday recall fanout). storage_scope is "global" (the C2 new axis
+        — see test_agent_prompt_storage_scope_global).
         """
         p = get_policy("agent_prompt")
-        assert p.gate_mode == "similarity"
+        assert p.gate_mode == "identity"  # Car C3: identity gate (was "similarity")
         assert p.recall_disposition == "exclude"  # Car C: excluded from fanout recall
         assert p.dir_scope == "strict"
         assert p.merge == "allow"

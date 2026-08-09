@@ -7,9 +7,12 @@ Seam 1 — directory scoping (folds the general cross-project gate fix):
 
 (Seam 2 — the type-aware identity gate that skipped content-similarity for
 ``page_type=repo_wiki`` and ran ``validate_repo_wiki_page`` instead — was
-removed along with repo_wiki's decommission, #33/ADR-0162. No page_type sets
-``gate_mode="identity"`` any more, so every wiki_add runs the similarity gate
-below.)
+removed along with repo_wiki's decommission, #33/ADR-0162. Car C3 (0047 §7
+D21) re-introduces the dispatch path: deterministic-slug page types
+(``adr``, ``task_list``, the agent-prompt library) now have
+``gate_mode="identity"`` in ``POLICY_BY_TYPE`` and route to
+``_identity_gate_for_drainer`` (a pass-through), so the slug IS the identity
+and a re-write of the same slug is an update, not a duplicate.)
 
 Embedding independence
 ----------------------

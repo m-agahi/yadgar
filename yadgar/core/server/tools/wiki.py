@@ -99,8 +99,11 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
     on the ADR INDEX create so a subsequent ``adr_add`` reads the just-written index
     when assigning the next sequential ID (the per-project lock is released between
     calls, so async enqueue would race the ID scan). Sanctioned callers must pass
-    ``force=True`` in the payload (canonical ADR/task-list pages are legitimately
-    near-duplicate and must bypass the drainer sim gate).
+    ``replace_slug`` (or ``force=True`` if the page_type's gate policy allows a
+    non-canonical write path) when the payload warrants it. ``adr`` and ``task_list``
+    canonical page_types now use ``gate_mode="identity"`` (Car C3, #0047 §7 D21),
+    so the drainer sim gate is a pass-through for them — no bypass flag is
+    required on the canonical ADR write.
 
     Raises ``ValueError`` on a non-allowlisted page_type (programmer error — a
     sanctioned caller must pass an allowlisted type).
@@ -113,8 +116,11 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
         )
     payload["_internal"] = True
     if wait:
-        # RYW: enqueue then poll until the drainer commits (the sim gate is bypassed
-        # by force=True in the payload — a sanctioned caller sets it).
+        # RYW: enqueue then poll until the drainer commits. The sim gate is
+        # bypassed via force=True in the payload OR the page_type's gate_mode
+        # is "identity" (Car C3, #0047 §7 D21 — adr/task_list/agent-prompt
+        # library). Sanctioned callers either set force or rely on the
+        # identity gate.
         return _wiki_add_wait_path(payload, payload.get("slug"), payload.get("title"))
     _get_file_queue().enqueue("wiki_add", payload)
     return {
