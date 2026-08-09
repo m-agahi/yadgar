@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.security.secrets import SecretLeakBlocked, check_secrets
+from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
 
 _log = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ class _MemoryMixin:
             "content = $content, embedding = $embedding, tags = $tags, "
             "source_episode_id = $source_episode_id, "
             "directory_context = $directory_context, "
+            "project_id = $project_id, "
             "created_at = $created_at, last_accessed = $last_accessed, "
             "heat = $heat, is_stale = $is_stale, file_hash = $file_hash, "
             "embedding_model = $embedding_model, "
@@ -121,6 +123,15 @@ class _MemoryMixin:
             # surfaces in the global anchor bucket without relying on '' equality
             # (SurrealDB 2 embedded may not round-trip '' reliably in comparisons).
             "directory_context": memory["directory_context"] or "global",
+            # Car L (0047 §16.9): project_id alongside directory_context. The
+            # caller may already provide a project_id (cleanup path, the
+            # wiki_add replay branch). When the caller did not, fall back to
+            # the lazy classifier — same seam as the migration; failure
+            # falls back to 'unresolved' so the write never blocks.
+            "project_id": _resolve_project_id_for_write(
+                caller_value=memory.get("project_id"),
+                directory_context=memory.get("directory_context") or "global",
+            ),
             "created_at": memory.get("created_at", now),
             "last_accessed": memory.get("last_accessed", now),
             "heat": memory.get("heat", 1.0),

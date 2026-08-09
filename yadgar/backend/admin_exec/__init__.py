@@ -38,6 +38,7 @@ from yadgar.backend.admin_exec import (
     ledger,
     memory,
     project,
+    reslug,
     restoration,
     restore_sql,
     runtime_config,
@@ -145,6 +146,10 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # _get_storage() read violation in core/server/tools/_runtime_config.py.
     "get_config_row": runtime_config.get_config_row,
     "list_config_rows": runtime_config.list_config_rows,
+    # Car L (0047 §7 D32 ③): ADR wiki page re-slug — moves pages from
+    # ``yadgar-adr-NNNN`` to ``{project_id}_adr-NNNN`` + updates crossrefs
+    # + inline body links + adr.body_slug. Idempotent; dry-run by default.
+    "reslug": reslug.reslug_adr_pages,
 }
 
 

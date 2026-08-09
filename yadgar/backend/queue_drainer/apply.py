@@ -124,6 +124,21 @@ class _ApplyMixin:
             p = self._fill_wiki_add_defaults(dict(p))
             # directory_context falls back to the enqueue-time directory
             p["directory_context"] = p.get("directory_context") or p.get("directory")
+            # Car L (0047 §16.9): stamp project_id alongside directory_context so
+            # the backfill migration is a one-way trapdoor. The classifier is
+            # routed through the project_id write chokepoint in
+            # yadgar._shared.storage._project_id_writer (the same seam the
+            # migration uses) — backend can import _shared, so this is the
+            # canonical entry point and the only place we call the classifier
+            # from a backend write path.
+            from yadgar._shared.storage._project_id_writer import (  # noqa: PLC0415
+                _resolve_project_id_for_write,
+            )
+
+            p["project_id"] = _resolve_project_id_for_write(
+                caller_value=p.get("project_id"),
+                directory_context=p["directory_context"],
+            )
 
             run_wiki_add_replay(p)
             return

@@ -29,6 +29,7 @@ import logging
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
 from yadgar._shared.storage.mutability_gate import enforce_mutability
 from yadgar._shared.storage.wiki_change_summary import compute_change_summary
 
@@ -146,6 +147,18 @@ class _WikiMixin:
             page_set += ", page_type = $page_type, wiki_schema_version = $wiki_schema_version"
             params["page_type"] = page_copy["page_type"]
             params["wiki_schema_version"] = page_copy.get("wiki_schema_version", 1)
+        # Car L (0047 §16.9): project_id alongside directory_context. The
+        # page_copy may already carry a project_id (the reslug op, the
+        # wiki_add replay branch, and the live write paths all stamp it).
+        # When the caller did not provide one, fall back to the lazy
+        # classifier — same seam as the migration; failure falls back to
+        # 'unresolved' so the write never blocks on a path-resolution error.
+        project_id = _resolve_project_id_for_write(
+            caller_value=page_copy.get("project_id"),
+            directory_context=directory_context,
+        )
+        page_set += ", project_id = $project_id"
+        params["project_id"] = project_id
 
         # Single compound transaction: wiki_page + wiki_page_version version=1.
         # I1: no LLM/embed inside txn — pure DB writes only.

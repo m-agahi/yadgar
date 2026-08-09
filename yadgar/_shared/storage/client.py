@@ -215,6 +215,11 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         # v5.73.0 — shadow gate fields (surprise_score = gate surprisal; would_reject = shadow decision)
         # surprise_score was already present; would_reject is new.
         "would_reject",
+        # Car L (0047 §16.9) — project_id alongside directory_context. Allow
+        # update_memory_fields to re-classify a row that the migration
+        # quarantined as 'unresolved'.
+        "project_id",
+        "legacy_directory",
     }
 )
 

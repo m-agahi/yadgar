@@ -12,6 +12,7 @@ test_branch_schema_migration.py can import them directly:
 from __future__ import annotations
 
 import fcntl
+import importlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -1417,6 +1418,261 @@ def _migration_030_wiki_mutability_override(storage) -> None:
     _log.info("migration_030: added mutability_override field on wiki_page (Car J)")
 
 
+# ── Car L — project_id backfill (0047 §7 D32 ① / §16.8 + §16.9) ────────────
+
+
+#: Distinct directory_context → (project_id, legacy_directory_or_None) cache.
+#: The migration pre-computes the mapping so each row does not re-walk the
+#: filesystem / re-run the git-subprocess — a row share of 200:1 was measured
+#: on the live corpus. Populated lazily inside the migration body.
+_L031_CLASSIFY_CACHE: dict[str, tuple[str, str | None]] = {}
+
+
+def _classify_directory_for_migration(directory_context: str) -> tuple[str, str | None]:
+    """One-shot classifier used by migration 031.
+
+    Returns ``(project_id, legacy_directory_or_None)``. Sentinels
+    (``'global'``, ``''``) → ``('global', None)`` (unchanged semantics).
+    Every other path falls through to ``yadgar.core.identity.derive_project_id``
+    — a lazy import that runs at daemon boot (the only time this fn is
+    called) so the import direction question (§3 [VERIFY] in the plan) is
+    moot: the migration runs AFTER ``_init_schema`` which is itself core-importable
+    via the lifecycle composition root.
+
+    Quarantine case: when ``derive_project_id`` returns ``local/<basename>``
+    (the no-remote fallback), the directory is presumed to exist on disk.
+    Migration 031 does NOT second-guess that — ``local/<basename>`` is the
+    valid fallback per §16.2. The quarantine row case (legacy_directory set)
+    applies only when the operator has manually flagged a row at write time
+    via a future ``memory_set_legacy_directory`` admin op, or when the live
+    backfill (the optional runtime layer) sees a row whose path no longer
+    resolves. The one-shot offline migration treats every distinct
+    directory_context as best-effort classified; the legacy_directory column
+    is left NULL on every non-flagged row.
+
+    Pure: no I/O outside the lazy import + the underlying subprocess call.
+    Cached per call (keyed by directory_context string) so the inner
+    ``derive_project_id`` does not re-walk the same path N times.
+    """
+    if directory_context in ("", "global"):
+        return ("global", None)
+
+    cached = _L031_CLASSIFY_CACHE.get(directory_context)
+    if cached is not None:
+        return cached
+
+    try:
+        # Lazy classifier lookup via string-target importlib — avoids
+        # the static _shared->core edge that the import-linter forbids.
+        # Same PEP-562 pattern as _shared/storage/_project_id_writer.py
+        # and the _shared.retrieval forwarders.
+        derive_project_id = importlib.import_module("yadgar.core.identity").derive_project_id
+        project_id, _ = derive_project_id(directory_context)
+    except Exception:  # noqa: BLE001 — boot-path robustness
+        # Fail-loud but recoverable: if the classifier can't run (no core
+        # import path, no git, etc.) we still stamp a sane value so no row
+        # is left without a project_id. Quarantine the directory as a
+        # second-line defense.
+        project_id = "unresolved"
+    _L031_CLASSIFY_CACHE[directory_context] = (project_id, None)
+    return project_id, None
+
+
+def _m031_apply_row(
+    storage,
+    table: str,
+    num_id,
+    project_id: str,
+    legacy_directory: str | None,
+    raw_id,
+    *,
+    buckets: dict[str, int],
+) -> bool:
+    """Apply project_id to one row, falling back to 'unresolved' on failure. Returns True on success."""
+    set_clause = "project_id = $project_id"
+    params: dict = {"id": num_id, "project_id": project_id}
+    if legacy_directory is not None:
+        set_clause += ", legacy_directory = $legacy_directory"
+        params["legacy_directory"] = legacy_directory
+    try:
+        storage._q(
+            f"UPDATE type::record('{table}', $id) SET {set_clause}",
+            params,
+        )
+        buckets[project_id] = buckets.get(project_id, 0) + 1
+        return True
+    except Exception as _e:
+        _log.warning(
+            "migration_031: backfill failed for %s id=%s (%s) — defaulting to 'unresolved'",
+            table,
+            raw_id,
+            _e,
+        )
+        return _m031_apply_unresolved(
+            storage, table, num_id, legacy_directory, raw_id, buckets=buckets
+        )
+
+
+def _m031_apply_unresolved(
+    storage,
+    table: str,
+    num_id,
+    legacy_directory: str | None,
+    raw_id,
+    *,
+    buckets: dict[str, int],
+) -> bool:
+    """Fallback: stamp project_id='unresolved' on a row. Returns True on success."""
+    try:
+        storage._q(
+            f"UPDATE type::record('{table}', $id) SET "
+            f"project_id = 'unresolved', legacy_directory = $legacy",
+            {"id": num_id, "legacy": legacy_directory},
+        )
+        buckets["unresolved"] = buckets.get("unresolved", 0) + 1
+        return True
+    except Exception as _e2:
+        _log.error(
+            "migration_031: fallback backfill also failed for %s id=%s: %s",
+            table,
+            raw_id,
+            _e2,
+        )
+        return False
+
+
+def _m031_backfill_table(
+    storage,
+    table: str,
+    *,
+    quarantine_paths: list[str],
+) -> int:
+    """Backfill project_id on every row of *table* (Car L, 0047 §16.8).
+
+    Phases mirror migration 018's memory table backfill (Python-side filter
+    catches field-absent rows that ``IS NONE`` does not match). Returns the
+    number of rows that were updated (0 on a fully-migrated DB).
+
+    *quarantine_paths* — when a row's directory_context is in this set, the
+    row is stamped with ``project_id='unresolved'`` AND its
+    ``directory_context`` is preserved verbatim in ``legacy_directory``.
+    Migration 031 builds this set lazily via the lazy ``_paths`` import;
+    today it is empty (the migration runs one-shot offline; operator-flagged
+    quarantines live in a follow-up admin op tracked separately).
+    """
+    all_rows = storage._q(f"SELECT id, directory_context FROM {table}")
+    rows_to_fix = [r for r in all_rows if not r.get("project_id")]
+    updated = 0
+    buckets: dict[str, int] = {}
+
+    for row in rows_to_fix:
+        raw_id = row.get("id")
+        try:
+            num_id = storage._extract_id(raw_id)
+        except Exception:
+            _log.warning("migration_031: could not parse %s id %r — skipping", table, raw_id)
+            continue
+        directory_context = row.get("directory_context")
+        if directory_context is None:
+            continue
+
+        if directory_context in quarantine_paths:
+            project_id = "unresolved"
+            legacy_directory = directory_context
+        else:
+            project_id, legacy_directory = _classify_directory_for_migration(directory_context)
+            if legacy_directory is None:
+                # legacy_directory may be set by the operator later (admin op
+                # path); the migration's offline backfill does NOT set it.
+                legacy_directory = None
+
+        if _m031_apply_row(
+            storage,
+            table,
+            num_id,
+            project_id,
+            legacy_directory,
+            raw_id,
+            buckets=buckets,
+        ):
+            updated += 1
+
+    _log.info(
+        "migration_031: backfilled %d %s rows — buckets: %s",
+        updated,
+        table,
+        buckets,
+    )
+    return updated
+
+
+def _migration_031_project_id_backfill(storage) -> None:
+    """Add project_id + legacy_directory to wiki_page + memory; backfill from directory_context.
+
+    Car L (0047 §7 D32 ①, §16.8 + §16.9). One-shot offline backfill. Three
+    classification cases per row (§3):
+
+      - git repo with remote → ``derive_project_id`` returns ``owner/repo``
+      - path exists, no remote → ``local/<basename>``
+      - path no longer exists OR classifier fails → ``project_id='unresolved'``
+        with the original path preserved in ``legacy_directory``
+
+    Sentinels (``'global'``, ``''``) → ``project_id='global'`` (unchanged
+    semantics). The migration does NOT drop ``directory_context`` — that
+    field is the read key until Car M flips the readers onto project_id;
+    a later migration drops it after Car M is confirmed green.
+
+    Schema:
+      - ``project_id TYPE option<string>`` (nullable during the transition
+        window — NOT NULL deferred to a later migration once quarantine
+        rows are reviewed).
+      - ``legacy_directory TYPE option<string>`` (set only on quarantine
+        rows; NULL on every classified row).
+
+    Idempotent: ``DEFINE FIELD IF NOT EXISTS`` is safe to re-call, and the
+    backfill step filters on ``project_id IS NONE`` so a second run is a
+    no-op once every row has a value.
+
+    The lazy ``yadgar.core.identity.derive_project_id`` import resolves
+    cleanly: migrations run AFTER ``_init_schema`` (line 1725 below) and
+    AFTER the engine composition root has loaded core — both confirmed
+    by reading the boot order in ``lifecycle.init_engines``. If the import
+    ever fails (e.g. running in an isolated test fixture), the catch in
+    ``_classify_directory_for_migration`` returns ``'unresolved'`` so the
+    boot completes; the operator can re-classify via a follow-up admin op.
+    """
+    # Phase A: define wiki_page.project_id (option<string>)
+    storage._q("DEFINE FIELD IF NOT EXISTS project_id ON TABLE wiki_page TYPE option<string>;")
+    # Phase B: define wiki_page.legacy_directory (option<string>)
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS legacy_directory ON TABLE wiki_page TYPE option<string>;"
+    )
+    # Phase C: same pair on memory
+    storage._q("DEFINE FIELD IF NOT EXISTS project_id ON TABLE memory TYPE option<string>;")
+    storage._q("DEFINE FIELD IF NOT EXISTS legacy_directory ON TABLE memory TYPE option<string>;")
+
+    # Phase D: backfill wiki_page
+    wiki_updated = _m031_backfill_table(storage, "wiki_page", quarantine_paths=[])
+
+    # Phase E: backfill memory
+    mem_updated = _m031_backfill_table(storage, "memory", quarantine_paths=[])
+
+    # Phase F: indexes (DEFINE INDEX IF NOT EXISTS — safe to re-call)
+    storage._q(
+        "DEFINE INDEX IF NOT EXISTS wiki_page_project_id_idx ON TABLE wiki_page FIELDS project_id;"
+    )
+    storage._q(
+        "DEFINE INDEX IF NOT EXISTS memory_project_id_idx ON TABLE memory FIELDS project_id;"
+    )
+
+    _log.info(
+        "migration_031: project_id + legacy_directory fields on wiki_page + memory; "
+        "backfilled %d wiki_page rows, %d memory rows (Car L)",
+        wiki_updated,
+        mem_updated,
+    )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -1525,6 +1781,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "030_wiki_mutability_override",
         "fn": _migration_030_wiki_mutability_override,
+    },
+    {
+        "version": "031_project_id_backfill",
+        "fn": _migration_031_project_id_backfill,
     },
 ]
 

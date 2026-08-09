@@ -39,6 +39,13 @@ def _observe_archive_purge(result: dict) -> None:
         pass
 
 
+def _resolve_project_id_for_write(directory: str) -> str:
+    """DEPRECATED — use ``yadgar._shared.storage._project_id_writer._resolve_project_id_for_write``."""
+    from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write as _shared
+
+    return _shared(caller_value=None, directory_context=directory)
+
+
 def _quarantine_action_group(action_ids: list, reason: str, directory: str) -> None:
     """Append a quarantine entry for a poison-pill action-log group.
 
@@ -179,10 +186,16 @@ class _CleanupMixin:
         Re-raises any other exception so the caller sees unexpected failures.
 
         v5.25.2: extracted from _process_action_log to reduce nesting/cyclo.
+        Car L (0047 §16.9): stamps ``project_id`` alongside ``directory_context``
+        so the backfill migration is a one-way trapdoor (post-migration writes
+        would lack the column otherwise). The classifier is the same seam
+        that the migration uses; failure to classify falls back to ``'global'``
+        so the write never blocks on a path-resolution error.
         """
         from yadgar._shared.security.secrets import SecretLeakBlocked  # noqa: PLC0415
 
         embedding = self._embeddings.encode(content)
+        project_id = _resolve_project_id_for_write(directory)
         try:
             self._storage.insert_memory(
                 {
@@ -190,6 +203,7 @@ class _CleanupMixin:
                     "embedding": embedding,
                     "tags": ["_action_stream", "_auto"],
                     "directory_context": directory,
+                    "project_id": project_id,
                     "heat": 0.4,
                     "confidence": 0.0,
                     "is_stale": False,
