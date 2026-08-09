@@ -102,83 +102,43 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      only — never rm under ~/.claude/projects). Then: yadgar pending-findings --advance-state
      --transcript-path "<session transcript_path>" (batch-advance all just-listed).
 
-5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to the
-   wiki so it survives session exit / /clear. Page: slug "{project}-task-list",
-   tag "task-list", scoped to this directory. Page format = the SCHEMA block at
-   the bottom of this step; each task is a UNIQUE "## task:<id>" section.
+5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to
+   the task ledger so it survives session exit / /clear. The ledger is the
+   source of truth (0047 spine train Car E); the legacy wiki task-list page
+   is read-only marker-only.
    - Step 5a — RECONCILE YOUR OWN LIST FIRST. Call TaskList. TaskUpdate anything
      completed or blocked this session; TaskCreate any follow-ups you discovered.
      This is the every-checkpoint "update your task list" pass — do it before you
-     mirror, so the page reflects reality.
-   - Step 5b — READ THE PAGE FOR REAL: CALL wiki_read("{project}-task-list",
-     directory="{directory}") NOW and reconcile against the tasks + updated_at it
-     RETURNS — never against a remembered copy of the page. Absent = no saved list
-     yet.
-   - Step 5c — BRANCH on {have open tasks after reconcile?} × {page exists?}:
-     (The task-list page is CANONICAL — one call lands it via the sanctioned
-     wiki_write_task_list writer, so the session-start restore-nudge resolves it
-     from any project, including a non-git project. You do NOT craft a
-     wiki_add — the writer handles placement server-side.)
-     - have tasks · NO page → CREATE. wiki_write_task_list(project="{project}",
-       content=<full page: ## Meta + one ## task:<id> section each>,
-       directory="{directory}").
-     - NO tasks · NO page → SKIP. Nothing to do.
-     - NO tasks · page EXISTS → CATCH-UP SYNC. The page has tasks you don't.
-       Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your harness
-       via TaskCreate — recovers a missed session-start restore or a concurrent
-       session's work. GUARD: never adopt a completed task; if ALL page tasks are
-       completed, OR the page's DB updated_at (from the wiki_read metadata) is
-       older than 14 days, do NOT adopt — note "stale/finished saved list" and
-       leave it. Adopt by judgment: open tasks relevant to the work you are about
-       to do; skip ones clearly from a finished or unrelated effort.
-     - have tasks · page EXISTS → MERGE + WRITE BACK. Reconcile the page's open
-       tasks with yours (union; your live status wins for tasks you own; keep
-       page-only open tasks). Default write = FULL REWRITE:
-       wiki_write_task_list(project="{project}", content=<merged full page>,
-       directory="{directory}"). OPTIONAL surgical path (only when your change is
-       confined to ONE task): wiki_append_section(slug="{project}-task-list",
-       section_heading="task:<id>", position="replace_section", heading_type="h2",
-       content=<that task's body>, directory="{directory}") — the "## task:<id>"
-       heading is UNIQUE so this is section-atomic and will not clobber a
-       concurrent edit to a DIFFERENT task's section.
-   - PER-TASK BODY: render fields as "- key: value" flat bullets UNDER the
-     "## task:<id>" heading — subject, status, active_form (optional),
-     description, context, blockedBy, blocks, modified. Multi-line values
-     (description, context) MUST indent continuation lines 2 spaces so an
-     embedded "##" line or ``` fence cannot be mis-parsed as a section boundary
-     (same discipline as the ADR to_markdown_body renderer). The "context" field
-     carries related-context pointers to where the task's work lives: file paths ·
-     [[wiki-slug]] · docs/plans/*.md · mem:<id>. The "modified" field is
-     ISO-8601 UTC, bumped ONLY on a real change to that task (per-task freshness).
-     Do NOT hand-write a page-level "updated:" stamp — the age gate reads the DB
-     updated_at column. Verify wiki_history after writing.
-   - SCHEMA (page body):
-     ```markdown
-     <!-- yadgar task-list page — schema v1. One "## task:<id>" section per task.
-          Fields are "- key: value" bullets; multi-line values indent 2 spaces.
-          status ∈ {pending, in_progress, completed}. Restore: recreate open
-          tasks via TaskCreate. -->
-
-     # {project} task list
-
-     ## Meta
-     - project: {project}
-     - open: <N> · completed: <M>
-
-     ## task:0003
-     - subject: <one line>
-     - status: in_progress
-     - active_form: <present-tense label>
-     - description: <text; continuation lines indent 2 spaces>
-     - context: src/foo.py · [[some-wiki-slug]] · docs/plans/x.md · mem:4821
-     - blockedBy: 0005
-     - blocks:
-     - modified: 2026-07-14T18:20:32Z
-     ```
-     Zero-pad each <id> to 4 digits ("task:0001" ≠ "task:0012") so the section
-     matcher is exact. status is the harness value VERBATIM, enum
-     {pending, in_progress, completed} — there is NO "blocked" status (blocking
-     is the blockedBy array).
+     mirror, so the ledger reflects reality.
+   - Step 5b — READ THE LEDGER FOR REAL: CALL task_list(project_id="{project}")
+     NOW and reconcile against the tasks + updated_at it RETURNS — never against
+     a remembered copy. D37 default is open-only (status ∈ {pending,
+     in_progress}); closed/archived require an explicit filter. Absent = no
+     saved ledger yet.
+   - Step 5c — BRANCH on {have open tasks after reconcile?} × {ledger has
+     open tasks?}:
+     - have tasks · NO ledger rows → CREATE. For each open task call
+       task_write(project_id="{project}", title=<subject>, status=<status>,
+       state=<state>, active_form=<active_form>). One call per task.
+     - NO tasks · NO ledger rows → SKIP. Nothing to do.
+     - NO tasks · ledger has rows → CATCH-UP SYNC. The ledger has tasks you
+       don't. Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your
+       harness via TaskCreate — recovers a missed session-start restore or a
+       concurrent session's work. GUARD: never adopt a completed task; if ALL
+       ledger tasks are completed, OR the ledger's updated_at is older than 14
+       days, do NOT adopt — note "stale/finished saved list" and leave it. Adopt
+       by judgment: open tasks relevant to the work you are about to do; skip
+       ones clearly from a finished or unrelated effort.
+     - have tasks · ledger has rows → MERGE + WRITE BACK. Reconcile the ledger's
+       open tasks with yours (union; your live status wins for tasks you own;
+       keep ledger-only open tasks). For each task call task_write with the
+       merged fields. project_id is a caller parameter (ADR-0202) — use the
+       same {project} for every call this step.
+   - The harness `TaskCreate` subject must preserve the `[N]` prefix from the
+     ledger so the next session's reconcile can match it (D11). The task
+     ledger ids are Crockford base32 (digits + a-z minus i,l,o,u) with an
+     optional origin/ prefix for foreign tasks; the prefix is preserved in
+     the subject verbatim.
 
 6. Call project_brief("{directory}", mode="signals"). UNCONDITIONAL — this call
    is how you LEARN whether maintenance applies; it is cheap and you may never

@@ -826,21 +826,138 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
 
 @observe(tier="stage")
-async def _task_list_restore_nudge(directory: str) -> str:
-    """Return the task-list restore-nudge line, or "" when no page exists.
+async def _task_list_legacy_wiki_nudge(directory: str, project: str) -> str:
+    """Legacy wiki-page parser for the without-Car-D branch.
 
-    If a saved "<project>-task-list" wiki page exists for `directory`, return a
-    one-line pointer telling the instance to restore its open tasks via
-    TaskCreate. A server-side existence pre-check (a metadata row read, parity
-    cost with the checkpoint hint) means zero dead nudges on projects that never
-    saved a list.
+    Extracted from `_task_list_restore_nudge` to keep the handler under the
+    C901 complexity cap. Returns "" on any error (fail-open). Deleted at
+    master 0047 cutover time.
+    """
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+
+    storage = _get_storage()
+    if storage is None:
+        return ""
+    slug = f"{project}-task-list"
+    try:
+        page = await asyncio.to_thread(
+            storage.get_wiki_page_by_slug_directory,
+            slug,
+            directory,
+        )
+    except Exception as _ge:
+        logger.debug("task-list page read failed: %s", _ge)
+        return ""
+    if not page:
+        return ""
+    import re as _re  # noqa: PLC0415
+
+    _TASK_RE = _re.compile(r"^## task:(?:([\w-]+/)?([0-9a-hj-np-tv-z]+))", _re.MULTILINE)
+    _STATUS_RE = _re.compile(r"^- status:\s*(\S+)", _re.MULTILINE)
+    _SUBJECT_RE = _re.compile(r"^- subject:\s*(.+)", _re.MULTILINE)
+    _content = page.get("content", "") or ""
+    _sections = _TASK_RE.split(_content)
+    _open_tasks: list[tuple[str, str, str]] = []
+    _i = 1
+    while _i + 1 < len(_sections):
+        _task_id = _sections[_i].strip()
+        _body = _sections[_i + 1]
+        _sm = _STATUS_RE.search(_body)
+        _status = _sm.group(1).lower() if _sm else ""
+        if _status in ("pending", "in_progress"):
+            _subm = _SUBJECT_RE.search(_body)
+            _subject = _subm.group(1).strip() if _subm else "(no subject)"
+            _open_tasks.append((_task_id, _subject, _status))
+        _i += 2
+    _CAP = 12
+    if not _open_tasks:
+        return (
+            f"\n[yadgar] Saved task list ({slug}) — all tasks complete.\n"
+            f'Full list: wiki_read("{slug}", directory="{directory}")\n'
+        )
+    _shown = _open_tasks[:_CAP]
+    _overflow = len(_open_tasks) - len(_shown)
+    _k = len(_open_tasks)
+    _lines = [
+        "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
+        f"{_k} open task(s) from the last session ({slug}). Call TaskCreate for EACH one now:",
+    ]
+    for _tid, _subj, _st_open in _shown:
+        _lines.append(f"  - [{_tid}] {_subj} ({_st_open})")
+    if _overflow > 0:
+        _lines.append(f"  …and {_overflow} more")
+    _lines.append(
+        f'Full descriptions: wiki_read("{slug}", directory="{directory}"). '
+        "Preserve the `[N]` prefix at the start of each TaskCreate subject "
+        "so task ids reconcile across sessions. "
+        "Recreate every open task (pending / in_progress) with TaskCreate "
+        "before proceeding; skip completed. Do this FIRST.\n"
+    )
+    return "\n".join(_lines)
+
+
+@observe(
+    exempt=(
+        "pure formatter; runs once per SessionStart nudge assembly. No I/O, "
+        "no storage side effects — just iterates pre-fetched ledger rows and "
+        "assembles a markdown snippet. Observability would add a span sample "
+        "with zero diagnostic value."
+    )
+)
+def _format_task_list_nudge_rows(rows: list[dict], cap: int, project: str) -> str:
+    """Format a ledger-read result list into the forcing-nudge payload.
+
+    Extracted from `_task_list_restore_nudge` to keep the handler under the
+    C901 complexity cap. Returns "" when rows is empty.
+    """
+    if not rows:
+        return ""
+    _lines = [
+        "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
+        f"{len(rows)} open task(s) for {project} from the task ledger. "
+        "Call TaskCreate for EACH one now:",
+    ]
+    _shown = rows[:cap]
+    _overflow = len(rows) - len(_shown)
+    for _row in _shown:
+        _tid = _row.get("number") or _row.get("id") or "?"
+        _subj = _row.get("title") or _row.get("subject") or "(no subject)"
+        _st = _row.get("status", "pending")
+        _lines.append(f"  - [{_tid}] {_subj} ({_st})")
+    if _overflow > 0:
+        _lines.append(f"  …and {_overflow} more")
+    _lines.append(
+        "Preserve the `[N]` prefix at the start of each TaskCreate subject "
+        "so task ids reconcile across sessions. "
+        "Recreate every open task (pending / in_progress) with TaskCreate "
+        "before proceeding; skip completed. Do this FIRST.\n"
+    )
+    return "\n".join(_lines)
+
+
+@observe(tier="stage")
+async def _task_list_restore_nudge(directory: str) -> str:
+    """Return the task-list restore-nudge line, or "" when no ledged exists.
+
+    Car E (0047 spine train): reads open tasks from the ``task`` ledger table
+    (Car D ships the schema + tools) instead of parsing the `{project}-task-list`
+    wiki page. The forcing-nudge form (ADR-0137 Option B) is preserved: imperative
+    + enumerated + hoisted FIRST by the caller (http.py:1105).
+
+    The D11 prefix-preserve instruction is part of the nudge payload so the
+    harness ``TaskCreate`` subject retains the ``[N]`` prefix and the next
+    session's reconcile can match it.
+
+    Graceful fallback: if Car D's task symbols (``task_list`` / ``list_task_rows``)
+    are not yet present, the function returns the legacy wiki-page nudge — so
+    the rewire is non-breaking on the without-Car-D branch.
 
     MAIN-THREAD-ONLY by construction: the sole caller is hook_session_context,
     reached by SessionStart only — never by a subagent (SubagentStart /
     agent_dispatch_prelude do not call it), and NOT via project_brief
     (subagent-callable → would leak).
 
-    ADR-0215 removed branch scoping, so the existence check resolves the page by
+    ADR-0215 removed branch scoping; the existence check resolves by
     directory alone and is reachable from any working tree.
 
     Fail-open: any error returns "" so session-start is never blocked.
@@ -848,95 +965,32 @@ async def _task_list_restore_nudge(directory: str) -> str:
     try:
         from pathlib import Path as _Path  # noqa: PLC0415
 
-        from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
-
         project = _Path(directory).name if directory else ""
         if not project:
             return ""
-        storage = _get_storage()
-        if storage is None:
-            return ""
-        slug = f"{project}-task-list"
-        page = await asyncio.to_thread(
-            storage.get_wiki_page_by_slug_directory,
-            slug,
-            directory,
-        )
-        if not page:
-            return ""
 
-        # v5.142.0 — inline a compact open-task summary (checkpoint-symmetric).
-        # Parse the page body to extract pending/in_progress tasks and inline
-        # them so the model sees content directly, mirroring the checkpoint hint
-        # at lines 1076-1082.  Fail-open: any parse error falls back to the old
-        # existence-only nudge so session-start is never blocked by a bad page.
-        _OLD_NUDGE = (
-            f"\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work. "
-            f'wiki_read("{slug}", directory="{directory}") and recreate every open '
-            "task (pending / in_progress) with TaskCreate before proceeding "
-            "(skip completed). Do this FIRST.\n"
-        )
+        # ── Car E primary path: read the task ledger (Car D ships the table + tools)
         try:
-            _content = page.get("content", "") or ""
-            # Parse ## task:NNNN sections.  Each section header starts a block
-            # that ends at the next ## heading or EOF.
-            import re as _re  # noqa: PLC0415
+            from yadgar.core.server.tools import task as _task_tools  # noqa: PLC0415
 
-            _TASK_RE = _re.compile(r"^## task:(\d+)", _re.MULTILINE)
-            _STATUS_RE = _re.compile(r"^- status:\s*(\S+)", _re.MULTILINE)
-            _SUBJECT_RE = _re.compile(r"^- subject:\s*(.+)", _re.MULTILINE)
+            _ledger = _task_tools
+        except ImportError:
+            _ledger = None
 
-            _sections = _TASK_RE.split(_content)
-            # split gives: [pre, id1, body1, id2, body2, ...]
-            _open_tasks: list[tuple[str, str, str]] = []  # (id, subject, status)
-            _i = 1
-            while _i + 1 < len(_sections):
-                _task_id = _sections[_i].strip()
-                _body = _sections[_i + 1]
-                _sm = _STATUS_RE.search(_body)
-                _status = _sm.group(1).lower() if _sm else ""
-                if _status in ("pending", "in_progress"):
-                    _subm = _SUBJECT_RE.search(_body)
-                    _subject = _subm.group(1).strip() if _subm else "(no subject)"
-                    _open_tasks.append((_task_id, _subject, _status))
-                _i += 2
-
-            _CAP = 12
-            if not _open_tasks:
-                # All tasks complete — brief note, no TaskCreate instruction.
-                return (
-                    f"\n[yadgar] Saved task list ({slug}) — all tasks complete.\n"
-                    f'Full list: wiki_read("{slug}", directory="{directory}")\n'
+        if _ledger is not None and hasattr(_ledger, "task_list"):
+            try:
+                _rows = await asyncio.to_thread(
+                    _ledger.task_list,
+                    project_id=project,
+                    status=["pending", "in_progress"],
                 )
+            except Exception as _le:
+                logger.debug("task-list ledger read failed: %s", _le)
+                _rows = []
+            return _format_task_list_nudge_rows(list(_rows or []), 12, project)
 
-            _shown = _open_tasks[:_CAP]
-            _overflow = len(_open_tasks) - len(_shown)
-            _k = len(_open_tasks)
-            # Forcing form (v5.149): imperative + enumerated + hoisted FIRST by the
-            # caller. The advisory tail-nudge was ignored (tasks stayed in yadgar,
-            # harness TaskList empty); a hook cannot COMPEL a TaskCreate call, so this
-            # maximizes salience. Mechanical writer is the fallback if this still fails
-            # (docs/plans/harness-task-seed-inbound-2026-07-17.md, Option A / task A).
-            _lines = [
-                "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
-                f"{_k} open task(s) from the last session ({slug}). "
-                "Call TaskCreate for EACH one now:",
-            ]
-            for _tid, _subj, _st in _shown:
-                _lines.append(f"  - [{_tid}] {_subj} ({_st})")
-            if _overflow > 0:
-                _lines.append(f"  …and {_overflow} more")
-            _lines.append(
-                f'Full descriptions: wiki_read("{slug}", directory="{directory}"). '
-                "Recreate every open task (pending / in_progress) with TaskCreate "
-                "before proceeding; skip completed. Do this FIRST.\n"
-            )
-            return "\n".join(_lines)
-        except Exception as _pe:
-            logger.debug("session-context task-list nudge parse error: %s", _pe)
-            # Parse failed — fall back to the old existence-only nudge so the
-            # model at least knows the page exists and how to restore manually.
-            return _OLD_NUDGE
+        # ── Legacy path: wiki-page parse. Removed once Car D lands.
+        return await _task_list_legacy_wiki_nudge(directory, project)
     except Exception as _te:
         logger.debug("session-context task-list nudge error: %s", _te)
         return ""
@@ -1355,6 +1409,65 @@ async def hook_seed_agent_prompts(request: Request) -> JSONResponse:
         raise
     finally:
         _hook_observe("seed_agent_prompts", _t0, _caught_exc)
+
+
+@mcp_server.custom_route("/hooks/seed-task-from-pages", methods=["POST"])
+@trace_span()
+async def hook_seed_task_from_pages(request: Request) -> JSONResponse:
+    """Seed the task ledger from existing {project}-task-list wiki pages.
+
+    Car E (0047 spine train, plan §3.3). Called by `yadgar seed
+    --seed-task-from-pages` CLI after daemon start. Forwards to the backend
+    admin op `seed_task_from_pages` via `_forward_admin`, which reads
+    page_type='task_list' wiki pages, parses ## task:<id> sections, and
+    inserts rows into the task ledger. Idempotent (D35a).
+
+    Body (JSON):
+        {
+            "directory": "/abs/path/to/project",
+            "project_id": "<project key>",
+            "dry_run": false
+        }
+
+    Response:
+        {"status": "ok", "result": {"seeded": N, "skipped": M, "candidates": K,
+                                    "dry_run": bool, "pages": {...}}}
+        {"status": "error", "message": "..."}   — on validation failure (400)
+    """
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    try:
+        try:
+            body = await request.json()
+        except Exception:
+            _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
+            _hook_observe_response("seed_task_from_pages", _resp.status_code)
+            return _resp
+
+        directory = sanitize_log_field(str(body.get("directory", "")), max_len=1000)
+        project_id = sanitize_log_field(str(body.get("project_id", "")), max_len=200)
+        dry_run = bool(body.get("dry_run", False))
+        if not directory or not project_id:
+            _resp = JSONResponse(
+                {"status": "error", "message": "directory and project_id are required"},
+                status_code=400,
+            )
+            _hook_observe_response("seed_task_from_pages", _resp.status_code)
+            return _resp
+
+        from yadgar.core.forward import _forward_admin  # noqa: PLC0415
+
+        result = await asyncio.to_thread(
+            _forward_admin,
+            "seed_task_from_pages",
+            {"directory": directory, "project_id": project_id, "dry_run": dry_run},
+        )
+        return JSONResponse({"status": "ok", "result": result})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("seed_task_from_pages", _t0, _caught_exc)
 
 
 @mcp_server.custom_route("/hooks/file-changed", methods=["POST"])
