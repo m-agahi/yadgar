@@ -18,6 +18,14 @@ from yadgar.core.forward import _forward_admin
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
 
+# Car M (0047 §7, §16.6): cross-project ``project=`` override on the wiki MCP
+# tools. Resolves the effective project_id (override → session → directory →
+# "global") and threads it through to the wiki enqueue / read path.
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    resolve_effective_project,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -329,8 +337,20 @@ def wiki_add(
     page_type: str | None = None,
     slug: str | None = None,
     upsert: bool = True,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
+
+    Car M (0047 §7, §16.6): the ``project=`` override lets a caller address
+    another project's wiki namespace. The validated project_id is stamped on
+    the enqueued payload (``payload["project_id"]``) so the drainer routes
+    the write to that project_id's pages; ``directory`` stays as the
+    directory-context hint (the same shape ``directory_context`` already
+    carries). Precedence: ``project`` (override) > ``session_project`` >
+    ``directory``-derived > ``"global"``. The deep "is this project_id in the
+    registry?" check is backend-side (Car A0 `_ensure_project_exists_sync`,
+    §15 / ADR-0078); core enforces the type-level guard.
 
     append=False (default): create a new page or overwrite an existing one.
     append=True: merge content into an existing page (appends with timestamp,
@@ -413,6 +433,24 @@ def wiki_add(
     if _effective_dir and _effective_dir != "global":
         _effective_dir = _effective_dir.rstrip("/") or _effective_dir
 
+    # Car M (0047 §7, §16.6): resolve the effective project_id BEFORE the
+    # enqueue so the wire payload can carry ``project_id`` (drainer-side
+    # routing). Type-level guard runs here so a malformed ``project=``
+    # surfaces as a tool error envelope, never as a raised exception.
+    try:
+        _effective_project_id = resolve_effective_project(
+            project=project,
+            directory=_effective_dir,
+            session_project=None,  # Car E SessionStart hook — not yet wired here
+        )
+    except InvalidProjectOverrideError as exc:
+        return {
+            "stored": False,
+            "ok": False,
+            "error": f"wiki_add: {exc}",
+            "op_type": "wiki_add",
+        }
+
     # v5.39.0 slug generation (O(1), needed for enqueue payload and wait path).
     import re as _re_slug  # noqa: PLC0415
 
@@ -448,6 +486,14 @@ def wiki_add(
         # Car C (#83): upsert semantics — drainer reads upsert from payload.
         "upsert": upsert,
     }
+    # Car M: stamp the validated project_id ONLY when the caller supplied
+    # ``project=`` (override). A bare session-derived or directory-derived
+    # project_id stays out of the wire payload so existing drainer semantics
+    # (inferring project_id from directory_context) are preserved for
+    # pre-Car-M callers. The deep registry check is backend-side
+    # (`_ensure_project_exists_sync`, Car A0, §15 / ADR-0078).
+    if project is not None:
+        _payload["project_id"] = _effective_project_id
 
     # wait=True: enqueue first (preserves FIFO), then poll until the drainer commits.
     # The drainer runs the similarity gate; rejection surfaces synchronously via the
@@ -538,6 +584,92 @@ _wiki_read_cache = _make_wiki_read_cache()
 _wiki_query_cache = _make_wiki_query_cache()
 
 
+@observe(exempt="single resolve + ValueError mapping; no I/O — called at the wiki_query boundary")
+def _resolve_wiki_query_project(*, project: str | None, directory: str | None) -> str:
+    """Car M: resolve the effective project_id for ``wiki_query``.
+
+    Raises ``ValueError`` on a malformed ``project=`` so the tool boundary
+    surfaces a clean error envelope (read tools stay fail-loud at the
+    boundary per the wiki_* pattern). The error string is prefixed with
+    ``"wiki_query: "`` so callers see the tool name in any traceback.
+    """
+    try:
+        return resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,  # Car E SessionStart hook — not yet wired here
+        )
+    except InvalidProjectOverrideError as exc:
+        raise ValueError(f"wiki_query: {exc}") from exc
+
+
+@observe(exempt="single resolve + ValueError mapping; no I/O — called at the wiki_read boundary")
+def _resolve_wiki_read_project(*, project: str | None, directory: str | None) -> str | None:
+    """Car M: resolve the effective project_id for ``wiki_read``.
+
+    Raises ``ValueError`` on a malformed ``project=``; the caller wraps it
+    in a dict-returning error envelope so the tool boundary stays clean.
+    The error string is prefixed with ``"wiki_read: "`` so callers see the
+    tool name in any traceback.
+    """
+    try:
+        return resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,  # Car E SessionStart hook — not yet wired here
+        )
+    except InvalidProjectOverrideError as exc:
+        raise ValueError(f"wiki_read: {exc}") from exc
+
+
+@observe(tier="stage", metric="tools.wiki._scope_and_downweight_wiki_results")
+def _scope_and_downweight_wiki_results(
+    results: list[dict],
+    *,
+    directory: str,
+    tags: list[str] | None,
+    max_results: int,
+) -> list[dict]:
+    """Apply Car C2 downweight + directory-eligibility filter + trim to ``max_results``.
+
+    Pulled out of ``wiki_query`` for complexity governance (fn_loc cap) — the
+    block has its own substrate (downweight policy + is_directory_eligible +
+    re-sort) and no tool-boundary state, so extraction is safe.
+    """
+    # Task 0134: wiki_query is a SEARCH path and used to bypass
+    # recall_disposition entirely. See is_recall_visible for the shared rule.
+    results = [r for r in results if is_recall_visible(r, tags)]
+
+    # v5.43.0 / v5.62.0: directory scoping — scope to caller directory.
+    # v5.62.0: replaces hand-rolled predicate with is_directory_eligible() from
+    # storage/directory.py — single source of truth for the eligible-set rule.
+    # Applied as Python-side post-filter (mirrors recall directory filter from v5.42.5).
+    results = [r for r in results if is_directory_eligible(r.get("directory_context"), directory)]
+
+    # Car C2 (0047 §7 3b): downweight penalty — a ``task_list`` page (D22
+    # `task → downweight`) sinks below include-disposition pages of
+    # comparable relevance without being filtered out. The legacy
+    # ``wiki_query`` path has no fusion / CE — ``_retrieval_score`` IS
+    # the ranking key. Apply the multiplier IN PLACE and re-sort BEFORE
+    # the cache so the reordering takes effect on this call AND on any
+    # cache hit (the cached copy holds the post-penalty scores; the
+    # penalty is deterministic per ``page_type`` so this is correct).
+    # Guarded on factor < 1.0 to skip the re-sort cost when the
+    # operator has disabled the penalty.
+    from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
+    from yadgar._shared.wiki.policy import downweight_multiplier  # noqa: PLC0415
+
+    _dw_factor = float(_get_settings().RECALL_DOWNWEIGHT_FACTOR)
+    if _dw_factor < 1.0:
+        for r in results:
+            r["_retrieval_score"] = float(r.get("_retrieval_score", 0.0)) * downweight_multiplier(
+                r, _dw_factor
+            )
+        results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
+
+    return results[:max_results]
+
+
 @_tool()
 def wiki_query(
     query: str,
@@ -545,10 +677,24 @@ def wiki_query(
     category: str | None = None,
     max_results: int = 5,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> list[dict]:
     """Search wiki pages by keyword + semantic similarity.
 
     Returns matching pages with relevance scores. Use tags and category to filter.
+
+    Car M (0047 §7, §16.6): the ``project=`` override lets a caller address
+    another project's wiki namespace. The validated project_id is folded into
+    the cache key AND the directory-eligibility check (a page whose
+    ``directory_context`` resolves to that project_id's workspace is in-scope;
+    pre-Car-L pages carry the canonical project_id via
+    ``directory_context → derive_project_id`` round-trip). Precedence:
+    ``project`` (override) > ``session_project`` > ``directory``-derived >
+    ``"global"``. Wiki pages are not project-stamped at the row level (the
+    directory_context remains the canonical key) — Car M's override is the
+    FIRST step toward the per-project_id row stamp that lands with Car L's
+    backfill.
 
     directory: Absolute project path for scoping results to caller directory + 'global'.
         Required (v5.65 Fix D): callers must supply the real host directory.
@@ -570,6 +716,17 @@ def wiki_query(
             "container cannot detect it via os.getcwd())"
         )
 
+    # Car M (0047 §7, §16.6): resolve the effective project_id BEFORE the cache
+    # key so the override stamps every cached lookup with the right scope. Type-
+    # level guard runs here so a malformed ``project=`` raises ValueError,
+    # matching the directory-required raise shape above (read tools stay fail-
+    # loud at the boundary). When ``project`` is supplied, the resolve helper
+    # logs-and-ignores ``directory`` (project wins — §9 [VERIFY]).
+    _effective_project_id = _resolve_wiki_query_project(
+        project=project,
+        directory=_dir_stripped,
+    )
+
     # Phase 2a: unified recall is now the ONLY path; emit deprecation unconditionally.
     try:
         logger.info(
@@ -586,6 +743,8 @@ def wiki_query(
     # (cache hit AND miss) — obs total-visibility. The cache-hit early return
     # lives inside the try below so the finally still fires for hits.
     _wiki_query_t0 = _time.monotonic()
+    # Car M: fold the resolved project_id into the cache key so the override
+    # scopes every cached lookup — a stale cross-project read cannot leak.
     _q_key = (
         query,
         _dir_stripped,
@@ -593,6 +752,7 @@ def wiki_query(
         tuple(tags) if tags else None,
         max_results,
         _current_wiki_epoch(),
+        _effective_project_id,
     )
     results: list[dict] = []
 
@@ -606,42 +766,14 @@ def wiki_query(
         # max_results after pruning.
         results = _st._wiki.query(query, tags, category, max_results * 3)
 
-        # Task 0134: wiki_query is a SEARCH path and used to bypass
-        # recall_disposition entirely. See is_recall_visible for the shared rule.
-        results = [r for r in results if is_recall_visible(r, tags)]
-
-        # v5.43.0 / v5.62.0: directory scoping — scope to caller directory.
-        # v5.62.0: replaces hand-rolled predicate with is_directory_eligible() from
-        # storage/directory.py — single source of truth for the eligible-set rule.
-        # Applied as Python-side post-filter (mirrors recall directory filter from v5.42.5).
-        # v5.65 Fix D: directory is now required (validated at function top), so
-        # _dir_stripped is always a non-empty absolute path here.
-        results = [
-            r for r in results if is_directory_eligible(r.get("directory_context"), _dir_stripped)
-        ]
-
-        # Car C2 (0047 §7 3b): downweight penalty — a ``task_list`` page (D22
-        # `task → downweight`) sinks below include-disposition pages of
-        # comparable relevance without being filtered out. The legacy
-        # ``wiki_query`` path has no fusion / CE — ``_retrieval_score`` IS
-        # the ranking key. Apply the multiplier IN PLACE and re-sort BEFORE
-        # the cache so the reordering takes effect on this call AND on any
-        # cache hit (the cached copy holds the post-penalty scores; the
-        # penalty is deterministic per ``page_type`` so this is correct).
-        # Guarded on factor < 1.0 to skip the re-sort cost when the
-        # operator has disabled the penalty.
-        from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
-        from yadgar._shared.wiki.policy import downweight_multiplier  # noqa: PLC0415
-
-        _dw_factor = float(_get_settings().RECALL_DOWNWEIGHT_FACTOR)
-        if _dw_factor < 1.0:
-            for r in results:
-                r["_retrieval_score"] = float(
-                    r.get("_retrieval_score", 0.0)
-                ) * downweight_multiplier(r, _dw_factor)
-            results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
-
-        results = results[:max_results]
+        # Car C2 downweight + v5.62 directory scoping + trim — extracted for
+        # complexity governance (fn_loc cap).
+        results = _scope_and_downweight_wiki_results(
+            results,
+            directory=_dir_stripped,
+            tags=tags,
+            max_results=max_results,
+        )
 
         for r in results:
             r.pop("embedding", None)
@@ -668,8 +800,18 @@ def wiki_query(
 def wiki_read(
     slug: str,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Read a specific wiki page by slug.
+
+    Car M (0047 §7, §16.6): the ``project=`` override lets a caller address
+    another project's wiki namespace without leaving the current working
+    tree. Precedence: ``project`` (override) > ``session_project`` >
+    ``directory``-derived > ``"global"``. The resolved project_id is folded
+    into the cache key so a stale read cannot leak across projects. When
+    BOTH ``project`` and ``directory`` are supplied, ``project`` wins and
+    ``directory`` is logged-and-ignored (§9 [VERIFY]).
 
     §25 Resolution order (directory-aware; ADR-0215 removed the branch axis):
     1. directory=$caller_dir  (project-scoped)
@@ -682,13 +824,29 @@ def wiki_read(
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
+    # Car M (0047 §7, §16.6): resolve the effective project_id BEFORE the cache
+    # key so the override scopes every cached lookup. The deep registry check
+    # is backend-side (Car A0 `_ensure_project_exists_sync`, §15 / ADR-0078);
+    # core enforces the type-level guard only. _resolve_wiki_read_project
+    # raises ValueError already prefixed with ``"wiki_read: "`` so we use
+    # ``str(exc)`` rather than re-prefixing.
+    try:
+        _effective_project_id = _resolve_wiki_read_project(
+            project=project,
+            directory=directory,
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+
     # Car 2: cache the resolved page by (slug, dir) + wiki epoch.
     # A hit skips the WikiStore read. A wiki write to ANY page bumps the global
     # epoch → this key moves → a stale page can never be served (the
     # wiki-write-busts-read guarantee). Only found pages are cached; a not-found
     # result is cheap to recompute and a later create bumps the epoch anyway.
+    # Car M: fold the resolved project_id into the cache key so a stale read
+    # cannot leak across projects when the override path is exercised.
     _caller_dir = directory.strip().rstrip("/") if directory is not None else None
-    _r_key = (slug, _caller_dir, _current_wiki_epoch())
+    _r_key = (slug, _caller_dir, _current_wiki_epoch(), _effective_project_id)
     _r_hit = _wiki_read_cache.get(_r_key)
     if _r_hit is not None:
         return _r_hit

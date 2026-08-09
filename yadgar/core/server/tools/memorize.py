@@ -20,6 +20,16 @@ from yadgar.core.forward import _forward_admin
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
 
+# Car M (0047 §7, §16.6): cross-project ``project=`` override. Resolves the
+# effective project_id (override → session → directory → "global"). On a
+# write the resolved value is stamped on the enqueued payload so the
+# backend drainer (Car A0's project-aware write path) routes by project_id
+# rather than inferring it from the directory.
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    resolve_effective_project,
+)
+
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
@@ -28,7 +38,7 @@ _VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
 
 @_tool(always_load=True)
-def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
+def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
     content: str,
     context: str,
     tags: list[str],
@@ -39,12 +49,27 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     ttl_days: int | None = None,
     reason: str = "",
     wait: bool = False,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Store a new memory with embedding.
 
     context MUST be the actual working directory path (e.g., '/home/user/projects/myapp'),
     NOT a description. project_brief() filters by directory path match —
     descriptive strings will make memories unfindable by project.
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` parameter is the
+    cross-project override. When supplied, the validated project_id is
+    stamped on the enqueued payload (``payload["project_id"]``) so the
+    backend drainer (Car A0) routes the write to that project_id's namespace
+    rather than the directory-derived one. Precedence: ``project`` (override)
+    > ``session_project`` (Car E) > ``directory``-derived (Car A0) >
+    ``"global"`` fallback. When BOTH ``project`` and ``context`` are
+    supplied, ``project`` wins (``context`` stays in the payload as the
+    canonical directory_context — the project_id is the stamp, the path is
+    the directory hint). The non-string / empty guards fire at the type
+    level; the deep registry check lives at the backend write path
+    (`_ensure_project_exists_sync`, §15 / ADR-0078).
 
     Persistence options:
     - is_protected=True: memory is exempt from heat decay and will never be aged out.
@@ -106,15 +131,37 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     # reads it any more.
     ctx.context = normalize_write_context(ctx.context)
 
-    return _enqueue(ctx, wait=wait)
+    # Car M (0047 §7, §16.6): resolve the effective project_id BEFORE the
+    # enqueue so the wire payload can carry it as ``project_id`` (drainer-side
+    # routing). The ``context`` (canonicalised directory path) stays as-is —
+    # the project_id is the namespace stamp, the directory is the file-system
+    # hint used for recall scoping. Type-level guard runs here so a malformed
+    # ``project=`` surfaces as InvalidProjectOverrideError, mapped to the
+    # tool's error envelope so the MCP boundary never raises.
+    try:
+        effective_project_id = resolve_effective_project(
+            project=project,
+            directory=ctx.context,
+            session_project=None,  # Car E SessionStart hook — not yet wired here
+        )
+    except InvalidProjectOverrideError as exc:
+        return {"stored": False, "ok": False, "error": f"memorize: {exc}"}
+
+    return _enqueue(ctx, wait=wait, project_id=effective_project_id if project else None)
 
 
 @observe(tier="stage")
-def _enqueue(ctx: MemorizeContext, wait: bool = False) -> dict:
+def _enqueue(ctx: MemorizeContext, wait: bool = False, *, project_id: str | None = None) -> dict:
     """Enqueue a memorize job. Returns the queued result.
 
     wait=True routes through _memorize_wait_path for read-your-writes (mirrors
     wiki_add). wait=False returns the async {stored, queued, queue_id} shape.
+
+    Car M (0047 §7, §16.6): when ``project_id`` is supplied (the caller
+    provided ``project=`` and the override won), it is stamped on the wire
+    payload so the drainer stamps it on the row. The drainer-side write path
+    (Car A0 ``_ensure_project_exists_sync``) REJECTS unknown project_ids
+    fail-loud at INSERT time — core stays out of the DB (§15).
     """
     payload: dict = {
         "content": ctx.content,
@@ -131,6 +178,8 @@ def _enqueue(ctx: MemorizeContext, wait: bool = False) -> dict:
     # run_memorize_replay can re-validate on the drainer side (R3 write-path).
     if ctx.reason:
         payload["reason"] = ctx.reason
+    if project_id is not None:
+        payload["project_id"] = project_id
 
     if wait:
         return _memorize_wait_path(payload)

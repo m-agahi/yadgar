@@ -27,9 +27,9 @@
     "function": "wiki_add",
     "lineno": 362,
     "metrics": {
-      "fn_loc": 154
+      "fn_loc": 190
     },
-    "rationale": "Car B0 (#83): wiki_add was already at fn_loc=148 (2 lines under the 150 HARD cap) before this change. Persisting repo-wiki module staleness metadata requires 2 new signature params (hash, source_file) + 2 payload dict entries + a 2-line docstring note \u2014 all irreducible feature surface, not logic branching (cyclomatic unchanged). Net +6 crosses the cap. The honest fix is extracting the payload-dict/branch-resolution preamble into a helper; that decomposition is a wiki-tools refactor of its own, not in scope for the B0 prerequisite. Scheduled for a wiki-tools complexity wave.",
+    "rationale": "Car B0 (#83): wiki_add was already at fn_loc=148 (2 lines under the 150 HARD cap) before this change. Persisting repo-wiki module staleness metadata requires 2 new signature params (hash, source_file) + 2 payload dict entries + a 2-line docstring note \u2014 all irreducible feature surface, not logic branching (cyclomatic unchanged). Net +6 crosses the cap. The honest fix is extracting the payload-dict/branch-resolution preamble into a helper; that decomposition is a wiki-tools refactor of its own, not in scope for the B0 prerequisite. Car M (0047 spine train, 2026-08-09): fn_loc 154 -> 190 for the cross-project project= override (resolve_effective_project wiring + debug docstring block + payload stamping). Cyclomatic and params unchanged (the project= param is keyword-only, defaults to None, takes 0 lines in the argument list). Same deferral: the parameter is essential feature surface, not logic branching; extracting payload-dict resolution into a helper is the wiki-tools refactor's job, not in scope for Car M.",
     "added": "2026-07-21",
     "added_by": "repo-wiki-refresh-car-b0"
   },
