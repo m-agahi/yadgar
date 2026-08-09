@@ -403,6 +403,19 @@ class Settings(BaseSettings):
     RECALL_MEMORY_PRIOR_WEIGHT: float = 0.1
     RECALL_WIKI_PRIOR_WEIGHT: float = 0.1
 
+    # Car C2 (0047 §7 3b): ranking-score multiplier applied to wiki
+    # candidates whose ``page_type`` resolves to ``recall_disposition="downweight"``
+    # (D22). A value in (0, 1) sinks the downweighted page below include pages
+    # of comparable relevance without removing it from the result set (the
+    # visibility filter still drops only ``"exclude"``). The factor is read
+    # live from settings on each fusion + wiki_query call (no caching), so a
+    # runtime change takes effect on the next call. 0.5 = half-score; tunable
+    # via ``YADGAR_RECALL_DOWNWEIGHT_FACTOR`` (registered in
+    # ``config_registry.py``). Set to 1.0 to disable the penalty (no re-sort
+    # cost in wiki_query). The penalty is applied to ``placement_score`` in
+    # fusion and to ``_retrieval_score`` in wiki_query.
+    RECALL_DOWNWEIGHT_FACTOR: float = 0.5
+
     # task:0085: recall() output-size bounds (presentation-only, applied in
     # core/server/tools/recall.py AFTER retrieval — ranking is untouched).
     # Per-row content cap. 1200 measured at -54.8% row bytes combined with the

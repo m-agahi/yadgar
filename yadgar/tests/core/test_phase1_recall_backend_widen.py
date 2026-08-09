@@ -83,6 +83,7 @@ class TestFusionCEGate:
             RECALL_WIKI_QUOTA=5,
             RECALL_MEMORY_PRIOR_WEIGHT=0.1,
             RECALL_WIKI_PRIOR_WEIGHT=0.1,
+            RECALL_DOWNWEIGHT_FACTOR=1.0,  # Car C2: tests don't exercise downweight; factor=1.0 = no-op
         )
 
         fuse_candidates(
@@ -120,6 +121,7 @@ class TestFusionCEGate:
             RECALL_WIKI_QUOTA=5,
             RECALL_MEMORY_PRIOR_WEIGHT=0.1,
             RECALL_WIKI_PRIOR_WEIGHT=0.1,
+            RECALL_DOWNWEIGHT_FACTOR=1.0,  # Car C2: tests don't exercise downweight; factor=1.0 = no-op
         )
 
         fuse_candidates(
@@ -155,6 +157,7 @@ class TestFusionCEGate:
             RECALL_WIKI_QUOTA=5,
             RECALL_MEMORY_PRIOR_WEIGHT=0.1,
             RECALL_WIKI_PRIOR_WEIGHT=0.1,
+            RECALL_DOWNWEIGHT_FACTOR=1.0,  # Car C2: tests don't exercise downweight; factor=1.0 = no-op
         )
 
         fuse_candidates(
@@ -188,6 +191,7 @@ class TestFusionCEGate:
             RECALL_WIKI_QUOTA=5,
             RECALL_MEMORY_PRIOR_WEIGHT=0.1,
             RECALL_WIKI_PRIOR_WEIGHT=0.1,
+            RECALL_DOWNWEIGHT_FACTOR=1.0,  # Car C2: tests don't exercise downweight; factor=1.0 = no-op
         )
 
         result = fuse_candidates(

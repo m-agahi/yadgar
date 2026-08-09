@@ -443,6 +443,11 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_RECALL_WIKI_QUOTA", "5", "int"),
     ConfigEntry("YADGAR_RECALL_MEMORY_PRIOR_WEIGHT", "0.1", "float"),
     ConfigEntry("YADGAR_RECALL_WIKI_PRIOR_WEIGHT", "0.1", "float"),
+    # Car C2 (0047 §7 3b): ranking-score multiplier for downweight-disposition
+    # wiki pages (D22's `task → downweight`). 0.5 = half-score penalty; tunable.
+    # 1.0 = no penalty (the wiki_query path guards on factor < 1.0 to skip
+    # the re-sort cost).
+    ConfigEntry("YADGAR_RECALL_DOWNWEIGHT_FACTOR", "0.5", "float"),
     # ── task:0085 recall output-size bounds ──────────────────────────────────
     ConfigEntry("YADGAR_RECALL_MAX_CONTENT_CHARS", "1200", "int"),
     ConfigEntry("YADGAR_RECALL_MAX_TOTAL_BYTES", "65536", "int"),

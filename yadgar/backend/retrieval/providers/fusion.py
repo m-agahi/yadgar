@@ -36,6 +36,15 @@ Settings consumed (I25 three-way registered):
                                        score comparison (keeps the setting consumed).
   RECALL_WIKI_PRIOR_WEIGHT   (float)  Default 0.1 — additive boost to wiki CE score
                                        for placement into the memory-ordered list.
+  RECALL_DOWNWEIGHT_FACTOR   (float)  Default 0.5 — Car C2 (0047 §7 3b):
+                                       ranking-score multiplier applied to wiki
+                                       candidates whose ``page_type`` resolves to
+                                       ``recall_disposition="downweight"`` (D22's
+                                       ``task → downweight``, e.g. ``task_list``).
+                                       A value in (0, 1) sinks the downweighted
+                                       page below include pages of comparable
+                                       relevance without removing it. 1.0 = no
+                                       penalty. Live-read on every call.
 """
 
 from __future__ import annotations
@@ -44,6 +53,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.wiki.policy import downweight_multiplier
 from yadgar.backend.retrieval.providers.base import Candidate
 
 if TYPE_CHECKING:
@@ -265,9 +275,20 @@ def fuse_candidates(
     # Step 3: prepare wiki candidates with placement score
     # (CE + RECALL_WIKI_PRIOR_WEIGHT * native_score), sorted best-first.
     wiki_with_placement: list[tuple[Candidate, float]] = []
+    downweight_factor = float(settings.RECALL_DOWNWEIGHT_FACTOR)
     for j, wiki_cand in enumerate(wiki_pool):
         ce = wiki_ce_scores.get(j, wiki_cand.native_score)
         placement_score = ce + wiki_prior_weight * wiki_cand.native_score
+        # Car C2 (0047 §7 3b): downweight penalty — sink downweighted wiki
+        # pages (D22's `task → downweight`, e.g. ``task_list``) below
+        # include-disposition pages of comparable CE relevance. The factor
+        # is read live from settings (no caching) so runtime tuning takes
+        # effect on the next call. A factor of 1.0 is a no-op. The penalty
+        # hits the actual ranking key, so it propagates through
+        # interleaving (insertion is by ``wiki_score``), dedup (which
+        # compares ``wiki_score``), and the final trim — without further
+        # code changes.
+        placement_score *= downweight_multiplier(wiki_cand.raw, downweight_factor)
         wiki_with_placement.append((wiki_cand, placement_score))
     # C4.0 (ADR-0108 A): break equal placement scores by candidate id desc so
     # wiki placement is a deterministic total order. wiki candidate ids are
